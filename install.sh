@@ -44,6 +44,7 @@ chmod +x "$EXTENSION_ROOT/extension/bin/worker-setup.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/jar-runner.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/status.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/retry-ticket.js"
+chmod +x "$EXTENSION_ROOT/extension/bin/tmux-runner.js"
 
 # --- COMMANDS ---
 cp "$SCRIPT_DIR/.claude/commands/pickle.md"            "$COMMANDS_DIR/"
@@ -57,6 +58,7 @@ cp "$SCRIPT_DIR/.claude/commands/disable-pickle.md"    "$COMMANDS_DIR/"
 cp "$SCRIPT_DIR/.claude/commands/enable-pickle.md"     "$COMMANDS_DIR/"
 cp "$SCRIPT_DIR/.claude/commands/pickle-status.md"     "$COMMANDS_DIR/"
 cp "$SCRIPT_DIR/.claude/commands/pickle-retry.md"      "$COMMANDS_DIR/"
+cp "$SCRIPT_DIR/.claude/commands/pickle-tmux.md"       "$COMMANDS_DIR/"
 
 # --- STOP HOOK (idempotent jq merge, $HOME stays LITERAL in JSON) ---
 if jq -e '.hooks.Stop // [] | map(.hooks // [] | map(.command)) | flatten | any(. == "node $HOME/.claude/pickle-rick/extension/hooks/dispatch.js stop-hook")' \

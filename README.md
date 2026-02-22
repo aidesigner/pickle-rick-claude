@@ -97,6 +97,7 @@ The **Stop hook** prevents Claude from exiting until the task is genuinely compl
 | Command | Description |
 |---|---|
 | `/pickle "task"` | 🥒 Start the full autonomous loop |
+| `/pickle-tmux "task"` | 🖥️ True context clearing — fresh subprocess per iteration via tmux. Best for long epics (8+ iterations). Requires `tmux`. |
 | `/pickle-prd "task"` | 📋 Interactively draft a PRD first |
 | `/eat-pickle` | 🛑 Cancel the active loop |
 | `/help-pickle` | ❓ Show all commands and flags |
@@ -117,6 +118,8 @@ The **Stop hook** prevents Claude from exiting until the task is genuinely compl
 ```
 
 ### Tips
+
+**`/pickle` vs `/pickle-tmux`** — Use `/pickle` for short-to-medium epics (1–7 iterations) in interactive mode with full keyboard access. Use `/pickle-tmux` for long epics (8+ iterations) where context drift is a concern — each iteration spawns a fresh Claude subprocess with a clean context window, bridged via `handoff.txt`. Requires `tmux`.
 
 **Bring your own PRD** — If a `prd.md` or `PRD.md` exists in your project root when you run `/pickle`, Rick will automatically load it instead of drafting a new one. Drop your PRD there and the interrogation phase is skipped entirely.
 

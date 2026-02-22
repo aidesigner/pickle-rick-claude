@@ -4,6 +4,7 @@ Summarize the available commands for the user:
 
 **Loop Commands:**
 - `/pickle <prompt>`: Start the autonomous development loop (Manager Mode).
+- `/pickle-tmux <prompt>`: True context clearing mode — spawns a fresh Claude subprocess per iteration inside a tmux session. Use for long epics (8+ iterations). Requires `tmux`.
 - `/pickle-prd <prompt>`: Interactively draft a PRD and initialize a session in paused mode, then resume with `/pickle --resume`.
 - `/eat-pickle`: Stop/Cancel the current loop.
 - `/help-pickle`: Show this message.
