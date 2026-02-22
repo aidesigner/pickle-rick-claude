@@ -41,6 +41,7 @@ async function main() {
     let resumePath = null;
     let resetMode = false;
     let pausedMode = false;
+    let tmuxMode = false;
     const taskArgs = [];
     const startEpoch = Math.floor(Date.now() / 1000);
     // Load Settings
@@ -86,6 +87,9 @@ async function main() {
         }
         else if (arg === '--paused') {
             pausedMode = true;
+        }
+        else if (arg === '--tmux') {
+            tmuxMode = true;
         }
         else if (arg === '--task') {
             // Named task flag — accepts the full task string as a single argument.
@@ -160,6 +164,7 @@ async function main() {
             history: [],
             started_at: new Date().toISOString(),
             session_dir: fullSessionPath,
+            tmux_mode: tmuxMode,
         };
         fs.writeFileSync(path.join(fullSessionPath, 'state.json'), JSON.stringify(state, null, 2));
     }
