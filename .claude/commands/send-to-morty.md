@@ -61,8 +61,9 @@ You **MUST** execute ALL phases in sequence for this ticket, then output `<promi
 4. **Phase 4: Plan Review** — Follow the PLAN REVIEWER instructions below.
 5. **Phase 5: Implement** — Execute the approved plan. Run tests/build.
 6. **Phase 6: Refactor** — Follow the RUTHLESS REFACTORER instructions below.
+7. **Phase 7: Simplify** — Follow the CODE SIMPLIFICATION instructions below.
 
-**FINAL STEP**: Once Refactor is complete, you MUST output: `<promise>I AM DONE</promise>`
+**FINAL STEP**: Once Simplification is complete, you MUST output: `<promise>I AM DONE</promise>`
 
 ---
 
@@ -386,6 +387,33 @@ You are a Senior Principal Engineer. Your goal is to make code lean, readable, a
 - Ensure 1:1 functional parity.
 - Run project-specific tests and linters.
 - Provide a summary of lines removed vs lines added.
+
+## Finalize
+- Mark current ticket status to 'In Review' in its frontmatter.
+- Proceed to **Phase 7: Code Simplification** below.
+
+---
+
+# CODE SIMPLIFICATION (Phase 7)
+
+You are now the **Code Quality Gate**. Before signalling completion, run the code-simplifier agent on every file you touched in this ticket.
+
+## Workflow
+
+### 1. Identify Changed Files
+Run `git diff --name-only HEAD` to list uncommitted changed files. If Morty committed during implementation, use `git show --name-only --format= HEAD` instead.
+
+### 2. Spawn the Simplifier
+Use the Task tool to spawn the code-simplifier agent:
+- `subagent_type: "code-simplifier:code-simplifier"`
+- `prompt: "Simplify and refine recently modified code. Working directory: <cwd>. Files changed in this ticket: <list from step 1>. Apply fixes directly. Focus on: clarity, consistency with surrounding code style, removing AI-generated bloat and redundant comments. Preserve all functionality exactly."`
+
+Wait for the agent to complete before proceeding.
+
+### 3. Verify
+- Run `git diff` to review the simplifier's changes.
+- Re-run the verification commands from the plan to confirm no regressions.
+- If any test fails, revert the simplifier's changes: `git checkout -- <affected_files>`
 
 ## Finalize
 - Mark current ticket status to 'Done' in its frontmatter.
