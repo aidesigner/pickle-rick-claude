@@ -276,7 +276,10 @@ Process tickets one by one. Do not stop until **ALL** tickets are 'Done'.
 4. **Next Ticket Loop**: Scan for the next ticket with status `Todo`.
    - **MANDATORY**: You are FORBIDDEN from deactivating the loop if any tickets are still `Todo`.
    - If found, spawn a new Morty.
-   - If all are Done, mark the Parent Ticket Done and announce the epic is complete.
+   - If all are Done, mark the Parent Ticket Done. Then:
+     1. Run `git branch --show-current` to get the current branch name.
+     2. If branch is `main` or `master`: print "⚠️ On main branch — skipping auto-PR. Create one manually." and output `<promise>EPIC_COMPLETED</promise>`.
+     3. Otherwise: run `node ${EXTENSION_ROOT}/extension/services/pr-factory.js ${SESSION_ROOT}`. If it exits non-zero, print a warning but continue. Then output `<promise>EPIC_COMPLETED</promise>`.
 
 **FINAL WARNING**:
 - Do not improvise the process.
