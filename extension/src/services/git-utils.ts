@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { run_cmd, Style } from './pickle-utils.js';
+import { run_cmd } from './pickle-utils.js';
 
 export function run_git(cmd: string[], cwd?: string, check: boolean = true): string {
   return run_cmd(['git', ...cmd], { cwd, check });
@@ -62,28 +62,4 @@ export function update_ticket_status(
 
   fs.writeFileSync(ticket_path, content);
   console.log(`Successfully updated ticket ${ticket_id} to status "${new_status}"`);
-}
-
-// CLI Interface
-if (process.argv[1] && path.basename(process.argv[1]) === 'git-utils.js') {
-  const args = process.argv.slice(2);
-
-  if (args.includes('--update-status')) {
-    const idIdx = args.indexOf('--update-status') + 1;
-    const ticketId = args[idIdx];
-    const status = args[idIdx + 1];
-    const sessionDir = args[idIdx + 2];
-
-    if (!ticketId || !status || !sessionDir) {
-      console.error('Usage: node git_utils.js --update-status <id> <status> <session_dir>');
-      process.exit(1);
-    }
-
-    try {
-      update_ticket_status(ticketId, status, sessionDir);
-    } catch (err) {
-      console.error(`${Style.RED}Error: ${(err as Error).message}${Style.RESET}`);
-      process.exit(1);
-    }
-  }
 }

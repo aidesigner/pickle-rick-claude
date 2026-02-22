@@ -21,7 +21,8 @@ Prompt: ${state.original_prompt}`;
         return output.trim();
     }
     catch (err) {
-        throw new Error(`Failed to create PR: ${err.message}`);
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`Failed to create PR: ${msg}`);
     }
 }
 // CLI
