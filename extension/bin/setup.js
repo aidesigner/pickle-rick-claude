@@ -87,6 +87,11 @@ async function main() {
         else if (arg === '--paused') {
             pausedMode = true;
         }
+        else if (arg === '--task') {
+            // Named task flag — accepts the full task string as a single argument.
+            // Preferred over positional args to avoid shell expansion of ~ and other metacharacters.
+            if (args[i + 1] !== undefined) taskArgs.push(args[++i]);
+        }
         else if (arg === '-s' || arg === '--session-id') {
             // Ignore session-id flag if passed by gemini, but consume the next arg if it's not a flag
             if (args[i + 1] && !args[i + 1].startsWith('-')) {

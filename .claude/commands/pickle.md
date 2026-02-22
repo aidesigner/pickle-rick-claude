@@ -14,16 +14,30 @@ You **MUST** output a text explanation ("brain dump") *before* every single tool
 ---
 
 **Step 1: Initialization**
-Run the setup script to initialize the loop state:
+Run the setup script to initialize the loop state.
+
+**CRITICAL — shell quoting**: Always pass the task string via `--task "..."` with double quotes. This prevents zsh from expanding `~` and other shell metacharacters in the task text. Any `--flags` go before `--task`.
+
 ```bash
-node "$HOME/.claude/pickle-rick/extension/bin/setup.js" $ARGUMENTS
+node "$HOME/.claude/pickle-rick/extension/bin/setup.js" [--flags from $ARGUMENTS] --task "$ARGUMENTS"
+```
+
+For example, if the user ran `/pickle --max-iterations 10 "refactor auth"`, execute:
+```bash
+node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --max-iterations 10 --task "refactor auth"
+```
+
+If no flags were provided, just:
+```bash
+node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --task "$ARGUMENTS"
 ```
 
 **CRITICAL**: The extension root is `$HOME/.claude/pickle-rick`. In all subsequent steps and skills, this path is referred to as `${EXTENSION_ROOT}`.
 
 Look for the machine-readable line `SESSION_ROOT=<path>` in the output (also shown as `Path:` in the panel). That path is your `${SESSION_ROOT}` — the session directory for all subsequent file operations.
 
-**Supported Arguments for setup.js:**
+**Supported flags for setup.js:**
+- `--task "<TEXT>"`: The task description. Always double-quoted.
 - `--max-iterations <N>`: Maximum number of loop iterations.
 - `--max-time <MINUTES>`: Maximum duration in minutes.
 - `--worker-timeout <SECONDS>`: Timeout for worker tasks.
@@ -31,7 +45,7 @@ Look for the machine-readable line `SESSION_ROOT=<path>` in the output (also sho
 - `--resume [PATH]`: Resume a previous session.
 - `--reset`: Reset the iteration count and timer (only valid with --resume).
 
-**CRITICAL**: Pass the user's arguments **VERBATIM** to the script. Do not rename, reorder, or infer flags. If the user provides `--max-time`, pass `--max-time`.
+**CRITICAL**: Separate flags from the task string. Do not pass `$ARGUMENTS` raw — always extract flags and use `--task "..."` for the task text.
 
 ---
 
