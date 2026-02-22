@@ -4,7 +4,12 @@ import * as path from 'path';
 import { getExtensionRoot } from '../services/pickle-utils.js';
 import { updateState } from './update-state.js';
 
-function retryTicket(ticketId, cwd) {
+export function retryTicket(ticketId, cwd) {
+    // Validate ticketId to prevent path traversal
+    if (!/^[a-zA-Z0-9_-]+$/.test(ticketId)) {
+        console.error(`Invalid ticket ID: ${ticketId}`);
+        process.exit(1);
+    }
     const sessionsMap = path.join(getExtensionRoot(), 'current_sessions.json');
     if (!fs.existsSync(sessionsMap)) {
         console.error('No active Pickle Rick session found.');
@@ -19,6 +24,10 @@ function retryTicket(ticketId, cwd) {
     const statePath = path.join(sessionPath, 'state.json');
     const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
     const sessionDir = state.session_dir;
+    if (!sessionDir) {
+        console.error('state.json is missing session_dir field.');
+        process.exit(1);
+    }
     const ticketDir = path.join(sessionDir, ticketId);
     const ticketFile = path.join(ticketDir, `linear_ticket_${ticketId}.md`);
     if (!fs.existsSync(ticketDir) || !fs.existsSync(ticketFile)) {
@@ -41,16 +50,16 @@ function retryTicket(ticketId, cwd) {
     // Reset ticket status to Todo
     const ticketContent = fs.readFileSync(ticketFile, 'utf-8');
     fs.writeFileSync(ticketFile, ticketContent.replace(/^status: .+$/m, 'status: Todo'));
-    // Re-activate session
+    // Re-activate session and set current ticket
     state.active = true;
     fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
-    // Set current ticket
     updateState('current_ticket', ticketId, sessionDir);
-    // Read fresh state for timeout
-    const freshState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-    const timeout = freshState.worker_timeout_seconds || 1500;
-    const originalPrompt = freshState.original_prompt || '';
-    const spawnCmd = `node "$HOME/.claude/pickle-rick/extension/bin/spawn-morty.js" --ticket-id ${ticketId} --ticket-path "${sessionDir}/${ticketId}/" --ticket-file "${sessionDir}/${ticketId}/linear_ticket_${ticketId}.md" --timeout ${timeout} "${originalPrompt.replace(/"/g, '\\"')}"`;
+    // Read final state for timeout/prompt values
+    const finalState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    const timeout = finalState.worker_timeout_seconds || 1500;
+    // Shell-safe single-quote escaping for the original prompt
+    const safePrompt = (finalState.original_prompt || '').replace(/'/g, "'\\''");
+    const spawnCmd = `node "$HOME/.claude/pickle-rick/extension/bin/spawn-morty.js" --ticket-id "${ticketId}" --ticket-path "${sessionDir}/${ticketId}/" --ticket-file "${sessionDir}/${ticketId}/linear_ticket_${ticketId}.md" --timeout ${timeout} '${safePrompt}'`;
     console.log(`\n✅ Ticket ${ticketId} reset to Todo. Run this command to re-spawn Morty:\n\n${spawnCmd}\n`);
 }
 

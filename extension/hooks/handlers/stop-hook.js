@@ -1,7 +1,7 @@
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import * as os from 'node:os';
-import { statusSymbol, parseTicketFrontmatter, collectTickets } from '../../services/pickle-utils.js';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+import { statusSymbol, collectTickets } from '../../services/pickle-utils.js';
 function buildHandoffSummary(state, sessionDir) {
     const task = state.original_prompt || '';
     const truncatedTask = task.length > 300 ? task.slice(0, 300) + ' [truncated]' : task;
