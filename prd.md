@@ -219,45 +219,75 @@ If found, copies the file into `${SESSION_ROOT}/prd.md` and skips directly to th
 
 Ideas validated as worthwhile but not yet scoped. Ordered roughly by impact.
 
-### B1. Parallel Morty Workers *(High Impact, Medium Effort)*
+### B1. True Context Clearing via tmux *(High Impact, Medium Effort)*
+
+Currently Rick's context accumulates across iterations — the stop hook injects a fresh session summary each turn, but the full conversation history still grows and gets auto-compressed by Claude Code. This works in practice but can cause drift on very long epics.
+
+**The idea**: replace the interactive session loop with a tmux-based outer runner that spawns a fresh `claude --no-session-persistence -p` subprocess per iteration. Each Rick iteration gets genuinely clean context. The tmux pane provides the live terminal view.
+
+**Architecture:**
+```
+tmux session
+└── pane: tmux-runner.js (outer loop)
+    ├── iteration 1: claude --no-session-persistence -p "$(cat handoff.txt)"
+    │   exits when promise token detected
+    ├── iteration 2: claude --no-session-persistence -p "$(cat handoff.txt)"
+    └── ... until EPIC_COMPLETED
+```
+
+**What's already in place:**
+- `buildHandoffSummary()` in `stop-hook.js` already computes the exact content needed for `handoff.txt`
+- `jar-runner.js` is already a subprocess spawner — `tmux-runner.js` is the same pattern
+- The stop hook's exit conditions already determine when to stop the outer loop
+- `send-to-morty.md` demonstrates the Morty worker prompt pattern Rick would use
+
+**New work required:**
+1. `extension/bin/tmux-runner.js` — outer loop; spawns fresh `claude -p` per iteration; detects EPIC_COMPLETED to exit
+2. Stop hook writes `handoff.txt` to session dir on every block decision (in addition to injecting via `reason`)
+3. `.claude/commands/pickle-tmux.md` — creates tmux session and launches runner
+4. Rick's starting prompt = manager prompt from `pickle.md` + handoff file contents
+
+**Consideration**: Loses the native interactive Claude Code session feel. User watches streamed headless output in a tmux pane instead. Keyboard shortcuts and UI features of the interactive session are unavailable. Best suited for long-running epics where context drift is a real concern.
+
+### B3. Parallel Morty Workers *(High Impact, Medium Effort)*
 
 Currently tickets run sequentially. Independent tickets (no shared files) could run concurrently via `Promise.all()` on `spawn-morty.js` calls. A 5-ticket epic becomes as fast as the slowest ticket.
 
 **Consideration**: Rick needs to detect ticket dependencies before parallelizing. Tickets that touch the same files must remain sequential. Could be as simple as a `depends_on` field in ticket frontmatter, or as naive as "always parallel, let Morty detect conflicts."
 
-### B2. Linear.app Sync *(High Impact, Medium Effort)*
+### B4. Linear.app Sync *(High Impact, Medium Effort)*
 
 The local `linear_ticket_*.md` files mirror Linear ticket structure exactly. A `/pickle-sync-linear` command could push tickets to real Linear, update statuses as Mortys complete. The Linear MCP is already available in Claude Code sessions — no new dependencies.
 
 **Consideration**: Bidirectional sync is complex. Start with one-way push only: local → Linear.
 
-### B3. GitHub Issues as PRD Input *(High Impact, Medium Effort)*
+### B5. GitHub Issues as PRD Input *(High Impact, Medium Effort)*
 
 `/pickle gh:owner/repo/issues/42` — fetch issue body via `gh issue view`, treat as PRD, skip drafting phase. Closes the loop between PM tools and execution.
 
 **Consideration**: GitHub issue quality varies wildly. May need a lightweight cleanup/normalization step before saving as `prd.md`.
 
-### B4. Worker Timeout Auto-Recovery *(Medium Impact, Low Effort)*
+### B6. Worker Timeout Auto-Recovery *(Medium Impact, Low Effort)*
 
 Currently when a Morty hits `--worker-timeout`, the ticket hangs at whatever status it was in. Rick's orchestration audit step should detect this: if a ticket has been "In Progress" for longer than `worker_timeout_seconds`, treat it as failed and offer to retry. Could be as simple as Rick checking ticket `updated` timestamp vs. `state.worker_timeout_seconds`.
 
-### B5. Model Selection Per Phase *(Medium Impact, Low Effort)*
+### B7. Model Selection Per Phase *(Medium Impact, Low Effort)*
 
 `spawn-morty.js` already constructs the `claude` command. Adding `--model haiku` for research/refactor phases and `--model sonnet` for planning would significantly reduce cost on large epics with no quality loss for the cheaper phases.
 
 **Consideration**: User preference varies. Could be a `pickle_settings.json` config key: `"research_model": "claude-haiku-4-5-20251001"`.
 
-### B6. PR Body Enrichment *(Medium Impact, Low Effort)*
+### B8. PR Body Enrichment *(Medium Impact, Low Effort)*
 
 `pr-factory.js` currently generates a sparse PR body (session name + original prompt). Could be enriched with: list of completed tickets, link to session dir, summary of files changed (`git diff --stat`). All information is already available at epic completion time.
 
 **Consideration**: Explicitly marked as out-of-scope for the current PRD. Natural follow-on once auto-PR is wired up.
 
-### B7. Cost / Token Tracking *(Low Impact, Low Effort)*
+### B9. Cost / Token Tracking *(Low Impact, Low Effort)*
 
 `state.json` already tracks timing. Could also track approximate token counts per session and per Morty via Claude Code's usage output. Useful for understanding what long Jar runs actually cost. Print a summary line at epic completion.
 
-### B8. Session Dashboard *(Low Impact, High Effort)*
+### B10. Session Dashboard *(Low Impact, High Effort)*
 
 A formatted TUI or web view of all sessions and their states. Lower priority — `/pickle-status` covers the immediate need.
 
