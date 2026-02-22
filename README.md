@@ -102,6 +102,8 @@ The **Stop hook** prevents Claude from exiting until the task is genuinely compl
 | `/help-pickle` | ❓ Show all commands and flags |
 | `/add-to-pickle-jar` | 🫙 Save current session to the Jar for later |
 | `/pickle-jar-open` | 🌙 Run all Jar tasks sequentially (Night Shift) |
+| `/pickle-status` | 📊 Show current session phase, iteration, and ticket status |
+| `/pickle-retry <ticket-id>` | 🔄 Reset a failed ticket to Todo and re-spawn a Morty for it |
 | `/disable-pickle` | 🔇 Disable the stop hook globally (without uninstalling) |
 | `/enable-pickle` | 🔊 Re-enable the stop hook |
 
@@ -119,6 +121,8 @@ The **Stop hook** prevents Claude from exiting until the task is genuinely compl
 **Bring your own PRD** — If a `prd.md` or `PRD.md` exists in your project root when you run `/pickle`, Rick will automatically load it instead of drafting a new one. Drop your PRD there and the interrogation phase is skipped entirely.
 
 **Disabling Rick** — `/disable-pickle` creates a global marker file that silences the stop hook across all sessions instantly — no uninstall required. `/enable-pickle` removes it. To also drop the persona mid-session, just tell Rick directly: *"drop the Pickle Rick persona"* and he'll revert to standard Claude behavior for the rest of the session.
+
+**Recovering from a failed Morty** — If a worker times out or exits without completing, use `/pickle-retry <ticket-id>` instead of restarting the whole epic. It archives the partial artifacts, resets the ticket to Todo, and prints the exact `spawn-morty.js` command to re-run — preserving all the work already done on other tickets.
 
 **"Stop hook error" is normal** — Claude Code labels every `decision: block` response from the stop hook as "Stop hook error" in the UI. This is not an actual error. It means the hook is working correctly — it blocked Claude's exit and injected the session context for the next iteration. If you see it, Rick is looping as intended.
 

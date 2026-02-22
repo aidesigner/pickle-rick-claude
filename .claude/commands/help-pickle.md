@@ -10,6 +10,10 @@ Summarize the available commands for the user:
 - `/disable-pickle`: Disable the stop hook globally (persona persists — remove from CLAUDE.md to fully disable).
 - `/enable-pickle`: Re-enable the stop hook.
 
+**Session Commands:**
+- `/pickle-status`: Show current session phase, iteration, and ticket status.
+- `/pickle-retry <ticket-id>`: Reset a failed ticket to Todo and re-spawn a Morty for it.
+
 **Jar Commands (Night Shift / Queue Mode):**
 - `/add-to-pickle-jar`: Save the current session's PRD to the Jar for later batch execution.
 - `/pickle-jar-open`: Run all queued Jar tasks sequentially (Grand Overseer Mode).
