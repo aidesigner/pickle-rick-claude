@@ -20,6 +20,7 @@ rm -f "$HOME/.claude/commands/disable-pickle.md"
 rm -f "$HOME/.claude/commands/enable-pickle.md"
 rm -f "$HOME/.claude/commands/pickle-status.md"
 rm -f "$HOME/.claude/commands/pickle-retry.md"
+rm -f "$HOME/.claude/commands/pickle-tmux.md"
 
 # Remove Stop hook from settings.json (clean up empty Stop/hooks keys)
 if [ -f "$SETTINGS_FILE" ]; then
