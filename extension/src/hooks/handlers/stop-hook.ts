@@ -129,7 +129,7 @@ async function main() {
   const elapsedSeconds = now - state.start_time_epoch;
   const maxTimeSeconds = state.max_time_minutes * 60;
 
-  if (state.max_iterations > 0 && state.iteration > state.max_iterations) {
+  if (state.max_iterations > 0 && state.iteration >= state.max_iterations) {
     log(`Decision: ALLOW (Max iterations reached: ${state.iteration}/${state.max_iterations})`);
     state.active = false;
     fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));

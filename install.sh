@@ -45,6 +45,7 @@ chmod +x "$EXTENSION_ROOT/extension/bin/jar-runner.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/status.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/retry-ticket.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/tmux-runner.js"
+chmod +x "$EXTENSION_ROOT/extension/bin/monitor.js"
 
 # --- COMMANDS ---
 cp "$SCRIPT_DIR/.claude/commands/pickle.md"            "$COMMANDS_DIR/"

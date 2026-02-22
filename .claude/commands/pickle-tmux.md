@@ -27,11 +27,19 @@ fires before the pane is ready.)
 
 Run: tmux send-keys -t <session-name>:0 "node $HOME/.claude/pickle-rick/extension/bin/tmux-runner.js <SESSION_ROOT>" Enter
 
-## Step 5: Report to User
+## Step 5: Launch Monitor Window
+
+Run: tmux new-window -t <session-name> -n monitor
+Run: tmux send-keys -t <session-name>:monitor "node $HOME/.claude/pickle-rick/extension/bin/monitor.js <SESSION_ROOT>" Enter
+Run: tmux select-window -t <session-name>:0
+
+## Step 6: Report to User
 
 Print ALL of the following:
 - tmux session name: <session-name>
-- Attach to watch: tmux attach -t <session-name>
+- Attach to session: tmux attach -t <session-name>
+  - Window 0 (default): live runner output
+  - Window 1 "monitor": live ticket dashboard (switch with Ctrl+B then 1, or Ctrl+B then n)
 - To cancel (MUST run from project dir): cd <working_dir> && /eat-pickle
 - Emergency kill: tmux kill-session -t <session-name>
   (follow with: node ~/.claude/pickle-rick/extension/bin/cancel.js from <working_dir>)

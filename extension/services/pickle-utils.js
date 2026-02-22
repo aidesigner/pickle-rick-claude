@@ -1,4 +1,4 @@
-import { execSync, spawn } from 'child_process';
+import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -66,15 +66,6 @@ export function printMinimalPanel(title, fields, colorName = 'GREEN', icon = 'ðŸ
     }
     process.stdout.write('\n');
 }
-export function printBanner(text, colorName = 'CYAN') {
-    const c = Style[colorName] || Style.CYAN;
-    const r = Style.RESET;
-    const b = Style.BOLD;
-    const line = '='.repeat(60);
-    process.stdout.write(`\n${b}${c}${line}${r}\n`);
-    process.stdout.write(`${b}${c}  ${text}${r}\n`);
-    process.stdout.write(`${b}${c}${line}${r}\n\n`);
-}
 export function formatTime(seconds) {
     const m = Math.floor(seconds / 60);
     const s = Math.floor(seconds % 60);
@@ -98,40 +89,8 @@ export function run_cmd(cmd, options = {}) {
         return err.stdout?.toString().trim() || '';
     }
 }
-export async function spawn_cmd(cmd, options = {}) {
-    return new Promise((resolve) => {
-        const proc = spawn(cmd[0], cmd.slice(1), {
-            cwd: options.cwd,
-            stdio: ['inherit', 'pipe', 'pipe'],
-            env: { ...process.env, PYTHONUNBUFFERED: '1' },
-        });
-        proc.stdout?.on('data', (data) => options.onData?.(data.toString()));
-        proc.stderr?.on('data', (data) => options.onData?.(data.toString()));
-        proc.on('close', (code) => {
-            resolve(code || 0);
-        });
-        proc.on('error', (err) => {
-            console.error(`Failed to start process: ${err}`);
-            resolve(1);
-        });
-    });
-}
 export function getExtensionRoot() {
     return path.join(os.homedir(), '.claude/pickle-rick');
-}
-export function getSessionDir() {
-    try {
-        const extensionRoot = getExtensionRoot();
-        const getSessionScript = path.join(extensionRoot, 'extension/bin/get-session.js');
-        if (fs.existsSync(getSessionScript)) {
-            const res = run_cmd(['node', getSessionScript], { capture: true, check: false });
-            return res || null;
-        }
-    }
-    catch (e) {
-        // Ignore
-    }
-    return null;
 }
 export function statusSymbol(status) {
     const s = (status || '').toLowerCase().replace(/^["']|["']$/g, '');

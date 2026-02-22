@@ -194,6 +194,7 @@ pickle-rick-claude/
 │   │   ├── spawn-morty.js  # Worker subprocess spawner
 │   │   ├── jar-runner.js   # Jar Night Shift runner 🫙
 │   │   ├── tmux-runner.js  # Outer loop for /pickle-tmux mode 🖥️
+│   │   ├── monitor.js      # Live tmux dashboard (window 1) 📊
 │   │   ├── worker-setup.js # Worker session initializer
 │   │   ├── get-session.js  # Session path resolver
 │   │   ├── update-state.js # State mutation helper

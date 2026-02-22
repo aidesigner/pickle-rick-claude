@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { statusSymbol, collectTickets, buildHandoffSummary } from '../../services/pickle-utils.js';
+import { buildHandoffSummary } from '../../services/pickle-utils.js';
 async function main() {
     const extensionDir = process.env.EXTENSION_DIR || path.join(os.homedir(), '.claude/pickle-rick');
     // Disabled flag — allows the user to turn off the hook globally without uninstalling
@@ -128,6 +128,29 @@ async function main() {
         process.exit(0);
         return;
     }
+    const blockAndContinue = (reason) => {
+        const sessionDir = path.dirname(stateFile);
+        let summary;
+        try {
+            summary = buildHandoffSummary(state, sessionDir);
+        } catch (e) {
+            log(`buildHandoffSummary failed: ${e}`);
+            summary = `🥒 Pickle Rick Loop Active (Iteration ${state.iteration})\nTask: ${state.original_prompt || ''}`;
+        }
+        try {
+            fs.writeFileSync(path.join(sessionDir, 'handoff.txt'), summary);
+        } catch (e) {
+            log(`Failed to write handoff.txt: ${e}`);
+        }
+        if (state.tmux_mode) {
+            process.exit(0);
+        }
+        console.log(JSON.stringify({
+            decision: 'block',
+            reason: reason ? `${reason}\n\n${summary}` : summary,
+        }));
+    };
+
     // CONTINUE CONDITIONS: Block exit to force next iteration
     if (isTaskDone || isTicketDone || isBreakdownDone || isPrdDone || isTicketSelected) {
         log(`Decision: BLOCK (Checkpoint reached)`);
@@ -140,28 +163,7 @@ async function main() {
             feedback += 'Ticket selected, starting research...';
         if (isTaskDone || isTicketDone)
             feedback += 'Ticket finished, moving to next...';
-        let summary;
-        try {
-            summary = buildHandoffSummary(state, path.dirname(stateFile));
-        } catch (e) {
-            log(`buildHandoffSummary failed: ${e}`);
-            const fp = state.original_prompt || '';
-            summary = `🥒 Pickle Rick Loop Active (Iteration ${state.iteration})\nTask: ${fp.length > 300 ? fp.slice(0, 300) + ' [truncated]' : fp}`;
-        }
-        const sessionDir = path.dirname(stateFile);
-        const handoffPath = path.join(sessionDir, 'handoff.txt');
-        try {
-            fs.writeFileSync(handoffPath, summary);
-        } catch (e) {
-            log(`Failed to write handoff.txt: ${e}`);
-        }
-        if (state.tmux_mode) {
-            process.exit(0);
-        }
-        console.log(JSON.stringify({
-            decision: 'block',
-            reason: `${feedback}\n\n${summary}`,
-        }));
+        blockAndContinue(feedback);
         return;
     }
     // 11. Check Limits (Final Guard)
@@ -183,27 +185,7 @@ async function main() {
     }
     // 12. Default: Continue Loop (Prevent Exit)
     log('Decision: BLOCK (Default continuation)');
-    let summary;
-    try {
-        summary = buildHandoffSummary(state, path.dirname(stateFile));
-    } catch (e) {
-        log(`buildHandoffSummary failed: ${e}`);
-        summary = `🥒 Pickle Rick Loop Active (Iteration ${state.iteration})\nTask: ${state.original_prompt || ''}`;
-    }
-    const sessionDir = path.dirname(stateFile);
-    const handoffPath = path.join(sessionDir, 'handoff.txt');
-    try {
-        fs.writeFileSync(handoffPath, summary);
-    } catch (e) {
-        log(`Failed to write handoff.txt: ${e}`);
-    }
-    if (state.tmux_mode) {
-        process.exit(0);
-    }
-    console.log(JSON.stringify({
-        decision: 'block',
-        reason: summary,
-    }));
+    blockAndContinue(null);
 }
 main().catch((err) => {
     try {
