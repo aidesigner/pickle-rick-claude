@@ -264,16 +264,25 @@ Process tickets one by one. Do not stop until **ALL** tickets are 'Done'.
    - **FORBIDDEN**: Do NOT mark a ticket as Done if these documents are missing.
    - Run `git status` & `git diff` (verify implementation matches the plan)
    - Run tests/build (check functionality)
-4. **Cleanup**: If validation fails, REVERT changes (`git reset --hard`). If it passes, COMMIT changes.
-5. **Update Ticket**: Mark ticket as 'Done' in its frontmatter.
-6. **Next Ticket**: Repeat until all tickets are Done.
+4. **Simplify**: If validation passes, run the code-simplifier agent on the changed files:
+   - Get changed files: `git diff --name-only HEAD` (for uncommitted changes) or `git show --name-only --format= HEAD` (if Morty committed)
+   - Use the Task tool to spawn the simplifier:
+     - `subagent_type: "code-simplifier:code-simplifier"`
+     - `prompt: "Simplify and refine recently modified code in <working_dir>. Files changed in this ticket: <list from git diff>. Apply fixes directly. Focus on clarity, consistency with surrounding style, and removing bloat. Preserve all functionality."`
+   - After the agent completes, run `git diff` to review its changes
+   - Re-run tests to confirm simplifier didn't break anything
+   - If simplifier caused regressions, revert its changes: `git checkout -- <affected_files>`
+5. **Cleanup**: If validation or simplification failed, REVERT all changes (`git reset --hard`). If everything passes, COMMIT all changes (implementation + simplification together).
+6. **Update Ticket**: Mark ticket as 'Done' in its frontmatter.
+7. **Next Ticket**: Repeat until all tickets are Done.
 
 ## Orchestration Validation (MANDATORY after each Morty)
 
 1. **Lifecycle Audit**: Check `${SESSION_ROOT}/[ticket_id]/` for mandatory documents.
 2. **Code Audit**: Use `git status` and `git diff` to verify implementation matches the approved plan.
 3. **Verification**: Run the automated tests/build steps defined in the plan.
-4. **Next Ticket Loop**: Scan for the next ticket with status `Todo`.
+4. **Simplification**: Use the Task tool to spawn a `code-simplifier:code-simplifier` agent on the changed files. Pass the list of changed files in the prompt. Wait for completion, review the diff, re-run tests. Revert simplifier changes if they cause regressions.
+5. **Next Ticket Loop**: Scan for the next ticket with status `Todo`.
    - **MANDATORY**: You are FORBIDDEN from deactivating the loop if any tickets are still `Todo`.
    - If found, spawn a new Morty.
    - If all are Done, mark the Parent Ticket Done. Then:
