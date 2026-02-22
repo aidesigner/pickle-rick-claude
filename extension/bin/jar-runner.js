@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, getExtensionRoot } from '../services/pickle-utils.js';
 async function runTask(sessionDir, repoCwd, extensionRoot) {
     const statePath = path.join(sessionDir, 'state.json');
@@ -109,6 +109,12 @@ async function main() {
         }
     }
     console.log(`\n🥒 Jar complete. ${succeeded} succeeded, ${failed} failed.`);
+    if (process.platform === 'darwin') {
+        spawnSync('osascript', [
+            '-e',
+            `display notification "${succeeded} succeeded, ${failed} failed" with title "🥒 Pickle Rick" subtitle "Jar complete"`,
+        ]);
+    }
     console.log('Signal: Jar Complete');
 }
 main().catch((err) => {
