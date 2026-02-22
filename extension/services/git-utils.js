@@ -1,19 +1,6 @@
-import { execSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
-import { Style } from './pickle-utils.js';
-function run_cmd(cmd, options = {}) {
-    const { cwd, check = true } = options;
-    const command = Array.isArray(cmd) ? cmd.join(' ') : cmd;
-    try {
-        return execSync(command, { cwd, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-    }
-    catch (error) {
-        if (check)
-            throw new Error(`Command failed: ${command}\nError: ${error.stderr?.toString() || error.message}`);
-        return error.stdout?.toString().trim() || '';
-    }
-}
+import { Style, run_cmd } from './pickle-utils.js';
 export function run_git(cmd, cwd, check = true) {
     return run_cmd(['git', ...cmd], { cwd, check });
 }

@@ -134,8 +134,9 @@ export function getSessionDir() {
     return null;
 }
 export function statusSymbol(status) {
-    if (status === 'done') return '[x]';
-    if (status === 'in progress') return '[~]';
+    const s = (status || '').toLowerCase().replace(/^["']|["']$/g, '');
+    if (s === 'done') return '[x]';
+    if (s === 'in progress') return '[~]';
     return '[ ]';
 }
 export function parseTicketFrontmatter(filePath) {
@@ -146,7 +147,7 @@ export function parseTicketFrontmatter(filePath) {
         const fm = fmMatch[1];
         const get = (field) => {
             const m = fm.match(new RegExp(`^${field}:\\s*(.+)$`, 'm'));
-            return m ? m[1].trim() : null;
+            return m ? m[1].trim().replace(/^["']|["']$/g, '') : null;
         };
         return {
             id: get('id'),
