@@ -14,6 +14,7 @@ echo "🥒 Installing Pickle Rick for Claude Code..."
 # --- VALIDATION ---
 node --version >/dev/null 2>&1    || { echo "❌ node not found on PATH"; exit 1; }
 jq --version >/dev/null 2>&1     || { echo "❌ jq not found on PATH"; exit 1; }
+rsync --version >/dev/null 2>&1  || { echo "❌ rsync not found on PATH"; exit 1; }
 claude --version >/dev/null 2>&1 || echo "⚠️  claude CLI not on PATH (needed at runtime for worker spawning)"
 [ -f "$SETTINGS_FILE" ]          || { echo "❌ ~/.claude/settings.json not found. Run 'claude' at least once first."; exit 1; }
 jq . "$SETTINGS_FILE" >/dev/null 2>&1 || { echo "❌ settings.json is not valid JSON"; exit 1; }
@@ -29,8 +30,16 @@ echo "✅ Backed up settings.json to ~/.claude/backups/"
 mkdir -p "$EXTENSION_ROOT" "$COMMANDS_DIR"
 
 # --- EXTENSION SCRIPTS ---
-# cp -r includes extension/package.json → required for ESM "type":"module" (all scripts use import)
-cp -r "$SCRIPT_DIR/extension/." "$EXTENSION_ROOT/extension/"
+# rsync compiled JS runtime files; exclude TS sources, tests, and dev-only files.
+# --delete removes stale files from the destination (e.g. deleted scripts).
+# package.json is included — required for ESM "type":"module".
+rsync -a --delete --delete-excluded \
+  --exclude='node_modules' \
+  --exclude='src' \
+  --exclude='tests' \
+  --exclude='tsconfig.json' \
+  --exclude='package-lock.json' \
+  "$SCRIPT_DIR/extension/" "$EXTENSION_ROOT/extension/"
 cp "$SCRIPT_DIR/pickle_settings.json" "$EXTENSION_ROOT/"
 # Store persona snippet — append this to your project's CLAUDE.md
 cp "$SCRIPT_DIR/persona.md" "$EXTENSION_ROOT/persona.md"
@@ -49,18 +58,8 @@ chmod +x "$EXTENSION_ROOT/extension/bin/monitor.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/log-watcher.js"
 
 # --- COMMANDS ---
-cp "$SCRIPT_DIR/.claude/commands/pickle.md"            "$COMMANDS_DIR/"
-cp "$SCRIPT_DIR/.claude/commands/pickle-prd.md"        "$COMMANDS_DIR/"
-cp "$SCRIPT_DIR/.claude/commands/eat-pickle.md"        "$COMMANDS_DIR/"
-cp "$SCRIPT_DIR/.claude/commands/help-pickle.md"       "$COMMANDS_DIR/"
-cp "$SCRIPT_DIR/.claude/commands/send-to-morty.md"     "$COMMANDS_DIR/"
-cp "$SCRIPT_DIR/.claude/commands/add-to-pickle-jar.md" "$COMMANDS_DIR/"
-cp "$SCRIPT_DIR/.claude/commands/pickle-jar-open.md"   "$COMMANDS_DIR/"
-cp "$SCRIPT_DIR/.claude/commands/disable-pickle.md"    "$COMMANDS_DIR/"
-cp "$SCRIPT_DIR/.claude/commands/enable-pickle.md"     "$COMMANDS_DIR/"
-cp "$SCRIPT_DIR/.claude/commands/pickle-status.md"     "$COMMANDS_DIR/"
-cp "$SCRIPT_DIR/.claude/commands/pickle-retry.md"      "$COMMANDS_DIR/"
-cp "$SCRIPT_DIR/.claude/commands/pickle-tmux.md"       "$COMMANDS_DIR/"
+# rsync all commands from .claude/commands/; no --delete to preserve user commands.
+rsync -a "$SCRIPT_DIR/.claude/commands/" "$COMMANDS_DIR/"
 
 # --- STOP HOOK (idempotent jq merge, $HOME stays LITERAL in JSON) ---
 if jq -e '.hooks.Stop // [] | map(.hooks // [] | map(.command)) | flatten | any(. == "node $HOME/.claude/pickle-rick/extension/hooks/dispatch.js stop-hook")' \
