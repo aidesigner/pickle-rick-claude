@@ -43,7 +43,7 @@ async function runTask(sessionDir, repoCwd, extensionRoot) {
         const proc = spawn('claude', cmdArgs, { cwd: repoCwd, env, stdio: 'inherit' });
         proc.on('close', (code) => resolve(code === 0));
         proc.on('error', (err) => {
-            console.error(`${Style.RED}Failed to spawn claude: ${err.message}${Style.RESET}`);
+            console.error(`${Style.RED}Failed to spawn claude: ${err instanceof Error ? err.message : String(err)}${Style.RESET}`);
             resolve(false);
         });
     });
@@ -107,6 +107,6 @@ async function main() {
     console.log('Signal: Jar Complete');
 }
 main().catch((err) => {
-    console.error(`${Style.RED}Error: ${err.message}${Style.RESET}`);
+    console.error(`${Style.RED}Error: ${err instanceof Error ? err.message : String(err)}${Style.RESET}`);
     process.exit(1);
 });

@@ -41,7 +41,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'pr-factory.js') {
     const url = createPR(sessionDir);
     console.log(`${Style.GREEN}PR Created: ${url}${Style.RESET}`);
   } catch (err) {
-    console.error(`${Style.RED}Error: ${(err as Error).message}${Style.RESET}`);
+    console.error(`${Style.RED}Error: ${err instanceof Error ? err.message : String(err)}${Style.RESET}`);
     process.exit(1);
   }
 }

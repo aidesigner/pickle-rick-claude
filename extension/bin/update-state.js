@@ -24,7 +24,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'update-state.js') {
         updateState(key, value, sessionDir);
     }
     catch (err) {
-        console.error(`Failed to update state: ${err.message}`);
+        console.error(`Failed to update state: ${err instanceof Error ? err.message : String(err)}`);
         process.exit(1);
     }
 }

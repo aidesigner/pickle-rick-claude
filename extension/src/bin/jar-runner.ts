@@ -48,7 +48,7 @@ async function runTask(sessionDir: string, repoCwd: string, extensionRoot: strin
     const proc = spawn('claude', cmdArgs, { cwd: repoCwd, env, stdio: 'inherit' });
     proc.on('close', (code) => resolve(code === 0));
     proc.on('error', (err) => {
-      console.error(`${Style.RED}Failed to spawn claude: ${(err as Error).message}${Style.RESET}`);
+      console.error(`${Style.RED}Failed to spawn claude: ${err instanceof Error ? err.message : String(err)}${Style.RESET}`);
       resolve(false);
     });
   });
@@ -118,6 +118,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(`${Style.RED}Error: ${(err as Error).message}${Style.RESET}`);
+  console.error(`${Style.RED}Error: ${err instanceof Error ? err.message : String(err)}${Style.RESET}`);
   process.exit(1);
 });

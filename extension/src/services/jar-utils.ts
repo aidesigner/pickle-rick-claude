@@ -72,7 +72,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'jar-utils.js') {
     const resultPath = addToJar(sessionDir);
     console.log(`Task successfully jarred at: ${resultPath}`);
   } catch (err) {
-    console.error(`${Style.RED}Error: ${(err as Error).message}${Style.RESET}`);
+    console.error(`${Style.RED}Error: ${err instanceof Error ? err.message : String(err)}${Style.RESET}`);
     process.exit(1);
   }
 }

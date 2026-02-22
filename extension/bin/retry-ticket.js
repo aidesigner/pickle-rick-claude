@@ -65,7 +65,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'retry-ticket.js') {
         retryTicket(ticketId, process.cwd());
     }
     catch (err) {
-        console.error(err.message);
+        console.error(err instanceof Error ? err.message : String(err));
         process.exit(1);
     }
 }
