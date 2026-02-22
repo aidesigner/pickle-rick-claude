@@ -67,6 +67,8 @@ These are the canonical `.ts` files. Any `.js` outside this list that has no cor
 - `cancel.ts` + `cancel.test.ts`
 - `get-session.ts` + `get-session.test.ts`
 - `jar-runner.ts` *(no test — tested via integration)*
+- `log-watcher.ts` *(no test — interactive TUI)*
+- `monitor.ts` *(no test — interactive TUI)*
 - `retry-ticket.ts` *(tests in `tests/retry-ticket.test.js`)*
 - `setup.ts` *(tests in `tests/setup.test.js`)*
 - `spawn-morty.ts`

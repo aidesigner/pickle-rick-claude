@@ -40,6 +40,6 @@ export function cancelSession(cwd: string) {
   );
 }
 
-if (process.argv[1] && path.basename(process.argv[1]).startsWith('cancel')) {
+if (process.argv[1] && path.basename(process.argv[1]) === 'cancel.js') {
   cancelSession(process.cwd());
 }

@@ -65,7 +65,7 @@ export function update_ticket_status(
 }
 
 // CLI Interface
-if (process.argv[1] && path.basename(process.argv[1]).includes('git-utils')) {
+if (process.argv[1] && path.basename(process.argv[1]) === 'git-utils.js') {
   const args = process.argv.slice(2);
 
   if (args.includes('--update-status')) {
