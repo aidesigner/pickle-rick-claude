@@ -124,13 +124,16 @@ The **Stop hook** prevents Claude from exiting until the task is genuinely compl
 
 **tmux Mode — two windows** — `/pickle-tmux` creates a tmux session with two windows:
 - **Window 0** (default): raw runner output — the live `claude -p` subprocess stream
-- **Window 1 `monitor`**: live dashboard — phase, iteration, elapsed time, all tickets with status (`[x]` done / `[~]` in progress / `[ ]` todo), and a tail of the most recent iteration log. Refreshes every 2 seconds.
+- **Window 1 `monitor`**: split view
+  - **Left pane**: live dashboard — phase, iteration, elapsed time, all tickets with status (`[x]` done / `[~]` in progress / `[ ]` todo). Refreshes every 2 seconds.
+  - **Right pane**: live log stream — streams each iteration's log as it's written, with an iteration header when the runner advances. Auto-switches to each new log file.
 
 The session name and attach command are printed **before the runner starts** so you can open a second terminal and attach immediately:
 
 ```bash
 tmux attach -t <session-name>   # printed by /pickle-tmux as soon as the session is ready
 Ctrl+B 1                        # switch to monitor window
+Ctrl+B ←/→                      # switch between dashboard and log stream panes
 Ctrl+B 0                        # switch back to runner output
 Ctrl+B d                        # detach (session keeps running in background)
 ```

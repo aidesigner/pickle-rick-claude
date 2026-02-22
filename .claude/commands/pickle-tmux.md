@@ -34,10 +34,13 @@ Print immediately (so the user can open a second terminal now):
 
 Run: tmux send-keys -t <session-name>:0 "node $HOME/.claude/pickle-rick/extension/bin/tmux-runner.js <SESSION_ROOT>" Enter
 
-## Step 5: Launch Monitor Window
+## Step 5: Launch Monitor Window (split: dashboard left, log stream right)
 
 Run: tmux new-window -t <session-name> -n monitor
 Run: tmux send-keys -t <session-name>:monitor "node $HOME/.claude/pickle-rick/extension/bin/monitor.js <SESSION_ROOT>" Enter
+Run: tmux split-window -h -t <session-name>:monitor
+Run: tmux send-keys -t <session-name>:monitor.1 "node $HOME/.claude/pickle-rick/extension/bin/log-watcher.js <SESSION_ROOT>" Enter
+Run: tmux select-pane -t <session-name>:monitor.0
 Run: tmux select-window -t <session-name>:0
 
 ## Step 6: Report to User
@@ -46,7 +49,10 @@ Print ALL of the following:
 - tmux session name: <session-name>
 - Attach to session: tmux attach -t <session-name>
   - Window 0 (default): live runner output
-  - Window 1 "monitor": live ticket dashboard (switch with Ctrl+B then 1, or Ctrl+B then n)
+  - Window 1 "monitor": split view
+    - Left pane: live ticket dashboard (phase, iteration, ticket status)
+    - Right pane: live log stream (auto-follows each iteration log)
+    - Switch panes: Ctrl+B then arrow key
 - To cancel (MUST run from project dir): cd <working_dir> && /eat-pickle
 - Emergency kill: tmux kill-session -t <session-name>
   (follow with: node ~/.claude/pickle-rick/extension/bin/cancel.js from <working_dir>)
