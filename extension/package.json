@@ -3,6 +3,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test tests/pickle-utils.test.js tests/update-state.test.js tests/retry-ticket.test.js tests/git-utils.test.js"
+    "test": "node --test tests/pickle-utils.test.js tests/update-state.test.js tests/retry-ticket.test.js tests/git-utils.test.js tests/cancel.test.js tests/get-session.test.js tests/jar-utils.test.js"
   }
 }

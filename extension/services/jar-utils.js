@@ -55,7 +55,7 @@ export function addToJar(sessionDir) {
     return taskDir;
 }
 // CLI Support
-if (process.argv[1] && path.basename(process.argv[1]).startsWith('jar-utils')) {
+if (process.argv[1] && path.basename(process.argv[1]) === 'jar-utils.js') {
     const args = process.argv.slice(2);
     const sessionIndex = args.indexOf('--session');
     if (sessionIndex === -1) {

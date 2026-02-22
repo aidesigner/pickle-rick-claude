@@ -21,12 +21,6 @@ function main() {
         console.error('Worker Error: No session path found.');
         process.exit(1);
     }
-    const stateFile = path.join(sessionPath, 'state.json');
-    if (fs.existsSync(stateFile)) {
-        const state = JSON.parse(fs.readFileSync(stateFile, 'utf-8'));
-        state.worker = true;
-        fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
-    }
     printMinimalPanel('Morty Worker Initialized', {
         Session: path.basename(sessionPath),
         CWD: process.cwd(),
