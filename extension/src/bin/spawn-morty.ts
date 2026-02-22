@@ -153,7 +153,7 @@ async function main() {
     PICKLE_ROLE: 'worker',
     PYTHONUNBUFFERED: '1',
   };
-  const proc = spawn('gemini', cmdArgs, {
+  const proc = spawn('claude', cmdArgs, {
     cwd: process.cwd(),
     env,
     stdio: ['inherit', 'pipe', 'pipe'],

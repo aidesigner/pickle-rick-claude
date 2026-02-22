@@ -96,7 +96,7 @@ async function main() {
                 taskArgs.push(args[++i]);
         }
         else if (arg === '-s' || arg === '--session-id') {
-            // Ignore session-id flag if passed by gemini, but consume the next arg if it's not a flag
+            // Ignore legacy session-id flag; consume the next arg if it's not a flag
             if (args[i + 1] && !args[i + 1].startsWith('-')) {
                 i++;
             }
