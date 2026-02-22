@@ -59,7 +59,7 @@ export function retryTicket(ticketId, cwd) {
     console.log(`\n✅ Ticket ${ticketId} reset to Todo. Run this command to re-spawn Morty:\n\n${spawnCmd}\n`);
 }
 
-if (process.argv[1] && path.basename(process.argv[1]).startsWith('retry-ticket')) {
+if (process.argv[1] && path.basename(process.argv[1]) === 'retry-ticket.js') {
     const ticketId = process.argv[2];
     if (!ticketId) {
         console.error('Usage: node retry-ticket.js <ticket-id>');

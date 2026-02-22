@@ -24,7 +24,7 @@ export function wrapText(text, width) {
     const words = text.split(' ');
     let currentLine = '';
     for (const word of words) {
-        if ((currentLine + word).length <= width) {
+        if ((currentLine === '' ? word.length : currentLine.length + 1 + word.length) <= width) {
             currentLine += (currentLine === '' ? '' : ' ') + word;
         }
         else {

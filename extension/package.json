@@ -1,5 +1,8 @@
 {
   "name": "pickle-rick-scripts",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/pickle-utils.test.js tests/update-state.test.js tests/retry-ticket.test.js tests/git-utils.test.js"
+  }
 }

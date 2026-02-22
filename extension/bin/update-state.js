@@ -16,7 +16,7 @@ export function updateState(key, value, sessionDir) {
     fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
     console.log(`Successfully updated ${key} to ${value} in ${statePath}`);
 }
-if (process.argv[1] && path.basename(process.argv[1]).startsWith('update-state')) {
+if (process.argv[1] && path.basename(process.argv[1]) === 'update-state.js') {
     const [key, value, sessionDir] = process.argv.slice(2);
     if (!key || !value || !sessionDir) {
         console.error('Usage: node update-state.js <key> <value> <session_dir>');
