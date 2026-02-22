@@ -107,7 +107,33 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'foo.js') { ... }
 if (process.argv[1] && path.basename(process.argv[1]).startsWith('foo')) { ... }
 ```
 
-This applies to: `update-state.ts`, `get-session.ts`, `jar-utils.ts`, and any future modules with CLI blocks.
+This applies to every module with a CLI block: `cancel.ts`, `update-state.ts`, `get-session.ts`, `jar-utils.ts`, `pr-factory.ts`, and any future additions. Note: `git-utils.ts` has no CLI block — its functions are export-only.
+
+### Hook Decision Schema
+
+Claude Code stop hooks must output one of these exact JSON responses:
+
+```json
+{ "decision": "approve" }
+{ "decision": "block", "reason": "..." }
+```
+
+**`"allow"` is not a valid decision value — it will be rejected by Claude Code.** Always use `"approve"`.
+
+The `hookSpecificOutput` field is not supported for `AfterAgent` hooks — do not include it in block responses.
+
+### Error Handling in Catch Blocks
+
+Never cast `err` to `Error` blindly — thrown values may be strings, numbers, or objects:
+
+```typescript
+// CORRECT — safe for any thrown value
+const msg = err instanceof Error ? err.message : String(err);
+throw new Error(`Failed to do thing: ${msg}`);
+
+// WRONG — produces "Failed to do thing: undefined" when err is a string
+throw new Error(`Failed to do thing: ${(err as Error).message}`);
+```
 
 ### Extension Directory Path
 
@@ -137,10 +163,12 @@ if ((currentLine + word).length <= width) {
 
 ### Key Architectural Notes
 
-- **`dispatch.js`** is the Claude Code stop hook entry point. It reads stdin (JSON from Claude Code), finds the matching handler in `hooks/handlers/`, spawns it as a child process, and forwards its stdout. Always outputs `{ "decision": "allow" }` on any failure — never blocks Claude Code.
-- **`stop-hook.js`** is the main handler. It reads `state.json`, checks for completion promises in Claude's response text, advances the lifecycle (PRD → Breakdown → Research → Plan → Implement → Refactor), and spawns the next worker via `spawn-morty.js`.
+- **`dispatch.js`** is the Claude Code stop hook entry point. It reads stdin (JSON from Claude Code), finds the matching handler in `hooks/handlers/`, spawns it as a child process, and forwards its stdout. Always outputs `{ "decision": "approve" }` on any failure — never blocks Claude Code.
+- **`stop-hook.js`** is the main handler. It reads `state.json`, checks for completion promises in Claude's response text, advances the lifecycle (PRD → Breakdown → Research → Plan → Implement → Refactor), and spawns the next worker via `spawn-morty.js`. When `state.tmux_mode` is `true`, checkpoint promises are allowed through so the tmux-runner can respawn a fresh `claude -p` for the next phase.
 - **`tmux-runner.js`** is the true context-clearing loop — spawns `claude -p` in a tmux pane per iteration. Use for epics (8+ tickets).
 - **`jar-runner.js`** is the night-shift batch runner — iterates marinating jar tasks and runs each via `claude --dangerously-skip-permissions`.
 - **`setup.js`** initializes a new session (`state.json`, ticket directories) and outputs the first prompt.
 - **`spawn-morty.js`** is the worker spawner — invoked by the stop hook to start a fresh `claude -p` subprocess for each ticket.
+- **`monitor.js`** is a live TUI dashboard — polls `state.json` and ticket files every 2s and renders session progress. Run directly: `node monitor.js <session-dir>`.
+- **`log-watcher.js`** is a streaming log tail — follows `tmux_iteration_*.log` files as they're written by the tmux runner. Run directly: `node log-watcher.js <session-dir>`.
 
