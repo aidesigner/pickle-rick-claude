@@ -102,6 +102,13 @@ async function main() {
 
   // CONTINUE CONDITIONS: Block exit to force next iteration
   if (isTaskDone || isTicketDone || isBreakdownDone || isPrdDone || isTicketSelected) {
+    // In tmux mode, allow exit at checkpoints — tmux-runner respawns a fresh instance
+    // for each phase, giving it a full turn budget instead of sharing one session.
+    if (state.tmux_mode) {
+      log(`Decision: ALLOW (tmux mode checkpoint — runner will respawn for next phase)`);
+      allow();
+      return;
+    }
     log(`Decision: BLOCK (Checkpoint reached)`);
 
     let feedback = '🥒 **Pickle Rick Loop Active** - ';

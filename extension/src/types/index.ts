@@ -15,6 +15,7 @@ export interface State {
   session_dir: string;
   jar_complete?: boolean;
   worker?: boolean;
+  tmux_mode?: boolean;
 }
 
 export interface HookInput {
