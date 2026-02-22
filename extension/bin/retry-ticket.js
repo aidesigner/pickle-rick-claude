@@ -3,7 +3,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getExtensionRoot } from '../services/pickle-utils.js';
 import { updateState } from './update-state.js';
-
 export function retryTicket(ticketId, cwd) {
     // Validate ticketId to prevent path traversal
     if (!/^[a-zA-Z0-9_-]+$/.test(ticketId)) {
@@ -30,10 +29,8 @@ export function retryTicket(ticketId, cwd) {
         throw new Error(`Ticket ${ticketId} not found in session ${sessionDir}`);
     }
     // Archive partial artifacts
-    const artifacts = fs.readdirSync(ticketDir).filter(f =>
-        /^research_.*\.md$/.test(f) || f === 'research_review.md' ||
-        /^plan_.*\.md$/.test(f) || f === 'plan_review.md'
-    );
+    const artifacts = fs.readdirSync(ticketDir).filter(f => /^research_.*\.md$/.test(f) || f === 'research_review.md' ||
+        /^plan_.*\.md$/.test(f) || f === 'plan_review.md');
     if (artifacts.length > 0) {
         const archiveDir = path.join(ticketDir, `_retry_${Date.now()}`);
         fs.mkdirSync(archiveDir, { recursive: true });
@@ -58,7 +55,6 @@ export function retryTicket(ticketId, cwd) {
     const spawnCmd = `node "$HOME/.claude/pickle-rick/extension/bin/spawn-morty.js" '${safePrompt}' --ticket-id "${ticketId}" --ticket-path "${sessionDir}/${ticketId}/" --ticket-file "${sessionDir}/${ticketId}/linear_ticket_${ticketId}.md" --timeout ${timeout}`;
     console.log(`\n✅ Ticket ${ticketId} reset to Todo. Run this command to re-spawn Morty:\n\n${spawnCmd}\n`);
 }
-
 if (process.argv[1] && path.basename(process.argv[1]) === 'retry-ticket.js') {
     const ticketId = process.argv[2];
     if (!ticketId) {
@@ -67,7 +63,8 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'retry-ticket.js') {
     }
     try {
         retryTicket(ticketId, process.cwd());
-    } catch (err) {
+    }
+    catch (err) {
         console.error(err.message);
         process.exit(1);
     }

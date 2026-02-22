@@ -37,7 +37,6 @@ function render(sessionDir) {
     ];
     const keyWidth = Math.max(...fields.map(([k]) => k.length)) + 1;
 
-    // Buffer all output — write atomically to eliminate flicker
     const out = ['\x1b[2J\x1b[H'];
     out.push(`\n${b}${g}🥒 Pickle Rick — Live Monitor${r}\n`);
     out.push(`${sep}\n`);
@@ -79,7 +78,7 @@ function render(sessionDir) {
                 }
             }
         }
-    } catch { /* non-fatal */ }
+    } catch {}
 
     out.push(`\n${d}Refreshing every 2s  •  Ctrl+C to detach${r}\n`);
     process.stdout.write(out.join(''));

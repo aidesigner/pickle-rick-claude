@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import * as crypto from 'crypto';
+import * as crypto from 'node:crypto';
 import { printMinimalPanel, Style, getExtensionRoot } from '../services/pickle-utils.js';
 function die(message) {
     console.error(`${Style.RED}❌ Error: ${message}${Style.RESET}`);
@@ -92,9 +92,8 @@ async function main() {
             tmuxMode = true;
         }
         else if (arg === '--task') {
-            // Named task flag — accepts the full task string as a single argument.
-            // Preferred over positional args to avoid shell expansion of ~ and other metacharacters.
-            if (args[i + 1] !== undefined) taskArgs.push(args[++i]);
+            if (args[i + 1] !== undefined)
+                taskArgs.push(args[++i]);
         }
         else if (arg === '-s' || arg === '--session-id') {
             // Ignore session-id flag if passed by gemini, but consume the next arg if it's not a flag

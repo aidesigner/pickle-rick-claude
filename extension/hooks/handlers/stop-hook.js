@@ -1,14 +1,8 @@
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
-import { buildHandoffSummary } from '../../services/pickle-utils.js';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { getExtensionDir, resolveStateFile, allow } from '../resolve-state.js';
 async function main() {
-    const extensionDir = process.env.EXTENSION_DIR || path.join(os.homedir(), '.claude/pickle-rick');
-    // Disabled flag — allows the user to turn off the hook globally without uninstalling
-    if (fs.existsSync(path.join(extensionDir, 'disabled'))) {
-        process.exit(0);
-        return;
-    }
+    const extensionDir = getExtensionDir();
     const globalDebugLog = path.join(extensionDir, 'debug.log');
     let sessionHooksLog = null;
     const log = (msg) => {
@@ -17,16 +11,12 @@ async function main() {
         try {
             fs.appendFileSync(globalDebugLog, formatted);
         }
-        catch {
-            /* ignore */
-        }
+        catch { /* ignore */ }
         if (sessionHooksLog) {
             try {
                 fs.appendFileSync(sessionHooksLog, formatted);
             }
-            catch {
-                /* ignore */
-            }
+            catch { /* ignore */ }
         }
     };
     // 1. Read Input
@@ -36,74 +26,40 @@ async function main() {
     }
     catch {
         log('Failed to read stdin');
-        process.exit(0);
+        allow();
         return;
     }
     const input = JSON.parse(inputData || '{}');
-    log(`Processing Stop hook. Input size: ${inputData.length}`);
-    // 2. Determine State File — use input.cwd (confirmed available) not process.cwd()
-    const cwd = input.cwd || process.cwd();
-    let stateFile = process.env.PICKLE_STATE_FILE;
+    log(`Processing AfterAgent hook. Input size: ${inputData.length}`);
+    // 2. Determine State File
+    const stateFile = resolveStateFile(extensionDir);
     if (!stateFile) {
-        const sessionsMapPath = path.join(extensionDir, 'current_sessions.json');
-        log(`Checking sessions map at: ${sessionsMapPath}`);
-        if (fs.existsSync(sessionsMapPath)) {
-            const map = JSON.parse(fs.readFileSync(sessionsMapPath, 'utf8'));
-            const sessionPath = map[cwd];
-            log(`Found session path for ${cwd}: ${sessionPath}`);
-            if (sessionPath)
-                stateFile = path.join(sessionPath, 'state.json');
-        }
-    }
-    if (!stateFile || !fs.existsSync(stateFile)) {
-        log(`No state file found. (stateFile: ${stateFile})`);
-        process.exit(0);
+        log(`No state file found.`);
+        allow();
         return;
     }
-    // Initialize session-specific hook log
     sessionHooksLog = path.join(path.dirname(stateFile), 'hooks.log');
     log(`State file found: ${stateFile}`);
     // 3. Read State
     const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-    // 4. Check CWD — use cwd (from input) not process.cwd()
-    if (state.working_dir && path.resolve(state.working_dir) !== path.resolve(cwd)) {
-        log(`CWD Mismatch: ${cwd} !== ${state.working_dir}`);
-        process.exit(0);
+    // 4. Check Context
+    if (state.working_dir && path.resolve(state.working_dir) !== path.resolve(process.cwd())) {
+        log(`CWD Mismatch: ${process.cwd()} !== ${state.working_dir}`);
+        allow();
         return;
     }
-    // 5. Inactive check
-    if (!state.active) {
-        log('Decision: ALLOW (Session inactive)');
-        process.exit(0);
-        return;
-    }
-    // 6. jar_complete guard (prevents infinite loop from prior Gemini jar sessions)
-    if (state.jar_complete) {
-        log('Decision: ALLOW (jar_complete)');
-        process.exit(0);
-        return;
-    }
-    // 7. Determine worker role
+    // 5. Bypass for Workers or Inactive loops
     const role = process.env.PICKLE_ROLE;
     const isWorker = role === 'worker' || state.worker;
     log(`State: active=${state.active}, iteration=${state.iteration}/${state.max_iterations}`);
-    log(`Context: role=${role}, isWorker=${isWorker}, cwd=${cwd}`);
-    // 8. Increment iteration — GUARDED for workers (workers share Rick's state file)
-    if (!isWorker) {
-        state.iteration = (state.iteration || 0) + 1;
-        fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
-        log(`Incremented iteration to ${state.iteration}`);
-    }
-    // 9. stop_hook_active safety guard — prevents unbounded loops if other limits fail
-    if (input.stop_hook_active && state.max_iterations > 0 && state.iteration >= state.max_iterations) {
-        log('Decision: ALLOW (stop_hook_active safety guard — iteration at max)');
-        state.active = false;
-        fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
-        process.exit(0);
+    log(`Context: role=${role}, isWorker=${isWorker}, cwd=${process.cwd()}`);
+    if (!state.active) {
+        log('Decision: ALLOW (Session inactive)');
+        allow();
         return;
     }
-    // 10. Check Completion Promises
-    const responseText = input.last_assistant_message || '';
+    // 6. Check Completion Promise
+    const responseText = input.prompt_response || '';
     log(`Agent response preview: ${responseText.slice(0, 100).replace(/\n/g, ' ')}...`);
     const hasPromise = state.completion_promise &&
         responseText.includes(`<promise>${state.completion_promise}</promise>`);
@@ -125,32 +81,9 @@ async function main() {
             state.active = false;
             fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
         }
-        process.exit(0);
+        allow();
         return;
     }
-    const blockAndContinue = (reason) => {
-        const sessionDir = path.dirname(stateFile);
-        let summary;
-        try {
-            summary = buildHandoffSummary(state, sessionDir);
-        } catch (e) {
-            log(`buildHandoffSummary failed: ${e}`);
-            summary = `🥒 Pickle Rick Loop Active (Iteration ${state.iteration})\nTask: ${state.original_prompt || ''}`;
-        }
-        try {
-            fs.writeFileSync(path.join(sessionDir, 'handoff.txt'), summary);
-        } catch (e) {
-            log(`Failed to write handoff.txt: ${e}`);
-        }
-        if (state.tmux_mode) {
-            process.exit(0);
-        }
-        console.log(JSON.stringify({
-            decision: 'block',
-            reason: reason ? `${reason}\n\n${summary}` : summary,
-        }));
-    };
-
     // CONTINUE CONDITIONS: Block exit to force next iteration
     if (isTaskDone || isTicketDone || isBreakdownDone || isPrdDone || isTicketSelected) {
         log(`Decision: BLOCK (Checkpoint reached)`);
@@ -163,39 +96,58 @@ async function main() {
             feedback += 'Ticket selected, starting research...';
         if (isTaskDone || isTicketDone)
             feedback += 'Ticket finished, moving to next...';
-        blockAndContinue(feedback);
+        if (isWorkerDone)
+            feedback += 'Worker finished, Rick is validating...';
+        console.log(JSON.stringify({
+            decision: 'block',
+            systemMessage: feedback,
+            hookSpecificOutput: {
+                hookEventName: 'AfterAgent',
+                additionalContext: state.original_prompt,
+            },
+        }));
         return;
     }
-    // 11. Check Limits (Final Guard)
+    // 7. Check Limits (Final Guard)
     const now = Math.floor(Date.now() / 1000);
     const elapsedSeconds = now - state.start_time_epoch;
+    const maxTimeSeconds = state.max_time_minutes * 60;
     if (state.max_iterations > 0 && state.iteration >= state.max_iterations) {
         log(`Decision: ALLOW (Max iterations reached: ${state.iteration}/${state.max_iterations})`);
         state.active = false;
         fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
-        process.exit(0);
+        allow();
         return;
     }
-    if (state.max_time_minutes > 0 && elapsedSeconds >= state.max_time_minutes * 60) {
-        log(`Decision: ALLOW (Time limit reached: ${elapsedSeconds}s)`);
+    if (state.max_time_minutes > 0 && elapsedSeconds >= maxTimeSeconds) {
+        log(`Decision: ALLOW (Time limit reached: ${elapsedSeconds}/${maxTimeSeconds}s)`);
         state.active = false;
         fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
-        process.exit(0);
+        allow();
         return;
     }
-    // 12. Default: Continue Loop (Prevent Exit)
+    // 8. Default: Continue Loop (Prevent Exit)
     log('Decision: BLOCK (Default continuation)');
-    blockAndContinue(null);
+    let defaultFeedback = `🥒 **Pickle Rick Loop Active** (Iteration ${state.iteration})`;
+    if (state.max_iterations > 0)
+        defaultFeedback += ` of ${state.max_iterations}`;
+    console.log(JSON.stringify({
+        decision: 'block',
+        systemMessage: defaultFeedback,
+        hookSpecificOutput: {
+            hookEventName: 'AfterAgent',
+            additionalContext: state.original_prompt,
+        },
+    }));
 }
 main().catch((err) => {
     try {
-        const extensionDir = process.env.EXTENSION_DIR || path.join(os.homedir(), '.claude/pickle-rick');
+        const extensionDir = getExtensionDir();
         const debugLog = path.join(extensionDir, 'debug.log');
         fs.appendFileSync(debugLog, `[FATAL] ${err.stack}\n`);
     }
     catch {
         /* ignore */
     }
-    // Fails open (allows exit) — correct safe default on fatal error
-    process.exit(0);
+    allow();
 });

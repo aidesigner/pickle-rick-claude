@@ -6,12 +6,10 @@ import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, getExtensionRoot } from '../services/pickle-utils.js';
 async function runTask(sessionDir, repoCwd, extensionRoot) {
     const statePath = path.join(sessionDir, 'state.json');
-    // Re-activate session
     const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
     state.active = true;
     state.completion_promise = null;
     fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
-    // Load the pickle.md prompt and substitute --resume
     const picklePromptPath = path.join(os.homedir(), '.claude/commands/pickle.md');
     let prompt = `You are Pickle Rick. Resume the session.\n\nRun:\nnode "$HOME/.claude/pickle-rick/extension/bin/setup.js" --resume ${sessionDir}\n\nThen continue the manager lifecycle from the current phase.`;
     try {
@@ -20,12 +18,12 @@ async function runTask(sessionDir, repoCwd, extensionRoot) {
         }
     }
     catch { /* use fallback */ }
-    // Load max turns from settings
     const settingsPath = path.join(extensionRoot, 'pickle_settings.json');
     let managerMaxTurns = 50;
     try {
         const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-        if (settings.default_manager_max_turns) managerMaxTurns = settings.default_manager_max_turns;
+        if (settings.default_manager_max_turns)
+            managerMaxTurns = settings.default_manager_max_turns;
     }
     catch { /* ignore */ }
     printMinimalPanel(`Running Jarred Task`, {
@@ -40,16 +38,9 @@ async function runTask(sessionDir, repoCwd, extensionRoot) {
         '--max-turns', String(managerMaxTurns),
         '-p', prompt,
     ];
-    const env = {
-        ...process.env,
-        PICKLE_STATE_FILE: statePath,
-    };
+    const env = { ...process.env, PICKLE_STATE_FILE: statePath };
     return new Promise((resolve) => {
-        const proc = spawn('claude', cmdArgs, {
-            cwd: repoCwd,
-            env,
-            stdio: 'inherit',
-        });
+        const proc = spawn('claude', cmdArgs, { cwd: repoCwd, env, stdio: 'inherit' });
         proc.on('close', (code) => resolve(code === 0));
         proc.on('error', (err) => {
             console.error(`${Style.RED}Failed to spawn claude: ${err.message}${Style.RESET}`);
@@ -66,18 +57,18 @@ async function main() {
         console.log('Signal: Jar Complete');
         return;
     }
-    // Collect all marinating tasks across all dates (oldest first)
     const tasks = [];
     for (const day of fs.readdirSync(JAR_ROOT).sort()) {
         const dayPath = path.join(JAR_ROOT, day);
-        if (!fs.statSync(dayPath).isDirectory()) continue;
+        if (!fs.statSync(dayPath).isDirectory())
+            continue;
         for (const taskId of fs.readdirSync(dayPath).sort()) {
             const metaPath = path.join(dayPath, taskId, 'meta.json');
-            if (!fs.existsSync(metaPath)) continue;
+            if (!fs.existsSync(metaPath))
+                continue;
             const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
-            if (meta.status === 'marinating') {
+            if (meta.status === 'marinating')
                 tasks.push({ taskId, metaPath, meta });
-            }
         }
     }
     if (tasks.length === 0) {
@@ -103,17 +94,15 @@ async function main() {
         if (ok) {
             succeeded++;
             console.log(`\n${Style.GREEN}✅ Task ${taskId} complete${Style.RESET}`);
-        } else {
+        }
+        else {
             failed++;
             console.log(`\n${Style.RED}❌ Task ${taskId} failed${Style.RESET}`);
         }
     }
     console.log(`\n🥒 Jar complete. ${succeeded} succeeded, ${failed} failed.`);
     if (process.platform === 'darwin') {
-        spawnSync('osascript', [
-            '-e',
-            `display notification "${succeeded} succeeded, ${failed} failed" with title "🥒 Pickle Rick" subtitle "Jar complete"`,
-        ]);
+        spawnSync('osascript', ['-e', `display notification "${succeeded} succeeded, ${failed} failed" with title "🥒 Pickle Rick" subtitle "Jar complete"`]);
     }
     console.log('Signal: Jar Complete');
 }

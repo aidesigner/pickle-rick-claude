@@ -4,11 +4,11 @@ import { existsSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as os from 'node:os';
 
-const EXTENSION_DIR = join(os.homedir(), '.gemini/extensions/pickle-rick');
+const EXTENSION_DIR = join(os.homedir(), '.claude/pickle-rick');
 const HANDLERS_DIR = join(EXTENSION_DIR, 'extension', 'hooks', 'handlers');
 const LOG_PATH = join(EXTENSION_DIR, 'debug.log');
 
-// Prevent EPIPE errors from crashing the dispatcher when Gemini closes the pipe
+// Prevent EPIPE errors from crashing the dispatcher when Claude Code closes the pipe
 const handleEpipe = (err: NodeJS.ErrnoException) => {
   if (err.code === 'EPIPE') process.exit(0);
 };

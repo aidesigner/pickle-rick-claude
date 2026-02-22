@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, } from '../services/pickle-utils.js';
 import { spawn } from 'child_process';
 async function main() {
@@ -68,62 +67,59 @@ async function main() {
             // Ignore
         }
     }
-    // Load worker max turns from pickle_settings.json
-    const extensionRoot = getExtensionRoot();
-    const settingsPath = path.join(extensionRoot, 'pickle_settings.json');
-    let workerMaxTurns = 20;
-    if (fs.existsSync(settingsPath)) {
-        try {
-            const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-            if (settings.default_worker_max_turns)
-                workerMaxTurns = settings.default_worker_max_turns;
-        }
-        catch {
-            /* ignore */
-        }
-    }
     printMinimalPanel('Spawning Morty Worker', {
         Request: task,
         Ticket: ticketId,
         Format: outputFormat,
         Timeout: `${effectiveTimeout}s (Req: ${timeout}s)`,
-        MaxTurns: workerMaxTurns,
         PID: process.pid,
     }, 'CYAN', '🥒');
-    // Build claude CLI args
-    const cmdArgs = ['--dangerously-skip-permissions'];
-    cmdArgs.push('--add-dir', ticketPath);
-    cmdArgs.push('--no-session-persistence');
-    cmdArgs.push('--max-turns', String(workerMaxTurns));
-    if (outputFormat !== 'text') {
-        cmdArgs.push('--output-format', outputFormat);
+    const extensionRoot = getExtensionRoot();
+    const includes = [extensionRoot, path.join(extensionRoot, 'skills'), ticketPath];
+    const cmdArgs = ['-s', '-y'];
+    for (const p of includes) {
+        if (fs.existsSync(p)) {
+            cmdArgs.push('--include-directories', p);
+        }
     }
-    // Prompt Construction — entire send-to-morty.md IS the prompt
-    const mdPath = path.join(os.homedir(), '.claude/commands/send-to-morty.md');
+    if (outputFormat !== 'text') {
+        cmdArgs.push('-o', outputFormat);
+    }
+    // Prompt Construction
+    const tomlPath = path.join(extensionRoot, 'commands/send-to-morty.toml');
     let basePrompt = '# **TASK REQUEST**\n$ARGUMENTS\n\nYou are a Morty Worker. Implement the request above.';
     try {
-        if (fs.existsSync(mdPath)) {
-            basePrompt = fs.readFileSync(mdPath, 'utf-8');
+        if (fs.existsSync(tomlPath)) {
+            const content = fs.readFileSync(tomlPath, 'utf-8');
+            const match = content.match(/prompt = """([\s\S]*?)"""/);
+            if (match) {
+                basePrompt = match[1].trim();
+            }
         }
     }
     catch (e) {
-        console.log(`${Style.YELLOW}⚠️ Failed to load prompt from ${mdPath}: ${e}. Using fallback.${Style.RESET}`);
+        console.log(`${Style.YELLOW}⚠️ Failed to load prompt: ${e}. Using fallback.${Style.RESET}`);
     }
-    let workerPrompt = basePrompt.replace(/\$ARGUMENTS/g, task);
+    let workerPrompt = basePrompt.replace(/\${extensionPath}/g, extensionRoot);
+    workerPrompt = workerPrompt.replace(/\$ARGUMENTS/g, task);
     // Inject Ticket Context
     workerPrompt += `\n\n# TARGET TICKET CONTENT\n${ticketContent || 'N/A'}`;
     workerPrompt += `\n\n# EXECUTION CONTEXT\n- SESSION_ROOT: ${sessionRoot}\n- TICKET_ID: ${ticketId}\n- TICKET_DIR: ${ticketPath}`;
     workerPrompt +=
         '\n\n**IMPORTANT**: You are a localized worker. You are FORBIDDEN from working on ANY other tickets. Once you output `<promise>I AM DONE</promise>`, you MUST STOP and let the manager take over.';
+    if (workerPrompt.length < 500) {
+        workerPrompt +=
+            '\n\n1. Activate persona: `activate_skill("load-pickle-persona")`.\n2. Follow \'Rick Loop\' philosophy.\n3. Output: <promise>I AM DONE</promise>';
+    }
     cmdArgs.push('-p', workerPrompt);
     const logStream = fs.createWriteStream(sessionLog, { flags: 'w' });
     const env = {
         ...process.env,
         PICKLE_STATE_FILE: timeoutStatePath || workerState,
         PICKLE_ROLE: 'worker',
+        PYTHONUNBUFFERED: '1',
     };
-    delete env.CLAUDECODE; // Allow nested claude subprocess (unblocks worker spawning)
-    const proc = spawn('claude', cmdArgs, {
+    const proc = spawn('gemini', cmdArgs, {
         cwd: process.cwd(),
         env,
         stdio: ['inherit', 'pipe', 'pipe'],

@@ -29,7 +29,7 @@ export function wrapText(text: string, width: number): string[] {
   let currentLine = '';
 
   for (const word of words) {
-    if ((currentLine + word).length <= width) {
+    if ((currentLine === '' ? word : currentLine + ' ' + word).length <= width) {
       currentLine += (currentLine === '' ? '' : ' ') + word;
     } else {
       if (currentLine) lines.push(currentLine);

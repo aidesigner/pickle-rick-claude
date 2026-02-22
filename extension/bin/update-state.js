@@ -10,8 +10,6 @@ export function updateState(key, value, sessionDir) {
         throw new Error(`state.json not found at ${statePath}`);
     }
     const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-    // Handle nested keys if needed (e.g. step, current_ticket)
-    // For now, keep it simple for flat top-level keys
     state[key] = value;
     fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
     console.log(`Successfully updated ${key} to ${value} in ${statePath}`);

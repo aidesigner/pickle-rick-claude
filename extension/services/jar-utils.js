@@ -4,10 +4,7 @@ import * as path from 'path';
 import { run_cmd, Style, getExtensionRoot } from './pickle-utils.js';
 function getBranch(repoPath) {
     try {
-        return run_cmd(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], {
-            cwd: repoPath,
-            capture: true,
-        }).trim();
+        return run_cmd(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repoPath });
     }
     catch {
         return 'unknown';
@@ -41,16 +38,16 @@ export function addToJar(sessionDir) {
     // 5. Write meta.json
     const meta = {
         repo_path: repoPath,
-        branch: branch,
+        branch,
         prd_path: 'prd.md',
         created_at: new Date().toISOString(),
         task_id: sessionId,
         status: 'marinating',
     };
     fs.writeFileSync(path.join(taskDir, 'meta.json'), JSON.stringify(meta, null, 2));
-    // 6. Deactivate the current session
+    // 6. Deactivate the current session to prevent immediate execution
     state.active = false;
-    state.completion_promise = 'JARRED';
+    state.completion_promise = 'JARRED'; // Signal completion
     fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
     return taskDir;
 }

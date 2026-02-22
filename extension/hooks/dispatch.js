@@ -6,7 +6,7 @@ import * as os from 'node:os';
 const EXTENSION_DIR = join(os.homedir(), '.claude/pickle-rick');
 const HANDLERS_DIR = join(EXTENSION_DIR, 'extension', 'hooks', 'handlers');
 const LOG_PATH = join(EXTENSION_DIR, 'debug.log');
-// Prevent EPIPE errors from crashing the dispatcher when Gemini closes the pipe
+// Prevent EPIPE errors from crashing the dispatcher when Claude Code closes the pipe
 const handleEpipe = (err) => {
     if (err.code === 'EPIPE')
         process.exit(0);
@@ -27,7 +27,7 @@ function logError(message) {
     log(`ERROR: ${message}`);
 }
 function allow() {
-    // exit 0 with no output = allow (Claude Code documented pattern)
+    console.log(JSON.stringify({ decision: 'allow' }));
 }
 function findExecutable(name) {
     const pathEnv = process.env.PATH || '';
@@ -103,10 +103,8 @@ async function main() {
             stdio: ['pipe', 'pipe', 'pipe'],
         });
         child.stdin?.on('error', (err) => {
-            if (err.code === 'EPIPE') {
-                // Ignore EPIPE on stdin
+            if (err.code === 'EPIPE')
                 return;
-            }
             logError(`Child stdin error: ${err}`);
         });
         if (inputData) {

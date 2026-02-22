@@ -24,7 +24,7 @@ export function wrapText(text, width) {
     const words = text.split(' ');
     let currentLine = '';
     for (const word of words) {
-        if ((currentLine === '' ? word.length : currentLine.length + 1 + word.length) <= width) {
+        if ((currentLine === '' ? word : currentLine + ' ' + word).length <= width) {
             currentLine += (currentLine === '' ? '' : ' ') + word;
         }
         else {
@@ -94,15 +94,18 @@ export function getExtensionRoot() {
 }
 export function statusSymbol(status) {
     const s = (status || '').toLowerCase().replace(/^["']|["']$/g, '');
-    if (s === 'done') return '[x]';
-    if (s === 'in progress') return '[~]';
+    if (s === 'done')
+        return '[x]';
+    if (s === 'in progress')
+        return '[~]';
     return '[ ]';
 }
 export function parseTicketFrontmatter(filePath) {
     try {
         const content = fs.readFileSync(filePath, 'utf8');
         const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-        if (!fmMatch) return null;
+        if (!fmMatch)
+            return null;
         const fm = fmMatch[1];
         const get = (field) => {
             const m = fm.match(new RegExp(`^${field}:\\s*(.+)$`, 'm'));
@@ -114,7 +117,8 @@ export function parseTicketFrontmatter(filePath) {
             status: get('status'),
             order: parseInt(get('order') || '0', 10),
         };
-    } catch {
+    }
+    catch {
         return null;
     }
 }
@@ -123,21 +127,26 @@ export function collectTickets(sessionDir) {
         const entries = fs.readdirSync(sessionDir, { withFileTypes: true });
         const tickets = [];
         for (const entry of entries) {
-            if (!entry.isDirectory()) continue;
+            if (!entry.isDirectory())
+                continue;
             const subDir = path.join(sessionDir, entry.name);
             try {
                 const files = fs.readdirSync(subDir);
                 for (const file of files) {
-                    if (!file.startsWith('linear_ticket_') || !file.endsWith('.md')) continue;
+                    if (!file.startsWith('linear_ticket_') || !file.endsWith('.md'))
+                        continue;
                     const parsed = parseTicketFrontmatter(path.join(subDir, file));
-                    if (parsed) tickets.push(parsed);
+                    if (parsed)
+                        tickets.push(parsed);
                 }
-            } catch {
+            }
+            catch {
                 /* skip */
             }
         }
         return tickets.sort((a, b) => a.order - b.order);
-    } catch {
+    }
+    catch {
         return [];
     }
 }
@@ -147,7 +156,7 @@ export function buildHandoffSummary(state, sessionDir) {
     const prdPath = path.join(sessionDir, 'prd.md');
     const prdExists = fs.existsSync(prdPath);
     const tickets = collectTickets(sessionDir);
-    const iterLine = state.max_iterations > 0
+    const iterLine = (state.max_iterations ?? 0) > 0
         ? `${state.iteration} of ${state.max_iterations}`
         : `${state.iteration}`;
     const lines = [
@@ -169,10 +178,6 @@ export function buildHandoffSummary(state, sessionDir) {
             lines.push(`  ${sym} ${t.id || '?'}: ${title}`);
         }
     }
-    lines.push(
-        '',
-        'NEXT ACTION: Resume from current phase. Read state.json for context.',
-        'Do NOT restart from PRD. Continue where you left off.',
-    );
+    lines.push('', 'NEXT ACTION: Resume from current phase. Read state.json for context.', 'Do NOT restart from PRD. Continue where you left off.');
     return lines.join('\n');
 }
