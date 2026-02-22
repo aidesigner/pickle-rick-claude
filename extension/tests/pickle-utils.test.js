@@ -9,6 +9,7 @@ import {
     collectTickets,
     wrapText,
     formatTime,
+    buildHandoffSummary,
 } from '../services/pickle-utils.js';
 
 // --- statusSymbol ---

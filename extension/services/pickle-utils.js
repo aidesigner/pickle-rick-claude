@@ -182,3 +182,38 @@ export function collectTickets(sessionDir) {
         return [];
     }
 }
+export function buildHandoffSummary(state, sessionDir) {
+    const task = state.original_prompt || '';
+    const truncatedTask = task.length > 300 ? task.slice(0, 300) + ' [truncated]' : task;
+    const prdPath = path.join(sessionDir, 'prd.md');
+    const prdExists = fs.existsSync(prdPath);
+    const tickets = collectTickets(sessionDir);
+    const iterLine = state.max_iterations > 0
+        ? `${state.iteration} of ${state.max_iterations}`
+        : `${state.iteration}`;
+    const lines = [
+        '=== PICKLE RICK LOOP CONTEXT ===',
+        `Phase: ${state.step || 'unknown'}`,
+        `Iteration: ${iterLine}`,
+        `Session: ${sessionDir}`,
+        `Ticket: ${state.current_ticket || 'none'}`,
+        `Task: ${truncatedTask}`,
+        `PRD: ${prdExists ? 'exists' : 'not yet created'}`,
+    ];
+    if (tickets.length > 0) {
+        lines.push('Tickets:');
+        for (const t of tickets) {
+            const sym = statusSymbol(t.status || '');
+            const title = (t.title || '').length > 60
+                ? (t.title || '').slice(0, 60) + '...'
+                : (t.title || '');
+            lines.push(`  ${sym} ${t.id || '?'}: ${title}`);
+        }
+    }
+    lines.push(
+        '',
+        'NEXT ACTION: Resume from current phase. Read state.json for context.',
+        'Do NOT restart from PRD. Continue where you left off.',
+    );
+    return lines.join('\n');
+}
