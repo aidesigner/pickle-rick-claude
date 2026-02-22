@@ -4,5 +4,6 @@
   "default_worker_timeout_seconds": 1200,
   "default_worker_max_turns": 20,
   "default_manager_max_turns": 50,
+  "default_tmux_max_turns": 50,
   "disable_sandbox": true
 }
