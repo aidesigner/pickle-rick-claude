@@ -182,6 +182,7 @@ pickle-rick-claude/
 │   │   ├── send-to-morty.md    # Worker prompt (all 7 skills inlined)
 │   │   ├── add-to-pickle-jar.md # Save session to Jar queue
 │   │   ├── pickle-jar-open.md  # Run all Jar tasks (Night Shift)
+│   │   ├── pickle-tmux.md      # True context clearing via tmux 🖥️
 │   │   ├── disable-pickle.md   # Disable stop hook globally
 │   │   └── enable-pickle.md    # Re-enable stop hook
 │   └── settings.json       # Stop hook registration
@@ -191,6 +192,7 @@ pickle-rick-claude/
 │   │   ├── cancel.js       # Loop canceller
 │   │   ├── spawn-morty.js  # Worker subprocess spawner
 │   │   ├── jar-runner.js   # Jar Night Shift runner 🫙
+│   │   ├── tmux-runner.js  # Outer loop for /pickle-tmux mode 🖥️
 │   │   ├── worker-setup.js # Worker session initializer
 │   │   ├── get-session.js  # Session path resolver
 │   │   ├── update-state.js # State mutation helper
