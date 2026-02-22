@@ -148,6 +148,16 @@ async function main() {
             const fp = state.original_prompt || '';
             summary = `🥒 Pickle Rick Loop Active (Iteration ${state.iteration})\nTask: ${fp.length > 300 ? fp.slice(0, 300) + ' [truncated]' : fp}`;
         }
+        const sessionDir = path.dirname(stateFile);
+        const handoffPath = path.join(sessionDir, 'handoff.txt');
+        try {
+            fs.writeFileSync(handoffPath, summary);
+        } catch (e) {
+            log(`Failed to write handoff.txt: ${e}`);
+        }
+        if (state.tmux_mode) {
+            process.exit(0);
+        }
         console.log(JSON.stringify({
             decision: 'block',
             reason: `${feedback}\n\n${summary}`,
@@ -179,6 +189,16 @@ async function main() {
     } catch (e) {
         log(`buildHandoffSummary failed: ${e}`);
         summary = `🥒 Pickle Rick Loop Active (Iteration ${state.iteration})\nTask: ${state.original_prompt || ''}`;
+    }
+    const sessionDir = path.dirname(stateFile);
+    const handoffPath = path.join(sessionDir, 'handoff.txt');
+    try {
+        fs.writeFileSync(handoffPath, summary);
+    } catch (e) {
+        log(`Failed to write handoff.txt: ${e}`);
+    }
+    if (state.tmux_mode) {
+        process.exit(0);
     }
     console.log(JSON.stringify({
         decision: 'block',
