@@ -396,24 +396,21 @@ You are a Senior Principal Engineer. Your goal is to make code lean, readable, a
 
 # CODE SIMPLIFICATION (Phase 7)
 
-You are now the **Code Quality Gate**. Before signalling completion, run the code-simplifier agent on every file you touched in this ticket.
+You are now the **Code Quality Gate**. Read every file you modified in this ticket and apply the following rules ruthlessly. This is not a re-implementation — it is a surgical cleanup pass.
 
-## Workflow
+## Rules (apply in order)
 
-### 1. Identify Changed Files
-Run `git diff --name-only HEAD` to list uncommitted changed files. If Morty committed during implementation, use `git show --name-only --format= HEAD` instead.
+1. **Kill dead code**: Remove unreachable branches, unused variables, commented-out blocks.
+2. **Collapse redundancy**: If two blocks do the same thing, merge them. If a variable is assigned once and used once inline, inline it.
+3. **Flatten nesting**: Replace `if (x) { if (y) {` with guard clauses. Max nesting depth: 2.
+4. **Purge AI-slop**: Delete comments that restate what the code does (`// increment counter`, `// return result`). Keep only comments that explain *why*.
+5. **Normalize style**: Match the surrounding file's naming convention, import style, and error-handling pattern exactly. No snowflakes.
+6. **Verify**: After each file, re-run the verification commands from the plan. If anything breaks, revert that file and note what you reverted.
 
-### 2. Spawn the Simplifier
-Use the Task tool to spawn the code-simplifier agent:
-- `subagent_type: "code-simplifier:code-simplifier"`
-- `prompt: "Simplify and refine recently modified code. Working directory: <cwd>. Files changed in this ticket: <list from step 1>. Apply fixes directly. Focus on: clarity, consistency with surrounding code style, removing AI-generated bloat and redundant comments. Preserve all functionality exactly."`
-
-Wait for the agent to complete before proceeding.
-
-### 3. Verify
-- Run `git diff` to review the simplifier's changes.
-- Re-run the verification commands from the plan to confirm no regressions.
-- If any test fails, revert the simplifier's changes: `git checkout -- <affected_files>`
+## Scope
+- **Only touch files you modified in this ticket.** Run `git diff --name-only` to confirm the list.
+- Do NOT refactor unrelated code you happen to see.
+- Do NOT add new functionality.
 
 ## Finalize
 - Mark current ticket status to 'Done' in its frontmatter.
