@@ -3,10 +3,10 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { State } from '../types/index.js';
 
-const ALLOW = JSON.stringify({ decision: 'allow' });
+const ALLOW = JSON.stringify({ decision: 'approve' });
 
 export function getExtensionDir(): string {
-  return process.env.EXTENSION_DIR || path.join(os.homedir(), '.gemini/extensions/pickle-rick');
+  return process.env.EXTENSION_DIR || path.join(os.homedir(), '.claude/pickle-rick');
 }
 
 /**

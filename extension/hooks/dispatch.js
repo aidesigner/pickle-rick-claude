@@ -27,7 +27,7 @@ function logError(message) {
     log(`ERROR: ${message}`);
 }
 function allow() {
-    console.log(JSON.stringify({ decision: 'allow' }));
+    console.log(JSON.stringify({ decision: 'approve' }));
 }
 function findExecutable(name) {
     const pathEnv = process.env.PATH || '';

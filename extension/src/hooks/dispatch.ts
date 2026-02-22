@@ -30,7 +30,7 @@ function logError(message: string) {
 }
 
 function allow() {
-  console.log(JSON.stringify({ decision: 'allow' }));
+  console.log(JSON.stringify({ decision: 'approve' }));
 }
 
 function findExecutable(name: string): string | null {

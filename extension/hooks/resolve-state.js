@@ -1,9 +1,9 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-const ALLOW = JSON.stringify({ decision: 'allow' });
+const ALLOW = JSON.stringify({ decision: 'approve' });
 export function getExtensionDir() {
-    return process.env.EXTENSION_DIR || path.join(os.homedir(), '.gemini/extensions/pickle-rick');
+    return process.env.EXTENSION_DIR || path.join(os.homedir(), '.claude/pickle-rick');
 }
 /**
  * Resolves the state file path from env or the sessions map.

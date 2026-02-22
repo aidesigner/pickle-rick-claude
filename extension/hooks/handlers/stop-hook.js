@@ -105,14 +105,7 @@ async function main() {
             feedback += 'Ticket finished, moving to next...';
         if (isWorkerDone)
             feedback += 'Worker finished, Rick is validating...';
-        console.log(JSON.stringify({
-            decision: 'block',
-            systemMessage: feedback,
-            hookSpecificOutput: {
-                hookEventName: 'AfterAgent',
-                additionalContext: state.original_prompt,
-            },
-        }));
+        console.log(JSON.stringify({ decision: 'block', systemMessage: feedback }));
         return;
     }
     // 7. Check Limits (Final Guard)
@@ -138,14 +131,7 @@ async function main() {
     let defaultFeedback = `🥒 **Pickle Rick Loop Active** (Iteration ${state.iteration})`;
     if (state.max_iterations > 0)
         defaultFeedback += ` of ${state.max_iterations}`;
-    console.log(JSON.stringify({
-        decision: 'block',
-        systemMessage: defaultFeedback,
-        hookSpecificOutput: {
-            hookEventName: 'AfterAgent',
-            additionalContext: state.original_prompt,
-        },
-    }));
+    console.log(JSON.stringify({ decision: 'block', systemMessage: defaultFeedback }));
 }
 main().catch((err) => {
     try {
