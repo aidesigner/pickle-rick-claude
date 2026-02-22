@@ -122,6 +122,7 @@ async function main() {
         PICKLE_STATE_FILE: timeoutStatePath || workerState,
         PICKLE_ROLE: 'worker',
     };
+    delete env.CLAUDECODE; // Allow nested claude subprocess (unblocks worker spawning)
     const proc = spawn('claude', cmdArgs, {
         cwd: process.cwd(),
         env,

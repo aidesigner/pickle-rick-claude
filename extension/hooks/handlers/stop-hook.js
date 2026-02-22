@@ -1,54 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-function statusSymbol(status) {
-    if (status === 'done') return '[x]';
-    if (status === 'in progress') return '[~]';
-    return '[ ]';
-}
-function parseTicketFrontmatter(filePath) {
-    try {
-        const content = fs.readFileSync(filePath, 'utf8');
-        const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-        if (!fmMatch) return null;
-        const fm = fmMatch[1];
-        const get = (field) => {
-            const m = fm.match(new RegExp(`^${field}:\\s*(.+)$`, 'm'));
-            return m ? m[1].trim() : null;
-        };
-        return {
-            id: get('id'),
-            title: get('title'),
-            status: get('status'),
-            order: parseInt(get('order') || '0', 10),
-        };
-    } catch {
-        return null;
-    }
-}
-function collectTickets(sessionDir) {
-    try {
-        const entries = fs.readdirSync(sessionDir, { withFileTypes: true });
-        const tickets = [];
-        for (const entry of entries) {
-            if (!entry.isDirectory()) continue;
-            const subDir = path.join(sessionDir, entry.name);
-            try {
-                const files = fs.readdirSync(subDir);
-                for (const file of files) {
-                    if (!file.startsWith('linear_ticket_') || !file.endsWith('.md')) continue;
-                    const parsed = parseTicketFrontmatter(path.join(subDir, file));
-                    if (parsed) tickets.push(parsed);
-                }
-            } catch {
-                /* skip */
-            }
-        }
-        return tickets.sort((a, b) => a.order - b.order);
-    } catch {
-        return [];
-    }
-}
+import { statusSymbol, parseTicketFrontmatter, collectTickets } from '../../services/pickle-utils.js';
 function buildHandoffSummary(state, sessionDir) {
     const task = state.original_prompt || '';
     const truncatedTask = task.length > 300 ? task.slice(0, 300) + ' [truncated]' : task;
