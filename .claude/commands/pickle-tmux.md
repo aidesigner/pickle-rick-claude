@@ -23,6 +23,13 @@ Run: sleep 1
 (Allow tmux to initialize the session before sending keys — avoids a race where send-keys
 fires before the pane is ready.)
 
+## Step 3b: Print Attach Command Early
+
+Print immediately (so the user can open a second terminal now):
+- tmux session name: <session-name>
+- **Attach to watch:** `tmux attach -t <session-name>`
+- Window 0: runner output  |  Window 1 "monitor": live dashboard (Ctrl+B 1)
+
 ## Step 4: Launch Runner
 
 Run: tmux send-keys -t <session-name>:0 "node $HOME/.claude/pickle-rick/extension/bin/tmux-runner.js <SESSION_ROOT>" Enter

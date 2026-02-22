@@ -122,6 +122,19 @@ The **Stop hook** prevents Claude from exiting until the task is genuinely compl
 
 **`/pickle` vs `/pickle-tmux`** — Use `/pickle` for short-to-medium epics (1–7 iterations) in interactive mode with full keyboard access. Use `/pickle-tmux` for long epics (8+ iterations) where context drift is a concern — each iteration spawns a fresh Claude subprocess with a clean context window, bridged via `handoff.txt`. Requires `tmux`.
 
+**tmux Mode — two windows** — `/pickle-tmux` creates a tmux session with two windows:
+- **Window 0** (default): raw runner output — the live `claude -p` subprocess stream
+- **Window 1 `monitor`**: live dashboard — phase, iteration, elapsed time, all tickets with status (`[x]` done / `[~]` in progress / `[ ]` todo), and a tail of the most recent iteration log. Refreshes every 2 seconds.
+
+The session name and attach command are printed **before the runner starts** so you can open a second terminal and attach immediately:
+
+```bash
+tmux attach -t <session-name>   # printed by /pickle-tmux as soon as the session is ready
+Ctrl+B 1                        # switch to monitor window
+Ctrl+B 0                        # switch back to runner output
+Ctrl+B d                        # detach (session keeps running in background)
+```
+
 **Bring your own PRD** — If a `prd.md` or `PRD.md` exists in your project root when you run `/pickle`, Rick will automatically load it instead of drafting a new one. Drop your PRD there and the interrogation phase is skipped entirely.
 
 **Disabling Rick** — `/disable-pickle` creates a global marker file that silences the stop hook across all sessions instantly — no uninstall required. `/enable-pickle` removes it. To also drop the persona mid-session, just tell Rick directly: *"drop the Pickle Rick persona"* and he'll revert to standard Claude behavior for the rest of the session.
@@ -157,10 +170,20 @@ cp ~/.claude/pickle-rick/persona.md /path/to/your/project/.claude/CLAUDE.md
 
 ### 3. Run
 
+**Recommended — tmux mode** (requires `tmux`): runs in the background with a live monitor window so Claude Code's interface stays free:
+
 ```bash
 cd /path/to/your/project
 claude
 # then type:
+/pickle-tmux "refactor the auth module"
+```
+
+Rick immediately prints a `tmux attach` command — open a second terminal and paste it to watch the live dashboard while it runs.
+
+**Interactive mode** (no tmux required):
+
+```bash
 /pickle "refactor the auth module"
 ```
 
