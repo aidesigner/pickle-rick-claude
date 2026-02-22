@@ -172,11 +172,15 @@ pickle-rick-claude/
 │   ├── commands/           # Slash commands (the magic words)
 │   │   ├── pickle.md           # Main loop command (PRD + Breakdown inlined)
 │   │   ├── pickle-prd.md       # Interactive PRD drafter
+│   │   ├── pickle-status.md    # Show session status
+│   │   ├── pickle-retry.md     # Retry a failed ticket
 │   │   ├── eat-pickle.md       # Loop canceller
 │   │   ├── help-pickle.md      # Help text
 │   │   ├── send-to-morty.md    # Worker prompt (all 7 skills inlined)
 │   │   ├── add-to-pickle-jar.md # Save session to Jar queue
-│   │   └── pickle-jar-open.md  # Run all Jar tasks (Night Shift)
+│   │   ├── pickle-jar-open.md  # Run all Jar tasks (Night Shift)
+│   │   ├── disable-pickle.md   # Disable stop hook globally
+│   │   └── enable-pickle.md    # Re-enable stop hook
 │   └── settings.json       # Stop hook registration
 ├── extension/
 │   ├── bin/
@@ -186,7 +190,9 @@ pickle-rick-claude/
 │   │   ├── jar-runner.js   # Jar Night Shift runner 🫙
 │   │   ├── worker-setup.js # Worker session initializer
 │   │   ├── get-session.js  # Session path resolver
-│   │   └── update-state.js # State mutation helper
+│   │   ├── update-state.js # State mutation helper
+│   │   ├── status.js       # Session status display
+│   │   └── retry-ticket.js # Reset + re-spawn a failed ticket
 │   ├── hooks/
 │   │   ├── dispatch.js     # Hook router
 │   │   └── handlers/

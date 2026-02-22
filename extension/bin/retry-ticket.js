@@ -7,32 +7,27 @@ import { updateState } from './update-state.js';
 export function retryTicket(ticketId, cwd) {
     // Validate ticketId to prevent path traversal
     if (!/^[a-zA-Z0-9_-]+$/.test(ticketId)) {
-        console.error(`Invalid ticket ID: ${ticketId}`);
-        process.exit(1);
+        throw new Error(`Invalid ticket ID: ${ticketId}`);
     }
     const sessionsMap = path.join(getExtensionRoot(), 'current_sessions.json');
     if (!fs.existsSync(sessionsMap)) {
-        console.error('No active Pickle Rick session found.');
-        process.exit(1);
+        throw new Error('No active Pickle Rick session found.');
     }
     const map = JSON.parse(fs.readFileSync(sessionsMap, 'utf-8'));
     const sessionPath = map[cwd];
     if (!sessionPath || !fs.existsSync(sessionPath)) {
-        console.error('No active session found for this directory.');
-        process.exit(1);
+        throw new Error('No active session found for this directory.');
     }
     const statePath = path.join(sessionPath, 'state.json');
     const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
     const sessionDir = state.session_dir;
     if (!sessionDir) {
-        console.error('state.json is missing session_dir field.');
-        process.exit(1);
+        throw new Error('state.json is missing session_dir field.');
     }
     const ticketDir = path.join(sessionDir, ticketId);
     const ticketFile = path.join(ticketDir, `linear_ticket_${ticketId}.md`);
     if (!fs.existsSync(ticketDir) || !fs.existsSync(ticketFile)) {
-        console.error(`Ticket ${ticketId} not found in session ${sessionDir}`);
-        process.exit(1);
+        throw new Error(`Ticket ${ticketId} not found in session ${sessionDir}`);
     }
     // Archive partial artifacts
     const artifacts = fs.readdirSync(ticketDir).filter(f =>
@@ -59,7 +54,8 @@ export function retryTicket(ticketId, cwd) {
     const timeout = finalState.worker_timeout_seconds || 1500;
     // Shell-safe single-quote escaping for the original prompt
     const safePrompt = (finalState.original_prompt || '').replace(/'/g, "'\\''");
-    const spawnCmd = `node "$HOME/.claude/pickle-rick/extension/bin/spawn-morty.js" --ticket-id "${ticketId}" --ticket-path "${sessionDir}/${ticketId}/" --ticket-file "${sessionDir}/${ticketId}/linear_ticket_${ticketId}.md" --timeout ${timeout} '${safePrompt}'`;
+    // Task is first positional arg (spawn-morty.js:13 expects args[0] as task)
+    const spawnCmd = `node "$HOME/.claude/pickle-rick/extension/bin/spawn-morty.js" '${safePrompt}' --ticket-id "${ticketId}" --ticket-path "${sessionDir}/${ticketId}/" --ticket-file "${sessionDir}/${ticketId}/linear_ticket_${ticketId}.md" --timeout ${timeout}`;
     console.log(`\n✅ Ticket ${ticketId} reset to Todo. Run this command to re-spawn Morty:\n\n${spawnCmd}\n`);
 }
 
@@ -69,5 +65,10 @@ if (process.argv[1] && path.basename(process.argv[1]).startsWith('retry-ticket')
         console.error('Usage: node retry-ticket.js <ticket-id>');
         process.exit(1);
     }
-    retryTicket(ticketId, process.cwd());
+    try {
+        retryTicket(ticketId, process.cwd());
+    } catch (err) {
+        console.error(err.message);
+        process.exit(1);
+    }
 }

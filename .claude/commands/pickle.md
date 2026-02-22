@@ -257,7 +257,7 @@ Process tickets one by one. Do not stop until **ALL** tickets are 'Done'.
 1. **Pick Ticket**: Pick the highest priority ticket that is NOT 'Done'.
 2. **Delegate**: Spawn a Worker (Morty) to handle the implementation lifecycle:
    ```bash
-   node "$HOME/.claude/pickle-rick/extension/bin/spawn-morty.js" --ticket-id <ID> --ticket-path "${SESSION_ROOT}/<ID>/" --ticket-file "${SESSION_ROOT}/<ID>/linear_ticket_<ID>.md" --timeout <worker_timeout_seconds> "<TASK_DESCRIPTION>"
+   node "$HOME/.claude/pickle-rick/extension/bin/spawn-morty.js" "<TASK_DESCRIPTION>" --ticket-id <ID> --ticket-path "${SESSION_ROOT}/<ID>/" --ticket-file "${SESSION_ROOT}/<ID>/linear_ticket_<ID>.md" --timeout <worker_timeout_seconds>
    ```
 3. **Validate**: After the Morty outputs `<promise>I AM DONE</promise>`, audit the results:
    - Check `${SESSION_ROOT}/[ticket_id]/` for mandatory docs: `research_*.md`, `research_review.md`, `plan_*.md`, `plan_review.md`.

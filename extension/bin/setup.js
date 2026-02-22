@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import * as crypto from 'node:crypto';
+import * as crypto from 'crypto';
 import { printMinimalPanel, Style, getExtensionRoot } from '../services/pickle-utils.js';
 function die(message) {
     console.error(`${Style.RED}❌ Error: ${message}${Style.RESET}`);
@@ -102,7 +102,7 @@ async function main() {
             taskArgs.push(arg);
         }
     }
-    const taskStr = taskArgs.join(' ').trim();
+    let taskStr = taskArgs.join(' ').trim();
     let fullSessionPath = '';
     let currentIteration = 1;
     if (resumeMode) {

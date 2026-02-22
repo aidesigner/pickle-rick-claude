@@ -14,6 +14,12 @@ rm -f "$HOME/.claude/commands/pickle-prd.md"
 rm -f "$HOME/.claude/commands/eat-pickle.md"
 rm -f "$HOME/.claude/commands/help-pickle.md"
 rm -f "$HOME/.claude/commands/send-to-morty.md"
+rm -f "$HOME/.claude/commands/add-to-pickle-jar.md"
+rm -f "$HOME/.claude/commands/pickle-jar-open.md"
+rm -f "$HOME/.claude/commands/disable-pickle.md"
+rm -f "$HOME/.claude/commands/enable-pickle.md"
+rm -f "$HOME/.claude/commands/pickle-status.md"
+rm -f "$HOME/.claude/commands/pickle-retry.md"
 
 # Remove Stop hook from settings.json (clean up empty Stop/hooks keys)
 if [ -f "$SETTINGS_FILE" ]; then
