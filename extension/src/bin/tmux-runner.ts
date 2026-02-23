@@ -51,6 +51,8 @@ async function runIteration(sessionDir: string, iterationNum: number, extensionR
   ];
 
   const env: NodeJS.ProcessEnv = { ...process.env, PICKLE_STATE_FILE: statePath };
+  // Remove CLAUDECODE so the spawned claude process doesn't think it's nested
+  // inside another Claude Code session (which would alter its behavior).
   delete env['CLAUDECODE'];
 
   const logStream = fs.createWriteStream(logFile, { flags: 'w' });
@@ -69,13 +71,18 @@ async function runIteration(sessionDir: string, iterationNum: number, extensionR
 
     proc.on('close', () => {
       logStream.end();
-      const output = fs.readFileSync(logFile, 'utf-8');
-      if (hasToken(output, PromiseTokens.EPIC_COMPLETED) ||
-          hasToken(output, PromiseTokens.TASK_COMPLETED)) {
-        resolve('completed');
-      } else {
-        resolve('continue');
-      }
+      // Wait for the write stream to fully flush before reading the log.
+      // Without this, pipe buffers may not have drained to disk yet and
+      // completion tokens could be missed — causing false "continue" results.
+      logStream.on('finish', () => {
+        const output = fs.readFileSync(logFile, 'utf-8');
+        if (hasToken(output, PromiseTokens.EPIC_COMPLETED) ||
+            hasToken(output, PromiseTokens.TASK_COMPLETED)) {
+          resolve('completed');
+        } else {
+          resolve('continue');
+        }
+      });
     });
 
     proc.on('error', (err) => {
@@ -146,8 +153,9 @@ async function main() {
       break;
     }
 
-    const elapsed = Math.max(0, Math.floor(Date.now() / 1000) - state.start_time_epoch);
-    if (state.max_time_minutes > 0 && elapsed >= state.max_time_minutes * 60) {
+    const startEpoch = Number(state.start_time_epoch) || 0;
+    const elapsed = startEpoch > 0 ? Math.max(0, Math.floor(Date.now() / 1000) - startEpoch) : 0;
+    if (state.max_time_minutes > 0 && startEpoch > 0 && elapsed >= state.max_time_minutes * 60) {
       log(`Time limit reached (${elapsed}s). Exiting.`);
       break;
     }

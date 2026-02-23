@@ -113,10 +113,15 @@ function spawnWorker(roleId, prompt, refinementDir, extensionRoot, timeout, work
     proc.stderr?.pipe(logStream);
     // SIGTERM first, escalate to SIGKILL after 2s if still alive
     const timeoutHandle = setTimeout(() => {
-        proc.kill('SIGTERM');
+        try {
+            proc.kill('SIGTERM');
+        }
+        catch { /* already dead */ }
         setTimeout(() => {
-            if (!proc.killed)
+            try {
                 proc.kill('SIGKILL');
+            }
+            catch { /* already dead */ }
         }, 2000);
     }, timeout * 1000);
     return new Promise((resolve, reject) => {

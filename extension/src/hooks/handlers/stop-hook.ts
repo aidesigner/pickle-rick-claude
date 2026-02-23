@@ -8,6 +8,13 @@ async function main() {
   const globalDebugLog = path.join(extensionDir, 'debug.log');
   let sessionHooksLog: string | null = null;
 
+  // 0. Check disabled marker — /disable-pickle creates this file to globally suppress the hook
+  const disabledMarker = path.join(extensionDir, 'disabled');
+  if (fs.existsSync(disabledMarker)) {
+    approve();
+    return;
+  }
+
   const log = (msg: string) => {
     const ts = new Date().toISOString();
     const formatted = `[${ts}] [StopHookJS] ${msg}\n`;
@@ -90,7 +97,7 @@ async function main() {
 
   // 6. Check Completion Promise
   const responseText = input.prompt_response || '';
-  log(`Agent response preview: ${responseText.slice(0, 100).replace(/\n/g, ' ')}...`);
+  log(`Agent response received (${responseText.length} chars)`);
 
   const hasPromise =
     !!state.completion_promise && hasToken(responseText, state.completion_promise);
@@ -133,7 +140,6 @@ async function main() {
     let feedback = '🥒 **Pickle Rick Loop Active** - ';
     if (isPrdDone) feedback += 'PRD finished, moving to breakdown...';
     if (isTicketSelected) feedback += 'Ticket selected, starting research...';
-    if (isWorkerDone) feedback += 'Worker finished, Rick is validating...';
 
     console.log(JSON.stringify({ decision: 'block', systemMessage: feedback }));
     return;
@@ -173,7 +179,8 @@ main().catch((err) => {
   try {
     const extensionDir = getExtensionDir();
     const debugLog = path.join(extensionDir, 'debug.log');
-    fs.appendFileSync(debugLog, `[FATAL] ${err.stack}\n`);
+    const detail = err instanceof Error ? err.stack || err.message : String(err);
+    fs.appendFileSync(debugLog, `[FATAL] ${detail}\n`);
   } catch {
     /* ignore */
   }

@@ -65,9 +65,14 @@ export function update_ticket_status(
   // Using a global replace here would corrupt any "status:" lines in the ticket body.
   const fm = extractFrontmatter(content);
   if (fm) {
-    const fmSection = content.slice(0, fm.end)
-      .replace(/^status:.*$/m, `status: "${new_status}"`)
-      .replace(/^updated:.*$/m, `updated: "${today}"`);
+    let fmSection = content.slice(0, fm.end)
+      .replace(/^status:.*$/m, `status: "${new_status}"`);
+    if (/^updated:.*$/m.test(fmSection)) {
+      fmSection = fmSection.replace(/^updated:.*$/m, `updated: "${today}"`);
+    } else {
+      // Insert updated field before closing --- if missing
+      fmSection = fmSection.replace(/\n---$/, `\nupdated: "${today}"\n---`);
+    }
     content = fmSection + content.slice(fm.end);
   } else {
     // No frontmatter delimiters found — warn and fall back to full-file replace

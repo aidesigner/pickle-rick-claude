@@ -86,8 +86,10 @@ export function retryTicket(ticketId: string, cwd: string): void {
   }
   const timeout = finalState.worker_timeout_seconds || 1500;
 
-  // Shell-safe single-quote escaping for the original prompt
-  const safePrompt = (finalState.original_prompt || '').replace(/'/g, "'\\''");
+  // Shell-safe escaping: single-quote escaping + collapse newlines to spaces
+  const safePrompt = (finalState.original_prompt || '')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/'/g, "'\\''");
 
   // Task is first positional arg (spawn-morty.js:13 expects args[0] as task)
   const spawnCmd = `node "$HOME/.claude/pickle-rick/extension/bin/spawn-morty.js" '${safePrompt}' --ticket-id "${ticketId}" --ticket-path "${sessionDir}/${ticketId}/" --ticket-file "${sessionDir}/${ticketId}/linear_ticket_${ticketId}.md" --timeout ${timeout}`;

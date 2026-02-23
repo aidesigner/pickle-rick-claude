@@ -56,3 +56,39 @@ test('setup: --tmux does not affect other state fields', () => {
         cleanup(sessionPath);
     }
 });
+
+test('setup: --resume preserves stored limits when no explicit flags given', () => {
+    // Create a session with custom limits
+    const sessionPath = runSetup(['--max-iterations', '20', '--max-time', '120', '--worker-timeout', '3000', '--task', 'resume-limits-test']);
+    try {
+        const statePath = path.join(sessionPath, 'state.json');
+        let state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(state.max_iterations, 20);
+        assert.equal(state.max_time_minutes, 120);
+        assert.equal(state.worker_timeout_seconds, 3000);
+
+        // Resume WITHOUT specifying limits — should preserve stored values
+        const resumedPath = runSetup(['--resume', sessionPath]);
+        state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(state.max_iterations, 20, 'max_iterations should be preserved on resume');
+        assert.equal(state.max_time_minutes, 120, 'max_time_minutes should be preserved on resume');
+        assert.equal(state.worker_timeout_seconds, 3000, 'worker_timeout_seconds should be preserved on resume');
+    } finally {
+        cleanup(sessionPath);
+    }
+});
+
+test('setup: --resume with explicit flag overrides stored limit', () => {
+    // Create a session with default limits
+    const sessionPath = runSetup(['--task', 'resume-override-test']);
+    try {
+        const statePath = path.join(sessionPath, 'state.json');
+
+        // Resume WITH explicit --max-iterations — should override
+        runSetup(['--resume', sessionPath, '--max-iterations', '99']);
+        const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(state.max_iterations, 99, 'explicit --max-iterations should override on resume');
+    } finally {
+        cleanup(sessionPath);
+    }
+});

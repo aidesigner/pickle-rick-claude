@@ -148,11 +148,13 @@ export function statusSymbol(status: string | null): string {
  * Returns the frontmatter body and byte offsets, or null if no valid block found.
  */
 export function extractFrontmatter(content: string): { body: string; start: number; end: number } | null {
-  if (!content.startsWith('---\n')) return null;
-  const closeIdx = content.indexOf('\n---', 4);
+  // Support both Unix (\n) and Windows (\r\n) line endings
+  const openLen = content.startsWith('---\r\n') ? 5 : content.startsWith('---\n') ? 4 : 0;
+  if (openLen === 0) return null;
+  const closeIdx = content.indexOf('\n---', openLen);
   if (closeIdx === -1) return null;
   const end = closeIdx + 4; // includes the trailing newline of closing ---
-  return { body: content.slice(4, closeIdx), start: 0, end };
+  return { body: content.slice(openLen, closeIdx), start: 0, end };
 }
 
 export interface TicketInfo {
@@ -278,7 +280,11 @@ export function withSessionMapLock<T>(lockPath: string, fn: () => T): T {
       acquired = true;
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
-      if (Date.now() >= deadline) break; // timeout: proceed without lock
+      if (Date.now() >= deadline) {
+        // Proceeding without lock — concurrent writes to sessions map are possible
+        console.error(`[pickle] WARNING: lock acquisition timed out (${lockPath}), proceeding without lock`);
+        break;
+      }
       sleepMs(Math.min(RETRY_MS, deadline - Date.now()));
     }
   }

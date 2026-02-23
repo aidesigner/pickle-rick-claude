@@ -95,33 +95,15 @@ async function main() {
     if (outputFormat !== 'text') {
         cmdArgs.push('-o', outputFormat);
     }
-    // Prompt Construction
-    const tomlPath = path.join(extensionRoot, 'commands/send-to-morty.toml');
-    let basePrompt = '# **TASK REQUEST**\n$ARGUMENTS\n\nYou are a Morty Worker. Implement the request above.';
-    try {
-        if (fs.existsSync(tomlPath)) {
-            const content = fs.readFileSync(tomlPath, 'utf-8');
-            const match = content.match(/prompt = """([\s\S]*?)"""/);
-            if (match) {
-                basePrompt = match[1].trim();
-            }
-        }
-    }
-    catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        console.log(`${Style.YELLOW}⚠️ Failed to load prompt: ${msg}. Using fallback.${Style.RESET}`);
-    }
-    let workerPrompt = basePrompt.replace(/\${extensionPath}/g, extensionRoot);
-    workerPrompt = workerPrompt.replace(/\$ARGUMENTS/g, task);
+    // Prompt Construction — the /send-to-morty.md slash command is loaded by
+    // Claude Code's own command system, not parsed here. Workers spawned via
+    // `claude -p` get a self-contained prompt with all necessary instructions.
+    let workerPrompt = `# **TASK REQUEST**\n${task}\n\nYou are a Morty Worker (Pickle Rick's assistant). Implement the request above.`;
     // Inject Ticket Context
     workerPrompt += `\n\n# TARGET TICKET CONTENT\n${ticketContent || 'N/A'}`;
     workerPrompt += `\n\n# EXECUTION CONTEXT\n- SESSION_ROOT: ${sessionRoot}\n- TICKET_ID: ${ticketId}\n- TICKET_DIR: ${ticketPath}`;
     workerPrompt +=
         '\n\n**IMPORTANT**: You are a localized worker. You are FORBIDDEN from working on ANY other tickets. Once you output `<promise>I AM DONE</promise>`, you MUST STOP and let the manager take over.';
-    if (workerPrompt.length < 500) {
-        workerPrompt +=
-            '\n\n1. Activate persona: `activate_skill("load-pickle-persona")`.\n2. Follow \'Rick Loop\' philosophy.\n3. Output: <promise>I AM DONE</promise>';
-    }
     cmdArgs.push('-p', workerPrompt);
     const logStream = fs.createWriteStream(sessionLog, { flags: 'w' });
     const env = {
@@ -155,19 +137,26 @@ async function main() {
             clearInterval(interval);
             clearTimeout(timeoutHandle);
             process.stdout.write('\r\x1b[K');
-            const logContent = fs.readFileSync(sessionLog, 'utf-8');
-            const isSuccess = hasToken(logContent, PromiseTokens.WORKER_DONE);
-            printMinimalPanel('Worker Report', {
-                status: `exit:${code}`,
-                validation: isSuccess ? 'successful' : 'failed',
-            }, isSuccess ? 'GREEN' : 'RED', '🥒');
-            if (!isSuccess)
-                process.exit(1);
-            resolve();
+            // End the write stream and wait for flush before reading the log.
+            // Without this, pipe buffers may not have drained to disk yet and
+            // the WORKER_DONE token could be missed — causing a false failure.
+            logStream.end();
+            logStream.on('finish', () => {
+                const logContent = fs.readFileSync(sessionLog, 'utf-8');
+                const isSuccess = hasToken(logContent, PromiseTokens.WORKER_DONE);
+                printMinimalPanel('Worker Report', {
+                    status: `exit:${code}`,
+                    validation: isSuccess ? 'successful' : 'failed',
+                }, isSuccess ? 'GREEN' : 'RED', '🥒');
+                if (!isSuccess)
+                    process.exit(1);
+                resolve();
+            });
         });
     });
 }
 main().catch((err) => {
-    console.error(err);
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`${Style.RED}${msg}${Style.RESET}`);
     process.exit(1);
 });

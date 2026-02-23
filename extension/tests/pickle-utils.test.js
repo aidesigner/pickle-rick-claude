@@ -55,6 +55,18 @@ test('extractFrontmatter: does not backtrack on large content missing closing --
     assert.ok(elapsed < 100, `extractFrontmatter took ${elapsed}ms — should be < 100ms`);
 });
 
+test('extractFrontmatter: handles Windows \\r\\n line endings', () => {
+    const content = '---\r\nid: abc\r\nstatus: Todo\r\n---\r\n# Body';
+    const result = extractFrontmatter(content);
+    assert.ok(result);
+    assert.ok(result.body.includes('id: abc'));
+    assert.ok(result.body.includes('status: Todo'));
+});
+
+test('extractFrontmatter: \\r\\n returns null when no closing delimiter', () => {
+    assert.equal(extractFrontmatter('---\r\nid: abc\r\nstatus: Todo'), null);
+});
+
 // --- statusSymbol ---
 
 test('statusSymbol: lowercase done', () => assert.equal(statusSymbol('done'), '[x]'));

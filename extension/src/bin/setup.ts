@@ -53,6 +53,7 @@ async function main() {
   let pausedMode = false;
   let tmuxMode = false;
   const taskArgs: string[] = [];
+  const explicitFlags = new Set<string>();
 
   const startEpoch = Math.floor(Date.now() / 1000);
 
@@ -78,14 +79,17 @@ async function main() {
       const v = parseInt(args[++i], 10);
       if (isNaN(v) || v < 0) die(`--max-iterations requires a non-negative integer`);
       loopLimit = v;
+      explicitFlags.add('max-iterations');
     } else if (arg === '--max-time') {
       const v = parseInt(args[++i], 10);
       if (isNaN(v) || v < 0) die(`--max-time requires a non-negative integer`);
       timeLimit = v;
+      explicitFlags.add('max-time');
     } else if (arg === '--worker-timeout') {
       const v = parseInt(args[++i], 10);
       if (isNaN(v) || v <= 0) die(`--worker-timeout requires a positive integer`);
       workerTimeout = v;
+      explicitFlags.add('worker-timeout');
     } else if (arg === '--completion-promise') {
       promiseToken = args[++i];
     } else if (arg === '--resume') {
@@ -145,11 +149,17 @@ async function main() {
       state.start_time_epoch = startEpoch;
     }
 
-    // Update state with new limits if provided
-    state.max_iterations = loopLimit;
-    state.max_time_minutes = timeLimit;
-    state.worker_timeout_seconds = workerTimeout;
+    // Only override limits that were explicitly passed on the command line;
+    // otherwise preserve the values from the stored session state.
+    if (explicitFlags.has('max-iterations')) state.max_iterations = loopLimit;
+    if (explicitFlags.has('max-time')) state.max_time_minutes = timeLimit;
+    if (explicitFlags.has('worker-timeout')) state.worker_timeout_seconds = workerTimeout;
     if (promiseToken) state.completion_promise = promiseToken;
+
+    // Sync local vars with (potentially preserved) state for display
+    loopLimit = state.max_iterations;
+    timeLimit = state.max_time_minutes;
+    workerTimeout = state.worker_timeout_seconds;
 
     writeStateFile(statePath, state);
     currentIteration = state.iteration + 1;
@@ -166,7 +176,7 @@ async function main() {
 
     if (!fs.existsSync(fullSessionPath)) fs.mkdirSync(fullSessionPath, { recursive: true });
 
-    const state = {
+    const state: State = {
       // tmux mode: start inactive so the main Claude window's stop hook never fires.
       // tmux-runner.ts takes ownership by setting active: true before its loop begins.
       active: !pausedMode && !tmuxMode,

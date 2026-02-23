@@ -23,8 +23,8 @@ function render(sessionDir: string): boolean {
   const width = getWidth();
   const sep = `${d}${'─'.repeat(width)}${r}`;
 
-  const startEpoch = state.start_time_epoch || 0;
-  const elapsed = Math.max(0, Math.floor(Date.now() / 1000) - startEpoch);
+  const startEpoch = Number(state.start_time_epoch) || 0;
+  const elapsed = startEpoch > 0 ? Math.max(0, Math.floor(Date.now() / 1000) - startEpoch) : 0;
   const tickets = collectTickets(sessionDir);
   const maxIter = state.max_iterations || 0;
   const maxTime = state.max_time_minutes || 0;

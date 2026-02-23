@@ -111,17 +111,17 @@ async function main() {
             failed++;
             continue;
         }
-        const repoPath = typeof meta.repo_path === 'string' ? meta.repo_path : '';
-        if (!repoPath) {
+        if (!meta.repo_path || typeof meta.repo_path !== 'string') {
             console.error(`${Style.RED}⚠️  Skipping ${taskId}: meta.repo_path is missing or not a string${Style.RESET}`);
             meta.status = 'failed';
             fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
             failed++;
             continue;
         }
+        const repoPath = meta.repo_path;
         // Integrity check: verify PRD content hasn't been tampered with since jarring
         if (typeof meta.prd_hash === 'string') {
-            const prdPath = path.join(path.dirname(metaPath), meta.prd_path || 'prd.md');
+            const prdPath = path.join(path.dirname(metaPath), typeof meta.prd_path === 'string' ? meta.prd_path : 'prd.md');
             try {
                 const prdContent = fs.readFileSync(prdPath, 'utf-8');
                 const currentHash = crypto.createHash('sha256').update(prdContent).digest('hex');

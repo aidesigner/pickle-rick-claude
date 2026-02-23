@@ -151,9 +151,9 @@ function spawnWorker(
 
   // SIGTERM first, escalate to SIGKILL after 2s if still alive
   const timeoutHandle = setTimeout(() => {
-    proc.kill('SIGTERM');
+    try { proc.kill('SIGTERM'); } catch { /* already dead */ }
     setTimeout(() => {
-      if (!proc.killed) proc.kill('SIGKILL');
+      try { proc.kill('SIGKILL'); } catch { /* already dead */ }
     }, 2000);
   }, timeout * 1000);
 

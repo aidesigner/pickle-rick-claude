@@ -58,7 +58,7 @@ npx tsc
 npm test
 ```
 
-**Always run `tsc --noEmit` before `tsc`.** Always run `npm test` after compiling. All 154 tests must pass before committing.
+**Always run `tsc --noEmit` before `tsc`.** Always run `npm test` after compiling. All 160 tests must pass before committing.
 
 ### Valid Source File Manifest
 

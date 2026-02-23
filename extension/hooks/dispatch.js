@@ -90,7 +90,7 @@ async function main() {
                 chunks.push(chunk);
             }
             inputData = Buffer.concat(chunks).toString();
-            log(`Input Data: ${inputData}`);
+            log(`Input received: ${inputData.length} bytes`);
         }
         catch (e) {
             log(`Error reading stdin: ${e}`);

@@ -474,3 +474,41 @@ test('resolve-state: loadActiveState returns null for cwd mismatch', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Disabled marker — /disable-pickle creates this file to suppress the hook
+// ---------------------------------------------------------------------------
+
+test('stop-hook: disabled marker file → approve immediately, state unchanged', () => {
+  const state = baseState();
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-'));
+  const sessionDir = path.join(tmpDir, 'session');
+  fs.mkdirSync(sessionDir);
+  const stateFile = path.join(sessionDir, 'state.json');
+  fs.writeFileSync(stateFile, JSON.stringify(state));
+  // Create the disabled marker file
+  fs.writeFileSync(path.join(tmpDir, 'disabled'), '');
+
+  const env = { ...process.env, EXTENSION_DIR: tmpDir, FORCE_COLOR: '0', PICKLE_STATE_FILE: stateFile };
+  delete env.PICKLE_ROLE;
+
+  try {
+    const stdout = execFileSync(process.execPath, [STOP_HOOK], {
+      input: JSON.stringify({ prompt_response: '' }),
+      encoding: 'utf-8',
+      env,
+    });
+    assert.deepEqual(JSON.parse(stdout.trim()), { decision: 'approve' });
+    // State should NOT be modified (no deactivation)
+    const afterState = JSON.parse(fs.readFileSync(stateFile, 'utf-8'));
+    assert.equal(afterState.active, true);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('stop-hook: no disabled marker → hook processes normally (blocks active session)', () => {
+  // Sanity check: without the marker, an active session with no tokens should block
+  const { decision } = runHook({ state: baseState(), response: 'just some text' });
+  assert.equal(decision.decision, 'block');
+});
