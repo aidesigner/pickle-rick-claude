@@ -9,6 +9,7 @@ import {
 } from '../services/pickle-utils.js';
 import { spawn } from 'child_process';
 import { PromiseTokens, hasToken } from '../types/index.js';
+import { update_ticket_status } from '../services/git-utils.js';
 
 async function main() {
   const args = process.argv.slice(2);
@@ -137,6 +138,9 @@ async function main() {
 
   cmdArgs.push('-p', workerPrompt);
 
+  // Mark ticket as In Progress so the monitor shows [~]
+  try { update_ticket_status(ticketId, 'In Progress', sessionRoot); } catch { /* best-effort */ }
+
   const logStream = fs.createWriteStream(sessionLog, { flags: 'w' });
   const env = {
     ...process.env,
@@ -184,6 +188,11 @@ async function main() {
       logStream.on('finish', () => {
         const logContent = fs.readFileSync(sessionLog, 'utf-8');
         const isSuccess = hasToken(logContent, PromiseTokens.WORKER_DONE);
+
+        // Update ticket frontmatter so monitor/status reflect the outcome
+        if (isSuccess) {
+          try { update_ticket_status(ticketId, 'Done', sessionRoot); } catch { /* best-effort */ }
+        }
 
         printMinimalPanel(
           'Worker Report',
