@@ -4,6 +4,9 @@ import * as path from 'path';
 import { collectTickets, statusSymbol, formatTime, getWidth, Style } from '../services/pickle-utils.js';
 const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 function render(sessionDir) {
+    // If the session directory itself is gone, signal exit (not just "waiting")
+    if (!fs.existsSync(sessionDir))
+        return false;
     const statePath = path.join(sessionDir, 'state.json');
     let state;
     try {
@@ -16,12 +19,15 @@ function render(sessionDir) {
     const { GREEN: g, RED: red, YELLOW: y, BOLD: b, DIM: d, RESET: r } = Style;
     const width = getWidth();
     const sep = `${d}${'─'.repeat(width)}${r}`;
-    const elapsed = Math.floor(Date.now() / 1000) - (state.start_time_epoch || 0);
+    const startEpoch = state.start_time_epoch || 0;
+    const elapsed = Math.max(0, Math.floor(Date.now() / 1000) - startEpoch);
     const tickets = collectTickets(sessionDir);
-    const iterStr = state.max_iterations > 0
+    const maxIter = state.max_iterations || 0;
+    const maxTime = state.max_time_minutes || 0;
+    const iterStr = maxIter > 0
         ? `${state.iteration} / ${state.max_iterations}`
         : `${state.iteration}`;
-    const timeStr = state.max_time_minutes > 0
+    const timeStr = maxTime > 0
         ? `${formatTime(elapsed)} / ${state.max_time_minutes}m`
         : formatTime(elapsed);
     const fields = [
@@ -80,7 +86,7 @@ function render(sessionDir) {
     }
     out.push(`\n${d}Refreshing every 2s  •  Ctrl+C to detach${r}\n`);
     process.stdout.write(out.join(''));
-    return state.active;
+    return state.active === true;
 }
 async function main() {
     const sessionDir = process.argv[2];
@@ -104,6 +110,7 @@ async function main() {
     }
 }
 main().catch((err) => {
-    console.error(`${Style.RED}[monitor] ${err.message}${Style.RESET}`);
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`${Style.RED}[monitor] ${msg}${Style.RESET}`);
     process.exit(1);
 });

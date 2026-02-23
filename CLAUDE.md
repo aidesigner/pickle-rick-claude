@@ -8,8 +8,8 @@ The extension transforms Claude Code into "Pickle Rick" (from Rick and Morty) �
 
 ## Key Components
 
-- **`.claude/commands/`**: Slash commands (`/pickle`, `/pickle-tmux`, `/pickle-prd`, `/eat-pickle`, `/help-pickle`, `/pickle-status`, `/pickle-retry`, `/add-to-pickle-jar`, `/pickle-jar-open`, `/disable-pickle`, `/enable-pickle`)
-- **`extension/bin/`**: Runtime scripts (setup, cancel, spawn-morty, worker-setup, update-state, get-session, jar-runner, tmux-runner, monitor, status, retry-ticket)
+- **`.claude/commands/`**: Slash commands (`/pickle`, `/pickle-tmux`, `/pickle-prd`, `/pickle-refine-prd`, `/eat-pickle`, `/help-pickle`, `/pickle-status`, `/pickle-retry`, `/add-to-pickle-jar`, `/pickle-jar-open`, `/disable-pickle`, `/enable-pickle`)
+- **`extension/bin/`**: Runtime scripts (setup, cancel, spawn-morty, spawn-refinement-team, worker-setup, update-state, get-session, jar-runner, tmux-runner, monitor, status, retry-ticket)
 - **`extension/hooks/`**: Stop hook dispatcher and handlers
 - **`extension/services/`**: Shared utilities (pickle-utils, git-utils, pr-factory, jar-utils)
 - **`pickle_settings.json`**: Default limits and settings
@@ -21,6 +21,7 @@ The extension transforms Claude Code into "Pickle Rick" (from Rick and Morty) �
 - **`/pickle <task>`**: Start the autonomous loop (PRD → Breakdown → per-ticket Research/Plan/Implement/Refactor)
 - **`/pickle-tmux <task>`**: True context clearing mode — spawns a fresh `claude -p` per iteration in a tmux session. Use for long epics (8+ iterations).
 - **`/pickle-prd [task]`**: Interactively draft a PRD, then resume with `/pickle --resume`
+- **`/pickle-refine-prd [path/to/prd.md]`**: Auto-refine an existing PRD using 3 parallel Morty analysts (Requirements, Codebase, Risk/Scope) — produces `prd_refined.md`
 - **`/eat-pickle`**: Cancel the active loop
 - **`/help-pickle`**: Show help
 - **`/pickle-status`**: Show current session phase, iteration, and ticket status
@@ -57,7 +58,7 @@ npx tsc
 npm test
 ```
 
-**Always run `tsc --noEmit` before `tsc`.** Always run `npm test` after compiling. All 66 tests must pass before committing.
+**Always run `tsc --noEmit` before `tsc`.** Always run `npm test` after compiling. All 154 tests must pass before committing.
 
 ### Valid Source File Manifest
 
@@ -72,6 +73,7 @@ These are the canonical `.ts` files. Any `.js` outside this list that has no cor
 - `retry-ticket.ts` *(tests in `tests/retry-ticket.test.js`)*
 - `setup.ts` *(tests in `tests/setup.test.js`)*
 - `spawn-morty.ts`
+- `spawn-refinement-team.ts` *(no test — integration only)*
 - `status.ts`
 - `tmux-runner.ts`
 - `update-state.ts` + `update-state.test.ts`
@@ -169,6 +171,7 @@ if ((currentLine + word).length <= width) {
 - **`jar-runner.js`** is the night-shift batch runner — iterates marinating jar tasks and runs each via `claude --dangerously-skip-permissions`.
 - **`setup.js`** initializes a new session (`state.json`, ticket directories) and outputs the first prompt.
 - **`spawn-morty.js`** is the worker spawner — invoked by the stop hook to start a fresh `claude -p` subprocess for each ticket.
+- **`spawn-refinement-team.js`** is the PRD refinement orchestrator — spawns 3 parallel `claude -p` workers (Requirements, Codebase, Risk/Scope analysts) that analyze a PRD and write findings to `${session_dir}/refinement/`. Invoked by `/pickle-refine-prd`. Blocks until all workers complete. Writes `refinement_manifest.json` and outputs `REFINEMENT_DIR=` and `MANIFEST=` lines for command parsing.
 - **`monitor.js`** is a live TUI dashboard — polls `state.json` and ticket files every 2s and renders session progress. Run directly: `node monitor.js <session-dir>`.
 - **`log-watcher.js`** is a streaming log tail — follows `tmux_iteration_*.log` files as they're written by the tmux runner. Run directly: `node log-watcher.js <session-dir>`.
 

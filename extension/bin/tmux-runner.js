@@ -4,9 +4,18 @@ import * as path from 'path';
 import * as os from 'os';
 import { spawn } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, buildHandoffSummary } from '../services/pickle-utils.js';
+import { PromiseTokens, hasToken } from '../types/index.js';
+import { writeStateFile } from '../hooks/resolve-state.js';
 async function runIteration(sessionDir, iterationNum, extensionRoot) {
     const statePath = path.join(sessionDir, 'state.json');
-    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    let state;
+    try {
+        state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    }
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`Failed to read state.json for iteration ${iterationNum}: ${msg}`);
+    }
     if (!state.active)
         return 'inactive';
     const picklePromptPath = path.join(os.homedir(), '.claude/commands/pickle.md');
@@ -18,6 +27,10 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
     const handoffPath = path.join(sessionDir, 'handoff.txt');
     if (fs.existsSync(handoffPath)) {
         managerPrompt += '\n\n' + fs.readFileSync(handoffPath, 'utf-8');
+        try {
+            fs.unlinkSync(handoffPath);
+        }
+        catch { /* consumed — prevent stale re-reads */ }
     }
     else {
         managerPrompt += '\n\n' + buildHandoffSummary(state, sessionDir);
@@ -53,8 +66,8 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
         proc.on('close', () => {
             logStream.end();
             const output = fs.readFileSync(logFile, 'utf-8');
-            if (output.includes('<promise>EPIC_COMPLETED</promise>') ||
-                output.includes('<promise>TASK_COMPLETED</promise>')) {
+            if (hasToken(output, PromiseTokens.EPIC_COMPLETED) ||
+                hasToken(output, PromiseTokens.TASK_COMPLETED)) {
                 resolve('completed');
             }
             else {
@@ -62,7 +75,8 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
             }
         });
         proc.on('error', (err) => {
-            console.error(`${Style.RED}Failed to spawn claude: ${err.message}${Style.RESET}`);
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`${Style.RED}Failed to spawn claude: ${msg}${Style.RESET}`);
             resolve('error');
         });
     });
@@ -82,12 +96,36 @@ async function main() {
         console.log(msg);
     };
     log('tmux-runner started');
+    // Take ownership: setup.js writes active: false in tmux mode so the main
+    // Claude window's stop hook is released immediately. We set active: true here
+    // before entering the loop so workers and state readers see a live session.
+    let ownerState;
+    try {
+        ownerState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    }
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`Cannot read initial state.json: ${msg}`);
+    }
+    if (!ownerState.active) {
+        ownerState.active = true;
+        writeStateFile(statePath, ownerState);
+        log('Session ownership taken (active: false → true)');
+    }
     const startTime = Date.now();
     let iteration = 0;
     let lastStateIteration = -1;
     let stallCount = 0;
     while (true) {
-        const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        let state;
+        try {
+            state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            log(`ERROR: Cannot read state.json: ${msg}. Exiting loop.`);
+            break;
+        }
         if (!state.active) {
             log('Session inactive. Exiting.');
             break;
@@ -96,7 +134,7 @@ async function main() {
             log(`Max iterations reached (${state.iteration}/${state.max_iterations}). Exiting.`);
             break;
         }
-        const elapsed = Math.floor(Date.now() / 1000) - state.start_time_epoch;
+        const elapsed = Math.max(0, Math.floor(Date.now() / 1000) - state.start_time_epoch);
         if (state.max_time_minutes > 0 && elapsed >= state.max_time_minutes * 60) {
             log(`Time limit reached (${elapsed}s). Exiting.`);
             break;
@@ -132,16 +170,24 @@ async function main() {
         await new Promise(r => setTimeout(r, 1000));
     }
     const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
-    const finalState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    let finalStep = 'unknown';
+    let finalActive = 'unknown';
+    try {
+        const finalState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        finalStep = finalState.step || 'unknown';
+        finalActive = String(finalState.active);
+    }
+    catch { /* use fallback values */ }
     printMinimalPanel('tmux-runner Complete', {
         Iterations: iteration,
         Elapsed: formatTime(totalElapsed),
-        FinalPhase: finalState.step || 'unknown',
-        Active: String(finalState.active),
+        FinalPhase: finalStep,
+        Active: finalActive,
     }, 'GREEN', '🥒');
     log(`tmux-runner finished. ${iteration} iterations, ${formatTime(totalElapsed)}`);
 }
 main().catch((err) => {
-    console.error(`${Style.RED}[FATAL] ${err.message}${Style.RESET}`);
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`${Style.RED}[FATAL] ${msg}${Style.RESET}`);
     process.exit(1);
 });

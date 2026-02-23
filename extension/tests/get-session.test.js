@@ -5,72 +5,87 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { getSessionPath } from '../bin/get-session.js';
 
-const extensionRoot = path.join(os.homedir(), '.claude/pickle-rick');
-const sessionsMapPath = path.join(extensionRoot, 'current_sessions.json');
+/**
+ * All tests use EXTENSION_DIR to isolate from the real ~/.claude/pickle-rick/.
+ * A temp dir stands in as the extension root; current_sessions.json is
+ * created (or not) inside that temp dir as each test requires.
+ */
 
-function withSessionMap(map, fn) {
-    const originalExists = fs.existsSync(sessionsMapPath);
-    const original = originalExists ? fs.readFileSync(sessionsMapPath, 'utf-8') : null;
-    fs.mkdirSync(path.dirname(sessionsMapPath), { recursive: true });
-    fs.writeFileSync(sessionsMapPath, JSON.stringify(map));
+function withExtensionDir(fn) {
+    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-gs-')));
+    const saved = process.env.EXTENSION_DIR;
+    process.env.EXTENSION_DIR = tmpDir;
     try {
-        return fn();
+        return fn(tmpDir);
     } finally {
-        if (original !== null) {
-            fs.writeFileSync(sessionsMapPath, original);
-        } else if (fs.existsSync(sessionsMapPath)) {
-            fs.unlinkSync(sessionsMapPath);
+        if (saved === undefined) {
+            delete process.env.EXTENSION_DIR;
+        } else {
+            process.env.EXTENSION_DIR = saved;
         }
+        fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 }
 
 // --- No sessions map ---
 
 test('getSessionPath: returns null when no sessions map exists', () => {
-    if (fs.existsSync(sessionsMapPath)) return; // can't safely test without map
-    const result = getSessionPath('/some/cwd');
-    assert.equal(result, null);
+    withExtensionDir(() => {
+        // No current_sessions.json created — dir is empty
+        const result = getSessionPath('/some/cwd');
+        assert.equal(result, null);
+    });
 });
 
 // --- cwd not in map ---
 
 test('getSessionPath: returns null when cwd is not in map', () => {
-    if (!fs.existsSync(sessionsMapPath)) return;
-
-    const result = getSessionPath('/definitely/not/a/real/cwd/xyzzy');
-    assert.equal(result, null);
+    withExtensionDir((tmpDir) => {
+        fs.writeFileSync(
+            path.join(tmpDir, 'current_sessions.json'),
+            JSON.stringify({ '/other/cwd': '/some/session' })
+        );
+        const result = getSessionPath('/definitely/not/a/real/cwd/xyzzy');
+        assert.equal(result, null);
+    });
 });
 
 // --- session path does not exist on disk ---
 
 test('getSessionPath: returns null when mapped session dir does not exist', () => {
-    if (!fs.existsSync(sessionsMapPath)) return;
-
-    const fakeCwd = '/tmp/pickle-gs-fake-cwd';
-    const missingSession = '/tmp/nonexistent-session-dir-xyz-abc';
-
-    const result = withSessionMap({ [fakeCwd]: missingSession }, () => {
-        return getSessionPath(fakeCwd);
+    withExtensionDir((tmpDir) => {
+        const fakeCwd = '/tmp/pickle-gs-fake-cwd';
+        const missingSession = '/tmp/nonexistent-session-dir-xyz-abc';
+        fs.writeFileSync(
+            path.join(tmpDir, 'current_sessions.json'),
+            JSON.stringify({ [fakeCwd]: missingSession })
+        );
+        const result = getSessionPath(fakeCwd);
+        assert.equal(result, null);
     });
-    assert.equal(result, null);
 });
 
 // --- Happy path ---
 
 test('getSessionPath: returns session path when map entry and dir both exist', () => {
-    if (!fs.existsSync(sessionsMapPath)) return;
+    withExtensionDir((tmpDir) => {
+        const sessionDir = fs.realpathSync(
+            fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-gs-session-'))
+        );
+        const fakeCwd = sessionDir + '-cwd';
+        fs.mkdirSync(fakeCwd, { recursive: true });
 
-    const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-gs-'));
-    const fakeCwd = sessionDir + '-cwd';
-    fs.mkdirSync(fakeCwd, { recursive: true });
+        fs.writeFileSync(
+            path.join(tmpDir, 'current_sessions.json'),
+            JSON.stringify({ [fakeCwd]: sessionDir })
+        );
 
-    try {
-        const result = withSessionMap({ [fakeCwd]: sessionDir }, () => {
-            return getSessionPath(fakeCwd);
-        });
-        assert.equal(result, sessionDir);
-    } finally {
-        fs.rmSync(sessionDir, { recursive: true });
-        fs.rmSync(fakeCwd, { recursive: true });
-    }
+        try {
+            const result = getSessionPath(fakeCwd);
+            assert.equal(result, sessionDir);
+        } finally {
+            fs.rmSync(sessionDir, { recursive: true, force: true });
+            fs.rmSync(fakeCwd, { recursive: true, force: true });
+        }
+    });
 });

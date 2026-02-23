@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { State, HookInput } from '../../types/index.js';
-import { getExtensionDir, resolveStateFile, allow } from '../resolve-state.js';
+import { State, HookInput, PromiseTokens, hasToken } from '../../types/index.js';
+import { getExtensionDir, resolveStateFile, approve, writeStateFile } from '../resolve-state.js';
 
 async function main() {
   const extensionDir = getExtensionDir();
@@ -23,18 +23,25 @@ async function main() {
     inputData = fs.readFileSync(0, 'utf8');
   } catch {
     log('Failed to read stdin');
-    allow();
+    approve();
     return;
   }
 
-  const input: HookInput = JSON.parse(inputData || '{}');
+  let input: HookInput;
+  try {
+    input = JSON.parse(inputData || '{}');
+  } catch (e) {
+    log(`Failed to parse input JSON: ${e instanceof Error ? e.message : String(e)}`);
+    approve();
+    return;
+  }
   log(`Processing AfterAgent hook. Input size: ${inputData.length}`);
 
   // 2. Determine State File
   const stateFile = resolveStateFile(extensionDir);
   if (!stateFile) {
     log(`No state file found.`);
-    allow();
+    approve();
     return;
   }
 
@@ -42,25 +49,42 @@ async function main() {
   log(`State file found: ${stateFile}`);
 
   // 3. Read State
-  const state: State = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+  let state: State;
+  try {
+    state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+  } catch {
+    log('Failed to parse state.json');
+    approve();
+    return;
+  }
 
   // 4. Check Context
   if (state.working_dir && path.resolve(state.working_dir) !== path.resolve(process.cwd())) {
     log(`CWD Mismatch: ${process.cwd()} !== ${state.working_dir}`);
-    allow();
+    approve();
     return;
   }
 
   // 5. Bypass for Workers or Inactive loops
   const role = process.env.PICKLE_ROLE;
-  const isWorker = role === 'worker' || state.worker;
+  const isWorker = role === 'worker';
 
   log(`State: active=${state.active}, iteration=${state.iteration}/${state.max_iterations}`);
   log(`Context: role=${role}, isWorker=${isWorker}, cwd=${process.cwd()}`);
 
+  // 5a. In tmux mode, allow the main Claude window to exit freely.
+  // tmux-runner sets PICKLE_STATE_FILE for its subprocesses; the main Claude window has
+  // no such env var. We use this to distinguish the two — the early-exit must NOT fire
+  // for tmux-runner subprocesses (they still need block/checkpoint handling to run phases).
+  if (state.tmux_mode && !process.env.PICKLE_STATE_FILE) {
+    log('Decision: ALLOW (tmux mode — main window defers to tmux-runner)');
+    approve();
+    return;
+  }
+
   if (!state.active) {
     log('Decision: ALLOW (Session inactive)');
-    allow();
+    approve();
     return;
   }
 
@@ -69,24 +93,19 @@ async function main() {
   log(`Agent response preview: ${responseText.slice(0, 100).replace(/\n/g, ' ')}...`);
 
   const hasPromise =
-    state.completion_promise &&
-    responseText.includes(`<promise>${state.completion_promise}</promise>`);
+    !!state.completion_promise && hasToken(responseText, state.completion_promise);
 
   // Stop Tokens (Full Exit)
-  const isEpicDone = responseText.includes('<promise>EPIC_COMPLETED</promise>');
-  const isTaskFinished = responseText.includes('<promise>TASK_COMPLETED</promise>');
+  const isEpicDone = hasToken(responseText, PromiseTokens.EPIC_COMPLETED);
+  const isTaskFinished = hasToken(responseText, PromiseTokens.TASK_COMPLETED);
 
   // Continue Tokens (Checkpoint)
-  const isWorkerDone = isWorker && responseText.includes('<promise>I AM DONE</promise>');
-  const isPrdDone = !isWorker && responseText.includes('<promise>PRD_COMPLETE</promise>');
-  const isBreakdownDone =
-    !isWorker && responseText.includes('<promise>BREAKDOWN_COMPLETE</promise>');
-  const isTicketSelected = !isWorker && responseText.includes('<promise>TICKET_SELECTED</promise>');
-  const isTicketDone = !isWorker && responseText.includes('<promise>TICKET_COMPLETE</promise>');
-  const isTaskDone = !isWorker && responseText.includes('<promise>TASK_COMPLETE</promise>');
+  const isWorkerDone = isWorker && hasToken(responseText, PromiseTokens.WORKER_DONE);
+  const isPrdDone = !isWorker && hasToken(responseText, PromiseTokens.PRD_COMPLETE);
+  const isTicketSelected = !isWorker && hasToken(responseText, PromiseTokens.TICKET_SELECTED);
 
   log(
-    `Promises: hasPromise=${hasPromise}, isEpicDone=${isEpicDone}, isTaskFinished=${isTaskFinished}, isWorkerDone=${isWorkerDone}, isPrdDone=${isPrdDone}, isBreakdownDone=${isBreakdownDone}, isTicketSelected=${isTicketSelected}, isTicketDone=${isTicketDone}, isTaskDone=${isTaskDone}`
+    `Promises: hasPromise=${hasPromise}, isEpicDone=${isEpicDone}, isTaskFinished=${isTaskFinished}, isWorkerDone=${isWorkerDone}, isPrdDone=${isPrdDone}, isTicketSelected=${isTicketSelected}`
   );
 
   // EXIT CONDITIONS: Full Exit
@@ -94,28 +113,26 @@ async function main() {
     log(`Decision: ALLOW (Task/Worker complete)`);
     if (!isWorker) {
       state.active = false;
-      fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
+      writeStateFile(stateFile, state);
     }
-    allow();
+    approve();
     return;
   }
 
   // CONTINUE CONDITIONS: Block exit to force next iteration
-  if (isTaskDone || isTicketDone || isBreakdownDone || isPrdDone || isTicketSelected) {
+  if (isPrdDone || isTicketSelected) {
     // In tmux mode, allow exit at checkpoints — tmux-runner respawns a fresh instance
     // for each phase, giving it a full turn budget instead of sharing one session.
     if (state.tmux_mode) {
       log(`Decision: ALLOW (tmux mode checkpoint — runner will respawn for next phase)`);
-      allow();
+      approve();
       return;
     }
     log(`Decision: BLOCK (Checkpoint reached)`);
 
     let feedback = '🥒 **Pickle Rick Loop Active** - ';
     if (isPrdDone) feedback += 'PRD finished, moving to breakdown...';
-    if (isBreakdownDone) feedback += 'Breakdown finished, moving to implementation...';
     if (isTicketSelected) feedback += 'Ticket selected, starting research...';
-    if (isTaskDone || isTicketDone) feedback += 'Ticket finished, moving to next...';
     if (isWorkerDone) feedback += 'Worker finished, Rick is validating...';
 
     console.log(JSON.stringify({ decision: 'block', systemMessage: feedback }));
@@ -124,22 +141,22 @@ async function main() {
 
   // 7. Check Limits (Final Guard)
   const now = Math.floor(Date.now() / 1000);
-  const elapsedSeconds = now - state.start_time_epoch;
+  const elapsedSeconds = Math.max(0, now - state.start_time_epoch);
   const maxTimeSeconds = state.max_time_minutes * 60;
 
   if (state.max_iterations > 0 && state.iteration >= state.max_iterations) {
     log(`Decision: ALLOW (Max iterations reached: ${state.iteration}/${state.max_iterations})`);
     state.active = false;
-    fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
-    allow();
+    writeStateFile(stateFile, state);
+    approve();
     return;
   }
 
   if (state.max_time_minutes > 0 && elapsedSeconds >= maxTimeSeconds) {
     log(`Decision: ALLOW (Time limit reached: ${elapsedSeconds}/${maxTimeSeconds}s)`);
     state.active = false;
-    fs.writeFileSync(stateFile, JSON.stringify(state, null, 2));
-    allow();
+    writeStateFile(stateFile, state);
+    approve();
     return;
   }
 
@@ -160,5 +177,5 @@ main().catch((err) => {
   } catch {
     /* ignore */
   }
-  allow();
+  approve();
 });

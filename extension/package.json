@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test tests/pickle-utils.test.js tests/update-state.test.js tests/retry-ticket.test.js tests/git-utils.test.js tests/cancel.test.js tests/get-session.test.js tests/jar-utils.test.js"
+    "test": "node --test tests/pickle-utils.test.js tests/update-state.test.js tests/retry-ticket.test.js tests/git-utils.test.js tests/cancel.test.js tests/get-session.test.js tests/jar-utils.test.js tests/stop-hook.test.js tests/promise-tokens.test.js tests/atomic-state.test.js tests/setup.test.js tests/pr-factory.test.js"
   },
   "devDependencies": {
     "@types/node": "^25.3.0",

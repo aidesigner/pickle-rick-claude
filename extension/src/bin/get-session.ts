@@ -10,7 +10,12 @@ export function getSessionPath(cwd: string): string | null {
     return null;
   }
 
-  const map = JSON.parse(fs.readFileSync(SESSIONS_MAP, 'utf-8'));
+  let map: Record<string, string>;
+  try {
+    map = JSON.parse(fs.readFileSync(SESSIONS_MAP, 'utf-8'));
+  } catch {
+    return null;
+  }
   const sessionPath = map[cwd];
 
   if (!sessionPath || !fs.existsSync(sessionPath)) {

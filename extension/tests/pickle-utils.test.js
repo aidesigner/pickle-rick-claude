@@ -10,7 +10,50 @@ import {
     wrapText,
     formatTime,
     buildHandoffSummary,
+    withSessionMapLock,
+    pruneOldSessions,
+    extractFrontmatter,
 } from '../services/pickle-utils.js';
+
+// --- extractFrontmatter ---
+
+test('extractFrontmatter: extracts valid frontmatter', () => {
+    const content = '---\nid: abc\nstatus: Todo\n---\n# Body';
+    const result = extractFrontmatter(content);
+    assert.ok(result);
+    assert.equal(result.body, 'id: abc\nstatus: Todo');
+    assert.equal(result.start, 0);
+    assert.equal(content.slice(0, result.end), '---\nid: abc\nstatus: Todo\n---');
+});
+
+test('extractFrontmatter: returns null when no opening delimiter', () => {
+    assert.equal(extractFrontmatter('# No frontmatter'), null);
+});
+
+test('extractFrontmatter: returns null when no closing delimiter', () => {
+    assert.equal(extractFrontmatter('---\nid: abc\nstatus: Todo'), null);
+});
+
+test('extractFrontmatter: handles empty body with blank line', () => {
+    const content = '---\n\n---\n# Body';
+    const result = extractFrontmatter(content);
+    assert.ok(result);
+    assert.equal(result.body, '');
+});
+
+test('extractFrontmatter: no body (---\\n---) returns null — requires newline separator', () => {
+    assert.equal(extractFrontmatter('---\n---\n# Body'), null);
+});
+
+test('extractFrontmatter: does not backtrack on large content missing closing ---', () => {
+    // This would hang with the old regex on sufficiently large input
+    const bigContent = '---\n' + 'x\n'.repeat(100000);
+    const start = Date.now();
+    const result = extractFrontmatter(bigContent);
+    const elapsed = Date.now() - start;
+    assert.equal(result, null);
+    assert.ok(elapsed < 100, `extractFrontmatter took ${elapsed}ms — should be < 100ms`);
+});
 
 // --- statusSymbol ---
 
@@ -163,4 +206,114 @@ test('collectTickets: empty directory returns []', () => {
 
 test('collectTickets: non-existent directory returns []', () => {
     assert.deepEqual(collectTickets('/tmp/nonexistent_pickle_dir_xyz'), []);
+});
+
+// --- withSessionMapLock ---
+
+test('withSessionMapLock: executes fn and returns result', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-lock-'));
+    try {
+        const lockPath = path.join(dir, 'test.lock');
+        const result = withSessionMapLock(lockPath, () => 42);
+        assert.equal(result, 42);
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('withSessionMapLock: lock file is cleaned up after fn', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-lock-'));
+    try {
+        const lockPath = path.join(dir, 'test.lock');
+        withSessionMapLock(lockPath, () => {});
+        assert.equal(fs.existsSync(lockPath), false);
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('withSessionMapLock: lock file is cleaned up even when fn throws', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-lock-'));
+    try {
+        const lockPath = path.join(dir, 'test.lock');
+        assert.throws(() => withSessionMapLock(lockPath, () => { throw new Error('boom'); }), /boom/);
+        assert.equal(fs.existsSync(lockPath), false);
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('withSessionMapLock: steals stale lock and executes fn', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-lock-'));
+    try {
+        const lockPath = path.join(dir, 'test.lock');
+        // Create a stale lock (old mtime)
+        fs.writeFileSync(lockPath, 'stale');
+        const staleTime = new Date(Date.now() - 10000); // 10s ago
+        fs.utimesSync(lockPath, staleTime, staleTime);
+        const result = withSessionMapLock(lockPath, () => 'stolen');
+        assert.equal(result, 'stolen');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+// --- pruneOldSessions ---
+
+test('pruneOldSessions: does nothing when sessionsRoot does not exist', () => {
+    assert.doesNotThrow(() => pruneOldSessions('/tmp/nonexistent_sessions_root_xyz'));
+});
+
+test('pruneOldSessions: removes old inactive session', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-sessions-'));
+    try {
+        const sessionDir = path.join(root, 'old-session');
+        fs.mkdirSync(sessionDir);
+        const oldDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString(); // 10 days ago
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({ active: false, started_at: oldDate }));
+        pruneOldSessions(root, 7);
+        assert.equal(fs.existsSync(sessionDir), false);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('pruneOldSessions: keeps recent inactive session', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-sessions-'));
+    try {
+        const sessionDir = path.join(root, 'recent-session');
+        fs.mkdirSync(sessionDir);
+        const recentDate = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(); // 2 days ago
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({ active: false, started_at: recentDate }));
+        pruneOldSessions(root, 7);
+        assert.equal(fs.existsSync(sessionDir), true);
+    } finally {
+        fs.rmSync(root, { recursive: true });
+    }
+});
+
+test('pruneOldSessions: never removes active session regardless of age', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-sessions-'));
+    try {
+        const sessionDir = path.join(root, 'active-session');
+        fs.mkdirSync(sessionDir);
+        const oldDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(); // 30 days ago
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({ active: true, started_at: oldDate }));
+        pruneOldSessions(root, 7);
+        assert.equal(fs.existsSync(sessionDir), true);
+    } finally {
+        fs.rmSync(root, { recursive: true });
+    }
+});
+
+test('pruneOldSessions: skips entries without state.json', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-sessions-'));
+    try {
+        const orphanDir = path.join(root, 'orphan-no-state');
+        fs.mkdirSync(orphanDir);
+        pruneOldSessions(root, 7);
+        assert.equal(fs.existsSync(orphanDir), true); // untouched
+    } finally {
+        fs.rmSync(root, { recursive: true });
+    }
 });

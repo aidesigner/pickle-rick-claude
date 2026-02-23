@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as os from 'node:os';
-const EXTENSION_DIR = join(os.homedir(), '.claude/pickle-rick');
+const EXTENSION_DIR = process.env.EXTENSION_DIR || join(os.homedir(), '.claude/pickle-rick');
 const HANDLERS_DIR = join(EXTENSION_DIR, 'extension', 'hooks', 'handlers');
 const LOG_PATH = join(EXTENSION_DIR, 'debug.log');
 // Prevent EPIPE errors from crashing the dispatcher when Claude Code closes the pipe
@@ -26,7 +26,7 @@ function logError(message) {
     console.error(`Dispatcher Error: ${message}`);
     log(`ERROR: ${message}`);
 }
-function allow() {
+function approve() {
     console.log(JSON.stringify({ decision: 'approve' }));
 }
 function findExecutable(name) {
@@ -55,32 +55,31 @@ async function main() {
     let cmd;
     let cmdArgs;
     const jsPath = join(HANDLERS_DIR, `${hookName}.js`);
+    const HOOKS_DIR = join(EXTENSION_DIR, 'hooks');
     if (existsSync(jsPath)) {
         scriptPath = jsPath;
         cmd = 'node';
         cmdArgs = [scriptPath, ...extraArgs];
     }
     else if (isWindows) {
-        const HOOKS_DIR = join(EXTENSION_DIR, 'hooks');
         scriptPath = join(HOOKS_DIR, `${hookName}.ps1`);
         const exe = findExecutable('pwsh') || findExecutable('powershell');
         if (!exe) {
             logError('PowerShell not found.');
-            allow();
+            approve();
             process.exit(0);
         }
         cmd = exe;
         cmdArgs = ['-ExecutionPolicy', 'Bypass', '-File', scriptPath, ...extraArgs];
     }
     else {
-        const HOOKS_DIR = join(EXTENSION_DIR, 'hooks');
         scriptPath = join(HOOKS_DIR, `${hookName}.sh`);
         cmd = 'bash';
         cmdArgs = [scriptPath, ...extraArgs];
     }
     if (!existsSync(scriptPath)) {
         logError(`Hook script not found: ${scriptPath}`);
-        allow();
+        approve();
         process.exit(0);
     }
     let inputData = '';
@@ -126,23 +125,26 @@ async function main() {
                 process.stdout.write(stdout);
             if (stderr)
                 process.stderr.write(stderr);
+            if (stderr.trim()) {
+                log(`Hook ${hookName} stderr: ${stderr.trim()}`);
+            }
             if (!stdout.trim()) {
                 if (code !== 0 && code !== null) {
-                    logError(`Hook ${hookName} failed with code ${code} and no output.`);
+                    logError(`Hook ${hookName} exited with code ${code} and no output. stderr: ${stderr.trim() || '(none)'}`);
                 }
-                allow();
+                approve();
             }
             process.exit(code ?? 0);
         });
         child.on('error', (err) => {
             logError(`Failed to start child process: ${err}`);
-            allow();
+            approve();
             process.exit(0);
         });
     }
     catch (e) {
         logError(`Unexpected execution error: ${e}`);
-        allow();
+        approve();
         process.exit(0);
     }
 }

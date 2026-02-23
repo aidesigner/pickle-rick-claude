@@ -1,7 +1,8 @@
-import { execSync } from 'child_process';
+import { execSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { State } from '../types/index.js';
 
 export const Style = {
   GREEN: '\x1b[32m',
@@ -98,9 +99,23 @@ export function run_cmd(
   options: { cwd?: string; check?: boolean; capture?: boolean } = {}
 ): string {
   const { cwd, check = true, capture = true } = options;
-  const command = Array.isArray(cmd) ? cmd.join(' ') : cmd;
+
+  // Array form: use spawnSync so each argument is passed verbatim (no shell splitting).
+  // String form: use execSync via the shell (supports pipes, globs, etc.).
+  if (Array.isArray(cmd)) {
+    const result = spawnSync(cmd[0], cmd.slice(1), {
+      cwd,
+      encoding: 'utf-8',
+      stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+    });
+    if (check && (result.status ?? 1) !== 0) {
+      throw new Error(`Command failed: ${cmd.join(' ')}\nError: ${result.stderr || ''}`);
+    }
+    return (result.stdout || '').trim();
+  }
+
   try {
-    const stdout = execSync(command, {
+    const stdout = execSync(cmd, {
       cwd,
       encoding: 'utf-8',
       stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
@@ -110,14 +125,14 @@ export function run_cmd(
     const err = error as ShellError;
     if (check)
       throw new Error(
-        `Command failed: ${command}\nError: ${err.stderr?.toString() || err.message}`
+        `Command failed: ${cmd}\nError: ${err.stderr?.toString() || err.message}`
       );
     return err.stdout?.toString().trim() || '';
   }
 }
 
 export function getExtensionRoot(): string {
-  return path.join(os.homedir(), '.claude/pickle-rick');
+  return process.env.EXTENSION_DIR || path.join(os.homedir(), '.claude/pickle-rick');
 }
 
 export function statusSymbol(status: string | null): string {
@@ -125,6 +140,19 @@ export function statusSymbol(status: string | null): string {
   if (s === 'done') return '[x]';
   if (s === 'in progress') return '[~]';
   return '[ ]';
+}
+
+/**
+ * Safely extracts YAML frontmatter from a string without catastrophic regex backtracking.
+ * Uses indexOf for delimiter search — O(n) regardless of content shape.
+ * Returns the frontmatter body and byte offsets, or null if no valid block found.
+ */
+export function extractFrontmatter(content: string): { body: string; start: number; end: number } | null {
+  if (!content.startsWith('---\n')) return null;
+  const closeIdx = content.indexOf('\n---', 4);
+  if (closeIdx === -1) return null;
+  const end = closeIdx + 4; // includes the trailing newline of closing ---
+  return { body: content.slice(4, closeIdx), start: 0, end };
 }
 
 export interface TicketInfo {
@@ -137,11 +165,10 @@ export interface TicketInfo {
 export function parseTicketFrontmatter(filePath: string): TicketInfo | null {
   try {
     const content = fs.readFileSync(filePath, 'utf8');
-    const fmMatch = content.match(/^---\n([\s\S]*?)\n---/);
-    if (!fmMatch) return null;
-    const fm = fmMatch[1];
+    const fm = extractFrontmatter(content);
+    if (!fm) return null;
     const get = (field: string): string | null => {
-      const m = fm.match(new RegExp(`^${field}:\\s*(.+)$`, 'm'));
+      const m = fm.body.match(new RegExp(`^${field}:\\s*(.+)$`, 'm'));
       return m ? m[1].trim().replace(/^["']|["']$/g, '') : null;
     };
     return {
@@ -179,15 +206,7 @@ export function collectTickets(sessionDir: string): TicketInfo[] {
   }
 }
 
-export interface PickleState {
-  original_prompt?: string;
-  step?: string;
-  iteration?: number;
-  max_iterations?: number;
-  current_ticket?: string | null;
-}
-
-export function buildHandoffSummary(state: PickleState, sessionDir: string): string {
+export function buildHandoffSummary(state: Partial<State>, sessionDir: string): string {
   const task = state.original_prompt || '';
   const truncatedTask = task.length > 300 ? task.slice(0, 300) + ' [truncated]' : task;
   const prdPath = path.join(sessionDir, 'prd.md');
@@ -221,4 +240,78 @@ export function buildHandoffSummary(state: PickleState, sessionDir: string): str
     'Do NOT restart from PRD. Continue where you left off.',
   );
   return lines.join('\n');
+}
+
+// Shared buffer for Atomics.wait()-based synchronous sleep (no CPU spin).
+const _sleepBuf = new Int32Array(new SharedArrayBuffer(4));
+
+/** Synchronous sleep that yields to the OS scheduler instead of busy-waiting. */
+function sleepMs(ms: number): void {
+  Atomics.wait(_sleepBuf, 0, 0, ms);
+}
+
+/**
+ * Acquires an exclusive file lock before executing fn, then releases it.
+ * Uses O_EXCL atomic create for lock acquisition. Retries for up to 3 seconds
+ * and steals locks older than 5 seconds. Degrades gracefully on timeout.
+ */
+export function withSessionMapLock<T>(lockPath: string, fn: () => T): T {
+  const MAX_WAIT_MS = 3000;
+  const RETRY_MS = 50;
+  const STALE_MS = 5000;
+  const deadline = Date.now() + MAX_WAIT_MS;
+  let acquired = false;
+
+  while (!acquired) {
+    // Steal stale lock if present
+    try {
+      const stats = fs.statSync(lockPath);
+      if (Date.now() - stats.mtimeMs > STALE_MS) {
+        try { fs.unlinkSync(lockPath); } catch { /* already gone */ }
+      }
+    } catch { /* lock file doesn't exist — expected */ }
+
+    // Atomic exclusive create
+    try {
+      const fd = fs.openSync(lockPath, 'wx');
+      fs.closeSync(fd);
+      acquired = true;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+      if (Date.now() >= deadline) break; // timeout: proceed without lock
+      sleepMs(Math.min(RETRY_MS, deadline - Date.now()));
+    }
+  }
+
+  try {
+    return fn();
+  } finally {
+    if (acquired) {
+      try { fs.unlinkSync(lockPath); } catch { /* ignore */ }
+    }
+  }
+}
+
+/**
+ * Removes inactive session directories older than maxAgeDays from sessionsRoot.
+ * Called on each new session start to prevent unbounded accumulation.
+ */
+export function pruneOldSessions(sessionsRoot: string, maxAgeDays = 7): void {
+  if (!fs.existsSync(sessionsRoot)) return;
+  const cutoffMs = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+  for (const entry of fs.readdirSync(sessionsRoot)) {
+    const sessionDir = path.join(sessionsRoot, entry);
+    const statePath = path.join(sessionDir, 'state.json');
+    if (!fs.existsSync(statePath)) continue;
+    try {
+      const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      if (state.active === true) continue;
+      const startedMs = state.started_at
+        ? new Date(state.started_at).getTime()
+        : fs.statSync(sessionDir).mtimeMs;
+      if (startedMs < cutoffMs) {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+      }
+    } catch { /* skip unreadable or already-deleted sessions */ }
+  }
 }

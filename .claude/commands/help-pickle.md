@@ -6,6 +6,7 @@ Summarize the available commands for the user:
 - `/pickle <prompt>`: Start the autonomous development loop (Manager Mode).
 - `/pickle-tmux <prompt>`: True context clearing mode — spawns a fresh Claude subprocess per iteration inside a tmux session. Use for long epics (8+ iterations). Requires `tmux`.
 - `/pickle-prd <prompt>`: Interactively draft a PRD and initialize a session in paused mode, then resume with `/pickle --resume`.
+- `/pickle-refine-prd [path/to/prd.md]`: Auto-refine an existing PRD using a parallel team of 3 Morty analysts (Requirements, Codebase, Risk/Scope). Outputs a refined PRD with all gaps addressed.
 - `/eat-pickle`: Stop/Cancel the current loop.
 - `/help-pickle`: Show this message.
 - `/disable-pickle`: Disable the stop hook globally (persona persists — remove from CLAUDE.md to fully disable).

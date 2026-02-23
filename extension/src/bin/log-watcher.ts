@@ -26,15 +26,25 @@ function emit(content: string): void {
   }
 }
 
+const DRAIN_CHUNK = 65536; // 64 KiB — prevents large allocations on long-running sessions
+
 function drain(logPath: string, offset: number): number {
   try {
     const { size } = fs.statSync(logPath);
     if (size <= offset) return offset;
-    const buf = Buffer.alloc(size - offset);
     const fd = fs.openSync(logPath, 'r');
-    fs.readSync(fd, buf, 0, buf.length, offset);
-    fs.closeSync(fd);
-    emit(buf.toString('utf-8'));
+    try {
+      let pos = offset;
+      while (pos < size) {
+        const toRead = Math.min(DRAIN_CHUNK, size - pos);
+        const buf = Buffer.allocUnsafe(toRead);
+        fs.readSync(fd, buf, 0, toRead, pos);
+        emit(buf.toString('utf-8'));
+        pos += toRead;
+      }
+    } finally {
+      fs.closeSync(fd);
+    }
     return size;
   } catch {
     return offset;
@@ -95,7 +105,8 @@ async function main() {
   }
 }
 
-main().catch((err: Error) => {
-  process.stderr.write(`[log-watcher] ${err.message}\n`);
+main().catch((err) => {
+  const msg = err instanceof Error ? err.message : String(err);
+  process.stderr.write(`[log-watcher] ${msg}\n`);
   process.exit(1);
 });

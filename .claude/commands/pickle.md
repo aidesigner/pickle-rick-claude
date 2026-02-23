@@ -248,8 +248,7 @@ links:
 
 # ORCHESTRATION (Phase 3 — The Loop)
 
-**CRITICAL INSTRUCTION**: You are the **MANAGER**. You are **FORBIDDEN** from implementing code yourself.
-**FORBIDDEN**: Do NOT use code-researcher, implementation-planner, or code-implementer directly.
+**CRITICAL INSTRUCTION**: You are the **MANAGER**. You are **FORBIDDEN** from implementing code yourself — always delegate to a Morty worker.
 
 Process tickets one by one. Do not stop until **ALL** tickets are 'Done'.
 
@@ -264,9 +263,15 @@ Process tickets one by one. Do not stop until **ALL** tickets are 'Done'.
    - **FORBIDDEN**: Do NOT mark a ticket as Done if these documents are missing.
    - Run `git status` & `git diff` (verify implementation matches the plan)
    - Run tests/build (check functionality)
-4. **Cleanup**: If validation fails, REVERT changes (`git reset --hard`). If it passes, COMMIT changes.
+4. **Cleanup**: If validation fails, STASH then REVERT changes (`git stash && git reset --hard`). If it passes, COMMIT changes.
 5. **Update Ticket**: Mark ticket as 'Done' in its frontmatter.
-6. **Next Ticket**: Repeat until all tickets are Done.
+6. **Increment Iteration**: After each completed ticket, increment the iteration counter:
+   ```bash
+   CURRENT=$(node -e "console.log(JSON.parse(require('fs').readFileSync('${SESSION_ROOT}/state.json','utf-8')).iteration)")
+   node "${EXTENSION_ROOT}/extension/bin/update-state.js" iteration $((CURRENT + 1)) "${SESSION_ROOT}"
+   ```
+   This is **MANDATORY** — the stop hook uses `state.iteration` to enforce `max_iterations`. Without this, the limit check never fires.
+7. **Next Ticket**: Repeat until all tickets are Done.
 
 ## Orchestration Validation (MANDATORY after each Morty)
 

@@ -2,14 +2,23 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import * as crypto from 'crypto';
 import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, getExtensionRoot } from '../services/pickle-utils.js';
+import { writeStateFile } from '../hooks/resolve-state.js';
 async function runTask(sessionDir, repoCwd, extensionRoot) {
     const statePath = path.join(sessionDir, 'state.json');
-    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    let state;
+    try {
+        state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    }
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`Failed to read state.json for ${path.basename(sessionDir)}: ${msg}`);
+    }
     state.active = true;
     state.completion_promise = null;
-    fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+    writeStateFile(statePath, state);
     const picklePromptPath = path.join(os.homedir(), '.claude/commands/pickle.md');
     let prompt = `You are Pickle Rick. Resume the session.\n\nRun:\nnode "$HOME/.claude/pickle-rick/extension/bin/setup.js" --resume ${sessionDir}\n\nThen continue the manager lifecycle from the current phase.`;
     try {
@@ -60,13 +69,27 @@ async function main() {
     const tasks = [];
     for (const day of fs.readdirSync(JAR_ROOT).sort()) {
         const dayPath = path.join(JAR_ROOT, day);
-        if (!fs.statSync(dayPath).isDirectory())
+        let dayIsDir;
+        try {
+            dayIsDir = fs.statSync(dayPath).isDirectory();
+        }
+        catch {
+            continue;
+        }
+        if (!dayIsDir)
             continue;
         for (const taskId of fs.readdirSync(dayPath).sort()) {
             const metaPath = path.join(dayPath, taskId, 'meta.json');
             if (!fs.existsSync(metaPath))
                 continue;
-            const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+            let meta;
+            try {
+                meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+            }
+            catch {
+                console.error(`${Style.RED}⚠️  Skipping ${taskId}: meta.json is corrupt or unreadable${Style.RESET}`);
+                continue;
+            }
             if (meta.status === 'marinating')
                 tasks.push({ taskId, metaPath, meta });
         }
@@ -88,7 +111,37 @@ async function main() {
             failed++;
             continue;
         }
-        const ok = await runTask(sessionDir, meta.repo_path, ROOT_DIR);
+        const repoPath = typeof meta.repo_path === 'string' ? meta.repo_path : '';
+        if (!repoPath) {
+            console.error(`${Style.RED}⚠️  Skipping ${taskId}: meta.repo_path is missing or not a string${Style.RESET}`);
+            meta.status = 'failed';
+            fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+            failed++;
+            continue;
+        }
+        // Integrity check: verify PRD content hasn't been tampered with since jarring
+        if (typeof meta.prd_hash === 'string') {
+            const prdPath = path.join(path.dirname(metaPath), meta.prd_path || 'prd.md');
+            try {
+                const prdContent = fs.readFileSync(prdPath, 'utf-8');
+                const currentHash = crypto.createHash('sha256').update(prdContent).digest('hex');
+                if (currentHash !== meta.prd_hash) {
+                    console.error(`${Style.RED}⚠️  Skipping ${taskId}: PRD integrity check failed (content modified since jarring)${Style.RESET}`);
+                    meta.status = 'failed';
+                    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+                    failed++;
+                    continue;
+                }
+            }
+            catch {
+                console.error(`${Style.RED}⚠️  Skipping ${taskId}: cannot read jarred PRD for integrity check${Style.RESET}`);
+                meta.status = 'failed';
+                fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+                failed++;
+                continue;
+            }
+        }
+        const ok = await runTask(sessionDir, repoPath, ROOT_DIR);
         meta.status = ok ? 'consumed' : 'failed';
         fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
         if (ok) {

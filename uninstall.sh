@@ -21,9 +21,11 @@ rm -f "$HOME/.claude/commands/enable-pickle.md"
 rm -f "$HOME/.claude/commands/pickle-status.md"
 rm -f "$HOME/.claude/commands/pickle-retry.md"
 rm -f "$HOME/.claude/commands/pickle-tmux.md"
+rm -f "$HOME/.claude/commands/pickle-refine-prd.md"
 
 # Remove Stop hook from settings.json (clean up empty Stop/hooks keys)
 if [ -f "$SETTINGS_FILE" ]; then
+  TMPFILE="$(mktemp)"
   jq '
     "node $HOME/.claude/pickle-rick/extension/hooks/dispatch.js stop-hook" as $cmd |
     if .hooks.Stop then
@@ -31,8 +33,8 @@ if [ -f "$SETTINGS_FILE" ]; then
       if (.hooks.Stop | length) == 0 then del(.hooks.Stop) else . end |
       if (.hooks | keys | length) == 0 then del(.hooks) else . end
     else . end
-  ' "$SETTINGS_FILE" > /tmp/pickle-uninstall.json \
-    && mv /tmp/pickle-uninstall.json "$SETTINGS_FILE"
+  ' "$SETTINGS_FILE" > "$TMPFILE" \
+    && mv "$TMPFILE" "$SETTINGS_FILE"
   echo "✅ Removed Stop hook from settings.json"
 fi
 

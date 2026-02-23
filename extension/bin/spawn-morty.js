@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, } from '../services/pickle-utils.js';
 import { spawn } from 'child_process';
+import { PromiseTokens, hasToken } from '../types/index.js';
 async function main() {
     const args = process.argv.slice(2);
     if (args.length < 1) {
@@ -21,7 +22,12 @@ async function main() {
     }
     const ticketId = args[ticketIdIndex + 1];
     let ticketPath = args[ticketPathIndex + 1];
-    const timeout = timeoutIndex !== -1 ? parseInt(args[timeoutIndex + 1]) : 1200;
+    if (!ticketId || ticketId.startsWith('--') || !ticketPath || ticketPath.startsWith('--')) {
+        console.log('Error: --ticket-id and --ticket-path require non-empty values.');
+        process.exit(1);
+    }
+    const rawTimeout = timeoutIndex !== -1 ? parseInt(args[timeoutIndex + 1], 10) : NaN;
+    const timeout = !isNaN(rawTimeout) && rawTimeout > 0 ? rawTimeout : 1200;
     const outputFormat = formatIndex !== -1 ? args[formatIndex + 1] : 'text';
     // Read ticket content if provided
     let ticketContent = '';
@@ -56,9 +62,13 @@ async function main() {
             const maxMins = state.max_time_minutes || 0;
             const startEpoch = state.start_time_epoch || 0;
             if (maxMins > 0 && startEpoch > 0) {
-                const remaining = maxMins * 60 - (Date.now() / 1000 - startEpoch);
-                if (remaining < effectiveTimeout) {
-                    effectiveTimeout = Math.max(10, Math.floor(remaining));
+                const remaining = Math.floor(maxMins * 60 - (Math.floor(Date.now() / 1000) - startEpoch));
+                if (remaining <= 0) {
+                    // Session wall-clock already elapsed; stop-hook will handle the limit on next turn
+                    console.log(`${Style.YELLOW}⚠️  Session time already elapsed; running with requested timeout.${Style.RESET}`);
+                }
+                else if (remaining < effectiveTimeout) {
+                    effectiveTimeout = remaining;
                     console.log(`${Style.YELLOW}⚠️  Worker timeout clamped: ${effectiveTimeout}s${Style.RESET}`);
                 }
             }
@@ -98,7 +108,8 @@ async function main() {
         }
     }
     catch (e) {
-        console.log(`${Style.YELLOW}⚠️ Failed to load prompt: ${e}. Using fallback.${Style.RESET}`);
+        const msg = e instanceof Error ? e.message : String(e);
+        console.log(`${Style.YELLOW}⚠️ Failed to load prompt: ${msg}. Using fallback.${Style.RESET}`);
     }
     let workerPrompt = basePrompt.replace(/\${extensionPath}/g, extensionRoot);
     workerPrompt = workerPrompt.replace(/\$ARGUMENTS/g, task);
@@ -145,7 +156,7 @@ async function main() {
             clearTimeout(timeoutHandle);
             process.stdout.write('\r\x1b[K');
             const logContent = fs.readFileSync(sessionLog, 'utf-8');
-            const isSuccess = logContent.includes('<promise>I AM DONE</promise>');
+            const isSuccess = hasToken(logContent, PromiseTokens.WORKER_DONE);
             printMinimalPanel('Worker Report', {
                 status: `exit:${code}`,
                 validation: isSuccess ? 'successful' : 'failed',

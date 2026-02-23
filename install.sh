@@ -56,6 +56,7 @@ chmod +x "$EXTENSION_ROOT/extension/bin/retry-ticket.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/tmux-runner.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/monitor.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/log-watcher.js"
+chmod +x "$EXTENSION_ROOT/extension/bin/spawn-refinement-team.js"
 
 # --- COMMANDS ---
 # rsync all commands from .claude/commands/; no --delete to preserve user commands.
@@ -66,6 +67,7 @@ if jq -e '.hooks.Stop // [] | map(.hooks // [] | map(.command)) | flatten | any(
     "$SETTINGS_FILE" >/dev/null 2>&1; then
   echo "⚠️  Stop hook already registered — skipping"
 else
+  TMPFILE="$(mktemp)"
   jq '
     "node $HOME/.claude/pickle-rick/extension/hooks/dispatch.js stop-hook" as $cmd |
     {"type": "command", "command": $cmd} as $entry |
@@ -76,8 +78,8 @@ else
     else
       .hooks.Stop += [{"hooks": [$entry]}]
     end
-  ' "$SETTINGS_FILE" > /tmp/pickle-settings-merged.json \
-    && mv /tmp/pickle-settings-merged.json "$SETTINGS_FILE"
+  ' "$SETTINGS_FILE" > "$TMPFILE" \
+    && mv "$TMPFILE" "$SETTINGS_FILE"
   echo "✅ Registered Stop hook in $SETTINGS_FILE"
 fi
 

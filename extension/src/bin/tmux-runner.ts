@@ -4,23 +4,18 @@ import * as path from 'path';
 import * as os from 'os';
 import { spawn } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, buildHandoffSummary } from '../services/pickle-utils.js';
-
-interface PickleState {
-  active: boolean;
-  working_dir?: string;
-  step?: string;
-  iteration: number;
-  max_iterations: number;
-  max_time_minutes: number;
-  start_time_epoch: number;
-  completion_promise?: string | null;
-  original_prompt?: string;
-  current_ticket?: string | null;
-}
+import { State as PickleState, PromiseTokens, hasToken } from '../types/index.js';
+import { writeStateFile } from '../hooks/resolve-state.js';
 
 async function runIteration(sessionDir: string, iterationNum: number, extensionRoot: string): Promise<string> {
   const statePath = path.join(sessionDir, 'state.json');
-  const state: PickleState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+  let state: PickleState;
+  try {
+    state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Failed to read state.json for iteration ${iterationNum}: ${msg}`);
+  }
 
   if (!state.active) return 'inactive';
 
@@ -34,6 +29,7 @@ async function runIteration(sessionDir: string, iterationNum: number, extensionR
   const handoffPath = path.join(sessionDir, 'handoff.txt');
   if (fs.existsSync(handoffPath)) {
     managerPrompt += '\n\n' + fs.readFileSync(handoffPath, 'utf-8');
+    try { fs.unlinkSync(handoffPath); } catch { /* consumed — prevent stale re-reads */ }
   } else {
     managerPrompt += '\n\n' + buildHandoffSummary(state, sessionDir);
   }
@@ -74,16 +70,17 @@ async function runIteration(sessionDir: string, iterationNum: number, extensionR
     proc.on('close', () => {
       logStream.end();
       const output = fs.readFileSync(logFile, 'utf-8');
-      if (output.includes('<promise>EPIC_COMPLETED</promise>') ||
-          output.includes('<promise>TASK_COMPLETED</promise>')) {
+      if (hasToken(output, PromiseTokens.EPIC_COMPLETED) ||
+          hasToken(output, PromiseTokens.TASK_COMPLETED)) {
         resolve('completed');
       } else {
         resolve('continue');
       }
     });
 
-    proc.on('error', (err: Error) => {
-      console.error(`${Style.RED}Failed to spawn claude: ${err.message}${Style.RESET}`);
+    proc.on('error', (err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`${Style.RED}Failed to spawn claude: ${msg}${Style.RESET}`);
       resolve('error');
     });
   });
@@ -107,13 +104,37 @@ async function main() {
   };
 
   log('tmux-runner started');
+
+  // Take ownership: setup.js writes active: false in tmux mode so the main
+  // Claude window's stop hook is released immediately. We set active: true here
+  // before entering the loop so workers and state readers see a live session.
+  let ownerState: PickleState;
+  try {
+    ownerState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Cannot read initial state.json: ${msg}`);
+  }
+  if (!ownerState.active) {
+    ownerState.active = true;
+    writeStateFile(statePath, ownerState);
+    log('Session ownership taken (active: false → true)');
+  }
+
   const startTime = Date.now();
   let iteration = 0;
   let lastStateIteration = -1;
   let stallCount = 0;
 
   while (true) {
-    const state: PickleState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    let state: PickleState;
+    try {
+      state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log(`ERROR: Cannot read state.json: ${msg}. Exiting loop.`);
+      break;
+    }
 
     if (!state.active) {
       log('Session inactive. Exiting.');
@@ -125,7 +146,7 @@ async function main() {
       break;
     }
 
-    const elapsed = Math.floor(Date.now() / 1000) - state.start_time_epoch;
+    const elapsed = Math.max(0, Math.floor(Date.now() / 1000) - state.start_time_epoch);
     if (state.max_time_minutes > 0 && elapsed >= state.max_time_minutes * 60) {
       log(`Time limit reached (${elapsed}s). Exiting.`);
       break;
@@ -157,19 +178,26 @@ async function main() {
   }
 
   const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
-  const finalState: PickleState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+  let finalStep = 'unknown';
+  let finalActive = 'unknown';
+  try {
+    const finalState: PickleState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    finalStep = finalState.step || 'unknown';
+    finalActive = String(finalState.active);
+  } catch { /* use fallback values */ }
 
   printMinimalPanel('tmux-runner Complete', {
     Iterations: iteration,
     Elapsed: formatTime(totalElapsed),
-    FinalPhase: finalState.step || 'unknown',
-    Active: String(finalState.active),
+    FinalPhase: finalStep,
+    Active: finalActive,
   }, 'GREEN', '🥒');
 
   log(`tmux-runner finished. ${iteration} iterations, ${formatTime(totalElapsed)}`);
 }
 
-main().catch((err: Error) => {
-  console.error(`${Style.RED}[FATAL] ${err.message}${Style.RESET}`);
+main().catch((err) => {
+  const msg = err instanceof Error ? err.message : String(err);
+  console.error(`${Style.RED}[FATAL] ${msg}${Style.RESET}`);
   process.exit(1);
 });

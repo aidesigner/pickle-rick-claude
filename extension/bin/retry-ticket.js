@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { getExtensionRoot } from '../services/pickle-utils.js';
+import { getExtensionRoot, extractFrontmatter } from '../services/pickle-utils.js';
 import { updateState } from './update-state.js';
+import { writeStateFile } from '../hooks/resolve-state.js';
 export function retryTicket(ticketId, cwd) {
     // Validate ticketId to prevent path traversal
     if (!/^[a-zA-Z0-9_-]+$/.test(ticketId)) {
@@ -12,13 +13,25 @@ export function retryTicket(ticketId, cwd) {
     if (!fs.existsSync(sessionsMap)) {
         throw new Error('No active Pickle Rick session found.');
     }
-    const map = JSON.parse(fs.readFileSync(sessionsMap, 'utf-8'));
+    let map;
+    try {
+        map = JSON.parse(fs.readFileSync(sessionsMap, 'utf-8'));
+    }
+    catch {
+        throw new Error('current_sessions.json is corrupt or unreadable.');
+    }
     const sessionPath = map[cwd];
     if (!sessionPath || !fs.existsSync(sessionPath)) {
         throw new Error('No active session found for this directory.');
     }
     const statePath = path.join(sessionPath, 'state.json');
-    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    let state;
+    try {
+        state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    }
+    catch {
+        throw new Error(`state.json is corrupt or unreadable in ${sessionPath}`);
+    }
     const sessionDir = state.session_dir;
     if (!sessionDir) {
         throw new Error('state.json is missing session_dir field.');
@@ -39,15 +52,30 @@ export function retryTicket(ticketId, cwd) {
         }
         console.log(`📦 Archived ${artifacts.length} artifact(s) to ${path.basename(archiveDir)}/`);
     }
-    // Reset ticket status to Todo
+    // Reset ticket status to Todo — scope replacement to YAML frontmatter only
     const ticketContent = fs.readFileSync(ticketFile, 'utf-8');
-    fs.writeFileSync(ticketFile, ticketContent.replace(/^status: .+$/m, 'status: Todo'));
+    const fmResult = extractFrontmatter(ticketContent);
+    let updatedContent;
+    if (fmResult) {
+        const fmSection = ticketContent.slice(0, fmResult.end).replace(/^status:.*$/m, 'status: Todo');
+        updatedContent = fmSection + ticketContent.slice(fmResult.end);
+    }
+    else {
+        updatedContent = ticketContent.replace(/^status:.*$/m, 'status: Todo');
+    }
+    fs.writeFileSync(ticketFile, updatedContent);
     // Re-activate session and set current ticket
     state.active = true;
-    fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+    writeStateFile(statePath, state);
     updateState('current_ticket', ticketId, sessionDir);
     // Read final state for timeout/prompt values
-    const finalState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    let finalState;
+    try {
+        finalState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    }
+    catch {
+        throw new Error(`state.json became unreadable after update in ${sessionPath}`);
+    }
     const timeout = finalState.worker_timeout_seconds || 1500;
     // Shell-safe single-quote escaping for the original prompt
     const safePrompt = (finalState.original_prompt || '').replace(/'/g, "'\\''");

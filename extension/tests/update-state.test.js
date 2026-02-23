@@ -51,3 +51,47 @@ test('updateState: throws when state.json missing', () => {
         fs.rmSync(dir, { recursive: true });
     }
 });
+
+// ---------------------------------------------------------------------------
+// Step validation
+// ---------------------------------------------------------------------------
+
+test('updateState: valid step "implement" is accepted', () => {
+    withTempSession({ active: true, step: 'prd', iteration: 0 }, (dir) => {
+        assert.doesNotThrow(() => updateState('step', 'implement', dir));
+        const state = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf-8'));
+        assert.equal(state.step, 'implement');
+    });
+});
+
+test('updateState: valid step "refactor" is accepted', () => {
+    withTempSession({ active: true, step: 'prd', iteration: 0 }, (dir) => {
+        assert.doesNotThrow(() => updateState('step', 'refactor', dir));
+    });
+});
+
+test('updateState: invalid step throws with helpful message', () => {
+    withTempSession({ active: true, step: 'prd', iteration: 0 }, (dir) => {
+        assert.throws(
+            () => updateState('step', 'bad-step', dir),
+            /invalid step/i
+        );
+    });
+});
+
+test('updateState: step validation is case-sensitive ("PRD" is not valid)', () => {
+    withTempSession({ active: true, step: 'prd', iteration: 0 }, (dir) => {
+        assert.throws(
+            () => updateState('step', 'PRD', dir),
+            /invalid step/i
+        );
+    });
+});
+
+test('updateState: non-step keys bypass step validation', () => {
+    withTempSession({ active: true, step: 'prd', iteration: 0 }, (dir) => {
+        assert.doesNotThrow(() => updateState('custom_key', 'any-value', dir));
+        const state = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf-8'));
+        assert.equal(state.custom_key, 'any-value');
+    });
+});

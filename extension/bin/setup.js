@@ -3,7 +3,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'node:crypto';
-import { printMinimalPanel, Style, getExtensionRoot } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, getExtensionRoot, withSessionMapLock, pruneOldSessions } from '../services/pickle-utils.js';
+import { writeStateFile } from '../hooks/resolve-state.js';
 function die(message) {
     console.error(`${Style.RED}❌ Error: ${message}${Style.RESET}`);
     process.exit(1);
@@ -15,23 +16,27 @@ async function main() {
     const WORKTREES_ROOT = path.join(ROOT_DIR, 'worktrees');
     const SESSIONS_MAP = path.join(ROOT_DIR, 'current_sessions.json');
     const updateSessionMap = (cwd, sessionPath) => {
-        let map = {};
-        if (fs.existsSync(SESSIONS_MAP)) {
-            try {
-                map = JSON.parse(fs.readFileSync(SESSIONS_MAP, 'utf-8'));
+        withSessionMapLock(SESSIONS_MAP + '.lock', () => {
+            let map = {};
+            if (fs.existsSync(SESSIONS_MAP)) {
+                try {
+                    map = JSON.parse(fs.readFileSync(SESSIONS_MAP, 'utf-8'));
+                }
+                catch {
+                    /* ignore */
+                }
             }
-            catch {
-                /* ignore */
-            }
-        }
-        map[cwd] = sessionPath;
-        fs.writeFileSync(SESSIONS_MAP, JSON.stringify(map, null, 2));
+            map[cwd] = sessionPath;
+            fs.writeFileSync(SESSIONS_MAP, JSON.stringify(map, null, 2));
+        });
     };
     // Ensure core directories exist
     [SESSIONS_ROOT, JAR_ROOT, WORKTREES_ROOT].forEach((dir) => {
         if (!fs.existsSync(dir))
             fs.mkdirSync(dir, { recursive: true });
     });
+    // Silently prune sessions older than 7 days that are no longer active
+    pruneOldSessions(SESSIONS_ROOT);
     // Defaults
     let loopLimit = 5;
     let timeLimit = 60;
@@ -65,13 +70,22 @@ async function main() {
     for (let i = 0; i < args.length; i++) {
         const arg = args[i];
         if (arg === '--max-iterations') {
-            loopLimit = parseInt(args[++i]);
+            const v = parseInt(args[++i], 10);
+            if (isNaN(v) || v < 0)
+                die(`--max-iterations requires a non-negative integer`);
+            loopLimit = v;
         }
         else if (arg === '--max-time') {
-            timeLimit = parseInt(args[++i]);
+            const v = parseInt(args[++i], 10);
+            if (isNaN(v) || v < 0)
+                die(`--max-time requires a non-negative integer`);
+            timeLimit = v;
         }
         else if (arg === '--worker-timeout') {
-            workerTimeout = parseInt(args[++i]);
+            const v = parseInt(args[++i], 10);
+            if (isNaN(v) || v <= 0)
+                die(`--worker-timeout requires a positive integer`);
+            workerTimeout = v;
         }
         else if (arg === '--completion-promise') {
             promiseToken = args[++i];
@@ -92,7 +106,7 @@ async function main() {
             tmuxMode = true;
         }
         else if (arg === '--task') {
-            if (args[i + 1] !== undefined)
+            if (i + 1 < args.length)
                 taskArgs.push(args[++i]);
         }
         else if (arg === '-s' || arg === '--session-id') {
@@ -113,14 +127,25 @@ async function main() {
             fullSessionPath = resolvePath(resumePath);
         }
         else if (fs.existsSync(SESSIONS_MAP)) {
-            const map = JSON.parse(fs.readFileSync(SESSIONS_MAP, 'utf-8'));
-            fullSessionPath = map[process.cwd()] || '';
+            try {
+                const map = JSON.parse(fs.readFileSync(SESSIONS_MAP, 'utf-8'));
+                fullSessionPath = map[process.cwd()] || '';
+            }
+            catch {
+                /* corrupt map — no session path */
+            }
         }
         if (!fullSessionPath || !fs.existsSync(fullSessionPath)) {
             die(`No active session found or path invalid: ${fullSessionPath}`);
         }
         const statePath = path.join(fullSessionPath, 'state.json');
-        const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        let state;
+        try {
+            state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        }
+        catch {
+            die(`state.json is missing or corrupt in ${fullSessionPath}`);
+        }
         state.active = !pausedMode;
         if (resetMode) {
             state.iteration = 0;
@@ -132,7 +157,7 @@ async function main() {
         state.worker_timeout_seconds = workerTimeout;
         if (promiseToken)
             state.completion_promise = promiseToken;
-        fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+        writeStateFile(statePath, state);
         currentIteration = state.iteration + 1;
         promiseToken = state.completion_promise;
         fullSessionPath = state.session_dir; // Use stored path
@@ -149,7 +174,9 @@ async function main() {
         if (!fs.existsSync(fullSessionPath))
             fs.mkdirSync(fullSessionPath, { recursive: true });
         const state = {
-            active: !pausedMode,
+            // tmux mode: start inactive so the main Claude window's stop hook never fires.
+            // tmux-runner.ts takes ownership by setting active: true before its loop begins.
+            active: !pausedMode && !tmuxMode,
             working_dir: process.cwd(),
             step: 'prd',
             iteration: 0,
@@ -165,7 +192,7 @@ async function main() {
             session_dir: fullSessionPath,
             tmux_mode: tmuxMode,
         };
-        fs.writeFileSync(path.join(fullSessionPath, 'state.json'), JSON.stringify(state, null, 2));
+        writeStateFile(path.join(fullSessionPath, 'state.json'), state);
     }
     updateSessionMap(process.cwd(), fullSessionPath);
     printMinimalPanel('Pickle Rick Activated!', {

@@ -28,11 +28,13 @@ fires before the pane is ready.)
 Print immediately (so the user can open a second terminal now):
 - tmux session name: <session-name>
 - **Attach to watch:** `tmux attach -t <session-name>`
-- Window 0: runner output  |  Window 1 "monitor": live dashboard (Ctrl+B 1)
+- Attaches to Window 1 "monitor" (live dashboard) by default
+- Window 0 "runner": background process log — switch with Ctrl+B 0
 
 ## Step 4: Launch Runner
 
-Run: tmux send-keys -t <session-name>:0 "node $HOME/.claude/pickle-rick/extension/bin/tmux-runner.js <SESSION_ROOT>" Enter
+Wrap the runner in a shell one-liner so the pane stays open after it exits:
+Run: tmux send-keys -t <session-name>:0 "node $HOME/.claude/pickle-rick/extension/bin/tmux-runner.js <SESSION_ROOT>; echo ''; echo '🥒 Runner finished.  Ctrl+B 1 → monitor  |  Ctrl+B D → detach'; read" Enter
 
 ## Step 5: Launch Monitor Window (split: dashboard left, log stream right)
 
@@ -41,18 +43,20 @@ Run: tmux send-keys -t <session-name>:monitor "node $HOME/.claude/pickle-rick/ex
 Run: tmux split-window -h -t <session-name>:monitor
 Run: tmux send-keys -t <session-name>:monitor.1 "node $HOME/.claude/pickle-rick/extension/bin/log-watcher.js <SESSION_ROOT>" Enter
 Run: tmux select-pane -t <session-name>:monitor.0
-Run: tmux select-window -t <session-name>:0
+Run: tmux select-window -t <session-name>:monitor
 
 ## Step 6: Report to User
 
 Print ALL of the following:
 - tmux session name: <session-name>
-- Attach to session: tmux attach -t <session-name>
-  - Window 0 (default): live runner output
-  - Window 1 "monitor": split view
+- Attach to session: `tmux attach -t <session-name>`
+  - **Lands on Window 1 "monitor"** (split view — this is the main display):
     - Left pane: live ticket dashboard (phase, iteration, ticket status)
     - Right pane: live log stream (auto-follows each iteration log)
     - Switch panes: Ctrl+B then arrow key
+  - Window 0 "runner": background process (low activity — shows start/end per iteration)
+    - Switch to it: Ctrl+B 0
+    - Switch back to monitor: Ctrl+B 1
 - To cancel (MUST run from project dir): cd <working_dir> && /eat-pickle
 - Emergency kill: tmux kill-session -t <session-name>
   (follow with: node ~/.claude/pickle-rick/extension/bin/cancel.js from <working_dir>)

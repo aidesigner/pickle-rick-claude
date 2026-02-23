@@ -1,14 +1,22 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { printMinimalPanel, getExtensionRoot } from '../services/pickle-utils.js';
+import { printMinimalPanel, getExtensionRoot, withSessionMapLock } from '../services/pickle-utils.js';
+import { writeStateFile } from '../hooks/resolve-state.js';
 export function cancelSession(cwd) {
     const SESSIONS_MAP = path.join(getExtensionRoot(), 'current_sessions.json');
     if (!fs.existsSync(SESSIONS_MAP)) {
         console.log('No active sessions map found.');
         return;
     }
-    const map = JSON.parse(fs.readFileSync(SESSIONS_MAP, 'utf-8'));
+    let map;
+    try {
+        map = JSON.parse(fs.readFileSync(SESSIONS_MAP, 'utf-8'));
+    }
+    catch {
+        console.log('Sessions map is unreadable.');
+        return;
+    }
     const sessionPath = map[cwd];
     if (!sessionPath || !fs.existsSync(sessionPath)) {
         console.log('No active session found for this directory.');
@@ -19,9 +27,40 @@ export function cancelSession(cwd) {
         console.log('State file not found.');
         return;
     }
-    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-    state.active = false;
-    fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+    // Deactivate state AND remove map entry inside one lock to prevent inconsistent state
+    // if the process crashes between the two operations.
+    try {
+        withSessionMapLock(SESSIONS_MAP + '.lock', () => {
+            // Deactivate state.json
+            let state;
+            try {
+                state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+            }
+            catch {
+                console.log('State file is unreadable.');
+                return;
+            }
+            state.active = false;
+            writeStateFile(statePath, state);
+            // Remove stale entry from the sessions map
+            let freshMap = {};
+            try {
+                freshMap = JSON.parse(fs.readFileSync(SESSIONS_MAP, 'utf-8'));
+            }
+            catch { /* ignore */ }
+            delete freshMap[cwd];
+            fs.writeFileSync(SESSIONS_MAP, JSON.stringify(freshMap, null, 2));
+        });
+    }
+    catch {
+        // Fallback: deactivate state without lock if lock acquisition fails
+        try {
+            const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+            state.active = false;
+            writeStateFile(statePath, state);
+        }
+        catch { /* session already deactivated or unreadable */ }
+    }
     printMinimalPanel('Loop Cancelled', {
         Session: path.basename(sessionPath),
         Status: 'Inactive',

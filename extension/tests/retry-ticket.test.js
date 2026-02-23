@@ -30,67 +30,65 @@ test('retryTicket: rejects ticketId with null byte', () => {
 // --- No session map ---
 
 test('retryTicket: throws when no sessions map exists', () => {
-    // Use a cwd where no session map will exist (point getExtensionRoot away)
-    // We can't easily mock getExtensionRoot, so test via the no-sessions-map path
-    // by providing a cwd that won't be in any real sessions map
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-retry-')));
+    const saved = process.env.EXTENSION_DIR;
+    process.env.EXTENSION_DIR = tmpDir;
     try {
-        // Valid ticketId but no session will exist for this temp dir
-        // retryTicket will throw "No active Pickle Rick session found." or "No active session found"
+        // No current_sessions.json in tmpDir — should throw
         assert.throws(
-            () => retryTicket('abc123', dir),
-            /No active Pickle Rick session found\.|No active session found/
+            () => retryTicket('abc123', tmpDir),
+            /No active Pickle Rick session found\./
         );
     } finally {
-        fs.rmSync(dir, { recursive: true });
+        if (saved === undefined) {
+            delete process.env.EXTENSION_DIR;
+        } else {
+            process.env.EXTENSION_DIR = saved;
+        }
+        fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
 
-// --- Ticket reset logic (filesystem-level test) ---
+// --- Ticket reset logic (filesystem-level integration test, fully isolated) ---
 
 test('retryTicket: resets ticket status to Todo and archives artifacts', () => {
-    // Build a minimal session structure that matches what retryTicket expects
-    const extensionRoot = path.join(os.homedir(), '.claude/pickle-rick');
-    const sessionsMapPath = path.join(extensionRoot, 'current_sessions.json');
-
-    // Skip if we can't read the sessions map (CI environment)
-    if (!fs.existsSync(sessionsMapPath)) {
-        // No session map — can't run filesystem integration test
-        return;
-    }
-
-    const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-session-'));
-    const ticketId = 'test-ticket-9z';
-    const ticketDir = path.join(sessionDir, ticketId);
-    fs.mkdirSync(ticketDir, { recursive: true });
-
-    // Write ticket file with Done status
-    fs.writeFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`),
-        `---\nid: ${ticketId}\ntitle: Test\nstatus: Done\norder: 10\n---\n`);
-
-    // Write an artifact that should get archived
-    fs.writeFileSync(path.join(ticketDir, 'research_2025-01-01.md'), '# Research');
-
-    // Write state.json
-    const state = {
-        active: false,
-        step: 'research',
-        iteration: 2,
-        session_dir: sessionDir,
-        original_prompt: 'test task',
-        worker_timeout_seconds: 1200,
-    };
-    fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify(state));
-
-    // Temporarily register this session in the map for our fake cwd
-    const fakeCwd = sessionDir;
-    const originalMap = fs.existsSync(sessionsMapPath)
-        ? JSON.parse(fs.readFileSync(sessionsMapPath, 'utf-8'))
-        : {};
-    const patchedMap = { ...originalMap, [fakeCwd]: sessionDir };
-    fs.writeFileSync(sessionsMapPath, JSON.stringify(patchedMap));
+    const tmpExtDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-retry-ext-')));
+    const sessionDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-session-')));
+    const fakeCwd = sessionDir; // use sessionDir as the cwd key
+    const saved = process.env.EXTENSION_DIR;
+    process.env.EXTENSION_DIR = tmpExtDir;
 
     try {
+        const ticketId = 'test-ticket-9z';
+        const ticketDir = path.join(sessionDir, ticketId);
+        fs.mkdirSync(ticketDir, { recursive: true });
+
+        // Write ticket file with Done status
+        fs.writeFileSync(
+            path.join(ticketDir, `linear_ticket_${ticketId}.md`),
+            `---\nid: ${ticketId}\ntitle: Test\nstatus: Done\norder: 10\n---\n`
+        );
+
+        // Write an artifact that should get archived
+        fs.writeFileSync(path.join(ticketDir, 'research_2025-01-01.md'), '# Research');
+
+        // Write state.json
+        const state = {
+            active: false,
+            step: 'research',
+            iteration: 2,
+            session_dir: sessionDir,
+            original_prompt: 'test task',
+            worker_timeout_seconds: 1200,
+        };
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify(state));
+
+        // Write current_sessions.json into the isolated extension root
+        fs.writeFileSync(
+            path.join(tmpExtDir, 'current_sessions.json'),
+            JSON.stringify({ [fakeCwd]: sessionDir })
+        );
+
         retryTicket(ticketId, fakeCwd);
 
         // Verify: ticket status reset to Todo
@@ -110,8 +108,12 @@ test('retryTicket: resets ticket status to Todo and archives artifacts', () => {
             fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
         assert.equal(updatedState.active, true);
     } finally {
-        // Restore original sessions map
-        fs.writeFileSync(sessionsMapPath, JSON.stringify(originalMap));
-        fs.rmSync(sessionDir, { recursive: true });
+        if (saved === undefined) {
+            delete process.env.EXTENSION_DIR;
+        } else {
+            process.env.EXTENSION_DIR = saved;
+        }
+        fs.rmSync(tmpExtDir, { recursive: true, force: true });
+        fs.rmSync(sessionDir, { recursive: true, force: true });
     }
 });

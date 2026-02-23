@@ -2,14 +2,18 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { collectTickets, statusSymbol, formatTime, getWidth, Style } from '../services/pickle-utils.js';
+import { State } from '../types/index.js';
 
 const sleep = (ms: number): Promise<void> => new Promise((res) => setTimeout(res, ms));
 
 function render(sessionDir: string): boolean {
+  // If the session directory itself is gone, signal exit (not just "waiting")
+  if (!fs.existsSync(sessionDir)) return false;
+
   const statePath = path.join(sessionDir, 'state.json');
-  let state: Record<string, unknown>;
+  let state: State;
   try {
-    state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    state = JSON.parse(fs.readFileSync(statePath, 'utf-8')) as State;
   } catch {
     process.stdout.write('\x1b[2J\x1b[H⏳ Waiting for session...\n');
     return true;
@@ -19,22 +23,23 @@ function render(sessionDir: string): boolean {
   const width = getWidth();
   const sep = `${d}${'─'.repeat(width)}${r}`;
 
-  const elapsed = Math.floor(Date.now() / 1000) - ((state.start_time_epoch as number) || 0);
+  const startEpoch = state.start_time_epoch || 0;
+  const elapsed = Math.max(0, Math.floor(Date.now() / 1000) - startEpoch);
   const tickets = collectTickets(sessionDir);
-  const iterStr =
-    (state.max_iterations as number) > 0
-      ? `${state.iteration} / ${state.max_iterations}`
-      : `${state.iteration}`;
-  const timeStr =
-    (state.max_time_minutes as number) > 0
-      ? `${formatTime(elapsed)} / ${state.max_time_minutes}m`
-      : formatTime(elapsed);
+  const maxIter = state.max_iterations || 0;
+  const maxTime = state.max_time_minutes || 0;
+  const iterStr = maxIter > 0
+    ? `${state.iteration} / ${state.max_iterations}`
+    : `${state.iteration}`;
+  const timeStr = maxTime > 0
+    ? `${formatTime(elapsed)} / ${state.max_time_minutes}m`
+    : formatTime(elapsed);
 
   const fields: [string, string][] = [
-    ['Phase', (state.step as string) || 'unknown'],
+    ['Phase', state.step || 'unknown'],
     ['Iteration', iterStr],
     ['Elapsed', timeStr],
-    ['Current Ticket', (state.current_ticket as string) || 'none'],
+    ['Current Ticket', state.current_ticket || 'none'],
     ['Active', state.active ? `${g}Yes${r}` : `${red}No${r}`],
   ];
   const keyWidth = Math.max(...fields.map(([k]) => k.length)) + 1;
@@ -91,7 +96,7 @@ function render(sessionDir: string): boolean {
 
   out.push(`\n${d}Refreshing every 2s  •  Ctrl+C to detach${r}\n`);
   process.stdout.write(out.join(''));
-  return state.active as boolean;
+  return state.active === true;
 }
 
 async function main() {
@@ -118,7 +123,8 @@ async function main() {
   }
 }
 
-main().catch((err: Error) => {
-  console.error(`${Style.RED}[monitor] ${err.message}${Style.RESET}`);
+main().catch((err) => {
+  const msg = err instanceof Error ? err.message : String(err);
+  console.error(`${Style.RED}[monitor] ${msg}${Style.RESET}`);
   process.exit(1);
 });

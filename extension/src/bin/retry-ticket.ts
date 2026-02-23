@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { getExtensionRoot } from '../services/pickle-utils.js';
+import { getExtensionRoot, extractFrontmatter } from '../services/pickle-utils.js';
 import { updateState } from './update-state.js';
+import { writeStateFile } from '../hooks/resolve-state.js';
+import { State } from '../types/index.js';
 
 export function retryTicket(ticketId: string, cwd: string): void {
   // Validate ticketId to prevent path traversal
@@ -15,15 +17,25 @@ export function retryTicket(ticketId: string, cwd: string): void {
     throw new Error('No active Pickle Rick session found.');
   }
 
-  const map: Record<string, string> = JSON.parse(fs.readFileSync(sessionsMap, 'utf-8'));
+  let map: Record<string, string>;
+  try {
+    map = JSON.parse(fs.readFileSync(sessionsMap, 'utf-8'));
+  } catch {
+    throw new Error('current_sessions.json is corrupt or unreadable.');
+  }
   const sessionPath = map[cwd];
   if (!sessionPath || !fs.existsSync(sessionPath)) {
     throw new Error('No active session found for this directory.');
   }
 
   const statePath = path.join(sessionPath, 'state.json');
-  const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-  const sessionDir: string = state.session_dir;
+  let state: State;
+  try {
+    state = JSON.parse(fs.readFileSync(statePath, 'utf-8')) as State;
+  } catch {
+    throw new Error(`state.json is corrupt or unreadable in ${sessionPath}`);
+  }
+  const sessionDir = state.session_dir;
   if (!sessionDir) {
     throw new Error('state.json is missing session_dir field.');
   }
@@ -48,21 +60,34 @@ export function retryTicket(ticketId: string, cwd: string): void {
     console.log(`📦 Archived ${artifacts.length} artifact(s) to ${path.basename(archiveDir)}/`);
   }
 
-  // Reset ticket status to Todo
+  // Reset ticket status to Todo — scope replacement to YAML frontmatter only
   const ticketContent = fs.readFileSync(ticketFile, 'utf-8');
-  fs.writeFileSync(ticketFile, ticketContent.replace(/^status: .+$/m, 'status: Todo'));
+  const fmResult = extractFrontmatter(ticketContent);
+  let updatedContent: string;
+  if (fmResult) {
+    const fmSection = ticketContent.slice(0, fmResult.end).replace(/^status:.*$/m, 'status: Todo');
+    updatedContent = fmSection + ticketContent.slice(fmResult.end);
+  } else {
+    updatedContent = ticketContent.replace(/^status:.*$/m, 'status: Todo');
+  }
+  fs.writeFileSync(ticketFile, updatedContent);
 
   // Re-activate session and set current ticket
   state.active = true;
-  fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+  writeStateFile(statePath, state);
   updateState('current_ticket', ticketId, sessionDir);
 
   // Read final state for timeout/prompt values
-  const finalState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-  const timeout: number = finalState.worker_timeout_seconds || 1500;
+  let finalState: State;
+  try {
+    finalState = JSON.parse(fs.readFileSync(statePath, 'utf-8')) as State;
+  } catch {
+    throw new Error(`state.json became unreadable after update in ${sessionPath}`);
+  }
+  const timeout = finalState.worker_timeout_seconds || 1500;
 
   // Shell-safe single-quote escaping for the original prompt
-  const safePrompt = ((finalState.original_prompt as string) || '').replace(/'/g, "'\\''");
+  const safePrompt = (finalState.original_prompt || '').replace(/'/g, "'\\''");
 
   // Task is first positional arg (spawn-morty.js:13 expects args[0] as task)
   const spawnCmd = `node "$HOME/.claude/pickle-rick/extension/bin/spawn-morty.js" '${safePrompt}' --ticket-id "${ticketId}" --ticket-path "${sessionDir}/${ticketId}/" --ticket-file "${sessionDir}/${ticketId}/linear_ticket_${ticketId}.md" --timeout ${timeout}`;

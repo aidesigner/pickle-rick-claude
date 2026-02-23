@@ -2,6 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { getExtensionRoot, printMinimalPanel, collectTickets, statusSymbol } from '../services/pickle-utils.js';
+import { State } from '../types/index.js';
 
 const SESSIONS_MAP = path.join(getExtensionRoot(), 'current_sessions.json');
 
@@ -10,7 +11,13 @@ if (!fs.existsSync(SESSIONS_MAP)) {
   process.exit(0);
 }
 
-const map: Record<string, string> = JSON.parse(fs.readFileSync(SESSIONS_MAP, 'utf-8'));
+let map: Record<string, string>;
+try {
+  map = JSON.parse(fs.readFileSync(SESSIONS_MAP, 'utf-8'));
+} catch {
+  console.log('🥒 Sessions map is unreadable. No active session.');
+  process.exit(0);
+}
 const sessionPath = map[process.cwd()];
 
 if (!sessionPath || !fs.existsSync(sessionPath)) {
@@ -18,7 +25,13 @@ if (!sessionPath || !fs.existsSync(sessionPath)) {
   process.exit(0);
 }
 
-const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+let state: State;
+try {
+  state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+} catch {
+  console.log('🥒 Session state is unreadable.');
+  process.exit(1);
+}
 
 const iterationStr = state.max_iterations
   ? `${state.iteration} of ${state.max_iterations}`

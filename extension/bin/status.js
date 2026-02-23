@@ -7,13 +7,27 @@ if (!fs.existsSync(SESSIONS_MAP)) {
     console.log('🥒 No active Pickle Rick session for this directory.');
     process.exit(0);
 }
-const map = JSON.parse(fs.readFileSync(SESSIONS_MAP, 'utf-8'));
+let map;
+try {
+    map = JSON.parse(fs.readFileSync(SESSIONS_MAP, 'utf-8'));
+}
+catch {
+    console.log('🥒 Sessions map is unreadable. No active session.');
+    process.exit(0);
+}
 const sessionPath = map[process.cwd()];
 if (!sessionPath || !fs.existsSync(sessionPath)) {
     console.log('🥒 No active Pickle Rick session for this directory.');
     process.exit(0);
 }
-const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+let state;
+try {
+    state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+}
+catch {
+    console.log('🥒 Session state is unreadable.');
+    process.exit(1);
+}
 const iterationStr = state.max_iterations
     ? `${state.iteration} of ${state.max_iterations}`
     : String(state.iteration);

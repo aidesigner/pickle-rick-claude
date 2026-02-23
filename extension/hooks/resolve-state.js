@@ -14,10 +14,15 @@ export function resolveStateFile(extensionDir) {
     if (!stateFile) {
         const sessionsMapPath = path.join(extensionDir, 'current_sessions.json');
         if (fs.existsSync(sessionsMapPath)) {
-            const map = JSON.parse(fs.readFileSync(sessionsMapPath, 'utf8'));
-            const sessionPath = map[process.cwd()];
-            if (sessionPath)
-                stateFile = path.join(sessionPath, 'state.json');
+            try {
+                const map = JSON.parse(fs.readFileSync(sessionsMapPath, 'utf8'));
+                const sessionPath = map[process.cwd()];
+                if (sessionPath)
+                    stateFile = path.join(sessionPath, 'state.json');
+            }
+            catch {
+                /* corrupt sessions map — treat as no active session */
+            }
         }
     }
     if (!stateFile || !fs.existsSync(stateFile))
@@ -29,7 +34,13 @@ export function resolveStateFile(extensionDir) {
  * inactive or the working directory doesn't match the current cwd.
  */
 export function loadActiveState(stateFile) {
-    const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    let state;
+    try {
+        state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    }
+    catch {
+        return null;
+    }
     if (state.working_dir && path.resolve(state.working_dir) !== path.resolve(process.cwd())) {
         return null;
     }
@@ -37,7 +48,25 @@ export function loadActiveState(stateFile) {
         return null;
     return state;
 }
-/** Prints the "allow" decision to stdout. */
-export function allow() {
+/** Prints the "approve" decision to stdout. */
+export function approve() {
     console.log(ALLOW);
+}
+/**
+ * Atomically writes `state` as pretty-printed JSON to `filePath`.
+ * Writes to a `.tmp` sibling first, then renames — prevents partial reads.
+ */
+export function writeStateFile(filePath, state) {
+    const tmp = filePath + '.tmp';
+    try {
+        fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
+        fs.renameSync(tmp, filePath);
+    }
+    catch (err) {
+        try {
+            fs.unlinkSync(tmp);
+        }
+        catch { /* ignore cleanup failure */ }
+        throw err;
+    }
 }

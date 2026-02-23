@@ -49,7 +49,8 @@ test('setup: --tmux does not affect other state fields', () => {
         assert.equal(state.tmux_mode, true);
         assert.equal(state.step, 'prd');
         assert.equal(state.iteration, 0);
-        assert.equal(state.active, true);
+        // tmux mode starts inactive — tmux-runner takes ownership and sets active=true
+        assert.equal(state.active, false);
         assert.equal(state.original_prompt, 'field-check');
     } finally {
         cleanup(sessionPath);

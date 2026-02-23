@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { run_cmd } from './pickle-utils.js';
+import { run_cmd, extractFrontmatter } from './pickle-utils.js';
 
 export function run_git(cmd: string[], cwd?: string, check: boolean = true): string {
   return run_cmd(['git', ...cmd], { cwd, check });
@@ -36,7 +36,12 @@ export function update_ticket_status(
     const files = fs.readdirSync(dir);
     for (const file of files) {
       const fullPath = path.join(dir, file);
-      const stat = fs.statSync(fullPath);
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(fullPath);
+      } catch {
+        continue;
+      }
       if (stat.isDirectory()) {
         const res = find_ticket(fullPath);
         if (res) return res;
@@ -56,9 +61,20 @@ export function update_ticket_status(
   let content = fs.readFileSync(ticket_path, 'utf-8');
   const today = new Date().toISOString().split('T')[0];
 
-  // Update status and updated date
-  content = content.replace(/^status:.*$/m, `status: "${new_status}"`);
-  content = content.replace(/^updated:.*$/m, `updated: "${today}"`);
+  // Replace only within the YAML frontmatter block (between the first pair of --- delimiters).
+  // Using a global replace here would corrupt any "status:" lines in the ticket body.
+  const fm = extractFrontmatter(content);
+  if (fm) {
+    const fmSection = content.slice(0, fm.end)
+      .replace(/^status:.*$/m, `status: "${new_status}"`)
+      .replace(/^updated:.*$/m, `updated: "${today}"`);
+    content = fmSection + content.slice(fm.end);
+  } else {
+    // No frontmatter delimiters found — warn and fall back to full-file replace
+    console.warn(`Warning: ticket ${ticket_id} has no valid YAML frontmatter — status replacement may be imprecise`);
+    content = content.replace(/^status:.*$/m, `status: "${new_status}"`);
+    content = content.replace(/^updated:.*$/m, `updated: "${today}"`);
+  }
 
   fs.writeFileSync(ticket_path, content);
   console.log(`Successfully updated ticket ${ticket_id} to status "${new_status}"`);
