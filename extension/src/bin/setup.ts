@@ -51,7 +51,7 @@ async function main() {
 
   // Defaults
   let loopLimit = 100;
-  let timeLimit = 60;
+  let timeLimit = 720;
   let workerTimeout = 1200;
   let promiseToken: string | null = null;
   let resumeMode = false;

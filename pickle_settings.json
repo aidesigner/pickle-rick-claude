@@ -1,6 +1,6 @@
 {
   "default_max_iterations": 100,
-  "default_max_time_minutes": 60,
+  "default_max_time_minutes": 720,
   "default_worker_timeout_seconds": 1200,
   "default_manager_max_turns": 50,
   "default_tmux_max_turns": 80,

@@ -50,7 +50,7 @@ async function main() {
     pruneOldSessions(SESSIONS_ROOT);
     // Defaults
     let loopLimit = 100;
-    let timeLimit = 60;
+    let timeLimit = 720;
     let workerTimeout = 1200;
     let promiseToken = null;
     let resumeMode = false;
