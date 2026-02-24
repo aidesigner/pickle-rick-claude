@@ -39,7 +39,7 @@ A port of the [Pickle Rick Gemini CLI extension](https://github.com/galz10/pickl
 - **Context clearing** — every loop iteration injects a structured session summary (phase, ticket list, task) as a system message, so Rick survives full context compression without losing his place
 - **Single Stop hook** — the Gemini version requires three hooks (BeforeAgent, BeforeModel, AfterAgent); this port does it all in one, with fewer moving parts
 - **PRD refinement & task decomposition** — `/pickle-refine-prd` runs multi-cycle refinement (default: 2 cycles) with 3 parallel Morty analysts (Requirements, Codebase, Risk/Scope), then decomposes the refined PRD into discrete, ordered implementation tasks with pre-created ticket files. The session is advanced so `/pickle --resume` skips PRD and breakdown phases and goes straight to orchestration.
-- **Worker isolation** — Morty subprocesses run with `-s` (no session persistence) and scoped `--include-directories`, so each worker starts genuinely fresh with only its ticket in context
+- **Worker isolation** — Morty subprocesses run with `--dangerously-skip-permissions` and scoped `--add-dir`, so each worker starts genuinely fresh with only its ticket and the extension root in context
 - **Skills inlined** — Gemini's skills require `activate_skill()` calls that can fail; here they're baked directly into the command prompts
 - **Jar improvements** — the Night Shift runner adds success/failure tracking and a configurable `default_manager_max_turns` setting absent from the original
 
@@ -114,8 +114,8 @@ The **Stop hook** prevents Claude from exiting until the task is genuinely compl
 ### Flags
 
 ```
---max-iterations <N>       Stop after N iterations (default: 5)
---max-time <M>             Stop after M minutes (default: 60)
+--max-iterations <N>       Stop after N iterations (default: 100)
+--max-time <M>             Stop after M minutes (default: 720 / 12 hours)
 --worker-timeout <S>       Timeout for individual workers in seconds (default: 1200)
 --completion-promise "TXT" Only stop when the agent outputs <promise>TXT</promise>
 --resume [PATH]            Resume from an existing session
@@ -128,6 +128,8 @@ The **Stop hook** prevents Claude from exiting until the task is genuinely compl
 **`/pickle` vs `/pickle-tmux`** — Use `/pickle` for short-to-medium epics (1–7 iterations) in interactive mode with full keyboard access. Use `/pickle-tmux` for long epics (8+ iterations) where context drift is a concern — each iteration spawns a fresh Claude subprocess with a clean context window, bridged via `handoff.txt`. Requires `tmux`.
 
 **tmux Mode — two windows** — `/pickle-tmux` creates a tmux session with two windows:
+
+![tmux monitor — live dashboard + log stream](images/tmux-monitor.png)
 - **Window 0 `runner`**: raw runner output — the live `claude -p` subprocess stream
 - **Window 1 `monitor`** (default — you land here on attach): split view
   - **Left pane**: live dashboard — phase, iteration, elapsed time, all tickets with status (`[x]` done / `[~]` in progress / `[ ]` todo). Refreshes every 2 seconds.
@@ -157,8 +159,8 @@ All defaults are configurable via `~/.claude/pickle-rick/pickle_settings.json`:
 
 | Setting | Default | Description |
 |---|---|---|
-| `default_max_iterations` | 5 | Max loop iterations before auto-stop |
-| `default_max_time_minutes` | 60 | Session wall-clock limit in minutes |
+| `default_max_iterations` | 100 | Max loop iterations before auto-stop |
+| `default_max_time_minutes` | 720 | Session wall-clock limit in minutes (12 hours) |
 | `default_worker_timeout_seconds` | 1200 | Per-worker subprocess timeout |
 | `default_manager_max_turns` | 50 | Max Claude turns per iteration (interactive/jar) |
 | `default_tmux_max_turns` | 80 | Max Claude turns per iteration (tmux mode) |
@@ -232,7 +234,7 @@ pickle-rick-claude/
 │   │   ├── pickle-jar-open.md  # Run all Jar tasks (Night Shift)
 │   │   ├── disable-pickle.md   # Disable stop hook globally
 │   │   └── enable-pickle.md    # Re-enable stop hook
-│   └── settings.json       # Stop hook registration
+│   └── settings.json       # Stop hook registration (created by install.sh in ~/.claude/)
 ├── extension/
 │   ├── src/                 # TypeScript sources (canonical — never edit .js directly)
 │   │   ├── bin/             # → compiles to extension/bin/
@@ -268,6 +270,8 @@ pickle-rick-claude/
 │   ├── tests/               # Test suite (node --test)
 │   ├── package.json         # "type": "module" — CRITICAL
 │   └── tsconfig.json        # TypeScript config (strict, ESNext)
+├── images/
+│   └── tmux-monitor.png     # tmux monitor screenshot
 ├── persona.md               # Pickle Rick persona snippet (append to your project's CLAUDE.md)
 ├── pickle_settings.json     # Default limits
 ├── install.sh               # Installer
@@ -284,32 +288,32 @@ pickle-rick-claude/
   Claude finishes a turn
           │
           ▼
-  Stop hook fires  ◄─────────────────────────────┐
-          │                                        │
-          ▼                                        │
-  Read state.json                                  │
-          │                                        │
-    ┌─────┴──────┐                                 │
-    │ Loop active?│── No ──► process.exit(0) ✅    │
-    └─────┬──────┘                                 │
-          │ Yes                                    │
-          ▼                                        │
-  Check completion tokens                           │
-          │                                        │
-    ┌─────┴──────┐                                 │
-    │Task done?  │── Yes ──► process.exit(0) ✅    │
-    │(promise    │                                 │
-    │ detected)  │                                 │
-    └─────┬──────┘                                 │
-          │ No                                     │
-          ▼                                        │
-    ┌─────┴──────┐                                 │
-    │Limit hit?  │── Yes ──► process.exit(0) ✅    │
-    └─────┬──────┘                                 │
-          │ No                                     │
-          ▼                                        │
-  { decision: "block",                             │
-    reason: "🥒 Pickle Rick Loop Active..." } ─────┘
+  Stop hook fires  ◄──────────────────────────────────┐
+          │                                             │
+          ▼                                             │
+  Read state.json                                       │
+          │                                             │
+    ┌─────┴──────┐                                      │
+    │ Loop active?│── No ──► { decision: "approve" } ✅ │
+    └─────┬──────┘                                      │
+          │ Yes                                         │
+          ▼                                             │
+  Check completion tokens                                │
+          │                                             │
+    ┌─────┴──────┐                                      │
+    │Task done?  │── Yes ──► { decision: "approve" } ✅ │
+    │(promise    │                                      │
+    │ detected)  │                                      │
+    └─────┬──────┘                                      │
+          │ No                                          │
+          ▼                                             │
+    ┌─────┴──────┐                                      │
+    │Limit hit?  │── Yes ──► { decision: "approve" } ✅ │
+    └─────┬──────┘                                      │
+          │ No                                          │
+          ▼                                             │
+  { decision: "block",                                  │
+    reason: "🥒 Pickle Rick Loop Active..." } ──────────┘
 ```
 
 ### Context Clearing — Why Rick Loops Work
@@ -353,7 +357,7 @@ Morty workers already get clean context naturally (each is a fresh `claude -p` s
 ### Manager / Worker Model
 
 - **Rick (Manager)**: Runs in your interactive Claude session. Handles PRD, Breakdown, orchestration.
-- **Morty (Worker)**: Spawned as `claude -s -y --include-directories <extension_root> --include-directories <ticket_path> -p "..."` subprocess per ticket. Gets the full lifecycle skill set inlined in the prompt. The `CLAUDECODE` env var is stripped so workers don't detect a nested session. Outputs `<promise>I AM DONE</promise>` when finished.
+- **Morty (Worker)**: Spawned as `claude --dangerously-skip-permissions --add-dir <extension_root> --add-dir <ticket_path> -p "..."` subprocess per ticket. Gets the full lifecycle skill set inlined in the prompt. The `CLAUDECODE` env var is stripped so workers don't detect a nested session. Outputs `<promise>I AM DONE</promise>` when finished.
 
 ---
 
@@ -365,7 +369,7 @@ Morty workers already get clean context naturally (each is a fresh `claude -p` s
 | `commands/*.toml` | `.claude/commands/*.md` |
 | `activate_skill("x")` | Skills inlined directly in command prompts |
 | `BeforeAgent` + `BeforeModel` + `AfterAgent` hooks | Single `Stop` hook |
-| `gemini -s -y --include-directories -p` | `claude -s -y --include-directories <path> -p` (workers) / `claude --dangerously-skip-permissions -p` (jar runner) |
+| `gemini -s -y --include-directories -p` | `claude --dangerously-skip-permissions --add-dir <path> -p` (workers) / `claude --dangerously-skip-permissions --add-dir <path> --no-session-persistence --max-turns N -p` (jar/tmux runner) |
 | `~/.gemini/extensions/pickle-rick/` | `~/.claude/pickle-rick/` |
 | `hookSpecificOutput.systemMessage` | `reason` field in block response |
 
