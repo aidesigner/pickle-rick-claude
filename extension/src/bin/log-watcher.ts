@@ -29,24 +29,25 @@ function emit(content: string): void {
 const DRAIN_CHUNK = 65536; // 64 KiB — prevents large allocations on long-running sessions
 
 function drain(logPath: string, offset: number): number {
+  let fd: number | null = null;
   try {
     const { size } = fs.statSync(logPath);
     if (size <= offset) return offset;
-    const fd = fs.openSync(logPath, 'r');
-    try {
-      let pos = offset;
-      while (pos < size) {
-        const toRead = Math.min(DRAIN_CHUNK, size - pos);
-        const buf = Buffer.allocUnsafe(toRead);
-        fs.readSync(fd, buf, 0, toRead, pos);
-        emit(buf.toString('utf-8'));
-        pos += toRead;
-      }
-    } finally {
-      fs.closeSync(fd);
+    fd = fs.openSync(logPath, 'r');
+    let pos = offset;
+    while (pos < size) {
+      const toRead = Math.min(DRAIN_CHUNK, size - pos);
+      const buf = Buffer.allocUnsafe(toRead);
+      fs.readSync(fd, buf, 0, toRead, pos);
+      emit(buf.toString('utf-8'));
+      pos += toRead;
     }
+    fs.closeSync(fd);
     return size;
   } catch {
+    if (fd !== null) {
+      try { fs.closeSync(fd); } catch { /* ignore double-close */ }
+    }
     return offset;
   }
 }

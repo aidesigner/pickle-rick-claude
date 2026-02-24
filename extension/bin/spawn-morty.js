@@ -141,13 +141,19 @@ async function main() {
     const spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
     let idx = 0;
     const startTime = Date.now();
+    const isTTY = process.stdout.isTTY;
     const interval = setInterval(() => {
+        if (!isTTY)
+            return;
         const elapsed = Math.floor((Date.now() - startTime) / 1000);
         const spinChar = spinner[idx % spinner.length];
         process.stdout.write(`\r   ${Style.CYAN}${spinChar}${Style.RESET} Worker Active... ${Style.DIM}[${formatTime(elapsed)}]${Style.RESET}\x1b[K`);
         idx++;
     }, 100);
+    let timedOut = false;
     const timeoutHandle = setTimeout(() => {
+        timedOut = true;
+        console.log(`\n${Style.RED}❌ Worker timed out after ${effectiveTimeout}s${Style.RESET}`);
         try {
             proc.kill('SIGTERM');
         }
@@ -158,20 +164,40 @@ async function main() {
             }
             catch { /* already dead */ }
         }, 2000);
-        console.log(`\n${Style.RED}❌ Worker timed out after ${effectiveTimeout}s${Style.RESET}`);
     }, effectiveTimeout * 1000);
+    // Safety net: if the Promise doesn't resolve within timeout + 30s, force exit.
+    const hangGuard = setTimeout(() => {
+        console.error(`${Style.RED}❌ Worker hang detected — forcing exit${Style.RESET}`);
+        process.exit(1);
+    }, (effectiveTimeout + 30) * 1000);
+    hangGuard.unref(); // Don't keep the process alive just for the guard
     return new Promise((resolve) => {
         proc.on('close', (code) => {
             clearInterval(interval);
             clearTimeout(timeoutHandle);
-            process.stdout.write('\r\x1b[K');
+            clearTimeout(hangGuard);
+            if (process.stdout.isTTY)
+                process.stdout.write('\r\x1b[K');
             // End the write stream and wait for flush before reading the log.
             // Without this, pipe buffers may not have drained to disk yet and
             // the WORKER_DONE token could be missed — causing a false failure.
             logStream.end();
+            // Guard against logStream.finish never firing (e.g., disk I/O failure)
+            const flushTimeout = setTimeout(() => {
+                console.error(`${Style.YELLOW}⚠️  Log flush timed out — reading partial log${Style.RESET}`);
+                finalize(code);
+            }, 5000);
             logStream.on('finish', () => {
-                const logContent = fs.readFileSync(sessionLog, 'utf-8');
-                const isSuccess = hasToken(logContent, PromiseTokens.WORKER_DONE);
+                clearTimeout(flushTimeout);
+                finalize(code);
+            });
+            function finalize(exitCode) {
+                let logContent = '';
+                try {
+                    logContent = fs.readFileSync(sessionLog, 'utf-8');
+                }
+                catch { /* missing log */ }
+                const isSuccess = !timedOut && hasToken(logContent, PromiseTokens.WORKER_DONE);
                 // Update ticket frontmatter so monitor/status reflect the outcome
                 if (isSuccess) {
                     try {
@@ -186,13 +212,13 @@ async function main() {
                     catch { /* best-effort */ }
                 }
                 printMinimalPanel('Worker Report', {
-                    status: `exit:${code}`,
+                    status: timedOut ? 'timeout' : `exit:${exitCode}`,
                     validation: isSuccess ? 'successful' : 'failed',
                 }, isSuccess ? 'GREEN' : 'RED', '🥒');
                 if (!isSuccess)
                     process.exit(1);
                 resolve();
-            });
+            }
         });
     });
 }

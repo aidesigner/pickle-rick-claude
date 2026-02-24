@@ -15,8 +15,24 @@ export function updateState(key, value, sessionDir) {
         throw new Error(`Invalid step "${value}". Must be one of: ${VALID_STEPS.join(', ')}`);
     }
     const NUMERIC_KEYS = new Set(['iteration', 'max_iterations', 'max_time_minutes', 'worker_timeout_seconds', 'start_time_epoch']);
+    const ALLOWED_KEYS = new Set([
+        ...NUMERIC_KEYS, 'step', 'active', 'working_dir', 'completion_promise',
+        'original_prompt', 'current_ticket', 'started_at', 'session_dir', 'tmux_mode',
+    ]);
+    if (!ALLOWED_KEYS.has(key)) {
+        throw new Error(`Unknown state key "${key}". Allowed: ${[...ALLOWED_KEYS].join(', ')}`);
+    }
     const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-    state[key] = NUMERIC_KEYS.has(key) ? Number(value) : value;
+    if (NUMERIC_KEYS.has(key)) {
+        const num = Number(value);
+        if (!Number.isFinite(num)) {
+            throw new Error(`Key "${key}" requires a finite number, got "${value}"`);
+        }
+        state[key] = num;
+    }
+    else {
+        state[key] = value;
+    }
     writeStateFile(statePath, state);
     console.log(`Successfully updated ${key} to ${value} in ${statePath}`);
 }

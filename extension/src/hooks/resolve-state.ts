@@ -42,7 +42,7 @@ export function loadActiveState(stateFile: string): State | null {
   } catch {
     return null;
   }
-  if (state.working_dir && path.resolve(state.working_dir) !== path.resolve(process.cwd())) {
+  if (state.working_dir != null && state.working_dir !== '' && path.resolve(state.working_dir) !== path.resolve(process.cwd())) {
     return null;
   }
   if (!state.active) return null;
@@ -58,7 +58,7 @@ export function approve(): void {
  * Atomically writes `state` as pretty-printed JSON to `filePath`.
  * Writes to a `.tmp` sibling first, then renames — prevents partial reads.
  */
-export function writeStateFile(filePath: string, state: object): void {
+export function writeStateFile(filePath: string, state: State | object): void {
   const tmp = filePath + '.tmp';
   try {
     fs.writeFileSync(tmp, JSON.stringify(state, null, 2));

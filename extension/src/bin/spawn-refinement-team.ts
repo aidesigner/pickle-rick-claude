@@ -150,7 +150,9 @@ function spawnWorker(
   proc.stderr?.pipe(logStream);
 
   // SIGTERM first, escalate to SIGKILL after 2s if still alive
+  let workerTimedOut = false;
   const timeoutHandle = setTimeout(() => {
+    workerTimedOut = true;
     try { proc.kill('SIGTERM'); } catch { /* already dead */ }
     setTimeout(() => {
       try { proc.kill('SIGKILL'); } catch { /* already dead */ }
@@ -164,14 +166,22 @@ function spawnWorker(
       clearTimeout(timeoutHandle);
       logStream.end();
 
-      // Wait for the write stream to fully flush before reading the log
+      // Guard against logStream.finish never firing
+      const flushTimeout = setTimeout(() => finalize(), 5000);
+
       logStream.on('finish', () => {
-        const logContent = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf-8') : '';
-        const success = logContent.includes('<promise>ANALYSIS_DONE</promise>');
+        clearTimeout(flushTimeout);
+        finalize();
+      });
+
+      function finalize() {
+        let logContent = '';
+        try { logContent = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf-8') : ''; } catch { /* */ }
+        const success = !workerTimedOut && logContent.includes('<promise>ANALYSIS_DONE</promise>');
         const result: WorkerResult = { roleId, success, logPath };
         onComplete(result);
         resolve(result);
-      });
+      }
     });
   });
 }

@@ -8,10 +8,10 @@ export function run_git(cmd: string[], cwd?: string, check: boolean = true): str
 
 export function get_github_user(): string {
   try {
-    return run_cmd('gh api user -q .login');
+    return run_cmd(['gh', 'api', 'user', '-q', '.login']);
   } catch {
     try {
-      return run_cmd('git config user.name').replace(/\s+/g, '');
+      return run_cmd(['git', 'config', 'user.name']).replace(/\s+/g, '');
     } catch {
       return 'pickle-rick';
     }

@@ -147,7 +147,8 @@ async function main() {
 
   // 7. Check Limits (Final Guard)
   const now = Math.floor(Date.now() / 1000);
-  const elapsedSeconds = Math.max(0, now - state.start_time_epoch);
+  const startEpoch = state.start_time_epoch > 0 ? state.start_time_epoch : now;
+  const elapsedSeconds = Math.max(0, now - startEpoch);
   const maxTimeSeconds = state.max_time_minutes * 60;
 
   if (state.max_iterations > 0 && state.iteration >= state.max_iterations) {

@@ -142,6 +142,16 @@ async function main() {
           logError(`Hook ${hookName} exited with code ${code} and no output. stderr: ${stderr.trim() || '(none)'}`);
         }
         approve();
+      } else {
+        // Validate handler output is well-formed JSON with a decision field
+        try {
+          const parsed = JSON.parse(stdout.trim());
+          if (!parsed.decision || (parsed.decision !== 'approve' && parsed.decision !== 'block')) {
+            log(`Hook ${hookName} returned invalid decision: ${JSON.stringify(parsed.decision)}`);
+          }
+        } catch {
+          log(`Hook ${hookName} returned non-JSON stdout — forwarding as-is`);
+        }
       }
       process.exit(code ?? 0);
     });

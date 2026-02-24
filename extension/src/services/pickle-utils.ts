@@ -24,7 +24,7 @@ export function getWidth(maxW: number = 90): number {
 }
 
 export function wrapText(text: string, width: number): string[] {
-  if (width <= 0) return [text];
+  if (!Number.isFinite(width) || width <= 0) return [text];
   const lines: string[] = [];
   const words = text.split(' ');
   let currentLine = '';
@@ -106,6 +106,7 @@ export function run_cmd(
     const result = spawnSync(cmd[0], cmd.slice(1), {
       cwd,
       encoding: 'utf-8',
+      timeout: 30_000,
       stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
     });
     if (check && (result.status ?? 1) !== 0) {
@@ -118,6 +119,7 @@ export function run_cmd(
     const stdout = execSync(cmd, {
       cwd,
       encoding: 'utf-8',
+      timeout: 30_000,
       stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
     });
     return (stdout || '').trim();
@@ -272,13 +274,17 @@ export function withSessionMapLock<T>(lockPath: string, fn: () => T): T {
   let acquired = false;
 
   while (!acquired) {
-    // Steal stale lock if present
+    // Steal stale lock if present — unlink + create in tight sequence to minimize TOCTOU window
+    let stale = false;
     try {
       const stats = fs.statSync(lockPath);
-      if (Date.now() - stats.mtimeMs > STALE_MS) {
-        try { fs.unlinkSync(lockPath); } catch { /* already gone */ }
-      }
+      stale = Date.now() - stats.mtimeMs > STALE_MS;
     } catch { /* lock file doesn't exist — expected */ }
+
+    if (stale) {
+      // Attempt atomic steal: unlink then immediately try exclusive create
+      try { fs.unlinkSync(lockPath); } catch { /* already gone */ }
+    }
 
     // Atomic exclusive create
     try {

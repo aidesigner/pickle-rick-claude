@@ -35,3 +35,112 @@ test('createPR throws when state.json is missing working_dir', () => {
         fs.rmSync(tmp, { recursive: true });
     }
 });
+
+test('createPR truncates long prompts to 50 chars in the PR title', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-factory-'));
+    try {
+        const longPrompt = 'A'.repeat(120);
+        fs.writeFileSync(
+            path.join(tmp, 'state.json'),
+            JSON.stringify({ working_dir: tmp, original_prompt: longPrompt })
+        );
+        // gh will fail because tmp is not a git repo — inspect the error to verify title construction
+        let caught;
+        try {
+            createPR(tmp);
+        } catch (err) {
+            caught = err;
+        }
+        assert.ok(caught, 'expected createPR to throw');
+        const msg = caught.message;
+        // Title should contain first 50 chars of the prompt followed by "..."
+        const expectedTitleFragment = `Pickle Rick: ${'A'.repeat(50)}...`;
+        assert.ok(
+            msg.includes(expectedTitleFragment),
+            `Error message should include the truncated title.\nExpected fragment: ${expectedTitleFragment}\nGot: ${msg}`
+        );
+        // Title must NOT contain the full 120-char prompt (it was truncated)
+        assert.ok(
+            !msg.includes(`Pickle Rick: ${'A'.repeat(120)}`),
+            'Title should not contain the full un-truncated prompt'
+        );
+    } finally {
+        fs.rmSync(tmp, { recursive: true });
+    }
+});
+
+test('createPR includes session ID (basename of sessionDir) in the PR body', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-factory-session-id-'));
+    try {
+        fs.writeFileSync(
+            path.join(tmp, 'state.json'),
+            JSON.stringify({ working_dir: tmp, original_prompt: 'add widget' })
+        );
+        let caught;
+        try {
+            createPR(tmp);
+        } catch (err) {
+            caught = err;
+        }
+        assert.ok(caught, 'expected createPR to throw');
+        const msg = caught.message;
+        const sessionId = path.basename(tmp);
+        assert.ok(
+            msg.includes(`Session: ${sessionId}`),
+            `Error message should include "Session: ${sessionId}" from the PR body.\nGot: ${msg}`
+        );
+    } finally {
+        fs.rmSync(tmp, { recursive: true });
+    }
+});
+
+test('createPR includes the full original prompt in the PR body', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-factory-'));
+    try {
+        const prompt = 'Refactor the authentication module to use OAuth2 with PKCE flow';
+        fs.writeFileSync(
+            path.join(tmp, 'state.json'),
+            JSON.stringify({ working_dir: tmp, original_prompt: prompt })
+        );
+        let caught;
+        try {
+            createPR(tmp);
+        } catch (err) {
+            caught = err;
+        }
+        assert.ok(caught, 'expected createPR to throw');
+        const msg = caught.message;
+        assert.ok(
+            msg.includes(`Prompt: ${prompt}`),
+            `Error message should include "Prompt: ${prompt}" from the PR body.\nGot: ${msg}`
+        );
+    } finally {
+        fs.rmSync(tmp, { recursive: true });
+    }
+});
+
+test('createPR propagates gh errors wrapped in "Failed to create PR"', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-factory-'));
+    try {
+        fs.writeFileSync(
+            path.join(tmp, 'state.json'),
+            JSON.stringify({ working_dir: tmp, original_prompt: 'test prompt' })
+        );
+        // gh will fail (no git repo) — createPR must wrap the error
+        assert.throws(() => createPR(tmp), (err) => {
+            assert.ok(err instanceof Error, 'thrown value should be an Error');
+            assert.ok(
+                err.message.startsWith('Failed to create PR:'),
+                `Error message should start with "Failed to create PR:", got: ${err.message}`
+            );
+            // The wrapped message should mention the gh command that failed
+            assert.ok(
+                err.message.includes('gh'),
+                `Wrapped error should reference the gh command, got: ${err.message}`
+            );
+            return true;
+        });
+    } finally {
+        fs.rmSync(tmp, { recursive: true });
+    }
+});

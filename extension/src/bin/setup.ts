@@ -30,9 +30,14 @@ async function main() {
         }
       }
       map[cwd] = sessionPath;
-      const tmpMap = SESSIONS_MAP + `.tmp.${process.pid}`;
-      fs.writeFileSync(tmpMap, JSON.stringify(map, null, 2));
-      fs.renameSync(tmpMap, SESSIONS_MAP);
+      const tmpMap = SESSIONS_MAP + `.tmp.${process.pid}.${Date.now()}`;
+      try {
+        fs.writeFileSync(tmpMap, JSON.stringify(map, null, 2));
+        fs.renameSync(tmpMap, SESSIONS_MAP);
+      } catch (err) {
+        try { fs.unlinkSync(tmpMap); } catch { /* cleanup best-effort */ }
+        throw err;
+      }
     });
   };
 

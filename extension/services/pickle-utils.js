@@ -18,7 +18,7 @@ export function getWidth(maxW = 90) {
     return Math.min(cols - 4, maxW);
 }
 export function wrapText(text, width) {
-    if (width <= 0)
+    if (!Number.isFinite(width) || width <= 0)
         return [text];
     const lines = [];
     const words = text.split(' ');
@@ -79,6 +79,7 @@ export function run_cmd(cmd, options = {}) {
         const result = spawnSync(cmd[0], cmd.slice(1), {
             cwd,
             encoding: 'utf-8',
+            timeout: 30_000,
             stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
         });
         if (check && (result.status ?? 1) !== 0) {
@@ -90,6 +91,7 @@ export function run_cmd(cmd, options = {}) {
         const stdout = execSync(cmd, {
             cwd,
             encoding: 'utf-8',
+            timeout: 30_000,
             stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
         });
         return (stdout || '').trim();
@@ -235,17 +237,20 @@ export function withSessionMapLock(lockPath, fn) {
     const deadline = Date.now() + MAX_WAIT_MS;
     let acquired = false;
     while (!acquired) {
-        // Steal stale lock if present
+        // Steal stale lock if present — unlink + create in tight sequence to minimize TOCTOU window
+        let stale = false;
         try {
             const stats = fs.statSync(lockPath);
-            if (Date.now() - stats.mtimeMs > STALE_MS) {
-                try {
-                    fs.unlinkSync(lockPath);
-                }
-                catch { /* already gone */ }
-            }
+            stale = Date.now() - stats.mtimeMs > STALE_MS;
         }
         catch { /* lock file doesn't exist — expected */ }
+        if (stale) {
+            // Attempt atomic steal: unlink then immediately try exclusive create
+            try {
+                fs.unlinkSync(lockPath);
+            }
+            catch { /* already gone */ }
+        }
         // Atomic exclusive create
         try {
             const fd = fs.openSync(lockPath, 'wx');

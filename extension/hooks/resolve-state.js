@@ -41,7 +41,7 @@ export function loadActiveState(stateFile) {
     catch {
         return null;
     }
-    if (state.working_dir && path.resolve(state.working_dir) !== path.resolve(process.cwd())) {
+    if (state.working_dir != null && state.working_dir !== '' && path.resolve(state.working_dir) !== path.resolve(process.cwd())) {
         return null;
     }
     if (!state.active)

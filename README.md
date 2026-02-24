@@ -31,7 +31,7 @@
     "I turned myself into a compiler, Morty! *belch*"
 ```
 
-> *"Wubba Lubba Dub Dub! 🥒 I'm not just an AI assistant, Morty — I'm a**n autonomous engineering machine** trapped in a pickle jar!"*
+> *"Wubba Lubba Dub Dub! 🥒 I'm not just an AI assistant, Morty — I'm an **autonomous engineering machine** trapped in a pickle jar!"*
 
 A port of the [Pickle Rick Gemini CLI extension](https://github.com/galz10/pickle-rick-extension) for **Claude Code** — bringing the same autonomous, iterative coding loop to `claude` users, with several enhancements over the original:
 

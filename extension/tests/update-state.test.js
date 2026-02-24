@@ -88,10 +88,28 @@ test('updateState: step validation is case-sensitive ("PRD" is not valid)', () =
     });
 });
 
-test('updateState: non-step keys bypass step validation', () => {
+test('updateState: unknown keys are rejected', () => {
     withTempSession({ active: true, step: 'prd', iteration: 0 }, (dir) => {
-        assert.doesNotThrow(() => updateState('custom_key', 'any-value', dir));
+        assert.throws(
+            () => updateState('custom_key', 'any-value', dir),
+            /unknown state key/i
+        );
+    });
+});
+
+test('updateState: allowed non-step key "current_ticket" bypasses step validation', () => {
+    withTempSession({ active: true, step: 'prd', iteration: 0 }, (dir) => {
+        assert.doesNotThrow(() => updateState('current_ticket', 'TICK-42', dir));
         const state = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf-8'));
-        assert.equal(state.custom_key, 'any-value');
+        assert.equal(state.current_ticket, 'TICK-42');
+    });
+});
+
+test('updateState: numeric key with non-numeric value throws', () => {
+    withTempSession({ active: true, step: 'prd', iteration: 0 }, (dir) => {
+        assert.throws(
+            () => updateState('iteration', 'abc', dir),
+            /requires a finite number/i
+        );
     });
 });

@@ -128,7 +128,7 @@ async function main() {
     const repoPath: string = meta.repo_path;
 
     // Integrity check: verify PRD content hasn't been tampered with since jarring
-    if (typeof meta.prd_hash === 'string') {
+    if (typeof meta.prd_hash === 'string' && meta.prd_hash.length > 0) {
       const prdPath = path.join(path.dirname(metaPath), typeof meta.prd_path === 'string' ? meta.prd_path : 'prd.md');
       try {
         const prdContent = fs.readFileSync(prdPath, 'utf-8');
