@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, } from '../services/pickle-utils.js';
+import { PromiseTokens, hasToken } from '../types/index.js';
 const WORKER_ROLES = [
     { id: 'requirements' },
     { id: 'codebase' },
@@ -205,7 +206,7 @@ function spawnWorker(roleId, prompt, refinementDir, extensionRoot, timeout, work
                     logContent = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf-8') : '';
                 }
                 catch { /* */ }
-                const success = !workerTimedOut && logContent.includes('<promise>ANALYSIS_DONE</promise>');
+                const success = !workerTimedOut && hasToken(logContent, PromiseTokens.ANALYSIS_DONE);
                 settleWith({ roleId, success, logPath, cycle });
             }
         });

@@ -8,6 +8,7 @@ import {
   formatTime,
   getExtensionRoot,
 } from '../services/pickle-utils.js';
+import { PromiseTokens, hasToken } from '../types/index.js';
 
 const WORKER_ROLES = [
   { id: 'requirements' },
@@ -251,7 +252,7 @@ function spawnWorker(
       function finalize() {
         let logContent = '';
         try { logContent = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf-8') : ''; } catch { /* */ }
-        const success = !workerTimedOut && logContent.includes('<promise>ANALYSIS_DONE</promise>');
+        const success = !workerTimedOut && hasToken(logContent, PromiseTokens.ANALYSIS_DONE);
         settleWith({ roleId, success, logPath, cycle });
       }
     });

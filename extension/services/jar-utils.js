@@ -41,11 +41,14 @@ export function addToJar(sessionDir) {
     const jarRoot = path.join(getExtensionRoot(), 'jar');
     const taskDir = path.join(jarRoot, today, sessionId);
     fs.mkdirSync(taskDir, { recursive: true });
-    // 4. Copy PRD and compute integrity hash
+    // 4. Copy PRD and compute integrity hash (atomic write)
     const prdContent = fs.readFileSync(prdSrc, 'utf-8');
-    fs.writeFileSync(path.join(taskDir, 'prd.md'), prdContent);
+    const prdDest = path.join(taskDir, 'prd.md');
+    const prdTmp = prdDest + '.tmp';
+    fs.writeFileSync(prdTmp, prdContent);
+    fs.renameSync(prdTmp, prdDest);
     const prdHash = crypto.createHash('sha256').update(prdContent).digest('hex');
-    // 5. Write meta.json (includes prd_hash for integrity verification at run time)
+    // 5. Write meta.json (atomic write — includes prd_hash for integrity verification at run time)
     const meta = {
         repo_path: repoPath,
         branch,
@@ -55,7 +58,10 @@ export function addToJar(sessionDir) {
         task_id: sessionId,
         status: 'marinating',
     };
-    fs.writeFileSync(path.join(taskDir, 'meta.json'), JSON.stringify(meta, null, 2));
+    const metaDest = path.join(taskDir, 'meta.json');
+    const metaTmp = metaDest + '.tmp';
+    fs.writeFileSync(metaTmp, JSON.stringify(meta, null, 2));
+    fs.renameSync(metaTmp, metaDest);
     // 6. Deactivate the current session to prevent immediate execution
     state.active = false;
     state.completion_promise = 'JARRED'; // Signal completion

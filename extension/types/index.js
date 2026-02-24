@@ -11,6 +11,7 @@ export const PromiseTokens = {
     WORKER_DONE: 'I AM DONE',
     PRD_COMPLETE: 'PRD_COMPLETE',
     TICKET_SELECTED: 'TICKET_SELECTED',
+    ANALYSIS_DONE: 'ANALYSIS_DONE',
 };
 /** Returns true if `text` contains `<promise>TOKEN</promise>`, tolerating whitespace inside tags. */
 export function hasToken(text, token) {

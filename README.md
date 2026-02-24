@@ -38,7 +38,7 @@ A port of the [Pickle Rick Gemini CLI extension](https://github.com/galz10/pickl
 - **True context clearing via tmux** — `/pickle-tmux` spawns a genuinely fresh `claude -p` subprocess per iteration inside a tmux session, so each iteration starts with zero conversation history. No context drift on long epics.
 - **Context clearing** — every loop iteration injects a structured session summary (phase, ticket list, task) as a system message, so Rick survives full context compression without losing his place
 - **Single Stop hook** — the Gemini version requires three hooks (BeforeAgent, BeforeModel, AfterAgent); this port does it all in one, with fewer moving parts
-- **PRD refinement** — `/pickle-refine-prd` runs multi-cycle refinement (default: 2 cycles) with 3 parallel Morty analysts (Requirements, Codebase, Risk/Scope). Cycle 1 analyzes independently; cycle 2+ cross-references all previous findings for deeper insights. The refined PRD is written back to the original file in-place.
+- **PRD refinement & task decomposition** — `/pickle-refine-prd` runs multi-cycle refinement (default: 2 cycles) with 3 parallel Morty analysts (Requirements, Codebase, Risk/Scope), then decomposes the refined PRD into discrete, ordered implementation tasks with pre-created ticket files. The session is advanced so `/pickle --resume` skips PRD and breakdown phases and goes straight to orchestration.
 - **Worker isolation** — Morty subprocesses run with `-s` (no session persistence) and scoped `--include-directories`, so each worker starts genuinely fresh with only its ticket in context
 - **Skills inlined** — Gemini's skills require `activate_skill()` calls that can fail; here they're baked directly into the command prompts
 - **Jar improvements** — the Night Shift runner adds success/failure tracking and a configurable `default_manager_max_turns` setting absent from the original
@@ -101,7 +101,7 @@ The **Stop hook** prevents Claude from exiting until the task is genuinely compl
 | `/pickle "task"` | 🥒 Start the full autonomous loop |
 | `/pickle-tmux "task"` | 🖥️ True context clearing — fresh subprocess per iteration via tmux. Best for long epics (8+ iterations). Requires `tmux`. |
 | `/pickle-prd "task"` | 📋 Interactively draft a PRD first |
-| `/pickle-refine-prd [path]` | 🔬 Auto-refine a PRD using 3 parallel Morty analysts across multiple cycles |
+| `/pickle-refine-prd [path]` | 🔬 Refine PRD + decompose into ordered tasks with pre-created tickets; `/pickle --resume` to execute |
 | `/eat-pickle` | 🛑 Cancel the active loop |
 | `/help-pickle` | ❓ Show all commands and flags |
 | `/add-to-pickle-jar` | 🫙 Save current session to the Jar for later |
@@ -222,7 +222,7 @@ pickle-rick-claude/
 │   │   ├── pickle.md           # Main loop command (PRD + Breakdown inlined)
 │   │   ├── pickle-tmux.md      # True context clearing via tmux 🖥️
 │   │   ├── pickle-prd.md       # Interactive PRD drafter
-│   │   ├── pickle-refine-prd.md # Auto-refine a PRD with parallel analysts 🔬
+│   │   ├── pickle-refine-prd.md # Refine PRD + decompose into executable tasks 🔬
 │   │   ├── send-to-morty.md    # Worker prompt (internal — all 7 phases inlined)
 │   │   ├── pickle-status.md    # Show session status
 │   │   ├── pickle-retry.md     # Retry a failed ticket

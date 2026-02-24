@@ -39,7 +39,12 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
     let maxTurns = 50;
     try {
         const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-        maxTurns = settings.default_tmux_max_turns ?? settings.default_manager_max_turns ?? 50;
+        if (typeof settings.default_tmux_max_turns === 'number' && settings.default_tmux_max_turns > 0) {
+            maxTurns = settings.default_tmux_max_turns;
+        }
+        else if (typeof settings.default_manager_max_turns === 'number' && settings.default_manager_max_turns > 0) {
+            maxTurns = settings.default_manager_max_turns;
+        }
     }
     catch { /* use default */ }
     const logFile = path.join(sessionDir, `tmux_iteration_${iterationNum}.log`);

@@ -227,6 +227,87 @@ test('jar-runner: skips task and sets status to failed when session dir is missi
     }
 });
 
+// --- Settings type guard for default_manager_max_turns ---
+
+test('jar-runner: ignores non-number default_manager_max_turns in settings (e.g., string)', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const taskId = 'task-bad-settings';
+        const taskDir = path.join(tmpRoot, 'jar', '2026-01-01', taskId);
+        fs.mkdirSync(taskDir, { recursive: true });
+        const metaPath = path.join(taskDir, 'meta.json');
+        fs.writeFileSync(metaPath, JSON.stringify({
+            status: 'marinating',
+            repo_path: tmpRoot,
+        }, null, 2));
+
+        // Write settings with a string value (should be ignored → default 50)
+        fs.writeFileSync(path.join(tmpRoot, 'pickle_settings.json'), JSON.stringify({
+            default_manager_max_turns: "fifty",
+        }));
+
+        // Create session dir with state.json
+        const sessionDir = path.join(tmpRoot, 'sessions', taskId);
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: false,
+            step: 'prd',
+            iteration: 0,
+            working_dir: tmpRoot,
+            session_dir: sessionDir,
+        }, null, 2));
+
+        const result = run(tmpRoot);
+        // Should not crash — the string value should be ignored
+        const combined = result.stdout + result.stderr;
+        assert.ok(
+            !combined.includes('TypeError'),
+            `Should not have TypeError with string settings, got: ${combined.slice(0, 500)}`
+        );
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('jar-runner: ignores zero or negative default_manager_max_turns in settings', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const taskId = 'task-zero-turns';
+        const taskDir = path.join(tmpRoot, 'jar', '2026-01-01', taskId);
+        fs.mkdirSync(taskDir, { recursive: true });
+        const metaPath = path.join(taskDir, 'meta.json');
+        fs.writeFileSync(metaPath, JSON.stringify({
+            status: 'marinating',
+            repo_path: tmpRoot,
+        }, null, 2));
+
+        // Write settings with zero value (should be ignored → default 50)
+        fs.writeFileSync(path.join(tmpRoot, 'pickle_settings.json'), JSON.stringify({
+            default_manager_max_turns: 0,
+        }));
+
+        const sessionDir = path.join(tmpRoot, 'sessions', taskId);
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: false,
+            step: 'prd',
+            iteration: 0,
+            working_dir: tmpRoot,
+            session_dir: sessionDir,
+        }, null, 2));
+
+        const result = run(tmpRoot);
+        const combined = result.stdout + result.stderr;
+        // Should show MaxTurns: 50 (the default) since 0 is rejected
+        assert.ok(
+            combined.includes('50'),
+            `Expected default max turns (50) when settings has 0, got: ${combined.slice(0, 500)}`
+        );
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
 // --- PRD integrity passes with correct hash ---
 
 test('jar-runner: does not skip task when PRD hash matches (integrity passes)', () => {

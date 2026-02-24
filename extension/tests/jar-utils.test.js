@@ -96,6 +96,38 @@ test('addToJar: creates jar entry, writes meta.json, deactivates session', () =>
     }
 });
 
+test('addToJar: prd.md and meta.json are written atomically (no leftover .tmp files)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-jar-'));
+
+    try {
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({
+            active: true,
+            working_dir: dir,
+        }));
+        fs.writeFileSync(path.join(dir, 'prd.md'), '# Atomic Test PRD');
+
+        const resultPath = addToJar(dir);
+
+        // Verify the files exist
+        assert.ok(fs.existsSync(path.join(resultPath, 'prd.md')), 'prd.md should exist');
+        assert.ok(fs.existsSync(path.join(resultPath, 'meta.json')), 'meta.json should exist');
+
+        // Verify no leftover .tmp files (atomic write cleans up)
+        const files = fs.readdirSync(resultPath);
+        const tmpFiles = files.filter(f => f.endsWith('.tmp'));
+        assert.equal(tmpFiles.length, 0, `No .tmp files should remain, found: ${tmpFiles.join(', ')}`);
+
+        // Cleanup
+        fs.rmSync(resultPath, { recursive: true });
+        const parentDir = path.dirname(resultPath);
+        if (fs.existsSync(parentDir) && fs.readdirSync(parentDir).length === 0) {
+            fs.rmdirSync(parentDir);
+        }
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
 test('addToJar: result path is nested under jar/<date>/<sessionId>', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-jar-'));
 

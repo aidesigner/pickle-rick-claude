@@ -34,7 +34,8 @@ async function runTask(sessionDir: string, repoCwd: string, extensionRoot: strin
   let managerMaxTurns = 50;
   try {
     const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-    if (settings.default_manager_max_turns) managerMaxTurns = settings.default_manager_max_turns;
+    if (typeof settings.default_manager_max_turns === 'number' && settings.default_manager_max_turns > 0)
+      managerMaxTurns = settings.default_manager_max_turns;
   } catch { /* ignore */ }
 
   printMinimalPanel(`Running Jarred Task`, {

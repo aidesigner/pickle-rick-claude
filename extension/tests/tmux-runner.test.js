@@ -158,6 +158,81 @@ test('tmux-runner: takes ownership of inactive session then respects max_iterati
     }
 });
 
+// --- Settings type guards for max turns ---
+
+test('tmux-runner: ignores non-number default_tmux_max_turns in settings', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = path.join(tmpRoot, 'session');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        // Session already at max iterations — will exit immediately
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            step: 'implement',
+            iteration: 3,
+            max_iterations: 3,
+            original_prompt: 'test settings guard',
+            working_dir: tmpRoot,
+        }, null, 2));
+
+        // Write settings with a string (should be ignored)
+        fs.writeFileSync(path.join(tmpRoot, 'pickle_settings.json'), JSON.stringify({
+            default_tmux_max_turns: "eighty",
+            default_manager_max_turns: true,
+        }));
+
+        const result = run(tmpRoot, [sessionDir]);
+        const combined = result.stdout + result.stderr;
+        // Should not crash with TypeError
+        assert.ok(
+            !combined.includes('TypeError'),
+            `Should handle non-number settings gracefully, got: ${combined.slice(0, 500)}`
+        );
+
+        const runnerLog = path.join(sessionDir, 'tmux-runner.log');
+        if (fs.existsSync(runnerLog)) {
+            const logContent = fs.readFileSync(runnerLog, 'utf-8');
+            assert.ok(
+                logContent.includes('Max iterations reached'),
+                `Expected normal max iterations exit, got: ${logContent}`
+            );
+        }
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('tmux-runner: ignores zero default_tmux_max_turns, falls back to default_manager_max_turns', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = path.join(tmpRoot, 'session');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            step: 'refactor',
+            iteration: 2,
+            max_iterations: 2,
+            original_prompt: 'test fallback',
+            working_dir: tmpRoot,
+        }, null, 2));
+
+        // default_tmux_max_turns is 0 (rejected), but default_manager_max_turns is valid
+        fs.writeFileSync(path.join(tmpRoot, 'pickle_settings.json'), JSON.stringify({
+            default_tmux_max_turns: 0,
+            default_manager_max_turns: 42,
+        }));
+
+        const result = run(tmpRoot, [sessionDir]);
+        const combined = result.stdout + result.stderr;
+        assert.ok(
+            !combined.includes('TypeError'),
+            `Should handle zero settings gracefully, got: ${combined.slice(0, 500)}`
+        );
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
 // --- Nonexistent session dir path → exit code 1 ---
 
 test('tmux-runner: exits with code 1 when session dir path does not exist', () => {

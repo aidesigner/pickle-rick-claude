@@ -60,6 +60,7 @@ test('PromiseTokens: all expected keys are defined', () => {
     'WORKER_DONE',
     'PRD_COMPLETE',
     'TICKET_SELECTED',
+    'ANALYSIS_DONE',
   ];
   for (const key of required) {
     assert.ok(key in PromiseTokens, `Missing PromiseTokens.${key}`);
@@ -113,4 +114,12 @@ test('hasToken: newline inside tags matched', () => {
 
 test('hasToken: tab inside tags matched', () => {
   assert.equal(hasToken('<promise>\tEPIC_COMPLETED\t</promise>', 'EPIC_COMPLETED'), true);
+});
+
+test('PromiseTokens: ANALYSIS_DONE is "ANALYSIS_DONE"', () => {
+  assert.equal(PromiseTokens.ANALYSIS_DONE, 'ANALYSIS_DONE');
+});
+
+test('hasToken: detects ANALYSIS_DONE with whitespace tolerance', () => {
+  assert.equal(hasToken('<promise> ANALYSIS_DONE </promise>', PromiseTokens.ANALYSIS_DONE), true);
 });
