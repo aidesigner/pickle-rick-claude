@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
+import { StringDecoder } from 'string_decoder';
 import { Style } from '../services/pickle-utils.js';
 const ANSI = /\x1b\[[0-9;]*[a-zA-Z]/g;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -31,14 +32,18 @@ function drain(logPath, offset) {
         if (size <= offset)
             return offset;
         fd = fs.openSync(logPath, 'r');
+        const decoder = new StringDecoder('utf-8');
         let pos = offset;
         while (pos < size) {
             const toRead = Math.min(DRAIN_CHUNK, size - pos);
             const buf = Buffer.allocUnsafe(toRead);
             fs.readSync(fd, buf, 0, toRead, pos);
-            emit(buf.toString('utf-8'));
+            emit(decoder.write(buf));
             pos += toRead;
         }
+        const trailing = decoder.end();
+        if (trailing)
+            emit(trailing);
         fs.closeSync(fd);
         return size;
     }

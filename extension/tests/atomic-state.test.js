@@ -84,3 +84,40 @@ test('writeStateFile: target file is complete JSON after write (not partial)', (
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// PID-qualified temp path (deep review pass 5)
+// ---------------------------------------------------------------------------
+
+test('writeStateFile: no .tmp.PID file left behind after successful write', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'as-'));
+  try {
+    const statePath = path.join(dir, 'state.json');
+    writeStateFile(statePath, { active: true, iteration: 1 });
+    // Verify no leftover .tmp files of any form (including .tmp.PID)
+    const files = fs.readdirSync(dir);
+    const tmpFiles = files.filter(f => f.includes('.tmp'));
+    assert.equal(tmpFiles.length, 0, `No .tmp files should remain, found: ${tmpFiles.join(', ')}`);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('writeStateFile: concurrent writes from same PID do not leave .tmp files', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'as-'));
+  try {
+    const statePath = path.join(dir, 'state.json');
+    // Write multiple times rapidly
+    for (let i = 0; i < 5; i++) {
+      writeStateFile(statePath, { active: true, iteration: i });
+    }
+    const files = fs.readdirSync(dir);
+    const tmpFiles = files.filter(f => f.includes('.tmp'));
+    assert.equal(tmpFiles.length, 0, `No .tmp files should remain after multiple writes`);
+    // Final value should be the last write
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    assert.equal(state.iteration, 4);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

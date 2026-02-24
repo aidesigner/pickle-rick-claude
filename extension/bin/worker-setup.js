@@ -31,4 +31,6 @@ function main() {
         CWD: process.cwd(),
     }, 'BLUE', '👶');
 }
-main();
+if (process.argv[1] && path.basename(process.argv[1]) === 'worker-setup.js') {
+    main();
+}

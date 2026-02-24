@@ -34,12 +34,13 @@ async function main() {
     }
     const rawTimeout = timeoutIndex !== -1 ? parseInt(args[timeoutIndex + 1], 10) : NaN;
     const timeout = !isNaN(rawTimeout) && rawTimeout > 0 ? rawTimeout : 1200;
-    const outputFormat = formatIndex !== -1 ? args[formatIndex + 1] : 'text';
+    const rawFormat = formatIndex !== -1 ? args[formatIndex + 1] : undefined;
+    const outputFormat = rawFormat && !rawFormat.startsWith('--') ? rawFormat : 'text';
     // Read ticket content if provided
     let ticketContent = '';
     if (ticketFileIndex !== -1) {
         const ticketFilePath = args[ticketFileIndex + 1];
-        if (fs.existsSync(ticketFilePath)) {
+        if (ticketFilePath && !ticketFilePath.startsWith('--') && fs.existsSync(ticketFilePath)) {
             ticketContent = fs.readFileSync(ticketFilePath, 'utf-8');
         }
     }
@@ -65,8 +66,8 @@ async function main() {
     if (timeoutStatePath) {
         try {
             const state = JSON.parse(fs.readFileSync(timeoutStatePath, 'utf-8'));
-            const maxMins = state.max_time_minutes || 0;
-            const startEpoch = state.start_time_epoch || 0;
+            const maxMins = Number(state.max_time_minutes) || 0;
+            const startEpoch = Number(state.start_time_epoch) || 0;
             if (maxMins > 0 && startEpoch > 0) {
                 const remaining = Math.floor(maxMins * 60 - (Math.floor(Date.now() / 1000) - startEpoch));
                 if (remaining <= 0) {
@@ -179,11 +180,8 @@ async function main() {
             clearTimeout(hangGuard);
             if (process.stdout.isTTY)
                 process.stdout.write('\r\x1b[K');
-            // End the write stream and wait for flush before reading the log.
-            // Without this, pipe buffers may not have drained to disk yet and
-            // the WORKER_DONE token could be missed — causing a false failure.
-            logStream.end();
             let finalized = false;
+            // Register finish listener BEFORE calling end() to avoid missing synchronous completion.
             // Guard against logStream.finish never firing (e.g., disk I/O failure)
             const flushTimeout = setTimeout(() => {
                 console.error(`${Style.YELLOW}⚠️  Log flush timed out — reading partial log${Style.RESET}`);
@@ -193,6 +191,10 @@ async function main() {
                 clearTimeout(flushTimeout);
                 finalize(code);
             });
+            // End the write stream and wait for flush before reading the log.
+            // Without this, pipe buffers may not have drained to disk yet and
+            // the WORKER_DONE token could be missed — causing a false failure.
+            logStream.end();
             function finalize(exitCode) {
                 if (finalized)
                     return;

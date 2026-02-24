@@ -251,6 +251,89 @@ test('tmux-runner: exits with code 1 when session dir path does not exist', () =
 
 // --- Runner creates tmux-runner.log ---
 
+// ---------------------------------------------------------------------------
+// Number() coercion for string numeric limits (deep review pass 5)
+// ---------------------------------------------------------------------------
+
+test('tmux-runner: string max_iterations and iteration still trigger max iterations exit', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = path.join(tmpRoot, 'session');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        // Use STRING values for max_iterations and iteration
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            step: 'implement',
+            iteration: '1',
+            max_iterations: '1',
+            original_prompt: 'test string coercion',
+            working_dir: tmpRoot,
+        }, null, 2));
+
+        const result = run(tmpRoot, [sessionDir]);
+
+        const runnerLog = path.join(sessionDir, 'tmux-runner.log');
+        let logContent = '';
+        if (fs.existsSync(runnerLog)) {
+            logContent = fs.readFileSync(runnerLog, 'utf-8');
+        }
+        const combined = result.stdout + result.stderr + logContent;
+
+        assert.ok(
+            combined.includes('Max iterations reached'),
+            `Expected "Max iterations reached" with string numerics, got stdout: ${result.stdout}, stderr: ${result.stderr}, log: ${logContent}`
+        );
+
+        // Verify state was set to inactive
+        const finalState = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+        assert.equal(finalState.active, false, 'Session should be inactive after string max iterations');
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('tmux-runner: NaN max_time_minutes and start_time_epoch do not crash', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = path.join(tmpRoot, 'session');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        // NaN time values but valid iteration limit so it exits quickly
+        // Number("abc") = NaN, || 0 fallback prevents crash on time checks
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            step: 'implement',
+            iteration: 5,
+            max_iterations: 5,
+            max_time_minutes: 'abc',
+            start_time_epoch: 'xyz',
+            original_prompt: 'test NaN safety',
+            working_dir: tmpRoot,
+        }, null, 2));
+
+        const result = run(tmpRoot, [sessionDir]);
+
+        const runnerLog = path.join(sessionDir, 'tmux-runner.log');
+        let logContent = '';
+        if (fs.existsSync(runnerLog)) {
+            logContent = fs.readFileSync(runnerLog, 'utf-8');
+        }
+        const combined = result.stdout + result.stderr + logContent;
+
+        // Should not crash with TypeError — should handle NaN gracefully
+        assert.ok(
+            !combined.includes('TypeError'),
+            `Should not crash on NaN time values, got: ${combined.slice(0, 500)}`
+        );
+        // Should still hit max iterations and exit cleanly
+        assert.ok(
+            combined.includes('Max iterations reached'),
+            `Expected "Max iterations reached" despite NaN time values, got: ${logContent}`
+        );
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
 test('tmux-runner: creates tmux-runner.log in session directory', () => {
     const tmpRoot = makeTmpRoot();
     try {

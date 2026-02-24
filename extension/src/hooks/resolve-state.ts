@@ -59,7 +59,7 @@ export function approve(): void {
  * Writes to a `.tmp` sibling first, then renames — prevents partial reads.
  */
 export function writeStateFile(filePath: string, state: State | object): void {
-  const tmp = filePath + '.tmp';
+  const tmp = `${filePath}.tmp.${process.pid}`;
   try {
     fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
     fs.renameSync(tmp, filePath);

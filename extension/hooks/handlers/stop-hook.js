@@ -132,17 +132,20 @@ async function main() {
     }
     // 7. Check Limits (Final Guard)
     const now = Math.floor(Date.now() / 1000);
-    const startEpoch = state.start_time_epoch > 0 ? state.start_time_epoch : now;
-    const elapsedSeconds = Math.max(0, now - startEpoch);
-    const maxTimeSeconds = state.max_time_minutes * 60;
-    if (state.max_iterations > 0 && state.iteration >= state.max_iterations) {
-        log(`Decision: ALLOW (Max iterations reached: ${state.iteration}/${state.max_iterations})`);
+    const startEpoch = Number(state.start_time_epoch) || 0;
+    const maxTimeMins = Number(state.max_time_minutes) || 0;
+    const maxIter = Number(state.max_iterations) || 0;
+    const curIter = Number(state.iteration) || 0;
+    const elapsedSeconds = startEpoch > 0 ? Math.max(0, now - startEpoch) : 0;
+    const maxTimeSeconds = maxTimeMins * 60;
+    if (maxIter > 0 && curIter >= maxIter) {
+        log(`Decision: ALLOW (Max iterations reached: ${curIter}/${maxIter})`);
         state.active = false;
         writeStateFile(stateFile, state);
         approve();
         return;
     }
-    if (state.max_time_minutes > 0 && elapsedSeconds >= maxTimeSeconds) {
+    if (maxTimeMins > 0 && startEpoch > 0 && elapsedSeconds >= maxTimeSeconds) {
         log(`Decision: ALLOW (Time limit reached: ${elapsedSeconds}/${maxTimeSeconds}s)`);
         state.active = false;
         writeStateFile(stateFile, state);
@@ -151,9 +154,9 @@ async function main() {
     }
     // 8. Default: Continue Loop (Prevent Exit)
     log('Decision: BLOCK (Default continuation)');
-    let defaultFeedback = `🥒 **Pickle Rick Loop Active** (Iteration ${state.iteration})`;
-    if (state.max_iterations > 0)
-        defaultFeedback += ` of ${state.max_iterations}`;
+    let defaultFeedback = `🥒 **Pickle Rick Loop Active** (Iteration ${curIter})`;
+    if (maxIter > 0)
+        defaultFeedback += ` of ${maxIter}`;
     console.log(JSON.stringify({ decision: 'block', reason: defaultFeedback }));
 }
 main().catch((err) => {

@@ -203,3 +203,33 @@ test('cancelSession: returns early when sessions map is unreadable JSON', () => 
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
 });
+
+// ---------------------------------------------------------------------------
+// Unreadable state.json should NOT print "Loop Cancelled" (deep review pass 5)
+// ---------------------------------------------------------------------------
+
+test('cancelSession: unreadable state.json does NOT print Loop Cancelled', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = path.join(tmpRoot, 'session');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        // Write corrupt state.json
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), '{{{corrupt json');
+
+        writeSessionsMap(tmpRoot, { [tmpRoot]: sessionDir });
+
+        const output = runCancelSubprocess(tmpRoot, tmpRoot);
+        // Must NOT claim the loop was cancelled when state was unreadable
+        assert.ok(
+            !output.includes('Loop Cancelled'),
+            `Should not print "Loop Cancelled" for unreadable state, got: ${output}`
+        );
+        // Should print an appropriate error message
+        assert.ok(
+            output.includes('unreadable') || output.includes('Failed'),
+            `Should report unreadable state or failure, got: ${output}`
+        );
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});

@@ -66,7 +66,7 @@ export function update_ticket_status(ticket_id, new_status, session_dir) {
         }
         else {
             // Insert updated field before closing --- if missing
-            fmSection = fmSection.replace(/\n---(\n?)$/, `\nupdated: "${today}"\n---$1`);
+            fmSection = fmSection.replace(/\n---(\r?\n?)$/, `\nupdated: "${today}"\n---$1`);
         }
         content = fmSection + content.slice(fm.end);
     }

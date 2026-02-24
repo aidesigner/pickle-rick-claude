@@ -512,3 +512,34 @@ test('stop-hook: no disabled marker → hook processes normally (blocks active s
   const { decision } = runHook({ state: baseState(), response: 'just some text' });
   assert.equal(decision.decision, 'block');
 });
+
+// ---------------------------------------------------------------------------
+// Number() coercion for string numeric state fields (deep review pass 5)
+// ---------------------------------------------------------------------------
+
+test('stop-hook: string max_iterations and iteration still trigger limit check', () => {
+  const { decision, state } = runHook({
+    state: baseState({ iteration: '3', max_iterations: '3' }),
+  });
+  assert.deepEqual(decision, { decision: 'approve' });
+  assert.equal(state.active, false, 'should deactivate when string numerics match limit');
+});
+
+test('stop-hook: string start_time_epoch and max_time_minutes still trigger time limit', () => {
+  const { decision, state } = runHook({
+    state: baseState({
+      start_time_epoch: String(Math.floor(Date.now() / 1000) - 3700),
+      max_time_minutes: '60',
+    }),
+  });
+  assert.deepEqual(decision, { decision: 'approve' });
+  assert.equal(state.active, false, 'should deactivate when string time values exceed limit');
+});
+
+test('stop-hook: NaN/undefined numeric state fields do not crash', () => {
+  // max_iterations is undefined, iteration is "abc" → Number("abc") = NaN → || 0
+  const { decision } = runHook({
+    state: baseState({ iteration: 'abc', max_iterations: undefined, max_time_minutes: undefined, start_time_epoch: undefined }),
+  });
+  assert.equal(decision.decision, 'block', 'should fall through to default block without crashing');
+});

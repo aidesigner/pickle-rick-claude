@@ -49,6 +49,11 @@ async function main() {
         process.exit(1);
     }
     const [hookName, ...extraArgs] = args;
+    if (hookName.includes('/') || hookName.includes('\\') || hookName.includes('..')) {
+        logError(`Invalid hook name (path traversal rejected): ${hookName}`);
+        approve();
+        process.exit(0);
+    }
     log(`Dispatching hook: ${hookName} (cwd: ${process.cwd()})`);
     const isWindows = process.platform === 'win32';
     let scriptPath;

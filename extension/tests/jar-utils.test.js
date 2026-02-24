@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { addToJar } from '../services/jar-utils.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const JAR_UTILS_BIN = path.resolve(__dirname, '../services/jar-utils.js');
 
 // --- Error paths ---
 
@@ -126,6 +131,34 @@ test('addToJar: prd.md and meta.json are written atomically (no leftover .tmp fi
     } finally {
         fs.rmSync(dir, { recursive: true });
     }
+});
+
+// ---------------------------------------------------------------------------
+// CLI --session validation (deep review pass 5)
+// ---------------------------------------------------------------------------
+
+test('jar-utils CLI: --session as last arg (no value) exits 1 with error', () => {
+    const result = spawnSync(process.execPath, [JAR_UTILS_BIN, 'add', '--session'], {
+        encoding: 'utf-8',
+        timeout: 10000,
+    });
+    assert.equal(result.status, 1, 'should exit with code 1');
+    assert.ok(
+        result.stderr.includes('non-empty path') || result.stderr.includes('requires'),
+        `stderr should mention empty path error, got: ${result.stderr}`
+    );
+});
+
+test('jar-utils CLI: --session with value starting with -- exits 1 with error', () => {
+    const result = spawnSync(process.execPath, [JAR_UTILS_BIN, 'add', '--session', '--bogus'], {
+        encoding: 'utf-8',
+        timeout: 10000,
+    });
+    assert.equal(result.status, 1, 'should exit with code 1');
+    assert.ok(
+        result.stderr.includes('non-empty path') || result.stderr.includes('requires'),
+        `stderr should mention path error, got: ${result.stderr}`
+    );
 });
 
 test('addToJar: result path is nested under jar/<date>/<sessionId>', () => {

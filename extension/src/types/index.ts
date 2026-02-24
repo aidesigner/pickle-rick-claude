@@ -13,7 +13,6 @@ export interface State {
   history: Array<{ step: Step; ticket?: string; timestamp: string }>;
   started_at: string;
   session_dir: string;
-  jar_complete?: boolean;
   tmux_mode?: boolean;
 }
 

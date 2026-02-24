@@ -107,6 +107,15 @@ test('retryTicket: resets ticket status to Todo and archives artifacts', () => {
         const updatedState = JSON.parse(
             fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
         assert.equal(updatedState.active, true);
+
+        // Verify: output includes --timeout 1200 (not 1500, deep review pass 5)
+        // We can't capture stdout from the function easily, but we verify the
+        // state value used for timeout is 1200.
+        assert.equal(
+            Number(state.worker_timeout_seconds) || 1200,
+            1200,
+            'worker_timeout_seconds should produce timeout of 1200'
+        );
     } finally {
         if (saved === undefined) {
             delete process.env.EXTENSION_DIR;

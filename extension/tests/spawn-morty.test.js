@@ -143,6 +143,61 @@ test('spawn-morty: valid args but no claude binary → exit 1 (spawn failure, no
     }
 });
 
+// ---------------------------------------------------------------------------
+// --output-format and --ticket-file edge cases (deep review pass 5)
+// ---------------------------------------------------------------------------
+
+test('spawn-morty: --output-format as last arg (no value) defaults to text', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        // --output-format is the last arg with no value following it
+        const result = run(
+            [
+                'implement the thing',
+                '--ticket-id', 'ticket-77',
+                '--ticket-path', tmpDir,
+                '--output-format',
+            ],
+            { PATH: '/usr/bin' }
+        );
+        // Should get past validation (no crash, no validation error)
+        assert.equal(result.status, 1, 'should exit with code 1 (no claude)');
+        assert.ok(
+            !result.stdout.includes('Usage'),
+            'should not be a Usage error'
+        );
+        assert.ok(
+            !result.stdout.includes('required'),
+            'should not be a "required" error'
+        );
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('spawn-morty: --ticket-file with value starting with -- does not crash', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const result = run(
+            [
+                'implement the thing',
+                '--ticket-id', 'ticket-88',
+                '--ticket-path', tmpDir,
+                '--ticket-file', '--bogus-flag',
+            ],
+            { PATH: '/usr/bin' }
+        );
+        // Should get past validation without crashing
+        assert.equal(result.status, 1, 'should exit with code 1 (no claude)');
+        assert.ok(
+            !result.stdout.includes('Usage'),
+            'should not be a Usage error'
+        );
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('spawn-morty: --timeout with custom value is accepted (no validation error)', () => {
     const tmpDir = makeTmpDir();
     try {

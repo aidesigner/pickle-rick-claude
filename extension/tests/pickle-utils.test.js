@@ -337,3 +337,54 @@ test('pruneOldSessions: skips entries without state.json', () => {
         fs.rmSync(root, { recursive: true });
     }
 });
+
+// ---------------------------------------------------------------------------
+// NaN from corrupt started_at — falls back to mtime (deep review pass 5)
+// ---------------------------------------------------------------------------
+
+test('pruneOldSessions: corrupt started_at falls back to mtime for age check', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-sessions-'));
+    try {
+        const sessionDir = path.join(root, 'corrupt-date-session');
+        fs.mkdirSync(sessionDir);
+        // Write state with corrupt started_at — Date("not-a-date") produces NaN
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({ active: false, started_at: 'not-a-date' })
+        );
+        // Set mtime to 10 days ago so the session is old enough to prune
+        const oldTime = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
+        fs.utimesSync(sessionDir, oldTime, oldTime);
+
+        pruneOldSessions(root, 7);
+        assert.equal(
+            fs.existsSync(sessionDir),
+            false,
+            'Should prune session with corrupt started_at using mtime fallback'
+        );
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('pruneOldSessions: corrupt started_at but recent mtime is kept', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-sessions-'));
+    try {
+        const sessionDir = path.join(root, 'corrupt-recent-session');
+        fs.mkdirSync(sessionDir);
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({ active: false, started_at: 'not-a-date' })
+        );
+        // mtime is recent (default, just created) → should NOT be pruned
+
+        pruneOldSessions(root, 7);
+        assert.equal(
+            fs.existsSync(sessionDir),
+            true,
+            'Should keep session with corrupt started_at but recent mtime'
+        );
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});

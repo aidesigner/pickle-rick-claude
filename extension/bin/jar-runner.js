@@ -42,6 +42,7 @@ async function runTask(sessionDir, repoCwd, extensionRoot) {
     }, 'MAGENTA', '🥒');
     const cmdArgs = [
         '--dangerously-skip-permissions',
+        '--add-dir', extensionRoot,
         '--add-dir', sessionDir,
         '--no-session-persistence',
         '--max-turns', String(managerMaxTurns),

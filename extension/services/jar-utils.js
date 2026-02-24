@@ -77,6 +77,10 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'jar-utils.js') {
         process.exit(1);
     }
     const sessionDir = args[sessionIndex + 1];
+    if (!sessionDir || sessionDir.startsWith('--')) {
+        console.error('Error: --session requires a non-empty path value.');
+        process.exit(1);
+    }
     try {
         const resultPath = addToJar(sessionDir);
         console.log(`Task successfully jarred at: ${resultPath}`);

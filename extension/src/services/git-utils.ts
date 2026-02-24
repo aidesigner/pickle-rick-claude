@@ -71,7 +71,7 @@ export function update_ticket_status(
       fmSection = fmSection.replace(/^updated:.*$/m, `updated: "${today}"`);
     } else {
       // Insert updated field before closing --- if missing
-      fmSection = fmSection.replace(/\n---(\n?)$/, `\nupdated: "${today}"\n---$1`);
+      fmSection = fmSection.replace(/\n---(\r?\n?)$/, `\nupdated: "${today}"\n---$1`);
     }
     content = fmSection + content.slice(fm.end);
   } else {

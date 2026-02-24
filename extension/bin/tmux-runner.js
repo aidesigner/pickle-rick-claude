@@ -50,6 +50,7 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
     const logFile = path.join(sessionDir, `tmux_iteration_${iterationNum}.log`);
     const cmdArgs = [
         '--dangerously-skip-permissions',
+        '--add-dir', extensionRoot,
         '--add-dir', sessionDir,
         '--no-session-persistence',
         '--max-turns', String(maxTurns),
@@ -61,6 +62,7 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
     delete env['CLAUDECODE'];
     const logStream = fs.createWriteStream(logFile, { flags: 'w' });
     return new Promise((resolve) => {
+        let settled = false;
         const proc = spawn('claude', cmdArgs, {
             cwd: state.working_dir || process.cwd(),
             env,
@@ -71,7 +73,9 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
         proc.stdout?.pipe(process.stdout);
         proc.stderr?.pipe(process.stderr);
         proc.on('close', () => {
-            logStream.end();
+            if (settled)
+                return;
+            settled = true;
             let finalized = false;
             function finalize() {
                 if (finalized)
@@ -86,7 +90,7 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
                     resolve('continue');
                 }
             }
-            // Guard against logStream.finish never firing (e.g., disk I/O failure)
+            // Register finish listener BEFORE calling end() to avoid missing synchronous completion
             const flushTimeout = setTimeout(() => {
                 console.error(`${Style.YELLOW}⚠️  Log flush timed out — reading partial log${Style.RESET}`);
                 finalize();
@@ -95,10 +99,15 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
                 clearTimeout(flushTimeout);
                 finalize();
             });
+            logStream.end();
         });
         proc.on('error', (err) => {
+            if (settled)
+                return;
+            settled = true;
             const msg = err instanceof Error ? err.message : String(err);
             console.error(`${Style.RED}Failed to spawn claude: ${msg}${Style.RESET}`);
+            logStream.end();
             resolve('error');
         });
     });
@@ -152,15 +161,18 @@ async function main() {
             log('Session inactive. Exiting.');
             break;
         }
-        if (state.max_iterations > 0 && state.iteration >= state.max_iterations) {
-            log(`Max iterations reached (${state.iteration}/${state.max_iterations}). Exiting.`);
+        const maxIter = Number(state.max_iterations) || 0;
+        const curIter = Number(state.iteration) || 0;
+        if (maxIter > 0 && curIter >= maxIter) {
+            log(`Max iterations reached (${curIter}/${maxIter}). Exiting.`);
             state.active = false;
             writeStateFile(statePath, state);
             break;
         }
         const startEpoch = Number(state.start_time_epoch) || 0;
+        const maxTimeMins = Number(state.max_time_minutes) || 0;
         const elapsed = startEpoch > 0 ? Math.max(0, Math.floor(Date.now() / 1000) - startEpoch) : 0;
-        if (state.max_time_minutes > 0 && startEpoch > 0 && elapsed >= state.max_time_minutes * 60) {
+        if (maxTimeMins > 0 && startEpoch > 0 && elapsed >= maxTimeMins * 60) {
             log(`Time limit reached (${elapsed}s). Exiting.`);
             state.active = false;
             writeStateFile(statePath, state);

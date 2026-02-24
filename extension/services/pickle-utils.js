@@ -297,8 +297,11 @@ export function pruneOldSessions(sessionsRoot, maxAgeDays = 7) {
             const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
             if (state.active === true)
                 continue;
-            const startedMs = state.started_at
+            const rawMs = state.started_at
                 ? new Date(state.started_at).getTime()
+                : NaN;
+            const startedMs = Number.isFinite(rawMs)
+                ? rawMs
                 : fs.statSync(sessionDir).mtimeMs;
             if (startedMs < cutoffMs) {
                 fs.rmSync(sessionDir, { recursive: true, force: true });

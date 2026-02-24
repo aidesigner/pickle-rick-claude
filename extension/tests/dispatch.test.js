@@ -323,6 +323,68 @@ test('dispatch: handler returning invalid decision field falls back to approve',
   }
 });
 
+// ---------------------------------------------------------------------------
+// Path traversal rejection (deep review pass 5)
+// ---------------------------------------------------------------------------
+
+test('dispatch: hook name with ../ path traversal outputs approve and exits 0', () => {
+  const tmpRoot = makeTmpRoot();
+  try {
+    // Create handlers dir so the test environment is valid
+    makeHandlersDir(tmpRoot);
+
+    const { stdout, status } = runDispatch({
+      extRoot: tmpRoot,
+      args: ['../../bin/setup'],
+      input: '{}',
+    });
+
+    assert.equal(status, 0, 'should exit with code 0');
+    const parsed = JSON.parse(stdout.trim());
+    assert.equal(parsed.decision, 'approve', 'path traversal should be rejected with approve (fail-open)');
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('dispatch: hook name with / outputs approve (path traversal)', () => {
+  const tmpRoot = makeTmpRoot();
+  try {
+    makeHandlersDir(tmpRoot);
+
+    const { stdout, status } = runDispatch({
+      extRoot: tmpRoot,
+      args: ['foo/bar'],
+      input: '{}',
+    });
+
+    assert.equal(status, 0, 'should exit with code 0');
+    const parsed = JSON.parse(stdout.trim());
+    assert.equal(parsed.decision, 'approve', 'slash in hook name should be rejected with approve');
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('dispatch: hook name with backslash outputs approve (path traversal)', () => {
+  const tmpRoot = makeTmpRoot();
+  try {
+    makeHandlersDir(tmpRoot);
+
+    const { stdout, status } = runDispatch({
+      extRoot: tmpRoot,
+      args: ['foo\\bar'],
+      input: '{}',
+    });
+
+    assert.equal(status, 0, 'should exit with code 0');
+    const parsed = JSON.parse(stdout.trim());
+    assert.equal(parsed.decision, 'approve', 'backslash in hook name should be rejected with approve');
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
 test('dispatch: EXTENSION_DIR env var is passed to the handler', () => {
   const tmpRoot = makeTmpRoot();
   try {
