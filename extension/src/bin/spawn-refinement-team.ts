@@ -287,7 +287,7 @@ async function main() {
   const extensionRoot = getExtensionRoot();
   const settingsFile = path.join(extensionRoot, 'pickle_settings.json');
   let defaultCycles = 3;
-  let defaultMaxTurns = 30;
+  let defaultMaxTurns = 100;
   if (fs.existsSync(settingsFile)) {
     try {
       const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf-8'));

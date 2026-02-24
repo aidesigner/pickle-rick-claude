@@ -163,9 +163,9 @@ All defaults are configurable via `~/.claude/pickle-rick/pickle_settings.json`:
 | `default_max_time_minutes` | 720 | Session wall-clock limit in minutes (12 hours) |
 | `default_worker_timeout_seconds` | 1200 | Per-worker subprocess timeout |
 | `default_manager_max_turns` | 50 | Max Claude turns per iteration (interactive/jar) |
-| `default_tmux_max_turns` | 80 | Max Claude turns per iteration (tmux mode) |
+| `default_tmux_max_turns` | 200 | Max Claude turns per iteration (tmux mode) |
 | `default_refinement_cycles` | 3 | Number of refinement analysis passes |
-| `default_refinement_max_turns` | 30 | Max Claude turns per refinement worker |
+| `default_refinement_max_turns` | 100 | Max Claude turns per refinement worker |
 
 ---
 
