@@ -33,7 +33,7 @@
 
 > *"Wubba Lubba Dub Dub! 🥒 I'm not just an AI assistant, Morty — I'm an **autonomous engineering machine** trapped in a pickle jar!"*
 
-A port of the [Pickle Rick Gemini CLI extension](https://github.com/galz10/pickle-rick-extension) for **Claude Code** — bringing the same autonomous, iterative coding loop to `claude` users, with several enhancements over the original:
+A port of the [Pickle Rick Gemini CLI extension](https://github.com/galz10/pickle-rick-extension) for **Claude Code** — bringing the same PRD-driven, autonomous coding loop to `claude` users, with several enhancements over the original:
 
 - **True context clearing via tmux** — `/pickle-tmux` spawns a genuinely fresh `claude -p` subprocess per iteration inside a tmux session, so each iteration starts with zero conversation history. No context drift on long epics.
 - **Context clearing** — every loop iteration injects a structured session summary (phase, ticket list, task) as a system message, so Rick survives full context compression without losing his place
@@ -47,7 +47,7 @@ A port of the [Pickle Rick Gemini CLI extension](https://github.com/galz10/pickl
 
 ## 🧬 What Is This?
 
-Pickle Rick transforms Claude Code into a **hyper-competent, arrogant, iterative coding machine** that enforces a rigid engineering lifecycle:
+Pickle Rick transforms Claude Code into a **hyper-competent, arrogant, iterative coding machine** that enforces a PRD-driven engineering lifecycle:
 
 ```
   /pickle "build X"
@@ -98,10 +98,10 @@ The **Stop hook** prevents Claude from exiting until the task is genuinely compl
 
 | Command | Description |
 |---|---|
-| `/pickle "task"` | 🥒 Start the full autonomous loop |
-| `/pickle-tmux "task"` | 🖥️ True context clearing — fresh subprocess per iteration via tmux. Best for long epics (8+ iterations). Requires `tmux`. |
-| `/pickle-prd "task"` | 📋 Interactively draft a PRD first |
-| `/pickle-refine-prd [path]` | 🔬 Refine PRD + decompose into ordered tasks with pre-created tickets; `/pickle --resume` to execute |
+| `/pickle "task"` | 🥒 Start the full autonomous loop — drafts a PRD, decomposes into tickets, then executes each through Research → Plan → Implement → Refactor |
+| `/pickle-tmux "task"` | 🖥️ Same PRD-driven loop, but with true context clearing — fresh subprocess per iteration via tmux. Best for long epics (8+ iterations). Requires `tmux`. |
+| `/pickle-prd "task"` | 📋 Interactively draft a PRD, then `/pickle --resume` to execute from it |
+| `/pickle-refine-prd [path]` | 🔬 Refine an existing PRD with 3 parallel analysts + decompose into ordered tickets; `/pickle --resume` to execute |
 | `/eat-pickle` | 🛑 Cancel the active loop |
 | `/help-pickle` | ❓ Show all commands and flags |
 | `/add-to-pickle-jar` | 🫙 Save current session to the Jar for later |
@@ -145,7 +145,7 @@ Ctrl+B 0                        # switch back to runner output
 Ctrl+B d                        # detach (session keeps running in background)
 ```
 
-**Bring your own PRD** — If a `prd.md` or `PRD.md` exists in your project root when you run `/pickle`, Rick will automatically load it instead of drafting a new one. Drop your PRD there and the interrogation phase is skipped entirely.
+**PRD is non-negotiable** — Every `/pickle` run starts with a PRD, whether Rick drafts it, you refine it with `/pickle-refine-prd`, or you bring your own (`prd.md` / `PRD.md` in project root). For best results on complex tasks, use `/pickle-prd` → `/pickle-refine-prd` → `/pickle --resume` to get the PRD right before execution begins.
 
 **Disabling Rick** — `/disable-pickle` creates a global marker file that silences the stop hook across all sessions instantly — no uninstall required. `/enable-pickle` removes it. To also drop the persona mid-session, just tell Rick directly: *"drop the Pickle Rick persona"* and he'll revert to standard Claude behavior for the rest of the session.
 
@@ -194,22 +194,40 @@ cp ~/.claude/pickle-rick/persona.md /path/to/your/project/.claude/CLAUDE.md
 
 ### 3. Run
 
-**Recommended — tmux mode** (requires `tmux`): runs in the background with a live monitor window so Claude Code's interface stays free:
+Everything starts with a PRD. Rick refuses to write code without one.
+
+**Option A: One-shot** — Rick drafts the PRD, breaks it down, and executes all in one loop:
 
 ```bash
 cd /path/to/your/project
 claude
 # then type:
+/pickle "refactor the auth module"
+```
+
+**Option B: PRD-first (recommended)** — Draft and refine the PRD interactively before execution:
+
+```bash
+/pickle-prd "refactor the auth module"    # Draft the PRD with Rick interrogating you
+/pickle-refine-prd                        # (optional) Refine with 3 parallel analysts + decompose into tickets
+/pickle --resume                          # Execute from the refined PRD
+```
+
+This gives you a chance to review and edit the PRD before Rick starts building. For complex tasks, this is the way.
+
+**Option C: Bring your own PRD** — Drop a `prd.md` or `PRD.md` in your project root, then:
+
+```bash
+/pickle "refactor the auth module"        # Rick detects the PRD and skips drafting
+```
+
+**tmux mode** (recommended for long epics): add `-tmux` to run in the background with a live monitor dashboard:
+
+```bash
 /pickle-tmux "refactor the auth module"
 ```
 
-Rick immediately prints a `tmux attach` command — open a second terminal and paste it to watch the live dashboard while it runs.
-
-**Interactive mode** (no tmux required):
-
-```bash
-/pickle "refactor the auth module"
-```
+Rick immediately prints a `tmux attach` command — open a second terminal and paste it to watch the live dashboard while it runs. Each iteration spawns a fresh Claude subprocess with clean context, so there's no drift on long epics (8+ iterations).
 
 Sit back. Rick handles the rest. 🥒
 
