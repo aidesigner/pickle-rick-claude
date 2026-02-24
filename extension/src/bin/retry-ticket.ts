@@ -70,7 +70,7 @@ export function retryTicket(ticketId: string, cwd: string): void {
   } else {
     updatedContent = ticketContent.replace(/^status:.*$/m, 'status: Todo');
   }
-  const tmpTicket = ticketFile + '.tmp';
+  const tmpTicket = ticketFile + `.tmp.${process.pid}`;
   try {
     fs.writeFileSync(tmpTicket, updatedContent);
     fs.renameSync(tmpTicket, ticketFile);

@@ -181,9 +181,14 @@ async function main() {
             state.completion_promise = promiseToken;
         // Sync local vars with (potentially preserved) state for display — coerce
         // to Number to guard against string-typed values from external edits / old state.
-        loopLimit = Number(state.max_iterations) || loopLimit;
-        timeLimit = Number(state.max_time_minutes) || timeLimit;
-        workerTimeout = Number(state.worker_timeout_seconds) || workerTimeout;
+        // Use Number.isFinite so that 0 (meaning infinite) is preserved rather than
+        // falling back to the settings default via `|| loopLimit`.
+        const rawLoopLimit = Number(state.max_iterations);
+        loopLimit = Number.isFinite(rawLoopLimit) ? rawLoopLimit : loopLimit;
+        const rawTimeLimit = Number(state.max_time_minutes);
+        timeLimit = Number.isFinite(rawTimeLimit) && rawTimeLimit > 0 ? rawTimeLimit : timeLimit;
+        const rawWorkerTimeout = Number(state.worker_timeout_seconds);
+        workerTimeout = Number.isFinite(rawWorkerTimeout) && rawWorkerTimeout > 0 ? rawWorkerTimeout : workerTimeout;
         writeStateFile(statePath, state);
         currentIteration = Number(state.iteration) + 1;
         promiseToken = state.completion_promise;
@@ -248,4 +253,6 @@ function resolvePath(p) {
         return path.join(os.homedir(), p.slice(1));
     return path.resolve(p);
 }
-main().catch((err) => die(err instanceof Error ? err.message : String(err)));
+if (process.argv[1] && path.basename(process.argv[1]) === 'setup.js') {
+    main().catch((err) => die(err instanceof Error ? err.message : String(err)));
+}

@@ -340,11 +340,11 @@ test('jar-runner: skips task when prd_path escapes task directory (path traversa
 
         const result = run(tmpRoot);
 
-        // Should fail with path traversal rejection OR integrity check failure
+        // Should fail with path traversal rejection specifically
         const combined = result.stdout + result.stderr;
         assert.ok(
-            combined.includes('escapes task directory') || combined.includes('integrity check failed') || combined.includes('Skipping'),
-            `Expected path traversal rejection, got stdout: ${result.stdout}, stderr: ${result.stderr}`
+            combined.includes('escapes task directory'),
+            `Expected "escapes task directory" in output, got stdout: ${result.stdout}, stderr: ${result.stderr}`
         );
 
         // Verify meta.json status was set to 'failed'
@@ -394,6 +394,51 @@ test('jar-runner: does not skip task when PRD hash matches (integrity passes)', 
         assert.ok(
             !result.stderr.includes('integrity check failed'),
             `Should NOT see "integrity check failed" when hash matches, got stderr: ${result.stderr}`
+        );
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+// --- runTask error isolation: corrupt state.json does not abort batch ---
+
+test('jar-runner: corrupt session state.json does not abort remaining tasks', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        // Task 1: corrupt state.json — should fail gracefully
+        const taskId1 = 'task-corrupt-state';
+        const taskDir1 = path.join(tmpRoot, 'jar', '2026-01-01', taskId1);
+        fs.mkdirSync(taskDir1, { recursive: true });
+        fs.writeFileSync(path.join(taskDir1, 'meta.json'), JSON.stringify({
+            status: 'marinating',
+            repo_path: tmpRoot,
+        }, null, 2));
+        const sessionDir1 = path.join(tmpRoot, 'sessions', taskId1);
+        fs.mkdirSync(sessionDir1, { recursive: true });
+        fs.writeFileSync(path.join(sessionDir1, 'state.json'), '{{{corrupt');
+
+        // Task 2: missing session dir — should also fail but prove batch continues
+        const taskId2 = 'task-no-session';
+        const taskDir2 = path.join(tmpRoot, 'jar', '2026-01-01', taskId2);
+        fs.mkdirSync(taskDir2, { recursive: true });
+        fs.writeFileSync(path.join(taskDir2, 'meta.json'), JSON.stringify({
+            status: 'marinating',
+            repo_path: tmpRoot,
+        }, null, 2));
+        // Intentionally no sessions/task-no-session/
+
+        const result = run(tmpRoot);
+        const combined = result.stdout + result.stderr;
+
+        // Both tasks should have been processed (batch didn't abort after first failure)
+        assert.ok(
+            combined.includes(taskId1) && combined.includes(taskId2),
+            `Expected both tasks to be mentioned in output, got: ${combined.slice(0, 1000)}`
+        );
+        // Should complete with summary
+        assert.ok(
+            combined.includes('Jar complete'),
+            `Expected batch completion summary, got: ${combined.slice(0, 500)}`
         );
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });

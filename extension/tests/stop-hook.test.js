@@ -514,6 +514,37 @@ test('stop-hook: no disabled marker → hook processes normally (blocks active s
 });
 
 // ---------------------------------------------------------------------------
+// Fail-open: corrupt state.json and invalid stdin
+// ---------------------------------------------------------------------------
+
+test('stop-hook: corrupt state.json → approve (fail-open)', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-'));
+  const sessionDir = path.join(tmpDir, 'session');
+  fs.mkdirSync(sessionDir);
+  const stateFile = path.join(sessionDir, 'state.json');
+  fs.writeFileSync(stateFile, '{{{invalid json!!!');
+
+  const env = { ...process.env, EXTENSION_DIR: tmpDir, FORCE_COLOR: '0', PICKLE_STATE_FILE: stateFile };
+  delete env.PICKLE_ROLE;
+
+  try {
+    const stdout = execFileSync(process.execPath, [STOP_HOOK], {
+      input: JSON.stringify({ prompt_response: '' }),
+      encoding: 'utf-8',
+      env,
+    });
+    assert.deepEqual(JSON.parse(stdout.trim()), { decision: 'approve' });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('stop-hook: empty stdin → approve (fail-open)', () => {
+  const { decision } = runHook({ state: baseState({ active: false }), response: '' });
+  assert.deepEqual(decision, { decision: 'approve' });
+});
+
+// ---------------------------------------------------------------------------
 // Refinement worker — ANALYSIS_DONE token handling
 // ---------------------------------------------------------------------------
 

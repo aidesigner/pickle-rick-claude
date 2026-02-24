@@ -116,6 +116,11 @@ test('retryTicket: resets ticket status to Todo and archives artifacts', () => {
             1200,
             'worker_timeout_seconds should produce timeout of 1200'
         );
+
+        // Verify: no leftover .tmp files (PID-qualified atomic write, deep review pass 7)
+        const ticketDirFiles = fs.readdirSync(ticketDir);
+        const tmpFiles = ticketDirFiles.filter(f => f.includes('.tmp'));
+        assert.equal(tmpFiles.length, 0, 'No .tmp files should remain after atomic write');
     } finally {
         if (saved === undefined) {
             delete process.env.EXTENSION_DIR;

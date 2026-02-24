@@ -136,7 +136,7 @@ async function main() {
       const rawPrdRel = typeof meta.prd_path === 'string' ? meta.prd_path : 'prd.md';
       const prdPath = path.resolve(taskDir, rawPrdRel);
       // Prevent path traversal — resolved prd_path must stay within the task directory
-      if (!prdPath.startsWith(taskDir + path.sep) && prdPath !== path.join(taskDir, rawPrdRel)) {
+      if (!prdPath.startsWith(taskDir + path.sep) && prdPath !== taskDir) {
         console.error(`${Style.RED}⚠️  Skipping ${taskId}: prd_path escapes task directory${Style.RESET}`);
         meta.status = 'failed';
         { const tmp = metaPath + `.tmp.${process.pid}`; fs.writeFileSync(tmp, JSON.stringify(meta, null, 2)); fs.renameSync(tmp, metaPath); }
@@ -162,7 +162,14 @@ async function main() {
       }
     }
 
-    const ok = await runTask(sessionDir, repoPath, ROOT_DIR);
+    let ok: boolean;
+    try {
+      ok = await runTask(sessionDir, repoPath, ROOT_DIR);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`${Style.RED}⚠️  runTask error for ${taskId}: ${msg}${Style.RESET}`);
+      ok = false;
+    }
     meta.status = ok ? 'consumed' : 'failed';
     { const tmp = metaPath + `.tmp.${process.pid}`; fs.writeFileSync(tmp, JSON.stringify(meta, null, 2)); fs.renameSync(tmp, metaPath); }
 

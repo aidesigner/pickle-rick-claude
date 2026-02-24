@@ -7,7 +7,7 @@ function main() {
     let sessionPath = '';
     // Find session path from args or map
     const resumeIndex = args.indexOf('--resume');
-    if (resumeIndex !== -1 && args[resumeIndex + 1]) {
+    if (resumeIndex !== -1 && args[resumeIndex + 1] && !args[resumeIndex + 1].startsWith('--')) {
         sessionPath = args[resumeIndex + 1];
     }
     if (!sessionPath || !fs.existsSync(sessionPath)) {

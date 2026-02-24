@@ -40,7 +40,7 @@ function render(sessionDir: string): boolean {
     ['Iteration', iterStr],
     ['Elapsed', timeStr],
     ['Current Ticket', state.current_ticket || 'none'],
-    ['Active', state.active ? `${g}Yes${r}` : `${red}No${r}`],
+    ['Active', state.active === true ? `${g}Yes${r}` : `${red}No${r}`],
   ];
   const keyWidth = Math.max(...fields.map(([k]) => k.length)) + 1;
 

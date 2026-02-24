@@ -225,3 +225,32 @@ test('spawn-morty: --timeout with custom value is accepted (no validation error)
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
+
+// ---------------------------------------------------------------------------
+// proc.on('error') handler (deep review pass 7)
+// ---------------------------------------------------------------------------
+
+test('spawn-morty: spawn error (no claude binary) reports spawn-error status', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        // Point PATH to a directory with no `claude` binary to trigger ENOENT spawn error
+        const result = run(
+            [
+                'implement the thing',
+                '--ticket-id', 'ticket-err',
+                '--ticket-path', tmpDir,
+                '--timeout', '5',
+            ],
+            { PATH: '/nonexistent' }
+        );
+        assert.equal(result.status, 1, 'should exit with code 1');
+        const combined = result.stdout + result.stderr;
+        // The error handler should report spawn-error status
+        assert.ok(
+            combined.includes('spawn-error') || combined.includes('failed'),
+            'should report spawn-error or failed status'
+        );
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});

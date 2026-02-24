@@ -127,7 +127,7 @@ async function main() {
         let feedback = '🥒 **Pickle Rick Loop Active** - ';
         if (isPrdDone)
             feedback += 'PRD finished, moving to breakdown...';
-        if (isTicketSelected)
+        else if (isTicketSelected)
             feedback += 'Ticket selected, starting research...';
         console.log(JSON.stringify({ decision: 'block', reason: feedback }));
         return;

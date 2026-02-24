@@ -71,10 +71,13 @@ async function runIteration(sessionDir: string, iterationNum: number, extensionR
       stdio: ['inherit', 'pipe', 'pipe'],
     });
 
-    proc.stdout?.pipe(logStream);
-    proc.stderr?.pipe(logStream);
-    proc.stdout?.pipe(process.stdout);
-    proc.stderr?.pipe(process.stderr);
+    // Use { end: false } so that when stdout ends first it doesn't call
+    // logStream.end(), which would discard any stderr data still in-flight.
+    // logStream.end() is called explicitly in the 'close' handler.
+    proc.stdout?.pipe(logStream, { end: false });
+    proc.stderr?.pipe(logStream, { end: false });
+    proc.stdout?.pipe(process.stdout, { end: false });
+    proc.stderr?.pipe(process.stderr, { end: false });
 
     proc.on('close', () => {
       if (settled) return;

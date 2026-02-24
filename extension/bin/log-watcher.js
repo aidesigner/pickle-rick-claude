@@ -37,9 +37,11 @@ function drain(logPath, offset) {
         while (pos < size) {
             const toRead = Math.min(DRAIN_CHUNK, size - pos);
             const buf = Buffer.allocUnsafe(toRead);
-            fs.readSync(fd, buf, 0, toRead, pos);
-            emit(decoder.write(buf));
-            pos += toRead;
+            const bytesRead = fs.readSync(fd, buf, 0, toRead, pos);
+            if (bytesRead === 0)
+                break; // EOF — file was truncated
+            emit(decoder.write(buf.subarray(0, bytesRead)));
+            pos += bytesRead;
         }
         const trailing = decoder.end();
         if (trailing)
@@ -88,7 +90,7 @@ async function main() {
         offset = drain(currentLog, offset);
         try {
             const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
-            if (!state.active) {
+            if (state.active !== true) {
                 await sleep(2000);
                 drain(currentLog, offset);
                 process.stdout.write(`\n${sep()}\n${g}🥒 Session complete.${r}\n`);

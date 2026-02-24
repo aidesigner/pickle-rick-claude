@@ -205,6 +205,20 @@ test('worker-setup: --resume path takes priority over sessions map', () => {
     }
 });
 
+// --- --resume value starting with -- is ignored (falls through to map) ---
+
+test('worker-setup: --resume with flag-like value falls through to sessions map', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        // --resume value starts with -- so it should be ignored
+        const result = run(tmpRoot, ['--resume', '--bad-flag']);
+        // With no sessions map either, should exit 1
+        assert.equal(result.status, 1, `Expected exit code 1, got: ${result.status}`);
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
 // --- Sessions map session dir doesn't exist on disk → exit 1 ---
 
 test('worker-setup: exits with code 1 when mapped session dir does not exist on disk', () => {

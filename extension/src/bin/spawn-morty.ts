@@ -169,8 +169,11 @@ async function main() {
     stdio: ['inherit', 'pipe', 'pipe'],
   });
 
-  proc.stdout?.pipe(logStream);
-  proc.stderr?.pipe(logStream);
+  // Use { end: false } so that when stdout ends first it doesn't call
+  // logStream.end(), which would discard any stderr data still in-flight.
+  // logStream.end() is called explicitly in the 'close' handler.
+  proc.stdout?.pipe(logStream, { end: false });
+  proc.stderr?.pipe(logStream, { end: false });
 
   const spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
   let idx = 0;
@@ -205,6 +208,25 @@ async function main() {
   hangGuard.unref(); // Don't keep the process alive just for the guard
 
   return new Promise<void>((resolve) => {
+    // Handle spawn failure (e.g., ENOENT when claude binary not found).
+    // Without this, 'close' may never fire on some Node versions, leaving
+    // the Promise unresolved until the hangGuard force-exits (~timeout+30s).
+    proc.on('error', () => {
+      clearInterval(interval);
+      clearTimeout(timeoutHandle);
+      clearTimeout(hangGuard);
+      if (process.stdout.isTTY) process.stdout.write('\r\x1b[K');
+      logStream.end();
+      try { update_ticket_status(ticketId, 'Failed', sessionRoot); } catch { /* best-effort */ }
+      printMinimalPanel(
+        'Worker Report',
+        { status: 'spawn-error', validation: 'failed' },
+        'RED',
+        '🥒'
+      );
+      process.exit(1);
+    });
+
     proc.on('close', (code) => {
       clearInterval(interval);
       clearTimeout(timeoutHandle);

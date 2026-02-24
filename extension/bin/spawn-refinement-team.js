@@ -153,8 +153,11 @@ function spawnWorker(roleId, prompt, refinementDir, extensionRoot, timeout, work
         env,
         stdio: ['ignore', 'pipe', 'pipe'],
     });
-    proc.stdout?.pipe(logStream);
-    proc.stderr?.pipe(logStream);
+    // Use { end: false } so that when stdout ends first it doesn't call
+    // logStream.end(), which would discard any stderr data still in-flight.
+    // logStream.end() is called explicitly in the 'close' and 'error' handlers.
+    proc.stdout?.pipe(logStream, { end: false });
+    proc.stderr?.pipe(logStream, { end: false });
     // SIGTERM first, escalate to SIGKILL after 2s if still alive
     let workerTimedOut = false;
     const timeoutHandle = setTimeout(() => {

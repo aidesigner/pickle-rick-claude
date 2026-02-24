@@ -48,7 +48,7 @@ export function addToJar(sessionDir: string): string {
   // 4. Copy PRD and compute integrity hash (atomic write)
   const prdContent = fs.readFileSync(prdSrc, 'utf-8');
   const prdDest = path.join(taskDir, 'prd.md');
-  const prdTmp = prdDest + '.tmp';
+  const prdTmp = `${prdDest}.tmp.${process.pid}`;
   fs.writeFileSync(prdTmp, prdContent);
   fs.renameSync(prdTmp, prdDest);
   const prdHash = crypto.createHash('sha256').update(prdContent).digest('hex');
@@ -64,11 +64,15 @@ export function addToJar(sessionDir: string): string {
     status: 'marinating',
   };
   const metaDest = path.join(taskDir, 'meta.json');
-  const metaTmp = metaDest + '.tmp';
+  const metaTmp = `${metaDest}.tmp.${process.pid}`;
   fs.writeFileSync(metaTmp, JSON.stringify(meta, null, 2));
   fs.renameSync(metaTmp, metaDest);
 
-  // 6. Deactivate the current session to prevent immediate execution
+  // 6. Re-read state to minimize race window with concurrent loop updates,
+  //    then deactivate the session to prevent immediate execution.
+  try {
+    state = JSON.parse(fs.readFileSync(statePath, 'utf-8')) as State;
+  } catch { /* use previously read state if re-read fails */ }
   state.active = false;
   state.completion_promise = 'JARRED'; // Signal completion
   writeStateFile(statePath, state);

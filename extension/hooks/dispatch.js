@@ -138,21 +138,21 @@ async function main() {
             }
             else {
                 // Validate handler output is well-formed JSON with a decision field before forwarding
-                let valid = false;
+                let parsed = null;
                 try {
-                    const parsed = JSON.parse(stdout.trim());
-                    if (parsed.decision === 'approve' || parsed.decision === 'block') {
-                        valid = true;
+                    const obj = JSON.parse(stdout.trim());
+                    if (obj.decision === 'approve' || obj.decision === 'block') {
+                        parsed = obj;
                     }
                     else {
-                        log(`Hook ${hookName} returned invalid decision: ${JSON.stringify(parsed.decision)}`);
+                        log(`Hook ${hookName} returned invalid decision: ${JSON.stringify(obj.decision)}`);
                     }
                 }
                 catch {
                     log(`Hook ${hookName} returned non-JSON stdout — falling back to approve`);
                 }
-                if (valid) {
-                    console.log(JSON.stringify(JSON.parse(stdout.trim())));
+                if (parsed) {
+                    console.log(JSON.stringify(parsed));
                 }
                 else {
                     approve();

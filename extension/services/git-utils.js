@@ -95,7 +95,7 @@ export function update_ticket_status(ticket_id, new_status, session_dir) {
     if (!statusReplaced) {
         console.warn(`Warning: no "status:" field found in ticket ${ticket_id} — status not updated`);
     }
-    const tmp = ticket_path + '.tmp';
+    const tmp = `${ticket_path}.tmp.${process.pid}`;
     try {
         fs.writeFileSync(tmp, content);
         fs.renameSync(tmp, ticket_path);
