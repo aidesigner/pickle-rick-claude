@@ -185,6 +185,73 @@ test('update_ticket_status: finds ticket in nested subdirectory', () => {
     }
 });
 
+// --- update_ticket_status: warns when no status field found (deep review pass 6) ---
+
+test('update_ticket_status: warns when ticket has no status field to replace', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    const ticketId = 'no-status-field';
+    const subDir = path.join(dir, ticketId);
+    fs.mkdirSync(subDir);
+    // Frontmatter with no status: line at all
+    fs.writeFileSync(
+        path.join(subDir, `linear_ticket_${ticketId}.md`),
+        `---\nid: "${ticketId}"\ntitle: "No Status"\norder: 1\n---\n# Body\n`
+    );
+    try {
+        const warnings = [];
+        const origWarn = console.warn;
+        console.warn = (...args) => warnings.push(args.join(' '));
+        const origLog = console.log;
+        const logs = [];
+        console.log = (...args) => logs.push(args.join(' '));
+        try {
+            update_ticket_status(ticketId, 'Done', dir);
+        } finally {
+            console.warn = origWarn;
+            console.log = origLog;
+        }
+        // Should have warned about missing status field
+        assert.ok(
+            warnings.some(w => w.includes('status not updated')),
+            `expected warning about status not updated, got: ${JSON.stringify(warnings)}`
+        );
+        // Should NOT have logged success
+        assert.ok(
+            !logs.some(l => l.includes('Successfully updated')),
+            `should not log success when no status field was replaced, got: ${JSON.stringify(logs)}`
+        );
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+// --- update_ticket_status: depth limit protects against deep recursion ---
+
+test('update_ticket_status: respects depth limit on deeply nested directories', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    const ticketId = 'deep-ticket';
+    // Create a structure 12 levels deep (exceeds the depth=10 limit)
+    let current = dir;
+    for (let i = 0; i < 12; i++) {
+        current = path.join(current, `level${i}`);
+    }
+    fs.mkdirSync(current, { recursive: true });
+    fs.writeFileSync(
+        path.join(current, `linear_ticket_${ticketId}.md`),
+        `---\nid: "${ticketId}"\ntitle: "Deep"\nstatus: "Todo"\n---\n# Body\n`
+    );
+    try {
+        // Should throw because the file is too deep (>10 levels)
+        assert.throws(
+            () => update_ticket_status(ticketId, 'Done', dir),
+            /not found/,
+            'Should not find ticket beyond depth limit'
+        );
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
 // --- get_branch_name: "issue" keyword → fix type ---
 
 test('get_branch_name: uses "fix" type for "issue" keyword in ticket id', () => {

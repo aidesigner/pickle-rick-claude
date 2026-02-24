@@ -308,6 +308,56 @@ test('jar-runner: ignores zero or negative default_manager_max_turns in settings
     }
 });
 
+// --- PRD path traversal (deep review pass 6) ---
+
+test('jar-runner: skips task when prd_path escapes task directory (path traversal)', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const taskId = 'task-traversal';
+        const taskDir = path.join(tmpRoot, 'jar', '2026-01-01', taskId);
+        fs.mkdirSync(taskDir, { recursive: true });
+        const metaPath = path.join(taskDir, 'meta.json');
+
+        // Write a PRD at the task dir level (legitimate)
+        fs.writeFileSync(path.join(taskDir, 'prd.md'), '# Legit PRD\n');
+
+        // But meta.json references a prd_path that escapes via ../
+        fs.writeFileSync(metaPath, JSON.stringify({
+            status: 'marinating',
+            repo_path: tmpRoot,
+            prd_path: '../../escaped.md',
+            prd_hash: 'abc123',
+        }, null, 2));
+
+        // Create the session dir
+        const sessionDir = path.join(tmpRoot, 'sessions', taskId);
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: false,
+            step: 'prd',
+            iteration: 0,
+        }, null, 2));
+
+        const result = run(tmpRoot);
+
+        // Should fail with path traversal rejection OR integrity check failure
+        const combined = result.stdout + result.stderr;
+        assert.ok(
+            combined.includes('escapes task directory') || combined.includes('integrity check failed') || combined.includes('Skipping'),
+            `Expected path traversal rejection, got stdout: ${result.stdout}, stderr: ${result.stderr}`
+        );
+
+        // Verify meta.json status was set to 'failed'
+        const updatedMeta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+        assert.equal(
+            updatedMeta.status, 'failed',
+            `Expected meta.status to be "failed", got: ${updatedMeta.status}`
+        );
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
 // --- PRD integrity passes with correct hash ---
 
 test('jar-runner: does not skip task when PRD hash matches (integrity passes)', () => {

@@ -385,6 +385,34 @@ test('dispatch: hook name with backslash outputs approve (path traversal)', () =
   }
 });
 
+test('dispatch: handler output whitespace is normalized (clean JSON forwarded)', () => {
+  const tmpRoot = makeTmpRoot();
+  try {
+    const handlersDir = makeHandlersDir(tmpRoot);
+    // Handler that outputs JSON with extra whitespace/newlines
+    writeHandler(handlersDir, 'test-whitespace', `
+      process.stdout.write('  {"decision":"approve","extra":"data"}  \\n');
+    `);
+
+    const { stdout, status } = runDispatch({
+      extRoot: tmpRoot,
+      args: ['test-whitespace'],
+      input: '{}',
+    });
+
+    assert.equal(status, 0, 'should exit with code 0');
+    const parsed = JSON.parse(stdout.trim());
+    assert.equal(parsed.decision, 'approve', 'should have approve decision');
+    // The forwarded output should be clean JSON (re-serialized), not the raw whitespace-padded version
+    assert.ok(
+      stdout.trim().startsWith('{'),
+      `output should start with { (no leading whitespace), got: ${JSON.stringify(stdout)}`
+    );
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
 test('dispatch: EXTENSION_DIR env var is passed to the handler', () => {
   const tmpRoot = makeTmpRoot();
   try {

@@ -180,7 +180,7 @@ async function main() {
         }
         // Stall detection: if state.iteration hasn't advanced in 3 outer-loop iterations,
         // something is broken (stop hook not firing, subprocess crashing, etc.)
-        if (state.iteration === lastStateIteration) {
+        if (curIter === lastStateIteration) {
             stallCount++;
             if (stallCount >= 3) {
                 log(`WARNING: state.iteration has not advanced in 3 outer-loop iterations (stuck at ${state.iteration}). Exiting to avoid wasted API calls.`);
@@ -192,7 +192,7 @@ async function main() {
         else {
             stallCount = 0;
         }
-        lastStateIteration = state.iteration;
+        lastStateIteration = curIter;
         iteration++;
         log(`--- Iteration ${iteration} (state.iteration=${state.iteration}) ---`);
         const result = await runIteration(sessionDir, iteration, extensionRoot);
@@ -227,8 +227,10 @@ async function main() {
     }, 'GREEN', '🥒');
     log(`tmux-runner finished. ${iteration} iterations, ${formatTime(totalElapsed)}`);
 }
-main().catch((err) => {
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`${Style.RED}[FATAL] ${msg}${Style.RESET}`);
-    process.exit(1);
-});
+if (process.argv[1] && path.basename(process.argv[1]) === 'tmux-runner.js') {
+    main().catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`${Style.RED}[FATAL] ${msg}${Style.RESET}`);
+        process.exit(1);
+    });
+}

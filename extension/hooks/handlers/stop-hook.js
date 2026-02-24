@@ -45,7 +45,7 @@ async function main() {
         approve();
         return;
     }
-    log(`Processing AfterAgent hook. Input size: ${inputData.length}`);
+    log(`Processing Stop hook. Input size: ${inputData.length}`);
     // 2. Determine State File
     const stateFile = resolveStateFile(extensionDir);
     if (!stateFile) {
@@ -97,15 +97,17 @@ async function main() {
     // Stop Tokens (Full Exit)
     const isEpicDone = hasToken(responseText, PromiseTokens.EPIC_COMPLETED);
     const isTaskFinished = hasToken(responseText, PromiseTokens.TASK_COMPLETED);
+    const isRefinementWorker = role === 'refinement-worker';
+    const isAnalysisDone = isRefinementWorker && hasToken(responseText, PromiseTokens.ANALYSIS_DONE);
     // Continue Tokens (Checkpoint)
     const isWorkerDone = isWorker && hasToken(responseText, PromiseTokens.WORKER_DONE);
     const isPrdDone = !isWorker && hasToken(responseText, PromiseTokens.PRD_COMPLETE);
     const isTicketSelected = !isWorker && hasToken(responseText, PromiseTokens.TICKET_SELECTED);
-    log(`Promises: hasPromise=${hasPromise}, isEpicDone=${isEpicDone}, isTaskFinished=${isTaskFinished}, isWorkerDone=${isWorkerDone}, isPrdDone=${isPrdDone}, isTicketSelected=${isTicketSelected}`);
+    log(`Promises: hasPromise=${hasPromise}, isEpicDone=${isEpicDone}, isTaskFinished=${isTaskFinished}, isWorkerDone=${isWorkerDone}, isAnalysisDone=${isAnalysisDone}, isPrdDone=${isPrdDone}, isTicketSelected=${isTicketSelected}`);
     // EXIT CONDITIONS: Full Exit
-    if (hasPromise || isEpicDone || isTaskFinished || isWorkerDone) {
+    if (hasPromise || isEpicDone || isTaskFinished || isWorkerDone || isAnalysisDone) {
         log(`Decision: ALLOW (Task/Worker complete)`);
-        if (!isWorker) {
+        if (!isWorker && !isRefinementWorker) {
             state.active = false;
             writeStateFile(stateFile, state);
         }

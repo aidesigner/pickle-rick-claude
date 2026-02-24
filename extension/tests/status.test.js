@@ -231,6 +231,83 @@ test('showStatus: shows "N of M" when max_iterations > 0', () => {
     });
 });
 
+// --- String numeric state fields (Number() coercion, deep review pass 6) ---
+
+test('showStatus: string max_iterations and iteration are correctly coerced', () => {
+    withExtensionDir((tmpDir) => {
+        const sessionDir = fs.realpathSync(
+            fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-status-session-'))
+        );
+        const fakeCwd = sessionDir + '-cwd';
+
+        fs.writeFileSync(
+            path.join(tmpDir, 'current_sessions.json'),
+            JSON.stringify({ [fakeCwd]: sessionDir })
+        );
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({
+                step: 'implement',
+                iteration: '3',        // string, not number
+                max_iterations: '10',   // string, not number
+                current_ticket: 'T-STR',
+                original_prompt: 'test coercion',
+            })
+        );
+
+        try {
+            const output = captureStdout(() => showStatus(fakeCwd));
+            // Should display "3 of 10", NOT "3 of 10" from string interpolation
+            // and definitely not "undefined" or "NaN"
+            assert.ok(
+                output.includes('3 of 10'),
+                `Expected "3 of 10" in output with string state values, got: ${output}`
+            );
+            assert.ok(
+                !output.includes('NaN'),
+                `Should not contain NaN, got: ${output}`
+            );
+        } finally {
+            fs.rmSync(sessionDir, { recursive: true, force: true });
+        }
+    });
+});
+
+test('showStatus: string "0" for max_iterations does not show "N of 0"', () => {
+    withExtensionDir((tmpDir) => {
+        const sessionDir = fs.realpathSync(
+            fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-status-session-'))
+        );
+        const fakeCwd = sessionDir + '-cwd';
+
+        fs.writeFileSync(
+            path.join(tmpDir, 'current_sessions.json'),
+            JSON.stringify({ [fakeCwd]: sessionDir })
+        );
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({
+                step: 'prd',
+                iteration: '2',
+                max_iterations: '0',  // string "0" — truthy but should coerce to 0
+                current_ticket: null,
+                original_prompt: 'test zero string',
+            })
+        );
+
+        try {
+            const output = captureStdout(() => showStatus(fakeCwd));
+            // String "0" is truthy, but Number("0") is 0 → should NOT show "of 0"
+            assert.ok(
+                !output.includes('of 0'),
+                `Should NOT show "of 0" for string "0" max_iterations, got: ${output}`
+            );
+        } finally {
+            fs.rmSync(sessionDir, { recursive: true, force: true });
+        }
+    });
+});
+
 // --- Shows iteration without max ---
 
 test('showStatus: shows just the number when max_iterations is 0', () => {

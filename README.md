@@ -65,25 +65,43 @@ Pickle Rick transforms Claude Code into a **hyper-competent, arrogant, iterative
     ┌────┴────┐  per ticket (Morty workers 👶)
     ▼         ▼
   ┌──────┐  ┌──────┐
-  │🔬 Re-│  │🔬 Re-│  ← Research the codebase. Every ugly corner.
+  │🔬 Re-│  │🔬 Re-│  1. Research the codebase. Every ugly corner.
   │search│  │search│
   └──┬───┘  └──┬───┘
      │          │
      ▼          ▼
   ┌──────┐  ┌──────┐
-  │📐Plan│  │📐Plan│  ← Architect the solution. Then review it.
+  │📝 Re-│  │📝 Re-│  2. Review the research. No hand-waving.
+  │view  │  │view  │
   └──┬───┘  └──┬───┘
      │          │
      ▼          ▼
   ┌──────┐  ┌──────┐
-  │⚡ Im-│  │⚡ Im-│  ← Implement. God Mode activated.
-  │ plem │  │ plem │
+  │📐Plan│  │📐Plan│  3. Architect the solution.
   └──┬───┘  └──┬───┘
      │          │
      ▼          ▼
   ┌──────┐  ┌──────┐
-  │✂️ Re-│  │✂️ Re-│  ← Ruthlessly refactor. Purge the slop.
+  │📝 Re-│  │📝 Re-│  4. Review the plan. Reject slop.
+  │view  │  │view  │
+  └──┬───┘  └──┬───┘
+     │          │
+     ▼          ▼
+  ┌──────┐  ┌──────┐
+  │⚡ Im-│  │⚡ Im-│  5. Implement. God Mode activated.
+  │plem  │  │plem  │
+  └──┬───┘  └──┬───┘
+     │          │
+     ▼          ▼
+  ┌──────┐  ┌──────┐
+  │✂️ Re-│  │✂️ Re-│  6. Ruthlessly refactor. Purge the slop.
   │factor│  │factor│
+  └──┬───┘  └──┬───┘
+     │          │
+     ▼          ▼
+  ┌──────┐  ┌──────┐
+  │🧹Sim-│  │🧹Sim-│  7. Simplify. Strip it to the bone.
+  │plify │  │plify │
   └──────┘  └──────┘
          │
          ▼
@@ -98,7 +116,7 @@ The **Stop hook** prevents Claude from exiting until the task is genuinely compl
 
 | Command | Description |
 |---|---|
-| `/pickle "task"` | 🥒 Start the full autonomous loop — drafts a PRD, decomposes into tickets, then executes each through Research → Plan → Implement → Refactor |
+| `/pickle "task"` | 🥒 Start the full autonomous loop — drafts a PRD, decomposes into tickets, then executes each through 7 phases: Research → Research Review → Plan → Plan Review → Implement → Refactor → Simplify |
 | `/pickle-tmux "task"` | 🖥️ Same PRD-driven loop, but with true context clearing — fresh subprocess per iteration via tmux. Best for long epics (8+ iterations). Requires `tmux`. |
 | `/pickle-prd "task"` | 📋 Interactively draft a PRD, then `/pickle --resume` to execute from it |
 | `/pickle-refine-prd [path]` | 🔬 Refine an existing PRD with 3 parallel analysts + decompose into ordered tickets; `/pickle --resume` to execute |

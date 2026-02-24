@@ -129,7 +129,7 @@ async function main() {
         }
         else if (arg === '-s' || arg === '--session-id') {
             // Ignore legacy session-id flag; consume the next arg if it's not a flag
-            if (args[i + 1] && !args[i + 1].startsWith('-')) {
+            if (args[i + 1] && !args[i + 1].startsWith('--')) {
                 i++;
             }
         }
@@ -179,14 +179,18 @@ async function main() {
             state.worker_timeout_seconds = workerTimeout;
         if (promiseToken)
             state.completion_promise = promiseToken;
-        // Sync local vars with (potentially preserved) state for display
-        loopLimit = state.max_iterations;
-        timeLimit = state.max_time_minutes;
-        workerTimeout = state.worker_timeout_seconds;
+        // Sync local vars with (potentially preserved) state for display — coerce
+        // to Number to guard against string-typed values from external edits / old state.
+        loopLimit = Number(state.max_iterations) || loopLimit;
+        timeLimit = Number(state.max_time_minutes) || timeLimit;
+        workerTimeout = Number(state.worker_timeout_seconds) || workerTimeout;
         writeStateFile(statePath, state);
-        currentIteration = state.iteration + 1;
+        currentIteration = Number(state.iteration) + 1;
         promiseToken = state.completion_promise;
-        fullSessionPath = state.session_dir; // Use stored path
+        // Only overwrite the validated fullSessionPath if the stored path exists on disk
+        if (state.session_dir && fs.existsSync(state.session_dir)) {
+            fullSessionPath = state.session_dir;
+        }
     }
     else {
         if (!taskStr && !pausedMode)

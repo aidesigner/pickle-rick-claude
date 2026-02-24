@@ -278,8 +278,8 @@ async function main() {
                     timeout = stateTimeout;
             }
             // Clamp to remaining session time if a wall-clock limit is set
-            const maxMins = state.max_time_minutes || 0;
-            const startEpoch = state.start_time_epoch || 0;
+            const maxMins = Number(state.max_time_minutes) || 0;
+            const startEpoch = Number(state.start_time_epoch) || 0;
             if (maxMins > 0 && startEpoch > 0) {
                 const remaining = Math.floor(maxMins * 60 - (Math.floor(Date.now() / 1000) - startEpoch));
                 if (remaining <= 0) {
@@ -423,9 +423,18 @@ async function main() {
         completed_at: new Date().toISOString(),
     };
     const manifestPath = path.join(sessionDir, 'refinement_manifest.json');
-    const manifestTmp = manifestPath + '.tmp';
-    fs.writeFileSync(manifestTmp, JSON.stringify(manifest, null, 2));
-    fs.renameSync(manifestTmp, manifestPath);
+    const manifestTmp = manifestPath + `.tmp.${process.pid}`;
+    try {
+        fs.writeFileSync(manifestTmp, JSON.stringify(manifest, null, 2));
+        fs.renameSync(manifestTmp, manifestPath);
+    }
+    catch (err) {
+        try {
+            fs.unlinkSync(manifestTmp);
+        }
+        catch { /* ignore cleanup failure */ }
+        throw err;
+    }
     if (!allSuccess) {
         const failed = finalResults.filter((r) => !r.success).map((r) => r.roleId);
         console.log(`${Style.YELLOW}⚠️  Workers failed: ${failed.join(', ')}. Synthesis will proceed with available analyses.${Style.RESET}`);

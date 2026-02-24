@@ -110,7 +110,7 @@ async function main() {
             console.error(`${Style.RED}⚠️  Session dir not found for ${taskId}${Style.RESET}`);
             meta.status = 'failed';
             {
-                const tmp = metaPath + '.tmp';
+                const tmp = metaPath + `.tmp.${process.pid}`;
                 fs.writeFileSync(tmp, JSON.stringify(meta, null, 2));
                 fs.renameSync(tmp, metaPath);
             }
@@ -121,7 +121,7 @@ async function main() {
             console.error(`${Style.RED}⚠️  Skipping ${taskId}: meta.repo_path is missing or not a string${Style.RESET}`);
             meta.status = 'failed';
             {
-                const tmp = metaPath + '.tmp';
+                const tmp = metaPath + `.tmp.${process.pid}`;
                 fs.writeFileSync(tmp, JSON.stringify(meta, null, 2));
                 fs.renameSync(tmp, metaPath);
             }
@@ -131,7 +131,21 @@ async function main() {
         const repoPath = meta.repo_path;
         // Integrity check: verify PRD content hasn't been tampered with since jarring
         if (typeof meta.prd_hash === 'string' && meta.prd_hash.length > 0) {
-            const prdPath = path.join(path.dirname(metaPath), typeof meta.prd_path === 'string' ? meta.prd_path : 'prd.md');
+            const taskDir = path.dirname(metaPath);
+            const rawPrdRel = typeof meta.prd_path === 'string' ? meta.prd_path : 'prd.md';
+            const prdPath = path.resolve(taskDir, rawPrdRel);
+            // Prevent path traversal — resolved prd_path must stay within the task directory
+            if (!prdPath.startsWith(taskDir + path.sep) && prdPath !== path.join(taskDir, rawPrdRel)) {
+                console.error(`${Style.RED}⚠️  Skipping ${taskId}: prd_path escapes task directory${Style.RESET}`);
+                meta.status = 'failed';
+                {
+                    const tmp = metaPath + `.tmp.${process.pid}`;
+                    fs.writeFileSync(tmp, JSON.stringify(meta, null, 2));
+                    fs.renameSync(tmp, metaPath);
+                }
+                failed++;
+                continue;
+            }
             try {
                 const prdContent = fs.readFileSync(prdPath, 'utf-8');
                 const currentHash = crypto.createHash('sha256').update(prdContent).digest('hex');
@@ -139,7 +153,7 @@ async function main() {
                     console.error(`${Style.RED}⚠️  Skipping ${taskId}: PRD integrity check failed (content modified since jarring)${Style.RESET}`);
                     meta.status = 'failed';
                     {
-                        const tmp = metaPath + '.tmp';
+                        const tmp = metaPath + `.tmp.${process.pid}`;
                         fs.writeFileSync(tmp, JSON.stringify(meta, null, 2));
                         fs.renameSync(tmp, metaPath);
                     }
@@ -151,7 +165,7 @@ async function main() {
                 console.error(`${Style.RED}⚠️  Skipping ${taskId}: cannot read jarred PRD for integrity check${Style.RESET}`);
                 meta.status = 'failed';
                 {
-                    const tmp = metaPath + '.tmp';
+                    const tmp = metaPath + `.tmp.${process.pid}`;
                     fs.writeFileSync(tmp, JSON.stringify(meta, null, 2));
                     fs.renameSync(tmp, metaPath);
                 }
@@ -162,7 +176,7 @@ async function main() {
         const ok = await runTask(sessionDir, repoPath, ROOT_DIR);
         meta.status = ok ? 'consumed' : 'failed';
         {
-            const tmp = metaPath + '.tmp';
+            const tmp = metaPath + `.tmp.${process.pid}`;
             fs.writeFileSync(tmp, JSON.stringify(meta, null, 2));
             fs.renameSync(tmp, metaPath);
         }
@@ -189,7 +203,9 @@ async function main() {
     }
     console.log('Signal: Jar Complete');
 }
-main().catch((err) => {
-    console.error(`${Style.RED}Error: ${err instanceof Error ? err.message : String(err)}${Style.RESET}`);
-    process.exit(1);
-});
+if (process.argv[1] && path.basename(process.argv[1]) === 'jar-runner.js') {
+    main().catch((err) => {
+        console.error(`${Style.RED}Error: ${err instanceof Error ? err.message : String(err)}${Style.RESET}`);
+        process.exit(1);
+    });
+}

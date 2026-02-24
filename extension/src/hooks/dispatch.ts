@@ -160,7 +160,7 @@ async function main() {
           log(`Hook ${hookName} returned non-JSON stdout — falling back to approve`);
         }
         if (valid) {
-          process.stdout.write(stdout);
+          console.log(JSON.stringify(JSON.parse(stdout.trim())));
         } else {
           approve();
         }
@@ -180,4 +180,10 @@ async function main() {
   }
 }
 
-main();
+main().catch((err) => {
+  try {
+    log(`FATAL: ${err instanceof Error ? err.stack || err.message : String(err)}`);
+  } catch { /* ignore */ }
+  approve();
+  process.exit(0);
+});

@@ -261,8 +261,10 @@ async function main() {
   });
 }
 
-main().catch((err) => {
-  const msg = err instanceof Error ? err.message : String(err);
-  console.error(`${Style.RED}${msg}${Style.RESET}`);
-  process.exit(1);
-});
+if (process.argv[1] && path.basename(process.argv[1]) === 'spawn-morty.js') {
+  main().catch((err) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`${Style.RED}${msg}${Style.RESET}`);
+    process.exit(1);
+  });
+}

@@ -514,6 +514,39 @@ test('stop-hook: no disabled marker → hook processes normally (blocks active s
 });
 
 // ---------------------------------------------------------------------------
+// Refinement worker — ANALYSIS_DONE token handling
+// ---------------------------------------------------------------------------
+
+test('stop-hook: refinement-worker + ANALYSIS_DONE → approve, active unchanged', () => {
+  const { decision, state } = runHook({
+    state: baseState({ active: true }),
+    response: '<promise>ANALYSIS_DONE</promise>',
+    role: 'refinement-worker',
+  });
+  assert.deepEqual(decision, { decision: 'approve' });
+  assert.equal(state.active, true, 'refinement workers must not deactivate the session');
+});
+
+test('stop-hook: refinement-worker + no token → block (default continuation)', () => {
+  const { decision } = runHook({
+    state: baseState({ active: true }),
+    response: 'Still working on analysis...',
+    role: 'refinement-worker',
+  });
+  assert.equal(decision.decision, 'block');
+});
+
+test('stop-hook: non-refinement role + ANALYSIS_DONE → not treated as exit, block', () => {
+  // ANALYSIS_DONE should only work for refinement-worker role
+  const { decision } = runHook({
+    state: baseState({ active: true }),
+    response: '<promise>ANALYSIS_DONE</promise>',
+    role: 'manager',
+  });
+  assert.equal(decision.decision, 'block');
+});
+
+// ---------------------------------------------------------------------------
 // Number() coercion for string numeric state fields (deep review pass 5)
 // ---------------------------------------------------------------------------
 

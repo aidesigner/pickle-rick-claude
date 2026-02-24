@@ -26,8 +26,8 @@ function render(sessionDir: string): boolean {
   const startEpoch = Number(state.start_time_epoch) || 0;
   const elapsed = startEpoch > 0 ? Math.max(0, Math.floor(Date.now() / 1000) - startEpoch) : 0;
   const tickets = collectTickets(sessionDir);
-  const maxIter = state.max_iterations || 0;
-  const maxTime = state.max_time_minutes || 0;
+  const maxIter = Number(state.max_iterations) || 0;
+  const maxTime = Number(state.max_time_minutes) || 0;
   const iterStr = maxIter > 0
     ? `${state.iteration} / ${state.max_iterations}`
     : `${state.iteration}`;
@@ -123,8 +123,10 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  const msg = err instanceof Error ? err.message : String(err);
-  console.error(`${Style.RED}[monitor] ${msg}${Style.RESET}`);
-  process.exit(1);
-});
+if (process.argv[1] && path.basename(process.argv[1]) === 'monitor.js') {
+  main().catch((err) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`${Style.RED}[monitor] ${msg}${Style.RESET}`);
+    process.exit(1);
+  });
+}

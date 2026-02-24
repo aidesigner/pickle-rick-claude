@@ -29,9 +29,11 @@ export function showStatus(cwd) {
         console.log('🥒 Session state is unreadable.');
         process.exit(1);
     }
-    const iterationStr = state.max_iterations
-        ? `${state.iteration} of ${state.max_iterations}`
-        : String(state.iteration);
+    const maxIter = Number(state.max_iterations) || 0;
+    const curIter = Number(state.iteration) || 0;
+    const iterationStr = maxIter > 0
+        ? `${curIter} of ${maxIter}`
+        : String(curIter);
     const raw = state.original_prompt || '';
     const taskStr = raw.length > 80 ? raw.slice(0, 80) + '…' : raw;
     printMinimalPanel('Pickle Rick — Session Status', {

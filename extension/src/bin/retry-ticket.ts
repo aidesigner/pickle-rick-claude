@@ -91,7 +91,8 @@ export function retryTicket(ticketId: string, cwd: string): void {
   } catch {
     throw new Error(`state.json became unreadable after update in ${sessionPath}`);
   }
-  const timeout = Number(finalState.worker_timeout_seconds) || 1200;
+  const rawTimeout = Number(finalState.worker_timeout_seconds);
+  const timeout = Number.isFinite(rawTimeout) && rawTimeout > 0 ? rawTimeout : 1200;
 
   // Shell-safe escaping: single-quote escaping + collapse newlines to spaces
   const safePrompt = (finalState.original_prompt || '')

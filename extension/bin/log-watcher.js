@@ -101,8 +101,10 @@ async function main() {
         await sleep(500);
     }
 }
-main().catch((err) => {
-    const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[log-watcher] ${msg}\n`);
-    process.exit(1);
-});
+if (process.argv[1] && path.basename(process.argv[1]) === 'log-watcher.js') {
+    main().catch((err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`[log-watcher] ${msg}\n`);
+        process.exit(1);
+    });
+}

@@ -32,18 +32,20 @@ export function update_ticket_status(
 ): void {
   // 1. Find the ticket file
   // Search recursively in the session directory
-  const find_ticket = (dir: string): string | null => {
-    const files = fs.readdirSync(dir);
+  const find_ticket = (dir: string, depth: number = 0): string | null => {
+    if (depth > 10) return null; // prevent runaway recursion from symlink cycles
+    let files: string[];
+    try { files = fs.readdirSync(dir); } catch { return null; }
     for (const file of files) {
       const fullPath = path.join(dir, file);
       let stat: fs.Stats;
       try {
-        stat = fs.statSync(fullPath);
+        stat = fs.lstatSync(fullPath); // lstat: don't follow symlinks into directories
       } catch {
         continue;
       }
       if (stat.isDirectory()) {
-        const res = find_ticket(fullPath);
+        const res = find_ticket(fullPath, depth + 1);
         if (res) return res;
       } else if (file === `linear_ticket_${ticket_id}.md`) {
         return fullPath;
@@ -61,12 +63,18 @@ export function update_ticket_status(
   let content = fs.readFileSync(ticket_path, 'utf-8');
   const today = new Date().toISOString().split('T')[0];
 
+  // Track whether the status: line was actually found and replaced
+  let statusReplaced = false;
+
   // Replace only within the YAML frontmatter block (between the first pair of --- delimiters).
   // Using a global replace here would corrupt any "status:" lines in the ticket body.
   const fm = extractFrontmatter(content);
   if (fm) {
-    let fmSection = content.slice(0, fm.end)
-      .replace(/^status:.*$/m, `status: "${new_status}"`);
+    let fmSection = content.slice(0, fm.end);
+    if (/^status:.*$/m.test(fmSection)) {
+      fmSection = fmSection.replace(/^status:.*$/m, `status: "${new_status}"`);
+      statusReplaced = true;
+    }
     if (/^updated:.*$/m.test(fmSection)) {
       fmSection = fmSection.replace(/^updated:.*$/m, `updated: "${today}"`);
     } else {
@@ -77,8 +85,15 @@ export function update_ticket_status(
   } else {
     // No frontmatter delimiters found — warn and fall back to full-file replace
     console.warn(`Warning: ticket ${ticket_id} has no valid YAML frontmatter — status replacement may be imprecise`);
-    content = content.replace(/^status:.*$/m, `status: "${new_status}"`);
+    if (/^status:.*$/m.test(content)) {
+      content = content.replace(/^status:.*$/m, `status: "${new_status}"`);
+      statusReplaced = true;
+    }
     content = content.replace(/^updated:.*$/m, `updated: "${today}"`);
+  }
+
+  if (!statusReplaced) {
+    console.warn(`Warning: no "status:" field found in ticket ${ticket_id} — status not updated`);
   }
 
   const tmp = ticket_path + '.tmp';
@@ -89,5 +104,7 @@ export function update_ticket_status(
     try { fs.unlinkSync(tmp); } catch { /* ignore cleanup failure */ }
     throw err;
   }
-  console.log(`Successfully updated ticket ${ticket_id} to status "${new_status}"`);
+  if (statusReplaced) {
+    console.log(`Successfully updated ticket ${ticket_id} to status "${new_status}"`);
+  }
 }
