@@ -38,7 +38,7 @@ A port of the [Pickle Rick Gemini CLI extension](https://github.com/galz10/pickl
 - **True context clearing via tmux** — `/pickle-tmux` spawns a genuinely fresh `claude -p` subprocess per iteration inside a tmux session, so each iteration starts with zero conversation history. No context drift on long epics.
 - **Context clearing** — every loop iteration injects a structured session summary (phase, ticket list, task) as a system message, so Rick survives full context compression without losing his place
 - **Single Stop hook** — the Gemini version requires three hooks (BeforeAgent, BeforeModel, AfterAgent); this port does it all in one, with fewer moving parts
-- **PRD refinement** — `/pickle-refine-prd` spawns 3 parallel Morty analysts (Requirements, Codebase, Risk/Scope) to audit and strengthen a PRD before implementation
+- **PRD refinement** — `/pickle-refine-prd` runs multi-cycle refinement (default: 2 cycles) with 3 parallel Morty analysts (Requirements, Codebase, Risk/Scope). Cycle 1 analyzes independently; cycle 2+ cross-references all previous findings for deeper insights. The refined PRD is written back to the original file in-place.
 - **Worker isolation** — Morty subprocesses run with `-s` (no session persistence) and scoped `--include-directories`, so each worker starts genuinely fresh with only its ticket in context
 - **Skills inlined** — Gemini's skills require `activate_skill()` calls that can fail; here they're baked directly into the command prompts
 - **Jar improvements** — the Night Shift runner adds success/failure tracking and a configurable `default_manager_max_turns` setting absent from the original
@@ -101,7 +101,7 @@ The **Stop hook** prevents Claude from exiting until the task is genuinely compl
 | `/pickle "task"` | 🥒 Start the full autonomous loop |
 | `/pickle-tmux "task"` | 🖥️ True context clearing — fresh subprocess per iteration via tmux. Best for long epics (8+ iterations). Requires `tmux`. |
 | `/pickle-prd "task"` | 📋 Interactively draft a PRD first |
-| `/pickle-refine-prd [path]` | 🔬 Auto-refine a PRD using 3 parallel Morty analysts |
+| `/pickle-refine-prd [path]` | 🔬 Auto-refine a PRD using 3 parallel Morty analysts across multiple cycles |
 | `/eat-pickle` | 🛑 Cancel the active loop |
 | `/help-pickle` | ❓ Show all commands and flags |
 | `/add-to-pickle-jar` | 🫙 Save current session to the Jar for later |
@@ -150,6 +150,20 @@ Ctrl+B d                        # detach (session keeps running in background)
 **Recovering from a failed Morty** — If a worker times out or exits without completing, use `/pickle-retry <ticket-id>` instead of restarting the whole epic. It archives the partial artifacts, resets the ticket to Todo, and prints the exact `spawn-morty.js` command to re-run — preserving all the work already done on other tickets.
 
 **"Stop hook error" is normal** — Claude Code labels every `decision: block` response from the stop hook as "Stop hook error" in the UI. This is not an actual error. It means the hook is working correctly — it blocked Claude's exit and injected the session context for the next iteration. If you see it, Rick is looping as intended.
+
+### Settings (`pickle_settings.json`)
+
+All defaults are configurable via `~/.claude/pickle-rick/pickle_settings.json`:
+
+| Setting | Default | Description |
+|---|---|---|
+| `default_max_iterations` | 5 | Max loop iterations before auto-stop |
+| `default_max_time_minutes` | 60 | Session wall-clock limit in minutes |
+| `default_worker_timeout_seconds` | 1200 | Per-worker subprocess timeout |
+| `default_manager_max_turns` | 50 | Max Claude turns per iteration (interactive/jar) |
+| `default_tmux_max_turns` | 80 | Max Claude turns per iteration (tmux mode) |
+| `default_refinement_cycles` | 2 | Number of refinement analysis passes |
+| `default_refinement_max_turns` | 30 | Max Claude turns per refinement worker |
 
 ---
 
@@ -339,7 +353,7 @@ Morty workers already get clean context naturally (each is a fresh `claude -p` s
 ### Manager / Worker Model
 
 - **Rick (Manager)**: Runs in your interactive Claude session. Handles PRD, Breakdown, orchestration.
-- **Morty (Worker)**: Spawned as `claude -s -y --include-directories <ticket_path> -p "..."` subprocess per ticket. Gets the full lifecycle skill set inlined in the prompt. Outputs `<promise>I AM DONE</promise>` when finished.
+- **Morty (Worker)**: Spawned as `claude -s -y --include-directories <extension_root> --include-directories <ticket_path> -p "..."` subprocess per ticket. Gets the full lifecycle skill set inlined in the prompt. The `CLAUDECODE` env var is stripped so workers don't detect a nested session. Outputs `<promise>I AM DONE</promise>` when finished.
 
 ---
 

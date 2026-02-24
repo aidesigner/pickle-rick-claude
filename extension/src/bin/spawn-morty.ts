@@ -154,12 +154,14 @@ async function main() {
   try { update_ticket_status(ticketId, 'In Progress', sessionRoot); } catch { /* best-effort */ }
 
   const logStream = fs.createWriteStream(sessionLog, { flags: 'w' });
-  const env = {
+  const env: NodeJS.ProcessEnv = {
     ...process.env,
     PICKLE_STATE_FILE: timeoutStatePath || workerState,
     PICKLE_ROLE: 'worker',
     PYTHONUNBUFFERED: '1',
   };
+  delete env['CLAUDECODE'];
+
   const proc = spawn('claude', cmdArgs, {
     cwd: process.cwd(),
     env,
@@ -213,6 +215,8 @@ async function main() {
       // the WORKER_DONE token could be missed — causing a false failure.
       logStream.end();
 
+      let finalized = false;
+
       // Guard against logStream.finish never firing (e.g., disk I/O failure)
       const flushTimeout = setTimeout(() => {
         console.error(`${Style.YELLOW}⚠️  Log flush timed out — reading partial log${Style.RESET}`);
@@ -225,6 +229,8 @@ async function main() {
       });
 
       function finalize(exitCode: number | null) {
+        if (finalized) return;
+        finalized = true;
         let logContent = '';
         try { logContent = fs.readFileSync(sessionLog, 'utf-8'); } catch { /* missing log */ }
         const isSuccess = !timedOut && hasToken(logContent, PromiseTokens.WORKER_DONE);

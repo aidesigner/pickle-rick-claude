@@ -3,5 +3,7 @@
   "default_max_time_minutes": 60,
   "default_worker_timeout_seconds": 1200,
   "default_manager_max_turns": 50,
-  "default_tmux_max_turns": 80
+  "default_tmux_max_turns": 80,
+  "default_refinement_cycles": 2,
+  "default_refinement_max_turns": 30
 }

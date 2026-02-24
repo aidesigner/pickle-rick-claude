@@ -41,7 +41,10 @@ node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --paused --task "PRD Ref
 **CRITICAL**: Extract `SESSION_ROOT=<path>` from the output. That is your `${SESSION_ROOT}`.
 The extension root is `$HOME/.claude/pickle-rick` (referred to as `${EXTENSION_ROOT}` below).
 
-Copy the PRD into the session:
+Store the original PRD path for later write-back, then copy into the session:
+
+**CRITICAL**: Remember `<PRD_PATH>` (the original location) — you will write the refined PRD back to this path in Step 6.
+
 ```bash
 cp "<PRD_PATH>" "${SESSION_ROOT}/prd.md"
 ```
@@ -52,8 +55,12 @@ cp "<PRD_PATH>" "${SESSION_ROOT}/prd.md"
 
 Announce: "Deploying the Morty analysis team. Three specialists, running in parallel. This is what science looks like, Morty."
 
-Run the refinement team spawner — this blocks until all 3 parallel workers complete.
-The `--timeout` flag is optional; the script reads `worker_timeout_seconds` from the session state automatically (default: 600s).
+Run the refinement team spawner — this blocks until all workers across all cycles complete.
+
+Optional flags (all have smart defaults from `pickle_settings.json`):
+- `--timeout <sec>` — per-worker timeout (inherits `worker_timeout_seconds` from session state, typically 1200s from `default_worker_timeout_seconds` in settings; hardcoded fallback: 600s)
+- `--cycles <n>` — number of refinement passes (default: 2). Cycle 1 is initial analysis; cycle 2+ cross-references all previous findings for deeper analysis.
+- `--max-turns <n>` — max Claude turns per worker (default: 30). Higher = deeper analysis per invocation.
 
 ```bash
 node "${EXTENSION_ROOT}/extension/bin/spawn-refinement-team.js" \
@@ -61,10 +68,15 @@ node "${EXTENSION_ROOT}/extension/bin/spawn-refinement-team.js" \
   --session-dir "${SESSION_ROOT}"
 ```
 
-**The 3 Morty Workers (run in parallel):**
+**The 3 Morty Workers (run in parallel, per cycle):**
 - 🔬 **Requirements Analyst Morty** → `${SESSION_ROOT}/refinement/analysis_requirements.md`
 - 🏗️ **Codebase Context Morty** → `${SESSION_ROOT}/refinement/analysis_codebase.md`
 - ⚠️ **Risk & Scope Auditor Morty** → `${SESSION_ROOT}/refinement/analysis_risk-scope.md`
+
+**Multi-Cycle Flow:**
+- **Cycle 1**: Each worker analyzes the raw PRD independently
+- **Cycle 2+**: Each worker receives ALL previous cycle analyses (cross-pollination), enabling deeper insights and cross-referencing
+- Intermediate cycle outputs are archived as `analysis_{role}_c{N}.md`; the canonical `analysis_{role}.md` always has the latest
 
 Wait for the `REFINEMENT_DIR=` and `MANIFEST=` output lines to confirm completion.
 
@@ -113,15 +125,26 @@ Produce `${SESSION_ROOT}/prd_refined.md` using the original PRD as the base, int
 
 ---
 
-## Step 6: Generate a Refinement Summary
+## Step 6: Update the Original PRD
 
-After writing `prd_refined.md`, write a summary to `${SESSION_ROOT}/refinement_summary.md`:
+Announce: "Writing the refined PRD back to the original location. The old version is archived in the session. *Belch*"
+
+Copy the refined PRD back to the **original PRD path** (the `<PRD_PATH>` you saved in Step 2):
+
+1. Write `${SESSION_ROOT}/prd_refined.md` content to `<PRD_PATH>`, overwriting the original.
+2. The pre-refinement version is preserved at `${SESSION_ROOT}/prd.md` for reference.
+
+---
+
+## Step 7: Generate a Refinement Summary
+
+After updating the original PRD, write a summary to `${SESSION_ROOT}/refinement_summary.md`:
 
 ```markdown
 # PRD Refinement Summary
 
-**Original PRD**: [path]
-**Refined PRD**: [path]
+**Original PRD (updated in-place)**: [PRD_PATH]
+**Pre-refinement backup**: ${SESSION_ROOT}/prd.md
 **Refined At**: [timestamp]
 **Session**: [SESSION_ROOT]
 
@@ -138,26 +161,21 @@ After writing `prd_refined.md`, write a summary to `${SESSION_ROOT}/refinement_s
 
 ## Workers That Failed (if any)
 - [List worker IDs that failed, with log paths for debugging]
-
-## Recommended Next Steps
-- [ ] Review refined PRD with stakeholders
-- [ ] To implement: copy `prd_refined.md` to your project root as `prd.md`, then run `/pickle` with your task
 ```
 
 ---
 
-## Step 7: Handoff
+## Step 8: Handoff
 
 Output this message:
 
 > "Wubba Lubba Dub Dub! 🥒 PRD refinement complete.
 >
-> **Refined PRD**: `${SESSION_ROOT}/prd_refined.md`
+> **Updated PRD**: `<PRD_PATH>` (refined in-place)
+> **Pre-refinement backup**: `${SESSION_ROOT}/prd.md`
 > **Analysis reports**: `${SESSION_ROOT}/refinement/`
 > **Summary**: `${SESSION_ROOT}/refinement_summary.md`
 >
-> Review the refined PRD. When you're happy with it:
-> 1. Copy it to your project root: `cp ${SESSION_ROOT}/prd_refined.md ./prd.md`
-> 2. Start the implementation loop: `/pickle <your task description>`
+> The PRD has been updated. To start implementation: `/pickle <your task description>`
 >
 > The refinement session is archived at `${SESSION_ROOT}` for reference."

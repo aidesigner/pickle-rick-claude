@@ -51,7 +51,8 @@ async function runTask(sessionDir: string, repoCwd: string, extensionRoot: strin
     '-p', prompt,
   ];
 
-  const env = { ...process.env, PICKLE_STATE_FILE: statePath };
+  const env: NodeJS.ProcessEnv = { ...process.env, PICKLE_STATE_FILE: statePath };
+  delete env['CLAUDECODE'];
 
   return new Promise((resolve) => {
     const proc = spawn('claude', cmdArgs, { cwd: repoCwd, env, stdio: 'inherit' });
