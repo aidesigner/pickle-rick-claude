@@ -15,9 +15,10 @@ export function updateState(key, value, sessionDir) {
         throw new Error(`Invalid step "${value}". Must be one of: ${VALID_STEPS.join(', ')}`);
     }
     const NUMERIC_KEYS = new Set(['iteration', 'max_iterations', 'max_time_minutes', 'worker_timeout_seconds', 'start_time_epoch']);
+    const BOOLEAN_KEYS = new Set(['active', 'tmux_mode']);
     const ALLOWED_KEYS = new Set([
-        ...NUMERIC_KEYS, 'step', 'active', 'working_dir', 'completion_promise',
-        'original_prompt', 'current_ticket', 'started_at', 'session_dir', 'tmux_mode',
+        ...NUMERIC_KEYS, ...BOOLEAN_KEYS, 'step', 'working_dir', 'completion_promise',
+        'original_prompt', 'current_ticket', 'started_at', 'session_dir',
     ]);
     if (!ALLOWED_KEYS.has(key)) {
         throw new Error(`Unknown state key "${key}". Allowed: ${[...ALLOWED_KEYS].join(', ')}`);
@@ -29,6 +30,12 @@ export function updateState(key, value, sessionDir) {
             throw new Error(`Key "${key}" requires a finite number, got "${value}"`);
         }
         state[key] = num;
+    }
+    else if (BOOLEAN_KEYS.has(key)) {
+        if (value !== 'true' && value !== 'false') {
+            throw new Error(`Key "${key}" requires "true" or "false", got "${value}"`);
+        }
+        state[key] = value === 'true';
     }
     else {
         state[key] = value;

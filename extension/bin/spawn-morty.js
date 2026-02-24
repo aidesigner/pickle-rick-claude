@@ -92,14 +92,14 @@ async function main() {
     }, 'CYAN', '🥒');
     const extensionRoot = getExtensionRoot();
     const includes = [extensionRoot, ticketPath];
-    const cmdArgs = ['-s', '-y'];
+    const cmdArgs = ['--dangerously-skip-permissions'];
     for (const p of includes) {
         if (fs.existsSync(p)) {
-            cmdArgs.push('--include-directories', p);
+            cmdArgs.push('--add-dir', p);
         }
     }
     if (outputFormat !== 'text') {
-        cmdArgs.push('-o', outputFormat);
+        cmdArgs.push('--output-format', outputFormat);
     }
     // Prompt Construction — read the full send-to-morty.md lifecycle template
     // so workers spawned via `claude -p` get all 7 phases (Research → Simplify).

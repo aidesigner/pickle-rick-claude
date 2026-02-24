@@ -179,10 +179,10 @@ function spawnWorker(
 
   // Mirror spawn-morty.ts: include extensionRoot and workingDir
   const includes = [extensionRoot, workingDir];
-  const cmdArgs = ['-s', '-y'];
+  const cmdArgs = ['--dangerously-skip-permissions'];
   for (const p of includes) {
     if (fs.existsSync(p)) {
-      cmdArgs.push('--include-directories', p);
+      cmdArgs.push('--add-dir', p);
     }
   }
   if (maxTurns > 0) {

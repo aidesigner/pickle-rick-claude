@@ -69,9 +69,11 @@ async function main() {
   if (fs.existsSync(settingsFile)) {
     try {
       const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf-8'));
-      if (settings.default_max_iterations) loopLimit = settings.default_max_iterations;
-      if (settings.default_max_time_minutes) timeLimit = settings.default_max_time_minutes;
-      if (settings.default_worker_timeout_seconds)
+      if (typeof settings.default_max_iterations === 'number' && settings.default_max_iterations > 0)
+        loopLimit = settings.default_max_iterations;
+      if (typeof settings.default_max_time_minutes === 'number' && settings.default_max_time_minutes > 0)
+        timeLimit = settings.default_max_time_minutes;
+      if (typeof settings.default_worker_timeout_seconds === 'number' && settings.default_worker_timeout_seconds > 0)
         workerTimeout = settings.default_worker_timeout_seconds;
     } catch {
       /* ignore */
@@ -98,7 +100,9 @@ async function main() {
       workerTimeout = v;
       explicitFlags.add('worker-timeout');
     } else if (arg === '--completion-promise') {
-      promiseToken = args[++i];
+      const v = args[++i];
+      if (!v || v.startsWith('--')) die(`--completion-promise requires a non-empty value`);
+      promiseToken = v;
     } else if (arg === '--resume') {
       resumeMode = true;
       if (args[i + 1] && !args[i + 1].startsWith('--')) {

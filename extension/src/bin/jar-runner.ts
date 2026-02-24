@@ -114,7 +114,7 @@ async function main() {
     if (!fs.existsSync(sessionDir)) {
       console.error(`${Style.RED}⚠️  Session dir not found for ${taskId}${Style.RESET}`);
       meta.status = 'failed';
-      fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+      { const tmp = metaPath + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(meta, null, 2)); fs.renameSync(tmp, metaPath); }
       failed++;
       continue;
     }
@@ -122,7 +122,7 @@ async function main() {
     if (!meta.repo_path || typeof meta.repo_path !== 'string') {
       console.error(`${Style.RED}⚠️  Skipping ${taskId}: meta.repo_path is missing or not a string${Style.RESET}`);
       meta.status = 'failed';
-      fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+      { const tmp = metaPath + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(meta, null, 2)); fs.renameSync(tmp, metaPath); }
       failed++;
       continue;
     }
@@ -137,14 +137,14 @@ async function main() {
         if (currentHash !== meta.prd_hash) {
           console.error(`${Style.RED}⚠️  Skipping ${taskId}: PRD integrity check failed (content modified since jarring)${Style.RESET}`);
           meta.status = 'failed';
-          fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+          { const tmp = metaPath + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(meta, null, 2)); fs.renameSync(tmp, metaPath); }
           failed++;
           continue;
         }
       } catch {
         console.error(`${Style.RED}⚠️  Skipping ${taskId}: cannot read jarred PRD for integrity check${Style.RESET}`);
         meta.status = 'failed';
-        fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+        { const tmp = metaPath + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(meta, null, 2)); fs.renameSync(tmp, metaPath); }
         failed++;
         continue;
       }
@@ -152,7 +152,7 @@ async function main() {
 
     const ok = await runTask(sessionDir, repoPath, ROOT_DIR);
     meta.status = ok ? 'consumed' : 'failed';
-    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+    { const tmp = metaPath + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(meta, null, 2)); fs.renameSync(tmp, metaPath); }
 
     // Deactivate session after task completes (runTask sets active=true on start)
     try {

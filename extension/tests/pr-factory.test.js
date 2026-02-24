@@ -119,6 +119,36 @@ test('createPR includes the full original prompt in the PR body', () => {
     }
 });
 
+test('createPR does not append "..." for short prompts', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-factory-'));
+    try {
+        const shortPrompt = 'fix login bug';
+        fs.writeFileSync(
+            path.join(tmp, 'state.json'),
+            JSON.stringify({ working_dir: tmp, original_prompt: shortPrompt })
+        );
+        let caught;
+        try {
+            createPR(tmp);
+        } catch (err) {
+            caught = err;
+        }
+        assert.ok(caught, 'expected createPR to throw');
+        const msg = caught.message;
+        // Title should contain the full short prompt WITHOUT trailing "..."
+        assert.ok(
+            msg.includes(`Pickle Rick: ${shortPrompt}`),
+            `Error message should include the full short title.\nGot: ${msg}`
+        );
+        assert.ok(
+            !msg.includes(`Pickle Rick: ${shortPrompt}...`),
+            `Short title should NOT have trailing "..."\nGot: ${msg}`
+        );
+    } finally {
+        fs.rmSync(tmp, { recursive: true });
+    }
+});
+
 test('createPR propagates gh errors wrapped in "Failed to create PR"', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-factory-'));
     try {

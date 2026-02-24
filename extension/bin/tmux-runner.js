@@ -39,7 +39,7 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
     let maxTurns = 50;
     try {
         const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-        maxTurns = settings.default_tmux_max_turns || settings.default_manager_max_turns || 50;
+        maxTurns = settings.default_tmux_max_turns ?? settings.default_manager_max_turns ?? 50;
     }
     catch { /* use default */ }
     const logFile = path.join(sessionDir, `tmux_iteration_${iterationNum}.log`);
@@ -67,10 +67,11 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
         proc.stderr?.pipe(process.stderr);
         proc.on('close', () => {
             logStream.end();
-            // Wait for the write stream to fully flush before reading the log.
-            // Without this, pipe buffers may not have drained to disk yet and
-            // completion tokens could be missed — causing false "continue" results.
-            logStream.on('finish', () => {
+            let finalized = false;
+            function finalize() {
+                if (finalized)
+                    return;
+                finalized = true;
                 const output = fs.readFileSync(logFile, 'utf-8');
                 if (hasToken(output, PromiseTokens.EPIC_COMPLETED) ||
                     hasToken(output, PromiseTokens.TASK_COMPLETED)) {
@@ -79,6 +80,15 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
                 else {
                     resolve('continue');
                 }
+            }
+            // Guard against logStream.finish never firing (e.g., disk I/O failure)
+            const flushTimeout = setTimeout(() => {
+                console.error(`${Style.YELLOW}⚠️  Log flush timed out — reading partial log${Style.RESET}`);
+                finalize();
+            }, 5000);
+            logStream.on('finish', () => {
+                clearTimeout(flushTimeout);
+                finalize();
             });
         });
         proc.on('error', (err) => {

@@ -186,7 +186,7 @@ export function parseTicketFrontmatter(filePath: string): TicketInfo | null {
       id: get('id'),
       title: get('title'),
       status: get('status'),
-      order: parseInt(get('order') || '0', 10),
+      order: parseInt(get('order') || '0', 10) || 0,
     };
   } catch {
     return null;

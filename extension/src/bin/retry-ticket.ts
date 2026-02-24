@@ -70,7 +70,14 @@ export function retryTicket(ticketId: string, cwd: string): void {
   } else {
     updatedContent = ticketContent.replace(/^status:.*$/m, 'status: Todo');
   }
-  fs.writeFileSync(ticketFile, updatedContent);
+  const tmpTicket = ticketFile + '.tmp';
+  try {
+    fs.writeFileSync(tmpTicket, updatedContent);
+    fs.renameSync(tmpTicket, ticketFile);
+  } catch (err) {
+    try { fs.unlinkSync(tmpTicket); } catch { /* ignore cleanup failure */ }
+    throw err;
+  }
 
   // Re-activate session and set current ticket
   state.active = true;

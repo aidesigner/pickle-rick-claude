@@ -81,6 +81,13 @@ export function update_ticket_status(
     content = content.replace(/^updated:.*$/m, `updated: "${today}"`);
   }
 
-  fs.writeFileSync(ticket_path, content);
+  const tmp = ticket_path + '.tmp';
+  try {
+    fs.writeFileSync(tmp, content);
+    fs.renameSync(tmp, ticket_path);
+  } catch (err) {
+    try { fs.unlinkSync(tmp); } catch { /* ignore cleanup failure */ }
+    throw err;
+  }
   console.log(`Successfully updated ticket ${ticket_id} to status "${new_status}"`);
 }

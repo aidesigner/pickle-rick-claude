@@ -113,3 +113,52 @@ test('updateState: numeric key with non-numeric value throws', () => {
         );
     });
 });
+
+// ---------------------------------------------------------------------------
+// Boolean key coercion (C2 fix)
+// ---------------------------------------------------------------------------
+
+test('updateState: boolean key "active" with "true" stores boolean true', () => {
+    withTempSession({ active: false, step: 'prd', iteration: 0 }, (dir) => {
+        updateState('active', 'true', dir);
+        const state = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf-8'));
+        assert.strictEqual(state.active, true);
+        assert.strictEqual(typeof state.active, 'boolean');
+    });
+});
+
+test('updateState: boolean key "active" with "false" stores boolean false', () => {
+    withTempSession({ active: true, step: 'prd', iteration: 0 }, (dir) => {
+        updateState('active', 'false', dir);
+        const state = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf-8'));
+        assert.strictEqual(state.active, false);
+        assert.strictEqual(typeof state.active, 'boolean');
+    });
+});
+
+test('updateState: boolean key "tmux_mode" with "true" stores boolean true', () => {
+    withTempSession({ active: true, step: 'prd', tmux_mode: false }, (dir) => {
+        updateState('tmux_mode', 'true', dir);
+        const state = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf-8'));
+        assert.strictEqual(state.tmux_mode, true);
+        assert.strictEqual(typeof state.tmux_mode, 'boolean');
+    });
+});
+
+test('updateState: boolean key rejects non-boolean values', () => {
+    withTempSession({ active: true, step: 'prd' }, (dir) => {
+        assert.throws(
+            () => updateState('active', 'yes', dir),
+            /requires "true" or "false"/i
+        );
+    });
+});
+
+test('updateState: boolean key rejects numeric-looking values', () => {
+    withTempSession({ active: true, step: 'prd' }, (dir) => {
+        assert.throws(
+            () => updateState('active', '1', dir),
+            /requires "true" or "false"/i
+        );
+    });
+});

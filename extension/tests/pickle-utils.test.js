@@ -173,6 +173,14 @@ test('parseTicketFrontmatter: missing order defaults to 0', () => {
     });
 });
 
+test('parseTicketFrontmatter: non-numeric order defaults to 0 (NaN guard)', () => {
+    withTempFile(`---\nid: x\ntitle: T\nstatus: Todo\norder: abc\n---\n`, (file) => {
+        const result = parseTicketFrontmatter(file);
+        assert.equal(result.order, 0);
+        assert.strictEqual(typeof result.order, 'number');
+    });
+});
+
 // --- collectTickets ---
 
 test('collectTickets: returns tickets sorted by order', () => {

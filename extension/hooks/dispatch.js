@@ -120,8 +120,6 @@ async function main() {
         child.stdout?.on('data', (data) => (stdout += data.toString()));
         child.stderr?.on('data', (data) => (stderr += data.toString()));
         child.on('close', (code) => {
-            if (stdout)
-                process.stdout.write(stdout);
             if (stderr)
                 process.stderr.write(stderr);
             if (stderr.trim()) {
@@ -134,15 +132,25 @@ async function main() {
                 approve();
             }
             else {
-                // Validate handler output is well-formed JSON with a decision field
+                // Validate handler output is well-formed JSON with a decision field before forwarding
+                let valid = false;
                 try {
                     const parsed = JSON.parse(stdout.trim());
-                    if (!parsed.decision || (parsed.decision !== 'approve' && parsed.decision !== 'block')) {
+                    if (parsed.decision === 'approve' || parsed.decision === 'block') {
+                        valid = true;
+                    }
+                    else {
                         log(`Hook ${hookName} returned invalid decision: ${JSON.stringify(parsed.decision)}`);
                     }
                 }
                 catch {
-                    log(`Hook ${hookName} returned non-JSON stdout — forwarding as-is`);
+                    log(`Hook ${hookName} returned non-JSON stdout — falling back to approve`);
+                }
+                if (valid) {
+                    process.stdout.write(stdout);
+                }
+                else {
+                    approve();
                 }
             }
             process.exit(code ?? 0);

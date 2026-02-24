@@ -277,6 +277,52 @@ test('dispatch: extra args are forwarded to the handler', () => {
   }
 });
 
+test('dispatch: handler returning invalid JSON falls back to approve', () => {
+  const tmpRoot = makeTmpRoot();
+  try {
+    const handlersDir = makeHandlersDir(tmpRoot);
+    // Handler that outputs garbage (not JSON)
+    writeHandler(handlersDir, 'test-garbage', `
+      process.stdout.write('this is not json');
+    `);
+
+    const { stdout, status } = runDispatch({
+      extRoot: tmpRoot,
+      args: ['test-garbage'],
+      input: '{}',
+    });
+
+    assert.equal(status, 0, 'should exit with code 0');
+    const parsed = JSON.parse(stdout.trim());
+    assert.equal(parsed.decision, 'approve', 'invalid JSON output should fall back to approve');
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('dispatch: handler returning invalid decision field falls back to approve', () => {
+  const tmpRoot = makeTmpRoot();
+  try {
+    const handlersDir = makeHandlersDir(tmpRoot);
+    // Handler that outputs valid JSON but with a bad decision value
+    writeHandler(handlersDir, 'test-bad-decision', `
+      console.log(JSON.stringify({ decision: 'allow', reason: 'wrong value' }));
+    `);
+
+    const { stdout, status } = runDispatch({
+      extRoot: tmpRoot,
+      args: ['test-bad-decision'],
+      input: '{}',
+    });
+
+    assert.equal(status, 0, 'should exit with code 0');
+    const parsed = JSON.parse(stdout.trim());
+    assert.equal(parsed.decision, 'approve', 'invalid decision value should fall back to approve');
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
 test('dispatch: EXTENSION_DIR env var is passed to the handler', () => {
   const tmpRoot = makeTmpRoot();
   try {
