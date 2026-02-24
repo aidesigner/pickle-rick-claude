@@ -49,7 +49,7 @@ async function main() {
     // Silently prune sessions older than 7 days that are no longer active
     pruneOldSessions(SESSIONS_ROOT);
     // Defaults
-    let loopLimit = 5;
+    let loopLimit = 100;
     let timeLimit = 60;
     let workerTimeout = 1200;
     let promiseToken = null;
