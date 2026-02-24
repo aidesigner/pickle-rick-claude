@@ -286,7 +286,7 @@ async function main() {
   // Load settings for refinement-specific defaults
   const extensionRoot = getExtensionRoot();
   const settingsFile = path.join(extensionRoot, 'pickle_settings.json');
-  let defaultCycles = 2;
+  let defaultCycles = 3;
   let defaultMaxTurns = 30;
   if (fs.existsSync(settingsFile)) {
     try {

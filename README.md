@@ -38,7 +38,7 @@ A port of the [Pickle Rick Gemini CLI extension](https://github.com/galz10/pickl
 - **True context clearing via tmux** — `/pickle-tmux` spawns a genuinely fresh `claude -p` subprocess per iteration inside a tmux session, so each iteration starts with zero conversation history. No context drift on long epics.
 - **Context clearing** — every loop iteration injects a structured session summary (phase, ticket list, task) as a system message, so Rick survives full context compression without losing his place
 - **Single Stop hook** — the Gemini version requires three hooks (BeforeAgent, BeforeModel, AfterAgent); this port does it all in one, with fewer moving parts
-- **PRD refinement & task decomposition** — `/pickle-refine-prd` runs multi-cycle refinement (default: 2 cycles) with 3 parallel Morty analysts (Requirements, Codebase, Risk/Scope), then decomposes the refined PRD into discrete, ordered implementation tasks with pre-created ticket files. The session is advanced so `/pickle --resume` skips PRD and breakdown phases and goes straight to orchestration.
+- **PRD refinement & task decomposition** — `/pickle-refine-prd` runs multi-cycle refinement (default: 3 cycles) with 3 parallel Morty analysts (Requirements, Codebase, Risk/Scope), then decomposes the refined PRD into discrete, ordered implementation tasks with pre-created ticket files. The session is advanced so `/pickle --resume` skips PRD and breakdown phases and goes straight to orchestration.
 - **Worker isolation** — Morty subprocesses run with `--dangerously-skip-permissions` and scoped `--add-dir`, so each worker starts genuinely fresh with only its ticket and the extension root in context
 - **Skills inlined** — Gemini's skills require `activate_skill()` calls that can fail; here they're baked directly into the command prompts
 - **Jar improvements** — the Night Shift runner adds success/failure tracking and a configurable `default_manager_max_turns` setting absent from the original
@@ -164,7 +164,7 @@ All defaults are configurable via `~/.claude/pickle-rick/pickle_settings.json`:
 | `default_worker_timeout_seconds` | 1200 | Per-worker subprocess timeout |
 | `default_manager_max_turns` | 50 | Max Claude turns per iteration (interactive/jar) |
 | `default_tmux_max_turns` | 80 | Max Claude turns per iteration (tmux mode) |
-| `default_refinement_cycles` | 2 | Number of refinement analysis passes |
+| `default_refinement_cycles` | 3 | Number of refinement analysis passes |
 | `default_refinement_max_turns` | 30 | Max Claude turns per refinement worker |
 
 ---
