@@ -227,8 +227,9 @@ claude
 
 ```bash
 /pickle-prd "refactor the auth module"    # Draft the PRD with Rick interrogating you
-/pickle-refine-prd                        # (optional) Refine with 3 parallel analysts + decompose into tickets
-/pickle --resume                          # Execute from the refined PRD
+/pickle-refine-prd example-prd.md         # (optional) Refine with 3 parallel analysts + decompose into tickets
+/pickle example-prd.md                    # Execute — Rick picks up the refined PRD
+/pickle-tmux example-prd.md              # Or use tmux mode for long epics (8+ tickets)
 ```
 
 This gives you a chance to review and edit the PRD before Rick starts building. For complex tasks, this is the way.
@@ -236,13 +237,8 @@ This gives you a chance to review and edit the PRD before Rick starts building. 
 **Option C: Bring your own PRD** — Drop a `prd.md` or `PRD.md` in your project root, then:
 
 ```bash
-/pickle "refactor the auth module"        # Rick detects the PRD and skips drafting
-```
-
-**tmux mode** (recommended for long epics): add `-tmux` to run in the background with a live monitor dashboard:
-
-```bash
-/pickle-tmux "refactor the auth module"
+/pickle my-prd.md                         # Rick picks up your PRD and skips drafting
+/pickle-tmux my-prd.md                    # Or use tmux mode for long epics (8+ tickets)
 ```
 
 Rick immediately prints a `tmux attach` command — open a second terminal and paste it to watch the live dashboard while it runs. Each iteration spawns a fresh Claude subprocess with clean context, so there's no drift on long epics (8+ iterations).
@@ -394,22 +390,6 @@ Morty workers already get clean context naturally (each is a fresh `claude -p` s
 
 - **Rick (Manager)**: Runs in your interactive Claude session. Handles PRD, Breakdown, orchestration.
 - **Morty (Worker)**: Spawned as `claude --dangerously-skip-permissions --add-dir <extension_root> --add-dir <ticket_path> -p "..."` subprocess per ticket. Gets the full lifecycle skill set inlined in the prompt. The `CLAUDECODE` env var is stripped so workers don't detect a nested session. Outputs `<promise>I AM DONE</promise>` when finished.
-
----
-
-## 🛡️ Differences from the Gemini Version
-
-| Gemini | Claude Code |
-|---|---|
-| `gemini-extension.json` | `CLAUDE.md` |
-| `commands/*.toml` | `.claude/commands/*.md` |
-| `activate_skill("x")` | Skills inlined directly in command prompts |
-| `BeforeAgent` + `BeforeModel` + `AfterAgent` hooks | Single `Stop` hook |
-| `gemini -s -y --include-directories -p` | `claude --dangerously-skip-permissions --add-dir <path> -p` (workers) / `claude --dangerously-skip-permissions --add-dir <path> --no-session-persistence --max-turns N -p` (jar/tmux runner) |
-| `~/.gemini/extensions/pickle-rick/` | `~/.claude/pickle-rick/` |
-| `hookSpecificOutput.systemMessage` | `reason` field in block response |
-
-> ✅ **Jar commands** (`/add-to-pickle-jar`, `/pickle-jar-open`) are fully ported.
 
 ---
 
