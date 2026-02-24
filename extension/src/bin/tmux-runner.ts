@@ -150,6 +150,8 @@ async function main() {
 
     if (state.max_iterations > 0 && state.iteration >= state.max_iterations) {
       log(`Max iterations reached (${state.iteration}/${state.max_iterations}). Exiting.`);
+      state.active = false;
+      writeStateFile(statePath, state);
       break;
     }
 
@@ -157,6 +159,8 @@ async function main() {
     const elapsed = startEpoch > 0 ? Math.max(0, Math.floor(Date.now() / 1000) - startEpoch) : 0;
     if (state.max_time_minutes > 0 && startEpoch > 0 && elapsed >= state.max_time_minutes * 60) {
       log(`Time limit reached (${elapsed}s). Exiting.`);
+      state.active = false;
+      writeStateFile(statePath, state);
       break;
     }
 
@@ -166,6 +170,8 @@ async function main() {
       stallCount++;
       if (stallCount >= 3) {
         log(`WARNING: state.iteration has not advanced in 3 outer-loop iterations (stuck at ${state.iteration}). Exiting to avoid wasted API calls.`);
+        state.active = false;
+        writeStateFile(statePath, state);
         break;
       }
     } else {

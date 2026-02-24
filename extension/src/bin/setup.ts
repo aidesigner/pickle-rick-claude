@@ -30,7 +30,9 @@ async function main() {
         }
       }
       map[cwd] = sessionPath;
-      fs.writeFileSync(SESSIONS_MAP, JSON.stringify(map, null, 2));
+      const tmpMap = SESSIONS_MAP + `.tmp.${process.pid}`;
+      fs.writeFileSync(tmpMap, JSON.stringify(map, null, 2));
+      fs.renameSync(tmpMap, SESSIONS_MAP);
     });
   };
 
@@ -232,4 +234,4 @@ function resolvePath(p: string): string {
   return path.resolve(p);
 }
 
-main().catch((err) => die(err.message));
+main().catch((err) => die(err instanceof Error ? err.message : String(err)));

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, } from '../services/pickle-utils.js';
 import { spawn } from 'child_process';
 import { PromiseTokens, hasToken } from '../types/index.js';
@@ -25,6 +26,10 @@ async function main() {
     let ticketPath = args[ticketPathIndex + 1];
     if (!ticketId || ticketId.startsWith('--') || !ticketPath || ticketPath.startsWith('--')) {
         console.log('Error: --ticket-id and --ticket-path require non-empty values.');
+        process.exit(1);
+    }
+    if (!/^[a-zA-Z0-9_-]+$/.test(ticketId)) {
+        console.log('Error: --ticket-id contains invalid characters.');
         process.exit(1);
     }
     const rawTimeout = timeoutIndex !== -1 ? parseInt(args[timeoutIndex + 1], 10) : NaN;
@@ -86,7 +91,7 @@ async function main() {
         PID: process.pid,
     }, 'CYAN', '🥒');
     const extensionRoot = getExtensionRoot();
-    const includes = [extensionRoot, path.join(extensionRoot, 'skills'), ticketPath];
+    const includes = [extensionRoot, ticketPath];
     const cmdArgs = ['-s', '-y'];
     for (const p of includes) {
         if (fs.existsSync(p)) {
@@ -96,10 +101,18 @@ async function main() {
     if (outputFormat !== 'text') {
         cmdArgs.push('-o', outputFormat);
     }
-    // Prompt Construction — the /send-to-morty.md slash command is loaded by
-    // Claude Code's own command system, not parsed here. Workers spawned via
-    // `claude -p` get a self-contained prompt with all necessary instructions.
-    let workerPrompt = `# **TASK REQUEST**\n${task}\n\nYou are a Morty Worker (Pickle Rick's assistant). Implement the request above.`;
+    // Prompt Construction — read the full send-to-morty.md lifecycle template
+    // so workers spawned via `claude -p` get all 7 phases (Research → Simplify).
+    const mortyPromptPath = path.join(os.homedir(), '.claude', 'commands', 'send-to-morty.md');
+    let workerPrompt;
+    if (fs.existsSync(mortyPromptPath)) {
+        workerPrompt = fs.readFileSync(mortyPromptPath, 'utf-8')
+            .replace(/\$ARGUMENTS/g, task);
+    }
+    else {
+        // Fallback if send-to-morty.md is not installed
+        workerPrompt = `# **TASK REQUEST**\n${task}\n\nYou are a Morty Worker (Pickle Rick's assistant). Implement the request above.`;
+    }
     // Inject Ticket Context
     workerPrompt += `\n\n# TARGET TICKET CONTENT\n${ticketContent || 'N/A'}`;
     workerPrompt += `\n\n# EXECUTION CONTEXT\n- SESSION_ROOT: ${sessionRoot}\n- TICKET_ID: ${ticketId}\n- TICKET_DIR: ${ticketPath}`;
@@ -163,6 +176,12 @@ async function main() {
                 if (isSuccess) {
                     try {
                         update_ticket_status(ticketId, 'Done', sessionRoot);
+                    }
+                    catch { /* best-effort */ }
+                }
+                else {
+                    try {
+                        update_ticket_status(ticketId, 'Failed', sessionRoot);
                     }
                     catch { /* best-effort */ }
                 }

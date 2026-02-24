@@ -119,6 +119,7 @@ The **Stop hook** prevents Claude from exiting until the task is genuinely compl
 --worker-timeout <S>       Timeout for individual workers in seconds (default: 1200)
 --completion-promise "TXT" Only stop when the agent outputs <promise>TXT</promise>
 --resume [PATH]            Resume from an existing session
+--reset                    Reset iteration counter and start time (use with --resume)
 --paused                   Start in paused mode (PRD only)
 ```
 
@@ -305,7 +306,11 @@ Long-running AI sessions accumulate stale conversational context. The model star
 
 **The Ralph Wiggum insight** (see [Credits](#-credits)) is that a simple loop — blocking the agent's exit and re-injecting a minimal, accurate context — outperforms one long conversation every time. Fresh context = cleaner decisions.
 
-**How we accomplish it:** The stop hook injects a structured session summary into the `reason` field of every `decision: block` response:
+**How we accomplish it depends on the mode:**
+
+**Interactive mode** (`/pickle`): The stop hook injects a short feedback string into the `reason` field of every `decision: block` response (e.g. `"🥒 Pickle Rick Loop Active (Iteration 3) of 10"`). Claude Code surfaces this `reason` string as a system message, giving Rick enough orientation to continue.
+
+**tmux mode** (`/pickle-tmux`): Each iteration spawns a genuinely fresh `claude -p` subprocess. The tmux-runner builds a full structured handoff summary — phase, ticket list, task — and injects it into the prompt before each iteration starts:
 
 ```
 === PICKLE RICK LOOP CONTEXT ===
@@ -325,9 +330,9 @@ NEXT ACTION: Resume from current phase. Read state.json for context.
 Do NOT restart from PRD. Continue where you left off.
 ```
 
-Claude Code injects this `reason` string as a **system message at the start of every new iteration** — even after full compression of the conversation history. No matter how much context gets evicted, Rick always wakes up knowing exactly where he is and what to do next.
+No matter how much context gets evicted, Rick always wakes up knowing exactly where he is and what to do next.
 
-Morty workers already get clean context naturally (each is a fresh `claude -p` subprocess). This brings equivalent resilience to Rick's long-running interactive session.
+Morty workers already get clean context naturally (each is a fresh `claude -p` subprocess with the full 7-phase lifecycle template from `send-to-morty.md`).
 
 ---
 
@@ -359,6 +364,7 @@ Morty workers already get clean context naturally (each is a fresh `claude -p` s
 - **Node.js** 18+
 - **Claude Code** CLI (`claude`) — v2.1.49+
 - **jq** (for `install.sh`)
+- **rsync** (for `install.sh`)
 - macOS or Linux (Windows not supported)
 
 ---

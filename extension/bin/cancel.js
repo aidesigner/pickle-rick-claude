@@ -49,7 +49,9 @@ export function cancelSession(cwd) {
             }
             catch { /* ignore */ }
             delete freshMap[cwd];
-            fs.writeFileSync(SESSIONS_MAP, JSON.stringify(freshMap, null, 2));
+            const tmpMap = SESSIONS_MAP + `.tmp.${process.pid}`;
+            fs.writeFileSync(tmpMap, JSON.stringify(freshMap, null, 2));
+            fs.renameSync(tmpMap, SESSIONS_MAP);
         });
     }
     catch {

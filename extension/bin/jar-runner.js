@@ -144,6 +144,14 @@ async function main() {
         const ok = await runTask(sessionDir, repoPath, ROOT_DIR);
         meta.status = ok ? 'consumed' : 'failed';
         fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2));
+        // Deactivate session after task completes (runTask sets active=true on start)
+        try {
+            const taskStatePath = path.join(sessionDir, 'state.json');
+            const taskState = JSON.parse(fs.readFileSync(taskStatePath, 'utf-8'));
+            taskState.active = false;
+            writeStateFile(taskStatePath, taskState);
+        }
+        catch { /* best-effort */ }
         if (ok) {
             succeeded++;
             console.log(`\n${Style.GREEN}✅ Task ${taskId} complete${Style.RESET}`);

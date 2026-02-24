@@ -63,13 +63,12 @@ async function main() {
   let cmdArgs: string[];
 
   const jsPath = join(HANDLERS_DIR, `${hookName}.js`);
-  const HOOKS_DIR = join(EXTENSION_DIR, 'hooks');
   if (existsSync(jsPath)) {
     scriptPath = jsPath;
     cmd = 'node';
     cmdArgs = [scriptPath, ...extraArgs];
   } else if (isWindows) {
-    scriptPath = join(HOOKS_DIR, `${hookName}.ps1`);
+    scriptPath = join(HANDLERS_DIR, `${hookName}.ps1`);
     const exe = findExecutable('pwsh') || findExecutable('powershell');
     if (!exe) {
       logError('PowerShell not found.');
@@ -79,7 +78,7 @@ async function main() {
     cmd = exe;
     cmdArgs = ['-ExecutionPolicy', 'Bypass', '-File', scriptPath, ...extraArgs];
   } else {
-    scriptPath = join(HOOKS_DIR, `${hookName}.sh`);
+    scriptPath = join(HANDLERS_DIR, `${hookName}.sh`);
     cmd = 'bash';
     cmdArgs = [scriptPath, ...extraArgs];
   }
