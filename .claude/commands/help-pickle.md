@@ -25,7 +25,7 @@ Summarize the available commands for the user:
 
 **Advanced Flags for /pickle:**
 - `--resume [PATH]`: Resume an existing session.
-- `--max-iterations <N>`: Stop after N iterations (default: 5).
-- `--max-time <M>`: Stop after M minutes (default: 60).
+- `--max-iterations <N>`: Stop after N iterations (default: 100).
+- `--max-time <M>`: Stop after M minutes (default: 720 / 12 hours).
 - `--worker-timeout <S>`: Timeout for individual workers in seconds (default: 1200).
 - `--completion-promise "TEXT"`: Only stop when the agent outputs `<promise>TEXT</promise>`.

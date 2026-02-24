@@ -39,7 +39,7 @@ Tests live in `extension/tests/*.test.js` (run via `node --test`). No `.test.ts`
 if (process.argv[1] && path.basename(process.argv[1]) === 'foo.js') { ... }
 ```
 
-**Hook Decisions** — Only `"approve"` or `"block"` (never `"allow"`). No `hookSpecificOutput` for `AfterAgent` hooks:
+**Hook Decisions** — This is a `Stop` hook. Only `"approve"` or `"block"` (never `"allow"`):
 ```json
 { "decision": "approve" }
 { "decision": "block", "reason": "..." }
