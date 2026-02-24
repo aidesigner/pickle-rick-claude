@@ -95,10 +95,17 @@ export function run_cmd(cmd, options = {}) {
         return (stdout || '').trim();
     }
     catch (error) {
-        const err = error;
-        if (check)
-            throw new Error(`Command failed: ${cmd}\nError: ${err.stderr?.toString() || err.message}`);
-        return err.stdout?.toString().trim() || '';
+        if (check) {
+            const stderr = error instanceof Error && 'stderr' in error
+                ? String(error.stderr || '')
+                : '';
+            const msg = stderr || (error instanceof Error ? error.message : String(error));
+            throw new Error(`Command failed: ${cmd}\nError: ${msg}`);
+        }
+        const stdout = error instanceof Error && 'stdout' in error
+            ? String(error.stdout || '')
+            : '';
+        return stdout.trim();
     }
 }
 export function getExtensionRoot() {
@@ -125,7 +132,9 @@ export function extractFrontmatter(content) {
     const closeIdx = content.indexOf('\n---', openLen);
     if (closeIdx === -1)
         return null;
-    const end = closeIdx + 4; // includes the trailing newline of closing ---
+    // +4 for '\n---', +1 more if followed by a newline to consume the full delimiter line
+    const rawEnd = closeIdx + 4;
+    const end = content[rawEnd] === '\n' ? rawEnd + 1 : content[rawEnd] === '\r' && content[rawEnd + 1] === '\n' ? rawEnd + 2 : rawEnd;
     return { body: content.slice(openLen, closeIdx), start: 0, end };
 }
 export function parseTicketFrontmatter(filePath) {

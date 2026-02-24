@@ -171,7 +171,10 @@ async function main() {
   }, 100);
 
   const timeoutHandle = setTimeout(() => {
-    proc.kill();
+    try { proc.kill('SIGTERM'); } catch { /* already dead */ }
+    setTimeout(() => {
+      try { proc.kill('SIGKILL'); } catch { /* already dead */ }
+    }, 2000);
     console.log(`\n${Style.RED}❌ Worker timed out after ${effectiveTimeout}s${Style.RESET}`);
   }, effectiveTimeout * 1000);
 

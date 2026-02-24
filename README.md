@@ -38,7 +38,8 @@ A port of the [Pickle Rick Gemini CLI extension](https://github.com/galz10/pickl
 - **True context clearing via tmux** — `/pickle-tmux` spawns a genuinely fresh `claude -p` subprocess per iteration inside a tmux session, so each iteration starts with zero conversation history. No context drift on long epics.
 - **Context clearing** — every loop iteration injects a structured session summary (phase, ticket list, task) as a system message, so Rick survives full context compression without losing his place
 - **Single Stop hook** — the Gemini version requires three hooks (BeforeAgent, BeforeModel, AfterAgent); this port does it all in one, with fewer moving parts
-- **Worker isolation** — Morty subprocesses run with `--no-session-persistence` and scoped `--add-dir`, so each worker starts genuinely fresh with only its ticket in context
+- **PRD refinement** — `/pickle-refine-prd` spawns 3 parallel Morty analysts (Requirements, Codebase, Risk/Scope) to audit and strengthen a PRD before implementation
+- **Worker isolation** — Morty subprocesses run with `-s` (no session persistence) and scoped `--include-directories`, so each worker starts genuinely fresh with only its ticket in context
 - **Skills inlined** — Gemini's skills require `activate_skill()` calls that can fail; here they're baked directly into the command prompts
 - **Jar improvements** — the Night Shift runner adds success/failure tracking and a configurable `default_manager_max_turns` setting absent from the original
 
@@ -100,6 +101,7 @@ The **Stop hook** prevents Claude from exiting until the task is genuinely compl
 | `/pickle "task"` | 🥒 Start the full autonomous loop |
 | `/pickle-tmux "task"` | 🖥️ True context clearing — fresh subprocess per iteration via tmux. Best for long epics (8+ iterations). Requires `tmux`. |
 | `/pickle-prd "task"` | 📋 Interactively draft a PRD first |
+| `/pickle-refine-prd [path]` | 🔬 Auto-refine a PRD using 3 parallel Morty analysts |
 | `/eat-pickle` | 🛑 Cancel the active loop |
 | `/help-pickle` | ❓ Show all commands and flags |
 | `/add-to-pickle-jar` | 🫙 Save current session to the Jar for later |
@@ -112,10 +114,12 @@ The **Stop hook** prevents Claude from exiting until the task is genuinely compl
 ### Flags
 
 ```
---max-iterations <N>    Stop after N iterations (default: 5)
---max-time <M>          Stop after M minutes (default: 60)
---resume                Resume from an existing session
---paused                Start in paused mode (PRD only)
+--max-iterations <N>       Stop after N iterations (default: 5)
+--max-time <M>             Stop after M minutes (default: 60)
+--worker-timeout <S>       Timeout for individual workers in seconds (default: 1200)
+--completion-promise "TXT" Only stop when the agent outputs <promise>TXT</promise>
+--resume [PATH]            Resume from an existing session
+--paused                   Start in paused mode (PRD only)
 ```
 
 ### Tips
@@ -123,8 +127,8 @@ The **Stop hook** prevents Claude from exiting until the task is genuinely compl
 **`/pickle` vs `/pickle-tmux`** — Use `/pickle` for short-to-medium epics (1–7 iterations) in interactive mode with full keyboard access. Use `/pickle-tmux` for long epics (8+ iterations) where context drift is a concern — each iteration spawns a fresh Claude subprocess with a clean context window, bridged via `handoff.txt`. Requires `tmux`.
 
 **tmux Mode — two windows** — `/pickle-tmux` creates a tmux session with two windows:
-- **Window 0** (default): raw runner output — the live `claude -p` subprocess stream
-- **Window 1 `monitor`**: split view
+- **Window 0 `runner`**: raw runner output — the live `claude -p` subprocess stream
+- **Window 1 `monitor`** (default — you land here on attach): split view
   - **Left pane**: live dashboard — phase, iteration, elapsed time, all tickets with status (`[x]` done / `[~]` in progress / `[ ]` todo). Refreshes every 2 seconds.
   - **Right pane**: live log stream — streams each iteration's log as it's written, with an iteration header when the runner advances. Auto-switches to each new log file.
 
@@ -201,45 +205,58 @@ pickle-rick-claude/
 ├── .claude/
 │   ├── commands/           # Slash commands (the magic words)
 │   │   ├── pickle.md           # Main loop command (PRD + Breakdown inlined)
+│   │   ├── pickle-tmux.md      # True context clearing via tmux 🖥️
 │   │   ├── pickle-prd.md       # Interactive PRD drafter
+│   │   ├── pickle-refine-prd.md # Auto-refine a PRD with parallel analysts 🔬
+│   │   ├── send-to-morty.md    # Worker prompt (internal — all 7 phases inlined)
 │   │   ├── pickle-status.md    # Show session status
 │   │   ├── pickle-retry.md     # Retry a failed ticket
 │   │   ├── eat-pickle.md       # Loop canceller
 │   │   ├── help-pickle.md      # Help text
-│   │   ├── send-to-morty.md    # Worker prompt (all 7 skills inlined)
 │   │   ├── add-to-pickle-jar.md # Save session to Jar queue
 │   │   ├── pickle-jar-open.md  # Run all Jar tasks (Night Shift)
-│   │   ├── pickle-tmux.md      # True context clearing via tmux 🖥️
 │   │   ├── disable-pickle.md   # Disable stop hook globally
 │   │   └── enable-pickle.md    # Re-enable stop hook
 │   └── settings.json       # Stop hook registration
 ├── extension/
-│   ├── bin/
-│   │   ├── setup.js        # Session initializer
-│   │   ├── cancel.js       # Loop canceller
-│   │   ├── spawn-morty.js  # Worker subprocess spawner
-│   │   ├── jar-runner.js   # Jar Night Shift runner 🫙
-│   │   ├── tmux-runner.js  # Outer loop for /pickle-tmux mode 🖥️
-│   │   ├── monitor.js      # Live tmux dashboard (window 1) 📊
-│   │   ├── worker-setup.js # Worker session initializer
-│   │   ├── get-session.js  # Session path resolver
-│   │   ├── update-state.js # State mutation helper
-│   │   ├── status.js       # Session status display
-│   │   └── retry-ticket.js # Reset + re-spawn a failed ticket
+│   ├── src/                 # TypeScript sources (canonical — never edit .js directly)
+│   │   ├── bin/             # → compiles to extension/bin/
+│   │   ├── hooks/           # → compiles to extension/hooks/
+│   │   ├── services/        # → compiles to extension/services/
+│   │   └── types/           # → compiles to extension/types/
+│   ├── bin/                 # Compiled JS (build artifacts)
+│   │   ├── setup.js         # Session initializer
+│   │   ├── cancel.js        # Loop canceller
+│   │   ├── spawn-morty.js   # Worker subprocess spawner
+│   │   ├── spawn-refinement-team.js # Parallel PRD analyst spawner 🔬
+│   │   ├── jar-runner.js    # Jar Night Shift runner 🫙
+│   │   ├── tmux-runner.js   # Outer loop for /pickle-tmux mode 🖥️
+│   │   ├── monitor.js       # Live tmux dashboard (window 1) 📊
+│   │   ├── log-watcher.js   # Live tmux log stream (window 1, right pane) 📜
+│   │   ├── worker-setup.js  # Worker session initializer
+│   │   ├── get-session.js   # Session path resolver
+│   │   ├── update-state.js  # State mutation helper
+│   │   ├── status.js        # Session status display
+│   │   └── retry-ticket.js  # Reset + re-spawn a failed ticket
 │   ├── hooks/
-│   │   ├── dispatch.js     # Hook router
+│   │   ├── dispatch.js      # Hook router
+│   │   ├── resolve-state.js # State file resolution + atomic writes
 │   │   └── handlers/
 │   │       └── stop-hook.js # The loop engine 🔁
 │   ├── services/
-│   │   ├── pickle-utils.js # Shared utilities
-│   │   ├── git-utils.js    # Git helpers
-│   │   ├── pr-factory.js   # PR creation
-│   │   └── jar-utils.js    # Jar queue helper
-│   └── package.json        # "type": "module" — CRITICAL
-├── persona.md              # Pickle Rick persona snippet (append to your project's CLAUDE.md)
-├── pickle_settings.json    # Default limits
-├── install.sh              # Installer
-└── uninstall.sh            # Uninstaller
+│   │   ├── pickle-utils.js  # Shared utilities
+│   │   ├── git-utils.js     # Git helpers
+│   │   ├── pr-factory.js    # PR creation
+│   │   └── jar-utils.js     # Jar queue helper
+│   ├── types/
+│   │   └── index.js         # Promise tokens, State type, HookInput type
+│   ├── tests/               # Test suite (node --test)
+│   ├── package.json         # "type": "module" — CRITICAL
+│   └── tsconfig.json        # TypeScript config (strict, ESNext)
+├── persona.md               # Pickle Rick persona snippet (append to your project's CLAUDE.md)
+├── pickle_settings.json     # Default limits
+├── install.sh               # Installer
+└── uninstall.sh             # Uninstaller
 ```
 
 ---
@@ -262,8 +279,7 @@ pickle-rick-claude/
     └─────┬──────┘                                 │
           │ Yes                                    │
           ▼                                        │
-  Increment iteration                              │
-  (Rick only, not Morty workers)                   │
+  Check completion tokens                           │
           │                                        │
     ┌─────┴──────┐                                 │
     │Task done?  │── Yes ──► process.exit(0) ✅    │
@@ -318,7 +334,7 @@ Morty workers already get clean context naturally (each is a fresh `claude -p` s
 ### Manager / Worker Model
 
 - **Rick (Manager)**: Runs in your interactive Claude session. Handles PRD, Breakdown, orchestration.
-- **Morty (Worker)**: Spawned as `claude --dangerously-skip-permissions --add-dir <ticket_path> -p "..."` subprocess per ticket. Gets the full lifecycle skill set inlined in the prompt. Outputs `<promise>I AM DONE</promise>` when finished.
+- **Morty (Worker)**: Spawned as `claude -s -y --include-directories <ticket_path> -p "..."` subprocess per ticket. Gets the full lifecycle skill set inlined in the prompt. Outputs `<promise>I AM DONE</promise>` when finished.
 
 ---
 
@@ -330,7 +346,7 @@ Morty workers already get clean context naturally (each is a fresh `claude -p` s
 | `commands/*.toml` | `.claude/commands/*.md` |
 | `activate_skill("x")` | Skills inlined directly in command prompts |
 | `BeforeAgent` + `BeforeModel` + `AfterAgent` hooks | Single `Stop` hook |
-| `gemini -s -y --include-directories -p` | `claude --dangerously-skip-permissions --add-dir <path> -p` |
+| `gemini -s -y --include-directories -p` | `claude -s -y --include-directories <path> -p` (workers) / `claude --dangerously-skip-permissions -p` (jar runner) |
 | `~/.gemini/extensions/pickle-rick/` | `~/.claude/pickle-rick/` |
 | `hookSpecificOutput.systemMessage` | `reason` field in block response |
 

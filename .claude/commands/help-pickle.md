@@ -20,6 +20,9 @@ Summarize the available commands for the user:
 - `/add-to-pickle-jar`: Save the current session's PRD to the Jar for later batch execution.
 - `/pickle-jar-open`: Run all queued Jar tasks sequentially (Grand Overseer Mode).
 
+**Internal (not for direct use):**
+- `/send-to-morty`: Worker lifecycle prompt — automatically sent to spawned Morty subprocesses. Do not invoke directly.
+
 **Advanced Flags for /pickle:**
 - `--resume [PATH]`: Resume an existing session.
 - `--max-iterations <N>`: Stop after N iterations (default: 5).

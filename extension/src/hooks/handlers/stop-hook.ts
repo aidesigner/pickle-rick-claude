@@ -141,7 +141,7 @@ async function main() {
     if (isPrdDone) feedback += 'PRD finished, moving to breakdown...';
     if (isTicketSelected) feedback += 'Ticket selected, starting research...';
 
-    console.log(JSON.stringify({ decision: 'block', systemMessage: feedback }));
+    console.log(JSON.stringify({ decision: 'block', reason: feedback }));
     return;
   }
 
@@ -172,7 +172,7 @@ async function main() {
   let defaultFeedback = `🥒 **Pickle Rick Loop Active** (Iteration ${state.iteration})`;
   if (state.max_iterations > 0) defaultFeedback += ` of ${state.max_iterations}`;
 
-  console.log(JSON.stringify({ decision: 'block', systemMessage: defaultFeedback }));
+  console.log(JSON.stringify({ decision: 'block', reason: defaultFeedback }));
 }
 
 main().catch((err) => {

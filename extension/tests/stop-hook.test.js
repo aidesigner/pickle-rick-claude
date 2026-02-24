@@ -208,13 +208,13 @@ test('stop-hook: worker + EPIC_COMPLETED → approve, active unchanged', () => {
 test('stop-hook: PRD_COMPLETE (non-tmux) → block, feedback mentions breakdown', () => {
   const { decision } = runHook({ response: '<promise>PRD_COMPLETE</promise>' });
   assert.equal(decision.decision, 'block');
-  assert.ok(decision.systemMessage.includes('breakdown'), decision.systemMessage);
+  assert.ok(decision.reason.includes('breakdown'), decision.reason);
 });
 
 test('stop-hook: TICKET_SELECTED (non-tmux) → block, feedback mentions research', () => {
   const { decision } = runHook({ response: '<promise>TICKET_SELECTED</promise>' });
   assert.equal(decision.decision, 'block');
-  assert.ok(decision.systemMessage.includes('research'), decision.systemMessage);
+  assert.ok(decision.reason.includes('research'), decision.reason);
 });
 
 // ---------------------------------------------------------------------------
@@ -252,7 +252,7 @@ test('stop-hook: worker + PRD_COMPLETE → not treated as checkpoint, falls to d
     role: 'worker',
   });
   assert.equal(decision.decision, 'block');
-  assert.ok(!decision.systemMessage.includes('breakdown'), 'should not include phase feedback');
+  assert.ok(!decision.reason.includes('breakdown'), 'should not include phase feedback');
 });
 
 test('stop-hook: state.worker=true (no PICKLE_ROLE) → NOT treated as worker, falls to default block', () => {
@@ -321,8 +321,8 @@ test('stop-hook: active session, no tokens → block with iteration number', () 
     state: baseState({ iteration: 3, max_iterations: 10 }),
   });
   assert.equal(decision.decision, 'block');
-  assert.ok(decision.systemMessage.includes('3'), decision.systemMessage);
-  assert.ok(decision.systemMessage.includes('10'), decision.systemMessage);
+  assert.ok(decision.reason.includes('3'), decision.reason);
+  assert.ok(decision.reason.includes('10'), decision.reason);
 });
 
 test('stop-hook: max_iterations=0 → block message has no "of N"', () => {
@@ -330,7 +330,7 @@ test('stop-hook: max_iterations=0 → block message has no "of N"', () => {
     state: baseState({ iteration: 2, max_iterations: 0 }),
   });
   assert.equal(decision.decision, 'block');
-  assert.ok(!decision.systemMessage.includes('of 0'), decision.systemMessage);
+  assert.ok(!decision.reason.includes('of 0'), decision.reason);
 });
 
 test('stop-hook: promise token with surrounding text is still detected', () => {

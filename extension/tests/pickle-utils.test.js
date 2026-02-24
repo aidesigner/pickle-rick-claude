@@ -23,7 +23,7 @@ test('extractFrontmatter: extracts valid frontmatter', () => {
     assert.ok(result);
     assert.equal(result.body, 'id: abc\nstatus: Todo');
     assert.equal(result.start, 0);
-    assert.equal(content.slice(0, result.end), '---\nid: abc\nstatus: Todo\n---');
+    assert.equal(content.slice(0, result.end), '---\nid: abc\nstatus: Todo\n---\n');
 });
 
 test('extractFrontmatter: returns null when no opening delimiter', () => {

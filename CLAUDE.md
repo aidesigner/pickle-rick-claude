@@ -65,18 +65,18 @@ npm test
 These are the canonical `.ts` files. Any `.js` outside this list that has no corresponding `.ts` source is a stale artifact and should be deleted.
 
 **`src/bin/`**
-- `cancel.ts` + `cancel.test.ts`
-- `get-session.ts` + `get-session.test.ts`
-- `jar-runner.ts` *(no test — tested via integration)*
-- `log-watcher.ts` *(no test — interactive TUI)*
-- `monitor.ts` *(no test — interactive TUI)*
-- `retry-ticket.ts` *(tests in `tests/retry-ticket.test.js`)*
-- `setup.ts` *(tests in `tests/setup.test.js`)*
+- `cancel.ts`
+- `get-session.ts`
+- `jar-runner.ts`
+- `log-watcher.ts`
+- `monitor.ts`
+- `retry-ticket.ts`
+- `setup.ts`
 - `spawn-morty.ts`
-- `spawn-refinement-team.ts` *(no test — integration only)*
+- `spawn-refinement-team.ts`
 - `status.ts`
 - `tmux-runner.ts`
-- `update-state.ts` + `update-state.test.ts`
+- `update-state.ts`
 - `worker-setup.ts`
 
 **`src/hooks/`**
@@ -85,10 +85,12 @@ These are the canonical `.ts` files. Any `.js` outside this list that has no cor
 - `handlers/stop-hook.ts`
 
 **`src/services/`**
-- `git-utils.ts` + `git-utils.test.ts`
-- `jar-utils.ts` + `jar-utils.test.ts`
-- `pickle-utils.ts` + `pickle-utils.test.ts`
-- `pr-factory.ts` + `pr-factory.test.ts`
+- `git-utils.ts`
+- `jar-utils.ts`
+- `pickle-utils.ts`
+- `pr-factory.ts`
+
+All tests live in `extension/tests/*.test.js` (run via `node --test`). There are no `.test.ts` files in `src/`.
 
 **`src/types/`**
 - `index.ts`

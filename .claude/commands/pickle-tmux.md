@@ -10,7 +10,7 @@ or `apt install tmux` (Linux), or use /pickle for interactive mode." Then stop.
 
 ## Step 2: Session Setup
 
-Run: node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux $ARGUMENTS
+Run: node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --task "$ARGUMENTS"
 
 Read the output for the SESSION_ROOT path (line starting with SESSION_ROOT=).
 Also record the working_dir (the project cwd).

@@ -93,7 +93,7 @@ async function main() {
   let inputData = '';
   if (!process.stdin.isTTY) {
     try {
-      const chunks = [];
+      const chunks: Buffer[] = [];
       for await (const chunk of process.stdin) {
         chunks.push(chunk);
       }
