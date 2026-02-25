@@ -35,7 +35,14 @@ function render(sessionDir: string): boolean {
     ? `${formatTime(elapsed)} / ${state.max_time_minutes}m`
     : formatTime(elapsed);
 
+  const workDir = state.working_dir || '';
+  const project = workDir ? path.basename(workDir) : 'unknown';
+  const task = state.original_prompt || '';
+  const taskDisplay = task.length > width - 20 ? task.slice(0, width - 23) + '…' : (task || 'none');
+
   const fields: [string, string][] = [
+    ['Project', `${b}${project}${r}`],
+    ['Task', taskDisplay],
     ['Phase', state.step || 'unknown'],
     ['Iteration', iterStr],
     ['Elapsed', timeStr],
