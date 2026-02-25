@@ -61,7 +61,7 @@ function drain(logPath, offset) {
 }
 async function main() {
     const sessionDir = process.argv[2];
-    if (!sessionDir || !fs.existsSync(sessionDir)) {
+    if (!sessionDir || sessionDir.startsWith('--') || !fs.existsSync(sessionDir)) {
         console.error('Usage: node log-watcher.js <session-dir>');
         process.exit(1);
     }
@@ -77,6 +77,14 @@ async function main() {
     while (true) {
         const log = latestLog(sessionDir);
         if (!log) {
+            try {
+                const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+                if (state.active !== true) {
+                    process.stdout.write(`\n${sep()}\n${g}🥒 Session complete (no iteration logs).${r}\n`);
+                    break;
+                }
+            }
+            catch { /* ignore */ }
             process.stdout.write(`\r${d}Waiting for first iteration...${r}\x1b[K`);
             await sleep(1000);
             continue;

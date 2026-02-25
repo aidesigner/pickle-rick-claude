@@ -180,8 +180,10 @@ async function main() {
       break;
     }
 
-    const maxIter = Number(state.max_iterations) || 0;
-    const curIter = Number(state.iteration) || 0;
+    const rawMaxIter = Number(state.max_iterations);
+    const maxIter = Number.isFinite(rawMaxIter) ? rawMaxIter : 0;
+    const rawCurIter = Number(state.iteration);
+    const curIter = Number.isFinite(rawCurIter) ? rawCurIter : 0;
     if (maxIter > 0 && curIter >= maxIter) {
       log(`Max iterations reached (${curIter}/${maxIter}). Exiting.`);
       state.active = false;
@@ -189,8 +191,10 @@ async function main() {
       break;
     }
 
-    const startEpoch = Number(state.start_time_epoch) || 0;
-    const maxTimeMins = Number(state.max_time_minutes) || 0;
+    const rawStartEpoch = Number(state.start_time_epoch);
+    const startEpoch = Number.isFinite(rawStartEpoch) ? rawStartEpoch : 0;
+    const rawMaxTimeMins = Number(state.max_time_minutes);
+    const maxTimeMins = Number.isFinite(rawMaxTimeMins) ? rawMaxTimeMins : 0;
     const elapsed = startEpoch > 0 ? Math.max(0, Math.floor(Date.now() / 1000) - startEpoch) : 0;
     if (maxTimeMins > 0 && startEpoch > 0 && elapsed >= maxTimeMins * 60) {
       log(`Time limit reached (${elapsed}s). Exiting.`);

@@ -101,7 +101,7 @@ function render(sessionDir: string): boolean {
 
 async function main() {
   const sessionDir = process.argv[2];
-  if (!sessionDir || !fs.existsSync(sessionDir)) {
+  if (!sessionDir || sessionDir.startsWith('--') || !fs.existsSync(sessionDir)) {
     console.error('Usage: node monitor.js <session-dir>');
     process.exit(1);
   }

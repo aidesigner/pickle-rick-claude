@@ -623,11 +623,23 @@ test('stop-hook: string "true" active is treated as inactive (strict boolean che
 
 test('stop-hook: string "true" tmux_mode is NOT treated as tmux mode (strict boolean check)', () => {
   // tmux_mode stored as string "true" (truthy but !== true) should NOT trigger tmux early-exit
+  // setStateFileEnv: false so the tmux main-window branch (!process.env.PICKLE_STATE_FILE) is reachable
   const { decision } = runHook({
     state: baseState({ tmux_mode: "true" }),
     response: 'some text',
+    setStateFileEnv: false,
   });
   // Should fall through to default block (active session, no tokens), not approve as tmux main-window
+  assert.equal(decision.decision, 'block');
+});
+
+test('stop-hook: string "true" tmux_mode does NOT approve checkpoint tokens (strict boolean check)', () => {
+  // tmux_mode stored as string "true" at the checkpoint path — should block, not approve
+  const { decision } = runHook({
+    state: baseState({ tmux_mode: "true" }),
+    response: '<promise>PRD_COMPLETE</promise>',
+  });
+  // With real tmux_mode=true, this would approve. With string "true", it should block with feedback.
   assert.equal(decision.decision, 'block');
 });
 

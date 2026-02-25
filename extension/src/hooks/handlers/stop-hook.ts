@@ -149,10 +149,14 @@ async function main() {
 
   // 7. Check Limits (Final Guard)
   const now = Math.floor(Date.now() / 1000);
-  const startEpoch = Number(state.start_time_epoch) || 0;
-  const maxTimeMins = Number(state.max_time_minutes) || 0;
-  const maxIter = Number(state.max_iterations) || 0;
-  const curIter = Number(state.iteration) || 0;
+  const rawStartEpoch = Number(state.start_time_epoch);
+  const startEpoch = Number.isFinite(rawStartEpoch) ? rawStartEpoch : 0;
+  const rawMaxTimeMins = Number(state.max_time_minutes);
+  const maxTimeMins = Number.isFinite(rawMaxTimeMins) ? rawMaxTimeMins : 0;
+  const rawMaxIter = Number(state.max_iterations);
+  const maxIter = Number.isFinite(rawMaxIter) ? rawMaxIter : 0;
+  const rawCurIter = Number(state.iteration);
+  const curIter = Number.isFinite(rawCurIter) ? rawCurIter : 0;
   const elapsedSeconds = startEpoch > 0 ? Math.max(0, now - startEpoch) : 0;
   const maxTimeSeconds = maxTimeMins * 60;
 
