@@ -384,6 +384,76 @@ test('tmux-runner: stall detection works with string state.iteration', () => {
     }
 });
 
+// --- command_template path traversal validation (meeseeks pass 3) ---
+
+test('tmux-runner: rejects command_template with path traversal (../)', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = path.join(tmpRoot, 'session');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        // Active session at iteration 0 — runIteration will be called,
+        // which reads command_template from state.json
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            step: 'prd',
+            iteration: 0,
+            max_iterations: 5,
+            original_prompt: 'test traversal',
+            working_dir: tmpRoot,
+            command_template: '../../../etc/passwd',
+        }, null, 2));
+
+        const result = run(tmpRoot, [sessionDir]);
+
+        const runnerLog = path.join(sessionDir, 'tmux-runner.log');
+        let logContent = '';
+        if (fs.existsSync(runnerLog)) {
+            logContent = fs.readFileSync(runnerLog, 'utf-8');
+        }
+        const combined = result.stdout + result.stderr + logContent;
+
+        assert.ok(
+            combined.includes('Invalid command_template'),
+            `Expected path traversal rejection, got stdout: ${result.stdout}, stderr: ${result.stderr}, log: ${logContent}`
+        );
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('tmux-runner: rejects command_template with forward slash', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = path.join(tmpRoot, 'session');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            step: 'prd',
+            iteration: 0,
+            max_iterations: 5,
+            original_prompt: 'test slash',
+            working_dir: tmpRoot,
+            command_template: 'subdir/evil.md',
+        }, null, 2));
+
+        const result = run(tmpRoot, [sessionDir]);
+
+        const runnerLog = path.join(sessionDir, 'tmux-runner.log');
+        let logContent = '';
+        if (fs.existsSync(runnerLog)) {
+            logContent = fs.readFileSync(runnerLog, 'utf-8');
+        }
+        const combined = result.stdout + result.stderr + logContent;
+
+        assert.ok(
+            combined.includes('Invalid command_template'),
+            `Expected slash rejection, got stdout: ${result.stdout}, stderr: ${result.stderr}, log: ${logContent}`
+        );
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
 test('tmux-runner: creates tmux-runner.log in session directory', () => {
     const tmpRoot = makeTmpRoot();
     try {

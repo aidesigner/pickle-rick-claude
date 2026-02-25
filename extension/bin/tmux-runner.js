@@ -19,6 +19,10 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
     if (state.active !== true)
         return 'inactive';
     const templateName = state.command_template || 'pickle.md';
+    // Validate at read time (not just at setup.ts CLI parse time) — state.json could be tampered with
+    if (templateName.includes('/') || templateName.includes('\\') || templateName.includes('..')) {
+        throw new Error(`Invalid command_template in state.json: "${templateName}" — must be a plain filename`);
+    }
     const picklePromptPath = path.join(os.homedir(), '.claude/commands', templateName);
     if (!fs.existsSync(picklePromptPath)) {
         throw new Error(`${templateName} not found at ${picklePromptPath}. Run install.sh first.`);
@@ -163,6 +167,7 @@ async function main() {
     let iteration = 0;
     let lastStateIteration = -1;
     let stallCount = 0;
+    let exitReason = 'error';
     while (true) {
         let state;
         try {
@@ -171,10 +176,12 @@ async function main() {
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             log(`ERROR: Cannot read state.json: ${msg}. Exiting loop.`);
+            exitReason = 'error';
             break;
         }
         if (state.active !== true) {
             log('Session inactive. Exiting.');
+            exitReason = 'cancelled';
             break;
         }
         const rawMaxIter = Number(state.max_iterations);
@@ -185,6 +192,7 @@ async function main() {
             log(`Max iterations reached (${curIter}/${maxIter}). Exiting.`);
             state.active = false;
             writeStateFile(statePath, state);
+            exitReason = 'limit';
             break;
         }
         const rawStartEpoch = Number(state.start_time_epoch);
@@ -196,6 +204,7 @@ async function main() {
             log(`Time limit reached (${elapsed}s). Exiting.`);
             state.active = false;
             writeStateFile(statePath, state);
+            exitReason = 'limit';
             break;
         }
         // Stall detection: if state.iteration hasn't advanced in 3 outer-loop iterations,
@@ -206,6 +215,7 @@ async function main() {
                 log(`WARNING: state.iteration has not advanced in 3 outer-loop iterations (stuck at ${state.iteration}). Exiting to avoid wasted API calls.`);
                 state.active = false;
                 writeStateFile(statePath, state);
+                exitReason = 'stall';
                 break;
             }
         }
@@ -227,15 +237,18 @@ async function main() {
             }
             else {
                 log('Completed. Exiting loop.');
+                exitReason = 'success';
                 break;
             }
         }
         else if (result === 'inactive') {
             log('Session deactivated. Exiting loop.');
+            exitReason = 'cancelled';
             break;
         }
         else if (result === 'error') {
             log('Subprocess error. Exiting loop.');
+            exitReason = 'error';
             break;
         }
         await new Promise(r => setTimeout(r, 1000));
@@ -262,7 +275,13 @@ async function main() {
     }, 'GREEN', '🥒');
     log(`tmux-runner finished. ${iteration} iterations, ${formatTime(totalElapsed)}`);
     if (process.platform === 'darwin') {
-        spawnSync('osascript', ['-e', `display notification "${iteration} iterations, ${formatTime(totalElapsed)}" with title "🥒 Pickle Run Complete" subtitle "Phase: ${finalStep}"`]);
+        const notifTitle = exitReason === 'success'
+            ? '🥒 Pickle Run Complete'
+            : '🥒 Pickle Run Failed';
+        const notifSubtitle = exitReason === 'success'
+            ? `Finished in ${formatTime(totalElapsed)}`
+            : `Exit: ${exitReason} (phase: ${finalStep})`;
+        spawnSync('osascript', ['-e', `display notification "${iteration} iterations, ${formatTime(totalElapsed)}" with title "${notifTitle}" subtitle "${notifSubtitle}"`]);
     }
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'tmux-runner.js') {
