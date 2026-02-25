@@ -40,8 +40,7 @@ A port of the [Pickle Rick Gemini CLI extension](https://github.com/galz10/pickl
 - **Single Stop hook** — the Gemini version requires three hooks (BeforeAgent, BeforeModel, AfterAgent); this port does it all in one, with fewer moving parts
 - **PRD refinement & task decomposition** — `/pickle-refine-prd` runs multi-cycle refinement (default: 3 cycles) with 3 parallel Morty analysts (Requirements, Codebase, Risk/Scope), then decomposes the refined PRD into discrete, ordered implementation tasks with pre-created ticket files. The session is advanced so `/pickle --resume` skips PRD and breakdown phases and goes straight to orchestration.
 - **Worker isolation** — Morty subprocesses run with `--dangerously-skip-permissions` and scoped `--add-dir`, so each worker starts genuinely fresh with only its ticket and the extension root in context
-- **Skills inlined** — Gemini's skills require `activate_skill()` calls that can fail; here they're baked directly into the command prompts
-- **Jar improvements** — the Night Shift runner adds success/failure tracking and a configurable `default_manager_max_turns` setting absent from the original
+- **Pickle Jar improvements** — the Night Shift runner (`/pickle-jar-open`) adds per-task success/failure tracking and a configurable `default_manager_max_turns` setting absent from the original
 
 ---
 
