@@ -81,12 +81,12 @@ async function main() {
     // no such env var. We use this to distinguish the two — the early-exit must NOT fire
     // for tmux-runner subprocesses (they still need block/checkpoint handling to run phases).
     if (state.tmux_mode && !process.env.PICKLE_STATE_FILE) {
-        log('Decision: ALLOW (tmux mode — main window defers to tmux-runner)');
+        log('Decision: APPROVE (tmux mode — main window defers to tmux-runner)');
         approve();
         return;
     }
     if (state.active !== true) {
-        log('Decision: ALLOW (Session inactive)');
+        log('Decision: APPROVE (Session inactive)');
         approve();
         return;
     }
@@ -106,7 +106,7 @@ async function main() {
     log(`Promises: hasPromise=${hasPromise}, isEpicDone=${isEpicDone}, isTaskFinished=${isTaskFinished}, isWorkerDone=${isWorkerDone}, isAnalysisDone=${isAnalysisDone}, isPrdDone=${isPrdDone}, isTicketSelected=${isTicketSelected}`);
     // EXIT CONDITIONS: Full Exit
     if (hasPromise || isEpicDone || isTaskFinished || isWorkerDone || isAnalysisDone) {
-        log(`Decision: ALLOW (Task/Worker complete)`);
+        log(`Decision: APPROVE (Task/Worker complete)`);
         if (!isWorker && !isRefinementWorker) {
             state.active = false;
             writeStateFile(stateFile, state);
@@ -119,7 +119,7 @@ async function main() {
         // In tmux mode, allow exit at checkpoints — tmux-runner respawns a fresh instance
         // for each phase, giving it a full turn budget instead of sharing one session.
         if (state.tmux_mode) {
-            log(`Decision: ALLOW (tmux mode checkpoint — runner will respawn for next phase)`);
+            log(`Decision: APPROVE (tmux mode checkpoint — runner will respawn for next phase)`);
             approve();
             return;
         }
@@ -141,14 +141,14 @@ async function main() {
     const elapsedSeconds = startEpoch > 0 ? Math.max(0, now - startEpoch) : 0;
     const maxTimeSeconds = maxTimeMins * 60;
     if (maxIter > 0 && curIter >= maxIter) {
-        log(`Decision: ALLOW (Max iterations reached: ${curIter}/${maxIter})`);
+        log(`Decision: APPROVE (Max iterations reached: ${curIter}/${maxIter})`);
         state.active = false;
         writeStateFile(stateFile, state);
         approve();
         return;
     }
     if (maxTimeMins > 0 && startEpoch > 0 && elapsedSeconds >= maxTimeSeconds) {
-        log(`Decision: ALLOW (Time limit reached: ${elapsedSeconds}/${maxTimeSeconds}s)`);
+        log(`Decision: APPROVE (Time limit reached: ${elapsedSeconds}/${maxTimeSeconds}s)`);
         state.active = false;
         writeStateFile(stateFile, state);
         approve();

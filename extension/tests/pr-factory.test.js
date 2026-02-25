@@ -149,6 +149,32 @@ test('createPR does not append "..." for short prompts', () => {
     }
 });
 
+test('createPR sanitizes newlines in original_prompt for PR title', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-factory-'));
+    try {
+        const multilinePrompt = 'Fix the\nlogin\r\nbug';
+        fs.writeFileSync(
+            path.join(tmp, 'state.json'),
+            JSON.stringify({ working_dir: tmp, original_prompt: multilinePrompt })
+        );
+        let caught;
+        try {
+            createPR(tmp);
+        } catch (err) {
+            caught = err;
+        }
+        assert.ok(caught, 'expected createPR to throw');
+        const msg = caught.message;
+        // Title should have newlines replaced with spaces — the --title arg is sanitized
+        assert.ok(
+            msg.includes('Pickle Rick: Fix the login bug'),
+            `Title should have newlines replaced with spaces.\nGot: ${msg}`
+        );
+    } finally {
+        fs.rmSync(tmp, { recursive: true });
+    }
+});
+
 test('createPR propagates gh errors wrapped in "Failed to create PR"', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-factory-'));
     try {

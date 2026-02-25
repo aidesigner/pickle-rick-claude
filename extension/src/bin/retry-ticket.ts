@@ -65,10 +65,10 @@ export function retryTicket(ticketId: string, cwd: string): void {
   const fmResult = extractFrontmatter(ticketContent);
   let updatedContent: string;
   if (fmResult) {
-    const fmSection = ticketContent.slice(0, fmResult.end).replace(/^status:.*$/m, 'status: Todo');
+    const fmSection = ticketContent.slice(0, fmResult.end).replace(/^status:.*$/m, 'status: "Todo"');
     updatedContent = fmSection + ticketContent.slice(fmResult.end);
   } else {
-    updatedContent = ticketContent.replace(/^status:.*$/m, 'status: Todo');
+    updatedContent = ticketContent.replace(/^status:.*$/m, 'status: "Todo"');
   }
   const tmpTicket = ticketFile + `.tmp.${process.pid}`;
   try {

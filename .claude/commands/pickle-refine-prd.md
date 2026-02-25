@@ -58,7 +58,7 @@ Announce: "Deploying the Morty analysis team. Three specialists, running in para
 Run the refinement team spawner — this blocks until all workers across all cycles complete.
 
 Optional flags (all have smart defaults from `pickle_settings.json`):
-- `--timeout <sec>` — per-worker timeout (inherits `worker_timeout_seconds` from session state, typically 1200s from `default_worker_timeout_seconds` in settings; hardcoded fallback: 600s)
+- `--timeout <sec>` — per-worker timeout (inherits `worker_timeout_seconds` from session state, typically 1200s from `default_worker_timeout_seconds` in settings; hardcoded fallback: 1200s)
 - `--cycles <n>` — number of refinement passes (default: 3). Cycle 1 is initial analysis; cycle 2+ cross-references all previous findings for deeper analysis.
 - `--max-turns <n>` — max Claude turns per worker (default: 100). Higher = deeper analysis per invocation.
 

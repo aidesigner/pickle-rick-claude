@@ -94,7 +94,7 @@ test('retryTicket: resets ticket status to Todo and archives artifacts', () => {
         // Verify: ticket status reset to Todo
         const ticketContent = fs.readFileSync(
             path.join(ticketDir, `linear_ticket_${ticketId}.md`), 'utf-8');
-        assert.match(ticketContent, /^status: Todo$/m);
+        assert.match(ticketContent, /^status: "Todo"$/m);
 
         // Verify: artifact was archived
         const entries = fs.readdirSync(ticketDir);

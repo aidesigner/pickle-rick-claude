@@ -104,7 +104,7 @@ async function main() {
       inputData = Buffer.concat(chunks).toString();
       log(`Input received: ${inputData.length} bytes`);
     } catch (e) {
-      log(`Error reading stdin: ${e}`);
+      log(`Error reading stdin: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -116,7 +116,7 @@ async function main() {
 
     child.stdin?.on('error', (err: NodeJS.ErrnoException) => {
       if (err.code === 'EPIPE') return;
-      logError(`Child stdin error: ${err}`);
+      logError(`Child stdin error: ${err instanceof Error ? err.message : String(err)}`);
     });
 
     if (inputData) {
@@ -169,12 +169,12 @@ async function main() {
     });
 
     child.on('error', (err) => {
-      logError(`Failed to start child process: ${err}`);
+      logError(`Failed to start child process: ${err instanceof Error ? err.message : String(err)}`);
       approve();
       process.exit(0);
     });
   } catch (e) {
-    logError(`Unexpected execution error: ${e}`);
+    logError(`Unexpected execution error: ${e instanceof Error ? e.message : String(e)}`);
     approve();
     process.exit(0);
   }

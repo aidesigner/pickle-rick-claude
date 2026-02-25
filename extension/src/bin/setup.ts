@@ -179,7 +179,7 @@ async function main() {
     workerTimeout = Number.isFinite(rawWorkerTimeout) && rawWorkerTimeout > 0 ? rawWorkerTimeout : workerTimeout;
 
     writeStateFile(statePath, state);
-    currentIteration = Number(state.iteration) + 1;
+    currentIteration = (Number(state.iteration) || 0) + 1;
     promiseToken = state.completion_promise;
     // Only overwrite the validated fullSessionPath if the stored path exists on disk
     if (state.session_dir && fs.existsSync(state.session_dir)) {

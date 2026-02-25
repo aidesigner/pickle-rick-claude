@@ -48,8 +48,9 @@ async function runTask(sessionDir, repoCwd, extensionRoot) {
         '--max-turns', String(managerMaxTurns),
         '-p', prompt,
     ];
-    const env = { ...process.env, PICKLE_STATE_FILE: statePath };
+    const env = { ...process.env, PICKLE_STATE_FILE: statePath, PYTHONUNBUFFERED: '1' };
     delete env['CLAUDECODE'];
+    delete env['PICKLE_ROLE'];
     return new Promise((resolve) => {
         const proc = spawn('claude', cmdArgs, { cwd: repoCwd, env, stdio: 'inherit' });
         proc.on('close', (code) => resolve(code === 0));

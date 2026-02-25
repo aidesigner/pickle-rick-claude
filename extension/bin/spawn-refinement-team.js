@@ -194,6 +194,8 @@ function spawnWorker(roleId, prompt, refinementDir, extensionRoot, timeout, work
             settleWith({ roleId, success: false, logPath, cycle });
         });
         proc.on('close', () => {
+            if (settled)
+                return; // error handler already resolved
             clearTimeout(timeoutHandle);
             clearTimeout(hangGuard);
             logStream.end();

@@ -21,7 +21,7 @@ export function createPR(sessionDir: string): string {
     throw new Error('state.json is missing working_dir — cannot determine target repository');
   }
 
-  const prompt = state.original_prompt || '';
+  const prompt = (state.original_prompt || '').replace(/[\r\n]+/g, ' ').trim();
   const title = prompt.length > 50
     ? `Pickle Rick: ${prompt.slice(0, 50)}...`
     : `Pickle Rick: ${prompt}`;

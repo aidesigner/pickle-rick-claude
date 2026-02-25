@@ -240,6 +240,7 @@ function spawnWorker(
     });
 
     proc.on('close', () => {
+      if (settled) return; // error handler already resolved
       clearTimeout(timeoutHandle);
       clearTimeout(hangGuard);
       logStream.end();
