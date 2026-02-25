@@ -61,6 +61,7 @@ test('PromiseTokens: all expected keys are defined', () => {
     'PRD_COMPLETE',
     'TICKET_SELECTED',
     'ANALYSIS_DONE',
+    'EXISTENCE_IS_PAIN',
   ];
   for (const key of required) {
     assert.ok(key in PromiseTokens, `Missing PromiseTokens.${key}`);
@@ -122,4 +123,12 @@ test('PromiseTokens: ANALYSIS_DONE is "ANALYSIS_DONE"', () => {
 
 test('hasToken: detects ANALYSIS_DONE with whitespace tolerance', () => {
   assert.equal(hasToken('<promise> ANALYSIS_DONE </promise>', PromiseTokens.ANALYSIS_DONE), true);
+});
+
+test('PromiseTokens: EXISTENCE_IS_PAIN is "EXISTENCE_IS_PAIN"', () => {
+  assert.equal(PromiseTokens.EXISTENCE_IS_PAIN, 'EXISTENCE_IS_PAIN');
+});
+
+test('hasToken: detects EXISTENCE_IS_PAIN with whitespace tolerance', () => {
+  assert.equal(hasToken('<promise> EXISTENCE_IS_PAIN </promise>', PromiseTokens.EXISTENCE_IS_PAIN), true);
 });

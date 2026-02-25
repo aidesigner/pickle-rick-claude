@@ -14,6 +14,8 @@ export interface State {
   started_at: string;
   session_dir: string;
   tmux_mode?: boolean;
+  min_iterations?: number;
+  command_template?: string;
 }
 
 export interface HookInput {
@@ -24,7 +26,7 @@ export interface HookInput {
 // Lifecycle Steps
 // ---------------------------------------------------------------------------
 
-export const VALID_STEPS = ['prd', 'breakdown', 'research', 'plan', 'implement', 'refactor'] as const;
+export const VALID_STEPS = ['prd', 'breakdown', 'research', 'plan', 'implement', 'refactor', 'review'] as const;
 export type Step = typeof VALID_STEPS[number];
 
 // ---------------------------------------------------------------------------
@@ -38,6 +40,7 @@ export const PromiseTokens = {
   PRD_COMPLETE: 'PRD_COMPLETE',
   TICKET_SELECTED: 'TICKET_SELECTED',
   ANALYSIS_DONE: 'ANALYSIS_DONE',
+  EXISTENCE_IS_PAIN: 'EXISTENCE_IS_PAIN',
 } as const;
 
 export type PromiseToken = typeof PromiseTokens[keyof typeof PromiseTokens];

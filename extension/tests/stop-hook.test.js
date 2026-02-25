@@ -643,6 +643,49 @@ test('stop-hook: string "true" tmux_mode does NOT approve checkpoint tokens (str
   assert.equal(decision.decision, 'block');
 });
 
+// ---------------------------------------------------------------------------
+// EXISTENCE_IS_PAIN token — meeseeks code review loop
+// ---------------------------------------------------------------------------
+
+test('stop-hook: EXISTENCE_IS_PAIN → approve + active=false (standard completion)', () => {
+  const { decision, state } = runHook({
+    response: '<promise>EXISTENCE_IS_PAIN</promise>',
+  });
+  assert.deepEqual(decision, { decision: 'approve' });
+  assert.equal(state.active, false);
+});
+
+test('stop-hook: EXISTENCE_IS_PAIN below min_iterations → approve, active stays true', () => {
+  const { decision, state } = runHook({
+    state: baseState({ min_iterations: 10, iteration: 3 }),
+    response: '<promise>EXISTENCE_IS_PAIN</promise>',
+  });
+  assert.deepEqual(decision, { decision: 'approve' });
+  assert.equal(state.active, true, 'below min_iterations — active must stay true for runner to continue');
+});
+
+test('stop-hook: EXISTENCE_IS_PAIN at min_iterations → approve + active=false', () => {
+  const { decision, state } = runHook({
+    state: baseState({ min_iterations: 10, iteration: 10 }),
+    response: '<promise>EXISTENCE_IS_PAIN</promise>',
+  });
+  assert.deepEqual(decision, { decision: 'approve' });
+  assert.equal(state.active, false, 'at min_iterations — should deactivate');
+});
+
+test('stop-hook: EPIC_COMPLETED ignores min_iterations → still deactivates', () => {
+  const { decision, state } = runHook({
+    state: baseState({ min_iterations: 10, iteration: 2 }),
+    response: '<promise>EPIC_COMPLETED</promise>',
+  });
+  assert.deepEqual(decision, { decision: 'approve' });
+  assert.equal(state.active, false, 'EPIC_COMPLETED must ignore min_iterations — no regression');
+});
+
+// ---------------------------------------------------------------------------
+// NaN/undefined edge cases
+// ---------------------------------------------------------------------------
+
 test('stop-hook: NaN/undefined numeric state fields do not crash', () => {
   // max_iterations is undefined, iteration is "abc" → Number("abc") = NaN → || 0
   const { decision } = runHook({

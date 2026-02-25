@@ -78,6 +78,50 @@ test('setup: --resume preserves stored limits when no explicit flags given', () 
     }
 });
 
+// ---------------------------------------------------------------------------
+// --min-iterations and --command-template flags (meeseeks support)
+// ---------------------------------------------------------------------------
+
+test('setup: --min-iterations 10 sets min_iterations in state.json', () => {
+    const sessionPath = runSetup(['--tmux', '--min-iterations', '10', '--task', 'meeseeks-test']);
+    try {
+        const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+        assert.equal(state.min_iterations, 10);
+    } finally {
+        cleanup(sessionPath);
+    }
+});
+
+test('setup: --command-template meeseeks.md sets field; ../evil.md is rejected', () => {
+    const sessionPath = runSetup(['--tmux', '--command-template', 'meeseeks.md', '--task', 'template-test']);
+    try {
+        const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+        assert.equal(state.command_template, 'meeseeks.md');
+    } finally {
+        cleanup(sessionPath);
+    }
+    // Path traversal must be rejected
+    assert.throws(
+        () => runSetup(['--tmux', '--command-template', '../evil.md', '--task', 'evil-test']),
+        /plain filename/i
+    );
+});
+
+test('setup: without meeseeks flags, min_iterations is 0 and command_template is undefined', () => {
+    const sessionPath = runSetup(['--task', 'default-test']);
+    try {
+        const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+        assert.equal(state.min_iterations, 0);
+        assert.equal(state.command_template, undefined);
+    } finally {
+        cleanup(sessionPath);
+    }
+});
+
+// ---------------------------------------------------------------------------
+// Resume tests
+// ---------------------------------------------------------------------------
+
 test('setup: --resume with explicit flag overrides stored limit', () => {
     // Create a session with default limits
     const sessionPath = runSetup(['--task', 'resume-override-test']);

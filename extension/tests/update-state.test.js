@@ -168,6 +168,39 @@ test('updateState: boolean key rejects numeric-looking values', () => {
 // CLI guard: sessionDir flag validation (deep review pass 12)
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Meeseeks fields: min_iterations, command_template, step: 'review'
+// ---------------------------------------------------------------------------
+
+test('updateState: min_iterations accepted as numeric key', () => {
+    withTempSession({ active: true, step: 'prd', iteration: 0 }, (dir) => {
+        updateState('min_iterations', '10', dir);
+        const state = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf-8'));
+        assert.strictEqual(state.min_iterations, 10);
+        assert.strictEqual(typeof state.min_iterations, 'number');
+    });
+});
+
+test('updateState: command_template accepted as string key', () => {
+    withTempSession({ active: true, step: 'prd', iteration: 0 }, (dir) => {
+        updateState('command_template', 'meeseeks.md', dir);
+        const state = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf-8'));
+        assert.equal(state.command_template, 'meeseeks.md');
+    });
+});
+
+test('updateState: step "review" is valid', () => {
+    withTempSession({ active: true, step: 'prd', iteration: 0 }, (dir) => {
+        assert.doesNotThrow(() => updateState('step', 'review', dir));
+        const state = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf-8'));
+        assert.equal(state.step, 'review');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// CLI guard: sessionDir flag validation (deep review pass 12)
+// ---------------------------------------------------------------------------
+
 test('updateState CLI: exits 1 when sessionDir starts with --', () => {
     const updateStatePath = path.resolve(
         path.dirname(new URL(import.meta.url).pathname),

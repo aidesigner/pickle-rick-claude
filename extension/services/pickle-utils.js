@@ -209,6 +209,14 @@ export function buildHandoffSummary(state, sessionDir) {
         `Task: ${truncatedTask}`,
         `PRD: ${prdExists ? 'exists' : 'not yet created'}`,
     ];
+    const rawMinIter = Number(state.min_iterations);
+    const minIter = Number.isFinite(rawMinIter) ? rawMinIter : 0;
+    if (minIter > 0) {
+        lines.push(`Min Passes: ${minIter}`);
+    }
+    if (state.command_template) {
+        lines.push(`Template: ${state.command_template}`);
+    }
     if (tickets.length > 0) {
         lines.push('Tickets:');
         for (const t of tickets) {
@@ -219,7 +227,7 @@ export function buildHandoffSummary(state, sessionDir) {
             lines.push(`  ${sym} ${t.id || '?'}: ${title}`);
         }
     }
-    lines.push('', 'NEXT ACTION: Resume from current phase. Read state.json for context.', 'Do NOT restart from PRD. Continue where you left off.');
+    lines.push('', 'NEXT ACTION: Resume from current phase. Read state.json for context.', 'Do NOT restart from scratch. Continue where you left off.');
     return lines.join('\n');
 }
 // Shared buffer for Atomics.wait()-based synchronous sleep (no CPU spin).

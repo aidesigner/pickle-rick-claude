@@ -182,6 +182,7 @@ Sit back. Rick handles the rest. 🥒
 | `/pickle-jar-open` | 🌙 Run all Jar tasks sequentially (Night Shift) |
 | `/pickle-status` | 📊 Show current session phase, iteration, and ticket status |
 | `/pickle-retry <ticket-id>` | 🔄 Reset a failed ticket to Todo and re-spawn a Morty for it |
+| `/meeseeks [task]` | 👋 Autonomous code review loop — tmux only, minimum 10 passes, commits per pass, exits when clean (`EXISTENCE_IS_PAIN`) |
 | `/disable-pickle` | 🔇 Disable the stop hook globally (without uninstalling) |
 | `/enable-pickle` | 🔊 Re-enable the stop hook |
 
@@ -229,6 +230,8 @@ Ctrl+B d                        # detach (session keeps running in background)
 
 **Recovering from a failed Morty** — If a worker times out or exits without completing, use `/pickle-retry <ticket-id>` instead of restarting the whole epic. It archives the partial artifacts, resets the ticket to Todo, and prints the exact `spawn-morty.js` command to re-run — preserving all the work already done on other tickets.
 
+**`/meeseeks` — Autonomous Code Review** — Summon Mr. Meeseeks to review your codebase in a tmux loop. Each pass scans for issues (security → logic → cleanup → consistency → polish), fixes them, runs tests, and commits. Minimum 10 passes before accepting a "clean" exit. Configurable via `default_meeseeks_min_passes` and `default_meeseeks_max_passes` in settings. Uses the same tmux infrastructure as `/pickle-tmux`.
+
 **"Stop hook error" is normal** — Claude Code labels every `decision: block` response from the stop hook as "Stop hook error" in the UI. This is not an actual error. It means the hook is working correctly — it blocked Claude's exit and injected the session context for the next iteration. If you see it, Rick is looping as intended.
 
 ### Settings (`pickle_settings.json`)
@@ -244,6 +247,8 @@ All defaults are configurable via `~/.claude/pickle-rick/pickle_settings.json`:
 | `default_tmux_max_turns` | 200 | Max Claude turns per iteration (tmux mode) |
 | `default_refinement_cycles` | 3 | Number of refinement analysis passes |
 | `default_refinement_max_turns` | 100 | Max Claude turns per refinement worker |
+| `default_meeseeks_min_passes` | 10 | Minimum review passes before clean exit |
+| `default_meeseeks_max_passes` | 50 | Maximum review passes |
 
 ---
 
@@ -257,6 +262,7 @@ pickle-rick-claude/
 │   │   ├── pickle-tmux.md      # True context clearing via tmux 🖥️
 │   │   ├── pickle-prd.md       # Interactive PRD drafter (used internally by /pickle)
 │   │   ├── pickle-refine-prd.md # Refine PRD + decompose into executable tasks 🔬
+│   │   ├── meeseeks.md            # Autonomous code review loop (setup + per-pass template) 👋
 │   │   ├── send-to-morty.md    # Worker prompt (internal — all 7 phases inlined)
 │   │   ├── pickle-status.md    # Show session status
 │   │   ├── pickle-retry.md     # Retry a failed ticket

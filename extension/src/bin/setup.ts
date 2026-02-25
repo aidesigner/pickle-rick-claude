@@ -59,6 +59,8 @@ async function main() {
   let resetMode = false;
   let pausedMode = false;
   let tmuxMode = false;
+  let minIterations = 0;
+  let commandTemplate: string | undefined = undefined;
   const taskArgs: string[] = [];
   const explicitFlags = new Set<string>();
 
@@ -116,6 +118,17 @@ async function main() {
       tmuxMode = true;
     } else if (arg === '--task') {
       if (i + 1 < args.length) taskArgs.push(args[++i]);
+    } else if (arg === '--min-iterations') {
+      const v = parseInt(args[++i], 10);
+      if (isNaN(v) || v < 0) die('--min-iterations requires a non-negative integer');
+      minIterations = v;
+      explicitFlags.add('min-iterations');
+    } else if (arg === '--command-template') {
+      const v = args[++i];
+      if (!v || v.startsWith('--')) die('--command-template requires a non-empty value');
+      if (v.includes('/') || v.includes('\\') || v.includes('..')) die('--command-template must be a plain filename');
+      commandTemplate = v;
+      explicitFlags.add('command-template');
     } else if (arg === '-s' || arg === '--session-id') {
       // Ignore legacy session-id flag; consume the next arg if it's not a flag
       if (args[i + 1] && !args[i + 1].startsWith('--')) {
@@ -166,6 +179,8 @@ async function main() {
     if (explicitFlags.has('max-time')) state.max_time_minutes = timeLimit;
     if (explicitFlags.has('worker-timeout')) state.worker_timeout_seconds = workerTimeout;
     if (promiseToken) state.completion_promise = promiseToken;
+    if (explicitFlags.has('min-iterations')) state.min_iterations = minIterations;
+    if (explicitFlags.has('command-template')) state.command_template = commandTemplate;
 
     // Sync local vars with (potentially preserved) state for display — coerce
     // to Number to guard against string-typed values from external edits / old state.
@@ -177,6 +192,10 @@ async function main() {
     timeLimit = Number.isFinite(rawTimeLimit) && rawTimeLimit > 0 ? rawTimeLimit : timeLimit;
     const rawWorkerTimeout = Number(state.worker_timeout_seconds);
     workerTimeout = Number.isFinite(rawWorkerTimeout) && rawWorkerTimeout > 0 ? rawWorkerTimeout : workerTimeout;
+
+    const rawMinIter = Number(state.min_iterations);
+    minIterations = Number.isFinite(rawMinIter) ? rawMinIter : 0;
+    commandTemplate = state.command_template;
 
     writeStateFile(statePath, state);
     currentIteration = (Number(state.iteration) || 0) + 1;
@@ -214,6 +233,8 @@ async function main() {
       started_at: new Date().toISOString(),
       session_dir: fullSessionPath,
       tmux_mode: tmuxMode,
+      min_iterations: minIterations,
+      command_template: commandTemplate,
     };
 
     writeStateFile(path.join(fullSessionPath, 'state.json'), state);
@@ -229,6 +250,8 @@ async function main() {
       'Max Time': `${timeLimit}m`,
       'Worker TO': `${workerTimeout}s`,
       Promise: promiseToken || 'None',
+      ...(minIterations > 0 ? { 'Min Passes': minIterations } : {}),
+      ...(commandTemplate ? { Template: commandTemplate } : {}),
       Extension: ROOT_DIR,
       Path: fullSessionPath,
     },

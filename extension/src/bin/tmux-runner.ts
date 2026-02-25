@@ -19,9 +19,10 @@ async function runIteration(sessionDir: string, iterationNum: number, extensionR
 
   if (state.active !== true) return 'inactive';
 
-  const picklePromptPath = path.join(os.homedir(), '.claude/commands/pickle.md');
+  const templateName = state.command_template || 'pickle.md';
+  const picklePromptPath = path.join(os.homedir(), '.claude/commands', templateName);
   if (!fs.existsSync(picklePromptPath)) {
-    throw new Error(`pickle.md not found at ${picklePromptPath}. Run install.sh first.`);
+    throw new Error(`${templateName} not found at ${picklePromptPath}. Run install.sh first.`);
   }
   let managerPrompt = fs.readFileSync(picklePromptPath, 'utf-8')
     .replace(/\$ARGUMENTS/g, `--resume ${sessionDir}`);
@@ -93,7 +94,8 @@ async function runIteration(sessionDir: string, iterationNum: number, extensionR
         let output = '';
         try { output = fs.readFileSync(logFile, 'utf-8'); } catch { /* missing/unreadable log */ }
         if (hasToken(output, PromiseTokens.EPIC_COMPLETED) ||
-            hasToken(output, PromiseTokens.TASK_COMPLETED)) {
+            hasToken(output, PromiseTokens.TASK_COMPLETED) ||
+            hasToken(output, PromiseTokens.EXISTENCE_IS_PAIN)) {
           resolve('completed');
         } else {
           resolve('continue');
@@ -223,9 +225,20 @@ async function main() {
 
     const result = await runIteration(sessionDir, iteration, extensionRoot);
 
-    if (result === 'completed') { log('Epic/Task completed. Exiting loop.'); break; }
-    if (result === 'inactive') { log('Session deactivated. Exiting loop.'); break; }
-    if (result === 'error') { log('Subprocess error. Exiting loop.'); break; }
+    if (result === 'completed') {
+      const curState: PickleState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      const rawMinIter = Number(curState.min_iterations);
+      const minIter = Number.isFinite(rawMinIter) ? rawMinIter : 0;
+      const rawCurIter2 = Number(curState.iteration);
+      const curIterNow = Number.isFinite(rawCurIter2) ? rawCurIter2 : 0;
+      if (minIter > 0 && curIterNow < minIter) {
+        log(`Clean pass at iteration ${curIterNow}, but min_iterations=${minIter}. Continuing.`);
+      } else {
+        log('Completed. Exiting loop.');
+        break;
+      }
+    } else if (result === 'inactive') { log('Session deactivated. Exiting loop.'); break; }
+    else if (result === 'error') { log('Subprocess error. Exiting loop.'); break; }
 
     await new Promise(r => setTimeout(r, 1000));
   }
@@ -233,11 +246,14 @@ async function main() {
   const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
   let finalStep = 'unknown';
   let finalActive = 'unknown';
+  let finalMinIter = 0;
   try {
     const finalState: PickleState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
     const rawStep = finalState.step || 'unknown';
     finalStep = (VALID_STEPS as readonly string[]).includes(rawStep) ? rawStep : 'unknown';
     finalActive = String(finalState.active);
+    const rawFinalMinIter = Number(finalState.min_iterations);
+    finalMinIter = Number.isFinite(rawFinalMinIter) ? rawFinalMinIter : 0;
   } catch { /* use fallback values */ }
 
   printMinimalPanel('tmux-runner Complete', {
@@ -245,6 +261,7 @@ async function main() {
     Elapsed: formatTime(totalElapsed),
     FinalPhase: finalStep,
     Active: finalActive,
+    ...(finalMinIter > 0 ? { 'Min Passes': finalMinIter } : {}),
   }, 'GREEN', '🥒');
 
   log(`tmux-runner finished. ${iteration} iterations, ${formatTime(totalElapsed)}`);

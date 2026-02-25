@@ -5,5 +5,7 @@
   "default_manager_max_turns": 50,
   "default_tmux_max_turns": 200,
   "default_refinement_cycles": 3,
-  "default_refinement_max_turns": 100
+  "default_refinement_max_turns": 100,
+  "default_meeseeks_min_passes": 10,
+  "default_meeseeks_max_passes": 50
 }

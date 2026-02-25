@@ -107,6 +107,7 @@ async function main() {
   const isTaskFinished = hasToken(responseText, PromiseTokens.TASK_COMPLETED);
   const isRefinementWorker = role === 'refinement-worker';
   const isAnalysisDone = isRefinementWorker && hasToken(responseText, PromiseTokens.ANALYSIS_DONE);
+  const isExistenceIsPain = hasToken(responseText, PromiseTokens.EXISTENCE_IS_PAIN);
 
   // Continue Tokens (Checkpoint)
   const isWorkerDone = isWorker && hasToken(responseText, PromiseTokens.WORKER_DONE);
@@ -114,11 +115,23 @@ async function main() {
   const isTicketSelected = !isWorker && hasToken(responseText, PromiseTokens.TICKET_SELECTED);
 
   log(
-    `Promises: hasPromise=${hasPromise}, isEpicDone=${isEpicDone}, isTaskFinished=${isTaskFinished}, isWorkerDone=${isWorkerDone}, isAnalysisDone=${isAnalysisDone}, isPrdDone=${isPrdDone}, isTicketSelected=${isTicketSelected}`
+    `Promises: hasPromise=${hasPromise}, isEpicDone=${isEpicDone}, isTaskFinished=${isTaskFinished}, isWorkerDone=${isWorkerDone}, isAnalysisDone=${isAnalysisDone}, isExistenceIsPain=${isExistenceIsPain}, isPrdDone=${isPrdDone}, isTicketSelected=${isTicketSelected}`
   );
 
   // EXIT CONDITIONS: Full Exit
-  if (hasPromise || isEpicDone || isTaskFinished || isWorkerDone || isAnalysisDone) {
+  if (hasPromise || isEpicDone || isTaskFinished || isWorkerDone || isAnalysisDone || isExistenceIsPain) {
+    // min_iterations gate: only applies to EXISTENCE_IS_PAIN token
+    if (isExistenceIsPain) {
+      const rawMinIter = Number(state.min_iterations);
+      const minIter = Number.isFinite(rawMinIter) ? rawMinIter : 0;
+      const rawCurIter2 = Number(state.iteration);
+      const curIter2 = Number.isFinite(rawCurIter2) ? rawCurIter2 : 0;
+      if (minIter > 0 && curIter2 < minIter) {
+        log(`Decision: APPROVE (EXISTENCE_IS_PAIN at ${curIter2}/${minIter} — below min, runner continues)`);
+        approve();
+        return;
+      }
+    }
     log(`Decision: APPROVE (Task/Worker complete)`);
     if (!isWorker && !isRefinementWorker) {
       state.active = false;

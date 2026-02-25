@@ -12,6 +12,7 @@ Extension that transforms Claude Code into "Pickle Rick" — enforces an iterati
 - **`/pickle-status`**: Show session phase, iteration, ticket status
 - **`/pickle-retry <ticket-id>`**: Re-spawn a Morty for a failed ticket
 - **`/add-to-pickle-jar`** / **`/pickle-jar-open`**: Queue tasks / run queued batch
+- **`/meeseeks [task]`**: Autonomous code review loop — tmux only, minimum 10 passes, commits per pass, exits when clean
 - **`/disable-pickle`** / **`/enable-pickle`**: Toggle stop hook
 
 ## Engineering Rules
@@ -62,3 +63,4 @@ const msg = err instanceof Error ? err.message : String(err);
 - **`tmux-runner.js`** — Context-clearing loop via tmux panes.
 - **`jar-runner.js`** — Batch runner for queued jar tasks.
 - **`monitor.js`** / **`log-watcher.js`** / **`morty-watcher.js`** — Live TUI dashboard / iteration log stream / worker log stream.
+- **`meeseeks.md`** — Dual-purpose: slash command setup + per-iteration review template for `/meeseeks` code review loop.

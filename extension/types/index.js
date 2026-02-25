@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // Lifecycle Steps
 // ---------------------------------------------------------------------------
-export const VALID_STEPS = ['prd', 'breakdown', 'research', 'plan', 'implement', 'refactor'];
+export const VALID_STEPS = ['prd', 'breakdown', 'research', 'plan', 'implement', 'refactor', 'review'];
 // ---------------------------------------------------------------------------
 // Promise Tokens
 // ---------------------------------------------------------------------------
@@ -12,6 +12,7 @@ export const PromiseTokens = {
     PRD_COMPLETE: 'PRD_COMPLETE',
     TICKET_SELECTED: 'TICKET_SELECTED',
     ANALYSIS_DONE: 'ANALYSIS_DONE',
+    EXISTENCE_IS_PAIN: 'EXISTENCE_IS_PAIN',
 };
 /** Returns true if `text` contains `<promise>TOKEN</promise>`, tolerating whitespace inside tags. */
 export function hasToken(text, token) {
