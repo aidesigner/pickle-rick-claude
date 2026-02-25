@@ -24,6 +24,9 @@ export function get_branch_name(task_id) {
     return `${user}/${type}/${task_id}`;
 }
 export function update_ticket_status(ticket_id, new_status, session_dir) {
+    if (/["\n\r]/.test(new_status)) {
+        throw new Error('Invalid status value: must not contain quotes or newlines');
+    }
     // 1. Find the ticket file
     // Search recursively in the session directory
     const find_ticket = (dir, depth = 0) => {

@@ -30,6 +30,9 @@ export function update_ticket_status(
   new_status: string,
   session_dir: string
 ): void {
+  if (/["\n\r]/.test(new_status)) {
+    throw new Error('Invalid status value: must not contain quotes or newlines');
+  }
   // 1. Find the ticket file
   // Search recursively in the session directory
   const find_ticket = (dir: string, depth: number = 0): string | null => {

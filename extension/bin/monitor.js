@@ -102,9 +102,11 @@ async function main() {
         const active = render(sessionDir);
         if (!active) {
             await sleep(3000);
-            render(sessionDir);
-            process.stdout.write('\n🥒 Session complete. Monitor exiting.\n');
-            break;
+            const stillInactive = !render(sessionDir);
+            if (stillInactive) {
+                process.stdout.write('\n🥒 Session complete. Monitor exiting.\n');
+                break;
+            }
         }
         await sleep(2000);
     }

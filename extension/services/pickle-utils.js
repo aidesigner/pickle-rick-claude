@@ -146,7 +146,8 @@ export function parseTicketFrontmatter(filePath) {
         if (!fm)
             return null;
         const get = (field) => {
-            const m = fm.body.match(new RegExp(`^${field}:\\s*(.+)$`, 'm'));
+            const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const m = fm.body.match(new RegExp(`^${escaped}:\\s*(.+)$`, 'm'));
             return m ? m[1].trim().replace(/^["']|["']$/g, '') : null;
         };
         return {
@@ -194,9 +195,11 @@ export function buildHandoffSummary(state, sessionDir) {
     const prdPath = path.join(sessionDir, 'prd.md');
     const prdExists = fs.existsSync(prdPath);
     const tickets = collectTickets(sessionDir);
-    const iterLine = (state.max_iterations ?? 0) > 0
-        ? `${state.iteration} of ${state.max_iterations}`
-        : `${state.iteration}`;
+    const iter = Number(state.iteration) || 0;
+    const maxIter = Number(state.max_iterations) || 0;
+    const iterLine = maxIter > 0
+        ? `${iter} of ${maxIter}`
+        : `${iter}`;
     const lines = [
         '=== PICKLE RICK LOOP CONTEXT ===',
         `Phase: ${state.step || 'unknown'}`,

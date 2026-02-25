@@ -48,7 +48,7 @@ function drain(logPath: string, offset: number): number {
     const trailing = decoder.end();
     if (trailing) emit(trailing);
     fs.closeSync(fd);
-    return size;
+    return pos;
   } catch {
     if (fd !== null) {
       try { fs.closeSync(fd); } catch { /* ignore double-close */ }

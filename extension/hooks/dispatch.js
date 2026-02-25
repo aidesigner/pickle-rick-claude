@@ -115,7 +115,7 @@ async function main() {
                 child.stdin?.write(inputData);
             }
             catch (err) {
-                if (err.code !== 'EPIPE')
+                if (!(err instanceof Error && err.code === 'EPIPE'))
                     throw err;
             }
         }

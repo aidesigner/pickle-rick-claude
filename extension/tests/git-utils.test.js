@@ -252,6 +252,24 @@ test('update_ticket_status: respects depth limit on deeply nested directories', 
     }
 });
 
+// --- update_ticket_status: YAML injection guard (deep review pass 8) ---
+
+test('update_ticket_status: rejects status with double quotes (YAML injection)', () => {
+    assert.throws(
+        () => update_ticket_status('any-ticket', 'Done"\nevil: true', '/tmp/nonexistent'),
+        /must not contain quotes or newlines/,
+        'new_status with quotes/newlines should be rejected'
+    );
+});
+
+test('update_ticket_status: rejects status with bare newline', () => {
+    assert.throws(
+        () => update_ticket_status('any-ticket', 'Done\ninjected: yes', '/tmp/nonexistent'),
+        /must not contain quotes or newlines/,
+        'new_status with newlines should be rejected'
+    );
+});
+
 // --- get_branch_name: "issue" keyword → fix type ---
 
 test('get_branch_name: uses "fix" type for "issue" keyword in ticket id', () => {

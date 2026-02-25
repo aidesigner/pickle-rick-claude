@@ -85,7 +85,7 @@ async function main() {
         approve();
         return;
     }
-    if (!state.active) {
+    if (state.active !== true) {
         log('Decision: ALLOW (Session inactive)');
         approve();
         return;

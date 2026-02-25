@@ -47,7 +47,7 @@ function drain(logPath, offset) {
         if (trailing)
             emit(trailing);
         fs.closeSync(fd);
-        return size;
+        return pos;
     }
     catch {
         if (fd !== null) {

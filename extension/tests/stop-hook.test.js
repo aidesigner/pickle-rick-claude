@@ -475,6 +475,18 @@ test('resolve-state: loadActiveState returns null for cwd mismatch', () => {
   }
 });
 
+test('resolve-state: loadActiveState returns null when active is string "true" (strict check)', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-'));
+  const stateFile = path.join(tmpDir, 'state.json');
+  fs.writeFileSync(stateFile, JSON.stringify({ active: "true", working_dir: process.cwd() }));
+  try {
+    assert.equal(loadActiveState(stateFile), null,
+      'string "true" should not pass strict === true check');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Disabled marker — /disable-pickle creates this file to suppress the hook
 // ---------------------------------------------------------------------------
@@ -598,6 +610,15 @@ test('stop-hook: string start_time_epoch and max_time_minutes still trigger time
   });
   assert.deepEqual(decision, { decision: 'approve' });
   assert.equal(state.active, false, 'should deactivate when string time values exceed limit');
+});
+
+test('stop-hook: string "true" active is treated as inactive (strict boolean check)', () => {
+  const { decision, state } = runHook({
+    state: baseState({ active: "true" }),
+    response: 'some text',
+  });
+  assert.deepEqual(decision, { decision: 'approve' });
+  assert.equal(state.active, "true", 'string "true" should not be modified — session treated as inactive');
 });
 
 test('stop-hook: NaN/undefined numeric state fields do not crash', () => {

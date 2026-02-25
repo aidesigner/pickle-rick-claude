@@ -47,7 +47,7 @@ export function createPR(sessionDir: string): string {
 if (process.argv[1] && path.basename(process.argv[1]) === 'pr-factory.js') {
   const sessionDir = process.argv[2];
   if (!sessionDir) {
-    console.error('Usage: node pr_factory.js <session_dir>');
+    console.error('Usage: node pr-factory.js <session_dir>');
     process.exit(1);
   }
 

@@ -55,10 +55,13 @@ async function runIteration(sessionDir: string, iterationNum: number, extensionR
     '-p', managerPrompt,
   ];
 
-  const env: NodeJS.ProcessEnv = { ...process.env, PICKLE_STATE_FILE: statePath };
+  const env: NodeJS.ProcessEnv = { ...process.env, PICKLE_STATE_FILE: statePath, PYTHONUNBUFFERED: '1' };
   // Remove CLAUDECODE so the spawned claude process doesn't think it's nested
   // inside another Claude Code session (which would alter its behavior).
   delete env['CLAUDECODE'];
+  // Remove PICKLE_ROLE so manager subprocesses aren't misidentified as workers
+  // by the stop-hook (tmux-runner spawns managers, not workers).
+  delete env['PICKLE_ROLE'];
 
   const logStream = fs.createWriteStream(logFile, { flags: 'w' });
 
@@ -87,7 +90,8 @@ async function runIteration(sessionDir: string, iterationNum: number, extensionR
       function finalize() {
         if (finalized) return;
         finalized = true;
-        const output = fs.readFileSync(logFile, 'utf-8');
+        let output = '';
+        try { output = fs.readFileSync(logFile, 'utf-8'); } catch { /* missing/unreadable log */ }
         if (hasToken(output, PromiseTokens.EPIC_COMPLETED) ||
             hasToken(output, PromiseTokens.TASK_COMPLETED)) {
           resolve('completed');

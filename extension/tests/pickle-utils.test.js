@@ -228,6 +228,43 @@ test('collectTickets: non-existent directory returns []', () => {
     assert.deepEqual(collectTickets('/tmp/nonexistent_pickle_dir_xyz'), []);
 });
 
+// --- buildHandoffSummary: Number() coercion (deep review pass 8) ---
+
+test('buildHandoffSummary: undefined iteration and string max_iterations are coerced', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        // Create a minimal state.json so collectTickets can run
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ active: true }));
+        const summary = buildHandoffSummary(
+            { iteration: undefined, max_iterations: "5", step: 'implement' },
+            dir
+        );
+        // With Number() coercion: undefined → 0, "5" → 5, so output is "0 of 5"
+        assert.match(summary, /Iteration: 0 of 5/,
+            'undefined iteration should coerce to 0, string max_iterations to 5');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('buildHandoffSummary: zero max_iterations shows just iteration number', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ active: true }));
+        const summary = buildHandoffSummary(
+            { iteration: "3", max_iterations: 0, step: 'prd' },
+            dir
+        );
+        // max_iterations=0 means unlimited, so no "of N" suffix
+        assert.match(summary, /Iteration: 3\n/,
+            'zero max_iterations should show just the iteration number');
+        assert.ok(!summary.includes('of 0'),
+            'should not show "of 0" for unlimited iterations');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
 // --- withSessionMapLock ---
 
 test('withSessionMapLock: executes fn and returns result', () => {

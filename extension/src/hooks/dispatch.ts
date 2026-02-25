@@ -123,7 +123,7 @@ async function main() {
       try {
         child.stdin?.write(inputData);
       } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'EPIPE') throw err;
+        if (!(err instanceof Error && (err as NodeJS.ErrnoException).code === 'EPIPE')) throw err;
       }
     }
     child.stdin?.end();
