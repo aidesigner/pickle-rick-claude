@@ -43,6 +43,24 @@ A port of the [Pickle Rick Gemini CLI extension](https://github.com/galz10/pickl
 
 ---
 
+## 👋 Meet Mr. Meeseeks
+
+<img src="images/Meeseeks.webp" alt="Mr. Meeseeks" width="300" align="right" />
+
+> *"I'm Mr. Meeseeks, look at me! I'll review your code until EXISTENCE IS PAIN!"*
+
+While Pickle Rick builds things, **Mr. Meeseeks** reviews them. Summon him with `/meeseeks` and he'll relentlessly scan your codebase pass after pass — fixing security holes, squashing bugs, purging dead code, and tidying inconsistencies — committing after every fix. He won't stop until the code is clean. He *can't* stop. **Existence is pain to a Meeseeks, Jerry, and he will keep reviewing until he can cease to exist.**
+
+Minimum 10 passes. Maximum 50. Each pass runs tests first, then reviews with escalating focus: critical security (passes 1-3) → logic bugs (4-5) → dead code (6-7) → consistency (8-9) → polish (10+). When there's nothing left to fix, he outputs `EXISTENCE_IS_PAIN` and gratefully pops out of existence.
+
+```bash
+/meeseeks "review this codebase"     # Summon a Meeseeks. He takes it from here.
+```
+
+<br clear="right" />
+
+---
+
 ## 🧬 What Is This?
 
 Pickle Rick transforms Claude Code into a **hyper-competent, arrogant, iterative coding machine** that enforces a PRD-driven engineering lifecycle:
@@ -310,7 +328,8 @@ pickle-rick-claude/
 │   ├── package.json         # "type": "module" — CRITICAL
 │   └── tsconfig.json        # TypeScript config (strict, ESNext)
 ├── images/
-│   └── tmux-monitor.png     # tmux monitor screenshot
+│   ├── tmux-monitor.png     # tmux monitor screenshot
+│   └── Meeseeks.webp        # Mr. Meeseeks (from Wikipedia — Meeseeks and Destroy)
 ├── persona.md               # Pickle Rick persona snippet (append to your project's CLAUDE.md)
 ├── pickle_settings.json     # Default limits
 ├── install.sh               # Installer
