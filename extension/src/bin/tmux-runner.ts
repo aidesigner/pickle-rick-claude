@@ -282,12 +282,15 @@ async function main() {
   log(`tmux-runner finished. ${iteration} iterations, ${formatTime(totalElapsed)}`);
 
   if (process.platform === 'darwin') {
-    const notifTitle = exitReason === 'success'
-      ? '🥒 Pickle Run Complete'
-      : '🥒 Pickle Run Failed';
-    const notifSubtitle = exitReason === 'success'
-      ? `Finished in ${formatTime(totalElapsed)}`
-      : `Exit: ${exitReason} (phase: ${finalStep})`;
+    const isFailure = exitReason === 'error' || exitReason === 'stall';
+    const notifTitle = isFailure
+      ? '🥒 Pickle Run Failed'
+      : '🥒 Pickle Run Complete';
+    const notifSubtitle = isFailure
+      ? `Exit: ${exitReason} (phase: ${finalStep})`
+      : exitReason === 'success'
+        ? `Finished in ${formatTime(totalElapsed)}`
+        : `Stopped: ${exitReason} (${formatTime(totalElapsed)})`;
     spawnSync('osascript', ['-e', `display notification "${iteration} iterations, ${formatTime(totalElapsed)}" with title "${notifTitle}" subtitle "${notifSubtitle}"`]);
   }
 }
