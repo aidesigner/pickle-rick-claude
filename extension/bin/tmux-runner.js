@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, buildHandoffSummary } from '../services/pickle-utils.js';
 import { PromiseTokens, hasToken } from '../types/index.js';
 import { writeStateFile } from '../hooks/resolve-state.js';
@@ -236,6 +236,9 @@ async function main() {
         Active: finalActive,
     }, 'GREEN', '🥒');
     log(`tmux-runner finished. ${iteration} iterations, ${formatTime(totalElapsed)}`);
+    if (process.platform === 'darwin') {
+        spawnSync('osascript', ['-e', `display notification "${iteration} iterations, ${formatTime(totalElapsed)}" with title "🥒 Pickle Run Complete" subtitle "Phase: ${finalStep}"`]);
+    }
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'tmux-runner.js') {
     main().catch((err) => {
