@@ -65,6 +65,10 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
     // by the stop-hook (tmux-runner spawns managers, not workers).
     delete env['PICKLE_ROLE'];
     const logStream = fs.createWriteStream(logFile, { flags: 'w' });
+    logStream.on('error', (err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`${Style.YELLOW}⚠️  Log stream error: ${msg}${Style.RESET}`);
+    });
     return new Promise((resolve) => {
         let settled = false;
         const proc = spawn('claude', cmdArgs, {
@@ -126,7 +130,7 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
 }
 async function main() {
     const sessionDir = process.argv[2];
-    if (!sessionDir || !fs.existsSync(path.join(sessionDir, 'state.json'))) {
+    if (!sessionDir || sessionDir.startsWith('--') || !fs.existsSync(path.join(sessionDir, 'state.json'))) {
         console.error('Usage: node tmux-runner.js <session-dir>');
         process.exit(1);
     }

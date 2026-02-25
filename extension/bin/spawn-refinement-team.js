@@ -134,6 +134,10 @@ ${outputInstructions}`;
 function spawnWorker(roleId, prompt, refinementDir, extensionRoot, timeout, workingDir, maxTurns, cycle, onComplete) {
     const logPath = path.join(refinementDir, `worker_${roleId}_c${cycle}.log`);
     const logStream = fs.createWriteStream(logPath, { flags: 'w' });
+    logStream.on('error', (err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`${Style.RED}❌ Log stream error (${roleId}): ${msg}${Style.RESET}`);
+    });
     // Mirror spawn-morty.ts: include extensionRoot and workingDir
     const includes = [extensionRoot, workingDir];
     const cmdArgs = ['--dangerously-skip-permissions'];

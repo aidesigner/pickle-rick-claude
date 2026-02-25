@@ -155,6 +155,10 @@ async function main() {
   try { update_ticket_status(ticketId, 'In Progress', sessionRoot); } catch { /* best-effort */ }
 
   const logStream = fs.createWriteStream(sessionLog, { flags: 'w' });
+  logStream.on('error', (err) => {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`${Style.RED}❌ Log stream error: ${msg}${Style.RESET}`);
+  });
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     PICKLE_STATE_FILE: timeoutStatePath || workerState,

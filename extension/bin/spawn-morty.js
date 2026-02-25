@@ -126,6 +126,10 @@ async function main() {
     }
     catch { /* best-effort */ }
     const logStream = fs.createWriteStream(sessionLog, { flags: 'w' });
+    logStream.on('error', (err) => {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`${Style.RED}❌ Log stream error: ${msg}${Style.RESET}`);
+    });
     const env = {
         ...process.env,
         PICKLE_STATE_FILE: timeoutStatePath || workerState,
