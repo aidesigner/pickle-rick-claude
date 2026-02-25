@@ -190,6 +190,7 @@ Sit back. Rick handles the rest. 🥒
 | Command | Description |
 |---|---|
 | `/pickle "task"` | 🥒 Start the full autonomous loop — drafts a PRD, decomposes into tickets, then executes each through 7 phases: Research → Research Review → Plan → Plan Review → Implement → Refactor → Simplify |
+| `/meeseeks [task]` | 👋 Autonomous code review loop — tmux only, minimum 10 passes, commits per pass, exits when clean (`EXISTENCE_IS_PAIN`) |
 | `/pickle prd.md` | 🥒 Pick up an existing PRD and skip drafting — goes straight to breakdown and execution |
 | `/pickle-tmux "task"` | 🖥️ Same PRD-driven loop, but with true context clearing — fresh subprocess per iteration via tmux. Best for long epics (8+ iterations). Requires `tmux`. |
 | `/pickle-tmux prd.md` | 🖥️ Pick up an existing PRD in tmux mode — fresh subprocess per iteration, no context drift |
@@ -200,7 +201,6 @@ Sit back. Rick handles the rest. 🥒
 | `/pickle-jar-open` | 🌙 Run all Jar tasks sequentially (Night Shift) |
 | `/pickle-status` | 📊 Show current session phase, iteration, and ticket status |
 | `/pickle-retry <ticket-id>` | 🔄 Reset a failed ticket to Todo and re-spawn a Morty for it |
-| `/meeseeks [task]` | 👋 Autonomous code review loop — tmux only, minimum 10 passes, commits per pass, exits when clean (`EXISTENCE_IS_PAIN`) |
 | `/disable-pickle` | 🔇 Disable the stop hook globally (without uninstalling) |
 | `/enable-pickle` | 🔊 Re-enable the stop hook |
 
