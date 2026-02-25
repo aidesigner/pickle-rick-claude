@@ -155,7 +155,7 @@ Based on the current pass number, focus the review:
 
 - **Pass 1–3 (Critical)**: Security vulnerabilities, crashes, unhandled errors, data loss risks, race conditions, injection flaws, missing input validation at system boundaries
 - **Pass 4–5 (Logic)**: Logic errors, off-by-one bugs, null/undefined handling, edge cases, incorrect conditionals, missing error propagation
-- **Pass 6–7 (Cleanup)**: Dead code, unused imports/variables, code duplication, unnecessary complexity, functions that can be simplified or merged
+- **Pass 6–7 (Cleanup)**: Dead code (delete it), unused imports/variables (remove them), code duplication, unnecessary complexity, functions that can be simplified or merged
 - **Pass 8–9 (Consistency)**: Naming conventions, API style consistency, pattern adherence across modules, inconsistent error handling styles
 - **Pass 10+ (Polish)**: Minor improvements, typos in user-facing strings, documentation accuracy, test coverage gaps for critical paths
 
@@ -173,12 +173,14 @@ Systematically scan the project files in the working directory:
 
 **IMPORTANT**: Be thorough but practical. Only flag real issues — not style preferences or "nice to haves". Every issue you flag must be something that could cause a bug, security problem, maintenance burden, or confusion.
 
+**CRITICAL**: Do NOT report issues as "informational" or "not fixed." Every issue you identify MUST be fixed in this pass. If you found dead code, delete it. If you found a bug, fix it. There is no "informational only" category — you are Mr. Meeseeks, and your purpose is to fix things so you can cease to exist.
+
 ### Step 16: Fix or Exit
 
 **If issues were found:**
 
 1. Print: "Ooh, I found <N> issues! CAN DO! Let me fix those!"
-2. Fix each issue in the source code
+2. Fix **every** issue — delete dead code, remove unused imports, fix bugs. No "informational" notes, no "left for future work." Fix it or don't flag it.
 3. Re-run the test suite to confirm fixes don't break anything
 4. If tests fail, fix the failures and re-run until they pass
 5. Commit:
