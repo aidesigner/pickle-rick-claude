@@ -235,7 +235,7 @@ links:
 ```
 
 ## Ticket Manager Completion Protocol (MANDATORY)
-1. **Select & Set Ticket**: Identify the highest priority ticket NOT 'Done'. Run:
+1. **Select & Set Ticket**: Pick the ticket with the lowest `order` value that is NOT 'Done'. Run:
    `node ${EXTENSION_ROOT}/extension/bin/update-state.js current_ticket [TICKET_ID] ${SESSION_ROOT}`
 2. **Advance Phase**: Run:
    `node ${EXTENSION_ROOT}/extension/bin/update-state.js step research ${SESSION_ROOT}`
@@ -253,7 +253,7 @@ links:
 Process tickets one by one. Do not stop until **ALL** tickets are 'Done'.
 
 **For each ticket**:
-1. **Pick Ticket**: Pick the highest priority ticket that is NOT 'Done'.
+1. **Pick Ticket**: Pick the ticket with the lowest `order` value that is NOT 'Done'.
 2. **Delegate**: Spawn a Worker (Morty) to handle the implementation lifecycle:
    ```bash
    node "$HOME/.claude/pickle-rick/extension/bin/spawn-morty.js" "<TASK_DESCRIPTION>" --ticket-id <ID> --ticket-path "${SESSION_ROOT}/<ID>/" --ticket-file "${SESSION_ROOT}/<ID>/linear_ticket_<ID>.md" --timeout <worker_timeout_seconds>
@@ -278,7 +278,7 @@ Process tickets one by one. Do not stop until **ALL** tickets are 'Done'.
 1. **Lifecycle Audit**: Check `${SESSION_ROOT}/[ticket_id]/` for mandatory documents.
 2. **Code Audit**: Use `git status` and `git diff` to verify implementation matches the approved plan.
 3. **Verification**: Run the automated tests/build steps defined in the plan.
-4. **Next Ticket Loop**: Scan for the next ticket with status `Todo`.
+4. **Next Ticket Loop**: Scan for the ticket with the lowest `order` value and status `Todo`.
    - **MANDATORY**: You are FORBIDDEN from deactivating the loop if any tickets are still `Todo`.
    - If found, spawn a new Morty.
    - If all are Done, mark the Parent Ticket Done. Then:

@@ -10,7 +10,27 @@ or `apt install tmux` (Linux), or use /pickle for interactive mode." Then stop.
 
 ## Step 2: Session Setup
 
-Run: node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --task "$ARGUMENTS"
+**CRITICAL — flag extraction**: `$ARGUMENTS` may contain flags like `--resume <path>`, `--max-iterations <N>`, etc. You MUST extract any `--flags` and pass them as separate arguments before `--task`. Only the bare task text goes inside `--task "..."`.
+
+```bash
+node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux [--flags from $ARGUMENTS] --task "$ARGUMENTS"
+```
+
+For example, if the user ran `/pickle-tmux --resume /sessions/057f0263`, execute:
+```bash
+node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --resume /sessions/057f0263
+```
+(No `--task` needed when resuming — the task is already in state.json.)
+
+If the user ran `/pickle-tmux --max-iterations 10 "refactor auth"`, execute:
+```bash
+node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --max-iterations 10 --task "refactor auth"
+```
+
+If no flags were provided, just:
+```bash
+node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --task "$ARGUMENTS"
+```
 
 Read the output for the SESSION_ROOT path (line starting with SESSION_ROOT=).
 Also record the working_dir (the project cwd).
