@@ -23,6 +23,7 @@ rm -f "$HOME/.claude/commands/pickle-status.md"
 rm -f "$HOME/.claude/commands/pickle-retry.md"
 rm -f "$HOME/.claude/commands/pickle-tmux.md"
 rm -f "$HOME/.claude/commands/pickle-refine-prd.md"
+rm -f "$HOME/.claude/commands/meeseeks.md"
 
 # Remove Stop hook from settings.json (clean up empty Stop/hooks keys)
 if [ -f "$SETTINGS_FILE" ]; then
