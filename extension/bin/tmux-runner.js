@@ -237,6 +237,8 @@ async function main() {
             }
             else {
                 log('Completed. Exiting loop.');
+                curState.active = false;
+                writeStateFile(statePath, curState);
                 exitReason = 'success';
                 break;
             }
