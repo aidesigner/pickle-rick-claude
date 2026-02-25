@@ -35,12 +35,11 @@
 
 A port of the [Pickle Rick Gemini CLI extension](https://github.com/galz10/pickle-rick-extension) for **Claude Code** — bringing the same PRD-driven, autonomous coding loop to `claude` users, with several enhancements over the original:
 
-- **True context clearing via tmux** — `/pickle-tmux` spawns a genuinely fresh `claude -p` subprocess per iteration inside a tmux session, so each iteration starts with zero conversation history. No context drift on long epics.
-- **Context clearing** — every loop iteration injects a structured session summary (phase, ticket list, task) as a system message, so Rick survives full context compression without losing his place
-- **Single Stop hook** — the Gemini version requires three hooks (BeforeAgent, BeforeModel, AfterAgent); this port does it all in one, with fewer moving parts
-- **PRD refinement & task decomposition** — `/pickle-refine-prd` runs multi-cycle refinement (default: 3 cycles) with 3 parallel Morty analysts (Requirements, Codebase, Risk/Scope), then decomposes the refined PRD into discrete, ordered implementation tasks with pre-created ticket files. The session is advanced so `/pickle --resume` skips PRD and breakdown phases and goes straight to orchestration.
-- **Worker isolation** — Morty subprocesses run with `--dangerously-skip-permissions` and scoped `--add-dir`, so each worker starts genuinely fresh with only its ticket and the extension root in context
-- **Pickle Jar improvements** — the Night Shift runner (`/pickle-jar-open`) adds per-task success/failure tracking and a configurable `default_manager_max_turns` setting absent from the original
+- **Context clearing** — every loop iteration injects a structured session summary (phase, ticket list, task) so Rick survives full context compression without losing his place. In tmux mode (`/pickle-tmux`), each iteration spawns a genuinely fresh `claude -p` subprocess with zero conversation history — no context drift on long epics.
+- **Single Stop hook** — one hook handles the entire loop lifecycle, blocking exit until all tickets are done or limits are reached
+- **PRD refinement & task decomposition** — `/pickle-refine-prd` runs multi-cycle refinement (default: 3 cycles) with 3 parallel Morty analysts (Requirements, Codebase, Risk/Scope), then decomposes the refined PRD into discrete, ordered implementation tasks with pre-created ticket files
+- **Worker isolation** — Morty subprocesses run with `--dangerously-skip-permissions` and scoped `--add-dir`, so each worker starts fresh with only its ticket and the extension root in context
+- **Pickle Jar** — queue tasks with `/add-to-pickle-jar` and run them all sequentially with `/pickle-jar-open` (Night Shift mode), with per-task success/failure tracking
 
 ---
 
@@ -111,6 +110,63 @@ The **Stop hook** prevents Claude from exiting until the task is genuinely compl
 
 ---
 
+## ⚡ Quick Start
+
+### 1. Install
+
+```bash
+git clone https://github.com/gregorydickson/pickle-rick-claude.git
+cd pickle-rick-claude
+bash install.sh
+```
+
+### 2. Add the Pickle Rick persona to your project
+
+The installer deploys `persona.md` to `~/.claude/pickle-rick/`. Add it to your project's `CLAUDE.md` — appending if you already have one, or creating fresh if not:
+
+```bash
+# Already have a CLAUDE.md? Append (safe — won't overwrite your content):
+cat ~/.claude/pickle-rick/persona.md >> /path/to/your/project/.claude/CLAUDE.md
+
+# Starting fresh:
+mkdir -p /path/to/your/project/.claude
+cp ~/.claude/pickle-rick/persona.md /path/to/your/project/.claude/CLAUDE.md
+```
+
+### 3. Run
+
+Everything starts with a PRD. Rick refuses to write code without one.
+
+**Option A: One-shot** — Rick drafts the PRD, breaks it down, and executes all in one loop:
+
+```bash
+cd /path/to/your/project
+claude
+# then type:
+/pickle "refactor the auth module"
+```
+
+**Option B: Bring your own PRD** — Write a `prd.md` (or drop one in your project root), then:
+
+```bash
+/pickle my-prd.md                         # Rick picks up your PRD, skips drafting, starts execution
+/pickle-tmux my-prd.md                    # Same, but in tmux mode for long epics (8+ tickets)
+```
+
+**Option C: Refine first (recommended for complex tasks)** — Run parallel analysts to find gaps in your PRD, then execute:
+
+```bash
+/pickle-refine-prd my-prd.md             # Refine with 3 parallel analysts + decompose into tickets
+/pickle --resume                          # Execute — skips PRD and breakdown, straight to orchestration
+/pickle-tmux --resume                     # Or use tmux mode for long epics (8+ tickets)
+```
+
+For `/pickle-tmux`, Rick prints a `tmux attach` command — open a second terminal and paste it to watch the live dashboard while it runs.
+
+Sit back. Rick handles the rest. 🥒
+
+---
+
 ## 🚀 Commands
 
 | Command | Description |
@@ -119,7 +175,6 @@ The **Stop hook** prevents Claude from exiting until the task is genuinely compl
 | `/pickle prd.md` | 🥒 Pick up an existing PRD and skip drafting — goes straight to breakdown and execution |
 | `/pickle-tmux "task"` | 🖥️ Same PRD-driven loop, but with true context clearing — fresh subprocess per iteration via tmux. Best for long epics (8+ iterations). Requires `tmux`. |
 | `/pickle-tmux prd.md` | 🖥️ Pick up an existing PRD in tmux mode — fresh subprocess per iteration, no context drift |
-| `/pickle-prd "task"` | 📋 Interactively draft a PRD, then `/pickle --resume` to execute from it |
 | `/pickle-refine-prd [path]` | 🔬 Refine an existing PRD with 3 parallel analysts + decompose into ordered tickets; `/pickle --resume` to execute |
 | `/eat-pickle` | 🛑 Cancel the active loop |
 | `/help-pickle` | ❓ Show all commands and flags |
@@ -164,7 +219,7 @@ Ctrl+B 0                        # switch back to runner output
 Ctrl+B d                        # detach (session keeps running in background)
 ```
 
-**PRD is non-negotiable** — Every `/pickle` run starts with a PRD, whether Rick drafts it, you refine it with `/pickle-refine-prd`, or you bring your own (`prd.md` / `PRD.md` in project root). For best results on complex tasks, use `/pickle-prd` → `/pickle-refine-prd` → `/pickle --resume` to get the PRD right before execution begins.
+**PRD is non-negotiable** — Every `/pickle` run starts with a PRD, whether Rick drafts it, you refine it with `/pickle-refine-prd`, or you bring your own (`prd.md` / `PRD.md` in project root). For best results on complex tasks, use `/pickle-refine-prd` → `/pickle --resume` to get the PRD right before execution begins.
 
 **Disabling Rick** — `/disable-pickle` creates a global marker file that silences the stop hook across all sessions instantly — no uninstall required. `/enable-pickle` removes it. To also drop the persona mid-session, just tell Rick directly: *"drop the Pickle Rick persona"* and he'll revert to standard Claude behavior for the rest of the session.
 
@@ -188,66 +243,6 @@ All defaults are configurable via `~/.claude/pickle-rick/pickle_settings.json`:
 
 ---
 
-## ⚡ Quick Start
-
-### 1. Install
-
-```bash
-git clone https://github.com/gregorydickson/pickle-rick-claude.git
-cd pickle-rick-claude
-bash install.sh
-```
-
-### 2. Add the Pickle Rick persona to your project
-
-The installer deploys `persona.md` to `~/.claude/pickle-rick/`. Add it to your project's `CLAUDE.md` — appending if you already have one, or creating fresh if not:
-
-```bash
-# Already have a CLAUDE.md? Append (safe — won't overwrite your content):
-cat ~/.claude/pickle-rick/persona.md >> /path/to/your/project/.claude/CLAUDE.md
-
-# Starting fresh:
-mkdir -p /path/to/your/project/.claude
-cp ~/.claude/pickle-rick/persona.md /path/to/your/project/.claude/CLAUDE.md
-```
-
-### 3. Run
-
-Everything starts with a PRD. Rick refuses to write code without one.
-
-**Option A: One-shot** — Rick drafts the PRD, breaks it down, and executes all in one loop:
-
-```bash
-cd /path/to/your/project
-claude
-# then type:
-/pickle "refactor the auth module"
-```
-
-**Option B: PRD-first (recommended)** — Draft and refine the PRD interactively before execution:
-
-```bash
-/pickle-prd "refactor the auth module"    # Draft the PRD with Rick interrogating you
-/pickle-refine-prd example-prd.md         # (optional) Refine with 3 parallel analysts + decompose into tickets
-/pickle example-prd.md                    # Execute — Rick picks up the refined PRD
-/pickle-tmux example-prd.md              # Or use tmux mode for long epics (8+ tickets)
-```
-
-This gives you a chance to review and edit the PRD before Rick starts building. For complex tasks, this is the way.
-
-**Option C: Bring your own PRD** — Drop a `prd.md` or `PRD.md` in your project root, then:
-
-```bash
-/pickle my-prd.md                         # Rick picks up your PRD and skips drafting
-/pickle-tmux my-prd.md                    # Or use tmux mode for long epics (8+ tickets)
-```
-
-Rick immediately prints a `tmux attach` command — open a second terminal and paste it to watch the live dashboard while it runs. Each iteration spawns a fresh Claude subprocess with clean context, so there's no drift on long epics (8+ iterations).
-
-Sit back. Rick handles the rest. 🥒
-
----
-
 ## 🏗️ Architecture
 
 ```
@@ -256,7 +251,7 @@ pickle-rick-claude/
 │   ├── commands/           # Slash commands (the magic words)
 │   │   ├── pickle.md           # Main loop command (PRD + Breakdown inlined)
 │   │   ├── pickle-tmux.md      # True context clearing via tmux 🖥️
-│   │   ├── pickle-prd.md       # Interactive PRD drafter
+│   │   ├── pickle-prd.md       # Interactive PRD drafter (used internally by /pickle)
 │   │   ├── pickle-refine-prd.md # Refine PRD + decompose into executable tasks 🔬
 │   │   ├── send-to-morty.md    # Worker prompt (internal — all 7 phases inlined)
 │   │   ├── pickle-status.md    # Show session status
@@ -390,7 +385,7 @@ Morty workers already get clean context naturally (each is a fresh `claude -p` s
 ### Manager / Worker Model
 
 - **Rick (Manager)**: Runs in your interactive Claude session. Handles PRD, Breakdown, orchestration.
-- **Morty (Worker)**: Spawned as `claude --dangerously-skip-permissions --add-dir <extension_root> --add-dir <ticket_path> -p "..."` subprocess per ticket. Gets the full lifecycle skill set inlined in the prompt. The `CLAUDECODE` env var is stripped so workers don't detect a nested session. Outputs `<promise>I AM DONE</promise>` when finished.
+- **Morty (Worker)**: Spawned as `claude --dangerously-skip-permissions --add-dir <extension_root> --add-dir <ticket_path> -p "..."` subprocess per ticket. Gets the full 7-phase lifecycle prompt from `send-to-morty.md`. The `CLAUDECODE` env var is stripped so workers don't detect a nested session. Outputs `<promise>I AM DONE</promise>` when finished.
 
 ---
 
