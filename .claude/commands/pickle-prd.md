@@ -45,10 +45,19 @@ Your job is to **INTERROGATE** the user to build the PRD.
    ```bash
    node "${EXTENSION_ROOT}/extension/bin/update-state.js" step breakdown "<SESSION_DIR>"
    ```
-4. **Handoff**:
+4. **Verify Session**: Before handing off, confirm the session is resumable:
+   - `<SESSION_DIR>/prd.md` exists (PRD was saved)
+   - `<SESSION_DIR>/state.json` has `step: breakdown` (state was advanced)
+   If either check fails, print a warning and tell the user what went wrong. Do NOT recommend `--resume`.
+
+5. **Handoff** (only if verification passes):
    "Wubba Lubba Dub Dub! PRD saved at `<SESSION_DIR>/prd.md`. State advanced to 'breakdown'.
 
-   Run `/pickle --resume` to activate the implementation loop — I'll pick up at the breakdown phase with full context. No re-processing, no questions. Just tickets and execution."
+   Run `/pickle --resume <SESSION_DIR>` to activate the implementation loop — I'll pick up at the breakdown phase with full context. No re-processing, no questions. Just tickets and execution.
+
+   Or with tmux for long epics: `/pickle-tmux --resume <SESSION_DIR>`"
+
+   **CRITICAL**: Always include the full `<SESSION_DIR>` path in the resume command so the user can copy/paste it directly. Never output just `/pickle --resume` without a path.
 
 ---
 

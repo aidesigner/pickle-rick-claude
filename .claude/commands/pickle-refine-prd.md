@@ -343,9 +343,15 @@ After updating the original PRD, write a summary to `${SESSION_ROOT}/refinement_
 
 ---
 
-## Step 9: Handoff
+## Step 9: Verify & Handoff
 
-Output this message:
+Before outputting the handoff message, verify the session is actually resumable:
+
+1. **Check state**: Read `${SESSION_ROOT}/state.json` and confirm `step` is `research` (set in Step 6e).
+2. **Check tickets**: Confirm at least one child ticket directory exists in `${SESSION_ROOT}` (created in Step 6c).
+3. **Check current_ticket**: Confirm `current_ticket` is set in state.json (set in Step 6e).
+
+**If ALL checks pass**, output:
 
 > "Wubba Lubba Dub Dub! PRD refinement and task decomposition complete.
 >
@@ -371,3 +377,20 @@ Output this message:
 > ```
 >
 > The refinement session is archived at `${SESSION_ROOT}` for reference."
+
+**If ANY check fails**, output a warning instead:
+
+> "⚠️ PRD refinement completed but the session is NOT ready for `--resume`:
+> - [List which checks failed: missing tickets, wrong step, missing current_ticket]
+>
+> **Updated PRD**: `<PRD_PATH>`
+> **Session**: `${SESSION_ROOT}`
+>
+> **To execute from scratch** (will re-read the refined PRD and do its own breakdown):
+> ```
+> /pickle [your task description]
+> ```
+>
+> The refined PRD at `<PRD_PATH>` already has the task breakdown section — `/pickle` will use it as input."
+
+**CRITICAL**: Never recommend `--resume` if the session state doesn't support it. An incomplete session (missing tickets, wrong step) will cause `/pickle --resume` to fail or redo work.
