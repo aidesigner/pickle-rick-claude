@@ -445,7 +445,7 @@ This port stands on the shoulders of giants. *Wubba Lubba Dub Dub.*
 
 ## 🥒 License
 
-MIT — same as the original Pickle Rick extension.
+Apache 2.0 — same as the original Pickle Rick extension.
 
 ---
 
