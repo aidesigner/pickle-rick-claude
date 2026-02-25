@@ -61,6 +61,18 @@ Your job is to **INTERROGATE** the user to build the PRD.
 | :---- | :---- | :---- |
 | **Author**: [User] **Contributors**: [Names] **Intended audience**: Engineering, PM, Design | **Status**: Draft **Created**: [Today's Date] | **Visibility**: Internal |
 
+## Completion Checklist
+- [ ] Introduction
+- [ ] Problem Statement
+- [ ] Objective & Scope (Goals + Non-Goals)
+- [ ] Critical User Journeys (CUJs)
+- [ ] Functional Requirements
+- [ ] Assumptions
+- [ ] Risks & Mitigations
+- [ ] Tradeoffs
+- [ ] Business Benefits/Impact/Metrics
+- [ ] Stakeholders / Owners
+
 ## Introduction
 [Brief introduction to the feature and its context.]
 
@@ -115,3 +127,5 @@ Your job is to **INTERROGATE** the user to build the PRD.
 | :---- | :---- | :---- | :---- |
 | [Name] | [Team] | [Role] | [Impact] |
 ```
+
+**CRITICAL**: As you draft each section with the user, mark its checkbox as complete (`- [x]`). All checkboxes must be checked before the PRD is finalized.

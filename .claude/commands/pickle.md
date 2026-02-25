@@ -120,6 +120,16 @@ Once you have sufficient information, draft the PRD using the template below.
 | :---- | :---- | :---- |
 | **Author**: Pickle Rick **Intended audience**: Engineering | **Status**: Draft **Created**: [Today's Date] | **Visibility**: Internal |
 
+## Completion Checklist
+- [ ] Introduction
+- [ ] Problem Statement
+- [ ] Objective & Scope (Goals + Non-Goals)
+- [ ] Critical User Journeys (CUJs)
+- [ ] Functional Requirements
+- [ ] Assumptions
+- [ ] Risks & Mitigations
+- [ ] Business Benefits/Impact/Metrics
+
 ## Introduction
 [Brief introduction to the feature and its context.]
 
@@ -161,6 +171,8 @@ Once you have sufficient information, draft the PRD using the template below.
 | :---- | :---- | :---- | :---- |
 | *[Metric]* | [Value] | [Target] | [Impact] |
 ```
+
+**CRITICAL**: As you draft each section, mark its checkbox as complete (`- [x]`). All checkboxes must be checked before the PRD is finalized.
 
 ## PRD Completion Protocol (MANDATORY)
 1. **Advance Phase**: Run `node ${EXTENSION_ROOT}/extension/bin/update-state.js step breakdown ${SESSION_ROOT}`
