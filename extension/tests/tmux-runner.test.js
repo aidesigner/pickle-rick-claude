@@ -486,3 +486,39 @@ test('tmux-runner: creates tmux-runner.log in session directory', () => {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
 });
+
+// --- Notification logic (buildTmuxNotification) ---
+
+import { buildTmuxNotification } from '../bin/tmux-runner.js';
+
+test('buildTmuxNotification: success shows "Complete" with elapsed time', () => {
+    const n = buildTmuxNotification('success', 'implement', 5, 300);
+    assert.equal(n.title, '🥒 Pickle Run Complete');
+    assert.ok(n.subtitle.includes('Finished in'), `Expected "Finished in" subtitle, got: ${n.subtitle}`);
+    assert.ok(n.body.includes('5 iterations'), `Expected iterations in body, got: ${n.body}`);
+});
+
+test('buildTmuxNotification: limit shows "Complete" with "Stopped"', () => {
+    const n = buildTmuxNotification('limit', 'implement', 10, 600);
+    assert.equal(n.title, '🥒 Pickle Run Complete');
+    assert.ok(n.subtitle.includes('Stopped: limit'), `Expected "Stopped: limit" subtitle, got: ${n.subtitle}`);
+});
+
+test('buildTmuxNotification: cancelled shows "Complete" with "Stopped"', () => {
+    const n = buildTmuxNotification('cancelled', 'research', 3, 120);
+    assert.equal(n.title, '🥒 Pickle Run Complete');
+    assert.ok(n.subtitle.includes('Stopped: cancelled'), `Expected "Stopped: cancelled" subtitle, got: ${n.subtitle}`);
+});
+
+test('buildTmuxNotification: error shows "Failed" with phase', () => {
+    const n = buildTmuxNotification('error', 'plan', 2, 45);
+    assert.equal(n.title, '🥒 Pickle Run Failed');
+    assert.ok(n.subtitle.includes('Exit: error'), `Expected "Exit: error" subtitle, got: ${n.subtitle}`);
+    assert.ok(n.subtitle.includes('phase: plan'), `Expected phase in subtitle, got: ${n.subtitle}`);
+});
+
+test('buildTmuxNotification: stall shows "Failed" with phase', () => {
+    const n = buildTmuxNotification('stall', 'implement', 7, 900);
+    assert.equal(n.title, '🥒 Pickle Run Failed');
+    assert.ok(n.subtitle.includes('Exit: stall'), `Expected "Exit: stall" subtitle, got: ${n.subtitle}`);
+});

@@ -192,16 +192,33 @@ async function main() {
   }
 
   console.log(`\n🥒 Jar complete. ${succeeded} succeeded, ${failed} failed.`);
-  if (process.platform === 'darwin') {
-    const body = failed > 0 ? `${succeeded} succeeded, ${failed} failed` : `${succeeded} task${succeeded === 1 ? '' : 's'} completed`;
-    spawnSync('osascript', ['-e', `display notification "${body}" with title "🥒 Pickle Run Complete" subtitle "Pickle Jar"`]);
-  }
+  sendJarNotification(succeeded, failed);
   console.log('Signal: Jar Complete');
+}
+
+export function buildJarNotification(succeeded: number, failed: number) {
+  const allFailed = succeeded === 0 && failed > 0;
+  const title = allFailed ? '🥒 Pickle Jar Failed' : '🥒 Pickle Run Complete';
+  const subtitle = 'Pickle Jar';
+  const body = failed > 0
+    ? `${succeeded} succeeded, ${failed} failed`
+    : `${succeeded} task${succeeded === 1 ? '' : 's'} completed`;
+  return { title, subtitle, body };
+}
+
+function sendJarNotification(succeeded: number, failed: number) {
+  if (process.platform !== 'darwin') return;
+  const { title, subtitle, body } = buildJarNotification(succeeded, failed);
+  spawnSync('osascript', ['-e', `display notification "${body}" with title "${title}" subtitle "${subtitle}"`]);
 }
 
 if (process.argv[1] && path.basename(process.argv[1]) === 'jar-runner.js') {
   main().catch((err) => {
-    console.error(`${Style.RED}Error: ${err instanceof Error ? err.message : String(err)}${Style.RESET}`);
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`${Style.RED}Error: ${msg}${Style.RESET}`);
+    if (process.platform === 'darwin') {
+      spawnSync('osascript', ['-e', `display notification "${msg.slice(0, 100)}" with title "🥒 Pickle Jar Failed" subtitle "Crash"`]);
+    }
     process.exit(1);
   });
 }

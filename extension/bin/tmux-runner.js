@@ -276,18 +276,23 @@ async function main() {
         ...(finalMinIter > 0 ? { 'Min Passes': finalMinIter } : {}),
     }, 'GREEN', '🥒');
     log(`tmux-runner finished. ${iteration} iterations, ${formatTime(totalElapsed)}`);
+    const notif = buildTmuxNotification(exitReason, finalStep, iteration, totalElapsed);
     if (process.platform === 'darwin') {
-        const isFailure = exitReason === 'error' || exitReason === 'stall';
-        const notifTitle = isFailure
-            ? '🥒 Pickle Run Failed'
-            : '🥒 Pickle Run Complete';
-        const notifSubtitle = isFailure
-            ? `Exit: ${exitReason} (phase: ${finalStep})`
-            : exitReason === 'success'
-                ? `Finished in ${formatTime(totalElapsed)}`
-                : `Stopped: ${exitReason} (${formatTime(totalElapsed)})`;
-        spawnSync('osascript', ['-e', `display notification "${iteration} iterations, ${formatTime(totalElapsed)}" with title "${notifTitle}" subtitle "${notifSubtitle}"`]);
+        spawnSync('osascript', ['-e', `display notification "${notif.body}" with title "${notif.title}" subtitle "${notif.subtitle}"`]);
     }
+}
+function buildTmuxNotification(exitReason, finalStep, iteration, totalElapsed) {
+    const isFailure = exitReason === 'error' || exitReason === 'stall';
+    const title = isFailure
+        ? '🥒 Pickle Run Failed'
+        : '🥒 Pickle Run Complete';
+    const subtitle = isFailure
+        ? `Exit: ${exitReason} (phase: ${finalStep})`
+        : exitReason === 'success'
+            ? `Finished in ${formatTime(totalElapsed)}`
+            : `Stopped: ${exitReason} (${formatTime(totalElapsed)})`;
+    const body = `${iteration} iterations, ${formatTime(totalElapsed)}`;
+    return { title, subtitle, body };
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'tmux-runner.js') {
     main().catch((err) => {
@@ -296,3 +301,4 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'tmux-runner.js') {
         process.exit(1);
     });
 }
+export { buildTmuxNotification };

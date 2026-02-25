@@ -444,3 +444,31 @@ test('jar-runner: corrupt session state.json does not abort remaining tasks', ()
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
 });
+
+// --- Notification logic (buildJarNotification) ---
+
+import { buildJarNotification } from '../bin/jar-runner.js';
+
+test('buildJarNotification: all succeeded shows "Complete"', () => {
+    const n = buildJarNotification(3, 0);
+    assert.equal(n.title, '🥒 Pickle Run Complete');
+    assert.equal(n.body, '3 tasks completed');
+    assert.equal(n.subtitle, 'Pickle Jar');
+});
+
+test('buildJarNotification: single task uses singular "task"', () => {
+    const n = buildJarNotification(1, 0);
+    assert.equal(n.body, '1 task completed');
+});
+
+test('buildJarNotification: mixed results shows "Complete" with counts', () => {
+    const n = buildJarNotification(2, 1);
+    assert.equal(n.title, '🥒 Pickle Run Complete');
+    assert.equal(n.body, '2 succeeded, 1 failed');
+});
+
+test('buildJarNotification: all failed shows "Failed"', () => {
+    const n = buildJarNotification(0, 3);
+    assert.equal(n.title, '🥒 Pickle Jar Failed');
+    assert.equal(n.body, '0 succeeded, 3 failed');
+});
