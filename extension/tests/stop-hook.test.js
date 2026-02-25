@@ -621,6 +621,16 @@ test('stop-hook: string "true" active is treated as inactive (strict boolean che
   assert.equal(state.active, "true", 'string "true" should not be modified — session treated as inactive');
 });
 
+test('stop-hook: string "true" tmux_mode is NOT treated as tmux mode (strict boolean check)', () => {
+  // tmux_mode stored as string "true" (truthy but !== true) should NOT trigger tmux early-exit
+  const { decision } = runHook({
+    state: baseState({ tmux_mode: "true" }),
+    response: 'some text',
+  });
+  // Should fall through to default block (active session, no tokens), not approve as tmux main-window
+  assert.equal(decision.decision, 'block');
+});
+
 test('stop-hook: NaN/undefined numeric state fields do not crash', () => {
   // max_iterations is undefined, iteration is "abc" → Number("abc") = NaN → || 0
   const { decision } = runHook({

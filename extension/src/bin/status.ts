@@ -43,12 +43,17 @@ export function showStatus(cwd: string): void {
   const raw: string = state.original_prompt || '';
   const taskStr = raw.length > 80 ? raw.slice(0, 80) + '…' : raw;
 
+  const isActive = state.active === true;
+  const mode = state.tmux_mode === true ? 'tmux' : 'inline';
+
   printMinimalPanel('Pickle Rick — Session Status', {
+    Active: isActive ? 'Yes' : 'No',
+    Mode: mode,
     Phase: state.step || 'unknown',
     Iteration: iterationStr,
     Ticket: state.current_ticket || 'none',
     Task: taskStr,
-  }, 'GREEN', '🥒');
+  }, isActive ? 'GREEN' : 'RED', '🥒');
 
   const tickets = collectTickets(sessionPath);
   if (tickets.length > 0) {

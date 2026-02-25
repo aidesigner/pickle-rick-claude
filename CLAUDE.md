@@ -61,4 +61,4 @@ const msg = err instanceof Error ? err.message : String(err);
 - **`spawn-refinement-team.js`** — PRD refinement orchestrator. Spawns 3 parallel analysts per cycle, supports `--cycles N` and `--max-turns N`. Writes `refinement_manifest.json`.
 - **`tmux-runner.js`** — Context-clearing loop via tmux panes.
 - **`jar-runner.js`** — Batch runner for queued jar tasks.
-- **`monitor.js`** / **`log-watcher.js`** — Live TUI dashboard / streaming log tail.
+- **`monitor.js`** / **`log-watcher.js`** / **`morty-watcher.js`** — Live TUI dashboard / iteration log stream / worker log stream.

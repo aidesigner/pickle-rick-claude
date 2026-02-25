@@ -83,7 +83,7 @@ async function main() {
   // tmux-runner sets PICKLE_STATE_FILE for its subprocesses; the main Claude window has
   // no such env var. We use this to distinguish the two — the early-exit must NOT fire
   // for tmux-runner subprocesses (they still need block/checkpoint handling to run phases).
-  if (state.tmux_mode && !process.env.PICKLE_STATE_FILE) {
+  if (state.tmux_mode === true && !process.env.PICKLE_STATE_FILE) {
     log('Decision: APPROVE (tmux mode — main window defers to tmux-runner)');
     approve();
     return;
@@ -132,7 +132,7 @@ async function main() {
   if (isPrdDone || isTicketSelected) {
     // In tmux mode, allow exit at checkpoints — tmux-runner respawns a fresh instance
     // for each phase, giving it a full turn budget instead of sharing one session.
-    if (state.tmux_mode) {
+    if (state.tmux_mode === true) {
       log(`Decision: APPROVE (tmux mode checkpoint — runner will respawn for next phase)`);
       approve();
       return;

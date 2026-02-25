@@ -308,6 +308,106 @@ test('showStatus: string "0" for max_iterations does not show "N of 0"', () => {
     });
 });
 
+// --- Active / Mode display (deep review pass 12) ---
+
+test('showStatus: shows Active=Yes and Mode=inline for active non-tmux session', () => {
+    withExtensionDir((tmpDir) => {
+        const sessionDir = fs.realpathSync(
+            fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-status-session-'))
+        );
+        const fakeCwd = sessionDir + '-cwd';
+
+        fs.writeFileSync(
+            path.join(tmpDir, 'current_sessions.json'),
+            JSON.stringify({ [fakeCwd]: sessionDir })
+        );
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({
+                active: true,
+                step: 'implement',
+                iteration: 2,
+                max_iterations: 10,
+                current_ticket: 'T-ACT',
+                original_prompt: 'test active display',
+            })
+        );
+
+        try {
+            const output = captureStdout(() => showStatus(fakeCwd));
+            assert.ok(output.includes('Yes'), `Expected "Yes" for active session, got: ${output}`);
+            assert.ok(output.includes('inline'), `Expected "inline" mode, got: ${output}`);
+        } finally {
+            fs.rmSync(sessionDir, { recursive: true, force: true });
+        }
+    });
+});
+
+test('showStatus: shows Active=No for inactive session', () => {
+    withExtensionDir((tmpDir) => {
+        const sessionDir = fs.realpathSync(
+            fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-status-session-'))
+        );
+        const fakeCwd = sessionDir + '-cwd';
+
+        fs.writeFileSync(
+            path.join(tmpDir, 'current_sessions.json'),
+            JSON.stringify({ [fakeCwd]: sessionDir })
+        );
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({
+                active: false,
+                step: 'implement',
+                iteration: 5,
+                max_iterations: 10,
+                current_ticket: 'T-INACT',
+                original_prompt: 'test inactive display',
+            })
+        );
+
+        try {
+            const output = captureStdout(() => showStatus(fakeCwd));
+            assert.ok(output.includes('No'), `Expected "No" for inactive session, got: ${output}`);
+        } finally {
+            fs.rmSync(sessionDir, { recursive: true, force: true });
+        }
+    });
+});
+
+test('showStatus: shows Mode=tmux for tmux_mode session', () => {
+    withExtensionDir((tmpDir) => {
+        const sessionDir = fs.realpathSync(
+            fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-status-session-'))
+        );
+        const fakeCwd = sessionDir + '-cwd';
+
+        fs.writeFileSync(
+            path.join(tmpDir, 'current_sessions.json'),
+            JSON.stringify({ [fakeCwd]: sessionDir })
+        );
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({
+                active: true,
+                tmux_mode: true,
+                step: 'research',
+                iteration: 1,
+                max_iterations: 50,
+                current_ticket: 'T-TMUX',
+                original_prompt: 'tmux mode test',
+            })
+        );
+
+        try {
+            const output = captureStdout(() => showStatus(fakeCwd));
+            assert.ok(output.includes('tmux'), `Expected "tmux" mode, got: ${output}`);
+        } finally {
+            fs.rmSync(sessionDir, { recursive: true, force: true });
+        }
+    });
+});
+
 // --- Shows iteration without max ---
 
 test('showStatus: shows just the number when max_iterations is 0', () => {

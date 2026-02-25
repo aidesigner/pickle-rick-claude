@@ -281,7 +281,8 @@ pickle-rick-claude/
 │   │   ├── jar-runner.js    # Jar Night Shift runner 🫙
 │   │   ├── tmux-runner.js   # Outer loop for /pickle-tmux mode 🖥️
 │   │   ├── monitor.js       # Live tmux dashboard (window 1) 📊
-│   │   ├── log-watcher.js   # Live tmux log stream (window 1, right pane) 📜
+│   │   ├── log-watcher.js   # Live tmux log stream (window 1, top-right pane) 📜
+│   │   ├── morty-watcher.js # Live worker log stream (window 1, bottom pane) 🔧
 │   │   ├── worker-setup.js  # Worker session initializer
 │   │   ├── get-session.js   # Session path resolver
 │   │   ├── update-state.js  # State mutation helper

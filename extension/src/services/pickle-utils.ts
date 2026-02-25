@@ -295,7 +295,8 @@ export function withSessionMapLock<T>(lockPath: string, fn: () => T): T {
       fs.closeSync(fd);
       acquired = true;
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+      const code = e instanceof Error ? (e as NodeJS.ErrnoException).code : undefined;
+      if (code !== 'EEXIST') throw e;
       if (Date.now() >= deadline) {
         // Proceeding without lock — concurrent writes to sessions map are possible
         console.error(`[pickle] WARNING: lock acquisition timed out (${lockPath}), proceeding without lock`);

@@ -45,7 +45,7 @@ export function updateState(key, value, sessionDir) {
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'update-state.js') {
     const [key, value, sessionDir] = process.argv.slice(2);
-    if (!key || !value || !sessionDir) {
+    if (!key || !value || !sessionDir || sessionDir.startsWith('--')) {
         console.error('Usage: node update-state.js <key> <value> <session_dir>');
         process.exit(1);
     }

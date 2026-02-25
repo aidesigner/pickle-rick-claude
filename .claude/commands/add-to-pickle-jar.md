@@ -4,8 +4,8 @@ You are jarring the current session's PRD for later execution.
 
 **Step 1: Run the jar command**
 ```bash
-SESSION_DIR=$(node "$HOME/.claude/pickle-rick/extension/bin/get-session.js")
-node "$HOME/.claude/pickle-rick/extension/services/jar-utils.js" add --session "$SESSION_DIR"
+SESSION_ROOT=$(node "$HOME/.claude/pickle-rick/extension/bin/get-session.js")
+node "$HOME/.claude/pickle-rick/extension/services/jar-utils.js" add --session "$SESSION_ROOT"
 ```
 
 **Step 2: Check the output**

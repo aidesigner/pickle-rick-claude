@@ -261,7 +261,8 @@ export function withSessionMapLock(lockPath, fn) {
             acquired = true;
         }
         catch (e) {
-            if (e.code !== 'EEXIST')
+            const code = e instanceof Error ? e.code : undefined;
+            if (code !== 'EEXIST')
                 throw e;
             if (Date.now() >= deadline) {
                 // Proceeding without lock — concurrent writes to sessions map are possible

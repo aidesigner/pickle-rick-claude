@@ -32,5 +32,11 @@ function main() {
     }, 'BLUE', '👶');
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'worker-setup.js') {
-    main();
+    try {
+        main();
+    }
+    catch (err) {
+        console.error(err instanceof Error ? err.message : String(err));
+        process.exit(1);
+    }
 }

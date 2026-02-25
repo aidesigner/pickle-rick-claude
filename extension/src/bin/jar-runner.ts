@@ -83,7 +83,7 @@ async function main() {
     const dayPath = path.join(JAR_ROOT, day);
     let dayIsDir: boolean;
     try {
-      dayIsDir = fs.statSync(dayPath).isDirectory();
+      dayIsDir = fs.lstatSync(dayPath).isDirectory();
     } catch {
       continue;
     }

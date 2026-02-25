@@ -48,7 +48,10 @@ fires before the pane is ready.)
 Print immediately (so the user can open a second terminal now):
 - tmux session name: <session-name>
 - **Attach to watch:** `tmux attach -t <session-name>`
-- Attaches to Window 1 "monitor" (live dashboard) by default
+- Attaches to Window 1 "monitor" (3-pane layout) by default:
+  - Top-left: live ticket dashboard
+  - Top-right: live iteration log stream
+  - Bottom: live worker (Morty) logs
 - Window 0 "runner": background process log — switch with Ctrl+B 0
 
 ## Step 4: Launch Runner
@@ -56,11 +59,13 @@ Print immediately (so the user can open a second terminal now):
 Wrap the runner in a shell one-liner so the pane stays open after it exits:
 Run: tmux send-keys -t <session-name>:0 "node $HOME/.claude/pickle-rick/extension/bin/tmux-runner.js <SESSION_ROOT>; echo ''; echo '🥒 Runner finished.  Ctrl+B 1 → monitor  |  Ctrl+B D → detach'; read" Enter
 
-## Step 5: Launch Monitor Window (split: dashboard left, log stream right)
+## Step 5: Launch Monitor Window (3-pane: dashboard top-left, log stream top-right, worker logs bottom)
 
 Run: tmux new-window -t <session-name> -n monitor
-Run: tmux send-keys -t <session-name>:monitor "node $HOME/.claude/pickle-rick/extension/bin/monitor.js <SESSION_ROOT>" Enter
-Run: tmux split-window -h -t <session-name>:monitor
+Run: tmux split-window -v -t <session-name>:monitor -l 33%
+Run: tmux send-keys -t <session-name>:monitor.1 "node $HOME/.claude/pickle-rick/extension/bin/morty-watcher.js <SESSION_ROOT>" Enter
+Run: tmux split-window -h -t <session-name>:monitor.0
+Run: tmux send-keys -t <session-name>:monitor.0 "node $HOME/.claude/pickle-rick/extension/bin/monitor.js <SESSION_ROOT>" Enter
 Run: tmux send-keys -t <session-name>:monitor.1 "node $HOME/.claude/pickle-rick/extension/bin/log-watcher.js <SESSION_ROOT>" Enter
 Run: tmux select-pane -t <session-name>:monitor.0
 Run: tmux select-window -t <session-name>:monitor
@@ -70,9 +75,10 @@ Run: tmux select-window -t <session-name>:monitor
 Print ALL of the following:
 - tmux session name: <session-name>
 - Attach to session: `tmux attach -t <session-name>`
-  - **Lands on Window 1 "monitor"** (split view — this is the main display):
-    - Left pane: live ticket dashboard (phase, iteration, ticket status)
-    - Right pane: live log stream (auto-follows each iteration log)
+  - **Lands on Window 1 "monitor"** (3-pane layout — this is the main display):
+    - Top-left pane: live ticket dashboard (phase, iteration, ticket status)
+    - Top-right pane: live iteration log stream (auto-follows each iteration log)
+    - Bottom pane: live worker (Morty) logs (auto-follows latest worker session)
     - Switch panes: Ctrl+B then arrow key
   - Window 0 "runner": background process (low activity — shows start/end per iteration)
     - Switch to it: Ctrl+B 0

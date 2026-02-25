@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { updateState } from '../bin/update-state.js';
 
 function withTempSession(initialState, fn) {
@@ -161,4 +162,23 @@ test('updateState: boolean key rejects numeric-looking values', () => {
             /requires "true" or "false"/i
         );
     });
+});
+
+// ---------------------------------------------------------------------------
+// CLI guard: sessionDir flag validation (deep review pass 12)
+// ---------------------------------------------------------------------------
+
+test('updateState CLI: exits 1 when sessionDir starts with --', () => {
+    const updateStatePath = path.resolve(
+        path.dirname(new URL(import.meta.url).pathname),
+        '../bin/update-state.js'
+    );
+    assert.throws(
+        () => execFileSync('node', [updateStatePath, 'step', 'breakdown', '--max-time'], { encoding: 'utf-8' }),
+        (err) => {
+            assert.ok(err.stderr.includes('Usage'), `Expected Usage in stderr, got: ${err.stderr}`);
+            assert.equal(err.status, 1);
+            return true;
+        }
+    );
 });

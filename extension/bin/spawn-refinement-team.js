@@ -282,13 +282,13 @@ async function main() {
             const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
             if (timeoutIndex === -1) {
                 const stateTimeout = Number(state.worker_timeout_seconds);
-                if (stateTimeout > 0)
+                if (Number.isFinite(stateTimeout) && stateTimeout > 0)
                     timeout = stateTimeout;
             }
             // Clamp to remaining session time if a wall-clock limit is set
-            const maxMins = Number(state.max_time_minutes) || 0;
-            const startEpoch = Number(state.start_time_epoch) || 0;
-            if (maxMins > 0 && startEpoch > 0) {
+            const maxMins = Number(state.max_time_minutes);
+            const startEpoch = Number(state.start_time_epoch);
+            if (Number.isFinite(maxMins) && maxMins > 0 && Number.isFinite(startEpoch) && startEpoch > 0) {
                 const remaining = Math.floor(maxMins * 60 - (Math.floor(Date.now() / 1000) - startEpoch));
                 if (remaining <= 0) {
                     console.log(`${Style.YELLOW}⚠️  Session time already elapsed; running with requested timeout.${Style.RESET}`);

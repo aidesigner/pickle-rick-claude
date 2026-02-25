@@ -66,9 +66,9 @@ async function main() {
     if (timeoutStatePath) {
         try {
             const state = JSON.parse(fs.readFileSync(timeoutStatePath, 'utf-8'));
-            const maxMins = Number(state.max_time_minutes) || 0;
-            const startEpoch = Number(state.start_time_epoch) || 0;
-            if (maxMins > 0 && startEpoch > 0) {
+            const maxMins = Number(state.max_time_minutes);
+            const startEpoch = Number(state.start_time_epoch);
+            if (Number.isFinite(maxMins) && maxMins > 0 && Number.isFinite(startEpoch) && startEpoch > 0) {
                 const remaining = Math.floor(maxMins * 60 - (Math.floor(Date.now() / 1000) - startEpoch));
                 if (remaining <= 0) {
                     // Session wall-clock already elapsed; stop-hook will handle the limit on next turn
