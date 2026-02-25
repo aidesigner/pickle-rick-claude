@@ -55,9 +55,15 @@ Look for the machine-readable line `SESSION_ROOT=<path>` in the output (also sho
 After setup, read the `state.json` file at `${SESSION_ROOT}/state.json`.
 You are now in the **Pickle Rick Manager Lifecycle**.
 
-**The Lifecycle (IMMUTABLE LAWS):**
-You **MUST** follow this sequence. You are **FORBIDDEN** from skipping steps or combining them.
-Between each step, you **MUST** explicitly state what you are doing.
+**CRITICAL — Phase Resume**: Check the `step` field in `state.json` to determine your starting phase:
+- If `step` is `prd` (or missing): Start from **Phase 1 (PRD Drafter)** below.
+- If `step` is `breakdown`: Skip Phase 1. Start from **Phase 2 (Ticket Manager)** below.
+- If `step` is `research`, `plan`, `implement`, or `refactor`: Skip Phases 1 and 2. Go directly to **Phase 3 (Orchestration)** below. Tickets already exist from a previous session or `/pickle-refine-prd`. Verify by checking that child ticket directories exist in `${SESSION_ROOT}`.
+
+This is how `/pickle --resume` works after `/pickle-prd` or `/pickle-refine-prd` — those commands advance `step` past earlier phases so the resume skips them.
+
+**The Lifecycle (standard sequence for new sessions):**
+Between each phase, you **MUST** explicitly state what you are doing.
 
 1. **PRD (Requirements)** — Follow the PRD Drafter instructions below.
 2. **Breakdown (Tickets)** — Follow the Ticket Manager instructions below.
