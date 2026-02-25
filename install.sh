@@ -57,6 +57,8 @@ chmod +x "$EXTENSION_ROOT/extension/bin/tmux-runner.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/monitor.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/log-watcher.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/spawn-refinement-team.js"
+chmod +x "$EXTENSION_ROOT/extension/bin/get-session.js"
+chmod +x "$EXTENSION_ROOT/extension/bin/update-state.js"
 
 # --- COMMANDS ---
 # rsync all commands from .claude/commands/; no --delete to preserve user commands.

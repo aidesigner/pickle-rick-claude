@@ -19,8 +19,10 @@ Run the setup script to initialize the loop state.
 **CRITICAL — shell quoting**: Always pass the task string via `--task "..."` with double quotes. This prevents zsh from expanding `~` and other shell metacharacters in the task text. Any `--flags` go before `--task`.
 
 ```bash
-node "$HOME/.claude/pickle-rick/extension/bin/setup.js" [--flags from $ARGUMENTS] --task "$ARGUMENTS"
+node "$HOME/.claude/pickle-rick/extension/bin/setup.js" <EXTRACTED_FLAGS> --task "<TASK_TEXT>"
 ```
+
+**CRITICAL — flag extraction**: `$ARGUMENTS` may contain flags like `--max-iterations <N>`, `--resume <path>`, etc. You MUST extract any `--flags` and pass them as separate arguments before `--task`. Only the bare task text goes inside `--task "..."`.
 
 For example, if the user ran `/pickle --max-iterations 10 "refactor auth"`, execute:
 ```bash
@@ -212,7 +214,7 @@ When tasked with breaking down a PRD:
 ---
 id: [Ticket ID]
 title: [Ticket Title]
-status: [Status]
+status: Todo
 priority: [High|Medium|Low]
 order: [Number]
 created: [YYYY-MM-DD]
@@ -253,17 +255,21 @@ links:
 Process tickets one by one. Do not stop until **ALL** tickets are 'Done'.
 
 **For each ticket**:
-1. **Pick Ticket**: Pick the ticket with the lowest `order` value that is NOT 'Done'.
+1. **Pick Ticket**: Pick the ticket with the lowest `order` value that is NOT 'Done'. Then update state:
+   ```bash
+   node ${EXTENSION_ROOT}/extension/bin/update-state.js current_ticket <TICKET_ID> ${SESSION_ROOT}
+   node ${EXTENSION_ROOT}/extension/bin/update-state.js step research ${SESSION_ROOT}
+   ```
 2. **Delegate**: Spawn a Worker (Morty) to handle the implementation lifecycle:
    ```bash
-   node "$HOME/.claude/pickle-rick/extension/bin/spawn-morty.js" "<TASK_DESCRIPTION>" --ticket-id <ID> --ticket-path "${SESSION_ROOT}/<ID>/" --ticket-file "${SESSION_ROOT}/<ID>/linear_ticket_<ID>.md" --timeout <worker_timeout_seconds>
+   node "${EXTENSION_ROOT}/extension/bin/spawn-morty.js" "<TASK_DESCRIPTION>" --ticket-id <ID> --ticket-path "${SESSION_ROOT}/<ID>/" --ticket-file "${SESSION_ROOT}/<ID>/linear_ticket_<ID>.md" --timeout <worker_timeout_seconds>
    ```
 3. **Validate**: After the Morty outputs `<promise>I AM DONE</promise>`, audit the results:
    - Check `${SESSION_ROOT}/[ticket_id]/` for mandatory docs: `research_*.md`, `research_review.md`, `plan_*.md`, `plan_review.md`.
    - **FORBIDDEN**: Do NOT mark a ticket as Done if these documents are missing.
    - Run `git status` & `git diff` (verify implementation matches the plan)
    - Run tests/build (check functionality)
-4. **Cleanup**: If validation fails, STASH then REVERT changes (`git stash && git reset --hard`). If it passes, COMMIT changes.
+4. **Cleanup**: If validation fails, STASH changes for later inspection (`git stash`), then REVERT to clean state (`git checkout .`). If it passes, COMMIT changes.
 5. **Update Ticket**: Mark ticket as 'Done' in its frontmatter.
 6. **Increment Iteration**: After each completed ticket, increment the iteration counter:
    ```bash

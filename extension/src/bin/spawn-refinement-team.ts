@@ -291,6 +291,7 @@ async function main() {
   const settingsFile = path.join(extensionRoot, 'pickle_settings.json');
   let defaultCycles = 3;
   let defaultMaxTurns = 100;
+  let defaultWorkerTimeout = 1200;
   if (fs.existsSync(settingsFile)) {
     try {
       const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf-8'));
@@ -298,6 +299,8 @@ async function main() {
         defaultCycles = settings.default_refinement_cycles;
       if (typeof settings.default_refinement_max_turns === 'number' && settings.default_refinement_max_turns > 0)
         defaultMaxTurns = settings.default_refinement_max_turns;
+      if (typeof settings.default_worker_timeout_seconds === 'number' && settings.default_worker_timeout_seconds > 0)
+        defaultWorkerTimeout = settings.default_worker_timeout_seconds;
     } catch { /* use hardcoded defaults */ }
   }
 
@@ -325,7 +328,7 @@ async function main() {
 
   // Respect worker_timeout_seconds from session state (mirrors spawn-morty.ts)
   const rawTimeout = timeoutIndex !== -1 ? parseInt(args[timeoutIndex + 1], 10) : NaN;
-  let timeout = !isNaN(rawTimeout) && rawTimeout > 0 ? rawTimeout : 600;
+  let timeout = !isNaN(rawTimeout) && rawTimeout > 0 ? rawTimeout : defaultWorkerTimeout;
   const statePath = path.join(sessionDir, 'state.json');
   if (fs.existsSync(statePath)) {
     try {

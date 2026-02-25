@@ -5,7 +5,8 @@ SETTINGS_FILE="$HOME/.claude/settings.json"
 
 echo "🥒 Uninstalling Pickle Rick for Claude Code..."
 
-# Remove extension scripts
+# Remove extension scripts (guard: ensure $HOME is set to prevent catastrophic rm -rf)
+if [ -z "$HOME" ]; then echo "❌ \$HOME is not set — aborting to prevent data loss."; exit 1; fi
 rm -rf "$HOME/.claude/pickle-rick/"
 
 # Remove commands (by exact name — does NOT touch user's other commands)

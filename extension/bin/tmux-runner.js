@@ -16,7 +16,7 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
         const msg = err instanceof Error ? err.message : String(err);
         throw new Error(`Failed to read state.json for iteration ${iterationNum}: ${msg}`);
     }
-    if (!state.active)
+    if (state.active !== true)
         return 'inactive';
     const picklePromptPath = path.join(os.homedir(), '.claude/commands/pickle.md');
     if (!fs.existsSync(picklePromptPath)) {
@@ -148,7 +148,7 @@ async function main() {
         const msg = err instanceof Error ? err.message : String(err);
         throw new Error(`Cannot read initial state.json: ${msg}`);
     }
-    if (!ownerState.active) {
+    if (ownerState.active !== true) {
         ownerState.active = true;
         writeStateFile(statePath, ownerState);
         log('Session ownership taken (active: false → true)');
@@ -167,7 +167,7 @@ async function main() {
             log(`ERROR: Cannot read state.json: ${msg}. Exiting loop.`);
             break;
         }
-        if (!state.active) {
+        if (state.active !== true) {
             log('Session inactive. Exiting.');
             break;
         }
