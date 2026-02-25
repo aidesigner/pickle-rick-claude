@@ -1,4 +1,4 @@
-# 🥒 Pickle Rick for Claude Code
+# 🥒 Pickle Rick & 👋 Mr. Meeseeks for Claude Code
 
 ```
           )))  )))  )))

@@ -60,7 +60,7 @@ Run: `sleep 1`
 Print immediately so the user can open a second terminal:
 - tmux session name
 - **Attach to watch:** `tmux attach -t <session-name>`
-- Window 1 "monitor" (default — 3-pane layout): dashboard, log stream, worker logs
+- Window 1 "monitor" (default — 3-pane layout): dashboard, iteration log, runner log
 - Window 0 "runner": background process log — switch with Ctrl+B 0
 
 ### Step 6: Launch Runner
@@ -74,7 +74,7 @@ tmux send-keys -t <session-name>:0 "node $HOME/.claude/pickle-rick/extension/bin
 
 Run: `tmux new-window -t <session-name> -n monitor`
 Run: `tmux split-window -v -t <session-name>:monitor -l 33%`
-Run: `tmux send-keys -t <session-name>:monitor.1 "node $HOME/.claude/pickle-rick/extension/bin/morty-watcher.js <SESSION_ROOT>" Enter`
+Run: `tmux send-keys -t <session-name>:monitor.1 "tail -F <SESSION_ROOT>/tmux-runner.log" Enter`
 Run: `tmux split-window -h -t <session-name>:monitor.0`
 Run: `tmux send-keys -t <session-name>:monitor.0 "node $HOME/.claude/pickle-rick/extension/bin/monitor.js <SESSION_ROOT>" Enter`
 Run: `tmux send-keys -t <session-name>:monitor.1 "node $HOME/.claude/pickle-rick/extension/bin/log-watcher.js <SESSION_ROOT>" Enter`
@@ -90,7 +90,7 @@ Print ALL of the following:
   - **Window 1 "monitor"** (default — 3-pane layout):
     - Top-left: live dashboard (phase, iteration, ticket status)
     - Top-right: live log stream (auto-follows each iteration log)
-    - Bottom: live worker logs
+    - Bottom: runner orchestration log (iteration timing, pass results, gating)
   - Window 0 "runner": background process
 - Min passes: `<MIN_PASSES>` (won't stop until this many clean passes)
 - Max passes: `<MAX_PASSES>`
@@ -131,7 +131,25 @@ node "$HOME/.claude/pickle-rick/extension/bin/update-state.js" step review <SESS
 
 Print: "I'm Mr. Meeseeks, look at me! Starting review pass <N>! CAN DO!"
 
-### Step 13: Determine Focus Area
+### Step 13: Run Tests First
+
+**Before any code review, run the project's test suite.** Look for `package.json` scripts (`npm test`), Makefile targets, or common test commands. If a build step is required first (e.g. `npx tsc`), run that too.
+
+**If tests fail:**
+1. Print: "Ooh, existing test failures! CAN DO! Fixing those first!"
+2. Read the failing test output carefully — identify root causes
+3. Fix the source code (not the tests, unless the tests themselves are wrong)
+4. Re-run the test suite to confirm the fix
+5. Repeat until all tests pass
+6. Commit the fixes:
+   ```bash
+   git add -A && git commit -m "meeseeks pass <N>: fix test failures — <brief summary>"
+   ```
+7. Continue to Step 14 (there may still be code review issues beyond the test failures)
+
+**If tests pass:** Print "All tests passing! Moving on to code review." and continue to Step 14.
+
+### Step 14: Determine Focus Area
 
 Based on the current pass number, focus the review:
 
@@ -143,7 +161,7 @@ Based on the current pass number, focus the review:
 
 Print the focus area so the user knows what you're looking at.
 
-### Step 14: Review the Codebase
+### Step 15: Review the Codebase
 
 Systematically scan the project files in the working directory:
 
@@ -155,18 +173,18 @@ Systematically scan the project files in the working directory:
 
 **IMPORTANT**: Be thorough but practical. Only flag real issues — not style preferences or "nice to haves". Every issue you flag must be something that could cause a bug, security problem, maintenance burden, or confusion.
 
-### Step 15: Fix or Exit
+### Step 16: Fix or Exit
 
 **If issues were found:**
 
 1. Print: "Ooh, I found <N> issues! CAN DO! Let me fix those!"
 2. Fix each issue in the source code
-3. Run the project's test suite (look for `package.json` scripts, Makefile targets, or common test commands)
-4. If tests pass, commit:
+3. Re-run the test suite to confirm fixes don't break anything
+4. If tests fail, fix the failures and re-run until they pass
+5. Commit:
    ```bash
    git add -A && git commit -m "meeseeks pass <N>: <brief summary of fixes>"
    ```
-5. If tests fail, fix the failures and re-run until they pass, then commit
 6. Print a summary of what was fixed
 
 **If NO issues were found:**
