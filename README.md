@@ -157,7 +157,7 @@ claude
 
 ```bash
 /pickle-refine-prd my-prd.md             # Refine with 3 parallel analysts + decompose into tickets
-/pickle --resume                          # Execute — skips PRD and breakdown, straight to orchestration
+/pickle --resume                          # Execute — auto-detects phase, skips PRD and breakdown
 /pickle-tmux --resume                     # Or use tmux mode for long epics (8+ tickets)
 ```
 
@@ -218,6 +218,10 @@ Ctrl+B ←/→                      # switch between dashboard and log stream pa
 Ctrl+B 0                        # switch back to runner output
 Ctrl+B d                        # detach (session keeps running in background)
 ```
+
+**Phase-resume** — When resuming after `/pickle-refine-prd` or `/pickle-prd`, the resume flow auto-detects the session's current phase and skips completed phases (PRD, Breakdown). No re-drafting, no re-decomposition — straight to orchestration. Both commands verify the session is resumable before recommending `--resume`.
+
+**Notifications (macOS)** — `/pickle-tmux` and `/pickle-jar-open` send macOS notifications on completion so you can work on something else while Rick runs. Inline `/pickle` outputs directly to your terminal.
 
 **PRD is non-negotiable** — Every `/pickle` run starts with a PRD, whether Rick drafts it, you refine it with `/pickle-refine-prd`, or you bring your own (`prd.md` / `PRD.md` in project root). For best results on complex tasks, use `/pickle-refine-prd` → `/pickle --resume` to get the PRD right before execution begins.
 

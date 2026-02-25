@@ -208,8 +208,8 @@ async function main() {
     }
     console.log(`\n🥒 Jar complete. ${succeeded} succeeded, ${failed} failed.`);
     if (process.platform === 'darwin') {
-        const subtitle = failed > 0 ? `${succeeded} succeeded, ${failed} failed` : `${succeeded} task${succeeded === 1 ? '' : 's'} completed`;
-        spawnSync('osascript', ['-e', `display notification "${subtitle}" with title "🥒 Pickle Run Complete"`]);
+        const body = failed > 0 ? `${succeeded} succeeded, ${failed} failed` : `${succeeded} task${succeeded === 1 ? '' : 's'} completed`;
+        spawnSync('osascript', ['-e', `display notification "${body}" with title "🥒 Pickle Run Complete" subtitle "Pickle Jar"`]);
     }
     console.log('Signal: Jar Complete');
 }

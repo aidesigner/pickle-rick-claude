@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, buildHandoffSummary } from '../services/pickle-utils.js';
-import { State as PickleState, PromiseTokens, hasToken } from '../types/index.js';
+import { State as PickleState, PromiseTokens, hasToken, VALID_STEPS } from '../types/index.js';
 import { writeStateFile } from '../hooks/resolve-state.js';
 
 async function runIteration(sessionDir: string, iterationNum: number, extensionRoot: string): Promise<string> {
@@ -231,7 +231,8 @@ async function main() {
   let finalActive = 'unknown';
   try {
     const finalState: PickleState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-    finalStep = finalState.step || 'unknown';
+    const rawStep = finalState.step || 'unknown';
+    finalStep = (VALID_STEPS as readonly string[]).includes(rawStep) ? rawStep : 'unknown';
     finalActive = String(finalState.active);
   } catch { /* use fallback values */ }
 

@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, buildHandoffSummary } from '../services/pickle-utils.js';
-import { PromiseTokens, hasToken } from '../types/index.js';
+import { PromiseTokens, hasToken, VALID_STEPS } from '../types/index.js';
 import { writeStateFile } from '../hooks/resolve-state.js';
 async function runIteration(sessionDir, iterationNum, extensionRoot) {
     const statePath = path.join(sessionDir, 'state.json');
@@ -225,7 +225,8 @@ async function main() {
     let finalActive = 'unknown';
     try {
         const finalState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-        finalStep = finalState.step || 'unknown';
+        const rawStep = finalState.step || 'unknown';
+        finalStep = VALID_STEPS.includes(rawStep) ? rawStep : 'unknown';
         finalActive = String(finalState.active);
     }
     catch { /* use fallback values */ }

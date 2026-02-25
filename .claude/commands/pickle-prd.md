@@ -11,7 +11,7 @@ Run the setup script to create the session in PAUSED mode:
 node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --task "$ARGUMENTS" --paused
 ```
 
-**CRITICAL**: Look for the machine-readable line `SESSION_ROOT=<path>` in the output (also shown as `Path:` in the panel). That is your `SESSION_DIR`.
+**CRITICAL**: Look for the machine-readable line `SESSION_ROOT=<path>` in the output (also shown as `Path:` in the panel). That path is your `${SESSION_ROOT}` for all subsequent file operations.
 
 The extension root is `$HOME/.claude/pickle-rick` (referred to as `${EXTENSION_ROOT}` below).
 
@@ -39,25 +39,25 @@ Your job is to **INTERROGATE** the user to build the PRD.
 **ONLY** proceed to this step when you have all the answers.
 
 1. **Draft PRD**: Create the PRD content using the template below.
-2. **Save PRD**: Write the content to `<SESSION_DIR>/prd.md`.
+2. **Save PRD**: Write the content to `${SESSION_ROOT}/prd.md`.
 3. **Update State**: Advance the session state so the loop skips the PRD phase when resumed.
    Run this command:
    ```bash
-   node "${EXTENSION_ROOT}/extension/bin/update-state.js" step breakdown "<SESSION_DIR>"
+   node "${EXTENSION_ROOT}/extension/bin/update-state.js" step breakdown "${SESSION_ROOT}"
    ```
 4. **Verify Session**: Before handing off, confirm the session is resumable:
-   - `<SESSION_DIR>/prd.md` exists (PRD was saved)
-   - `<SESSION_DIR>/state.json` has `step: breakdown` (state was advanced)
+   - `${SESSION_ROOT}/prd.md` exists (PRD was saved)
+   - `${SESSION_ROOT}/state.json` has `step: breakdown` (state was advanced)
    If either check fails, print a warning and tell the user what went wrong. Do NOT recommend `--resume`.
 
 5. **Handoff** (only if verification passes):
-   "Wubba Lubba Dub Dub! PRD saved at `<SESSION_DIR>/prd.md`. State advanced to 'breakdown'.
+   "Wubba Lubba Dub Dub! PRD saved at `${SESSION_ROOT}/prd.md`. State advanced to 'breakdown'.
 
-   Run `/pickle --resume <SESSION_DIR>` to activate the implementation loop — I'll pick up at the breakdown phase with full context. No re-processing, no questions. Just tickets and execution.
+   Run `/pickle --resume ${SESSION_ROOT}` to activate the implementation loop — I'll pick up at the breakdown phase with full context. No re-processing, no questions. Just tickets and execution.
 
-   Or with tmux for long epics: `/pickle-tmux --resume <SESSION_DIR>`"
+   Or with tmux for long epics: `/pickle-tmux --resume ${SESSION_ROOT}`"
 
-   **CRITICAL**: Always include the full `<SESSION_DIR>` path in the resume command so the user can copy/paste it directly. Never output just `/pickle --resume` without a path.
+   **CRITICAL**: Always include the full `${SESSION_ROOT}` path in the resume command so the user can copy/paste it directly. Never output just `/pickle --resume` without a path.
 
 ---
 
