@@ -33,13 +33,15 @@
 
 > *"Wubba Lubba Dub Dub! 🥒 I'm not just an AI assistant, Morty — I'm an **autonomous engineering machine** trapped in a pickle jar!"*
 
-A port of the [Pickle Rick Gemini CLI extension](https://github.com/galz10/pickle-rick-extension) for **Claude Code** — bringing the same PRD-driven, autonomous coding loop to `claude` users, with several enhancements over the original:
+A port of the [Pickle Rick Gemini CLI extension](https://github.com/galz10/pickle-rick-extension) for **Claude Code** — the same PRD-driven, autonomous coding loop, rebuilt for `claude` with key differences:
 
-- **Context clearing** — every loop iteration injects a structured session summary (phase, ticket list, task) so Rick survives full context compression without losing his place. In tmux mode (`/pickle-tmux`), each iteration spawns a genuinely fresh `claude -p` subprocess with zero conversation history — no context drift on long epics.
-- **Single Stop hook** — one hook handles the entire loop lifecycle, blocking exit until all tickets are done or limits are reached
-- **PRD refinement & task decomposition** — `/pickle-refine-prd` runs multi-cycle refinement (default: 3 cycles) with 3 parallel Morty analysts (Requirements, Codebase, Risk/Scope), then decomposes the refined PRD into discrete, ordered implementation tasks with pre-created ticket files
-- **Worker isolation** — Morty subprocesses run with `--dangerously-skip-permissions` and scoped `--add-dir`, so each worker starts fresh with only its ticket and the extension root in context
-- **Pickle Jar** — queue tasks with `/add-to-pickle-jar` and run them all sequentially with `/pickle-jar-open` (Night Shift mode), with per-task success/failure tracking
+| | |
+|---|---|
+| **Context clearing** | Every iteration injects a structured summary (phase, tickets, task) so Rick never loses his place — even after full context compression. tmux mode (`/pickle-tmux`) goes further: each iteration is a fresh `claude -p` subprocess with zero conversation history. No drift on 50+ iteration epics. |
+| **One hook, whole lifecycle** | A single Stop hook blocks exit, injects context, and enforces limits. No daemon, no polling, no external orchestrator — just the hook and `state.json`. |
+| **PRD refinement** | `/pickle-refine-prd` deploys 3 parallel Morty analysts (Requirements, Codebase, Risk/Scope) over multiple cycles, then decomposes findings into ordered, self-contained tickets. Add `--run` to auto-launch an unlimited tmux session immediately after. |
+| **Worker isolation** | Each Morty runs as a scoped `claude -p` subprocess — `--dangerously-skip-permissions`, `--add-dir` limited to its ticket and the extension root. No cross-contamination between workers. |
+| **Pickle Jar** | Queue tasks with `/add-to-pickle-jar`, run them all with `/pickle-jar-open`. Night shift mode — walk away, come back to per-task success/failure results. |
 
 ---
 
