@@ -2,6 +2,7 @@ import { execSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { StringDecoder } from 'string_decoder';
 export const Style = {
     GREEN: '\x1b[32m',
     RED: '\x1b[31m',
@@ -290,6 +291,58 @@ export function withSessionMapLock(lockPath, fn) {
             }
             catch { /* ignore */ }
         }
+    }
+}
+/** Async sleep — resolves after `ms` milliseconds. */
+export function sleep(ms) {
+    return new Promise((r) => setTimeout(r, ms));
+}
+const ANSI_REGEX = /\x1b\[[0-9;]*[a-zA-Z]/g;
+const DRAIN_CHUNK = 65536; // 64 KiB
+/** Emits log content to stdout, stripping ANSI codes and truncating long lines. */
+function emitLog(content) {
+    const width = Math.min((process.stdout.columns || 80) - 2, 120);
+    const lines = content.replace(ANSI_REGEX, '').split('\n').filter((l) => l.trim());
+    for (const line of lines) {
+        process.stdout.write((line.length > width ? line.slice(0, width - 1) + '…' : line) + '\n');
+    }
+}
+/**
+ * Reads new bytes from a log file starting at `offset`, emits them to stdout,
+ * and returns the new offset. Reads in 64 KiB chunks to limit memory usage.
+ */
+export function drainLog(logPath, offset) {
+    let fd = null;
+    try {
+        const { size } = fs.statSync(logPath);
+        if (size <= offset)
+            return offset;
+        fd = fs.openSync(logPath, 'r');
+        const decoder = new StringDecoder('utf-8');
+        let pos = offset;
+        while (pos < size) {
+            const toRead = Math.min(DRAIN_CHUNK, size - pos);
+            const buf = Buffer.allocUnsafe(toRead);
+            const bytesRead = fs.readSync(fd, buf, 0, toRead, pos);
+            if (bytesRead === 0)
+                break; // EOF — file was truncated
+            emitLog(decoder.write(buf.subarray(0, bytesRead)));
+            pos += bytesRead;
+        }
+        const trailing = decoder.end();
+        if (trailing)
+            emitLog(trailing);
+        fs.closeSync(fd);
+        return pos;
+    }
+    catch {
+        if (fd !== null) {
+            try {
+                fs.closeSync(fd);
+            }
+            catch { /* ignore double-close */ }
+        }
+        return offset;
     }
 }
 /**

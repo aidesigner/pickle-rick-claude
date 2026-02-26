@@ -1,10 +1,8 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { collectTickets, statusSymbol, formatTime, getWidth, Style } from '../services/pickle-utils.js';
+import { collectTickets, statusSymbol, formatTime, getWidth, Style, sleep } from '../services/pickle-utils.js';
 import { State } from '../types/index.js';
-
-const sleep = (ms: number): Promise<void> => new Promise((res) => setTimeout(res, ms));
 
 function render(sessionDir: string): boolean {
   // If the session directory itself is gone, signal exit (not just "waiting")
