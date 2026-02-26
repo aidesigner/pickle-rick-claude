@@ -413,6 +413,55 @@ test('dispatch: handler output whitespace is normalized (clean JSON forwarded)',
   }
 });
 
+test('dispatch: handler with debug output before JSON decision still works', () => {
+  const tmpRoot = makeTmpRoot();
+  try {
+    const handlersDir = makeHandlersDir(tmpRoot);
+    // Handler that writes debug text to stdout before the real decision
+    writeHandler(handlersDir, 'test-multiline', `
+      console.log('DEBUG: processing hook...');
+      console.log('some other debug line');
+      console.log(JSON.stringify({ decision: 'block', reason: 'test reason' }));
+    `);
+
+    const { stdout, status } = runDispatch({
+      extRoot: tmpRoot,
+      args: ['test-multiline'],
+      input: '{}',
+    });
+
+    assert.equal(status, 0, 'should exit with code 0');
+    const parsed = JSON.parse(stdout.trim());
+    assert.equal(parsed.decision, 'block', 'should find the block decision despite debug lines before it');
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('dispatch: handler with debug output after JSON decision uses first valid JSON', () => {
+  const tmpRoot = makeTmpRoot();
+  try {
+    const handlersDir = makeHandlersDir(tmpRoot);
+    // Handler that writes the decision then more debug text
+    writeHandler(handlersDir, 'test-trailing', `
+      console.log(JSON.stringify({ decision: 'block', reason: 'real decision' }));
+      console.log('trailing debug output');
+    `);
+
+    const { stdout, status } = runDispatch({
+      extRoot: tmpRoot,
+      args: ['test-trailing'],
+      input: '{}',
+    });
+
+    assert.equal(status, 0, 'should exit with code 0');
+    const parsed = JSON.parse(stdout.trim());
+    assert.equal(parsed.decision, 'block', 'should find block decision even with trailing output');
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
 test('dispatch: EXTENSION_DIR env var is passed to the handler', () => {
   const tmpRoot = makeTmpRoot();
   try {

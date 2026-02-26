@@ -276,7 +276,8 @@ async function main() {
     log(`tmux-runner finished. ${iteration} iterations, ${formatTime(totalElapsed)}`);
     const notif = buildTmuxNotification(exitReason, finalStep, iteration, totalElapsed);
     if (process.platform === 'darwin') {
-        spawnSync('osascript', ['-e', `display notification "${notif.body}" with title "${notif.title}" subtitle "${notif.subtitle}"`]);
+        const esc = (s) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+        spawnSync('osascript', ['-e', `display notification "${esc(notif.body)}" with title "${esc(notif.title)}" subtitle "${esc(notif.subtitle)}"`]);
     }
 }
 export function buildTmuxNotification(exitReason, finalStep, iteration, totalElapsed) {

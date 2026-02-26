@@ -222,15 +222,17 @@ export function buildJarNotification(succeeded, failed) {
 function sendJarNotification(succeeded, failed) {
     if (process.platform !== 'darwin')
         return;
+    const esc = (s) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     const { title, subtitle, body } = buildJarNotification(succeeded, failed);
-    spawnSync('osascript', ['-e', `display notification "${body}" with title "${title}" subtitle "${subtitle}"`]);
+    spawnSync('osascript', ['-e', `display notification "${esc(body)}" with title "${esc(title)}" subtitle "${esc(subtitle)}"`]);
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'jar-runner.js') {
     main().catch((err) => {
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`${Style.RED}Error: ${msg}${Style.RESET}`);
         if (process.platform === 'darwin') {
-            spawnSync('osascript', ['-e', `display notification "${msg.slice(0, 100)}" with title "🥒 Pickle Jar Failed" subtitle "Crash"`]);
+            const esc = (s) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+            spawnSync('osascript', ['-e', `display notification "${esc(msg.slice(0, 100))}" with title "🥒 Pickle Jar Failed" subtitle "Crash"`]);
         }
         process.exit(1);
     });

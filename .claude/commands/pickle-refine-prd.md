@@ -496,7 +496,7 @@ tmux split-window -v -t <session-name>:monitor -l 33%
 tmux send-keys -t <session-name>:monitor.1 "node $HOME/.claude/pickle-rick/extension/bin/morty-watcher.js ${SESSION_ROOT}" Enter
 tmux split-window -h -t <session-name>:monitor.0
 tmux send-keys -t <session-name>:monitor.0 "node $HOME/.claude/pickle-rick/extension/bin/monitor.js ${SESSION_ROOT}" Enter
-tmux send-keys -t <session-name>:monitor.1 "node $HOME/.claude/pickle-rick/extension/bin/log-watcher.js ${SESSION_ROOT}" Enter
+tmux send-keys -t <session-name>:monitor.2 "node $HOME/.claude/pickle-rick/extension/bin/log-watcher.js ${SESSION_ROOT}" Enter
 tmux select-pane -t <session-name>:monitor.0
 tmux select-window -t <session-name>:monitor
 ```

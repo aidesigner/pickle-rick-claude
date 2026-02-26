@@ -147,17 +147,22 @@ async function main() {
         }
         approve();
       } else {
-        // Validate handler output is well-formed JSON with a decision field before forwarding
+        // Parse the LAST non-empty line as the decision JSON.
+        // Handlers may accidentally emit debug output before the decision;
+        // only the final line matters.
         let parsed: { decision: string } | null = null;
-        try {
-          const obj = JSON.parse(stdout.trim());
-          if (obj.decision === 'approve' || obj.decision === 'block') {
-            parsed = obj;
-          } else {
-            log(`Hook ${hookName} returned invalid decision: ${JSON.stringify(obj.decision)}`);
-          }
-        } catch {
-          log(`Hook ${hookName} returned non-JSON stdout — falling back to approve`);
+        const lines = stdout.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+        for (let i = lines.length - 1; i >= 0; i--) {
+          try {
+            const obj = JSON.parse(lines[i]);
+            if (obj.decision === 'approve' || obj.decision === 'block') {
+              parsed = obj;
+              break;
+            }
+          } catch { /* not JSON, try previous line */ }
+        }
+        if (!parsed && lines.length > 0) {
+          log(`Hook ${hookName} stdout contained no valid decision JSON — falling back to approve`);
         }
         if (parsed) {
           console.log(JSON.stringify(parsed));
