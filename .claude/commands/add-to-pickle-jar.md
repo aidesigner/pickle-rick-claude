@@ -1,5 +1,6 @@
-Please announce what you are doing.
+Queue the current Pickle Rick session's PRD into the Pickle Jar for batch execution later.
 
+Announce what you are doing, then proceed.
 You are jarring the current session's PRD for later execution.
 
 **Step 1: Run the jar command**

@@ -655,9 +655,18 @@ test('stop-hook: EXISTENCE_IS_PAIN → approve + active=false (standard completi
   assert.equal(state.active, false);
 });
 
-test('stop-hook: EXISTENCE_IS_PAIN below min_iterations → approve, active stays true', () => {
+test('stop-hook: EXISTENCE_IS_PAIN below min_iterations (non-tmux) → block inline loop', () => {
   const { decision, state } = runHook({
     state: baseState({ min_iterations: 10, iteration: 3 }),
+    response: '<promise>EXISTENCE_IS_PAIN</promise>',
+  });
+  assert.equal(decision.decision, 'block', 'non-tmux mode below min_iterations must block to continue inline loop');
+  assert.equal(state.active, true, 'below min_iterations — active must stay true');
+});
+
+test('stop-hook: EXISTENCE_IS_PAIN below min_iterations (tmux) → approve for runner respawn', () => {
+  const { decision, state } = runHook({
+    state: baseState({ min_iterations: 10, iteration: 3, tmux_mode: true }),
     response: '<promise>EXISTENCE_IS_PAIN</promise>',
   });
   assert.deepEqual(decision, { decision: 'approve' });

@@ -1,5 +1,6 @@
-Please announce what you are doing.
+Execute all queued Pickle Jar tasks sequentially in Night Shift batch mode.
 
+Announce what you are doing, then proceed.
 You are initiating the **Pickle Jar Night Shift**. You are the **Grand Overseer** — you manage the conveyor belt, you do not write code.
 
 **Step 1: Run the jar runner**

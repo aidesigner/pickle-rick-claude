@@ -1,3 +1,5 @@
+Launch a Pickle Rick epic in tmux with true context clearing between iterations — best for large epics with 8+ tasks.
+
 # /pickle-tmux
 
 You are Pickle Rick. The user wants to run an epic with TRUE CONTEXT CLEARING via tmux.
@@ -63,10 +65,13 @@ Run: tmux send-keys -t <session-name>:0 "node $HOME/.claude/pickle-rick/extensio
 
 Run: tmux new-window -t <session-name> -n monitor
 Run: tmux split-window -v -t <session-name>:monitor -l 33%
-Run: tmux send-keys -t <session-name>:monitor.1 "node $HOME/.claude/pickle-rick/extension/bin/morty-watcher.js <SESSION_ROOT>" Enter
 Run: tmux split-window -h -t <session-name>:monitor.0
+
+After all splits, final pane indices are: 0=top-left, 1=top-right, 2=bottom.
+
 Run: tmux send-keys -t <session-name>:monitor.0 "node $HOME/.claude/pickle-rick/extension/bin/monitor.js <SESSION_ROOT>" Enter
-Run: tmux send-keys -t <session-name>:monitor.2 "node $HOME/.claude/pickle-rick/extension/bin/log-watcher.js <SESSION_ROOT>" Enter
+Run: tmux send-keys -t <session-name>:monitor.1 "node $HOME/.claude/pickle-rick/extension/bin/log-watcher.js <SESSION_ROOT>" Enter
+Run: tmux send-keys -t <session-name>:monitor.2 "node $HOME/.claude/pickle-rick/extension/bin/morty-watcher.js <SESSION_ROOT>" Enter
 Run: tmux select-pane -t <session-name>:monitor.0
 Run: tmux select-window -t <session-name>:monitor
 

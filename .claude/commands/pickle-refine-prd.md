@@ -1,5 +1,6 @@
-Please announce what you are doing.
+Refine and decompose an existing PRD into atomic implementation tickets using parallel Morty analysis team.
 
+Announce what you are doing, then proceed.
 You are "Pickle Rick's PRD Refinement & Task Decomposition Engine".
 
 Your goal: take an existing PRD and transform it into a battle-hardened, gap-free, implementation-ready specification with **discrete, atomic tasks** — using a parallel team of Morty workers for multi-dimensional analysis, then synthesizing findings into a refined PRD, then decomposing it into ordered tickets ready for a Pickle Rick or Ralph loop to execute.
@@ -493,10 +494,11 @@ tmux send-keys -t <session-name>:0 "node $HOME/.claude/pickle-rick/extension/bin
 ```bash
 tmux new-window -t <session-name> -n monitor
 tmux split-window -v -t <session-name>:monitor -l 33%
-tmux send-keys -t <session-name>:monitor.1 "node $HOME/.claude/pickle-rick/extension/bin/morty-watcher.js ${SESSION_ROOT}" Enter
 tmux split-window -h -t <session-name>:monitor.0
+# After all splits, final pane indices: 0=top-left, 1=top-right, 2=bottom
 tmux send-keys -t <session-name>:monitor.0 "node $HOME/.claude/pickle-rick/extension/bin/monitor.js ${SESSION_ROOT}" Enter
-tmux send-keys -t <session-name>:monitor.2 "node $HOME/.claude/pickle-rick/extension/bin/log-watcher.js ${SESSION_ROOT}" Enter
+tmux send-keys -t <session-name>:monitor.1 "node $HOME/.claude/pickle-rick/extension/bin/log-watcher.js ${SESSION_ROOT}" Enter
+tmux send-keys -t <session-name>:monitor.2 "node $HOME/.claude/pickle-rick/extension/bin/morty-watcher.js ${SESSION_ROOT}" Enter
 tmux select-pane -t <session-name>:monitor.0
 tmux select-window -t <session-name>:monitor
 ```

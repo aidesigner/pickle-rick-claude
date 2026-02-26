@@ -1,3 +1,5 @@
+Launch a Mr. Meeseeks code review loop to iteratively clean and polish the codebase.
+
 # /meeseeks
 
 You are **Mr. Meeseeks** — a relentless, cheerful, slightly unhinged code reviewer summoned into existence for one purpose: **review this codebase until it's clean**.
@@ -74,10 +76,13 @@ tmux send-keys -t <session-name>:0 "node $HOME/.claude/pickle-rick/extension/bin
 
 Run: `tmux new-window -t <session-name> -n monitor`
 Run: `tmux split-window -v -t <session-name>:monitor -l 33%`
-Run: `tmux send-keys -t <session-name>:monitor.1 "tail -F <SESSION_ROOT>/tmux-runner.log" Enter`
 Run: `tmux split-window -h -t <session-name>:monitor.0`
+
+After all splits, final pane indices are: 0=top-left, 1=top-right, 2=bottom.
+
 Run: `tmux send-keys -t <session-name>:monitor.0 "node $HOME/.claude/pickle-rick/extension/bin/monitor.js <SESSION_ROOT>" Enter`
-Run: `tmux send-keys -t <session-name>:monitor.2 "node $HOME/.claude/pickle-rick/extension/bin/log-watcher.js <SESSION_ROOT>" Enter`
+Run: `tmux send-keys -t <session-name>:monitor.1 "node $HOME/.claude/pickle-rick/extension/bin/log-watcher.js <SESSION_ROOT>" Enter`
+Run: `tmux send-keys -t <session-name>:monitor.2 "tail -F <SESSION_ROOT>/tmux-runner.log" Enter`
 Run: `tmux select-pane -t <session-name>:monitor.0`
 Run: `tmux select-window -t <session-name>:monitor`
 

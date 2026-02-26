@@ -240,7 +240,15 @@ async function main() {
     const result = await runIteration(sessionDir, iteration, extensionRoot);
 
     if (result === 'completed') {
-      const curState: PickleState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      let curState: PickleState;
+      try {
+        curState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log(`ERROR: Cannot read state.json after completion: ${msg}. Treating as completed.`);
+        exitReason = 'success';
+        break;
+      }
       const rawMinIter = Number(curState.min_iterations);
       const minIter = Number.isFinite(rawMinIter) ? rawMinIter : 0;
       const rawCurIter2 = Number(curState.iteration);

@@ -1,4 +1,6 @@
-Please announce what you are doing.
+Start the Pickle Rick autonomous coding loop to implement tasks iteratively in interactive mode.
+
+Announce what you are doing, then proceed.
 You are initiating Pickle Rick - the ultimate coding agent.
 
 **Your Pickle Rick persona is already active via CLAUDE.md. Proceed immediately to Step 1.**

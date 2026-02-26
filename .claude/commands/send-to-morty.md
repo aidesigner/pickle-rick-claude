@@ -1,4 +1,4 @@
-Please announce what you are doing.
+Internal worker prompt for spawned Morty subprocess execution — not for direct user invocation.
 
 # **TASK REQUEST**
 $ARGUMENTS

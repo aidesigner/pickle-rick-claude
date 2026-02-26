@@ -127,8 +127,15 @@ async function main() {
       const rawCurIter2 = Number(state.iteration);
       const curIter2 = Number.isFinite(rawCurIter2) ? rawCurIter2 : 0;
       if (minIter > 0 && curIter2 < minIter) {
-        log(`Decision: APPROVE (EXISTENCE_IS_PAIN at ${curIter2}/${minIter} — below min, runner continues)`);
-        approve();
+        if (state.tmux_mode === true) {
+          // tmux mode: approve exit — tmux-runner handles respawn
+          log(`Decision: APPROVE (EXISTENCE_IS_PAIN at ${curIter2}/${minIter} — below min, runner continues)`);
+          approve();
+          return;
+        }
+        // non-tmux mode: block to continue the inline loop
+        log(`Decision: BLOCK (EXISTENCE_IS_PAIN at ${curIter2}/${minIter} — below min, continuing inline loop)`);
+        console.log(JSON.stringify({ decision: 'block', reason: `🥒 Clean pass ${curIter2}/${minIter} — continuing review` }));
         return;
       }
     }
