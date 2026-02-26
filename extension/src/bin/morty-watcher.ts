@@ -109,7 +109,7 @@ async function main() {
 if (process.argv[1] && path.basename(process.argv[1]) === 'morty-watcher.js') {
   main().catch((err) => {
     const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(`[morty-watcher] ${msg}\n`);
+    console.error(`${Style.RED}[morty-watcher] ${msg}${Style.RESET}`);
     process.exit(1);
   });
 }

@@ -73,7 +73,7 @@ async function main() {
 if (process.argv[1] && path.basename(process.argv[1]) === 'log-watcher.js') {
     main().catch((err) => {
         const msg = err instanceof Error ? err.message : String(err);
-        process.stderr.write(`[log-watcher] ${msg}\n`);
+        console.error(`${Style.RED}[log-watcher] ${msg}${Style.RESET}`);
         process.exit(1);
     });
 }

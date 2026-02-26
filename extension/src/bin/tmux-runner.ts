@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, buildHandoffSummary } from '../services/pickle-utils.js';
-import { State as PickleState, PromiseTokens, hasToken, VALID_STEPS } from '../types/index.js';
+import { State, PromiseTokens, hasToken, VALID_STEPS } from '../types/index.js';
 import { writeStateFile } from '../hooks/resolve-state.js';
 
 /**
@@ -26,7 +26,7 @@ export function classifyCompletion(output: string): 'task_completed' | 'review_c
 
 async function runIteration(sessionDir: string, iterationNum: number, extensionRoot: string): Promise<string> {
   const statePath = path.join(sessionDir, 'state.json');
-  let state: PickleState;
+  let state: State;
   try {
     state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
   } catch (err) {
@@ -168,7 +168,7 @@ async function main() {
   // Take ownership: setup.js writes active: false in tmux mode so the main
   // Claude window's stop hook is released immediately. We set active: true here
   // before entering the loop so workers and state readers see a live session.
-  let ownerState: PickleState;
+  let ownerState: State;
   try {
     ownerState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
   } catch (err) {
@@ -188,7 +188,7 @@ async function main() {
   let exitReason: 'success' | 'cancelled' | 'error' | 'limit' | 'stall' = 'error';
 
   while (true) {
-    let state: PickleState;
+    let state: State;
     try {
       state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
     } catch (err) {
@@ -257,7 +257,7 @@ async function main() {
       break;
     } else if (result === 'review_clean') {
       // EXISTENCE_IS_PAIN — apply min_iterations gate (Meeseeks review pattern)
-      let curState: PickleState;
+      let curState: State;
       try {
         curState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
       } catch (err) {
@@ -288,7 +288,7 @@ async function main() {
   let finalActive = 'unknown';
   let finalMinIter = 0;
   try {
-    const finalState: PickleState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    const finalState: State = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
     const rawStep = finalState.step || 'unknown';
     finalStep = (VALID_STEPS as readonly string[]).includes(rawStep) ? rawStep : 'unknown';
     finalActive = String(finalState.active);
