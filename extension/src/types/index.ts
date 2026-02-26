@@ -43,7 +43,7 @@ export const PromiseTokens = {
   EXISTENCE_IS_PAIN: 'EXISTENCE_IS_PAIN',
 } as const;
 
-export type PromiseToken = typeof PromiseTokens[keyof typeof PromiseTokens];
+type PromiseToken = typeof PromiseTokens[keyof typeof PromiseTokens];
 
 /** Returns true if `text` contains `<promise>TOKEN</promise>`, tolerating whitespace inside tags. */
 export function hasToken(text: string, token: string): boolean {

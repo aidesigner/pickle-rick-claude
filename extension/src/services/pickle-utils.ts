@@ -17,7 +17,7 @@ export const Style = {
   RESET: '\x1b[0m',
 } as const;
 
-export type StyleColor = keyof typeof Style;
+type StyleColor = keyof typeof Style;
 
 export function getWidth(maxW: number = 90): number {
   const cols = process.stdout.columns || 80;
@@ -90,7 +90,7 @@ export function formatTime(seconds: number): string {
   return `${m}m ${s}s`;
 }
 
-export interface ShellError extends Error {
+interface ShellError extends Error {
   stderr?: Buffer | string;
   stdout?: Buffer | string;
 }
