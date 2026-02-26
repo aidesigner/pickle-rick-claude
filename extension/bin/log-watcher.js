@@ -10,7 +10,11 @@ function latestLog(sessionDir) {
         const logs = fs
             .readdirSync(sessionDir)
             .filter((f) => f.startsWith('tmux_iteration_') && f.endsWith('.log'))
-            .sort();
+            .sort((a, b) => {
+            const numA = parseInt(a.replace('tmux_iteration_', '').replace('.log', ''), 10);
+            const numB = parseInt(b.replace('tmux_iteration_', '').replace('.log', ''), 10);
+            return (numA || 0) - (numB || 0);
+        });
         return logs.length > 0 ? path.join(sessionDir, logs[logs.length - 1]) : null;
     }
     catch {

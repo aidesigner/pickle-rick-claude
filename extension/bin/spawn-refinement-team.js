@@ -202,13 +202,14 @@ function spawnWorker(roleId, prompt, refinementDir, extensionRoot, timeout, work
                 return; // error handler already resolved
             clearTimeout(timeoutHandle);
             clearTimeout(hangGuard);
-            logStream.end();
-            // Guard against logStream.finish never firing
+            // Register finish listener BEFORE calling end() to avoid missing synchronous completion.
+            // Guard against logStream.finish never firing (e.g., disk I/O failure)
             const flushTimeout = setTimeout(() => finalize(), 5000);
             logStream.on('finish', () => {
                 clearTimeout(flushTimeout);
                 finalize();
             });
+            logStream.end();
             function finalize() {
                 let logContent = '';
                 try {
