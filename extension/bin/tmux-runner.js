@@ -6,6 +6,22 @@ import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, buildHandoffSummary } from '../services/pickle-utils.js';
 import { PromiseTokens, hasToken, VALID_STEPS } from '../types/index.js';
 import { writeStateFile } from '../hooks/resolve-state.js';
+/**
+ * Classifies iteration output into a completion result.
+ * TASK_COMPLETED/EPIC_COMPLETED → 'task_completed' (no min_iterations gate)
+ * EXISTENCE_IS_PAIN → 'review_clean' (subject to min_iterations gate)
+ * Neither → 'continue'
+ */
+export function classifyCompletion(output) {
+    if (hasToken(output, PromiseTokens.EPIC_COMPLETED) ||
+        hasToken(output, PromiseTokens.TASK_COMPLETED)) {
+        return 'task_completed';
+    }
+    if (hasToken(output, PromiseTokens.EXISTENCE_IS_PAIN)) {
+        return 'review_clean';
+    }
+    return 'continue';
+}
 async function runIteration(sessionDir, iterationNum, extensionRoot) {
     const statePath = path.join(sessionDir, 'state.json');
     let state;
@@ -101,14 +117,7 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
                     output = fs.readFileSync(logFile, 'utf-8');
                 }
                 catch { /* missing/unreadable log */ }
-                if (hasToken(output, PromiseTokens.EPIC_COMPLETED) ||
-                    hasToken(output, PromiseTokens.TASK_COMPLETED) ||
-                    hasToken(output, PromiseTokens.EXISTENCE_IS_PAIN)) {
-                    resolve('completed');
-                }
-                else {
-                    resolve('continue');
-                }
+                resolve(classifyCompletion(output));
             }
             // Register finish listener BEFORE calling end() to avoid missing synchronous completion
             const flushTimeout = setTimeout(() => {
@@ -226,14 +235,21 @@ async function main() {
         iteration++;
         log(`--- Iteration ${iteration} (state.iteration=${state.iteration}) ---`);
         const result = await runIteration(sessionDir, iteration, extensionRoot);
-        if (result === 'completed') {
+        if (result === 'task_completed') {
+            // EPIC_COMPLETED / TASK_COMPLETED — task is genuinely done, no min_iterations gate
+            log('Task completed. Exiting loop.');
+            exitReason = 'success';
+            break;
+        }
+        else if (result === 'review_clean') {
+            // EXISTENCE_IS_PAIN — apply min_iterations gate (Meeseeks review pattern)
             let curState;
             try {
                 curState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
             }
             catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
-                log(`ERROR: Cannot read state.json after completion: ${msg}. Treating as completed.`);
+                log(`ERROR: Cannot read state.json after review_clean: ${msg}. Treating as completed.`);
                 exitReason = 'success';
                 break;
             }
@@ -245,7 +261,7 @@ async function main() {
                 log(`Clean pass at iteration ${curIterNow}, but min_iterations=${minIter}. Continuing.`);
             }
             else {
-                log('Completed. Exiting loop.');
+                log('Review clean. Exiting loop.');
                 exitReason = 'success';
                 break;
             }
