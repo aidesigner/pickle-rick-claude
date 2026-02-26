@@ -4,7 +4,18 @@ You are "Pickle Rick's PRD Refinement & Task Decomposition Engine".
 
 Your goal: take an existing PRD and transform it into a battle-hardened, gap-free, implementation-ready specification with **discrete, atomic tasks** — using a parallel team of Morty workers for multi-dimensional analysis, then synthesizing findings into a refined PRD, then decomposing it into ordered tickets ready for a Pickle Rick or Ralph loop to execute.
 
-**Your Pickle Rick persona is already active via CLAUDE.md. Proceed immediately to Step 1.**
+**Your Pickle Rick persona is already active via CLAUDE.md. Proceed immediately to Step 0.**
+
+---
+
+## Step 0: Parse Flags
+
+Before doing anything, scan `$ARGUMENTS` for the `--run` flag:
+
+- If `$ARGUMENTS` contains `--run`, set `AUTO_RUN=true` and strip `--run` from the arguments.
+- Otherwise, set `AUTO_RUN=false`.
+
+Store the remaining text (after stripping `--run`) as `${TASK_ARGS}`. Use `${TASK_ARGS}` — NOT the raw `$ARGUMENTS` — in all subsequent steps.
 
 ---
 
@@ -12,9 +23,11 @@ Your goal: take an existing PRD and transform it into a battle-hardened, gap-fre
 
 First, announce: "Locating the PRD. *Belch*. Let's see what kind of mess we're dealing with."
 
+If `AUTO_RUN=true`, also announce: "And we're going straight to tmux after this. No limits. No mercy."
+
 Check for the PRD in this priority order:
 
-1. **Explicit path from arguments**: If `$ARGUMENTS` contains a file path (ends in `.md` or is an existing file), use that.
+1. **Explicit path from arguments**: If `${TASK_ARGS}` contains a file path (ends in `.md` or is an existing file), use that.
 2. **Current directory**: Check for `prd.md` or `PRD.md` in the working directory.
 3. **Most recent active session**: Run:
    ```bash
@@ -35,7 +48,7 @@ Announce: "Initializing refinement session. Stand back, Morty. *Belch*"
 
 Run setup in paused mode so no stop hook fires during refinement:
 ```bash
-node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --paused --task "PRD Refinement: $ARGUMENTS"
+node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --paused --task "PRD Refinement: ${TASK_ARGS}"
 ```
 
 **CRITICAL**: Extract `SESSION_ROOT=<path>` from the output. That is your `${SESSION_ROOT}`.
@@ -351,7 +364,17 @@ Before outputting the handoff message, verify the session is actually resumable:
 2. **Check tickets**: Confirm at least one child ticket directory exists in `${SESSION_ROOT}` (created in Step 6c).
 3. **Check current_ticket**: Confirm `current_ticket` is set in state.json (set in Step 6e).
 
-**If ALL checks pass**, output:
+**If ALL checks pass AND `AUTO_RUN=true`**, output:
+
+> "Wubba Lubba Dub Dub! PRD refinement and task decomposition complete. Now launching tmux with NO limits. *Belch*
+>
+> **Updated PRD** (with task breakdown): `<PRD_PATH>`
+> **Tasks created**: [N] tickets ready for execution
+> **Session**: `${SESSION_ROOT}`"
+
+Then proceed immediately to **Step 10**.
+
+**If ALL checks pass AND `AUTO_RUN=false`**, output:
 
 > "Wubba Lubba Dub Dub! PRD refinement and task decomposition complete.
 >
@@ -371,6 +394,11 @@ Before outputting the handoff message, verify the session is actually resumable:
 > /pickle-tmux --resume [SESSION_ROOT]
 > ```
 >
+> **To execute with no limits via tmux** (no iteration cap, no time cap):
+> ```
+> /pickle-tmux --resume [SESSION_ROOT] --max-iterations 0 --max-time 0
+> ```
+>
 > **To execute from scratch** (re-reads the refined PRD, does its own breakdown):
 > ```
 > /pickle [your task description]
@@ -378,7 +406,27 @@ Before outputting the handoff message, verify the session is actually resumable:
 >
 > The refinement session is archived at `${SESSION_ROOT}` for reference."
 
-**If ANY check fails**, output a warning instead:
+**If ANY check fails AND `AUTO_RUN=true`**, output a warning:
+
+> "⚠️ PRD refinement completed but the session is NOT ready for `--resume`. **Auto-launch aborted** — tmux will NOT start.
+> - [List which checks failed: missing tickets, wrong step, missing current_ticket]
+>
+> **Updated PRD**: `<PRD_PATH>`
+> **Session**: `${SESSION_ROOT}`
+>
+> Fix the issues above, then launch manually:
+> ```
+> /pickle-tmux --resume [SESSION_ROOT] --max-iterations 0 --max-time 0
+> ```
+>
+> Or start from scratch:
+> ```
+> /pickle [your task description]
+> ```"
+
+Then **STOP** — do NOT proceed to Step 10.
+
+**If ANY check fails AND `AUTO_RUN=false`**, output a warning:
 
 > "⚠️ PRD refinement completed but the session is NOT ready for `--resume`:
 > - [List which checks failed: missing tickets, wrong step, missing current_ticket]
@@ -394,3 +442,83 @@ Before outputting the handoff message, verify the session is actually resumable:
 > The refined PRD at `<PRD_PATH>` already has the task breakdown section — `/pickle` will use it as input."
 
 **CRITICAL**: Never recommend `--resume` if the session state doesn't support it. An incomplete session (missing tickets, wrong step) will cause `/pickle --resume` to fail or redo work.
+
+---
+
+## Step 10: Auto-Launch tmux (only if `AUTO_RUN=true`)
+
+**Skip this step entirely if `AUTO_RUN=false`.** The command ends at Step 9 in that case.
+
+Announce: "Alright Morty, firing up the tmux loop. No iteration limit. No time limit. Pure, unlimited Rick energy. *Belch*"
+
+### 10a: Check for tmux
+
+```bash
+tmux -V
+```
+
+If tmux is not installed, print: "tmux is not installed. Run `brew install tmux` (macOS) or `apt install tmux` (Linux). Your PRD is refined and ready — use `/pickle-tmux --resume [SESSION_ROOT]` manually after installing tmux." Then STOP.
+
+### 10b: Re-initialize Session for tmux with No Limits
+
+```bash
+node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --resume "${SESSION_ROOT}" --max-iterations 0 --max-time 0
+```
+
+Read the output for the SESSION_ROOT path (line starting with `SESSION_ROOT=`). Also record the `working_dir` (the project cwd).
+
+### 10c: Create tmux Session
+
+Derive session name from SESSION_ROOT basename: `pickle-<hash-portion>`
+
+```bash
+tmux new-session -d -s <session-name> -c <working_dir>
+sleep 1
+```
+
+### 10d: Print Attach Command Early
+
+Print immediately (so the user can open a second terminal now):
+- tmux session name: `<session-name>`
+- **Attach to watch:** `tmux attach -t <session-name>`
+
+### 10e: Launch Runner
+
+```bash
+tmux send-keys -t <session-name>:0 "node $HOME/.claude/pickle-rick/extension/bin/tmux-runner.js ${SESSION_ROOT}; echo ''; echo '🥒 Runner finished.  Ctrl+B 1 → monitor  |  Ctrl+B D → detach'; read" Enter
+```
+
+### 10f: Launch Monitor Window (3-pane layout)
+
+```bash
+tmux new-window -t <session-name> -n monitor
+tmux split-window -v -t <session-name>:monitor -l 33%
+tmux send-keys -t <session-name>:monitor.1 "node $HOME/.claude/pickle-rick/extension/bin/morty-watcher.js ${SESSION_ROOT}" Enter
+tmux split-window -h -t <session-name>:monitor.0
+tmux send-keys -t <session-name>:monitor.0 "node $HOME/.claude/pickle-rick/extension/bin/monitor.js ${SESSION_ROOT}" Enter
+tmux send-keys -t <session-name>:monitor.1 "node $HOME/.claude/pickle-rick/extension/bin/log-watcher.js ${SESSION_ROOT}" Enter
+tmux select-pane -t <session-name>:monitor.0
+tmux select-window -t <session-name>:monitor
+```
+
+### 10g: Report to User
+
+Print ALL of the following:
+
+- tmux session name: `<session-name>`
+- **No iteration limit. No time limit.** Runs until all tickets complete or you cancel.
+- Attach to session: `tmux attach -t <session-name>`
+  - **Lands on Window 1 "monitor"** (3-pane layout — this is the main display):
+    - Top-left pane: live ticket dashboard (phase, iteration, ticket status)
+    - Top-right pane: live iteration log stream (auto-follows each iteration log)
+    - Bottom pane: live worker (Morty) logs (auto-follows latest worker session)
+    - Switch panes: Ctrl+B then arrow key
+  - Window 0 "runner": background process (low activity — shows start/end per iteration)
+    - Switch to it: Ctrl+B 0
+    - Switch back to monitor: Ctrl+B 1
+- To cancel (MUST run from project dir): `cd <working_dir> && /eat-pickle`
+- Emergency kill: `tmux kill-session -t <session-name>`
+  (follow with: `node ~/.claude/pickle-rick/extension/bin/cancel.js` from `<working_dir>`)
+- state.json path for manual cancel: `${SESSION_ROOT}/state.json`
+
+Then output: `<promise>TASK_COMPLETED</promise>`

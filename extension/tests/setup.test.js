@@ -122,6 +122,27 @@ test('setup: without meeseeks flags, min_iterations is 0 and command_template is
 // Resume tests
 // ---------------------------------------------------------------------------
 
+test('setup: --resume with --tmux propagates tmux_mode to state.json', () => {
+    // Create a non-tmux session (simulates /pickle-refine-prd Step 2: --paused)
+    const sessionPath = runSetup(['--paused', '--task', 'refine-then-tmux']);
+    try {
+        const statePath = path.join(sessionPath, 'state.json');
+        let state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(state.tmux_mode, false, 'initial session should be non-tmux');
+        assert.equal(state.active, false, 'paused session should be inactive');
+
+        // Resume with --tmux (simulates /pickle-refine-prd Step 10b)
+        runSetup(['--resume', sessionPath, '--tmux', '--max-iterations', '0', '--max-time', '0']);
+        state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(state.tmux_mode, true, 'resume with --tmux must set tmux_mode: true');
+        assert.equal(state.active, true, 'resume without --paused must set active: true');
+        assert.equal(state.max_iterations, 0, 'explicit --max-iterations 0 must be set');
+        assert.equal(state.max_time_minutes, 0, 'explicit --max-time 0 must be set');
+    } finally {
+        cleanup(sessionPath);
+    }
+});
+
 test('setup: --resume with explicit flag overrides stored limit', () => {
     // Create a session with default limits
     const sessionPath = runSetup(['--task', 'resume-override-test']);

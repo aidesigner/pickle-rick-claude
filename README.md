@@ -179,6 +179,12 @@ claude
 /pickle-tmux --resume                     # Or use tmux mode for long epics (8+ tickets)
 ```
 
+**Option D: Refine and go** — Refine, decompose, and immediately launch an unlimited tmux session in one command:
+
+```bash
+/pickle-refine-prd --run my-prd.md       # Refine → decompose → auto-launch tmux (no iteration/time limits)
+```
+
 For `/pickle-tmux`, Rick prints a `tmux attach` command — open a second terminal and paste it to watch the live dashboard while it runs.
 
 Sit back. Rick handles the rest. 🥒
@@ -195,6 +201,7 @@ Sit back. Rick handles the rest. 🥒
 | `/pickle-tmux "task"` | 🖥️ Same PRD-driven loop, but with true context clearing — fresh subprocess per iteration via tmux. Best for long epics (8+ iterations). Requires `tmux`. |
 | `/pickle-tmux prd.md` | 🖥️ Pick up an existing PRD in tmux mode — fresh subprocess per iteration, no context drift |
 | `/pickle-refine-prd [path]` | 🔬 Refine an existing PRD with 3 parallel analysts + decompose into ordered tickets; `/pickle --resume` to execute |
+| `/pickle-refine-prd --run [path]` | 🔬🖥️ Refine + decompose + auto-launch unlimited tmux session (no iteration or time cap) |
 | `/eat-pickle` | 🛑 Cancel the active loop |
 | `/help-pickle` | ❓ Show all commands and flags |
 | `/add-to-pickle-jar` | 🫙 Save current session to the Jar for later |
@@ -207,13 +214,14 @@ Sit back. Rick handles the rest. 🥒
 ### Flags
 
 ```
---max-iterations <N>       Stop after N iterations (default: 100)
---max-time <M>             Stop after M minutes (default: 720 / 12 hours)
+--max-iterations <N>       Stop after N iterations (default: 100; 0 = unlimited)
+--max-time <M>             Stop after M minutes (default: 720 / 12 hours; 0 = unlimited)
 --worker-timeout <S>       Timeout for individual workers in seconds (default: 1200)
 --completion-promise "TXT" Only stop when the agent outputs <promise>TXT</promise>
 --resume [PATH]            Resume from an existing session
 --reset                    Reset iteration counter and start time (use with --resume)
 --paused                   Start in paused mode (PRD only)
+--run                      (/pickle-refine-prd only) Auto-launch tmux with no limits after refinement
 ```
 
 ### Tips

@@ -237,8 +237,6 @@ async function main() {
             }
             else {
                 log('Completed. Exiting loop.');
-                curState.active = false;
-                writeStateFile(statePath, curState);
                 exitReason = 'success';
                 break;
             }
@@ -281,7 +279,7 @@ async function main() {
         spawnSync('osascript', ['-e', `display notification "${notif.body}" with title "${notif.title}" subtitle "${notif.subtitle}"`]);
     }
 }
-function buildTmuxNotification(exitReason, finalStep, iteration, totalElapsed) {
+export function buildTmuxNotification(exitReason, finalStep, iteration, totalElapsed) {
     const isFailure = exitReason === 'error' || exitReason === 'stall';
     const title = isFailure
         ? '🥒 Pickle Run Failed'
@@ -301,4 +299,3 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'tmux-runner.js') {
         process.exit(1);
     });
 }
-export { buildTmuxNotification };

@@ -201,6 +201,10 @@ async function main() {
             state.min_iterations = minIterations;
         if (explicitFlags.has('command-template'))
             state.command_template = commandTemplate;
+        // Propagate tmux mode on resume — needed when transitioning a paused/non-tmux
+        // session into tmux mode (e.g. /pickle-refine-prd --run).
+        if (tmuxMode)
+            state.tmux_mode = true;
         // Sync local vars with (potentially preserved) state for display — coerce
         // to Number to guard against string-typed values from external edits / old state.
         // Use Number.isFinite so that 0 (meaning infinite) is preserved rather than

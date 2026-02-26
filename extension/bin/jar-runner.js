@@ -210,7 +210,7 @@ async function main() {
     sendJarNotification(succeeded, failed);
     console.log('Signal: Jar Complete');
 }
-function buildJarNotification(succeeded, failed) {
+export function buildJarNotification(succeeded, failed) {
     const allFailed = succeeded === 0 && failed > 0;
     const title = allFailed ? '🥒 Pickle Jar Failed' : '🥒 Pickle Run Complete';
     const subtitle = 'Pickle Jar';
@@ -235,4 +235,3 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'jar-runner.js') {
         process.exit(1);
     });
 }
-export { buildJarNotification };
