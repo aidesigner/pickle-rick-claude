@@ -2,11 +2,11 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { run_cmd, Style, getExtensionRoot } from './pickle-utils.js';
+import { runCmd, Style, getExtensionRoot } from './pickle-utils.js';
 import { writeStateFile } from '../hooks/resolve-state.js';
 function getBranch(repoPath) {
     try {
-        return run_cmd(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repoPath });
+        return runCmd(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repoPath });
     }
     catch {
         return 'unknown';

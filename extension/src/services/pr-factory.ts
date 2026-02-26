@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { run_cmd, Style } from './pickle-utils.js';
+import { runCmd, Style } from './pickle-utils.js';
 import { State } from '../types/index.js';
 
 export function createPR(sessionDir: string): string {
@@ -33,7 +33,7 @@ export function createPR(sessionDir: string): string {
   ].join('\n');
 
   try {
-    const output = run_cmd(['gh', 'pr', 'create', '--title', title, '--body', body], {
+    const output = runCmd(['gh', 'pr', 'create', '--title', title, '--body', body], {
       cwd: repoPath,
     });
     return output.trim();

@@ -1,10 +1,11 @@
-import * as fs from 'node:fs';
-import * as path from 'node:path';
+import * as fs from 'fs';
+import * as path from 'path';
 import { State, HookInput, PromiseTokens, hasToken } from '../../types/index.js';
-import { getExtensionDir, resolveStateFile, approve, writeStateFile } from '../resolve-state.js';
+import { resolveStateFile, approve, writeStateFile } from '../resolve-state.js';
+import { getExtensionRoot } from '../../services/pickle-utils.js';
 
 async function main() {
-  const extensionDir = getExtensionDir();
+  const extensionDir = getExtensionRoot();
   const globalDebugLog = path.join(extensionDir, 'debug.log');
   let sessionHooksLog: string | null = null;
 
@@ -207,7 +208,7 @@ async function main() {
 
 main().catch((err) => {
   try {
-    const extensionDir = getExtensionDir();
+    const extensionDir = getExtensionRoot();
     const debugLog = path.join(extensionDir, 'debug.log');
     const detail = err instanceof Error ? err.stack || err.message : String(err);
     fs.appendFileSync(debugLog, `[FATAL] ${detail}\n`);

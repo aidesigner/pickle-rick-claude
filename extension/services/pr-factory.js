@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { run_cmd, Style } from './pickle-utils.js';
+import { runCmd, Style } from './pickle-utils.js';
 export function createPR(sessionDir) {
     const statePath = path.join(sessionDir, 'state.json');
     if (!fs.existsSync(statePath)) {
@@ -29,7 +29,7 @@ export function createPR(sessionDir) {
         `Prompt: ${state.original_prompt || '(none)'}`,
     ].join('\n');
     try {
-        const output = run_cmd(['gh', 'pr', 'create', '--title', title, '--body', body], {
+        const output = runCmd(['gh', 'pr', 'create', '--title', title, '--body', body], {
             cwd: repoPath,
         });
         return output.trim();

@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import * as crypto from 'node:crypto';
+import * as crypto from 'crypto';
 import { printMinimalPanel, Style, getExtensionRoot, withSessionMapLock, pruneOldSessions } from '../services/pickle-utils.js';
 import { writeStateFile } from '../hooks/resolve-state.js';
 function die(message) {

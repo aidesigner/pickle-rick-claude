@@ -1,10 +1,9 @@
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import * as os from 'node:os';
+import * as fs from 'fs';
+import * as path from 'path';
+import { getExtensionRoot } from '../services/pickle-utils.js';
 const ALLOW = JSON.stringify({ decision: 'approve' });
-export function getExtensionDir() {
-    return process.env.EXTENSION_DIR || path.join(os.homedir(), '.claude/pickle-rick');
-}
+/** @deprecated Use getExtensionRoot() from pickle-utils.ts instead. */
+export const getExtensionDir = getExtensionRoot;
 /**
  * Resolves the state file path from env or the sessions map.
  * Returns null if no active state file is found.

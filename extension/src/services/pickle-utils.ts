@@ -95,7 +95,7 @@ interface ShellError extends Error {
   stdout?: Buffer | string;
 }
 
-export function run_cmd(
+export function runCmd(
   cmd: string | string[],
   options: { cwd?: string; check?: boolean; capture?: boolean } = {}
 ): string {

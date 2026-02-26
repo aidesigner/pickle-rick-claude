@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
-import { existsSync, appendFileSync } from 'node:fs';
-import { join } from 'node:path';
-import * as os from 'node:os';
+import { spawn } from 'child_process';
+import { existsSync, appendFileSync } from 'fs';
+import { join } from 'path';
+import * as os from 'os';
 
 const EXTENSION_DIR = process.env.EXTENSION_DIR || join(os.homedir(), '.claude/pickle-rick');
 const HANDLERS_DIR = join(EXTENSION_DIR, 'extension', 'hooks', 'handlers');

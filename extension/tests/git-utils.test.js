@@ -3,41 +3,41 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { get_branch_name, get_github_user, update_ticket_status } from '../services/git-utils.js';
+import { getBranchName, getGithubUser, updateTicketStatus } from '../services/git-utils.js';
 
-// --- get_branch_name ---
-// get_github_user() falls back to 'pickle-rick' when gh/git unavailable,
+// --- getBranchName ---
+// getGithubUser() falls back to 'pickle-rick' when gh/git unavailable,
 // so branch format is always <user>/<type>/<task_id>
 
-test('get_branch_name: uses "fix" type for bug-related ticket id', () => {
-    const branch = get_branch_name('fix-auth-123');
+test('getBranchName: uses "fix" type for bug-related ticket id', () => {
+    const branch = getBranchName('fix-auth-123');
     assert.match(branch, /\/fix\/fix-auth-123$/);
 });
 
-test('get_branch_name: uses "fix" type for "bug" in ticket id', () => {
-    const branch = get_branch_name('bug-login-overflow');
+test('getBranchName: uses "fix" type for "bug" in ticket id', () => {
+    const branch = getBranchName('bug-login-overflow');
     assert.match(branch, /\/fix\/bug-login-overflow$/);
 });
 
-test('get_branch_name: uses "feat" type for normal ticket', () => {
-    const branch = get_branch_name('add-login-button');
+test('getBranchName: uses "feat" type for normal ticket', () => {
+    const branch = getBranchName('add-login-button');
     assert.match(branch, /\/feat\/add-login-button$/);
 });
 
-test('get_branch_name: contains the ticket id', () => {
-    const branch = get_branch_name('abc123');
+test('getBranchName: contains the ticket id', () => {
+    const branch = getBranchName('abc123');
     assert.ok(branch.includes('abc123'), `ticket id not in branch: ${branch}`);
 });
 
-test('get_branch_name: has three slash-separated parts', () => {
-    const branch = get_branch_name('my-ticket');
+test('getBranchName: has three slash-separated parts', () => {
+    const branch = getBranchName('my-ticket');
     const parts = branch.split('/');
     assert.ok(parts.length >= 3, `expected at least 3 parts: ${branch}`);
 });
 
-// --- update_ticket_status ---
+// --- updateTicketStatus ---
 
-test('update_ticket_status: updates status in frontmatter', () => {
+test('updateTicketStatus: updates status in frontmatter', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
     const ticketId = 'testticket';
     const subDir = path.join(dir, ticketId);
@@ -47,7 +47,7 @@ test('update_ticket_status: updates status in frontmatter', () => {
         `---\nid: ${ticketId}\ntitle: Test\nstatus: Todo\nupdated: 2025-01-01\n---\n# Body\n`
     );
     try {
-        update_ticket_status(ticketId, 'Done', dir);
+        updateTicketStatus(ticketId, 'Done', dir);
         const content = fs.readFileSync(
             path.join(subDir, `linear_ticket_${ticketId}.md`), 'utf-8');
         assert.match(content, /^status: "Done"$/m);
@@ -59,11 +59,11 @@ test('update_ticket_status: updates status in frontmatter', () => {
     }
 });
 
-test('update_ticket_status: throws when ticket file not found', () => {
+test('updateTicketStatus: throws when ticket file not found', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
     try {
         assert.throws(
-            () => update_ticket_status('nonexistent', 'Done', dir),
+            () => updateTicketStatus('nonexistent', 'Done', dir),
             /not found/
         );
     } finally {
@@ -71,17 +71,17 @@ test('update_ticket_status: throws when ticket file not found', () => {
     }
 });
 
-// --- get_github_user ---
+// --- getGithubUser ---
 
-test('get_github_user: returns a non-empty string', () => {
-    const user = get_github_user();
+test('getGithubUser: returns a non-empty string', () => {
+    const user = getGithubUser();
     assert.ok(typeof user === 'string', 'should return a string');
     assert.ok(user.length > 0, 'should not be empty');
 });
 
-// --- update_ticket_status: updated field ---
+// --- updateTicketStatus: updated field ---
 
-test('update_ticket_status: updates the "updated" field to today', () => {
+test('updateTicketStatus: updates the "updated" field to today', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
     const ticketId = 'upd-date-check';
     const subDir = path.join(dir, ticketId);
@@ -91,7 +91,7 @@ test('update_ticket_status: updates the "updated" field to today', () => {
         '---\nid: "upd-date-check"\ntitle: "Date Test"\nstatus: "Todo"\nupdated: "2020-01-01"\norder: 1\n---\n# Body\n'
     );
     try {
-        update_ticket_status(ticketId, 'InProgress', dir);
+        updateTicketStatus(ticketId, 'InProgress', dir);
         const content = fs.readFileSync(
             path.join(subDir, `linear_ticket_${ticketId}.md`), 'utf-8');
         const today = new Date().toISOString().split('T')[0];
@@ -102,9 +102,9 @@ test('update_ticket_status: updates the "updated" field to today', () => {
     }
 });
 
-// --- update_ticket_status: no frontmatter ---
+// --- updateTicketStatus: no frontmatter ---
 
-test('update_ticket_status: no frontmatter prints warning and still replaces status', () => {
+test('updateTicketStatus: no frontmatter prints warning and still replaces status', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
     const ticketId = 'no-fm';
     const subDir = path.join(dir, ticketId);
@@ -120,7 +120,7 @@ test('update_ticket_status: no frontmatter prints warning and still replaces sta
         const origWarn = console.warn;
         console.warn = (...args) => warnings.push(args.join(' '));
         try {
-            update_ticket_status(ticketId, 'Done', dir);
+            updateTicketStatus(ticketId, 'Done', dir);
         } finally {
             console.warn = origWarn;
         }
@@ -136,9 +136,9 @@ test('update_ticket_status: no frontmatter prints warning and still replaces sta
     }
 });
 
-// --- update_ticket_status: preserves body content ---
+// --- updateTicketStatus: preserves body content ---
 
-test('update_ticket_status: preserves body content after frontmatter', () => {
+test('updateTicketStatus: preserves body content after frontmatter', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
     const ticketId = 'body-preserve';
     const subDir = path.join(dir, ticketId);
@@ -149,7 +149,7 @@ test('update_ticket_status: preserves body content after frontmatter', () => {
         `---\nid: "${ticketId}"\ntitle: "Body Test"\nstatus: "Todo"\nupdated: "2020-01-01"\norder: 1\n---\n${bodyContent}`
     );
     try {
-        update_ticket_status(ticketId, 'Done', dir);
+        updateTicketStatus(ticketId, 'Done', dir);
         const content = fs.readFileSync(
             path.join(subDir, `linear_ticket_${ticketId}.md`), 'utf-8');
         // Status should be updated
@@ -162,9 +162,9 @@ test('update_ticket_status: preserves body content after frontmatter', () => {
     }
 });
 
-// --- update_ticket_status: nested ticket ---
+// --- updateTicketStatus: nested ticket ---
 
-test('update_ticket_status: finds ticket in nested subdirectory', () => {
+test('updateTicketStatus: finds ticket in nested subdirectory', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
     const ticketId = 'nested-ticket';
     // Create a deeper directory structure: session_dir/some/nested/dir/ticketId/
@@ -175,7 +175,7 @@ test('update_ticket_status: finds ticket in nested subdirectory', () => {
         `---\nid: "${ticketId}"\ntitle: "Nested Test"\nstatus: "Todo"\nupdated: "2020-01-01"\norder: 1\n---\n# Nested Body\n`
     );
     try {
-        update_ticket_status(ticketId, 'InProgress', dir);
+        updateTicketStatus(ticketId, 'InProgress', dir);
         const content = fs.readFileSync(
             path.join(nestedDir, `linear_ticket_${ticketId}.md`), 'utf-8');
         assert.match(content, /^status: "InProgress"$/m,
@@ -185,9 +185,9 @@ test('update_ticket_status: finds ticket in nested subdirectory', () => {
     }
 });
 
-// --- update_ticket_status: warns when no status field found (deep review pass 6) ---
+// --- updateTicketStatus: warns when no status field found (deep review pass 6) ---
 
-test('update_ticket_status: warns when ticket has no status field to replace', () => {
+test('updateTicketStatus: warns when ticket has no status field to replace', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
     const ticketId = 'no-status-field';
     const subDir = path.join(dir, ticketId);
@@ -205,7 +205,7 @@ test('update_ticket_status: warns when ticket has no status field to replace', (
         const logs = [];
         console.log = (...args) => logs.push(args.join(' '));
         try {
-            update_ticket_status(ticketId, 'Done', dir);
+            updateTicketStatus(ticketId, 'Done', dir);
         } finally {
             console.warn = origWarn;
             console.log = origLog;
@@ -225,9 +225,9 @@ test('update_ticket_status: warns when ticket has no status field to replace', (
     }
 });
 
-// --- update_ticket_status: depth limit protects against deep recursion ---
+// --- updateTicketStatus: depth limit protects against deep recursion ---
 
-test('update_ticket_status: respects depth limit on deeply nested directories', () => {
+test('updateTicketStatus: respects depth limit on deeply nested directories', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
     const ticketId = 'deep-ticket';
     // Create a structure 12 levels deep (exceeds the depth=10 limit)
@@ -243,7 +243,7 @@ test('update_ticket_status: respects depth limit on deeply nested directories', 
     try {
         // Should throw because the file is too deep (>10 levels)
         assert.throws(
-            () => update_ticket_status(ticketId, 'Done', dir),
+            () => updateTicketStatus(ticketId, 'Done', dir),
             /not found/,
             'Should not find ticket beyond depth limit'
         );
@@ -252,36 +252,36 @@ test('update_ticket_status: respects depth limit on deeply nested directories', 
     }
 });
 
-// --- update_ticket_status: YAML injection guard (deep review pass 8) ---
+// --- updateTicketStatus: YAML injection guard (deep review pass 8) ---
 
-test('update_ticket_status: rejects status with double quotes (YAML injection)', () => {
+test('updateTicketStatus: rejects status with double quotes (YAML injection)', () => {
     assert.throws(
-        () => update_ticket_status('any-ticket', 'Done"\nevil: true', '/tmp/nonexistent'),
+        () => updateTicketStatus('any-ticket', 'Done"\nevil: true', '/tmp/nonexistent'),
         /must not contain quotes or newlines/,
         'new_status with quotes/newlines should be rejected'
     );
 });
 
-test('update_ticket_status: rejects status with bare newline', () => {
+test('updateTicketStatus: rejects status with bare newline', () => {
     assert.throws(
-        () => update_ticket_status('any-ticket', 'Done\ninjected: yes', '/tmp/nonexistent'),
+        () => updateTicketStatus('any-ticket', 'Done\ninjected: yes', '/tmp/nonexistent'),
         /must not contain quotes or newlines/,
         'new_status with newlines should be rejected'
     );
 });
 
-// --- get_branch_name: "issue" keyword → fix type ---
+// --- getBranchName: "issue" keyword → fix type ---
 
-test('get_branch_name: uses "fix" type for "issue" keyword in ticket id', () => {
-    const branch = get_branch_name('issue-auth-flow');
+test('getBranchName: uses "fix" type for "issue" keyword in ticket id', () => {
+    const branch = getBranchName('issue-auth-flow');
     assert.match(branch, /\/fix\/issue-auth-flow$/,
         'ticket id containing "issue" should use "fix" type');
 });
 
-// --- get_branch_name: "patch" keyword → fix type ---
+// --- getBranchName: "patch" keyword → fix type ---
 
-test('get_branch_name: uses "fix" type for "patch" keyword in ticket id', () => {
-    const branch = get_branch_name('patch-memory-leak');
+test('getBranchName: uses "fix" type for "patch" keyword in ticket id', () => {
+    const branch = getBranchName('patch-memory-leak');
     assert.match(branch, /\/fix\/patch-memory-leak$/,
         'ticket id containing "patch" should use "fix" type');
 });

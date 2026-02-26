@@ -72,7 +72,7 @@ export function formatTime(seconds) {
     const s = Math.floor(seconds % 60);
     return `${m}m ${s}s`;
 }
-export function run_cmd(cmd, options = {}) {
+export function runCmd(cmd, options = {}) {
     const { cwd, check = true, capture = true } = options;
     // Array form: use spawnSync so each argument is passed verbatim (no shell splitting).
     // String form: use execSync via the shell (supports pipes, globs, etc.).

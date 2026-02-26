@@ -10,12 +10,12 @@ import {
 } from '../services/pickle-utils.js';
 import { spawn } from 'child_process';
 import { PromiseTokens, hasToken } from '../types/index.js';
-import { update_ticket_status } from '../services/git-utils.js';
+import { updateTicketStatus } from '../services/git-utils.js';
 
 async function main() {
   const args = process.argv.slice(2);
   if (args.length < 1) {
-    console.log(
+    console.error(
       'Usage: node spawn-morty.js <task> --ticket-id <id> --ticket-path <path> [--timeout <sec>] [--output-format <fmt>]'
     );
     process.exit(1);
@@ -29,7 +29,7 @@ async function main() {
   const formatIndex = args.indexOf('--output-format');
 
   if (ticketIdIndex === -1 || ticketPathIndex === -1) {
-    console.log('Error: --ticket-id and --ticket-path are required.');
+    console.error('Error: --ticket-id and --ticket-path are required.');
     process.exit(1);
   }
 
@@ -37,11 +37,11 @@ async function main() {
   let ticketPath = args[ticketPathIndex + 1];
 
   if (!ticketId || ticketId.startsWith('--') || !ticketPath || ticketPath.startsWith('--')) {
-    console.log('Error: --ticket-id and --ticket-path require non-empty values.');
+    console.error('Error: --ticket-id and --ticket-path require non-empty values.');
     process.exit(1);
   }
   if (!/^[a-zA-Z0-9_-]+$/.test(ticketId)) {
-    console.log('Error: --ticket-id contains invalid characters.');
+    console.error('Error: --ticket-id contains invalid characters.');
     process.exit(1);
   }
   const rawTimeout = timeoutIndex !== -1 ? parseInt(args[timeoutIndex + 1], 10) : NaN;
@@ -152,7 +152,7 @@ async function main() {
   cmdArgs.push('-p', workerPrompt);
 
   // Mark ticket as In Progress so the monitor shows [~]
-  try { update_ticket_status(ticketId, 'In Progress', sessionRoot); } catch { /* best-effort */ }
+  try { updateTicketStatus(ticketId, 'In Progress', sessionRoot); } catch { /* best-effort */ }
 
   const logStream = fs.createWriteStream(sessionLog, { flags: 'w' });
   logStream.on('error', (err) => {
@@ -221,7 +221,7 @@ async function main() {
       clearTimeout(hangGuard);
       if (process.stdout.isTTY) process.stdout.write('\r\x1b[K');
       logStream.end();
-      try { update_ticket_status(ticketId, 'Failed', sessionRoot); } catch { /* best-effort */ }
+      try { updateTicketStatus(ticketId, 'Failed', sessionRoot); } catch { /* best-effort */ }
       printMinimalPanel(
         'Worker Report',
         { status: 'spawn-error', validation: 'failed' },
@@ -265,9 +265,9 @@ async function main() {
 
         // Update ticket frontmatter so monitor/status reflect the outcome
         if (isSuccess) {
-          try { update_ticket_status(ticketId, 'Done', sessionRoot); } catch { /* best-effort */ }
+          try { updateTicketStatus(ticketId, 'Done', sessionRoot); } catch { /* best-effort */ }
         } else {
-          try { update_ticket_status(ticketId, 'Failed', sessionRoot); } catch { /* best-effort */ }
+          try { updateTicketStatus(ticketId, 'Failed', sessionRoot); } catch { /* best-effort */ }
         }
 
         printMinimalPanel(

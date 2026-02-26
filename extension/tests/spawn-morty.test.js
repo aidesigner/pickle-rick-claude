@@ -34,7 +34,7 @@ function makeTmpDir(prefix = 'pickle-spawn-morty-') {
 test('spawn-morty: no args → exit 1, prints Usage', () => {
     const result = run([]);
     assert.equal(result.status, 1, 'should exit with code 1');
-    assert.ok(result.stdout.includes('Usage'), 'stdout should include Usage');
+    assert.ok(result.stderr.includes('Usage'), 'stderr should include Usage');
 });
 
 test('spawn-morty: missing --ticket-id → exit 1, prints required', () => {
@@ -45,7 +45,7 @@ test('spawn-morty: missing --ticket-id → exit 1, prints required', () => {
             '--ticket-path', tmpDir,
         ]);
         assert.equal(result.status, 1, 'should exit with code 1');
-        assert.ok(result.stdout.includes('required'), 'stdout should mention required');
+        assert.ok(result.stderr.includes('required'), 'stderr should mention required');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -57,7 +57,7 @@ test('spawn-morty: missing --ticket-path → exit 1, prints required', () => {
         '--ticket-id', 'ticket-001',
     ]);
     assert.equal(result.status, 1, 'should exit with code 1');
-    assert.ok(result.stdout.includes('required'), 'stdout should mention required');
+    assert.ok(result.stderr.includes('required'), 'stderr should mention required');
 });
 
 test('spawn-morty: invalid ticket-id characters → exit 1, prints invalid characters', () => {
@@ -70,8 +70,8 @@ test('spawn-morty: invalid ticket-id characters → exit 1, prints invalid chara
         ]);
         assert.equal(result.status, 1, 'should exit with code 1');
         assert.ok(
-            result.stdout.includes('invalid characters'),
-            'stdout should mention invalid characters'
+            result.stderr.includes('invalid characters'),
+            'stderr should mention invalid characters'
         );
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -103,8 +103,8 @@ test('spawn-morty: --ticket-id value starts with -- → exit 1', () => {
         ]);
         assert.equal(result.status, 1, 'should exit with code 1');
         assert.ok(
-            result.stdout.includes('non-empty values'),
-            'stdout should mention non-empty values'
+            result.stderr.includes('non-empty values'),
+            'stderr should mention non-empty values'
         );
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
