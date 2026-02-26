@@ -192,7 +192,7 @@ async function main() {
     const rawLoopLimit = Number(state.max_iterations);
     loopLimit = Number.isFinite(rawLoopLimit) ? rawLoopLimit : loopLimit;
     const rawTimeLimit = Number(state.max_time_minutes);
-    timeLimit = Number.isFinite(rawTimeLimit) && rawTimeLimit > 0 ? rawTimeLimit : timeLimit;
+    timeLimit = Number.isFinite(rawTimeLimit) ? rawTimeLimit : timeLimit;
     const rawWorkerTimeout = Number(state.worker_timeout_seconds);
     workerTimeout = Number.isFinite(rawWorkerTimeout) && rawWorkerTimeout > 0 ? rawWorkerTimeout : workerTimeout;
 
@@ -250,7 +250,7 @@ async function main() {
     {
       Iteration: currentIteration,
       Limit: loopLimit > 0 ? loopLimit : '∞',
-      'Max Time': `${timeLimit}m`,
+      'Max Time': timeLimit > 0 ? `${timeLimit}m` : '∞',
       'Worker TO': `${workerTimeout}s`,
       Promise: promiseToken || 'None',
       ...(minIterations > 0 ? { 'Min Passes': minIterations } : {}),

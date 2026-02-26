@@ -143,6 +143,45 @@ test('setup: --resume with --tmux propagates tmux_mode to state.json', () => {
     }
 });
 
+test('setup: --resume preserves max_time_minutes=0 (unlimited) without falling back to default', () => {
+    // Create a session with max_time=0 (unlimited)
+    const sessionPath = runSetup(['--max-time', '0', '--task', 'unlimited-time-test']);
+    try {
+        const statePath = path.join(sessionPath, 'state.json');
+        let state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(state.max_time_minutes, 0, 'initial max_time_minutes should be 0');
+
+        // Resume WITHOUT explicit --max-time — should preserve 0, not fall back to default
+        const output = execFileSync(process.execPath, [SETUP, '--resume', sessionPath], {
+            encoding: 'utf-8',
+            env: { ...process.env, FORCE_COLOR: '0' },
+        });
+        state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(state.max_time_minutes, 0, 'max_time_minutes=0 must be preserved on resume');
+        // Display should show ∞ for unlimited, not a numeric default
+        assert.ok(output.includes('∞'), 'output should show ∞ for unlimited max_time_minutes');
+    } finally {
+        cleanup(sessionPath);
+    }
+});
+
+test('setup: new session with max_time=0 shows ∞ in panel output', () => {
+    const output = execFileSync(process.execPath, [SETUP, '--max-time', '0', '--task', 'display-infinity-test'], {
+        encoding: 'utf-8',
+        env: { ...process.env, FORCE_COLOR: '0' },
+    });
+    const match = output.match(/SESSION_ROOT=(.+)/);
+    assert.ok(match, 'SESSION_ROOT should be in output');
+    const sessionPath = match[1].trim();
+    try {
+        // Max Time should display ∞, not "0m"
+        assert.ok(!output.includes('Max Time') || !output.includes('0m') || output.includes('∞'),
+            'Max Time should show ∞ for 0 (unlimited), not "0m"');
+    } finally {
+        cleanup(sessionPath);
+    }
+});
+
 test('setup: --resume with explicit flag overrides stored limit', () => {
     // Create a session with default limits
     const sessionPath = runSetup(['--task', 'resume-override-test']);
