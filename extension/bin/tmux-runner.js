@@ -84,11 +84,16 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
     // Remove PICKLE_ROLE so manager subprocesses aren't misidentified as workers
     // by the stop-hook (tmux-runner spawns managers, not workers).
     delete env['PICKLE_ROLE'];
-    const logStream = fs.createWriteStream(logFile, { flags: 'w' });
-    logStream.on('error', (err) => {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error(`${Style.YELLOW}⚠️  Log stream error: ${msg}${Style.RESET}`);
-    });
+    // Use a raw file descriptor with synchronous writes so every chunk hits
+    // the disk immediately. Node's WriteStream buffers up to 16KB internally,
+    // which starves log-watcher (it polls file size via statSync).
+    const logFd = fs.openSync(logFile, 'w');
+    function writeToLog(chunk) {
+        try {
+            fs.writeSync(logFd, chunk);
+        }
+        catch { /* fd closed — ignore late writes */ }
+    }
     return new Promise((resolve) => {
         let settled = false;
         const proc = spawn('claude', cmdArgs, {
@@ -96,39 +101,30 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
             env,
             stdio: ['inherit', 'pipe', 'pipe'],
         });
-        // Use { end: false } so that when stdout ends first it doesn't call
-        // logStream.end(), which would discard any stderr data still in-flight.
-        // logStream.end() is called explicitly in the 'close' handler.
-        proc.stdout?.pipe(logStream, { end: false });
-        proc.stderr?.pipe(logStream, { end: false });
-        proc.stdout?.pipe(process.stdout, { end: false });
-        proc.stderr?.pipe(process.stderr, { end: false });
+        // Direct data handlers: write each chunk to both the log file (sync,
+        // no buffering) and the terminal (for the tmux-runner pane).
+        proc.stdout?.on('data', (chunk) => {
+            writeToLog(chunk);
+            process.stdout.write(chunk);
+        });
+        proc.stderr?.on('data', (chunk) => {
+            writeToLog(chunk);
+            process.stderr.write(chunk);
+        });
         proc.on('close', () => {
             if (settled)
                 return;
             settled = true;
-            let finalized = false;
-            function finalize() {
-                if (finalized)
-                    return;
-                finalized = true;
-                let output = '';
-                try {
-                    output = fs.readFileSync(logFile, 'utf-8');
-                }
-                catch { /* missing/unreadable log */ }
-                resolve(classifyCompletion(output));
+            try {
+                fs.closeSync(logFd);
             }
-            // Register finish listener BEFORE calling end() to avoid missing synchronous completion
-            const flushTimeout = setTimeout(() => {
-                console.error(`${Style.YELLOW}⚠️  Log flush timed out — reading partial log${Style.RESET}`);
-                finalize();
-            }, 5000);
-            logStream.on('finish', () => {
-                clearTimeout(flushTimeout);
-                finalize();
-            });
-            logStream.end();
+            catch { /* already closed */ }
+            let output = '';
+            try {
+                output = fs.readFileSync(logFile, 'utf-8');
+            }
+            catch { /* missing/unreadable log */ }
+            resolve(classifyCompletion(output));
         });
         proc.on('error', (err) => {
             if (settled)
@@ -136,7 +132,10 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
             settled = true;
             const msg = err instanceof Error ? err.message : String(err);
             console.error(`${Style.RED}Failed to spawn claude: ${msg}${Style.RESET}`);
-            logStream.end();
+            try {
+                fs.closeSync(logFd);
+            }
+            catch { /* already closed */ }
             resolve('error');
         });
     });
