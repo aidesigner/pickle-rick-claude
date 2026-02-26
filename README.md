@@ -204,6 +204,7 @@ Sit back. Rick handles the rest. 🥒
 | `/pickle-tmux prd.md` | 🖥️ Pick up an existing PRD in tmux mode — fresh subprocess per iteration, no context drift |
 | `/pickle-refine-prd [path]` | 🔬 Refine an existing PRD with 3 parallel analysts + decompose into ordered tickets; `/pickle --resume` to execute |
 | `/pickle-refine-prd --run [path]` | 🔬🖥️ Refine + decompose + auto-launch unlimited tmux session (no iteration or time cap) |
+| `/pickle-dot [path \| inline]` | 🔀 Convert a PRD into a [strongdm/attractor](https://github.com/strongdm/attractor)-compatible DOT digraph — generates a validated `.dot` file with node shapes, edge conditions, parallel fan-out/in, and model stylesheets |
 | `/eat-pickle` | 🛑 Cancel the active loop |
 | `/help-pickle` | ❓ Show all commands and flags |
 | `/add-to-pickle-jar` | 🫙 Save current session to the Jar for later |
@@ -290,6 +291,7 @@ pickle-rick-claude/
 │   │   ├── pickle-tmux.md      # True context clearing via tmux 🖥️
 │   │   ├── pickle-prd.md       # Interactive PRD drafter (used internally by /pickle)
 │   │   ├── pickle-refine-prd.md # Refine PRD + decompose into executable tasks 🔬
+│   │   ├── pickle-dot.md         # PRD → attractor DOT digraph converter 🔀
 │   │   ├── meeseeks.md            # Autonomous code review loop (setup + per-pass template) 👋
 │   │   ├── send-to-morty.md    # Worker prompt (internal — all 7 phases inlined)
 │   │   ├── pickle-status.md    # Show session status

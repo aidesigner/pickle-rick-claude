@@ -7,6 +7,7 @@ Summarize the available commands for the user:
 - `/pickle-tmux <prompt>`: True context clearing mode — spawns a fresh Claude subprocess per iteration inside a tmux session. Use for long epics (8+ iterations). Requires `tmux`.
 - `/pickle-prd <prompt>`: Interactively draft a PRD and initialize a session in paused mode, then resume with `/pickle --resume`.
 - `/pickle-refine-prd [path/to/prd.md]`: Refine a PRD and decompose it into discrete, ordered implementation tasks. Runs 3 parallel Morty analysts (Requirements, Codebase, Risk/Scope), synthesizes findings, then creates atomic ticket files ready for `/pickle --resume` or `/pickle-tmux --resume` to execute directly.
+- `/pickle-dot [path/to/prd.md | inline PRD]`: Convert a PRD into a strongdm/attractor-compatible DOT digraph. Generates a validated `.dot` file with proper node shapes, edge conditions, parallel fan-out/in, and model stylesheets. Optionally renders SVG preview via Graphviz.
 - `/eat-pickle`: Stop/Cancel the current loop.
 - `/help-pickle`: Show this message.
 - `/disable-pickle`: Disable the stop hook globally (persona persists — remove from CLAUDE.md to fully disable).

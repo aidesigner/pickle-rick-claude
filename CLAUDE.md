@@ -8,6 +8,7 @@ Extension that transforms Claude Code into "Pickle Rick" — enforces an iterati
 - **`/pickle-tmux <task>`**: Context-clearing mode via tmux (for long epics, 8+ iterations)
 - **`/pickle-prd [task]`**: Interactively draft a PRD, then `/pickle --resume`
 - **`/pickle-refine-prd [path]`**: Refine PRD + decompose into discrete tasks with pre-created tickets; resume directly into orchestration
+- **`/pickle-dot [path/to/prd.md | inline]`**: Convert a PRD into a strongdm/attractor-compatible DOT digraph (`.dot` file)
 - **`/eat-pickle`**: Cancel the active loop
 - **`/pickle-status`**: Show session phase, iteration, ticket status
 - **`/pickle-retry <ticket-id>`**: Re-spawn a Morty for a failed ticket
