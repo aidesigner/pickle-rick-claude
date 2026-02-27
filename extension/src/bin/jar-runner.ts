@@ -7,6 +7,7 @@ import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, getExtensionRoot } from '../services/pickle-utils.js';
 import { writeStateFile } from '../hooks/resolve-state.js';
 import { State } from '../types/index.js';
+import { logActivity } from '../services/activity-logger.js';
 
 async function runTask(sessionDir: string, repoCwd: string, extensionRoot: string): Promise<boolean> {
   const statePath = path.join(sessionDir, 'state.json');
@@ -109,6 +110,7 @@ async function main() {
   }
 
   console.log(`\n🥒 Pickle Jar Night Shift — ${tasks.length} task(s) queued\n`);
+  logActivity({ event: 'jar_start', source: 'pickle' });
   let succeeded = 0;
   let failed = 0;
 
@@ -192,6 +194,7 @@ async function main() {
   }
 
   console.log(`\n🥒 Jar complete. ${succeeded} succeeded, ${failed} failed.`);
+  logActivity({ event: 'jar_end', source: 'pickle' });
   sendJarNotification(succeeded, failed);
   console.log('Signal: Jar Complete');
 }

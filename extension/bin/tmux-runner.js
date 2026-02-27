@@ -6,6 +6,7 @@ import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, buildHandoffSummary } from '../services/pickle-utils.js';
 import { PromiseTokens, hasToken, VALID_STEPS } from '../types/index.js';
 import { writeStateFile } from '../hooks/resolve-state.js';
+import { logActivity } from '../services/activity-logger.js';
 /**
  * Classifies iteration output into a completion result.
  * TASK_COMPLETED/EPIC_COMPLETED → 'task_completed' (no min_iterations gate)
@@ -326,6 +327,7 @@ async function main() {
         await new Promise(r => setTimeout(r, 1000));
     }
     const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
+    logActivity({ event: 'session_end', source: 'pickle', session: path.basename(sessionDir), duration_min: Math.round(totalElapsed / 60), mode: 'tmux' });
     let finalStep = 'unknown';
     let finalActive = 'unknown';
     let finalMinIter = 0;

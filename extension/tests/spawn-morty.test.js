@@ -227,6 +227,53 @@ test('spawn-morty: --timeout with custom value is accepted (no validation error)
 });
 
 // ---------------------------------------------------------------------------
+// --review flag (meso-review enforcement)
+// ---------------------------------------------------------------------------
+
+test('spawn-morty: --review flag accepted without validation error', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const result = run(
+            [
+                'review correctness and architecture',
+                '--ticket-id', 'rev-001',
+                '--ticket-path', tmpDir,
+                '--review',
+            ],
+            { PATH: '/usr/bin' }
+        );
+        assert.equal(result.status, 1, 'should exit with code 1 (no claude)');
+        // Should get past validation — no Usage or required errors
+        assert.ok(!result.stderr.includes('Usage'), 'should not be a Usage error');
+        assert.ok(!result.stderr.includes('required'), 'should not be a "required" error');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('spawn-morty: --review flag shows Review Worker panel', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const result = run(
+            [
+                'review correctness',
+                '--ticket-id', 'rev-002',
+                '--ticket-path', tmpDir,
+                '--review',
+            ],
+            { PATH: '/usr/bin' }
+        );
+        const combined = result.stdout + result.stderr;
+        assert.ok(
+            combined.includes('Spawning Review Worker') || combined.includes('review'),
+            'should show Review Worker panel title or review type'
+        );
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+// ---------------------------------------------------------------------------
 // proc.on('error') handler (deep review pass 7)
 // ---------------------------------------------------------------------------
 

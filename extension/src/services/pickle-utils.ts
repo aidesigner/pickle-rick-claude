@@ -172,6 +172,7 @@ export interface TicketInfo {
   title: string | null;
   status: string | null;
   order: number;
+  type: string | null;
 }
 
 export function parseTicketFrontmatter(filePath: string): TicketInfo | null {
@@ -189,6 +190,7 @@ export function parseTicketFrontmatter(filePath: string): TicketInfo | null {
       title: get('title'),
       status: get('status'),
       order: parseInt(get('order') || '0', 10) || 0,
+      type: get('type'),
     };
   } catch {
     return null;
@@ -254,7 +256,8 @@ export function buildHandoffSummary(state: Partial<State>, sessionDir: string, i
       const title = (t.title || '').length > 60
         ? (t.title || '').slice(0, 60) + '...'
         : (t.title || '');
-      lines.push(`  ${sym} ${t.id || '?'}: ${title}`);
+      const typeTag = t.type === 'review' ? ' [REVIEW]' : '';
+      lines.push(`  ${sym} ${t.id || '?'}: ${title}${typeTag}`);
     }
   }
   const isFirstIteration = (iterationNum === 1 || iterationNum === undefined)

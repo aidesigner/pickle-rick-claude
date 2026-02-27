@@ -27,6 +27,8 @@ async function main() {
   const ticketFileIndex = args.indexOf('--ticket-file');
   const timeoutIndex = args.indexOf('--timeout');
   const formatIndex = args.indexOf('--output-format');
+  const reviewFlagIndex = args.indexOf('--review');
+  const isReviewTicket = reviewFlagIndex !== -1;
 
   if (ticketIdIndex === -1 || ticketPathIndex === -1) {
     console.error('Error: --ticket-id and --ticket-path are required.');
@@ -106,15 +108,16 @@ async function main() {
   }
 
   printMinimalPanel(
-    'Spawning Morty Worker',
+    isReviewTicket ? 'Spawning Review Worker' : 'Spawning Morty Worker',
     {
       Request: task,
       Ticket: ticketId,
+      Type: isReviewTicket ? 'review' : 'implementation',
       Format: outputFormat,
       Timeout: `${effectiveTimeout}s (Req: ${timeout}s)`,
       PID: process.pid,
     },
-    'CYAN',
+    isReviewTicket ? 'MAGENTA' : 'CYAN',
     '🥒'
   );
 
@@ -131,16 +134,19 @@ async function main() {
     cmdArgs.push('--output-format', outputFormat);
   }
 
-  // Prompt Construction — read the full send-to-morty.md lifecycle template
-  // so workers spawned via `claude -p` get all 7 phases (Research → Simplify).
-  const mortyPromptPath = path.join(os.homedir(), '.claude', 'commands', 'send-to-morty.md');
+  // Prompt Construction — read the appropriate lifecycle template.
+  // Review workers get send-to-morty-review.md (3-phase), implementation workers get send-to-morty.md (7-phase).
+  const promptFilename = isReviewTicket ? 'send-to-morty-review.md' : 'send-to-morty.md';
+  const mortyPromptPath = path.join(os.homedir(), '.claude', 'commands', promptFilename);
   let workerPrompt: string;
   if (fs.existsSync(mortyPromptPath)) {
     workerPrompt = fs.readFileSync(mortyPromptPath, 'utf-8')
       .replace(/\$ARGUMENTS/g, task);
   } else {
-    // Fallback if send-to-morty.md is not installed
-    workerPrompt = `# **TASK REQUEST**\n${task}\n\nYou are a Morty Worker (Pickle Rick's assistant). Implement the request above.`;
+    // Fallback if prompt template is not installed
+    workerPrompt = isReviewTicket
+      ? `# **REVIEW REQUEST**\n${task}\n\nYou are a Review Worker. Review the preceding implementation tickets for correctness, architecture, and code quality.`
+      : `# **TASK REQUEST**\n${task}\n\nYou are a Morty Worker (Pickle Rick's assistant). Implement the request above.`;
   }
 
   // Inject Ticket Context

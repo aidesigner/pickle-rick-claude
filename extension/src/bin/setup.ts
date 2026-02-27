@@ -6,6 +6,7 @@ import * as crypto from 'crypto';
 import { printMinimalPanel, Style, getExtensionRoot, withSessionMapLock, pruneOldSessions } from '../services/pickle-utils.js';
 import { writeStateFile } from '../hooks/resolve-state.js';
 import { State } from '../types/index.js';
+import { logActivity } from '../services/activity-logger.js';
 
 function die(message: string): never {
   console.error(`${Style.RED}❌ Error: ${message}${Style.RESET}`);
@@ -247,6 +248,7 @@ async function main() {
     };
 
     writeStateFile(path.join(fullSessionPath, 'state.json'), state);
+    logActivity({ event: 'session_start', source: 'pickle', session: sessionId, mode: tmuxMode ? 'tmux' : 'inline' });
   }
 
   updateSessionMap(process.cwd(), fullSessionPath);

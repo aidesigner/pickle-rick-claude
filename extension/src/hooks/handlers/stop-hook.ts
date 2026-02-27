@@ -3,6 +3,7 @@ import * as path from 'path';
 import { State, HookInput, PromiseTokens, hasToken } from '../../types/index.js';
 import { resolveStateFile, approve, writeStateFile } from '../resolve-state.js';
 import { getExtensionRoot } from '../../services/pickle-utils.js';
+import { logActivity } from '../../services/activity-logger.js';
 
 async function main() {
   const extensionDir = getExtensionRoot();
@@ -146,6 +147,15 @@ async function main() {
       writeStateFile(stateFile, state);
     }
     approve();
+    const sessionId = path.basename(path.dirname(stateFile));
+    if (isExistenceIsPain) {
+      logActivity({ event: 'meeseeks_pass', source: 'pickle', session: sessionId, pass: Number(state.iteration) || undefined });
+    } else if (isEpicDone) {
+      logActivity({ event: 'epic_completed', source: 'pickle', session: sessionId, epic: state.original_prompt || undefined });
+    } else if (isTaskFinished && !isWorker) {
+      logActivity({ event: 'ticket_completed', source: 'pickle', session: sessionId, ticket: state.current_ticket || undefined, step: state.step });
+    }
+    // isWorkerDone, isAnalysisDone, hasPromise → no activity events
     return;
   }
 
@@ -186,6 +196,10 @@ async function main() {
     state.active = false;
     writeStateFile(stateFile, state);
     approve();
+    if (state.tmux_mode !== true) {
+      const durationMin = startEpoch > 0 ? Math.round(elapsedSeconds / 60) : undefined;
+      logActivity({ event: 'session_end', source: 'pickle', session: path.basename(path.dirname(stateFile)), duration_min: durationMin, mode: 'inline' });
+    }
     return;
   }
 
@@ -194,6 +208,9 @@ async function main() {
     state.active = false;
     writeStateFile(stateFile, state);
     approve();
+    if (state.tmux_mode !== true) {
+      logActivity({ event: 'session_end', source: 'pickle', session: path.basename(path.dirname(stateFile)), duration_min: Math.round(elapsedSeconds / 60), mode: 'inline' });
+    }
     return;
   }
 

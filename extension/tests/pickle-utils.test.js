@@ -181,7 +181,54 @@ test('parseTicketFrontmatter: non-numeric order defaults to 0 (NaN guard)', () =
     });
 });
 
+// --- parseTicketFrontmatter: type field ---
+
+test('parseTicketFrontmatter: extracts type field when present', () => {
+    withTempFile(`---\nid: r1a2b3c4\ntitle: "Review: correctness"\nstatus: Todo\norder: 35\ntype: review\n---\n# Review\n`, (file) => {
+        const result = parseTicketFrontmatter(file);
+        assert.equal(result.type, 'review');
+    });
+});
+
+test('parseTicketFrontmatter: type is null when absent (backward compat)', () => {
+    withTempFile(`---\nid: abc123\ntitle: Test Ticket\nstatus: Todo\norder: 10\n---\n# Body\n`, (file) => {
+        const result = parseTicketFrontmatter(file);
+        assert.equal(result.type, null);
+    });
+});
+
 // --- collectTickets ---
+
+test('collectTickets: review tickets sorted by order alongside impl tickets', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        // impl ticket at order 10
+        const sub1 = path.join(dir, 'impl1');
+        fs.mkdirSync(sub1);
+        fs.writeFileSync(path.join(sub1, 'linear_ticket_impl1.md'),
+            '---\nid: impl1\ntitle: Implement foo\nstatus: Done\norder: 10\n---\n');
+        // review ticket at order 15
+        const sub2 = path.join(dir, 'rev1');
+        fs.mkdirSync(sub2);
+        fs.writeFileSync(path.join(sub2, 'linear_ticket_rev1.md'),
+            '---\nid: rev1\ntitle: "Review: impl1"\nstatus: Todo\norder: 15\ntype: review\n---\n');
+        // impl ticket at order 20
+        const sub3 = path.join(dir, 'impl2');
+        fs.mkdirSync(sub3);
+        fs.writeFileSync(path.join(sub3, 'linear_ticket_impl2.md'),
+            '---\nid: impl2\ntitle: Implement bar\nstatus: Todo\norder: 20\n---\n');
+
+        const tickets = collectTickets(dir);
+        assert.equal(tickets.length, 3);
+        assert.equal(tickets[0].id, 'impl1');
+        assert.equal(tickets[1].id, 'rev1');
+        assert.equal(tickets[1].type, 'review');
+        assert.equal(tickets[2].id, 'impl2');
+        assert.equal(tickets[2].type, null);
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
 
 test('collectTickets: returns tickets sorted by order', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
@@ -329,6 +376,31 @@ test('buildHandoffSummary: no iterationNum defaults to new-session detection', (
         );
         assert.match(summary, /THIS IS A NEW SESSION/,
             'undefined iterationNum with iteration=0 and empty history should be new session');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+// --- buildHandoffSummary: [REVIEW] tag for review tickets ---
+
+test('buildHandoffSummary: shows [REVIEW] tag for review tickets', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ active: true }));
+        // Create an impl ticket and a review ticket
+        const implDir = path.join(dir, 'impl1');
+        fs.mkdirSync(implDir);
+        fs.writeFileSync(path.join(implDir, 'linear_ticket_impl1.md'),
+            '---\nid: impl1\ntitle: Implement foo\nstatus: Done\norder: 10\n---\n');
+        const revDir = path.join(dir, 'rev1');
+        fs.mkdirSync(revDir);
+        fs.writeFileSync(path.join(revDir, 'linear_ticket_rev1.md'),
+            '---\nid: rev1\ntitle: "Review: impl1"\nstatus: Todo\norder: 15\ntype: review\n---\n');
+
+        const summary = buildHandoffSummary({ step: 'research', iteration: 1 }, dir);
+        assert.match(summary, /rev1:.*\[REVIEW\]/, 'review ticket should show [REVIEW] tag');
+        assert.ok(!summary.includes('impl1') || !summary.match(/impl1:.*\[REVIEW\]/),
+            'implementation ticket should NOT show [REVIEW] tag');
     } finally {
         fs.rmSync(dir, { recursive: true });
     }

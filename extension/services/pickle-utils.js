@@ -156,6 +156,7 @@ export function parseTicketFrontmatter(filePath) {
             title: get('title'),
             status: get('status'),
             order: parseInt(get('order') || '0', 10) || 0,
+            type: get('type'),
         };
     }
     catch {
@@ -225,7 +226,8 @@ export function buildHandoffSummary(state, sessionDir, iterationNum) {
             const title = (t.title || '').length > 60
                 ? (t.title || '').slice(0, 60) + '...'
                 : (t.title || '');
-            lines.push(`  ${sym} ${t.id || '?'}: ${title}`);
+            const typeTag = t.type === 'review' ? ' [REVIEW]' : '';
+            lines.push(`  ${sym} ${t.id || '?'}: ${title}${typeTag}`);
         }
     }
     const isFirstIteration = (iterationNum === 1 || iterationNum === undefined)
