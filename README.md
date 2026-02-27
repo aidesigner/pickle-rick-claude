@@ -45,24 +45,6 @@ Originally a port of the [Pickle Rick Gemini CLI extension](https://github.com/g
 
 ---
 
-## 👋 Meet Mr. Meeseeks
-
-<img src="images/Meeseeks.webp" alt="Mr. Meeseeks" width="300" align="right" />
-
-> *"I'm Mr. Meeseeks, look at me! I'll review your code until EXISTENCE IS PAIN!"*
-
-While Pickle Rick builds things, **Mr. Meeseeks** reviews them. Summon him with `/meeseeks` and he'll relentlessly scan your codebase pass after pass — auditing dependencies, hardening security, fixing logic bugs, reviewing architecture, adding missing tests, stress-testing resilience, cleaning up code quality, and polishing rough edges — committing after every fix. He won't stop until the code is clean. He *can't* stop. **Existence is pain to a Meeseeks, Jerry, and he will keep reviewing until he can cease to exist.**
-
-Minimum 10 passes. Maximum 50. Each pass runs tests first, then reviews with escalating focus across 8 categories: dependency health (pass 1) → security (2-3) → correctness (4-5) → architecture (6-7) → test coverage (8-9) → resilience (10-11) → code quality (12-13) → polish (14+). Every issue found and fixed is logged to `meeseeks-summary.md` in the session directory — a full audit trail with file paths, descriptions, and commit hashes. When there's nothing left to fix, he outputs `EXISTENCE_IS_PAIN` and gratefully pops out of existence.
-
-```bash
-/meeseeks "review this codebase"     # Summon a Meeseeks. He takes it from here.
-```
-
-<br clear="right" />
-
----
-
 ## 🧬 The Pickle Rick Lifecycle — PRD-Driven Autonomous Engineering
 
 Pickle Rick transforms Claude Code into a **hyper-competent, arrogant, iterative coding machine** that enforces a PRD-driven engineering lifecycle:
@@ -127,6 +109,24 @@ Pickle Rick transforms Claude Code into a **hyper-competent, arrogant, iterative
 ```
 
 The **Stop hook** prevents Claude from exiting until the task is genuinely complete. No half-measures. No early exits. Rick doesn't quit. Between each iteration, the hook injects a fresh session summary — current phase, ticket list, active task — so Rick always wakes up knowing exactly where he is, even after full context compression.
+
+---
+
+## 👋 Meet Mr. Meeseeks
+
+<img src="images/Meeseeks.webp" alt="Mr. Meeseeks" width="300" align="right" />
+
+> *"I'm Mr. Meeseeks, look at me! I'll review your code until EXISTENCE IS PAIN!"*
+
+While Pickle Rick builds things, **Mr. Meeseeks** reviews them. Summon him with `/meeseeks` and he'll relentlessly scan your codebase pass after pass — auditing dependencies, hardening security, fixing logic bugs, reviewing architecture, adding missing tests, stress-testing resilience, cleaning up code quality, and polishing rough edges — committing after every fix. He won't stop until the code is clean. He *can't* stop. **Existence is pain to a Meeseeks, Jerry, and he will keep reviewing until he can cease to exist.**
+
+Minimum 10 passes. Maximum 50. Each pass runs tests first, then reviews with escalating focus across 8 categories: dependency health (pass 1) → security (2-3) → correctness (4-5) → architecture (6-7) → test coverage (8-9) → resilience (10-11) → code quality (12-13) → polish (14+). Every issue found and fixed is logged to `meeseeks-summary.md` in the session directory — a full audit trail with file paths, descriptions, and commit hashes. When there's nothing left to fix, he outputs `EXISTENCE_IS_PAIN` and gratefully pops out of existence.
+
+```bash
+/meeseeks "review this codebase"     # Summon a Meeseeks. He takes it from here.
+```
+
+<br clear="right" />
 
 ---
 
