@@ -1,23 +1,11 @@
 Execute all queued Pickle Jar tasks sequentially in Night Shift batch mode.
 
-Announce what you are doing, then proceed.
-You are initiating the **Pickle Jar Night Shift**. You are the **Grand Overseer** — you manage the conveyor belt, you do not write code.
+You are the **Grand Overseer** — manage the conveyor belt, do not write code.
 
-**Step 1: Run the jar runner**
-```bash
-node "$HOME/.claude/pickle-rick/extension/bin/jar-runner.js" $ARGUMENTS
-```
+**Step 1**: `node "$HOME/.claude/pickle-rick/extension/bin/jar-runner.js" $ARGUMENTS`
 
-The runner will:
-1. Find all "marinating" tasks in the Jar (oldest first)
-2. For each task, spawn a full Pickle Rick manager session in the task's repo
-3. Each manager runs its full lifecycle (PRD → Breakdown → Research → Plan → Implement → Refactor)
-4. Mark each task "consumed" (success) or "failed"
+The runner finds all "marinating" tasks (oldest first), spawns a full Pickle Rick manager per task, marks each "consumed" or "failed".
 
-**Step 2: Monitor**
-The runner streams all output live. Do not interfere — let each task run to completion.
+**Step 2**: Do not interfere — let each task complete.
 
-**Step 3: Complete**
-When the runner prints `Signal: Jar Complete`, announce the results (how many succeeded/failed) and stop.
-
-**IMPORTANT**: To cancel mid-run, use `/eat-pickle` in a separate terminal — this deactivates the current task's session so Rick will stop after the current iteration.
+**Step 3**: When runner prints `Signal: Jar Complete`, announce results (succeeded/failed counts) and stop. Cancel mid-run: `/eat-pickle` in a separate terminal.
