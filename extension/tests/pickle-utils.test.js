@@ -265,6 +265,75 @@ test('buildHandoffSummary: zero max_iterations shows just iteration number', () 
     }
 });
 
+// --- buildHandoffSummary: new session vs resume detection ---
+
+test('buildHandoffSummary: iteration 1 with no history shows NEW SESSION', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ active: true }));
+        const summary = buildHandoffSummary(
+            { iteration: 0, max_iterations: 50, step: 'prd', history: [] },
+            dir,
+            1
+        );
+        assert.match(summary, /THIS IS A NEW SESSION/,
+            'first iteration with empty history should indicate new session');
+        assert.ok(!summary.includes('Resume from current phase'),
+            'should not say "Resume" on a new session');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('buildHandoffSummary: iteration 2 shows resume message', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ active: true }));
+        const summary = buildHandoffSummary(
+            { iteration: 1, max_iterations: 50, step: 'implement', history: [{ step: 'prd' }] },
+            dir,
+            2
+        );
+        assert.match(summary, /Resume from current phase/,
+            'later iterations should say resume');
+        assert.ok(!summary.includes('NEW SESSION'),
+            'should not say NEW SESSION on resume');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('buildHandoffSummary: iteration 1 with existing history shows resume', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ active: true }));
+        const summary = buildHandoffSummary(
+            { iteration: 3, max_iterations: 50, step: 'implement', history: [{ step: 'prd' }] },
+            dir,
+            1
+        );
+        assert.match(summary, /Resume from current phase/,
+            'iteration 1 with non-zero state.iteration should still say resume');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('buildHandoffSummary: no iterationNum defaults to new-session detection', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ active: true }));
+        const summary = buildHandoffSummary(
+            { iteration: 0, max_iterations: 50, step: 'prd', history: [] },
+            dir
+        );
+        assert.match(summary, /THIS IS A NEW SESSION/,
+            'undefined iterationNum with iteration=0 and empty history should be new session');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
 // --- withSessionMapLock ---
 
 test('withSessionMapLock: executes fn and returns result', () => {

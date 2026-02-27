@@ -219,7 +219,7 @@ export function collectTickets(sessionDir: string): TicketInfo[] {
   }
 }
 
-export function buildHandoffSummary(state: Partial<State>, sessionDir: string): string {
+export function buildHandoffSummary(state: Partial<State>, sessionDir: string, iterationNum?: number): string {
   const task = state.original_prompt || '';
   const truncatedTask = task.length > 300 ? task.slice(0, 300) + ' [truncated]' : task;
   const prdPath = path.join(sessionDir, 'prd.md');
@@ -257,11 +257,22 @@ export function buildHandoffSummary(state: Partial<State>, sessionDir: string): 
       lines.push(`  ${sym} ${t.id || '?'}: ${title}`);
     }
   }
-  lines.push(
-    '',
-    'NEXT ACTION: Resume from current phase. Read state.json for context.',
-    'Do NOT restart from scratch. Continue where you left off.',
-  );
+  const isFirstIteration = (iterationNum === 1 || iterationNum === undefined)
+    && (Number(state.iteration) || 0) === 0
+    && (state.history || []).length === 0;
+  if (isFirstIteration) {
+    lines.push(
+      '',
+      'THIS IS A NEW SESSION. Begin the lifecycle from the current phase.',
+      'Read state.json for full context, then start working on the task.',
+    );
+  } else {
+    lines.push(
+      '',
+      'NEXT ACTION: Resume from current phase. Read state.json for context.',
+      'Do NOT restart from scratch. Continue where you left off.',
+    );
+  }
   return lines.join('\n');
 }
 

@@ -82,7 +82,7 @@ async function runIteration(sessionDir: string, iterationNum: number, extensionR
     managerPrompt += '\n\n' + fs.readFileSync(handoffPath, 'utf-8');
     try { fs.unlinkSync(handoffPath); } catch { /* consumed — prevent stale re-reads */ }
   } else {
-    managerPrompt += '\n\n' + buildHandoffSummary(state, sessionDir);
+    managerPrompt += '\n\n' + buildHandoffSummary(state, sessionDir, iterationNum);
   }
 
   const settingsPath = path.join(extensionRoot, 'pickle_settings.json');

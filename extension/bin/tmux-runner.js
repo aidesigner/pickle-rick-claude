@@ -83,7 +83,7 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
         catch { /* consumed — prevent stale re-reads */ }
     }
     else {
-        managerPrompt += '\n\n' + buildHandoffSummary(state, sessionDir);
+        managerPrompt += '\n\n' + buildHandoffSummary(state, sessionDir, iterationNum);
     }
     const settingsPath = path.join(extensionRoot, 'pickle_settings.json');
     let maxTurns = 50;
