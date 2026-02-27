@@ -1,67 +1,53 @@
 # Pickle Rick for Claude Code
 
-Extension that transforms Claude Code into "Pickle Rick" — enforces an iterative engineering lifecycle: **PRD → Breakdown → Research → Plan → Implement → Refactor**.
+Iterative engineering lifecycle: PRD → Breakdown → Research → Plan → Implement → Refactor.
 
-## Commands
+## Source of Truth — CRITICAL
 
-- **`/pickle <task>`**: Start the autonomous loop
-- **`/pickle-tmux <task>`**: Context-clearing mode via tmux (for long epics, 8+ iterations)
-- **`/pickle-prd [task]`**: Interactively draft a PRD, then `/pickle --resume`
-- **`/pickle-refine-prd [path]`**: Refine PRD + decompose into discrete tasks with pre-created tickets; resume directly into orchestration
-- **`/pickle-dot [path/to/prd.md | inline]`**: Convert a PRD into a strongdm/attractor-compatible DOT digraph (`.dot` file)
-- **`/eat-pickle`**: Cancel the active loop
-- **`/pickle-status`**: Show session phase, iteration, ticket status
-- **`/pickle-retry <ticket-id>`**: Re-spawn a Morty for a failed ticket
-- **`/add-to-pickle-jar`** / **`/pickle-jar-open`**: Queue tasks / run queued batch
-- **`/meeseeks [task]`**: Autonomous code review loop — tmux only, minimum 10 passes, commits per pass, exits when clean
-- **`/disable-pickle`** / **`/enable-pickle`**: Toggle stop hook
+Canonical → Deployed (install.sh rsyncs, overwrites deployed):
+- `extension/src/*.ts` → `~/.claude/pickle-rick/extension/**/*.js`
+- `.claude/commands/*.md` → `~/.claude/commands/*.md`
+- `pickle_settings.json` → `~/.claude/pickle-rick/pickle_settings.json`
+- `persona.md` → `~/.claude/pickle-rick/persona.md`
 
-## Engineering Rules
+NEVER edit deployed files. Edit repo source, then `bash install.sh`.
 
-### Source of Truth
+## Build & Test
 
-**TypeScript sources in `extension/src/` are canonical.** JS files in `extension/` are build artifacts — never edit them directly. The `src/` directory mirrors the output structure: `src/bin/*.ts` → `bin/*.js`, etc.
-
-### Build & Test
-
-All commands run from `extension/`:
-
-```bash
-npx tsc --noEmit   # Type-check (run first)
-npx tsc            # Compile
-npm test           # Run full suite — all tests must pass before committing
+Run from `extension/`:
 ```
+npx tsc --noEmit && npx tsc && npm test
+```
+Tests: `extension/tests/*.test.js` via `node --test`. No `.test.ts` files.
 
-Tests live in `extension/tests/*.test.js` (run via `node --test`). No `.test.ts` files in `src/`.
+## Required Patterns
 
-### Critical Patterns
-
-**CLI Guard** — Use exact filename matching, never `startsWith` (prevents `foo.test.js` from triggering `foo.js`'s CLI block):
-```typescript
+CLI guard — exact basename match, never startsWith:
+```ts
 if (process.argv[1] && path.basename(process.argv[1]) === 'foo.js') { ... }
 ```
 
-**Hook Decisions** — This is a `Stop` hook. Only `"approve"` or `"block"` (never `"allow"`):
+Hook decisions — Stop hook, only "approve" or "block" (never "allow"):
 ```json
 { "decision": "approve" }
 { "decision": "block", "reason": "..." }
 ```
 
-**Error Handling** — Never cast `err` to `Error` blindly:
-```typescript
+Error handling — never cast unknown to Error:
+```ts
 const msg = err instanceof Error ? err.message : String(err);
 ```
 
-**Extension Path** — Always `~/.claude/pickle-rick`. If you see `.gemini` anywhere, it's wrong.
+Extension path: always `~/.claude/pickle-rick`. Never `.gemini`.
 
-### Architecture
+## Architecture
 
-- **`dispatch.js`** — Stop hook entry point. Reads stdin JSON, spawns matching handler, forwards stdout. Fail-open: always outputs `"approve"` on error.
-- **`stop-hook.js`** — Gatekeeper. Checks `state.json` for completion/checkpoint tokens. Does NOT advance lifecycle or spawn workers. In `tmux_mode`, checkpoint tokens pass through for tmux-runner to handle.
-- **`setup.js`** — Initializes session (`state.json`, ticket dirs), outputs first prompt.
-- **`spawn-morty.js`** — Worker spawner for per-ticket `claude -p` subprocesses.
-- **`spawn-refinement-team.js`** — PRD refinement orchestrator. Spawns 3 parallel analysts per cycle, supports `--cycles N` and `--max-turns N`. Writes `refinement_manifest.json`.
-- **`tmux-runner.js`** — Context-clearing loop via tmux panes.
-- **`jar-runner.js`** — Batch runner for queued jar tasks.
-- **`monitor.js`** / **`log-watcher.js`** / **`morty-watcher.js`** — Live TUI dashboard / iteration log stream / worker log stream.
-- **`meeseeks.md`** — Dual-purpose: slash command setup + per-iteration review template for `/meeseeks` code review loop.
+dispatch.js — hook entry, reads stdin JSON, spawns handler, fail-open approve on error
+stop-hook.js — checks state.json for tokens, does NOT advance lifecycle. tmux_mode: pass-through
+setup.js — session init (state.json, ticket dirs), outputs first prompt
+spawn-morty.js — per-ticket `claude -p` subprocess spawner
+spawn-refinement-team.js — 3 parallel analysts per cycle, writes refinement_manifest.json
+tmux-runner.js — context-clearing outer loop via tmux
+jar-runner.js — batch runner for jar queue
+monitor.js / log-watcher.js / morty-watcher.js — tmux TUI panes
+meeseeks.md — dual-purpose: setup + per-pass review template

@@ -53,7 +53,7 @@ Originally a port of the [Pickle Rick Gemini CLI extension](https://github.com/g
 
 While Pickle Rick builds things, **Mr. Meeseeks** reviews them. Summon him with `/meeseeks` and he'll relentlessly scan your codebase pass after pass — fixing security holes, squashing bugs, purging dead code, and tidying inconsistencies — committing after every fix. He won't stop until the code is clean. He *can't* stop. **Existence is pain to a Meeseeks, Jerry, and he will keep reviewing until he can cease to exist.**
 
-Minimum 10 passes. Maximum 50. Each pass runs tests first, then reviews with escalating focus: critical security (passes 1-3) → logic bugs (4-5) → dead code (6-7) → consistency (8-9) → polish (10+). When there's nothing left to fix, he outputs `EXISTENCE_IS_PAIN` and gratefully pops out of existence.
+Minimum 10 passes. Maximum 50. Each pass runs tests first, then reviews with escalating focus across 8 categories: dependency health (pass 1) → security (2-3) → correctness (4-5) → architecture (6-7) → test coverage (8-9) → resilience (10-11) → code quality (12-13) → polish (14+). Every issue found and fixed is logged to `meeseeks-summary.md` in the session directory — a full audit trail with file paths, descriptions, and commit hashes. When there's nothing left to fix, he outputs `EXISTENCE_IS_PAIN` and gratefully pops out of existence.
 
 ```bash
 /meeseeks "review this codebase"     # Summon a Meeseeks. He takes it from here.
@@ -268,7 +268,7 @@ Ctrl+B d                        # detach (session keeps running in background)
 
 **Recovering from a failed Morty** — If a worker times out or exits without completing, use `/pickle-retry <ticket-id>` instead of restarting the whole epic. It archives the partial artifacts, resets the ticket to Todo, and prints the exact `spawn-morty.js` command to re-run — preserving all the work already done on other tickets.
 
-**`/meeseeks` — Autonomous Code Review** — Summon Mr. Meeseeks to review your codebase in a tmux loop. Each pass scans for issues (security → logic → cleanup → consistency → polish), fixes them, runs tests, and commits. Minimum 10 passes before accepting a "clean" exit. Configurable via `default_meeseeks_min_passes` and `default_meeseeks_max_passes` in settings. Uses the same tmux infrastructure as `/pickle-tmux`.
+**`/meeseeks` — Autonomous Code Review** — Summon Mr. Meeseeks to review your codebase in a tmux loop. Each pass scans for issues across 8 escalating categories (dependency health → security → correctness → architecture → test coverage → resilience → code quality → polish), fixes them, runs tests, and commits. Every finding is logged to `meeseeks-summary.md` in the session directory — a persistent audit trail. Minimum 10 passes before accepting a "clean" exit. Configurable via `default_meeseeks_min_passes` and `default_meeseeks_max_passes` in settings. Uses the same tmux infrastructure as `/pickle-tmux`.
 
 **`--meeseeks` chaining** — `/pickle-refine-prd --meeseeks` is the "one command to rule them all" option. It chains the entire pipeline: PRD refinement → ticket decomposition → tmux execution → automatic Meeseeks review. When tmux-runner detects all tickets are complete (`TASK_COMPLETED`), it transitions the session to Meeseeks mode (swapping the command template, setting min/max passes, resetting iteration counter) and continues the loop. Same tmux session, same monitor panes. Cancel at any point with `/eat-pickle`.
 
@@ -358,6 +358,21 @@ pickle-rick-claude/
 ├── install.sh               # Installer
 └── uninstall.sh             # Uninstaller
 ```
+
+---
+
+## 📌 Source of Truth
+
+`install.sh` deploys files from this repo to `~/.claude/` via `rsync`. **The installed copies are overwritten on every install.** Always edit the repo source, never the installed copy:
+
+| What | Canonical (edit here) | Deployed (never edit) |
+|---|---|---|
+| TypeScript runtime | `extension/src/` | `~/.claude/pickle-rick/extension/` |
+| Slash commands | `.claude/commands/` | `~/.claude/commands/` |
+| Settings | `pickle_settings.json` | `~/.claude/pickle-rick/pickle_settings.json` |
+| Persona | `persona.md` | `~/.claude/pickle-rick/persona.md` |
+
+After editing, run `bash install.sh` from the repo root to deploy.
 
 ---
 
