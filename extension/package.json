@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test tests/pickle-utils.test.js tests/update-state.test.js tests/retry-ticket.test.js tests/git-utils.test.js tests/cancel.test.js tests/get-session.test.js tests/jar-utils.test.js tests/stop-hook.test.js tests/promise-tokens.test.js tests/atomic-state.test.js tests/setup.test.js tests/pr-factory.test.js tests/dispatch.test.js tests/status.test.js tests/spawn-morty.test.js tests/log-watcher.test.js tests/monitor.test.js tests/jar-runner.test.js tests/tmux-runner.test.js tests/worker-setup.test.js tests/spawn-refinement-team.test.js tests/morty-watcher.test.js tests/activity-logger.test.js tests/activity-instrumentation.test.js tests/review-ticket.test.js tests/log-commit.test.js"
+    "test": "node --test tests/pickle-utils.test.js tests/update-state.test.js tests/retry-ticket.test.js tests/git-utils.test.js tests/cancel.test.js tests/get-session.test.js tests/jar-utils.test.js tests/stop-hook.test.js tests/promise-tokens.test.js tests/atomic-state.test.js tests/setup.test.js tests/pr-factory.test.js tests/dispatch.test.js tests/status.test.js tests/spawn-morty.test.js tests/log-watcher.test.js tests/monitor.test.js tests/jar-runner.test.js tests/tmux-runner.test.js tests/worker-setup.test.js tests/spawn-refinement-team.test.js tests/morty-watcher.test.js tests/activity-logger.test.js tests/activity-instrumentation.test.js tests/review-ticket.test.js tests/log-commit.test.js tests/prune-activity.test.js"
   },
   "devDependencies": {
     "@types/node": "^25.3.0",

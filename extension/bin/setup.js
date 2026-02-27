@@ -6,6 +6,7 @@ import * as crypto from 'crypto';
 import { printMinimalPanel, Style, getExtensionRoot, withSessionMapLock, pruneOldSessions } from '../services/pickle-utils.js';
 import { writeStateFile } from '../hooks/resolve-state.js';
 import { logActivity } from '../services/activity-logger.js';
+import { pruneActivity } from './prune-activity.js';
 function die(message) {
     console.error(`${Style.RED}❌ Error: ${message}${Style.RESET}`);
     process.exit(1);
@@ -268,6 +269,10 @@ async function main() {
             chain_meeseeks: chainMeeseeks,
         };
         writeStateFile(path.join(fullSessionPath, 'state.json'), state);
+        try {
+            pruneActivity();
+        }
+        catch { /* must not block session start */ }
         logActivity({ event: 'session_start', source: 'pickle', session: sessionId, mode: tmuxMode ? 'tmux' : 'inline' });
     }
     updateSessionMap(process.cwd(), fullSessionPath);
