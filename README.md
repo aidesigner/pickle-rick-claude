@@ -39,7 +39,7 @@ Originally a port of the [Pickle Rick Gemini CLI extension](https://github.com/g
 |---|---|
 | **Context clearing** | Every iteration injects a structured summary (phase, tickets, task) so Rick never loses his place — even after full context compression. tmux mode (`/pickle-tmux`) goes further: each iteration is a fresh `claude -p` subprocess with zero conversation history. No drift on 50+ iteration epics. |
 | **One hook, whole lifecycle** | A single Stop hook blocks exit, injects context, and enforces limits. No daemon, no polling, no external orchestrator — just the hook and `state.json`. |
-| **PRD refinement** | `/pickle-refine-prd` deploys 3 parallel Morty analysts (Requirements, Codebase, Risk/Scope) over multiple cycles, then decomposes findings into ordered, self-contained tickets. Add `--run` to auto-launch an unlimited tmux session immediately after. |
+| **PRD refinement** | `/pickle-refine-prd` deploys 3 parallel Morty analysts (Requirements, Codebase, Risk/Scope) over multiple cycles, then decomposes findings into ordered, self-contained tickets. Add `--run` to auto-launch an unlimited tmux session immediately after, or `--meeseeks` for the full pipeline: refine → execute → Meeseeks review. |
 | **Worker isolation** | Each Morty runs as a scoped `claude -p` subprocess — `--dangerously-skip-permissions`, `--add-dir` limited to its ticket and the extension root. No cross-contamination between workers. |
 | **Pickle Jar** | Queue tasks with `/add-to-pickle-jar`, run them all with `/pickle-jar-open`. Night shift mode — walk away, come back to per-task success/failure results. |
 
@@ -187,6 +187,12 @@ claude
 /pickle-refine-prd --run my-prd.md       # Refine → decompose → auto-launch tmux (no iteration/time limits)
 ```
 
+**Option E: Full pipeline** — Refine, execute all tickets, then auto-transition to Meeseeks code review. One command, zero babysitting:
+
+```bash
+/pickle-refine-prd --meeseeks my-prd.md  # Refine → decompose → execute → Meeseeks review (min 10 passes)
+```
+
 For `/pickle-tmux`, Rick prints a `tmux attach` command — open a second terminal and paste it to watch the live dashboard while it runs.
 
 Sit back. Rick handles the rest. 🥒
@@ -204,6 +210,7 @@ Sit back. Rick handles the rest. 🥒
 | `/pickle-tmux prd.md` | 🖥️ Pick up an existing PRD in tmux mode — fresh subprocess per iteration, no context drift |
 | `/pickle-refine-prd [path]` | 🔬 Refine an existing PRD with 3 parallel analysts + decompose into ordered tickets; `/pickle --resume` to execute |
 | `/pickle-refine-prd --run [path]` | 🔬🖥️ Refine + decompose + auto-launch unlimited tmux session (no iteration or time cap) |
+| `/pickle-refine-prd --meeseeks [path]` | 🔬🖥️👋 Full pipeline: refine + decompose + execute all tickets + auto-transition to Meeseeks review (implies `--run`) |
 | `/pickle-dot [path \| inline]` | 🔀 Convert a PRD into a [strongdm/attractor](https://github.com/strongdm/attractor)-compatible DOT digraph — generates a validated `.dot` file with node shapes, edge conditions, parallel fan-out/in, and model stylesheets |
 | `/eat-pickle` | 🛑 Cancel the active loop |
 | `/help-pickle` | ❓ Show all commands and flags |
@@ -225,6 +232,7 @@ Sit back. Rick handles the rest. 🥒
 --reset                    Reset iteration counter and start time (use with --resume)
 --paused                   Start in paused mode (PRD only)
 --run                      (/pickle-refine-prd only) Auto-launch tmux with no limits after refinement
+--meeseeks                 (/pickle-refine-prd only) Full pipeline: --run + auto-chain Meeseeks review after tickets complete
 ```
 
 ### Tips
@@ -235,16 +243,17 @@ Sit back. Rick handles the rest. 🥒
 
 ![tmux monitor — live dashboard + log stream](images/tmux-monitor.png)
 - **Window 0 `runner`**: raw runner output — the live `claude -p` subprocess stream
-- **Window 1 `monitor`** (default — you land here on attach): split view
-  - **Left pane**: live dashboard — phase, iteration, elapsed time, all tickets with status (`[x]` done / `[~]` in progress / `[ ]` todo). Refreshes every 2 seconds.
-  - **Right pane**: live log stream — streams each iteration's log as it's written, with an iteration header when the runner advances. Auto-switches to each new log file.
+- **Window 1 `monitor`** (default — you land here on attach): 3-pane layout
+  - **Top-left pane**: live dashboard — phase, iteration, elapsed time, all tickets with status (`[x]` done / `[~]` in progress / `[ ]` todo). Refreshes every 2 seconds.
+  - **Top-right pane**: live log stream — streams each iteration's log as it's written, with an iteration header when the runner advances. Auto-switches to each new log file.
+  - **Bottom pane**: live worker (Morty) log stream — auto-follows the latest worker session output.
 
 The session name and attach command are printed **before the runner starts** so you can open a second terminal and attach immediately:
 
 ```bash
 tmux attach -t <session-name>   # printed by /pickle-tmux as soon as the session is ready
 Ctrl+B 1                        # switch to monitor window
-Ctrl+B ←/→                      # switch between dashboard and log stream panes
+Ctrl+B ←/↑/↓                    # switch between panes (top-left, top-right, bottom)
 Ctrl+B 0                        # switch back to runner output
 Ctrl+B d                        # detach (session keeps running in background)
 ```
@@ -260,6 +269,8 @@ Ctrl+B d                        # detach (session keeps running in background)
 **Recovering from a failed Morty** — If a worker times out or exits without completing, use `/pickle-retry <ticket-id>` instead of restarting the whole epic. It archives the partial artifacts, resets the ticket to Todo, and prints the exact `spawn-morty.js` command to re-run — preserving all the work already done on other tickets.
 
 **`/meeseeks` — Autonomous Code Review** — Summon Mr. Meeseeks to review your codebase in a tmux loop. Each pass scans for issues (security → logic → cleanup → consistency → polish), fixes them, runs tests, and commits. Minimum 10 passes before accepting a "clean" exit. Configurable via `default_meeseeks_min_passes` and `default_meeseeks_max_passes` in settings. Uses the same tmux infrastructure as `/pickle-tmux`.
+
+**`--meeseeks` chaining** — `/pickle-refine-prd --meeseeks` is the "one command to rule them all" option. It chains the entire pipeline: PRD refinement → ticket decomposition → tmux execution → automatic Meeseeks review. When tmux-runner detects all tickets are complete (`TASK_COMPLETED`), it transitions the session to Meeseeks mode (swapping the command template, setting min/max passes, resetting iteration counter) and continues the loop. Same tmux session, same monitor panes. Cancel at any point with `/eat-pickle`.
 
 **"Stop hook error" is normal** — Claude Code labels every `decision: block` response from the stop hook as "Stop hook error" in the UI. This is not an actual error. It means the hook is working correctly — it blocked Claude's exit and injected the session context for the next iteration. If you see it, Rick is looping as intended.
 
