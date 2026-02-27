@@ -14,7 +14,7 @@ Summarize the available commands for the user:
 - `/disable-pickle`: Disable stop hook globally
 - `/enable-pickle`: Re-enable stop hook
 
-**Session:** `/pickle-status` (show status) | `/pickle-retry <ticket-id>` (retry failed ticket)
+**Session:** `/pickle-status` (show status) | `/pickle-retry <ticket-id>` (retry failed ticket) | `/pickle-standup` (activity summary)
 
 **Jar (batch queue):** `/add-to-pickle-jar` (queue PRD) | `/pickle-jar-open` (run all queued)
 

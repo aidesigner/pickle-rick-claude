@@ -27,7 +27,7 @@ cp "$SETTINGS_FILE" "$HOME/.claude/backups/settings.json.pickle-backup.$(date +%
 echo "✅ Backed up settings.json to ~/.claude/backups/"
 
 # --- DIRECTORIES ---
-mkdir -p "$EXTENSION_ROOT" "$COMMANDS_DIR"
+mkdir -p "$EXTENSION_ROOT" "$COMMANDS_DIR" "$EXTENSION_ROOT/activity"
 
 # --- EXTENSION SCRIPTS ---
 # rsync compiled JS runtime files; exclude TS sources, tests, and dev-only files.
@@ -60,6 +60,10 @@ chmod +x "$EXTENSION_ROOT/extension/bin/morty-watcher.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/spawn-refinement-team.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/get-session.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/update-state.js"
+chmod +x "$EXTENSION_ROOT/extension/bin/log-activity.js"
+chmod +x "$EXTENSION_ROOT/extension/bin/log-commit.js"
+chmod +x "$EXTENSION_ROOT/extension/bin/prune-activity.js"
+chmod +x "$EXTENSION_ROOT/extension/bin/standup.js"
 
 # --- COMMANDS ---
 # rsync all commands from .claude/commands/; no --delete to preserve user commands.
@@ -84,6 +88,29 @@ else
   ' "$SETTINGS_FILE" > "$TMPFILE" \
     && mv "$TMPFILE" "$SETTINGS_FILE"
   echo "✅ Registered Stop hook in $SETTINGS_FILE"
+fi
+
+# --- POST-TOOL-USE HOOK (git commit activity logger, idempotent) ---
+COMMIT_HOOK_CMD='node $HOME/.claude/pickle-rick/extension/bin/log-commit.js'
+if jq -e --arg cmd "$COMMIT_HOOK_CMD" \
+    '.hooks.PostToolUse // [] | map(.hooks // [] | map(.command)) | flatten | any(. == $cmd)' \
+    "$SETTINGS_FILE" >/dev/null 2>&1; then
+  echo "⚠️  PostToolUse hook already registered — skipping"
+else
+  TMPFILE="$(mktemp)"
+  jq --arg cmd "$COMMIT_HOOK_CMD" '
+    {"type": "command", "command": $cmd, "async": true, "timeout": 5} as $entry |
+    {"matcher": "Bash", "hooks": [$entry]} as $group |
+    if .hooks == null then
+      .hooks = {"PostToolUse": [$group]}
+    elif .hooks.PostToolUse == null then
+      .hooks.PostToolUse = [$group]
+    else
+      .hooks.PostToolUse += [$group]
+    end
+  ' "$SETTINGS_FILE" > "$TMPFILE" \
+    && mv "$TMPFILE" "$SETTINGS_FILE"
+  echo "✅ Registered PostToolUse hook in $SETTINGS_FILE"
 fi
 
 # --- VALIDATE result ---

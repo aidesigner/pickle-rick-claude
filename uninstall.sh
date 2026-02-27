@@ -24,6 +24,8 @@ rm -f "$HOME/.claude/commands/pickle-retry.md"
 rm -f "$HOME/.claude/commands/pickle-tmux.md"
 rm -f "$HOME/.claude/commands/pickle-refine-prd.md"
 rm -f "$HOME/.claude/commands/meeseeks.md"
+rm -f "$HOME/.claude/commands/pickle-standup.md"
+rm -f "$HOME/.claude/commands/pickle-dot.md"
 
 # Remove Stop hook from settings.json (clean up empty Stop/hooks keys)
 if [ -f "$SETTINGS_FILE" ]; then
@@ -38,6 +40,19 @@ if [ -f "$SETTINGS_FILE" ]; then
   ' "$SETTINGS_FILE" > "$TMPFILE" \
     && mv "$TMPFILE" "$SETTINGS_FILE"
   echo "✅ Removed Stop hook from settings.json"
+
+  # Remove PostToolUse hook (git commit activity logger)
+  TMPFILE="$(mktemp)"
+  jq '
+    "node $HOME/.claude/pickle-rick/extension/bin/log-commit.js" as $cmd |
+    if .hooks.PostToolUse then
+      .hooks.PostToolUse = [.hooks.PostToolUse[] | select(.hooks | map(.command) | any(. == $cmd) | not)] |
+      if (.hooks.PostToolUse | length) == 0 then del(.hooks.PostToolUse) else . end |
+      if (.hooks | keys | length) == 0 then del(.hooks) else . end
+    else . end
+  ' "$SETTINGS_FILE" > "$TMPFILE" \
+    && mv "$TMPFILE" "$SETTINGS_FILE"
+  echo "✅ Removed PostToolUse hook from settings.json"
 fi
 
 echo ""
