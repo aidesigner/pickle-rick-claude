@@ -1,0 +1,456 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import {
+    parseArgs,
+    readActivityFiles,
+    deduplicateCommits,
+    formatOutput,
+    getGitCommits,
+} from '../bin/standup.js';
+
+const CLI_PATH = path.join(import.meta.dirname, '..', 'bin', 'standup.js');
+
+function runCli(args, env = {}) {
+    return spawnSync(process.execPath, [CLI_PATH, ...args], {
+        encoding: 'utf-8',
+        timeout: 10000,
+        env: { ...process.env, ...env },
+    });
+}
+
+function withTempActivityDir(fn) {
+    const extRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-standup-'));
+    const activityDir = path.join(extRoot, 'activity');
+    fs.mkdirSync(activityDir, { recursive: true });
+    try {
+        fn(activityDir, extRoot);
+    } finally {
+        fs.rmSync(extRoot, { recursive: true, force: true });
+    }
+}
+
+function writeEvent(activityDir, dateStr, event) {
+    const filepath = path.join(activityDir, `${dateStr}.jsonl`);
+    fs.appendFileSync(filepath, JSON.stringify(event) + '\n');
+}
+
+function yesterday() {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    return formatDateStr(d);
+}
+
+function today() {
+    return formatDateStr(new Date());
+}
+
+function daysAgo(n) {
+    const d = new Date();
+    d.setDate(d.getDate() - n);
+    return formatDateStr(d);
+}
+
+function formatDateStr(d) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+}
+
+// --- parseArgs ---
+
+test('parseArgs: defaults to --days 1 with no args', () => {
+    const { range } = parseArgs([]);
+    const now = new Date();
+    const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const expectedSince = new Date(todayMidnight);
+    expectedSince.setDate(expectedSince.getDate() - 1);
+    assert.equal(range.since.getTime(), expectedSince.getTime());
+    assert.equal(range.until.getTime(), todayMidnight.getTime());
+});
+
+test('parseArgs: --days 0 covers today', () => {
+    const { range } = parseArgs(['--days', '0']);
+    const now = new Date();
+    const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const tomorrowMidnight = new Date(todayMidnight);
+    tomorrowMidnight.setDate(tomorrowMidnight.getDate() + 1);
+    assert.equal(range.since.getTime(), todayMidnight.getTime());
+    assert.equal(range.until.getTime(), tomorrowMidnight.getTime());
+});
+
+test('parseArgs: --days 3 covers 3 days back through yesterday', () => {
+    const { range } = parseArgs(['--days', '3']);
+    const now = new Date();
+    const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const expectedSince = new Date(todayMidnight);
+    expectedSince.setDate(expectedSince.getDate() - 3);
+    assert.equal(range.since.getTime(), expectedSince.getTime());
+    assert.equal(range.until.getTime(), todayMidnight.getTime());
+});
+
+test('parseArgs: --since overrides --days', () => {
+    const { range } = parseArgs(['--days', '5', '--since', '2026-01-15']);
+    assert.equal(range.since.getFullYear(), 2026);
+    assert.equal(range.since.getMonth(), 0); // January = 0
+    assert.equal(range.since.getDate(), 15);
+});
+
+// --- parseArgs error cases (CLI) ---
+
+test('CLI: --days -1 exits with error', () => {
+    const result = runCli(['--days', '-1']);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /non-negative integer/);
+});
+
+test('CLI: --days NaN exits with error', () => {
+    const result = runCli(['--days', 'abc']);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /non-negative integer/);
+});
+
+test('CLI: --days without value exits with error', () => {
+    const result = runCli(['--days']);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /requires a numeric value/);
+});
+
+test('CLI: --since with invalid date exits with error', () => {
+    const result = runCli(['--since', 'not-a-date']);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /invalid date/);
+});
+
+test('CLI: --since with future date exits with error', () => {
+    const result = runCli(['--since', '2099-01-01']);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /future/);
+});
+
+test('CLI: --since without value exits with error', () => {
+    const result = runCli(['--since']);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /requires a YYYY-MM-DD value/);
+});
+
+test('CLI: unknown flag exits with error', () => {
+    const result = runCli(['--verbose']);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /unknown flag/);
+});
+
+test('CLI: --days Infinity exits with error', () => {
+    const result = runCli(['--days', 'Infinity']);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /non-negative integer/);
+});
+
+test('CLI: --days 1.5 exits with error', () => {
+    const result = runCli(['--days', '1.5']);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /non-negative integer/);
+});
+
+// --- readActivityFiles ---
+
+test('readActivityFiles: reads and parses JSONL events', () => {
+    withTempActivityDir((activityDir) => {
+        const dateStr = yesterday();
+        writeEvent(activityDir, dateStr, { ts: `${dateStr}T10:00:00Z`, event: 'session_start', source: 'pickle', session: 'sess-1' });
+        writeEvent(activityDir, dateStr, { ts: `${dateStr}T11:00:00Z`, event: 'ticket_completed', source: 'pickle', session: 'sess-1', ticket: 'abc' });
+
+        const now = new Date();
+        const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const sinceMidnight = new Date(todayMidnight);
+        sinceMidnight.setDate(sinceMidnight.getDate() - 1);
+
+        const events = readActivityFiles(activityDir, sinceMidnight, todayMidnight);
+        assert.equal(events.length, 2);
+        assert.equal(events[0].event, 'session_start');
+        assert.equal(events[1].event, 'ticket_completed');
+    });
+});
+
+test('readActivityFiles: filters files by date range', () => {
+    withTempActivityDir((activityDir) => {
+        const yesterdayStr = yesterday();
+        const twoDaysAgoStr = daysAgo(2);
+        writeEvent(activityDir, yesterdayStr, { ts: `${yesterdayStr}T10:00:00Z`, event: 'session_start', source: 'pickle' });
+        writeEvent(activityDir, twoDaysAgoStr, { ts: `${twoDaysAgoStr}T10:00:00Z`, event: 'feature', source: 'persona', title: 'old' });
+
+        // --days 1 = yesterday only
+        const now = new Date();
+        const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const sinceMidnight = new Date(todayMidnight);
+        sinceMidnight.setDate(sinceMidnight.getDate() - 1);
+
+        const events = readActivityFiles(activityDir, sinceMidnight, todayMidnight);
+        assert.equal(events.length, 1);
+        assert.equal(events[0].event, 'session_start');
+    });
+});
+
+test('readActivityFiles: --days 0 reads today', () => {
+    withTempActivityDir((activityDir) => {
+        const todayStr = today();
+        writeEvent(activityDir, todayStr, { ts: `${todayStr}T08:00:00Z`, event: 'feature', source: 'persona', title: 'today work' });
+
+        const now = new Date();
+        const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const tomorrowMidnight = new Date(todayMidnight);
+        tomorrowMidnight.setDate(tomorrowMidnight.getDate() + 1);
+
+        const events = readActivityFiles(activityDir, todayMidnight, tomorrowMidnight);
+        assert.equal(events.length, 1);
+        assert.equal(events[0].title, 'today work');
+    });
+});
+
+test('readActivityFiles: skips corrupt JSON lines', () => {
+    withTempActivityDir((activityDir) => {
+        const dateStr = yesterday();
+        const filepath = path.join(activityDir, `${dateStr}.jsonl`);
+        fs.writeFileSync(filepath, [
+            JSON.stringify({ ts: `${dateStr}T10:00:00Z`, event: 'session_start', source: 'pickle' }),
+            'NOT VALID JSON {{{',
+            JSON.stringify({ ts: `${dateStr}T11:00:00Z`, event: 'session_end', source: 'pickle' }),
+        ].join('\n') + '\n');
+
+        const now = new Date();
+        const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const sinceMidnight = new Date(todayMidnight);
+        sinceMidnight.setDate(sinceMidnight.getDate() - 1);
+
+        const events = readActivityFiles(activityDir, sinceMidnight, todayMidnight);
+        assert.equal(events.length, 2);
+    });
+});
+
+test('readActivityFiles: warns on >10% corrupt', () => {
+    withTempActivityDir((activityDir) => {
+        const dateStr = yesterday();
+        const filepath = path.join(activityDir, `${dateStr}.jsonl`);
+        // 1 valid + 2 corrupt = 66% corrupt
+        fs.writeFileSync(filepath, [
+            JSON.stringify({ ts: `${dateStr}T10:00:00Z`, event: 'session_start', source: 'pickle' }),
+            'BAD LINE 1',
+            'BAD LINE 2',
+        ].join('\n') + '\n');
+
+        const now = new Date();
+        const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const sinceMidnight = new Date(todayMidnight);
+        sinceMidnight.setDate(sinceMidnight.getDate() - 1);
+
+        // Capture stderr
+        const origStderr = console.error;
+        let warned = false;
+        console.error = (msg) => { if (typeof msg === 'string' && msg.includes('could not be parsed')) warned = true; };
+        try {
+            readActivityFiles(activityDir, sinceMidnight, todayMidnight);
+            assert.ok(warned, 'Should have warned about corrupt lines');
+        } finally {
+            console.error = origStderr;
+        }
+    });
+});
+
+test('readActivityFiles: sorts events by timestamp', () => {
+    withTempActivityDir((activityDir) => {
+        const dateStr = yesterday();
+        writeEvent(activityDir, dateStr, { ts: `${dateStr}T15:00:00Z`, event: 'session_end', source: 'pickle' });
+        writeEvent(activityDir, dateStr, { ts: `${dateStr}T08:00:00Z`, event: 'session_start', source: 'pickle' });
+        writeEvent(activityDir, dateStr, { ts: `${dateStr}T12:00:00Z`, event: 'commit', source: 'hook', commit_hash: 'abc1234' });
+
+        const now = new Date();
+        const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const sinceMidnight = new Date(todayMidnight);
+        sinceMidnight.setDate(sinceMidnight.getDate() - 1);
+
+        const events = readActivityFiles(activityDir, sinceMidnight, todayMidnight);
+        assert.equal(events.length, 3);
+        assert.ok(events[0].ts < events[1].ts);
+        assert.ok(events[1].ts < events[2].ts);
+    });
+});
+
+test('readActivityFiles: returns empty for nonexistent directory', () => {
+    const events = readActivityFiles('/nonexistent/path/activity', new Date(0), new Date());
+    assert.equal(events.length, 0);
+});
+
+// --- deduplicateCommits ---
+
+test('deduplicateCommits: hook commits win over git-log', () => {
+    const events = [
+        { ts: '2026-02-26T10:00:00Z', event: 'commit', source: 'hook', commit_hash: 'abc1234', commit_message: 'fix: thing' },
+        { ts: '2026-02-26T11:00:00Z', event: 'session_start', source: 'pickle' },
+    ];
+    const gitCommits = new Map([
+        ['abc1234', 'fix: thing'],
+        ['def5678', 'feat: other'],
+    ]);
+
+    const { hookCommits, gitOnlyCommits } = deduplicateCommits(events, gitCommits);
+    assert.equal(hookCommits.length, 1);
+    assert.equal(hookCommits[0].commit_hash, 'abc1234');
+    assert.equal(gitOnlyCommits.length, 1);
+    assert.equal(gitOnlyCommits[0][0], 'def5678');
+});
+
+test('deduplicateCommits: short hash prefix matching', () => {
+    const events = [
+        { ts: '2026-02-26T10:00:00Z', event: 'commit', source: 'hook', commit_hash: 'abc1234567890' },
+    ];
+    const gitCommits = new Map([
+        ['abc1234', 'fix: thing'], // short hash from --oneline
+    ]);
+
+    const { hookCommits, gitOnlyCommits } = deduplicateCommits(events, gitCommits);
+    assert.equal(hookCommits.length, 1);
+    assert.equal(gitOnlyCommits.length, 0, 'Short hash should match long hash prefix');
+});
+
+test('deduplicateCommits: empty git commits', () => {
+    const events = [
+        { ts: '2026-02-26T10:00:00Z', event: 'commit', source: 'hook', commit_hash: 'abc1234' },
+    ];
+    const gitCommits = new Map();
+
+    const { hookCommits, gitOnlyCommits } = deduplicateCommits(events, gitCommits);
+    assert.equal(hookCommits.length, 1);
+    assert.equal(gitOnlyCommits.length, 0);
+});
+
+test('deduplicateCommits: no commit events', () => {
+    const events = [
+        { ts: '2026-02-26T10:00:00Z', event: 'session_start', source: 'pickle' },
+    ];
+    const gitCommits = new Map([['def5678', 'feat: something']]);
+
+    const { hookCommits, gitOnlyCommits } = deduplicateCommits(events, gitCommits);
+    assert.equal(hookCommits.length, 0);
+    assert.equal(gitOnlyCommits.length, 1);
+});
+
+// --- formatOutput ---
+
+test('formatOutput: empty range shows no activity message', () => {
+    const since = new Date('2026-02-26');
+    const until = new Date('2026-02-27');
+    const output = formatOutput([], [], [], since, until);
+    assert.match(output, /No activity found/);
+    assert.match(output, /2026-02-26/);
+});
+
+test('formatOutput: groups events by session', () => {
+    const events = [
+        { ts: '2026-02-26T10:00:00Z', event: 'session_start', source: 'pickle', session: 'my-session' },
+        { ts: '2026-02-26T11:00:00Z', event: 'ticket_completed', source: 'pickle', session: 'my-session', ticket: 'abc' },
+    ];
+    const output = formatOutput(events, [], [], new Date('2026-02-26'), new Date('2026-02-27'));
+    assert.match(output, /## Sessions/);
+    assert.match(output, /### my-session/);
+    assert.match(output, /session_start/);
+    assert.match(output, /ticket_completed/);
+});
+
+test('formatOutput: ad-hoc events in separate section', () => {
+    const events = [
+        { ts: '2026-02-26T14:00:00Z', event: 'feature', source: 'persona', title: 'Did a thing' },
+    ];
+    const output = formatOutput(events, [], [], new Date('2026-02-26'), new Date('2026-02-27'));
+    assert.match(output, /## Ad-hoc Activity/);
+    assert.match(output, /Did a thing/);
+});
+
+test('formatOutput: commits section with hook and git-only', () => {
+    const hookCommits = [
+        { ts: '2026-02-26T10:00:00Z', event: 'commit', source: 'hook', commit_hash: 'abc1234567', commit_message: 'fix: bug' },
+    ];
+    const gitOnly = [['def5678', 'feat: new thing']];
+    const output = formatOutput([], hookCommits, gitOnly, new Date('2026-02-26'), new Date('2026-02-27'));
+    assert.match(output, /## Commits/);
+    assert.match(output, /abc1234/);
+    assert.match(output, /fix: bug/);
+    assert.match(output, /def5678/);
+    assert.match(output, /feat: new thing/);
+});
+
+test('formatOutput: commit with no message shows fallback', () => {
+    const hookCommits = [
+        { ts: '2026-02-26T10:00:00Z', event: 'commit', source: 'hook', commit_hash: 'abc1234567' },
+    ];
+    const output = formatOutput([], hookCommits, [], new Date('2026-02-26'), new Date('2026-02-27'));
+    assert.match(output, /\(no message\)/);
+});
+
+// --- getGitCommits ---
+
+test('getGitCommits: returns a Map (may be empty in test env)', () => {
+    const commits = getGitCommits(new Date('2020-01-01'));
+    assert.ok(commits instanceof Map);
+});
+
+// --- Full CLI integration ---
+
+test('CLI: default run produces output', () => {
+    withTempActivityDir((activityDir, extRoot) => {
+        const dateStr = yesterday();
+        writeEvent(activityDir, dateStr, { ts: `${dateStr}T10:00:00Z`, event: 'session_start', source: 'pickle', session: 'test-sess' });
+        writeEvent(activityDir, dateStr, { ts: `${dateStr}T11:00:00Z`, event: 'commit', source: 'hook', commit_hash: 'aaa1111', commit_message: 'fix: test' });
+
+        const result = runCli([], { EXTENSION_DIR: extRoot });
+        assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+        assert.match(result.stdout, /Standup/);
+        assert.match(result.stdout, /test-sess/);
+        assert.match(result.stdout, /aaa1111/);
+    });
+});
+
+test('CLI: --days 0 shows today events', () => {
+    withTempActivityDir((activityDir, extRoot) => {
+        const todayStr = today();
+        writeEvent(activityDir, todayStr, { ts: `${todayStr}T09:00:00Z`, event: 'feature', source: 'persona', title: 'morning work' });
+
+        const result = runCli(['--days', '0'], { EXTENSION_DIR: extRoot });
+        assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+        assert.match(result.stdout, /morning work/);
+    });
+});
+
+test('CLI: empty range shows no activity', () => {
+    withTempActivityDir((_activityDir, extRoot) => {
+        // Run from temp dir (not a git repo) so git log returns nothing
+        const result = spawnSync(process.execPath, [CLI_PATH, '--since', '2026-02-20'], {
+            encoding: 'utf-8',
+            timeout: 10000,
+            env: { ...process.env, EXTENSION_DIR: extRoot },
+            cwd: extRoot,
+        });
+        assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+        assert.match(result.stdout, /No activity found/);
+    });
+});
+
+test('CLI: --days 3 includes events from 3 days ago', () => {
+    withTempActivityDir((activityDir, extRoot) => {
+        const threeDaysAgoStr = daysAgo(3);
+        const twoDaysAgoStr = daysAgo(2);
+        const fourDaysAgoStr = daysAgo(4);
+        writeEvent(activityDir, threeDaysAgoStr, { ts: `${threeDaysAgoStr}T10:00:00Z`, event: 'feature', source: 'persona', title: 'three days' });
+        writeEvent(activityDir, twoDaysAgoStr, { ts: `${twoDaysAgoStr}T10:00:00Z`, event: 'feature', source: 'persona', title: 'two days' });
+        writeEvent(activityDir, fourDaysAgoStr, { ts: `${fourDaysAgoStr}T10:00:00Z`, event: 'feature', source: 'persona', title: 'four days' });
+
+        const result = runCli(['--days', '3'], { EXTENSION_DIR: extRoot });
+        assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+        assert.match(result.stdout, /three days/);
+        assert.match(result.stdout, /two days/);
+        assert.ok(!result.stdout.includes('four days'), 'Should not include 4 days ago');
+    });
+});
