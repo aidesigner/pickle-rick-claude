@@ -521,6 +521,17 @@ test('classifyCompletion: tolerates whitespace in tokens', () => {
     assert.equal(classifyCompletion('<promise> TASK_COMPLETED </promise>'), 'task_completed');
 });
 
+test('classifyCompletion: matches TASK_COMPLETED inside stream-json line', () => {
+    // stream-json wraps assistant output in JSON — token appears inside a string value
+    const streamJsonLine = JSON.stringify({
+        type: 'assistant',
+        message: {
+            content: [{ type: 'text', text: 'All done!\n<promise>TASK_COMPLETED</promise>' }],
+        },
+    });
+    assert.equal(classifyCompletion(streamJsonLine), 'task_completed');
+});
+
 // --- Notification logic (buildTmuxNotification) ---
 
 test('buildTmuxNotification: success shows "Complete" with elapsed time', () => {

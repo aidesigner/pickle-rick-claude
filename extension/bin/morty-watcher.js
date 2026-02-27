@@ -2,6 +2,68 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { Style, sleep, drainLog } from '../services/pickle-utils.js';
+const ARTIFACT_IGNORE = new Set(['state.json']);
+const ARTIFACT_RECENCY_MS = 30000;
+/**
+ * Classifies an artifact filename into a progress category.
+ */
+export function classifyArtifact(fileName) {
+    if (fileName.startsWith('research_') || fileName.startsWith('analysis_'))
+        return '📖 Researching...';
+    if (fileName.startsWith('plan_'))
+        return '📐 Planning...';
+    return '🔨 Implementing...';
+}
+/**
+ * Scans ticket directories for recently created files (within 30s)
+ * that aren't state.json or log files. Used as a fallback when
+ * no worker logs exist (inline-processed tickets).
+ */
+export function discoverArtifacts(sessionDir, seenArtifacts) {
+    const now = Date.now();
+    const results = [];
+    try {
+        for (const dir of fs.readdirSync(sessionDir)) {
+            const dirPath = path.join(sessionDir, dir);
+            let stat;
+            try {
+                stat = fs.lstatSync(dirPath);
+            }
+            catch {
+                continue;
+            }
+            if (!stat.isDirectory())
+                continue;
+            try {
+                for (const file of fs.readdirSync(dirPath)) {
+                    if (ARTIFACT_IGNORE.has(file) || file.endsWith('.log'))
+                        continue;
+                    const filePath = path.join(dirPath, file);
+                    if (seenArtifacts.has(filePath))
+                        continue;
+                    let fileStat;
+                    try {
+                        fileStat = fs.lstatSync(filePath);
+                    }
+                    catch {
+                        continue;
+                    }
+                    if (!fileStat.isFile())
+                        continue;
+                    if (now - fileStat.mtimeMs > ARTIFACT_RECENCY_MS)
+                        continue;
+                    seenArtifacts.add(filePath);
+                    results.push({ ticketId: dir, filePath, fileName: file });
+                }
+            }
+            catch {
+                continue;
+            }
+        }
+    }
+    catch { /* ignore */ }
+    return results;
+}
 function discoverWorkerLogs(sessionDir) {
     try {
         const entries = [];
@@ -59,18 +121,33 @@ async function main() {
     let currentLog = null;
     let currentTicket = null;
     let offset = 0;
+    const seenArtifacts = new Set();
     while (true) {
         const logs = discoverWorkerLogs(sessionDir);
         if (logs.length === 0) {
-            try {
-                const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
-                if (state.active !== true) {
-                    process.stdout.write(`\n${sep()}\n${g}🥒 Session complete (no worker logs).${r}\n`);
-                    break;
+            // Fallback: check for artifacts from inline-processed tickets
+            const artifacts = discoverArtifacts(sessionDir, seenArtifacts);
+            if (artifacts.length > 0) {
+                for (const art of artifacts) {
+                    const label = classifyArtifact(art.fileName);
+                    if (art.ticketId !== currentTicket) {
+                        currentTicket = art.ticketId;
+                        process.stdout.write(`\n${sep()}\n${b}${c}Ticket: ${art.ticketId}${r}\n${sep()}\n`);
+                    }
+                    process.stdout.write(`  ${label} ${d}${art.fileName}${r}\n`);
                 }
             }
-            catch { /* ignore */ }
-            process.stdout.write(`\r${d}Waiting for first worker log...${r}\x1b[K`);
+            else {
+                try {
+                    const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+                    if (state.active !== true) {
+                        process.stdout.write(`\n${sep()}\n${g}🥒 Session complete (no worker logs).${r}\n`);
+                        break;
+                    }
+                }
+                catch { /* ignore */ }
+                process.stdout.write(`\r${d}Waiting for worker activity...${r}\x1b[K`);
+            }
             await sleep(1000);
             continue;
         }

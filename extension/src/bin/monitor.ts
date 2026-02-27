@@ -4,6 +4,49 @@ import * as path from 'path';
 import { collectTickets, statusSymbol, formatTime, getWidth, Style, sleep } from '../services/pickle-utils.js';
 import { State } from '../types/index.js';
 
+/**
+ * Extracts a short readable summary from a stream-json log line.
+ * Returns the original line (sans ANSI) if it's not valid JSON.
+ */
+export function summarizeLine(raw: string): string {
+  const clean = raw.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').trim();
+  if (!clean) return '';
+  let parsed: Record<string, unknown>;
+  try {
+    parsed = JSON.parse(clean);
+  } catch {
+    return clean;
+  }
+  if (typeof parsed !== 'object' || parsed === null) return clean;
+
+  const type = parsed.type;
+
+  if (type === 'assistant') {
+    const msg = parsed.message as Record<string, unknown> | undefined;
+    if (!msg || !Array.isArray(msg.content)) return '';
+    const parts: string[] = [];
+    for (const block of msg.content) {
+      if (typeof block !== 'object' || block === null) continue;
+      const b = block as Record<string, unknown>;
+      if (b.type === 'text' && typeof b.text === 'string') {
+        const first = (b.text as string).split('\n')[0].trim();
+        if (first) parts.push(first);
+      } else if (b.type === 'tool_use' && typeof b.name === 'string') {
+        parts.push(`🔧 ${b.name}`);
+      }
+    }
+    return parts.join(' | ') || '';
+  }
+  if (type === 'result') {
+    const isError = typeof parsed.subtype === 'string' && (parsed.subtype as string).startsWith('error');
+    return isError ? `❌ ${parsed.subtype}` : '✅ success';
+  }
+  if (type === 'system' && parsed.subtype === 'init') {
+    return `🚀 init (${typeof parsed.model === 'string' ? parsed.model : 'unknown'})`;
+  }
+  return '';
+}
+
 function render(sessionDir: string): boolean {
   // If the session directory itself is gone, signal exit (not just "waiting")
   if (!fs.existsSync(sessionDir)) return false;
@@ -85,14 +128,16 @@ function render(sessionDir: string): boolean {
       });
     if (logs.length > 0) {
       const latestLog = fs.readFileSync(path.join(sessionDir, logs[logs.length - 1]), 'utf-8');
-      const cleanLines = latestLog
-        .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
+      const summaryLines = latestLog
         .split('\n')
         .filter((l) => l.trim())
+        .slice(-10)
+        .map(summarizeLine)
+        .filter((l) => l.length > 0)
         .slice(-5);
-      if (cleanLines.length > 0) {
+      if (summaryLines.length > 0) {
         out.push(`\n${sep}\n${d}Recent output:${r}\n`);
-        for (const logLine of cleanLines) {
+        for (const logLine of summaryLines) {
           const truncated =
             logLine.length > width - 2 ? logLine.slice(0, width - 5) + '…' : logLine;
           out.push(`${d}  ${truncated}${r}\n`);

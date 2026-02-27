@@ -102,6 +102,7 @@ async function runIteration(sessionDir: string, iterationNum: number, extensionR
     '--add-dir', extensionRoot,
     '--add-dir', sessionDir,
     '--no-session-persistence',
+    '--output-format', 'stream-json',
     '--max-turns', String(maxTurns),
     '-p', managerPrompt,
   ];
