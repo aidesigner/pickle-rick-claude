@@ -182,6 +182,77 @@ test('setup: new session with max_time=0 shows ∞ in panel output', () => {
     }
 });
 
+// ---------------------------------------------------------------------------
+// --chain-meeseeks flag
+// ---------------------------------------------------------------------------
+
+test('setup: --chain-meeseeks sets chain_meeseeks: true in state.json', () => {
+    const sessionPath = runSetup(['--tmux', '--chain-meeseeks', '--task', 'chain-test']);
+    try {
+        const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+        assert.equal(state.chain_meeseeks, true);
+    } finally {
+        cleanup(sessionPath);
+    }
+});
+
+test('setup: without --chain-meeseeks, chain_meeseeks is false in state.json', () => {
+    const sessionPath = runSetup(['--task', 'no-chain-test']);
+    try {
+        const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+        assert.equal(state.chain_meeseeks, false);
+    } finally {
+        cleanup(sessionPath);
+    }
+});
+
+test('setup: --resume with --chain-meeseeks propagates to state.json', () => {
+    const sessionPath = runSetup(['--paused', '--task', 'chain-resume-test']);
+    try {
+        const statePath = path.join(sessionPath, 'state.json');
+        let state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(state.chain_meeseeks, false, 'initial session should not have chain_meeseeks');
+
+        runSetup(['--resume', sessionPath, '--tmux', '--chain-meeseeks']);
+        state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(state.chain_meeseeks, true, 'resume with --chain-meeseeks must set chain_meeseeks: true');
+    } finally {
+        cleanup(sessionPath);
+    }
+});
+
+test('setup: --resume without --chain-meeseeks preserves existing chain_meeseeks in state', () => {
+    // Create a session WITH --chain-meeseeks
+    const sessionPath = runSetup(['--tmux', '--chain-meeseeks', '--task', 'preserve-chain-test']);
+    try {
+        const statePath = path.join(sessionPath, 'state.json');
+        let state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(state.chain_meeseeks, true, 'initial session should have chain_meeseeks: true');
+
+        // Resume WITHOUT --chain-meeseeks — should preserve existing true
+        runSetup(['--resume', sessionPath, '--tmux']);
+        state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(state.chain_meeseeks, true, 'resume without --chain-meeseeks must preserve existing chain_meeseeks: true');
+    } finally {
+        cleanup(sessionPath);
+    }
+});
+
+test('setup: --resume syncs chain_meeseeks from state for display', () => {
+    // Create a session WITH --chain-meeseeks
+    const sessionPath = runSetup(['--tmux', '--chain-meeseeks', '--task', 'display-sync-test']);
+    try {
+        // Resume WITHOUT --chain-meeseeks — output should still show "Chain Meeseeks"
+        const output = execFileSync(process.execPath, [SETUP, '--resume', sessionPath, '--tmux'], {
+            encoding: 'utf-8',
+            env: { ...process.env, FORCE_COLOR: '0' },
+        });
+        assert.ok(output.includes('Chain Meeseeks'), 'resume should show Chain Meeseeks from stored state');
+    } finally {
+        cleanup(sessionPath);
+    }
+});
+
 test('setup: --resume with explicit flag overrides stored limit', () => {
     // Create a session with default limits
     const sessionPath = runSetup(['--task', 'resume-override-test']);

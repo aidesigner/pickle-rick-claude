@@ -11,12 +11,13 @@ Your goal: take an existing PRD and transform it into a battle-hardened, gap-fre
 
 ## Step 0: Parse Flags
 
-Before doing anything, scan `$ARGUMENTS` for the `--run` flag:
+Before doing anything, scan `$ARGUMENTS` for flags:
 
 - If `$ARGUMENTS` contains `--run`, set `AUTO_RUN=true` and strip `--run` from the arguments.
-- Otherwise, set `AUTO_RUN=false`.
+- If `$ARGUMENTS` contains `--meeseeks`, set `CHAIN_MEESEEKS=true` and strip `--meeseeks` from the arguments. **`--meeseeks` implies `--run`** — also set `AUTO_RUN=true`.
+- Otherwise, set `AUTO_RUN=false` and `CHAIN_MEESEEKS=false`.
 
-Store the remaining text (after stripping `--run`) as `${TASK_ARGS}`. Use `${TASK_ARGS}` — NOT the raw `$ARGUMENTS` — in all subsequent steps.
+Store the remaining text (after stripping flags) as `${TASK_ARGS}`. Use `${TASK_ARGS}` — NOT the raw `$ARGUMENTS` — in all subsequent steps.
 
 ---
 
@@ -24,7 +25,9 @@ Store the remaining text (after stripping `--run`) as `${TASK_ARGS}`. Use `${TAS
 
 First, announce: "Locating the PRD. *Belch*. Let's see what kind of mess we're dealing with."
 
-If `AUTO_RUN=true`, also announce: "And we're going straight to tmux after this. No limits. No mercy."
+If `AUTO_RUN=true` and `CHAIN_MEESEEKS=false`, also announce: "And we're going straight to tmux after this. No limits. No mercy."
+
+If `CHAIN_MEESEEKS=true`, also announce: "And we're going straight to tmux after this. No limits. No mercy. AND when the tickets are done, Mr. Meeseeks takes over for review passes. Full pipeline. *Belch* One command to rule them all."
 
 Check for the PRD in this priority order:
 
@@ -466,6 +469,11 @@ If tmux is not installed, print: "tmux is not installed. Run `brew install tmux`
 node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --resume "${SESSION_ROOT}" --max-iterations 0 --max-time 0
 ```
 
+If `CHAIN_MEESEEKS=true`, append `--chain-meeseeks` to the command above:
+```bash
+node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --resume "${SESSION_ROOT}" --max-iterations 0 --max-time 0 --chain-meeseeks
+```
+
 Read the output for the SESSION_ROOT path (line starting with `SESSION_ROOT=`). Also record the `working_dir` (the project cwd).
 
 ### 10c: Create tmux Session
@@ -509,6 +517,7 @@ Print ALL of the following:
 
 - tmux session name: `<session-name>`
 - **No iteration limit. No time limit.** Runs until all tickets complete or you cancel.
+- If `CHAIN_MEESEEKS=true`: **Meeseeks chaining enabled.** After all tickets complete, the session will automatically transition to Meeseeks review mode (min 10 passes, max 50 passes) for code cleanup.
 - Attach to session: `tmux attach -t <session-name>`
   - **Lands on Window 1 "monitor"** (3-pane layout — this is the main display):
     - Top-left pane: live ticket dashboard (phase, iteration, ticket status)

@@ -489,7 +489,7 @@ test('tmux-runner: creates tmux-runner.log in session directory', () => {
 
 // --- Completion classification (classifyCompletion) ---
 
-import { buildTmuxNotification, classifyCompletion } from '../bin/tmux-runner.js';
+import { buildTmuxNotification, classifyCompletion, transitionToMeeseeks } from '../bin/tmux-runner.js';
 
 test('classifyCompletion: TASK_COMPLETED returns task_completed', () => {
     assert.equal(classifyCompletion('<promise>TASK_COMPLETED</promise>'), 'task_completed');
@@ -553,4 +553,118 @@ test('buildTmuxNotification: stall shows "Failed" with phase', () => {
     const n = buildTmuxNotification('stall', 'implement', 7, 900);
     assert.equal(n.title, '🥒 Pickle Run Failed');
     assert.ok(n.subtitle.includes('Exit: stall'), `Expected "Exit: stall" subtitle, got: ${n.subtitle}`);
+});
+
+// ---------------------------------------------------------------------------
+// transitionToMeeseeks
+// ---------------------------------------------------------------------------
+
+function makeState(overrides = {}) {
+    return {
+        active: true,
+        working_dir: '/tmp/test',
+        step: 'implement',
+        iteration: 5,
+        max_iterations: 100,
+        max_time_minutes: 720,
+        worker_timeout_seconds: 1200,
+        start_time_epoch: 1700000000,
+        completion_promise: null,
+        original_prompt: 'test task',
+        current_ticket: 'abc123',
+        history: [{ step: 'implement', ticket: 'abc123', timestamp: '2025-01-01T00:00:00Z' }],
+        started_at: '2025-01-01T00:00:00Z',
+        session_dir: '/tmp/test-session',
+        tmux_mode: true,
+        min_iterations: 0,
+        command_template: 'pickle.md',
+        chain_meeseeks: true,
+        ...overrides,
+    };
+}
+
+test('transitionToMeeseeks: uses default min/max when no settings file', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-')));
+    try {
+        const state = makeState();
+        const result = transitionToMeeseeks(state, fakeRoot);
+
+        assert.equal(result.chain_meeseeks, false);
+        assert.equal(result.command_template, 'meeseeks.md');
+        assert.equal(result.min_iterations, 10);
+        assert.equal(result.max_iterations, 50);
+        assert.equal(result.iteration, 0);
+        assert.equal(result.step, 'review');
+        assert.equal(result.current_ticket, null);
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
+});
+
+test('transitionToMeeseeks: reads custom values from pickle_settings.json', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-')));
+    try {
+        fs.writeFileSync(path.join(fakeRoot, 'pickle_settings.json'), JSON.stringify({
+            default_meeseeks_min_passes: 15,
+            default_meeseeks_max_passes: 75,
+        }));
+        const result = transitionToMeeseeks(makeState(), fakeRoot);
+        assert.equal(result.min_iterations, 15);
+        assert.equal(result.max_iterations, 75);
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
+});
+
+test('transitionToMeeseeks: non-number settings fall back to defaults', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-')));
+    try {
+        fs.writeFileSync(path.join(fakeRoot, 'pickle_settings.json'), JSON.stringify({
+            default_meeseeks_min_passes: 'not-a-number',
+            default_meeseeks_max_passes: null,
+        }));
+        const result = transitionToMeeseeks(makeState(), fakeRoot);
+        assert.equal(result.min_iterations, 10);
+        assert.equal(result.max_iterations, 50);
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
+});
+
+test('transitionToMeeseeks: zero/negative settings fall back to defaults', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-')));
+    try {
+        fs.writeFileSync(path.join(fakeRoot, 'pickle_settings.json'), JSON.stringify({
+            default_meeseeks_min_passes: 0,
+            default_meeseeks_max_passes: -5,
+        }));
+        const result = transitionToMeeseeks(makeState(), fakeRoot);
+        assert.equal(result.min_iterations, 10);
+        assert.equal(result.max_iterations, 50);
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
+});
+
+test('transitionToMeeseeks: preserves non-transitioned state fields', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-')));
+    try {
+        const state = makeState({
+            working_dir: '/my/project',
+            start_time_epoch: 1700000000,
+            original_prompt: 'build the thing',
+            session_dir: '/sessions/abc',
+            tmux_mode: true,
+            active: true,
+        });
+        const result = transitionToMeeseeks(state, fakeRoot);
+        assert.equal(result.working_dir, '/my/project');
+        assert.equal(result.start_time_epoch, 1700000000);
+        assert.equal(result.original_prompt, 'build the thing');
+        assert.equal(result.session_dir, '/sessions/abc');
+        assert.equal(result.tmux_mode, true);
+        assert.equal(result.active, true);
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
 });

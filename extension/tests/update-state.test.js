@@ -201,6 +201,24 @@ test('updateState: step "review" is valid', () => {
 // CLI guard: sessionDir flag validation (deep review pass 12)
 // ---------------------------------------------------------------------------
 
+test('updateState: boolean key "chain_meeseeks" with "true" stores boolean true', () => {
+    withTempSession({ active: true, step: 'prd', iteration: 0 }, (dir) => {
+        updateState('chain_meeseeks', 'true', dir);
+        const state = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf-8'));
+        assert.strictEqual(state.chain_meeseeks, true);
+        assert.strictEqual(typeof state.chain_meeseeks, 'boolean');
+    });
+});
+
+test('updateState: boolean key "chain_meeseeks" with "false" stores boolean false', () => {
+    withTempSession({ active: true, step: 'prd', chain_meeseeks: true }, (dir) => {
+        updateState('chain_meeseeks', 'false', dir);
+        const state = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf-8'));
+        assert.strictEqual(state.chain_meeseeks, false);
+        assert.strictEqual(typeof state.chain_meeseeks, 'boolean');
+    });
+});
+
 test('updateState CLI: exits 1 when sessionDir starts with --', () => {
     const updateStatePath = path.resolve(
         path.dirname(new URL(import.meta.url).pathname),

@@ -61,6 +61,7 @@ async function main() {
   let tmuxMode = false;
   let minIterations = 0;
   let commandTemplate: string | undefined = undefined;
+  let chainMeeseeks = false;
   const taskArgs: string[] = [];
   const explicitFlags = new Set<string>();
 
@@ -129,6 +130,8 @@ async function main() {
       if (v.includes('/') || v.includes('\\') || v.includes('..')) die('--command-template must be a plain filename');
       commandTemplate = v;
       explicitFlags.add('command-template');
+    } else if (arg === '--chain-meeseeks') {
+      chainMeeseeks = true;
     } else if (arg === '-s' || arg === '--session-id') {
       // Ignore legacy session-id flag; consume the next arg if it's not a flag
       if (args[i + 1] && !args[i + 1].startsWith('--')) {
@@ -184,6 +187,7 @@ async function main() {
     // Propagate tmux mode on resume — needed when transitioning a paused/non-tmux
     // session into tmux mode (e.g. /pickle-refine-prd --run).
     if (tmuxMode) state.tmux_mode = true;
+    if (chainMeeseeks) state.chain_meeseeks = true;
 
     // Sync local vars with (potentially preserved) state for display — coerce
     // to Number to guard against string-typed values from external edits / old state.
@@ -199,6 +203,7 @@ async function main() {
     const rawMinIter = Number(state.min_iterations);
     minIterations = Number.isFinite(rawMinIter) ? rawMinIter : 0;
     commandTemplate = state.command_template;
+    chainMeeseeks = state.chain_meeseeks === true;
 
     writeStateFile(statePath, state);
     currentIteration = (Number(state.iteration) || 0) + 1;
@@ -238,6 +243,7 @@ async function main() {
       tmux_mode: tmuxMode,
       min_iterations: minIterations,
       command_template: commandTemplate,
+      chain_meeseeks: chainMeeseeks,
     };
 
     writeStateFile(path.join(fullSessionPath, 'state.json'), state);
@@ -255,6 +261,7 @@ async function main() {
       Promise: promiseToken || 'None',
       ...(minIterations > 0 ? { 'Min Passes': minIterations } : {}),
       ...(commandTemplate ? { Template: commandTemplate } : {}),
+      ...(chainMeeseeks ? { 'Chain Meeseeks': 'Yes' } : {}),
       Extension: ROOT_DIR,
       Path: fullSessionPath,
     },

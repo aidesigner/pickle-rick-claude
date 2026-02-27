@@ -16,6 +16,7 @@ export interface State {
   tmux_mode?: boolean;
   min_iterations?: number;
   command_template?: string;
+  chain_meeseeks?: boolean;
 }
 
 export interface HookInput {

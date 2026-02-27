@@ -22,6 +22,35 @@ export function classifyCompletion(output) {
     }
     return 'continue';
 }
+/**
+ * Transitions a session from ticket-execution mode to Meeseeks review mode.
+ * Pure function — returns a new state object without side effects.
+ */
+export function transitionToMeeseeks(state, extensionRoot) {
+    let minPasses = 10;
+    let maxPasses = 50;
+    const settingsPath = path.join(extensionRoot, 'pickle_settings.json');
+    try {
+        const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+        const rawMin = Number(settings.default_meeseeks_min_passes);
+        if (Number.isFinite(rawMin) && rawMin > 0)
+            minPasses = rawMin;
+        const rawMax = Number(settings.default_meeseeks_max_passes);
+        if (Number.isFinite(rawMax) && rawMax > 0)
+            maxPasses = rawMax;
+    }
+    catch { /* use defaults */ }
+    return {
+        ...state,
+        chain_meeseeks: false,
+        command_template: 'meeseeks.md',
+        min_iterations: minPasses,
+        max_iterations: maxPasses,
+        iteration: 0,
+        step: 'review',
+        current_ticket: null,
+    };
+}
 async function runIteration(sessionDir, iterationNum, extensionRoot) {
     const statePath = path.join(sessionDir, 'state.json');
     let state;
@@ -235,7 +264,25 @@ async function main() {
         log(`--- Iteration ${iteration} (state.iteration=${state.iteration}) ---`);
         const result = await runIteration(sessionDir, iteration, extensionRoot);
         if (result === 'task_completed') {
-            // EPIC_COMPLETED / TASK_COMPLETED — task is genuinely done, no min_iterations gate
+            // EPIC_COMPLETED / TASK_COMPLETED — check for meeseeks chain before exiting
+            let curState;
+            try {
+                curState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                log(`ERROR: Cannot read state.json after task_completed: ${msg}. Exiting.`);
+                exitReason = 'success';
+                break;
+            }
+            if (curState.chain_meeseeks === true) {
+                const newState = transitionToMeeseeks(curState, extensionRoot);
+                writeStateFile(statePath, newState);
+                lastStateIteration = -1;
+                stallCount = 0;
+                log('Transitioning to Meeseeks review mode (chain_meeseeks). Continuing loop.');
+                continue;
+            }
             log('Task completed. Exiting loop.');
             exitReason = 'success';
             break;
