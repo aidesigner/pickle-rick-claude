@@ -63,53 +63,7 @@ Minimum 10 passes. Maximum 50. Each pass runs tests first, then reviews with esc
 
 ---
 
-## 💥 Project Mayhem — Chaos Engineering
-
-> *"You want to know how tough your code is, Morty? You break it. On purpose. Scientifically."*
-
-`/project-mayhem` is a standalone chaos engineering command that stress-tests any project through three modules — **mutation testing**, **dependency downgrades**, and **config corruption** — then produces a comprehensive markdown report with a single Chaos Score. It's non-destructive (every mutation is reverted immediately), language-agnostic (auto-detects Node, Rust, Python, Go, JVM, Make), and requires only a clean git state.
-
-```bash
-/project-mayhem                              # Run all 3 modules (auto-detect everything)
-/project-mayhem --mutation-only              # Just mutation testing
-/project-mayhem --deps-only --config-only    # Skip mutations, run deps + config
-/project-mayhem --max-mutations 10           # Cap mutation attempts at 10
-/project-mayhem --test-cmd "pytest -x"       # Override auto-detected test command
-```
-
-### How It Works
-
-Every module follows the same **Chaos Cycle**: read original → apply one mutation → run tests → record result → `git checkout` revert → verify revert. One mutation at a time, always reverted, always verified.
-
-**Module 1 — Mutation Testing**: Finds high-value mutation sites in your source code (conditionals, comparisons, boolean literals, guard clauses, error handlers) and applies operators like boolean flip, comparison inversion, boundary shift, operator swap, condition negation, guard removal, and empty catch. If tests still pass after a mutation (a "survivor"), that's a test coverage gap. Survivors are severity-rated: Critical (auth/security/validation), High (business logic), Medium (utilities), Low (display/logging).
-
-**Module 2 — Dependency Armageddon**: Selects 5-10 key direct dependencies — prioritizing the most imported, foundational, and security-sensitive — and downgrades each to the previous major version one at a time. Tracks install failures, test breakages (with error messages), and backward-compatible deps. Also runs a phantom dependency check to find imports that work by accident via transitive dependencies.
-
-**Module 3 — Config Resilience**: Discovers runtime config files (JSON, YAML, .env, INI — excluding build tooling), then applies corruption strategies: truncation (50%), empty file, missing keys, wrong types, prototype pollution payloads (`__proto__`), and invalid syntax. Tests whether the app handles each corruption gracefully or crashes.
-
-### The Report
-
-After all modules run, a `project_mayhem_report.md` is written to the project root with:
-
-- **Chaos Score** (0–100): weighted average — Mutation 50%, Deps 25%, Config 25%
-- **Mutation survivors table**: file:line, operator, original → mutated, severity
-- **Dependency breakages**: package, version tested, error summary
-- **Phantom dependencies**: imports not declared in the manifest
-- **Config crashes**: file, corruption strategy, exit code, error
-- **Prioritized recommendations**: what to fix first based on severity
-
-### Safety Guarantees
-
-- Requires clean git state — refuses to run with uncommitted changes
-- Records `HEAD` SHA before starting, verifies it hasn't changed at the end
-- Every individual mutation is reverted immediately via `git checkout -- <file>`
-- Dependency downgrades restore the original lockfile + re-install after each test
-- Final verification: `git diff` must be empty, tests must pass
-- On any error: `git checkout .` + restore deps before reporting
-
----
-
-## 🧬 What Is This?
+## 🧬 The Pickle Rick Lifecycle — PRD-Driven Autonomous Engineering
 
 Pickle Rick transforms Claude Code into a **hyper-competent, arrogant, iterative coding machine** that enforces a PRD-driven engineering lifecycle:
 
@@ -173,6 +127,52 @@ Pickle Rick transforms Claude Code into a **hyper-competent, arrogant, iterative
 ```
 
 The **Stop hook** prevents Claude from exiting until the task is genuinely complete. No half-measures. No early exits. Rick doesn't quit. Between each iteration, the hook injects a fresh session summary — current phase, ticket list, active task — so Rick always wakes up knowing exactly where he is, even after full context compression.
+
+---
+
+## 💥 Project Mayhem — Chaos Engineering
+
+> *"You want to know how tough your code is, Morty? You break it. On purpose. Scientifically."*
+
+`/project-mayhem` is a standalone chaos engineering command that stress-tests any project through three modules — **mutation testing**, **dependency downgrades**, and **config corruption** — then produces a comprehensive markdown report with a single Chaos Score. It's non-destructive (every mutation is reverted immediately), language-agnostic (auto-detects Node, Rust, Python, Go, JVM, Make), and requires only a clean git state.
+
+```bash
+/project-mayhem                              # Run all 3 modules (auto-detect everything)
+/project-mayhem --mutation-only              # Just mutation testing
+/project-mayhem --deps-only --config-only    # Skip mutations, run deps + config
+/project-mayhem --max-mutations 10           # Cap mutation attempts at 10
+/project-mayhem --test-cmd "pytest -x"       # Override auto-detected test command
+```
+
+### How It Works
+
+Every module follows the same **Chaos Cycle**: read original → apply one mutation → run tests → record result → `git checkout` revert → verify revert. One mutation at a time, always reverted, always verified.
+
+**Module 1 — Mutation Testing**: Finds high-value mutation sites in your source code (conditionals, comparisons, boolean literals, guard clauses, error handlers) and applies operators like boolean flip, comparison inversion, boundary shift, operator swap, condition negation, guard removal, and empty catch. If tests still pass after a mutation (a "survivor"), that's a test coverage gap. Survivors are severity-rated: Critical (auth/security/validation), High (business logic), Medium (utilities), Low (display/logging).
+
+**Module 2 — Dependency Armageddon**: Selects 5-10 key direct dependencies — prioritizing the most imported, foundational, and security-sensitive — and downgrades each to the previous major version one at a time. Tracks install failures, test breakages (with error messages), and backward-compatible deps. Also runs a phantom dependency check to find imports that work by accident via transitive dependencies.
+
+**Module 3 — Config Resilience**: Discovers runtime config files (JSON, YAML, .env, INI — excluding build tooling), then applies corruption strategies: truncation (50%), empty file, missing keys, wrong types, prototype pollution payloads (`__proto__`), and invalid syntax. Tests whether the app handles each corruption gracefully or crashes.
+
+### The Report
+
+After all modules run, a `project_mayhem_report.md` is written to the project root with:
+
+- **Chaos Score** (0–100): weighted average — Mutation 50%, Deps 25%, Config 25%
+- **Mutation survivors table**: file:line, operator, original → mutated, severity
+- **Dependency breakages**: package, version tested, error summary
+- **Phantom dependencies**: imports not declared in the manifest
+- **Config crashes**: file, corruption strategy, exit code, error
+- **Prioritized recommendations**: what to fix first based on severity
+
+### Safety Guarantees
+
+- Requires clean git state — refuses to run with uncommitted changes
+- Records `HEAD` SHA before starting, verifies it hasn't changed at the end
+- Every individual mutation is reverted immediately via `git checkout -- <file>`
+- Dependency downgrades restore the original lockfile + re-install after each test
+- Final verification: `git diff` must be empty, tests must pass
+- On any error: `git checkout .` + restore deps before reporting
 
 ---
 
