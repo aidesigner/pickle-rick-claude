@@ -287,22 +287,20 @@ Sit back. Rick handles the rest. 🥒
 
 **`/pickle` vs `/pickle-tmux`** — Use `/pickle` for short-to-medium epics (1–7 iterations) in interactive mode with full keyboard access. Use `/pickle-tmux` for long epics (8+ iterations) where context drift is a concern — each iteration spawns a fresh Claude subprocess with a clean context window, bridged via `handoff.txt`. Requires `tmux`.
 
-**tmux Mode — two windows** — `/pickle-tmux` creates a tmux session with two windows:
+**tmux Mode — 3-pane live monitor** — `/pickle-tmux` creates a tmux session with a background runner and a 3-pane monitor window you attach to:
 
-![tmux monitor — live dashboard + log stream](images/tmux-monitor.png)
-- **Window 0 `runner`**: raw runner output — the live `claude -p` subprocess stream
-- **Window 1 `monitor`** (default — you land here on attach): 3-pane layout
-  - **Top-left pane**: live dashboard — phase, iteration, elapsed time, all tickets with status (`[x]` done / `[~]` in progress / `[ ]` todo). Refreshes every 2 seconds.
-  - **Top-right pane**: live log stream — streams each iteration's log as it's written, with an iteration header when the runner advances. Auto-switches to each new log file.
-  - **Bottom pane**: live worker (Morty) log stream — auto-follows the latest worker session output.
+![tmux monitor — 3-pane layout: dashboard (top-left), iteration log (top-right), worker stream (bottom)](images/tmux-monitor.png)
+- **Top-left pane**: live dashboard — active ticket, phase, iteration count, elapsed time, all tickets with status (`[x]` done / `[~]` in progress / `[ ]` todo), and recent output summary. Refreshes every 2 seconds.
+- **Top-right pane**: live iteration log — streams each iteration's log as it's written, with an iteration header when the runner advances. Auto-switches to each new log file.
+- **Bottom pane**: live worker (Morty) stream — auto-follows the latest worker session output showing research, implementation, test runs, and commits in real time.
 
-The session name and attach command are printed **before the runner starts** so you can open a second terminal and attach immediately:
+The runner itself runs in a separate tmux window (Window 0). The session name and attach command are printed **before the runner starts** so you can open a second terminal and attach immediately:
 
 ```bash
 tmux attach -t <session-name>   # printed by /pickle-tmux as soon as the session is ready
-Ctrl+B 1                        # switch to monitor window
 Ctrl+B ←/↑/↓                    # switch between panes (top-left, top-right, bottom)
-Ctrl+B 0                        # switch back to runner output
+Ctrl+B 0                        # switch to raw runner output
+Ctrl+B 1                        # switch back to monitor
 Ctrl+B d                        # detach (session keeps running in background)
 ```
 
