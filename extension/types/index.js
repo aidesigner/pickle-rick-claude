@@ -25,3 +25,11 @@ export function hasToken(text, token) {
 export function wrapToken(token) {
     return `<promise>${token}</promise>`;
 }
+// ---------------------------------------------------------------------------
+// Activity Events
+// ---------------------------------------------------------------------------
+export const VALID_ACTIVITY_EVENTS = [
+    'session_start', 'session_end', 'ticket_completed', 'epic_completed',
+    'meeseeks_pass', 'commit', 'research', 'bug_fix', 'feature',
+    'refactor', 'review', 'jar_start', 'jar_end',
+];

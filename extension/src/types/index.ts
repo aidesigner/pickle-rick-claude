@@ -57,3 +57,32 @@ export function hasToken(text: string, token: string): boolean {
 export function wrapToken(token: string): string {
   return `<promise>${token}</promise>`;
 }
+
+// ---------------------------------------------------------------------------
+// Activity Events
+// ---------------------------------------------------------------------------
+
+export const VALID_ACTIVITY_EVENTS = [
+  'session_start', 'session_end', 'ticket_completed', 'epic_completed',
+  'meeseeks_pass', 'commit', 'research', 'bug_fix', 'feature',
+  'refactor', 'review', 'jar_start', 'jar_end',
+] as const;
+
+export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];
+
+export interface ActivityEvent {
+  ts: string;
+  event: ActivityEventType;
+  source: 'pickle' | 'hook' | 'persona';
+  session?: string;
+  epic?: string;
+  ticket?: string;
+  title?: string;
+  step?: string;
+  mode?: string;
+  pass?: number;
+  commit_hash?: string;
+  commit_message?: string;
+  duration_min?: number;
+  error?: string;
+}
