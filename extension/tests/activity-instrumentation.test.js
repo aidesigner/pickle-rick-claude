@@ -138,6 +138,17 @@ test('activity: refinement-worker + ANALYSIS_DONE emits NO events', () => {
   assert.equal(activityEvents.length, 0, 'refinement workers must not emit activity events');
 });
 
+test('activity: TASK_COMPLETED with null current_ticket still emits ticket_completed', () => {
+  const { activityEvents } = runHookWithActivity({
+    state: baseState({ current_ticket: null, step: 'implement' }),
+    response: '<promise>TASK_COMPLETED</promise>',
+  });
+  assert.equal(activityEvents.length, 1);
+  assert.equal(activityEvents[0].event, 'ticket_completed');
+  assert.equal(activityEvents[0].ticket, undefined, 'null current_ticket should produce undefined ticket');
+  assert.equal(activityEvents[0].step, 'implement');
+});
+
 test('activity: custom completion_promise emits NO per-token events', () => {
   const { activityEvents } = runHookWithActivity({
     state: baseState({ completion_promise: 'MY_CUSTOM' }),

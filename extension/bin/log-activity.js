@@ -15,7 +15,8 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'log-activity.js') {
         console.error('Title is required and must not start with "--".');
         process.exit(1);
     }
-    const title = rawTitle.replace(/[\n\r]/g, ' ').slice(0, 200);
+    // Strip all control characters (C0/C1) and ANSI escape sequences
+    const title = rawTitle.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').slice(0, 200);
     if (title.trim().length === 0) {
         console.error('Title must not be empty after sanitization.');
         process.exit(1);

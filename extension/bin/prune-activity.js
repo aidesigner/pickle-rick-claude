@@ -10,10 +10,9 @@ export function pruneActivity(maxAgeDays = 365) {
     const activityDir = getActivityDir();
     if (!fs.existsSync(activityDir))
         return 0;
-    const cutoff = new Date();
-    cutoff.setDate(cutoff.getDate() - maxAgeDays);
-    cutoff.setHours(0, 0, 0, 0);
-    const cutoffMs = cutoff.getTime();
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const cutoffMs = now.getTime() - maxAgeDays * 86_400_000;
     let deleted = 0;
     for (const entry of fs.readdirSync(activityDir)) {
         if (!DATE_JSONL_RE.test(entry))

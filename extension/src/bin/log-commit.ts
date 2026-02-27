@@ -2,13 +2,15 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { logActivity } from '../services/activity-logger.js';
 
-const COMMIT_CMD_RE = /\bgit\s+(commit|cherry-pick|merge)\b/;
-const COMMIT_HASH_RE = /\[[\w\/-]+\s+([a-f0-9]{7,})\]\s+(.+)/;
+const COMMIT_CMD_RE = /\bgit\s+(commit|cherry-pick|merge|rebase)\b/;
+const COMMIT_HASH_RE = /\[[^\]]*\s+([a-f0-9]{7,})\]\s+(.+)/;
 
 function main(): void {
+  const MAX_STDIN = 1024 * 1024; // 1 MB guard — truncate oversized input
   let raw = '';
   try {
     raw = fs.readFileSync(0, 'utf8');
+    if (raw.length > MAX_STDIN) raw = raw.slice(0, MAX_STDIN);
   } catch {
     process.exit(0);
   }

@@ -279,6 +279,82 @@ test('readActivityFiles: sorts events by timestamp', () => {
     });
 });
 
+test('readActivityFiles: skips oversized files (>10MB guard)', () => {
+    withTempActivityDir((activityDir) => {
+        const dateStr = yesterday();
+        const filepath = path.join(activityDir, `${dateStr}.jsonl`);
+        // Create a file that exceeds 10MB
+        const bigLine = JSON.stringify({ ts: `${dateStr}T10:00:00Z`, event: 'commit', source: 'hook', commit_hash: 'a'.repeat(100) }) + '\n';
+        const fd = fs.openSync(filepath, 'w');
+        // Write ~11MB
+        const chunk = bigLine.repeat(1000);
+        for (let i = 0; i < Math.ceil((11 * 1024 * 1024) / chunk.length); i++) {
+            fs.writeSync(fd, chunk);
+        }
+        fs.closeSync(fd);
+
+        const now = new Date();
+        const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const sinceMidnight = new Date(todayMidnight);
+        sinceMidnight.setDate(sinceMidnight.getDate() - 1);
+
+        // Capture stderr for the warning
+        const origStderr = console.error;
+        let warned = false;
+        console.error = (msg) => { if (typeof msg === 'string' && msg.includes('exceeds 10MB')) warned = true; };
+        try {
+            const events = readActivityFiles(activityDir, sinceMidnight, todayMidnight);
+            assert.equal(events.length, 0, 'Should skip oversized file');
+            assert.ok(warned, 'Should warn about oversized file');
+        } finally {
+            console.error = origStderr;
+        }
+    });
+});
+
+test('readActivityFiles: rejects events with non-string ts or event', () => {
+    withTempActivityDir((activityDir) => {
+        const dateStr = yesterday();
+        const filepath = path.join(activityDir, `${dateStr}.jsonl`);
+        fs.writeFileSync(filepath, [
+            JSON.stringify({ ts: `${dateStr}T10:00:00Z`, event: 'session_start', source: 'pickle' }),
+            JSON.stringify({ ts: 12345, event: 'session_end', source: 'pickle' }),
+            JSON.stringify({ ts: `${dateStr}T11:00:00Z`, event: null, source: 'pickle' }),
+            JSON.stringify({ ts: `${dateStr}T12:00:00Z`, event: 'commit', source: 'hook' }),
+        ].join('\n') + '\n');
+
+        const now = new Date();
+        const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const sinceMidnight = new Date(todayMidnight);
+        sinceMidnight.setDate(sinceMidnight.getDate() - 1);
+
+        const events = readActivityFiles(activityDir, sinceMidnight, todayMidnight);
+        assert.equal(events.length, 2, 'Should only accept events with string ts and event');
+        assert.equal(events[0].event, 'session_start');
+        assert.equal(events[1].event, 'commit');
+    });
+});
+
+test('readActivityFiles: ignores malformed date filenames', () => {
+    withTempActivityDir((activityDir) => {
+        // Write a file with an invalid date filename that passes the .jsonl filter
+        fs.writeFileSync(path.join(activityDir, 'not-a-date.jsonl'),
+            JSON.stringify({ ts: `${yesterday()}T10:00:00Z`, event: 'commit', source: 'hook' }) + '\n');
+        // Also write a valid file
+        const dateStr = yesterday();
+        writeEvent(activityDir, dateStr, { ts: `${dateStr}T10:00:00Z`, event: 'session_start', source: 'pickle' });
+
+        const now = new Date();
+        const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const sinceMidnight = new Date(todayMidnight);
+        sinceMidnight.setDate(sinceMidnight.getDate() - 1);
+
+        const events = readActivityFiles(activityDir, sinceMidnight, todayMidnight);
+        assert.equal(events.length, 1, 'should only read the valid-date file');
+        assert.equal(events[0].event, 'session_start');
+    });
+});
+
 test('readActivityFiles: returns empty for nonexistent directory', () => {
     const events = readActivityFiles('/nonexistent/path/activity', new Date(0), new Date());
     assert.equal(events.length, 0);
@@ -392,9 +468,30 @@ test('formatOutput: commit with no message shows fallback', () => {
 
 // --- getGitCommits ---
 
-test('getGitCommits: returns a Map (may be empty in test env)', () => {
+test('getGitCommits: returns Map with short-hash keys from real git repo', () => {
+    // We're running inside the pickle-rick-claude repo — should have real commits
     const commits = getGitCommits(new Date('2020-01-01'));
     assert.ok(commits instanceof Map);
+    if (commits.size > 0) {
+        // Verify entries have expected structure: short hash -> message
+        const [hash, msg] = commits.entries().next().value;
+        assert.ok(typeof hash === 'string' && hash.length >= 7, 'hash should be 7+ chars');
+        assert.ok(typeof msg === 'string' && msg.length > 0, 'message should be non-empty');
+    }
+});
+
+test('getGitCommits: returns empty Map when not in a git repo', () => {
+    const origDir = process.cwd();
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-standup-nogit-'));
+    try {
+        process.chdir(tmpDir);
+        const commits = getGitCommits(new Date('2020-01-01'));
+        assert.ok(commits instanceof Map);
+        assert.equal(commits.size, 0);
+    } finally {
+        process.chdir(origDir);
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
 });
 
 // --- Full CLI integration ---

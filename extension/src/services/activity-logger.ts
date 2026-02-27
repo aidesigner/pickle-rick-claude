@@ -17,6 +17,7 @@ export function logActivity(
     const filepath = path.join(activityDir, `${date}.jsonl`);
     const fullEvent: ActivityEvent = { ts: new Date().toISOString(), ...event };
     const line = JSON.stringify(fullEvent) + '\n';
+    // mode only applies on file creation (ignored if file exists) — first write = 0o600
     fs.appendFileSync(filepath, line, { mode: 0o600 });
   } catch {
     // Silent failure — activity logging must never break the caller

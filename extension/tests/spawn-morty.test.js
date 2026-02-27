@@ -251,7 +251,7 @@ test('spawn-morty: --review flag accepted without validation error', () => {
     }
 });
 
-test('spawn-morty: --review flag shows Review Worker panel', () => {
+test('spawn-morty: --review flag shows Review Worker panel title', () => {
     const tmpDir = makeTmpDir();
     try {
         const result = run(
@@ -264,10 +264,26 @@ test('spawn-morty: --review flag shows Review Worker panel', () => {
             { PATH: '/usr/bin' }
         );
         const combined = result.stdout + result.stderr;
-        assert.ok(
-            combined.includes('Spawning Review Worker') || combined.includes('review'),
-            'should show Review Worker panel title or review type'
+        // Must match the actual panel title, not just the word "review" which appears in the command
+        assert.match(combined, /Review Worker|type.*review/i,
+            'should show Review Worker panel title or review type field');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('spawn-morty: --review without --ticket-id still requires ticket-id', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const result = run(
+            [
+                'review correctness',
+                '--ticket-path', tmpDir,
+                '--review',
+            ],
         );
+        assert.equal(result.status, 1, 'should exit with code 1');
+        assert.ok(result.stderr.includes('required'), 'should require --ticket-id even with --review');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

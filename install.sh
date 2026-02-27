@@ -28,6 +28,7 @@ echo "✅ Backed up settings.json to ~/.claude/backups/"
 
 # --- DIRECTORIES ---
 mkdir -p "$EXTENSION_ROOT" "$COMMANDS_DIR" "$EXTENSION_ROOT/activity"
+chmod 700 "$EXTENSION_ROOT/activity"
 
 # --- EXTENSION SCRIPTS ---
 # rsync compiled JS runtime files; exclude TS sources, tests, and dev-only files.

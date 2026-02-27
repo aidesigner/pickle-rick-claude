@@ -45,6 +45,75 @@ test('review ticket: frontmatter round-trip preserves all fields', () => {
     }
 });
 
+test('review ticket: parseTicketFrontmatter extracts review_group via extractFrontmatter', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-review-'));
+    try {
+        const ticketContent = [
+            '---',
+            'id: r_group_test',
+            'title: "Review: group extraction"',
+            'status: Todo',
+            'order: 45',
+            'type: review',
+            'review_group: impl1,impl2,impl3',
+            '---',
+            '# Review',
+        ].join('\n');
+
+        const filePath = path.join(dir, 'linear_ticket_r_group_test.md');
+        fs.writeFileSync(filePath, ticketContent);
+
+        // parseTicketFrontmatter returns TicketInfo which has id, title, status, order, type
+        // review_group is NOT in TicketInfo — must extract via extractFrontmatter
+        const parsed = parseTicketFrontmatter(filePath);
+        assert.ok(parsed, 'should parse');
+        assert.equal(parsed.type, 'review');
+        assert.equal(parsed.id, 'r_group_test');
+
+        // Verify review_group is accessible via extractFrontmatter
+        const content = fs.readFileSync(filePath, 'utf-8');
+        const fm = extractFrontmatter(content);
+        assert.ok(fm, 'should have frontmatter');
+        const match = fm.body.match(/^review_group:\s*(.+)$/m);
+        assert.ok(match, 'review_group should be present in frontmatter');
+        const ids = match[1].trim().split(',').map(s => s.trim());
+        assert.deepEqual(ids, ['impl1', 'impl2', 'impl3']);
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('review ticket: malformed review_group with empty segments', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-review-'));
+    try {
+        const ticketContent = [
+            '---',
+            'id: r_malformed',
+            'title: "Review: malformed group"',
+            'status: Todo',
+            'order: 50',
+            'type: review',
+            'review_group: abc1,,def2,,,ghi3',
+            '---',
+            '# Review',
+        ].join('\n');
+
+        const filePath = path.join(dir, 'linear_ticket_r_malformed.md');
+        fs.writeFileSync(filePath, ticketContent);
+
+        const content = fs.readFileSync(filePath, 'utf-8');
+        const fm = extractFrontmatter(content);
+        assert.ok(fm);
+        const match = fm.body.match(/^review_group:\s*(.+)$/m);
+        assert.ok(match);
+        // Splitting with empty segments produces empty strings — consumers should filter
+        const ids = match[1].trim().split(',').map(s => s.trim()).filter(Boolean);
+        assert.deepEqual(ids, ['abc1', 'def2', 'ghi3']);
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
 test('review ticket: review_group parsing from frontmatter', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-review-'));
     try {

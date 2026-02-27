@@ -43,11 +43,9 @@ test('VALID_ACTIVITY_EVENTS contains all 13 expected event types', () => {
     }
 });
 
-test('VALID_ACTIVITY_EVENTS is an array of strings', () => {
-    assert.ok(Array.isArray(VALID_ACTIVITY_EVENTS));
-    for (const e of VALID_ACTIVITY_EVENTS) {
-        assert.equal(typeof e, 'string');
-    }
+test('VALID_ACTIVITY_EVENTS has no duplicates', () => {
+    const unique = new Set(VALID_ACTIVITY_EVENTS);
+    assert.equal(unique.size, VALID_ACTIVITY_EVENTS.length, 'should have no duplicate event types');
 });
 
 // --- logActivity ---
@@ -248,6 +246,44 @@ test('CLI: strips newlines from title', () => {
         const parsed = JSON.parse(fs.readFileSync(filepath, 'utf8').trim());
         assert.ok(!parsed.title.includes('\n'), 'title should not contain \\n');
         assert.ok(!parsed.title.includes('\r'), 'title should not contain \\r');
+    } finally {
+        fs.rmSync(extRoot, { recursive: true, force: true });
+    }
+});
+
+test('CLI: strips ANSI escape codes from title', () => {
+    const extRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-activity-'));
+    try {
+        const ansiTitle = '\x1b[31mred text\x1b[0m and \x1b[1mbold\x1b[0m';
+        const result = runCli(['feature', ansiTitle], { EXTENSION_DIR: extRoot });
+        assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+        const activityDir = path.join(extRoot, 'activity');
+        const date = new Date().toLocaleDateString('en-CA');
+        const filepath = path.join(activityDir, `${date}.jsonl`);
+        const parsed = JSON.parse(fs.readFileSync(filepath, 'utf8').trim());
+        assert.ok(!parsed.title.includes('\x1b'), 'title should not contain ANSI escape codes');
+        assert.match(parsed.title, /red text.*bold/, 'text content should be preserved');
+    } finally {
+        fs.rmSync(extRoot, { recursive: true, force: true });
+    }
+});
+
+test('CLI: strips control characters (bell, backspace, vertical tab) from title', () => {
+    const extRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-activity-'));
+    try {
+        // Use control chars that Node allows in CLI args (no null bytes)
+        const controlTitle = 'before\x07bell\x08backspace\x0Bvtab after';
+        const result = runCli(['bug_fix', controlTitle], { EXTENSION_DIR: extRoot });
+        assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+        const activityDir = path.join(extRoot, 'activity');
+        const date = new Date().toLocaleDateString('en-CA');
+        const filepath = path.join(activityDir, `${date}.jsonl`);
+        const parsed = JSON.parse(fs.readFileSync(filepath, 'utf8').trim());
+        assert.ok(!parsed.title.includes('\x07'), 'title should not contain bell char');
+        assert.ok(!parsed.title.includes('\x08'), 'title should not contain backspace');
+        assert.ok(!parsed.title.includes('\x0B'), 'title should not contain vertical tab');
+        assert.ok(parsed.title.includes('before'), 'readable text should be preserved');
+        assert.ok(parsed.title.includes('after'), 'readable text should be preserved');
     } finally {
         fs.rmSync(extRoot, { recursive: true, force: true });
     }

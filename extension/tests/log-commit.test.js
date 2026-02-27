@@ -126,6 +126,30 @@ test('log-commit: git merge detected', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Commit detection — git rebase
+// ---------------------------------------------------------------------------
+
+test('log-commit: git rebase detected', () => {
+  const { events } = runHook(commitInput(
+    'git rebase main',
+    '[detached HEAD babe123] rebased commit\n 2 files changed'
+  ));
+  assert.equal(events.length, 1);
+  assert.equal(events[0].event, 'commit');
+  assert.equal(events[0].commit_hash, 'babe123');
+});
+
+test('log-commit: git rebase --continue detected', () => {
+  const { events } = runHook(commitInput(
+    'git rebase --continue',
+    '[detached HEAD feed456] continued rebase\n 1 file changed'
+  ));
+  assert.equal(events.length, 1);
+  assert.equal(events[0].event, 'commit');
+  assert.equal(events[0].commit_hash, 'feed456');
+});
+
+// ---------------------------------------------------------------------------
 // Multi-command chains
 // ---------------------------------------------------------------------------
 
@@ -236,6 +260,19 @@ test('log-commit: "github commit" in command does not trigger (no word boundary)
 test('log-commit: "git log" does not trigger', () => {
   const { events } = runHook(commitInput('git log --oneline', 'abc1234 fix: thing'));
   assert.equal(events.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// stdin size guard (1MB limit via Buffer.alloc)
+// ---------------------------------------------------------------------------
+
+test('log-commit: handles large stdin without OOM (within 1MB)', () => {
+  // Simulate a large but valid git commit output — well under 1MB
+  const bigStdout = '[main 1234567] fix: big commit\n' + 'x'.repeat(500_000);
+  const { events, exitCode } = runHook(commitInput('git commit -m "big"', bigStdout));
+  assert.equal(exitCode, 0);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].commit_hash, '1234567');
 });
 
 // ---------------------------------------------------------------------------

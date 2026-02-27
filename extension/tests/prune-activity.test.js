@@ -147,6 +147,38 @@ test('pruneActivity: boundary — file exactly 365 days old is NOT deleted', () 
     });
 });
 
+test('pruneActivity: handles large maxAgeDays across year boundaries', () => {
+    withTempActivityDir((activityDir) => {
+        // 800 days ago crosses multiple year boundaries — ms arithmetic handles this; setDate() was fragile
+        const d = new Date();
+        const targetMs = d.getTime() - 800 * 86_400_000;
+        const target = new Date(targetMs);
+        const dateStr = target.toLocaleDateString('en-CA');
+        const filepath = path.join(activityDir, `${dateStr}.jsonl`);
+        fs.writeFileSync(filepath, '{"event":"ancient"}\n');
+        const deleted = pruneActivity(365);
+        assert.equal(deleted, 1);
+        assert.equal(fs.existsSync(filepath), false);
+    });
+});
+
+test('pruneActivity: month boundary — file from prev month is correctly aged', () => {
+    withTempActivityDir((activityDir) => {
+        // Create file exactly 40 days ago (crosses month boundary for most months)
+        const d = new Date();
+        const targetMs = d.getTime() - 40 * 86_400_000;
+        const target = new Date(targetMs);
+        const dateStr = target.toLocaleDateString('en-CA');
+        const filepath = path.join(activityDir, `${dateStr}.jsonl`);
+        fs.writeFileSync(filepath, '{"event":"cross-month"}\n');
+        // maxAge=30 should delete it, maxAge=50 should keep it
+        assert.equal(pruneActivity(50), 0);
+        assert.ok(fs.existsSync(filepath));
+        assert.equal(pruneActivity(30), 1);
+        assert.equal(fs.existsSync(filepath), false);
+    });
+});
+
 test('pruneActivity: file 366 days old IS deleted', () => {
     withTempActivityDir((activityDir) => {
         const old = dateStr(366);

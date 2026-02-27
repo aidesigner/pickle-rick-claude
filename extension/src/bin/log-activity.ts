@@ -10,7 +10,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'log-activity.js') {
     process.exit(1);
   }
 
-  if (!(VALID_ACTIVITY_EVENTS as readonly string[]).includes(eventType)) {
+  if (!VALID_ACTIVITY_EVENTS.includes(eventType as ActivityEventType)) {
     console.error(`Unknown event type "${eventType}". Valid types: ${VALID_ACTIVITY_EVENTS.join(', ')}`);
     process.exit(1);
   }
@@ -20,7 +20,8 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'log-activity.js') {
     process.exit(1);
   }
 
-  const title = rawTitle.replace(/[\n\r]/g, ' ').slice(0, 200);
+  // Strip all control characters (C0/C1) and ANSI escape sequences
+  const title = rawTitle.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/[\x00-\x1f\x7f-\x9f]/g, ' ').slice(0, 200);
 
   if (title.trim().length === 0) {
     console.error('Title must not be empty after sanitization.');

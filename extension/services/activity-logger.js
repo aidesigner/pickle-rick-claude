@@ -12,6 +12,7 @@ export function logActivity(event) {
         const filepath = path.join(activityDir, `${date}.jsonl`);
         const fullEvent = { ts: new Date().toISOString(), ...event };
         const line = JSON.stringify(fullEvent) + '\n';
+        // mode only applies on file creation (ignored if file exists) — first write = 0o600
         fs.appendFileSync(filepath, line, { mode: 0o600 });
     }
     catch {

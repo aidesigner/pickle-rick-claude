@@ -14,6 +14,15 @@ interface ParsedArgs {
   range: DateRange;
 }
 
+function consumeArg(argv: string[], i: number, flagName: string, hint: string): string {
+  const val = argv[i + 1];
+  if (val === undefined || val.startsWith('--')) {
+    console.error(`Error: ${flagName} requires ${hint}.`);
+    process.exit(1);
+  }
+  return val;
+}
+
 export function parseArgs(argv: string[]): ParsedArgs {
   let days: number | null = null;
   let sinceStr: string | null = null;
@@ -21,23 +30,14 @@ export function parseArgs(argv: string[]): ParsedArgs {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--days') {
-      const val = argv[++i];
-      if (val === undefined || val.startsWith('--')) {
-        console.error('Error: --days requires a numeric value.');
-        process.exit(1);
-      }
+      const val = consumeArg(argv, i++, '--days', 'a numeric value');
       days = Number(val);
       if (!Number.isFinite(days) || days < 0 || Math.floor(days) !== days) {
         console.error(`Error: --days must be a non-negative integer, got "${val}".`);
         process.exit(1);
       }
     } else if (arg === '--since') {
-      const val = argv[++i];
-      if (val === undefined || val.startsWith('--')) {
-        console.error('Error: --since requires a YYYY-MM-DD value.');
-        process.exit(1);
-      }
-      sinceStr = val;
+      sinceStr = consumeArg(argv, i++, '--since', 'a YYYY-MM-DD value');
     } else {
       console.error(`Error: unknown flag "${arg}".`);
       process.exit(1);
@@ -92,26 +92,37 @@ export function readActivityFiles(activityDir: string, since: Date, until: Date)
     return [];
   }
 
-  const sinceStr = dateToFilename(since);
-  const untilStr = dateToFilename(until);
+  const sinceMs = since.getTime();
+  const untilMs = until.getTime();
 
   const matchingFiles = files.filter((f) => {
     const datepart = f.replace('.jsonl', '');
-    return datepart >= sinceStr && datepart < untilStr;
+    const fileMs = new Date(datepart + 'T00:00:00').getTime();
+    return Number.isFinite(fileMs) && fileMs >= sinceMs && fileMs < untilMs;
   });
 
   const events: ActivityEvent[] = [];
   let totalLines = 0;
   let corruptLines = 0;
 
+  const MAX_FILE_BYTES = 10 * 1024 * 1024; // 10 MB guard
+
   for (const file of matchingFiles) {
-    const content = fs.readFileSync(path.join(activityDir, file), 'utf-8');
+    const filePath = path.join(activityDir, file);
+    try {
+      const stat = fs.statSync(filePath);
+      if (stat.size > MAX_FILE_BYTES) {
+        console.error(`Warning: skipping ${file} (${Math.round(stat.size / 1024 / 1024)}MB exceeds 10MB limit).`);
+        continue;
+      }
+    } catch { continue; }
+    const content = fs.readFileSync(filePath, 'utf-8');
     const lines = content.split('\n').filter((l) => l.trim());
     for (const line of lines) {
       totalLines++;
       try {
         const parsed = JSON.parse(line) as ActivityEvent;
-        if (parsed.ts && parsed.event) {
+        if (typeof parsed.ts === 'string' && typeof parsed.event === 'string') {
           events.push(parsed);
         } else {
           corruptLines++;

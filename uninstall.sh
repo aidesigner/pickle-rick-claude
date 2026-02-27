@@ -26,6 +26,8 @@ rm -f "$HOME/.claude/commands/pickle-refine-prd.md"
 rm -f "$HOME/.claude/commands/meeseeks.md"
 rm -f "$HOME/.claude/commands/pickle-standup.md"
 rm -f "$HOME/.claude/commands/pickle-dot.md"
+rm -f "$HOME/.claude/commands/project-mayhem.md"
+rm -f "$HOME/.claude/commands/send-to-morty-review.md"
 
 # Remove Stop hook from settings.json (clean up empty Stop/hooks keys)
 if [ -f "$SETTINGS_FILE" ]; then
