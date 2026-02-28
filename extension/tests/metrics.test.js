@@ -12,6 +12,7 @@ import {
     formatNumber,
     buildReport,
 } from '../services/metrics-utils.js';
+import { parseMetricsArgs } from '../bin/metrics.js';
 
 const CLI_PATH = path.join(import.meta.dirname, '..', 'bin', 'metrics.js');
 
@@ -474,6 +475,101 @@ test('CLI: --days 0 returns today only', () => {
         for (const row of report.rows) {
             assert.equal(row.date, today, 'All rows should be today');
         }
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// parseMetricsArgs
+// ---------------------------------------------------------------------------
+
+test('parseMetricsArgs: no flags defaults to 7 days', () => {
+    const result = parseMetricsArgs([]);
+    assert.equal(result.days, 7);
+    assert.equal(result.since, null);
+    assert.equal(result.weekly, false);
+    assert.equal(result.json, false);
+});
+
+test('parseMetricsArgs: --days 14', () => {
+    const result = parseMetricsArgs(['--days', '14']);
+    assert.equal(result.days, 14);
+});
+
+test('parseMetricsArgs: --days 0', () => {
+    const result = parseMetricsArgs(['--days', '0']);
+    assert.equal(result.days, 0);
+});
+
+test('parseMetricsArgs: --weekly alone defaults to 28 days', () => {
+    const result = parseMetricsArgs(['--weekly']);
+    assert.equal(result.days, 28);
+    assert.equal(result.weekly, true);
+});
+
+test('parseMetricsArgs: --weekly --days 14 uses explicit days', () => {
+    const result = parseMetricsArgs(['--weekly', '--days', '14']);
+    assert.equal(result.days, 14);
+    assert.equal(result.weekly, true);
+});
+
+test('parseMetricsArgs: --json flag', () => {
+    const result = parseMetricsArgs(['--json']);
+    assert.equal(result.json, true);
+    assert.equal(result.days, 7);
+});
+
+test('parseMetricsArgs: --since sets date', () => {
+    const result = parseMetricsArgs(['--since', '2026-02-01']);
+    assert.equal(result.since, '2026-02-01');
+    assert.equal(result.days, 7);
+});
+
+test('parseMetricsArgs: combined --json --weekly --days 7', () => {
+    const result = parseMetricsArgs(['--json', '--weekly', '--days', '7']);
+    assert.equal(result.json, true);
+    assert.equal(result.weekly, true);
+    assert.equal(result.days, 7);
+});
+
+// ---------------------------------------------------------------------------
+// parseGitLogOutput: Invalid Date handling
+// ---------------------------------------------------------------------------
+
+test('parseGitLogOutput: invalid ISO date is skipped', () => {
+    const output = [
+        '9999-99-99T00:00:00Z',
+        ' 1 file changed, 10 insertions(+)',
+        '2026-02-28T10:00:00-06:00',
+        ' 1 file changed, 5 insertions(+)',
+    ].join('\n');
+    const result = parseGitLogOutput(output);
+    assert.equal(result.size, 1);
+    assert.ok(result.has('2026-02-28'));
+    assert.equal(result.get('2026-02-28').added, 5);
+});
+
+// ---------------------------------------------------------------------------
+// CLI: --weekly integration
+// ---------------------------------------------------------------------------
+
+test('CLI: --weekly --json returns weekly grouping', () => {
+    const { root, cacheFile: _ } = makeTempProjectsDir();
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-metrics-repos-'));
+    try {
+        const today = new Date().toLocaleDateString('en-CA');
+        writeSessionLine(root, 'weekly-proj', 'session.jsonl',
+            makeAssistantLine(`${today}T10:00:00Z`, 100, 200));
+
+        const result = runMetricsCli(['--weekly', '--json'], {
+            CLAUDE_PROJECTS_DIR: root,
+            METRICS_REPO_ROOT: repoRoot,
+        });
+        assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+        const report = JSON.parse(result.stdout);
+        assert.equal(report.grouping, 'weekly');
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
         fs.rmSync(repoRoot, { recursive: true, force: true });

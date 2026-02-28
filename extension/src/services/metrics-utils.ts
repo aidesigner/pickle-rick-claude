@@ -265,7 +265,9 @@ export function parseGitLogOutput(output: string): Map<string, DailyLOC> {
     if (!line) continue;
 
     if (ISO_DATE_RE.test(line)) {
-      currentDate = new Date(line).toLocaleDateString('en-CA');
+      const d = new Date(line);
+      if (isNaN(d.getTime())) continue;
+      currentDate = d.toLocaleDateString('en-CA');
       if (!result.has(currentDate)) result.set(currentDate, { commits: 0, added: 0, removed: 0 });
       result.get(currentDate)!.commits += 1;
       continue;
