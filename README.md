@@ -132,9 +132,13 @@ Minimum 10 passes. Maximum 50. Each pass runs tests first, then reviews with esc
 
 ## 💥 Project Mayhem — Chaos Engineering
 
+<img src="images/project-mayhem.png" alt="Project Mayhem — Pickle Rick chaos engineering" width="400" align="right" />
+
 > *"You want to know how tough your code is, Morty? You break it. On purpose. Scientifically."*
 
 `/project-mayhem` is a standalone chaos engineering command that stress-tests any project through three modules — **mutation testing**, **dependency downgrades**, and **config corruption** — then produces a comprehensive markdown report with a single Chaos Score. It's non-destructive (every mutation is reverted immediately), language-agnostic (auto-detects Node, Rust, Python, Go, JVM, Make), and requires only a clean git state.
+
+<br clear="right" />
 
 ```bash
 /project-mayhem                              # Run all 3 modules (auto-detect everything)
@@ -426,6 +430,141 @@ pickle-rick-claude/
 | Persona | `persona.md` | `~/.claude/pickle-rick/persona.md` |
 
 After editing, run `bash install.sh` from the repo root to deploy.
+
+---
+
+## 🧠 Memory & State
+
+Rick remembers. Not just within a session — across sessions, across conversations, across dimensions. Three memory systems work together so Rick always knows where he's been, what he's doing, and what went wrong last time.
+
+### 1. Auto-Memory (Cross-Session Persistence)
+
+Claude Code's built-in [auto-memory](https://docs.anthropic.com/en/docs/claude-code) system gives Rick persistent knowledge across conversations. The memory directory lives at:
+
+```
+~/.claude/projects/<project-hash>/memory/
+├── MEMORY.md          # Always loaded into context (first 200 lines)
+└── tmux_research.md   # Topic-specific deep dives (linked from MEMORY.md)
+```
+
+**MEMORY.md** is automatically injected into every conversation. It contains:
+- Project location, build commands, architecture notes
+- Key API surfaces and type definitions
+- Test file inventory and current test count
+- Important patterns and gotchas (macOS symlinks, hook decisions, pipe flushing)
+- **Session History Summaries** — a running log of what was accomplished in each session (bugs fixed, features added, test count growth)
+
+Topic files store detailed research that would blow past the 200-line cap. Rick creates these during deep dives and links them from MEMORY.md.
+
+Memory updates happen automatically when stable patterns are confirmed across sessions. One-off findings stay out until verified.
+
+### 2. Session State (`state.json`)
+
+Every Pickle Rick session creates a directory under `~/.claude/pickle-rick/sessions/<date-hash>/` with a `state.json` that tracks the live execution state:
+
+```json
+{
+  "active": true,
+  "working_dir": "/path/to/project",
+  "step": "implement",
+  "iteration": 7,
+  "max_iterations": 100,
+  "max_time_minutes": 720,
+  "worker_timeout_seconds": 1200,
+  "start_time_epoch": 1772287760,
+  "current_ticket": "feat-03",
+  "tmux_mode": true,
+  "chain_meeseeks": false,
+  "history": []
+}
+```
+
+The stop hook reads `state.json` on every turn to decide whether to block or approve exit. The tmux-runner reads it between iterations to build the handoff summary. `/pickle-status` reads it to display the dashboard.
+
+### 3. Session Logs & Artifacts
+
+Each session directory accumulates execution traces and work products:
+
+```
+~/.claude/pickle-rick/sessions/2026-02-28-a1b2c3d4/
+├── state.json                          # Live state (see above)
+├── prd.md                              # The PRD for this epic
+├── linear_ticket_parent.md             # Parent ticket with all sub-tickets
+├── hooks.log                           # Stop hook decisions and state transitions
+├── tmux-runner.log                     # Orchestrator-level log (tmux mode)
+├── tmux_iteration_1.log                # Per-iteration NDJSON stdout
+├── tmux_iteration_2.log
+├── meeseeks-summary.md                 # Meeseeks audit trail (when review runs)
+├── feat-01/
+│   ├── linear_ticket_feat-01.md        # Ticket specification
+│   ├── research_feat-01.md             # Research phase output
+│   ├── research_review.md              # Research review
+│   ├── plan_feat-01.md                 # Implementation plan
+│   ├── plan_review.md                  # Plan review
+│   └── worker_session_12345.log        # Morty worker stdout
+├── feat-02/
+│   └── ...
+└── refinement/                         # PRD refinement worker logs
+    ├── worker_requirements_c1.log      # Requirements analyst (cycle 1)
+    ├── worker_codebase_c1.log          # Codebase analyst (cycle 1)
+    └── worker_risk-scope_c1.log        # Risk/scope analyst (cycle 1)
+```
+
+**Log types:**
+
+| Log | What it captures |
+|-----|------------------|
+| `hooks.log` | Every stop hook decision (approve/block), completion token matches, state transitions |
+| `tmux-runner.log` | Iteration lifecycle: spawn, wait, classify completion, advance or stop |
+| `tmux_iteration_N.log` | Raw NDJSON from `claude -p --output-format stream-json` per iteration |
+| `worker_session_<pid>.log` | Full Morty subprocess output — research, planning, implementation, test runs |
+| `worker_<role>_c<N>.log` | PRD refinement analyst output per role per cycle |
+| `meeseeks-summary.md` | Per-pass table of issues found/fixed, test status, commit hashes |
+
+**Ticket artifacts** follow the lifecycle phases: `research_<id>.md` → `research_review.md` → `plan_<id>.md` → `plan_review.md` → implementation (code changes + commits). These persist in the session directory and can be reviewed after the run.
+
+### 4. Activity Log (Standup Data)
+
+The activity logger (`activity-logger.ts`) writes a date-keyed JSONL file for every notable event — ticket transitions, commits, phase changes, errors:
+
+```
+~/.claude/pickle-rick/activity/
+├── 2026-02-27.jsonl
+└── 2026-02-28.jsonl
+```
+
+`/pickle-standup` reads these to produce a formatted standup summary. Old files are pruned by `prune-activity.js` (called during session setup).
+
+### 5. Global Settings
+
+`~/.claude/pickle-rick/pickle_settings.json` stores all configurable defaults (max iterations, timeouts, meeseeks pass limits, refinement cycles). See [Settings](#settings-pickle_settingsjson) above.
+
+### How the Systems Connect
+
+```
+Auto-Memory (MEMORY.md)              Global Settings (pickle_settings.json)
+   │ loaded every conversation            │ read at session setup
+   │                                      │
+   ▼                                      ▼
+┌──────────────────────────────────────────────┐
+│              Active Session                   │
+│  state.json ◄──► stop-hook / tmux-runner     │
+│       │                                       │
+│       ├── hooks.log (decision trace)          │
+│       ├── tmux_iteration_N.log (raw output)   │
+│       ├── ticket/worker_*.log (Morty output)  │
+│       ├── ticket/research_*.md (artifacts)    │
+│       └── meeseeks-summary.md (review audit)  │
+└──────────────────┬───────────────────────────┘
+                   │
+                   ▼
+        Activity Log (JSONL)
+           │
+           ▼
+      /pickle-standup
+```
+
+When a session ends, its directory persists — you can review any past session's state, logs, and artifacts. Auto-memory captures the *lessons learned* (patterns, bugs, decisions), while session dirs capture the *raw execution trace*.
 
 ---
 
