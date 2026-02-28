@@ -265,7 +265,6 @@ function emptyTotals() {
     return { turns: 0, input: 0, output: 0, cache_read: 0, cache_create: 0, commits: 0, added: 0, removed: 0 };
 }
 export function buildReport(tokens, loc, since, until, grouping) {
-    // Collect all dates
     const dateSet = new Set();
     for (const dateMap of tokens.values()) {
         for (const date of dateMap.keys())
@@ -276,7 +275,6 @@ export function buildReport(tokens, loc, since, until, grouping) {
             dateSet.add(date);
     }
     const dates = [...dateSet].sort();
-    // Build rows
     const rows = dates.map((date) => {
         const projects = {};
         for (const [slug, dateMap] of tokens) {
@@ -292,7 +290,6 @@ export function buildReport(tokens, loc, since, until, grouping) {
         }
         return { date, projects, loc: locData };
     });
-    // Build project summaries
     const projectTotals = new Map();
     for (const [slug, dateMap] of tokens) {
         const t = emptyTotals();
@@ -308,25 +305,13 @@ export function buildReport(tokens, loc, since, until, grouping) {
     // Merge LOC into project totals where repo name matches a slug suffix
     for (const [repo, dateMap] of loc) {
         for (const dl of dateMap.values()) {
-            // Find matching project or create standalone entry
-            let matched = false;
-            for (const [slug, totals] of projectTotals) {
-                if (slug.endsWith(repo) || slug.endsWith('-' + repo)) {
-                    totals.commits += dl.commits;
-                    totals.added += dl.added;
-                    totals.removed += dl.removed;
-                    matched = true;
-                    break;
-                }
-            }
-            if (!matched) {
-                if (!projectTotals.has(repo))
-                    projectTotals.set(repo, emptyTotals());
-                const t = projectTotals.get(repo);
-                t.commits += dl.commits;
-                t.added += dl.added;
-                t.removed += dl.removed;
-            }
+            const match = [...projectTotals.entries()].find(([slug]) => slug.endsWith(repo) || slug.endsWith('-' + repo));
+            if (!match && !projectTotals.has(repo))
+                projectTotals.set(repo, emptyTotals());
+            const target = match ? match[1] : projectTotals.get(repo);
+            target.commits += dl.commits;
+            target.added += dl.added;
+            target.removed += dl.removed;
         }
     }
     const projects = [...projectTotals.entries()].map(([slug, totals]) => ({
@@ -334,7 +319,6 @@ export function buildReport(tokens, loc, since, until, grouping) {
         label: shortenSlug(slug),
         totals,
     }));
-    // Grand totals
     const totals = emptyTotals();
     for (const p of projects) {
         totals.turns += p.totals.turns;

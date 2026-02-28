@@ -335,7 +335,6 @@ export function buildReport(
   until: string,
   grouping: string,
 ): MetricsReport {
-  // Collect all dates
   const dateSet = new Set<string>();
   for (const dateMap of tokens.values()) {
     for (const date of dateMap.keys()) dateSet.add(date);
@@ -345,7 +344,6 @@ export function buildReport(
   }
   const dates = [...dateSet].sort();
 
-  // Build rows
   const rows: MetricsRow[] = dates.map((date) => {
     const projects: Record<string, DailyTokens> = {};
     for (const [slug, dateMap] of tokens) {
@@ -360,7 +358,6 @@ export function buildReport(
     return { date, projects, loc: locData };
   });
 
-  // Build project summaries
   const projectTotals = new Map<string, MetricsTotals>();
   for (const [slug, dateMap] of tokens) {
     const t = emptyTotals();
@@ -376,24 +373,14 @@ export function buildReport(
   // Merge LOC into project totals where repo name matches a slug suffix
   for (const [repo, dateMap] of loc) {
     for (const dl of dateMap.values()) {
-      // Find matching project or create standalone entry
-      let matched = false;
-      for (const [slug, totals] of projectTotals) {
-        if (slug.endsWith(repo) || slug.endsWith('-' + repo)) {
-          totals.commits += dl.commits;
-          totals.added += dl.added;
-          totals.removed += dl.removed;
-          matched = true;
-          break;
-        }
-      }
-      if (!matched) {
-        if (!projectTotals.has(repo)) projectTotals.set(repo, emptyTotals());
-        const t = projectTotals.get(repo)!;
-        t.commits += dl.commits;
-        t.added += dl.added;
-        t.removed += dl.removed;
-      }
+      const match = [...projectTotals.entries()].find(
+        ([slug]) => slug.endsWith(repo) || slug.endsWith('-' + repo),
+      );
+      if (!match && !projectTotals.has(repo)) projectTotals.set(repo, emptyTotals());
+      const target = match ? match[1] : projectTotals.get(repo)!;
+      target.commits += dl.commits;
+      target.added += dl.added;
+      target.removed += dl.removed;
     }
   }
 
@@ -403,7 +390,6 @@ export function buildReport(
     totals,
   }));
 
-  // Grand totals
   const totals = emptyTotals();
   for (const p of projects) {
     totals.turns += p.totals.turns;
