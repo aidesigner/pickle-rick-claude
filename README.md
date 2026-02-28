@@ -391,21 +391,6 @@ pickle-rick-claude/
 
 ---
 
-## 📌 Source of Truth
-
-`install.sh` deploys files from this repo to `~/.claude/` via `rsync`. **The installed copies are overwritten on every install.** Always edit the repo source, never the installed copy:
-
-| What | Canonical (edit here) | Deployed (never edit) |
-|---|---|---|
-| TypeScript runtime | `extension/src/` | `~/.claude/pickle-rick/extension/` |
-| Slash commands | `.claude/commands/` | `~/.claude/commands/` |
-| Settings | `pickle_settings.json` | `~/.claude/pickle-rick/pickle_settings.json` |
-| Persona | `persona.md` | `~/.claude/pickle-rick/persona.md` |
-
-After editing, run `bash install.sh` from the repo root to deploy.
-
----
-
 ## 🧠 Memory & State
 
 Rick remembers. Not just within a session — across sessions, across conversations, across dimensions. Three memory systems work together so Rick always knows where he's been, what he's doing, and what went wrong last time.
@@ -541,8 +526,6 @@ When a session ends, its directory persists — you can review any past session'
 
 ---
 
-## 🔧 How It Works
-
 ### The Stop Hook Loop
 
 ```
@@ -577,7 +560,7 @@ When a session ends, its directory persists — you can review any past session'
     reason: "🥒 Pickle Rick Loop Active..." } ──────────┘
 ```
 
-### Context Clearing — Why Rick Loops Work
+### Context Clearing
 
 The single biggest advantage of the Rick loop over naive "just keep prompting" approaches is **context clearing between iterations**.
 
@@ -612,8 +595,6 @@ Do NOT restart from PRD. Continue where you left off.
 No matter how much context gets evicted, Rick always wakes up knowing exactly where he is and what to do next.
 
 Morty workers already get clean context naturally (each is a fresh `claude -p` subprocess with the full 7-phase lifecycle template from `send-to-morty.md`).
-
----
 
 ### Manager / Worker Model
 
