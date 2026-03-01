@@ -343,6 +343,8 @@ async function main() {
                 continue;
             }
             log('Task completed. Exiting loop.');
+            curState.active = false;
+            writeStateFile(statePath, curState);
             exitReason = 'success';
             break;
         }
@@ -367,6 +369,8 @@ async function main() {
             }
             else {
                 log('Review clean. Exiting loop.');
+                curState.active = false;
+                writeStateFile(statePath, curState);
                 exitReason = 'success';
                 break;
             }
@@ -378,6 +382,8 @@ async function main() {
         }
         else if (result === 'error') {
             log('Subprocess error. Exiting loop.');
+            state.active = false;
+            writeStateFile(statePath, state);
             exitReason = 'error';
             break;
         }

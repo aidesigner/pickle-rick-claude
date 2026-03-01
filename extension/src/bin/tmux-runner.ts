@@ -361,6 +361,8 @@ async function main() {
         continue;
       }
       log('Task completed. Exiting loop.');
+      curState.active = false;
+      writeStateFile(statePath, curState);
       exitReason = 'success';
       break;
     } else if (result === 'review_clean') {
@@ -382,11 +384,19 @@ async function main() {
         log(`Clean pass at iteration ${curIterNow}, but min_iterations=${minIter}. Continuing.`);
       } else {
         log('Review clean. Exiting loop.');
+        curState.active = false;
+        writeStateFile(statePath, curState);
         exitReason = 'success';
         break;
       }
     } else if (result === 'inactive') { log('Session deactivated. Exiting loop.'); exitReason = 'cancelled'; break; }
-    else if (result === 'error') { log('Subprocess error. Exiting loop.'); exitReason = 'error'; break; }
+    else if (result === 'error') {
+      log('Subprocess error. Exiting loop.');
+      state.active = false;
+      writeStateFile(statePath, state);
+      exitReason = 'error';
+      break;
+    }
 
     await new Promise(r => setTimeout(r, 1000));
   }
