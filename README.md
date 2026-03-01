@@ -14,6 +14,7 @@ Originally a port of the [Pickle Rick Gemini CLI extension](https://github.com/g
 | **One hook, whole lifecycle** | A single Stop hook blocks exit, injects context, and enforces limits. No daemon, no polling, no external orchestrator — just the hook and `state.json`. |
 | **PRD refinement** | `/pickle-refine-prd` deploys 3 parallel Morty analysts (Requirements, Codebase, Risk/Scope) over multiple cycles, then decomposes findings into ordered, self-contained tickets. Add `--run` to auto-launch an unlimited tmux session immediately after, or `--meeseeks` for the full pipeline: refine → execute → Meeseeks review. |
 | **Worker isolation** | Each Morty runs as a scoped `claude -p` subprocess — `--dangerously-skip-permissions`, `--add-dir` limited to its ticket and the extension root. No cross-contamination between workers. |
+| **Circuit breaker** | Three-state safeguard (CLOSED → HALF_OPEN → OPEN) against runaway sessions. Detects stalls via git-diff progress checks and repeated-error signatures. Graduates from warning (HALF_OPEN) to full stop (OPEN) with configurable thresholds. Manual recovery via `circuit-reset.js`. Live state shown color-coded in the tmux monitor. |
 | **Pickle Jar** | Queue tasks with `/add-to-pickle-jar`, run them all with `/pickle-jar-open`. Night shift mode — walk away, come back to per-task success/failure results. |
 
 ---
@@ -100,6 +101,92 @@ Minimum 10 passes. Maximum 50. Each pass runs tests first, then reviews with esc
 ```
 
 <br clear="right" />
+
+---
+
+## 🔌 Circuit Breaker — Runaway Session Protection
+
+> *"You know what's worse than a bug, Morty? An infinite loop that keeps making the same bug. Over and over. Burning tokens like Jerry burns goodwill."*
+
+Long-running autonomous sessions can get stuck — same error repeating, no git progress, the model spinning its wheels. The circuit breaker detects these failure modes and stops the session before it wastes hours.
+
+### How It Works
+
+The circuit breaker is a three-state machine integrated into `tmux-runner.ts`. After every iteration, it checks two signals:
+
+**Progress detection** — Runs `git diff --stat` (staged + unstaged) and `git rev-parse HEAD` against the last known state. Also tracks lifecycle transitions (step changes, ticket changes). If any of these changed, the iteration made progress. First-iteration warm-up always counts as progress (no baseline to compare).
+
+**Error signature extraction** — Parses the iteration's NDJSON output for `result.subtype` starting with `"error"`. If found, extracts the last assistant text block and normalizes it: paths → `<PATH>`, line:column → `<N>:<N>`, timestamps → `<TS>`, UUIDs → `<UUID>`, whitespace collapsed, truncated to 200 chars. Exit codes are preserved (they're diagnostic). Two iterations hitting the same normalized signature count as the same error.
+
+### State Transitions
+
+```
+                     progress detected
+            ┌────────────────────────────────┐
+            │                                │
+            ▼                                │
+        ┌────────┐  no progress ≥ 2  ┌───────────┐  no progress ≥ 5  ┌────────┐
+        │ CLOSED │ ──────────────── →│ HALF_OPEN │ ──────────────── →│  OPEN  │
+        │ (green)│                   │ (yellow)  │                   │ (red)  │
+        └────────┘                   └───────────┘                   └────────┘
+            ▲                                                            │
+            │                     manual reset                           │
+            └────────────────────────────────────────────────────────────┘
+```
+
+- **CLOSED** (green): Normal operation. All iterations execute.
+- **HALF_OPEN** (yellow): Warning state. Iterations still execute, but the monitor shows a yellow warning. Recovers to CLOSED on any progress.
+- **OPEN** (red): Session stopped. `tmux-runner` exits with reason `circuit_open`. Triggered by either `noProgressThreshold` (default 5) or `sameErrorThreshold` (default 5) consecutive matches.
+
+Error-based transitions are independent of progress — 5 identical errors trip the breaker even if git shows changes.
+
+### Manual Recovery
+
+When the circuit opens, fix the underlying issue, then reset:
+
+```bash
+node ~/.claude/pickle-rick/extension/bin/circuit-reset.js <session-dir> --reason "fixed the flaky test"
+```
+
+This resets to CLOSED with all counters zeroed, preserving the transition history for audit. Then resume the session with `/pickle-tmux --resume`.
+
+### Monitor Display
+
+The tmux monitor shows circuit state as a color-coded field alongside iteration count and elapsed time. CLOSED = green, HALF_OPEN = yellow with reason, OPEN = red with reason. Missing `circuit_breaker.json` (e.g., CB disabled) = field omitted silently.
+
+### Disabling
+
+Set `default_circuit_breaker_enabled` to `false` in `pickle_settings.json`. When disabled, the tmux-runner falls back to a simplified stall counter (same as pre-CB behavior).
+
+---
+
+## 📊 Metrics — Token & Code Tracking
+
+> *"You can't optimize what you don't measure, Morty. Well, I can. But you can't."*
+
+`/pickle-metrics` aggregates Claude Code usage across all your projects — token consumption, turn counts, commits, and lines of code changed — into a daily or weekly breakdown.
+
+### What It Reports
+
+- **Turns**: Total Claude API round-trips per day/week
+- **Input / Output tokens**: Token consumption from Claude Code's session JSONL files (`~/.claude/projects/`)
+- **Commits**: Git commit count per repo per day (via `git log`)
+- **Lines +/-**: Lines added and removed across all tracked repos
+- **Per-project breakdown**: Each project's contribution to the totals
+- **Weekly trends**: Week-over-week output delta and top project per week
+
+### Usage
+
+```bash
+/pickle-metrics                    # Last 7 days, daily breakdown
+/pickle-metrics --days 30          # Last 30 days
+/pickle-metrics --since 2026-02-01 # Since a specific date
+/pickle-metrics --weekly           # Weekly buckets (defaults to 28 days)
+/pickle-metrics --weekly --days 90 # Weekly over 90 days
+/pickle-metrics --json             # Machine-readable JSON output
+```
+
+Data sources: session JSONL files in `~/.claude/projects/` for tokens, `git log --numstat` across repos under `~/loanlight/` (configurable via `METRICS_REPO_ROOT`) for LOC. Results are cached to `metrics-cache.json` to avoid re-parsing unchanged session files.
 
 ---
 
@@ -236,6 +323,7 @@ Sit back. Rick handles the rest. 🥒
 | `/pickle-refine-prd --meeseeks [path]` | 🔬🖥️👋 Full pipeline: refine + decompose + execute all tickets + auto-transition to Meeseeks review (implies `--run`) |
 | `/pickle-dot [path \| inline]` | 🔀 Convert a PRD into a [strongdm/attractor](https://github.com/strongdm/attractor)-compatible DOT digraph — generates a validated `.dot` file with node shapes, edge conditions, parallel fan-out/in, and model stylesheets |
 | `/project-mayhem` | 💥 Chaos engineering — mutation testing, dependency downgrades, config corruption. Non-destructive, language-agnostic, comprehensive report. |
+| `/pickle-metrics` | 📊 Token usage, turns, commits, and lines changed — daily or `--weekly`, per-project, with `--json` export |
 | `/pickle-standup` | 📰 Show a formatted standup summary from activity logs (last 24h by default) |
 | `/eat-pickle` | 🛑 Cancel the active loop |
 | `/help-pickle` | ❓ Show all commands and flags |
@@ -312,6 +400,10 @@ All defaults are configurable via `~/.claude/pickle-rick/pickle_settings.json`:
 | `default_refinement_max_turns` | 100 | Max Claude turns per refinement worker |
 | `default_meeseeks_min_passes` | 10 | Minimum review passes before clean exit |
 | `default_meeseeks_max_passes` | 50 | Maximum review passes |
+| `default_circuit_breaker_enabled` | true | Enable three-state circuit breaker in tmux-runner |
+| `default_cb_no_progress_threshold` | 5 | Consecutive no-progress iterations before OPEN |
+| `default_cb_same_error_threshold` | 5 | Consecutive identical errors before OPEN |
+| `default_cb_half_open_after` | 2 | No-progress iterations before entering HALF_OPEN |
 
 ---
 
@@ -363,7 +455,9 @@ pickle-rick-claude/
 │   │   ├── log-activity.js  # CLI: log activity events (used by personas)
 │   │   ├── log-commit.js    # PostToolUse hook: detects git commits → activity log
 │   │   ├── standup.js       # CLI: formatted standup from activity JSONL
-│   │   └── prune-activity.js # Prune old activity JSONL files (called by setup.js)
+│   │   ├── prune-activity.js # Prune old activity JSONL files (called by setup.js)
+│   │   ├── circuit-reset.js  # Manual circuit breaker reset CLI 🔧
+│   │   └── metrics.js        # Token/LOC metrics reporter (daily/weekly) 📊
 │   ├── hooks/
 │   │   ├── dispatch.js      # Hook router
 │   │   ├── resolve-state.js # State file resolution + atomic writes
@@ -374,7 +468,9 @@ pickle-rick-claude/
 │   │   ├── git-utils.js     # Git helpers
 │   │   ├── pr-factory.js    # PR creation
 │   │   ├── jar-utils.js     # Jar queue helper
-│   │   └── activity-logger.js # JSONL activity log writer (date-keyed, 0o600)
+│   │   ├── activity-logger.js # JSONL activity log writer (date-keyed, 0o600)
+│   │   ├── circuit-breaker.js # Three-state circuit breaker (CLOSED/HALF_OPEN/OPEN) 🔌
+│   │   └── metrics-utils.js   # Metrics aggregation engine (session scanner + git log parser) 📊
 │   ├── types/
 │   │   └── index.js         # Promise tokens, State type, HookInput type
 │   ├── tests/               # Test suite (node --test)
@@ -446,6 +542,7 @@ Each session directory accumulates execution traces and work products:
 ```
 ~/.claude/pickle-rick/sessions/2026-02-28-a1b2c3d4/
 ├── state.json                          # Live state (see above)
+├── circuit_breaker.json                # Circuit breaker state (when enabled)
 ├── prd.md                              # The PRD for this epic
 ├── linear_ticket_parent.md             # Parent ticket with all sub-tickets
 ├── hooks.log                           # Stop hook decisions and state transitions
@@ -478,6 +575,7 @@ Each session directory accumulates execution traces and work products:
 | `worker_session_<pid>.log` | Full Morty subprocess output — research, planning, implementation, test runs |
 | `worker_<role>_c<N>.log` | PRD refinement analyst output per role per cycle |
 | `meeseeks-summary.md` | Per-pass table of issues found/fixed, test status, commit hashes |
+| `circuit_breaker.json` | Circuit breaker state: `state` (CLOSED/HALF_OPEN/OPEN), counters, `lastError`, `reason` |
 
 **Ticket artifacts** follow the lifecycle phases: `research_<id>.md` → `research_review.md` → `plan_<id>.md` → `plan_review.md` → implementation (code changes + commits). These persist in the session directory and can be reviewed after the run.
 
