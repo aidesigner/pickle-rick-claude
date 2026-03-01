@@ -199,10 +199,12 @@ async function runIteration(sessionDir: string, iterationNum: number, extensionR
       process.stderr.write(chunk);
     });
 
-    proc.on('close', () => {
+    proc.on('close', (code) => {
       if (settled) return;
       settled = true;
       try { fs.closeSync(logFd); } catch { /* already closed */ }
+      const exitCodeFile = logFile.replace('.log', '.exitcode');
+      try { fs.writeFileSync(exitCodeFile, String(code ?? -1)); } catch { /* best effort */ }
       let output = '';
       try { output = fs.readFileSync(logFile, 'utf-8'); } catch { /* missing/unreadable log */ }
       resolve(classifyCompletion(output));

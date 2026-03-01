@@ -201,7 +201,7 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
             writeToLog(chunk);
             process.stderr.write(chunk);
         });
-        proc.on('close', () => {
+        proc.on('close', (code) => {
             if (settled)
                 return;
             settled = true;
@@ -209,6 +209,11 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
                 fs.closeSync(logFd);
             }
             catch { /* already closed */ }
+            const exitCodeFile = logFile.replace('.log', '.exitcode');
+            try {
+                fs.writeFileSync(exitCodeFile, String(code ?? -1));
+            }
+            catch { /* best effort */ }
             let output = '';
             try {
                 output = fs.readFileSync(logFile, 'utf-8');

@@ -769,3 +769,21 @@ test('loadRateLimitSettings: boundary value 1 is accepted (minimum floor)', () =
         fs.rmSync(fakeRoot, { recursive: true, force: true });
     }
 });
+
+// ---------------------------------------------------------------------------
+// Exit code sidecar file pattern (d6ed51ab)
+// ---------------------------------------------------------------------------
+
+test('exitcode sidecar: .log replaced with .exitcode produces correct filename', () => {
+    const logFile = '/tmp/sessions/2026-03-01/tmux_iteration_1.log';
+    const exitCodeFile = logFile.replace('.log', '.exitcode');
+    assert.equal(exitCodeFile, '/tmp/sessions/2026-03-01/tmux_iteration_1.exitcode');
+});
+
+test('exitcode sidecar: pattern works for various iteration numbers', () => {
+    for (const n of [0, 1, 42, 999]) {
+        const logFile = `tmux_iteration_${n}.log`;
+        const exitCodeFile = logFile.replace('.log', '.exitcode');
+        assert.equal(exitCodeFile, `tmux_iteration_${n}.exitcode`);
+    }
+});
