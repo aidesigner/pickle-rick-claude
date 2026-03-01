@@ -7,6 +7,7 @@ import { printMinimalPanel, Style, formatTime, getExtensionRoot, buildHandoffSum
 import { State, PromiseTokens, hasToken, VALID_STEPS } from '../types/index.js';
 import { writeStateFile } from '../hooks/resolve-state.js';
 import { logActivity } from '../services/activity-logger.js';
+import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, type CircuitBreakerState } from '../services/circuit-breaker.js';
 
 /**
  * Classifies iteration output into a completion result.
@@ -200,11 +201,16 @@ async function main() {
     log('Session ownership taken (active: false → true)');
   }
 
+  const cbSettings = loadSettings(extensionRoot);
+  const cbEnabled = cbSettings.enabled;
+  let cbState: CircuitBreakerState | null = cbEnabled ? initCircuitBreaker(sessionDir, cbSettings) : null;
+  const cbPath = path.join(sessionDir, 'circuit_breaker.json');
+
   const startTime = Date.now();
   let iteration = 0;
   let lastStateIteration = -1;
   let stallCount = 0;
-  let exitReason: 'success' | 'cancelled' | 'error' | 'limit' | 'stall' = 'error';
+  let exitReason: 'success' | 'cancelled' | 'error' | 'limit' | 'stall' | 'circuit_open' = 'error';
 
   while (true) {
     let state: State;
@@ -248,26 +254,88 @@ async function main() {
       break;
     }
 
-    // Stall detection: if state.iteration hasn't advanced in 3 outer-loop iterations,
-    // something is broken (stop hook not firing, subprocess crashing, etc.)
-    if (curIter === lastStateIteration) {
-      stallCount++;
-      if (stallCount >= 3) {
-        log(`WARNING: state.iteration has not advanced in 3 outer-loop iterations (stuck at ${state.iteration}). Exiting to avoid wasted API calls.`);
-        state.active = false;
-        writeStateFile(statePath, state);
-        exitReason = 'stall';
-        break;
-      }
-    } else {
-      stallCount = 0;
+    // Circuit breaker gate: if CB is OPEN, exit immediately
+    if (cbEnabled && cbState && !canExecute(cbState)) {
+      log(`Circuit breaker OPEN: ${cbState.reason}. Exiting.`);
+      state.active = false;
+      writeStateFile(statePath, state);
+      exitReason = 'circuit_open';
+      break;
     }
-    lastStateIteration = curIter;
+
+    // Stall detection fallback (only when CB is disabled)
+    if (!cbEnabled) {
+      if (curIter === lastStateIteration) {
+        stallCount++;
+        if (stallCount >= 3) {
+          log(`WARNING: state.iteration has not advanced in 3 outer-loop iterations (stuck at ${state.iteration}). Exiting to avoid wasted API calls.`);
+          state.active = false;
+          writeStateFile(statePath, state);
+          exitReason = 'stall';
+          break;
+        }
+      } else {
+        stallCount = 0;
+      }
+      lastStateIteration = curIter;
+    }
 
     iteration++;
     log(`--- Iteration ${iteration} (state.iteration=${state.iteration}) ---`);
 
     const result = await runIteration(sessionDir, iteration, extensionRoot);
+
+    // Circuit breaker: record iteration outcome (skip for subprocess failures)
+    if (cbEnabled && cbState && result !== 'error' && result !== 'inactive') {
+      let postIterState: State;
+      try {
+        postIterState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      } catch {
+        postIterState = state;
+      }
+
+      const progress = detectProgress(
+        postIterState.working_dir || process.cwd(),
+        cbState.last_known_head,
+        cbState.last_known_step,
+        postIterState.step,
+        cbState.last_known_ticket,
+        postIterState.current_ticket
+      );
+
+      const iterLogFile = path.join(sessionDir, `tmux_iteration_${iteration}.log`);
+      let errorSig: string | null = null;
+      try {
+        const logContent = fs.readFileSync(iterLogFile, 'utf-8');
+        errorSig = extractErrorSignature(logContent);
+      } catch { /* log may not exist */ }
+
+      const prevCBState = cbState.state;
+      cbState = recordIterationResult(
+        cbState,
+        { hasProgress: progress.hasProgress, errorSignature: errorSig },
+        iteration,
+        cbSettings
+      );
+      cbState.last_known_head = progress.currentHead;
+      cbState.last_known_step = postIterState.step;
+      cbState.last_known_ticket = postIterState.current_ticket;
+      writeStateFile(cbPath, cbState);
+
+      if (prevCBState !== 'OPEN' && cbState.state === 'OPEN') {
+        logActivity({ event: 'circuit_open', source: 'pickle', session: path.basename(sessionDir), error: cbState.reason });
+        log(`Circuit breaker tripped: ${cbState.reason}`);
+        state.active = false;
+        writeStateFile(statePath, state);
+        exitReason = 'circuit_open';
+        break;
+      }
+
+      if (prevCBState === 'HALF_OPEN' && cbState.state === 'CLOSED') {
+        logActivity({ event: 'circuit_recovery', source: 'pickle', session: path.basename(sessionDir) });
+        log('Circuit breaker recovered (HALF_OPEN → CLOSED)');
+      }
+    }
 
     if (result === 'task_completed') {
       // EPIC_COMPLETED / TASK_COMPLETED — check for meeseeks chain before exiting
@@ -285,6 +353,10 @@ async function main() {
         writeStateFile(statePath, newState);
         lastStateIteration = -1;
         stallCount = 0;
+        if (cbEnabled) {
+          try { fs.unlinkSync(cbPath); } catch { /* may not exist */ }
+          cbState = initCircuitBreaker(sessionDir, cbSettings);
+        }
         log('Transitioning to Meeseeks review mode (chain_meeseeks). Continuing loop.');
         continue;
       }
@@ -351,7 +423,7 @@ async function main() {
 }
 
 export function buildTmuxNotification(exitReason: string, finalStep: string, iteration: number, totalElapsed: number) {
-  const isFailure = exitReason === 'error' || exitReason === 'stall';
+  const isFailure = exitReason === 'error' || exitReason === 'stall' || exitReason === 'circuit_open';
   const title = isFailure
     ? '🥒 Pickle Run Failed'
     : '🥒 Pickle Run Complete';
