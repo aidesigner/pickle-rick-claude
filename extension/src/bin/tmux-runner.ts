@@ -55,6 +55,19 @@ export function transitionToMeeseeks(state: State, extensionRoot: string): State
   };
 }
 
+export function loadRateLimitSettings(extensionRoot: string): { waitMinutes: number; maxRetries: number } {
+  let waitMinutes = 60;
+  let maxRetries = 3;
+  try {
+    const raw = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
+    const rawWait = raw.default_rate_limit_wait_minutes;
+    if (typeof rawWait === 'number' && rawWait >= 1) waitMinutes = rawWait;
+    const rawRetries = raw.default_max_rate_limit_retries;
+    if (typeof rawRetries === 'number' && rawRetries >= 1) maxRetries = rawRetries;
+  } catch { /* use defaults */ }
+  return { waitMinutes, maxRetries };
+}
+
 async function runIteration(sessionDir: string, iterationNum: number, extensionRoot: string): Promise<string> {
   const statePath = path.join(sessionDir, 'state.json');
   let state: State;
@@ -206,10 +219,13 @@ async function main() {
   let cbState: CircuitBreakerState | null = cbEnabled ? initCircuitBreaker(sessionDir, cbSettings) : null;
   const cbPath = path.join(sessionDir, 'circuit_breaker.json');
 
+  const { waitMinutes: rateLimitWaitMinutes, maxRetries: maxRateLimitRetries } = loadRateLimitSettings(extensionRoot);
+
   const startTime = Date.now();
   let iteration = 0;
   let lastStateIteration = -1;
   let stallCount = 0;
+  let consecutiveRateLimits = 0;
   let exitReason: 'success' | 'cancelled' | 'error' | 'limit' | 'stall' | 'circuit_open' = 'error';
 
   while (true) {

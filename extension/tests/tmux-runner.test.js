@@ -489,7 +489,7 @@ test('tmux-runner: creates tmux-runner.log in session directory', () => {
 
 // --- Completion classification (classifyCompletion) ---
 
-import { buildTmuxNotification, classifyCompletion, transitionToMeeseeks } from '../bin/tmux-runner.js';
+import { buildTmuxNotification, classifyCompletion, transitionToMeeseeks, loadRateLimitSettings } from '../bin/tmux-runner.js';
 
 test('classifyCompletion: TASK_COMPLETED returns task_completed', () => {
     assert.equal(classifyCompletion('<promise>TASK_COMPLETED</promise>'), 'task_completed');
@@ -675,6 +675,96 @@ test('transitionToMeeseeks: preserves non-transitioned state fields', () => {
         assert.equal(result.session_dir, '/sessions/abc');
         assert.equal(result.tmux_mode, true);
         assert.equal(result.active, true);
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// loadRateLimitSettings
+// ---------------------------------------------------------------------------
+
+test('loadRateLimitSettings: returns defaults when no settings file', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-')));
+    try {
+        const result = loadRateLimitSettings(fakeRoot);
+        assert.equal(result.waitMinutes, 60);
+        assert.equal(result.maxRetries, 3);
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
+});
+
+test('loadRateLimitSettings: reads custom values from pickle_settings.json', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-')));
+    try {
+        fs.writeFileSync(path.join(fakeRoot, 'pickle_settings.json'), JSON.stringify({
+            default_rate_limit_wait_minutes: 30,
+            default_max_rate_limit_retries: 5,
+        }));
+        const result = loadRateLimitSettings(fakeRoot);
+        assert.equal(result.waitMinutes, 30);
+        assert.equal(result.maxRetries, 5);
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
+});
+
+test('loadRateLimitSettings: zero values fall back to floor of 1', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-')));
+    try {
+        fs.writeFileSync(path.join(fakeRoot, 'pickle_settings.json'), JSON.stringify({
+            default_rate_limit_wait_minutes: 0,
+            default_max_rate_limit_retries: 0,
+        }));
+        const result = loadRateLimitSettings(fakeRoot);
+        assert.equal(result.waitMinutes, 60, 'wait_minutes: 0 should fall back to default 60');
+        assert.equal(result.maxRetries, 3, 'retries: 0 should fall back to default 3');
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
+});
+
+test('loadRateLimitSettings: negative values fall back to defaults', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-')));
+    try {
+        fs.writeFileSync(path.join(fakeRoot, 'pickle_settings.json'), JSON.stringify({
+            default_rate_limit_wait_minutes: -10,
+            default_max_rate_limit_retries: -1,
+        }));
+        const result = loadRateLimitSettings(fakeRoot);
+        assert.equal(result.waitMinutes, 60);
+        assert.equal(result.maxRetries, 3);
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
+});
+
+test('loadRateLimitSettings: non-number values fall back to defaults', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-')));
+    try {
+        fs.writeFileSync(path.join(fakeRoot, 'pickle_settings.json'), JSON.stringify({
+            default_rate_limit_wait_minutes: 'sixty',
+            default_max_rate_limit_retries: true,
+        }));
+        const result = loadRateLimitSettings(fakeRoot);
+        assert.equal(result.waitMinutes, 60);
+        assert.equal(result.maxRetries, 3);
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
+});
+
+test('loadRateLimitSettings: boundary value 1 is accepted (minimum floor)', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-')));
+    try {
+        fs.writeFileSync(path.join(fakeRoot, 'pickle_settings.json'), JSON.stringify({
+            default_rate_limit_wait_minutes: 1,
+            default_max_rate_limit_retries: 1,
+        }));
+        const result = loadRateLimitSettings(fakeRoot);
+        assert.equal(result.waitMinutes, 1);
+        assert.equal(result.maxRetries, 1);
     } finally {
         fs.rmSync(fakeRoot, { recursive: true, force: true });
     }
