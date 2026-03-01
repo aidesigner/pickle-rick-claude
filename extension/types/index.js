@@ -32,4 +32,5 @@ export const VALID_ACTIVITY_EVENTS = [
     'session_start', 'session_end', 'ticket_completed', 'epic_completed',
     'meeseeks_pass', 'commit', 'research', 'bug_fix', 'feature',
     'refactor', 'review', 'jar_start', 'jar_end',
+    'circuit_open', 'circuit_recovery',
 ];

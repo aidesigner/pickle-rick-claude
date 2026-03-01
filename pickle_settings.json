@@ -7,5 +7,9 @@
   "default_refinement_cycles": 3,
   "default_refinement_max_turns": 100,
   "default_meeseeks_min_passes": 10,
-  "default_meeseeks_max_passes": 50
+  "default_meeseeks_max_passes": 50,
+  "default_circuit_breaker_enabled": true,
+  "default_cb_no_progress_threshold": 5,
+  "default_cb_same_error_threshold": 5,
+  "default_cb_half_open_after": 2
 }

@@ -41,7 +41,14 @@ rsync -a --delete --delete-excluded \
   --exclude='tsconfig.json' \
   --exclude='package-lock.json' \
   "$SCRIPT_DIR/extension/" "$EXTENSION_ROOT/extension/"
-cp "$SCRIPT_DIR/pickle_settings.json" "$EXTENSION_ROOT/"
+# Merge pickle_settings: repo defaults as base, user values overlaid (preserves customizations)
+if [ -f "$EXTENSION_ROOT/pickle_settings.json" ]; then
+  TMPFILE="$(mktemp)"
+  jq -s '.[0] * .[1]' "$SCRIPT_DIR/pickle_settings.json" "$EXTENSION_ROOT/pickle_settings.json" > "$TMPFILE" \
+    && mv "$TMPFILE" "$EXTENSION_ROOT/pickle_settings.json"
+else
+  cp "$SCRIPT_DIR/pickle_settings.json" "$EXTENSION_ROOT/"
+fi
 # Store persona snippet — append this to your project's CLAUDE.md
 cp "$SCRIPT_DIR/persona.md" "$EXTENSION_ROOT/persona.md"
 
