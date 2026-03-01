@@ -90,6 +90,21 @@ function render(sessionDir: string): boolean {
     ['Current Ticket', state.current_ticket || 'none'],
     ['Active', state.active === true ? `${g}Yes${r}` : `${red}No${r}`],
   ];
+
+  try {
+    const cbRaw = fs.readFileSync(path.join(sessionDir, 'circuit_breaker.json'), 'utf-8');
+    const cb = JSON.parse(cbRaw) as { state?: string; reason?: string };
+    if (cb.state === 'CLOSED') {
+      fields.push(['Circuit', `${g}CLOSED${r}`]);
+    } else if (cb.state === 'HALF_OPEN') {
+      fields.push(['Circuit', `${y}HALF_OPEN (${cb.reason || ''})${r}`]);
+    } else if (cb.state === 'OPEN') {
+      fields.push(['Circuit', `${red}OPEN (${cb.reason || ''})${r}`]);
+    }
+  } catch {
+    // circuit_breaker.json missing or corrupt — skip field
+  }
+
   const keyWidth = Math.max(...fields.map(([k]) => k.length)) + 1;
 
   const out: string[] = ['\x1b[2J\x1b[H'];
