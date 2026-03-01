@@ -31,14 +31,15 @@ async function getLogActivity() {
 
 // --- VALID_ACTIVITY_EVENTS ---
 
-test('VALID_ACTIVITY_EVENTS contains all 15 expected event types', () => {
+test('VALID_ACTIVITY_EVENTS contains all 18 expected event types', () => {
     const expected = [
         'session_start', 'session_end', 'ticket_completed', 'epic_completed',
         'meeseeks_pass', 'commit', 'research', 'bug_fix', 'feature',
         'refactor', 'review', 'jar_start', 'jar_end',
         'circuit_open', 'circuit_recovery',
+        'rate_limit_wait', 'rate_limit_resume', 'rate_limit_exhausted',
     ];
-    assert.equal(VALID_ACTIVITY_EVENTS.length, 15);
+    assert.equal(VALID_ACTIVITY_EVENTS.length, 18);
     for (const e of expected) {
         assert.ok(VALID_ACTIVITY_EVENTS.includes(e), `Missing event type: ${e}`);
     }
@@ -306,12 +307,13 @@ test('CLI: truncates title at 200 chars', () => {
     }
 });
 
-test('CLI: accepts all 15 valid event types', () => {
+test('CLI: accepts all 18 valid event types', () => {
     const expected = [
         'session_start', 'session_end', 'ticket_completed', 'epic_completed',
         'meeseeks_pass', 'commit', 'research', 'bug_fix', 'feature',
         'refactor', 'review', 'jar_start', 'jar_end',
         'circuit_open', 'circuit_recovery',
+        'rate_limit_wait', 'rate_limit_resume', 'rate_limit_exhausted',
     ];
     const extRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-activity-'));
     try {

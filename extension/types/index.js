@@ -33,4 +33,5 @@ export const VALID_ACTIVITY_EVENTS = [
     'meeseeks_pass', 'commit', 'research', 'bug_fix', 'feature',
     'refactor', 'review', 'jar_start', 'jar_end',
     'circuit_open', 'circuit_recovery',
+    'rate_limit_wait', 'rate_limit_resume', 'rate_limit_exhausted',
 ];
