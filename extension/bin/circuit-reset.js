@@ -33,7 +33,6 @@ function main() {
         }, 'GREEN', '🔌');
         process.exit(0);
     }
-    // Parse optional --reason flag
     let reason = 'Manual CLI reset';
     const reasonIdx = process.argv.indexOf('--reason');
     if (reasonIdx !== -1 && process.argv[reasonIdx + 1]) {
