@@ -6,16 +6,7 @@
 
 > *"Wubba Lubba Dub Dub! 🥒 I'm not just an AI assistant, Morty — I'm an **autonomous engineering machine** trapped in a pickle jar!"*
 
-Originally a port of the [Pickle Rick Gemini CLI extension](https://github.com/galz10/pickle-rick-extension), has evolved into a full Ralph Loop toolset:
-
-| | |
-|---|---|
-| **Context clearing** | Every iteration injects a structured summary (phase, tickets, task) so Rick never loses his place — even after full context compression. tmux mode (`/pickle-tmux`) goes further: each iteration is a fresh `claude -p` subprocess with zero conversation history. No drift on 50+ iteration epics. |
-| **One hook, whole lifecycle** | A single Stop hook blocks exit, injects context, and enforces limits. No daemon, no polling, no external orchestrator — just the hook and `state.json`. |
-| **PRD refinement** | `/pickle-refine-prd` deploys 3 parallel Morty analysts (Requirements, Codebase, Risk/Scope) over multiple cycles, then decomposes findings into ordered, self-contained tickets. Add `--run` to auto-launch an unlimited tmux session immediately after, or `--meeseeks` for the full pipeline: refine → execute → Meeseeks review. |
-| **Worker isolation** | Each Morty runs as a scoped `claude -p` subprocess — `--dangerously-skip-permissions`, `--add-dir` limited to its ticket and the extension root. No cross-contamination between workers. |
-| **Circuit breaker** | Three-state safeguard (CLOSED → HALF_OPEN → OPEN) against runaway sessions. Detects stalls via git-diff progress checks and repeated-error signatures. Graduates from warning (HALF_OPEN) to full stop (OPEN) with configurable thresholds. Manual recovery via `circuit-reset.js`. Live state shown color-coded in the tmux monitor. |
-| **Pickle Jar** | Queue tasks with `/add-to-pickle-jar`, run them all with `/pickle-jar-open`. Night shift mode — walk away, come back to per-task success/failure results. |
+Originally a port of the [Pickle Rick Gemini CLI extension](https://github.com/galz10/pickle-rick-extension), Pickle Rick has evolved into a complete autonomous engineering toolkit built on the [Ralph Wiggum loop](https://ghuntley.com/ralph/). Hand it a PRD — or let it draft one — and it decomposes the work into tickets, spawns isolated worker subprocesses for each, and drives them through a full research → plan → implement → refactor lifecycle without human intervention. Context clearing between every iteration means no drift even on 50+ iteration epics. A single Stop hook powers the entire lifecycle — no daemon, no polling, no external orchestrator. Three parallel analysts refine your PRD before a line of code is written. A three-state circuit breaker auto-stops runaway sessions by tracking git-diff progress and repeated errors. Queue tasks into the Pickle Jar and run them all overnight. Track token usage, commits, and lines changed with built-in metrics. One command can chain the full pipeline — refinement, execution, and code review — then send you a macOS notification when it's done.
 
 ---
 
