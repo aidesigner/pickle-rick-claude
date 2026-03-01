@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, buildHandoffSummary } from '../services/pickle-utils.js';
-import { State, PromiseTokens, hasToken, VALID_STEPS } from '../types/index.js';
+import { State, PromiseTokens, hasToken, VALID_STEPS, type IterationExitType } from '../types/index.js';
 import { writeStateFile } from '../hooks/resolve-state.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, type CircuitBreakerState } from '../services/circuit-breaker.js';
@@ -66,6 +66,46 @@ export function loadRateLimitSettings(extensionRoot: string): { waitMinutes: num
     if (typeof rawRetries === 'number' && rawRetries >= 1) maxRetries = rawRetries;
   } catch { /* use defaults */ }
   return { waitMinutes, maxRetries };
+}
+
+export function detectRateLimitInLog(logFile: string): boolean {
+  try {
+    const content = fs.readFileSync(logFile, 'utf-8');
+    const lines = content.split('\n');
+    const tail = lines.slice(-100);
+    for (const line of tail) {
+      try {
+        const parsed = JSON.parse(line);
+        if (parsed.type === 'rate_limit_event' && parsed.status === 'rejected') return true;
+      } catch { /* not JSON */ }
+    }
+  } catch { /* file missing */ }
+  return false;
+}
+
+export function detectRateLimitInText(logFile: string): boolean {
+  try {
+    const content = fs.readFileSync(logFile, 'utf-8');
+    const lines = content.split('\n');
+    const tail = lines.slice(-100);
+    const filtered = tail.filter(l => !l.includes('"type":"user"') && !l.includes('"type":"tool_result"'));
+    const text = filtered.join('\n');
+    const patterns = [/5.*hour.*limit/i, /limit.*reached.*try.*back/i, /usage.*limit.*reached/i, /rate limit/i];
+    return patterns.some(p => p.test(text));
+  } catch { /* file missing */ }
+  return false;
+}
+
+export function classifyIterationExit(
+  completionResult: string,
+  logFile: string,
+): IterationExitType {
+  if (completionResult === 'inactive') return 'inactive';
+  if (completionResult === 'error') return 'error';
+  if (completionResult === 'task_completed' || completionResult === 'review_clean') return 'success';
+  if (detectRateLimitInLog(logFile)) return 'api_limit';
+  if (detectRateLimitInText(logFile)) return 'api_limit';
+  return 'success';
 }
 
 async function runIteration(sessionDir: string, iterationNum: number, extensionRoot: string): Promise<string> {
