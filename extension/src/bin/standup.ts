@@ -242,7 +242,15 @@ export function formatOutput(
   }
 
   // 3. Build sorted session entries (newest first by first event timestamp)
-  const sessionEntries = [...sessionEvents.entries()].map(([sid, sevts]) => {
+  //    Filter out empty sessions: only session_start/session_end events, no commits, no iterations
+  const LIFECYCLE_ONLY = new Set(['session_start', 'session_end']);
+  const sessionEntries = [...sessionEvents.entries()]
+    .filter(([sid, sevts]) => {
+      const commits = sessionCommits.get(sid) || [];
+      const hasMeaningfulEvents = sevts.some((e) => !LIFECYCLE_ONLY.has(e.event));
+      return commits.length > 0 || hasMeaningfulEvents;
+    })
+    .map(([sid, sevts]) => {
     const startEvent = sevts.find((e) => e.event === 'session_start');
     const prompt = startEvent?.original_prompt;
     const taskName = prompt ? (prompt.length > 60 ? prompt.slice(0, 60) + '...' : prompt) : sid;
@@ -265,7 +273,7 @@ export function formatOutput(
     const iterationCount = iterationStarts.length;
     const iterationStr = iterationCount > 0 ? `${iterationCount} iteration${iterationCount === 1 ? '' : 's'}` : '? iterations';
 
-    const mode = iterationCount > 0 ? 'tmux' : 'inline';
+    const mode = startEvent?.mode || (iterationCount > 0 ? 'tmux' : 'inline');
 
     return { sid, taskName, durationStr, iterationStr, mode, commits, firstTs };
   });

@@ -509,8 +509,10 @@ test('formatOutput: old session without iteration events (graceful degradation)'
 test('formatOutput: multiple sessions sorted newest first', () => {
     const events = [
         { ts: '2026-02-26T08:00:00Z', event: 'session_start', source: 'pickle', session: 'older-sess', original_prompt: 'Older task' },
+        { ts: '2026-02-26T08:30:00Z', event: 'iteration_start', source: 'pickle', session: 'older-sess', iteration: 1 },
         { ts: '2026-02-26T09:00:00Z', event: 'session_end', source: 'pickle', session: 'older-sess' },
         { ts: '2026-02-26T14:00:00Z', event: 'session_start', source: 'pickle', session: 'newer-sess', original_prompt: 'Newer task' },
+        { ts: '2026-02-26T14:30:00Z', event: 'iteration_start', source: 'pickle', session: 'newer-sess', iteration: 1 },
         { ts: '2026-02-26T15:30:00Z', event: 'session_end', source: 'pickle', session: 'newer-sess' },
     ];
     const output = formatOutput(events, [], [], new Date('2026-02-26'), new Date('2026-02-27'));
@@ -542,6 +544,7 @@ test('formatOutput: original_prompt truncated to 60 chars', () => {
     const longPrompt = 'This is a very long original prompt that exceeds sixty characters and should be truncated';
     const events = [
         { ts: '2026-02-26T10:00:00Z', event: 'session_start', source: 'pickle', session: 'sess-trunc', original_prompt: longPrompt },
+        { ts: '2026-02-26T10:30:00Z', event: 'iteration_start', source: 'pickle', session: 'sess-trunc', iteration: 1 },
         { ts: '2026-02-26T11:00:00Z', event: 'session_end', source: 'pickle', session: 'sess-trunc' },
     ];
     const output = formatOutput(events, [], [], new Date('2026-02-26'), new Date('2026-02-27'));
@@ -584,7 +587,7 @@ test('CLI: default run produces output', () => {
     withTempActivityDir((activityDir, extRoot) => {
         const dateStr = yesterday();
         writeEvent(activityDir, dateStr, { ts: `${dateStr}T10:00:00Z`, event: 'session_start', source: 'pickle', session: 'test-sess' });
-        writeEvent(activityDir, dateStr, { ts: `${dateStr}T11:00:00Z`, event: 'commit', source: 'hook', commit_hash: 'aaa1111', commit_message: 'fix: test' });
+        writeEvent(activityDir, dateStr, { ts: `${dateStr}T11:00:00Z`, event: 'commit', source: 'hook', session: 'test-sess', commit_hash: 'aaa1111', commit_message: 'fix: test' });
 
         const result = runCli([], { EXTENSION_DIR: extRoot });
         assert.equal(result.status, 0, `stderr: ${result.stderr}`);
