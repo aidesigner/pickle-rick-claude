@@ -203,11 +203,6 @@ export function detectProgress(
   prevTicket: string | null,
   currentTicket: string | null
 ): ProgressResult {
-  // First-iteration warm-up: no baseline to compare against
-  if (lastKnownHead === '') {
-    return { hasProgress: true, currentHead: '', filesChanged: 0, stepChanged: false, ticketChanged: false };
-  }
-
   const stepChanged = prevStep !== null && prevStep !== currentStep;
   const ticketChanged = prevTicket !== null && prevTicket !== currentTicket;
 
@@ -221,14 +216,21 @@ export function detectProgress(
     return { hasProgress: true, currentHead: '', filesChanged: 0, stepChanged, ticketChanged };
   }
 
+  const currentHead = runCmd(['git', 'rev-parse', 'HEAD'], { cwd: workingDir, check: false });
+
+  // First-iteration warm-up: no baseline to compare against.
+  // Compute currentHead above so subsequent iterations have a baseline.
+  if (lastKnownHead === '') {
+    return { hasProgress: true, currentHead, filesChanged: 0, stepChanged, ticketChanged };
+  }
+
   const diffOutput = runCmd(['git', 'diff', '--stat'], { cwd: workingDir, check: false });
   const hasUncommittedChanges = diffOutput.length > 0;
 
   const stagedOutput = runCmd(['git', 'diff', '--stat', '--cached'], { cwd: workingDir, check: false });
   const hasStagedChanges = stagedOutput.length > 0;
 
-  const currentHead = runCmd(['git', 'rev-parse', 'HEAD'], { cwd: workingDir, check: false });
-  const headChanged = lastKnownHead !== '' && currentHead !== lastKnownHead;
+  const headChanged = currentHead !== lastKnownHead;
 
   return {
     hasProgress: hasUncommittedChanges || hasStagedChanges || headChanged || stepChanged || ticketChanged,
