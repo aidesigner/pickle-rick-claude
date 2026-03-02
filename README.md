@@ -6,7 +6,7 @@
 
 > *"Wubba Lubba Dub Dub! 🥒 I'm not just an AI assistant, Morty — I'm an **autonomous engineering machine** trapped in a pickle jar!"*
 
-Originally a port of the [Pickle Rick Gemini CLI extension](https://github.com/galz10/pickle-rick-extension), Pickle Rick has evolved into a complete autonomous engineering toolkit built on the [Ralph Wiggum loop](https://ghuntley.com/ralph/). Hand it a PRD — or let it draft one — and it decomposes the work into tickets, spawns isolated worker subprocesses for each, and drives them through a full research → plan → implement → refactor lifecycle without human intervention. Context clearing between every iteration means no drift even on 50+ iteration epics. A single Stop hook powers the entire lifecycle — no daemon, no polling, no external orchestrator. Three parallel analysts refine your PRD before a line of code is written. A three-state circuit breaker auto-stops runaway sessions by tracking git-diff progress and repeated errors. Queue tasks into the Pickle Jar and run them all overnight. Track token usage, commits, and lines changed with built-in metrics. One command can chain the full pipeline — refinement, execution, and code review — then send you a macOS notification when it's done.
+Originally a port of the [Pickle Rick Gemini CLI extension](https://github.com/galz10/pickle-rick-extension), Pickle Rick has evolved into a complete autonomous engineering toolkit built on the [Ralph Wiggum loop](https://ghuntley.com/ralph/). Hand it a PRD — or let it draft one — and it decomposes the work into tickets, spawns isolated worker subprocesses for each, and drives them through a full research → plan → implement → simplify lifecycle without human intervention. Context clearing between every iteration means no drift even on 50+ iteration epics. A single Stop hook powers the entire lifecycle — no daemon, no polling, no external orchestrator. Three parallel analysts refine your PRD before a line of code is written. A three-state circuit breaker auto-stops runaway sessions by tracking git-diff progress and repeated errors. Rate limit auto-recovery detects API throttling, waits it out with a cancellable countdown, and resumes — surviving overnight runs that hit per-hour caps. Queue tasks into the Pickle Jar and run them all overnight. Track token usage, commits, and lines changed with built-in metrics. One command can chain the full pipeline — refinement, execution, and code review — then send you a macOS notification when it's done.
 
 ---
 
@@ -59,13 +59,7 @@ Pickle Rick transforms Claude Code into a **hyper-competent, arrogant, iterative
      │          │
      ▼          ▼
   ┌──────┐  ┌──────┐
-  │✂️ Re-│  │✂️ Re-│  6. Ruthlessly refactor. Purge the slop.
-  │factor│  │factor│
-  └──┬───┘  └──┬───┘
-     │          │
-     ▼          ▼
-  ┌──────┐  ┌──────┐
-  │🧹Sim-│  │🧹Sim-│  7. Simplify. Strip it to the bone.
+  │🧹Sim-│  │🧹Sim-│  6. Simplify. Kill dead code. Strip to the bone.
   │plify │  │plify │
   └──────┘  └──────┘
          │
@@ -73,7 +67,7 @@ Pickle Rick transforms Claude Code into a **hyper-competent, arrogant, iterative
   ✅ DONE (or loops again)
 ```
 
-The **Stop hook** prevents Claude from exiting until the task is genuinely complete. No half-measures. No early exits. Rick doesn't quit. Between each iteration, the hook injects a fresh session summary — current phase, ticket list, active task — so Rick always wakes up knowing exactly where he is, even after full context compression.
+The **Stop hook** prevents Claude from exiting until the task is genuinely complete. No half-measures. No early exits. Rick doesn't quit. Between each iteration, the hook injects a fresh session summary — current phase, ticket list, active task — so Rick always wakes up knowing exactly where he is, even after full context compression. In tmux mode, the runner owns the session lifecycle — the stop hook approves subprocess exits without touching `active`, letting the runner decide whether to continue, transition to Meeseeks, or stop.
 
 ---
 
@@ -148,6 +142,65 @@ The tmux monitor shows circuit state as a color-coded field alongside iteration 
 ### Disabling
 
 Set `default_circuit_breaker_enabled` to `false` in `pickle_settings.json`. When disabled, the tmux-runner falls back to a simplified stall counter (same as pre-CB behavior).
+
+---
+
+## ⏳ Rate Limit Auto-Recovery
+
+> *"You think a rate limit can stop me, Morty? I'm Pickle Rick. I'll just take a nap and come back swinging."*
+
+Long tmux sessions — especially overnight runs or `--meeseeks` chains — will inevitably hit the Anthropic API's per-hour request limit. Instead of crashing or burning through circuit breaker retries, the runner detects rate limits, waits them out, and resumes automatically.
+
+### How It Works
+
+After every iteration, `classifyIterationExit()` checks two signals before anything else (including the circuit breaker, so rate limits don't poison progress tracking):
+
+**NDJSON detection** — Scans the last 100 lines of the iteration log for `{"type": "rate_limit_event", "status": "rejected"}` — structured events from Claude's `stream-json` output. This is the primary signal.
+
+**Text pattern detection** — Regex fallback for natural language rate limit messages (`"5 per hour limit"`, `"usage limit reached"`, `"rate limit"`). Filters out `user` and `tool_result` lines to avoid false positives from the model discussing rate limits.
+
+### Wait-and-Resume Cycle
+
+```
+Iteration exits
+      │
+      ▼
+classifyIterationExit()
+      │
+  api_limit? ── No ──► normal CB/result handling
+      │
+      │ Yes
+      ▼
+Write rate_limit_wait.json (monitor shows countdown)
+      │
+      ▼
+┌─────────────────────────────────────────┐
+│  Sleep 10s loop (cancellable)           │
+│  • Check state.json active flag         │
+│  • Check session time limit             │
+│  • /eat-pickle sets active=false → exit │
+└──────────────┬──────────────────────────┘
+               │ timer expires
+               ▼
+Delete rate_limit_wait.json
+Write handoff.txt (resume instructions)
+Continue loop → next iteration
+```
+
+**Consecutive limit**: After `default_max_rate_limit_retries` (default: 3) consecutive rate limits without a successful iteration between them, the runner exits with `rate_limit_exhausted`. A successful iteration resets the counter.
+
+**Time-limit aware**: If the configured wait would exceed the session's `max_time_minutes`, the wait is clamped to the remaining time (or the session exits immediately if time is already up).
+
+### Monitor Display
+
+When the runner is in a rate limit wait, the tmux monitor shows a countdown timer with minutes:seconds remaining until resume. The `rate_limit_wait.json` file contains `wait_until` as an ISO timestamp — the monitor computes remaining time from that.
+
+### Settings
+
+| Setting | Default | Description |
+|---|---|---|
+| `default_rate_limit_wait_minutes` | 60 | How long to wait after detecting a rate limit |
+| `default_max_rate_limit_retries` | 3 | Consecutive rate limits before giving up |
 
 ---
 
@@ -304,7 +357,7 @@ Sit back. Rick handles the rest. 🥒
 
 | Command | Description |
 |---|---|
-| `/pickle "task"` | 🥒 Start the full autonomous loop — drafts a PRD, decomposes into tickets, then executes each through 7 phases: Research → Research Review → Plan → Plan Review → Implement → Refactor → Simplify |
+| `/pickle "task"` | 🥒 Start the full autonomous loop — drafts a PRD, decomposes into tickets, then executes each through 6 phases: Research → Research Review → Plan → Plan Review → Implement → Simplify |
 | `/meeseeks [task]` | 👋 Autonomous code review loop — tmux only, minimum 10 passes, commits per pass, exits when clean (`EXISTENCE_IS_PAIN`) |
 | `/pickle prd.md` | 🥒 Pick up an existing PRD and skip drafting — goes straight to breakdown and execution |
 | `/pickle-tmux "task"` | 🖥️ Same PRD-driven loop, but with true context clearing — fresh subprocess per iteration via tmux. Best for long epics (8+ iterations). Requires `tmux`. |
@@ -346,7 +399,7 @@ Sit back. Rick handles the rest. 🥒
 **tmux Mode — 3-pane live monitor** — `/pickle-tmux` creates a tmux session with a background runner and a 3-pane monitor window you attach to:
 
 ![tmux monitor — 3-pane layout: dashboard (top-left), iteration log (top-right), worker stream (bottom)](images/tmux-monitor.png)
-- **Top-left pane**: live dashboard — active ticket, phase, iteration count, elapsed time, all tickets with status (`[x]` done / `[~]` in progress / `[ ]` todo), and recent output summary. Refreshes every 2 seconds.
+- **Top-left pane**: live dashboard — active ticket, phase, iteration count, elapsed time, circuit breaker state, rate limit countdown (when waiting), all tickets with status (`[x]` done / `[~]` in progress / `[ ]` todo), and recent output summary. Refreshes every 2 seconds.
 - **Top-right pane**: live iteration log — streams each iteration's log as it's written, with an iteration header when the runner advances. Auto-switches to each new log file.
 - **Bottom pane**: live worker (Morty) stream — auto-follows the latest worker session output showing research, implementation, test runs, and commits in real time.
 
@@ -362,7 +415,7 @@ Ctrl+B d                        # detach (session keeps running in background)
 
 **Phase-resume** — When resuming after `/pickle-refine-prd` or `/pickle-prd`, the resume flow auto-detects the session's current phase and skips completed phases (PRD, Breakdown). No re-drafting, no re-decomposition — straight to orchestration. Both commands verify the session is resumable before recommending `--resume`.
 
-**Notifications (macOS)** — `/pickle-tmux` and `/pickle-jar-open` send macOS notifications on completion so you can work on something else while Rick runs. Inline `/pickle` outputs directly to your terminal.
+**Notifications (macOS)** — `/pickle-tmux` and `/pickle-jar-open` send macOS notifications on completion (or failure — circuit breaker trips, rate limit exhaustion, stalls) so you can work on something else while Rick runs. Inline `/pickle` outputs directly to your terminal.
 
 **PRD is non-negotiable** — Every `/pickle` run starts with a PRD, whether Rick drafts it, you refine it with `/pickle-refine-prd`, or you bring your own (`prd.md` / `PRD.md` in project root). For best results on complex tasks, use `/pickle-refine-prd` → `/pickle --resume` to get the PRD right before execution begins.
 
@@ -372,7 +425,7 @@ Ctrl+B d                        # detach (session keeps running in background)
 
 **`/meeseeks` — Autonomous Code Review** — Summon Mr. Meeseeks to review your codebase in a tmux loop. Each pass scans for issues across 8 escalating categories (dependency health → security → correctness → architecture → test coverage → resilience → code quality → polish), fixes them, runs tests, and commits. Every finding is logged to `meeseeks-summary.md` in the session directory — a persistent audit trail. Minimum 10 passes before accepting a "clean" exit. Configurable via `default_meeseeks_min_passes` and `default_meeseeks_max_passes` in settings. Uses the same tmux infrastructure as `/pickle-tmux`.
 
-**`--meeseeks` chaining** — `/pickle-refine-prd --meeseeks` is the "one command to rule them all" option. It chains the entire pipeline: PRD refinement → ticket decomposition → tmux execution → automatic Meeseeks review. When tmux-runner detects all tickets are complete (`TASK_COMPLETED`), it transitions the session to Meeseeks mode (swapping the command template, setting min/max passes, resetting iteration counter) and continues the loop. Same tmux session, same monitor panes. Cancel at any point with `/eat-pickle`.
+**`--meeseeks` chaining** — `/pickle-refine-prd --meeseeks` is the "one command to rule them all" option. It chains the entire pipeline: PRD refinement → ticket decomposition → tmux execution → automatic Meeseeks review. When tmux-runner detects all tickets are complete (`EPIC_COMPLETED`), it transitions the session to Meeseeks mode (swapping the command template, setting min/max passes, resetting iteration counter) and continues the loop. Same tmux session, same monitor panes. Cancel at any point with `/eat-pickle`.
 
 **"Stop hook error" is normal** — Claude Code labels every `decision: block` response from the stop hook as "Stop hook error" in the UI. This is not an actual error. It means the hook is working correctly — it blocked Claude's exit and injected the session context for the next iteration. If you see it, Rick is looping as intended.
 
@@ -395,6 +448,8 @@ All defaults are configurable via `~/.claude/pickle-rick/pickle_settings.json`:
 | `default_cb_no_progress_threshold` | 5 | Consecutive no-progress iterations before OPEN |
 | `default_cb_same_error_threshold` | 5 | Consecutive identical errors before OPEN |
 | `default_cb_half_open_after` | 2 | No-progress iterations before entering HALF_OPEN |
+| `default_rate_limit_wait_minutes` | 60 | Wait duration after API rate limit detection |
+| `default_max_rate_limit_retries` | 3 | Consecutive rate limits before giving up |
 
 ---
 
@@ -411,7 +466,7 @@ pickle-rick-claude/
 │   │   ├── pickle-dot.md         # PRD → attractor DOT digraph converter 🔀
 │   │   ├── meeseeks.md            # Autonomous code review loop (setup + per-pass template) 👋
 │   │   ├── project-mayhem.md      # Chaos engineering — mutation, deps, config corruption 💥
-│   │   ├── send-to-morty.md    # Worker prompt (internal — all 7 phases inlined)
+│   │   ├── send-to-morty.md    # Worker prompt (internal — 6 phases + scope boundary)
 │   │   ├── send-to-morty-review.md # Review worker prompt (3-phase: scope → review → simplify)
 │   │   ├── pickle-status.md    # Show session status
 │   │   ├── pickle-retry.md     # Retry a failed ticket
@@ -534,11 +589,13 @@ Each session directory accumulates execution traces and work products:
 ~/.claude/pickle-rick/sessions/2026-02-28-a1b2c3d4/
 ├── state.json                          # Live state (see above)
 ├── circuit_breaker.json                # Circuit breaker state (when enabled)
+├── rate_limit_wait.json                # Rate limit countdown (transient — deleted on resume)
 ├── prd.md                              # The PRD for this epic
 ├── linear_ticket_parent.md             # Parent ticket with all sub-tickets
 ├── hooks.log                           # Stop hook decisions and state transitions
 ├── tmux-runner.log                     # Orchestrator-level log (tmux mode)
 ├── tmux_iteration_1.log                # Per-iteration NDJSON stdout
+├── tmux_iteration_1.exitcode           # Subprocess exit code for post-mortem
 ├── tmux_iteration_2.log
 ├── meeseeks-summary.md                 # Meeseeks audit trail (when review runs)
 ├── feat-01/
@@ -567,6 +624,7 @@ Each session directory accumulates execution traces and work products:
 | `worker_<role>_c<N>.log` | PRD refinement analyst output per role per cycle |
 | `meeseeks-summary.md` | Per-pass table of issues found/fixed, test status, commit hashes |
 | `circuit_breaker.json` | Circuit breaker state: `state` (CLOSED/HALF_OPEN/OPEN), counters, `lastError`, `reason` |
+| `rate_limit_wait.json` | Transient: `waiting`, `wait_until` (ISO), `consecutive_waits`. Deleted on resume. Monitor reads this for countdown display |
 
 **Ticket artifacts** follow the lifecycle phases: `research_<id>.md` → `research_review.md` → `plan_<id>.md` → `plan_review.md` → implementation (code changes + commits). These persist in the session directory and can be reviewed after the run.
 
@@ -683,12 +741,12 @@ Do NOT restart from PRD. Continue where you left off.
 
 No matter how much context gets evicted, Rick always wakes up knowing exactly where he is and what to do next.
 
-Morty workers already get clean context naturally (each is a fresh `claude -p` subprocess with the full 7-phase lifecycle template from `send-to-morty.md`).
+Morty workers already get clean context naturally (each is a fresh `claude -p` subprocess with the full 6-phase lifecycle template from `send-to-morty.md`).
 
 ### Manager / Worker Model
 
 - **Rick (Manager)**: Runs in your interactive Claude session. Handles PRD, Breakdown, orchestration.
-- **Morty (Worker)**: Spawned as `claude --dangerously-skip-permissions --add-dir <extension_root> --add-dir <ticket_path> -p "..."` subprocess per ticket. Gets the full 7-phase lifecycle prompt from `send-to-morty.md`. The `CLAUDECODE` env var is stripped so workers don't detect a nested session. Outputs `<promise>I AM DONE</promise>` when finished.
+- **Morty (Worker)**: Spawned as `claude --dangerously-skip-permissions --add-dir <extension_root> --add-dir <ticket_path> -p "..."` subprocess per ticket. Gets the full 6-phase lifecycle prompt from `send-to-morty.md`. The `CLAUDECODE` env var is stripped so workers don't detect a nested session. Workers are scope-bounded: they write artifacts only to their ticket directory, signal completion only via `<promise>I AM DONE</promise>`, and are forbidden from modifying `state.json` (enforced at both prompt and CLI level).
 
 ---
 
