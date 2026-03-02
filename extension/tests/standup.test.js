@@ -67,10 +67,12 @@ test('parseArgs: defaults to --days 1 with no args', () => {
     const { range } = parseArgs([]);
     const now = new Date();
     const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const tomorrowMidnight = new Date(todayMidnight);
+    tomorrowMidnight.setDate(tomorrowMidnight.getDate() + 1);
     const expectedSince = new Date(todayMidnight);
     expectedSince.setDate(expectedSince.getDate() - 1);
     assert.equal(range.since.getTime(), expectedSince.getTime());
-    assert.equal(range.until.getTime(), todayMidnight.getTime());
+    assert.equal(range.until.getTime(), tomorrowMidnight.getTime());
 });
 
 test('parseArgs: --days 0 covers today', () => {
@@ -83,14 +85,16 @@ test('parseArgs: --days 0 covers today', () => {
     assert.equal(range.until.getTime(), tomorrowMidnight.getTime());
 });
 
-test('parseArgs: --days 3 covers 3 days back through yesterday', () => {
+test('parseArgs: --days 3 covers 3 days back through today', () => {
     const { range } = parseArgs(['--days', '3']);
     const now = new Date();
     const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const tomorrowMidnight = new Date(todayMidnight);
+    tomorrowMidnight.setDate(tomorrowMidnight.getDate() + 1);
     const expectedSince = new Date(todayMidnight);
     expectedSince.setDate(expectedSince.getDate() - 3);
     assert.equal(range.since.getTime(), expectedSince.getTime());
-    assert.equal(range.until.getTime(), todayMidnight.getTime());
+    assert.equal(range.until.getTime(), tomorrowMidnight.getTime());
 });
 
 test('parseArgs: --since overrides --days', () => {

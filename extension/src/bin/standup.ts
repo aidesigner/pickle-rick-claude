@@ -65,10 +65,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   // Default: --days 1
   const effectiveDays = days ?? 1;
   const until = new Date(todayMidnight);
-  if (effectiveDays === 0) {
-    // --days 0 = today only
-    until.setDate(until.getDate() + 1);
-  }
+  until.setDate(until.getDate() + 1); // always include today's file
   const since = new Date(todayMidnight);
   since.setDate(since.getDate() - effectiveDays);
 
