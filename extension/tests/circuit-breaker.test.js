@@ -751,3 +751,84 @@ test('canExecute: is irrelevant when CB is disabled — config flag gates the ca
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
+
+// ---------------------------------------------------------------------------
+// Edge cases: non-array history, string boolean, tool_use-only (pass 9)
+// ---------------------------------------------------------------------------
+
+test('initCircuitBreaker: non-array history field defaults to empty array', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const malformed = makeFreshState({ state: 'CLOSED', history: 'not-an-array' });
+        fs.writeFileSync(path.join(tmpDir, 'circuit_breaker.json'), JSON.stringify(malformed));
+        const state = initCircuitBreaker(tmpDir, makeSettings());
+        assert.equal(state.state, 'CLOSED');
+        assert.ok(Array.isArray(state.history), 'history should be coerced to array');
+        assert.equal(state.history.length, 0, 'non-array history should default to []');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('initCircuitBreaker: history=null defaults to empty array', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const malformed = makeFreshState({ state: 'HALF_OPEN', history: null });
+        fs.writeFileSync(path.join(tmpDir, 'circuit_breaker.json'), JSON.stringify(malformed));
+        const state = initCircuitBreaker(tmpDir, makeSettings());
+        assert.ok(Array.isArray(state.history), 'null history should default to []');
+        assert.equal(state.history.length, 0);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('loadSettings: string "true" for boolean config is ignored (strict typeof check)', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        fs.writeFileSync(path.join(tmpDir, 'pickle_settings.json'), JSON.stringify({
+            default_circuit_breaker_enabled: "true", // string, not boolean
+        }));
+        const cfg = loadSettings(tmpDir);
+        assert.equal(cfg.enabled, true,
+            'string "true" should not override default — typeof check rejects non-boolean');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('loadSettings: Infinity and negative values for numeric thresholds are rejected', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        fs.writeFileSync(path.join(tmpDir, 'pickle_settings.json'), JSON.stringify({
+            default_cb_no_progress_threshold: Infinity,
+            default_cb_same_error_threshold: -5,
+            default_cb_half_open_after: NaN,
+        }));
+        const cfg = loadSettings(tmpDir);
+        // Infinity: Number.isFinite(Infinity) → false → default 5, then min 2 → 5
+        assert.equal(cfg.noProgressThreshold, 5, 'Infinity should be rejected, keeping default');
+        // -5: isFinite but fails > 0 check → default 5, then min 2 → 5
+        assert.equal(cfg.sameErrorThreshold, 5, 'negative value should be rejected, keeping default');
+        // NaN: isFinite(NaN) → false → default 2
+        assert.equal(cfg.halfOpenAfter, 2, 'NaN should be rejected, keeping default');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('extractErrorSignature: assistant with only tool_use blocks (no text) returns null', () => {
+    const ndjson = [
+        JSON.stringify({
+            type: 'assistant',
+            message: {
+                content: [
+                    { type: 'tool_use', id: 'call_1', name: 'Read', input: { file_path: '/foo' } },
+                ]
+            }
+        }),
+        JSON.stringify({ type: 'result', subtype: 'error_max_turns' }),
+    ].join('\n');
+    const sig = extractErrorSignature(ndjson);
+    assert.equal(sig, null, 'should return null when assistant has no text blocks');
+});

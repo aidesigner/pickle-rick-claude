@@ -728,3 +728,29 @@ test('stop-hook: NaN/undefined numeric state fields do not crash', () => {
   });
   assert.equal(decision.decision, 'block', 'should fall through to default block without crashing');
 });
+
+// ---------------------------------------------------------------------------
+// Edge cases: empty completion_promise, start_time_epoch=0 (pass 9)
+// ---------------------------------------------------------------------------
+
+test('stop-hook: completion_promise empty string → not treated as custom promise', () => {
+  // !!("") is false, so hasPromise should be false even if responseText has <promise></promise>
+  const { decision } = runHook({
+    state: baseState({ completion_promise: '' }),
+    response: 'no tokens here',
+  });
+  assert.equal(decision.decision, 'block', 'empty string completion_promise should not match anything');
+});
+
+test('stop-hook: start_time_epoch=0 with max_time_minutes>0 → time limit skipped', () => {
+  // Line 210: maxTimeMins > 0 && startEpoch > 0 — when epoch is 0, the condition short-circuits
+  const { decision } = runHook({
+    state: baseState({
+      start_time_epoch: 0,
+      max_time_minutes: 1, // 1 minute — would trigger if epoch were valid
+      iteration: 1,
+      max_iterations: 100,
+    }),
+  });
+  assert.equal(decision.decision, 'block', 'start_time_epoch=0 should disable time limit check');
+});

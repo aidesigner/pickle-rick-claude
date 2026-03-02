@@ -270,6 +270,64 @@ test('updateTicketStatus: rejects status with bare newline', () => {
     );
 });
 
+// --- updateTicketStatus: inserts updated field when missing (pass 9) ---
+
+test('updateTicketStatus: inserts updated field when missing from frontmatter', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    const ticketId = 'no-updated-field';
+    const subDir = path.join(dir, ticketId);
+    fs.mkdirSync(subDir);
+    // Frontmatter with status but no updated: line
+    fs.writeFileSync(
+        path.join(subDir, `linear_ticket_${ticketId}.md`),
+        `---\nid: "${ticketId}"\ntitle: "No Updated"\nstatus: "Todo"\norder: 1\n---\n# Body\n`
+    );
+    try {
+        updateTicketStatus(ticketId, 'Done', dir);
+        const content = fs.readFileSync(
+            path.join(subDir, `linear_ticket_${ticketId}.md`), 'utf-8');
+        // Status should be updated
+        assert.match(content, /^status: "Done"$/m);
+        // updated field should be inserted within frontmatter
+        const today = new Date().toISOString().split('T')[0];
+        assert.match(content, new RegExp(`updated: "${today}"`),
+            'updated field should be inserted when missing');
+        // Verify inserted before closing ---
+        const fmEndIdx = content.indexOf('\n---', 4);
+        const updatedIdx = content.indexOf(`updated: "${today}"`);
+        assert.ok(updatedIdx < fmEndIdx,
+            'updated field should appear before closing --- delimiter');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+// --- updateTicketStatus: body status untouched (pass 9) ---
+
+test('updateTicketStatus: does not replace status: line in body after frontmatter', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    const ticketId = 'body-status';
+    const subDir = path.join(dir, ticketId);
+    fs.mkdirSync(subDir);
+    // status: appears both in frontmatter AND in the body
+    fs.writeFileSync(
+        path.join(subDir, `linear_ticket_${ticketId}.md`),
+        `---\nid: "${ticketId}"\ntitle: "Body Status"\nstatus: "Todo"\nupdated: "2020-01-01"\n---\n# Body\nstatus: should-not-change\n`
+    );
+    try {
+        updateTicketStatus(ticketId, 'Done', dir);
+        const content = fs.readFileSync(
+            path.join(subDir, `linear_ticket_${ticketId}.md`), 'utf-8');
+        // Frontmatter status should be updated
+        assert.match(content, /^status: "Done"$/m);
+        // Body status should remain unchanged
+        assert.ok(content.includes('status: should-not-change'),
+            'status: in body after frontmatter must not be modified');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
 // --- getBranchName: "issue" keyword → fix type ---
 
 test('getBranchName: uses "fix" type for "issue" keyword in ticket id', () => {

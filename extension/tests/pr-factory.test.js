@@ -175,6 +175,76 @@ test('createPR sanitizes newlines in original_prompt for PR title', () => {
     }
 });
 
+// ---------------------------------------------------------------------------
+// Edge cases: empty working_dir, double-newline collapse (pass 9)
+// ---------------------------------------------------------------------------
+
+test('createPR throws when working_dir is empty string (falsy)', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-factory-'));
+    try {
+        fs.writeFileSync(
+            path.join(tmp, 'state.json'),
+            JSON.stringify({ working_dir: '', original_prompt: 'test' })
+        );
+        assert.throws(() => createPR(tmp), {
+            message: 'state.json is missing working_dir — cannot determine target repository',
+        });
+    } finally {
+        fs.rmSync(tmp, { recursive: true });
+    }
+});
+
+test('createPR collapses consecutive newlines to single space in title', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-factory-'));
+    try {
+        // Double \r\n\r\n should collapse to single space, not double
+        const prompt = 'Fix the\r\n\r\nlogin bug';
+        fs.writeFileSync(
+            path.join(tmp, 'state.json'),
+            JSON.stringify({ working_dir: tmp, original_prompt: prompt })
+        );
+        let caught;
+        try {
+            createPR(tmp);
+        } catch (err) {
+            caught = err;
+        }
+        assert.ok(caught, 'expected createPR to throw');
+        const msg = caught.message;
+        // The regex [\r\n]+ matches the entire \r\n\r\n sequence at once → single space
+        assert.ok(
+            msg.includes('Pickle Rick: Fix the login bug'),
+            `Double newlines should collapse to single space.\nGot: ${msg}`
+        );
+    } finally {
+        fs.rmSync(tmp, { recursive: true });
+    }
+});
+
+test('createPR uses "(none)" when original_prompt is missing', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-factory-'));
+    try {
+        fs.writeFileSync(
+            path.join(tmp, 'state.json'),
+            JSON.stringify({ working_dir: tmp })
+        );
+        let caught;
+        try {
+            createPR(tmp);
+        } catch (err) {
+            caught = err;
+        }
+        assert.ok(caught, 'expected createPR to throw');
+        const msg = caught.message;
+        assert.ok(
+            msg.includes('Prompt: (none)'),
+            `Missing prompt should show "(none)" in body.\nGot: ${msg}`
+        );
+    } finally {
+        fs.rmSync(tmp, { recursive: true });
+    }
+});
+
 test('createPR propagates gh errors wrapped in "Failed to create PR"', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-factory-'));
     try {

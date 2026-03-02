@@ -143,6 +143,20 @@ test('wrapText: single word longer than width gets split', () => {
     assert.equal(lines.join(''), 'abcdefghijklmnop');
 });
 
+// --- wrapText: Infinity, NaN, negative width edge cases (pass 9) ---
+
+test('wrapText: Infinity width returns text unchanged', () => {
+    assert.deepEqual(wrapText('hello world', Infinity), ['hello world']);
+});
+
+test('wrapText: NaN width returns text unchanged', () => {
+    assert.deepEqual(wrapText('hello world', NaN), ['hello world']);
+});
+
+test('wrapText: negative width returns text unchanged', () => {
+    assert.deepEqual(wrapText('hello world', -5), ['hello world']);
+});
+
 // --- parseTicketFrontmatter ---
 
 function withTempFile(content, fn) {
