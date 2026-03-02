@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
@@ -248,6 +249,69 @@ test('setup: --resume syncs chain_meeseeks from state for display', () => {
             env: { ...process.env, FORCE_COLOR: '0' },
         });
         assert.ok(output.includes('Chain Meeseeks'), 'resume should show Chain Meeseeks from stored state');
+    } finally {
+        cleanup(sessionPath);
+    }
+});
+
+// ---------------------------------------------------------------------------
+// Activity logging: session_start suppression on resume, original_prompt on new
+// ---------------------------------------------------------------------------
+
+function getActivityEvents(sessionId) {
+    const activityDir = path.join(os.homedir(), '.claude/pickle-rick/activity');
+    const date = new Date().toLocaleDateString('en-CA');
+    const filepath = path.join(activityDir, `${date}.jsonl`);
+    if (!fs.existsSync(filepath)) return [];
+    return fs.readFileSync(filepath, 'utf-8')
+        .split('\n')
+        .filter(Boolean)
+        .map(line => { try { return JSON.parse(line); } catch { return null; } })
+        .filter(e => e && e.event === 'session_start' && e.session === sessionId);
+}
+
+function sessionIdFromPath(sessionPath) {
+    return path.basename(sessionPath);
+}
+
+test('setup: new session logs session_start with original_prompt', () => {
+    const taskText = 'activity-log-new-session-test';
+    const sessionPath = runSetup(['--task', taskText]);
+    try {
+        const sid = sessionIdFromPath(sessionPath);
+        const events = getActivityEvents(sid);
+        assert.ok(events.length >= 1, 'session_start should be logged for new sessions');
+        assert.equal(events[0].original_prompt, taskText, 'session_start should include original_prompt');
+    } finally {
+        cleanup(sessionPath);
+    }
+});
+
+test('setup: resumed session does NOT log additional session_start', () => {
+    const sessionPath = runSetup(['--task', 'resume-no-session-start-test']);
+    try {
+        const sid = sessionIdFromPath(sessionPath);
+        const beforeCount = getActivityEvents(sid).length;
+        assert.ok(beforeCount >= 1, 'new session should have logged session_start');
+
+        // Resume the session
+        runSetup(['--resume', sessionPath]);
+        const afterCount = getActivityEvents(sid).length;
+        assert.equal(afterCount, beforeCount, 'resume should NOT log additional session_start');
+    } finally {
+        cleanup(sessionPath);
+    }
+});
+
+test('setup: session_start original_prompt matches exact task text', () => {
+    const taskText = 'exact-prompt-match-test with spaces and $pecial chars';
+    const sessionPath = runSetup(['--task', taskText]);
+    try {
+        const sid = sessionIdFromPath(sessionPath);
+        const events = getActivityEvents(sid);
+        assert.equal(events.length, 1, 'exactly one session_start should be logged');
+        assert.equal(events[0].original_prompt, taskText, 'original_prompt should match task text exactly');
+        assert.equal(events[0].source, 'pickle', 'source should be pickle');
     } finally {
         cleanup(sessionPath);
     }

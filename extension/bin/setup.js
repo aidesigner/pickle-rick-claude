@@ -273,7 +273,7 @@ async function main() {
             pruneActivity();
         }
         catch { /* must not block session start */ }
-        logActivity({ event: 'session_start', source: 'pickle', session: sessionId, mode: tmuxMode ? 'tmux' : 'inline' });
+        logActivity({ event: 'session_start', source: 'pickle', session: sessionId, mode: tmuxMode ? 'tmux' : 'inline', original_prompt: taskStr });
     }
     updateSessionMap(process.cwd(), fullSessionPath);
     printMinimalPanel('Pickle Rick Activated!', {
