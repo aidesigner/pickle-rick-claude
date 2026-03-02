@@ -1130,3 +1130,90 @@ test('classifyIterationExit: api_limit is distinct from other exit types', () =>
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
+
+// ---------------------------------------------------------------------------
+// iteration_start / iteration_end activity events (222c384d)
+// ---------------------------------------------------------------------------
+
+/**
+ * Run tmux-runner with claude removed from PATH so spawn fails fast.
+ * Returns parsed activity events from EXTENSION_DIR/activity/.
+ */
+function runAndCollectActivity(stateOverrides = {}) {
+    const tmpRoot = makeTmpRoot();
+    const sessionDir = path.join(tmpRoot, 'session');
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+        active: true,
+        step: 'implement',
+        iteration: 0,
+        max_iterations: 100,
+        max_time_minutes: 720,
+        original_prompt: 'test iteration events',
+        working_dir: tmpRoot,
+        ...stateOverrides,
+    }, null, 2));
+
+    // Strip claude from PATH so runIteration's spawn('claude') fails immediately
+    const pathDirs = (process.env.PATH || '').split(':').filter(d => {
+        try { return !fs.existsSync(path.join(d, 'claude')); } catch { return true; }
+    });
+
+    const result = spawnSync(process.execPath, [TMUX_RUNNER_BIN, sessionDir], {
+        env: { ...process.env, EXTENSION_DIR: tmpRoot, PATH: pathDirs.join(':') },
+        encoding: 'utf-8',
+        timeout: 15000,
+    });
+
+    const activityDir = path.join(tmpRoot, 'activity');
+    let events = [];
+    if (fs.existsSync(activityDir)) {
+        for (const f of fs.readdirSync(activityDir)) {
+            if (f.endsWith('.jsonl')) {
+                const lines = fs.readFileSync(path.join(activityDir, f), 'utf-8').trim().split('\n').filter(Boolean);
+                events.push(...lines.map(l => JSON.parse(l)));
+            }
+        }
+    }
+
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+    return { events, result, sessionDir: path.basename(sessionDir) };
+}
+
+test('iteration events: iteration_start logged at start of iteration', () => {
+    const { events } = runAndCollectActivity();
+    const starts = events.filter(e => e.event === 'iteration_start');
+    assert.ok(starts.length >= 1, `Expected at least 1 iteration_start event, got ${starts.length}`);
+    assert.equal(starts[0].source, 'pickle');
+    assert.equal(starts[0].iteration, 1);
+    assert.ok(starts[0].session, 'iteration_start should have session ID');
+    assert.ok(starts[0].ts, 'iteration_start should have timestamp');
+});
+
+test('iteration events: iteration_end logged with error exit_type on spawn failure', () => {
+    const { events } = runAndCollectActivity();
+    const ends = events.filter(e => e.event === 'iteration_end');
+    assert.ok(ends.length >= 1, `Expected at least 1 iteration_end event, got ${ends.length}`);
+    assert.equal(ends[0].source, 'pickle');
+    assert.equal(ends[0].iteration, 1);
+    assert.equal(ends[0].exit_type, 'error');
+    assert.ok(ends[0].session, 'iteration_end should have session ID');
+});
+
+test('iteration events: session ID matches basename of session directory', () => {
+    const { events, sessionDir } = runAndCollectActivity();
+    const starts = events.filter(e => e.event === 'iteration_start');
+    const ends = events.filter(e => e.event === 'iteration_end');
+    assert.ok(starts.length >= 1, 'Need iteration_start events');
+    assert.ok(ends.length >= 1, 'Need iteration_end events');
+    assert.equal(starts[0].session, sessionDir);
+    assert.equal(ends[0].session, sessionDir);
+});
+
+test('iteration events: iteration number matches across start and end', () => {
+    const { events } = runAndCollectActivity();
+    const starts = events.filter(e => e.event === 'iteration_start');
+    const ends = events.filter(e => e.event === 'iteration_end');
+    assert.ok(starts.length >= 1 && ends.length >= 1, 'Need both iteration events');
+    assert.equal(starts[0].iteration, ends[0].iteration, 'Start and end should have same iteration number');
+});

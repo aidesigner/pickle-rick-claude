@@ -412,10 +412,12 @@ async function main() {
         }
         iteration++;
         log(`--- Iteration ${iteration} (state.iteration=${state.iteration}) ---`);
+        logActivity({ event: 'iteration_start', source: 'pickle', session: path.basename(sessionDir), iteration });
         const result = await runIteration(sessionDir, iteration, extensionRoot);
         // --- Rate limit classification (MUST run before CB to prevent CB poisoning) ---
         const iterLogFile = path.join(sessionDir, `tmux_iteration_${iteration}.log`);
         const exitType = classifyIterationExit(result, iterLogFile);
+        logActivity({ event: 'iteration_end', source: 'pickle', session: path.basename(sessionDir), iteration, exit_type: exitType });
         if (exitType === 'api_limit') {
             consecutiveRateLimits++;
             log(`API rate limit detected (consecutive: ${consecutiveRateLimits}/${maxRateLimitRetries})`);
