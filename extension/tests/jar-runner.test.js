@@ -447,7 +447,7 @@ test('jar-runner: corrupt session state.json does not abort remaining tasks', ()
 
 // --- Notification logic (buildJarNotification) ---
 
-import { buildJarNotification } from '../bin/jar-runner.js';
+import { buildJarNotification, loadJarTaskTimeout } from '../bin/jar-runner.js';
 
 test('buildJarNotification: all succeeded shows "Complete"', () => {
     const n = buildJarNotification(3, 0);
@@ -471,4 +471,89 @@ test('buildJarNotification: all failed shows "Failed"', () => {
     const n = buildJarNotification(0, 3);
     assert.equal(n.title, '🥒 Pickle Jar Failed');
     assert.equal(n.body, '0 succeeded, 3 failed');
+});
+
+// --- loadJarTaskTimeout ---
+
+test('loadJarTaskTimeout: uses worker_timeout_seconds from state when set', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const timeout = loadJarTaskTimeout(tmpRoot, {
+            active: true, working_dir: '/tmp', step: 'prd', iteration: 0,
+            max_iterations: 10, max_time_minutes: 60, worker_timeout_seconds: 900,
+            start_time_epoch: 0, completion_promise: null, original_prompt: '',
+            current_ticket: null, history: [], started_at: '', session_dir: '',
+        });
+        assert.equal(timeout, 900);
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('loadJarTaskTimeout: falls back to settings when state has no timeout', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        fs.writeFileSync(path.join(tmpRoot, 'pickle_settings.json'), JSON.stringify({
+            default_worker_timeout_seconds: 600,
+        }));
+        const timeout = loadJarTaskTimeout(tmpRoot, {
+            active: true, working_dir: '/tmp', step: 'prd', iteration: 0,
+            max_iterations: 10, max_time_minutes: 60, worker_timeout_seconds: 0,
+            start_time_epoch: 0, completion_promise: null, original_prompt: '',
+            current_ticket: null, history: [], started_at: '', session_dir: '',
+        });
+        assert.equal(timeout, 600);
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('loadJarTaskTimeout: returns default 1200 when no state or settings timeout', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const timeout = loadJarTaskTimeout(tmpRoot, {
+            active: true, working_dir: '/tmp', step: 'prd', iteration: 0,
+            max_iterations: 10, max_time_minutes: 60, worker_timeout_seconds: 0,
+            start_time_epoch: 0, completion_promise: null, original_prompt: '',
+            current_ticket: null, history: [], started_at: '', session_dir: '',
+        });
+        assert.equal(timeout, 1200);
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('loadJarTaskTimeout: ignores NaN state timeout and uses settings', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        fs.writeFileSync(path.join(tmpRoot, 'pickle_settings.json'), JSON.stringify({
+            default_worker_timeout_seconds: 500,
+        }));
+        // Cast to bypass TS — simulate corrupt state with NaN-coercing value
+        const state = {
+            active: true, working_dir: '/tmp', step: 'prd', iteration: 0,
+            max_iterations: 10, max_time_minutes: 60, worker_timeout_seconds: NaN,
+            start_time_epoch: 0, completion_promise: null, original_prompt: '',
+            current_ticket: null, history: [], started_at: '', session_dir: '',
+        };
+        const timeout = loadJarTaskTimeout(tmpRoot, state);
+        assert.equal(timeout, 500);
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('loadJarTaskTimeout: ignores negative state timeout', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const timeout = loadJarTaskTimeout(tmpRoot, {
+            active: true, working_dir: '/tmp', step: 'prd', iteration: 0,
+            max_iterations: 10, max_time_minutes: 60, worker_timeout_seconds: -100,
+            start_time_epoch: 0, completion_promise: null, original_prompt: '',
+            current_ticket: null, history: [], started_at: '', session_dir: '',
+        });
+        assert.equal(timeout, 1200);
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
 });

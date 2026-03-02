@@ -10,6 +10,20 @@ import { logActivity } from '../services/activity-logger.js';
 // Tracks the currently-running task's session dir so signal handlers
 // can deactivate it on shutdown, preventing orphaned active: true sessions.
 let activeTaskSessionDir = null;
+export function loadJarTaskTimeout(extensionRoot, state) {
+    // Use worker_timeout_seconds from state if set, else fall back to settings, else default
+    const stateTimeout = Number(state.worker_timeout_seconds);
+    if (Number.isFinite(stateTimeout) && stateTimeout > 0)
+        return stateTimeout;
+    try {
+        const settings = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
+        const rawTimeout = Number(settings.default_worker_timeout_seconds);
+        if (Number.isFinite(rawTimeout) && rawTimeout > 0)
+            return rawTimeout;
+    }
+    catch { /* use default */ }
+    return Defaults.WORKER_TIMEOUT_SECONDS;
+}
 async function runTask(sessionDir, repoCwd, extensionRoot) {
     const statePath = path.join(sessionDir, 'state.json');
     let state;
@@ -24,6 +38,7 @@ async function runTask(sessionDir, repoCwd, extensionRoot) {
     state.completion_promise = null;
     writeStateFile(statePath, state);
     activeTaskSessionDir = sessionDir;
+    const taskTimeout = loadJarTaskTimeout(extensionRoot, state);
     const picklePromptPath = path.join(os.homedir(), '.claude/commands/pickle.md');
     let prompt = `You are Pickle Rick. Resume the session.\n\nRun:\nnode "${extensionRoot}/extension/bin/setup.js" --resume ${sessionDir}\n\nThen continue the manager lifecycle from the current phase.`;
     try {
@@ -44,6 +59,7 @@ async function runTask(sessionDir, repoCwd, extensionRoot) {
         Session: path.basename(sessionDir),
         Repo: repoCwd,
         MaxTurns: managerMaxTurns,
+        Timeout: `${taskTimeout}s`,
     }, 'MAGENTA', '🥒');
     const cmdArgs = [
         '--dangerously-skip-permissions',
@@ -57,12 +73,52 @@ async function runTask(sessionDir, repoCwd, extensionRoot) {
     delete env['CLAUDECODE'];
     delete env['PICKLE_ROLE'];
     return new Promise((resolve) => {
+        let settled = false;
         const proc = spawn('claude', cmdArgs, { cwd: repoCwd, env, stdio: 'inherit' });
+        // Per-task timeout: SIGTERM first, escalate to SIGKILL after 2s
+        let killEscalation = null;
+        const timeoutHandle = setTimeout(() => {
+            console.error(`\n${Style.YELLOW}⚠️  Jar task timed out after ${taskTimeout}s — killing${Style.RESET}`);
+            try {
+                proc.kill('SIGTERM');
+            }
+            catch { /* already dead */ }
+            killEscalation = setTimeout(() => {
+                try {
+                    proc.kill('SIGKILL');
+                }
+                catch { /* already dead */ }
+            }, 2000);
+        }, taskTimeout * 1000);
+        // Hang guard: force-resolve if process doesn't exit within timeout + 30s
+        const hangGuard = setTimeout(() => {
+            if (settled)
+                return;
+            settled = true;
+            activeTaskSessionDir = null;
+            console.error(`${Style.RED}❌ Jar task hang detected — forcing failure${Style.RESET}`);
+            resolve(false);
+        }, (taskTimeout + 30) * 1000);
+        hangGuard.unref();
         proc.on('close', (code) => {
+            if (settled)
+                return;
+            settled = true;
+            clearTimeout(timeoutHandle);
+            if (killEscalation)
+                clearTimeout(killEscalation);
+            clearTimeout(hangGuard);
             activeTaskSessionDir = null;
             resolve(code === 0);
         });
         proc.on('error', (err) => {
+            if (settled)
+                return;
+            settled = true;
+            clearTimeout(timeoutHandle);
+            if (killEscalation)
+                clearTimeout(killEscalation);
+            clearTimeout(hangGuard);
             activeTaskSessionDir = null;
             console.error(`${Style.RED}Failed to spawn claude: ${err instanceof Error ? err.message : String(err)}${Style.RESET}`);
             resolve(false);
