@@ -489,7 +489,7 @@ test('tmux-runner: creates tmux-runner.log in session directory', () => {
 
 // --- Completion classification (classifyCompletion) ---
 
-import { buildTmuxNotification, classifyCompletion, transitionToMeeseeks, loadRateLimitSettings } from '../bin/tmux-runner.js';
+import { buildTmuxNotification, classifyCompletion, transitionToMeeseeks, loadRateLimitSettings, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText } from '../bin/tmux-runner.js';
 
 test('classifyCompletion: TASK_COMPLETED returns task_completed', () => {
     assert.equal(classifyCompletion('<promise>TASK_COMPLETED</promise>'), 'task_completed');
@@ -785,5 +785,284 @@ test('exitcode sidecar: pattern works for various iteration numbers', () => {
         const logFile = `tmux_iteration_${n}.log`;
         const exitCodeFile = logFile.replace('.log', '.exitcode');
         assert.equal(exitCodeFile, `tmux_iteration_${n}.exitcode`);
+    }
+});
+
+// ---------------------------------------------------------------------------
+// classifyIterationExit — rate limit main loop integration (87e1fdde)
+// ---------------------------------------------------------------------------
+
+test('classifyIterationExit: inactive result returns inactive', () => {
+    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-exit-')));
+    try {
+        const logFile = path.join(tmpDir, 'test.log');
+        fs.writeFileSync(logFile, 'some output\n');
+        assert.equal(classifyIterationExit('inactive', logFile), 'inactive');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('classifyIterationExit: error result returns error', () => {
+    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-exit-')));
+    try {
+        const logFile = path.join(tmpDir, 'test.log');
+        fs.writeFileSync(logFile, 'some output\n');
+        assert.equal(classifyIterationExit('error', logFile), 'error');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('classifyIterationExit: task_completed returns success', () => {
+    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-exit-')));
+    try {
+        const logFile = path.join(tmpDir, 'test.log');
+        fs.writeFileSync(logFile, 'normal output\n');
+        assert.equal(classifyIterationExit('task_completed', logFile), 'success');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('classifyIterationExit: review_clean returns success', () => {
+    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-exit-')));
+    try {
+        const logFile = path.join(tmpDir, 'test.log');
+        fs.writeFileSync(logFile, 'clean output\n');
+        assert.equal(classifyIterationExit('review_clean', logFile), 'success');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('classifyIterationExit: continue with rate_limit_event JSON returns api_limit', () => {
+    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-exit-')));
+    try {
+        const logFile = path.join(tmpDir, 'test.log');
+        const lines = [
+            'normal output',
+            JSON.stringify({ type: 'rate_limit_event', status: 'rejected' }),
+        ];
+        fs.writeFileSync(logFile, lines.join('\n'));
+        assert.equal(classifyIterationExit('continue', logFile), 'api_limit');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('classifyIterationExit: continue with rate limit text pattern returns api_limit', () => {
+    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-exit-')));
+    try {
+        const logFile = path.join(tmpDir, 'test.log');
+        fs.writeFileSync(logFile, 'You have reached your 5 hour limit. Please try back later.\n');
+        assert.equal(classifyIterationExit('continue', logFile), 'api_limit');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('classifyIterationExit: continue with clean log returns success', () => {
+    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-exit-')));
+    try {
+        const logFile = path.join(tmpDir, 'test.log');
+        fs.writeFileSync(logFile, 'all good, no issues\n');
+        assert.equal(classifyIterationExit('continue', logFile), 'success');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('classifyIterationExit: missing log file still returns success for continue', () => {
+    assert.equal(classifyIterationExit('continue', '/nonexistent/path/log.log'), 'success');
+});
+
+// ---------------------------------------------------------------------------
+// detectRateLimitInLog / detectRateLimitInText — unit coverage (87e1fdde)
+// ---------------------------------------------------------------------------
+
+test('detectRateLimitInLog: returns true for rate_limit_event with rejected status', () => {
+    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rl-')));
+    try {
+        const logFile = path.join(tmpDir, 'test.log');
+        fs.writeFileSync(logFile, JSON.stringify({ type: 'rate_limit_event', status: 'rejected' }) + '\n');
+        assert.equal(detectRateLimitInLog(logFile), true);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectRateLimitInLog: returns false for rate_limit_event with accepted status', () => {
+    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rl-')));
+    try {
+        const logFile = path.join(tmpDir, 'test.log');
+        fs.writeFileSync(logFile, JSON.stringify({ type: 'rate_limit_event', status: 'accepted' }) + '\n');
+        assert.equal(detectRateLimitInLog(logFile), false);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectRateLimitInLog: returns false for missing file', () => {
+    assert.equal(detectRateLimitInLog('/nonexistent/file.log'), false);
+});
+
+test('detectRateLimitInLog: only checks last 100 lines', () => {
+    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rl-')));
+    try {
+        const logFile = path.join(tmpDir, 'test.log');
+        // Place rate limit event beyond the last 100 lines
+        const lines = [JSON.stringify({ type: 'rate_limit_event', status: 'rejected' })];
+        for (let i = 0; i < 110; i++) lines.push('filler line');
+        fs.writeFileSync(logFile, lines.join('\n'));
+        assert.equal(detectRateLimitInLog(logFile), false);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectRateLimitInText: returns true for "5 hour limit" pattern', () => {
+    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rl-')));
+    try {
+        const logFile = path.join(tmpDir, 'test.log');
+        fs.writeFileSync(logFile, 'You have reached your 5 hour limit.\n');
+        assert.equal(detectRateLimitInText(logFile), true);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectRateLimitInText: returns true for "usage limit reached" pattern', () => {
+    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rl-')));
+    try {
+        const logFile = path.join(tmpDir, 'test.log');
+        fs.writeFileSync(logFile, 'Your usage limit has been reached. Please try again later.\n');
+        assert.equal(detectRateLimitInText(logFile), true);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectRateLimitInText: returns true for "rate limit" pattern', () => {
+    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rl-')));
+    try {
+        const logFile = path.join(tmpDir, 'test.log');
+        fs.writeFileSync(logFile, 'API rate limit hit, backing off.\n');
+        assert.equal(detectRateLimitInText(logFile), true);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectRateLimitInText: ignores rate limit text inside user/tool_result lines', () => {
+    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rl-')));
+    try {
+        const logFile = path.join(tmpDir, 'test.log');
+        // Lines containing "type":"user" or "type":"tool_result" are filtered out
+        fs.writeFileSync(logFile, '{"type":"user","text":"rate limit handling code"}\n');
+        assert.equal(detectRateLimitInText(logFile), false);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectRateLimitInText: returns false for clean output', () => {
+    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rl-')));
+    try {
+        const logFile = path.join(tmpDir, 'test.log');
+        fs.writeFileSync(logFile, 'Everything worked great. No issues.\n');
+        assert.equal(detectRateLimitInText(logFile), false);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectRateLimitInText: returns false for missing file', () => {
+    assert.equal(detectRateLimitInText('/nonexistent/file.log'), false);
+});
+
+// ---------------------------------------------------------------------------
+// buildTmuxNotification: rate_limit_exhausted (87e1fdde)
+// ---------------------------------------------------------------------------
+
+test('buildTmuxNotification: rate_limit_exhausted shows "Failed"', () => {
+    const n = buildTmuxNotification('rate_limit_exhausted', 'implement', 3, 3600);
+    assert.equal(n.title, '🥒 Pickle Run Failed');
+    assert.ok(n.subtitle.includes('Exit: rate_limit_exhausted'), `Expected exit reason in subtitle, got: ${n.subtitle}`);
+    assert.ok(n.subtitle.includes('phase: implement'), `Expected phase in subtitle, got: ${n.subtitle}`);
+});
+
+// ---------------------------------------------------------------------------
+// Stale rate_limit_wait.json cleanup on startup (87e1fdde)
+// ---------------------------------------------------------------------------
+
+test('tmux-runner: cleans up stale rate_limit_wait.json on startup', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = path.join(tmpRoot, 'session');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        // Session at max iterations — will exit immediately after ownership
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: false,
+            step: 'implement',
+            iteration: 5,
+            max_iterations: 5,
+            original_prompt: 'test stale cleanup',
+            working_dir: tmpRoot,
+        }, null, 2));
+        // Create a stale rate_limit_wait.json
+        fs.writeFileSync(path.join(sessionDir, 'rate_limit_wait.json'), JSON.stringify({
+            waiting: true, reason: 'API rate limit',
+            started_at: '2026-03-01T00:00:00Z',
+        }));
+
+        run(tmpRoot, [sessionDir]);
+
+        // The stale file should have been cleaned up during ownership takeover
+        assert.equal(
+            fs.existsSync(path.join(sessionDir, 'rate_limit_wait.json')),
+            false,
+            'Stale rate_limit_wait.json should be deleted on startup'
+        );
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// consecutiveRateLimits reset logic (87e1fdde)
+// ---------------------------------------------------------------------------
+
+test('classifyIterationExit: success exit type used to reset consecutiveRateLimits counter', () => {
+    // This verifies the contract: when classifyIterationExit returns 'success',
+    // the main loop resets consecutiveRateLimits to 0.
+    // We test the function returns 'success' for the expected inputs.
+    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-exit-')));
+    try {
+        const logFile = path.join(tmpDir, 'clean.log');
+        fs.writeFileSync(logFile, 'normal iteration output\n');
+        // 'continue' with clean log → success
+        assert.equal(classifyIterationExit('continue', logFile), 'success');
+        // 'task_completed' → success
+        assert.equal(classifyIterationExit('task_completed', logFile), 'success');
+        // 'review_clean' → success
+        assert.equal(classifyIterationExit('review_clean', logFile), 'success');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('classifyIterationExit: api_limit is distinct from other exit types', () => {
+    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-exit-')));
+    try {
+        const logFile = path.join(tmpDir, 'rl.log');
+        fs.writeFileSync(logFile, JSON.stringify({ type: 'rate_limit_event', status: 'rejected' }) + '\n');
+        const exitType = classifyIterationExit('continue', logFile);
+        assert.equal(exitType, 'api_limit');
+        assert.notEqual(exitType, 'success');
+        assert.notEqual(exitType, 'error');
+        assert.notEqual(exitType, 'inactive');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });

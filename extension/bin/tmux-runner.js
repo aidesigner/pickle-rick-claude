@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, buildHandoffSummary } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, buildHandoffSummary, sleep } from '../services/pickle-utils.js';
 import { PromiseTokens, hasToken, VALID_STEPS } from '../types/index.js';
 import { writeStateFile } from '../hooks/resolve-state.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -266,6 +266,11 @@ async function main() {
         writeStateFile(statePath, ownerState);
         log('Session ownership taken (active: false → true)');
     }
+    // Clean up stale rate_limit_wait.json from a previous crashed session
+    try {
+        fs.unlinkSync(path.join(sessionDir, 'rate_limit_wait.json'));
+    }
+    catch { /* not present */ }
     const cbSettings = loadSettings(extensionRoot);
     const cbEnabled = cbSettings.enabled;
     let cbState = cbEnabled ? initCircuitBreaker(sessionDir, cbSettings) : null;
@@ -344,6 +349,86 @@ async function main() {
         iteration++;
         log(`--- Iteration ${iteration} (state.iteration=${state.iteration}) ---`);
         const result = await runIteration(sessionDir, iteration, extensionRoot);
+        // --- Rate limit classification (MUST run before CB to prevent CB poisoning) ---
+        const iterLogFile = path.join(sessionDir, `tmux_iteration_${iteration}.log`);
+        const exitType = classifyIterationExit(result, iterLogFile);
+        if (exitType === 'api_limit') {
+            consecutiveRateLimits++;
+            log(`API rate limit detected (consecutive: ${consecutiveRateLimits}/${maxRateLimitRetries})`);
+            if (consecutiveRateLimits >= maxRateLimitRetries) {
+                exitReason = 'rate_limit_exhausted';
+                logActivity({ event: 'rate_limit_exhausted', source: 'pickle',
+                    session: path.basename(sessionDir), error: `max retries (${maxRateLimitRetries}) exceeded` });
+                state.active = false;
+                writeStateFile(statePath, state);
+                break;
+            }
+            logActivity({ event: 'rate_limit_wait', source: 'pickle',
+                session: path.basename(sessionDir), duration_min: rateLimitWaitMinutes });
+            writeStateFile(path.join(sessionDir, 'rate_limit_wait.json'), {
+                waiting: true, reason: 'API rate limit',
+                started_at: new Date().toISOString(),
+                wait_until: new Date(Date.now() + rateLimitWaitMinutes * 60 * 1000).toISOString(),
+                consecutive_waits: consecutiveRateLimits,
+            });
+            // Pre-wait time check
+            const rawEpoch = Number(state.start_time_epoch);
+            const epoch = Number.isFinite(rawEpoch) ? rawEpoch : 0;
+            const rawMax = Number(state.max_time_minutes);
+            const maxMins = Number.isFinite(rawMax) ? rawMax : 0;
+            let actualWaitMs = rateLimitWaitMinutes * 60 * 1000;
+            if (maxMins > 0 && epoch > 0) {
+                const elapsed = Math.floor(Date.now() / 1000) - epoch;
+                const remaining = (maxMins * 60) - elapsed;
+                if (remaining <= 0) {
+                    exitReason = 'limit';
+                    state.active = false;
+                    writeStateFile(statePath, state);
+                    break;
+                }
+                actualWaitMs = Math.min(actualWaitMs, remaining * 1000);
+            }
+            // Cancellable + time-limit-aware sleep loop
+            const waitEnd = Date.now() + actualWaitMs;
+            while (Date.now() < waitEnd) {
+                await sleep(10_000);
+                try {
+                    const ws = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+                    if (ws.active !== true) {
+                        exitReason = 'cancelled';
+                        break;
+                    }
+                }
+                catch { /* proceed */ }
+                if (maxMins > 0 && epoch > 0) {
+                    const elapsed = Math.floor(Date.now() / 1000) - epoch;
+                    if (elapsed >= maxMins * 60) {
+                        exitReason = 'limit';
+                        break;
+                    }
+                }
+            }
+            if (exitReason === 'cancelled' || exitReason === 'limit') {
+                state.active = false;
+                writeStateFile(statePath, state);
+                break;
+            }
+            // Wake: cleanup + handoff
+            try {
+                fs.unlinkSync(path.join(sessionDir, 'rate_limit_wait.json'));
+            }
+            catch { /* ok */ }
+            logActivity({ event: 'rate_limit_resume', source: 'pickle', session: path.basename(sessionDir) });
+            fs.writeFileSync(path.join(sessionDir, 'handoff.txt'), [
+                buildHandoffSummary(state, sessionDir, iteration + 1), '',
+                `NOTE: Resumed after ${rateLimitWaitMinutes}-minute API rate limit wait.`,
+                'Resume from current phase — do not repeat the rate-limited iteration.',
+            ].join('\n'));
+            continue; // Skip CB recording + result branching entirely
+        }
+        if (exitType === 'success')
+            consecutiveRateLimits = 0;
+        // === Existing CB recording — only reached for non-rate-limit ===
         // Circuit breaker: record iteration outcome (skip for subprocess failures)
         if (cbEnabled && cbState && result !== 'error' && result !== 'inactive') {
             let postIterState;
@@ -354,7 +439,6 @@ async function main() {
                 postIterState = state;
             }
             const progress = detectProgress(postIterState.working_dir || process.cwd(), cbState.last_known_head, cbState.last_known_step, postIterState.step, cbState.last_known_ticket, postIterState.current_ticket);
-            const iterLogFile = path.join(sessionDir, `tmux_iteration_${iteration}.log`);
             let errorSig = null;
             try {
                 const logContent = fs.readFileSync(iterLogFile, 'utf-8');
@@ -452,7 +536,7 @@ async function main() {
             exitReason = 'error';
             break;
         }
-        await new Promise(r => setTimeout(r, 1000));
+        await sleep(1000);
     }
     const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
     logActivity({ event: 'session_end', source: 'pickle', session: path.basename(sessionDir), duration_min: Math.round(totalElapsed / 60), mode: 'tmux' });
@@ -483,7 +567,7 @@ async function main() {
     }
 }
 export function buildTmuxNotification(exitReason, finalStep, iteration, totalElapsed) {
-    const isFailure = exitReason === 'error' || exitReason === 'stall' || exitReason === 'circuit_open';
+    const isFailure = exitReason === 'error' || exitReason === 'stall' || exitReason === 'circuit_open' || exitReason === 'rate_limit_exhausted';
     const title = isFailure
         ? '🥒 Pickle Run Failed'
         : '🥒 Pickle Run Complete';
