@@ -428,19 +428,100 @@ test('formatOutput: empty range shows no activity message', () => {
     assert.match(output, /2026-02-26/);
 });
 
-test('formatOutput: groups events by session', () => {
+test('formatOutput: session with iterations and commits', () => {
     const events = [
-        { ts: '2026-02-26T10:00:00Z', event: 'session_start', source: 'pickle', session: 'my-session' },
-        { ts: '2026-02-26T11:00:00Z', event: 'ticket_completed', source: 'pickle', session: 'my-session', ticket: 'abc' },
+        { ts: '2026-02-26T10:00:00Z', event: 'session_start', source: 'pickle', session: 'sess-1', original_prompt: 'Implement circuit breaker' },
+        { ts: '2026-02-26T10:05:00Z', event: 'iteration_start', source: 'pickle', session: 'sess-1', iteration: 1 },
+        { ts: '2026-02-26T10:20:00Z', event: 'iteration_end', source: 'pickle', session: 'sess-1', iteration: 1 },
+        { ts: '2026-02-26T10:21:00Z', event: 'iteration_start', source: 'pickle', session: 'sess-1', iteration: 2 },
+        { ts: '2026-02-26T10:40:00Z', event: 'iteration_end', source: 'pickle', session: 'sess-1', iteration: 2 },
+        { ts: '2026-02-26T11:00:00Z', event: 'iteration_start', source: 'pickle', session: 'sess-1', iteration: 3 },
+        { ts: '2026-02-26T11:30:00Z', event: 'session_end', source: 'pickle', session: 'sess-1' },
     ];
-    const output = formatOutput(events, [], [], new Date('2026-02-26'), new Date('2026-02-27'));
-    assert.match(output, /## Sessions/);
-    assert.match(output, /### my-session/);
-    assert.match(output, /session_start/);
-    assert.match(output, /ticket_completed/);
+    const hookCommits = [
+        { ts: '2026-02-26T10:25:00Z', event: 'commit', source: 'hook', commit_hash: 'abc1234567', commit_message: 'feat: circuit breaker', session: 'sess-1' },
+    ];
+    const output = formatOutput(events, hookCommits, [], new Date('2026-02-26'), new Date('2026-02-27'));
+    assert.match(output, /# Standup/);
+    assert.match(output, /## Implement circuit breaker \(sess-1\)/);
+    assert.match(output, /\*\*Duration\*\*: 1h 30m \(3 iterations\)/);
+    assert.match(output, /\*\*Mode\*\*: tmux/);
+    assert.match(output, /\*\*Commits\*\*:/);
+    assert.match(output, /`abc1234` feat: circuit breaker/);
 });
 
-test('formatOutput: ad-hoc events in separate section', () => {
+test('formatOutput: commit attribution by session field', () => {
+    const events = [
+        { ts: '2026-02-26T10:00:00Z', event: 'session_start', source: 'pickle', session: 'sess-1' },
+        { ts: '2026-02-26T11:00:00Z', event: 'session_end', source: 'pickle', session: 'sess-1' },
+    ];
+    const hookCommits = [
+        { ts: '2026-02-26T10:30:00Z', event: 'commit', source: 'hook', commit_hash: 'aaa1111111', commit_message: 'fix: attributed', session: 'sess-1' },
+        { ts: '2026-02-26T12:00:00Z', event: 'commit', source: 'hook', commit_hash: 'bbb2222222', commit_message: 'fix: unattributed' },
+    ];
+    const output = formatOutput(events, hookCommits, [], new Date('2026-02-26'), new Date('2026-02-27'));
+    // Attributed commit under session block
+    assert.match(output, /## sess-1 \(sess-1\)/);
+    assert.match(output, /`aaa1111` fix: attributed/);
+    // Unattributed commit in ad-hoc (timestamp 12:00 is outside session 10:00-11:00)
+    assert.match(output, /## Ad-hoc Commits/);
+    assert.match(output, /`bbb2222` fix: unattributed/);
+});
+
+test('formatOutput: timestamp fallback attribution', () => {
+    const events = [
+        { ts: '2026-02-26T10:00:00Z', event: 'session_start', source: 'pickle', session: 'sess-1' },
+        { ts: '2026-02-26T11:00:00Z', event: 'session_end', source: 'pickle', session: 'sess-1' },
+    ];
+    // Commit has no session field but timestamp falls within session range
+    const hookCommits = [
+        { ts: '2026-02-26T10:30:00Z', event: 'commit', source: 'hook', commit_hash: 'ccc3333333', commit_message: 'fix: fallback' },
+    ];
+    const output = formatOutput(events, hookCommits, [], new Date('2026-02-26'), new Date('2026-02-27'));
+    // Should be attributed to sess-1 via timestamp fallback, not ad-hoc
+    assert.match(output, /## sess-1 \(sess-1\)/);
+    assert.match(output, /`ccc3333` fix: fallback/);
+    assert.ok(!output.includes('Ad-hoc Commits'), 'No ad-hoc section expected');
+});
+
+test('formatOutput: ad-hoc commits from hook and git-only', () => {
+    const hookCommits = [
+        { ts: '2026-02-26T10:00:00Z', event: 'commit', source: 'hook', commit_hash: 'abc1234567', commit_message: 'fix: standalone' },
+    ];
+    const gitOnly = [['def5678901', 'feat: git only']];
+    const output = formatOutput([], hookCommits, gitOnly, new Date('2026-02-26'), new Date('2026-02-27'));
+    assert.match(output, /## Ad-hoc Commits/);
+    assert.match(output, /`abc1234` fix: standalone/);
+    assert.match(output, /`def5678` feat: git only/);
+});
+
+test('formatOutput: old session without iteration events (graceful degradation)', () => {
+    const events = [
+        { ts: '2026-02-26T10:00:00Z', event: 'session_start', source: 'pickle', session: 'old-sess' },
+        { ts: '2026-02-26T10:45:00Z', event: 'ticket_completed', source: 'pickle', session: 'old-sess', ticket: 'abc' },
+    ];
+    const output = formatOutput(events, [], [], new Date('2026-02-26'), new Date('2026-02-27'));
+    assert.match(output, /## old-sess \(old-sess\)/);
+    assert.match(output, /\*\*Duration\*\*: 45m \(\? iterations\)/);
+    assert.match(output, /\*\*Mode\*\*: inline/);
+});
+
+test('formatOutput: multiple sessions sorted newest first', () => {
+    const events = [
+        { ts: '2026-02-26T08:00:00Z', event: 'session_start', source: 'pickle', session: 'older-sess', original_prompt: 'Older task' },
+        { ts: '2026-02-26T09:00:00Z', event: 'session_end', source: 'pickle', session: 'older-sess' },
+        { ts: '2026-02-26T14:00:00Z', event: 'session_start', source: 'pickle', session: 'newer-sess', original_prompt: 'Newer task' },
+        { ts: '2026-02-26T15:30:00Z', event: 'session_end', source: 'pickle', session: 'newer-sess' },
+    ];
+    const output = formatOutput(events, [], [], new Date('2026-02-26'), new Date('2026-02-27'));
+    const newerIdx = output.indexOf('## Newer task');
+    const olderIdx = output.indexOf('## Older task');
+    assert.ok(newerIdx >= 0, 'Should contain newer session');
+    assert.ok(olderIdx >= 0, 'Should contain older session');
+    assert.ok(newerIdx < olderIdx, 'Newer session should appear first');
+});
+
+test('formatOutput: ad-hoc non-commit events in separate section', () => {
     const events = [
         { ts: '2026-02-26T14:00:00Z', event: 'feature', source: 'persona', title: 'Did a thing' },
     ];
@@ -449,25 +530,24 @@ test('formatOutput: ad-hoc events in separate section', () => {
     assert.match(output, /Did a thing/);
 });
 
-test('formatOutput: commits section with hook and git-only', () => {
-    const hookCommits = [
-        { ts: '2026-02-26T10:00:00Z', event: 'commit', source: 'hook', commit_hash: 'abc1234567', commit_message: 'fix: bug' },
-    ];
-    const gitOnly = [['def5678', 'feat: new thing']];
-    const output = formatOutput([], hookCommits, gitOnly, new Date('2026-02-26'), new Date('2026-02-27'));
-    assert.match(output, /## Commits/);
-    assert.match(output, /abc1234/);
-    assert.match(output, /fix: bug/);
-    assert.match(output, /def5678/);
-    assert.match(output, /feat: new thing/);
-});
-
 test('formatOutput: commit with no message shows fallback', () => {
     const hookCommits = [
         { ts: '2026-02-26T10:00:00Z', event: 'commit', source: 'hook', commit_hash: 'abc1234567' },
     ];
     const output = formatOutput([], hookCommits, [], new Date('2026-02-26'), new Date('2026-02-27'));
     assert.match(output, /\(no message\)/);
+});
+
+test('formatOutput: original_prompt truncated to 60 chars', () => {
+    const longPrompt = 'This is a very long original prompt that exceeds sixty characters and should be truncated';
+    const events = [
+        { ts: '2026-02-26T10:00:00Z', event: 'session_start', source: 'pickle', session: 'sess-trunc', original_prompt: longPrompt },
+        { ts: '2026-02-26T11:00:00Z', event: 'session_end', source: 'pickle', session: 'sess-trunc' },
+    ];
+    const output = formatOutput(events, [], [], new Date('2026-02-26'), new Date('2026-02-27'));
+    assert.match(output, /## This is a very long original prompt that exceeds sixty ch/);
+    assert.match(output, /\.\.\./);
+    assert.ok(!output.includes(longPrompt), 'Full prompt should not appear');
 });
 
 // --- getGitCommits ---

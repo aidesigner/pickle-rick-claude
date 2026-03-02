@@ -162,40 +162,96 @@ export function formatOutput(events, hookCommits, gitOnlyCommits, since, until) 
     if (!hasContent) {
         return `No activity found for ${sinceStr} to ${untilStr}.`;
     }
+    // 1. Build session map from non-commit events
+    const sessionEvents = new Map();
+    const adhocEvents = [];
+    for (const e of nonCommitEvents) {
+        if (e.session) {
+            const list = sessionEvents.get(e.session) || [];
+            list.push(e);
+            sessionEvents.set(e.session, list);
+        }
+        else {
+            adhocEvents.push(e);
+        }
+    }
+    // 2. Attribute commits to sessions
+    const sessionCommits = new Map();
+    const adhocHookCommits = [];
+    for (const c of hookCommits) {
+        if (c.session) {
+            if (!sessionEvents.has(c.session))
+                sessionEvents.set(c.session, []);
+            const list = sessionCommits.get(c.session) || [];
+            list.push(c);
+            sessionCommits.set(c.session, list);
+        }
+        else {
+            // No session field — try timestamp fallback
+            let attributed = false;
+            for (const [sid, sevts] of sessionEvents) {
+                if (sevts.length === 0)
+                    continue;
+                const firstTs = sevts[0].ts;
+                const lastTs = sevts[sevts.length - 1].ts;
+                if (c.ts >= firstTs && c.ts <= lastTs) {
+                    const list = sessionCommits.get(sid) || [];
+                    list.push(c);
+                    sessionCommits.set(sid, list);
+                    attributed = true;
+                    break;
+                }
+            }
+            if (!attributed)
+                adhocHookCommits.push(c);
+        }
+    }
+    // 3. Build sorted session entries (newest first by first event timestamp)
+    const sessionEntries = [...sessionEvents.entries()].map(([sid, sevts]) => {
+        const startEvent = sevts.find((e) => e.event === 'session_start');
+        const prompt = startEvent?.original_prompt;
+        const taskName = prompt ? (prompt.length > 60 ? prompt.slice(0, 60) + '...' : prompt) : sid;
+        const allTs = sevts.map((e) => e.ts);
+        const commits = sessionCommits.get(sid) || [];
+        for (const c of commits)
+            allTs.push(c.ts);
+        allTs.sort();
+        const firstTs = allTs[0] || '';
+        const lastTs = allTs[allTs.length - 1] || firstTs;
+        const durationMs = new Date(lastTs).getTime() - new Date(firstTs).getTime();
+        const durationMin = Math.floor(durationMs / 60000);
+        const hours = Math.floor(durationMin / 60);
+        const mins = durationMin % 60;
+        const durationStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+        const iterationStarts = sevts.filter((e) => e.event === 'iteration_start');
+        const iterationCount = iterationStarts.length;
+        const iterationStr = iterationCount > 0 ? `${iterationCount} iteration${iterationCount === 1 ? '' : 's'}` : '? iterations';
+        const mode = iterationCount > 0 ? 'tmux' : 'inline';
+        return { sid, taskName, durationStr, iterationStr, mode, commits, firstTs };
+    });
+    sessionEntries.sort((a, b) => (a.firstTs > b.firstTs ? -1 : a.firstTs < b.firstTs ? 1 : 0));
+    // 4. Render output
     const lines = [];
     lines.push(`# Standup — ${sinceStr} to ${untilStr}`);
     lines.push('');
-    // Sessions section
-    const sessions = new Map();
-    const adhoc = [];
-    for (const e of nonCommitEvents) {
-        if (e.session) {
-            const list = sessions.get(e.session) || [];
-            list.push(e);
-            sessions.set(e.session, list);
-        }
-        else {
-            adhoc.push(e);
-        }
-    }
-    if (sessions.size > 0) {
-        lines.push('## Sessions');
-        lines.push('');
-        for (const [session, sessionEvents] of sessions) {
-            lines.push(`### ${session}`);
-            for (const e of sessionEvents) {
-                const time = e.ts.slice(11, 16);
-                const detail = e.title || e.ticket || e.step || '';
-                lines.push(`- \`${time}\` **${e.event}**${detail ? ` — ${detail}` : ''}`);
+    for (const s of sessionEntries) {
+        lines.push(`## ${s.taskName} (${s.sid})`);
+        lines.push(`- **Duration**: ${s.durationStr} (${s.iterationStr})`);
+        lines.push(`- **Mode**: ${s.mode}`);
+        if (s.commits.length > 0) {
+            lines.push('- **Commits**:');
+            for (const c of s.commits) {
+                const msg = c.commit_message || '(no message)';
+                lines.push(`  - \`${c.commit_hash?.slice(0, 7)}\` ${msg}`);
             }
-            lines.push('');
         }
-    }
-    // Commits section
-    if (hookCommits.length > 0 || gitOnlyCommits.length > 0) {
-        lines.push('## Commits');
         lines.push('');
-        for (const c of hookCommits) {
+    }
+    // 5. Ad-hoc section
+    const hasAdhocCommits = adhocHookCommits.length > 0 || gitOnlyCommits.length > 0;
+    if (hasAdhocCommits) {
+        lines.push('## Ad-hoc Commits');
+        for (const c of adhocHookCommits) {
             const msg = c.commit_message || '(no message)';
             lines.push(`- \`${c.commit_hash?.slice(0, 7)}\` ${msg}`);
         }
@@ -204,11 +260,9 @@ export function formatOutput(events, hookCommits, gitOnlyCommits, since, until) 
         }
         lines.push('');
     }
-    // Ad-hoc Activity section
-    if (adhoc.length > 0) {
+    if (adhocEvents.length > 0) {
         lines.push('## Ad-hoc Activity');
-        lines.push('');
-        for (const e of adhoc) {
+        for (const e of adhocEvents) {
             const time = e.ts.slice(11, 16);
             const detail = e.title || e.ticket || e.step || '';
             lines.push(`- \`${time}\` **${e.event}**${detail ? ` — ${detail}` : ''}`);
