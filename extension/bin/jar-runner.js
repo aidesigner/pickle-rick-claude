@@ -7,6 +7,9 @@ import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, getExtensionRoot, writeStateFile } from '../services/pickle-utils.js';
 import { Defaults } from '../types/index.js';
 import { logActivity } from '../services/activity-logger.js';
+// Tracks the currently-running task's session dir so signal handlers
+// can deactivate it on shutdown, preventing orphaned active: true sessions.
+let activeTaskSessionDir = null;
 async function runTask(sessionDir, repoCwd, extensionRoot) {
     const statePath = path.join(sessionDir, 'state.json');
     let state;
@@ -20,6 +23,7 @@ async function runTask(sessionDir, repoCwd, extensionRoot) {
     state.active = true;
     state.completion_promise = null;
     writeStateFile(statePath, state);
+    activeTaskSessionDir = sessionDir;
     const picklePromptPath = path.join(os.homedir(), '.claude/commands/pickle.md');
     let prompt = `You are Pickle Rick. Resume the session.\n\nRun:\nnode "${extensionRoot}/extension/bin/setup.js" --resume ${sessionDir}\n\nThen continue the manager lifecycle from the current phase.`;
     try {
@@ -54,8 +58,12 @@ async function runTask(sessionDir, repoCwd, extensionRoot) {
     delete env['PICKLE_ROLE'];
     return new Promise((resolve) => {
         const proc = spawn('claude', cmdArgs, { cwd: repoCwd, env, stdio: 'inherit' });
-        proc.on('close', (code) => resolve(code === 0));
+        proc.on('close', (code) => {
+            activeTaskSessionDir = null;
+            resolve(code === 0);
+        });
         proc.on('error', (err) => {
+            activeTaskSessionDir = null;
             console.error(`${Style.RED}Failed to spawn claude: ${err instanceof Error ? err.message : String(err)}${Style.RESET}`);
             resolve(false);
         });
@@ -103,6 +111,28 @@ async function main() {
         console.log('Signal: Jar Complete');
         return;
     }
+    // Graceful shutdown: deactivate the current task's session on SIGTERM/SIGINT
+    // so it doesn't remain orphaned with active: true when the process is killed.
+    const handleShutdownSignal = (signal) => {
+        console.error(`\n${Style.YELLOW}⚠️  Received ${signal} — deactivating current task session${Style.RESET}`);
+        if (activeTaskSessionDir) {
+            try {
+                const taskStatePath = path.join(activeTaskSessionDir, 'state.json');
+                const taskState = JSON.parse(fs.readFileSync(taskStatePath, 'utf-8'));
+                taskState.active = false;
+                writeStateFile(taskStatePath, taskState);
+            }
+            catch {
+                try {
+                    writeStateFile(path.join(activeTaskSessionDir, 'state.json'), { active: false });
+                }
+                catch { /* nothing we can do */ }
+            }
+        }
+        process.exit(0);
+    };
+    process.on('SIGTERM', () => handleShutdownSignal('SIGTERM'));
+    process.on('SIGINT', () => handleShutdownSignal('SIGINT'));
     console.log(`\n🥒 Pickle Jar Night Shift — ${tasks.length} task(s) queued\n`);
     logActivity({ event: 'jar_start', source: 'pickle' });
     let succeeded = 0;

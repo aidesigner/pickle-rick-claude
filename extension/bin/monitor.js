@@ -154,8 +154,32 @@ function render(sessionDir) {
             return (numA || 0) - (numB || 0);
         });
         if (logs.length > 0) {
-            const latestLog = fs.readFileSync(path.join(sessionDir, logs[logs.length - 1]), 'utf-8');
-            const summaryLines = latestLog
+            const logPath = path.join(sessionDir, logs[logs.length - 1]);
+            // Read only the tail of the file (last 64KB) instead of the entire log,
+            // which can grow to multi-MB during long sessions. 64KB is more than
+            // enough to capture the last 10 NDJSON lines.
+            const TAIL_BYTES = 65536;
+            const { size } = fs.statSync(logPath);
+            const readStart = Math.max(0, size - TAIL_BYTES);
+            let tail;
+            if (readStart === 0) {
+                tail = fs.readFileSync(logPath, 'utf-8');
+            }
+            else {
+                const buf = Buffer.allocUnsafe(size - readStart);
+                const fd = fs.openSync(logPath, 'r');
+                try {
+                    fs.readSync(fd, buf, 0, buf.length, readStart);
+                }
+                finally {
+                    fs.closeSync(fd);
+                }
+                // Drop first partial line from mid-file read
+                const raw = buf.toString('utf-8');
+                const firstNewline = raw.indexOf('\n');
+                tail = firstNewline !== -1 ? raw.slice(firstNewline + 1) : raw;
+            }
+            const summaryLines = tail
                 .split('\n')
                 .filter((l) => l.trim())
                 .slice(-10)
