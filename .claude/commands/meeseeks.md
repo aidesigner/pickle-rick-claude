@@ -34,7 +34,7 @@ Print attach command immediately: `tmux attach -t <name>` (Window 1 "monitor" = 
 
 ### Step 6: Launch Runner
 ```bash
-tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/tmux-runner.js <SESSION_ROOT>; echo ''; echo '👋 Mr. Meeseeks has ceased to exist.'; read" Enter
+tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/mux-runner.js <SESSION_ROOT>; echo ''; echo '👋 Mr. Meeseeks has ceased to exist.'; read" Enter
 ```
 
 ### Step 7: Monitor (3-pane)
@@ -45,13 +45,13 @@ tmux split-window -v -t <name>:monitor -l 33%
 tmux split-window -h -t <name>:monitor.0
 tmux send-keys -t <name>:monitor.0 "node $HOME/.claude/pickle-rick/extension/bin/monitor.js <SESSION_ROOT>" Enter
 tmux send-keys -t <name>:monitor.1 "node $HOME/.claude/pickle-rick/extension/bin/log-watcher.js <SESSION_ROOT>" Enter
-tmux send-keys -t <name>:monitor.2 "tail -F <SESSION_ROOT>/tmux-runner.log" Enter
+tmux send-keys -t <name>:monitor.2 "tail -F <SESSION_ROOT>/mux-runner.log" Enter
 tmux select-pane -t <name>:monitor.0
 tmux select-window -t <name>:monitor
 ```
 
 ### Step 8: Report
-Print: session name, `tmux attach -t <name>`, window layout (monitor: dashboard/log-stream/runner-log, runner: background), min/max passes, cancel: `/eat-pickle`, emergency: `tmux kill-session -t <name>`.
+Print: session name, `tmux attach -t <name>`, window layout (monitor: dashboard/log-stream/runner-log, runner: background), min/max passes, cancel: `cd <working_dir> && /eat-pickle`, emergency: `tmux kill-session -t <name>` then `node ~/.claude/pickle-rick/extension/bin/cancel.js`, state path: `<SESSION_ROOT>/state.json`.
 
 ### Step 9: Exit
 Output: `<promise>TASK_COMPLETED</promise>`
