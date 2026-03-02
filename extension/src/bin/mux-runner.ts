@@ -175,6 +175,16 @@ async function runIteration(sessionDir: string, iterationNum: number, extensionR
   let managerPrompt = fs.readFileSync(picklePromptPath, 'utf-8')
     .replace(/\$ARGUMENTS/g, `--resume ${sessionDir}`);
 
+  // Strip Setup Mode section from dual-mode templates (e.g. meeseeks.md).
+  // The runner always invokes with --resume, so Setup Mode instructions are
+  // dead weight that confuse the model — a Morty once killed its own parent
+  // tmux session by running Setup steps instead of Review Pass steps.
+  const setupStart = managerPrompt.indexOf('## SETUP MODE');
+  const reviewStart = managerPrompt.indexOf('## REVIEW PASS MODE');
+  if (setupStart !== -1 && reviewStart !== -1 && setupStart < reviewStart) {
+    managerPrompt = managerPrompt.slice(0, setupStart) + managerPrompt.slice(reviewStart);
+  }
+
   const handoffPath = path.join(sessionDir, 'handoff.txt');
   if (fs.existsSync(handoffPath)) {
     managerPrompt += '\n\n' + fs.readFileSync(handoffPath, 'utf-8');
