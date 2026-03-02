@@ -31,15 +31,16 @@ async function getLogActivity() {
 
 // --- VALID_ACTIVITY_EVENTS ---
 
-test('VALID_ACTIVITY_EVENTS contains all 18 expected event types', () => {
+test('VALID_ACTIVITY_EVENTS contains all 20 expected event types', () => {
     const expected = [
         'session_start', 'session_end', 'ticket_completed', 'epic_completed',
         'meeseeks_pass', 'commit', 'research', 'bug_fix', 'feature',
         'refactor', 'review', 'jar_start', 'jar_end',
         'circuit_open', 'circuit_recovery',
+        'iteration_start', 'iteration_end',
         'rate_limit_wait', 'rate_limit_resume', 'rate_limit_exhausted',
     ];
-    assert.equal(VALID_ACTIVITY_EVENTS.length, 18);
+    assert.equal(VALID_ACTIVITY_EVENTS.length, 20);
     for (const e of expected) {
         assert.ok(VALID_ACTIVITY_EVENTS.includes(e), `Missing event type: ${e}`);
     }
@@ -168,6 +169,46 @@ test('logActivity: includes all provided optional fields', async () => {
         assert.equal(parsed.ticket, 'abc');
         assert.equal(parsed.step, 'implement');
         assert.equal(parsed.epic, 'my-epic');
+    });
+});
+
+// --- Iteration events and new fields ---
+
+test('logActivity: iteration_start event preserves iteration field', async () => {
+    const logActivity = await getLogActivity();
+    withTempActivityDir((activityDir) => {
+        logActivity({ event: 'iteration_start', source: 'pickle', iteration: 3, session: 'sess-abc' });
+        const date = new Date().toLocaleDateString('en-CA');
+        const filepath = path.join(activityDir, `${date}.jsonl`);
+        const parsed = JSON.parse(fs.readFileSync(filepath, 'utf8').trim());
+        assert.equal(parsed.event, 'iteration_start');
+        assert.equal(parsed.iteration, 3);
+        assert.equal(parsed.session, 'sess-abc');
+    });
+});
+
+test('logActivity: iteration_end event preserves iteration and exit_type fields', async () => {
+    const logActivity = await getLogActivity();
+    withTempActivityDir((activityDir) => {
+        logActivity({ event: 'iteration_end', source: 'pickle', iteration: 5, exit_type: 'error' });
+        const date = new Date().toLocaleDateString('en-CA');
+        const filepath = path.join(activityDir, `${date}.jsonl`);
+        const parsed = JSON.parse(fs.readFileSync(filepath, 'utf8').trim());
+        assert.equal(parsed.event, 'iteration_end');
+        assert.equal(parsed.iteration, 5);
+        assert.equal(parsed.exit_type, 'error');
+    });
+});
+
+test('logActivity: session_start event preserves original_prompt field', async () => {
+    const logActivity = await getLogActivity();
+    withTempActivityDir((activityDir) => {
+        logActivity({ event: 'session_start', source: 'pickle', original_prompt: 'Build the portal gun' });
+        const date = new Date().toLocaleDateString('en-CA');
+        const filepath = path.join(activityDir, `${date}.jsonl`);
+        const parsed = JSON.parse(fs.readFileSync(filepath, 'utf8').trim());
+        assert.equal(parsed.event, 'session_start');
+        assert.equal(parsed.original_prompt, 'Build the portal gun');
     });
 });
 
@@ -307,12 +348,13 @@ test('CLI: truncates title at 200 chars', () => {
     }
 });
 
-test('CLI: accepts all 18 valid event types', () => {
+test('CLI: accepts all 20 valid event types', () => {
     const expected = [
         'session_start', 'session_end', 'ticket_completed', 'epic_completed',
         'meeseeks_pass', 'commit', 'research', 'bug_fix', 'feature',
         'refactor', 'review', 'jar_start', 'jar_end',
         'circuit_open', 'circuit_recovery',
+        'iteration_start', 'iteration_end',
         'rate_limit_wait', 'rate_limit_resume', 'rate_limit_exhausted',
     ];
     const extRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-activity-'));
