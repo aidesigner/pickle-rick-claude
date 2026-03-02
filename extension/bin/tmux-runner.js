@@ -7,6 +7,7 @@ import { printMinimalPanel, Style, formatTime, getExtensionRoot, buildHandoffSum
 import { PromiseTokens, hasToken, VALID_STEPS, Defaults } from '../types/index.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult } from '../services/circuit-breaker.js';
+let currentChildProc = null;
 /**
  * Extracts text content from assistant messages in stream-json output.
  * Filters out tool_result / user / system lines so that promise tokens
@@ -235,6 +236,7 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
             env,
             stdio: ['inherit', 'pipe', 'pipe'],
         });
+        currentChildProc = proc;
         // Direct data handlers: write each chunk to both the log file (sync,
         // no buffering) and the terminal (for the tmux-runner pane).
         proc.stdout?.on('data', (chunk) => {
@@ -249,6 +251,7 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
             if (settled)
                 return;
             settled = true;
+            currentChildProc = null;
             try {
                 fs.closeSync(logFd);
             }
@@ -269,6 +272,7 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
             if (settled)
                 return;
             settled = true;
+            currentChildProc = null;
             const msg = err instanceof Error ? err.message : String(err);
             console.error(`${Style.RED}Failed to spawn claude: ${msg}${Style.RESET}`);
             try {
@@ -310,10 +314,15 @@ async function main() {
             }
             catch { /* nothing we can do */ }
         }
+        if (currentChildProc && !currentChildProc.killed) {
+            currentChildProc.kill('SIGTERM');
+        }
+        logActivity({ event: 'session_end', source: 'pickle', session: path.basename(sessionDir), mode: 'tmux' });
         process.exit(0);
     };
     process.on('SIGTERM', () => handleShutdownSignal('SIGTERM'));
     process.on('SIGINT', () => handleShutdownSignal('SIGINT'));
+    process.on('SIGHUP', () => handleShutdownSignal('SIGHUP'));
     // Take ownership: setup.js writes active: false in tmux mode so the main
     // Claude window's stop hook is released immediately. We set active: true here
     // before entering the loop so workers and state readers see a live session.
