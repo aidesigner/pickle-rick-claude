@@ -38,16 +38,8 @@ tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/mux-run
 ```
 
 ### Step 7: Monitor (3-pane)
-Do ALL splits before ANY send-keys. Pane indices after splits: 0=top-left, 1=top-right, 2=bottom.
 ```bash
-tmux new-window -t <name> -n monitor
-tmux split-window -v -t <name>:monitor -l 33%
-tmux split-window -h -t <name>:monitor.0
-tmux send-keys -t <name>:monitor.0 "node $HOME/.claude/pickle-rick/extension/bin/monitor.js <SESSION_ROOT>" Enter
-tmux send-keys -t <name>:monitor.1 "node $HOME/.claude/pickle-rick/extension/bin/log-watcher.js <SESSION_ROOT>" Enter
-tmux send-keys -t <name>:monitor.2 "tail -F <SESSION_ROOT>/mux-runner.log" Enter
-tmux select-pane -t <name>:monitor.0
-tmux select-window -t <name>:monitor
+bash "$HOME/.claude/pickle-rick/extension/scripts/tmux-monitor.sh" <name> <SESSION_ROOT> meeseeks
 ```
 
 ### Step 8: Report

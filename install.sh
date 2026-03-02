@@ -75,6 +75,7 @@ chmod +x "$EXTENSION_ROOT/extension/bin/prune-activity.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/standup.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/metrics.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/circuit-reset.js"
+chmod +x "$EXTENSION_ROOT/extension/scripts/tmux-monitor.sh"
 
 # --- COMMANDS ---
 # rsync all commands from .claude/commands/; no --delete to preserve user commands.
