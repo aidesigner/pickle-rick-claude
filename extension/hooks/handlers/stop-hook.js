@@ -129,7 +129,9 @@ async function main() {
             }
         }
         log(`Decision: APPROVE (Task/Worker complete)`);
-        if (!isWorker && !isRefinementWorker) {
+        // In tmux mode, tmux-runner owns the active flag — don't deactivate here.
+        // The runner reads classifyCompletion output and manages state transitions itself.
+        if (!isWorker && !isRefinementWorker && state.tmux_mode !== true) {
             state.active = false;
             writeStateFile(stateFile, state);
         }
@@ -179,8 +181,10 @@ async function main() {
     const maxTimeSeconds = maxTimeMins * 60;
     if (maxIter > 0 && curIter >= maxIter) {
         log(`Decision: APPROVE (Max iterations reached: ${curIter}/${maxIter})`);
-        state.active = false;
-        writeStateFile(stateFile, state);
+        if (state.tmux_mode !== true) {
+            state.active = false;
+            writeStateFile(stateFile, state);
+        }
         approve();
         if (state.tmux_mode !== true) {
             const durationMin = startEpoch > 0 ? Math.round(elapsedSeconds / 60) : undefined;
@@ -190,8 +194,10 @@ async function main() {
     }
     if (maxTimeMins > 0 && startEpoch > 0 && elapsedSeconds >= maxTimeSeconds) {
         log(`Decision: APPROVE (Time limit reached: ${elapsedSeconds}/${maxTimeSeconds}s)`);
-        state.active = false;
-        writeStateFile(stateFile, state);
+        if (state.tmux_mode !== true) {
+            state.active = false;
+            writeStateFile(stateFile, state);
+        }
         approve();
         if (state.tmux_mode !== true) {
             logActivity({ event: 'session_end', source: 'pickle', session: path.basename(path.dirname(stateFile)), duration_min: Math.round(elapsedSeconds / 60), mode: 'inline' });

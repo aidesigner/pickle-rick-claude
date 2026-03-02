@@ -164,6 +164,24 @@ test('stop-hook: TASK_COMPLETED → approve + active=false', () => {
   assert.equal(state.active, false);
 });
 
+test('stop-hook: EPIC_COMPLETED + tmux_mode → approve, active UNCHANGED (runner owns active)', () => {
+  const { decision, state } = runHook({
+    state: baseState({ tmux_mode: true }),
+    response: '<promise>EPIC_COMPLETED</promise>',
+  });
+  assert.deepEqual(decision, { decision: 'approve' });
+  assert.equal(state.active, true, 'tmux mode: runner owns active — hook must not deactivate');
+});
+
+test('stop-hook: TASK_COMPLETED + tmux_mode → approve, active UNCHANGED (runner owns active)', () => {
+  const { decision, state } = runHook({
+    state: baseState({ tmux_mode: true }),
+    response: '<promise>TASK_COMPLETED</promise>',
+  });
+  assert.deepEqual(decision, { decision: 'approve' });
+  assert.equal(state.active, true, 'tmux mode: runner owns active — hook must not deactivate');
+});
+
 test('stop-hook: custom completion_promise match → approve + active=false', () => {
   const { decision, state } = runHook({
     state: baseState({ completion_promise: 'MY_CUSTOM_DONE' }),
@@ -291,6 +309,14 @@ test('stop-hook: max_iterations=0 (unlimited) → never fires limit, falls to de
   assert.equal(decision.decision, 'block');
 });
 
+test('stop-hook: iteration limit + tmux_mode → approve, active UNCHANGED (runner handles limits)', () => {
+  const { decision, state } = runHook({
+    state: baseState({ tmux_mode: true, iteration: 5, max_iterations: 5 }),
+  });
+  assert.deepEqual(decision, { decision: 'approve' });
+  assert.equal(state.active, true, 'tmux mode: runner handles limits — hook must not deactivate');
+});
+
 test('stop-hook: time limit reached → approve + active=false', () => {
   const { decision, state } = runHook({
     state: baseState({
@@ -310,6 +336,18 @@ test('stop-hook: max_time_minutes=0 (unlimited) → never fires limit, falls to 
     }),
   });
   assert.equal(decision.decision, 'block');
+});
+
+test('stop-hook: time limit + tmux_mode → approve, active UNCHANGED (runner handles limits)', () => {
+  const { decision, state } = runHook({
+    state: baseState({
+      tmux_mode: true,
+      start_time_epoch: Math.floor(Date.now() / 1000) - 3700,
+      max_time_minutes: 60,
+    }),
+  });
+  assert.deepEqual(decision, { decision: 'approve' });
+  assert.equal(state.active, true, 'tmux mode: runner handles limits — hook must not deactivate');
 });
 
 // ---------------------------------------------------------------------------
@@ -680,6 +718,15 @@ test('stop-hook: EXISTENCE_IS_PAIN at min_iterations → approve + active=false'
   });
   assert.deepEqual(decision, { decision: 'approve' });
   assert.equal(state.active, false, 'at min_iterations — should deactivate');
+});
+
+test('stop-hook: EXISTENCE_IS_PAIN at min_iterations + tmux_mode → approve, active UNCHANGED', () => {
+  const { decision, state } = runHook({
+    state: baseState({ tmux_mode: true, min_iterations: 10, iteration: 10 }),
+    response: '<promise>EXISTENCE_IS_PAIN</promise>',
+  });
+  assert.deepEqual(decision, { decision: 'approve' });
+  assert.equal(state.active, true, 'tmux mode: runner owns active — hook must not deactivate');
 });
 
 test('stop-hook: EPIC_COMPLETED ignores min_iterations → still deactivates', () => {
