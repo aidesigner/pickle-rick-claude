@@ -5,6 +5,7 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, getExtensionRoot, writeStateFile } from '../services/pickle-utils.js';
+import { Defaults } from '../types/index.js';
 import { logActivity } from '../services/activity-logger.js';
 async function runTask(sessionDir, repoCwd, extensionRoot) {
     const statePath = path.join(sessionDir, 'state.json');
@@ -20,7 +21,7 @@ async function runTask(sessionDir, repoCwd, extensionRoot) {
     state.completion_promise = null;
     writeStateFile(statePath, state);
     const picklePromptPath = path.join(os.homedir(), '.claude/commands/pickle.md');
-    let prompt = `You are Pickle Rick. Resume the session.\n\nRun:\nnode "$HOME/.claude/pickle-rick/extension/bin/setup.js" --resume ${sessionDir}\n\nThen continue the manager lifecycle from the current phase.`;
+    let prompt = `You are Pickle Rick. Resume the session.\n\nRun:\nnode "${extensionRoot}/extension/bin/setup.js" --resume ${sessionDir}\n\nThen continue the manager lifecycle from the current phase.`;
     try {
         if (fs.existsSync(picklePromptPath)) {
             prompt = fs.readFileSync(picklePromptPath, 'utf-8').replace(/\$ARGUMENTS/g, `--resume ${sessionDir}`);
@@ -28,7 +29,7 @@ async function runTask(sessionDir, repoCwd, extensionRoot) {
     }
     catch { /* use fallback */ }
     const settingsPath = path.join(extensionRoot, 'pickle_settings.json');
-    let managerMaxTurns = 50;
+    let managerMaxTurns = Defaults.MANAGER_MAX_TURNS;
     try {
         const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
         if (typeof settings.default_manager_max_turns === 'number' && settings.default_manager_max_turns > 0)

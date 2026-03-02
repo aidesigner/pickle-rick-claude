@@ -8,7 +8,7 @@ import {
   formatTime,
   getExtensionRoot,
 } from '../services/pickle-utils.js';
-import { PromiseTokens, hasToken } from '../types/index.js';
+import { PromiseTokens, hasToken, Defaults } from '../types/index.js';
 
 const WORKER_ROLES = [
   { id: 'requirements' },
@@ -301,7 +301,7 @@ async function main() {
   const settingsFile = path.join(extensionRoot, 'pickle_settings.json');
   let defaultCycles = 3;
   let defaultMaxTurns = 100;
-  let defaultWorkerTimeout = 1200;
+  let defaultWorkerTimeout = Defaults.WORKER_TIMEOUT_SECONDS;
   if (fs.existsSync(settingsFile)) {
     try {
       const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf-8'));

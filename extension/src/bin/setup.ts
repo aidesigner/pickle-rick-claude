@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import { printMinimalPanel, Style, getExtensionRoot, withSessionMapLock, pruneOldSessions, writeStateFile } from '../services/pickle-utils.js';
-import { State } from '../types/index.js';
+import { State, Defaults } from '../types/index.js';
 import { logActivity } from '../services/activity-logger.js';
 import { pruneActivity } from './prune-activity.js';
 
@@ -53,7 +53,7 @@ async function main() {
   // Defaults
   let loopLimit = 100;
   let timeLimit = 720;
-  let workerTimeout = 1200;
+  let workerTimeout: number = Defaults.WORKER_TIMEOUT_SECONDS;
   let promiseToken: string | null = null;
   let resumeMode = false;
   let resumePath: string | null = null;

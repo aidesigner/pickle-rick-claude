@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, } from '../services/pickle-utils.js';
 import { spawn } from 'child_process';
-import { PromiseTokens, hasToken } from '../types/index.js';
+import { PromiseTokens, hasToken, Defaults } from '../types/index.js';
 import { updateTicketStatus } from '../services/git-utils.js';
 async function main() {
     const args = process.argv.slice(2);
@@ -35,7 +35,7 @@ async function main() {
         process.exit(1);
     }
     const rawTimeout = timeoutIndex !== -1 ? parseInt(args[timeoutIndex + 1], 10) : NaN;
-    const timeout = !isNaN(rawTimeout) && rawTimeout > 0 ? rawTimeout : 1200;
+    const timeout = !isNaN(rawTimeout) && rawTimeout > 0 ? rawTimeout : Defaults.WORKER_TIMEOUT_SECONDS;
     const rawFormat = formatIndex !== -1 ? args[formatIndex + 1] : undefined;
     const outputFormat = rawFormat && !rawFormat.startsWith('--') ? rawFormat : 'text';
     // Read ticket content if provided

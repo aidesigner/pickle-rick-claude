@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getExtensionRoot, extractFrontmatter, writeStateFile } from '../services/pickle-utils.js';
 import { updateState } from './update-state.js';
-import { State } from '../types/index.js';
+import { State, Defaults } from '../types/index.js';
 
 export function retryTicket(ticketId: string, cwd: string): void {
   // Validate ticketId to prevent path traversal
@@ -91,7 +91,7 @@ export function retryTicket(ticketId: string, cwd: string): void {
     throw new Error(`state.json became unreadable after update in ${sessionPath}`);
   }
   const rawTimeout = Number(finalState.worker_timeout_seconds);
-  const timeout = Number.isFinite(rawTimeout) && rawTimeout > 0 ? rawTimeout : 1200;
+  const timeout = Number.isFinite(rawTimeout) && rawTimeout > 0 ? rawTimeout : Defaults.WORKER_TIMEOUT_SECONDS;
 
   // Shell-safe escaping: single-quote escaping + collapse newlines to spaces
   const safePrompt = (finalState.original_prompt || '')
@@ -101,7 +101,7 @@ export function retryTicket(ticketId: string, cwd: string): void {
   // Task is first positional arg (spawn-morty.js:13 expects args[0] as task)
   // Use single-quoting for sessionDir to prevent shell expansion of $, `, etc.
   const safeSessionDir = sessionDir.replace(/'/g, "'\\''");
-  const spawnCmd = `node "$HOME/.claude/pickle-rick/extension/bin/spawn-morty.js" '${safePrompt}' --ticket-id '${ticketId}' --ticket-path '${safeSessionDir}/${ticketId}/' --ticket-file '${safeSessionDir}/${ticketId}/linear_ticket_${ticketId}.md' --timeout ${timeout}`;
+  const spawnCmd = `node "${getExtensionRoot()}/extension/bin/spawn-morty.js" '${safePrompt}' --ticket-id '${ticketId}' --ticket-path '${safeSessionDir}/${ticketId}/' --ticket-file '${safeSessionDir}/${ticketId}/linear_ticket_${ticketId}.md' --timeout ${timeout}`;
   console.log(`\n✅ Ticket ${ticketId} reset to Todo. Run this command to re-spawn Morty:\n\n${spawnCmd}\n`);
 }
 

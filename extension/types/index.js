@@ -1,4 +1,11 @@
 // ---------------------------------------------------------------------------
+// Default Configuration Values
+// ---------------------------------------------------------------------------
+export const Defaults = {
+    WORKER_TIMEOUT_SECONDS: 1200,
+    MANAGER_MAX_TURNS: 50,
+};
+// ---------------------------------------------------------------------------
 // Lifecycle Steps
 // ---------------------------------------------------------------------------
 export const VALID_STEPS = ['prd', 'breakdown', 'research', 'plan', 'implement', 'refactor', 'review'];

@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, buildHandoffSummary, sleep, writeStateFile } from '../services/pickle-utils.js';
-import { State, PromiseTokens, hasToken, VALID_STEPS, type IterationExitType } from '../types/index.js';
+import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, type IterationExitType } from '../types/index.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, type CircuitBreakerState } from '../services/circuit-breaker.js';
 
@@ -182,7 +182,7 @@ async function runIteration(sessionDir: string, iterationNum: number, extensionR
   }
 
   const settingsPath = path.join(extensionRoot, 'pickle_settings.json');
-  let maxTurns = 50;
+  let maxTurns = Defaults.MANAGER_MAX_TURNS;
   try {
     const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
     if (typeof settings.default_tmux_max_turns === 'number' && settings.default_tmux_max_turns > 0) {
