@@ -119,21 +119,21 @@ test('updateState: numeric key with non-numeric value throws', () => {
 // Boolean key coercion (C2 fix)
 // ---------------------------------------------------------------------------
 
-test('updateState: boolean key "active" with "true" stores boolean true', () => {
+test('updateState: rejects "active" — owned by tmux-runner/cancel.js', () => {
     withTempSession({ active: false, step: 'prd', iteration: 0 }, (dir) => {
-        updateState('active', 'true', dir);
-        const state = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf-8'));
-        assert.strictEqual(state.active, true);
-        assert.strictEqual(typeof state.active, 'boolean');
+        assert.throws(
+            () => updateState('active', 'true', dir),
+            /Unknown state key/i
+        );
     });
 });
 
-test('updateState: boolean key "active" with "false" stores boolean false', () => {
+test('updateState: rejects "completion_promise" — immutable after creation', () => {
     withTempSession({ active: true, step: 'prd', iteration: 0 }, (dir) => {
-        updateState('active', 'false', dir);
-        const state = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf-8'));
-        assert.strictEqual(state.active, false);
-        assert.strictEqual(typeof state.active, 'boolean');
+        assert.throws(
+            () => updateState('completion_promise', 'I AM DONE', dir),
+            /Unknown state key/i
+        );
     });
 });
 
@@ -147,18 +147,18 @@ test('updateState: boolean key "tmux_mode" with "true" stores boolean true', () 
 });
 
 test('updateState: boolean key rejects non-boolean values', () => {
-    withTempSession({ active: true, step: 'prd' }, (dir) => {
+    withTempSession({ active: true, step: 'prd', tmux_mode: false }, (dir) => {
         assert.throws(
-            () => updateState('active', 'yes', dir),
+            () => updateState('tmux_mode', 'yes', dir),
             /requires "true" or "false"/i
         );
     });
 });
 
 test('updateState: boolean key rejects numeric-looking values', () => {
-    withTempSession({ active: true, step: 'prd' }, (dir) => {
+    withTempSession({ active: true, step: 'prd', tmux_mode: false }, (dir) => {
         assert.throws(
-            () => updateState('active', '1', dir),
+            () => updateState('tmux_mode', '1', dir),
             /requires "true" or "false"/i
         );
     });

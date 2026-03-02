@@ -10,13 +10,12 @@ import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult } from '../services/circuit-breaker.js';
 /**
  * Classifies iteration output into a completion result.
- * TASK_COMPLETED/EPIC_COMPLETED → 'task_completed' (no min_iterations gate)
+ * EPIC_COMPLETED → 'task_completed' (exits the loop — all tickets done)
  * EXISTENCE_IS_PAIN → 'review_clean' (subject to min_iterations gate)
- * Neither → 'continue'
+ * TASK_COMPLETED / anything else → 'continue' (single ticket done, loop continues)
  */
 export function classifyCompletion(output) {
-    if (hasToken(output, PromiseTokens.EPIC_COMPLETED) ||
-        hasToken(output, PromiseTokens.TASK_COMPLETED)) {
+    if (hasToken(output, PromiseTokens.EPIC_COMPLETED)) {
         return 'task_completed';
     }
     if (hasToken(output, PromiseTokens.EXISTENCE_IS_PAIN)) {
@@ -195,7 +194,7 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
         // no buffering) and the terminal (for the tmux-runner pane).
         proc.stdout?.on('data', (chunk) => {
             writeToLog(chunk);
-            process.stdout.write(chunk);
+            process.stderr.write(chunk);
         });
         proc.stderr?.on('data', (chunk) => {
             writeToLog(chunk);
@@ -247,7 +246,7 @@ async function main() {
     const log = (msg) => {
         const line = `[${new Date().toISOString()}] ${msg}\n`;
         fs.appendFileSync(runnerLog, line);
-        console.log(msg);
+        process.stderr.write(line);
     };
     log('tmux-runner started');
     // Take ownership: setup.js writes active: false in tmux mode so the main

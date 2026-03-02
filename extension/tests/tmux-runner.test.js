@@ -491,8 +491,8 @@ test('tmux-runner: creates tmux-runner.log in session directory', () => {
 
 import { buildTmuxNotification, classifyCompletion, transitionToMeeseeks, loadRateLimitSettings, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText } from '../bin/tmux-runner.js';
 
-test('classifyCompletion: TASK_COMPLETED returns task_completed', () => {
-    assert.equal(classifyCompletion('<promise>TASK_COMPLETED</promise>'), 'task_completed');
+test('classifyCompletion: TASK_COMPLETED returns continue (single ticket, loop continues)', () => {
+    assert.equal(classifyCompletion('<promise>TASK_COMPLETED</promise>'), 'continue');
 });
 
 test('classifyCompletion: EPIC_COMPLETED returns task_completed', () => {
@@ -511,22 +511,31 @@ test('classifyCompletion: empty string returns continue', () => {
     assert.equal(classifyCompletion(''), 'continue');
 });
 
-test('classifyCompletion: TASK_COMPLETED takes precedence over EXISTENCE_IS_PAIN', () => {
-    const output = '<promise>TASK_COMPLETED</promise>\n<promise>EXISTENCE_IS_PAIN</promise>';
+test('classifyCompletion: EPIC_COMPLETED takes precedence over EXISTENCE_IS_PAIN', () => {
+    const output = '<promise>EPIC_COMPLETED</promise>\n<promise>EXISTENCE_IS_PAIN</promise>';
     assert.equal(classifyCompletion(output), 'task_completed');
 });
 
 test('classifyCompletion: tolerates whitespace in tokens', () => {
     assert.equal(classifyCompletion('<promise> EXISTENCE_IS_PAIN </promise>'), 'review_clean');
-    assert.equal(classifyCompletion('<promise> TASK_COMPLETED </promise>'), 'task_completed');
+    assert.equal(classifyCompletion('<promise> TASK_COMPLETED </promise>'), 'continue');
 });
 
-test('classifyCompletion: matches TASK_COMPLETED inside stream-json line', () => {
-    // stream-json wraps assistant output in JSON — token appears inside a string value
+test('classifyCompletion: TASK_COMPLETED inside stream-json returns continue', () => {
     const streamJsonLine = JSON.stringify({
         type: 'assistant',
         message: {
             content: [{ type: 'text', text: 'All done!\n<promise>TASK_COMPLETED</promise>' }],
+        },
+    });
+    assert.equal(classifyCompletion(streamJsonLine), 'continue');
+});
+
+test('classifyCompletion: EPIC_COMPLETED inside stream-json returns task_completed', () => {
+    const streamJsonLine = JSON.stringify({
+        type: 'assistant',
+        message: {
+            content: [{ type: 'text', text: 'All done!\n<promise>EPIC_COMPLETED</promise>' }],
         },
     });
     assert.equal(classifyCompletion(streamJsonLine), 'task_completed');

@@ -15,9 +15,10 @@ export function updateState(key, value, sessionDir) {
         throw new Error(`Invalid step "${value}". Must be one of: ${VALID_STEPS.join(', ')}`);
     }
     const NUMERIC_KEYS = new Set(['iteration', 'max_iterations', 'max_time_minutes', 'worker_timeout_seconds', 'start_time_epoch', 'min_iterations']);
-    const BOOLEAN_KEYS = new Set(['active', 'tmux_mode', 'chain_meeseeks']);
+    const BOOLEAN_KEYS = new Set(['tmux_mode', 'chain_meeseeks']);
+    // active and completion_promise are owned by tmux-runner/cancel.js — never via CLI
     const ALLOWED_KEYS = new Set([
-        ...NUMERIC_KEYS, ...BOOLEAN_KEYS, 'step', 'working_dir', 'completion_promise',
+        ...NUMERIC_KEYS, ...BOOLEAN_KEYS, 'step', 'working_dir',
         'original_prompt', 'current_ticket', 'started_at', 'session_dir', 'command_template',
     ]);
     if (!ALLOWED_KEYS.has(key)) {
