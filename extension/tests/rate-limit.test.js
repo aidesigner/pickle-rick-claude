@@ -305,3 +305,20 @@ test('classifyIterationExit: NDJSON detection takes priority over text detection
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
+
+// ---------------------------------------------------------------------------
+// Rate limit countdown computation (monitor display)
+// ---------------------------------------------------------------------------
+
+test('countdown computes remaining time from rate_limit_wait.json', () => {
+    const waitData = {
+        waiting: true,
+        reason: 'API rate limit',
+        started_at: new Date().toISOString(),
+        wait_until: new Date(Date.now() + 52 * 60 * 1000 + 30 * 1000).toISOString(),
+        consecutive_waits: 1,
+    };
+    const remainMs = new Date(waitData.wait_until).getTime() - Date.now();
+    const remainSec = Math.ceil(remainMs / 1000);
+    assert.ok(remainSec > 3100 && remainSec <= 3150);
+});

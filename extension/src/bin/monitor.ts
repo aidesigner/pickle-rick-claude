@@ -105,6 +105,21 @@ function render(sessionDir: string): boolean {
     // circuit_breaker.json missing or corrupt — skip field
   }
 
+  // Rate limit wait display
+  try {
+    const waitPath = path.join(sessionDir, 'rate_limit_wait.json');
+    const waitData = JSON.parse(fs.readFileSync(waitPath, 'utf-8'));
+    if (waitData.waiting === true && waitData.wait_until) {
+      const remainMs = new Date(waitData.wait_until).getTime() - Date.now();
+      if (remainMs > 0) {
+        const remainSec = Math.ceil(remainMs / 1000);
+        fields.push(['Rate Limit', `${y}⏳ Rate limited (${formatTime(remainSec)} remaining)${r}`]);
+      } else {
+        fields.push(['Rate Limit', `${y}⏳ Rate limit wait ending...${r}`]);
+      }
+    }
+  } catch { /* no wait state */ }
+
   const keyWidth = Math.max(...fields.map(([k]) => k.length)) + 1;
 
   const out: string[] = ['\x1b[2J\x1b[H'];
