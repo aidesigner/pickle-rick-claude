@@ -270,13 +270,13 @@ async function runIteration(sessionDir: string, iterationNum: number, extensionR
 async function main() {
   const sessionDir = process.argv[2];
   if (!sessionDir || sessionDir.startsWith('--') || !fs.existsSync(path.join(sessionDir, 'state.json'))) {
-    console.error('Usage: node tmux-runner.js <session-dir>');
+    console.error('Usage: node mux-runner.js <session-dir>');
     process.exit(1);
   }
 
   const extensionRoot = getExtensionRoot();
   const statePath = path.join(sessionDir, 'state.json');
-  const runnerLog = path.join(sessionDir, 'tmux-runner.log');
+  const runnerLog = path.join(sessionDir, 'mux-runner.log');
 
   const log = (msg: string) => {
     const line = `[${new Date().toISOString()}] ${msg}\n`;
@@ -284,7 +284,7 @@ async function main() {
     process.stderr.write(line);
   };
 
-  log('tmux-runner started');
+  log('mux-runner started');
 
   // Graceful shutdown: deactivate session on SIGTERM/SIGINT so it doesn't
   // remain orphaned with active: true when the tmux pane is closed.
@@ -620,7 +620,7 @@ async function main() {
     finalMinIter = Number.isFinite(rawFinalMinIter) ? rawFinalMinIter : 0;
   } catch { /* use fallback values */ }
 
-  printMinimalPanel('tmux-runner Complete', {
+  printMinimalPanel('mux-runner Complete', {
     Iterations: iteration,
     Elapsed: formatTime(totalElapsed),
     FinalPhase: finalStep,
@@ -628,7 +628,7 @@ async function main() {
     ...(finalMinIter > 0 ? { 'Min Passes': finalMinIter } : {}),
   }, 'GREEN', '🥒');
 
-  log(`tmux-runner finished. ${iteration} iterations, ${formatTime(totalElapsed)}`);
+  log(`mux-runner finished. ${iteration} iterations, ${formatTime(totalElapsed)}`);
 
   const notif = buildTmuxNotification(exitReason, finalStep, iteration, totalElapsed);
   if (process.platform === 'darwin') {
@@ -651,7 +651,7 @@ export function buildTmuxNotification(exitReason: string, finalStep: string, ite
   return { title, subtitle, body };
 }
 
-if (process.argv[1] && path.basename(process.argv[1]) === 'tmux-runner.js') {
+if (process.argv[1] && path.basename(process.argv[1]) === 'mux-runner.js') {
   main().catch((err) => {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`${Style.RED}[FATAL] ${msg}${Style.RESET}`);

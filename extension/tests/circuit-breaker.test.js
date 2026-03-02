@@ -17,7 +17,7 @@ import {
     resetCircuitBreaker,
 } from '../services/circuit-breaker.js';
 
-import { buildTmuxNotification } from '../bin/tmux-runner.js';
+import { buildTmuxNotification } from '../bin/mux-runner.js';
 
 function makeTmpDir(prefix = 'cb-test-') {
     return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));

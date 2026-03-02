@@ -119,7 +119,7 @@ test('updateState: numeric key with non-numeric value throws', () => {
 // Boolean key coercion (C2 fix)
 // ---------------------------------------------------------------------------
 
-test('updateState: rejects "active" — owned by tmux-runner/cancel.js', () => {
+test('updateState: rejects "active" — owned by mux-runner/cancel.js', () => {
     withTempSession({ active: false, step: 'prd', iteration: 0 }, (dir) => {
         assert.throws(
             () => updateState('active', 'true', dir),

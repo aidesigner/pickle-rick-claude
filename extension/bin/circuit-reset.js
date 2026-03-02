@@ -45,7 +45,7 @@ function main() {
         Current: 'CLOSED',
         Reason: reason,
     }, 'GREEN', '🔌');
-    console.log('Restart tmux-runner to resume: node tmux-runner.js <session-dir>');
+    console.log('Restart mux-runner to resume: node mux-runner.js <session-dir>');
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'circuit-reset.js') {
     main();

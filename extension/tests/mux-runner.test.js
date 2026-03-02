@@ -7,18 +7,18 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const TMUX_RUNNER_BIN = path.resolve(__dirname, '../bin/tmux-runner.js');
+const TMUX_RUNNER_BIN = path.resolve(__dirname, '../bin/mux-runner.js');
 
 /**
  * Create an isolated temp root directory.
  * Uses fs.realpathSync to resolve macOS /var -> /private/var symlinks.
  */
 function makeTmpRoot() {
-    return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-tmux-runner-')));
+    return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mux-runner-')));
 }
 
 /**
- * Run tmux-runner.js as a subprocess with isolated EXTENSION_DIR.
+ * Run mux-runner.js as a subprocess with isolated EXTENSION_DIR.
  * @param {string} extDir - the EXTENSION_DIR to use
  * @param {string[]} args - additional arguments to pass
  */
@@ -32,7 +32,7 @@ function run(extDir, args = []) {
 
 // --- No args → exit code 1, stderr includes "Usage" ---
 
-test('tmux-runner: exits with code 1 and prints Usage when no args provided', () => {
+test('mux-runner: exits with code 1 and prints Usage when no args provided', () => {
     const tmpRoot = makeTmpRoot();
     try {
         const result = run(tmpRoot);
@@ -48,7 +48,7 @@ test('tmux-runner: exits with code 1 and prints Usage when no args provided', ()
 
 // --- Session dir without state.json → exit code 1, stderr includes "Usage" ---
 
-test('tmux-runner: exits with code 1 when session dir has no state.json', () => {
+test('mux-runner: exits with code 1 when session dir has no state.json', () => {
     const tmpRoot = makeTmpRoot();
     try {
         // Create a session dir but don't put state.json in it
@@ -68,7 +68,7 @@ test('tmux-runner: exits with code 1 when session dir has no state.json', () => 
 
 // --- Max iterations already reached → exits with "Max iterations reached" ---
 
-test('tmux-runner: exits when max_iterations already reached', () => {
+test('mux-runner: exits when max_iterations already reached', () => {
     const tmpRoot = makeTmpRoot();
     try {
         // Create a session dir with state.json where iteration >= max_iterations
@@ -83,7 +83,7 @@ test('tmux-runner: exits when max_iterations already reached', () => {
             working_dir: tmpRoot,
         }, null, 2));
 
-        // tmux-runner also needs pickle_settings.json at extension root (optional)
+        // mux-runner also needs pickle_settings.json at extension root (optional)
         // and pickle.md in ~/.claude/commands/ (only needed for runIteration)
         // Since max_iterations is already reached, the loop will break before
         // calling runIteration, so we don't need those files.
@@ -91,7 +91,7 @@ test('tmux-runner: exits when max_iterations already reached', () => {
         const result = run(tmpRoot, [sessionDir]);
 
         // Combine stdout and runner log to check for the exit message
-        const runnerLog = path.join(sessionDir, 'tmux-runner.log');
+        const runnerLog = path.join(sessionDir, 'mux-runner.log');
         let logContent = '';
         if (fs.existsSync(runnerLog)) {
             logContent = fs.readFileSync(runnerLog, 'utf-8');
@@ -111,14 +111,14 @@ test('tmux-runner: exits when max_iterations already reached', () => {
     }
 });
 
-// --- Session starts inactive, tmux-runner takes ownership, then immediately hits max ---
+// --- Session starts inactive, mux-runner takes ownership, then immediately hits max ---
 
-test('tmux-runner: takes ownership of inactive session then respects max_iterations', () => {
+test('mux-runner: takes ownership of inactive session then respects max_iterations', () => {
     const tmpRoot = makeTmpRoot();
     try {
         const sessionDir = path.join(tmpRoot, 'session');
         fs.mkdirSync(sessionDir, { recursive: true });
-        // Start with active: false (tmux-runner should set it to true)
+        // Start with active: false (mux-runner should set it to true)
         // but iteration is already at max
         fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
             active: false,
@@ -131,7 +131,7 @@ test('tmux-runner: takes ownership of inactive session then respects max_iterati
 
         const result = run(tmpRoot, [sessionDir]);
 
-        const runnerLog = path.join(sessionDir, 'tmux-runner.log');
+        const runnerLog = path.join(sessionDir, 'mux-runner.log');
         let logContent = '';
         if (fs.existsSync(runnerLog)) {
             logContent = fs.readFileSync(runnerLog, 'utf-8');
@@ -160,7 +160,7 @@ test('tmux-runner: takes ownership of inactive session then respects max_iterati
 
 // --- Settings type guards for max turns ---
 
-test('tmux-runner: ignores non-number default_tmux_max_turns in settings', () => {
+test('mux-runner: ignores non-number default_tmux_max_turns in settings', () => {
     const tmpRoot = makeTmpRoot();
     try {
         const sessionDir = path.join(tmpRoot, 'session');
@@ -189,7 +189,7 @@ test('tmux-runner: ignores non-number default_tmux_max_turns in settings', () =>
             `Should handle non-number settings gracefully, got: ${combined.slice(0, 500)}`
         );
 
-        const runnerLog = path.join(sessionDir, 'tmux-runner.log');
+        const runnerLog = path.join(sessionDir, 'mux-runner.log');
         if (fs.existsSync(runnerLog)) {
             const logContent = fs.readFileSync(runnerLog, 'utf-8');
             assert.ok(
@@ -202,7 +202,7 @@ test('tmux-runner: ignores non-number default_tmux_max_turns in settings', () =>
     }
 });
 
-test('tmux-runner: ignores zero default_tmux_max_turns, falls back to default_manager_max_turns', () => {
+test('mux-runner: ignores zero default_tmux_max_turns, falls back to default_manager_max_turns', () => {
     const tmpRoot = makeTmpRoot();
     try {
         const sessionDir = path.join(tmpRoot, 'session');
@@ -235,7 +235,7 @@ test('tmux-runner: ignores zero default_tmux_max_turns, falls back to default_ma
 
 // --- Nonexistent session dir path → exit code 1 ---
 
-test('tmux-runner: exits with code 1 when session dir path does not exist', () => {
+test('mux-runner: exits with code 1 when session dir path does not exist', () => {
     const tmpRoot = makeTmpRoot();
     try {
         const result = run(tmpRoot, ['/nonexistent/session/path/xyz']);
@@ -249,13 +249,13 @@ test('tmux-runner: exits with code 1 when session dir path does not exist', () =
     }
 });
 
-// --- Runner creates tmux-runner.log ---
+// --- Runner creates mux-runner.log ---
 
 // ---------------------------------------------------------------------------
 // Number() coercion for string numeric limits (deep review pass 5)
 // ---------------------------------------------------------------------------
 
-test('tmux-runner: string max_iterations and iteration still trigger max iterations exit', () => {
+test('mux-runner: string max_iterations and iteration still trigger max iterations exit', () => {
     const tmpRoot = makeTmpRoot();
     try {
         const sessionDir = path.join(tmpRoot, 'session');
@@ -272,7 +272,7 @@ test('tmux-runner: string max_iterations and iteration still trigger max iterati
 
         const result = run(tmpRoot, [sessionDir]);
 
-        const runnerLog = path.join(sessionDir, 'tmux-runner.log');
+        const runnerLog = path.join(sessionDir, 'mux-runner.log');
         let logContent = '';
         if (fs.existsSync(runnerLog)) {
             logContent = fs.readFileSync(runnerLog, 'utf-8');
@@ -292,7 +292,7 @@ test('tmux-runner: string max_iterations and iteration still trigger max iterati
     }
 });
 
-test('tmux-runner: NaN max_time_minutes and start_time_epoch do not crash', () => {
+test('mux-runner: NaN max_time_minutes and start_time_epoch do not crash', () => {
     const tmpRoot = makeTmpRoot();
     try {
         const sessionDir = path.join(tmpRoot, 'session');
@@ -312,7 +312,7 @@ test('tmux-runner: NaN max_time_minutes and start_time_epoch do not crash', () =
 
         const result = run(tmpRoot, [sessionDir]);
 
-        const runnerLog = path.join(sessionDir, 'tmux-runner.log');
+        const runnerLog = path.join(sessionDir, 'mux-runner.log');
         let logContent = '';
         if (fs.existsSync(runnerLog)) {
             logContent = fs.readFileSync(runnerLog, 'utf-8');
@@ -334,7 +334,7 @@ test('tmux-runner: NaN max_time_minutes and start_time_epoch do not crash', () =
     }
 });
 
-test('tmux-runner: stall detection works with string state.iteration', () => {
+test('mux-runner: stall detection works with string state.iteration', () => {
     const tmpRoot = makeTmpRoot();
     try {
         const sessionDir = path.join(tmpRoot, 'session');
@@ -342,7 +342,7 @@ test('tmux-runner: stall detection works with string state.iteration', () => {
         // String iteration — stall detection must compare Number()-coerced values
         // Start at iteration "5" with max "100" — runIteration will fail (no claude),
         // but the stall counter should increment because state.iteration won't advance.
-        // After 3 stalls, tmux-runner exits.
+        // After 3 stalls, mux-runner exits.
         fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
             active: true,
             step: 'implement',
@@ -364,7 +364,7 @@ test('tmux-runner: stall detection works with string state.iteration', () => {
 
         const result = run(tmpRoot, [sessionDir]);
 
-        const runnerLog = path.join(sessionDir, 'tmux-runner.log');
+        const runnerLog = path.join(sessionDir, 'mux-runner.log');
         let logContent = '';
         if (fs.existsSync(runnerLog)) {
             logContent = fs.readFileSync(runnerLog, 'utf-8');
@@ -386,7 +386,7 @@ test('tmux-runner: stall detection works with string state.iteration', () => {
 
 // --- command_template path traversal validation (meeseeks pass 3) ---
 
-test('tmux-runner: rejects command_template with path traversal (../)', () => {
+test('mux-runner: rejects command_template with path traversal (../)', () => {
     const tmpRoot = makeTmpRoot();
     try {
         const sessionDir = path.join(tmpRoot, 'session');
@@ -405,7 +405,7 @@ test('tmux-runner: rejects command_template with path traversal (../)', () => {
 
         const result = run(tmpRoot, [sessionDir]);
 
-        const runnerLog = path.join(sessionDir, 'tmux-runner.log');
+        const runnerLog = path.join(sessionDir, 'mux-runner.log');
         let logContent = '';
         if (fs.existsSync(runnerLog)) {
             logContent = fs.readFileSync(runnerLog, 'utf-8');
@@ -421,7 +421,7 @@ test('tmux-runner: rejects command_template with path traversal (../)', () => {
     }
 });
 
-test('tmux-runner: rejects command_template with forward slash', () => {
+test('mux-runner: rejects command_template with forward slash', () => {
     const tmpRoot = makeTmpRoot();
     try {
         const sessionDir = path.join(tmpRoot, 'session');
@@ -438,7 +438,7 @@ test('tmux-runner: rejects command_template with forward slash', () => {
 
         const result = run(tmpRoot, [sessionDir]);
 
-        const runnerLog = path.join(sessionDir, 'tmux-runner.log');
+        const runnerLog = path.join(sessionDir, 'mux-runner.log');
         let logContent = '';
         if (fs.existsSync(runnerLog)) {
             logContent = fs.readFileSync(runnerLog, 'utf-8');
@@ -454,7 +454,7 @@ test('tmux-runner: rejects command_template with forward slash', () => {
     }
 });
 
-test('tmux-runner: creates tmux-runner.log in session directory', () => {
+test('mux-runner: creates mux-runner.log in session directory', () => {
     const tmpRoot = makeTmpRoot();
     try {
         const sessionDir = path.join(tmpRoot, 'session');
@@ -470,17 +470,17 @@ test('tmux-runner: creates tmux-runner.log in session directory', () => {
 
         run(tmpRoot, [sessionDir]);
 
-        const logPath = path.join(sessionDir, 'tmux-runner.log');
-        assert.ok(fs.existsSync(logPath), 'tmux-runner.log should be created in session dir');
+        const logPath = path.join(sessionDir, 'mux-runner.log');
+        assert.ok(fs.existsSync(logPath), 'mux-runner.log should be created in session dir');
 
         const logContent = fs.readFileSync(logPath, 'utf-8');
         assert.ok(
-            logContent.includes('tmux-runner started'),
-            `Expected "tmux-runner started" in log, got: ${logContent}`
+            logContent.includes('mux-runner started'),
+            `Expected "mux-runner started" in log, got: ${logContent}`
         );
         assert.ok(
-            logContent.includes('tmux-runner finished'),
-            `Expected "tmux-runner finished" in log, got: ${logContent}`
+            logContent.includes('mux-runner finished'),
+            `Expected "mux-runner finished" in log, got: ${logContent}`
         );
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
@@ -489,7 +489,7 @@ test('tmux-runner: creates tmux-runner.log in session directory', () => {
 
 // --- Completion classification (classifyCompletion) ---
 
-import { buildTmuxNotification, classifyCompletion, extractAssistantContent, transitionToMeeseeks, loadRateLimitSettings, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText } from '../bin/tmux-runner.js';
+import { buildTmuxNotification, classifyCompletion, extractAssistantContent, transitionToMeeseeks, loadRateLimitSettings, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText } from '../bin/mux-runner.js';
 
 test('classifyCompletion: TASK_COMPLETED returns continue (single ticket, loop continues)', () => {
     assert.equal(classifyCompletion('<promise>TASK_COMPLETED</promise>'), 'continue');
@@ -1060,7 +1060,7 @@ test('buildTmuxNotification: rate_limit_exhausted shows "Failed"', () => {
 // Stale rate_limit_wait.json cleanup on startup (87e1fdde)
 // ---------------------------------------------------------------------------
 
-test('tmux-runner: cleans up stale rate_limit_wait.json on startup', () => {
+test('mux-runner: cleans up stale rate_limit_wait.json on startup', () => {
     const tmpRoot = makeTmpRoot();
     try {
         const sessionDir = path.join(tmpRoot, 'session');
@@ -1136,7 +1136,7 @@ test('classifyIterationExit: api_limit is distinct from other exit types', () =>
 // ---------------------------------------------------------------------------
 
 /**
- * Run tmux-runner with claude removed from PATH so spawn fails fast.
+ * Run mux-runner with claude removed from PATH so spawn fails fast.
  * Returns parsed activity events from EXTENSION_DIR/activity/.
  */
 function runAndCollectActivity(stateOverrides = {}) {

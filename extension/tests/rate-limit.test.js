@@ -8,7 +8,7 @@ import {
     detectRateLimitInLog,
     detectRateLimitInText,
     classifyIterationExit,
-} from '../bin/tmux-runner.js';
+} from '../bin/mux-runner.js';
 
 function makeTmpDir(prefix = 'rl-test-') {
     return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
