@@ -1,8 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { State, HookInput, PromiseTokens, hasToken } from '../../types/index.js';
-import { resolveStateFile, approve, writeStateFile } from '../resolve-state.js';
-import { getExtensionRoot } from '../../services/pickle-utils.js';
+import { resolveStateFile, approve } from '../resolve-state.js';
+import { getExtensionRoot, writeStateFile } from '../../services/pickle-utils.js';
 import { logActivity } from '../../services/activity-logger.js';
 
 async function main() {

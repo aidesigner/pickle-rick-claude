@@ -1,11 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { State } from '../types/index.js';
-import { getExtensionRoot, writeStateFile } from '../services/pickle-utils.js';
-
-// Re-export writeStateFile so existing hooks-layer consumers can access it
-// without a layer violation. Canonical implementation lives in pickle-utils.ts.
-export { writeStateFile };
+import { getExtensionRoot } from '../services/pickle-utils.js';
 
 const ALLOW = JSON.stringify({ decision: 'approve' });
 

@@ -1,9 +1,5 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { writeStateFile } from '../services/pickle-utils.js';
-// Re-export writeStateFile so existing hooks-layer consumers can access it
-// without a layer violation. Canonical implementation lives in pickle-utils.ts.
-export { writeStateFile };
 const ALLOW = JSON.stringify({ decision: 'approve' });
 /**
  * Resolves the state file path from env or the sessions map.
