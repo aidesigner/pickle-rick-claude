@@ -2,8 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { runCmd, Style, getExtensionRoot } from './pickle-utils.js';
-import { writeStateFile } from '../hooks/resolve-state.js';
+import { runCmd, Style, getExtensionRoot, writeStateFile } from './pickle-utils.js';
 import { State } from '../types/index.js';
 
 function getBranch(repoPath: string): string {

@@ -1,7 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { runCmd } from './pickle-utils.js';
-import { writeStateFile } from '../hooks/resolve-state.js';
+import { runCmd, writeStateFile } from './pickle-utils.js';
 // ---------------------------------------------------------------------------
 // Module state
 // ---------------------------------------------------------------------------

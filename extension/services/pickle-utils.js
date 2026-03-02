@@ -359,6 +359,24 @@ export function drainLog(logPath, offset) {
  * Removes inactive session directories older than maxAgeDays from sessionsRoot.
  * Called on each new session start to prevent unbounded accumulation.
  */
+/**
+ * Atomically writes `state` as pretty-printed JSON to `filePath`.
+ * Writes to a `.tmp` sibling first, then renames — prevents partial reads.
+ */
+export function writeStateFile(filePath, state) {
+    const tmp = `${filePath}.tmp.${process.pid}`;
+    try {
+        fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
+        fs.renameSync(tmp, filePath);
+    }
+    catch (err) {
+        try {
+            fs.unlinkSync(tmp);
+        }
+        catch { /* ignore cleanup failure */ }
+        throw err;
+    }
+}
 export function pruneOldSessions(sessionsRoot, maxAgeDays = 7) {
     if (!fs.existsSync(sessionsRoot))
         return;

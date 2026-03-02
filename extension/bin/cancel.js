@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { printMinimalPanel, getExtensionRoot, withSessionMapLock } from '../services/pickle-utils.js';
-import { writeStateFile } from '../hooks/resolve-state.js';
+import { printMinimalPanel, getExtensionRoot, withSessionMapLock, writeStateFile } from '../services/pickle-utils.js';
 export function cancelSession(cwd) {
     const SESSIONS_MAP = path.join(getExtensionRoot(), 'current_sessions.json');
     if (!fs.existsSync(SESSIONS_MAP)) {

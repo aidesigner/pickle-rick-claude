@@ -3,8 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
-import { printMinimalPanel, Style, getExtensionRoot, withSessionMapLock, pruneOldSessions } from '../services/pickle-utils.js';
-import { writeStateFile } from '../hooks/resolve-state.js';
+import { printMinimalPanel, Style, getExtensionRoot, withSessionMapLock, pruneOldSessions, writeStateFile } from '../services/pickle-utils.js';
 import { logActivity } from '../services/activity-logger.js';
 import { pruneActivity } from './prune-activity.js';
 function die(message) {

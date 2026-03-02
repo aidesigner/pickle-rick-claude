@@ -392,28 +392,7 @@ test('stop-hook: token with extra whitespace inside tags IS matched (tolerant)',
 // resolve-state.ts exports
 // ---------------------------------------------------------------------------
 
-const { getExtensionDir, resolveStateFile, loadActiveState } = await import(RESOLVE_STATE);
-
-test('resolve-state: getExtensionDir uses EXTENSION_DIR env if set', () => {
-  const saved = process.env.EXTENSION_DIR;
-  try {
-    process.env.EXTENSION_DIR = '/custom/path';
-    assert.equal(getExtensionDir(), '/custom/path');
-  } finally {
-    if (saved === undefined) delete process.env.EXTENSION_DIR;
-    else process.env.EXTENSION_DIR = saved;
-  }
-});
-
-test('resolve-state: getExtensionDir defaults to ~/.claude/pickle-rick', () => {
-  const saved = process.env.EXTENSION_DIR;
-  try {
-    delete process.env.EXTENSION_DIR;
-    assert.equal(getExtensionDir(), path.join(os.homedir(), '.claude/pickle-rick'));
-  } finally {
-    if (saved !== undefined) process.env.EXTENSION_DIR = saved;
-  }
-});
+const { resolveStateFile, loadActiveState } = await import(RESOLVE_STATE);
 
 test('resolve-state: resolveStateFile returns path when PICKLE_STATE_FILE set and file exists', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-'));

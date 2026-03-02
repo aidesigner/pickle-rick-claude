@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { getExtensionRoot, extractFrontmatter } from '../services/pickle-utils.js';
+import { getExtensionRoot, extractFrontmatter, writeStateFile } from '../services/pickle-utils.js';
 import { updateState } from './update-state.js';
-import { writeStateFile } from '../hooks/resolve-state.js';
 import { State } from '../types/index.js';
 
 export function retryTicket(ticketId: string, cwd: string): void {

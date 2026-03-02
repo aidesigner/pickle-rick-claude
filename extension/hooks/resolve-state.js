@@ -1,9 +1,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { getExtensionRoot } from '../services/pickle-utils.js';
+import { writeStateFile } from '../services/pickle-utils.js';
+// Re-export writeStateFile so existing hooks-layer consumers can access it
+// without a layer violation. Canonical implementation lives in pickle-utils.ts.
+export { writeStateFile };
 const ALLOW = JSON.stringify({ decision: 'approve' });
-/** @deprecated Use getExtensionRoot() from pickle-utils.ts instead. */
-export const getExtensionDir = getExtensionRoot;
 /**
  * Resolves the state file path from env or the sessions map.
  * Returns null if no active state file is found.
@@ -50,22 +51,4 @@ export function loadActiveState(stateFile) {
 /** Prints the "approve" decision to stdout. */
 export function approve() {
     console.log(ALLOW);
-}
-/**
- * Atomically writes `state` as pretty-printed JSON to `filePath`.
- * Writes to a `.tmp` sibling first, then renames — prevents partial reads.
- */
-export function writeStateFile(filePath, state) {
-    const tmp = `${filePath}.tmp.${process.pid}`;
-    try {
-        fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
-        fs.renameSync(tmp, filePath);
-    }
-    catch (err) {
-        try {
-            fs.unlinkSync(tmp);
-        }
-        catch { /* ignore cleanup failure */ }
-        throw err;
-    }
 }

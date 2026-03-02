@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { VALID_STEPS } from '../types/index.js';
-import { writeStateFile } from '../hooks/resolve-state.js';
+import { writeStateFile } from '../services/pickle-utils.js';
 
 /**
  * Usage: node update-state.js <key> <value> <session_dir>

@@ -4,8 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import { spawn, spawnSync } from 'child_process';
-import { printMinimalPanel, Style, getExtensionRoot } from '../services/pickle-utils.js';
-import { writeStateFile } from '../hooks/resolve-state.js';
+import { printMinimalPanel, Style, getExtensionRoot, writeStateFile } from '../services/pickle-utils.js';
 import { State } from '../types/index.js';
 import { logActivity } from '../services/activity-logger.js';
 

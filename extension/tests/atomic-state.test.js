@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { writeStateFile } from '../hooks/resolve-state.js';
+import { writeStateFile } from '../services/pickle-utils.js';
 
 // ---------------------------------------------------------------------------
 // writeStateFile

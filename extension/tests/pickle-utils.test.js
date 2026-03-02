@@ -13,7 +13,31 @@ import {
     withSessionMapLock,
     pruneOldSessions,
     extractFrontmatter,
+    getExtensionRoot,
 } from '../services/pickle-utils.js';
+
+// --- getExtensionRoot ---
+
+test('getExtensionRoot: uses EXTENSION_DIR env if set', () => {
+    const saved = process.env.EXTENSION_DIR;
+    try {
+        process.env.EXTENSION_DIR = '/custom/path';
+        assert.equal(getExtensionRoot(), '/custom/path');
+    } finally {
+        if (saved === undefined) delete process.env.EXTENSION_DIR;
+        else process.env.EXTENSION_DIR = saved;
+    }
+});
+
+test('getExtensionRoot: defaults to ~/.claude/pickle-rick', () => {
+    const saved = process.env.EXTENSION_DIR;
+    try {
+        delete process.env.EXTENSION_DIR;
+        assert.equal(getExtensionRoot(), path.join(os.homedir(), '.claude/pickle-rick'));
+    } finally {
+        if (saved !== undefined) process.env.EXTENSION_DIR = saved;
+    }
+});
 
 // --- extractFrontmatter ---
 
