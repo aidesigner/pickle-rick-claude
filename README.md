@@ -97,7 +97,7 @@ Long-running autonomous sessions can get stuck — same error repeating, no git 
 
 ### How It Works
 
-The circuit breaker is a three-state machine integrated into `tmux-runner.ts`. After every iteration, it checks two signals:
+The circuit breaker is a three-state machine integrated into `mux-runner.ts`. After every iteration, it checks two signals:
 
 **Progress detection** — Runs `git diff --stat` (staged + unstaged) and `git rev-parse HEAD` against the last known state. Also tracks lifecycle transitions (step changes, ticket changes). If any of these changed, the iteration made progress. First-iteration warm-up always counts as progress (no baseline to compare).
 
@@ -121,7 +121,7 @@ The circuit breaker is a three-state machine integrated into `tmux-runner.ts`. A
 
 - **CLOSED** (green): Normal operation. All iterations execute.
 - **HALF_OPEN** (yellow): Warning state. Iterations still execute, but the monitor shows a yellow warning. Recovers to CLOSED on any progress.
-- **OPEN** (red): Session stopped. `tmux-runner` exits with reason `circuit_open`. Triggered by either `noProgressThreshold` (default 5) or `sameErrorThreshold` (default 5) consecutive matches.
+- **OPEN** (red): Session stopped. `mux-runner` exits with reason `circuit_open`. Triggered by either `noProgressThreshold` (default 5) or `sameErrorThreshold` (default 5) consecutive matches.
 
 Error-based transitions are independent of progress — 5 identical errors trip the breaker even if git shows changes.
 
@@ -141,7 +141,7 @@ The tmux monitor shows circuit state as a color-coded field alongside iteration 
 
 ### Disabling
 
-Set `default_circuit_breaker_enabled` to `false` in `pickle_settings.json`. When disabled, the tmux-runner falls back to a simplified stall counter (same as pre-CB behavior).
+Set `default_circuit_breaker_enabled` to `false` in `pickle_settings.json`. When disabled, the mux-runner falls back to a simplified stall counter (same as pre-CB behavior).
 
 ---
 
@@ -362,6 +362,8 @@ Sit back. Rick handles the rest. 🥒
 | `/pickle prd.md` | 🥒 Pick up an existing PRD and skip drafting — goes straight to breakdown and execution |
 | `/pickle-tmux "task"` | 🖥️ Same PRD-driven loop, but with true context clearing — fresh subprocess per iteration via tmux. Best for long epics (8+ iterations). Requires `tmux`. |
 | `/pickle-tmux prd.md` | 🖥️ Pick up an existing PRD in tmux mode — fresh subprocess per iteration, no context drift |
+| `/pickle-zellij "task"` | 🖥️ Same PRD-driven loop in Zellij with KDL layouts — fresh subprocess per iteration. Best for long epics (8+ iterations). Requires Zellij >= 0.40.0 |
+| `/meeseeks-zellij` | 👋 Autonomous code review in Zellij with KDL layouts. Same as `/meeseeks` but for Zellij users. Requires Zellij >= 0.40.0 |
 | `/pickle-refine-prd [path]` | 🔬 Refine an existing PRD with 3 parallel analysts + decompose into ordered tickets; `/pickle --resume` to execute |
 | `/pickle-refine-prd --run [path]` | 🔬🖥️ Refine + decompose + auto-launch unlimited tmux session (no iteration or time cap) |
 | `/pickle-refine-prd --meeseeks [path]` | 🔬🖥️👋 Full pipeline: refine + decompose + execute all tickets + auto-transition to Meeseeks review (implies `--run`) |
@@ -413,6 +415,8 @@ Ctrl+B 1                        # switch back to monitor
 Ctrl+B d                        # detach (session keeps running in background)
 ```
 
+**Zellij Mode — KDL layouts** — `/pickle-zellij` and `/meeseeks-zellij` are Zellij equivalents of `/pickle-tmux` and `/meeseeks`. They use KDL layout files (`extension/layouts/monitor-pickle.kdl`, `extension/layouts/monitor-meeseeks.kdl`) to create the same multi-pane monitoring experience. Requires Zellij >= 0.40.0. Three-tier session creation tries `--new-session-with-layout` first (>= 0.41), falls back to `--layout`, then two-step create + apply. Attach with `zellij attach <session-name>`.
+
 **Phase-resume** — When resuming after `/pickle-refine-prd` or `/pickle-prd`, the resume flow auto-detects the session's current phase and skips completed phases (PRD, Breakdown). No re-drafting, no re-decomposition — straight to orchestration. Both commands verify the session is resumable before recommending `--resume`.
 
 **Notifications (macOS)** — `/pickle-tmux` and `/pickle-jar-open` send macOS notifications on completion (or failure — circuit breaker trips, rate limit exhaustion, stalls) so you can work on something else while Rick runs. Inline `/pickle` outputs directly to your terminal.
@@ -425,7 +429,7 @@ Ctrl+B d                        # detach (session keeps running in background)
 
 **`/meeseeks` — Autonomous Code Review** — Summon Mr. Meeseeks to review your codebase in a tmux loop. Each pass scans for issues across 8 escalating categories (dependency health → security → correctness → architecture → test coverage → resilience → code quality → polish), fixes them, runs tests, and commits. Every finding is logged to `meeseeks-summary.md` in the session directory — a persistent audit trail. Minimum 10 passes before accepting a "clean" exit. Configurable via `default_meeseeks_min_passes` and `default_meeseeks_max_passes` in settings. Uses the same tmux infrastructure as `/pickle-tmux`.
 
-**`--meeseeks` chaining** — `/pickle-refine-prd --meeseeks` is the "one command to rule them all" option. It chains the entire pipeline: PRD refinement → ticket decomposition → tmux execution → automatic Meeseeks review. When tmux-runner detects all tickets are complete (`EPIC_COMPLETED`), it transitions the session to Meeseeks mode (swapping the command template, setting min/max passes, resetting iteration counter) and continues the loop. Same tmux session, same monitor panes. Cancel at any point with `/eat-pickle`.
+**`--meeseeks` chaining** — `/pickle-refine-prd --meeseeks` is the "one command to rule them all" option. It chains the entire pipeline: PRD refinement → ticket decomposition → tmux execution → automatic Meeseeks review. When mux-runner detects all tickets are complete (`EPIC_COMPLETED`), it transitions the session to Meeseeks mode (swapping the command template, setting min/max passes, resetting iteration counter) and continues the loop. Same tmux session, same monitor panes. Cancel at any point with `/eat-pickle`.
 
 **"Stop hook error" is normal** — Claude Code labels every `decision: block` response from the stop hook as "Stop hook error" in the UI. This is not an actual error. It means the hook is working correctly — it blocked Claude's exit and injected the session context for the next iteration. If you see it, Rick is looping as intended.
 
@@ -444,7 +448,7 @@ All defaults are configurable via `~/.claude/pickle-rick/pickle_settings.json`:
 | `default_refinement_max_turns` | 100 | Max Claude turns per refinement worker |
 | `default_meeseeks_min_passes` | 10 | Minimum review passes before clean exit |
 | `default_meeseeks_max_passes` | 50 | Maximum review passes |
-| `default_circuit_breaker_enabled` | true | Enable three-state circuit breaker in tmux-runner |
+| `default_circuit_breaker_enabled` | true | Enable three-state circuit breaker in mux-runner |
 | `default_cb_no_progress_threshold` | 5 | Consecutive no-progress iterations before OPEN |
 | `default_cb_same_error_threshold` | 5 | Consecutive identical errors before OPEN |
 | `default_cb_half_open_after` | 2 | No-progress iterations before entering HALF_OPEN |
@@ -461,6 +465,8 @@ pickle-rick-claude/
 │   ├── commands/           # Slash commands (the magic words)
 │   │   ├── pickle.md           # Main loop command (PRD + Breakdown inlined)
 │   │   ├── pickle-tmux.md      # True context clearing via tmux 🖥️
+│   │   ├── pickle-zellij.md    # True context clearing via Zellij 🖥️
+│   │   ├── meeseeks-zellij.md  # Zellij mode for Mr. Meeseeks 👋
 │   │   ├── pickle-prd.md       # Interactive PRD drafter (used internally by /pickle)
 │   │   ├── pickle-refine-prd.md # Refine PRD + decompose into executable tasks 🔬
 │   │   ├── pickle-dot.md         # PRD → attractor DOT digraph converter 🔀
@@ -489,7 +495,7 @@ pickle-rick-claude/
 │   │   ├── spawn-morty.js   # Worker subprocess spawner
 │   │   ├── spawn-refinement-team.js # Parallel PRD analyst spawner 🔬
 │   │   ├── jar-runner.js    # Jar Night Shift runner 🫙
-│   │   ├── tmux-runner.js   # Outer loop for /pickle-tmux mode 🖥️
+│   │   ├── mux-runner.js    # Outer loop for /pickle-tmux and /pickle-zellij mode 🖥️
 │   │   ├── monitor.js       # Live tmux dashboard (window 1) 📊
 │   │   ├── log-watcher.js   # Live tmux log stream (window 1, top-right pane) 📜
 │   │   ├── morty-watcher.js # Live worker log stream (window 1, bottom pane) 🔧
@@ -504,6 +510,9 @@ pickle-rick-claude/
 │   │   ├── prune-activity.js # Prune old activity JSONL files (called by setup.js)
 │   │   ├── circuit-reset.js  # Manual circuit breaker reset CLI 🔧
 │   │   └── metrics.js        # Token/LOC metrics reporter (daily/weekly) 📊
+│   ├── layouts/
+│   │   ├── monitor-pickle.kdl   # Zellij layout for /pickle-zellij 🖥️
+│   │   └── monitor-meeseeks.kdl # Zellij layout for /meeseeks-zellij 👋
 │   ├── hooks/
 │   │   ├── dispatch.js      # Hook router
 │   │   ├── resolve-state.js # State file resolution + atomic writes
@@ -579,7 +588,7 @@ Every Pickle Rick session creates a directory under `~/.claude/pickle-rick/sessi
 }
 ```
 
-The stop hook reads `state.json` on every turn to decide whether to block or approve exit. The tmux-runner reads it between iterations to build the handoff summary. `/pickle-status` reads it to display the dashboard.
+The stop hook reads `state.json` on every turn to decide whether to block or approve exit. The mux-runner reads it between iterations to build the handoff summary. `/pickle-status` reads it to display the dashboard.
 
 ### 3. Session Logs & Artifacts
 
@@ -593,7 +602,7 @@ Each session directory accumulates execution traces and work products:
 ├── prd.md                              # The PRD for this epic
 ├── linear_ticket_parent.md             # Parent ticket with all sub-tickets
 ├── hooks.log                           # Stop hook decisions and state transitions
-├── tmux-runner.log                     # Orchestrator-level log (tmux mode)
+├── mux-runner.log                      # Orchestrator-level log (tmux/zellij mode)
 ├── tmux_iteration_1.log                # Per-iteration NDJSON stdout
 ├── tmux_iteration_1.exitcode           # Subprocess exit code for post-mortem
 ├── tmux_iteration_2.log
@@ -618,7 +627,7 @@ Each session directory accumulates execution traces and work products:
 | Log | What it captures |
 |-----|------------------|
 | `hooks.log` | Every stop hook decision (approve/block), completion token matches, state transitions |
-| `tmux-runner.log` | Iteration lifecycle: spawn, wait, classify completion, advance or stop |
+| `mux-runner.log` | Iteration lifecycle: spawn, wait, classify completion, advance or stop |
 | `tmux_iteration_N.log` | Raw NDJSON from `claude -p --output-format stream-json` per iteration |
 | `worker_session_<pid>.log` | Full Morty subprocess output — research, planning, implementation, test runs |
 | `worker_<role>_c<N>.log` | PRD refinement analyst output per role per cycle |
@@ -653,7 +662,7 @@ Auto-Memory (MEMORY.md)              Global Settings (pickle_settings.json)
    ▼                                      ▼
 ┌──────────────────────────────────────────────┐
 │              Active Session                   │
-│  state.json ◄──► stop-hook / tmux-runner     │
+│  state.json ◄──► stop-hook / mux-runner     │
 │       │                                       │
 │       ├── hooks.log (decision trace)          │
 │       ├── tmux_iteration_N.log (raw output)   │
@@ -719,7 +728,7 @@ Long-running AI sessions accumulate stale conversational context. The model star
 
 **Interactive mode** (`/pickle`): The stop hook injects a short feedback string into the `reason` field of every `decision: block` response (e.g. `"🥒 Pickle Rick Loop Active (Iteration 3) of 10"`). Claude Code surfaces this `reason` string as a system message, giving Rick enough orientation to continue.
 
-**tmux mode** (`/pickle-tmux`): Each iteration spawns a genuinely fresh `claude -p` subprocess. The tmux-runner builds a full structured handoff summary — phase, ticket list, task — and injects it into the prompt before each iteration starts:
+**tmux mode** (`/pickle-tmux`): Each iteration spawns a genuinely fresh `claude -p` subprocess. The mux-runner builds a full structured handoff summary — phase, ticket list, task — and injects it into the prompt before each iteration starts:
 
 ```
 === PICKLE RICK LOOP CONTEXT ===
@@ -756,6 +765,8 @@ Morty workers already get clean context naturally (each is a fresh `claude -p` s
 - **Claude Code** CLI (`claude`) — v2.1.49+
 - **jq** (for `install.sh`)
 - **rsync** (for `install.sh`)
+- **tmux** *(optional — for `/pickle-tmux` and `/meeseeks`)*
+- **Zellij** >= 0.40.0 *(optional — for `/pickle-zellij` and `/meeseeks-zellij`)*
 - macOS or Linux (Windows not supported)
 
 ---

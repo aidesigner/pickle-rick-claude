@@ -119,21 +119,36 @@ Check: state.json `step`=research, child ticket dirs exist, `current_ticket` set
 
 Never recommend `--resume` if session state is incomplete.
 
-## Step 10: Auto-Launch tmux (AUTO_RUN=true only)
+## Step 10: Auto-Launch (AUTO_RUN=true only)
 
-### 10a: Check tmux
-`tmux -V`. If missing: suggest install, note PRD is ready for manual `/pickle-tmux --resume`. Stop.
+### 10a: Check multiplexer
+`tmux -V`. If present → set MUX=tmux, proceed to 10b.
 
-### 10b: Re-initialize
+If tmux missing, check Zellij:
+```bash
+ZELLIJ_VER=$(zellij --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+```
+If Zellij present and >= 0.40.0 → set MUX=zellij, proceed to 10b-zellij.
+
+If neither available: suggest install (`brew install tmux` or `brew install zellij`), note PRD is ready for manual `/pickle-tmux --resume` or `/pickle-zellij --resume`. Stop.
+
+### 10b: Re-initialize (tmux)
 ```bash
 node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --resume "${SESSION_ROOT}" --max-iterations 0 --max-time 0
 ```
 If CHAIN_MEESEEKS: append `--chain-meeseeks`.
 
-### 10c-f: tmux Session + Monitor
+### 10b-zellij: Re-initialize (Zellij)
+```bash
+node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --resume "${SESSION_ROOT}" --max-iterations 0 --max-time 0
+```
+If CHAIN_MEESEEKS: append `--chain-meeseeks`.
+Then create Zellij session per /pickle-zellij Steps 3-4 (export env vars, three-tier session creation with KDL layout, attach instructions).
+
+### 10c-f: tmux Session + Monitor (MUX=tmux only)
 Session name: `pickle-<hash>`. Same pattern as /pickle-tmux Steps 3-5 (create session, launch runner, 3-pane monitor with morty-watcher in bottom pane).
 
 ### 10g: Report
-Print: session name, no limits, attach command, window layout, cancel/kill commands. If CHAIN_MEESEEKS: note auto-transition to Meeseeks review after tickets complete.
+Print: session name, no limits, attach command (`tmux attach` or `zellij attach`), window/tab layout, cancel/kill commands. If CHAIN_MEESEEKS: note auto-transition to Meeseeks review after tickets complete.
 
 Output: `<promise>TASK_COMPLETED</promise>`
