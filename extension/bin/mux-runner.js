@@ -674,7 +674,8 @@ export function buildTmuxNotification(exitReason, finalStep, iteration, totalEla
     const body = `${iteration} iterations, ${formatTime(totalElapsed)}`;
     return { title, subtitle, body };
 }
-if (process.argv[1] && path.basename(process.argv[1]) === 'mux-runner.js') {
+const selfBase = process.argv[1] ? path.basename(fs.realpathSync(process.argv[1])) : '';
+if (selfBase === 'mux-runner.js') {
     main().catch((err) => {
         const msg = err instanceof Error ? err.message : String(err);
         console.error(`${Style.RED}[FATAL] ${msg}${Style.RESET}`);
