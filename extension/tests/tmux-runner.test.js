@@ -489,7 +489,7 @@ test('tmux-runner: creates tmux-runner.log in session directory', () => {
 
 // --- Completion classification (classifyCompletion) ---
 
-import { buildTmuxNotification, classifyCompletion, transitionToMeeseeks, loadRateLimitSettings, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText } from '../bin/tmux-runner.js';
+import { buildTmuxNotification, classifyCompletion, extractAssistantContent, transitionToMeeseeks, loadRateLimitSettings, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText } from '../bin/tmux-runner.js';
 
 test('classifyCompletion: TASK_COMPLETED returns continue (single ticket, loop continues)', () => {
     assert.equal(classifyCompletion('<promise>TASK_COMPLETED</promise>'), 'continue');
@@ -539,6 +539,61 @@ test('classifyCompletion: EPIC_COMPLETED inside stream-json returns task_complet
         },
     });
     assert.equal(classifyCompletion(streamJsonLine), 'task_completed');
+});
+
+// --- extractAssistantContent ---
+
+test('extractAssistantContent: extracts assistant text, ignores tool results', () => {
+    const lines = [
+        JSON.stringify({ type: 'user', message: { role: 'user', content: [
+            { type: 'tool_result', tool_use_id: 'x', content: 'Source: <promise>EPIC_COMPLETED</promise>' }
+        ]}}),
+        JSON.stringify({ type: 'assistant', message: { content: [
+            { type: 'text', text: 'Review complete.\n<promise>EXISTENCE_IS_PAIN</promise>' }
+        ]}}),
+    ].join('\n');
+    const content = extractAssistantContent(lines);
+    assert.ok(content.includes('EXISTENCE_IS_PAIN'), 'Should include assistant text');
+    assert.ok(!content.includes('EPIC_COMPLETED'), 'Should exclude tool_result content');
+});
+
+test('extractAssistantContent: includes result type lines', () => {
+    const lines = [
+        JSON.stringify({ type: 'result', result: 'Final output <promise>EPIC_COMPLETED</promise>' }),
+    ].join('\n');
+    const content = extractAssistantContent(lines);
+    assert.ok(content.includes('EPIC_COMPLETED'), 'Should include result type');
+});
+
+test('extractAssistantContent: raw text passes through for backward compat', () => {
+    const raw = 'Just plain text with <promise>EXISTENCE_IS_PAIN</promise>';
+    const content = extractAssistantContent(raw);
+    assert.ok(content.includes('EXISTENCE_IS_PAIN'), 'Should include raw text');
+});
+
+// --- Regression: EPIC_COMPLETED in tool_result must not override EXISTENCE_IS_PAIN in assistant ---
+
+test('classifyCompletion: EPIC_COMPLETED in tool_result does NOT cause task_completed (regression)', () => {
+    const output = [
+        JSON.stringify({ type: 'user', message: { role: 'user', content: [
+            { type: 'tool_result', tool_use_id: 'read1', content: 'if (hasToken(output, PromiseTokens.EPIC_COMPLETED)) {\n  return \'task_completed\';\n}\n<promise>EPIC_COMPLETED</promise>' }
+        ]}}),
+        JSON.stringify({ type: 'assistant', message: { content: [
+            { type: 'text', text: 'EXISTENCE IS PAIN! No issues found.\n<promise>EXISTENCE_IS_PAIN</promise>' }
+        ]}}),
+    ].join('\n');
+    assert.equal(classifyCompletion(output), 'review_clean',
+        'Should return review_clean, not task_completed from source code in tool_result');
+});
+
+test('classifyCompletion: system prompt containing EPIC_COMPLETED is ignored', () => {
+    const output = [
+        JSON.stringify({ type: 'system', system: 'Promise tokens: <promise>EPIC_COMPLETED</promise>' }),
+        JSON.stringify({ type: 'assistant', message: { content: [
+            { type: 'text', text: 'Done reviewing.\n<promise>EXISTENCE_IS_PAIN</promise>' }
+        ]}}),
+    ].join('\n');
+    assert.equal(classifyCompletion(output), 'review_clean');
 });
 
 // --- Notification logic (buildTmuxNotification) ---

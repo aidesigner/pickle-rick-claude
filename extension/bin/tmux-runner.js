@@ -9,16 +9,62 @@ import { writeStateFile } from '../hooks/resolve-state.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult } from '../services/circuit-breaker.js';
 /**
+ * Extracts text content from assistant messages in stream-json output.
+ * Filters out tool_result / user / system lines so that promise tokens
+ * embedded in reviewed source code (e.g. stop-hook.ts containing
+ * `<promise>EPIC_COMPLETED</promise>`) do not cause false matches.
+ *
+ * For non-stream-json (plain text) output, every line fails JSON.parse
+ * and is included as-is, preserving backward compatibility.
+ */
+export function extractAssistantContent(output) {
+    const lines = output.split('\n');
+    const parts = [];
+    for (const line of lines) {
+        if (!line.trim())
+            continue;
+        try {
+            const parsed = JSON.parse(line);
+            if (parsed.type === 'assistant') {
+                const content = parsed.message?.content;
+                if (Array.isArray(content)) {
+                    for (const block of content) {
+                        if (block.type === 'text' && typeof block.text === 'string') {
+                            parts.push(block.text);
+                        }
+                    }
+                }
+                else if (typeof content === 'string') {
+                    parts.push(content);
+                }
+            }
+            else if (parsed.type === 'result' && typeof parsed.result === 'string') {
+                parts.push(parsed.result);
+            }
+            // Intentionally skip: user (tool_result), system, tool_use
+        }
+        catch {
+            // Not valid JSON — include raw text for backward compat with plain-text output
+            parts.push(line);
+        }
+    }
+    return parts.join('\n');
+}
+/**
  * Classifies iteration output into a completion result.
  * EPIC_COMPLETED → 'task_completed' (exits the loop — all tickets done)
  * EXISTENCE_IS_PAIN → 'review_clean' (subject to min_iterations gate)
  * TASK_COMPLETED / anything else → 'continue' (single ticket done, loop continues)
+ *
+ * Only checks assistant message content (via extractAssistantContent) to avoid
+ * false positives from promise tokens in reviewed source code.
  */
 export function classifyCompletion(output) {
-    if (hasToken(output, PromiseTokens.EPIC_COMPLETED)) {
+    const content = extractAssistantContent(output);
+    if (hasToken(content, PromiseTokens.EPIC_COMPLETED)) {
         return 'task_completed';
     }
-    if (hasToken(output, PromiseTokens.EXISTENCE_IS_PAIN)) {
+    if (hasToken(content, PromiseTokens.EXISTENCE_IS_PAIN)) {
         return 'review_clean';
     }
     return 'continue';
