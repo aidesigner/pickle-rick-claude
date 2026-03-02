@@ -164,13 +164,14 @@ function spawnWorker(roleId, prompt, refinementDir, extensionRoot, timeout, work
     proc.stderr?.pipe(logStream, { end: false });
     // SIGTERM first, escalate to SIGKILL after 2s if still alive
     let workerTimedOut = false;
+    let killEscalation = null;
     const timeoutHandle = setTimeout(() => {
         workerTimedOut = true;
         try {
             proc.kill('SIGTERM');
         }
         catch { /* already dead */ }
-        setTimeout(() => {
+        killEscalation = setTimeout(() => {
             try {
                 proc.kill('SIGKILL');
             }
@@ -184,6 +185,8 @@ function spawnWorker(roleId, prompt, refinementDir, extensionRoot, timeout, work
                 return;
             settled = true;
             clearTimeout(timeoutHandle);
+            if (killEscalation)
+                clearTimeout(killEscalation);
             clearTimeout(hangGuard);
             onComplete(result);
             resolve(result);
@@ -201,6 +204,8 @@ function spawnWorker(roleId, prompt, refinementDir, extensionRoot, timeout, work
             if (settled)
                 return; // error handler already resolved
             clearTimeout(timeoutHandle);
+            if (killEscalation)
+                clearTimeout(killEscalation);
             clearTimeout(hangGuard);
             // Register finish listener BEFORE calling end() to avoid missing synchronous completion.
             // Guard against logStream.finish never firing (e.g., disk I/O failure)

@@ -104,15 +104,15 @@ async function main() {
   const hasPromise =
     !!state.completion_promise && hasToken(responseText, state.completion_promise);
 
-  // Stop Tokens (Full Exit)
+  // Stop Tokens (Full Exit — approve exit, deactivate if applicable)
   const isEpicDone = hasToken(responseText, PromiseTokens.EPIC_COMPLETED);
   const isTaskFinished = hasToken(responseText, PromiseTokens.TASK_COMPLETED);
   const isRefinementWorker = role === 'refinement-worker';
   const isAnalysisDone = isRefinementWorker && hasToken(responseText, PromiseTokens.ANALYSIS_DONE);
   const isExistenceIsPain = hasToken(responseText, PromiseTokens.EXISTENCE_IS_PAIN);
-
-  // Continue Tokens (Checkpoint)
   const isWorkerDone = isWorker && hasToken(responseText, PromiseTokens.WORKER_DONE);
+
+  // Checkpoint Tokens (block exit in inline mode, approve in tmux mode for respawn)
   const isPrdDone = !isWorker && hasToken(responseText, PromiseTokens.PRD_COMPLETE);
   const isTicketSelected = !isWorker && hasToken(responseText, PromiseTokens.TICKET_SELECTED);
 

@@ -20,7 +20,8 @@ export function formatNumber(n) {
 }
 export function shortenSlug(slug) {
     const username = os.userInfo().username;
-    let result = slug.replace(new RegExp(`^-Users-${username}-`), '');
+    const escapedUser = username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    let result = slug.replace(new RegExp(`^-Users-${escapedUser}-`), '');
     result = result.replace(/^loanlight-/, 'l/');
     return result;
 }

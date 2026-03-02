@@ -166,6 +166,7 @@ async function main() {
         idx++;
     }, 100);
     let timedOut = false;
+    let killEscalation = null;
     const timeoutHandle = setTimeout(() => {
         timedOut = true;
         console.log(`\n${Style.RED}❌ Worker timed out after ${effectiveTimeout}s${Style.RESET}`);
@@ -173,7 +174,7 @@ async function main() {
             proc.kill('SIGTERM');
         }
         catch { /* already dead */ }
-        setTimeout(() => {
+        killEscalation = setTimeout(() => {
             try {
                 proc.kill('SIGKILL');
             }
@@ -193,6 +194,8 @@ async function main() {
         proc.on('error', () => {
             clearInterval(interval);
             clearTimeout(timeoutHandle);
+            if (killEscalation)
+                clearTimeout(killEscalation);
             clearTimeout(hangGuard);
             if (process.stdout.isTTY)
                 process.stdout.write('\r\x1b[K');
@@ -207,6 +210,8 @@ async function main() {
         proc.on('close', (code) => {
             clearInterval(interval);
             clearTimeout(timeoutHandle);
+            if (killEscalation)
+                clearTimeout(killEscalation);
             clearTimeout(hangGuard);
             if (process.stdout.isTTY)
                 process.stdout.write('\r\x1b[K');

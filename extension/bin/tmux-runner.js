@@ -295,6 +295,26 @@ async function main() {
         process.stderr.write(line);
     };
     log('tmux-runner started');
+    // Graceful shutdown: deactivate session on SIGTERM/SIGINT so it doesn't
+    // remain orphaned with active: true when the tmux pane is closed.
+    const handleShutdownSignal = (signal) => {
+        log(`Received ${signal} — deactivating session`);
+        try {
+            const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+            state.active = false;
+            writeStateFile(statePath, state);
+        }
+        catch {
+            // Best effort: if state is unreadable, write a minimal deactivation
+            try {
+                writeStateFile(statePath, { active: false });
+            }
+            catch { /* nothing we can do */ }
+        }
+        process.exit(0);
+    };
+    process.on('SIGTERM', () => handleShutdownSignal('SIGTERM'));
+    process.on('SIGINT', () => handleShutdownSignal('SIGINT'));
     // Take ownership: setup.js writes active: false in tmux mode so the main
     // Claude window's stop hook is released immediately. We set active: true here
     // before entering the loop so workers and state readers see a live session.
@@ -464,11 +484,22 @@ async function main() {
             }
             catch { /* ok */ }
             logActivity({ event: 'rate_limit_resume', source: 'pickle', session: path.basename(sessionDir) });
-            fs.writeFileSync(path.join(sessionDir, 'handoff.txt'), [
+            const handoffContent = [
                 buildHandoffSummary(state, sessionDir, iteration + 1), '',
                 `NOTE: Resumed after ${rateLimitWaitMinutes}-minute API rate limit wait.`,
                 'Resume from current phase — do not repeat the rate-limited iteration.',
-            ].join('\n'));
+            ].join('\n');
+            const handoffTmp = path.join(sessionDir, `handoff.txt.tmp.${process.pid}`);
+            try {
+                fs.writeFileSync(handoffTmp, handoffContent);
+                fs.renameSync(handoffTmp, path.join(sessionDir, 'handoff.txt'));
+            }
+            catch {
+                try {
+                    fs.unlinkSync(handoffTmp);
+                }
+                catch { /* ignore */ }
+            }
             continue; // Skip CB recording + result branching entirely
         }
         if (exitType === 'success')

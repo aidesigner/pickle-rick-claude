@@ -212,10 +212,11 @@ function spawnWorker(
 
   // SIGTERM first, escalate to SIGKILL after 2s if still alive
   let workerTimedOut = false;
+  let killEscalation: ReturnType<typeof setTimeout> | null = null;
   const timeoutHandle = setTimeout(() => {
     workerTimedOut = true;
     try { proc.kill('SIGTERM'); } catch { /* already dead */ }
-    setTimeout(() => {
+    killEscalation = setTimeout(() => {
       try { proc.kill('SIGKILL'); } catch { /* already dead */ }
     }, 2000);
   }, timeout * 1000);
@@ -227,6 +228,7 @@ function spawnWorker(
       if (settled) return;
       settled = true;
       clearTimeout(timeoutHandle);
+      if (killEscalation) clearTimeout(killEscalation);
       clearTimeout(hangGuard);
       onComplete(result);
       resolve(result);
@@ -246,6 +248,7 @@ function spawnWorker(
     proc.on('close', () => {
       if (settled) return; // error handler already resolved
       clearTimeout(timeoutHandle);
+      if (killEscalation) clearTimeout(killEscalation);
       clearTimeout(hangGuard);
 
       // Register finish listener BEFORE calling end() to avoid missing synchronous completion.
