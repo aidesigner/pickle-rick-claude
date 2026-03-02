@@ -20,6 +20,14 @@ export interface State {
 }
 
 export interface HookInput {
+  session_id?: string;
+  transcript_path?: string;
+  cwd?: string;
+  permission_mode?: string;
+  hook_event_name?: string;
+  stop_hook_active?: boolean;
+  last_assistant_message?: string;
+  /** @deprecated Claude Code uses last_assistant_message instead */
   prompt_response?: string;
 }
 

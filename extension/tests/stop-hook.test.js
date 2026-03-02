@@ -41,7 +41,7 @@ function baseState(overrides = {}) {
  *
  * Options:
  *   state           – state object written to state.json
- *   response        – value for prompt_response in the hook input JSON
+ *   response        – value for last_assistant_message in the hook input JSON
  *   role            – value for PICKLE_ROLE env var (omitted if undefined)
  *   setStateFileEnv – if true (default), sets PICKLE_STATE_FILE; if false,
  *                     the hook resolves state via current_sessions.json instead
@@ -72,7 +72,7 @@ function runHook(opts = {}) {
 
   try {
     const stdout = execFileSync(process.execPath, [STOP_HOOK], {
-      input: JSON.stringify({ prompt_response: response }),
+      input: JSON.stringify({ last_assistant_message: response }),
       encoding: 'utf-8',
       env,
     });
@@ -100,7 +100,7 @@ test('stop-hook: no state file found → approve', () => {
     };
     delete env.PICKLE_ROLE;
     const stdout = execFileSync(process.execPath, [STOP_HOOK], {
-      input: JSON.stringify({ prompt_response: '' }),
+      input: JSON.stringify({ last_assistant_message: '' }),
       encoding: 'utf-8',
       env,
     });
@@ -544,7 +544,7 @@ test('stop-hook: disabled marker file → approve immediately, state unchanged',
 
   try {
     const stdout = execFileSync(process.execPath, [STOP_HOOK], {
-      input: JSON.stringify({ prompt_response: '' }),
+      input: JSON.stringify({ last_assistant_message: '' }),
       encoding: 'utf-8',
       env,
     });
@@ -579,7 +579,7 @@ test('stop-hook: corrupt state.json → approve (fail-open)', () => {
 
   try {
     const stdout = execFileSync(process.execPath, [STOP_HOOK], {
-      input: JSON.stringify({ prompt_response: '' }),
+      input: JSON.stringify({ last_assistant_message: '' }),
       encoding: 'utf-8',
       env,
     });

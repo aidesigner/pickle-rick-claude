@@ -58,7 +58,7 @@ function runHookWithActivity(opts = {}) {
 
   try {
     const stdout = execFileSync(process.execPath, [STOP_HOOK], {
-      input: JSON.stringify({ prompt_response: response }),
+      input: JSON.stringify({ last_assistant_message: response }),
       encoding: 'utf-8',
       env,
     });

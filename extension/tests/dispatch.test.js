@@ -212,7 +212,7 @@ test('dispatch: stdin is forwarded to the handler subprocess', () => {
       });
     `);
 
-    const payload = JSON.stringify({ prompt_response: 'hello from dispatch' });
+    const payload = JSON.stringify({ last_assistant_message: 'hello from dispatch' });
     const { stdout, status } = runDispatch({
       extRoot: tmpRoot,
       args: ['test-stdin'],

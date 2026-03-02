@@ -98,7 +98,7 @@ async function main() {
   }
 
   // 6. Check Completion Promise
-  const responseText = input.prompt_response || '';
+  const responseText = input.last_assistant_message || input.prompt_response || '';
   log(`Agent response received (${responseText.length} chars)`);
 
   const hasPromise =
