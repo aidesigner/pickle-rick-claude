@@ -56,8 +56,13 @@ export function cancelSession(cwd: string) {
       } catch { /* ignore */ }
       delete freshMap[cwd];
       const tmpMap = SESSIONS_MAP + `.tmp.${process.pid}`;
-      fs.writeFileSync(tmpMap, JSON.stringify(freshMap, null, 2));
-      fs.renameSync(tmpMap, SESSIONS_MAP);
+      try {
+        fs.writeFileSync(tmpMap, JSON.stringify(freshMap, null, 2));
+        fs.renameSync(tmpMap, SESSIONS_MAP);
+      } catch (writeErr) {
+        try { fs.unlinkSync(tmpMap); } catch { /* ignore cleanup failure */ }
+        throw writeErr;
+      }
     });
   } catch {
     // Fallback: deactivate state without lock if lock acquisition fails
