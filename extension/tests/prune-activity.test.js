@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 // Import under test — getActivityDir reads EXTENSION_DIR at call time
-import { pruneActivity } from '../bin/prune-activity.js';
+import { pruneActivity } from '../services/activity-logger.js';
 
 function withTempActivityDir(fn) {
     const extRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-prune-'));

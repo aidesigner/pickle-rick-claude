@@ -1,49 +1,7 @@
 #!/usr/bin/env node
-import * as fs from 'fs';
 import * as path from 'path';
-import { VALID_STEPS } from '../types/index.js';
-import { writeStateFile } from '../services/pickle-utils.js';
-/**
- * Usage: node update-state.js <key> <value> <session_dir>
- */
-export function updateState(key, value, sessionDir) {
-    const statePath = path.join(sessionDir, 'state.json');
-    if (!fs.existsSync(statePath)) {
-        throw new Error(`state.json not found at ${statePath}`);
-    }
-    if (key === 'step' && !VALID_STEPS.includes(value)) {
-        throw new Error(`Invalid step "${value}". Must be one of: ${VALID_STEPS.join(', ')}`);
-    }
-    const NUMERIC_KEYS = new Set(['iteration', 'max_iterations', 'max_time_minutes', 'worker_timeout_seconds', 'start_time_epoch', 'min_iterations']);
-    const BOOLEAN_KEYS = new Set(['tmux_mode', 'chain_meeseeks']);
-    // active and completion_promise are owned by tmux-runner/cancel.js — never via CLI
-    const ALLOWED_KEYS = new Set([
-        ...NUMERIC_KEYS, ...BOOLEAN_KEYS, 'step', 'working_dir',
-        'original_prompt', 'current_ticket', 'started_at', 'session_dir', 'command_template',
-    ]);
-    if (!ALLOWED_KEYS.has(key)) {
-        throw new Error(`Unknown state key "${key}". Allowed: ${[...ALLOWED_KEYS].join(', ')}`);
-    }
-    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-    if (NUMERIC_KEYS.has(key)) {
-        const num = Number(value);
-        if (!Number.isFinite(num)) {
-            throw new Error(`Key "${key}" requires a finite number, got "${value}"`);
-        }
-        state[key] = num;
-    }
-    else if (BOOLEAN_KEYS.has(key)) {
-        if (value !== 'true' && value !== 'false') {
-            throw new Error(`Key "${key}" requires "true" or "false", got "${value}"`);
-        }
-        state[key] = value === 'true';
-    }
-    else {
-        state[key] = value;
-    }
-    writeStateFile(statePath, state);
-    console.log(`Successfully updated ${key} to ${value} in ${statePath}`);
-}
+import { updateState } from '../services/pickle-utils.js';
+export { updateState };
 if (process.argv[1] && path.basename(process.argv[1]) === 'update-state.js') {
     const [key, value, sessionDir] = process.argv.slice(2);
     if (!key || !value || !sessionDir || sessionDir.startsWith('--')) {

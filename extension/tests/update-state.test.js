@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { updateState } from '../bin/update-state.js';
+import { updateState } from '../services/pickle-utils.js';
 
 function withTempSession(initialState, fn) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));

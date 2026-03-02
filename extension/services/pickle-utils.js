@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { StringDecoder } from 'string_decoder';
+import { VALID_STEPS } from '../types/index.js';
 export const Style = {
     GREEN: '\x1b[32m',
     RED: '\x1b[31m',
@@ -356,10 +357,6 @@ export function drainLog(logPath, offset) {
     }
 }
 /**
- * Removes inactive session directories older than maxAgeDays from sessionsRoot.
- * Called on each new session start to prevent unbounded accumulation.
- */
-/**
  * Atomically writes `state` as pretty-printed JSON to `filePath`.
  * Writes to a `.tmp` sibling first, then renames — prevents partial reads.
  */
@@ -377,6 +374,49 @@ export function writeStateFile(filePath, state) {
         throw err;
     }
 }
+/**
+ * Updates a single key in a session's state.json with validation.
+ * Numeric, boolean, and step keys are type-checked before writing.
+ */
+export function updateState(key, value, sessionDir) {
+    const statePath = path.join(sessionDir, 'state.json');
+    if (!fs.existsSync(statePath)) {
+        throw new Error(`state.json not found at ${statePath}`);
+    }
+    if (key === 'step' && !VALID_STEPS.includes(value)) {
+        throw new Error(`Invalid step "${value}". Must be one of: ${VALID_STEPS.join(', ')}`);
+    }
+    const NUMERIC_KEYS = new Set(['iteration', 'max_iterations', 'max_time_minutes', 'worker_timeout_seconds', 'start_time_epoch', 'min_iterations']);
+    const BOOLEAN_KEYS = new Set(['tmux_mode', 'chain_meeseeks']);
+    // active and completion_promise are owned by tmux-runner/cancel.js — never via CLI
+    const ALLOWED_KEYS = new Set([
+        ...NUMERIC_KEYS, ...BOOLEAN_KEYS, 'step', 'working_dir',
+        'original_prompt', 'current_ticket', 'started_at', 'session_dir', 'command_template',
+    ]);
+    if (!ALLOWED_KEYS.has(key)) {
+        throw new Error(`Unknown state key "${key}". Allowed: ${[...ALLOWED_KEYS].join(', ')}`);
+    }
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    if (NUMERIC_KEYS.has(key)) {
+        const num = Number(value);
+        if (!Number.isFinite(num)) {
+            throw new Error(`Key "${key}" requires a finite number, got "${value}"`);
+        }
+        state[key] = num;
+    }
+    else if (BOOLEAN_KEYS.has(key)) {
+        if (value !== 'true' && value !== 'false') {
+            throw new Error(`Key "${key}" requires "true" or "false", got "${value}"`);
+        }
+        state[key] = value === 'true';
+    }
+    else {
+        state[key] = value;
+    }
+    writeStateFile(statePath, state);
+    console.log(`Successfully updated ${key} to ${value} in ${statePath}`);
+}
+/** Removes inactive session directories older than maxAgeDays from sessionsRoot. */
 export function pruneOldSessions(sessionsRoot, maxAgeDays = 7) {
     if (!fs.existsSync(sessionsRoot))
         return;

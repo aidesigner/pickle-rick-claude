@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { getExtensionRoot, extractFrontmatter, writeStateFile } from '../services/pickle-utils.js';
-import { updateState } from './update-state.js';
+import { getExtensionRoot, extractFrontmatter, writeStateFile, updateState } from '../services/pickle-utils.js';
 import { Defaults } from '../types/index.js';
 export function retryTicket(ticketId, cwd) {
     // Validate ticketId to prevent path traversal

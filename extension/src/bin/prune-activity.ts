@@ -1,38 +1,7 @@
-import * as fs from 'fs';
 import * as path from 'path';
-import { getActivityDir } from '../services/activity-logger.js';
+import { pruneActivity } from '../services/activity-logger.js';
 
-const DATE_JSONL_RE = /^\d{4}-\d{2}-\d{2}\.jsonl$/;
-
-/**
- * Deletes JSONL activity files older than maxAgeDays by filename date.
- * Handles ENOENT race (concurrent sessions may delete the same file).
- */
-export function pruneActivity(maxAgeDays = 365): number {
-  const activityDir = getActivityDir();
-  if (!fs.existsSync(activityDir)) return 0;
-
-  const now = new Date();
-  now.setHours(0, 0, 0, 0);
-  const cutoffMs = now.getTime() - maxAgeDays * 86_400_000;
-
-  let deleted = 0;
-  for (const entry of fs.readdirSync(activityDir)) {
-    if (!DATE_JSONL_RE.test(entry)) continue;
-    const dateStr = path.basename(entry, '.jsonl');
-    const fileMs = new Date(dateStr + 'T00:00:00').getTime();
-    if (!Number.isFinite(fileMs)) continue;
-    if (fileMs >= cutoffMs) continue;
-    try {
-      fs.unlinkSync(path.join(activityDir, entry));
-      deleted++;
-    } catch (err) {
-      if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'ENOENT') continue;
-      throw err;
-    }
-  }
-  return deleted;
-}
+export { pruneActivity };
 
 if (process.argv[1] && path.basename(process.argv[1]) === 'prune-activity.js') {
   try {

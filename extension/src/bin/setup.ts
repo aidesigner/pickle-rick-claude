@@ -5,8 +5,7 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { printMinimalPanel, Style, getExtensionRoot, withSessionMapLock, pruneOldSessions, writeStateFile } from '../services/pickle-utils.js';
 import { State, Defaults } from '../types/index.js';
-import { logActivity } from '../services/activity-logger.js';
-import { pruneActivity } from './prune-activity.js';
+import { logActivity, pruneActivity } from '../services/activity-logger.js';
 
 function die(message: string): never {
   console.error(`${Style.RED}❌ Error: ${message}${Style.RESET}`);
