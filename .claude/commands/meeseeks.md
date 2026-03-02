@@ -113,7 +113,7 @@ Only flag real issues. Every issue MUST be fixed — no "informational" items.
 
 **No issues**: "EXISTENCE IS PAIN!" Append clean-pass entry. Output: `<promise>EXISTENCE_IS_PAIN</promise>`
 
-The tmux-runner handles min_iterations gating.
+The mux-runner handles min_iterations gating.
 
 ### Step 17: Findings Summary
 
