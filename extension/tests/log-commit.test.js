@@ -13,8 +13,9 @@ const LOG_COMMIT = path.resolve(__dirname, '../bin/log-commit.js');
 // Helpers
 // ---------------------------------------------------------------------------
 
-function runHook(stdinObj, envOverrides = {}) {
+function runHook(stdinObj, envOverrides = {}, setup = undefined) {
   const extRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lc-'));
+  if (setup) setup(extRoot);
   const env = { ...process.env, EXTENSION_DIR: extRoot, FORCE_COLOR: '0', ...envOverrides };
   try {
     const stdout = execFileSync(process.execPath, [LOG_COMMIT], {
@@ -289,4 +290,51 @@ test('log-commit: activity event has ts field', () => {
   assert.equal(events.length, 1);
   assert.ok(events[0].ts >= before, 'ts should be >= test start');
   assert.ok(events[0].ts <= after, 'ts should be <= test end');
+});
+
+// ---------------------------------------------------------------------------
+// Session attribution
+// ---------------------------------------------------------------------------
+
+test('log-commit: commit during active session includes session field', () => {
+  const sessionId = '2026-01-01-abc12345';
+  const { events } = runHook(
+    commitInput('git commit -m "feat: session"', '[main aaa1111] feat: session\n 1 file changed'),
+    {},
+    (extRoot) => {
+      const sessionDir = path.join(extRoot, 'sessions', sessionId);
+      fs.mkdirSync(sessionDir, { recursive: true });
+      fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({ active: true }));
+    }
+  );
+  assert.equal(events.length, 1);
+  assert.equal(events[0].session, sessionId);
+});
+
+test('log-commit: commit with no active session omits session field', () => {
+  const { events } = runHook(
+    commitInput('git commit -m "feat: no session"', '[main bbb2222] feat: no session\n 1 file changed'),
+    {},
+    (extRoot) => {
+      const sessionDir = path.join(extRoot, 'sessions', '2026-01-01-dead0000');
+      fs.mkdirSync(sessionDir, { recursive: true });
+      fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({ active: false }));
+    }
+  );
+  assert.equal(events.length, 1);
+  assert.equal(events[0].session, undefined);
+});
+
+test('log-commit: unreadable sessions dir falls back gracefully', () => {
+  const { events } = runHook(
+    commitInput('git commit -m "feat: broken"', '[main ccc3333] feat: broken\n 1 file changed'),
+    {},
+    (extRoot) => {
+      // Create sessions as a file, not a directory — readdirSync will throw
+      fs.writeFileSync(path.join(extRoot, 'sessions'), 'not a directory');
+    }
+  );
+  assert.equal(events.length, 1);
+  assert.equal(events[0].event, 'commit');
+  assert.equal(events[0].session, undefined);
 });
