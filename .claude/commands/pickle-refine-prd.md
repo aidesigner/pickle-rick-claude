@@ -145,8 +145,23 @@ node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --resume "${SESSI
 If CHAIN_MEESEEKS: append `--chain-meeseeks`.
 Then create Zellij session per /pickle-zellij Steps 3-4 (export env vars, three-tier session creation with KDL layout, attach instructions).
 
-### 10c-f: tmux Session + Monitor (MUX=tmux only)
-Session name: `pickle-<hash>`. Same pattern as /pickle-tmux Steps 3-5 (create session, launch runner, 3-pane monitor with morty-watcher in bottom pane).
+### 10c: tmux Session (MUX=tmux only)
+Session name: `pickle-<hash>` from SESSION_ROOT basename.
+```bash
+tmux new-session -d -s <name> -c <working_dir>
+sleep 1
+```
+Print attach command immediately: `tmux attach -t <name>`.
+
+### 10d: Launch Runner
+```bash
+tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/mux-runner.js ${SESSION_ROOT}; echo ''; echo '🥒 Runner finished.  Ctrl+B 1 → monitor  |  Ctrl+B D → detach'; read" Enter
+```
+
+### 10e: Monitor (3-pane via canonical script)
+```bash
+bash "$HOME/.claude/pickle-rick/extension/scripts/tmux-monitor.sh" <name> ${SESSION_ROOT} pickle
+```
 
 ### 10g: Report
 Print: session name, no limits, attach command (`tmux attach` or `zellij attach`), window/tab layout, cancel/kill commands. If CHAIN_MEESEEKS: note auto-transition to Meeseeks review after tickets complete.
