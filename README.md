@@ -6,7 +6,18 @@
 
 > *"Wubba Lubba Dub Dub! 🥒 I'm not just an AI assistant, Morty — I'm an **autonomous engineering machine** trapped in a pickle jar!"*
 
-Pickle Rick is a complete agentic engineering toolbelt and toolkit built on the [Ralph Wiggum loop](https://ghuntley.com/ralph/). Use a specific tool for a specific purpose, or hand it a Product Requirements Document (PRD) — or let it draft one — and it can decompose the work into tickets, spawn isolated worker subprocesses for each, and drive them through a full research → plan → implement → simplify lifecycle without human intervention. You can optionally use the tools in discrete steps. True to the principles of a Ralph Loop, it has context clearing between every iteration meaning no drift or context rot even on 500+ iteration epics. A three-state circuit breaker auto-stops runaway sessions by tracking git-diff progress and repeated errors. Rate limit auto-recovery detects API throttling, waits it out with a cancellable countdown, and resumes — surviving long or overnight runs that hit per-session caps. Queue tasks into the Pickle Jar and run them all overnight. Track token usage, commits, and lines changed with built-in metrics. One command can chain the full pipeline — refinement, execution, and code review — then send you a macOS notification when it's done. Project Mayhem brings chaos engineering to any codebase with mutation testing and dependency downgrades, while Mr. Meeseeks runs an automated review-and-improve Ralph Loop for at least ten iterations — both with full tmux and Zellij monitor support.
+Pickle Rick is a complete agentic engineering toolbelt built on the [Ralph Wiggum loop](https://ghuntley.com/ralph/). Hand it a PRD — or let it draft one — and it decomposes work into tickets, spawns isolated worker subprocesses, and drives each through a full **research → plan → implement → simplify** lifecycle without human intervention. You can also use any tool in discrete steps.
+
+- **Context clearing** between every iteration — no drift or context rot, even on 500+ iteration epics
+- **Three-state circuit breaker** auto-stops runaway sessions by tracking git-diff progress and repeated errors
+- **Rate limit auto-recovery** detects API throttling, waits it out with a cancellable countdown, and resumes — surviving long or overnight runs that hit per-session caps
+- **Pickle Jar** queues tasks for unattended batch execution overnight
+- **Built-in metrics** track token usage, commits, and lines changed
+- **Full pipeline chaining** — refinement, execution, and code review in one command, with a macOS notification when it's done
+- **Project Mayhem** brings chaos engineering to any codebase with mutation testing and dependency downgrades
+- **Mr. Meeseeks** runs an automated review-and-improve Ralph Loop for at least ten iterations
+
+All modes support both tmux and Zellij monitor layouts.
 
 ---
 
