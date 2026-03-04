@@ -16,6 +16,7 @@ Pickle Rick is a complete agentic engineering toolbelt built on the [Ralph Wiggu
 - **Full pipeline chaining** — refinement, execution, and code review in one command, with a macOS notification when it's done
 - **Project Mayhem** brings chaos engineering to any codebase with mutation testing and dependency downgrades
 - **Mr. Meeseeks** runs an automated review-and-improve Ralph Loop for at least ten iterations
+- **GitNexus integration** gives workers a code knowledge graph for impact analysis, execution flow tracing, and safe refactoring
 
 All modes support both tmux and Zellij monitor layouts.
 
@@ -292,6 +293,30 @@ After all modules run, a `project_mayhem_report.md` is written to the project ro
 - Dependency downgrades restore the original lockfile + re-install after each test
 - Final verification: `git diff` must be empty, tests must pass
 - On any error: `git checkout .` + restore deps before reporting
+
+---
+
+## 🧠 GitNexus Integration — Code Knowledge Graph
+
+Pickle Rick integrates with [GitNexus](https://gitnexus.dev), an MCP-powered code knowledge graph that indexes your codebase into symbols, relationships, and execution flows. Once indexed, every Morty worker automatically inherits GitNexus awareness — no manual setup per ticket.
+
+- **Explore architecture** — trace execution flows, understand how modules connect, answer "how does X work?"
+- **Impact analysis** — before changing shared code, see the blast radius: direct callers, affected processes, risk level
+- **Safe refactoring** — multi-file coordinated renames using graph + text search, tagged by confidence
+- **Bug tracing** — follow call chains from symptom to root cause across file boundaries
+- **Change detection** — map uncommitted diffs to affected execution flows before you commit
+
+### Setup
+
+```bash
+# Index the current repo (run from project root)
+npx gitnexus analyze
+
+# Verify the index
+npx gitnexus status
+```
+
+GitNexus runs as an MCP server. Once indexed, Pickle Rick's slash commands (`/gitnexus-exploring`, `/gitnexus-impact-analysis`, `/gitnexus-debugging`, `/gitnexus-refactoring`) expose guided workflows for each capability. Workers spawned via `/pickle` or `/pickle-tmux` get GitNexus tool access injected automatically.
 
 ---
 
