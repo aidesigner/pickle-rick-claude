@@ -6,7 +6,7 @@
 
 > *"Wubba Lubba Dub Dub! 🥒 I'm not just an AI assistant, Morty — I'm an **autonomous engineering machine** trapped in a pickle jar!"*
 
-Pickle Rick is a complete agentic engineering toolbelt built on the [Ralph Wiggum loop](https://ghuntley.com/ralph/). Hand it a PRD — or let it draft one — and it decomposes work into tickets, spawns isolated worker subprocesses, and drives each through a full **research → plan → implement → simplify** lifecycle without human intervention. You can also use any tool in discrete steps.
+Pickle Rick is a complete agentic engineering toolbelt built on the [Ralph Wiggum loop](https://ghuntley.com/ralph/). Hand it a PRD — or let it draft one — and it decomposes work into tickets, spawns isolated worker subprocesses, and drives each through a full **research → plan → implement → simplify** lifecycle without human intervention. You can also use any tool in discrete steps. New to PRDs? See the **[PRD Writing Guide](PRD_GUIDE.md)**.
 
 - **Context clearing** between every iteration — no drift or context rot, even on 500+ iteration epics
 - **Three-state circuit breaker** auto-stops runaway sessions by tracking git-diff progress and repeated errors
