@@ -11,12 +11,15 @@ Scan `$ARGUMENTS`:
 | `--run` | false | Auto-launch `/pickle-tmux` after PRD is ready |
 | `--meeseeks` | false | Chain Meeseeks review after execution (implies `--run`) |
 | `--target <path>` | cwd | Target repo/directory for the transplant |
-| `--depth <shallow\|deep>` | `deep` | `shallow` = single pattern extraction, `deep` = full structural analysis |
+| `--depth <shallow\|deep>` | `deep` | `shallow` = summary, structural pattern, and invariants only; `deep` = full structural analysis |
 | `--no-refine` | false | Skip the automatic refinement cycle (Step 6) |
+| `--cycles <N>` | 3 | Number of refinement cycles (passed to spawn-refinement-team.js) |
+| `--max-turns <N>` | 100 | Max turns per refinement worker (passed to spawn-refinement-team.js) |
+| `--save-pattern <name>` | — | Save extracted pattern to persistent library for future reuse |
 
 Remaining text = `${EXEMPLAR}` (the portal destination — a GitHub URL, local file/dir path, npm/PyPI package name, or plain-text description of a pattern).
 
-Store: `AUTO_RUN`, `CHAIN_MEESEEKS`, `TARGET_DIR`, `DEPTH`, `SKIP_REFINE`, `EXEMPLAR`.
+Store: `AUTO_RUN`, `CHAIN_MEESEEKS`, `TARGET_DIR`, `DEPTH`, `SKIP_REFINE`, `CYCLES`, `MAX_TURNS`, `SAVE_PATTERN`, `EXEMPLAR`.
 
 If `EXEMPLAR` is empty → ask user: "Where should I open the portal? Give me a GitHub URL, file path, package name, or describe the pattern you want to steal."
 
@@ -183,9 +186,11 @@ Source: [URL/path]. Analysis: `portal/pattern_analysis.md`.
 | P0 | [Invariant-preserving requirement] | [donor file:line] | [what changes for target] |
 
 ### Behavioral Validation Tests
-| Test | Donor Behavior | Expected Target Behavior |
-|:---|:---|:---|
-| [Test 1] | [What donor does] | [What target should do — same semantics, different implementation] |
+Require at least one test per invariant from pattern_analysis.md.
+
+| Priority | Test | Invariant | Donor Behavior | Expected Target Behavior |
+|:---|:---|:---|:---|:---|
+| P0 | [Test 1] | [Which invariant this validates] | [What donor does] | [What target should do — same semantics, different implementation] |
 
 ## Assumptions
 - Donor pattern is correct and battle-tested
@@ -231,6 +236,8 @@ If tmux NOT available: print tip, skip monitor.
 ```bash
 node "${EXTENSION_ROOT}/extension/bin/spawn-refinement-team.js" --prd "${SESSION_ROOT}/prd.md" --session-dir "${SESSION_ROOT}"
 ```
+Optional: `--timeout <sec>` | `--cycles <n>` (default:3) | `--max-turns <n>` (default:100). Pass `CYCLES` and `MAX_TURNS` if user specified them.
+
 Wait for `REFINEMENT_DIR=` and `MANIFEST=` output.
 
 The 3 parallel analysts per cycle:
@@ -267,7 +274,39 @@ Write `${SESSION_ROOT}/refinement_summary.md`: timestamp, per-analysis changes, 
 
 Announce: refinement complete, key findings, risk level.
 
-## Step 7: Advance State & Handoff
+## Step 7: Propagate (Pattern Persistence)
+
+Save the extracted pattern for future reuse. This implements the "Propagate" step of gene transfusion — making patterns discoverable and reusable across projects.
+
+### 7a: Pattern Library
+Pattern library location: `~/.claude/pickle-rick/patterns/`
+
+If `SAVE_PATTERN` is set OR prompt user: "Save this pattern to the library for future portal-gun sessions? (name suggestion: `[inferred-name]`)"
+
+If saving:
+1. Create `~/.claude/pickle-rick/patterns/` if it doesn't exist
+2. Copy `${SESSION_ROOT}/portal/pattern_analysis.md` → `~/.claude/pickle-rick/patterns/${PATTERN_NAME}.md`
+3. Append entry to `~/.claude/pickle-rick/patterns/index.md`:
+
+```markdown
+| [Name] | [Source URL/path] | [Date] | [Summary] |
+```
+
+Create `index.md` with header if it doesn't exist:
+```markdown
+# Pattern Library
+Extracted patterns available for future `/portal-gun` sessions.
+
+| Pattern | Source | Date | Summary |
+|:---|:---|:---|:---|
+```
+
+If user declines or `--no-refine` was set with no `--save-pattern`: skip, but print: "Pattern available at `${SESSION_ROOT}/portal/pattern_analysis.md` — use `--save-pattern <name>` to persist."
+
+### 7b: Project-Local Copy (always)
+Copy `${SESSION_ROOT}/portal/pattern_analysis.md` → `${TARGET_DIR}/.patterns/${PATTERN_NAME}.md` if `.patterns/` dir exists. If not, skip silently.
+
+## Step 8: Advance State & Handoff
 
 ```bash
 node "${EXTENSION_ROOT}/extension/bin/update-state.js" step breakdown "${SESSION_ROOT}"
@@ -275,42 +314,44 @@ node "${EXTENSION_ROOT}/extension/bin/update-state.js" step breakdown "${SESSION
 
 Verify: `prd.md` exists AND state.json has `step: breakdown`.
 
+**Note**: State advances to `breakdown`. When the user runs `/pickle --resume` or `/pickle-tmux --resume`, pickle.md Phase 2 (Ticket Manager) will decompose the PRD into atomic tickets before entering the orchestration loop. This is the standard Pickle Rick lifecycle — portal-gun handles PRD creation, pickle handles decomposition and execution.
+
 **If `AUTO_RUN` is false**:
-Print results: PRD path, pattern summary, donor → target mapping, refinement status.
+Print results: PRD path, pattern summary, donor → target mapping, refinement status, pattern library status.
 Offer next steps:
-- `/pickle --resume ${SESSION_ROOT}` — execute interactively
-- `/pickle-tmux --resume ${SESSION_ROOT}` — execute in tmux
+- `/pickle --resume ${SESSION_ROOT}` — decompose into tickets + execute interactively
+- `/pickle-tmux --resume ${SESSION_ROOT}` — decompose + execute in tmux (recommended for 4+ tickets)
 - Edit `${SESSION_ROOT}/prd.md` to adjust before executing
 
-**If `AUTO_RUN` is true**: Proceed to Step 8.
+**If `AUTO_RUN` is true**: Proceed to Step 9.
 
-## Step 8: Auto-Launch (AUTO_RUN=true only)
+## Step 9: Auto-Launch (AUTO_RUN=true only)
 
-### 8a: Check multiplexer
-`tmux -V`. If present → set MUX=tmux, proceed to 8b.
+### 9a: Check multiplexer
+`tmux -V`. If present → set MUX=tmux, proceed to 9b.
 
 If tmux missing, check Zellij:
 ```bash
 ZELLIJ_VER=$(zellij --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
 ```
-If Zellij present and >= 0.40.0 → set MUX=zellij, proceed to 8b-zellij.
+If Zellij present and >= 0.40.0 → set MUX=zellij, proceed to 9b-zellij.
 
 If neither available: suggest install, note PRD is ready for manual resume. Stop.
 
-### 8b: Re-initialize (tmux)
+### 9b: Re-initialize (tmux)
 ```bash
 node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --resume "${SESSION_ROOT}" --max-iterations 0 --max-time 0
 ```
 If CHAIN_MEESEEKS: append `--chain-meeseeks`.
 
-### 8b-zellij: Re-initialize (Zellij)
+### 9b-zellij: Re-initialize (Zellij)
 ```bash
 node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --resume "${SESSION_ROOT}" --max-iterations 0 --max-time 0
 ```
 If CHAIN_MEESEEKS: append `--chain-meeseeks`.
 Then create Zellij session per /pickle-zellij Steps 3-4.
 
-### 8c: tmux Session (MUX=tmux only)
+### 9c: tmux Session (MUX=tmux only)
 Session name: `portal-<hash>` from SESSION_ROOT basename.
 ```bash
 tmux new-session -d -s <name> -c <working_dir>
@@ -318,17 +359,17 @@ sleep 1
 ```
 Print attach command: `tmux attach -t <name>`.
 
-### 8d: Launch Runner
+### 9d: Launch Runner
 ```bash
 tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/mux-runner.js ${SESSION_ROOT}; echo ''; echo 'Portal closed. Pattern transplanted.'; read" Enter
 ```
 
-### 8e: Monitor (3-pane via canonical script)
+### 9e: Monitor (3-pane via canonical script)
 ```bash
 bash "$HOME/.claude/pickle-rick/extension/scripts/tmux-monitor.sh" <name> ${SESSION_ROOT} pickle
 ```
 
-### 8f: Report
+### 9f: Report
 Print: session name, attach command, window layout, cancel/kill commands.
 If CHAIN_MEESEEKS: note auto-transition to Meeseeks review.
 

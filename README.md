@@ -281,7 +281,7 @@ Data sources: session JSONL files in `~/.claude/projects/` for tokens, `git log 
 | `--run` | Auto-launch tmux/Zellij session after PRD is ready |
 | `--meeseeks` | Chain Meeseeks review after execution (implies `--run`) |
 | `--target <path>` | Target repo (default: cwd) |
-| `--depth shallow\|deep` | `shallow` = summary + invariants only, `deep` = full analysis (default) |
+| `--depth shallow\|deep` | `shallow` = summary, structural pattern, and invariants only; `deep` = full analysis (default) |
 | `--no-refine` | Skip the automatic refinement cycle |
 
 ---
@@ -479,10 +479,10 @@ Sit back. Rick handles the rest. 🥒
 --resume [PATH]            Resume from an existing session
 --reset                    Reset iteration counter and start time (use with --resume)
 --paused                   Start in paused mode (PRD only)
---run                      (/pickle-refine-prd only) Auto-launch tmux with no limits after refinement
+--run                      (/pickle-refine-prd, /portal-gun) Auto-launch tmux with no limits after refinement
 --meeseeks                 (/pickle-refine-prd, /portal-gun) Full pipeline: --run + auto-chain Meeseeks review after tickets complete
 --target <PATH>            (/portal-gun only) Target repo for the transplant (default: cwd)
---depth <shallow|deep>     (/portal-gun only) Extraction depth — shallow for summary, deep for full analysis (default: deep)
+--depth <shallow|deep>     (/portal-gun only) Extraction depth — shallow for summary, structural pattern, and invariants only; deep for full analysis (default: deep)
 --no-refine                (/portal-gun only) Skip the automatic refinement cycle
 ```
 
