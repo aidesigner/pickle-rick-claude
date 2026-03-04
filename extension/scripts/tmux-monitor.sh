@@ -1,6 +1,6 @@
 #!/bin/bash
 # Deterministic 3-pane tmux monitor layout.
-# Usage: tmux-monitor.sh <session-name> <session-root> [pickle|meeseeks]
+# Usage: tmux-monitor.sh <session-name> <session-root> [pickle|meeseeks|refinement]
 set -e
 
 NAME="$1"

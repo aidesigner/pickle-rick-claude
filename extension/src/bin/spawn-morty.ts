@@ -155,6 +155,22 @@ async function main() {
   workerPrompt +=
     '\n\n**IMPORTANT**: You are a localized worker. You are FORBIDDEN from working on ANY other tickets. Once you output `<promise>I AM DONE</promise>`, you MUST STOP and let the manager take over.';
 
+  // Conditionally inject GitNexus MCP awareness when the repo has a knowledge graph index
+  let gitnexusIndexed = false;
+  try { gitnexusIndexed = fs.statSync(path.join(process.cwd(), '.gitnexus')).isDirectory(); } catch { /* no index */ }
+  if (gitnexusIndexed) {
+    workerPrompt += `\n
+# GITNEXUS CODE INTELLIGENCE (auto-detected)
+This repo has a GitNexus knowledge graph index. Use these MCP tools during Research and Plan phases:
+- **query()**: Find execution flows related to a concept (e.g., "auth validation logic")
+- **context()**: 360-degree view of a symbol — callers, callees, process participation
+- **impact()**: Blast radius analysis before modifying shared code
+- **cypher()**: Custom graph queries (nodes: Function, Class, Method, File, Process, Community)
+
+Prefer GitNexus tools over raw Grep/Glob for understanding call chains, dependencies, and execution flows.
+For simple file/string lookups, Grep/Glob are still fine.`;
+  }
+
   cmdArgs.push('-p', workerPrompt);
 
   // Mark ticket as In Progress so the monitor shows [~]
