@@ -19,6 +19,23 @@ node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --paused --task "PRD Ref
 Extract `SESSION_ROOT=<path>`. Save original PRD path as `<PRD_PATH>` for write-back. Copy: `cp "<PRD_PATH>" "${SESSION_ROOT}/prd.md"`. Extension root: `$HOME/.claude/pickle-rick` (`${EXTENSION_ROOT}`).
 
 ## Step 3: Deploy Refinement Team
+
+### 3a: Launch Refinement Monitor (if tmux available)
+Check `tmux -V`. If tmux is available, create a monitoring session so the user can watch worker progress in real time.
+Session name: `refine-<hash>` where `<hash>` is the last 8 chars of SESSION_ROOT basename.
+```bash
+REFINE_HASH="$(basename "${SESSION_ROOT}" | sed 's/.*\(.\{8\}\)$/\1/')"
+REFINE_SESSION="refine-${REFINE_HASH}"
+tmux new-session -d -s "$REFINE_SESSION" -c "$(pwd)"
+tmux send-keys -t "$REFINE_SESSION" "node ${EXTENSION_ROOT}/extension/bin/refinement-watcher.js ${SESSION_ROOT}" Enter
+```
+Print: `Monitor: tmux attach -t $REFINE_SESSION`
+
+If tmux is NOT available, print: `Tip: install tmux for live refinement monitoring` and skip to 3b.
+
+Store `REFINE_SESSION` value (or empty if no tmux) for use in step 3c.
+
+### 3b: Spawn Workers
 ```bash
 node "${EXTENSION_ROOT}/extension/bin/spawn-refinement-team.js" --prd "${SESSION_ROOT}/prd.md" --session-dir "${SESSION_ROOT}"
 ```
@@ -27,6 +44,13 @@ Optional: `--timeout <sec>` | `--cycles <n>` (default:3) | `--max-turns <n>` (de
 3 parallel workers per cycle: Requirements Analyst → `analysis_requirements.md`, Codebase Context → `analysis_codebase.md`, Risk & Scope → `analysis_risk-scope.md`. Cycle 2+ cross-references all prior analyses.
 
 Wait for `REFINEMENT_DIR=` and `MANIFEST=` output.
+
+### 3c: Cleanup Monitor
+If a monitoring session was created in 3a, clean it up. The refinement-watcher auto-exits when the manifest appears.
+```bash
+REFINE_HASH="$(basename "${SESSION_ROOT}" | sed 's/.*\(.\{8\}\)$/\1/')"
+tmux kill-session -t "refine-${REFINE_HASH}" 2>/dev/null || true
+```
 
 ## Step 4: Audit Reports
 Read `${SESSION_ROOT}/refinement_manifest.json`. For failed workers: print warning, note incomplete analysis, continue with available reports. Read all available `analysis_*.md` files + original PRD.
