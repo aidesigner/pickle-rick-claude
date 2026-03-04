@@ -16,7 +16,7 @@ Pickle Rick is a complete agentic engineering toolbelt built on the [Ralph Wiggu
 - **Full pipeline chaining** — refinement, execution, and code review in one command, with a macOS notification when it's done
 - **Project Mayhem** brings chaos engineering to any codebase with mutation testing and dependency downgrades
 - **Mr. Meeseeks** runs an automated review-and-improve Ralph Loop for at least ten iterations
-- **Portal Gun** opens a portal to another codebase, extracts patterns via [gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion), and generates a transplant PRD with automatic refinement
+- **Portal Gun** opens a portal to another codebase, extracts patterns via [gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion), generates a transplant PRD with automatic refinement, and saves patterns to a reusable library
 - **GitNexus integration** gives workers a code knowledge graph for impact analysis, execution flow tracing, and safe refactoring
 
 All modes support both tmux and Zellij monitor layouts.
@@ -263,6 +263,7 @@ Data sources: session JSONL files in `~/.claude/projects/` for tokens, `git log 
 /portal-gun --run https://github.com/org/repo/tree/main/src/lib  # Transplant + auto-execute
 /portal-gun --depth shallow "circuit breaker pattern"             # Pattern from description
 /portal-gun --no-refine ./donor/retry-logic.ts                   # Skip refinement cycle
+/portal-gun --save-pattern retry ../donor/retry.ts               # Save pattern to library
 ```
 
 ### How It Works
@@ -272,7 +273,8 @@ Data sources: session JSONL files in `~/.claude/projects/` for tokens, `git log 
 3. **Target Analysis** — Studies your codebase: conventions, integration points, conflicts, adaptation requirements → `target_analysis.md`
 4. **PRD Synthesis** — Generates a transplant PRD with a Behavioral Validation Tests table mapping donor behavior to expected target behavior, with donor file references for Morty workers
 5. **Refinement Cycle** — Three parallel analysts (Requirements, Codebase Context, Risk & Scope) validate the transplant PRD against donor invariants and target constraints. Portal artifacts give them extra context a normal refinement wouldn't have
-6. **Handoff** — Resume with `/pickle --resume`, `/pickle-tmux --resume`, or use `--run` to auto-launch
+6. **Pattern Library** — Saves extracted patterns to `~/.claude/pickle-rick/patterns/` for reuse in future portal-gun sessions. Use `--save-pattern <name>` to persist, or patterns stay in the session directory
+7. **Handoff** — Resume with `/pickle --resume`, `/pickle-tmux --resume`, or use `--run` to auto-launch
 
 ### Flags
 
@@ -283,6 +285,9 @@ Data sources: session JSONL files in `~/.claude/projects/` for tokens, `git log 
 | `--target <path>` | Target repo (default: cwd) |
 | `--depth shallow\|deep` | `shallow` = summary, structural pattern, and invariants only; `deep` = full analysis (default) |
 | `--no-refine` | Skip the automatic refinement cycle |
+| `--save-pattern <name>` | Persist extracted pattern to global library for future reuse |
+| `--cycles <N>` | Number of refinement cycles (default: 3) |
+| `--max-turns <N>` | Max turns per refinement worker (default: 100) |
 
 ---
 
@@ -484,6 +489,9 @@ Sit back. Rick handles the rest. 🥒
 --target <PATH>            (/portal-gun only) Target repo for the transplant (default: cwd)
 --depth <shallow|deep>     (/portal-gun only) Extraction depth — shallow for summary, structural pattern, and invariants only; deep for full analysis (default: deep)
 --no-refine                (/portal-gun only) Skip the automatic refinement cycle
+--save-pattern <NAME>      (/portal-gun only) Persist extracted pattern to ~/.claude/pickle-rick/patterns/ for future reuse
+--cycles <N>               (/portal-gun only) Number of refinement cycles (default: 3)
+--max-turns <N>            (/portal-gun only) Max turns per refinement worker (default: 100)
 ```
 
 ### Tips

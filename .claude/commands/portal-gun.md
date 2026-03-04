@@ -13,8 +13,8 @@ Scan `$ARGUMENTS`:
 | `--target <path>` | cwd | Target repo/directory for the transplant |
 | `--depth <shallow\|deep>` | `deep` | `shallow` = summary, structural pattern, and invariants only; `deep` = full structural analysis |
 | `--no-refine` | false | Skip the automatic refinement cycle (Step 6) |
-| `--cycles <N>` | 3 | Number of refinement cycles (passed to spawn-refinement-team.js) |
-| `--max-turns <N>` | 100 | Max turns per refinement worker (passed to spawn-refinement-team.js) |
+| `--cycles <N>` | 3 | Number of refinement cycles (ignored if `--no-refine`) |
+| `--max-turns <N>` | 100 | Max turns per refinement worker (ignored if `--no-refine`) |
 | `--save-pattern <name>` | — | Save extracted pattern to persistent library for future reuse |
 
 Remaining text = `${EXEMPLAR}` (the portal destination — a GitHub URL, local file/dir path, npm/PyPI package name, or plain-text description of a pattern).
@@ -59,6 +59,11 @@ Save all fetched source to `${SESSION_ROOT}/portal/donor/` preserving relative p
 - Skip to Step 4 (no donor code to analyze)
 
 Announce what was acquired: file count, languages detected, estimated complexity.
+
+**Error handling**: If acquisition fails (gh api error, file not found, npm pack failure, network timeout):
+1. Print what failed and why
+2. Ask user to provide an alternative source or fix the issue
+3. Do NOT proceed to Step 3 with empty/missing donor code
 
 ## Step 3: Scan the Other Side (Pattern Extraction)
 
@@ -283,16 +288,17 @@ Pattern library location: `~/.claude/pickle-rick/patterns/`
 
 If `SAVE_PATTERN` is set OR prompt user: "Save this pattern to the library for future portal-gun sessions? (name suggestion: `[inferred-name]`)"
 
-If saving:
-1. Create `~/.claude/pickle-rick/patterns/` if it doesn't exist
+**Decision tree:**
+1. `--save-pattern <name>` set → save immediately, no prompt
+2. `--save-pattern` not set AND `--no-refine` not set → prompt user: "Save this pattern to the library for future portal-gun sessions? (name suggestion: `[inferred-name]`)"
+3. `--save-pattern` not set AND `--no-refine` set → skip with hint: "Pattern available at `${SESSION_ROOT}/portal/pattern_analysis.md` — use `--save-pattern <name>` to persist."
+
+**When saving:**
+1. Create `~/.claude/pickle-rick/patterns/` if it doesn't exist. If creation fails, warn and skip (non-fatal).
 2. Copy `${SESSION_ROOT}/portal/pattern_analysis.md` → `~/.claude/pickle-rick/patterns/${PATTERN_NAME}.md`
-3. Append entry to `~/.claude/pickle-rick/patterns/index.md`:
+3. Create or append to `~/.claude/pickle-rick/patterns/index.md`:
 
-```markdown
-| [Name] | [Source URL/path] | [Date] | [Summary] |
-```
-
-Create `index.md` with header if it doesn't exist:
+If `index.md` doesn't exist, create with header:
 ```markdown
 # Pattern Library
 Extracted patterns available for future `/portal-gun` sessions.
@@ -301,7 +307,12 @@ Extracted patterns available for future `/portal-gun` sessions.
 |:---|:---|:---|:---|
 ```
 
-If user declines or `--no-refine` was set with no `--save-pattern`: skip, but print: "Pattern available at `${SESSION_ROOT}/portal/pattern_analysis.md` — use `--save-pattern <name>` to persist."
+Append entry:
+```markdown
+| [Name] | [Source URL/path] | [Date] | [Summary] |
+```
+
+If `index.md` exists but doesn't contain the expected table header, warn "Pattern library index may be corrupted" but still append.
 
 ### 7b: Project-Local Copy (always)
 Copy `${SESSION_ROOT}/portal/pattern_analysis.md` → `${TARGET_DIR}/.patterns/${PATTERN_NAME}.md` if `.patterns/` dir exists. If not, skip silently.
