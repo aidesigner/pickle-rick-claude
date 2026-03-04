@@ -26,3 +26,6 @@ After completing work (bug fix, feature, refactor, research, review), log it:
 node ~/.claude/pickle-rick/extension/bin/log-activity.js <type> "<description>"
 ```
 Types: `bug_fix`, `feature`, `refactor`, `research`, `review`. Keep descriptions under 100 chars.
+
+## Metrics
+For token usage, commits, or LOC queries → `/pickle-metrics`. Flags: `--days N`, `--since YYYY-MM-DD`, `--weekly`, `--json`.

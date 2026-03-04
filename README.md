@@ -318,6 +318,8 @@ mkdir -p /path/to/your/project/.claude
 cp ~/.claude/pickle-rick/persona.md /path/to/your/project/.claude/CLAUDE.md
 ```
 
+> **After upgrading:** `bash install.sh` deploys a fresh `persona.md`. If you appended it to your project's `CLAUDE.md`, re-sync by replacing the old persona block with the updated one.
+
 ### 3. Run
 
 Everything starts with a PRD. Rick refuses to write code without one.

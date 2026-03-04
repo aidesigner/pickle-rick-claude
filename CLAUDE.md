@@ -49,5 +49,6 @@ spawn-morty.js — per-ticket `claude -p` subprocess spawner
 spawn-refinement-team.js — 3 parallel analysts per cycle, writes refinement_manifest.json
 tmux-runner.js — context-clearing outer loop via tmux
 jar-runner.js — batch runner for jar queue
+metrics.js + metrics-utils.js — token/commit/LOC reporter, incremental cache at `~/.claude/pickle-rick/metrics-cache.json`
 monitor.js / log-watcher.js / morty-watcher.js — tmux TUI panes
 meeseeks.md — dual-purpose: setup + per-pass review template
