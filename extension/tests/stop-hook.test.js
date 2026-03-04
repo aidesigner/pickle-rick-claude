@@ -718,6 +718,63 @@ test('stop-hook: EPIC_COMPLETED ignores min_iterations → still deactivates', (
 });
 
 // ---------------------------------------------------------------------------
+// Rate limit detection — approve exit so mux-runner handles backoff
+// ---------------------------------------------------------------------------
+
+test('stop-hook: short rate limit message → approve (hand off to runner)', () => {
+  const { decision, state } = runHook({
+    response: "You're out of extra usage · resets Mar 6 at 11am",
+  });
+  assert.deepEqual(decision, { decision: 'approve' });
+  assert.equal(state.active, true, 'rate limit approve must not deactivate — runner owns lifecycle');
+});
+
+test('stop-hook: "rate limit" short message → approve', () => {
+  const { decision } = runHook({
+    response: 'API rate limit exceeded.',
+  });
+  assert.deepEqual(decision, { decision: 'approve' });
+});
+
+test('stop-hook: "usage limit reached" short message → approve', () => {
+  const { decision } = runHook({
+    response: 'Your usage limit has been reached.',
+  });
+  assert.deepEqual(decision, { decision: 'approve' });
+});
+
+test('stop-hook: "hour limit" short message → approve', () => {
+  const { decision } = runHook({
+    response: 'You have exceeded your 5 requests per hour limit.',
+  });
+  assert.deepEqual(decision, { decision: 'approve' });
+});
+
+test('stop-hook: long response mentioning rate limit → block (not a real rate limit)', () => {
+  // > 500 chars: normal conversation about rate limits, not a synthetic error
+  const longText = 'I hit a rate limit but recovered and continued working on the task. ' +
+    'Here is what I found during my research phase. '.repeat(15);
+  assert.ok(longText.length > 500, 'test setup: text must be > 500 chars');
+  const { decision } = runHook({ response: longText });
+  assert.equal(decision.decision, 'block', 'long responses mentioning rate limits must not trigger early exit');
+});
+
+test('stop-hook: empty response → block (not a rate limit)', () => {
+  const { decision } = runHook({ response: '' });
+  assert.equal(decision.decision, 'block');
+});
+
+test('stop-hook: rate limit in tmux subprocess → approve, active unchanged', () => {
+  const { decision, state } = runHook({
+    state: baseState({ tmux_mode: true }),
+    setStateFileEnv: true,
+    response: "You're out of extra usage · resets Mar 6 at 11am",
+  });
+  assert.deepEqual(decision, { decision: 'approve' });
+  assert.equal(state.active, true, 'tmux mode: runner owns active');
+});
+
+// ---------------------------------------------------------------------------
 // NaN/undefined edge cases
 // ---------------------------------------------------------------------------
 

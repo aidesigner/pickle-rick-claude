@@ -137,7 +137,7 @@ export function detectRateLimitInText(logFile) {
         const tail = lines.slice(-100);
         const filtered = tail.filter(l => !l.includes('"type":"user"') && !l.includes('"type":"tool_result"'));
         const text = filtered.join('\n');
-        const patterns = [/5.*hour.*limit/i, /limit.*reached.*try.*back/i, /usage.*limit.*reached/i, /rate limit/i];
+        const patterns = [/5.*hour.*limit/i, /limit.*reached.*try.*back/i, /usage.*limit.*reached/i, /rate limit/i, /out of (extra )?usage/i];
         return patterns.some(p => p.test(text));
     }
     catch { /* file missing */ }

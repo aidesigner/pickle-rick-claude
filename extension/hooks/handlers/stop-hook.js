@@ -95,6 +95,23 @@ async function main() {
     // 6. Check Completion Promise
     const responseText = input.last_assistant_message || input.prompt_response || '';
     log(`Agent response received (${responseText.length} chars)`);
+    // 6a. Rate limit detection — approve exit so mux-runner can handle backoff.
+    // Rate limit responses are short synthetic messages from Claude Code.
+    // The length guard (<500 chars) prevents false positives from normal conversation
+    // that merely mentions rate limits.
+    const RATE_LIMIT_PATTERNS = [
+        /out of (extra )?usage/i,
+        /rate limit/i,
+        /usage.*limit.*reached/i,
+        /limit.*reached.*try.*back/i,
+        /hour.*limit/i,
+    ];
+    if (responseText.length > 0 && responseText.length < 500 &&
+        RATE_LIMIT_PATTERNS.some(p => p.test(responseText))) {
+        log('Decision: APPROVE (Rate limit detected — handing off to runner for backoff)');
+        approve();
+        return;
+    }
     const hasPromise = !!state.completion_promise && hasToken(responseText, state.completion_promise);
     // Stop Tokens (Full Exit — approve exit, deactivate if applicable)
     const isEpicDone = hasToken(responseText, PromiseTokens.EPIC_COMPLETED);

@@ -208,6 +208,34 @@ test('detectRateLimitInText: returns false for missing file', () => {
     assert.equal(detectRateLimitInText('/nonexistent/path/iter.log'), false);
 });
 
+test('detectRateLimitInText: detects "out of extra usage" pattern', () => {
+    const tmpDir = makeTmpDir();
+    const logFile = path.join(tmpDir, 'iter.log');
+    try {
+        const lines = [
+            JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: "You're out of extra usage · resets Mar 6 at 11am" }] } }),
+        ];
+        fs.writeFileSync(logFile, lines.join('\n'));
+        assert.equal(detectRateLimitInText(logFile), true);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectRateLimitInText: detects "out of usage" (without extra) pattern', () => {
+    const tmpDir = makeTmpDir();
+    const logFile = path.join(tmpDir, 'iter.log');
+    try {
+        const lines = [
+            JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: "You're out of usage for today" }] } }),
+        ];
+        fs.writeFileSync(logFile, lines.join('\n'));
+        assert.equal(detectRateLimitInText(logFile), true);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('detectRateLimitInText: returns false for clean log', () => {
     const tmpDir = makeTmpDir();
     const logFile = path.join(tmpDir, 'iter.log');
