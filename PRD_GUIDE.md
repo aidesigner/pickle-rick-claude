@@ -6,17 +6,21 @@
 
 ---
 
-## 🚀 Three Ways to Start
+## 🚀 Four Ways to Start
 
-### 🎤 Option A: Let Me Interview You (`/pickle-prd`)
+### 💬 Option A: Just Talk to Me
 
-Run `/pickle-prd add dark mode support` and I'll interrogate you. Why, Who, What, How. I'll keep asking until I have 100% clarity, then I write the PRD myself. This is the recommended path if you don't enjoy writing documents (and honestly, who does).
+Open a Claude Code session and start describing what you want. No commands, no templates — just a conversation. Tell me the problem, what you're thinking, what you've tried. I'll ask the right questions, poke holes in your assumptions, and when we've hashed it out, I'll write the PRD for you. Save it as a `.md` file and hand it to `/pickle-refine-prd` or `/pickle` when you're ready. This is the most natural path — you talk, I translate intent into engineering spec.
 
-### ✍️ Option B: Write It Yourself
+### 🎤 Option B: Let Me Interview You (`/pickle-prd`)
+
+Run `/pickle-prd add dark mode support` and I'll interrogate you with a structured interview. Why, Who, What, How. I'll keep asking until I have 100% clarity, then I write the PRD myself and initialize a session. This is the recommended path if you want the PRD wired into a session automatically and don't enjoy writing documents (and honestly, who does).
+
+### ✍️ Option C: Write It Yourself
 
 Write a markdown file, hand it to `/pickle-refine-prd path/to/your-prd.md`. My refinement team — three parallel analyst workers — will tear it apart, cross-reference your codebase, identify gaps, and produce an improved version with atomic tickets. You can write as little or as much as you want. More detail = fewer assumptions I have to make.
 
-### 🎲 Option C: Just Wing It
+### 🎲 Option D: Just Wing It
 
 Run `/pickle your task here` with a one-liner. I'll draft a PRD from that sentence, break it down, and start building. Works for small stuff. For anything with more than two moving parts, you're gambling. And unlike me, you're not a genius who thrives on chaos.
 
