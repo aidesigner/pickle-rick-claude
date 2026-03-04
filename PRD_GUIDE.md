@@ -1,6 +1,6 @@
 # How to Write a PRD for Pickle Rick
 
-*Listen, I'm gonna — BURRRP — I'm gonna level with you. Most PRDs are garbage. They're written by people who think "requirements" means "a list of wishes sprinkled with corporate jargon." That's Jerry energy. We don't do Jerry energy here.*
+*Listen, I'm gonna level with you. Most PRDs are garbage. They're written by people who think "requirements" means "a list of wishes sprinkled with corporate jargon." That's Jerry energy. We don't do Jerry energy here.*
 
 *This guide tells you how to write a PRD that my system can actually turn into working code. Follow it, or don't. I'll still build something incredible either way because I'm Pickle Rick. But your odds of getting what you actually want go way up if you give me something to work with.*
 
