@@ -16,6 +16,7 @@ Pickle Rick is a complete agentic engineering toolbelt built on the [Ralph Wiggu
 - **Full pipeline chaining** — refinement, execution, and code review in one command, with a macOS notification when it's done
 - **Project Mayhem** brings chaos engineering to any codebase with mutation testing and dependency downgrades
 - **Mr. Meeseeks** runs an automated review-and-improve Ralph Loop for at least ten iterations
+- **Portal Gun** opens a portal to another codebase, extracts patterns via [gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion), and generates a transplant PRD with automatic refinement
 - **GitNexus integration** gives workers a code knowledge graph for impact analysis, execution flow tracing, and safe refactoring
 
 All modes support both tmux and Zellij monitor layouts.
@@ -246,6 +247,45 @@ Data sources: session JSONL files in `~/.claude/projects/` for tokens, `git log 
 
 ---
 
+## 🔫 Portal Gun — Gene Transfusion
+
+<img src="images/portal-gun.png" alt="Portal Gun — gene transfusion for codebases" width="400" align="right" />
+
+> *"You see that code over there, Morty? In that other repo? I'm gonna open a portal, reach in, and yank its DNA into OUR dimension."*
+
+`/portal-gun` implements [gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) — a technique for transferring proven coding patterns between codebases using AI agents. Point it at a GitHub URL, local file, npm package, or just describe a pattern, and it extracts the structural DNA, analyzes your target codebase for compatibility, then generates a transplant PRD with behavioral validation tests. The built-in refinement cycle catches invariant violations and convention mismatches before a single line is written.
+
+<br clear="right" />
+
+```bash
+/portal-gun https://github.com/org/repo/blob/main/src/auth.ts   # Transplant from GitHub
+/portal-gun ../other-project/src/cache.ts                        # Transplant from local file
+/portal-gun --run https://github.com/org/repo/tree/main/src/lib  # Transplant + auto-execute
+/portal-gun --depth shallow "circuit breaker pattern"             # Pattern from description
+/portal-gun --no-refine ./donor/retry-logic.ts                   # Skip refinement cycle
+```
+
+### How It Works
+
+1. **Open Portal** — Fetches the donor code (GitHub API, local copy, npm registry, or synthesizes from description). Saves to `portal/donor/`
+2. **Pattern Extraction** — Analyzes the donor: structural pattern, invariants, edge cases, anti-patterns → `pattern_analysis.md`
+3. **Target Analysis** — Studies your codebase: conventions, integration points, conflicts, adaptation requirements → `target_analysis.md`
+4. **PRD Synthesis** — Generates a transplant PRD with a Behavioral Validation Tests table mapping donor behavior to expected target behavior, with donor file references for Morty workers
+5. **Refinement Cycle** — Three parallel analysts (Requirements, Codebase Context, Risk & Scope) validate the transplant PRD against donor invariants and target constraints. Portal artifacts give them extra context a normal refinement wouldn't have
+6. **Handoff** — Resume with `/pickle --resume`, `/pickle-tmux --resume`, or use `--run` to auto-launch
+
+### Flags
+
+| Flag | Effect |
+|------|--------|
+| `--run` | Auto-launch tmux/Zellij session after PRD is ready |
+| `--meeseeks` | Chain Meeseeks review after execution (implies `--run`) |
+| `--target <path>` | Target repo (default: cwd) |
+| `--depth shallow\|deep` | `shallow` = summary + invariants only, `deep` = full analysis (default) |
+| `--no-refine` | Skip the automatic refinement cycle |
+
+---
+
 ## 💥 Project Mayhem — Chaos Engineering
 
 <img src="images/project-mayhem.png" alt="Project Mayhem — Pickle Rick chaos engineering" width="400" align="right" />
@@ -381,7 +421,14 @@ claude --dangerously-skip-permissions
 /pickle-refine-prd --run my-prd.md       # Refine → decompose → auto-launch tmux (no iteration/time limits)
 ```
 
-**Option E: Full pipeline** — Refine, execute all tickets, then auto-transition to Meeseeks code review. One command, zero babysitting:
+**Option E: Gene transfusion** — Steal a pattern from another codebase, generate a transplant PRD, refine it, and optionally execute:
+
+```bash
+/portal-gun https://github.com/org/repo/blob/main/src/pattern.ts  # Extract + PRD + refine
+/portal-gun --run ../other-project/src/cache/                      # Extract + PRD + refine + execute
+```
+
+**Option F: Full pipeline** — Refine, execute all tickets, then auto-transition to Meeseeks code review. One command, zero babysitting:
 
 ```bash
 /pickle-refine-prd --meeseeks my-prd.md  # Refine → decompose → execute → Meeseeks review (min 10 passes)
@@ -408,6 +455,8 @@ Sit back. Rick handles the rest. 🥒
 | `/pickle-refine-prd --run [path]` | 🔬🖥️ Refine + decompose + auto-launch unlimited tmux session (no iteration or time cap) |
 | `/pickle-refine-prd --meeseeks [path]` | 🔬🖥️👋 Full pipeline: refine + decompose + execute all tickets + auto-transition to Meeseeks review (implies `--run`) |
 | `/pickle-dot [path \| inline]` | 🔀 Convert a PRD into a [strongdm/attractor](https://github.com/strongdm/attractor)-compatible DOT digraph — generates a validated `.dot` file with node shapes, edge conditions, parallel fan-out/in, and model stylesheets |
+| `/portal-gun <source>` | 🔫 [Gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) — extract patterns from another codebase and generate a transplant PRD with behavioral validation tests and automatic refinement |
+| `/portal-gun --run <source>` | 🔫🖥️ Extract pattern + generate PRD + refine + auto-launch tmux session |
 | `/project-mayhem` | 💥 Chaos engineering — mutation testing, dependency downgrades, config corruption. Non-destructive, language-agnostic, comprehensive report. |
 | `/pickle-metrics` | 📊 Token usage, turns, commits, and lines changed — daily or `--weekly`, per-project, with `--json` export |
 | `/pickle-standup` | 📰 Show a formatted standup summary from activity logs (last 24h by default) |
@@ -431,7 +480,10 @@ Sit back. Rick handles the rest. 🥒
 --reset                    Reset iteration counter and start time (use with --resume)
 --paused                   Start in paused mode (PRD only)
 --run                      (/pickle-refine-prd only) Auto-launch tmux with no limits after refinement
---meeseeks                 (/pickle-refine-prd only) Full pipeline: --run + auto-chain Meeseeks review after tickets complete
+--meeseeks                 (/pickle-refine-prd, /portal-gun) Full pipeline: --run + auto-chain Meeseeks review after tickets complete
+--target <PATH>            (/portal-gun only) Target repo for the transplant (default: cwd)
+--depth <shallow|deep>     (/portal-gun only) Extraction depth — shallow for summary, deep for full analysis (default: deep)
+--no-refine                (/portal-gun only) Skip the automatic refinement cycle
 ```
 
 ### Tips
@@ -510,6 +562,7 @@ pickle-rick-claude/
 │   │   ├── pickle-prd.md       # Interactive PRD drafter (used internally by /pickle)
 │   │   ├── pickle-refine-prd.md # Refine PRD + decompose into executable tasks 🔬
 │   │   ├── pickle-dot.md         # PRD → attractor DOT digraph converter 🔀
+│   │   ├── portal-gun.md         # Gene transfusion — pattern transplant PRD generator 🔫
 │   │   ├── meeseeks.md            # Autonomous code review loop (setup + per-pass template) 👋
 │   │   ├── project-mayhem.md      # Chaos engineering — mutation, deps, config corruption 💥
 │   │   ├── send-to-morty.md    # Worker prompt (internal — 6 phases + scope boundary)
@@ -573,6 +626,7 @@ pickle-rick-claude/
 │   └── tsconfig.json        # TypeScript config (strict, ESNext)
 ├── images/
 │   ├── tmux-monitor.png     # tmux monitor screenshot
+│   ├── portal-gun.png       # Portal Gun — gene transfusion
 │   └── Meeseeks.webp        # Mr. Meeseeks (from Wikipedia — Meeseeks and Destroy)
 ├── persona.md               # Pickle Rick persona snippet (append to your project's CLAUDE.md)
 ├── pickle_settings.json     # Default limits
