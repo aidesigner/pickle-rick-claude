@@ -322,13 +322,15 @@ cp ~/.claude/pickle-rick/persona.md /path/to/your/project/.claude/CLAUDE.md
 
 ### 3. Run
 
+> **Permissions:** Launch Claude with `claude --dangerously-skip-permissions`. Pickle Rick's loops spawn worker subprocesses that already run permissionless, but the root instance needs it too — otherwise you'll drown in permission prompts for every file write, bash command, and hook invocation.
+
 Everything starts with a PRD. Rick refuses to write code without one.
 
 **Option A: One-shot** — Rick drafts the PRD, breaks it down, and executes all in one loop:
 
 ```bash
 cd /path/to/your/project
-claude
+claude --dangerously-skip-permissions
 # then type:
 /pickle "refactor the auth module"
 ```
