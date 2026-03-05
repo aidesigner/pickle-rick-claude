@@ -357,6 +357,48 @@ Write `${SESSION_ROOT}/refinement_summary.md`: timestamp, per-analysis changes, 
 
 Announce: refinement complete, key findings, risk level.
 
+<!-- [Improvement F: Post-Edit Consistency -- START] -->
+### 6g: Post-Edit Consistency Check
+
+When the user requests scope changes to the PRD (e.g., "remove XML support", "change upload limit to 25MB", "drop the LLM budget feature"), run a consistency scan BEFORE confirming the edit is complete.
+
+#### Check 1: Contradictory Numeric Values
+Scan for numeric values associated with the same concept appearing with different values.
+
+**IS a contradiction (flag):**
+- "Maximum upload size: 50MB" (CUJ-2) + "Upload limit: 25MB" (Risk Mitigations) → same concept, different values → FLAG
+- "7 sections in findings display" (CUJ-1) + "15 sections in schema definition" when schema drives display → FLAG
+- "Timeout: 30s" (Functional Requirements) + "Timeout: 120s" (Acceptance Criteria for the same requirement) → FLAG
+
+**IS NOT a contradiction (skip):**
+- "S3 max object size: 5GB" + "Upload limit: 25MB" → different concepts (infrastructure capacity vs application limit) → SKIP
+- "Poll every 1s during active processing" + "Poll every 60s during idle timeout" → same metric but explicitly different operational contexts → SKIP
+
+#### Check 2: Stale Feature References
+After removing or renaming a feature, search for ALL terms related to that feature throughout the PRD. Report each occurrence with its section and surrounding context.
+
+**Example**: User says "remove XML support". Search for: `XML`, `MISMO`, `parser`, `xpath`, and any feature-specific terms that appeared near XML references. Each hit is a potential stale reference.
+
+#### Check 3: Section Count Alignment
+Verify structural consistency:
+- Number of CUJs matches number of requirement groups (each CUJ has a corresponding functional requirements section)
+- Every CUJ has at least one functional requirement row
+- Every functional requirement maps to at least one acceptance criterion
+- Every behavioral validation test maps to a declared invariant
+
+#### Check 4: Report
+List all findings BEFORE confirming the edit is complete:
+```
+CONFLICT: {concept} = {value1} (section {s1}) vs {value2} (section {s2})
+STALE: "{term}" in {section}: "{surrounding context}"
+ORPHAN: CUJ-{n} has no corresponding requirements
+ORPHAN: FR-{n} has no acceptance criteria
+OK: No inconsistencies found
+```
+
+If any CONFLICT or STALE findings exist, present them to the user and ask whether each is intentional before finalizing the edit.
+<!-- [Improvement F: Post-Edit Consistency -- END] -->
+
 ## Step 7: Propagate (Pattern Persistence)
 
 Save the extracted pattern for future reuse. This implements the "Propagate" step of gene transfusion — making patterns discoverable and reusable across projects.
