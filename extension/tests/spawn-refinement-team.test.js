@@ -9,6 +9,9 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.resolve(__dirname, '../bin/spawn-refinement-team.js');
 
+// Import buildWorkerPrompt for direct unit testing
+const { buildWorkerPrompt } = await import('../bin/spawn-refinement-team.js');
+
 function run(args, env = {}) {
     return spawnSync(process.execPath, [BIN, ...args], {
         env: { ...process.env, ...env },
@@ -394,4 +397,26 @@ test('spawn-refinement-team: manifest workers report failure when claude exits n
         fs.rmSync(tmp, { recursive: true, force: true });
         fs.rmSync(fakeBin, { recursive: true, force: true });
     }
+});
+
+// --- Portal context in buildWorkerPrompt ---
+
+test('buildWorkerPrompt includes portal context for codebase role', () => {
+    const prompt = buildWorkerPrompt('codebase', '# PRD', '/out.md', '/target', 1, undefined, {
+        portalDir: '/session/portal', patternSummaryLines: 50
+    });
+    assert.ok(prompt.includes('Portal Artifacts'), 'Should include Portal Artifacts section');
+    assert.ok(prompt.includes('/session/portal/pattern_analysis.md'), 'Should include pattern_analysis.md path');
+});
+
+test('buildWorkerPrompt omits portal context for non-codebase roles', () => {
+    const prompt = buildWorkerPrompt('requirements', '# PRD', '/out.md', '/target', 1, undefined, {
+        portalDir: '/session/portal', patternSummaryLines: 50
+    });
+    assert.ok(!prompt.includes('Portal Artifacts'), 'Should not include Portal Artifacts for requirements role');
+});
+
+test('buildWorkerPrompt omits portal context when not provided', () => {
+    const prompt = buildWorkerPrompt('codebase', '# PRD', '/out.md', '/target', 1);
+    assert.ok(!prompt.includes('Portal Artifacts'), 'Should not include Portal Artifacts when no portalContext');
 });

@@ -195,6 +195,19 @@ Analyze the target codebase at `${TARGET_DIR}`. Produce `${SESSION_ROOT}/portal/
 - Language: [source] → [target]
 - Framework: [source] → [target]
 - Conventions: [adaptations needed]
+
+<!-- [Improvement E: Deep Target Diff -- START] -->
+## Per-File Modification Specs
+
+For each existing target file that will be modified (files classified as "Behavioral reference" or "Direct transplant to existing target" by Step 3's classification):
+
+### [filepath] (Modified)
+**Current behavior**: [describe what this file does now]
+**Lines/patterns to update**:
+  - Line [N]: `[current code]` -- [what needs to change]
+  - Line [N]: `[current string/value]` -- [replacement]
+**Required changes**: [summary of all changes needed]
+<!-- [Improvement E: Deep Target Diff -- END] -->
 ```
 
 Use GitNexus (`mcp__gitnexus__query`) if indexed, otherwise Glob/Grep/Read.
