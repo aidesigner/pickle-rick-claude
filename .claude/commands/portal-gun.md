@@ -286,11 +286,13 @@ Save the extracted pattern for future reuse. This implements the "Propagate" ste
 ### 7a: Pattern Library
 Pattern library location: `~/.claude/pickle-rick/patterns/`
 
-If `SAVE_PATTERN` is set OR prompt user: "Save this pattern to the library for future portal-gun sessions? (name suggestion: `[inferred-name]`)"
+Derive `PATTERN_NAME`: use `SAVE_PATTERN` value if set, otherwise infer from exemplar (repo name, file basename without extension, or slugified description). Fallback: `pattern-<date>`.
 
 **Decision tree:**
-1. `--save-pattern <name>` set → save immediately, no prompt
-2. `--save-pattern` not set AND `--no-refine` not set → prompt user: "Save this pattern to the library for future portal-gun sessions? (name suggestion: `[inferred-name]`)"
+1. `--save-pattern <name>` set → `PATTERN_NAME = SAVE_PATTERN`. Save immediately, no prompt.
+2. `--save-pattern` not set AND `--no-refine` not set → prompt user: "Save this pattern to the library for future portal-gun sessions? (name suggestion: `${PATTERN_NAME}`)"
+   - User accepts → save with suggested or user-provided name
+   - User declines → skip, no further action
 3. `--save-pattern` not set AND `--no-refine` set → skip with hint: "Pattern available at `${SESSION_ROOT}/portal/pattern_analysis.md` — use `--save-pattern <name>` to persist."
 
 **When saving:**
@@ -314,7 +316,8 @@ Append entry:
 
 If `index.md` exists but doesn't contain the expected table header, warn "Pattern library index may be corrupted" but still append.
 
-### 7b: Project-Local Copy (always)
+### 7b: Project-Local Copy
+Runs only if `PATTERN_NAME` was set (i.e., pattern was saved in 7a or `--save-pattern` was provided).
 Copy `${SESSION_ROOT}/portal/pattern_analysis.md` → `${TARGET_DIR}/.patterns/${PATTERN_NAME}.md` if `.patterns/` dir exists. If not, skip silently.
 
 ## Step 8: Advance State & Handoff
