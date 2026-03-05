@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="images/architecture.png" alt="Pickle Rick Architecture" width="780" />
+</p>
+
 # Pickle Rick Architecture
 
 Deep-dive internals for the Pickle Rick engineering lifecycle. For usage, commands, and quick start, see the [README](README.md).
