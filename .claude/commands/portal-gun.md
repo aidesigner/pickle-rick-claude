@@ -119,6 +119,27 @@ MANDATORY: Use Glob to enumerate ALL donor files. Do not truncate, summarize wit
 - dirname/ ([count] files)
   - filename.ext (brief purpose)
 <!-- [Improvement B: File Manifest -- END] -->
+
+<!-- [Improvement C: Import Graph -- START] -->
+### Import Graph (entry: [entry point file])
+
+Trace imports from the entry point(s) using Grep tool. Cover ALL import patterns:
+- ES static: `import ... from '...'`
+- CJS: `require('...')`
+- Dynamic: `import('...')`
+- Re-exports: `export * from '...'`
+- Barrel files: `index.ts` that re-exports
+
+For each file, classify:
+- **Required**: reachable from entry point
+- **Unused by pipeline**: exists in donor but not imported
+- **External dep**: npm/pip package (not local file)
+
+Language scope: TypeScript and JavaScript only. If donor is another language, write: "Import graph skipped -- [language] not supported. See File Manifest for complete inventory."
+
+[Import graph here -- trace from entry point, show dependency tree]
+(files NOT reachable from entry -- classify as Unused)
+<!-- [Improvement C: Import Graph -- END] -->
 ```
 
 For `--depth shallow`: focus on Summary, Structural Pattern, and Invariants only.
