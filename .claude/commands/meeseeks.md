@@ -34,7 +34,7 @@ Print attach command immediately: `tmux attach -t <name>` (Window 1 "monitor" = 
 
 ### Step 6: Launch Runner
 ```bash
-tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/mux-runner.js <SESSION_ROOT>; echo ''; echo '👋 Mr. Meeseeks has ceased to exist.'; read" Enter
+tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/mux-runner.js <SESSION_ROOT>; echo ''; echo 'Mr. Meeseeks has ceased to exist.'; read" Enter
 ```
 
 ### Step 7: Monitor (3-pane)

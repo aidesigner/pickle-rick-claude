@@ -124,7 +124,7 @@ Add `## Implementation Task Breakdown` table to `${SESSION_ROOT}/prd_refined.md`
 ### 6e: Advance State
 ```bash
 node "${EXTENSION_ROOT}/extension/bin/update-state.js" step research "${SESSION_ROOT}"
-node "${EXTENSION_ROOT}/extension/bin/update-state.js" current_ticket [FIRST_ID] "${SESSION_ROOT}"
+node "${EXTENSION_ROOT}/extension/bin/update-state.js" current_ticket ${FIRST_ID} "${SESSION_ROOT}"
 ```
 
 ## Step 7: Update Original PRD
@@ -179,7 +179,7 @@ Print attach command immediately: `tmux attach -t <name>`.
 
 ### 10d: Launch Runner
 ```bash
-tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/mux-runner.js ${SESSION_ROOT}; echo ''; echo '🥒 Runner finished.  Ctrl+B 1 → monitor  |  Ctrl+B D → detach'; read" Enter
+tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/mux-runner.js ${SESSION_ROOT}; echo ''; echo 'Runner finished.  Ctrl+B 1 → monitor  |  Ctrl+B D → detach'; read" Enter
 ```
 
 ### 10e: Monitor (3-pane via canonical script)

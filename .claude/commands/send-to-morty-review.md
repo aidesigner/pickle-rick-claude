@@ -27,9 +27,9 @@ Determine exactly which files were modified by the preceding implementation tick
 1. Read ticket at `${SESSION_ROOT}/${TICKET_ID}/linear_ticket_${TICKET_ID}.md`
 2. Extract `review_group` from frontmatter — comma-separated list of ticket IDs that were implemented before this review
 3. For each ticket ID in `review_group`:
-   - Read the ticket's directory at `${SESSION_ROOT}/[id]/`
+   - Read the ticket's directory at `${SESSION_ROOT}/${id}/`
    - Check for implementation artifacts: `plan_*.md`, `research_*.md`
-   - Scan git log for commits mentioning the ticket ID: `git log --oneline --all --grep="[id]" -- .`
+   - Scan git log for commits mentioning the ticket ID: `git log --oneline --all --grep="${id}" -- .`
    - Collect modified files: `git diff --name-only HEAD~N` (scope to group's commits) or read plan artifacts for file lists
 4. Deduplicate and filter: only files that exist and are source code (`.ts`, `.js`, `.py`, `.go`, `.rs`, `.java`, `.tsx`, `.jsx`, `.vue`, `.svelte`, `.css`, `.scss`, etc.)
 5. Write `${SESSION_ROOT}/${TICKET_ID}/review_scope.md`:
