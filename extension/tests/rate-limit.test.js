@@ -15,10 +15,10 @@ function makeTmpDir(prefix = 'rl-test-') {
 }
 
 // ---------------------------------------------------------------------------
-// detectRateLimitInLog
+// detectRateLimitInLog — returns RateLimitInfo
 // ---------------------------------------------------------------------------
 
-test('detectRateLimitInLog: returns true for rate_limit_event with status rejected', () => {
+test('detectRateLimitInLog: returns limited=true for rate_limit_event with status rejected (flat)', () => {
     const tmpDir = makeTmpDir();
     const logFile = path.join(tmpDir, 'iter.log');
     try {
@@ -27,13 +27,41 @@ test('detectRateLimitInLog: returns true for rate_limit_event with status reject
             JSON.stringify({ type: 'rate_limit_event', status: 'rejected' }),
         ];
         fs.writeFileSync(logFile, lines.join('\n'));
-        assert.equal(detectRateLimitInLog(logFile), true);
+        const info = detectRateLimitInLog(logFile);
+        assert.equal(info.limited, true);
+        assert.equal(info.resetsAt, undefined);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
 
-test('detectRateLimitInLog: returns false when no rate_limit_event present', () => {
+test('detectRateLimitInLog: returns limited=true with resetsAt for nested rate_limit_info', () => {
+    const tmpDir = makeTmpDir();
+    const logFile = path.join(tmpDir, 'iter.log');
+    try {
+        const lines = [
+            JSON.stringify({
+                type: 'rate_limit_event',
+                rate_limit_info: {
+                    status: 'rejected',
+                    resetsAt: 1772229600,
+                    rateLimitType: 'five_hour',
+                    overageStatus: 'allowed',
+                    isUsingOverage: true,
+                },
+            }),
+        ];
+        fs.writeFileSync(logFile, lines.join('\n'));
+        const info = detectRateLimitInLog(logFile);
+        assert.equal(info.limited, true);
+        assert.equal(info.resetsAt, 1772229600);
+        assert.equal(info.rateLimitType, 'five_hour');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectRateLimitInLog: returns limited=false when no rate_limit_event present', () => {
     const tmpDir = makeTmpDir();
     const logFile = path.join(tmpDir, 'iter.log');
     try {
@@ -42,21 +70,41 @@ test('detectRateLimitInLog: returns false when no rate_limit_event present', () 
             JSON.stringify({ type: 'result', subtype: 'success' }),
         ];
         fs.writeFileSync(logFile, lines.join('\n'));
-        assert.equal(detectRateLimitInLog(logFile), false);
+        const info = detectRateLimitInLog(logFile);
+        assert.equal(info.limited, false);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
 
-test('detectRateLimitInLog: returns false for rate_limit_event with non-rejected status', () => {
+test('detectRateLimitInLog: returns limited=false for rate_limit_event with non-rejected status', () => {
     const tmpDir = makeTmpDir();
     const logFile = path.join(tmpDir, 'iter.log');
     try {
         const lines = [
-            JSON.stringify({ type: 'rate_limit_event', status: 'allowed' }),
+            JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', resetsAt: 1772424000 } }),
         ];
         fs.writeFileSync(logFile, lines.join('\n'));
-        assert.equal(detectRateLimitInLog(logFile), false);
+        const info = detectRateLimitInLog(logFile);
+        assert.equal(info.limited, false);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectRateLimitInLog: returns limited=false for allowed_warning status', () => {
+    const tmpDir = makeTmpDir();
+    const logFile = path.join(tmpDir, 'iter.log');
+    try {
+        const lines = [
+            JSON.stringify({
+                type: 'rate_limit_event',
+                rate_limit_info: { status: 'allowed_warning', resetsAt: 1772816400, rateLimitType: 'seven_day', utilization: 0.52 },
+            }),
+        ];
+        fs.writeFileSync(logFile, lines.join('\n'));
+        const info = detectRateLimitInLog(logFile);
+        assert.equal(info.limited, false);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -69,31 +117,51 @@ test('detectRateLimitInLog: handles non-JSON lines gracefully', () => {
         const lines = [
             '{not valid json',
             'plain text line',
-            JSON.stringify({ type: 'rate_limit_event', status: 'rejected' }),
+            JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: 1772229600 } }),
         ];
         fs.writeFileSync(logFile, lines.join('\n'));
-        assert.equal(detectRateLimitInLog(logFile), true);
+        const info = detectRateLimitInLog(logFile);
+        assert.equal(info.limited, true);
+        assert.equal(info.resetsAt, 1772229600);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
 
-test('detectRateLimitInLog: returns false for missing file', () => {
-    assert.equal(detectRateLimitInLog('/nonexistent/path/iter.log'), false);
+test('detectRateLimitInLog: returns limited=false for missing file', () => {
+    const info = detectRateLimitInLog('/nonexistent/path/iter.log');
+    assert.equal(info.limited, false);
 });
 
 test('detectRateLimitInLog: only scans last 100 lines', () => {
     const tmpDir = makeTmpDir();
     const logFile = path.join(tmpDir, 'iter.log');
     try {
-        // Put rate limit event at line 1, then 150 normal lines after it
-        const lines = [JSON.stringify({ type: 'rate_limit_event', status: 'rejected' })];
+        const lines = [JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: 1772229600 } })];
         for (let i = 0; i < 150; i++) {
             lines.push(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: `line ${i}` }] } }));
         }
         fs.writeFileSync(logFile, lines.join('\n'));
-        // The rate_limit_event is at index 0, tail(-100) starts at index 51 — should miss it
-        assert.equal(detectRateLimitInLog(logFile), false);
+        const info = detectRateLimitInLog(logFile);
+        assert.equal(info.limited, false);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectRateLimitInLog: last rejected event wins (takes latest resetsAt)', () => {
+    const tmpDir = makeTmpDir();
+    const logFile = path.join(tmpDir, 'iter.log');
+    try {
+        const lines = [
+            JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: 1000000, rateLimitType: 'five_hour' } }),
+            JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: 2000000, rateLimitType: 'seven_day' } }),
+        ];
+        fs.writeFileSync(logFile, lines.join('\n'));
+        const info = detectRateLimitInLog(logFile);
+        assert.equal(info.limited, true);
+        assert.equal(info.resetsAt, 2000000);
+        assert.equal(info.rateLimitType, 'seven_day');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -163,7 +231,6 @@ test('detectRateLimitInText: ignores rate limit text inside tool_result lines', 
     const tmpDir = makeTmpDir();
     const logFile = path.join(tmpDir, 'iter.log');
     try {
-        // Rate limit text appears but inside a tool_result line — should be filtered out
         const lines = [
             '{"type":"tool_result","content":"Error: rate limit exceeded"}',
         ];
@@ -192,7 +259,6 @@ test('detectRateLimitInText: does not detect text beyond last 100 lines', () => 
     const tmpDir = makeTmpDir();
     const logFile = path.join(tmpDir, 'iter.log');
     try {
-        // Rate limit text at line 1, then 150 clean lines
         const lines = ['Rate limit exceeded'];
         for (let i = 0; i < 150; i++) {
             lines.push(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: `clean line ${i}` }] } }));
@@ -252,40 +318,46 @@ test('detectRateLimitInText: returns false for clean log', () => {
 });
 
 // ---------------------------------------------------------------------------
-// classifyIterationExit
+// classifyIterationExit — returns IterationExitResult
 // ---------------------------------------------------------------------------
 
 test('classifyIterationExit: task_completed → success', () => {
-    assert.equal(classifyIterationExit('task_completed', '/nonexistent/log'), 'success');
+    const r = classifyIterationExit('task_completed', '/nonexistent/log');
+    assert.equal(r.type, 'success');
+    assert.equal(r.rateLimitInfo, undefined);
 });
 
 test('classifyIterationExit: review_clean → success', () => {
-    assert.equal(classifyIterationExit('review_clean', '/nonexistent/log'), 'success');
+    assert.equal(classifyIterationExit('review_clean', '/nonexistent/log').type, 'success');
 });
 
 test('classifyIterationExit: error → error', () => {
-    assert.equal(classifyIterationExit('error', '/nonexistent/log'), 'error');
+    assert.equal(classifyIterationExit('error', '/nonexistent/log').type, 'error');
 });
 
 test('classifyIterationExit: inactive → inactive', () => {
-    assert.equal(classifyIterationExit('inactive', '/nonexistent/log'), 'inactive');
+    assert.equal(classifyIterationExit('inactive', '/nonexistent/log').type, 'inactive');
 });
 
-test('classifyIterationExit: continue with rate_limit_event in log → api_limit', () => {
+test('classifyIterationExit: continue with rate_limit_event in log → api_limit with rateLimitInfo', () => {
     const tmpDir = makeTmpDir();
     const logFile = path.join(tmpDir, 'iter.log');
     try {
         const lines = [
-            JSON.stringify({ type: 'rate_limit_event', status: 'rejected' }),
+            JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: 1772229600, rateLimitType: 'five_hour' } }),
         ];
         fs.writeFileSync(logFile, lines.join('\n'));
-        assert.equal(classifyIterationExit('continue', logFile), 'api_limit');
+        const r = classifyIterationExit('continue', logFile);
+        assert.equal(r.type, 'api_limit');
+        assert.equal(r.rateLimitInfo?.limited, true);
+        assert.equal(r.rateLimitInfo?.resetsAt, 1772229600);
+        assert.equal(r.rateLimitInfo?.rateLimitType, 'five_hour');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
 
-test('classifyIterationExit: continue with rate limit text in log → api_limit', () => {
+test('classifyIterationExit: continue with rate limit text in log → api_limit without rateLimitInfo', () => {
     const tmpDir = makeTmpDir();
     const logFile = path.join(tmpDir, 'iter.log');
     try {
@@ -293,7 +365,9 @@ test('classifyIterationExit: continue with rate limit text in log → api_limit'
             JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'API rate limit hit' }] } }),
         ];
         fs.writeFileSync(logFile, lines.join('\n'));
-        assert.equal(classifyIterationExit('continue', logFile), 'api_limit');
+        const r = classifyIterationExit('continue', logFile);
+        assert.equal(r.type, 'api_limit');
+        assert.equal(r.rateLimitInfo, undefined);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -308,27 +382,60 @@ test('classifyIterationExit: continue with clean log → success', () => {
             JSON.stringify({ type: 'result', subtype: 'success' }),
         ];
         fs.writeFileSync(logFile, lines.join('\n'));
-        assert.equal(classifyIterationExit('continue', logFile), 'success');
+        assert.equal(classifyIterationExit('continue', logFile).type, 'success');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
 
 test('classifyIterationExit: continue with missing log file → success', () => {
-    assert.equal(classifyIterationExit('continue', '/nonexistent/log'), 'success');
+    assert.equal(classifyIterationExit('continue', '/nonexistent/log').type, 'success');
 });
 
 test('classifyIterationExit: NDJSON detection takes priority over text detection', () => {
     const tmpDir = makeTmpDir();
     const logFile = path.join(tmpDir, 'iter.log');
     try {
-        // Both NDJSON and text patterns present — NDJSON checked first
         const lines = [
-            JSON.stringify({ type: 'rate_limit_event', status: 'rejected' }),
+            JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: 9999999 } }),
             'Rate limit exceeded in plain text too',
         ];
         fs.writeFileSync(logFile, lines.join('\n'));
-        assert.equal(classifyIterationExit('continue', logFile), 'api_limit');
+        const r = classifyIterationExit('continue', logFile);
+        assert.equal(r.type, 'api_limit');
+        assert.equal(r.rateLimitInfo?.resetsAt, 9999999);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('classifyIterationExit: text-only api_limit has no rateLimitInfo (wait_source will be config)', () => {
+    const tmpDir = makeTmpDir();
+    const logFile = path.join(tmpDir, 'iter.log');
+    try {
+        // Only text pattern, no NDJSON rate_limit_event
+        fs.writeFileSync(logFile, "You're out of usage for today\n");
+        const r = classifyIterationExit('continue', logFile);
+        assert.equal(r.type, 'api_limit');
+        assert.equal(r.rateLimitInfo, undefined);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectRateLimitInLog: resetsAt in the past still sets limited=true', () => {
+    // The resetsAt value is extracted regardless — the caller decides whether to use it
+    const tmpDir = makeTmpDir();
+    const logFile = path.join(tmpDir, 'iter.log');
+    try {
+        const pastEpoch = Math.floor(Date.now() / 1000) - 3600; // 1 hour ago
+        const lines = [
+            JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'rejected', resetsAt: pastEpoch, rateLimitType: 'five_hour' } }),
+        ];
+        fs.writeFileSync(logFile, lines.join('\n'));
+        const info = detectRateLimitInLog(logFile);
+        assert.equal(info.limited, true);
+        assert.equal(info.resetsAt, pastEpoch);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -345,6 +452,9 @@ test('countdown computes remaining time from rate_limit_wait.json', () => {
         started_at: new Date().toISOString(),
         wait_until: new Date(Date.now() + 52 * 60 * 1000 + 30 * 1000).toISOString(),
         consecutive_waits: 1,
+        rate_limit_type: 'five_hour',
+        resets_at_epoch: Math.floor(Date.now() / 1000) + 52 * 60,
+        wait_source: 'api',
     };
     const remainMs = new Date(waitData.wait_until).getTime() - Date.now();
     const remainSec = Math.ceil(remainMs / 1000);

@@ -92,6 +92,17 @@ export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];
 
 export type IterationExitType = 'success' | 'error' | 'api_limit' | 'inactive';
 
+export interface RateLimitInfo {
+  limited: boolean;
+  resetsAt?: number;       // Unix epoch seconds from API
+  rateLimitType?: string;  // 'five_hour' | 'seven_day' etc.
+}
+
+export interface IterationExitResult {
+  type: IterationExitType;
+  rateLimitInfo?: RateLimitInfo;
+}
+
 export interface ActivityEvent {
   ts: string;
   event: ActivityEventType;

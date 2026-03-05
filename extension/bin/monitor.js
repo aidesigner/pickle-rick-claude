@@ -111,9 +111,11 @@ function render(sessionDir) {
         const waitData = JSON.parse(fs.readFileSync(waitPath, 'utf-8'));
         if (waitData.waiting === true && waitData.wait_until) {
             const remainMs = new Date(waitData.wait_until).getTime() - Date.now();
+            const typeLabel = waitData.rate_limit_type ? ` [${waitData.rate_limit_type}]` : '';
+            const sourceLabel = waitData.wait_source === 'api' ? ' (API reset)' : '';
             if (remainMs > 0) {
                 const remainSec = Math.ceil(remainMs / 1000);
-                fields.push(['Rate Limit', `${y}⏳ Rate limited (${formatTime(remainSec)} remaining)${r}`]);
+                fields.push(['Rate Limit', `${y}⏳ Rate limited${typeLabel}${sourceLabel} (${formatTime(remainSec)} remaining)${r}`]);
             }
             else {
                 fields.push(['Rate Limit', `${y}⏳ Rate limit wait ending...${r}`]);

@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, buildHandoffSummary, sleep, writeStateFile } from '../services/pickle-utils.js';
-import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, type IterationExitType } from '../types/index.js';
+import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, type IterationExitType, type RateLimitInfo, type IterationExitResult } from '../types/index.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, type CircuitBreakerState } from '../services/circuit-breaker.js';
 
@@ -111,7 +111,8 @@ export function loadRateLimitSettings(extensionRoot: string): { waitMinutes: num
   return { waitMinutes, maxRetries };
 }
 
-export function detectRateLimitInLog(logFile: string): boolean {
+export function detectRateLimitInLog(logFile: string): RateLimitInfo {
+  const result: RateLimitInfo = { limited: false };
   try {
     const content = fs.readFileSync(logFile, 'utf-8');
     const lines = content.split('\n');
@@ -119,11 +120,19 @@ export function detectRateLimitInLog(logFile: string): boolean {
     for (const line of tail) {
       try {
         const parsed = JSON.parse(line);
-        if (parsed.type === 'rate_limit_event' && parsed.status === 'rejected') return true;
+        if (parsed.type !== 'rate_limit_event') continue;
+        // Real API nests under rate_limit_info; check both paths for robustness
+        const info = parsed.rate_limit_info ?? parsed;
+        const status = info.status;
+        if (status === 'rejected') {
+          result.limited = true;
+          if (typeof info.resetsAt === 'number') result.resetsAt = info.resetsAt;
+          if (typeof info.rateLimitType === 'string') result.rateLimitType = info.rateLimitType;
+        }
       } catch { /* not JSON */ }
     }
   } catch { /* file missing */ }
-  return false;
+  return result;
 }
 
 export function detectRateLimitInText(logFile: string): boolean {
@@ -142,13 +151,14 @@ export function detectRateLimitInText(logFile: string): boolean {
 export function classifyIterationExit(
   completionResult: string,
   logFile: string,
-): IterationExitType {
-  if (completionResult === 'inactive') return 'inactive';
-  if (completionResult === 'error') return 'error';
-  if (completionResult === 'task_completed' || completionResult === 'review_clean') return 'success';
-  if (detectRateLimitInLog(logFile)) return 'api_limit';
-  if (detectRateLimitInText(logFile)) return 'api_limit';
-  return 'success';
+): IterationExitResult {
+  if (completionResult === 'inactive') return { type: 'inactive' };
+  if (completionResult === 'error') return { type: 'error' };
+  if (completionResult === 'task_completed' || completionResult === 'review_clean') return { type: 'success' };
+  const rlInfo = detectRateLimitInLog(logFile);
+  if (rlInfo.limited) return { type: 'api_limit', rateLimitInfo: rlInfo };
+  if (detectRateLimitInText(logFile)) return { type: 'api_limit' };
+  return { type: 'success' };
 }
 
 async function runIteration(sessionDir: string, iterationNum: number, extensionRoot: string): Promise<string> {
@@ -427,12 +437,16 @@ async function main() {
 
     // --- Rate limit classification (MUST run before CB to prevent CB poisoning) ---
     const iterLogFile = path.join(sessionDir, `tmux_iteration_${iteration}.log`);
-    const exitType = classifyIterationExit(result, iterLogFile);
+    const exitResult = classifyIterationExit(result, iterLogFile);
+    const exitType = exitResult.type;
     logActivity({ event: 'iteration_end', source: 'pickle', session: path.basename(sessionDir), iteration, exit_type: exitType });
 
     if (exitType === 'api_limit') {
       consecutiveRateLimits++;
       log(`API rate limit detected (consecutive: ${consecutiveRateLimits}/${maxRateLimitRetries})`);
+      if (exitResult.rateLimitInfo?.resetsAt) {
+        log(`API reports reset at ${new Date(exitResult.rateLimitInfo.resetsAt * 1000).toISOString()} (type: ${exitResult.rateLimitInfo.rateLimitType || 'unknown'})`);
+      }
       if (consecutiveRateLimits >= maxRateLimitRetries) {
         exitReason = 'rate_limit_exhausted';
         logActivity({ event: 'rate_limit_exhausted', source: 'pickle',
@@ -441,13 +455,37 @@ async function main() {
         writeStateFile(statePath, state);
         break;
       }
+
+      // Compute wait time: use API resetsAt if available, fall back to static config.
+      // Cap API wait at 3× config default to prevent multi-day hangs from seven_day limits.
+      const configWaitMs = rateLimitWaitMinutes * 60 * 1000;
+      const maxApiWaitMs = configWaitMs * 3;
+      let computedWaitMs = configWaitMs;
+      let waitSource = 'config';
+      const rlResetsAt = exitResult.rateLimitInfo?.resetsAt;
+      if (typeof rlResetsAt === 'number' && rlResetsAt > 0) {
+        const apiWaitMs = (rlResetsAt * 1000) - Date.now();
+        if (apiWaitMs > 0 && apiWaitMs <= maxApiWaitMs) {
+          // Add 30s buffer so we don't resume exactly at the boundary
+          computedWaitMs = apiWaitMs + 30_000;
+          waitSource = 'api';
+          log(`Using API-provided reset time: ${Math.ceil(computedWaitMs / 60_000)}min wait (vs ${rateLimitWaitMinutes}min config default)`);
+        } else if (apiWaitMs > maxApiWaitMs) {
+          log(`API reset time ${Math.ceil(apiWaitMs / 60_000)}min exceeds cap (${Math.ceil(maxApiWaitMs / 60_000)}min) — using config default`);
+        }
+      }
+
+      const waitUntil = new Date(Date.now() + computedWaitMs).toISOString();
       logActivity({ event: 'rate_limit_wait', source: 'pickle',
-        session: path.basename(sessionDir), duration_min: rateLimitWaitMinutes });
+        session: path.basename(sessionDir), duration_min: Math.ceil(computedWaitMs / 60_000) });
       writeStateFile(path.join(sessionDir, 'rate_limit_wait.json'), {
         waiting: true, reason: 'API rate limit',
         started_at: new Date().toISOString(),
-        wait_until: new Date(Date.now() + rateLimitWaitMinutes * 60 * 1000).toISOString(),
+        wait_until: waitUntil,
         consecutive_waits: consecutiveRateLimits,
+        rate_limit_type: exitResult.rateLimitInfo?.rateLimitType || null,
+        resets_at_epoch: rlResetsAt || null,
+        wait_source: waitSource,
       });
 
       // Pre-wait time check
@@ -455,7 +493,7 @@ async function main() {
       const epoch = Number.isFinite(rawEpoch) ? rawEpoch : 0;
       const rawMax = Number(state.max_time_minutes);
       const maxMins = Number.isFinite(rawMax) ? rawMax : 0;
-      let actualWaitMs = rateLimitWaitMinutes * 60 * 1000;
+      let actualWaitMs = computedWaitMs;
       if (maxMins > 0 && epoch > 0) {
         const elapsed = Math.floor(Date.now() / 1000) - epoch;
         const remaining = (maxMins * 60) - elapsed;
@@ -483,9 +521,10 @@ async function main() {
       // Wake: cleanup + handoff
       try { fs.unlinkSync(path.join(sessionDir, 'rate_limit_wait.json')); } catch { /* ok */ }
       logActivity({ event: 'rate_limit_resume', source: 'pickle', session: path.basename(sessionDir) });
+      const waitedMinutes = Math.ceil(computedWaitMs / 60_000);
       const handoffContent = [
         buildHandoffSummary(state, sessionDir, iteration + 1), '',
-        `NOTE: Resumed after ${rateLimitWaitMinutes}-minute API rate limit wait.`,
+        `NOTE: Resumed after ${waitedMinutes}-minute API rate limit wait (source: ${waitSource}).`,
         'Resume from current phase — do not repeat the rate-limited iteration.',
       ].join('\n');
       const handoffTmp = path.join(sessionDir, `handoff.txt.tmp.${process.pid}`);

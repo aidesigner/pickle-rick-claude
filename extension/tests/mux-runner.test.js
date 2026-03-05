@@ -861,7 +861,7 @@ test('classifyIterationExit: inactive result returns inactive', () => {
     try {
         const logFile = path.join(tmpDir, 'test.log');
         fs.writeFileSync(logFile, 'some output\n');
-        assert.equal(classifyIterationExit('inactive', logFile), 'inactive');
+        assert.equal(classifyIterationExit('inactive', logFile).type, 'inactive');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -872,7 +872,7 @@ test('classifyIterationExit: error result returns error', () => {
     try {
         const logFile = path.join(tmpDir, 'test.log');
         fs.writeFileSync(logFile, 'some output\n');
-        assert.equal(classifyIterationExit('error', logFile), 'error');
+        assert.equal(classifyIterationExit('error', logFile).type, 'error');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -883,7 +883,7 @@ test('classifyIterationExit: task_completed returns success', () => {
     try {
         const logFile = path.join(tmpDir, 'test.log');
         fs.writeFileSync(logFile, 'normal output\n');
-        assert.equal(classifyIterationExit('task_completed', logFile), 'success');
+        assert.equal(classifyIterationExit('task_completed', logFile).type, 'success');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -894,7 +894,7 @@ test('classifyIterationExit: review_clean returns success', () => {
     try {
         const logFile = path.join(tmpDir, 'test.log');
         fs.writeFileSync(logFile, 'clean output\n');
-        assert.equal(classifyIterationExit('review_clean', logFile), 'success');
+        assert.equal(classifyIterationExit('review_clean', logFile).type, 'success');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -909,7 +909,7 @@ test('classifyIterationExit: continue with rate_limit_event JSON returns api_lim
             JSON.stringify({ type: 'rate_limit_event', status: 'rejected' }),
         ];
         fs.writeFileSync(logFile, lines.join('\n'));
-        assert.equal(classifyIterationExit('continue', logFile), 'api_limit');
+        assert.equal(classifyIterationExit('continue', logFile).type, 'api_limit');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -920,7 +920,7 @@ test('classifyIterationExit: continue with rate limit text pattern returns api_l
     try {
         const logFile = path.join(tmpDir, 'test.log');
         fs.writeFileSync(logFile, 'You have reached your 5 hour limit. Please try back later.\n');
-        assert.equal(classifyIterationExit('continue', logFile), 'api_limit');
+        assert.equal(classifyIterationExit('continue', logFile).type, 'api_limit');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -931,14 +931,14 @@ test('classifyIterationExit: continue with clean log returns success', () => {
     try {
         const logFile = path.join(tmpDir, 'test.log');
         fs.writeFileSync(logFile, 'all good, no issues\n');
-        assert.equal(classifyIterationExit('continue', logFile), 'success');
+        assert.equal(classifyIterationExit('continue', logFile).type, 'success');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
 
 test('classifyIterationExit: missing log file still returns success for continue', () => {
-    assert.equal(classifyIterationExit('continue', '/nonexistent/path/log.log'), 'success');
+    assert.equal(classifyIterationExit('continue', '/nonexistent/path/log.log').type, 'success');
 });
 
 // ---------------------------------------------------------------------------
@@ -950,7 +950,7 @@ test('detectRateLimitInLog: returns true for rate_limit_event with rejected stat
     try {
         const logFile = path.join(tmpDir, 'test.log');
         fs.writeFileSync(logFile, JSON.stringify({ type: 'rate_limit_event', status: 'rejected' }) + '\n');
-        assert.equal(detectRateLimitInLog(logFile), true);
+        assert.equal(detectRateLimitInLog(logFile).limited, true);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -961,14 +961,14 @@ test('detectRateLimitInLog: returns false for rate_limit_event with accepted sta
     try {
         const logFile = path.join(tmpDir, 'test.log');
         fs.writeFileSync(logFile, JSON.stringify({ type: 'rate_limit_event', status: 'accepted' }) + '\n');
-        assert.equal(detectRateLimitInLog(logFile), false);
+        assert.equal(detectRateLimitInLog(logFile).limited, false);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
 
-test('detectRateLimitInLog: returns false for missing file', () => {
-    assert.equal(detectRateLimitInLog('/nonexistent/file.log'), false);
+test('detectRateLimitInLog: returns limited=false for missing file', () => {
+    assert.equal(detectRateLimitInLog('/nonexistent/file.log').limited, false);
 });
 
 test('detectRateLimitInLog: only checks last 100 lines', () => {
@@ -979,7 +979,7 @@ test('detectRateLimitInLog: only checks last 100 lines', () => {
         const lines = [JSON.stringify({ type: 'rate_limit_event', status: 'rejected' })];
         for (let i = 0; i < 110; i++) lines.push('filler line');
         fs.writeFileSync(logFile, lines.join('\n'));
-        assert.equal(detectRateLimitInLog(logFile), false);
+        assert.equal(detectRateLimitInLog(logFile).limited, false);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -1098,19 +1098,15 @@ test('mux-runner: cleans up stale rate_limit_wait.json on startup', () => {
 // ---------------------------------------------------------------------------
 
 test('classifyIterationExit: success exit type used to reset consecutiveRateLimits counter', () => {
-    // This verifies the contract: when classifyIterationExit returns 'success',
+    // This verifies the contract: when classifyIterationExit returns type 'success',
     // the main loop resets consecutiveRateLimits to 0.
-    // We test the function returns 'success' for the expected inputs.
     const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-exit-')));
     try {
         const logFile = path.join(tmpDir, 'clean.log');
         fs.writeFileSync(logFile, 'normal iteration output\n');
-        // 'continue' with clean log → success
-        assert.equal(classifyIterationExit('continue', logFile), 'success');
-        // 'task_completed' → success
-        assert.equal(classifyIterationExit('task_completed', logFile), 'success');
-        // 'review_clean' → success
-        assert.equal(classifyIterationExit('review_clean', logFile), 'success');
+        assert.equal(classifyIterationExit('continue', logFile).type, 'success');
+        assert.equal(classifyIterationExit('task_completed', logFile).type, 'success');
+        assert.equal(classifyIterationExit('review_clean', logFile).type, 'success');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -1121,11 +1117,11 @@ test('classifyIterationExit: api_limit is distinct from other exit types', () =>
     try {
         const logFile = path.join(tmpDir, 'rl.log');
         fs.writeFileSync(logFile, JSON.stringify({ type: 'rate_limit_event', status: 'rejected' }) + '\n');
-        const exitType = classifyIterationExit('continue', logFile);
-        assert.equal(exitType, 'api_limit');
-        assert.notEqual(exitType, 'success');
-        assert.notEqual(exitType, 'error');
-        assert.notEqual(exitType, 'inactive');
+        const result = classifyIterationExit('continue', logFile);
+        assert.equal(result.type, 'api_limit');
+        assert.notEqual(result.type, 'success');
+        assert.notEqual(result.type, 'error');
+        assert.notEqual(result.type, 'inactive');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
