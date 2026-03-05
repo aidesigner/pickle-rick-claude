@@ -94,6 +94,8 @@ While Pickle Rick builds things, **Mr. Meeseeks** reviews them. Summon him with 
 
 Minimum 10 passes. Maximum 50. Each pass runs tests first, then reviews with escalating focus across 8 categories: dependency health (pass 1) → security (2-3) → correctness (4-5) → architecture (6-7) → test coverage (8-9) → resilience (10-11) → code quality (12-13) → polish (14+). Every issue found and fixed is logged to `meeseeks-summary.md` in the session directory — a full audit trail with file paths, descriptions, and commit hashes. When there's nothing left to fix, he outputs `EXISTENCE_IS_PAIN` and gratefully pops out of existence.
 
+**Model routing**: Meeseeks review passes use **Sonnet** by default instead of Opus. Reviews are pattern-matching tasks — finding unused imports, missing tests, style issues — that don't need Opus-level reasoning. This significantly reduces token cost for 10-50 pass review chains. Configure via `default_meeseeks_model` in `pickle_settings.json` (set to `"opus"` to restore previous behavior, or use a full model ID like `"claude-sonnet-4-6"`).
+
 ```bash
 /meeseeks "review this codebase"     # Summon a Meeseeks. He takes it from here.
 ```
@@ -552,6 +554,7 @@ All defaults are configurable via `~/.claude/pickle-rick/pickle_settings.json`:
 | `default_tmux_max_turns` | 200 | Max Claude turns per iteration (tmux mode) |
 | `default_refinement_cycles` | 3 | Number of refinement analysis passes |
 | `default_refinement_max_turns` | 100 | Max Claude turns per refinement worker |
+| `default_meeseeks_model` | `"sonnet"` | Model for Meeseeks review passes (alias or full ID) |
 | `default_meeseeks_min_passes` | 10 | Minimum review passes before clean exit |
 | `default_meeseeks_max_passes` | 50 | Maximum review passes |
 | `default_circuit_breaker_enabled` | true | Enable three-state circuit breaker in mux-runner |
