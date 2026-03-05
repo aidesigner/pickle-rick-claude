@@ -104,6 +104,21 @@ Analyze the donor code. Produce `${SESSION_ROOT}/portal/pattern_analysis.md`:
 
 ## Anti-Patterns
 [What NOT to do when implementing this — common mistakes]
+
+<!-- [Improvement B: File Manifest -- START] -->
+## File Manifest
+
+MANDATORY: Use Glob to enumerate ALL donor files. Do not truncate, summarize with "...", or omit files you consider unimportant. Completeness is the entire point of this manifest.
+
+### Root files ([count from Glob])
+[List EVERY file in donor root — one per line with brief purpose]
+- filename.ext (brief purpose)
+
+### Subdirectories
+[For each subdirectory, list ALL files:]
+- dirname/ ([count] files)
+  - filename.ext (brief purpose)
+<!-- [Improvement B: File Manifest -- END] -->
 ```
 
 For `--depth shallow`: focus on Summary, Structural Pattern, and Invariants only.
