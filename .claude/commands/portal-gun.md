@@ -140,6 +140,24 @@ Language scope: TypeScript and JavaScript only. If donor is another language, wr
 [Import graph here -- trace from entry point, show dependency tree]
 (files NOT reachable from entry -- classify as Unused)
 <!-- [Improvement C: Import Graph -- END] -->
+
+<!-- [Improvement D: Transplant Classification -- START] -->
+### File Classification
+
+Classify each donor file based on import graph reachability and content analysis:
+
+| File | Classification | Rationale |
+|:---|:---|:---|
+| [file] | [category] | [why] |
+
+Categories and detection heuristics:
+- **Direct transplant**: Reachable from entry point AND target has no equivalent file
+- **Type-only transplant**: Exports only `interface`/`type`/`enum` -- no runtime code
+- **Behavioral reference**: UI/framework-specific code in a different stack than target (e.g., vanilla JS -> React)
+- **Replace with equivalent**: Grep target for similar function names/exports -- match found
+- **Environment prerequisite**: Contains `process.env`, config objects, or infrastructure references
+- **Not needed**: NOT reachable from entry point import graph
+<!-- [Improvement D: Transplant Classification -- END] -->
 ```
 
 For `--depth shallow`: focus on Summary, Structural Pattern, and Invariants only.
