@@ -234,6 +234,69 @@ Require at least one test per invariant from pattern_analysis.md.
 
 Mark checkboxes as sections are drafted.
 
+<!-- [Improvement A: PRD Validation -- START] -->
+## Step 5.5: PRD Validation Pass
+
+Before refinement, validate all file paths referenced in the PRD against the actual filesystem. This catches wrong prefixes, stale line numbers, incomplete directory listings, and hallucinated paths before they propagate into tickets.
+
+### 5.5a: Extract Paths
+Scan `${SESSION_ROOT}/prd.md` for all backtick-quoted strings containing `/`. These are candidate file paths. Exclude:
+- URLs (strings starting with `http://`, `https://`, `git://`)
+- Shell variables without a path component (e.g., `${SESSION_ROOT}` alone)
+- Glob patterns used as examples (e.g., `**/*.ts`)
+
+### 5.5b: Classify Each Path
+For each extracted path, apply detection in this order (stop at first match):
+
+1. **To-create**: Path appears under a "New Files", "Files to Create", or "Files to Add" heading in the PRD → `TO-CREATE: {path} (skipped)`. Skip further checks.
+2. **Exists (valid or shifted)**: `Read(path)` succeeds → file exists. If a line number is referenced (e.g., `path:42`), read that line. If content at the stated line doesn't match what the PRD describes, search the file for the expected content → `SHIFTED: {path}:{stated} -> actual :{found}`. If line content matches or no line number is referenced → `VALID: {path}`.
+3. **Wrong prefix**: `Read(path)` fails → `Glob(**/${basename})`. If 1+ matches found → `INVALID: {path} -- found at {match}`. If multiple matches, list all.
+4. **Incomplete directory**: Path references a directory (no file extension, or PRD lists directory contents). Run `Glob({dir}/*)` and compare count to PRD-listed count → `INCOMPLETE: {dir} -- PRD lists {n}, found {actual}. Missing: {list}`.
+5. **Hallucinated**: `Read(path)` fails AND `Glob(**/${basename})` returns 0 matches → `NOT FOUND: {path} -- no match in codebase`.
+6. **Stale reference**: `Read(path)` succeeds (file exists) but the referenced symbol, function, or export (e.g., `export function foo`) is not found anywhere in the file → `STALE: {path} -- referenced content "{snippet}" not found in file`.
+
+### 5.5c: Write Validation Report
+Write `${SESSION_ROOT}/portal/validation_report.md`:
+
+```markdown
+# PRD Validation Report
+Generated: [timestamp]
+Source PRD: ${SESSION_ROOT}/prd.md
+
+## Summary
+- Total paths extracted: [N]
+- Valid: [N]
+- To-create (skipped): [N]
+- Shifted line numbers: [N]
+- Invalid prefix: [N]
+- Incomplete directory: [N]
+- Not found: [N]
+- Stale reference: [N]
+
+## Details
+[One line per path with classification, e.g.:]
+VALID: src/index.ts
+TO-CREATE: src/new-module.ts (skipped)
+SHIFTED: src/db/index.ts:29 -> actual :47
+INVALID: pdfjs-pipeline/adapter.ts -- found at src/pdfjs-pipeline/adapter.ts
+INCOMPLETE: src/schema/ -- PRD lists 4, found 8. Missing: e.ts, f.ts, g.ts, h.ts
+NOT FOUND: src/phantom/ghost.ts -- no match in codebase
+STALE: src/auth.ts -- referenced content "export function validateToken" not found in file
+```
+
+### 5.5d: Update PRD
+Apply corrections to `${SESSION_ROOT}/prd.md` based on the validation report:
+
+- **SHIFTED**: Update line numbers in the PRD to actual locations.
+- **INVALID** (with matches): Replace wrong paths with correct paths found by Glob.
+- **INCOMPLETE**: Add a `<!-- INCOMPLETE: {dir} has {N} additional files not listed -->` comment in the PRD near the directory reference.
+- **NOT FOUND**: Mark with `[UNVERIFIED]` suffix (e.g., `` `src/phantom/ghost.ts` [UNVERIFIED] ``).
+- **STALE**: Mark with `[STALE]` suffix and note the referenced content was not found.
+- **TO-CREATE** and **VALID**: No changes needed.
+
+Do NOT use bash commands (`stat`, `ls`, `grep`, `find`). Use Read, Glob, Grep tools only.
+<!-- [Improvement A: PRD Validation -- END] -->
+
 ## Step 6: Refinement Cycle (unless `--no-refine`)
 
 If `SKIP_REFINE` is true → skip to Step 7.
