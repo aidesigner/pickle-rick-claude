@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="images/architecture.png" alt="Pickle Rick Architecture" width="780" />
+  <img src="images/architecture.png" alt="Pickle Rick Architecture" width="100%" />
 </p>
 
 # Pickle Rick Architecture

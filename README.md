@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="images/pickle-rick.png" alt="Pickle Rick for Claude Code" width="780" />
+  <img src="images/pickle-rick.png" alt="Pickle Rick for Claude Code" width="100%" />
 </p>
 
 # 🥒 Pickle Rick & 👋 Mr. Meeseeks for Claude Code
