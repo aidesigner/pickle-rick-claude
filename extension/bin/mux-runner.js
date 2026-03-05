@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, buildHandoffSummary, sleep, writeStateFile } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone } from '../services/pickle-utils.js';
 import { PromiseTokens, hasToken, VALID_STEPS, Defaults } from '../types/index.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult } from '../services/circuit-breaker.js';
@@ -390,6 +390,7 @@ async function main() {
     let lastStateIteration = -1;
     let stallCount = 0;
     let consecutiveRateLimits = 0;
+    let previousTicket = null;
     let exitReason = 'error';
     while (true) {
         let state;
@@ -456,9 +457,24 @@ async function main() {
             lastStateIteration = curIter;
         }
         iteration++;
+        const preTicket = state.current_ticket || null;
+        if (previousTicket === null)
+            previousTicket = preTicket;
         log(`--- Iteration ${iteration} (state.iteration=${state.iteration}) ---`);
         logActivity({ event: 'iteration_start', source: 'pickle', session: path.basename(sessionDir), iteration });
         const result = await runIteration(sessionDir, iteration, extensionRoot);
+        // Detect ticket transitions: if current_ticket changed, mark the previous one Done
+        try {
+            const postState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+            const postTicket = postState.current_ticket || null;
+            if (previousTicket && postTicket !== previousTicket) {
+                if (markTicketDone(sessionDir, previousTicket)) {
+                    log(`Marked ticket ${previousTicket} as Done (transitioned to ${postTicket || 'none'})`);
+                }
+            }
+            previousTicket = postTicket;
+        }
+        catch { /* state read failed — skip transition check */ }
         // --- Rate limit classification (MUST run before CB to prevent CB poisoning) ---
         const iterLogFile = path.join(sessionDir, `tmux_iteration_${iteration}.log`);
         const exitResult = classifyIterationExit(result, iterLogFile);
@@ -625,6 +641,12 @@ async function main() {
                 log(`ERROR: Cannot read state.json after task_completed: ${msg}. Exiting.`);
                 exitReason = 'success';
                 break;
+            }
+            // Mark final ticket as Done before exiting or chaining
+            if (curState.current_ticket) {
+                if (markTicketDone(sessionDir, curState.current_ticket)) {
+                    log(`Marked final ticket ${curState.current_ticket} as Done`);
+                }
             }
             if (curState.chain_meeseeks === true) {
                 const newState = transitionToMeeseeks(curState, extensionRoot);

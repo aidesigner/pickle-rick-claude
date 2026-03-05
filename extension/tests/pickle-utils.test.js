@@ -14,6 +14,7 @@ import {
     pruneOldSessions,
     extractFrontmatter,
     getExtensionRoot,
+    markTicketDone,
 } from '../services/pickle-utils.js';
 
 // --- getExtensionRoot ---
@@ -602,5 +603,75 @@ test('pruneOldSessions: corrupt started_at but recent mtime is kept', () => {
         );
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+// --- markTicketDone ---
+
+test('markTicketDone: updates unquoted Todo to Done', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        const sub = path.join(dir, 'abc123');
+        fs.mkdirSync(sub);
+        fs.writeFileSync(path.join(sub, 'linear_ticket_abc123.md'),
+            '---\nid: abc123\ntitle: Test\nstatus: Todo\norder: 10\n---\nBody');
+        const result = markTicketDone(dir, 'abc123');
+        assert.equal(result, true);
+        const content = fs.readFileSync(path.join(sub, 'linear_ticket_abc123.md'), 'utf-8');
+        assert.ok(content.includes('status: "Done"'), `Expected status: "Done", got: ${content}`);
+        assert.ok(content.includes('Body'), 'Body should be preserved');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('markTicketDone: updates quoted "In Progress" to Done', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        const sub = path.join(dir, 'def456');
+        fs.mkdirSync(sub);
+        fs.writeFileSync(path.join(sub, 'linear_ticket_def456.md'),
+            '---\nid: def456\ntitle: Test\nstatus: "In Progress"\norder: 10\n---\n');
+        const result = markTicketDone(dir, 'def456');
+        assert.equal(result, true);
+        const content = fs.readFileSync(path.join(sub, 'linear_ticket_def456.md'), 'utf-8');
+        assert.ok(content.includes('status: "Done"'));
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('markTicketDone: no-op when already Done', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        const sub = path.join(dir, 'ghi789');
+        fs.mkdirSync(sub);
+        fs.writeFileSync(path.join(sub, 'linear_ticket_ghi789.md'),
+            '---\nid: ghi789\ntitle: Test\nstatus: "Done"\norder: 10\n---\n');
+        const result = markTicketDone(dir, 'ghi789');
+        assert.equal(result, false, 'Should return false when already Done');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('markTicketDone: returns false for nonexistent ticket dir', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        assert.equal(markTicketDone(dir, 'nonexistent'), false);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('markTicketDone: returns false when no linear_ticket_ file exists', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        const sub = path.join(dir, 'jkl012');
+        fs.mkdirSync(sub);
+        fs.writeFileSync(path.join(sub, 'research_notes.md'), '# Notes');
+        assert.equal(markTicketDone(dir, 'jkl012'), false);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
     }
 });

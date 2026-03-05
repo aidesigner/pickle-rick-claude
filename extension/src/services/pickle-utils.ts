@@ -197,6 +197,28 @@ export function parseTicketFrontmatter(filePath: string): TicketInfo | null {
   }
 }
 
+/**
+ * Marks a ticket's frontmatter status as "Done" by rewriting the status line.
+ * No-op if ticket dir or file doesn't exist, or status is already Done.
+ */
+export function markTicketDone(sessionDir: string, ticketId: string): boolean {
+  try {
+    const ticketDir = path.join(sessionDir, ticketId);
+    const files = fs.readdirSync(ticketDir);
+    const ticketFile = files.find(f => f.startsWith('linear_ticket_') && f.endsWith('.md'));
+    if (!ticketFile) return false;
+    const filePath = path.join(ticketDir, ticketFile);
+    const content = fs.readFileSync(filePath, 'utf-8');
+    // Replace status line in frontmatter (handles quoted/unquoted values)
+    const updated = content.replace(/^(status:\s*).*$/m, '$1"Done"');
+    if (updated === content) return false;
+    fs.writeFileSync(filePath, updated);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function collectTickets(sessionDir: string): TicketInfo[] {
   try {
     const entries = fs.readdirSync(sessionDir, { withFileTypes: true });
