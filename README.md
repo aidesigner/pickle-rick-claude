@@ -10,7 +10,7 @@ Pickle Rick is a complete agentic engineering toolbelt built on the [Ralph Wiggu
 
 - **Context clearing** between every iteration — no drift or context rot, even on 500+ iteration epics
 - **Three-state circuit breaker** auto-stops runaway sessions by tracking git-diff progress and repeated errors
-- **Rate limit auto-recovery** detects API throttling, waits it out with a cancellable countdown, and resumes — surviving long or overnight runs that hit per-session caps
+- **Rate limit auto-recovery** detects API throttling via structured NDJSON events, computes precise wait from the API's `resetsAt` epoch (falling back to config default), and resumes automatically — surviving long or overnight runs that hit per-session caps
 - **Pickle Jar** queues tasks for unattended batch execution overnight
 - **Built-in metrics** track token usage, commits, and lines changed
 - **Full pipeline chaining** — refinement, execution, and code review in one command, with a macOS notification when it's done
@@ -168,9 +168,9 @@ Long tmux sessions — especially overnight runs or `--meeseeks` chains — will
 
 After every iteration, `classifyIterationExit()` checks two signals before anything else (including the circuit breaker, so rate limits don't poison progress tracking):
 
-**NDJSON detection** — Scans the last 100 lines of the iteration log for `{"type": "rate_limit_event", "status": "rejected"}` — structured events from Claude's `stream-json` output. This is the primary signal.
+**NDJSON detection** — Scans the last 100 lines of the iteration log for `{"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", ...}}` — structured events from Claude's `stream-json` output. This is the primary signal. When detected, extracts `resetsAt` (Unix epoch) and `rateLimitType` (`five_hour`, `seven_day`, etc.) to compute a precise wait duration.
 
-**Text pattern detection** — Regex fallback for natural language rate limit messages (`"5 per hour limit"`, `"usage limit reached"`, `"rate limit"`). Filters out `user` and `tool_result` lines to avoid false positives from the model discussing rate limits.
+**Text pattern detection** — Regex fallback for natural language rate limit messages (`"5 per hour limit"`, `"usage limit reached"`, `"rate limit"`, `"out of usage"`). Filters out `user` and `tool_result` lines to avoid false positives from the model discussing rate limits. When only text detection fires, the static `default_rate_limit_wait_minutes` is used.
 
 ### Wait-and-Resume Cycle
 
@@ -178,13 +178,17 @@ After every iteration, `classifyIterationExit()` checks two signals before anyth
 Iteration exits
       │
       ▼
-classifyIterationExit()
+classifyIterationExit() → IterationExitResult
       │
   api_limit? ── No ──► normal CB/result handling
       │
-      │ Yes
+      │ Yes (carries RateLimitInfo with resetsAt if available)
       ▼
-Write rate_limit_wait.json (monitor shows countdown)
+Compute wait: API resetsAt + 30s buffer, or config default
+(capped at 3× config to prevent multi-day hangs)
+      │
+      ▼
+Write rate_limit_wait.json (monitor shows countdown + type)
       │
       ▼
 ┌─────────────────────────────────────────┐
@@ -202,17 +206,19 @@ Continue loop → next iteration
 
 **Consecutive limit**: After `default_max_rate_limit_retries` (default: 3) consecutive rate limits without a successful iteration between them, the runner exits with `rate_limit_exhausted`. A successful iteration resets the counter.
 
-**Time-limit aware**: If the configured wait would exceed the session's `max_time_minutes`, the wait is clamped to the remaining time (or the session exits immediately if time is already up).
+**Time-limit aware**: If the computed wait would exceed the session's `max_time_minutes`, the wait is clamped to the remaining time (or the session exits immediately if time is already up).
+
+**Smart backoff**: When a structured `rate_limit_event` is available, the runner uses the API's `resetsAt` epoch to compute the exact wait duration (+ 30s buffer). This avoids both under-waiting (resuming before the window opens) and over-waiting (sitting idle for 60 minutes when the limit resets in 12). The API wait is capped at 3× `default_rate_limit_wait_minutes` to prevent `seven_day` limits from hanging a session for days — if the reset is too far out, the static config default is used instead.
 
 ### Monitor Display
 
-When the runner is in a rate limit wait, the tmux monitor shows a countdown timer with minutes:seconds remaining until resume. The `rate_limit_wait.json` file contains `wait_until` as an ISO timestamp — the monitor computes remaining time from that.
+When the runner is in a rate limit wait, the tmux monitor shows a countdown timer with minutes:seconds remaining until resume. It also displays the rate limit type (e.g., `[five_hour]`) and source indicator (`(API reset)` when using the structured reset time vs config default). The `rate_limit_wait.json` file contains `wait_until` as an ISO timestamp, plus `rate_limit_type`, `resets_at_epoch`, and `wait_source` (`"api"` or `"config"`).
 
 ### Settings
 
 | Setting | Default | Description |
 |---|---|---|
-| `default_rate_limit_wait_minutes` | 60 | How long to wait after detecting a rate limit |
+| `default_rate_limit_wait_minutes` | 60 | Fallback wait duration when no API reset time is available. Also used as the base for the 3× cap on API-derived waits |
 | `default_max_rate_limit_retries` | 3 | Consecutive rate limits before giving up |
 
 ---
@@ -552,7 +558,7 @@ All defaults are configurable via `~/.claude/pickle-rick/pickle_settings.json`:
 | `default_cb_no_progress_threshold` | 5 | Consecutive no-progress iterations before OPEN |
 | `default_cb_same_error_threshold` | 5 | Consecutive identical errors before OPEN |
 | `default_cb_half_open_after` | 2 | No-progress iterations before entering HALF_OPEN |
-| `default_rate_limit_wait_minutes` | 60 | Wait duration after API rate limit detection |
+| `default_rate_limit_wait_minutes` | 60 | Fallback wait when no API reset time available; also base for 3× cap |
 | `default_max_rate_limit_retries` | 3 | Consecutive rate limits before giving up |
 
 ---
@@ -735,7 +741,7 @@ Each session directory accumulates execution traces and work products:
 | `worker_<role>_c<N>.log` | PRD refinement analyst output per role per cycle |
 | `meeseeks-summary.md` | Per-pass table of issues found/fixed, test status, commit hashes |
 | `circuit_breaker.json` | Circuit breaker state: `state` (CLOSED/HALF_OPEN/OPEN), counters, `lastError`, `reason` |
-| `rate_limit_wait.json` | Transient: `waiting`, `wait_until` (ISO), `consecutive_waits`. Deleted on resume. Monitor reads this for countdown display |
+| `rate_limit_wait.json` | Transient: `waiting`, `wait_until` (ISO), `consecutive_waits`, `rate_limit_type`, `resets_at_epoch`, `wait_source` (`"api"`/`"config"`). Deleted on resume. Monitor reads this for countdown + type display |
 
 **Ticket artifacts** follow the lifecycle phases: `research_<id>.md` → `research_review.md` → `plan_<id>.md` → `plan_review.md` → implementation (code changes + commits). These persist in the session directory and can be reviewed after the run.
 
