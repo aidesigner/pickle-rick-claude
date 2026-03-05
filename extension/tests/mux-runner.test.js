@@ -489,7 +489,7 @@ test('mux-runner: creates mux-runner.log in session directory', () => {
 
 // --- Completion classification (classifyCompletion) ---
 
-import { buildTmuxNotification, classifyCompletion, extractAssistantContent, transitionToMeeseeks, loadRateLimitSettings, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText } from '../bin/mux-runner.js';
+import { buildTmuxNotification, classifyCompletion, extractAssistantContent, transitionToMeeseeks, loadRateLimitSettings, loadMeeseeksModel, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText } from '../bin/mux-runner.js';
 
 test('classifyCompletion: TASK_COMPLETED returns continue (single ticket, loop continues)', () => {
     assert.equal(classifyCompletion('<promise>TASK_COMPLETED</promise>'), 'continue');
@@ -829,6 +829,63 @@ test('loadRateLimitSettings: boundary value 1 is accepted (minimum floor)', () =
         const result = loadRateLimitSettings(fakeRoot);
         assert.equal(result.waitMinutes, 1);
         assert.equal(result.maxRetries, 1);
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// loadMeeseeksModel
+// ---------------------------------------------------------------------------
+
+test('loadMeeseeksModel: returns "sonnet" when no settings file', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mm-')));
+    try {
+        assert.equal(loadMeeseeksModel(fakeRoot), 'sonnet');
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
+});
+
+test('loadMeeseeksModel: reads custom model from pickle_settings.json', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mm-')));
+    try {
+        fs.writeFileSync(path.join(fakeRoot, 'pickle_settings.json'),
+            JSON.stringify({ default_meeseeks_model: 'haiku' }));
+        assert.equal(loadMeeseeksModel(fakeRoot), 'haiku');
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
+});
+
+test('loadMeeseeksModel: accepts full model ID', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mm-')));
+    try {
+        fs.writeFileSync(path.join(fakeRoot, 'pickle_settings.json'),
+            JSON.stringify({ default_meeseeks_model: 'claude-sonnet-4-6' }));
+        assert.equal(loadMeeseeksModel(fakeRoot), 'claude-sonnet-4-6');
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
+});
+
+test('loadMeeseeksModel: empty string falls back to sonnet', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mm-')));
+    try {
+        fs.writeFileSync(path.join(fakeRoot, 'pickle_settings.json'),
+            JSON.stringify({ default_meeseeks_model: '' }));
+        assert.equal(loadMeeseeksModel(fakeRoot), 'sonnet');
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
+});
+
+test('loadMeeseeksModel: non-string value falls back to sonnet', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mm-')));
+    try {
+        fs.writeFileSync(path.join(fakeRoot, 'pickle_settings.json'),
+            JSON.stringify({ default_meeseeks_model: 42 }));
+        assert.equal(loadMeeseeksModel(fakeRoot), 'sonnet');
     } finally {
         fs.rmSync(fakeRoot, { recursive: true, force: true });
     }

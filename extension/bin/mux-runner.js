@@ -98,6 +98,16 @@ export function transitionToMeeseeks(state, extensionRoot) {
         current_ticket: null,
     };
 }
+export function loadMeeseeksModel(extensionRoot) {
+    try {
+        const raw = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
+        if (typeof raw.default_meeseeks_model === 'string' && raw.default_meeseeks_model.length > 0) {
+            return raw.default_meeseeks_model;
+        }
+    }
+    catch { /* use default */ }
+    return 'sonnet';
+}
 export function loadRateLimitSettings(extensionRoot) {
     let waitMinutes = 60;
     let maxRetries = 3;
@@ -223,6 +233,7 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
         }
     }
     catch { /* use default */ }
+    const meeseeksModel = loadMeeseeksModel(extensionRoot);
     const logFile = path.join(sessionDir, `tmux_iteration_${iterationNum}.log`);
     const cmdArgs = [
         '--dangerously-skip-permissions',
@@ -231,8 +242,12 @@ async function runIteration(sessionDir, iterationNum, extensionRoot) {
         '--no-session-persistence',
         '--output-format', 'stream-json', '--verbose',
         '--max-turns', String(maxTurns),
-        '-p', managerPrompt,
     ];
+    // Route meeseeks review passes through a cheaper model (default: sonnet)
+    if (templateName === 'meeseeks.md' && meeseeksModel) {
+        cmdArgs.push('--model', meeseeksModel);
+    }
+    cmdArgs.push('-p', managerPrompt);
     const env = { ...process.env, PICKLE_STATE_FILE: statePath, PYTHONUNBUFFERED: '1' };
     // Remove CLAUDECODE so the spawned claude process doesn't think it's nested
     // inside another Claude Code session (which would alter its behavior).
