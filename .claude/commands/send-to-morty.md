@@ -43,7 +43,16 @@ Read plan. FAIL if: vague ("update the logic"), no verification commands, generi
 ### 5. Implement
 No plan = no code. Execute plan steps, mark `[x]` as done. Run verifications after each phase.
 
-### 6. Simplify
+### 6. Code Review
+Self-review all changes from this ticket (`git diff`). Write `${TICKET_DIR}/code_review_[date].md`:
+1. **Correctness**: Logic errors, off-by-ones, missed edge cases, null/undefined paths
+2. **Security**: Injection, auth bypass, secrets exposure, OWASP top 10
+3. **Tests**: Missing coverage, fragile assertions, untested error paths
+4. **Architecture**: Coupling violations, abstraction leaks, contract mismatches
+5. **Verdict**: PASS / NEEDS_FIX (list specific fixes with file:line refs)
+- PASS → continue. NEEDS_FIX → apply fixes, re-run verifications, then continue.
+
+### 7. Simplify
 Surgical cleanup on files modified in this ticket only (`git diff --name-only`).
 1. Delete dead code, unreachable branches, unused vars
 2. Merge duplicates, inline single-use vars, flatten nesting (max depth 2)
