@@ -239,6 +239,31 @@ async function main() {
     return;
   }
 
+  // 7a. No-op detection: if the response is trivially short and contains no
+  // meaningful content (just an ack of the hook's own feedback message), approve
+  // exit to break the degenerate ack loop. The mux-runner will respawn a fresh
+  // iteration with a full prompt, or the stall detector will terminate the session.
+  const trimmed = responseText.trim();
+  const NO_OP_MAX_LENGTH = 100;
+  const NO_OP_PATTERNS = [
+    /^acknowledged\.?$/i,
+    /^ok\.?$/i,
+    /^done\.?$/i,
+    /^understood\.?$/i,
+    /^noted\.?$/i,
+    /^continuing\.?$/i,
+    /^ready\.?$/i,
+    /^got it\.?$/i,
+    /^will do\.?$/i,
+    /^roger\.?$/i,
+  ];
+  if (trimmed.length > 0 && trimmed.length <= NO_OP_MAX_LENGTH &&
+      NO_OP_PATTERNS.some(p => p.test(trimmed))) {
+    log(`Decision: APPROVE (No-op response detected: "${trimmed}" — breaking ack loop)`);
+    approve();
+    return;
+  }
+
   // 8. Default: Continue Loop (Prevent Exit)
   log('Decision: BLOCK (Default continuation)');
 

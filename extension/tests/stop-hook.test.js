@@ -811,3 +811,56 @@ test('stop-hook: start_time_epoch=0 with max_time_minutes>0 → time limit skipp
   });
   assert.equal(decision.decision, 'block', 'start_time_epoch=0 should disable time limit check');
 });
+
+// ---------------------------------------------------------------------------
+// No-op / ack loop detection — approve exit to break degenerate feedback loops
+// ---------------------------------------------------------------------------
+
+test('stop-hook: "Acknowledged." response → approve (no-op detection)', () => {
+  const { decision } = runHook({
+    state: baseState({ iteration: 3, max_iterations: 50 }),
+    response: 'Acknowledged.',
+  });
+  assert.equal(decision.decision, 'approve');
+});
+
+test('stop-hook: "ok" response → approve (no-op detection, case-insensitive)', () => {
+  const { decision } = runHook({
+    state: baseState({ iteration: 5, max_iterations: 50 }),
+    response: 'OK',
+  });
+  assert.equal(decision.decision, 'approve');
+});
+
+test('stop-hook: "Understood" response → approve (no-op detection)', () => {
+  const { decision } = runHook({
+    state: baseState({ iteration: 1, max_iterations: 10 }),
+    response: 'Understood',
+  });
+  assert.equal(decision.decision, 'approve');
+});
+
+test('stop-hook: "Got it." response → approve (no-op detection)', () => {
+  const { decision } = runHook({
+    state: baseState({ iteration: 2, max_iterations: 10 }),
+    response: 'Got it.',
+  });
+  assert.equal(decision.decision, 'approve');
+});
+
+test('stop-hook: substantive short response without tokens → still blocks (not a no-op)', () => {
+  const { decision } = runHook({
+    state: baseState({ iteration: 2, max_iterations: 10 }),
+    response: 'I fixed the linting error in utils.ts and ran the tests.',
+  });
+  assert.equal(decision.decision, 'block');
+});
+
+test('stop-hook: no-op detection does not fire for empty response', () => {
+  // Empty responses are handled by the existing default block path
+  const { decision } = runHook({
+    state: baseState({ iteration: 2, max_iterations: 10 }),
+    response: '',
+  });
+  assert.equal(decision.decision, 'block');
+});
