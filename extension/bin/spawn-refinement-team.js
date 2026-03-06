@@ -419,7 +419,6 @@ async function main() {
             }
         }
         allCycleResults.push(results);
-        const cycleSuccess = results.every((r) => r.success);
         if (cycles > 1) {
             const statusLine = results.map((r) => `${r.roleId}: ${r.success ? '✅' : '❌'}`).join(' | ');
             console.log(`   ${Style.DIM}Cycle ${cycle}: ${statusLine}${Style.RESET}`);

@@ -29,7 +29,7 @@ async function main() {
         }
     };
     // 1. Read Input
-    let inputData = '';
+    let inputData;
     try {
         inputData = fs.readFileSync(0, 'utf8');
     }

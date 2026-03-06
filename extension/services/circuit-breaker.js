@@ -80,7 +80,7 @@ export function loadSettings(extensionRoot) {
         config.halfOpenAfter = 1;
     return config;
 }
-export function initCircuitBreaker(sessionDir, settings) {
+export function initCircuitBreaker(sessionDir, _settings) {
     const cbPath = path.join(sessionDir, 'circuit_breaker.json');
     try {
         const raw = JSON.parse(fs.readFileSync(cbPath, 'utf-8'));

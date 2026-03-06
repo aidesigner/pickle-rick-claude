@@ -143,7 +143,7 @@ export function loadSettings(extensionRoot: string): CircuitBreakerConfig {
 
 export function initCircuitBreaker(
   sessionDir: string,
-  settings: CircuitBreakerConfig
+  _settings: CircuitBreakerConfig
 ): CircuitBreakerState {
   const cbPath = path.join(sessionDir, 'circuit_breaker.json');
 

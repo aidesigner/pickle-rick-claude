@@ -1,7 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { State } from '../types/index.js';
-import { getExtensionRoot } from '../services/pickle-utils.js';
 
 const ALLOW = JSON.stringify({ decision: 'approve' });
 
