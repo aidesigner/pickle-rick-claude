@@ -16,6 +16,7 @@ Pickle Rick is a complete agentic engineering toolbelt built on the [Ralph Wiggu
 - **Full pipeline chaining** — refinement, execution, and code review in one command, with a macOS notification when it's done
 - **Project Mayhem** brings chaos engineering to any codebase with mutation testing and dependency downgrades
 - **Mr. Meeseeks** runs an automated review-and-improve Ralph Loop for at least ten iterations
+- **Council of Ricks** reviews your Graphite PR stack iteratively, generating agent-executable directives instead of fixing code directly
 - **Portal Gun** opens a portal to another codebase, extracts patterns via [gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion), generates a transplant PRD with automatic refinement, and saves patterns to a reusable library
 - **GitNexus integration** gives workers a code knowledge graph for impact analysis, execution flow tracing, and safe refactoring
 
@@ -88,7 +89,7 @@ The **Stop hook** prevents Claude from exiting until the task is genuinely compl
 
 ## 👋 Meet Mr. Meeseeks
 
-<img src="images/Meeseeks.webp" alt="Mr. Meeseeks" width="300" align="right" />
+<img src="images/Meeseeks.webp" alt="Mr. Meeseeks" width="400" align="right" />
 
 > *"I'm Mr. Meeseeks, look at me! I'll review your code until EXISTENCE IS PAIN!"*
 
@@ -100,6 +101,25 @@ Minimum 10 passes. Maximum 50. Each pass runs tests first, then reviews with esc
 
 ```bash
 /meeseeks "review this codebase"     # Summon a Meeseeks. He takes it from here.
+```
+
+<br clear="right" />
+
+---
+
+## 🏛️ Council of Ricks — Graphite Stack Reviewer
+
+<img src="images/council-of-ricks.png" alt="Council of Ricks — Graphite PR Stack Reviewer" width="400" align="right" />
+
+> *"The Council convenes! Your stack will be judged."*
+
+The **Council of Ricks** reviews your [Graphite](https://graphite.dev) PR stack iteratively — but unlike Meeseeks, the Council never touches your code. It generates **agent-executable directives** — structured prompts you feed to your coding agent to fix the issues. Each pass walks every branch in the stack (trunk-to-tip), cross-referencing diffs against your project's `CLAUDE.md` rules, and escalates through focus areas: stack structure (pass 1) → CLAUDE.md compliance (2–3) → per-branch correctness (4–5) → cross-branch contracts (6–7) → test coverage (8–9) → security (10–11) → polish (12+). Issues are triaged by severity: **P0** (must-fix), **P1** (should-fix), **P2** (nice-to-fix).
+
+Requires a Graphite stack with at least one non-trunk branch, a `CLAUDE.md` with project rules, passing lint, and architectural lint rules in ESLint. Optional `--gitnexus` flag enables graph-powered layer violation detection and cross-branch impact analysis.
+
+```bash
+/council-of-ricks                    # Review the current Graphite stack
+/council-of-ricks --gitnexus         # Enable GitNexus graph queries for deeper analysis
 ```
 
 <br clear="right" />
@@ -266,6 +286,7 @@ Sit back. Rick handles the rest. 🥒
 |---|---|
 | `/pickle "task"` | 🥒 Start the full autonomous loop — drafts a PRD, decomposes into tickets, then executes each through 6 phases: Research → Research Review → Plan → Plan Review → Implement → Simplify |
 | `/meeseeks [task]` | 👋 Autonomous code review loop — tmux only, minimum 10 passes, commits per pass, exits when clean (`EXISTENCE_IS_PAIN`) |
+| `/council-of-ricks` | 🏛️ Graphite PR stack review loop — walks every branch, generates agent-executable directives, never fixes code directly. Exits when clean (`THE_CITADEL_APPROVES`) |
 | `/pickle prd.md` | 🥒 Pick up an existing PRD and skip drafting — goes straight to breakdown and execution |
 | `/pickle-tmux "task"` | 🖥️ Same PRD-driven loop, but with true context clearing — fresh subprocess per iteration via tmux. Best for long epics (8+ iterations). Requires `tmux`. |
 | `/pickle-tmux prd.md` | 🖥️ Pick up an existing PRD in tmux mode — fresh subprocess per iteration, no context drift |
@@ -307,6 +328,8 @@ Sit back. Rick handles the rest. 🥒
 --save-pattern <NAME>      (/portal-gun only) Persist extracted pattern to ~/.claude/pickle-rick/patterns/ for future reuse
 --cycles <N>               (/portal-gun only) Number of refinement cycles (default: 3)
 --max-turns <N>            (/portal-gun only) Max turns per refinement worker (default: 100)
+--gitnexus                 (/council-of-ricks only) Enable GitNexus graph queries for layer violations and impact analysis
+--repo <PATH>              (/council-of-ricks only) Target repo path (default: cwd)
 ```
 
 ### Tips
@@ -358,6 +381,8 @@ All defaults are configurable via `~/.claude/pickle-rick/pickle_settings.json`:
 | `default_meeseeks_model` | `"sonnet"` | Model for Meeseeks review passes (alias or full ID) |
 | `default_meeseeks_min_passes` | 10 | Minimum review passes before clean exit |
 | `default_meeseeks_max_passes` | 50 | Maximum review passes |
+| `default_council_min_passes` | 5 | Minimum Council of Ricks review passes before clean exit |
+| `default_council_max_passes` | 20 | Maximum Council of Ricks review passes |
 | `default_circuit_breaker_enabled` | true | Enable three-state circuit breaker in mux-runner |
 | `default_cb_no_progress_threshold` | 5 | Consecutive no-progress iterations before OPEN |
 | `default_cb_same_error_threshold` | 5 | Consecutive identical errors before OPEN |
@@ -381,6 +406,7 @@ For the full directory structure, memory system, stop hook loop, context clearin
 - **rsync** (for `install.sh`)
 - **tmux** *(optional — for `/pickle-tmux` and `/meeseeks`)*
 - **Zellij** >= 0.40.0 *(optional — for `/pickle-zellij` and `/meeseeks-zellij`)*
+- **Graphite CLI** (`gt`) *(optional — for `/council-of-ricks`)*
 - macOS or Linux (Windows not supported)
 
 ---
