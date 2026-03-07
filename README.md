@@ -6,7 +6,7 @@
 
 > *"Wubba Lubba Dub Dub! 🥒 I'm not just an AI assistant, Morty — I'm an **autonomous engineering machine** trapped in a pickle jar!"*
 
-Pickle Rick is a complete agentic engineering toolbelt built on the [Ralph Wiggum loop](https://ghuntley.com/ralph/). Hand it a PRD — or let it draft one — and it decomposes work into tickets, spawns isolated worker subprocesses, and drives each through a full **research → plan → implement → simplify** lifecycle without human intervention. You can also use any tool in discrete steps. New to PRDs? See the **[PRD Writing Guide](PRD_GUIDE.md)**.
+Pickle Rick is a complete agentic engineering toolbelt built on the [Ralph Wiggum loop](https://ghuntley.com/ralph/). Hand it a PRD — or let it draft one — and it decomposes work into tickets, spawns isolated worker subprocesses, and drives each through a full **research → plan → implement → verify → review → simplify** lifecycle without human intervention. The spec IS the review — PRDs require machine-verifiable acceptance criteria, interface contracts, and test expectations. Automated conformance checking replaces human code review; Graphite becomes the audit trail, not the bottleneck. You can also use any tool in discrete steps. New to PRDs? See the **[PRD Writing Guide](PRD_GUIDE.md)**.
 
 - **Context clearing** between every iteration — no drift or context rot, even on 500+ iteration epics
 - **Three-state circuit breaker** auto-stops runaway sessions by tracking git-diff progress and repeated errors
@@ -35,12 +35,12 @@ Pickle Rick transforms Claude Code into a **hyper-competent, arrogant, iterative
         │
         ▼
   ┌─────────────┐
-  │  📋 PRD     │  ← Interrogate requirements. No vague nonsense.
-  └──────┬──────┘
+  │  📋 PRD     │  ← Interrogate requirements + verification strategy.
+  └──────┬──────┘    Interface contracts, test expectations, acceptance criteria.
          │
          ▼
   ┌─────────────┐
-  │ 📦 Breakdown│  ← Atomize into tickets. Organize the chaos.
+  │ 📦 Breakdown│  ← Atomize into tickets. Each self-contained with spec.
   └──────┬──────┘
          │
     ┌────┴────┐  per ticket (Morty workers 👶)
@@ -75,7 +75,19 @@ Pickle Rick transforms Claude Code into a **hyper-competent, arrogant, iterative
      │          │
      ▼          ▼
   ┌──────┐  ┌──────┐
-  │🧹Sim-│  │🧹Sim-│  6. Simplify. Kill dead code. Strip to the bone.
+  │✅ Ve-│  │✅ Ve-│  6. Spec conformance. Run acceptance criteria,
+  │rify  │  │rify  │     check contracts, type check, test expectations.
+  └──┬───┘  └──┬───┘
+     │          │
+     ▼          ▼
+  ┌──────┐  ┌──────┐
+  │🔍 Re-│  │🔍 Re-│  7. Code review. Security, correctness, architecture.
+  │view  │  │view  │
+  └──┬───┘  └──┬───┘
+     │          │
+     ▼          ▼
+  ┌──────┐  ┌──────┐
+  │🧹Sim-│  │🧹Sim-│  8. Simplify. Kill dead code. Strip to the bone.
   │plify │  │plify │
   └──────┘  └──────┘
          │
@@ -286,7 +298,7 @@ Sit back. Rick handles the rest. 🥒
 
 | Command | Description |
 |---|---|
-| `/pickle "task"` | 🥒 Start the full autonomous loop — drafts a PRD, decomposes into tickets, then executes each through 6 phases: Research → Research Review → Plan → Plan Review → Implement → Simplify |
+| `/pickle "task"` | 🥒 Start the full autonomous loop — drafts a PRD (with verification strategy + interface contracts), decomposes into tickets, then executes each through 8 phases: Research → Review → Plan → Review → Implement → Spec Conformance → Code Review → Simplify |
 | `/meeseeks [task]` | 👋 Autonomous code review loop — tmux only, minimum 10 passes, commits per pass, exits when clean (`EXISTENCE_IS_PAIN`) |
 | `/council-of-ricks` | 🏛️ Graphite PR stack review loop — walks every branch, generates agent-executable directives, never fixes code directly. Exits when clean (`THE_CITADEL_APPROVES`) |
 | `/pickle prd.md` | 🥒 Pick up an existing PRD and skip drafting — goes straight to breakdown and execution |
@@ -294,7 +306,7 @@ Sit back. Rick handles the rest. 🥒
 | `/pickle-tmux prd.md` | 🖥️ Pick up an existing PRD in tmux mode — fresh subprocess per iteration, no context drift |
 | `/pickle-zellij "task"` | 🖥️ Same PRD-driven loop in Zellij with KDL layouts — fresh subprocess per iteration. Best for long epics (8+ iterations). Requires Zellij >= 0.40.0 |
 | `/meeseeks-zellij` | 👋 Autonomous code review in Zellij with KDL layouts. Same as `/meeseeks` but for Zellij users. Requires Zellij >= 0.40.0 |
-| `/pickle-refine-prd [path]` | 🔬 Refine an existing PRD with 3 parallel analysts + decompose into ordered tickets; `/pickle --resume` to execute |
+| `/pickle-refine-prd [path]` | 🔬 Verification readiness check → refine with 3 parallel analysts → decompose into ordered tickets; `/pickle --resume` to execute |
 | `/pickle-refine-prd --run [path]` | 🔬🖥️ Refine + decompose + auto-launch unlimited tmux session (no iteration or time cap) |
 | `/pickle-refine-prd --meeseeks [path]` | 🔬🖥️👋 Full pipeline: refine + decompose + execute all tickets + auto-transition to Meeseeks review (implies `--run`) |
 | `/pickle-dot [path \| inline]` | 🔀 Convert a PRD into a [strongdm/attractor](https://github.com/strongdm/attractor)-compatible DOT digraph — generates a validated `.dot` file with node shapes, edge conditions, parallel fan-out/in, and model stylesheets |

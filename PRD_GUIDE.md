@@ -198,13 +198,15 @@ That's it. Five sections. I can work with this. The refinement team will fill in
 
 Here's what happens after you hand me a PRD — so you know what you're feeding into:
 
-1. 🔬 **Refinement** (`/pickle-refine-prd`): Three parallel analysts examine your PRD against the actual codebase. Requirements analyst checks completeness. Codebase analyst greps for relevant files, patterns, and existing implementations. Risk analyst evaluates scope and identifies hazards. They run 3 cycles, cross-referencing each other's findings.
+1. ✅ **Verification Readiness Check**: Before spending tokens on refinement, the system checks your PRD for verification infrastructure — interface contracts, verification strategy, test expectations, machine-checkable acceptance criteria. Missing or vague sections trigger an interactive interview to fill the gaps. Under-specified PRDs can't auto-run.
 
-2. 🎫 **Decomposition**: The refined PRD gets broken into atomic tickets. Each ticket is sized for <30 minutes of coding, touches <5 files, has <4 acceptance criteria, and spans <2 subsystems. Tickets are self-contained — the worker executing a ticket never reads the PRD or other tickets. Everything it needs is embedded in its own ticket spec, including research seeds (file paths, patterns, API signatures).
+2. 🔬 **Refinement** (`/pickle-refine-prd`): Three parallel analysts examine your PRD against the actual codebase. Requirements analyst checks completeness. Codebase analyst greps for relevant files, patterns, and existing implementations. Risk analyst evaluates scope and identifies hazards. They run 3 cycles, cross-referencing each other's findings.
 
-3. ⚙️ **Execution**: Each ticket runs through a 7-phase lifecycle: Research → Research Review → Plan → Plan Review → Implement → Simplify → Done. The mux-runner orchestrates iterations, handles rate limits, and advances through tickets sequentially.
+3. 🎫 **Decomposition**: The refined PRD gets broken into atomic tickets. Each ticket is sized for <30 minutes of coding, touches <5 files, has <4 acceptance criteria, and spans <2 subsystems. Tickets are self-contained with embedded interface contracts, test expectations, and conformance checks — the worker never reads the PRD or other tickets.
 
-The takeaway: **your PRD is the single source of intent**. Everything downstream — refined PRD, tickets, research, implementation — traces back to what you wrote (or what I drafted from your interview). The better the PRD, the less drift between what you wanted and what gets built.
+4. ⚙️ **Execution**: Each ticket runs through an 8-phase lifecycle: Research → Research Review → Plan → Plan Review → Implement → **Spec Conformance** → Code Review → Simplify → Done. The spec conformance phase runs every acceptance criterion, checks interface contracts against implementation signatures, and verifies test expectations before any subjective code review. The mux-runner orchestrates iterations, handles rate limits, and advances through tickets sequentially.
+
+The takeaway: **your PRD is the single source of truth AND the review mechanism**. The spec replaces human code review — if the acceptance criteria pass, the interface contracts match, and the tests verify, the code is conformant. Graphite is the audit trail, not the review bottleneck. The more precise your spec, the more automated the verification.
 
 ---
 
