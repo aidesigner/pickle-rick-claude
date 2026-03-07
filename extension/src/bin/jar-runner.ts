@@ -8,9 +8,10 @@ import { printMinimalPanel, Style, getExtensionRoot, writeStateFile } from '../s
 import { State, Defaults } from '../types/index.js';
 import { logActivity } from '../services/activity-logger.js';
 
-// Tracks the currently-running task's session dir so signal handlers
-// can deactivate it on shutdown, preventing orphaned active: true sessions.
+// Tracks the currently-running task's session dir and subprocess so signal
+// handlers can deactivate it and kill the child on shutdown.
 let activeTaskSessionDir: string | null = null;
+let activeTaskProc: import('child_process').ChildProcess | null = null;
 
 export function loadJarTaskTimeout(extensionRoot: string, state: State): number {
   // Use worker_timeout_seconds from state if set, else fall back to settings, else default
@@ -83,6 +84,7 @@ async function runTask(sessionDir: string, repoCwd: string, extensionRoot: strin
     let settled = false;
 
     const proc = spawn('claude', cmdArgs, { cwd: repoCwd, env, stdio: 'inherit' });
+    activeTaskProc = proc;
 
     // Per-task timeout: SIGTERM first, escalate to SIGKILL after 2s
     let killEscalation: ReturnType<typeof setTimeout> | null = null;
@@ -99,6 +101,7 @@ async function runTask(sessionDir: string, repoCwd: string, extensionRoot: strin
       if (settled) return;
       settled = true;
       activeTaskSessionDir = null;
+      activeTaskProc = null;
       console.error(`${Style.RED}❌ Jar task hang detected — forcing failure${Style.RESET}`);
       resolve(false);
     }, (taskTimeout + 30) * 1000);
@@ -111,6 +114,7 @@ async function runTask(sessionDir: string, repoCwd: string, extensionRoot: strin
       if (killEscalation) clearTimeout(killEscalation);
       clearTimeout(hangGuard);
       activeTaskSessionDir = null;
+      activeTaskProc = null;
       resolve(code === 0);
     });
     proc.on('error', (err) => {
@@ -120,6 +124,7 @@ async function runTask(sessionDir: string, repoCwd: string, extensionRoot: strin
       if (killEscalation) clearTimeout(killEscalation);
       clearTimeout(hangGuard);
       activeTaskSessionDir = null;
+      activeTaskProc = null;
       console.error(`${Style.RED}Failed to spawn claude: ${err instanceof Error ? err.message : String(err)}${Style.RESET}`);
       resolve(false);
     });
@@ -180,6 +185,9 @@ async function main() {
       } catch {
         try { writeStateFile(path.join(activeTaskSessionDir, 'state.json'), { active: false }); } catch { /* nothing we can do */ }
       }
+    }
+    if (activeTaskProc && !activeTaskProc.killed) {
+      activeTaskProc.kill('SIGTERM');
     }
     process.exit(0);
   };
