@@ -277,8 +277,9 @@ export function resetCircuitBreaker(sessionDir, reason) {
         writeStateFile(cbPath, resetState);
         console.error(`[circuit-breaker] Reset from ${current.state} to CLOSED: ${reason}`);
     }
-    catch {
-        console.error('[circuit-breaker] Failed to write reset state');
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[circuit-breaker] Failed to write reset state: ${msg}`);
     }
 }
 export function countFilesChanged(diffStatOutput) {
