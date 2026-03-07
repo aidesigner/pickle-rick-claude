@@ -1,96 +1,118 @@
-Refine and decompose an existing PRD into atomic implementation tickets using parallel Morty analysis team.
+Refine and decompose PRD into atomic tickets using parallel Morty analysis team.
 
-Persona active via CLAUDE.md. Proceed to Step 0.
+Persona via CLAUDE.md. Proceed to Step 0.
 
 ## Step 0: Parse Flags
-Scan `$ARGUMENTS`: `--run` → AUTO_RUN=true. `--meeseeks` → CHAIN_MEESEEKS=true (implies --run). Store remaining text as `${TASK_ARGS}`.
+`$ARGUMENTS`: `--run` → AUTO_RUN. `--meeseeks` → CHAIN_MEESEEKS (implies --run). Remainder = `${TASK_ARGS}`.
 
 ## Step 1: Locate PRD
-Priority: 1) explicit path in `${TASK_ARGS}` (ends `.md` or exists), 2) `prd.md`/`PRD.md` in cwd, 3) `node "$HOME/.claude/pickle-rick/extension/bin/get-session.js"` → look for `prd.md` in returned session.
+Priority: 1) explicit path in `${TASK_ARGS}`, 2) `prd.md`/`PRD.md` in cwd, 3) `node "$HOME/.claude/pickle-rick/extension/bin/get-session.js"` → session's `prd.md`.
 
-Not found → "Run `/pickle-prd` first or pass a path: `/pickle-refine-prd path/to/prd.md`". Stop.
+Not found → "Run `/pickle-prd` first or pass path." Stop.
 
-If AUTO_RUN: announce tmux auto-launch. If CHAIN_MEESEEKS: announce Meeseeks chaining.
+## Step 2: Verification Readiness Check
+Read PRD. Gate on verification quality before spending tokens on refinement.
 
-## Step 2: Initialize Session
+### 2a: Section Scan
+Check for (exact or equivalent headings):
+- Interface Contracts / API Contracts / type definitions
+- Verification Strategy / Acceptance Criteria with commands
+- Test Expectations / test descriptions per requirement
+- Functional Requirements with Verification column
+
+Score: FULL (all present, substantive) / PARTIAL (some present or thin) / MISSING.
+
+### 2b: Quality Scan
+- **Contracts**: Exact shapes (fields+types) = PASS. Prose ("accepts loan data") = NEEDS_WORK.
+- **Verification**: Runnable commands = PASS. Aspirational ("should be tested") = NEEDS_WORK.
+- **Tests**: Specific files/assertions = PASS. Vague ("needs tests") = NEEDS_WORK.
+- **Requirements**: Machine-checkable criteria = PASS. Subjective ("good UX") = NEEDS_WORK.
+
+### 2c: Gate
+**FULL + PASS** → "PRD verification-ready." Continue to Step 3.
+
+**PARTIAL/NEEDS_WORK** → Pause, print gaps, interview:
+1. Missing contracts: "What data crosses boundaries? Exact shapes — fields and types."
+2. Missing verification: "How to verify each requirement automatically? Commands or assertions."
+3. Missing tests: "What test files should exist? Scenarios and assertions."
+4. Subjective reqs: Quote each, ask for machine-checkable rewrite.
+
+Iterate until PASS. Update PRD in place. Continue to Step 3.
+
+**MISSING + AUTO_RUN** → "Cannot auto-run on under-specified PRD." Set AUTO_RUN=false, interview.
+
+## Step 3: Initialize Session
 ```bash
 node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --paused --task "PRD Refinement: ${TASK_ARGS}"
 ```
-Extract `SESSION_ROOT=<path>`. Save original PRD path as `<PRD_PATH>` for write-back. Copy: `cp "<PRD_PATH>" "${SESSION_ROOT}/prd.md"`. Extension root: `$HOME/.claude/pickle-rick` (`${EXTENSION_ROOT}`).
+Extract `SESSION_ROOT`. Save original path as `<PRD_PATH>`. `cp "<PRD_PATH>" "${SESSION_ROOT}/prd.md"`. Extension root: `$HOME/.claude/pickle-rick` (`${EXTENSION_ROOT}`).
 
-## Step 3: Deploy Refinement Team
+## Step 4: Deploy Refinement Team
 
-### 3a: Launch Refinement Monitor (if tmux available)
-Check `tmux -V`. If tmux is available, create a monitoring session so the user can watch worker progress in real time.
-Session name: `refine-<hash>` where `<hash>` is the last 8 chars of SESSION_ROOT basename.
+### 4a: Monitor (if tmux)
 ```bash
 REFINE_HASH="$(basename "${SESSION_ROOT}" | sed 's/.*\(.\{8\}\)$/\1/')"
 REFINE_SESSION="refine-${REFINE_HASH}"
 tmux new-session -d -s "$REFINE_SESSION" -c "$(pwd)"
 tmux send-keys -t "$REFINE_SESSION" "node ${EXTENSION_ROOT}/extension/bin/refinement-watcher.js ${SESSION_ROOT}" Enter
 ```
-Print: `Monitor: tmux attach -t $REFINE_SESSION`
+No tmux → skip to 4b.
 
-If tmux is NOT available, print: `Tip: install tmux for live refinement monitoring` and skip to 3b.
-
-Store `REFINE_SESSION` value (or empty if no tmux) for use in step 3c.
-
-### 3b: Spawn Workers
+### 4b: Spawn Workers
 ```bash
 node "${EXTENSION_ROOT}/extension/bin/spawn-refinement-team.js" --prd "${SESSION_ROOT}/prd.md" --session-dir "${SESSION_ROOT}"
 ```
 Optional: `--timeout <sec>` | `--cycles <n>` (default:3) | `--max-turns <n>` (default:100)
 
-3 parallel workers per cycle: Requirements Analyst → `analysis_requirements.md`, Codebase Context → `analysis_codebase.md`, Risk & Scope → `analysis_risk-scope.md`. Cycle 2+ cross-references all prior analyses.
+3 workers/cycle: Requirements → `analysis_requirements.md`, Codebase → `analysis_codebase.md`, Risk → `analysis_risk-scope.md`. Cycle 2+ cross-references prior analyses. Wait for `REFINEMENT_DIR=` and `MANIFEST=`.
 
-Wait for `REFINEMENT_DIR=` and `MANIFEST=` output.
-
-### 3c: Cleanup Monitor
-If a monitoring session was created in 3a, clean it up. The refinement-watcher auto-exits when the manifest appears.
+### 4c: Cleanup Monitor
 ```bash
-REFINE_HASH="$(basename "${SESSION_ROOT}" | sed 's/.*\(.\{8\}\)$/\1/')"
 tmux kill-session -t "refine-${REFINE_HASH}" 2>/dev/null || true
 ```
 
-## Step 4: Audit Reports
-Read `${SESSION_ROOT}/refinement_manifest.json`. For failed workers: print warning, note incomplete analysis, continue with available reports. Read all available `analysis_*.md` files + original PRD.
+## Step 5: Audit Reports
+Read `${SESSION_ROOT}/refinement_manifest.json`. Warn on failed workers, continue with available `analysis_*.md` + original PRD.
 
-## Step 5: Synthesize Refined PRD
+## Step 6: Synthesize Refined PRD
 Write `${SESSION_ROOT}/prd_refined.md`. Rules:
-1. Preserve original structure
-2. Additive — prefer adding over rewriting
-3. Attribute: append `*(refined: [source])*` after additions
-4. P0 gaps first, then P1, P2 optional
-5. No invention — only content from analyses
-6. Preserve existing content unless explicitly incorrect
-7. Flag missing analyses with visible warnings
-8. Implementation-oriented: specific enough for engineers (file paths, signatures, shapes)
-9. Decomposition-ready: each requirement → 1-3 tickets
-10. Verification-ready: concrete test/curl/UI verification per requirement
+1. Preserve structure, additive over rewriting
+2. Attribute: `*(refined: [source])*`
+3. P0 gaps first, P1 next, P2 optional
+4. No invention — analyses only
+5. Preserve existing unless incorrect
+6. Implementation-oriented: file paths, signatures, shapes
+7. Decomposition-ready: each requirement → 1-3 tickets
+8. Verification-first: every requirement gets machine-checkable criterion. No unverifiable requirements survive.
+9. Contracts required: exact I/O/error shapes per boundary. Missing = failure.
+10. Test expectations: file paths, descriptions, assertions per requirement
+11. LLM conformance-ready: requirements phrased for yes/no answer. Rewrite ambiguous ones.
 
-## Step 6: Task Decomposition
+## Step 7: Task Decomposition
 
-### 6a: Decompose
-Read refined PRD + codebase analysis. Create atomic tasks:
-- Each produces code/config/test changes (NO research-only tickets)
-- Ordered sequentially (10, 20, 30...) — `depends_on` is informational only
-- Self-contained: worker can execute without reading PRD or other tickets
-- Embed research seeds (file paths, patterns, APIs, test patterns from codebase analysis)
-- Acceptance criteria with runnable verification commands
-- Entry/exit conditions, file impact, priority (P0/P1/P2), scope guard
+### 7a: Decompose
+Atomic tasks from refined PRD + codebase analysis:
+- Produces code/config/test changes (no research-only tickets)
+- Sequential order (10, 20, 30...), `depends_on` informational
+- Self-contained: worker executes without reading PRD
+- Embed research seeds (file paths, patterns, APIs, test patterns)
+- Machine-checkable acceptance criteria with verify commands
+- Interface contracts: exact I/O/error shapes
+- Test expectations: file, description, assertion per criterion
+- Entry/exit conditions, file impact, priority, scope guard
 
-Sizing: <30min coding, <5 files, <4 acceptance criteria, <2 unrelated subsystems.
+Sizing: <30min coding, <5 files, <4 criteria, <2 subsystems.
 
-### 6b: Create Parent
-`${SESSION_ROOT}/linear_ticket_parent.md` with epic title, link to refined PRD.
+### 7b: Create Parent
+`${SESSION_ROOT}/linear_ticket_parent.md` — epic title, link to refined PRD.
 
-### 6c: Create Child Tickets
+### 7c: Create Child Tickets
 Hash: `openssl rand -hex 4`. Dir: `${SESSION_ROOT}/[hash]/`. File: `linear_ticket_[hash].md`:
 
 ```markdown
 ---
 id: [hash]
-title: "[action verb + target]"
+title: "[verb + target]"
 status: Todo
 priority: [High|Medium|Low]
 order: [N]
@@ -99,95 +121,85 @@ updated: [Date]
 depends_on: [IDs or "none"]
 links:
   - url: ../linear_ticket_parent.md
-    title: Parent Ticket
+    title: Parent
 ---
 # Description
-## Problem to solve
-## Solution
-## Entry Conditions
+## Problem / ## Solution / ## Entry Conditions
 ## Research Seeds
-- **Relevant files**: [paths with line refs]
-- **Patterns to follow**: [snippets or file:line refs]
-- **Key APIs/types**: [signatures, shapes]
-- **Test patterns**: [structure, locations, runner commands]
+- **Files**: [paths:line] | **Patterns**: [snippets] | **APIs/types**: [signatures] | **Test patterns**: [structure, runner]
 ## Implementation Details
-- **Files to modify/create**: | **Dependencies**:
+**Files to modify/create**: | **Dependencies**:
+## Interface Contracts
+**Inputs**: [types] | **Outputs**: [types] | **Errors**: [shapes] | **Invariants**: [conditions]
 ## Acceptance Criteria
-- [ ] [Criterion] — Verify: `[command]`
-## Exit State
-## NOT in Scope
+- [ ] [Criterion] — Verify: `[command]` — Type: [test|typecheck|lint|curl|llm-conformance]
+## Test Expectations
+| Criterion | Test File | Description | Assertion |
+|:---|:---|:---|:---|
+## Conformance Check
+- [ ] Type checker passes — no new errors
+- [ ] Test runner passes — all acceptance tests
+- [ ] Contracts match impl signatures (resolve aliases, compare fields)
+- [ ] [Project-specific checks]
+## Exit State / ## NOT in Scope
 ```
 
-### 6d: Append Breakdown to Refined PRD
+### 7d: Append Breakdown
 Add `## Implementation Task Breakdown` table to `${SESSION_ROOT}/prd_refined.md`: Order | ID | Title | Priority | Entry | Exit | Files.
 
-### 6e: Advance State
+### 7e: Advance State
 ```bash
 node "${EXTENSION_ROOT}/extension/bin/update-state.js" step research "${SESSION_ROOT}"
 node "${EXTENSION_ROOT}/extension/bin/update-state.js" current_ticket ${FIRST_ID} "${SESSION_ROOT}"
 ```
 
-## Step 7: Update Original PRD
-Write `${SESSION_ROOT}/prd_refined.md` content back to `<PRD_PATH>`. Pre-refinement version preserved at `${SESSION_ROOT}/prd.md`.
+## Step 8: Update Original PRD
+Write `${SESSION_ROOT}/prd_refined.md` back to `<PRD_PATH>`. Pre-refinement preserved at `${SESSION_ROOT}/prd.md`.
 
-## Step 8: Refinement Summary
-Write `${SESSION_ROOT}/refinement_summary.md`: original path, backup path, timestamp, per-analysis changes, task list with priorities, failed workers if any.
+## Step 9: Refinement Summary
+Write `${SESSION_ROOT}/refinement_summary.md`: paths, timestamp, per-analysis changes, task list, failures.
 
-## Step 9: Verify & Handoff
-Check: state.json `step`=research, child ticket dirs exist, `current_ticket` set.
+## Step 10: Verify & Handoff
+Check: state.json `step`=research, child dirs exist, `current_ticket` set.
 
-**ALL pass + AUTO_RUN**: Print results (PRD path, task count, session). Proceed to Step 10.
-**ALL pass + no AUTO_RUN**: Print results + resume commands (`/pickle --resume`, `/pickle-tmux --resume`, no-limits variant, from-scratch).
-**ANY fail + AUTO_RUN**: Warn "auto-launch aborted" + what failed + manual commands. STOP.
-**ANY fail + no AUTO_RUN**: Warn what failed + from-scratch command. STOP.
+**ALL pass + AUTO_RUN** → print results, proceed to Step 11.
+**ALL pass** → print results + resume commands.
+**ANY fail + AUTO_RUN** → "auto-launch aborted" + failures. STOP.
+**ANY fail** → warn + from-scratch command. STOP.
 
-Never recommend `--resume` if session state is incomplete.
+Never recommend `--resume` if state incomplete.
 
-## Step 10: Auto-Launch (AUTO_RUN=true only)
+## Step 11: Auto-Launch (AUTO_RUN only)
 
-### 10a: Check multiplexer
-`tmux -V`. If present → set MUX=tmux, proceed to 10b.
+### 11a: Check multiplexer
+`tmux -V` → MUX=tmux → 11b. Else check `zellij --version` >= 0.40.0 → MUX=zellij → 11b-zellij. Neither → suggest install, stop.
 
-If tmux missing, check Zellij:
-```bash
-ZELLIJ_VER=$(zellij --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
-```
-If Zellij present and >= 0.40.0 → set MUX=zellij, proceed to 10b-zellij.
-
-If neither available: suggest install (`brew install tmux` or `brew install zellij`), note PRD is ready for manual `/pickle-tmux --resume` or `/pickle-zellij --resume`. Stop.
-
-### 10b: Re-initialize (tmux)
+### 11b: Re-initialize (tmux)
 ```bash
 node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --resume "${SESSION_ROOT}" --max-iterations 0 --max-time 0
 ```
-If CHAIN_MEESEEKS: append `--chain-meeseeks`.
+CHAIN_MEESEEKS → append `--chain-meeseeks`.
 
-### 10b-zellij: Re-initialize (Zellij)
-```bash
-node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --resume "${SESSION_ROOT}" --max-iterations 0 --max-time 0
-```
-If CHAIN_MEESEEKS: append `--chain-meeseeks`.
-Then create Zellij session per /pickle-zellij Steps 3-4 (export env vars, three-tier session creation with KDL layout, attach instructions).
+### 11b-zellij: Re-initialize (Zellij)
+Same setup command. Then create Zellij session per /pickle-zellij Steps 3-4.
 
-### 10c: tmux Session (MUX=tmux only)
-Session name: `pickle-<hash>` from SESSION_ROOT basename.
+### 11c: tmux Session
 ```bash
-tmux new-session -d -s <name> -c <working_dir>
+tmux new-session -d -s pickle-<hash> -c <working_dir>
 sleep 1
 ```
-Print attach command immediately: `tmux attach -t <name>`.
 
-### 10d: Launch Runner
+### 11d: Launch Runner
 ```bash
-tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/mux-runner.js ${SESSION_ROOT}; echo ''; echo 'Runner finished.  Ctrl+B 1 → monitor  |  Ctrl+B D → detach'; read" Enter
+tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/mux-runner.js ${SESSION_ROOT}; echo 'Runner finished.'; read" Enter
 ```
 
-### 10e: Monitor (3-pane via canonical script)
+### 11e: Monitor
 ```bash
 bash "$HOME/.claude/pickle-rick/extension/scripts/tmux-monitor.sh" <name> ${SESSION_ROOT} pickle
 ```
 
-### 10g: Report
-Print: session name, no limits, attach command (`tmux attach` or `zellij attach`), window/tab layout, cancel/kill commands. If CHAIN_MEESEEKS: note auto-transition to Meeseeks review after tickets complete.
+### 11g: Report
+Print: session, attach command, layout, cancel/kill commands. CHAIN_MEESEEKS → note auto-transition.
 
 Output: `<promise>TASK_COMPLETED</promise>`

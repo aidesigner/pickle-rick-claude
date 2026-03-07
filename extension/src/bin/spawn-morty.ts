@@ -135,7 +135,7 @@ async function main() {
   }
 
   // Prompt Construction — read the appropriate lifecycle template.
-  // Review workers get send-to-morty-review.md (3-phase), implementation workers get send-to-morty.md (7-phase).
+  // Review workers get send-to-morty-review.md (4-phase), implementation workers get send-to-morty.md (8-phase).
   const promptFilename = isReviewTicket ? 'send-to-morty-review.md' : 'send-to-morty.md';
   const mortyPromptPath = path.join(os.homedir(), '.claude', 'commands', promptFilename);
   let workerPrompt: string;
