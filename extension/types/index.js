@@ -4,6 +4,7 @@
 export const Defaults = {
     WORKER_TIMEOUT_SECONDS: 1200,
     MANAGER_MAX_TURNS: 50,
+    RATE_LIMIT_POLL_MS: 10_000,
 };
 // ---------------------------------------------------------------------------
 // Lifecycle Steps

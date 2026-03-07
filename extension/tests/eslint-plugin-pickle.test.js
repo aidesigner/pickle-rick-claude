@@ -164,3 +164,238 @@ describe('pickle/no-unsafe-error-cast', () => {
     });
   });
 });
+
+// ─── no-gemini-path ──────────────────────────────────────────────────────────
+
+describe('pickle/no-gemini-path', () => {
+  it('flags .gemini in path strings', () => {
+    ruleTester.run('no-gemini-path', pickle.rules['no-gemini-path'], {
+      valid: [
+        { code: `const p = '~/.claude/pickle-rick';` },
+        { code: `const p = '/home/user/.claude/pickle-rick/extension';` },
+        { code: 'const p = `${home}/.claude/pickle-rick`;' },
+      ],
+      invalid: [
+        {
+          code: `const p = '~/.gemini/pickle-rick';`,
+          errors: [{ messageId: 'noGemini' }],
+        },
+        {
+          code: 'const p = `${home}/.gemini/extension`;',
+          errors: [{ messageId: 'noGemini' }],
+        },
+      ],
+    });
+  });
+});
+
+// ─── no-deployed-file-edit ───────────────────────────────────────────────────
+
+describe('pickle/no-deployed-file-edit', () => {
+  it('flags writes to deployed ~/.claude/pickle-rick/ paths', () => {
+    ruleTester.run('no-deployed-file-edit', pickle.rules['no-deployed-file-edit'], {
+      valid: [
+        { code: `import * as fs from 'fs'; fs.writeFileSync('/tmp/foo.json', '{}');` },
+        { code: `import * as fs from 'fs'; fs.readFileSync('/home/.claude/pickle-rick/state.json');` },
+        { code: `import * as fs from 'fs'; fs.writeFileSync('./extension/src/foo.ts', 'code');` },
+      ],
+      invalid: [
+        {
+          code: `import * as fs from 'fs'; fs.writeFileSync('/home/user/.claude/pickle-rick/state.json', '{}');`,
+          errors: [{ messageId: 'noDeployedWrite' }],
+        },
+        {
+          code: `import * as fs from 'fs'; fs.appendFileSync('~/.claude/pickle-rick/debug.log', 'msg');`,
+          errors: [{ messageId: 'noDeployedWrite' }],
+        },
+        {
+          code: 'import * as fs from \'fs\'; fs.unlinkSync(`${home}/.claude/pickle-rick/foo`);',
+          errors: [{ messageId: 'noDeployedWrite' }],
+        },
+      ],
+    });
+  });
+});
+
+// ─── require-number-validation ───────────────────────────────────────────────
+
+describe('pickle/require-number-validation', () => {
+  it('requires Number.isFinite() guard after Number() on state fields', () => {
+    ruleTester.run('require-number-validation', pickle.rules['require-number-validation'], {
+      valid: [
+        // Properly guarded
+        { code: `const raw = Number(state.iteration); const val = Number.isFinite(raw) ? raw : 0;` },
+        // Non-member arg (plain variable) — not flagged
+        { code: `const n = Number(someString);` },
+        // Number on a literal — not flagged
+        { code: `const n = Number('42');` },
+      ],
+      invalid: [
+        {
+          code: `const raw = Number(state.iteration); const val = raw > 0 ? raw : 0;`,
+          errors: [{ messageId: 'requireIsFinite' }],
+        },
+        {
+          code: `const rawMax = Number(settings.maxRetries); console.log(rawMax);`,
+          errors: [{ messageId: 'requireIsFinite' }],
+        },
+      ],
+    });
+  });
+});
+
+// ─── no-process-exit-in-library ──────────────────────────────────────────────
+
+describe('pickle/no-process-exit-in-library', () => {
+  it('flags process.exit() in services/ files', () => {
+    ruleTester.run('no-process-exit-in-library', pickle.rules['no-process-exit-in-library'], {
+      valid: [
+        // process.exit in bin/ is fine
+        { code: `process.exit(1);`, filename: 'src/bin/setup.ts' },
+        // process.exit in hooks/ is fine
+        { code: `process.exit(0);`, filename: 'src/hooks/dispatch.ts' },
+        // Non-exit call in services/ is fine
+        { code: `process.cwd();`, filename: 'src/services/utils.ts' },
+      ],
+      invalid: [
+        {
+          code: `process.exit(1);`,
+          filename: 'src/services/pickle-utils.ts',
+          errors: [{ messageId: 'noExitInService' }],
+        },
+        {
+          code: `if (bad) { process.exit(0); }`,
+          filename: 'src/services/circuit-breaker.ts',
+          errors: [{ messageId: 'noExitInService' }],
+        },
+      ],
+    });
+  });
+});
+
+// ─── promise-token-format ────────────────────────────────────────────────────
+
+describe('pickle/promise-token-format', () => {
+  it('flags hardcoded promise tokens outside types/index', () => {
+    ruleTester.run('promise-token-format', pickle.rules['promise-token-format'], {
+      valid: [
+        // Using enum reference is fine
+        { code: `const t = PromiseTokens.EPIC_COMPLETED;`, filename: 'src/bin/setup.ts' },
+        // Token in definition file is fine
+        { code: `const EPIC_COMPLETED = 'EPIC_COMPLETED';`, filename: 'src/types/index.ts' },
+        // Token in test file is fine
+        { code: `const r = 'EPIC_COMPLETED';`, filename: 'tests/stop-hook.test.js' },
+        // Non-token string is fine
+        { code: `const s = 'some_other_string';`, filename: 'src/bin/setup.ts' },
+      ],
+      invalid: [
+        {
+          code: `const t = 'EPIC_COMPLETED';`,
+          filename: 'src/bin/mux-runner.ts',
+          errors: [{ messageId: 'useEnum' }],
+        },
+        {
+          code: `if (text.includes('TASK_COMPLETED')) {}`,
+          filename: 'src/hooks/handlers/stop-hook.ts',
+          errors: [{ messageId: 'useEnum' }],
+        },
+        {
+          code: 'const x = `token: EXISTENCE_IS_PAIN`;',
+          filename: 'src/bin/setup.ts',
+          errors: [{ messageId: 'useEnum' }],
+        },
+      ],
+    });
+  });
+});
+
+// ─── no-sync-in-async ────────────────────────────────────────────────────────
+
+describe('pickle/no-sync-in-async', () => {
+  it('flags synchronous fs calls inside async functions', () => {
+    ruleTester.run('no-sync-in-async', pickle.rules['no-sync-in-async'], {
+      valid: [
+        // Sync fs in sync function is fine
+        { code: `import * as fs from 'fs'; function foo() { fs.readFileSync('x'); }` },
+        // Async fs.promises in async function is fine
+        { code: `import * as fs from 'fs'; async function foo() { await fs.promises.readFile('x'); }` },
+        // Non-fs sync call in async is fine
+        { code: `async function foo() { JSON.parse('{}'); }` },
+      ],
+      invalid: [
+        {
+          code: `import * as fs from 'fs'; async function foo() { fs.readFileSync('x'); }`,
+          errors: [{ messageId: 'preferAsync' }],
+        },
+        {
+          code: `import * as fs from 'fs'; const foo = async () => { fs.writeFileSync('x', 'y'); };`,
+          errors: [{ messageId: 'preferAsync' }],
+        },
+        {
+          code: `import * as fs from 'fs'; async function foo() { fs.existsSync('x'); }`,
+          errors: [{ messageId: 'preferAsync' }],
+        },
+      ],
+    });
+  });
+});
+
+// ─── spawn-error-handler ─────────────────────────────────────────────────────
+
+describe('pickle/spawn-error-handler', () => {
+  it('requires .on("error") handler for spawn/exec calls', () => {
+    ruleTester.run('spawn-error-handler', pickle.rules['spawn-error-handler'], {
+      valid: [
+        // Has error handler
+        { code: `const proc = spawn('node', []); proc.on('error', (e) => console.error(e));` },
+        // exec with error handler
+        { code: `const p = exec('ls'); p.on('error', (e) => {});` },
+        // Not a spawn call
+        { code: `const x = foo('bar');` },
+      ],
+      invalid: [
+        {
+          code: `const proc = spawn('node', []); proc.on('close', () => {});`,
+          errors: [{ messageId: 'requireErrorHandler' }],
+        },
+        {
+          code: `const p = exec('ls');`,
+          errors: [{ messageId: 'requireErrorHandler' }],
+        },
+      ],
+    });
+  });
+});
+
+// ─── no-hardcoded-timeout ────────────────────────────────────────────────────
+
+describe('pickle/no-hardcoded-timeout', () => {
+  it('flags hardcoded timeouts >5000ms', () => {
+    ruleTester.run('no-hardcoded-timeout', pickle.rules['no-hardcoded-timeout'], {
+      valid: [
+        // Small timeout is fine
+        { code: `sleep(1000);` },
+        { code: `setTimeout(fn, 5000);` },
+        // Variable timeout is fine
+        { code: `sleep(configTimeout);` },
+        { code: `setTimeout(fn, settings.timeout);` },
+        // Boundary: exactly 5000 is fine
+        { code: `sleep(5000);` },
+      ],
+      invalid: [
+        {
+          code: `sleep(10000);`,
+          errors: [{ messageId: 'useConfig' }],
+        },
+        {
+          code: `setTimeout(fn, 60000);`,
+          errors: [{ messageId: 'useConfig' }],
+        },
+        {
+          code: `sleep(30000);`,
+          errors: [{ messageId: 'useConfig' }],
+        },
+      ],
+    });
+  });
+});

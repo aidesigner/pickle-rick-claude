@@ -545,7 +545,7 @@ async function main() {
             // Cancellable + time-limit-aware sleep loop
             const waitEnd = Date.now() + actualWaitMs;
             while (Date.now() < waitEnd) {
-                await sleep(10_000);
+                await sleep(Defaults.RATE_LIMIT_POLL_MS);
                 try {
                     const ws = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
                     if (ws.active !== true) {

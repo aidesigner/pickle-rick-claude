@@ -305,18 +305,434 @@ const noUnsafeErrorCast = {
   },
 };
 
+// ─── Rule: no-gemini-path ────────────────────────────────────────────────────
+
+const noGeminiPath = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description: 'Disallow ".gemini" in path strings — extension path is ~/.claude/pickle-rick',
+    },
+    messages: {
+      noGemini:
+        'Path contains ".gemini". The extension path is ~/.claude/pickle-rick, never .gemini.',
+    },
+    schema: [],
+  },
+  create(context) {
+    function checkForGemini(node, value) {
+      if (typeof value === 'string' && value.includes('.gemini')) {
+        context.report({ node, messageId: 'noGemini' });
+      }
+    }
+    return {
+      Literal(node) {
+        checkForGemini(node, node.value);
+      },
+      TemplateLiteral(node) {
+        for (const quasi of node.quasis) {
+          checkForGemini(node, quasi.value.raw);
+        }
+      },
+    };
+  },
+};
+
+// ─── Rule: no-deployed-file-edit ─────────────────────────────────────────────
+
+const DEPLOYED_PATH_PATTERN = /~\/\.claude\/pickle-rick\/|\/\.claude\/pickle-rick\//;
+
+const noDeployedFileEdit = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description: 'Disallow writing to deployed ~/.claude/pickle-rick/ files — edit source, run install.sh',
+    },
+    messages: {
+      noDeployedWrite:
+        'Do not write to deployed files under ~/.claude/pickle-rick/. Edit extension/src/ and run install.sh.',
+    },
+    schema: [],
+  },
+  create(context) {
+    const writeMethods = new Set(['writeFileSync', 'writeSync', 'renameSync', 'unlinkSync', 'appendFileSync']);
+
+    function refersToDeployedPath(node) {
+      if (!node) return false;
+      if (node.type === 'Literal' && typeof node.value === 'string') {
+        return DEPLOYED_PATH_PATTERN.test(node.value);
+      }
+      if (node.type === 'TemplateLiteral') {
+        return node.quasis.some((q) => DEPLOYED_PATH_PATTERN.test(q.value.raw));
+      }
+      return false;
+    }
+
+    return {
+      CallExpression(node) {
+        const callee = node.callee;
+        if (
+          callee.type === 'MemberExpression' &&
+          callee.object.type === 'Identifier' &&
+          callee.object.name === 'fs' &&
+          callee.property.type === 'Identifier' &&
+          writeMethods.has(callee.property.name)
+        ) {
+          const firstArg = node.arguments[0];
+          if (refersToDeployedPath(firstArg)) {
+            context.report({ node, messageId: 'noDeployedWrite' });
+          }
+        }
+      },
+    };
+  },
+};
+
+// ─── Rule: require-number-validation ─────────────────────────────────────────
+
+const requireNumberValidation = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description: 'Number() calls on state fields must be followed by Number.isFinite() guard',
+    },
+    messages: {
+      requireIsFinite:
+        'Number({{arg}}) must be guarded with Number.isFinite(). Use: `const raw = Number({{arg}}); const val = Number.isFinite(raw) ? raw : 0;`',
+    },
+    schema: [],
+  },
+  create(context) {
+    // Track variables assigned from Number() calls
+    const numberVars = new Map();
+
+    return {
+      // Collect: const raw = Number(state.foo)
+      VariableDeclarator(node) {
+        if (
+          node.init &&
+          node.init.type === 'CallExpression' &&
+          node.init.callee.type === 'Identifier' &&
+          node.init.callee.name === 'Number' &&
+          node.init.arguments.length >= 1
+        ) {
+          const arg = node.init.arguments[0];
+          // Only flag state-related args (state.foo, settings.bar, etc.)
+          if (arg.type === 'MemberExpression') {
+            const varName = node.id.type === 'Identifier' ? node.id.name : null;
+            if (varName) {
+              numberVars.set(varName, { node: node.init, arg: context.sourceCode.getText(arg) });
+            }
+          }
+        }
+      },
+      // Check that the variable is used inside Number.isFinite()
+      'Program:exit'() {
+        const sourceText = context.sourceCode.getText();
+        for (const [varName, info] of numberVars) {
+          // Look for Number.isFinite(varName) anywhere in the source
+          const pattern = new RegExp(`Number\\.isFinite\\(\\s*${varName}\\s*\\)`);
+          if (!pattern.test(sourceText)) {
+            context.report({
+              node: info.node,
+              messageId: 'requireIsFinite',
+              data: { arg: info.arg },
+            });
+          }
+        }
+      },
+    };
+  },
+};
+
+// ─── Rule: no-process-exit-in-library ────────────────────────────────────────
+
+const noProcessExitInLibrary = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description: 'Disallow process.exit() in services/ files — services should throw, only bin/ scripts may exit',
+    },
+    messages: {
+      noExitInService:
+        'Do not call process.exit() in service/library files. Throw an error instead — let the caller decide how to exit.',
+    },
+    schema: [],
+  },
+  create(context) {
+    const filename = context.filename || context.getFilename();
+    const inServices = /services[/\\]/.test(filename);
+    if (!inServices) return {};
+
+    return {
+      CallExpression(node) {
+        if (
+          node.callee.type === 'MemberExpression' &&
+          node.callee.object.type === 'Identifier' &&
+          node.callee.object.name === 'process' &&
+          node.callee.property.type === 'Identifier' &&
+          node.callee.property.name === 'exit'
+        ) {
+          context.report({ node, messageId: 'noExitInService' });
+        }
+      },
+    };
+  },
+};
+
+// ─── Rule: promise-token-format ──────────────────────────────────────────────
+
+const KNOWN_TOKENS = [
+  'EPIC_COMPLETED', 'TASK_COMPLETED', 'EXISTENCE_IS_PAIN',
+  'THE_CITADEL_APPROVES', 'PRD_COMPLETE', 'TICKET_SELECTED',
+  'ANALYSIS_DONE', 'I AM DONE',
+];
+
+const promiseTokenFormat = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description: 'Promise tokens must be referenced via PromiseTokens enum, not hardcoded strings',
+    },
+    messages: {
+      useEnum:
+        'Hardcoded promise token "{{token}}" — use PromiseTokens.* from types/index.js instead.',
+    },
+    schema: [],
+  },
+  create(context) {
+    const filename = context.filename || context.getFilename();
+    // Allow the definition file itself
+    if (/types[/\\]index\./.test(filename)) return {};
+    // Allow test files
+    if (/tests?[/\\]/.test(filename)) return {};
+
+    function checkToken(node, value) {
+      if (typeof value !== 'string') return;
+      for (const token of KNOWN_TOKENS) {
+        if (value === token) {
+          context.report({ node, messageId: 'useEnum', data: { token } });
+          return;
+        }
+      }
+    }
+
+    return {
+      Literal(node) {
+        checkToken(node, node.value);
+      },
+      TemplateLiteral(node) {
+        for (const quasi of node.quasis) {
+          for (const token of KNOWN_TOKENS) {
+            if (quasi.value.raw.includes(token)) {
+              context.report({ node, messageId: 'useEnum', data: { token } });
+              return;
+            }
+          }
+        }
+      },
+    };
+  },
+};
+
+// ─── Rule: no-sync-in-async ──────────────────────────────────────────────────
+
+const SYNC_FS_METHODS = new Set([
+  'readFileSync', 'writeFileSync', 'appendFileSync', 'existsSync',
+  'mkdirSync', 'unlinkSync', 'renameSync', 'statSync', 'readdirSync',
+  'copyFileSync', 'chmodSync', 'accessSync', 'openSync', 'closeSync',
+  'writeSync', 'readSync',
+]);
+
+const noSyncInAsync = {
+  meta: {
+    type: 'suggestion',
+    docs: {
+      description: 'Flag synchronous fs calls inside async functions — prefer async alternatives',
+    },
+    messages: {
+      preferAsync:
+        'Synchronous fs.{{method}}() inside async function. Consider using fs.promises.{{asyncAlt}}() to avoid blocking the event loop.',
+    },
+    schema: [],
+  },
+  create(context) {
+    const asyncStack = [];
+
+    function enterFunction(node) {
+      asyncStack.push(node.async === true);
+    }
+    function exitFunction() {
+      asyncStack.pop();
+    }
+    function isInAsync() {
+      return asyncStack.length > 0 && asyncStack[asyncStack.length - 1];
+    }
+
+    const ASYNC_ALTS = {
+      readFileSync: 'readFile', writeFileSync: 'writeFile', appendFileSync: 'appendFile',
+      existsSync: 'access', mkdirSync: 'mkdir', unlinkSync: 'unlink',
+      renameSync: 'rename', statSync: 'stat', readdirSync: 'readdir',
+      copyFileSync: 'copyFile', chmodSync: 'chmod', accessSync: 'access',
+      openSync: 'open', closeSync: 'close', writeSync: 'write', readSync: 'read',
+    };
+
+    return {
+      FunctionDeclaration: enterFunction,
+      'FunctionDeclaration:exit': exitFunction,
+      FunctionExpression: enterFunction,
+      'FunctionExpression:exit': exitFunction,
+      ArrowFunctionExpression: enterFunction,
+      'ArrowFunctionExpression:exit': exitFunction,
+      CallExpression(node) {
+        if (!isInAsync()) return;
+        const callee = node.callee;
+        if (
+          callee.type === 'MemberExpression' &&
+          callee.object.type === 'Identifier' &&
+          callee.object.name === 'fs' &&
+          callee.property.type === 'Identifier' &&
+          SYNC_FS_METHODS.has(callee.property.name)
+        ) {
+          context.report({
+            node,
+            messageId: 'preferAsync',
+            data: {
+              method: callee.property.name,
+              asyncAlt: ASYNC_ALTS[callee.property.name] || callee.property.name.replace('Sync', ''),
+            },
+          });
+        }
+      },
+    };
+  },
+};
+
+// ─── Rule: spawn-error-handler ───────────────────────────────────────────────
+
+const spawnErrorHandler = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description: 'spawn()/exec() calls must have a .on("error") handler',
+    },
+    messages: {
+      requireErrorHandler:
+        '{{method}}() call must have a .on("error") handler to catch spawn failures (ENOENT, EACCES, etc.).',
+    },
+    schema: [],
+  },
+  create(context) {
+    const spawnMethods = new Set(['spawn', 'exec', 'execFile']);
+    const spawnVars = new Map(); // varName → node
+
+    return {
+      // Track: const proc = spawn(...)
+      VariableDeclarator(node) {
+        if (
+          node.init &&
+          node.init.type === 'CallExpression' &&
+          node.init.callee.type === 'Identifier' &&
+          spawnMethods.has(node.init.callee.name) &&
+          node.id.type === 'Identifier'
+        ) {
+          spawnVars.set(node.id.name, node.init);
+        }
+      },
+      // Track: proc.on('error', ...)
+      CallExpression(node) {
+        if (
+          node.callee.type === 'MemberExpression' &&
+          node.callee.property.type === 'Identifier' &&
+          node.callee.property.name === 'on' &&
+          node.callee.object.type === 'Identifier' &&
+          node.arguments.length >= 2 &&
+          node.arguments[0].type === 'Literal' &&
+          node.arguments[0].value === 'error'
+        ) {
+          spawnVars.delete(node.callee.object.name);
+        }
+      },
+      'Program:exit'() {
+        for (const [varName, node] of spawnVars) {
+          // Check source for .on('error') with this var (handles chaining patterns)
+          const sourceText = context.sourceCode.getText();
+          const chainPattern = new RegExp(`${varName}\\.on\\(\\s*['"]error['"]`);
+          if (!chainPattern.test(sourceText)) {
+            context.report({
+              node,
+              messageId: 'requireErrorHandler',
+              data: { method: sourceText.slice(node.range?.[0] ?? 0, (node.range?.[0] ?? 0) + 5).includes('exec') ? 'exec' : 'spawn' },
+            });
+          }
+        }
+      },
+    };
+  },
+};
+
+// ─── Rule: no-hardcoded-timeout ──────────────────────────────────────────────
+
+const noHardcodedTimeout = {
+  meta: {
+    type: 'suggestion',
+    docs: {
+      description: 'Timeouts >5000ms should come from settings or Defaults, not magic numbers',
+    },
+    messages: {
+      useConfig:
+        'Hardcoded timeout {{value}}ms. Use pickle_settings.json or Defaults.* constant instead of magic numbers.',
+    },
+    schema: [],
+  },
+  create(context) {
+    const timeoutFunctions = new Set(['setTimeout', 'sleep']);
+
+    return {
+      CallExpression(node) {
+        let funcName = null;
+        if (node.callee.type === 'Identifier') {
+          funcName = node.callee.name;
+        }
+        if (!funcName || !timeoutFunctions.has(funcName)) return;
+
+        // sleep(n) — first arg; setTimeout(fn, n) — second arg
+        const argIndex = funcName === 'setTimeout' ? 1 : 0;
+        const arg = node.arguments[argIndex];
+        if (!arg) return;
+
+        if (arg.type === 'Literal' && typeof arg.value === 'number' && arg.value > 5000) {
+          context.report({
+            node,
+            messageId: 'useConfig',
+            data: { value: String(arg.value) },
+          });
+        }
+      },
+    };
+  },
+};
+
 // ─── Plugin Export ───────────────────────────────────────────────────────────
 
 const plugin = {
   meta: {
     name: 'eslint-plugin-pickle',
-    version: '1.0.0',
+    version: '2.0.0',
   },
   rules: {
     'no-raw-state-write': noRawStateWrite,
     'cli-guard-basename': cliGuardBasename,
     'hook-decision-values': hookDecisionValues,
     'no-unsafe-error-cast': noUnsafeErrorCast,
+    'no-gemini-path': noGeminiPath,
+    'no-deployed-file-edit': noDeployedFileEdit,
+    'require-number-validation': requireNumberValidation,
+    'no-process-exit-in-library': noProcessExitInLibrary,
+    'promise-token-format': promiseTokenFormat,
+    'no-sync-in-async': noSyncInAsync,
+    'spawn-error-handler': spawnErrorHandler,
+    'no-hardcoded-timeout': noHardcodedTimeout,
   },
 };
 
