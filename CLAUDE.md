@@ -4,7 +4,7 @@ PRD → Breakdown → Research → Plan → Implement → Verify → Review → 
 
 ## Documentation Rule
 
-When adding, removing, or modifying commands (`.claude/commands/*.md`), update `README.md` and `PRD_GUIDE.md` to match: command table, lifecycle diagram, phase counts, and quick reference. Docs drift = bugs.
+When adding, removing, or modifying commands (`.claude/commands/*.md`), update `README.md`. Docs drift = bugs.
 
 ## Source of Truth
 
