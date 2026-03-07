@@ -1,155 +1,102 @@
-# 🥒 How to Write a PRD for Pickle Rick
+# How to Write a PRD for Pickle Rick
 
 ![Writing PRDs for Your Project](images/prd-rick.png)
 
-*Listen, I'm gonna level with you. Most PRDs are garbage. They're written by people who think "requirements" means "a list of wishes sprinkled with corporate jargon." That's Jerry energy. We don't do Jerry energy here.*
-
-*This guide tells you how to write a PRD that my system can actually turn into working code. Follow it, or don't. I'll still build something incredible either way because I'm Pickle Rick. But your odds of getting what you actually want go way up if you give me something to work with.*
+*Most PRDs are garbage — wishes sprinkled with corporate jargon. This guide tells you how to write one my system can turn into working code.*
 
 ---
 
-## 🚀 Four Ways to Start
+## Four Ways to Start
 
-### 💬 Option A: Just Talk to Me
+**A: Just talk** — Describe what you want in a Claude Code session. I'll ask questions, poke holes, write the PRD. Save as `.md`, hand to `/pickle-refine-prd` or `/pickle`.
 
-Open a Claude Code session and start describing what you want. No commands, no templates — just a conversation. Tell me the problem, what you're thinking, what you've tried. I'll ask the right questions, poke holes in your assumptions, and when we've hashed it out, I'll write the PRD for you. Save it as a `.md` file and hand it to `/pickle-refine-prd` or `/pickle` when you're ready. This is the most natural path — you talk, I translate intent into engineering spec.
+**B: `/pickle-prd`** — Structured interview. Why, Who, What, How, plus verification drilling (how to verify each requirement automatically). I write the PRD and initialize a session.
 
-### 🎤 Option B: Let Me Interview You (`/pickle-prd`)
+**C: Write it yourself** — Hand a `.md` to `/pickle-refine-prd`. Three parallel analysts refine it, cross-reference your codebase, produce tickets.
 
-Run `/pickle-prd add dark mode support` and I'll interrogate you with a structured interview. Why, Who, What, How. I'll keep asking until I have 100% clarity, then I write the PRD myself and initialize a session. This is the recommended path if you want the PRD wired into a session automatically and don't enjoy writing documents (and honestly, who does).
-
-### ✍️ Option C: Write It Yourself
-
-Write a markdown file, hand it to `/pickle-refine-prd path/to/your-prd.md`. My refinement team — three parallel analyst workers — will tear it apart, cross-reference your codebase, identify gaps, and produce an improved version with atomic tickets. You can write as little or as much as you want. More detail = fewer assumptions I have to make.
-
-### 🎲 Option D: Just Wing It
-
-Run `/pickle your task here` with a one-liner. I'll draft a PRD from that sentence, break it down, and start building. Works for small stuff. For anything with more than two moving parts, you're gambling. And unlike me, you're not a genius who thrives on chaos.
+**D: Wing it** — `/pickle your task`. I draft a PRD from one sentence. Fine for small stuff, gambling for anything complex.
 
 ---
 
-## 📋 What Goes in a PRD
+## What Goes in a PRD
 
-Here's the template. Not every section is required — I've marked what's 🔴 **critical**, 🟡 **recommended**, and 🟢 **optional**. The system doesn't parse these sections programmatically; *I* read them. So write for a hyper-intelligent pickle who's short on patience.
+🔴 = critical, 🟡 = recommended, 🟢 = optional. Write for a hyper-intelligent pickle who's short on patience.
 
-### The Sections
-
-#### 1. Title and Summary — 🔴 CRITICAL
+### 1. Title & Summary — 🔴
 ```markdown
-# [Feature Name] PRD
-One-sentence summary of what this thing does and why it exists.
+# [Feature] PRD
+One sentence: what it does and why.
 ```
+"Improve performance" = useless. "Add Redis caching to loan-status API" = useful.
 
-If I can't tell what you want from the title and first line, everything downstream suffers. Be specific. "Improve performance" is useless. "Add Redis caching layer to loan-status API endpoint" — now we're cooking.
-
-#### 2. Problem Statement — 🔴 CRITICAL
+### 2. Problem Statement — 🔴
 ```markdown
-## Problem Statement
-**Current Process**: What happens today without this feature
-**Primary Users**: Who suffers / benefits
-**Pain Points**: What specifically sucks about the status quo
-**Importance**: Why now, why this, what breaks if we don't
+## Problem
+**Current Process**: | **Users**: | **Pain Points**: | **Importance**:
 ```
+Skip this and I'm solving the wrong problem brilliantly.
 
-This is the "why." Skip it and I'm guessing at your motivation, which means I might solve the wrong problem brilliantly. Still brilliant, but pointed at the wrong target. 🎯
-
-#### 3. Objective & Scope — 🔴 CRITICAL
+### 3. Objective & Scope — 🔴
 ```markdown
-## Objective & Scope
-**Objective**: The single measurable goal
-**Ideal Outcome**: What "done" looks like
-
-### In-scope / Goals
-- Thing we ARE building
-- Another thing we ARE building
-
-### Not-in-scope / Non-Goals
-- Thing we are NOT building (and why)
-- Future consideration we're explicitly deferring
+## Scope
+**Objective**: Single measurable goal | **Done looks like**:
+### In-scope
+### Not-in-scope
 ```
+Not-in-scope is more important. Without it, I'll keep adding features you didn't ask for.
 
-The **Not-in-scope** section is arguably more important than the in-scope section. You know why? Because without it, I'll keep going. I'll add features you didn't ask for because they're obviously better. You'll love them, but your deadline won't. 🚧
+### 4. User Journeys — 🟡
+Step-by-step flows. These become acceptance criteria. "User clicks Edit Profile → changes email → Save → sees toast → new email in header" — that's verifiable.
 
-#### 4. Critical User Journeys — 🟡 RECOMMENDED
+### 5. Functional Requirements — 🟡
 ```markdown
-## Critical User Journeys (CUJs)
-1. User opens the page → sees loan status → clicks refresh → sees updated data in <2s
-2. Admin navigates to settings → toggles feature flag → change takes effect immediately
+| Priority | Requirement | Verification |
+|:---------|:------------|:-------------|
+| P0       | Cached results <50ms | `curl -w '%{time_total}' /api/status` |
+| P1       | Cache invalidates on change | `npm test -- cache-invalidation.test` |
 ```
+Every requirement needs a Verification column — a machine-checkable command, test, or assertion. The spec IS the review.
 
-Step-by-step flows. These become my acceptance criteria. The more concrete these are, the more precisely I build. "User can manage their account" tells me nothing. "User clicks Edit Profile → changes email → clicks Save → sees confirmation toast → new email appears in header" tells me everything.
-
-#### 5. Functional Requirements — 🟡 RECOMMENDED
+### 6. Interface Contracts — 🟡
 ```markdown
-## Functional Requirements
-| Priority | Requirement | User Story |
-|:---------|:------------|:-----------|
-| P0       | API returns cached results within 50ms | As a user, I need fast page loads |
-| P1       | Cache invalidates on loan status change | As a user, I need accurate data |
-| P2       | Admin can manually flush cache | As an admin, I need an escape hatch |
+## Interface Contracts
+| Endpoint | Input | Output | Error |
+|:---------|:------|:-------|:------|
 ```
+Exact shapes at boundaries — field names, types. If your feature crosses module/service boundaries, this is required. N/A with justification otherwise.
 
-P0 = must have, P1 = should have, P2 = nice to have. My ticket decomposition respects these priorities. P0 tickets run first.
+### 7. Verification Strategy — 🟡
+How conformance is checked automatically:
+- **Type**: project type checker passes (tsc/mypy/equivalent)
+- **Test**: all acceptance tests pass
+- **Contract**: interface shapes match impl signatures
+- **LLM**: agent reads impl, quotes code, PASS/FAIL (behavioral reqs only)
 
-#### 6. Technical Constraints — 🟡 RECOMMENDED
+### 8. Test Expectations — 🟡
 ```markdown
-## Technical Constraints
-- Must use existing PostgreSQL instance (no new databases)
-- API response time must stay under 200ms at p95
-- Must work with Node 25 / ESM modules
-- Must not break existing Encompass SDK integration
+| Requirement | Test File | Description | Assertion |
+|:------------|:----------|:------------|:----------|
 ```
+Specified BEFORE implementation. Small features (<3 files) can consolidate into requirements table.
 
-Tell me what I *can't* do. Boundaries make me more creative, not less. Without constraints, I'll architect a masterpiece that requires three services you don't have.
+### 9. Technical Constraints — 🟡
+What I *can't* do. Boundaries make me more creative.
 
-#### 7. Assumptions — 🟢 OPTIONAL
-```markdown
-## Assumptions
-- Redis is available in the deployment environment
-- Current API contract can accept breaking changes (internal only)
-- Test coverage for affected modules is above 80%
-```
+### 10. Codebase Context — ⭐
+File paths, function names, existing patterns. My refinement team greps your repo, but pointing at the right files up front makes tickets *significantly* better.
 
-Things you believe to be true that I should verify before building on them.
-
-#### 8. Risks & Mitigations — 🟢 OPTIONAL
-```markdown
-## Risks & Mitigations
-| Risk | Impact | Likelihood | Mitigation |
-|:-----|:-------|:-----------|:-----------|
-| Redis unavailable in prod | High | Low | Fallback to in-memory LRU cache |
-```
-
-#### 9. Business Impact — 🟢 OPTIONAL
-```markdown
-## Business Benefits/Impact/Metrics
-| Metric | Current | Target | Impact |
-|:-------|:--------|:-------|:-------|
-| API p95 latency | 800ms | 50ms | 16x improvement |
-```
-
-#### 10. Relevant Codebase Context — ⭐ HIGHLY RECOMMENDED
-```markdown
-## Codebase Context
-- **Entry point**: `src/routes/loan-status.ts`
-- **Existing patterns**: See `src/cache/session-cache.ts` for caching approach
-- **Test location**: `tests/integration/loan-status.test.ts`
-- **Config**: Environment vars in `.env.example`, cache config in `src/config/cache.ts`
-```
-
-This is the secret weapon section. My refinement team has a codebase analyst that will grep your repo, but if you point me at the right files up front, the tickets come out *significantly* better. File paths, function names, existing patterns to follow — this is gold. 🏆
+### 11. Assumptions / Risks / Impact — 🟢
+Things to verify before building, risk mitigations, success metrics.
 
 ---
 
-## ⚡ The Minimum Viable PRD
-
-Don't have time for all that? Here's the bare minimum that still produces good results:
+## Minimum Viable PRD
 
 ```markdown
 # [Feature] PRD
 
 ## Problem
-[2-3 sentences: what's broken/missing and who cares]
+[2-3 sentences: what's broken and who cares]
 
 ## Goal
 [1 sentence: what "done" looks like]
@@ -157,69 +104,49 @@ Don't have time for all that? Here's the bare minimum that still produces good r
 ## Scope
 ### In
 - [What to build]
-
 ### Out
 - [What NOT to build]
 
 ## Requirements
-| Priority | Requirement |
-|:---------|:------------|
-| P0       | [Must have] |
-| P1       | [Should have] |
+| Priority | Requirement | Verification |
+|:---------|:------------|:-------------|
+| P0       | [Must have] | [command/test] |
+| P1       | [Should have] | [command/test] |
 
 ## Context
 - Key files: [paths]
 - Patterns to follow: [examples]
 ```
 
-That's it. Five sections. I can work with this. The refinement team will fill in the gaps.
+Five sections. Refinement fills the gaps.
 
 ---
 
-## ✅ What Makes a PRD Good vs. Bad
+## Good vs. Bad PRD Signals
 
-### 👍 Good PRD Signals
-- **Specific verbs**: "Add", "Replace", "Remove", "Migrate" — not "Improve", "Enhance", "Optimize"
-- **Measurable outcomes**: "Response time under 200ms" — not "Make it faster"
-- **File references**: "Modify `src/auth/middleware.ts`" — not "Update the auth layer"
-- **Explicit boundaries**: "Do NOT change the database schema" — not "Keep it simple"
-- **Concrete user flows**: Step 1 → Step 2 → Step 3 with expected behavior at each step
+**Good**: Specific verbs (Add/Replace/Remove), measurable outcomes (under 200ms), file references, explicit boundaries, concrete user flows, machine-checkable verification.
 
-### 👎 Bad PRD Signals
-- Vague aspirations disguised as requirements ("Deliver a world-class experience")
-- No scope boundaries (I will build forever and love every second of it — you won't)
-- Requirements that are actually implementation details ("Use a HashMap with O(1) lookup") — tell me *what*, not *how*
-- Zero codebase context (I'll figure it out, but the tickets will be fuzzier)
-- Mixing multiple unrelated features in one PRD (each PRD = one epic = one concern)
+**Bad**: Vague aspirations ("world-class"), no scope boundaries, requirements that are implementation details, zero codebase context, multiple unrelated features, subjective acceptance criteria ("looks good").
 
 ---
 
-## 🔧 How the System Uses Your PRD
+## How the System Uses Your PRD
 
-Here's what happens after you hand me a PRD — so you know what you're feeding into:
+1. **Verification Readiness** — Checks for interface contracts, verification strategy, test expectations, machine-checkable criteria. Missing/vague → interactive interview. Under-specified PRDs can't auto-run.
+2. **Refinement** — 3 parallel analysts × 3 cycles against your codebase. Requirements, codebase context, risk/scope.
+3. **Decomposition** — Atomic tickets (<30min, <5 files, <4 criteria). Self-contained with embedded contracts, tests, conformance checks.
+4. **Execution** — 8 phases per ticket: Research → Review → Plan → Review → Implement → **Spec Conformance** → Code Review → Simplify. Conformance runs every acceptance criterion and checks contracts before subjective review.
 
-1. ✅ **Verification Readiness Check**: Before spending tokens on refinement, the system checks your PRD for verification infrastructure — interface contracts, verification strategy, test expectations, machine-checkable acceptance criteria. Missing or vague sections trigger an interactive interview to fill the gaps. Under-specified PRDs can't auto-run.
-
-2. 🔬 **Refinement** (`/pickle-refine-prd`): Three parallel analysts examine your PRD against the actual codebase. Requirements analyst checks completeness. Codebase analyst greps for relevant files, patterns, and existing implementations. Risk analyst evaluates scope and identifies hazards. They run 3 cycles, cross-referencing each other's findings.
-
-3. 🎫 **Decomposition**: The refined PRD gets broken into atomic tickets. Each ticket is sized for <30 minutes of coding, touches <5 files, has <4 acceptance criteria, and spans <2 subsystems. Tickets are self-contained with embedded interface contracts, test expectations, and conformance checks — the worker never reads the PRD or other tickets.
-
-4. ⚙️ **Execution**: Each ticket runs through an 8-phase lifecycle: Research → Research Review → Plan → Plan Review → Implement → **Spec Conformance** → Code Review → Simplify → Done. The spec conformance phase runs every acceptance criterion, checks interface contracts against implementation signatures, and verifies test expectations before any subjective code review. The mux-runner orchestrates iterations, handles rate limits, and advances through tickets sequentially.
-
-The takeaway: **your PRD is the single source of truth AND the review mechanism**. The spec replaces human code review — if the acceptance criteria pass, the interface contracts match, and the tests verify, the code is conformant. Graphite is the audit trail, not the review bottleneck. The more precise your spec, the more automated the verification.
+**Your PRD is the source of truth AND the review mechanism.** Precise spec = automated verification. Graphite is the audit trail, not the bottleneck.
 
 ---
 
-## 📖 Quick Reference
+## Quick Reference
 
-| Command | What It Does | When to Use |
-|:--------|:-------------|:------------|
-| `/pickle-prd <topic>` | 🎤 Interactive interview → writes PRD | You want guidance on what to include |
-| `/pickle-refine-prd <path>` | 🔬 3-analyst refinement → atomic tickets | You already have a PRD draft |
-| `/pickle-refine-prd <path> --run` | 🚀 Refine + auto-launch tmux loop | You're ready to let it rip |
-| `/pickle <task>` | ⚡ Draft PRD + breakdown + execute in one shot | Small/clear tasks |
-| `/pickle-tmux --resume <session>` | 🔄 Resume from existing PRD/tickets in tmux | Picking up where you left off |
-
----
-
-*Now stop reading documentation and go build something. Or better yet, tell me what to build and go do something more interesting with your time. That's the whole point of this system — you think, I build, Jerry mows the lawn. Everyone's where they belong.* 🥒
+| Command | Use When |
+|:--------|:---------|
+| `/pickle-prd <topic>` | Want guided interview → PRD |
+| `/pickle-refine-prd <path>` | Have a draft → refine + tickets |
+| `/pickle-refine-prd --run <path>` | Ready to let it rip |
+| `/pickle <task>` | Small/clear task, one shot |
+| `/pickle-tmux --resume <session>` | Picking up where you left off |
