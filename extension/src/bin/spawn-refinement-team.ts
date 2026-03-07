@@ -258,7 +258,9 @@ function spawnWorker(
     }, (timeout + 30) * 1000);
     hangGuard.unref();
 
-    proc.on('error', () => {
+    proc.on('error', (err) => {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`${Style.RED}Failed to spawn claude (${roleId}): ${msg}${Style.RESET}`);
       logStream.end();
       settleWith({ roleId, success: false, logPath, cycle });
     });
