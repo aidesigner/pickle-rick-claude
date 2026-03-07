@@ -100,6 +100,18 @@ test('activity: EXISTENCE_IS_PAIN emits meeseeks_pass', () => {
   assert.ok(activityEvents[0].session, 'should have session ID');
 });
 
+test('activity: THE_CITADEL_APPROVES emits meeseeks_pass', () => {
+  const { activityEvents } = runHookWithActivity({
+    state: baseState({ iteration: 3 }),
+    response: '<promise>THE_CITADEL_APPROVES</promise>',
+  });
+  assert.equal(activityEvents.length, 1);
+  assert.equal(activityEvents[0].event, 'meeseeks_pass');
+  assert.equal(activityEvents[0].source, 'pickle');
+  assert.equal(activityEvents[0].pass, 3);
+  assert.ok(activityEvents[0].session, 'should have session ID');
+});
+
 test('activity: EPIC_COMPLETED emits epic_completed', () => {
   const { activityEvents } = runHookWithActivity({
     state: baseState({ original_prompt: 'Build the portal gun' }),

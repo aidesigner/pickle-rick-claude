@@ -128,7 +128,7 @@ async function main() {
   const isTaskFinished = hasToken(responseText, PromiseTokens.TASK_COMPLETED);
   const isRefinementWorker = role === 'refinement-worker';
   const isAnalysisDone = isRefinementWorker && hasToken(responseText, PromiseTokens.ANALYSIS_DONE);
-  const isExistenceIsPain = hasToken(responseText, PromiseTokens.EXISTENCE_IS_PAIN);
+  const isExistenceIsPain = hasToken(responseText, PromiseTokens.EXISTENCE_IS_PAIN) || hasToken(responseText, PromiseTokens.THE_CITADEL_APPROVES);
   const isWorkerDone = isWorker && hasToken(responseText, PromiseTokens.WORKER_DONE);
 
   // Checkpoint Tokens (block exit in inline mode, approve in tmux mode for respawn)
@@ -141,7 +141,7 @@ async function main() {
 
   // EXIT CONDITIONS: Full Exit
   if (hasPromise || isEpicDone || isTaskFinished || isWorkerDone || isAnalysisDone || isExistenceIsPain) {
-    // min_iterations gate: only applies to EXISTENCE_IS_PAIN token
+    // min_iterations gate: applies to review-clean tokens (EXISTENCE_IS_PAIN / THE_CITADEL_APPROVES)
     if (isExistenceIsPain) {
       const rawMinIter = Number(state.min_iterations);
       const minIter = Number.isFinite(rawMinIter) ? rawMinIter : 0;
@@ -150,12 +150,12 @@ async function main() {
       if (minIter > 0 && curIter2 < minIter) {
         if (state.tmux_mode === true) {
           // tmux mode: approve exit — tmux-runner handles respawn
-          log(`Decision: APPROVE (EXISTENCE_IS_PAIN at ${curIter2}/${minIter} — below min, runner continues)`);
+          log(`Decision: APPROVE (review_clean at ${curIter2}/${minIter} — below min, runner continues)`);
           approve();
           return;
         }
         // non-tmux mode: block to continue the inline loop
-        log(`Decision: BLOCK (EXISTENCE_IS_PAIN at ${curIter2}/${minIter} — below min, continuing inline loop)`);
+        log(`Decision: BLOCK (review_clean at ${curIter2}/${minIter} — below min, continuing inline loop)`);
         console.log(JSON.stringify({ decision: 'block', reason: `🥒 Clean pass ${curIter2}/${minIter} — continuing review` }));
         return;
       }

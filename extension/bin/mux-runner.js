@@ -53,7 +53,7 @@ export function extractAssistantContent(output) {
 /**
  * Classifies iteration output into a completion result.
  * EPIC_COMPLETED → 'task_completed' (exits the loop — all tickets done)
- * EXISTENCE_IS_PAIN → 'review_clean' (subject to min_iterations gate)
+ * EXISTENCE_IS_PAIN / THE_CITADEL_APPROVES → 'review_clean' (subject to min_iterations gate)
  * TASK_COMPLETED / anything else → 'continue' (single ticket done, loop continues)
  *
  * Only checks assistant message content (via extractAssistantContent) to avoid
@@ -64,7 +64,7 @@ export function classifyCompletion(output) {
     if (hasToken(content, PromiseTokens.EPIC_COMPLETED)) {
         return 'task_completed';
     }
-    if (hasToken(content, PromiseTokens.EXISTENCE_IS_PAIN)) {
+    if (hasToken(content, PromiseTokens.EXISTENCE_IS_PAIN) || hasToken(content, PromiseTokens.THE_CITADEL_APPROVES)) {
         return 'review_clean';
     }
     return 'continue';
@@ -670,7 +670,7 @@ async function main() {
             break;
         }
         else if (result === 'review_clean') {
-            // EXISTENCE_IS_PAIN — apply min_iterations gate (Meeseeks review pattern)
+            // review_clean (EXISTENCE_IS_PAIN / THE_CITADEL_APPROVES) — apply min_iterations gate
             let curState;
             try {
                 curState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));

@@ -503,6 +503,10 @@ test('classifyCompletion: EXISTENCE_IS_PAIN returns review_clean', () => {
     assert.equal(classifyCompletion('<promise>EXISTENCE_IS_PAIN</promise>'), 'review_clean');
 });
 
+test('classifyCompletion: THE_CITADEL_APPROVES returns review_clean', () => {
+    assert.equal(classifyCompletion('<promise>THE_CITADEL_APPROVES</promise>'), 'review_clean');
+});
+
 test('classifyCompletion: no token returns continue', () => {
     assert.equal(classifyCompletion('Some random output with no tokens'), 'continue');
 });

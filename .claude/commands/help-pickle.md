@@ -11,6 +11,7 @@ Summarize the available commands for the user:
 - `/pickle-dot [path | inline PRD]`: Convert PRD to strongdm/attractor-compatible DOT digraph
 - `/meeseeks`: Launch iterative code review loop (Mr. Meeseeks)
 - `/meeseeks-zellij`: Launch Mr. Meeseeks code review in Zellij. Same as /meeseeks but for Zellij users. Requires Zellij >= 0.40.0
+- `/council-of-ricks`: Iterative Graphite stack reviewer (Council of Ricks). Reviews every branch, generates agent-executable directives. Requires `gt`, `tmux`, `CLAUDE.md`, lint with architectural rules. Flags: `--gitnexus`, `--min-iterations`, `--max-iterations`, `--repo`
 - `/eat-pickle`: Stop/cancel current loop
 - `/help-pickle`: This message
 - `/disable-pickle`: Disable stop hook globally

@@ -708,6 +708,54 @@ test('stop-hook: EXISTENCE_IS_PAIN at min_iterations + tmux_mode → approve, ac
   assert.equal(state.active, true, 'tmux mode: runner owns active — hook must not deactivate');
 });
 
+// ---------------------------------------------------------------------------
+// THE_CITADEL_APPROVES token — council of ricks stack review loop
+// ---------------------------------------------------------------------------
+
+test('stop-hook: THE_CITADEL_APPROVES → approve + active=false (standard completion)', () => {
+  const { decision, state } = runHook({
+    response: '<promise>THE_CITADEL_APPROVES</promise>',
+  });
+  assert.deepEqual(decision, { decision: 'approve' });
+  assert.equal(state.active, false);
+});
+
+test('stop-hook: THE_CITADEL_APPROVES below min_iterations (non-tmux) → block inline loop', () => {
+  const { decision, state } = runHook({
+    state: baseState({ min_iterations: 10, iteration: 3 }),
+    response: '<promise>THE_CITADEL_APPROVES</promise>',
+  });
+  assert.equal(decision.decision, 'block', 'non-tmux mode below min_iterations must block to continue inline loop');
+  assert.equal(state.active, true, 'below min_iterations — active must stay true');
+});
+
+test('stop-hook: THE_CITADEL_APPROVES below min_iterations (tmux) → approve for runner respawn', () => {
+  const { decision, state } = runHook({
+    state: baseState({ min_iterations: 10, iteration: 3, tmux_mode: true }),
+    response: '<promise>THE_CITADEL_APPROVES</promise>',
+  });
+  assert.deepEqual(decision, { decision: 'approve' });
+  assert.equal(state.active, true, 'below min_iterations — active must stay true for runner to continue');
+});
+
+test('stop-hook: THE_CITADEL_APPROVES at min_iterations → approve + active=false', () => {
+  const { decision, state } = runHook({
+    state: baseState({ min_iterations: 10, iteration: 10 }),
+    response: '<promise>THE_CITADEL_APPROVES</promise>',
+  });
+  assert.deepEqual(decision, { decision: 'approve' });
+  assert.equal(state.active, false, 'at min_iterations — should deactivate');
+});
+
+test('stop-hook: THE_CITADEL_APPROVES at min_iterations + tmux_mode → approve, active UNCHANGED', () => {
+  const { decision, state } = runHook({
+    state: baseState({ tmux_mode: true, min_iterations: 10, iteration: 10 }),
+    response: '<promise>THE_CITADEL_APPROVES</promise>',
+  });
+  assert.deepEqual(decision, { decision: 'approve' });
+  assert.equal(state.active, true, 'tmux mode: runner owns active — hook must not deactivate');
+});
+
 test('stop-hook: EPIC_COMPLETED ignores min_iterations → still deactivates', () => {
   const { decision, state } = runHook({
     state: baseState({ min_iterations: 10, iteration: 2 }),

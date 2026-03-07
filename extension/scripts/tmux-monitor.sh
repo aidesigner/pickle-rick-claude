@@ -24,7 +24,7 @@ tmux send-keys -t "$NAME:monitor.0" "node $EXT/bin/monitor.js $SESSION_ROOT" Ent
 tmux send-keys -t "$NAME:monitor.1" "node $EXT/bin/log-watcher.js $SESSION_ROOT" Enter
 
 # Pane 2 = bottom — varies by mode
-if [ "$MODE" = "meeseeks" ]; then
+if [ "$MODE" = "meeseeks" ] || [ "$MODE" = "council" ]; then
   tmux send-keys -t "$NAME:monitor.2" "tail -F $SESSION_ROOT/mux-runner.log" Enter
 elif [ "$MODE" = "refinement" ]; then
   tmux send-keys -t "$NAME:monitor.2" "node $EXT/bin/refinement-watcher.js $SESSION_ROOT" Enter
