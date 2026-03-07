@@ -257,6 +257,14 @@ async function runIteration(sessionDir: string, iterationNum: number, extensionR
     try { fs.writeSync(logFd, chunk); } catch { /* fd closed — ignore late writes */ }
   }
 
+  // Per-iteration timeout: mirrors spawn-morty.ts + jar-runner.ts.
+  // max_time_minutes is checked between iterations; if claude hangs mid-iteration
+  // (e.g. stuck on a tool call), the outer loop never regains control without this.
+  const rawIterTimeout = Number(state.worker_timeout_seconds);
+  const iterTimeout = Number.isFinite(rawIterTimeout) && rawIterTimeout > 0
+    ? rawIterTimeout
+    : Defaults.WORKER_TIMEOUT_SECONDS;
+
   return new Promise((resolve) => {
     let settled = false;
 
@@ -266,6 +274,30 @@ async function runIteration(sessionDir: string, iterationNum: number, extensionR
       stdio: ['inherit', 'pipe', 'pipe'],
     });
     currentChildProc = proc;
+
+    // SIGTERM first, escalate to SIGKILL after 2s if still alive
+    let killEscalation: ReturnType<typeof setTimeout> | null = null;
+    const timeoutHandle = setTimeout(() => {
+      if (settled) return;
+      console.error(`\n${Style.YELLOW}⚠️  Iteration ${iterationNum} timed out after ${iterTimeout}s — killing${Style.RESET}`);
+      try { proc.kill('SIGTERM'); } catch { /* already dead */ }
+      killEscalation = setTimeout(() => {
+        try { proc.kill('SIGKILL'); } catch { /* already dead */ }
+      }, 2000);
+    }, iterTimeout * 1000);
+
+    // Safety net: force-resolve if process doesn't exit within timeout + 30s
+    const hangGuard = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      currentChildProc = null;
+      clearTimeout(timeoutHandle);
+      if (killEscalation) clearTimeout(killEscalation);
+      try { fs.closeSync(logFd); } catch { /* already closed */ }
+      console.error(`${Style.RED}❌ Iteration ${iterationNum} hang detected — forcing failure${Style.RESET}`);
+      resolve('error');
+    }, (iterTimeout + 30) * 1000);
+    hangGuard.unref();
 
     // Direct data handlers: write each chunk to both the log file (sync,
     // no buffering) and the terminal (for the tmux-runner pane).
@@ -282,6 +314,9 @@ async function runIteration(sessionDir: string, iterationNum: number, extensionR
       if (settled) return;
       settled = true;
       currentChildProc = null;
+      clearTimeout(timeoutHandle);
+      if (killEscalation) clearTimeout(killEscalation);
+      clearTimeout(hangGuard);
       try { fs.closeSync(logFd); } catch { /* already closed */ }
       const exitCodeFile = logFile.replace('.log', '.exitcode');
       try { fs.writeFileSync(exitCodeFile, String(code ?? -1)); } catch { /* best effort */ }
@@ -294,6 +329,9 @@ async function runIteration(sessionDir: string, iterationNum: number, extensionR
       if (settled) return;
       settled = true;
       currentChildProc = null;
+      clearTimeout(timeoutHandle);
+      if (killEscalation) clearTimeout(killEscalation);
+      clearTimeout(hangGuard);
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`${Style.RED}Failed to spawn claude: ${msg}${Style.RESET}`);
       try { fs.closeSync(logFd); } catch { /* already closed */ }
