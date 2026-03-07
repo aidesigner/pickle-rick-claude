@@ -171,7 +171,7 @@ export function classifyIterationExit(
   return { type: 'success' };
 }
 
-async function runIteration(sessionDir: string, iterationNum: number, extensionRoot: string): Promise<string> {
+async function runIteration(sessionDir: string, iterationNum: number, extensionRoot: string, meeseeksModel: string): Promise<string> {
   const statePath = path.join(sessionDir, 'state.json');
   let state: State;
   try {
@@ -223,8 +223,6 @@ async function runIteration(sessionDir: string, iterationNum: number, extensionR
       maxTurns = settings.default_manager_max_turns;
     }
   } catch { /* use default */ }
-  const meeseeksModel = loadMeeseeksModel(extensionRoot);
-
   const logFile = path.join(sessionDir, `tmux_iteration_${iterationNum}.log`);
   const cmdArgs = [
     '--dangerously-skip-permissions',
@@ -370,6 +368,7 @@ async function main() {
   const cbPath = path.join(sessionDir, 'circuit_breaker.json');
 
   const { waitMinutes: rateLimitWaitMinutes, maxRetries: maxRateLimitRetries } = loadRateLimitSettings(extensionRoot);
+  const meeseeksModel = loadMeeseeksModel(extensionRoot);
 
   const startTime = Date.now();
   let iteration = 0;
@@ -453,7 +452,7 @@ async function main() {
     log(`--- Iteration ${iteration} (state.iteration=${state.iteration}) ---`);
     logActivity({ event: 'iteration_start', source: 'pickle', session: path.basename(sessionDir), iteration });
 
-    const result = await runIteration(sessionDir, iteration, extensionRoot);
+    const result = await runIteration(sessionDir, iteration, extensionRoot, meeseeksModel);
 
     // Detect ticket transitions: if current_ticket changed, mark the previous one Done
     try {
@@ -694,7 +693,8 @@ async function main() {
   }
 
   const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
-  logActivity({ event: 'session_end', source: 'pickle', session: path.basename(sessionDir), duration_min: Math.round(totalElapsed / 60), mode: 'tmux' });
+  const isFailedExit = exitReason === 'error' || exitReason === 'stall' || exitReason === 'circuit_open' || exitReason === 'rate_limit_exhausted';
+  logActivity({ event: 'session_end', source: 'pickle', session: path.basename(sessionDir), duration_min: Math.round(totalElapsed / 60), mode: 'tmux', ...(isFailedExit ? { error: exitReason } : {}) });
   let finalStep = 'unknown';
   let finalActive = 'unknown';
   let finalMinIter = 0;
