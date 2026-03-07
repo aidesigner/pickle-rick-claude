@@ -10,6 +10,9 @@ import {
 } from '../services/pickle-utils.js';
 import { PromiseTokens, hasToken, Defaults } from '../types/index.js';
 
+// Tracks all active worker subprocesses so the signal handler can kill them.
+const activeWorkerProcs = new Set<import('child_process').ChildProcess>();
+
 const WORKER_ROLES = [
   { id: 'requirements' },
   { id: 'codebase' },
@@ -221,6 +224,7 @@ function spawnWorker(
     env,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+  activeWorkerProcs.add(proc);
 
   // Use { end: false } so that when stdout ends first it doesn't call
   // logStream.end(), which would discard any stderr data still in-flight.
@@ -245,6 +249,7 @@ function spawnWorker(
     function settleWith(result: WorkerResult) {
       if (settled) return;
       settled = true;
+      activeWorkerProcs.delete(proc);
       clearTimeout(timeoutHandle);
       if (killEscalation) clearTimeout(killEscalation);
       clearTimeout(hangGuard);
@@ -403,6 +408,18 @@ async function main() {
   const portalContext: PortalContext | undefined = hasPortal
     ? { portalDir, patternSummaryLines: 50 }
     : undefined;
+
+  // Graceful shutdown: kill all active worker subprocesses on SIGTERM/SIGINT
+  // so orphaned `claude` processes don't keep burning API tokens.
+  const handleShutdownSignal = (signal: string) => {
+    console.error(`\n${Style.YELLOW}⚠️  Received ${signal} — killing ${activeWorkerProcs.size} active worker(s)${Style.RESET}`);
+    for (const wp of activeWorkerProcs) {
+      try { wp.kill('SIGTERM'); } catch { /* already dead */ }
+    }
+    process.exit(0);
+  };
+  process.on('SIGTERM', () => handleShutdownSignal('SIGTERM'));
+  process.on('SIGINT', () => handleShutdownSignal('SIGINT'));
 
   printMinimalPanel(
     'PRD Refinement Team Deploying',
