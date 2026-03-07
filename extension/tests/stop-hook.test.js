@@ -643,7 +643,7 @@ test('stop-hook: string "true" tmux_mode is NOT treated as tmux mode (strict boo
   // setStateFileEnv: false so the tmux main-window branch (!process.env.PICKLE_STATE_FILE) is reachable
   const { decision } = runHook({
     state: baseState({ tmux_mode: "true" }),
-    response: 'some text',
+    response: 'This is a longer response that avoids the degenerate short-response detection',
     setStateFileEnv: false,
   });
   // Should fall through to default block (active session, no tokens), not approve as tmux main-window
@@ -872,7 +872,8 @@ test('stop-hook: "Acknowledged." response → approve (no-op detection)', () => 
   assert.equal(decision.decision, 'approve');
 });
 
-test('stop-hook: "ok" response → approve (no-op detection, case-insensitive)', () => {
+test('stop-hook: "ok" short response → approve (caught by degenerate, not no-op)', () => {
+  // "OK" is 2 chars — caught by degenerate short check (≤10), not no-op patterns
   const { decision } = runHook({
     state: baseState({ iteration: 5, max_iterations: 50 }),
     response: 'OK',
@@ -880,15 +881,27 @@ test('stop-hook: "ok" response → approve (no-op detection, case-insensitive)',
   assert.equal(decision.decision, 'approve');
 });
 
-test('stop-hook: "Understood" response → approve (no-op detection)', () => {
+test('stop-hook: "  Understood  " padded response → approve (no-op pattern, trimmed to 10 chars)', () => {
+  // After trim: "Understood" = 10 chars, caught by degenerate (≤10).
+  // Use a padded version to verify the trim + degenerate path.
   const { decision } = runHook({
     state: baseState({ iteration: 1, max_iterations: 10 }),
-    response: 'Understood',
+    response: '  Understood  ',
   });
   assert.equal(decision.decision, 'approve');
 });
 
-test('stop-hook: "Got it." response → approve (no-op detection)', () => {
+test('stop-hook: "Continuing." (12 chars) → approve (genuine no-op pattern match)', () => {
+  // 12 chars after trim — above degenerate threshold, must be caught by no-op pattern
+  const { decision } = runHook({
+    state: baseState({ iteration: 2, max_iterations: 10 }),
+    response: ' Continuing.',
+  });
+  assert.equal(decision.decision, 'approve');
+});
+
+test('stop-hook: "Got it." response → approve (caught by degenerate, not no-op)', () => {
+  // "Got it." is 6 chars — caught by degenerate short check (≤10)
   const { decision } = runHook({
     state: baseState({ iteration: 2, max_iterations: 10 }),
     response: 'Got it.',
@@ -911,4 +924,101 @@ test('stop-hook: no-op detection does not fire for empty response', () => {
     response: '',
   });
   assert.equal(decision.decision, 'block');
+});
+
+// ---------------------------------------------------------------------------
+// Degenerate short / whitespace response detection
+// ---------------------------------------------------------------------------
+
+test('stop-hook: whitespace-only response → approve + deactivate (inline mode)', () => {
+  const { decision, state } = runHook({
+    state: baseState({ iteration: 6, max_iterations: 50 }),
+    response: '  \n\n',
+  });
+  assert.equal(decision.decision, 'approve');
+  assert.equal(state.active, false, 'inline mode must deactivate on degenerate to prevent stale state');
+});
+
+test('stop-hook: 2-char non-matching response → approve + deactivate (inline mode)', () => {
+  const { decision, state } = runHook({
+    state: baseState({ iteration: 6, max_iterations: 50 }),
+    response: 'no',
+  });
+  assert.equal(decision.decision, 'approve');
+  assert.equal(state.active, false, 'inline mode must deactivate on degenerate to prevent stale state');
+});
+
+test('stop-hook: 10-char response → approve (degenerate boundary)', () => {
+  const { decision } = runHook({
+    state: baseState({ iteration: 3, max_iterations: 50 }),
+    response: '0123456789',
+  });
+  assert.equal(decision.decision, 'approve');
+});
+
+test('stop-hook: 11-char non-matching response → block (above degenerate threshold)', () => {
+  const { decision } = runHook({
+    state: baseState({ iteration: 3, max_iterations: 50 }),
+    response: '01234567890',
+  });
+  assert.equal(decision.decision, 'block');
+});
+
+test('stop-hook: 1-char response → approve (degenerate short)', () => {
+  const { decision } = runHook({
+    state: baseState({ iteration: 2, max_iterations: 50 }),
+    response: 'x',
+  });
+  assert.equal(decision.decision, 'approve');
+});
+
+test('stop-hook: tab-only response → approve (whitespace-only detection)', () => {
+  const { decision } = runHook({
+    state: baseState({ iteration: 2, max_iterations: 50 }),
+    response: '\t\t',
+  });
+  assert.equal(decision.decision, 'approve');
+});
+
+test('stop-hook: \\r\\n response → approve (whitespace-only detection)', () => {
+  const { decision } = runHook({
+    state: baseState({ iteration: 2, max_iterations: 50 }),
+    response: '\r\n',
+  });
+  assert.equal(decision.decision, 'approve');
+});
+
+test('stop-hook: single newline response → approve (whitespace-only detection)', () => {
+  const { decision } = runHook({
+    state: baseState({ iteration: 2, max_iterations: 50 }),
+    response: '\n',
+  });
+  assert.equal(decision.decision, 'approve');
+});
+
+test('stop-hook: degenerate short response in tmux mode → approve', () => {
+  const { decision, state } = runHook({
+    state: baseState({ tmux_mode: true, iteration: 3, max_iterations: 50 }),
+    response: 'no',
+  });
+  assert.equal(decision.decision, 'approve');
+  assert.equal(state.active, true, 'degenerate approve must not deactivate — runner handles lifecycle');
+});
+
+test('stop-hook: no-op "Acknowledged." in inline mode → approve + deactivate', () => {
+  const { decision, state } = runHook({
+    state: baseState({ iteration: 3, max_iterations: 50 }),
+    response: 'Acknowledged.',
+  });
+  assert.equal(decision.decision, 'approve');
+  assert.equal(state.active, false, 'inline mode must deactivate on no-op to prevent stale state');
+});
+
+test('stop-hook: whitespace-only response in tmux mode → approve', () => {
+  const { decision, state } = runHook({
+    state: baseState({ tmux_mode: true, iteration: 3, max_iterations: 50 }),
+    response: '  \n\n',
+  });
+  assert.equal(decision.decision, 'approve');
+  assert.equal(state.active, true, 'whitespace approve must not deactivate');
 });

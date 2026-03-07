@@ -239,11 +239,32 @@ async function main() {
     return;
   }
 
-  // 7a. No-op detection: if the response is trivially short and contains no
-  // meaningful content (just an ack of the hook's own feedback message), approve
-  // exit to break the degenerate ack loop. The mux-runner will respawn a fresh
-  // iteration with a full prompt, or the stall detector will terminate the session.
+  // 7a. No-op / degenerate response detection.
+  // If the agent tries to exit with an empty, whitespace-only, or very short
+  // response it's stuck in a degenerate loop. Approve exit so mux-runner can
+  // respawn a fresh iteration with full context (tmux) or the session ends
+  // cleanly (inline). Without this, the default BLOCK traps the inner Claude
+  // in an infinite 2-char-response loop that never advances.
   const trimmed = responseText.trim();
+  const DEGENERATE_MAX_LENGTH = 10;
+  if (responseText.length > 0 && trimmed.length === 0) {
+    log(`Decision: APPROVE (Whitespace-only response — ${responseText.length} raw chars)`);
+    if (!isWorker && !isRefinementWorker && state.tmux_mode !== true) {
+      state.active = false;
+      writeStateFile(stateFile, state);
+    }
+    approve();
+    return;
+  }
+  if (trimmed.length > 0 && trimmed.length <= DEGENERATE_MAX_LENGTH) {
+    log(`Decision: APPROVE (Degenerate short response: "${trimmed}" — ${trimmed.length} chars)`);
+    if (!isWorker && !isRefinementWorker && state.tmux_mode !== true) {
+      state.active = false;
+      writeStateFile(stateFile, state);
+    }
+    approve();
+    return;
+  }
   const NO_OP_MAX_LENGTH = 100;
   const NO_OP_PATTERNS = [
     /^acknowledged\.?$/i,
@@ -260,6 +281,10 @@ async function main() {
   if (trimmed.length > 0 && trimmed.length <= NO_OP_MAX_LENGTH &&
       NO_OP_PATTERNS.some(p => p.test(trimmed))) {
     log(`Decision: APPROVE (No-op response detected: "${trimmed}" — breaking ack loop)`);
+    if (!isWorker && !isRefinementWorker && state.tmux_mode !== true) {
+      state.active = false;
+      writeStateFile(stateFile, state);
+    }
     approve();
     return;
   }
