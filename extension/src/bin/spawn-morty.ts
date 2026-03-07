@@ -238,13 +238,15 @@ For simple file/string lookups, Grep/Glob are still fine.`;
     // Handle spawn failure (e.g., ENOENT when claude binary not found).
     // Without this, 'close' may never fire on some Node versions, leaving
     // the Promise unresolved until the hangGuard force-exits (~timeout+30s).
-    proc.on('error', () => {
+    proc.on('error', (err) => {
       clearInterval(interval);
       clearTimeout(timeoutHandle);
       if (killEscalation) clearTimeout(killEscalation);
       clearTimeout(hangGuard);
       if (process.stdout.isTTY) process.stdout.write('\r\x1b[K');
       logStream.end();
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`${Style.RED}Failed to spawn claude: ${msg}${Style.RESET}`);
       try { updateTicketStatus(ticketId, 'Failed', sessionRoot); } catch { /* best-effort */ }
       printMinimalPanel(
         'Worker Report',
