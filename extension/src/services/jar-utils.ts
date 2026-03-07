@@ -79,17 +79,21 @@ export function addToJar(sessionDir: string): string {
   return taskDir;
 }
 
-// CLI Support
+// CLI Support — process.exit() is intentional here: this block only runs when
+// the file is invoked directly as a CLI script (guarded by process.argv[1] check),
+// never when imported as a library module.
 if (process.argv[1] && path.basename(process.argv[1]) === 'jar-utils.js') {
   const args = process.argv.slice(2);
   const sessionIndex = args.indexOf('--session');
   if (sessionIndex === -1) {
     console.log('Usage: node jar-utils.js add --session <path>');
+    // eslint-disable-next-line pickle/no-process-exit-in-library
     process.exit(1);
   }
   const sessionDir = args[sessionIndex + 1];
   if (!sessionDir || sessionDir.startsWith('--')) {
     console.error('Error: --session requires a non-empty path value.');
+    // eslint-disable-next-line pickle/no-process-exit-in-library
     process.exit(1);
   }
   try {
@@ -97,6 +101,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'jar-utils.js') {
     console.log(`Task successfully jarred at: ${resultPath}`);
   } catch (err) {
     console.error(`${Style.RED}Error: ${err instanceof Error ? err.message : String(err)}${Style.RESET}`);
+    // eslint-disable-next-line pickle/no-process-exit-in-library
     process.exit(1);
   }
 }

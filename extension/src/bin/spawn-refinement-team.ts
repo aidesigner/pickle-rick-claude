@@ -153,7 +153,7 @@ Use this EXACT structure:
 [What you found by reading other analysts' work that affects your domain]` : ''}
 \`\`\`
 
-After writing the file, output: <promise>ANALYSIS_DONE</promise>
+After writing the file, output: <promise>${PromiseTokens.ANALYSIS_DONE}</promise>
 Then STOP IMMEDIATELY. Do not attempt to rewrite the PRD.`;
 
   return `${persona}

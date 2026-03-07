@@ -43,11 +43,14 @@ export function createPR(sessionDir: string): string {
   }
 }
 
-// CLI
+// CLI — process.exit() is intentional here: this block only runs when
+// the file is invoked directly as a CLI script (guarded by process.argv[1] check),
+// never when imported as a library module.
 if (process.argv[1] && path.basename(process.argv[1]) === 'pr-factory.js') {
   const sessionDir = process.argv[2];
   if (!sessionDir) {
     console.error('Usage: node pr-factory.js <session_dir>');
+    // eslint-disable-next-line pickle/no-process-exit-in-library
     process.exit(1);
   }
 
@@ -56,6 +59,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'pr-factory.js') {
     console.log(`${Style.GREEN}PR Created: ${url}${Style.RESET}`);
   } catch (err) {
     console.error(`${Style.RED}Error: ${err instanceof Error ? err.message : String(err)}${Style.RESET}`);
+    // eslint-disable-next-line pickle/no-process-exit-in-library
     process.exit(1);
   }
 }
