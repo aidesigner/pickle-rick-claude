@@ -19,6 +19,8 @@ Scan `$ARGUMENTS`:
 
 Remaining text = `${EXEMPLAR}` (the portal destination — a GitHub URL, local file/dir path, npm/PyPI package name, or plain-text description of a pattern).
 
+If `CHAIN_MEESEEKS` is true, set `AUTO_RUN` to true (implies `--run`).
+
 Store: `AUTO_RUN`, `CHAIN_MEESEEKS`, `TARGET_DIR`, `DEPTH`, `SKIP_REFINE`, `CYCLES`, `MAX_TURNS`, `SAVE_PATTERN`, `EXEMPLAR`.
 
 If `EXEMPLAR` is empty → ask user: "Where should I open the portal? Give me a GitHub URL, file path, package name, or describe the pattern you want to steal."
@@ -66,6 +68,27 @@ Announce what was acquired: file count, languages detected, estimated complexity
 3. Do NOT proceed to Step 3 with empty/missing donor code
 
 ## Step 3: Scan the Other Side (Pattern Extraction)
+
+<!-- [Improvement I: Pattern Library Search -- START] -->
+### 3a: Check Pattern Library
+
+Before analyzing, check if a matching pattern already exists:
+
+1. Read `~/.claude/pickle-rick/patterns/index.md` (if it exists)
+2. For each entry, compare the **Source** column against `${EXEMPLAR}`:
+   - Exact path/URL match → **HIT**
+   - Same repo/directory name but different subpath → **PARTIAL**
+   - No match → continue
+3. On **HIT**: Read the cached pattern file (`~/.claude/pickle-rick/patterns/${name}.md`). If the file is missing or unreadable, warn: "Pattern `${name}` listed in index but file missing — proceeding with full analysis." and treat as no match. Otherwise print: "Found cached pattern: `${name}`. Using as baseline — will verify against current donor and update if stale."
+   - Use the cached analysis as a starting template — verify each section against the actual donor files (they may have changed since extraction)
+   - Skip sections that match, update sections that diverged
+   - If donor files are identical: skip to Step 4 with cached analysis (copy to `${SESSION_ROOT}/portal/pattern_analysis.md`)
+4. On **PARTIAL**: Print: "Found related pattern: `${name}` from `${source}`. Cross-referencing during analysis."
+   - Read the cached pattern and use it as context (related patterns, shared conventions) but perform full fresh analysis
+5. On no library or no match: proceed with full analysis below
+<!-- [Improvement I: Pattern Library Search -- END] -->
+
+### 3b: Analyze Donor
 
 Analyze the donor code. Produce `${SESSION_ROOT}/portal/pattern_analysis.md`:
 
@@ -135,10 +158,20 @@ For each file, classify:
 - **Unused by pipeline**: exists in donor but not imported
 - **External dep**: npm/pip package (not local file)
 
-Language scope: TypeScript and JavaScript only. If donor is another language, write: "Import graph skipped -- [language] not supported. See File Manifest for complete inventory."
+**Language-specific patterns:**
+
+| Language | Import Patterns to Trace |
+|:---|:---|
+| TypeScript/JavaScript | (covered above: ES import, CJS require, dynamic import, re-exports, barrels) |
+| Python | `import X`, `from X import Y`, `from . import Y` (relative), `__init__.py` barrel files |
+| Go | `import "path"`, `import ( ... )` grouped imports, internal vs external packages |
+| Rust | `use crate::X`, `mod X;` (submodule declarations), `use super::X`, `pub use` re-exports |
+
+If donor language is not in the table above, write: "Import graph skipped -- [language] not yet supported. See File Manifest for complete inventory." and classify all files as "Required (unverified)" instead of skipping classification entirely.
 
 [Import graph here -- trace from entry point, show dependency tree]
 (files NOT reachable from entry -- classify as Unused)
+(files imported but not available locally -- classify as "Required (not fetched)" with the import source noted)
 <!-- [Improvement C: Import Graph -- END] -->
 
 <!-- [Improvement D: Transplant Classification -- START] -->
@@ -154,9 +187,15 @@ Categories and detection heuristics:
 - **Direct transplant**: Reachable from entry point AND target has no equivalent file
 - **Type-only transplant**: Exports only `interface`/`type`/`enum` -- no runtime code
 - **Behavioral reference**: UI/framework-specific code in a different stack than target (e.g., vanilla JS -> React)
-- **Replace with equivalent**: Grep target for similar function names/exports -- match found
+- **Replace with equivalent**: Use multi-signal matching (not just name grep):
+  1. **Name match**: Grep target for similar function/class/export names from donor
+  2. **Signature match**: Extract donor function signatures (params, return types). Grep target for functions with similar parameter patterns
+  3. **Behavioral match**: Read donor function bodies. For each key behavior (e.g., "parses PDF", "validates schema", "uploads to S3"), Grep target for related terms/APIs
+  4. Require at least 2 of 3 signals to classify as Replace (a single name match like both having `utils.ts` is insufficient). Note WHICH target file is the equivalent and HOW the behaviors differ
 - **Environment prerequisite**: Contains `process.env`, config objects, or infrastructure references
 - **Not needed**: NOT reachable from entry point import graph
+
+**When import graph was skipped** (unsupported language): All files are "Required (unverified)" — the "Not needed" category cannot be determined. Rely on content analysis signals only: Type-only, Behavioral reference, Replace with equivalent, and Environment prerequisite still apply. Files that don't match any content-based category default to "Direct transplant (unverified)".
 <!-- [Improvement D: Transplant Classification -- END] -->
 ```
 
@@ -199,7 +238,7 @@ Analyze the target codebase at `${TARGET_DIR}`. Produce `${SESSION_ROOT}/portal/
 <!-- [Improvement E: Deep Target Diff -- START] -->
 ## Per-File Modification Specs
 
-For each existing target file that will be modified (files classified as "Behavioral reference" or "Direct transplant to existing target" by Step 3's classification):
+For each existing target file that will be modified (files classified as "Behavioral reference" or "Direct transplant" where the target already has the file, by Step 3's classification):
 
 ### [filepath] (Modified)
 **Current behavior**: [describe what this file does now]
@@ -290,6 +329,20 @@ Mark checkboxes as sections are drafted.
 ## Step 5.5: PRD Validation Pass
 
 Before refinement, validate all file paths referenced in the PRD against the actual filesystem. This catches wrong prefixes, stale line numbers, incomplete directory listings, and hallucinated paths before they propagate into tickets.
+
+### 5.5-pre: Remote Donor Check
+If the donor was acquired from a remote source (GitHub URL, npm package, PyPI package) AND the donor files were saved to `${SESSION_ROOT}/portal/donor/`:
+- Rewrite donor path references to use the local `portal/donor/` copy for validation
+- E.g., `github.com/owner/repo/src/foo.ts` → validate against `${SESSION_ROOT}/portal/donor/src/foo.ts`
+
+If the donor was remote AND no local copy exists (acquisition fully failed):
+- Classify all donor-referencing paths as `SKIP: remote donor (no local copy)` — do not flag as NOT FOUND
+- Still validate all TARGET paths normally
+
+If the donor was remote AND acquisition was partial (some files fetched, others failed):
+- Validate available local copies normally (they exist under `portal/donor/`)
+- Classify paths referencing files that were NOT fetched as `SKIP: remote donor (not fetched)`
+- Still validate all TARGET paths normally
 
 ### 5.5a: Extract Paths
 Scan `${SESSION_ROOT}/prd.md` for all backtick-quoted strings containing `/`. These are candidate file paths. Exclude:
@@ -451,6 +504,23 @@ OK: No inconsistencies found
 If any CONFLICT or STALE findings exist, present them to the user and ask whether each is intentional before finalizing the edit.
 <!-- [Improvement F: Post-Edit Consistency -- END] -->
 
+<!-- [Improvement J: Incremental Re-Validation -- START] -->
+### 6h: Incremental Re-Validation
+
+After any user-requested PRD edits (scope changes, path corrections, feature additions/removals), re-run a targeted validation pass on CHANGED sections only:
+
+1. Identify which PRD sections were modified by the edit (based on the user's stated edit request)
+2. Extract new or changed backtick-quoted paths from those sections
+3. Also scan UNCHANGED sections for paths that reference concepts removed by the edit (e.g., if "GenServer" was removed, find paths containing "genserver" in unchanged sections — these are now stale)
+4. Run the same 5.5b classification pipeline on all collected paths
+5. For any new INVALID, NOT FOUND, or SHIFTED results:
+   - Append to `${SESSION_ROOT}/portal/validation_report.md` under a `## Re-Validation (Edit N)` heading
+   - Report findings to user inline before confirming the edit is complete
+6. If the edit introduced new files to the "New Files" section, verify they don't already exist (would indicate the user wants to modify, not create)
+
+This runs AFTER Step 6g's consistency check. The sequence is: user requests edit → apply edit → 6g consistency check → 6h re-validation → report all findings → confirm.
+<!-- [Improvement J: Incremental Re-Validation -- END] -->
+
 ## Step 7: Propagate (Pattern Persistence)
 
 Save the extracted pattern for future reuse. This implements the "Propagate" step of gene transfusion — making patterns discoverable and reusable across projects.
@@ -462,9 +532,13 @@ Derive `PATTERN_NAME`: use `SAVE_PATTERN` value if set, otherwise infer from exe
 
 **Decision tree:**
 1. `--save-pattern <name>` set → `PATTERN_NAME = SAVE_PATTERN`. Save immediately, no prompt.
-2. `--save-pattern` not set AND `--no-refine` not set → prompt user: "Save this pattern to the library for future portal-gun sessions? (name suggestion: `${PATTERN_NAME}`)"
-   - User accepts → save with suggested or user-provided name
-   - User declines → skip, no further action
+2. `--save-pattern` not set AND `--no-refine` not set → check if `~/.claude/pickle-rick/patterns/${PATTERN_NAME}.md` already exists:
+   - If exists: prompt user: "Pattern `${PATTERN_NAME}` already in library. Update it with this session's analysis? (y/n)"
+     - User accepts → overwrite file, update index entry date
+     - User declines → skip
+   - If not exists: prompt user: "Save this pattern to the library for future portal-gun sessions? (name suggestion: `${PATTERN_NAME}`)"
+     - User accepts → save with suggested or user-provided name
+     - User declines → skip, no further action
 3. `--save-pattern` not set AND `--no-refine` set → skip with hint: "Pattern available at `${SESSION_ROOT}/portal/pattern_analysis.md` — use `--save-pattern <name>` to persist."
 
 **When saving:**
