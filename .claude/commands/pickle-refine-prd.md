@@ -3,10 +3,15 @@ Refine and decompose PRD into atomic tickets using parallel Morty analysis team.
 Persona via CLAUDE.md. Proceed to Step 0.
 
 ## Step 0: Parse Flags
-`$ARGUMENTS`: `--run` → AUTO_RUN. `--meeseeks` → CHAIN_MEESEEKS (implies --run). Remainder = `${TASK_ARGS}`.
+`$ARGUMENTS`: `--run` → AUTO_RUN. `--meeseeks` → CHAIN_MEESEEKS (implies --run). `--resume [PATH]` → RESUME_MODE (reuse existing session). Remainder = `${TASK_ARGS}`.
+
+If `--resume` has a path argument → `RESUME_SESSION = <path>`. If `--resume` with no path → resolve via `node "$HOME/.claude/pickle-rick/extension/bin/get-session.js"` → `RESUME_SESSION`.
 
 ## Step 1: Locate PRD
-Priority: 1) explicit path in `${TASK_ARGS}`, 2) `prd.md`/`PRD.md` in cwd, 3) `node "$HOME/.claude/pickle-rick/extension/bin/get-session.js"` → session's `prd.md`.
+
+**If RESUME_MODE**: PRD is at `${RESUME_SESSION}/prd.md`. If missing → "Session has no prd.md. Run `/pickle-prd` first." Stop. Set `SESSION_ROOT = ${RESUME_SESSION}`.
+
+**If NOT RESUME_MODE**: Priority: 1) explicit path in `${TASK_ARGS}`, 2) `prd.md`/`PRD.md` in cwd, 3) `node "$HOME/.claude/pickle-rick/extension/bin/get-session.js"` → session's `prd.md`.
 
 Not found → "Run `/pickle-prd` first or pass path." Stop.
 
@@ -42,10 +47,16 @@ Iterate until PASS. Update PRD in place. Continue to Step 3.
 **MISSING + AUTO_RUN** → "Cannot auto-run on under-specified PRD." Set AUTO_RUN=false, interview.
 
 ## Step 3: Initialize Session
+
+Extension root: `$HOME/.claude/pickle-rick` (`${EXTENSION_ROOT}`).
+
+**If RESUME_MODE**: `SESSION_ROOT` is already set from Step 1. `<PRD_PATH> = ${SESSION_ROOT}/prd.md`. Skip session creation — reuse existing session directory and state.
+
+**If NOT RESUME_MODE**:
 ```bash
 node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --paused --task "PRD Refinement: ${TASK_ARGS}"
 ```
-Extract `SESSION_ROOT`. Save original path as `<PRD_PATH>`. `cp "<PRD_PATH>" "${SESSION_ROOT}/prd.md"`. Extension root: `$HOME/.claude/pickle-rick` (`${EXTENSION_ROOT}`).
+Extract `SESSION_ROOT`. Save original path as `<PRD_PATH>`. `cp "<PRD_PATH>" "${SESSION_ROOT}/prd.md"`.
 
 ## Step 4: Deploy Refinement Team
 
