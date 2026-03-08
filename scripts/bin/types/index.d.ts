@@ -1,3 +1,57 @@
+export declare const VALID_STEPS: readonly ["prd", "breakdown", "research", "plan", "implement", "refactor", "review"];
+export type Step = typeof VALID_STEPS[number];
+export interface State {
+    active: boolean;
+    working_dir: string;
+    step: Step;
+    iteration: number;
+    max_iterations: number;
+    max_time_minutes: number;
+    worker_timeout_seconds: number;
+    start_time_epoch: number;
+    completion_promise: string | null;
+    original_prompt: string;
+    current_ticket: string | null;
+    history: Array<{
+        step: Step;
+        ticket?: string;
+        timestamp: string;
+    }>;
+    started_at: string;
+    session_dir: string;
+    tmux_mode?: boolean;
+    min_iterations?: number;
+    command_template?: string;
+    chain_meeseeks?: boolean;
+}
+export declare const Defaults: {
+    readonly WORKER_TIMEOUT_SECONDS: 1200;
+    readonly MANAGER_MAX_TURNS: 50;
+    readonly RATE_LIMIT_POLL_MS: 10000;
+};
+export declare const PromiseTokens: {
+    readonly EPIC_COMPLETED: "EPIC_COMPLETED";
+    readonly TASK_COMPLETED: "TASK_COMPLETED";
+    readonly WORKER_DONE: "I AM DONE";
+    readonly PRD_COMPLETE: "PRD_COMPLETE";
+    readonly TICKET_SELECTED: "TICKET_SELECTED";
+    readonly ANALYSIS_DONE: "ANALYSIS_DONE";
+    readonly EXISTENCE_IS_PAIN: "EXISTENCE_IS_PAIN";
+    readonly THE_CITADEL_APPROVES: "THE_CITADEL_APPROVES";
+};
+export declare function hasToken(text: string, token: string): boolean;
+export type CompletionClassification = 'task_completed' | 'review_clean' | 'continue';
+export type SessionExitReason = 'success' | 'cancelled' | 'error' | 'limit' | 'stall' | 'circuit_open' | 'rate_limit_exhausted';
+export type IterationExitType = 'success' | 'error' | 'api_limit' | 'inactive';
+export interface RateLimitInfo {
+    limited: boolean;
+    resetsAt?: number;
+    rateLimitType?: string;
+}
+export interface IterationExitResult {
+    type: IterationExitType;
+    rateLimitInfo?: RateLimitInfo;
+}
 export interface RuntimeConfig {
     bin: string;
     prompt_flag: string;
