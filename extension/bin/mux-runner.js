@@ -9,6 +9,22 @@ import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult } from '../services/circuit-breaker.js';
 let currentChildProc = null;
 /**
+ * Strips the Setup section from dual-mode templates (e.g. meeseeks.md, council-of-ricks.md).
+ * The mux-runner always invokes with --resume, so Setup instructions are dead weight
+ * that confuse the model. Matches both "## SETUP MODE" and "## SETUP" (with or without
+ * the " MODE" suffix) to prevent silent failures when templates use variant headers.
+ */
+export function stripSetupSection(prompt) {
+    const setupRe = /^## SETUP(?: MODE)?$/m;
+    const reviewRe = /^## REVIEW PASS(?: MODE)?$/m;
+    const setupMatch = setupRe.exec(prompt);
+    const reviewMatch = reviewRe.exec(prompt);
+    if (setupMatch && reviewMatch && setupMatch.index < reviewMatch.index) {
+        return prompt.slice(0, setupMatch.index) + prompt.slice(reviewMatch.index);
+    }
+    return prompt;
+}
+/**
  * Extracts text content from assistant messages in stream-json output.
  * Filters out tool_result / user / system lines so that promise tokens
  * embedded in reviewed source code (e.g. stop-hook.ts containing
@@ -237,15 +253,7 @@ async function runIteration(sessionDir, iterationNum, extensionRoot, meeseeksMod
     }
     let managerPrompt = fs.readFileSync(picklePromptPath, 'utf-8')
         .replace(/\$ARGUMENTS/g, `--resume ${sessionDir}`);
-    // Strip Setup Mode section from dual-mode templates (e.g. meeseeks.md).
-    // The runner always invokes with --resume, so Setup Mode instructions are
-    // dead weight that confuse the model — a Morty once killed its own parent
-    // tmux session by running Setup steps instead of Review Pass steps.
-    const setupStart = managerPrompt.indexOf('## SETUP MODE');
-    const reviewStart = managerPrompt.indexOf('## REVIEW PASS MODE');
-    if (setupStart !== -1 && reviewStart !== -1 && setupStart < reviewStart) {
-        managerPrompt = managerPrompt.slice(0, setupStart) + managerPrompt.slice(reviewStart);
-    }
+    managerPrompt = stripSetupSection(managerPrompt);
     const handoffPath = path.join(sessionDir, 'handoff.txt');
     if (fs.existsSync(handoffPath)) {
         managerPrompt += '\n\n' + fs.readFileSync(handoffPath, 'utf-8');

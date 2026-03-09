@@ -489,7 +489,7 @@ test('mux-runner: creates mux-runner.log in session directory', () => {
 
 // --- Completion classification (classifyCompletion) ---
 
-import { buildTmuxNotification, classifyCompletion, extractAssistantContent, transitionToMeeseeks, loadRateLimitSettings, loadMeeseeksModel, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText } from '../bin/mux-runner.js';
+import { buildTmuxNotification, classifyCompletion, extractAssistantContent, transitionToMeeseeks, loadRateLimitSettings, loadMeeseeksModel, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText, stripSetupSection } from '../bin/mux-runner.js';
 
 test('classifyCompletion: TASK_COMPLETED returns continue (single ticket, loop continues)', () => {
     assert.equal(classifyCompletion('<promise>TASK_COMPLETED</promise>'), 'continue');
@@ -1273,4 +1273,50 @@ test('iteration events: iteration number matches across start and end', () => {
     const ends = events.filter(e => e.event === 'iteration_end');
     assert.ok(starts.length >= 1 && ends.length >= 1, 'Need both iteration events');
     assert.equal(starts[0].iteration, ends[0].iteration, 'Start and end should have same iteration number');
+});
+
+// --- stripSetupSection ---
+
+test('stripSetupSection: strips "## SETUP MODE" through "## REVIEW PASS MODE"', () => {
+    const input = 'Header\n\n## SETUP MODE\n\nSetup stuff\n\n## REVIEW PASS MODE\n\nReview stuff';
+    const result = stripSetupSection(input);
+    assert.equal(result, 'Header\n\n## REVIEW PASS MODE\n\nReview stuff');
+    assert.ok(!result.includes('Setup stuff'));
+});
+
+test('stripSetupSection: strips "## SETUP" through "## REVIEW PASS" (no MODE suffix)', () => {
+    const input = 'Header\n\n## SETUP\n\nSetup stuff\n\n## REVIEW PASS\n\nReview stuff';
+    const result = stripSetupSection(input);
+    assert.equal(result, 'Header\n\n## REVIEW PASS\n\nReview stuff');
+    assert.ok(!result.includes('Setup stuff'));
+});
+
+test('stripSetupSection: strips "## SETUP" through "## REVIEW PASS MODE" (mixed)', () => {
+    const input = 'Header\n\n## SETUP\n\nSetup stuff\n\n## REVIEW PASS MODE\n\nReview stuff';
+    const result = stripSetupSection(input);
+    assert.equal(result, 'Header\n\n## REVIEW PASS MODE\n\nReview stuff');
+});
+
+test('stripSetupSection: returns prompt unchanged when no setup section', () => {
+    const input = 'Just a regular prompt\n\n## Some Other Section\n\nContent';
+    assert.equal(stripSetupSection(input), input);
+});
+
+test('stripSetupSection: returns prompt unchanged when setup appears after review', () => {
+    const input = '## REVIEW PASS MODE\n\nReview\n\n## SETUP MODE\n\nSetup';
+    assert.equal(stripSetupSection(input), input);
+});
+
+test('stripSetupSection: does not match partial headers like "## SETUP WIZARD"', () => {
+    const input = 'Header\n\n## SETUP WIZARD\n\nWizard stuff\n\n## REVIEW PASS MODE\n\nReview';
+    assert.equal(stripSetupSection(input), input);
+});
+
+test('stripSetupSection: preserves content before setup and after review pass', () => {
+    const input = 'Preamble line 1\nPreamble line 2\n\n## SETUP MODE\n\nGate checks\nStep 1\n\n## REVIEW PASS MODE\n\nStep 10\n\nFooter';
+    const result = stripSetupSection(input);
+    assert.ok(result.startsWith('Preamble line 1\nPreamble line 2\n\n'));
+    assert.ok(result.includes('Step 10'));
+    assert.ok(result.includes('Footer'));
+    assert.ok(!result.includes('Gate checks'));
 });
