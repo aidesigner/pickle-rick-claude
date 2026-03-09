@@ -322,6 +322,11 @@ export function buildHandoffSummary(state: Partial<State>, sessionDir: string, i
       lines.push(`  ${sym} ${t.id || '?'}: ${title}${typeTag}${dirTag}${skippedNote}`);
     }
   }
+  const workingDirs = new Set(tickets.map(t => t.working_dir).filter(Boolean));
+  if (workingDirs.size >= 2) {
+    lines.push('');
+    lines.push(`⚠️  MULTI-REPO: Tickets span ${[...workingDirs].join(', ')}. Consider separate sessions per repo.`);
+  }
   const isFirstIteration = (iterationNum === 1 || iterationNum === undefined)
     && (Number(state.iteration) || 0) === 0
     && (state.history || []).length === 0;

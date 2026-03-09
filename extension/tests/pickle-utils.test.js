@@ -881,3 +881,47 @@ test('buildHandoffSummary: does not show re-attempt note for Done or Todo ticket
         fs.rmSync(dir, { recursive: true });
     }
 });
+
+// --- buildHandoffSummary: multi-repo warning ---
+
+test('buildHandoffSummary: includes MULTI-REPO warning when tickets span 2+ working_dirs', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ active: true }));
+        const t1 = path.join(dir, 'api1');
+        fs.mkdirSync(t1);
+        fs.writeFileSync(path.join(t1, 'linear_ticket_api1.md'),
+            '---\nid: api1\ntitle: API task\nstatus: Todo\norder: 10\nworking_dir: api/\n---\n');
+        const t2 = path.join(dir, 'web1');
+        fs.mkdirSync(t2);
+        fs.writeFileSync(path.join(t2, 'linear_ticket_web1.md'),
+            '---\nid: web1\ntitle: Web task\nstatus: Todo\norder: 20\nworking_dir: web/\n---\n');
+
+        const summary = buildHandoffSummary({ step: 'implement', iteration: 1 }, dir);
+        assert.match(summary, /MULTI-REPO/, 'should contain MULTI-REPO warning');
+        assert.match(summary, /api\//, 'should mention api/');
+        assert.match(summary, /web\//, 'should mention web/');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('buildHandoffSummary: omits MULTI-REPO warning for single working_dir', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ active: true }));
+        const t1 = path.join(dir, 'a1');
+        fs.mkdirSync(t1);
+        fs.writeFileSync(path.join(t1, 'linear_ticket_a1.md'),
+            '---\nid: a1\ntitle: Task A\nstatus: Todo\norder: 10\nworking_dir: api/\n---\n');
+        const t2 = path.join(dir, 'a2');
+        fs.mkdirSync(t2);
+        fs.writeFileSync(path.join(t2, 'linear_ticket_a2.md'),
+            '---\nid: a2\ntitle: Task B\nstatus: Todo\norder: 20\nworking_dir: api/\n---\n');
+
+        const summary = buildHandoffSummary({ step: 'implement', iteration: 1 }, dir);
+        assert.ok(!summary.includes('MULTI-REPO'), 'should NOT contain MULTI-REPO warning');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});

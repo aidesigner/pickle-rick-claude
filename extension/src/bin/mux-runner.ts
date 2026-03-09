@@ -28,6 +28,21 @@ export function stripSetupSection(prompt: string): string {
 }
 
 /**
+ * Detects whether tickets in a session span multiple repositories.
+ * Returns an array of distinct working_dir values if 2+, null otherwise.
+ * Tickets with working_dir: null are excluded (they use session default).
+ */
+export function detectMultiRepo(sessionDir: string): string[] | null {
+  const tickets = collectTickets(sessionDir);
+  const dirs = new Set(
+    tickets
+      .map(t => t.working_dir)
+      .filter((d): d is string => d !== null && d !== undefined)
+  );
+  return dirs.size >= 2 ? [...dirs] : null;
+}
+
+/**
  * Extracts text content from assistant messages in stream-json output.
  * Filters out tool_result / user / system lines so that promise tokens
  * embedded in reviewed source code (e.g. stop-hook.ts containing
@@ -571,6 +586,15 @@ async function main() {
     if (previousTicket === null) previousTicket = preTicket;
     log(`--- Iteration ${iteration} (state.iteration=${state.iteration}) ---`);
     logActivity({ event: 'iteration_start', source: 'pickle', session: path.basename(sessionDir), iteration });
+
+    // Multi-repo advisory check (once, on first iteration)
+    if (iteration === 1) {
+      const multiRepoDirs = detectMultiRepo(sessionDir);
+      if (multiRepoDirs) {
+        log(`⚠️  MULTI-REPO DETECTED: Tickets span [${multiRepoDirs.join(', ')}]. Pickle Rick works best with single-repo sessions.`);
+        logActivity({ event: 'multi_repo_warning', source: 'pickle', session: path.basename(sessionDir) });
+      }
+    }
 
     const result = await runIteration(sessionDir, iteration, extensionRoot, meeseeksModel);
 

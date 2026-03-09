@@ -31,7 +31,7 @@ async function getLogActivity() {
 
 // --- VALID_ACTIVITY_EVENTS ---
 
-test('VALID_ACTIVITY_EVENTS contains all 20 expected event types', () => {
+test('VALID_ACTIVITY_EVENTS contains all 21 expected event types', () => {
     const expected = [
         'session_start', 'session_end', 'ticket_completed', 'epic_completed',
         'meeseeks_pass', 'commit', 'research', 'bug_fix', 'feature',
@@ -39,8 +39,9 @@ test('VALID_ACTIVITY_EVENTS contains all 20 expected event types', () => {
         'circuit_open', 'circuit_recovery',
         'iteration_start', 'iteration_end',
         'rate_limit_wait', 'rate_limit_resume', 'rate_limit_exhausted',
+        'multi_repo_warning',
     ];
-    assert.equal(VALID_ACTIVITY_EVENTS.length, 20);
+    assert.equal(VALID_ACTIVITY_EVENTS.length, 21);
     for (const e of expected) {
         assert.ok(VALID_ACTIVITY_EVENTS.includes(e), `Missing event type: ${e}`);
     }
@@ -348,7 +349,7 @@ test('CLI: truncates title at 200 chars', () => {
     }
 });
 
-test('CLI: accepts all 20 valid event types', () => {
+test('CLI: accepts all 21 valid event types', () => {
     const expected = [
         'session_start', 'session_end', 'ticket_completed', 'epic_completed',
         'meeseeks_pass', 'commit', 'research', 'bug_fix', 'feature',
@@ -356,6 +357,7 @@ test('CLI: accepts all 20 valid event types', () => {
         'circuit_open', 'circuit_recovery',
         'iteration_start', 'iteration_end',
         'rate_limit_wait', 'rate_limit_resume', 'rate_limit_exhausted',
+        'multi_repo_warning',
     ];
     const extRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-activity-'));
     try {

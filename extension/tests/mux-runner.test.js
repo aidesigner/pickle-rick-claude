@@ -489,7 +489,7 @@ test('mux-runner: creates mux-runner.log in session directory', () => {
 
 // --- Completion classification (classifyCompletion) ---
 
-import { buildTmuxNotification, classifyCompletion, classifyTicketCompletion, extractAssistantContent, transitionToMeeseeks, loadRateLimitSettings, loadMeeseeksModel, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText, stripSetupSection } from '../bin/mux-runner.js';
+import { buildTmuxNotification, classifyCompletion, classifyTicketCompletion, extractAssistantContent, transitionToMeeseeks, loadRateLimitSettings, loadMeeseeksModel, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText, stripSetupSection, detectMultiRepo } from '../bin/mux-runner.js';
 
 test('classifyCompletion: TASK_COMPLETED returns continue (single ticket, loop continues)', () => {
     assert.equal(classifyCompletion('<promise>TASK_COMPLETED</promise>'), 'continue');
@@ -1404,5 +1404,83 @@ test('classifyTicketCompletion: returns completed when staged git changes detect
         assert.equal(classifyTicketCompletion(logFile, tmpDir), 'completed');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+// --- detectMultiRepo ---
+
+test('detectMultiRepo: returns dirs when tickets have 2+ distinct working_dir values', () => {
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-multi-')));
+    try {
+        const t1 = path.join(dir, 't1');
+        fs.mkdirSync(t1);
+        fs.writeFileSync(path.join(t1, 'linear_ticket_t1.md'),
+            '---\nid: t1\ntitle: API work\nstatus: Todo\norder: 10\nworking_dir: api/\n---\n');
+        const t2 = path.join(dir, 't2');
+        fs.mkdirSync(t2);
+        fs.writeFileSync(path.join(t2, 'linear_ticket_t2.md'),
+            '---\nid: t2\ntitle: Web work\nstatus: Todo\norder: 20\nworking_dir: web/\n---\n');
+
+        const result = detectMultiRepo(dir);
+        assert.ok(result, 'should return an array');
+        assert.ok(result.includes('api/'), 'should contain api/');
+        assert.ok(result.includes('web/'), 'should contain web/');
+        assert.equal(result.length, 2);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('detectMultiRepo: returns null when all tickets share same working_dir', () => {
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-multi-')));
+    try {
+        const t1 = path.join(dir, 't1');
+        fs.mkdirSync(t1);
+        fs.writeFileSync(path.join(t1, 'linear_ticket_t1.md'),
+            '---\nid: t1\ntitle: Task A\nstatus: Todo\norder: 10\nworking_dir: api/\n---\n');
+        const t2 = path.join(dir, 't2');
+        fs.mkdirSync(t2);
+        fs.writeFileSync(path.join(t2, 'linear_ticket_t2.md'),
+            '---\nid: t2\ntitle: Task B\nstatus: Todo\norder: 20\nworking_dir: api/\n---\n');
+
+        assert.equal(detectMultiRepo(dir), null);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('detectMultiRepo: returns null when all tickets have working_dir null', () => {
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-multi-')));
+    try {
+        const t1 = path.join(dir, 't1');
+        fs.mkdirSync(t1);
+        fs.writeFileSync(path.join(t1, 'linear_ticket_t1.md'),
+            '---\nid: t1\ntitle: Task A\nstatus: Todo\norder: 10\n---\n');
+        const t2 = path.join(dir, 't2');
+        fs.mkdirSync(t2);
+        fs.writeFileSync(path.join(t2, 'linear_ticket_t2.md'),
+            '---\nid: t2\ntitle: Task B\nstatus: Todo\norder: 20\n---\n');
+
+        assert.equal(detectMultiRepo(dir), null);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('detectMultiRepo: returns null when only one ticket has a working_dir', () => {
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-multi-')));
+    try {
+        const t1 = path.join(dir, 't1');
+        fs.mkdirSync(t1);
+        fs.writeFileSync(path.join(t1, 'linear_ticket_t1.md'),
+            '---\nid: t1\ntitle: Task A\nstatus: Todo\norder: 10\nworking_dir: api/\n---\n');
+        const t2 = path.join(dir, 't2');
+        fs.mkdirSync(t2);
+        fs.writeFileSync(path.join(t2, 'linear_ticket_t2.md'),
+            '---\nid: t2\ntitle: Task B\nstatus: Todo\norder: 20\n---\n');
+
+        assert.equal(detectMultiRepo(dir), null);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
     }
 });
