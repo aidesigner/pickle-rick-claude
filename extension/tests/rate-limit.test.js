@@ -8,6 +8,7 @@ import {
     detectRateLimitInLog,
     detectRateLimitInText,
     classifyIterationExit,
+    computeRateLimitAction,
 } from '../bin/mux-runner.js';
 
 function makeTmpDir(prefix = 'rl-test-') {
@@ -459,4 +460,85 @@ test('countdown computes remaining time from rate_limit_wait.json', () => {
     const remainMs = new Date(waitData.wait_until).getTime() - Date.now();
     const remainSec = Math.ceil(remainMs / 1000);
     assert.ok(remainSec > 3100 && remainSec <= 3150);
+});
+
+// ---------------------------------------------------------------------------
+// computeRateLimitAction — pure decision function
+// ---------------------------------------------------------------------------
+
+test('computeRateLimitAction: resetsAt available → action=wait with api source', () => {
+    const futureEpoch = Math.floor(Date.now() / 1000) + 3600; // 1 hour from now
+    const exitResult = { type: 'api_limit', rateLimitInfo: { limited: true, resetsAt: futureEpoch } };
+    const action = computeRateLimitAction(exitResult, 1, 3, 60);
+    assert.equal(action.action, 'wait');
+    assert.equal(action.waitSource, 'api');
+    assert.equal(action.resetCounter, true);
+    assert.equal(action.hasResetsAt, true);
+    // waitMs should be ~3630s (3600 + 30s buffer) in ms, ±2s tolerance
+    const expectedMs = (futureEpoch * 1000 - Date.now()) + 30_000;
+    assert.ok(Math.abs(action.waitMs - expectedMs) < 2000, `waitMs ${action.waitMs} not close to ${expectedMs}`);
+});
+
+test('computeRateLimitAction: resetsAt available + retries >= max → still waits (does NOT bail)', () => {
+    const futureEpoch = Math.floor(Date.now() / 1000) + 1800; // 30 min from now
+    const exitResult = { type: 'api_limit', rateLimitInfo: { limited: true, resetsAt: futureEpoch } };
+    const action = computeRateLimitAction(exitResult, 5, 3, 60);
+    assert.equal(action.action, 'wait', 'Should wait when resetsAt available, even if retries >= max');
+    assert.equal(action.waitSource, 'api');
+    assert.equal(action.resetCounter, true);
+});
+
+test('computeRateLimitAction: no resetsAt + retries >= max → bail', () => {
+    const exitResult = { type: 'api_limit' }; // no rateLimitInfo
+    const action = computeRateLimitAction(exitResult, 3, 3, 60);
+    assert.equal(action.action, 'bail');
+    assert.equal(action.waitMs, 0);
+    assert.equal(action.resetCounter, false);
+    assert.equal(action.hasResetsAt, false);
+});
+
+test('computeRateLimitAction: no resetsAt + retries < max → wait with config source', () => {
+    const exitResult = { type: 'api_limit' };
+    const action = computeRateLimitAction(exitResult, 1, 3, 60);
+    assert.equal(action.action, 'wait');
+    assert.equal(action.waitSource, 'config');
+    assert.equal(action.waitMs, 60 * 60 * 1000); // 60 min in ms
+    assert.equal(action.resetCounter, false);
+    assert.equal(action.hasResetsAt, false);
+});
+
+test('computeRateLimitAction: resetsAt exceeds 3× cap → falls back to config', () => {
+    const farFuture = Math.floor(Date.now() / 1000) + 999999; // way past 3× cap
+    const exitResult = { type: 'api_limit', rateLimitInfo: { limited: true, resetsAt: farFuture } };
+    const action = computeRateLimitAction(exitResult, 1, 3, 60);
+    assert.equal(action.action, 'wait');
+    assert.equal(action.waitSource, 'config');
+    assert.equal(action.waitMs, 60 * 60 * 1000); // config default
+    assert.equal(action.resetCounter, false); // config source → no counter reset
+    assert.equal(action.hasResetsAt, true);
+});
+
+test('computeRateLimitAction: resetsAt in the past → falls back to config', () => {
+    const pastEpoch = Math.floor(Date.now() / 1000) - 3600; // 1 hour ago
+    const exitResult = { type: 'api_limit', rateLimitInfo: { limited: true, resetsAt: pastEpoch } };
+    const action = computeRateLimitAction(exitResult, 1, 3, 60);
+    assert.equal(action.action, 'wait');
+    assert.equal(action.waitSource, 'config');
+    assert.equal(action.waitMs, 60 * 60 * 1000);
+    assert.equal(action.hasResetsAt, true);
+});
+
+test('computeRateLimitAction: resetsAt = 0 → treated as no resetsAt', () => {
+    const exitResult = { type: 'api_limit', rateLimitInfo: { limited: true, resetsAt: 0 } };
+    const action = computeRateLimitAction(exitResult, 3, 3, 60);
+    assert.equal(action.action, 'bail', 'resetsAt=0 should be treated as missing');
+    assert.equal(action.hasResetsAt, false);
+});
+
+test('computeRateLimitAction: rateLimitInfo present but no resetsAt field → no resetsAt', () => {
+    const exitResult = { type: 'api_limit', rateLimitInfo: { limited: true } };
+    const action = computeRateLimitAction(exitResult, 2, 3, 60);
+    assert.equal(action.action, 'wait');
+    assert.equal(action.waitSource, 'config');
+    assert.equal(action.hasResetsAt, false);
 });

@@ -178,6 +178,42 @@ export function classifyIterationExit(completionResult, logFile) {
         return { type: 'api_limit' };
     return { type: 'success' };
 }
+/**
+ * Pure decision function: given rate limit context, returns whether to wait or bail.
+ * Extracted from main() for testability. No side effects.
+ *
+ * When resetsAt is available from the API, always waits (the API told us when to come back).
+ * Only bails when no resetsAt AND consecutive retries >= max.
+ * Resets the counter after an API-guided wait completes.
+ */
+export function computeRateLimitAction(exitResult, consecutiveRateLimits, maxRetries, configWaitMinutes) {
+    const configWaitMs = configWaitMinutes * 60 * 1000;
+    const maxApiWaitMs = configWaitMs * 3;
+    let waitMs = configWaitMs;
+    let waitSource = 'config';
+    const rlResetsAt = exitResult.rateLimitInfo?.resetsAt;
+    const hasResetsAt = typeof rlResetsAt === 'number' && rlResetsAt > 0;
+    if (hasResetsAt) {
+        const apiWaitMs = (rlResetsAt * 1000) - Date.now();
+        if (apiWaitMs > 0 && apiWaitMs <= maxApiWaitMs) {
+            waitMs = apiWaitMs + 30_000; // 30s buffer
+            waitSource = 'api';
+        }
+        // apiWaitMs > maxApiWaitMs → capped, falls through to config default
+        // apiWaitMs <= 0 → resetsAt in the past, use config default
+    }
+    // Bail only when blind (no resetsAt) AND retries exhausted
+    if (!hasResetsAt && consecutiveRateLimits >= maxRetries) {
+        return { action: 'bail', waitMs: 0, waitSource: 'config', resetCounter: false, hasResetsAt };
+    }
+    return {
+        action: 'wait',
+        waitMs,
+        waitSource,
+        resetCounter: waitSource === 'api',
+        hasResetsAt,
+    };
+}
 async function runIteration(sessionDir, iterationNum, extensionRoot, meeseeksModel) {
     const statePath = path.join(sessionDir, 'state.json');
     let state;
@@ -532,36 +568,21 @@ async function main() {
         if (exitType === 'api_limit') {
             consecutiveRateLimits++;
             log(`API rate limit detected (consecutive: ${consecutiveRateLimits}/${maxRateLimitRetries})`);
-            // Compute wait time: use API resetsAt if available, fall back to static config.
-            // Cap API wait at 3× config default to prevent multi-day hangs from seven_day limits.
-            const configWaitMs = rateLimitWaitMinutes * 60 * 1000;
-            const maxApiWaitMs = configWaitMs * 3;
-            let computedWaitMs = configWaitMs;
-            let waitSource = 'config';
-            const rlResetsAt = exitResult.rateLimitInfo?.resetsAt;
-            const hasResetsAt = typeof rlResetsAt === 'number' && rlResetsAt > 0;
-            if (hasResetsAt) {
-                log(`API reports reset at ${new Date(rlResetsAt * 1000).toISOString()} (type: ${exitResult.rateLimitInfo?.rateLimitType || 'unknown'})`);
-                const apiWaitMs = (rlResetsAt * 1000) - Date.now();
-                if (apiWaitMs > 0 && apiWaitMs <= maxApiWaitMs) {
-                    // Add 30s buffer so we don't resume exactly at the boundary
-                    computedWaitMs = apiWaitMs + 30_000;
-                    waitSource = 'api';
-                    log(`Using API-provided reset time: ${Math.ceil(computedWaitMs / 60_000)}min wait (vs ${rateLimitWaitMinutes}min config default)`);
-                }
-                else if (apiWaitMs > maxApiWaitMs) {
-                    log(`API reset time ${Math.ceil(apiWaitMs / 60_000)}min exceeds cap (${Math.ceil(maxApiWaitMs / 60_000)}min) — using config default`);
-                }
+            if (exitResult.rateLimitInfo?.resetsAt) {
+                log(`API reports reset at ${new Date(exitResult.rateLimitInfo.resetsAt * 1000).toISOString()} (type: ${exitResult.rateLimitInfo.rateLimitType || 'unknown'})`);
             }
-            // Exhaustion check: only bail if no resetsAt to wait for AND max retries exceeded.
-            // When resetsAt is available, always wait — the API told us exactly when to come back.
-            if (!hasResetsAt && consecutiveRateLimits >= maxRateLimitRetries) {
+            const rlAction = computeRateLimitAction(exitResult, consecutiveRateLimits, maxRateLimitRetries, rateLimitWaitMinutes);
+            if (rlAction.action === 'bail') {
                 exitReason = 'rate_limit_exhausted';
                 logActivity({ event: 'rate_limit_exhausted', source: 'pickle',
                     session: path.basename(sessionDir), error: `max retries (${maxRateLimitRetries}) exceeded, no resetsAt available` });
                 state.active = false;
                 writeStateFile(statePath, state);
                 break;
+            }
+            const { waitMs: computedWaitMs, waitSource } = rlAction;
+            if (waitSource === 'api') {
+                log(`Using API-provided reset time: ${Math.ceil(computedWaitMs / 60_000)}min wait (vs ${rateLimitWaitMinutes}min config default)`);
             }
             const waitUntil = new Date(Date.now() + computedWaitMs).toISOString();
             logActivity({ event: 'rate_limit_wait', source: 'pickle',
@@ -572,7 +593,7 @@ async function main() {
                 wait_until: waitUntil,
                 consecutive_waits: consecutiveRateLimits,
                 rate_limit_type: exitResult.rateLimitInfo?.rateLimitType || null,
-                resets_at_epoch: rlResetsAt || null,
+                resets_at_epoch: exitResult.rateLimitInfo?.resetsAt || null,
                 wait_source: waitSource,
             });
             // Pre-wait time check
@@ -622,8 +643,7 @@ async function main() {
                 fs.unlinkSync(path.join(sessionDir, 'rate_limit_wait.json'));
             }
             catch { /* ok */ }
-            // Reset consecutive counter after successful wait — we properly waited for the API
-            if (waitSource === 'api')
+            if (rlAction.resetCounter)
                 consecutiveRateLimits = 0;
             logActivity({ event: 'rate_limit_resume', source: 'pickle', session: path.basename(sessionDir) });
             const waitedMinutes = Math.ceil(computedWaitMs / 60_000);

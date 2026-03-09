@@ -103,6 +103,14 @@ export interface IterationExitResult {
   rateLimitInfo?: RateLimitInfo;
 }
 
+export interface RateLimitAction {
+  action: 'wait' | 'bail';
+  waitMs: number;
+  waitSource: 'api' | 'config';
+  resetCounter: boolean;
+  hasResetsAt: boolean;
+}
+
 export interface ActivityEvent {
   ts: string;
   event: ActivityEventType;
