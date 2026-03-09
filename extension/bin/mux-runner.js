@@ -532,17 +532,6 @@ async function main() {
         if (exitType === 'api_limit') {
             consecutiveRateLimits++;
             log(`API rate limit detected (consecutive: ${consecutiveRateLimits}/${maxRateLimitRetries})`);
-            if (exitResult.rateLimitInfo?.resetsAt) {
-                log(`API reports reset at ${new Date(exitResult.rateLimitInfo.resetsAt * 1000).toISOString()} (type: ${exitResult.rateLimitInfo.rateLimitType || 'unknown'})`);
-            }
-            if (consecutiveRateLimits >= maxRateLimitRetries) {
-                exitReason = 'rate_limit_exhausted';
-                logActivity({ event: 'rate_limit_exhausted', source: 'pickle',
-                    session: path.basename(sessionDir), error: `max retries (${maxRateLimitRetries}) exceeded` });
-                state.active = false;
-                writeStateFile(statePath, state);
-                break;
-            }
             // Compute wait time: use API resetsAt if available, fall back to static config.
             // Cap API wait at 3× config default to prevent multi-day hangs from seven_day limits.
             const configWaitMs = rateLimitWaitMinutes * 60 * 1000;
@@ -550,7 +539,9 @@ async function main() {
             let computedWaitMs = configWaitMs;
             let waitSource = 'config';
             const rlResetsAt = exitResult.rateLimitInfo?.resetsAt;
-            if (typeof rlResetsAt === 'number' && rlResetsAt > 0) {
+            const hasResetsAt = typeof rlResetsAt === 'number' && rlResetsAt > 0;
+            if (hasResetsAt) {
+                log(`API reports reset at ${new Date(rlResetsAt * 1000).toISOString()} (type: ${exitResult.rateLimitInfo?.rateLimitType || 'unknown'})`);
                 const apiWaitMs = (rlResetsAt * 1000) - Date.now();
                 if (apiWaitMs > 0 && apiWaitMs <= maxApiWaitMs) {
                     // Add 30s buffer so we don't resume exactly at the boundary
@@ -561,6 +552,16 @@ async function main() {
                 else if (apiWaitMs > maxApiWaitMs) {
                     log(`API reset time ${Math.ceil(apiWaitMs / 60_000)}min exceeds cap (${Math.ceil(maxApiWaitMs / 60_000)}min) — using config default`);
                 }
+            }
+            // Exhaustion check: only bail if no resetsAt to wait for AND max retries exceeded.
+            // When resetsAt is available, always wait — the API told us exactly when to come back.
+            if (!hasResetsAt && consecutiveRateLimits >= maxRateLimitRetries) {
+                exitReason = 'rate_limit_exhausted';
+                logActivity({ event: 'rate_limit_exhausted', source: 'pickle',
+                    session: path.basename(sessionDir), error: `max retries (${maxRateLimitRetries}) exceeded, no resetsAt available` });
+                state.active = false;
+                writeStateFile(statePath, state);
+                break;
             }
             const waitUntil = new Date(Date.now() + computedWaitMs).toISOString();
             logActivity({ event: 'rate_limit_wait', source: 'pickle',
@@ -621,6 +622,9 @@ async function main() {
                 fs.unlinkSync(path.join(sessionDir, 'rate_limit_wait.json'));
             }
             catch { /* ok */ }
+            // Reset consecutive counter after successful wait — we properly waited for the API
+            if (waitSource === 'api')
+                consecutiveRateLimits = 0;
             logActivity({ event: 'rate_limit_resume', source: 'pickle', session: path.basename(sessionDir) });
             const waitedMinutes = Math.ceil(computedWaitMs / 60_000);
             const handoffContent = [
