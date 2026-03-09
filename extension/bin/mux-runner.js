@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, runCmd } from '../services/pickle-utils.js';
 import { PromiseTokens, hasToken, VALID_STEPS, Defaults } from '../types/index.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult } from '../services/circuit-breaker.js';
@@ -84,6 +84,33 @@ export function classifyCompletion(output) {
         return 'review_clean';
     }
     return 'continue';
+}
+/**
+ * Post-hoc safety net: validates whether a ticket was actually completed
+ * before marking it Done. Checks for TASK_COMPLETED promise token in the
+ * iteration log, then falls back to git diff checks for evidence of work.
+ * Never throws — fails safe to 'skipped'.
+ */
+export function classifyTicketCompletion(iterLogFile, workingDir) {
+    // 1. Check iteration log for TASK_COMPLETED promise token
+    try {
+        const logContent = fs.readFileSync(iterLogFile, 'utf-8');
+        const assistantContent = extractAssistantContent(logContent);
+        if (hasToken(assistantContent, PromiseTokens.TASK_COMPLETED))
+            return 'completed';
+    }
+    catch { /* log file unreadable — fall through to git check */ }
+    // 2. Three-signal git check (mirrors circuit-breaker.ts:227-236)
+    try {
+        const uncommitted = runCmd(['git', 'diff', '--stat'], { cwd: workingDir, check: false });
+        if (uncommitted.length > 0)
+            return 'completed';
+        const staged = runCmd(['git', 'diff', '--stat', '--cached'], { cwd: workingDir, check: false });
+        if (staged.length > 0)
+            return 'completed';
+    }
+    catch { /* not a git repo or git unavailable — rely on token only */ }
+    return 'skipped';
 }
 /**
  * Transitions a session from ticket-execution mode to Meeseeks review mode.
@@ -556,20 +583,39 @@ async function main() {
         log(`--- Iteration ${iteration} (state.iteration=${state.iteration}) ---`);
         logActivity({ event: 'iteration_start', source: 'pickle', session: path.basename(sessionDir), iteration });
         const result = await runIteration(sessionDir, iteration, extensionRoot, meeseeksModel);
-        // Detect ticket transitions: if current_ticket changed, mark the previous one Done
+        // Move iterLogFile computation BEFORE transition block (needed by classifyTicketCompletion)
+        const iterLogFile = path.join(sessionDir, `tmux_iteration_${iteration}.log`);
+        // Detect ticket transitions: validate completion before marking Done
         try {
             const postState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
             const postTicket = postState.current_ticket || null;
             if (previousTicket && postTicket !== previousTicket) {
-                if (markTicketDone(sessionDir, previousTicket)) {
-                    log(`Marked ticket ${previousTicket} as Done (transitioned to ${postTicket || 'none'})`);
+                // Check if the model already marked it Done via prompt-driven validation
+                const tickets = collectTickets(sessionDir);
+                const prevTicketInfo = tickets.find(t => t.id === previousTicket);
+                if (prevTicketInfo?.status?.toLowerCase().replace(/["']/g, '') === 'done') {
+                    log(`Ticket ${previousTicket} already marked Done by model — skipping validation`);
+                }
+                else {
+                    // Drift scenario: model changed current_ticket without following protocol
+                    const ticketWorkingDir = prevTicketInfo?.working_dir || state.working_dir || process.cwd();
+                    const verdict = classifyTicketCompletion(iterLogFile, ticketWorkingDir);
+                    if (verdict === 'completed') {
+                        if (markTicketDone(sessionDir, previousTicket)) {
+                            log(`Marked ticket ${previousTicket} as Done (validated: evidence found)`);
+                        }
+                    }
+                    else {
+                        if (markTicketSkipped(sessionDir, previousTicket)) {
+                            log(`Marked ticket ${previousTicket} as Skipped (no completion evidence)`);
+                        }
+                    }
                 }
             }
             previousTicket = postTicket;
         }
         catch { /* state read failed — skip transition check */ }
         // --- Rate limit classification (MUST run before CB to prevent CB poisoning) ---
-        const iterLogFile = path.join(sessionDir, `tmux_iteration_${iteration}.log`);
         const exitResult = classifyIterationExit(result, iterLogFile);
         const exitType = exitResult.type;
         logActivity({ event: 'iteration_end', source: 'pickle', session: path.basename(sessionDir), iteration, exit_type: exitType });

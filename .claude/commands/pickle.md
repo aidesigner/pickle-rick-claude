@@ -117,16 +117,19 @@ You are the MANAGER — FORBIDDEN from implementing code. Always delegate to Mor
 Process tickets one by one until ALL are Done.
 
 **Per ticket**:
-1. **Pick**: lowest-order non-Done ticket. `update-state.js current_ticket <ID> ${SESSION_ROOT}` + `update-state.js step research ${SESSION_ROOT}`
+1. **Pick**: lowest-order non-Done ticket. Tickets marked `[!]` Skipped were not verified
+   as complete by the safety net — re-attempt Skipped tickets before starting new Todo tickets.
+   `update-state.js current_ticket <ID> ${SESSION_ROOT}` + `update-state.js step research ${SESSION_ROOT}`
 2. **Delegate**: `node "${EXTENSION_ROOT}/extension/bin/spawn-morty.js" "<DESC>" --ticket-id <ID> --ticket-path "${SESSION_ROOT}/<ID>/" --ticket-file "${SESSION_ROOT}/<ID>/linear_ticket_<ID>.md" --timeout <worker_timeout_seconds>`
 3. **Validate** (after Morty outputs `<promise>I AM DONE</promise>`): check `${SESSION_ROOT}/[id]/` for `research_*.md`, `research_review.md`, `plan_*.md`, `plan_review.md`, `conformance_*.md`, `code_review_*.md` — FORBIDDEN to mark Done if missing. Run `git status`, `git diff`, tests/build.
 4. **Cleanup**: validation fail → `git stash` + `git checkout .`; pass → commit
 5. **Update**: mark ticket Done in frontmatter
-6. **Increment iteration**:
+6. **Signal**: output `<promise>TASK_COMPLETED</promise>` to confirm ticket completion
+7. **Increment iteration**:
    ```bash
    CURRENT=$(node -e "console.log(JSON.parse(require('fs').readFileSync('${SESSION_ROOT}/state.json','utf-8')).iteration)")
    node "${EXTENSION_ROOT}/extension/bin/update-state.js" iteration $((CURRENT + 1)) "${SESSION_ROOT}"
    ```
-7. **Next ticket**: repeat
+8. **Next ticket**: repeat
 
 **All tickets Done**: mark parent Done. If on `main`/`master` → skip auto-PR, output `<promise>EPIC_COMPLETED</promise>`. Otherwise → `node ${EXTENSION_ROOT}/extension/services/pr-factory.js ${SESSION_ROOT}`, output `<promise>EPIC_COMPLETED</promise>`.

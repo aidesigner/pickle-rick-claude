@@ -839,3 +839,45 @@ test('parseTicketFrontmatter: completed_at and skipped_at null when absent', () 
         assert.equal(result.skipped_at, null);
     });
 });
+
+// --- buildHandoffSummary: Skipped ticket note ---
+
+test('buildHandoffSummary: shows "(no verified completion — re-attempt)" for Skipped tickets', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ active: true }));
+        const ticketDir = path.join(dir, 'skip1');
+        fs.mkdirSync(ticketDir);
+        fs.writeFileSync(path.join(ticketDir, 'linear_ticket_skip1.md'),
+            '---\nid: skip1\ntitle: Skipped task\nstatus: "Skipped"\norder: 10\n---\n');
+
+        const summary = buildHandoffSummary({ step: 'implement', iteration: 1 }, dir);
+        assert.match(summary, /no verified completion — re-attempt/,
+            'Skipped ticket should show re-attempt note');
+        assert.match(summary, /\[!\] skip1/,
+            'Skipped ticket should show [!] symbol');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('buildHandoffSummary: does not show re-attempt note for Done or Todo tickets', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ active: true }));
+        const doneDir = path.join(dir, 'done1');
+        fs.mkdirSync(doneDir);
+        fs.writeFileSync(path.join(doneDir, 'linear_ticket_done1.md'),
+            '---\nid: done1\ntitle: Done task\nstatus: "Done"\norder: 10\n---\n');
+        const todoDir = path.join(dir, 'todo1');
+        fs.mkdirSync(todoDir);
+        fs.writeFileSync(path.join(todoDir, 'linear_ticket_todo1.md'),
+            '---\nid: todo1\ntitle: Todo task\nstatus: Todo\norder: 20\n---\n');
+
+        const summary = buildHandoffSummary({ step: 'implement', iteration: 1 }, dir);
+        assert.ok(!summary.includes('no verified completion'),
+            'Done and Todo tickets should NOT show re-attempt note');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});

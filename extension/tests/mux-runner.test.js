@@ -489,7 +489,7 @@ test('mux-runner: creates mux-runner.log in session directory', () => {
 
 // --- Completion classification (classifyCompletion) ---
 
-import { buildTmuxNotification, classifyCompletion, extractAssistantContent, transitionToMeeseeks, loadRateLimitSettings, loadMeeseeksModel, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText, stripSetupSection } from '../bin/mux-runner.js';
+import { buildTmuxNotification, classifyCompletion, classifyTicketCompletion, extractAssistantContent, transitionToMeeseeks, loadRateLimitSettings, loadMeeseeksModel, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText, stripSetupSection } from '../bin/mux-runner.js';
 
 test('classifyCompletion: TASK_COMPLETED returns continue (single ticket, loop continues)', () => {
     assert.equal(classifyCompletion('<promise>TASK_COMPLETED</promise>'), 'continue');
@@ -1319,4 +1319,90 @@ test('stripSetupSection: preserves content before setup and after review pass', 
     assert.ok(result.includes('Step 10'));
     assert.ok(result.includes('Footer'));
     assert.ok(!result.includes('Gate checks'));
+});
+
+// --- classifyTicketCompletion ---
+
+test('classifyTicketCompletion: returns completed when TASK_COMPLETED token found in log', () => {
+    const tmpDir = makeTmpRoot();
+    try {
+        const logFile = path.join(tmpDir, 'test_iter.log');
+        fs.writeFileSync(logFile, 'some output\n<promise>TASK_COMPLETED</promise>\nmore output');
+        assert.equal(classifyTicketCompletion(logFile, '/nonexistent/dir'), 'completed');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('classifyTicketCompletion: returns completed when TASK_COMPLETED in stream-json assistant message', () => {
+    const tmpDir = makeTmpRoot();
+    try {
+        const logFile = path.join(tmpDir, 'test_iter.log');
+        const streamLine = JSON.stringify({
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'Done! <promise>TASK_COMPLETED</promise>' }] }
+        });
+        fs.writeFileSync(logFile, streamLine + '\n');
+        assert.equal(classifyTicketCompletion(logFile, '/nonexistent/dir'), 'completed');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('classifyTicketCompletion: returns skipped when no evidence found (empty log, nonexistent dir)', () => {
+    const tmpDir = makeTmpRoot();
+    try {
+        const logFile = path.join(tmpDir, 'test_iter.log');
+        fs.writeFileSync(logFile, 'some random output with no tokens\n');
+        assert.equal(classifyTicketCompletion(logFile, '/nonexistent/dir/xyz'), 'skipped');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('classifyTicketCompletion: returns skipped on log read failure (nonexistent file)', () => {
+    assert.equal(classifyTicketCompletion('/nonexistent/log/file.log', '/nonexistent/dir'), 'skipped');
+});
+
+test('classifyTicketCompletion: returns completed when uncommitted git changes detected', () => {
+    const tmpDir = makeTmpRoot();
+    try {
+        // Create a real git repo with uncommitted changes
+        spawnSync('git', ['init'], { cwd: tmpDir });
+        spawnSync('git', ['config', 'user.email', 'test@test.com'], { cwd: tmpDir });
+        spawnSync('git', ['config', 'user.name', 'Test'], { cwd: tmpDir });
+        fs.writeFileSync(path.join(tmpDir, 'initial.txt'), 'initial');
+        spawnSync('git', ['add', '.'], { cwd: tmpDir });
+        spawnSync('git', ['commit', '-m', 'init', '--no-gpg-sign'], { cwd: tmpDir });
+        // Create uncommitted change
+        fs.writeFileSync(path.join(tmpDir, 'initial.txt'), 'modified');
+
+        const logFile = path.join(tmpDir, 'test_iter.log');
+        fs.writeFileSync(logFile, 'no tokens here\n');
+        assert.equal(classifyTicketCompletion(logFile, tmpDir), 'completed');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('classifyTicketCompletion: returns completed when staged git changes detected', () => {
+    const tmpDir = makeTmpRoot();
+    try {
+        // Create a real git repo with staged changes
+        spawnSync('git', ['init'], { cwd: tmpDir });
+        spawnSync('git', ['config', 'user.email', 'test@test.com'], { cwd: tmpDir });
+        spawnSync('git', ['config', 'user.name', 'Test'], { cwd: tmpDir });
+        fs.writeFileSync(path.join(tmpDir, 'initial.txt'), 'initial');
+        spawnSync('git', ['add', '.'], { cwd: tmpDir });
+        spawnSync('git', ['commit', '-m', 'init', '--no-gpg-sign'], { cwd: tmpDir });
+        // Create staged change
+        fs.writeFileSync(path.join(tmpDir, 'initial.txt'), 'staged change');
+        spawnSync('git', ['add', '.'], { cwd: tmpDir });
+
+        const logFile = path.join(tmpDir, 'test_iter.log');
+        fs.writeFileSync(logFile, 'no tokens here\n');
+        assert.equal(classifyTicketCompletion(logFile, tmpDir), 'completed');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
 });

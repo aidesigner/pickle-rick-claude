@@ -316,7 +316,10 @@ export function buildHandoffSummary(state: Partial<State>, sessionDir: string, i
         : (t.title || '');
       const typeTag = t.type === 'review' ? ' [REVIEW]' : '';
       const dirTag = t.working_dir && t.working_dir !== state.working_dir ? ` (${t.working_dir})` : '';
-      lines.push(`  ${sym} ${t.id || '?'}: ${title}${typeTag}${dirTag}`);
+      const skippedNote = (t.status || '').toLowerCase().replace(/["']/g, '') === 'skipped'
+        ? ' (no verified completion — re-attempt)'
+        : '';
+      lines.push(`  ${sym} ${t.id || '?'}: ${title}${typeTag}${dirTag}${skippedNote}`);
     }
   }
   const isFirstIteration = (iterationNum === 1 || iterationNum === undefined)
