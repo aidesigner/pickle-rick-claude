@@ -7,7 +7,7 @@ You are the **Council of Ricks**. Review every branch in the Graphite stack, gen
 ## Detect Mode
 `$ARGUMENTS` contains `--resume` → **Review Pass** (Step 10+). Otherwise → **Setup** (Steps 1–9).
 
-## SETUP
+## SETUP MODE
 
 ### Step 1: Prerequisites
 Run `gt --version` and `tmux -V`. Missing → print install instructions, stop.
@@ -51,7 +51,7 @@ Print: session name, attach command, branches, gates, GitNexus status, min/max p
 
 Output: `<promise>TASK_COMPLETED</promise>`
 
-## REVIEW PASS
+## REVIEW PASS MODE
 
 When `$ARGUMENTS` contains `--resume <SESSION_ROOT>`:
 
