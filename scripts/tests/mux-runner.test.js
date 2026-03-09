@@ -81,79 +81,79 @@ describe('classifyCompletion', () => {
 
 describe('isDegenerate', () => {
   it('whitespace-only is degenerate', () => {
-    assert.equal(isDegenerate('   \n  '), true);
+    assert.equal(isDegenerate('   \n  ').degenerate, true);
   });
 
   it('empty string is degenerate', () => {
-    assert.equal(isDegenerate(''), true);
+    assert.equal(isDegenerate('').degenerate, true);
   });
 
   it('ultra-short is degenerate (≤10 chars)', () => {
-    assert.equal(isDegenerate('ok'), true);
+    assert.equal(isDegenerate('ok').degenerate, true);
   });
 
   it('exactly 10 chars is degenerate', () => {
-    assert.equal(isDegenerate('1234567890'), true);
+    assert.equal(isDegenerate('1234567890').degenerate, true);
   });
 
   it('11 chars without pattern is not degenerate', () => {
-    assert.equal(isDegenerate('hello world'), false);
+    assert.equal(isDegenerate('hello world').degenerate, false);
   });
 
   // All 10 no-op patterns
   it('acknowledged. is degenerate', () => {
-    assert.equal(isDegenerate('acknowledged.'), true);
+    assert.equal(isDegenerate('acknowledged.').degenerate, true);
   });
 
   it('ok is degenerate', () => {
-    assert.equal(isDegenerate('Ok.'), true);
+    assert.equal(isDegenerate('Ok.').degenerate, true);
   });
 
   it('done is degenerate', () => {
-    assert.equal(isDegenerate('Done'), true);
+    assert.equal(isDegenerate('Done').degenerate, true);
   });
 
   it('understood is degenerate', () => {
-    assert.equal(isDegenerate('Understood.'), true);
+    assert.equal(isDegenerate('Understood.').degenerate, true);
   });
 
   it('noted is degenerate', () => {
-    assert.equal(isDegenerate('noted'), true);
+    assert.equal(isDegenerate('noted').degenerate, true);
   });
 
   it('continuing is degenerate', () => {
-    assert.equal(isDegenerate('Continuing.'), true);
+    assert.equal(isDegenerate('Continuing.').degenerate, true);
   });
 
   it('ready is degenerate', () => {
-    assert.equal(isDegenerate('Ready'), true);
+    assert.equal(isDegenerate('Ready').degenerate, true);
   });
 
   it('got it is degenerate', () => {
-    assert.equal(isDegenerate('Got it.'), true);
+    assert.equal(isDegenerate('Got it.').degenerate, true);
   });
 
   it('will do is degenerate', () => {
-    assert.equal(isDegenerate('Will do'), true);
+    assert.equal(isDegenerate('Will do').degenerate, true);
   });
 
   it('roger is degenerate', () => {
-    assert.equal(isDegenerate('Roger.'), true);
+    assert.equal(isDegenerate('Roger.').degenerate, true);
   });
 
   it('real output is not degenerate', () => {
-    assert.equal(isDegenerate('I have completed the implementation of the feature as requested.'), false);
+    assert.equal(isDegenerate('I have completed the implementation of the feature as requested.').degenerate, false);
   });
 
   it('no-op pattern over 100 chars is not degenerate', () => {
     const long = 'acknowledged' + ' '.repeat(90);
     assert.equal(long.trim().length <= 100, true); // "acknowledged" is 12 chars
-    assert.equal(isDegenerate(long), true);
+    assert.equal(isDegenerate(long).degenerate, true);
   });
 
   it('long non-pattern is not degenerate', () => {
     const long = 'x'.repeat(101);
-    assert.equal(isDegenerate(long), false);
+    assert.equal(isDegenerate(long).degenerate, false);
   });
 });
 

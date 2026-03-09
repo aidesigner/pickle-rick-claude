@@ -52,6 +52,16 @@ export interface IterationExitResult {
     type: IterationExitType;
     rateLimitInfo?: RateLimitInfo;
 }
+export interface RateLimitWaitInfo {
+    waiting: boolean;
+    reason: string;
+    started_at: string;
+    wait_until: string;
+    consecutive_waits: number;
+    rate_limit_type: 'five_hour' | 'seven_day' | 'unknown';
+    resets_at_epoch: number;
+    wait_source: 'api' | 'config';
+}
 export interface RuntimeConfig {
     bin: string;
     prompt_flag: string;

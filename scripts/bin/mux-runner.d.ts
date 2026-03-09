@@ -1,15 +1,11 @@
 import type { State, CompletionClassification, IterationExitResult } from './types/index.js';
+export { isDegenerate } from './services/degenerate-detector.js';
 /**
  * Classifies iteration output into a completion result.
  * Checks tokens in priority order per PRD table.
  * WORKER_DONE and ANALYSIS_DONE are NOT scanned.
  */
 export declare function classifyCompletion(output: string, state?: Partial<State>): CompletionClassification;
-/**
- * Detects degenerate (no-op) output from workers.
- * Whitespace-only, ultra-short, or no-op phrases.
- */
-export declare function isDegenerate(output: string): boolean;
 /**
  * Classifies iteration exit based on raw spawn result.
  * Rate limit detection runs first to prevent circuit breaker poisoning.

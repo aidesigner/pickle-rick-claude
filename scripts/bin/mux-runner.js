@@ -3,6 +3,8 @@ import * as path from 'path';
 import { PromiseTokens, hasToken } from './types/index.js';
 import { spawnManager } from './spawn-worker.js';
 import { loadConfig } from './services/config.js';
+import { isDegenerate, extractTail } from './services/degenerate-detector.js';
+export { isDegenerate } from './services/degenerate-detector.js';
 // ---------------------------------------------------------------------------
 // Inline helpers (will be replaced by pickle-utils when ticket fb281903 lands)
 // ---------------------------------------------------------------------------
@@ -34,18 +36,6 @@ function sleep(ms) {
 // ---------------------------------------------------------------------------
 // Token Classification
 // ---------------------------------------------------------------------------
-const NO_OP_PATTERNS = [
-    /^acknowledged\.?$/i,
-    /^ok\.?$/i,
-    /^done\.?$/i,
-    /^understood\.?$/i,
-    /^noted\.?$/i,
-    /^continuing\.?$/i,
-    /^ready\.?$/i,
-    /^got it\.?$/i,
-    /^will do\.?$/i,
-    /^roger\.?$/i,
-];
 const RATE_LIMIT_TEXT_PATTERNS = [
     /5.*hour.*limit/i,
     /limit.*reached.*try.*back/i,
@@ -75,20 +65,6 @@ export function classifyCompletion(output, state) {
         return 'task_completed';
     }
     return 'continue';
-}
-/**
- * Detects degenerate (no-op) output from workers.
- * Whitespace-only, ultra-short, or no-op phrases.
- */
-export function isDegenerate(output) {
-    const trimmed = output.trim();
-    if (trimmed.length === 0)
-        return true;
-    if (trimmed.length <= 10)
-        return true;
-    if (trimmed.length <= 100 && NO_OP_PATTERNS.some(p => p.test(trimmed)))
-        return true;
-    return false;
 }
 /**
  * Classifies iteration exit based on raw spawn result.
@@ -325,7 +301,7 @@ async function main() {
             break;
         }
         // Classify iteration exit (rate limit runs BEFORE circuit breaker)
-        const exitResult = classifyIterationExit(spawnResult.exitCode, spawnResult.stdout, spawnResult.stderr, spawnResult.timedOut);
+        let exitResult = classifyIterationExit(spawnResult.exitCode, spawnResult.stdout, spawnResult.stderr, spawnResult.timedOut);
         if (exitResult.type === 'api_limit') {
             consecutiveRateLimits++;
             log(`API rate limit (consecutive: ${consecutiveRateLimits}/${config.defaults.max_rate_limit_retries})`);
@@ -340,10 +316,14 @@ async function main() {
         }
         if (exitResult.type === 'success')
             consecutiveRateLimits = 0;
-        // Degenerate output → classify as error for CB recording
-        if (isDegenerate(spawnResult.stdout)) {
-            log(`Degenerate output detected (${spawnResult.stdout.trim().length} chars).`);
-            // Degenerate counts as error for circuit breaker, but we continue classification
+        // Degenerate output → reclassify success as error for CB recording
+        if (exitResult.type === 'success') {
+            const tailOutput = extractTail(spawnResult.stdout);
+            const degResult = isDegenerate(tailOutput);
+            if (degResult.degenerate) {
+                log(`Degenerate output detected: ${degResult.reason} (${spawnResult.stdout.trim().length} chars). Reclassifying as error.`);
+                exitResult = { type: 'error' };
+            }
         }
         if (exitResult.type === 'error') {
             log('Subprocess error. Exiting.');
