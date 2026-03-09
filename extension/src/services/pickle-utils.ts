@@ -173,6 +173,7 @@ export interface TicketInfo {
   status: string | null;
   order: number;
   type: string | null;
+  working_dir: string | null;
 }
 
 export function parseTicketFrontmatter(filePath: string): TicketInfo | null {
@@ -191,6 +192,7 @@ export function parseTicketFrontmatter(filePath: string): TicketInfo | null {
       status: get('status'),
       order: parseInt(get('order') || '0', 10) || 0,
       type: get('type'),
+      working_dir: get('working_dir'),
     };
   } catch {
     return null;
@@ -279,7 +281,8 @@ export function buildHandoffSummary(state: Partial<State>, sessionDir: string, i
         ? (t.title || '').slice(0, 60) + '...'
         : (t.title || '');
       const typeTag = t.type === 'review' ? ' [REVIEW]' : '';
-      lines.push(`  ${sym} ${t.id || '?'}: ${title}${typeTag}`);
+      const dirTag = t.working_dir && t.working_dir !== state.working_dir ? ` (${t.working_dir})` : '';
+      lines.push(`  ${sym} ${t.id || '?'}: ${title}${typeTag}${dirTag}`);
     }
   }
   const isFirstIteration = (iterationNum === 1 || iterationNum === undefined)

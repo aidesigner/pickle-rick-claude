@@ -158,6 +158,7 @@ export function parseTicketFrontmatter(filePath) {
             status: get('status'),
             order: parseInt(get('order') || '0', 10) || 0,
             type: get('type'),
+            working_dir: get('working_dir'),
         };
     }
     catch {
@@ -252,7 +253,8 @@ export function buildHandoffSummary(state, sessionDir, iterationNum) {
                 ? (t.title || '').slice(0, 60) + '...'
                 : (t.title || '');
             const typeTag = t.type === 'review' ? ' [REVIEW]' : '';
-            lines.push(`  ${sym} ${t.id || '?'}: ${title}${typeTag}`);
+            const dirTag = t.working_dir && t.working_dir !== state.working_dir ? ` (${t.working_dir})` : '';
+            lines.push(`  ${sym} ${t.id || '?'}: ${title}${typeTag}${dirTag}`);
         }
     }
     const isFirstIteration = (iterationNum === 1 || iterationNum === undefined)

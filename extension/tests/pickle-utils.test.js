@@ -236,6 +236,22 @@ test('parseTicketFrontmatter: type is null when absent (backward compat)', () =>
     });
 });
 
+// --- parseTicketFrontmatter: working_dir field ---
+
+test('parseTicketFrontmatter: extracts working_dir when present', () => {
+    withTempFile(`---\nid: wd1\ntitle: Add API\nstatus: Todo\norder: 10\nworking_dir: subdir/\n---\n# Body\n`, (file) => {
+        const result = parseTicketFrontmatter(file);
+        assert.equal(result.working_dir, 'subdir/');
+    });
+});
+
+test('parseTicketFrontmatter: working_dir is null when absent (backward compat)', () => {
+    withTempFile(`---\nid: abc123\ntitle: Test Ticket\nstatus: Todo\norder: 10\n---\n# Body\n`, (file) => {
+        const result = parseTicketFrontmatter(file);
+        assert.equal(result.working_dir, null);
+    });
+});
+
 // --- collectTickets ---
 
 test('collectTickets: review tickets sorted by order alongside impl tickets', () => {
@@ -440,6 +456,56 @@ test('buildHandoffSummary: shows [REVIEW] tag for review tickets', () => {
         assert.match(summary, /rev1:.*\[REVIEW\]/, 'review ticket should show [REVIEW] tag');
         assert.ok(!summary.includes('impl1') || !summary.match(/impl1:.*\[REVIEW\]/),
             'implementation ticket should NOT show [REVIEW] tag');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+// --- buildHandoffSummary: working_dir per-ticket display ---
+
+test('buildHandoffSummary: shows directory context when working_dir differs from session', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ active: true }));
+        const ticketDir = path.join(dir, 'wd1');
+        fs.mkdirSync(ticketDir);
+        fs.writeFileSync(path.join(ticketDir, 'linear_ticket_wd1.md'),
+            '---\nid: wd1\ntitle: Add API endpoint\nstatus: Todo\norder: 10\nworking_dir: api/\n---\n');
+
+        const summary = buildHandoffSummary({ step: 'implement', iteration: 1, working_dir: '/project' }, dir);
+        assert.match(summary, /wd1: Add API endpoint \(api\/\)/, 'should show (api/) after title');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('buildHandoffSummary: omits parenthetical when working_dir is null', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ active: true }));
+        const ticketDir = path.join(dir, 'nowd');
+        fs.mkdirSync(ticketDir);
+        fs.writeFileSync(path.join(ticketDir, 'linear_ticket_nowd.md'),
+            '---\nid: nowd\ntitle: Fix the thing\nstatus: Todo\norder: 10\n---\n');
+
+        const summary = buildHandoffSummary({ step: 'implement', iteration: 1 }, dir);
+        assert.ok(!summary.match(/Fix the thing\s*\(/), 'should NOT have parenthetical after title');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('buildHandoffSummary: omits parenthetical when working_dir matches session root', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ active: true }));
+        const ticketDir = path.join(dir, 'same');
+        fs.mkdirSync(ticketDir);
+        fs.writeFileSync(path.join(ticketDir, 'linear_ticket_same.md'),
+            '---\nid: same\ntitle: Same dir task\nstatus: Todo\norder: 10\nworking_dir: /project\n---\n');
+
+        const summary = buildHandoffSummary({ step: 'implement', iteration: 1, working_dir: '/project' }, dir);
+        assert.ok(!summary.match(/Same dir task\s*\(/), 'should NOT show parenthetical when working_dir matches session');
     } finally {
         fs.rmSync(dir, { recursive: true });
     }

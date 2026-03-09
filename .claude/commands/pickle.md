@@ -78,7 +78,7 @@ Mark checkboxes as sections are drafted.
 ### Create Tickets
 1. Read `${SESSION_ROOT}/prd.md`
 2. Create `${SESSION_ROOT}/linear_ticket_parent.md` — Status: Backlog, Title: [Epic] [Feature]
-3. Create atomic child tickets. Each MUST produce functional/testable changes — NO research-only or docs-only tickets. Assign `order` (10, 20, 30...).
+3. Create atomic child tickets. Each MUST produce functional/testable changes — NO research-only or docs-only tickets. Assign `order` (10, 20, 30...). If the PRD targets a specific subdirectory that is its own git repo, set `working_dir` to that path relative to the session root. Omit if the ticket targets the same directory as the session.
 
 For each child: generate hash (`openssl rand -hex 4`), create `${SESSION_ROOT}/[hash]/linear_ticket_[hash].md`:
 
@@ -89,6 +89,7 @@ title: [Title]
 status: Todo
 priority: [High|Medium|Low]
 order: [N]
+working_dir: [path or omit]
 created: [Date]
 updated: [Date]
 links:

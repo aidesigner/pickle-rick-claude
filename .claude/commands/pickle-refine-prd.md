@@ -127,6 +127,7 @@ title: "[verb + target]"
 status: Todo
 priority: [High|Medium|Low]
 order: [N]
+working_dir: [path or omit]
 created: [Date]
 updated: [Date]
 depends_on: [IDs or "none"]
