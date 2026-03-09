@@ -147,6 +147,7 @@ export function statusSymbol(status: string | null): string {
   const s = (status || '').toLowerCase().replace(/^["']|["']$/g, '');
   if (s === 'done') return '[x]';
   if (s === 'in progress') return '[~]';
+  if (s === 'skipped') return '[!]';
   return '[ ]';
 }
 
@@ -167,6 +168,16 @@ export function extractFrontmatter(content: string): { body: string; start: numb
   return { body: content.slice(openLen, closeIdx), start: 0, end };
 }
 
+function insertFrontmatterField(content: string, field: string, value: string): string {
+  const fm = extractFrontmatter(content);
+  if (!fm) return content;
+  const closingNewline = content.lastIndexOf('\n---', fm.end - 1);
+  if (closingNewline === -1) return content;
+  const insertPoint = closingNewline + 1;
+  const newLine = `${field}: "${value}"\n`;
+  return content.slice(0, insertPoint) + newLine + content.slice(insertPoint);
+}
+
 export interface TicketInfo {
   id: string | null;
   title: string | null;
@@ -174,6 +185,8 @@ export interface TicketInfo {
   order: number;
   type: string | null;
   working_dir: string | null;
+  completed_at: string | null;
+  skipped_at: string | null;
 }
 
 export function parseTicketFrontmatter(filePath: string): TicketInfo | null {
@@ -193,6 +206,8 @@ export function parseTicketFrontmatter(filePath: string): TicketInfo | null {
       order: parseInt(get('order') || '0', 10) || 0,
       type: get('type'),
       working_dir: get('working_dir'),
+      completed_at: get('completed_at'),
+      skipped_at: get('skipped_at'),
     };
   } catch {
     return null;
@@ -214,7 +229,26 @@ export function markTicketDone(sessionDir: string, ticketId: string): boolean {
     // Replace status line in frontmatter (handles quoted/unquoted values)
     const updated = content.replace(/^(status:\s*).*$/m, '$1"Done"');
     if (updated === content) return false;
-    fs.writeFileSync(filePath, updated);
+    const withTimestamp = insertFrontmatterField(updated, 'completed_at', new Date().toISOString());
+    fs.writeFileSync(filePath, withTimestamp);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function markTicketSkipped(sessionDir: string, ticketId: string): boolean {
+  try {
+    const ticketDir = path.join(sessionDir, ticketId);
+    const files = fs.readdirSync(ticketDir);
+    const ticketFile = files.find(f => f.startsWith('linear_ticket_') && f.endsWith('.md'));
+    if (!ticketFile) return false;
+    const filePath = path.join(ticketDir, ticketFile);
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const updated = content.replace(/^(status:\s*).*$/m, '$1"Skipped"');
+    if (updated === content) return false;
+    const withTimestamp = insertFrontmatterField(updated, 'skipped_at', new Date().toISOString());
+    fs.writeFileSync(filePath, withTimestamp);
     return true;
   } catch {
     return false;

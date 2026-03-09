@@ -15,6 +15,7 @@ import {
     extractFrontmatter,
     getExtensionRoot,
     markTicketDone,
+    markTicketSkipped,
 } from '../services/pickle-utils.js';
 
 // --- getExtensionRoot ---
@@ -102,6 +103,9 @@ test("statusSymbol: single-quoted 'Done'", () => assert.equal(statusSymbol("'Don
 test('statusSymbol: in progress lowercase', () => assert.equal(statusSymbol('in progress'), '[~]'));
 test('statusSymbol: In Progress title-case', () => assert.equal(statusSymbol('In Progress'), '[~]'));
 test('statusSymbol: quoted "In Progress"', () => assert.equal(statusSymbol('"In Progress"'), '[~]'));
+test('statusSymbol: Skipped → [!]', () => assert.equal(statusSymbol('Skipped'), '[!]'));
+test('statusSymbol: skipped lowercase → [!]', () => assert.equal(statusSymbol('skipped'), '[!]'));
+test('statusSymbol: quoted "Skipped" → [!]', () => assert.equal(statusSymbol('"Skipped"'), '[!]'));
 test('statusSymbol: Todo → [ ]', () => assert.equal(statusSymbol('Todo'), '[ ]'));
 test('statusSymbol: Backlog → [ ]', () => assert.equal(statusSymbol('Backlog'), '[ ]'));
 test('statusSymbol: empty string → [ ]', () => assert.equal(statusSymbol(''), '[ ]'));
@@ -740,4 +744,98 @@ test('markTicketDone: returns false when no linear_ticket_ file exists', () => {
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
+});
+
+test('markTicketDone: inserts completed_at timestamp', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        const sub = path.join(dir, 'ts1');
+        fs.mkdirSync(sub);
+        fs.writeFileSync(path.join(sub, 'linear_ticket_ts1.md'),
+            '---\nid: ts1\ntitle: Test\nstatus: Todo\norder: 10\n---\nBody');
+        const result = markTicketDone(dir, 'ts1');
+        assert.equal(result, true);
+        const content = fs.readFileSync(path.join(sub, 'linear_ticket_ts1.md'), 'utf-8');
+        assert.ok(content.includes('status: "Done"'));
+        assert.match(content, /completed_at: "\d{4}-\d{2}-\d{2}T/);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+// --- markTicketSkipped ---
+
+test('markTicketSkipped: updates Todo to Skipped', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        const sub = path.join(dir, 'skip1');
+        fs.mkdirSync(sub);
+        fs.writeFileSync(path.join(sub, 'linear_ticket_skip1.md'),
+            '---\nid: skip1\ntitle: Test\nstatus: Todo\norder: 10\n---\nBody');
+        const result = markTicketSkipped(dir, 'skip1');
+        assert.equal(result, true);
+        const content = fs.readFileSync(path.join(sub, 'linear_ticket_skip1.md'), 'utf-8');
+        assert.ok(content.includes('status: "Skipped"'), `Expected status: "Skipped", got: ${content}`);
+        assert.ok(content.includes('Body'), 'Body should be preserved');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('markTicketSkipped: inserts skipped_at timestamp', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        const sub = path.join(dir, 'skip2');
+        fs.mkdirSync(sub);
+        fs.writeFileSync(path.join(sub, 'linear_ticket_skip2.md'),
+            '---\nid: skip2\ntitle: Test\nstatus: "In Progress"\norder: 10\n---\n');
+        const result = markTicketSkipped(dir, 'skip2');
+        assert.equal(result, true);
+        const content = fs.readFileSync(path.join(sub, 'linear_ticket_skip2.md'), 'utf-8');
+        assert.ok(content.includes('status: "Skipped"'));
+        assert.match(content, /skipped_at: "\d{4}-\d{2}-\d{2}T/);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('markTicketSkipped: no-op when already Skipped', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        const sub = path.join(dir, 'skip3');
+        fs.mkdirSync(sub);
+        fs.writeFileSync(path.join(sub, 'linear_ticket_skip3.md'),
+            '---\nid: skip3\ntitle: Test\nstatus: "Skipped"\norder: 10\n---\n');
+        const result = markTicketSkipped(dir, 'skip3');
+        assert.equal(result, false, 'Should return false when already Skipped');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('markTicketSkipped: returns false for nonexistent ticket dir', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        assert.equal(markTicketSkipped(dir, 'nonexistent'), false);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+// --- parseTicketFrontmatter: timestamps ---
+
+test('parseTicketFrontmatter: reads completed_at and skipped_at when present', () => {
+    withTempFile(`---\nid: x\ntitle: T\nstatus: Done\norder: 1\ncompleted_at: "2026-03-09T12:00:00.000Z"\nskipped_at: "2026-03-08T10:00:00.000Z"\n---\n`, (file) => {
+        const result = parseTicketFrontmatter(file);
+        assert.equal(result.completed_at, '2026-03-09T12:00:00.000Z');
+        assert.equal(result.skipped_at, '2026-03-08T10:00:00.000Z');
+    });
+});
+
+test('parseTicketFrontmatter: completed_at and skipped_at null when absent', () => {
+    withTempFile(`---\nid: x\ntitle: T\nstatus: Todo\norder: 1\n---\n`, (file) => {
+        const result = parseTicketFrontmatter(file);
+        assert.equal(result.completed_at, null);
+        assert.equal(result.skipped_at, null);
+    });
 });
