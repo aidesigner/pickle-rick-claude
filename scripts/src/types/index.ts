@@ -24,6 +24,7 @@ export interface State {
   min_iterations?: number;
   command_template?: string;
   chain_meeseeks?: boolean;
+  runtime?: string;
 }
 
 // ---------------------------------------------------------------------------

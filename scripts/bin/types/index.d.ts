@@ -23,6 +23,7 @@ export interface State {
     min_iterations?: number;
     command_template?: string;
     chain_meeseeks?: boolean;
+    runtime?: string;
 }
 export declare const Defaults: {
     readonly WORKER_TIMEOUT_SECONDS: 1200;
