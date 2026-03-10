@@ -115,7 +115,7 @@ export function getLatestRelease() {
         return null;
     }
 }
-function getCurrentVersion() {
+export function getCurrentVersion() {
     try {
         const pkgPath = path.join(getExtensionRoot(), 'extension', 'package.json');
         const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
@@ -225,10 +225,12 @@ export function performUpgrade(from, to, tag) {
         if (!result.success) {
             return result;
         }
+        // Only update cache after confirmed successful install
+        const postInstallVersion = getCurrentVersion();
         writeCache({
             last_check_epoch: Math.floor(Date.now() / 1000),
             latest_version: to,
-            current_version: to,
+            current_version: postInstallVersion,
         });
         process.stderr.write(`🥒 Pickle Rick upgraded: v${from} → v${to}\n`);
         log(`Upgrade complete: ${from} → ${to}`);

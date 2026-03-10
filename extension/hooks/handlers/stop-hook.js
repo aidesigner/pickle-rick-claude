@@ -24,6 +24,9 @@ function maybeSpawnUpdateCheck(extensionDir, log) {
     }
     log('Spawning detached check-update process');
     const child = spawn('node', [checkUpdatePath], { detached: true, stdio: 'ignore' });
+    child.on('error', (err) => {
+        log(`check-update spawn error: ${err instanceof Error ? err.message : String(err)}`);
+    });
     child.unref();
 }
 async function main() {
@@ -225,7 +228,6 @@ async function main() {
             state.active = false;
             writeStateFile(stateFile, state);
         }
-        maybeSpawnUpdateCheck(extensionDir, log);
         approve();
         if (state.tmux_mode !== true) {
             const durationMin = startEpoch > 0 ? Math.round(elapsedSeconds / 60) : undefined;
@@ -239,7 +241,6 @@ async function main() {
             state.active = false;
             writeStateFile(stateFile, state);
         }
-        maybeSpawnUpdateCheck(extensionDir, log);
         approve();
         if (state.tmux_mode !== true) {
             logActivity({ event: 'session_end', source: 'pickle', session: path.basename(path.dirname(stateFile)), duration_min: Math.round(elapsedSeconds / 60), mode: 'inline' });
@@ -260,7 +261,6 @@ async function main() {
             state.active = false;
             writeStateFile(stateFile, state);
         }
-        maybeSpawnUpdateCheck(extensionDir, log);
         approve();
         return;
     }
@@ -270,7 +270,6 @@ async function main() {
             state.active = false;
             writeStateFile(stateFile, state);
         }
-        maybeSpawnUpdateCheck(extensionDir, log);
         approve();
         return;
     }
@@ -294,7 +293,6 @@ async function main() {
             state.active = false;
             writeStateFile(stateFile, state);
         }
-        maybeSpawnUpdateCheck(extensionDir, log);
         approve();
         return;
     }
