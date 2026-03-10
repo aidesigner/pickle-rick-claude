@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { getExtensionRoot } from '../services/pickle-utils.js';
@@ -125,6 +126,120 @@ function getCurrentVersion() {
         return '0.0.0';
     }
 }
+export function downloadRelease(tag) {
+    let tmpDir = '';
+    try {
+        tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-update-')));
+        log(`Downloading release ${tag} to ${tmpDir}`);
+        const result = spawnSync('gh', [
+            'release', 'download', tag,
+            '-R', 'gregorydickson/pickle-rick-claude',
+            '-A', 'tar.gz',
+            '-D', tmpDir,
+        ], { encoding: 'utf-8', timeout: 60_000 });
+        if (result.status !== 0) {
+            log(`gh release download failed: ${(result.stderr || '').trim()}`);
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+            return null;
+        }
+        const files = fs.readdirSync(tmpDir).filter(f => f.endsWith('.tar.gz'));
+        if (files.length === 0) {
+            log('No .tar.gz asset found in downloaded release');
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+            return null;
+        }
+        return path.join(tmpDir, files[0]);
+    }
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log(`downloadRelease error: ${msg}`);
+        if (tmpDir) {
+            try {
+                fs.rmSync(tmpDir, { recursive: true, force: true });
+            }
+            catch { /* best-effort */ }
+        }
+        return null;
+    }
+}
+export function extractAndInstall(tarballPath) {
+    const tarballDir = path.dirname(tarballPath);
+    let extractDir = '';
+    try {
+        extractDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-extract-')));
+        log(`Extracting ${tarballPath} to ${extractDir}`);
+        const tar = spawnSync('tar', ['xzf', tarballPath, '-C', extractDir, '--strip-components=1'], {
+            encoding: 'utf-8',
+            timeout: 30_000,
+        });
+        if (tar.status !== 0) {
+            const msg = (tar.stderr || '').trim();
+            log(`tar extraction failed: ${msg}`);
+            return { success: false, error: `Extraction failed: ${msg}` };
+        }
+        const installScript = path.join(extractDir, 'install.sh');
+        if (!fs.existsSync(installScript)) {
+            log('install.sh not found in extracted tarball');
+            return { success: false, error: 'install.sh not found in release' };
+        }
+        log('Running install.sh');
+        const install = spawnSync('bash', ['install.sh'], {
+            cwd: extractDir,
+            encoding: 'utf-8',
+            timeout: 30_000,
+        });
+        if (install.status !== 0) {
+            const msg = (install.stderr || '').trim();
+            log(`install.sh failed (exit ${install.status}): ${msg}`);
+            return { success: false, error: `install.sh failed (exit ${install.status})` };
+        }
+        log('install.sh completed successfully');
+        return { success: true };
+    }
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log(`extractAndInstall error: ${msg}`);
+        return { success: false, error: msg };
+    }
+    finally {
+        try {
+            fs.rmSync(tarballDir, { recursive: true, force: true });
+        }
+        catch { /* best-effort */ }
+        if (extractDir) {
+            try {
+                fs.rmSync(extractDir, { recursive: true, force: true });
+            }
+            catch { /* best-effort */ }
+        }
+    }
+}
+export function performUpgrade(from, to, tag) {
+    try {
+        log(`Starting upgrade: ${from} → ${to} (${tag})`);
+        const tarballPath = downloadRelease(tag);
+        if (!tarballPath) {
+            return { success: false, error: 'Failed to download release' };
+        }
+        const result = extractAndInstall(tarballPath);
+        if (!result.success) {
+            return result;
+        }
+        writeCache({
+            last_check_epoch: Math.floor(Date.now() / 1000),
+            latest_version: to,
+            current_version: to,
+        });
+        process.stderr.write(`🥒 Pickle Rick upgraded: v${from} → v${to}\n`);
+        log(`Upgrade complete: ${from} → ${to}`);
+        return { success: true };
+    }
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log(`performUpgrade error: ${msg}`);
+        return { success: false, error: msg };
+    }
+}
 export function checkForUpdate(options) {
     const currentVersion = getCurrentVersion();
     const errorResult = { status: 'error', currentVersion };
@@ -158,6 +273,10 @@ export function checkForUpdate(options) {
         });
         if (compareSemver(currentVersion, latestVersion) < 0) {
             log(`Update available: ${currentVersion} → ${latestVersion}`);
+            const upgrade = performUpgrade(currentVersion, latestVersion, release.tagName);
+            if (upgrade.success) {
+                return { status: 'up-to-date', currentVersion: latestVersion, latestVersion };
+            }
             return { status: 'update-available', currentVersion, latestVersion };
         }
         log(`Up to date: ${currentVersion}`);
@@ -170,6 +289,25 @@ export function checkForUpdate(options) {
     }
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'check-update.js') {
-    const result = checkForUpdate({ force: process.argv.includes('--force') });
-    console.log(JSON.stringify(result, null, 2));
+    if (process.argv.includes('--upgrade')) {
+        const current = getCurrentVersion();
+        const release = getLatestRelease();
+        if (!release) {
+            console.error('Failed to fetch latest release');
+            process.exit(1);
+        }
+        const latest = parseVersion(release.tagName);
+        if (!latest || compareSemver(current, latest) >= 0) {
+            console.log(JSON.stringify({ status: 'up-to-date', currentVersion: current }));
+        }
+        else {
+            const upgrade = performUpgrade(current, latest, release.tagName);
+            console.log(JSON.stringify(upgrade, null, 2));
+            process.exit(upgrade.success ? 0 : 1);
+        }
+    }
+    else {
+        const result = checkForUpdate({ force: process.argv.includes('--force') });
+        console.log(JSON.stringify(result, null, 2));
+    }
 }

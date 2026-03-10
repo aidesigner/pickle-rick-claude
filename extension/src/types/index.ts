@@ -165,3 +165,8 @@ export interface UpdateResult {
   latestVersion?: string;
   error?: string;
 }
+
+export interface UpgradeResult {
+  success: boolean;
+  error?: string;
+}

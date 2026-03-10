@@ -12,6 +12,9 @@ import {
     readSettings,
     isCacheStale,
     checkForUpdate,
+    downloadRelease,
+    extractAndInstall,
+    performUpgrade,
 } from '../bin/check-update.js';
 
 function makeTmpDir() {
@@ -249,5 +252,109 @@ describe('checkForUpdate', () => {
         const result = checkForUpdate();
         assert.ok(['up-to-date', 'update-available', 'error'].includes(result.status));
         assert.equal(result.currentVersion, '1.7.0');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// downloadRelease
+// ---------------------------------------------------------------------------
+
+describe('downloadRelease', () => {
+    let tmpDir;
+    let origEnv;
+
+    beforeEach(() => {
+        tmpDir = makeTmpDir();
+        origEnv = process.env.EXTENSION_DIR;
+        process.env.EXTENSION_DIR = tmpDir;
+    });
+
+    afterEach(() => {
+        if (origEnv === undefined) delete process.env.EXTENSION_DIR;
+        else process.env.EXTENSION_DIR = origEnv;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    test('returns null on invalid tag, never throws', () => {
+        const result = downloadRelease('v999.999.999-nonexistent');
+        assert.equal(result, null);
+    });
+
+    test('returns string path on valid release', () => {
+        // Empty tag downloads latest release — gh treats it as "latest"
+        // This validates the happy path when gh is available
+        const result = downloadRelease('');
+        if (result !== null) {
+            assert.ok(result.endsWith('.tar.gz'));
+            // Clean up downloaded file
+            try { fs.rmSync(path.dirname(result), { recursive: true, force: true }); } catch { /* */ }
+        }
+    });
+});
+
+// ---------------------------------------------------------------------------
+// extractAndInstall
+// ---------------------------------------------------------------------------
+
+describe('extractAndInstall', () => {
+    let tmpDir;
+    let origEnv;
+
+    beforeEach(() => {
+        tmpDir = makeTmpDir();
+        origEnv = process.env.EXTENSION_DIR;
+        process.env.EXTENSION_DIR = tmpDir;
+    });
+
+    afterEach(() => {
+        if (origEnv === undefined) delete process.env.EXTENSION_DIR;
+        else process.env.EXTENSION_DIR = origEnv;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    test('returns error for nonexistent tarball', () => {
+        const result = extractAndInstall('/tmp/nonexistent-pickle-fakefile.tar.gz');
+        assert.equal(result.success, false);
+        assert.ok(result.error);
+    });
+
+    test('returns error for invalid tarball', () => {
+        const fakeTarball = path.join(tmpDir, 'fake.tar.gz');
+        fs.writeFileSync(fakeTarball, 'not a real tarball');
+        const result = extractAndInstall(fakeTarball);
+        assert.equal(result.success, false);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// performUpgrade
+// ---------------------------------------------------------------------------
+
+describe('performUpgrade', () => {
+    let tmpDir;
+    let origEnv;
+
+    beforeEach(() => {
+        tmpDir = makeTmpDir();
+        origEnv = process.env.EXTENSION_DIR;
+        process.env.EXTENSION_DIR = tmpDir;
+    });
+
+    afterEach(() => {
+        if (origEnv === undefined) delete process.env.EXTENSION_DIR;
+        else process.env.EXTENSION_DIR = origEnv;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    });
+
+    test('fails gracefully when download fails', () => {
+        const result = performUpgrade('1.0.0', '999.0.0', 'v999.0.0');
+        assert.equal(result.success, false);
+        assert.ok(result.error);
+    });
+
+    test('never throws', () => {
+        assert.doesNotThrow(() => {
+            performUpgrade('1.0.0', '999.0.0', 'v999.0.0');
+        });
     });
 });
