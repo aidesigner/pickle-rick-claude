@@ -19,7 +19,7 @@ jobs:
           node-version: '22'
 
       - name: Install and compile
-        run: cd extension && npm ci && npx tsc
+        run: cd extension && npm ci && npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npx tsc && npm test
 
       - name: Build tarball
         run: |
@@ -27,8 +27,11 @@ jobs:
           tar -czf "pickle-rick-${VERSION}.tar.gz" \
             extension/bin/ \
             extension/services/ \
+            extension/types/ \
             extension/hooks/ \
             extension/scripts/ \
+            extension/layouts/ \
+            extension/eslint-plugin-pickle/ \
             extension/package.json \
             install.sh \
             .claude/commands/ \

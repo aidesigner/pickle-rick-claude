@@ -244,7 +244,6 @@ async function main() {
       state.active = false;
       writeStateFile(stateFile, state);
     }
-    maybeSpawnUpdateCheck(extensionDir, log);
     approve();
     if (state.tmux_mode !== true) {
       const durationMin = startEpoch > 0 ? Math.round(elapsedSeconds / 60) : undefined;
@@ -259,7 +258,6 @@ async function main() {
       state.active = false;
       writeStateFile(stateFile, state);
     }
-    maybeSpawnUpdateCheck(extensionDir, log);
     approve();
     if (state.tmux_mode !== true) {
       logActivity({ event: 'session_end', source: 'pickle', session: path.basename(path.dirname(stateFile)), duration_min: Math.round(elapsedSeconds / 60), mode: 'inline' });
@@ -281,7 +279,6 @@ async function main() {
       state.active = false;
       writeStateFile(stateFile, state);
     }
-    maybeSpawnUpdateCheck(extensionDir, log);
     approve();
     return;
   }
@@ -291,7 +288,6 @@ async function main() {
       state.active = false;
       writeStateFile(stateFile, state);
     }
-    maybeSpawnUpdateCheck(extensionDir, log);
     approve();
     return;
   }
@@ -315,7 +311,6 @@ async function main() {
       state.active = false;
       writeStateFile(stateFile, state);
     }
-    maybeSpawnUpdateCheck(extensionDir, log);
     approve();
     return;
   }

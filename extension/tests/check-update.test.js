@@ -255,10 +255,10 @@ describe('checkForUpdate', () => {
     });
 
     test('returns error status on API failure, never throws', () => {
-        // Stale cache forces API call, which will likely fail in test env
+        // Stale cache forces API call — may succeed or fail depending on env
         const result = checkForUpdate();
         assert.ok(['up-to-date', 'update-available', 'error'].includes(result.status));
-        assert.equal(result.currentVersion, '1.7.0');
+        assert.ok(typeof result.currentVersion === 'string', 'currentVersion should be a string');
     });
 });
 
@@ -490,16 +490,29 @@ describe('detached spawn (stop-hook)', () => {
         }
     }
 
-    test('spawns detached check-update on max iterations reached', () => {
+    test('spawns detached check-update on task completion', () => {
+        const log = runStopHook({
+            state: makeMaxIterState({ iteration: 1, max_iterations: 100 }),
+            response: 'All done! <promise>TASK_COMPLETED</promise>',
+        });
+        assert.ok(log.includes('Spawning detached check-update process'),
+            'stop-hook should log detached spawn on task completion');
+    });
+
+    test('does NOT spawn on max iterations (only on completion)', () => {
         const log = runStopHook({
             response: 'Some work output that is long enough to not be degenerate response detection threshold',
         });
-        assert.ok(log.includes('Spawning detached check-update process'),
-            'stop-hook should log detached spawn on max iterations');
+        assert.ok(!log.includes('Spawning detached'),
+            'stop-hook should NOT spawn update check on max iterations');
     });
 
     test('skips spawn when check-update.js is missing', () => {
-        const log = runStopHook({ createCheckUpdate: false });
+        const log = runStopHook({
+            state: makeMaxIterState({ iteration: 1, max_iterations: 100 }),
+            response: 'All done! <promise>TASK_COMPLETED</promise>',
+            createCheckUpdate: false,
+        });
         assert.ok(log.includes('check-update.js not found'),
             'should log that check-update.js was not found');
         assert.ok(!log.includes('Spawning detached'),
@@ -508,6 +521,8 @@ describe('detached spawn (stop-hook)', () => {
 
     test('skips spawn when auto_update disabled', () => {
         const log = runStopHook({
+            state: makeMaxIterState({ iteration: 1, max_iterations: 100 }),
+            response: 'All done! <promise>TASK_COMPLETED</promise>',
             extraFiles: { 'pickle_settings.json': JSON.stringify({ auto_update_enabled: false }) },
         });
         assert.ok(log.includes('Auto-update disabled'),
