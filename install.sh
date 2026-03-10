@@ -21,6 +21,22 @@ jq . "$SETTINGS_FILE" >/dev/null 2>&1 || { echo "❌ settings.json is not valid 
 [ -d "$SCRIPT_DIR/extension" ]   || { echo "❌ extension/ not found. Are you running from the repo root?"; exit 1; }
 [ -d "$SCRIPT_DIR/.claude/commands" ] || { echo "❌ .claude/commands/ not found. Are you running from the repo root?"; exit 1; }
 
+# --- MODE DETECTION ---
+if [ -d "$SCRIPT_DIR/.git" ]; then
+  INSTALL_MODE="git"
+else
+  INSTALL_MODE="tarball"
+fi
+echo "[install.sh] Mode: $INSTALL_MODE" >&2
+
+# --- COMPILE (git mode only) ---
+if [ "$INSTALL_MODE" = "git" ]; then
+  echo "🔨 Compiling TypeScript..."
+  (cd "$SCRIPT_DIR/extension" && npx tsc)
+else
+  echo "[install.sh] Skipping compilation (pre-built tarball)" >&2
+fi
+
 # --- BACKUP ---
 mkdir -p "$HOME/.claude/backups"
 cp "$SETTINGS_FILE" "$HOME/.claude/backups/settings.json.pickle-backup.$(date +%s)"
