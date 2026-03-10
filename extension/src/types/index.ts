@@ -131,3 +131,37 @@ export interface ActivityEvent {
   exit_type?: IterationExitType;
   original_prompt?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Auto-Update Types
+// ---------------------------------------------------------------------------
+
+export interface UpdateCheckCache {
+  last_check_epoch: number;
+  latest_version: string;
+  current_version: string;
+}
+
+export interface ReleaseAsset {
+  name: string;
+  url: string;
+}
+
+export interface ReleaseInfo {
+  tagName: string;
+  assets: ReleaseAsset[];
+}
+
+export interface UpdateSettings {
+  auto_update_enabled: boolean;
+  update_check_interval_hours: number;
+}
+
+export type UpdateStatus = 'up-to-date' | 'update-available' | 'error';
+
+export interface UpdateResult {
+  status: UpdateStatus;
+  currentVersion: string;
+  latestVersion?: string;
+  error?: string;
+}
