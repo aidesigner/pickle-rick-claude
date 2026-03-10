@@ -24,6 +24,9 @@ function maybeSpawnUpdateCheck(extensionDir: string, log: (msg: string) => void)
   }
   log('Spawning detached check-update process');
   const child = spawn('node', [checkUpdatePath], { detached: true, stdio: 'ignore' });
+  child.on('error', (err) => {
+    log(`check-update spawn error: ${err instanceof Error ? err.message : String(err)}`);
+  });
   child.unref();
 }
 
