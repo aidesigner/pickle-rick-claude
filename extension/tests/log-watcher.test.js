@@ -6,7 +6,8 @@ import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-import { processLine, formatToolUse, drainStreamJson } from '../bin/log-watcher.js';
+import { processLine, formatToolUse } from '../bin/log-watcher.js';
+import { drainStreamJsonLines } from '../services/pickle-utils.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOG_WATCHER_BIN = path.resolve(__dirname, '../bin/log-watcher.js');
@@ -139,6 +140,7 @@ test('formatToolUse: extracts correct field per tool type', () => {
     assert.equal(formatToolUse('Glob', { pattern: '**/*.ts' }), '**/*.ts');
     assert.equal(formatToolUse('Grep', { pattern: 'TODO' }), 'TODO');
     assert.equal(formatToolUse('Task', { description: 'research codebase' }), 'research codebase');
+    assert.equal(formatToolUse('Agent', { description: 'explore architecture' }), 'explore architecture');
 });
 
 test('formatToolUse: unknown tool returns name', () => {
@@ -150,13 +152,13 @@ test('formatToolUse: missing expected field returns name', () => {
     assert.equal(formatToolUse('Read', { not_file_path: '/x' }), 'Read');
 });
 
-// --- drainStreamJson ---
+// --- drainStreamJsonLines (shared utility from pickle-utils) ---
 
 function makeTmpDir() {
     return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-log-watcher-')));
 }
 
-test('drainStreamJson: parses complete lines and emits results', () => {
+test('drainStreamJsonLines: parses complete lines and emits results', () => {
     const tmpDir = makeTmpDir();
     try {
         const logPath = path.join(tmpDir, 'test.log');
@@ -167,7 +169,7 @@ test('drainStreamJson: parses complete lines and emits results', () => {
         fs.writeFileSync(logPath, lines.join('\n') + '\n');
 
         const emitted = [];
-        const result = drainStreamJson(logPath, 0, '', (t) => emitted.push(t));
+        const result = drainStreamJsonLines(logPath, 0, '', processLine, (t) => emitted.push(t));
 
         assert.ok(emitted.length >= 2, `Expected 2+ emitted lines, got: ${emitted.length}`);
         assert.ok(emitted[0].includes('🚀'), 'First line should be init');
@@ -178,7 +180,7 @@ test('drainStreamJson: parses complete lines and emits results', () => {
     }
 });
 
-test('drainStreamJson: handles partial line buffering across calls', () => {
+test('drainStreamJsonLines: handles partial line buffering across calls', () => {
     const tmpDir = makeTmpDir();
     try {
         const logPath = path.join(tmpDir, 'test.log');
@@ -188,14 +190,14 @@ test('drainStreamJson: handles partial line buffering across calls', () => {
         fs.writeFileSync(logPath, half);
 
         const emitted1 = [];
-        const r1 = drainStreamJson(logPath, 0, '', (t) => emitted1.push(t));
+        const r1 = drainStreamJsonLines(logPath, 0, '', processLine, (t) => emitted1.push(t));
         assert.equal(emitted1.length, 0, 'No complete line yet');
         assert.equal(r1.lineBuf, half, 'Partial line buffered');
 
         // Append rest with newline
         fs.appendFileSync(logPath, fullLine.slice(30) + '\n');
         const emitted2 = [];
-        const r2 = drainStreamJson(logPath, r1.offset, r1.lineBuf, (t) => emitted2.push(t));
+        const r2 = drainStreamJsonLines(logPath, r1.offset, r1.lineBuf, processLine, (t) => emitted2.push(t));
         assert.equal(emitted2.length, 1, 'Complete line emitted');
         assert.ok(emitted2[0].includes('buffered'), `Expected text, got: ${emitted2[0]}`);
         assert.equal(r2.lineBuf, '', 'No trailing partial');
@@ -204,14 +206,14 @@ test('drainStreamJson: handles partial line buffering across calls', () => {
     }
 });
 
-test('drainStreamJson: empty file returns unchanged state', () => {
+test('drainStreamJsonLines: empty file returns unchanged state', () => {
     const tmpDir = makeTmpDir();
     try {
         const logPath = path.join(tmpDir, 'empty.log');
         fs.writeFileSync(logPath, '');
 
         const emitted = [];
-        const result = drainStreamJson(logPath, 0, '', (t) => emitted.push(t));
+        const result = drainStreamJsonLines(logPath, 0, '', processLine, (t) => emitted.push(t));
         assert.equal(emitted.length, 0);
         assert.equal(result.offset, 0);
         assert.equal(result.lineBuf, '');
@@ -220,9 +222,9 @@ test('drainStreamJson: empty file returns unchanged state', () => {
     }
 });
 
-test('drainStreamJson: non-existent file returns unchanged state', () => {
+test('drainStreamJsonLines: non-existent file returns unchanged state', () => {
     const emitted = [];
-    const result = drainStreamJson('/nonexistent/path/test.log', 0, '', (t) => emitted.push(t));
+    const result = drainStreamJsonLines('/nonexistent/path/test.log', 0, '', processLine, (t) => emitted.push(t));
     assert.equal(emitted.length, 0);
     assert.equal(result.offset, 0);
 });

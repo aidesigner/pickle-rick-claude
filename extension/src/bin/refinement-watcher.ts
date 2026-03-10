@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { Style, sleep, formatTime } from '../services/pickle-utils.js';
-import { drainStreamJson } from './log-watcher.js';
+import { Style, sleep, formatTime, drainStreamJsonLines } from '../services/pickle-utils.js';
+import { processLine } from './log-watcher.js';
 
 const ROLES = ['requirements', 'codebase', 'risk-scope'] as const;
 type RoleId = (typeof ROLES)[number];
@@ -94,7 +94,7 @@ async function main() {
       for (const role of ROLES) {
         const ws = workers.get(role)!;
         if (ws.logPath) {
-          drainStreamJson(ws.logPath, ws.offset, ws.lineBuf, (text) => {
+          drainStreamJsonLines(ws.logPath, ws.offset, ws.lineBuf, processLine, (text: string) => {
             const color = ROLE_COLORS[role];
             const icon = ROLE_ICONS[role];
             for (const line of text.split('\n')) {
@@ -164,7 +164,7 @@ async function main() {
 
       // Drain new content
       const prevOffset = ws.offset;
-      const result = drainStreamJson(ws.logPath, ws.offset, ws.lineBuf, (text) => {
+      const result = drainStreamJsonLines(ws.logPath, ws.offset, ws.lineBuf, processLine, (text: string) => {
         // Print role header if switching roles
         if (lastRole !== role) {
           lastRole = role;

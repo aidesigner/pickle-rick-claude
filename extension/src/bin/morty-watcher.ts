@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { Style, sleep, drainLog } from '../services/pickle-utils.js';
+import { Style, sleep, drainLog, MatrixStyle, matrixSeparator } from '../services/pickle-utils.js';
 
 interface WorkerLogEntry {
   ticketId: string;
@@ -100,10 +100,10 @@ async function main() {
     process.exit(0);
   });
 
-  const { GREEN: g, YELLOW: y, CYAN: c, BOLD: b, DIM: d, RESET: r } = Style;
-  const sep = () => `${d}${'─'.repeat(Math.min((process.stdout.columns || 60) - 2, 60))}${r}`;
+  const MX = MatrixStyle;
+  const sep = () => matrixSeparator(Math.min((process.stdout.columns || 60) - 2, 60));
 
-  process.stdout.write(`\n${b}${y}🥒 Pickle Rick — Worker Logs${r}\n${sep()}\n`);
+  process.stdout.write(`\n${MX.BRIGHT}◤ WORKER LOGS ◢${MX.R}\n${sep()}\n`);
 
   let currentLog: string | null = null;
   let currentTicket: string | null = null;
@@ -121,19 +121,19 @@ async function main() {
           const label = classifyArtifact(art.fileName);
           if (art.ticketId !== currentTicket) {
             currentTicket = art.ticketId;
-            process.stdout.write(`\n${sep()}\n${b}${c}Ticket: ${art.ticketId}${r}\n${sep()}\n`);
+            process.stdout.write(`\n${sep()}\n${MX.BRIGHT}▸ ${art.ticketId}${MX.R}\n${sep()}\n`);
           }
-          process.stdout.write(`  ${label} ${d}${art.fileName}${r}\n`);
+          process.stdout.write(`  ${label} ${MX.DIM}${art.fileName}${MX.R}\n`);
         }
       } else {
         try {
           const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
           if (state.active !== true) {
-            process.stdout.write(`\n${sep()}\n${g}🥒 Session complete (no worker logs).${r}\n`);
+            process.stdout.write(`\n${sep()}\n${MX.BRIGHT}◤ FEED TERMINATED ◢${MX.R}\n`);
             break;
           }
         } catch { /* ignore */ }
-        process.stdout.write(`\r${d}Waiting for worker activity...${r}\x1b[K`);
+        process.stdout.write(`\r${MX.DIM}Awaiting worker signal...${MX.R}\x1b[K`);
       }
       await sleep(1000);
       continue;
@@ -148,10 +148,10 @@ async function main() {
       offset = 0;
 
       if (isNewTicket) {
-        process.stdout.write(`\n${sep()}\n${b}${c}Ticket: ${latest.ticketId}${r}\n${sep()}\n`);
+        process.stdout.write(`\n${sep()}\n${MX.BRIGHT}▸ ${latest.ticketId}${MX.R}\n${sep()}\n`);
       } else {
         const pid = path.basename(latest.logPath, '.log').replace('worker_session_', '');
-        process.stdout.write(`\n${sep()}\n${b}${y}Worker Retry (PID ${pid})${r}\n${sep()}\n`);
+        process.stdout.write(`\n${sep()}\n${MX.WARN}▸ RETRY (PID ${pid})${MX.R}\n${sep()}\n`);
       }
     }
 
@@ -162,7 +162,7 @@ async function main() {
       if (state.active !== true) {
         await sleep(2000);
         drainLog(currentLog, offset);
-        process.stdout.write(`\n${sep()}\n${g}🥒 Session complete.${r}\n`);
+        process.stdout.write(`\n${sep()}\n${MX.BRIGHT}◤ FEED TERMINATED ◢${MX.R}\n`);
         break;
       }
     } catch {

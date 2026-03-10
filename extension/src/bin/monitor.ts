@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { collectTickets, statusSymbol, formatTime, getWidth, Style, sleep } from '../services/pickle-utils.js';
+import { collectTickets, statusSymbol, formatTime, getWidth, Style, sleep, MatrixStyle, matrixSeparator, latestIterationLog } from '../services/pickle-utils.js';
 import { State } from '../types/index.js';
 
 /**
@@ -47,6 +47,8 @@ export function summarizeLine(raw: string): string {
   return '';
 }
 
+const MX = MatrixStyle;
+
 function render(sessionDir: string): boolean {
   // If the session directory itself is gone, signal exit (not just "waiting")
   if (!fs.existsSync(sessionDir)) return false;
@@ -56,13 +58,12 @@ function render(sessionDir: string): boolean {
   try {
     state = JSON.parse(fs.readFileSync(statePath, 'utf-8')) as State;
   } catch {
-    process.stdout.write('\x1b[2J\x1b[H⏳ Waiting for session...\n');
+    process.stdout.write(`\x1b[2J\x1b[H${MX.DIM}Awaiting signal...${MX.R}\n`);
     return true;
   }
 
-  const { GREEN: g, RED: red, YELLOW: y, BOLD: b, DIM: d, RESET: r } = Style;
   const width = getWidth();
-  const sep = `${d}${'─'.repeat(width)}${r}`;
+  const sep = matrixSeparator(width);
 
   const startEpoch = Number(state.start_time_epoch) || 0;
   const elapsed = startEpoch > 0 ? Math.max(0, Math.floor(Date.now() / 1000) - startEpoch) : 0;
@@ -82,24 +83,24 @@ function render(sessionDir: string): boolean {
   const taskDisplay = task.length > width - 20 ? task.slice(0, width - 23) + '…' : (task || 'none');
 
   const fields: [string, string][] = [
-    ['Project', `${b}${project}${r}`],
-    ['Task', taskDisplay],
-    ['Phase', state.step || 'unknown'],
-    ['Iteration', iterStr],
-    ['Elapsed', timeStr],
-    ['Current Ticket', state.current_ticket || 'none'],
-    ['Active', state.active === true ? `${g}Yes${r}` : `${red}No${r}`],
+    ['Project', `${MX.BRIGHT}${project}${MX.R}`],
+    ['Task', `${MX.GREEN}${taskDisplay}${MX.R}`],
+    ['Phase', `${MX.CYAN}${state.step || 'unknown'}${MX.R}`],
+    ['Iteration', `${MX.GREEN}${iterStr}${MX.R}`],
+    ['Elapsed', `${MX.GREEN}${timeStr}${MX.R}`],
+    ['Current', state.current_ticket ? `${MX.BRIGHT}${state.current_ticket}${MX.R}` : `${MX.DIM}none${MX.R}`],
+    ['Active', state.active === true ? `${MX.BRIGHT}▣ ONLINE${MX.R}` : `${MX.ERR}▢ OFFLINE${MX.R}`],
   ];
 
   try {
     const cbRaw = fs.readFileSync(path.join(sessionDir, 'circuit_breaker.json'), 'utf-8');
     const cb = JSON.parse(cbRaw) as { state?: string; reason?: string };
     if (cb.state === 'CLOSED') {
-      fields.push(['Circuit', `${g}CLOSED${r}`]);
+      fields.push(['Circuit', `${MX.GREEN}CLOSED${MX.R}`]);
     } else if (cb.state === 'HALF_OPEN') {
-      fields.push(['Circuit', `${y}HALF_OPEN (${cb.reason || ''})${r}`]);
+      fields.push(['Circuit', `${MX.WARN}HALF_OPEN (${cb.reason || ''})${MX.R}`]);
     } else if (cb.state === 'OPEN') {
-      fields.push(['Circuit', `${red}OPEN (${cb.reason || ''})${r}`]);
+      fields.push(['Circuit', `${MX.ERR}OPEN (${cb.reason || ''})${MX.R}`]);
     }
   } catch {
     // circuit_breaker.json missing or corrupt — skip field
@@ -115,9 +116,9 @@ function render(sessionDir: string): boolean {
       const sourceLabel = waitData.wait_source === 'api' ? ' (API reset)' : '';
       if (remainMs > 0) {
         const remainSec = Math.ceil(remainMs / 1000);
-        fields.push(['Rate Limit', `${y}⏳ Rate limited${typeLabel}${sourceLabel} (${formatTime(remainSec)} remaining)${r}`]);
+        fields.push(['Rate Limit', `${MX.WARN}⏳ Rate limited${typeLabel}${sourceLabel} (${formatTime(remainSec)} remaining)${MX.R}`]);
       } else {
-        fields.push(['Rate Limit', `${y}⏳ Rate limit wait ending...${r}`]);
+        fields.push(['Rate Limit', `${MX.WARN}⏳ Rate limit wait ending...${MX.R}`]);
       }
     }
   } catch { /* no wait state */ }
@@ -125,41 +126,33 @@ function render(sessionDir: string): boolean {
   const keyWidth = Math.max(...fields.map(([k]) => k.length)) + 1;
 
   const out: string[] = ['\x1b[2J\x1b[H'];
-  out.push(`\n${b}${g}🥒 Pickle Rick — Live Monitor${r}\n`);
+  out.push(`\n${MX.BRIGHT}◤ PICKLE RICK — LIVE MONITOR ◢${MX.R}\n`);
   out.push(`${sep}\n`);
   for (const [k, v] of fields) {
-    out.push(`  ${d}${k + ':'}${' '.repeat(keyWidth - k.length)}${r} ${v}\n`);
+    out.push(`  ${MX.DIM}${k + ':'}${' '.repeat(keyWidth - k.length)}${MX.R} ${v}\n`);
   }
 
   if (tickets.length > 0) {
-    out.push(`\n${sep}\n${b}Tickets:${r}\n`);
+    out.push(`\n${sep}\n${MX.BRIGHT}Tickets:${MX.R}\n`);
     for (const ticket of tickets) {
       const status = (ticket.status || '').toLowerCase();
       const sym = statusSymbol(ticket.status);
       const coloredSym =
         status === 'done'
-          ? `${g}${sym}${r}`
+          ? `${MX.GREEN}${sym}${MX.R}`
           : status === 'in progress'
-            ? `${y}${sym}${r}`
-            : sym;
+            ? `${MX.WARN}${sym}${MX.R}`
+            : `${MX.DIM}${sym}${MX.R}`;
       const isCurrent = ticket.id === state.current_ticket;
-      const prefix = isCurrent ? `${y}▶${r}` : ' ';
-      const titleStr = isCurrent ? `${b}${ticket.title}${r}` : ticket.title || '';
-      out.push(`${prefix} ${coloredSym} ${ticket.id}: ${titleStr}\n`);
+      const prefix = isCurrent ? `${MX.BRIGHT}▸${MX.R}` : ' ';
+      const titleStr = isCurrent ? `${MX.BRIGHT}${ticket.title}${MX.R}` : `${MX.GREEN}${ticket.title || ''}${MX.R}`;
+      out.push(`${prefix} ${coloredSym} ${MX.DIM}${ticket.id}:${MX.R} ${titleStr}\n`);
     }
   }
 
   try {
-    const logs = fs
-      .readdirSync(sessionDir)
-      .filter((f) => f.startsWith('tmux_iteration_') && f.endsWith('.log'))
-      .sort((a, b) => {
-        const numA = parseInt(a.replace('tmux_iteration_', '').replace('.log', ''), 10);
-        const numB = parseInt(b.replace('tmux_iteration_', '').replace('.log', ''), 10);
-        return (numA || 0) - (numB || 0);
-      });
-    if (logs.length > 0) {
-      const logPath = path.join(sessionDir, logs[logs.length - 1]);
+    const logPath = latestIterationLog(sessionDir);
+    if (logPath) {
       // Read only the tail of the file (last 64KB) instead of the entire log,
       // which can grow to multi-MB during long sessions. 64KB is more than
       // enough to capture the last 10 NDJSON lines.
@@ -190,11 +183,11 @@ function render(sessionDir: string): boolean {
         .filter((l) => l.length > 0)
         .slice(-5);
       if (summaryLines.length > 0) {
-        out.push(`\n${sep}\n${d}Recent output:${r}\n`);
+        out.push(`\n${sep}\n${MX.DIM}Recent output:${MX.R}\n`);
         for (const logLine of summaryLines) {
           const truncated =
             logLine.length > width - 2 ? logLine.slice(0, width - 5) + '…' : logLine;
-          out.push(`${d}  ${truncated}${r}\n`);
+          out.push(`${MX.GREEN}  ${truncated}${MX.R}\n`);
         }
       }
     }
@@ -202,7 +195,7 @@ function render(sessionDir: string): boolean {
     /* ignore */
   }
 
-  out.push(`\n${d}Refreshing every 2s  •  Ctrl+C to detach${r}\n`);
+  out.push(`\n${MX.DIM}Refreshing every 2s  •  Ctrl+C to detach${MX.R}\n`);
   process.stdout.write(out.join(''));
   return state.active === true;
 }
@@ -215,7 +208,7 @@ async function main() {
   }
 
   process.on('SIGINT', () => {
-    process.stdout.write('\x1b[2J\x1b[HMonitor detached.\n');
+    process.stdout.write(`\x1b[2J\x1b[H${MX.DIM}Monitor detached.${MX.R}\n`);
     process.exit(0);
   });
 
@@ -225,7 +218,7 @@ async function main() {
       await sleep(3000);
       const stillInactive = !render(sessionDir);
       if (stillInactive) {
-        process.stdout.write('\n🥒 Session complete. Monitor exiting.\n');
+        process.stdout.write(`\n${MX.BRIGHT}◤ SESSION COMPLETE ◢${MX.R}\n`);
         break;
       }
     }

@@ -374,12 +374,93 @@ export function withSessionMapLock(lockPath, fn) {
         }
     }
 }
-/** Async sleep — resolves after `ms` milliseconds. */
-export function sleep(ms) {
-    return new Promise((r) => setTimeout(r, ms));
+/** Matrix palette shared across all monitor panes. */
+export const MatrixStyle = {
+    BRIGHT: '\x1b[1;32m', // bold green
+    GREEN: '\x1b[32m', // normal green
+    DIM: '\x1b[2;32m', // dim green
+    CYAN: '\x1b[36m', // cyan accent
+    ERR: '\x1b[1;31m', // bold red
+    WARN: '\x1b[33m', // yellow
+    R: '\x1b[0m', // reset
+};
+export const RAIN_CHARS = 'ﾊﾐﾋｰｳｼﾅﾓﾆｻﾜﾂｵﾘｱﾎﾃﾏｹﾒｴｶｷﾑﾕﾗｾﾈｽﾀﾇﾍ012345789Z:."=*+-<>¦╌╎';
+/** Generates a Matrix-styled separator line with random rain characters. */
+export function matrixSeparator(width) {
+    const line = [];
+    for (let i = 0; i < width; i++) {
+        line.push(Math.random() < 0.2
+            ? RAIN_CHARS[Math.floor(Math.random() * RAIN_CHARS.length)]
+            : '─');
+    }
+    return `${MatrixStyle.DIM}${line.join('')}${MatrixStyle.R}`;
+}
+/** Finds the most recent tmux_iteration_N.log in a session directory. */
+export function latestIterationLog(sessionDir) {
+    try {
+        const logs = fs
+            .readdirSync(sessionDir)
+            .filter((f) => f.startsWith('tmux_iteration_') && f.endsWith('.log'))
+            .sort((a, b) => {
+            const numA = parseInt(a.replace('tmux_iteration_', '').replace('.log', ''), 10);
+            const numB = parseInt(b.replace('tmux_iteration_', '').replace('.log', ''), 10);
+            return (numA || 0) - (numB || 0);
+        });
+        return logs.length > 0 ? path.join(sessionDir, logs[logs.length - 1]) : null;
+    }
+    catch {
+        return null;
+    }
 }
 const ANSI_REGEX = /\x1b\[[0-9;]*[a-zA-Z]/g;
 const DRAIN_CHUNK = 65536; // 64 KiB
+/**
+ * Reads stream-json log from `offset`, processes complete lines via the
+ * provided `processor`, and emits output. Returns new offset and partial
+ * trailing line buffer.
+ */
+export function drainStreamJsonLines(logPath, offset, lineBuf, processor, emit) {
+    let fd = null;
+    try {
+        const { size } = fs.statSync(logPath);
+        if (size <= offset)
+            return { offset, lineBuf };
+        fd = fs.openSync(logPath, 'r');
+        let pos = offset;
+        let buf = lineBuf;
+        while (pos < size) {
+            const toRead = Math.min(DRAIN_CHUNK, size - pos);
+            const raw = Buffer.allocUnsafe(toRead);
+            const bytesRead = fs.readSync(fd, raw, 0, toRead, pos);
+            if (bytesRead === 0)
+                break;
+            buf += raw.subarray(0, bytesRead).toString('utf-8');
+            pos += bytesRead;
+        }
+        fs.closeSync(fd);
+        fd = null;
+        const lines = buf.split('\n');
+        const trailing = lines.pop() ?? '';
+        for (const line of lines) {
+            const result = processor(line);
+            if (result !== null)
+                emit(result);
+        }
+        return { offset: pos, lineBuf: trailing };
+    }
+    catch {
+        if (fd !== null) {
+            try {
+                fs.closeSync(fd);
+            }
+            catch { /* ignore */ }
+        }
+        return { offset, lineBuf };
+    }
+}
+export function sleep(ms) {
+    return new Promise((r) => setTimeout(r, ms));
+}
 /** Emits log content to stdout, stripping ANSI codes and truncating long lines. */
 function emitLog(content) {
     const width = Math.min((process.stdout.columns || 80) - 2, 120);

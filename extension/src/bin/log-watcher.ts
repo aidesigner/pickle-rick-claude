@@ -1,25 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { Style, sleep } from '../services/pickle-utils.js';
-
-const CHUNK_SIZE = 65536; // 64 KiB
-
-function latestLog(sessionDir: string): string | null {
-  try {
-    const logs = fs
-      .readdirSync(sessionDir)
-      .filter((f) => f.startsWith('tmux_iteration_') && f.endsWith('.log'))
-      .sort((a, b) => {
-        const numA = parseInt(a.replace('tmux_iteration_', '').replace('.log', ''), 10);
-        const numB = parseInt(b.replace('tmux_iteration_', '').replace('.log', ''), 10);
-        return (numA || 0) - (numB || 0);
-      });
-    return logs.length > 0 ? path.join(sessionDir, logs[logs.length - 1]) : null;
-  } catch {
-    return null;
-  }
-}
+import { Style, sleep, MatrixStyle, matrixSeparator, latestIterationLog, drainStreamJsonLines } from '../services/pickle-utils.js';
 
 /**
  * Extracts the most informative parameter from a tool_use input object.
@@ -32,7 +14,8 @@ export function formatToolUse(name: string, input: Record<string, unknown>): str
     case 'Write': return typeof input.file_path === 'string' ? input.file_path : name;
     case 'Glob': return typeof input.pattern === 'string' ? input.pattern : name;
     case 'Grep': return typeof input.pattern === 'string' ? input.pattern : name;
-    case 'Task': return typeof input.description === 'string' ? input.description : name;
+    case 'Task':
+    case 'Agent': return typeof input.description === 'string' ? input.description : name;
     default: return name;
   }
 }
@@ -100,48 +83,6 @@ export function processLine(line: string): string | null {
   return null;
 }
 
-/**
- * Reads stream-json log from `offset`, parses complete lines, emits readable output.
- * Returns `{ offset, lineBuf }` — new byte offset and any partial trailing line.
- */
-export function drainStreamJson(
-  logPath: string,
-  offset: number,
-  lineBuf: string,
-  emit: (text: string) => void,
-): { offset: number; lineBuf: string } {
-  let fd: number | null = null;
-  try {
-    const { size } = fs.statSync(logPath);
-    if (size <= offset) return { offset, lineBuf };
-    fd = fs.openSync(logPath, 'r');
-    let pos = offset;
-    let buf = lineBuf;
-    while (pos < size) {
-      const toRead = Math.min(CHUNK_SIZE, size - pos);
-      const raw = Buffer.allocUnsafe(toRead);
-      const bytesRead = fs.readSync(fd, raw, 0, toRead, pos);
-      if (bytesRead === 0) break;
-      buf += raw.subarray(0, bytesRead).toString('utf-8');
-      pos += bytesRead;
-    }
-    fs.closeSync(fd);
-    fd = null;
-
-    // Split into complete lines; keep any partial trailing line
-    const lines = buf.split('\n');
-    const trailing = lines.pop() ?? '';
-    for (const line of lines) {
-      const result = processLine(line);
-      if (result !== null) emit(result);
-    }
-    return { offset: pos, lineBuf: trailing };
-  } catch {
-    if (fd !== null) { try { fs.closeSync(fd); } catch { /* ignore */ } }
-    return { offset, lineBuf };
-  }
-}
-
 async function main() {
   const sessionDir = process.argv[2];
   if (!sessionDir || sessionDir.startsWith('--') || !fs.existsSync(sessionDir)) {
@@ -154,34 +95,34 @@ async function main() {
     process.exit(0);
   });
 
-  const { GREEN: g, CYAN: c, BOLD: b, DIM: d, RESET: r } = Style;
+  const MX = MatrixStyle;
   const width = () => Math.min((process.stdout.columns || 60) - 2, 60);
-  const sep = () => `${d}${'─'.repeat(width())}${r}`;
+  const sep = () => matrixSeparator(width());
   const emit = (text: string) => {
     for (const line of text.split('\n')) {
       const truncated = line.length > width() ? line.slice(0, width() - 3) + '…' : line;
-      process.stdout.write(truncated + '\n');
+      process.stdout.write(`${MX.GREEN}${truncated}${MX.R}\n`);
     }
   };
 
-  process.stdout.write(`\n${b}${g}🥒 Pickle Rick — Log Stream${r}\n${sep()}\n`);
+  process.stdout.write(`\n${MX.BRIGHT}◤ LOG STREAM ◢${MX.R}\n${sep()}\n`);
 
   let currentLog: string | null = null;
   let offset = 0;
   let lineBuf = '';
 
   while (true) {
-    const log = latestLog(sessionDir);
+    const log = latestIterationLog(sessionDir);
 
     if (!log) {
       try {
         const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
         if (state.active !== true) {
-          process.stdout.write(`\n${sep()}\n${g}🥒 Session complete (no iteration logs).${r}\n`);
+          process.stdout.write(`\n${sep()}\n${MX.BRIGHT}◤ FEED TERMINATED ◢${MX.R}\n`);
           break;
         }
       } catch { /* ignore */ }
-      process.stdout.write(`\r${d}Waiting for first iteration...${r}\x1b[K`);
+      process.stdout.write(`\r${MX.DIM}Awaiting signal...${MX.R}\x1b[K`);
       await sleep(1000);
       continue;
     }
@@ -191,10 +132,10 @@ async function main() {
       offset = 0;
       lineBuf = '';
       const n = path.basename(log, '.log').replace('tmux_iteration_', '');
-      process.stdout.write(`\n${sep()}\n${b}${c}Iteration ${n}${r}\n${sep()}\n`);
+      process.stdout.write(`\n${sep()}\n${MX.BRIGHT}▸ ITERATION ${n}${MX.R}\n${sep()}\n`);
     }
 
-    const result = drainStreamJson(currentLog, offset, lineBuf, emit);
+    const result = drainStreamJsonLines(currentLog, offset, lineBuf, processLine, emit);
     offset = result.offset;
     lineBuf = result.lineBuf;
 
@@ -202,8 +143,8 @@ async function main() {
       const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
       if (state.active !== true) {
         await sleep(2000);
-        drainStreamJson(currentLog, offset, lineBuf, emit);
-        process.stdout.write(`\n${sep()}\n${g}🥒 Session complete.${r}\n`);
+        drainStreamJsonLines(currentLog, offset, lineBuf, processLine, emit);
+        process.stdout.write(`\n${sep()}\n${MX.BRIGHT}◤ FEED TERMINATED ◢${MX.R}\n`);
         break;
       }
     } catch {
