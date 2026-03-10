@@ -1,9 +1,31 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { spawn } from 'child_process';
 import { State, HookInput, PromiseTokens, hasToken } from '../../types/index.js';
 import { resolveStateFile, approve } from '../resolve-state.js';
 import { getExtensionRoot, writeStateFile } from '../../services/pickle-utils.js';
 import { logActivity } from '../../services/activity-logger.js';
+
+function maybeSpawnUpdateCheck(extensionDir: string, log: (msg: string) => void): void {
+  const checkUpdatePath = path.join(extensionDir, 'extension', 'bin', 'check-update.js');
+  if (!fs.existsSync(checkUpdatePath)) {
+    log('check-update.js not found, skipping update check');
+    return;
+  }
+  try {
+    const settingsPath = path.join(extensionDir, 'pickle_settings.json');
+    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    if (raw.auto_update_enabled === false) {
+      log('Auto-update disabled in settings, skipping');
+      return;
+    }
+  } catch {
+    // Settings missing/corrupted — default to enabled
+  }
+  log('Spawning detached check-update process');
+  const child = spawn('node', [checkUpdatePath], { detached: true, stdio: 'ignore' });
+  child.unref();
+}
 
 async function main() {
   const extensionDir = getExtensionRoot();
@@ -167,6 +189,7 @@ async function main() {
       state.active = false;
       writeStateFile(stateFile, state);
     }
+    maybeSpawnUpdateCheck(extensionDir, log);
     approve();
     const sessionId = path.basename(path.dirname(stateFile));
     if (isExistenceIsPain) {
@@ -218,6 +241,7 @@ async function main() {
       state.active = false;
       writeStateFile(stateFile, state);
     }
+    maybeSpawnUpdateCheck(extensionDir, log);
     approve();
     if (state.tmux_mode !== true) {
       const durationMin = startEpoch > 0 ? Math.round(elapsedSeconds / 60) : undefined;
@@ -232,6 +256,7 @@ async function main() {
       state.active = false;
       writeStateFile(stateFile, state);
     }
+    maybeSpawnUpdateCheck(extensionDir, log);
     approve();
     if (state.tmux_mode !== true) {
       logActivity({ event: 'session_end', source: 'pickle', session: path.basename(path.dirname(stateFile)), duration_min: Math.round(elapsedSeconds / 60), mode: 'inline' });
@@ -253,6 +278,7 @@ async function main() {
       state.active = false;
       writeStateFile(stateFile, state);
     }
+    maybeSpawnUpdateCheck(extensionDir, log);
     approve();
     return;
   }
@@ -262,6 +288,7 @@ async function main() {
       state.active = false;
       writeStateFile(stateFile, state);
     }
+    maybeSpawnUpdateCheck(extensionDir, log);
     approve();
     return;
   }
@@ -285,6 +312,7 @@ async function main() {
       state.active = false;
       writeStateFile(stateFile, state);
     }
+    maybeSpawnUpdateCheck(extensionDir, log);
     approve();
     return;
   }
