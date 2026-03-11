@@ -102,6 +102,17 @@ test('createMicroverseState returns valid initial state', () => {
     assert.deepEqual(state.failed_approaches, []);
 });
 
+test('createMicroverseState defaults direction to higher when not provided', () => {
+    const state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+    assert.equal(state.key_metric.direction, 'higher');
+});
+
+test('createMicroverseState preserves explicit direction lower', () => {
+    const metricWithDirection = { ...TEST_METRIC, direction: 'lower' };
+    const state = createMicroverseState('/tmp/prd.md', metricWithDirection, 3);
+    assert.equal(state.key_metric.direction, 'lower');
+});
+
 test('isConverged returns true when stall_counter >= stall_limit', () => {
     const state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
     state.convergence.stall_counter = 3;

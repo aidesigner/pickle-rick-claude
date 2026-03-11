@@ -16,7 +16,7 @@ export function createMicroverseState(prdPath, metric, stallLimit) {
     return {
         status: 'gap_analysis',
         prd_path: prdPath,
-        key_metric: metric,
+        key_metric: { ...metric, direction: metric.direction ?? 'higher' },
         convergence: {
             stall_limit: stallLimit,
             stall_counter: 0,

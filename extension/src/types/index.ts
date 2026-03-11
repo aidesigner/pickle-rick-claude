@@ -181,6 +181,8 @@ export interface MicroverseMetric {
   type: 'command' | 'llm';
   timeout_seconds: number;
   tolerance: number;
+  direction?: 'higher' | 'lower';
+  judge_model?: string;
 }
 
 export interface MicroverseHistoryEntry {
