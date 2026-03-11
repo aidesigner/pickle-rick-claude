@@ -315,6 +315,19 @@ export async function main(sessionDir: string): Promise<void> {
       } else {
         log('WARNING: Could not measure baseline metric — defaulting to 0');
       }
+    } else if (currentMv.key_metric.type === 'llm') {
+      const baseline = measureLlmMetric(
+        currentMv.key_metric.validation,
+        currentMv.key_metric.timeout_seconds,
+        workingDir,
+        currentMv.key_metric.judge_model,
+      );
+      if (baseline) {
+        currentMv.baseline_score = baseline.score;
+        log(`LLM baseline metric: ${baseline.score}`);
+      } else {
+        log('WARNING: Could not measure LLM baseline — defaulting to 0');
+      }
     }
 
     currentMv.status = 'iterating';
@@ -455,6 +468,14 @@ export async function main(sessionDir: string): Promise<void> {
     let metricResult: { raw: string; score: number } | null = null;
     if (currentMv.key_metric.type === 'command') {
       metricResult = measureMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir);
+    } else if (currentMv.key_metric.type === 'llm') {
+      metricResult = measureLlmMetric(
+        currentMv.key_metric.validation,
+        currentMv.key_metric.timeout_seconds,
+        workingDir,
+        currentMv.key_metric.judge_model,
+        currentMv.convergence.history,
+      );
     }
 
     if (!metricResult) {

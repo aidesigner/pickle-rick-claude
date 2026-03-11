@@ -762,3 +762,125 @@ test('measureLlmMetric defaults to claude-sonnet-4-6 model', () => {
         _deps.execFileSync = orig;
     }
 });
+
+// --- LLM runner integration tests (ticket 7351399a) ---
+
+test('LLM baseline: measureLlmMetric result sets baseline_score in gap analysis', () => {
+    // Simulate the baseline measurement branch for type='llm'
+    const orig = _deps.execFileSync;
+    _deps.execFileSync = () => 'analysis...\n45';
+    try {
+        const LLM_METRIC = {
+            description: 'code quality',
+            validation: 'improve code quality',
+            type: 'llm',
+            timeout_seconds: 60,
+            tolerance: 2,
+            judge_model: 'claude-sonnet-4-6',
+        };
+        let currentMv = createMicroverseState('/tmp/prd.md', LLM_METRIC, 3);
+        currentMv.status = 'gap_analysis';
+        const workingDir = '/tmp';
+
+        // Replicate the runner's baseline branch for type='llm'
+        if (currentMv.key_metric.type === 'llm') {
+            const baseline = measureLlmMetric(
+                currentMv.key_metric.validation,
+                currentMv.key_metric.timeout_seconds,
+                workingDir,
+                currentMv.key_metric.judge_model,
+            );
+            if (baseline) {
+                currentMv.baseline_score = baseline.score;
+            }
+        }
+
+        assert.equal(currentMv.baseline_score, 45, 'baseline_score should be 45 from LLM judge');
+    } finally {
+        _deps.execFileSync = orig;
+    }
+});
+
+test('LLM iteration: measureLlmMetric result feeds into comparison pipeline', () => {
+    const orig = _deps.execFileSync;
+    _deps.execFileSync = () => '72';
+    try {
+        const LLM_METRIC = {
+            description: 'code quality',
+            validation: 'improve code quality',
+            type: 'llm',
+            timeout_seconds: 60,
+            tolerance: 2,
+            judge_model: 'claude-sonnet-4-6',
+        };
+        let currentMv = createMicroverseState('/tmp/prd.md', LLM_METRIC, 3);
+        currentMv.status = 'iterating';
+        currentMv.baseline_score = 40;
+        const workingDir = '/tmp';
+
+        // Replicate the runner's iteration branch for type='llm'
+        let metricResult = null;
+        if (currentMv.key_metric.type === 'llm') {
+            metricResult = measureLlmMetric(
+                currentMv.key_metric.validation,
+                currentMv.key_metric.timeout_seconds,
+                workingDir,
+                currentMv.key_metric.judge_model,
+                currentMv.convergence.history,
+            );
+        }
+
+        assert.ok(metricResult, 'metricResult should be non-null');
+        assert.equal(metricResult.score, 72, 'score should be 72');
+
+        // Verify it feeds into comparison
+        const lastAccepted = [...currentMv.convergence.history].reverse().find(h => h.action === 'accept');
+        const previousScore = lastAccepted ? lastAccepted.score : currentMv.baseline_score;
+        const classification = compareMetric(metricResult.score, previousScore, currentMv.key_metric.tolerance);
+        assert.equal(classification, 'improved', '72 vs baseline 40 should be improved');
+    } finally {
+        _deps.execFileSync = orig;
+    }
+});
+
+test('LLM measurement failure treated as stall', () => {
+    const orig = _deps.execFileSync;
+    _deps.execFileSync = () => { throw new Error('subprocess failed'); };
+    try {
+        const LLM_METRIC = {
+            description: 'code quality',
+            validation: 'improve code quality',
+            type: 'llm',
+            timeout_seconds: 60,
+            tolerance: 2,
+            judge_model: 'claude-sonnet-4-6',
+        };
+        let currentMv = createMicroverseState('/tmp/prd.md', LLM_METRIC, 3);
+        currentMv.status = 'iterating';
+        currentMv.baseline_score = 40;
+        const workingDir = '/tmp';
+
+        // Replicate the runner's iteration branch for type='llm'
+        let metricResult = null;
+        if (currentMv.key_metric.type === 'llm') {
+            metricResult = measureLlmMetric(
+                currentMv.key_metric.validation,
+                currentMv.key_metric.timeout_seconds,
+                workingDir,
+                currentMv.key_metric.judge_model,
+                currentMv.convergence.history,
+            );
+        }
+
+        assert.equal(metricResult, null, 'metricResult should be null on failure');
+
+        // Replicate the runner's stall handling for null metricResult
+        if (!metricResult) {
+            currentMv = { ...currentMv, convergence: { ...currentMv.convergence, stall_counter: currentMv.convergence.stall_counter + 1 } };
+        }
+
+        assert.equal(currentMv.convergence.stall_counter, 1, 'stall_counter should increment on null metric');
+    } finally {
+        _deps.execFileSync = orig;
+    }
+});
