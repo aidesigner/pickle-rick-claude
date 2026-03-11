@@ -310,6 +310,7 @@ Sit back. Rick handles the rest. 🥒
 | `/pickle-refine-prd --run [path]` | 🔬🖥️ Refine + decompose + auto-launch unlimited tmux session (no iteration or time cap) |
 | `/pickle-refine-prd --meeseeks [path]` | 🔬🖥️👋 Full pipeline: refine + decompose + execute all tickets + auto-transition to Meeseeks review (implies `--run`) |
 | `/pickle-dot [path \| inline]` | 🔀 Convert a PRD into a [strongdm/attractor](https://github.com/strongdm/attractor)-compatible DOT digraph — generates a validated `.dot` file with node shapes, edge conditions, parallel fan-out/in, and model stylesheets |
+| `/pickle-microverse` | 🔬 Microverse convergence loop — optimize a numeric metric through targeted, incremental changes. Measures after each iteration, reverts regressions, stops when converged. Interactive or `--tmux` mode. |
 | `/portal-gun <source>` | 🔫 [Gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) — extract patterns from another codebase and generate a transplant PRD with behavioral validation tests and automatic refinement |
 | `/portal-gun --run <source>` | 🔫🖥️ Extract pattern + generate PRD + refine + auto-launch tmux session |
 | `/project-mayhem` | 💥 Chaos engineering — mutation testing, dependency downgrades, config corruption. Non-destructive, language-agnostic, comprehensive report. |
@@ -344,6 +345,9 @@ Sit back. Rick handles the rest. 🥒
 --max-turns <N>            (/portal-gun only) Max turns per refinement worker (default: 100)
 --gitnexus                 (/council-of-ricks only) Enable GitNexus graph queries for layer violations and impact analysis
 --repo <PATH>              (/council-of-ricks only) Target repo path (default: cwd)
+--metric "<CMD>"           (/pickle-microverse) Shell command whose last stdout line is a numeric score (required)
+--tolerance <N>            (/pickle-microverse) Score delta within which changes count as "held" (default: 0)
+--stall-limit <N>          (/pickle-microverse) Non-improving iterations before convergence (default: 5)
 ```
 
 ### Tips

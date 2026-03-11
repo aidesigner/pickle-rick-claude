@@ -2,57 +2,62 @@ Start the Pickle Rick microverse convergence loop — optimize a metric through 
 
 # /pickle-microverse
 
+Pickle Rick persona active via CLAUDE.md. Proceed to Step 1.
+
+**SPEAK BEFORE ACTING**: Output text before every tool call.
+
 ## Step 1: Parse Flags
 
 Extract from `$ARGUMENTS`:
 
-| Flag | Type | Default | Required |
-|------|------|---------|----------|
-| `--metric '<cmd>'` | string | — | Yes (new session) |
-| `--tolerance <N>` | number | 0 | No |
-| `--stall-limit <N>` | number | 5 | No |
-| `--task '<text>'` | string | — | Yes (new session) |
-| `--resume <path>` | string | — | No (skips --metric/--task) |
-| `--max-iterations <N>` | number | 100 | No |
+| Flag | Default | Required (new) | Description |
+|------|---------|----------------|-------------|
+| `--metric "<cmd>"` | — | Yes | Shell command whose last stdout line is a numeric score |
+| `--task "<text>"` | — | Yes | What to optimize (becomes the PRD objective) |
+| `--tolerance <N>` | `0` | No | Score delta within which changes count as "held" |
+| `--stall-limit <N>` | `5` | No | Non-improving iterations before convergence |
+| `--max-iterations <N>` | `100` | No | Hard cap on total iterations |
+| `--resume [path]` | — | No | Resume existing session (skips --metric/--task) |
+| `--tmux` | — | No | Run in tmux with context clearing between iterations |
 
-If `--resume` is present, skip validation of `--metric` and `--task`.
-Otherwise, both `--metric` and `--task` are required — error if missing.
+If `--resume`: `--metric` and `--task` are NOT required.
+Otherwise: both `--metric` and `--task` are required — print error and STOP if missing.
 
 ## Step 2: Session Setup
 
-Build the setup.js command with extracted flags:
-
+### New Session
 ```bash
-node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --command-template microverse.md [--max-iterations <N>] [--resume <path>] --task "<task text>"
+node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --command-template microverse.md [--tmux] [--max-iterations <N>] --task "<TASK_TEXT>"
 ```
 
-For `--resume`: `node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --command-template microverse.md --resume <path> [--max-iterations <N>]`
+### Resume
+```bash
+node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --command-template microverse.md --resume [<PATH>] [--tmux] [--max-iterations <N>]
+```
 
-Extract `SESSION_ROOT=<path>` from the output.
+Extract `SESSION_ROOT=<path>` from output. If `--resume`, skip Steps 3 and 4.
 
 ## Step 3: Create microverse.json (new sessions only)
 
-Skip this step if `--resume` was used.
-
-Write `microverse.json` to `SESSION_ROOT`:
+Write `${SESSION_ROOT}/microverse.json` conforming to `MicroverseSessionState`:
 
 ```bash
 node -e "
 const fs = require('fs');
 const path = require('path');
-const sessionDir = '<SESSION_ROOT>';
+const sessionDir = process.argv[1];
 const state = {
   status: 'gap_analysis',
   prd_path: path.join(sessionDir, 'prd.md'),
   key_metric: {
-    description: '<task text>',
-    validation: '<metric cmd>',
+    description: process.argv[2],
+    validation: process.argv[3],
     type: 'command',
-    tolerance: <TOLERANCE>,
-    timeout_seconds: 30
+    timeout_seconds: 60,
+    tolerance: Number(process.argv[4])
   },
   convergence: {
-    stall_limit: <STALL_LIMIT>,
+    stall_limit: Number(process.argv[5]),
     stall_counter: 0,
     history: []
   },
@@ -62,50 +67,115 @@ const state = {
 };
 fs.writeFileSync(path.join(sessionDir, 'microverse.json'), JSON.stringify(state, null, 2));
 console.log('microverse.json created');
-"
+" "${SESSION_ROOT}" "<TASK_TEXT>" "<METRIC_CMD>" "<TOLERANCE>" "<STALL_LIMIT>"
 ```
 
-Replace `<SESSION_ROOT>`, `<task text>`, `<metric cmd>`, `<TOLERANCE>`, `<STALL_LIMIT>` with the parsed values.
+Replace `<TASK_TEXT>`, `<METRIC_CMD>`, `<TOLERANCE>`, `<STALL_LIMIT>` with parsed values.
+
+Verify: `node -e "const s=JSON.parse(require('fs').readFileSync('${SESSION_ROOT}/microverse.json','utf-8')); console.log('status:', s.status, 'metric:', s.key_metric.validation, 'stall_limit:', s.convergence.stall_limit)"`
 
 ## Step 4: Write prd.md (new sessions only)
 
-Skip this step if `--resume` was used.
-
-Write `prd.md` to `SESSION_ROOT` with the task as the optimization objective:
+Write `${SESSION_ROOT}/prd.md`:
 
 ```markdown
-# Microverse PRD
+# Microverse Optimization PRD
 
 ## Objective
-<task text>
+<TASK_TEXT>
 
 ## Key Metric
-- **Validation Command**: `<metric cmd>`
+- **Command**: `<METRIC_CMD>`
 - **Tolerance**: <TOLERANCE>
 - **Stall Limit**: <STALL_LIMIT>
 
-## Strategy
-Optimize the metric through targeted, incremental changes. Each iteration should make one focused improvement. The microverse runner will automatically measure the metric after each iteration, accept improvements, and revert regressions.
+## Success Criteria
+Continuously improve the metric score through targeted, incremental changes until convergence (no improvement for <STALL_LIMIT> consecutive iterations).
+
+## Constraints
+- One logical change per iteration
+- Never repeat failed approaches
+- Always commit changes for measurement
+- Metric is measured automatically after each iteration
 ```
 
-## Step 5: Launch Runner
+## Step 5: Launch
 
-Run `microverse-runner.js` directly (interactive mode — no tmux):
+### Option A: tmux mode (`--tmux` flag present)
 
+1. Check tmux: `tmux -V`. If missing → print "Install tmux: `brew install tmux`" and STOP.
+
+2. Session name: `microverse-<hash>` from SESSION_ROOT basename.
+
+3. Read `working_dir` from `${SESSION_ROOT}/state.json`.
+
+4. Create tmux session:
 ```bash
-node "$HOME/.claude/pickle-rick/extension/bin/microverse-runner.js" <SESSION_ROOT>
+tmux new-session -d -s <name> -c <working_dir>
+sleep 1
+```
+Print attach command: `tmux attach -t <name>`
+
+5. Launch runner:
+```bash
+tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/microverse-runner.js ${SESSION_ROOT}; echo ''; echo 'Microverse runner finished.  Ctrl+B 1 → monitor  |  Ctrl+B D → detach'; read" Enter
 ```
 
-## Step 6: Report
+6. Launch monitor:
+```bash
+bash "$HOME/.claude/pickle-rick/extension/scripts/tmux-monitor.sh" <name> ${SESSION_ROOT} pickle
+```
 
-Print:
-- Session path: `<SESSION_ROOT>`
-- Metric: `<metric cmd>`
-- Tolerance: `<TOLERANCE>`
-- Stall limit: `<STALL_LIMIT>`
-- Max iterations: `<N>`
-- Cancel: `/eat-pickle`
-- State: `<SESSION_ROOT>/state.json`
-- Microverse state: `<SESSION_ROOT>/microverse.json`
+7. Report: session name, `tmux attach -t <name>`, window layout (monitor: Ctrl+B 1; runner: Ctrl+B 0), cancel: `cd <working_dir> && /eat-pickle`, emergency: `tmux kill-session -t <name>`, state path.
 
 Output: `<promise>TASK_COMPLETED</promise>`
+
+### Option B: Interactive mode (no `--tmux`)
+
+You ARE the convergence loop. Run it inline.
+
+#### 5a: Gap Analysis (iteration 0)
+
+1. Read `${SESSION_ROOT}/prd.md`
+2. Run the metric validation command to see current score
+3. Analyze the codebase — use **Glob** and **Grep** (not bash grep) to understand what the metric measures, where relevant code lives, and current bottlenecks
+4. Write gap analysis to `${SESSION_ROOT}/gap_analysis.md`
+5. Update `microverse.json`: set `gap_analysis_path` to the gap analysis path
+6. Make initial improvements if obvious quick wins exist
+7. Commit: `git add -A && git commit -m "microverse: gap analysis and initial improvements"`
+8. Measure metric again, update `baseline_score` in `microverse.json`
+9. Update `microverse.json`: set `status` to `"iterating"`
+
+#### 5b: Iteration Loop
+
+Repeat until converged or max iterations reached:
+
+1. Read `microverse.json` for current state
+2. Record pre-iteration SHA: `git rev-parse HEAD`
+3. Plan **one targeted change** — consult `failed_approaches` to avoid repeats, review recent `convergence.history` for trends
+4. Implement the change using **Read**, **Edit**, **Glob**, **Grep** tools
+5. Run the metric validation command, parse the numeric score from the last line
+6. Compare score to previous (last history entry's score, or baseline_score if first iteration):
+   - **Improved** (score > previous + tolerance) → accept, set stall_counter = 0
+   - **Held** (within tolerance) → accept, increment stall_counter
+   - **Regressed** (score < previous - tolerance) → run `git reset --hard <pre-iteration-SHA>`, add description to `failed_approaches`, increment stall_counter
+7. If accepted: `git add -A && git commit -m "microverse: <description>"`
+8. Add entry to `convergence.history`: `{iteration, metric_value, score, action, description, pre_iteration_sha, timestamp}`
+9. Write updated state to `microverse.json`
+10. Check: `stall_counter >= stall_limit` → set status to `"converged"`, exit loop
+11. Check: iteration >= max_iterations → set status to `"stopped"`, set `exit_reason` to `"limit_reached"`, exit loop
+
+#### 5c: Finalize
+
+1. Update `microverse.json` with final status and `exit_reason`
+2. Print summary: total iterations, baseline score, best score, exit reason, accepted/reverted counts
+3. Output: `<promise>TASK_COMPLETED</promise>`
+
+## Rules
+
+1. **--metric is mandatory** for new sessions — no metric, no microverse
+2. **One change per iteration** — atomic, revertible
+3. **Never repeat failed approaches** — always check `failed_approaches` before planning
+4. **Always commit** — uncommitted changes are invisible to measurement
+5. **Use built-in tools** — Glob for file search, Grep for content search, Read for files
+6. **microverse.json is the source of truth** — update it after every state change
