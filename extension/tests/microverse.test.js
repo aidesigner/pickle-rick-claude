@@ -401,6 +401,35 @@ test('buildMicroverseHandoff includes recent history', () => {
     assert.ok(handoff.includes('score=50'));
 });
 
+test('buildMicroverseHandoff includes Type field from key_metric', () => {
+    const llmMetric = { ...TEST_METRIC, type: 'llm', validation: 'Improve code quality' };
+    const mvState = createMicroverseState('/tmp/prd.md', llmMetric, 3);
+    const handoff = buildMicroverseHandoff(mvState, 1, '/tmp/work');
+    assert.ok(handoff.includes('Type: llm'));
+});
+
+test('buildMicroverseHandoff includes Direction field', () => {
+    const lowerMetric = { ...TEST_METRIC, direction: 'lower' };
+    const mvState = createMicroverseState('/tmp/prd.md', lowerMetric, 3);
+    const handoff = buildMicroverseHandoff(mvState, 1, '/tmp/work');
+    assert.ok(handoff.includes('Direction: lower'));
+    assert.ok(handoff.includes('lower is better'));
+});
+
+test('buildMicroverseHandoff with direction=lower says "reducing the metric"', () => {
+    const lowerMetric = { ...TEST_METRIC, direction: 'lower' };
+    const mvState = createMicroverseState('/tmp/prd.md', lowerMetric, 3);
+    const handoff = buildMicroverseHandoff(mvState, 1, '/tmp/work');
+    assert.ok(handoff.includes('Focus on reducing the metric.'));
+});
+
+test('buildMicroverseHandoff with direction=higher says "improving the metric"', () => {
+    const higherMetric = { ...TEST_METRIC, direction: 'higher' };
+    const mvState = createMicroverseState('/tmp/prd.md', higherMetric, 3);
+    const handoff = buildMicroverseHandoff(mvState, 1, '/tmp/work');
+    assert.ok(handoff.includes('Focus on improving the metric.'));
+});
+
 // --- Accept/reject cycle simulation ---
 
 test('accept/reject cycle: 3 iterations (improve, regress, hold) → 2 accepted, 1 reset, stall_counter=1', () => {

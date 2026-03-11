@@ -123,11 +123,14 @@ export function buildMicroverseHandoff(
   iteration: number,
   workingDir: string,
 ): string {
+  const dir = mvState.key_metric.direction ?? 'higher';
   const parts: string[] = [
     `# Microverse Iteration ${iteration}`,
     '',
     `## Metric: ${mvState.key_metric.description}`,
     `- Validation: \`${mvState.key_metric.validation}\``,
+    `- Type: ${mvState.key_metric.type}`,
+    `- Direction: ${dir} (${dir === 'lower' ? 'lower is better' : 'higher is better'})`,
     `- Baseline score: ${mvState.baseline_score}`,
     `- Current stall counter: ${mvState.convergence.stall_counter}/${mvState.convergence.stall_limit}`,
     '',
@@ -160,7 +163,7 @@ export function buildMicroverseHandoff(
   parts.push(`## PRD: ${mvState.prd_path}`);
   parts.push(`## Working Directory: ${workingDir}`);
   parts.push('');
-  parts.push('Focus on improving the metric. Make targeted changes and commit.');
+  parts.push(`${dir === 'lower' ? 'Focus on reducing the metric.' : 'Focus on improving the metric.'} Make targeted changes and commit.`);
 
   return parts.join('\n');
 }
