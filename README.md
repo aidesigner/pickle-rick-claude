@@ -217,7 +217,7 @@ See [architecture](architecture.md#project-mayhem-internals) for module details,
 
 > *"I put a universe inside a box, Morty, and it powers my car battery. This is the same thing, except the universe is your codebase and the battery is a metric."*
 
-`/pickle-microverse` optimizes any numeric metric through targeted, incremental changes. Give it a shell command that outputs a score and a task description, and Rick will iterate — gap analysis first, then one focused change per iteration — measuring after each commit, auto-reverting regressions, and tracking failed approaches so he never repeats a dead end. When the score stops improving for N consecutive iterations (configurable stall limit), the loop converges and exits with a full report.
+`/pickle-microverse` optimizes any metric through targeted, incremental changes. Give it a shell command (`--metric`) that outputs a numeric score, or a natural language goal (`--goal`) for LLM-as-judge scoring, plus a task description, and Rick will iterate — gap analysis first, then one focused change per iteration — measuring after each commit, auto-reverting regressions, and tracking failed approaches so he never repeats a dead end. Supports configurable optimization direction (`--direction higher|lower`) and judge model selection. When the score stops improving for N consecutive iterations (configurable stall limit), the loop converges and exits with a full report.
 
 **How it works:**
 
@@ -246,7 +246,8 @@ Supports both interactive mode (inline convergence) and tmux mode (context clear
 
 ```bash
 /pickle-microverse --metric "npm test 2>&1 | tail -1" --task "increase test coverage"
-/pickle-microverse --metric "node benchmark.js" --task "reduce p99 latency" --tolerance 5 --stall-limit 10
+/pickle-microverse --metric "node benchmark.js" --task "reduce p99 latency" --tolerance 5 --stall-limit 10 --direction lower
+/pickle-microverse --goal "code is clean, well-documented, and follows project conventions" --task "improve code quality" --judge-model claude-sonnet-4-6
 /pickle-microverse-tmux --metric "npm run coverage:score" --task "hit 90% coverage" --max-iterations 50
 ```
 
@@ -392,7 +393,10 @@ Sit back. Rick handles the rest. 🥒
 --max-turns <N>            (/portal-gun only) Max turns per refinement worker (default: 100)
 --gitnexus                 (/council-of-ricks only) Enable GitNexus graph queries for layer violations and impact analysis
 --repo <PATH>              (/council-of-ricks only) Target repo path (default: cwd)
---metric "<CMD>"           (/pickle-microverse) Shell command whose last stdout line is a numeric score (required)
+--metric "<CMD>"           (/pickle-microverse) Shell command whose last stdout line is a numeric score (XOR with --goal)
+--goal "<TEXT>"             (/pickle-microverse) Natural language goal for LLM judge scoring (XOR with --metric)
+--direction <higher|lower> (/pickle-microverse) Optimization direction (default: higher)
+--judge-model <MODEL>      (/pickle-microverse) Judge model for LLM scoring, only with --goal (default: claude-sonnet-4-6)
 --tolerance <N>            (/pickle-microverse) Score delta within which changes count as "held" (default: 0)
 --stall-limit <N>          (/pickle-microverse) Non-improving iterations before convergence (default: 5)
 ```

@@ -12,16 +12,22 @@ Extract from `$ARGUMENTS`:
 
 | Flag | Default | Required (new) | Description |
 |------|---------|----------------|-------------|
-| `--metric "<cmd>"` | — | Yes | Shell command whose last stdout line is a numeric score |
+| `--metric "<cmd>"` | — | Yes (XOR --goal) | Shell command whose last stdout line is a numeric score. Sets type='command'. |
+| `--goal "<text>"` | — | Yes (XOR --metric) | Natural language goal for LLM judge. Sets type='llm'. |
+| `--direction <higher\|lower>` | `higher` | No | Optimization direction — whether higher or lower scores are better |
+| `--judge-model <model>` | `claude-sonnet-4-6` | No | Judge model for LLM scoring (only valid with --goal) |
 | `--task "<text>"` | — | Yes | What to optimize (becomes the PRD objective) |
 | `--tolerance <N>` | `0` | No | Score delta within which changes count as "held" |
 | `--stall-limit <N>` | `5` | No | Non-improving iterations before convergence |
 | `--max-iterations <N>` | `100` | No | Hard cap on total iterations |
-| `--resume [path]` | — | No | Resume existing session (skips --metric/--task) |
+| `--resume [path]` | — | No | Resume existing session (skips --metric/--task/--goal) |
 | `--tmux` | — | No | Run in tmux with context clearing between iterations |
 
-If `--resume`: `--metric` and `--task` are NOT required.
-Otherwise: both `--metric` and `--task` are required — print error and STOP if missing.
+If `--resume`: `--metric`/`--goal` and `--task` are NOT required.
+Otherwise:
+- Exactly one of `--metric` or `--goal` is required — print error and STOP if both or neither provided.
+- `--task` is required — print error and STOP if missing.
+- `--judge-model` without `--goal` is an error — print error and STOP.
 
 ## Step 2: Session Setup
 
@@ -46,16 +52,21 @@ node -e "
 const fs = require('fs');
 const path = require('path');
 const sessionDir = process.argv[1];
+const type = process.argv[6] || 'command';
+const direction = process.argv[7] || 'higher';
+const keyMetric = {
+  description: process.argv[2],
+  validation: process.argv[3],
+  type: type,
+  timeout_seconds: 60,
+  tolerance: Number(process.argv[4]),
+  direction: direction
+};
+if (type === 'llm') keyMetric.judge_model = process.argv[8] || 'claude-sonnet-4-6';
 const state = {
   status: 'gap_analysis',
   prd_path: path.join(sessionDir, 'prd.md'),
-  key_metric: {
-    description: process.argv[2],
-    validation: process.argv[3],
-    type: 'command',
-    timeout_seconds: 60,
-    tolerance: Number(process.argv[4])
-  },
+  key_metric: keyMetric,
   convergence: {
     stall_limit: Number(process.argv[5]),
     stall_counter: 0,
@@ -67,10 +78,14 @@ const state = {
 };
 fs.writeFileSync(path.join(sessionDir, 'microverse.json'), JSON.stringify(state, null, 2));
 console.log('microverse.json created');
-" "${SESSION_ROOT}" "<TASK_TEXT>" "<METRIC_CMD>" "<TOLERANCE>" "<STALL_LIMIT>"
+" "${SESSION_ROOT}" "<TASK_TEXT>" "<VALIDATION>" "<TOLERANCE>" "<STALL_LIMIT>" "<TYPE>" "<DIRECTION>" "<JUDGE_MODEL>"
 ```
 
-Replace `<TASK_TEXT>`, `<METRIC_CMD>`, `<TOLERANCE>`, `<STALL_LIMIT>` with parsed values.
+Replace placeholders with parsed values:
+- `<VALIDATION>` = metric command (if `--metric`) or goal text (if `--goal`)
+- `<TYPE>` = `command` (if `--metric`) or `llm` (if `--goal`)
+- `<DIRECTION>` = from `--direction` flag (default `higher`)
+- `<JUDGE_MODEL>` = from `--judge-model` flag (default `claude-sonnet-4-6`, only used when type=`llm`)
 
 Verify: `node -e "const s=JSON.parse(require('fs').readFileSync('${SESSION_ROOT}/microverse.json','utf-8')); console.log('status:', s.status, 'metric:', s.key_metric.validation, 'stall_limit:', s.convergence.stall_limit)"`
 
@@ -85,7 +100,10 @@ Write `${SESSION_ROOT}/prd.md`:
 <TASK_TEXT>
 
 ## Key Metric
-- **Command**: `<METRIC_CMD>`
+- **Type**: <TYPE> (`command` or `llm`)
+- **Command** (if type=command): `<METRIC_CMD>`
+- **Goal** (if type=llm): <GOAL_TEXT>
+- **Direction**: <DIRECTION> (higher or lower is better)
 - **Tolerance**: <TOLERANCE>
 - **Stall Limit**: <STALL_LIMIT>
 
@@ -154,11 +172,18 @@ Repeat until converged or max iterations reached:
 2. Record pre-iteration SHA: `git rev-parse HEAD`
 3. Plan **one targeted change** — consult `failed_approaches` to avoid repeats, review recent `convergence.history` for trends
 4. Implement the change using **Read**, **Edit**, **Glob**, **Grep** tools
-5. Run the metric validation command, parse the numeric score from the last line
-6. Compare score to previous (last history entry's score, or baseline_score if first iteration):
-   - **Improved** (score > previous + tolerance) → accept, set stall_counter = 0
-   - **Held** (within tolerance) → accept, increment stall_counter
-   - **Regressed** (score < previous - tolerance) → run `git reset --hard <pre-iteration-SHA>`, add description to `failed_approaches`, increment stall_counter
+5. Measure the metric:
+   - If type=`command`: Run the metric validation command, parse the numeric score from the last line
+   - If type=`llm`: Do NOT run the validation as a shell command. The runner's LLM judge scores your changes — note this and proceed to commit. The judge will evaluate against the goal description.
+6. Compare score to previous. Use the last **accepted** history entry's score (i.e., filter out entries with action='reverted'), or baseline_score if no accepted entries yet. Comparison is **direction-aware** based on `key_metric.direction`:
+   - If direction=`higher` (default):
+     - **Improved** (score > previous + tolerance) → accept, set stall_counter = 0
+     - **Held** (within tolerance) → accept, increment stall_counter
+     - **Regressed** (score < previous - tolerance) → run `git reset --hard <pre-iteration-SHA>`, add description to `failed_approaches`, increment stall_counter
+   - If direction=`lower`:
+     - **Improved** (score < previous - tolerance) → accept, set stall_counter = 0
+     - **Held** (within tolerance) → accept, increment stall_counter
+     - **Regressed** (score > previous + tolerance) → run `git reset --hard <pre-iteration-SHA>`, add description to `failed_approaches`, increment stall_counter
 7. If accepted: `git add -A && git commit -m "microverse: <description>"`
 8. Add entry to `convergence.history`: `{iteration, metric_value, score, action, description, pre_iteration_sha, timestamp}`
 9. Write updated state to `microverse.json`
@@ -173,7 +198,7 @@ Repeat until converged or max iterations reached:
 
 ## Rules
 
-1. **--metric is mandatory** for new sessions — no metric, no microverse
+1. **--metric or --goal is mandatory** for new sessions — no metric/goal, no microverse. They are mutually exclusive (XOR).
 2. **One change per iteration** — atomic, revertible
 3. **Never repeat failed approaches** — always check `failed_approaches` before planning
 4. **Always commit** — uncommitted changes are invisible to measurement

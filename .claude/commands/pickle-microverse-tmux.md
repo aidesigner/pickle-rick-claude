@@ -11,15 +11,21 @@ Extract from `$ARGUMENTS`:
 
 | Flag | Default | Required (new) | Description |
 |------|---------|----------------|-------------|
-| `--metric "<cmd>"` | — | Yes | Shell command whose last stdout line is a numeric score |
+| `--metric "<cmd>"` | — | Yes (XOR --goal) | Shell command whose last stdout line is a numeric score. Sets type='command'. |
+| `--goal "<text>"` | — | Yes (XOR --metric) | Natural language goal for LLM judge. Sets type='llm'. |
+| `--direction <higher\|lower>` | `higher` | No | Optimization direction — whether higher or lower scores are better |
+| `--judge-model <model>` | `claude-sonnet-4-6` | No | Judge model for LLM scoring (only valid with --goal) |
 | `--task "<text>"` | — | Yes | What to optimize (becomes the PRD objective) |
 | `--tolerance <N>` | `0` | No | Score delta within which changes count as "held" |
 | `--stall-limit <N>` | `5` | No | Non-improving iterations before convergence |
 | `--max-iterations <N>` | `100` | No | Hard cap on total iterations |
-| `--resume [path]` | — | No | Resume existing session (skips --metric/--task) |
+| `--resume [path]` | — | No | Resume existing session (skips --metric/--task/--goal) |
 
-If `--resume`: `--metric` and `--task` are NOT required.
-Otherwise: both `--metric` and `--task` are required — print error and STOP if missing.
+If `--resume`: `--metric`/`--goal` and `--task` are NOT required.
+Otherwise:
+- Exactly one of `--metric` or `--goal` is required — print error and STOP if both or neither provided.
+- `--task` is required — print error and STOP if missing.
+- `--judge-model` without `--goal` is an error — print error and STOP.
 
 ## Step 3: Session Setup
 
@@ -42,16 +48,21 @@ node -e "
 const fs = require('fs');
 const path = require('path');
 const sessionDir = process.argv[1];
+const type = process.argv[6] || 'command';
+const direction = process.argv[7] || 'higher';
+const keyMetric = {
+  description: process.argv[2],
+  validation: process.argv[3],
+  type: type,
+  timeout_seconds: 60,
+  tolerance: Number(process.argv[4]),
+  direction: direction
+};
+if (type === 'llm') keyMetric.judge_model = process.argv[8] || 'claude-sonnet-4-6';
 const state = {
   status: 'gap_analysis',
   prd_path: path.join(sessionDir, 'prd.md'),
-  key_metric: {
-    description: process.argv[2],
-    validation: process.argv[3],
-    type: 'command',
-    timeout_seconds: 60,
-    tolerance: Number(process.argv[4])
-  },
+  key_metric: keyMetric,
   convergence: {
     stall_limit: Number(process.argv[5]),
     stall_counter: 0,
@@ -63,10 +74,14 @@ const state = {
 };
 fs.writeFileSync(path.join(sessionDir, 'microverse.json'), JSON.stringify(state, null, 2));
 console.log('microverse.json created');
-" "${SESSION_ROOT}" "<TASK_TEXT>" "<METRIC_CMD>" "<TOLERANCE>" "<STALL_LIMIT>"
+" "${SESSION_ROOT}" "<TASK_TEXT>" "<VALIDATION>" "<TOLERANCE>" "<STALL_LIMIT>" "<TYPE>" "<DIRECTION>" "<JUDGE_MODEL>"
 ```
 
-Replace `<TASK_TEXT>`, `<METRIC_CMD>`, `<TOLERANCE>`, `<STALL_LIMIT>` with parsed values.
+Replace placeholders with parsed values:
+- `<VALIDATION>` = metric command (if `--metric`) or goal text (if `--goal`)
+- `<TYPE>` = `command` (if `--metric`) or `llm` (if `--goal`)
+- `<DIRECTION>` = from `--direction` flag (default `higher`)
+- `<JUDGE_MODEL>` = from `--judge-model` flag (default `claude-sonnet-4-6`, only used when type=`llm`)
 
 Verify: `node -e "const s=JSON.parse(require('fs').readFileSync('${SESSION_ROOT}/microverse.json','utf-8')); console.log('status:', s.status, 'metric:', s.key_metric.validation, 'stall_limit:', s.convergence.stall_limit)"`
 
@@ -81,7 +96,10 @@ Write `${SESSION_ROOT}/prd.md`:
 <TASK_TEXT>
 
 ## Key Metric
-- **Command**: `<METRIC_CMD>`
+- **Type**: <TYPE> (`command` or `llm`)
+- **Command** (if type=command): `<METRIC_CMD>`
+- **Goal** (if type=llm): <GOAL_TEXT>
+- **Direction**: <DIRECTION> (higher or lower is better)
 - **Tolerance**: <TOLERANCE>
 - **Stall Limit**: <STALL_LIMIT>
 
