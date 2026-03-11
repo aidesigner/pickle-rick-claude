@@ -276,7 +276,7 @@ test('runIteration is exported from mux-runner', () => {
 
 // --- microverse-runner tests ---
 
-import { measureMetric, buildMicroverseHandoff, main } from '../bin/microverse-runner.js';
+import { measureMetric, measureLlmMetric, buildJudgePrompt, buildMicroverseHandoff, main, _deps } from '../bin/microverse-runner.js';
 import { resetToSha } from '../services/git-utils.js';
 import { writeStateFile } from '../services/pickle-utils.js';
 
@@ -664,5 +664,101 @@ test('pre-iteration SHA recorded correctly', () => {
         assert.notEqual(sha, newSha, 'SHA should change after commit');
     } finally {
         fs.rmSync(dir, { recursive: true });
+    }
+});
+
+// --- measureLlmMetric + buildJudgePrompt tests ---
+
+test('measureLlmMetric extracts numeric score from last line', () => {
+    const mockOutput = 'analysis of codebase...\n42';
+    const orig = _deps.execFileSync;
+    _deps.execFileSync = () => mockOutput;
+    try {
+        const result = measureLlmMetric('fix bugs', 30, '/tmp');
+        assert.deepEqual(result, { raw: mockOutput, score: 42 });
+    } finally {
+        _deps.execFileSync = orig;
+    }
+});
+
+test('measureLlmMetric spawns claude subprocess with --model flag', () => {
+    const orig = _deps.execFileSync;
+    let capturedArgs;
+    _deps.execFileSync = (cmd, args) => {
+        capturedArgs = { cmd, args };
+        return '75';
+    };
+    try {
+        measureLlmMetric('fix bugs', 30, '/tmp', 'claude-opus-4-6');
+        assert.equal(capturedArgs.cmd, 'claude');
+        assert.ok(capturedArgs.args.includes('-p'));
+        assert.ok(capturedArgs.args.includes('--model'));
+        assert.ok(capturedArgs.args.includes('claude-opus-4-6'));
+    } finally {
+        _deps.execFileSync = orig;
+    }
+});
+
+test('measureLlmMetric returns null on timeout', () => {
+    const orig = _deps.execFileSync;
+    _deps.execFileSync = () => {
+        const err = new Error('Command timed out');
+        err.code = 'ETIMEDOUT';
+        throw err;
+    };
+    try {
+        const result = measureLlmMetric('fix bugs', 1, '/tmp');
+        assert.equal(result, null);
+    } finally {
+        _deps.execFileSync = orig;
+    }
+});
+
+test('measureLlmMetric returns null on subprocess error', () => {
+    const orig = _deps.execFileSync;
+    _deps.execFileSync = () => { throw new Error('subprocess failed'); };
+    try {
+        const result = measureLlmMetric('fix bugs', 30, '/tmp');
+        assert.equal(result, null);
+    } finally {
+        _deps.execFileSync = orig;
+    }
+});
+
+test('measureLlmMetric returns null on non-numeric output', () => {
+    const orig = _deps.execFileSync;
+    _deps.execFileSync = () => 'great job!';
+    try {
+        const result = measureLlmMetric('fix bugs', 30, '/tmp');
+        assert.equal(result, null);
+    } finally {
+        _deps.execFileSync = orig;
+    }
+});
+
+test('buildJudgePrompt includes goal, cwd, and scoring format instructions', () => {
+    const prompt = buildJudgePrompt('fix bugs', '/tmp');
+    assert.ok(prompt.includes('fix bugs'), 'should include goal');
+    assert.ok(prompt.includes('/tmp'), 'should include cwd');
+    assert.ok(prompt.includes('single integer'), 'should include scoring instructions');
+});
+
+test('buildJudgePrompt instructs no fractions', () => {
+    const prompt = buildJudgePrompt('fix bugs', '/tmp');
+    assert.ok(prompt.includes('Do NOT use fractions'), 'should instruct no fractions');
+});
+
+test('measureLlmMetric defaults to claude-sonnet-4-6 model', () => {
+    const orig = _deps.execFileSync;
+    let capturedArgs;
+    _deps.execFileSync = (_cmd, args) => {
+        capturedArgs = args;
+        return '50';
+    };
+    try {
+        measureLlmMetric('fix bugs', 30, '/tmp');
+        assert.ok(capturedArgs.includes('claude-sonnet-4-6'), 'should use default model');
+    } finally {
+        _deps.execFileSync = orig;
     }
 });
