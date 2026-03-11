@@ -276,7 +276,7 @@ export function computeRateLimitAction(
   };
 }
 
-async function runIteration(sessionDir: string, iterationNum: number, extensionRoot: string, meeseeksModel: string): Promise<string> {
+export async function runIteration(sessionDir: string, iterationNum: number, extensionRoot: string, meeseeksModel: string): Promise<string> {
   const statePath = path.join(sessionDir, 'state.json');
   let state: State;
   try {

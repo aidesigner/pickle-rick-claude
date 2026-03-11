@@ -269,7 +269,7 @@ export function computeRateLimitAction(exitResult, consecutiveRateLimits, maxRet
         hasResetsAt,
     };
 }
-async function runIteration(sessionDir, iterationNum, extensionRoot, meeseeksModel) {
+export async function runIteration(sessionDir, iterationNum, extensionRoot, meeseeksModel) {
     const statePath = path.join(sessionDir, 'state.json');
     let state;
     try {

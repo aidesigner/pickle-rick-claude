@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { execSync } from 'node:child_process';
 import { getHeadSha, isWorkingTreeDirty } from '../services/git-utils.js';
+import { runIteration } from '../bin/mux-runner.js';
 import {
     compareMetric,
     createMicroverseState,
@@ -175,4 +176,8 @@ test('readMicroverseState returns null for missing file', () => {
     } finally {
         fs.rmSync(dir, { recursive: true });
     }
+});
+
+test('runIteration is exported from mux-runner', () => {
+    assert.equal(typeof runIteration, 'function');
 });
