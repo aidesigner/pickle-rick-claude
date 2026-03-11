@@ -72,8 +72,9 @@ function writeFinalReport(sessionDir, mvState, exitReason, iterations, elapsedSe
     const history = mvState.convergence.history;
     const accepted = history.filter(h => h.action === 'accept').length;
     const reverted = history.filter(h => h.action === 'revert').length;
+    const bestFn = (mvState.key_metric.direction ?? 'higher') === 'lower' ? Math.min : Math.max;
     const bestScore = history.length > 0
-        ? Math.max(...history.filter(h => h.action === 'accept').map(h => h.score), mvState.baseline_score)
+        ? bestFn(...history.filter(h => h.action === 'accept').map(h => h.score), mvState.baseline_score)
         : mvState.baseline_score;
     const report = [
         `# Microverse Final Report`,
@@ -347,7 +348,7 @@ export async function main(sessionDir) {
         // Compare with last accepted score (not last entry, which may be a reverted score)
         const lastAccepted = [...currentMv.convergence.history].reverse().find(h => h.action === 'accept');
         const previousScore = lastAccepted ? lastAccepted.score : currentMv.baseline_score;
-        const classification = compareMetric(metricResult.score, previousScore, currentMv.key_metric.tolerance);
+        const classification = compareMetric(metricResult.score, previousScore, currentMv.key_metric.tolerance, currentMv.key_metric.direction);
         log(`Classification: ${classification} (previous=${previousScore}, tolerance=${currentMv.key_metric.tolerance})`);
         const entry = {
             iteration,
@@ -391,9 +392,12 @@ export async function main(sessionDir) {
         Iterations: iteration,
         Elapsed: formatTime(totalElapsed),
         ExitReason: exitReason,
-        BestScore: currentMv.convergence.history.length > 0
-            ? Math.max(...currentMv.convergence.history.filter(h => h.action === 'accept').map(h => h.score), currentMv.baseline_score)
-            : currentMv.baseline_score,
+        BestScore: (() => {
+            const fn = (currentMv.key_metric.direction ?? 'higher') === 'lower' ? Math.min : Math.max;
+            return currentMv.convergence.history.length > 0
+                ? fn(...currentMv.convergence.history.filter(h => h.action === 'accept').map(h => h.score), currentMv.baseline_score)
+                : currentMv.baseline_score;
+        })(),
     }, 'GREEN', '🔬');
     log(`microverse-runner finished. ${iteration} iterations, ${formatTime(totalElapsed)}, exit: ${exitReason}`);
     const exitCode = (exitReason === 'converged' || exitReason === 'stopped' || exitReason === 'limit_reached') ? 0 : 1;

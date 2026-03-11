@@ -2,8 +2,15 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { writeStateFile } from './services/pickle-utils.js';
 const MICROVERSE_FILE = 'microverse.json';
-export function compareMetric(current, previous, tolerance) {
+export function compareMetric(current, previous, tolerance, direction) {
     if (!Number.isFinite(current) || !Number.isFinite(previous) || !Number.isFinite(tolerance)) {
+        return 'held';
+    }
+    if ((direction ?? 'higher') === 'lower') {
+        if (current < previous - tolerance)
+            return 'improved';
+        if (current > previous + tolerance)
+            return 'regressed';
         return 'held';
     }
     if (current > previous + tolerance)
@@ -32,7 +39,7 @@ export function recordIteration(state, entry) {
     // Use last *accepted* entry's score as baseline, not last entry (which may be a reverted score)
     const lastAccepted = [...state.convergence.history].reverse().find(h => h.action === 'accept');
     const previousScore = lastAccepted ? lastAccepted.score : state.baseline_score;
-    const classification = compareMetric(entry.score, previousScore, state.key_metric.tolerance);
+    const classification = compareMetric(entry.score, previousScore, state.key_metric.tolerance, state.key_metric.direction);
     const stallCounter = entry.action === 'accept' && classification === 'improved'
         ? 0
         : state.convergence.stall_counter + 1;

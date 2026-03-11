@@ -114,8 +114,9 @@ function writeFinalReport(
   const history = mvState.convergence.history;
   const accepted = history.filter(h => h.action === 'accept').length;
   const reverted = history.filter(h => h.action === 'revert').length;
+  const bestFn = (mvState.key_metric.direction ?? 'higher') === 'lower' ? Math.min : Math.max;
   const bestScore = history.length > 0
-    ? Math.max(...history.filter(h => h.action === 'accept').map(h => h.score), mvState.baseline_score)
+    ? bestFn(...history.filter(h => h.action === 'accept').map(h => h.score), mvState.baseline_score)
     : mvState.baseline_score;
 
   const report = [
@@ -415,7 +416,7 @@ export async function main(sessionDir: string): Promise<void> {
     const lastAccepted = [...currentMv.convergence.history].reverse().find(h => h.action === 'accept');
     const previousScore = lastAccepted ? lastAccepted.score : currentMv.baseline_score;
 
-    const classification = compareMetric(metricResult.score, previousScore, currentMv.key_metric.tolerance);
+    const classification = compareMetric(metricResult.score, previousScore, currentMv.key_metric.tolerance, currentMv.key_metric.direction);
     log(`Classification: ${classification} (previous=${previousScore}, tolerance=${currentMv.key_metric.tolerance})`);
 
     const entry: MicroverseHistoryEntry = {
@@ -466,13 +467,16 @@ export async function main(sessionDir: string): Promise<void> {
     ...(exitReason === 'error' || exitReason === 'rate_limit_exhausted' ? { error: exitReason } : {}),
   });
 
+  const panelBestFn = (currentMv.key_metric.direction ?? 'higher') === 'lower' ? Math.min : Math.max;
+  const panelBestScore = currentMv.convergence.history.length > 0
+    ? panelBestFn(...currentMv.convergence.history.filter(h => h.action === 'accept').map(h => h.score), currentMv.baseline_score)
+    : currentMv.baseline_score;
+
   printMinimalPanel('microverse-runner Complete', {
     Iterations: iteration,
     Elapsed: formatTime(totalElapsed),
     ExitReason: exitReason,
-    BestScore: currentMv.convergence.history.length > 0
-      ? Math.max(...currentMv.convergence.history.filter(h => h.action === 'accept').map(h => h.score), currentMv.baseline_score)
-      : currentMv.baseline_score,
+    BestScore: panelBestScore,
   }, 'GREEN', '🔬');
 
   log(`microverse-runner finished. ${iteration} iterations, ${formatTime(totalElapsed)}, exit: ${exitReason}`);

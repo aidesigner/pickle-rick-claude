@@ -91,6 +91,73 @@ test('compareMetric handles zero tolerance (exact match required)', () => {
     assert.equal(compareMetric(49, 50, 0), 'regressed');
 });
 
+// --- direction='lower' tests ---
+
+test('compareMetric direction=lower: score drop below tolerance → improved', () => {
+    assert.equal(compareMetric(30, 50, 2, 'lower'), 'improved');
+});
+
+test('compareMetric direction=lower: score rise above tolerance → regressed', () => {
+    assert.equal(compareMetric(60, 50, 2, 'lower'), 'regressed');
+});
+
+test('compareMetric direction=lower: score within tolerance → held', () => {
+    assert.equal(compareMetric(49, 50, 2, 'lower'), 'held');
+});
+
+test('compareMetric backward compat: no direction param = higher behavior', () => {
+    assert.equal(compareMetric(60, 50, 2), 'improved');
+    assert.equal(compareMetric(30, 50, 2), 'regressed');
+    assert.equal(compareMetric(51, 50, 2), 'held');
+});
+
+test('compareMetric direction=higher explicit: same as default', () => {
+    assert.equal(compareMetric(60, 50, 2, 'higher'), 'improved');
+    assert.equal(compareMetric(30, 50, 2, 'higher'), 'regressed');
+    assert.equal(compareMetric(51, 50, 2, 'higher'), 'held');
+});
+
+test('compareMetric direction=lower: NaN guard still returns held', () => {
+    assert.equal(compareMetric(NaN, 50, 2, 'lower'), 'held');
+    assert.equal(compareMetric(50, NaN, 2, 'lower'), 'held');
+});
+
+test('recordIteration with direction=lower: score drop → stall_counter=0, action=accept', () => {
+    const metricWithLower = { ...TEST_METRIC, direction: 'lower' };
+    let state = createMicroverseState('/tmp/prd.md', metricWithLower, 3);
+    state.convergence.stall_counter = 2;
+    state.baseline_score = 50;
+    const entry = {
+        iteration: 1,
+        metric_value: '30',
+        score: 30,
+        action: 'accept',
+        description: 'improved (lower)',
+        pre_iteration_sha: 'abc123'.padEnd(40, '0'),
+        timestamp: new Date().toISOString(),
+    };
+    state = recordIteration(state, entry);
+    assert.equal(state.convergence.stall_counter, 0, 'stall reset on improvement with direction=lower');
+    assert.equal(state.convergence.history.length, 1);
+});
+
+test('recordIteration with direction=lower: score rise → stall_counter increments', () => {
+    const metricWithLower = { ...TEST_METRIC, direction: 'lower' };
+    let state = createMicroverseState('/tmp/prd.md', metricWithLower, 3);
+    state.baseline_score = 50;
+    const entry = {
+        iteration: 1,
+        metric_value: '60',
+        score: 60,
+        action: 'accept',
+        description: 'regressed (lower)',
+        pre_iteration_sha: 'abc123'.padEnd(40, '0'),
+        timestamp: new Date().toISOString(),
+    };
+    state = recordIteration(state, entry);
+    assert.equal(state.convergence.stall_counter, 1, 'stall incremented on regression with direction=lower');
+});
+
 test('createMicroverseState returns valid initial state', () => {
     const state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
     assert.equal(state.status, 'gap_analysis');
