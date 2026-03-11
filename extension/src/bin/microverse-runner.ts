@@ -107,6 +107,7 @@ export function measureLlmMetric(
       cwd,
       timeout: timeoutSeconds * 1000,
       encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
     }).trim();
     const lines = output.split('\n');
     const lastLine = lines[lines.length - 1].trim();
@@ -168,6 +169,13 @@ export function buildMicroverseHandoff(
   return parts.join('\n');
 }
 
+function getBestScore(mvState: MicroverseSessionState): number {
+  const bestFn = (mvState.key_metric.direction ?? 'higher') === 'lower' ? Math.min : Math.max;
+  const accepted = mvState.convergence.history.filter(h => h.action === 'accept').map(h => h.score);
+  if (accepted.length === 0) return mvState.baseline_score;
+  return bestFn(...accepted, mvState.baseline_score);
+}
+
 function writeFinalReport(
   sessionDir: string,
   mvState: MicroverseSessionState,
@@ -178,10 +186,7 @@ function writeFinalReport(
   const history = mvState.convergence.history;
   const accepted = history.filter(h => h.action === 'accept').length;
   const reverted = history.filter(h => h.action === 'revert').length;
-  const bestFn = (mvState.key_metric.direction ?? 'higher') === 'lower' ? Math.min : Math.max;
-  const bestScore = history.length > 0
-    ? bestFn(...history.filter(h => h.action === 'accept').map(h => h.score), mvState.baseline_score)
-    : mvState.baseline_score;
+  const bestScore = getBestScore(mvState);
 
   const report = [
     `# Microverse Final Report`,
@@ -552,10 +557,7 @@ export async function main(sessionDir: string): Promise<void> {
     ...(exitReason === 'error' || exitReason === 'rate_limit_exhausted' ? { error: exitReason } : {}),
   });
 
-  const panelBestFn = (currentMv.key_metric.direction ?? 'higher') === 'lower' ? Math.min : Math.max;
-  const panelBestScore = currentMv.convergence.history.length > 0
-    ? panelBestFn(...currentMv.convergence.history.filter(h => h.action === 'accept').map(h => h.score), currentMv.baseline_score)
-    : currentMv.baseline_score;
+  const panelBestScore = getBestScore(currentMv);
 
   printMinimalPanel('microverse-runner Complete', {
     Iterations: iteration,
