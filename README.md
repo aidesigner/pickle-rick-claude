@@ -311,6 +311,7 @@ Sit back. Rick handles the rest. 🥒
 | `/pickle-refine-prd --meeseeks [path]` | 🔬🖥️👋 Full pipeline: refine + decompose + execute all tickets + auto-transition to Meeseeks review (implies `--run`) |
 | `/pickle-dot [path \| inline]` | 🔀 Convert a PRD into a [strongdm/attractor](https://github.com/strongdm/attractor)-compatible DOT digraph — generates a validated `.dot` file with node shapes, edge conditions, parallel fan-out/in, and model stylesheets |
 | `/pickle-microverse` | 🔬 Microverse convergence loop — optimize a numeric metric through targeted, incremental changes. Measures after each iteration, reverts regressions, stops when converged. Interactive or `--tmux` mode. |
+| `/pickle-microverse-tmux` | 🔬🖥️ Microverse convergence loop in tmux with context clearing between iterations. Same flags as `/pickle-microverse`. Requires `tmux`. |
 | `/portal-gun <source>` | 🔫 [Gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) — extract patterns from another codebase and generate a transplant PRD with behavioral validation tests and automatic refinement |
 | `/portal-gun --run <source>` | 🔫🖥️ Extract pattern + generate PRD + refine + auto-launch tmux session |
 | `/project-mayhem` | 💥 Chaos engineering — mutation testing, dependency downgrades, config corruption. Non-destructive, language-agnostic, comprehensive report. |
