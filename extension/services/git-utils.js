@@ -114,3 +114,13 @@ export function updateTicketStatus(ticketId, newStatus, sessionDir) {
         console.log(`Successfully updated ticket ${ticketId} to status "${newStatus}"`);
     }
 }
+export function getHeadSha(cwd) {
+    return runGit(['rev-parse', 'HEAD'], cwd).trim();
+}
+export function resetToSha(sha, cwd) {
+    runGit(['reset', '--hard', sha], cwd);
+    runGit(['clean', '-fd'], cwd);
+}
+export function isWorkingTreeDirty(cwd) {
+    return runGit(['status', '--porcelain'], cwd).trim().length > 0;
+}
