@@ -3,6 +3,9 @@ import * as path from 'path';
 import { writeStateFile } from './services/pickle-utils.js';
 const MICROVERSE_FILE = 'microverse.json';
 export function compareMetric(current, previous, tolerance) {
+    if (!Number.isFinite(current) || !Number.isFinite(previous) || !Number.isFinite(tolerance)) {
+        return 'held';
+    }
     if (current > previous + tolerance)
         return 'improved';
     if (current < previous - tolerance)
@@ -26,9 +29,9 @@ export function createMicroverseState(prdPath, metric, stallLimit) {
 }
 export function recordIteration(state, entry) {
     const history = [...state.convergence.history, entry];
-    const previousScore = state.convergence.history.length > 0
-        ? state.convergence.history[state.convergence.history.length - 1].score
-        : state.baseline_score;
+    // Use last *accepted* entry's score as baseline, not last entry (which may be a reverted score)
+    const lastAccepted = [...state.convergence.history].reverse().find(h => h.action === 'accept');
+    const previousScore = lastAccepted ? lastAccepted.score : state.baseline_score;
     const classification = compareMetric(entry.score, previousScore, state.key_metric.tolerance);
     const stallCounter = entry.action === 'accept' && classification === 'improved'
         ? 0
@@ -60,7 +63,11 @@ export function readMicroverseState(sessionDir) {
         const raw = fs.readFileSync(filePath, 'utf-8');
         return JSON.parse(raw);
     }
-    catch {
+    catch (err) {
+        if (err.code === 'ENOENT')
+            return null;
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`[microverse-state] Failed to read ${filePath}: ${msg}`);
         return null;
     }
 }

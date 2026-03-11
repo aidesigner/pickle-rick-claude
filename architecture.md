@@ -214,6 +214,134 @@ After all modules run, a `project_mayhem_report.md` is written to the project ro
 
 ---
 
+## Microverse Internals
+
+The Microverse convergence loop optimizes a numeric metric through iterative, atomic changes. It runs as a dedicated runner (`microverse-runner.ts`) that reuses the mux-runner's iteration infrastructure but adds metric measurement, automatic rollback, and convergence detection.
+
+### State Machine
+
+```
+                    ┌──────────────┐
+                    │ gap_analysis │  Initial state — first iteration
+                    └──────┬───────┘  runs gap analysis, measures baseline
+                           │
+                           ▼
+                    ┌──────────────┐
+              ┌────►│  iterating   │◄────┐
+              │     └──────┬───────┘     │
+              │            │             │
+              │     measure metric       │ score improved
+              │            │             │ or held
+              │     ┌──────┴──────┐      │
+              │     │ regressed?  │──No──┘
+              │     └──────┬──────┘
+              │            │ Yes
+              │     git reset --hard <pre-SHA>
+              │     add to failed_approaches
+              │     increment stall_counter
+              │            │
+              │     ┌──────┴──────┐
+              │     │ converged?  │──No──┘
+              │     └──────┬──────┘
+              │            │ Yes
+              │            ▼
+              │     ┌──────────────┐
+              │     │  converged   │  stall_counter ≥ stall_limit
+              │     └──────────────┘
+              │
+              │     ┌──────────────┐
+              └────►│   stopped    │  external cancel, time/iteration limit,
+                    └──────────────┘  error, or rate limit exhaustion
+```
+
+### Metric Comparison
+
+Three outcomes per iteration, controlled by the `tolerance` parameter:
+
+| Outcome | Condition | Effect |
+|---------|-----------|--------|
+| **Improved** | `score > previous + tolerance` | Accept commit, reset `stall_counter` to 0 |
+| **Held** | `abs(score - previous) ≤ tolerance` | Accept commit, increment `stall_counter` |
+| **Regressed** | `score < previous - tolerance` | `git reset --hard` to pre-iteration SHA, add to `failed_approaches`, increment `stall_counter` |
+
+The "previous" score is always the last **accepted** entry's score (not the last entry, which may have been reverted), falling back to `baseline_score` if no accepted entries exist yet.
+
+### microverse.json Schema
+
+```json
+{
+  "status": "iterating",
+  "prd_path": "/path/to/session/prd.md",
+  "key_metric": {
+    "description": "increase test coverage",
+    "validation": "npm test 2>&1 | tail -1",
+    "type": "command",
+    "timeout_seconds": 60,
+    "tolerance": 0
+  },
+  "convergence": {
+    "stall_limit": 5,
+    "stall_counter": 2,
+    "history": [
+      {
+        "iteration": 1,
+        "metric_value": "78.4",
+        "score": 78.4,
+        "action": "accept",
+        "description": "improved: 78.4 vs 72.0",
+        "pre_iteration_sha": "abc1234",
+        "timestamp": "2026-03-10T05:00:00Z"
+      }
+    ]
+  },
+  "gap_analysis_path": "/path/to/session/gap_analysis.md",
+  "failed_approaches": [
+    "Iteration 3: score dropped from 78.4 to 71.2"
+  ],
+  "baseline_score": 72.0,
+  "exit_reason": null
+}
+```
+
+### Runner Architecture
+
+The `microverse-runner.ts` reuses core infrastructure from `mux-runner.ts`:
+
+- **`runIteration()`** — spawns a fresh `claude -p` subprocess per iteration with the `microverse.md` command template
+- **`classifyIterationExit()`** — detects rate limits vs normal exits
+- **`computeRateLimitAction()`** — computes wait-and-resume for API throttling
+- **`measureMetric()`** — executes the validation command in a child shell, parses the last stdout line as a float, with configurable timeout
+- **`buildMicroverseHandoff()`** — constructs the per-iteration context injection: metric description, baseline, recent history (last 5), failed approaches, gap analysis path
+
+Each iteration's worker gets a fresh context with only the handoff summary — no conversational drift. The worker template (`microverse.md`) is a focused optimizer: read context → plan one change → implement → commit → exit. The runner handles all measurement, comparison, and rollback externally.
+
+### Final Report
+
+On exit, the runner writes `microverse_report_<date>.md` to the session's `memory/` directory:
+
+- Exit reason (converged, limit_reached, stopped, error, rate_limit_exhausted)
+- Total iterations, elapsed time
+- Baseline score vs best score
+- Accepted vs reverted count
+- Full iteration history table (iteration, score, action, description)
+
+### Session Artifacts
+
+```
+~/.claude/pickle-rick/sessions/<date-hash>/
+├── microverse.json           # Microverse state (source of truth)
+├── gap_analysis.md           # Initial codebase analysis
+├── prd.md                    # Optimization PRD
+├── handoff.txt               # Per-iteration context (overwritten each iteration)
+├── microverse-runner.log     # Runner log
+├── tmux_iteration_N.log      # Per-iteration NDJSON output
+├── state.json                # Standard session state
+└── memory/
+    └── microverse_report_*.md  # Final report
+```
+
+---
+
 ## GitNexus Integration
 
 Pickle Rick integrates with [GitNexus](https://gitnexus.dev), an MCP-powered code knowledge graph that indexes your codebase into symbols, relationships, and execution flows. Once indexed, every Morty worker automatically inherits GitNexus awareness — no manual setup per ticket.
@@ -291,7 +419,8 @@ pickle-rick-claude/
 │   │   ├── standup.js       # CLI: formatted standup from activity JSONL
 │   │   ├── prune-activity.js # Prune old activity JSONL files (called by setup.js)
 │   │   ├── circuit-reset.js  # Manual circuit breaker reset CLI
-│   │   └── metrics.js        # Token/LOC metrics reporter (daily/weekly)
+│   │   ├── metrics.js        # Token/LOC metrics reporter (daily/weekly)
+│   │   └── microverse-runner.js # Microverse convergence loop runner
 │   ├── layouts/
 │   │   ├── monitor-pickle.kdl   # Zellij layout for /pickle-zellij
 │   │   └── monitor-meeseeks.kdl # Zellij layout for /meeseeks-zellij
@@ -307,7 +436,8 @@ pickle-rick-claude/
 │   │   ├── jar-utils.js     # Jar queue helper
 │   │   ├── activity-logger.js # JSONL activity log writer (date-keyed, 0o600)
 │   │   ├── circuit-breaker.js # Three-state circuit breaker (CLOSED/HALF_OPEN/OPEN)
-│   │   └── metrics-utils.js   # Metrics aggregation engine (session scanner + git log parser)
+│   │   ├── metrics-utils.js   # Metrics aggregation engine (session scanner + git log parser)
+│   │   └── microverse-state.js # Microverse state management (convergence detection, metric comparison)
 │   ├── types/
 │   │   └── index.js         # Promise tokens, State type, HookInput type
 │   ├── tests/               # Test suite (node --test)
@@ -316,6 +446,7 @@ pickle-rick-claude/
 ├── images/
 │   ├── tmux-monitor.png     # tmux monitor screenshot
 │   ├── portal-gun.png       # Portal Gun — gene transfusion
+│   ├── microverse.png       # Microverse hero image
 │   └── Meeseeks.webp        # Mr. Meeseeks (from Wikipedia — Meeseeks and Destroy)
 ├── persona.md               # Pickle Rick persona snippet (append to your project's CLAUDE.md)
 ├── pickle_settings.json     # Default limits

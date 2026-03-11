@@ -18,6 +18,7 @@ Pickle Rick is a complete agentic engineering toolbelt built on the [Ralph Wiggu
 - **Mr. Meeseeks** runs an automated review-and-improve Ralph Loop for at least ten iterations
 - **Council of Ricks** reviews your Graphite PR stack iteratively, generating agent-executable directives instead of fixing code directly
 - **Portal Gun** opens a portal to another codebase, extracts patterns via [gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) with import graph tracing, transplant classification, PRD validation, and a persistent pattern library
+- **Microverse** convergence loop optimizes any numeric metric through targeted, incremental changes — measuring after each iteration, auto-reverting regressions, and stopping when converged
 - **GitNexus integration** gives workers a code knowledge graph for impact analysis, execution flow tracing, and safe refactoring
 
 All modes support both tmux and Zellij monitor layouts.
@@ -205,6 +206,51 @@ See [architecture](architecture.md#portal-gun-internals) for the full pipeline a
 ```
 
 See [architecture](architecture.md#project-mayhem-internals) for module details, the report format, and safety guarantees.
+
+---
+
+## 🔬 Microverse — Metric Convergence Loop
+
+<p align="center">
+  <img src="images/microverse.png" alt="The Microverse — powering your Pickle Rick app" width="100%" />
+</p>
+
+> *"I put a universe inside a box, Morty, and it powers my car battery. This is the same thing, except the universe is your codebase and the battery is a metric."*
+
+`/pickle-microverse` optimizes any numeric metric through targeted, incremental changes. Give it a shell command that outputs a score and a task description, and Rick will iterate — gap analysis first, then one focused change per iteration — measuring after each commit, auto-reverting regressions, and tracking failed approaches so he never repeats a dead end. When the score stops improving for N consecutive iterations (configurable stall limit), the loop converges and exits with a full report.
+
+**How it works:**
+
+```
+Gap Analysis (iteration 0)
+    │ measure baseline, analyze codebase, identify bottlenecks
+    ▼
+┌─────────────────────────────────────────────────┐
+│ Iteration Loop                                   │
+│                                                   │
+│  1. Plan one targeted change (avoid failed list) │
+│  2. Implement + commit                            │
+│  3. Measure metric                                │
+│     • Improved → accept, reset stall counter     │
+│     • Held → accept, increment stall counter     │
+│     • Regressed → git reset, log failed approach │
+│  4. Converged? (stall_counter ≥ stall_limit)     │
+└──────────────────────┬──────────────────────────┘
+                       ▼
+              Final Report
+    (baseline → best score, iteration history,
+     accepted/reverted counts, failed approaches)
+```
+
+Supports both interactive mode (inline convergence) and tmux mode (context clearing between iterations for long optimization runs). Rate limit auto-recovery works in tmux mode.
+
+```bash
+/pickle-microverse --metric "npm test 2>&1 | tail -1" --task "increase test coverage"
+/pickle-microverse --metric "node benchmark.js" --task "reduce p99 latency" --tolerance 5 --stall-limit 10
+/pickle-microverse-tmux --metric "npm run coverage:score" --task "hit 90% coverage" --max-iterations 50
+```
+
+See [architecture](architecture.md#microverse-internals) for the runner state machine, metric comparison logic, and `microverse.json` schema.
 
 ---
 

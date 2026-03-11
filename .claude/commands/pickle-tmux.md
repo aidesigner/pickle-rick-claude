@@ -22,19 +22,19 @@ Session name: `pickle-<hash>` from SESSION_ROOT basename.
 tmux new-session -d -s <name> -c <working_dir>
 sleep 1
 ```
-Print attach command immediately: `tmux attach -t <name>` (Window 1 "monitor" = 3-pane; Window 0 "runner" = background, Ctrl+B 0).
+Print attach command immediately: `tmux attach -t <name>` (Window 1 "monitor" = 4-pane; Window 0 "runner" = background, Ctrl+B 0).
 
 ## Step 4: Launch Runner
 ```bash
 tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/mux-runner.js <SESSION_ROOT>; echo ''; echo 'Runner finished.  Ctrl+B 1 → monitor  |  Ctrl+B D → detach'; read" Enter
 ```
 
-## Step 5: Monitor (3-pane)
+## Step 5: Monitor (4-pane)
 ```bash
 bash "$HOME/.claude/pickle-rick/extension/scripts/tmux-monitor.sh" <name> <SESSION_ROOT> pickle
 ```
 
 ## Step 6: Report
-Print: session name, `tmux attach -t <name>`, window layout (monitor: dashboard top-left / log-stream top-right / morty-logs bottom; runner: Ctrl+B 0), cancel: `cd <working_dir> && /eat-pickle`, emergency: `tmux kill-session -t <name>` then `node ~/.claude/pickle-rick/extension/bin/cancel.js`, state path: `<SESSION_ROOT>/state.json`.
+Print: session name, `tmux attach -t <name>`, window layout (monitor: dashboard top-left / log-stream top-right / morty-logs bottom-left / raw-morty bottom-right; runner: Ctrl+B 0), cancel: `cd <working_dir> && /eat-pickle`, emergency: `tmux kill-session -t <name>` then `node ~/.claude/pickle-rick/extension/bin/cancel.js`, state path: `<SESSION_ROOT>/state.json`.
 
 Output: `<promise>TASK_COMPLETED</promise>`

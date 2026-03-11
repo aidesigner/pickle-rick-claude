@@ -1,16 +1,20 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { Defaults } from '../types/index.js';
 import { readMicroverseState, writeMicroverseState, recordIteration as stateRecordIteration, recordFailedApproach, isConverged, compareMetric, } from '../microverse-state.js';
 import { getHeadSha, resetToSha, isWorkingTreeDirty } from '../services/git-utils.js';
 import { writeStateFile, getExtensionRoot, sleep, Style, formatTime, printMinimalPanel, } from '../services/pickle-utils.js';
-import { runIteration, loadRateLimitSettings, classifyIterationExit, computeRateLimitAction, } from './mux-runner.js';
+import { runIteration, loadRateLimitSettings, classifyIterationExit, computeRateLimitAction, killCurrentChild, } from './mux-runner.js';
 import { logActivity } from '../services/activity-logger.js';
 export function measureMetric(validation, timeoutSeconds, cwd) {
+    if (!validation || typeof validation !== 'string')
+        return null;
     try {
-        const output = execSync(validation, {
+        // Use execFileSync with explicit /bin/sh to avoid direct shell interpretation
+        // of the validation string. The command is user-authored in microverse.json.
+        const output = execFileSync('/bin/sh', ['-c', validation], {
             cwd,
             timeout: timeoutSeconds * 1000,
             encoding: 'utf-8',
@@ -136,6 +140,7 @@ export async function main(sessionDir) {
     // Signal handlers
     const handleShutdownSignal = (signal) => {
         log(`Received ${signal} — deactivating session`);
+        killCurrentChild();
         try {
             const s = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
             s.active = false;
@@ -165,7 +170,7 @@ export async function main(sessionDir) {
     let iteration = 0;
     let consecutiveRateLimits = 0;
     let exitReason = 'error';
-    let currentMv = { ...mvState };
+    let currentMv = structuredClone(mvState);
     // --- Gap Analysis Phase ---
     if (currentMv.status === 'gap_analysis') {
         log('Starting gap analysis phase');
@@ -311,7 +316,7 @@ export async function main(sessionDir) {
         const postIterSha = getHeadSha(workingDir);
         if (postIterSha === preIterSha) {
             log('No commits made — stall (no rollback)');
-            currentMv.convergence.stall_counter++;
+            currentMv = { ...currentMv, convergence: { ...currentMv.convergence, stall_counter: currentMv.convergence.stall_counter + 1 } };
             writeMicroverseState(sessionDir, currentMv);
             if (isConverged(currentMv)) {
                 log('Converged (stall limit reached with no new commits)');
@@ -328,7 +333,7 @@ export async function main(sessionDir) {
         }
         if (!metricResult) {
             log('WARNING: Could not measure metric — treating as stall');
-            currentMv.convergence.stall_counter++;
+            currentMv = { ...currentMv, convergence: { ...currentMv.convergence, stall_counter: currentMv.convergence.stall_counter + 1 } };
             writeMicroverseState(sessionDir, currentMv);
             if (isConverged(currentMv)) {
                 log('Converged (stall limit reached — metric unmeasurable)');
@@ -339,10 +344,9 @@ export async function main(sessionDir) {
             continue;
         }
         log(`Metric: ${metricResult.score} (raw: ${metricResult.raw})`);
-        // Compare with previous
-        const previousScore = currentMv.convergence.history.length > 0
-            ? currentMv.convergence.history[currentMv.convergence.history.length - 1].score
-            : currentMv.baseline_score;
+        // Compare with last accepted score (not last entry, which may be a reverted score)
+        const lastAccepted = [...currentMv.convergence.history].reverse().find(h => h.action === 'accept');
+        const previousScore = lastAccepted ? lastAccepted.score : currentMv.baseline_score;
         const classification = compareMetric(metricResult.score, previousScore, currentMv.key_metric.tolerance);
         log(`Classification: ${classification} (previous=${previousScore}, tolerance=${currentMv.key_metric.tolerance})`);
         const entry = {

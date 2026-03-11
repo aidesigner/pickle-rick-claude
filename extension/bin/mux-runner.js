@@ -8,6 +8,11 @@ import { PromiseTokens, hasToken, VALID_STEPS, Defaults } from '../types/index.j
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult } from '../services/circuit-breaker.js';
 let currentChildProc = null;
+export function killCurrentChild() {
+    if (currentChildProc && !currentChildProc.killed) {
+        currentChildProc.kill('SIGTERM');
+    }
+}
 /**
  * Strips the Setup section from dual-mode templates (e.g. meeseeks.md, council-of-ricks.md).
  * The mux-runner always invokes with --resume, so Setup instructions are dead weight

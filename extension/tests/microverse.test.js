@@ -77,6 +77,20 @@ test('compareMetric returns "regressed" when current < previous - tolerance', ()
     assert.equal(compareMetric(30, 40, 2), 'regressed');
 });
 
+test('compareMetric returns "held" for NaN inputs', () => {
+    assert.equal(compareMetric(NaN, 50, 2), 'held');
+    assert.equal(compareMetric(50, NaN, 2), 'held');
+    assert.equal(compareMetric(50, 50, NaN), 'held');
+    assert.equal(compareMetric(Infinity, 50, 2), 'held');
+    assert.equal(compareMetric(50, 50, Infinity), 'held');
+});
+
+test('compareMetric handles zero tolerance (exact match required)', () => {
+    assert.equal(compareMetric(50, 50, 0), 'held');
+    assert.equal(compareMetric(51, 50, 0), 'improved');
+    assert.equal(compareMetric(49, 50, 0), 'regressed');
+});
+
 test('createMicroverseState returns valid initial state', () => {
     const state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
     assert.equal(state.status, 'gap_analysis');
@@ -339,14 +353,12 @@ test('accept/reject cycle: 3 iterations (improve, regress, hold) → 2 accepted,
         assert.equal(mvState.failed_approaches.length, 1);
 
         // Iteration 3: hold (51 within 50 ± 2)
+        // recordIteration now uses last *accepted* score (50), not last entry score (30)
         const entry3 = {
             iteration: 3, metric_value: '51', score: 51, action: 'accept',
             description: 'held: 51 vs 50', pre_iteration_sha: sha,
             timestamp: new Date().toISOString(),
         };
-        // Note: compareMetric uses last history entry score (30 from revert)
-        // But in runner logic, after revert we use the previous accepted score.
-        // For this test we're testing recordIteration directly which looks at last history entry.
         mvState = recordIteration(mvState, entry3);
 
         const accepted = mvState.convergence.history.filter(h => h.action === 'accept').length;
@@ -357,6 +369,79 @@ test('accept/reject cycle: 3 iterations (improve, regress, hold) → 2 accepted,
     } finally {
         fs.rmSync(dir, { recursive: true });
     }
+});
+
+// --- Post-revert baseline (M1 fix) ---
+
+test('recordIteration after revert compares against last accepted score, not reverted score', () => {
+    let mvState = createMicroverseState('/tmp/prd.md', TEST_METRIC, 5);
+    mvState.baseline_score = 40;
+    mvState.status = 'iterating';
+    const sha = 'b'.repeat(40);
+
+    // Iteration 1: accept at score 60 (improved from baseline 40)
+    mvState = recordIteration(mvState, {
+        iteration: 1, metric_value: '60', score: 60, action: 'accept',
+        description: 'improved', pre_iteration_sha: sha, timestamp: new Date().toISOString(),
+    });
+    assert.equal(mvState.convergence.stall_counter, 0, 'stall reset on improvement');
+
+    // Iteration 2: revert at score 20 (regressed)
+    mvState = recordIteration(mvState, {
+        iteration: 2, metric_value: '20', score: 20, action: 'revert',
+        description: 'regressed', pre_iteration_sha: sha, timestamp: new Date().toISOString(),
+    });
+    assert.equal(mvState.convergence.stall_counter, 1);
+
+    // Iteration 3: score 45 — compared against last accepted (60), NOT last entry (20)
+    // 45 < 60 - 2 = 58, so this should be 'regressed', not 'improved' (as it would be vs 20)
+    mvState = recordIteration(mvState, {
+        iteration: 3, metric_value: '45', score: 45, action: 'revert',
+        description: 'regressed vs accepted', pre_iteration_sha: sha, timestamp: new Date().toISOString(),
+    });
+    assert.equal(mvState.convergence.stall_counter, 2, 'stall incremented — 45 regressed from accepted 60');
+
+    // Iteration 4: score 63 — compared against last accepted (60), 63 > 60+2 → improved
+    mvState = recordIteration(mvState, {
+        iteration: 4, metric_value: '63', score: 63, action: 'accept',
+        description: 'improved vs accepted', pre_iteration_sha: sha, timestamp: new Date().toISOString(),
+    });
+    assert.equal(mvState.convergence.stall_counter, 0, 'stall reset — 63 improved from accepted 60');
+});
+
+test('recordIteration with all-reverts falls back to baseline_score', () => {
+    let mvState = createMicroverseState('/tmp/prd.md', TEST_METRIC, 10);
+    mvState.baseline_score = 50;
+    mvState.status = 'iterating';
+    const sha = 'c'.repeat(40);
+
+    // Two consecutive reverts — no accepted entries exist
+    mvState = recordIteration(mvState, {
+        iteration: 1, metric_value: '20', score: 20, action: 'revert',
+        description: 'regressed', pre_iteration_sha: sha, timestamp: new Date().toISOString(),
+    });
+    assert.equal(mvState.convergence.stall_counter, 1);
+
+    mvState = recordIteration(mvState, {
+        iteration: 2, metric_value: '15', score: 15, action: 'revert',
+        description: 'regressed again', pre_iteration_sha: sha, timestamp: new Date().toISOString(),
+    });
+    assert.equal(mvState.convergence.stall_counter, 2);
+
+    // No accepted entries — lastAccepted is undefined, so previousScore = baseline_score (50)
+    // Score 53 > 50 + 2 = 52 → improved, stall resets
+    mvState = recordIteration(mvState, {
+        iteration: 3, metric_value: '53', score: 53, action: 'accept',
+        description: 'improved vs baseline', pre_iteration_sha: sha, timestamp: new Date().toISOString(),
+    });
+    assert.equal(mvState.convergence.stall_counter, 0, 'stall reset — compared against baseline_score 50');
+
+    // Now lastAccepted exists at 53 — score 51 within 53 ± 2 → held
+    mvState = recordIteration(mvState, {
+        iteration: 4, metric_value: '51', score: 51, action: 'accept',
+        description: 'held vs accepted', pre_iteration_sha: sha, timestamp: new Date().toISOString(),
+    });
+    assert.equal(mvState.convergence.stall_counter, 1, 'stall incremented — 51 held vs accepted 53');
 });
 
 // --- Convergence detection ---

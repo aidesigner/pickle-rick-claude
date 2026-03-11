@@ -10,6 +10,12 @@ import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractEr
 
 let currentChildProc: import('child_process').ChildProcess | null = null;
 
+export function killCurrentChild(): void {
+  if (currentChildProc && !currentChildProc.killed) {
+    currentChildProc.kill('SIGTERM');
+  }
+}
+
 /**
  * Strips the Setup section from dual-mode templates (e.g. meeseeks.md, council-of-ricks.md).
  * The mux-runner always invokes with --resume, so Setup instructions are dead weight

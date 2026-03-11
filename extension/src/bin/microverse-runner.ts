@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { State, Defaults } from '../types/index.js';
 import type { MicroverseSessionState, MicroverseHistoryEntry } from '../types/index.js';
 import {
@@ -26,6 +26,7 @@ import {
   loadRateLimitSettings,
   classifyIterationExit,
   computeRateLimitAction,
+  killCurrentChild,
 } from './mux-runner.js';
 import { logActivity } from '../services/activity-logger.js';
 
@@ -36,8 +37,11 @@ export function measureMetric(
   timeoutSeconds: number,
   cwd: string,
 ): { raw: string; score: number } | null {
+  if (!validation || typeof validation !== 'string') return null;
   try {
-    const output = execSync(validation, {
+    // Use execFileSync with explicit /bin/sh to avoid direct shell interpretation
+    // of the validation string. The command is user-authored in microverse.json.
+    const output = execFileSync('/bin/sh', ['-c', validation], {
       cwd,
       timeout: timeoutSeconds * 1000,
       encoding: 'utf-8',
@@ -184,6 +188,7 @@ export async function main(sessionDir: string): Promise<void> {
   // Signal handlers
   const handleShutdownSignal = (signal: string) => {
     log(`Received ${signal} — deactivating session`);
+    killCurrentChild();
     try {
       const s = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
       s.active = false;
@@ -211,7 +216,7 @@ export async function main(sessionDir: string): Promise<void> {
   let iteration = 0;
   let consecutiveRateLimits = 0;
   let exitReason: ExitReason = 'error';
-  let currentMv = { ...mvState } as MicroverseSessionState;
+  let currentMv = structuredClone(mvState);
 
   // --- Gap Analysis Phase ---
   if (currentMv.status === 'gap_analysis') {
@@ -372,7 +377,7 @@ export async function main(sessionDir: string): Promise<void> {
     const postIterSha = getHeadSha(workingDir);
     if (postIterSha === preIterSha) {
       log('No commits made — stall (no rollback)');
-      currentMv.convergence.stall_counter++;
+      currentMv = { ...currentMv, convergence: { ...currentMv.convergence, stall_counter: currentMv.convergence.stall_counter + 1 } };
       writeMicroverseState(sessionDir, currentMv);
 
       if (isConverged(currentMv)) {
@@ -392,7 +397,7 @@ export async function main(sessionDir: string): Promise<void> {
 
     if (!metricResult) {
       log('WARNING: Could not measure metric — treating as stall');
-      currentMv.convergence.stall_counter++;
+      currentMv = { ...currentMv, convergence: { ...currentMv.convergence, stall_counter: currentMv.convergence.stall_counter + 1 } };
       writeMicroverseState(sessionDir, currentMv);
 
       if (isConverged(currentMv)) {
@@ -406,10 +411,9 @@ export async function main(sessionDir: string): Promise<void> {
 
     log(`Metric: ${metricResult.score} (raw: ${metricResult.raw})`);
 
-    // Compare with previous
-    const previousScore = currentMv.convergence.history.length > 0
-      ? currentMv.convergence.history[currentMv.convergence.history.length - 1].score
-      : currentMv.baseline_score;
+    // Compare with last accepted score (not last entry, which may be a reverted score)
+    const lastAccepted = [...currentMv.convergence.history].reverse().find(h => h.action === 'accept');
+    const previousScore = lastAccepted ? lastAccepted.score : currentMv.baseline_score;
 
     const classification = compareMetric(metricResult.score, previousScore, currentMv.key_metric.tolerance);
     log(`Classification: ${classification} (previous=${previousScore}, tolerance=${currentMv.key_metric.tolerance})`);
