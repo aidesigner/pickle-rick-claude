@@ -261,6 +261,38 @@ Pickle Rick integrates with [GitNexus](https://gitnexus.dev), an MCP-powered cod
 
 ---
 
+## 🔀 Pipeline: PRD to Execution
+
+Turn a PRD into a running pipeline in two commands using `/pickle-dot` and `/attract`:
+
+```
+  PRD (markdown)
+       │
+       ▼
+  /pickle-dot prd.md
+       │  Parses requirements, extracts tasks, builds convergence graph
+       ▼
+  pipeline.dot (attractor-compatible DAG)
+       │
+       ▼
+  /attract pipeline.dot
+       │  Validates → submits to attractor server → monitors → handles human gates
+       ▼
+  Execution results
+```
+
+`/pickle-dot` converts your PRD into a self-correcting DOT digraph — not a linear task list, but a convergence basin with test-fix loops, conditional routing, parallel fan-out, and human gates. `/attract` then submits that `.dot` file to a running [attractor](https://github.com/strongdm/attractor) server for execution.
+
+```bash
+/pickle-dot my-prd.md                # Generate pipeline.dot from PRD
+/attract pipeline.dot                 # Submit to attractor server
+/attract                              # Auto-detect most recent .dot file
+```
+
+Environment variables for `/attract`: `ATTRACTOR_URL` (default `http://localhost:7777`), `ATTRACTOR_API_KEY`, `ATTRACTOR_ROOT` (auto-detected).
+
+---
+
 ## ⚡ Quick Start
 
 ### 1. Install
@@ -357,6 +389,7 @@ Sit back. Rick handles the rest. 🥒
 | `/pickle-refine-prd --run [path]` | 🔬🖥️ Refine + decompose + auto-launch unlimited tmux session (no iteration or time cap) |
 | `/pickle-refine-prd --meeseeks [path]` | 🔬🖥️👋 Full pipeline: refine + decompose + execute all tickets + auto-transition to Meeseeks review (implies `--run`) |
 | `/pickle-dot [path \| inline]` | 🔀 Convert a PRD into a [strongdm/attractor](https://github.com/strongdm/attractor)-compatible DOT digraph — generates a validated `.dot` file with node shapes, edge conditions, parallel fan-out/in, and model stylesheets |
+| `/attract [file.dot]` | 🚀 Submit a `.dot` pipeline to the [attractor](https://github.com/strongdm/attractor) server for execution — validates locally, submits via HTTP, monitors status, handles human gates. Auto-detects most recent `.dot` file if none specified. |
 | `/pickle-microverse` | 🔬 Microverse convergence loop — optimize a numeric metric through targeted, incremental changes. Measures after each iteration, reverts regressions, stops when converged. Interactive or `--tmux` mode. |
 | `/pickle-microverse-tmux` | 🔬🖥️ Microverse convergence loop in tmux with context clearing between iterations. Same flags as `/pickle-microverse`. Requires `tmux`. |
 | `/portal-gun <source>` | 🔫 [Gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) — extract patterns from another codebase and generate a transplant PRD with behavioral validation tests and automatic refinement |

@@ -1,6 +1,12 @@
-Convert a PRD (Product Requirements Document) into a strongdm/attractor-compatible DOT digraph.
+Convert a PRD (Product Requirements Document) into an attractor-compatible DOT digraph.
 
 Persona active via CLAUDE.md. **SPEAK BEFORE ACTING**.
+
+## Attractor Philosophy
+
+An attractor is NOT a linear task list. It is a **convergence basin** — a target state the system falls into regardless of initial conditions. The DOT graph defines the phase space: edges are convergence paths with conditions, failures route back toward the basin, and the system self-corrects at the graph level.
+
+**Every graph you generate MUST be self-correcting.** Linear chains (`A → B → C → done`) are forbidden unless the PRD truly has zero failure modes. Real software has failure modes. Encode them.
 
 ## Step 1: Acquire PRD
 From `$ARGUMENTS`: file path (contains `/` or `.md`) → read file. Substantial text → use directly. No argument → ask user.
@@ -11,17 +17,65 @@ Extract:
 - **Tasks**: ID (`[A-Za-z_][A-Za-z0-9_]*`), description, type (code/review/approval/conditional/parallel), prompt (substantive LLM instruction with PRD context), critical? (P0/acceptance criteria), dependencies, complexity (low/medium/high)
 - **Gates**: human review → hexagon, conditional routing → diamond
 - **Parallelism**: independent tasks → component fan-out / tripleoctagon fan-in
-- **Acceptance criteria**: → `goal_gate=true` markers
+- **Acceptance criteria**: extract ALL acceptance criteria from the PRD → `acceptance_criteria` graph attr + `goal_gate=true` markers
+- **Failure modes**: for each task, identify what can go wrong. These become conditional edges.
 
-## Step 3: Build DAG
+## Step 3: Build Convergence Graph
 
 **Structure**: exactly one `Mdiamond` start + one `Msquare` exit. All nodes reachable from start. Exit reachable from all non-terminal nodes. No orphans. DAG only (`->`, never `--`).
 
-**Shapes**: Mdiamond=start, Msquare=exit, box=codergen(default), diamond=conditional, hexagon=human gate, component=parallel fan-out, tripleoctagon=parallel fan-in
+**Shapes**: Mdiamond=start, Msquare=exit, box=codergen(default), diamond=conditional, hexagon=human gate, component=parallel fan-out, tripleoctagon=parallel fan-in, parallelogram=tool, house=stack.manager_loop
 
-**Parallel**: every component fan-out MUST have matching tripleoctagon fan-in.
-**Conditional**: every diamond MUST have 2+ outgoing edges with `condition` attributes.
-**Approval**: hexagon with approved/revise edges.
+### Mandatory Convergence Patterns
+
+1. **Test-Fix Loops**: Every implementation node MUST have a verification node (tool/test) that routes back on failure:
+   ```
+   implement -> test
+   test -> done [condition="outcome=success", weight=2]
+   test -> implement [condition="outcome=fail"]
+   ```
+
+2. **Goal Gates**: All P0/critical nodes get `goal_gate=true` with a `retry_target`. If the PRD has acceptance criteria, they become graph-level `acceptance_criteria`:
+   ```
+   graph [acceptance_criteria="context.tests_pass=true && context.build_status=passing"]
+   graph [retry_target="implement"]
+   test_step [goal_gate=true]
+   ```
+
+3. **Conditional Routing**: Use diamond nodes for decisions, NOT linear assumptions:
+   ```
+   check [shape=diamond]
+   check -> path_a [condition="context.status=ready"]
+   check -> path_b [condition="context.status!=ready"]
+   ```
+
+4. **Parallel Fan-Out/Fan-In**: When a task can be solved multiple ways (P0 tasks, architecture decisions), use competing implementations:
+   ```
+   parallel_split [shape=component]
+   approach_a [prompt="Implement using strategy A"]
+   approach_b [prompt="Implement using strategy B"]
+   select_best [shape=tripleoctagon, prompt="Select the best implementation"]
+   parallel_split -> approach_a
+   parallel_split -> approach_b
+   approach_a -> select_best
+   approach_b -> select_best
+   ```
+
+5. **Human Gates**: Review/approval steps use hexagon with revision loops:
+   ```
+   review [shape=hexagon, label="Review Changes"]
+   review -> next_step [label="[A] Approve"]
+   review -> fix_step [label="[R] Revise"]
+   ```
+
+6. **Max Visits**: Prevent infinite convergence loops with `max_visits` on looping nodes.
+
+### Anti-Patterns (NEVER generate these)
+
+- **Linear chains without feedback loops**: `research → plan → implement → done` — what happens when implementation fails?
+- **Orphan test nodes**: Tests that don't route failures back for correction
+- **Missing retry paths**: `goal_gate=true` without `retry_target`
+- **Acceptance criteria without retry_target**: The system can't self-correct
 
 ## Step 4: Generate DOT
 
@@ -32,23 +86,41 @@ digraph ${SLUG} {
     goal = "${GOAL}"
     label = "${LABEL}"
     default_max_retry = 2
+    retry_target = "${FIRST_IMPLEMENTATION_NODE}"
+    acceptance_criteria = "${CRITERIA_FROM_PRD}"
+    // working_dir = "/repos/${REPO_NAME}"
     // model_stylesheet = "* { llm_model: claude-sonnet-4-6; } .critical { llm_model: claude-opus-4-6; reasoning_effort: high; }"
+
     start [shape=Mdiamond, label="Begin"]
-    // nodes with: label, prompt, goal_gate, max_retries, timeout (300s/900s/1800s by complexity), class
+
+    // Implementation nodes with prompts, goal_gate on critical steps
+    // Verification nodes (tool/test) with conditional edges back to implementation
+    // Human gates for review points
+    // Parallel fan-out/fan-in for competing approaches
+
     done [shape=Msquare, label="Complete"]
-    // edges with: label, condition (for diamond/hexagon), weight (2=happy path)
+
+    // Edges: weight=2 for happy path, condition on failure paths
+    // Every implementation node has a test-fix loop
 }
 ```
 
 Edge conditions: `outcome=success`, `outcome=fail`, `outcome!=success`, `context.KEY=VALUE`, combine with `&&`.
 
 ## Step 5: Validate
-**Errors** (must fix): single start/exit, no incoming to start, no outgoing from exit, all reachable, exit reachable from all, no orphans, valid targets, diamond has 2+ conditional edges, component↔tripleoctagon paired, valid condition syntax, valid IDs, commas in attrs, quoted strings, `->` only, single digraph.
+**Errors** (must fix): single start/exit, no incoming to start, no outgoing from exit, all reachable, exit reachable from all, no orphans, valid targets, diamond has 2+ conditional edges, component↔tripleoctagon paired, valid condition syntax, valid IDs, commas in attrs, quoted strings, `->` only, single digraph, acceptance_criteria syntax valid.
 
-**Warnings** (should fix): every box has non-empty prompt, happy-path edges higher weight, goal_gate nodes have retry path, no duplicate IDs.
+**Warnings** (must fix for convergence): every box has non-empty prompt, happy-path edges higher weight, goal_gate nodes have retry path, acceptance_criteria has retry_target, no linear chains without feedback loops, every implementation node has a verification step.
 
-## Step 6: Present & Save
-Show DOT in ```dot block. Summary table (nodes by type, edges, goal-gated). Ask where to save (default: `./${SLUG}.dot`). Offer Graphviz render if `dot` available: `dot -Tsvg file.dot -o file.svg`.
+## Step 6: Convergence Summary & Save
+Show DOT in ```dot block. Summary table including:
+- Nodes by type
+- Edges (total, conditional, feedback loops)
+- Goal gates and acceptance criteria
+- Convergence ratio potential (goal_gates + criteria count)
+- Self-correction paths (how many failure edges route back for retry)
+
+Ask where to save (default: `./${SLUG}.dot`). Offer Graphviz render if `dot` available: `dot -Tsvg file.dot -o file.svg`.
 
 ## Reference: Condition Language
 `ConditionExpr ::= Clause ('&&' Clause)*` where `Clause ::= Key Op Literal`. Keys: `outcome`, `preferred_label`, `context.PATH`. Ops: `=`, `!=`. Status values lowercase: success, fail, partial_success, retry.
@@ -57,7 +129,10 @@ Show DOT in ```dot block. Summary table (nodes by type, edges, goal-gated). Ask 
 Mdiamond=start, Msquare=exit, box=codergen, hexagon=wait.human, diamond=conditional, component=parallel, tripleoctagon=parallel.fan_in, parallelogram=tool, house=stack.manager_loop
 
 ## Reference: Node Attrs
-label(String), shape(String,"box"), prompt(String), goal_gate(Boolean,false), max_retries(Integer,0), timeout(Duration), class(String), retry_target(String), fidelity(String)
+label(String), shape(String,"box"), prompt(String), goal_gate(Boolean,false), max_retries(Integer,0), max_visits(Integer), timeout(Duration), class(String), retry_target(String), fidelity(String)
 
 ## Reference: Edge Attrs
-label(String), condition(String), weight(Integer,0), fidelity(String)
+label(String), condition(String), weight(Integer,0), fidelity(String), loop_restart(Boolean,false)
+
+## Reference: Graph Attrs
+goal(String), label(String), retry_target(String), fallback_retry_target(String), acceptance_criteria(String), working_dir(String), default_max_retry(Integer), model_stylesheet(String)
