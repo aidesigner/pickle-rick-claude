@@ -8,7 +8,18 @@ Persona active via CLAUDE.md. **SPEAK BEFORE ACTING**.
 
 From `$ARGUMENTS`:
 - File path (contains `/` or `.dot`) → use as DOT file
+- `--detach` flag → submit pipeline and exit immediately without polling (fire-and-forget mode)
 - Empty → look for the most recently modified `.dot` file in the current directory and Pickle Rick session root. If multiple found, present choices. If none, ask user.
+
+Parse flags:
+```bash
+DETACH=false
+for arg in $ARGUMENTS; do
+  case "$arg" in
+    --detach) DETACH=true ;;
+  esac
+done
+```
 
 Resolve to absolute path. Verify it exists:
 ```bash
@@ -17,11 +28,30 @@ test -f "$DOT_FILE" && echo "OK: $DOT_FILE" || echo "ERROR: not found"
 
 ## Step 2: Validate Locally
 
-Find attractor and validate before submitting:
+Find attractor and validate before submitting.
+
+**Root detection** checks three locations in order:
+1. `$ATTRACTOR_ROOT` env var (explicit override)
+2. `../attractor/` relative to the working directory (common monorepo layout)
+3. Auto-detect via `find` under `~/loanlight`
+
+If all three fail, stop with a clear error — do not proceed with an empty path.
 
 ```bash
-ATTRACTOR_ROOT="${ATTRACTOR_ROOT:-$(find ~/loanlight -maxdepth 2 -type f -name "cli.ts" -path "*/packages/attractor/src/cli.ts" 2>/dev/null | head -1 | sed 's|/packages/attractor/src/cli.ts||')}"
-echo "ATTRACTOR_ROOT=$ATTRACTOR_ROOT"
+if [ -n "$ATTRACTOR_ROOT" ] && [ -d "$ATTRACTOR_ROOT/packages/attractor" ]; then
+  echo "ATTRACTOR_ROOT=$ATTRACTOR_ROOT (from env)"
+elif [ -d "../attractor/packages/attractor" ]; then
+  ATTRACTOR_ROOT="$(cd ../attractor && pwd)"
+  echo "ATTRACTOR_ROOT=$ATTRACTOR_ROOT (from ../attractor/)"
+else
+  ATTRACTOR_ROOT="$(find ~/loanlight -maxdepth 2 -type f -name "cli.ts" -path "*/packages/attractor/src/cli.ts" 2>/dev/null | head -1 | sed 's|/packages/attractor/src/cli.ts||')"
+  if [ -z "$ATTRACTOR_ROOT" ]; then
+    echo "ERROR: attractor auto-detect failed. ATTRACTOR_ROOT is not set and ../attractor/ does not exist."
+    echo "Fix: export ATTRACTOR_ROOT=/path/to/attractor   OR   clone attractor next to this repo."
+    exit 1
+  fi
+  echo "ATTRACTOR_ROOT=$ATTRACTOR_ROOT (auto-detected)"
+fi
 ```
 
 ```bash
@@ -79,6 +109,31 @@ If submission fails, show the HTTP status code, error response body, and stop.
 Track the pipeline ID for the monitor dashboard:
 ```bash
 echo "$PIPELINE_ID" >> /tmp/attractor-monitor-pipelines.txt
+```
+
+**Checkpoint save**: persist pipeline state for session recovery. If `SESSION_ROOT` is set (Pickle Rick sessions), save the checkpoint there; otherwise use `/tmp`.
+```bash
+CHECKPOINT_DIR="${SESSION_ROOT:-/tmp}"
+cat > "$CHECKPOINT_DIR/attractor-checkpoint.json" <<CKPT
+{
+  "pipelineId": "$PIPELINE_ID",
+  "dotFile": "$DOT_FILE",
+  "url": "$ATTRACTOR_URL",
+  "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+}
+CKPT
+echo "Checkpoint saved: $CHECKPOINT_DIR/attractor-checkpoint.json"
+```
+
+**`--detach` mode**: if the `--detach` flag was passed, print the pipeline ID and resume command, then stop without polling.
+```bash
+if [ "$DETACH" = "true" ]; then
+  echo "Pipeline submitted in detach mode."
+  echo "  Pipeline ID: $PIPELINE_ID"
+  echo "  Resume: curl -sf $ATTRACTOR_URL/pipelines/$PIPELINE_ID | jq ."
+  echo "  Checkpoint: $CHECKPOINT_DIR/attractor-checkpoint.json"
+  exit 0
+fi
 ```
 
 ## Step 5: Monitor Execution
@@ -188,6 +243,14 @@ If `failed`, suggest:
 - Check logs in the monitor: `./scripts/monitor.sh`
 - View events: `curl -sN $ATTRACTOR_URL/pipelines/$PIPELINE_ID/events`
 - Resume from checkpoint (if available): `curl -sf $ATTRACTOR_URL/pipelines/$PIPELINE_ID/checkpoint`
+
+## API Key Security
+
+- **NEVER** log, print, or echo API keys in output. Use `${ATTRACTOR_API_KEY:-}` in headers only — never interpolate into `echo` or debug statements.
+- Store keys in a `.env` file at the project root. Load with `source .env` or `export $(grep -v '^#' .env | xargs)`.
+- **NEVER** commit `.env` or any file containing secrets. Ensure `.env` is in `.gitignore`.
+- If an API error includes the key in the response body, mask it before displaying: `echo "$RESPONSE" | sed "s/$ATTRACTOR_API_KEY/***REDACTED***/g"`
+- For CI/CD, use environment variables or secret managers — never hardcode keys in pipelines.
 
 ## Environment Variables
 
