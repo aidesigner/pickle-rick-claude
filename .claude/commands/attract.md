@@ -28,7 +28,7 @@ echo "ATTRACTOR_ROOT=$ATTRACTOR_ROOT"
 cd "$ATTRACTOR_ROOT" && bun packages/attractor/src/cli.ts validate "$DOT_FILE"
 ```
 
-- Errors → show diagnostics, **stop**.
+- Errors → show diagnostics, reference **`attractor/DOT_SCHEMA.md`** for schema details (shapes, attributes, condition syntax, validator rules), **stop**.
 - Warnings → show them, continue.
 
 ## Step 3: Check Server

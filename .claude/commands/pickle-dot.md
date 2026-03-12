@@ -207,17 +207,6 @@ digraph user_auth_api {
 
 **Key convergence features**: `run_tests` loops back to `implement_auth` on failure (self-correction). `code_review` as hexagon gate can send revisions back. `goal_gate=true` on implementation with `retry_target` at graph level. `max_visits=3` prevents infinite loops.
 
-## Reference: Condition Language
-`ConditionExpr ::= Clause ('&&' Clause)*` where `Clause ::= Key Op Literal`. Keys: `outcome`, `preferred_label`, `context.PATH`. Ops: `=`, `!=`. Status values lowercase: success, fail, partial_success, retry.
+## Schema Reference
 
-## Reference: Shape→Handler
-Mdiamond=start, Msquare=exit, box=codergen, hexagon=wait.human, diamond=conditional, component=parallel, tripleoctagon=parallel.fan_in, parallelogram=tool, house=stack.manager_loop
-
-## Reference: Node Attrs
-label(String), shape(String,"box"), prompt(String), goal_gate(Boolean,false), max_retries(Integer,0), max_visits(Integer), timeout(Duration), class(String), retry_target(String), fidelity(String)
-
-## Reference: Edge Attrs
-label(String), condition(String), weight(Integer,0), fidelity(String), loop_restart(Boolean,false)
-
-## Reference: Graph Attrs
-goal(String), label(String), retry_target(String), fallback_retry_target(String), acceptance_criteria(String), working_dir(String), default_max_retry(Integer), model_stylesheet(String)
+For the complete and canonical DOT schema — shapes, node/edge/graph attributes, condition syntax, convergence patterns, and validator rules — see **`attractor/DOT_SCHEMA.md`**.
