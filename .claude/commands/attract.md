@@ -189,6 +189,15 @@ while true; do
       ;;
   esac
 
+  # Check for pending human gate questions on each non-terminal iteration
+  QUESTION=$(curl -sf "$ATTRACTOR_URL/pipelines/$PIPELINE_ID/question" -H "x-api-key: ${ATTRACTOR_API_KEY:-}")
+  if echo "$QUESTION" | jq -e '.questionId' > /dev/null 2>&1; then
+    QID=$(echo "$QUESTION" | jq -r '.questionId')
+    PROMPT=$(echo "$QUESTION" | jq -r '.prompt // .label // "Approve?"')
+    OPTIONS=$(echo "$QUESTION" | jq -r '.options // empty')
+    # Present to user and ask for their answer
+  fi
+
   if [ "$POLL_TIMEOUT" -gt 0 ] && [ "$ELAPSED" -ge "$POLL_TIMEOUT" ]; then
     echo "⏱ Polling timeout (${POLL_TIMEOUT}s) exceeded. Pipeline ID: $PIPELINE_ID"
     echo "Resume monitoring: curl -sf $ATTRACTOR_URL/pipelines/$PIPELINE_ID | jq ."
@@ -203,17 +212,6 @@ while true; do
   sleep "$BACKOFF"
   BACKOFF=$(( BACKOFF * 2 > 30 ? 30 : BACKOFF * 2 ))
 done
-```
-
-While polling, also check for pending human gate questions:
-```bash
-QUESTION=$(curl -sf "$ATTRACTOR_URL/pipelines/$PIPELINE_ID/question" -H "x-api-key: ${ATTRACTOR_API_KEY:-}")
-if echo "$QUESTION" | jq -e '.questionId' > /dev/null 2>&1; then
-  QID=$(echo "$QUESTION" | jq -r '.questionId')
-  PROMPT=$(echo "$QUESTION" | jq -r '.prompt // .label // "Approve?"')
-  OPTIONS=$(echo "$QUESTION" | jq -r '.options // empty')
-  # Present to user and ask for their answer
-fi
 ```
 
 When a human gate is detected:
