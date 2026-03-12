@@ -438,7 +438,7 @@ test('dispatch: handler with debug output before JSON decision still works', () 
   }
 });
 
-test('dispatch: handler with debug output after JSON decision uses first valid JSON', () => {
+test('dispatch: handler with debug output after JSON decision uses last valid JSON (backward scan)', () => {
   const tmpRoot = makeTmpRoot();
   try {
     const handlersDir = makeHandlersDir(tmpRoot);
@@ -457,6 +457,32 @@ test('dispatch: handler with debug output after JSON decision uses first valid J
     assert.equal(status, 0, 'should exit with code 0');
     const parsed = JSON.parse(stdout.trim());
     assert.equal(parsed.decision, 'block', 'should find block decision even with trailing output');
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('dispatch: two valid JSON decisions → last one wins (backward scan)', () => {
+  const tmpRoot = makeTmpRoot();
+  try {
+    const handlersDir = makeHandlersDir(tmpRoot);
+    // First line: approve; last line: block — backward scan should pick block
+    writeHandler(handlersDir, 'test-two-decisions', `
+      console.log(JSON.stringify({ decision: 'approve', reason: 'first' }));
+      console.log('some debug output');
+      console.log(JSON.stringify({ decision: 'block', reason: 'last wins' }));
+    `);
+
+    const { stdout, status } = runDispatch({
+      extRoot: tmpRoot,
+      args: ['test-two-decisions'],
+      input: '{}',
+    });
+
+    assert.equal(status, 0, 'should exit with code 0');
+    const parsed = JSON.parse(stdout.trim());
+    assert.equal(parsed.decision, 'block', 'last valid JSON decision wins (backward scan)');
+    assert.equal(parsed.reason, 'last wins');
   } finally {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }
