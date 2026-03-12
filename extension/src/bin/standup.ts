@@ -72,6 +72,22 @@ export function parseArgs(argv: string[]): ParsedArgs {
   return { range: { since, until } };
 }
 
+/** Read working_dir from a session's state.json and extract the project name. */
+function getSessionProject(sessionId: string): string | null {
+  const sessionsDir = path.join(getExtensionRoot(), 'sessions');
+  const stateFile = path.join(sessionsDir, sessionId, 'state.json');
+  try {
+    const data = JSON.parse(fs.readFileSync(stateFile, 'utf-8'));
+    const wd = data?.working_dir;
+    if (typeof wd === 'string' && wd) {
+      return path.basename(wd);
+    }
+  } catch {
+    // state.json missing or unreadable
+  }
+  return null;
+}
+
 function dateToFilename(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
@@ -274,8 +290,9 @@ export function formatOutput(
     const iterationStr = iterationCount > 0 ? `${iterationCount} iteration${iterationCount === 1 ? '' : 's'}` : '? iterations';
 
     const mode = startEvent?.mode || (iterationCount > 0 ? 'tmux' : 'inline');
+    const project = getSessionProject(sid);
 
-    return { sid, taskName, durationStr, iterationStr, mode, commits, firstTs };
+    return { sid, taskName, durationStr, iterationStr, mode, commits, firstTs, project };
   });
 
   sessionEntries.sort((a, b) => (a.firstTs > b.firstTs ? -1 : a.firstTs < b.firstTs ? 1 : 0));
@@ -286,7 +303,8 @@ export function formatOutput(
   lines.push('');
 
   for (const s of sessionEntries) {
-    lines.push(`## ${s.taskName} (${s.sid})`);
+    const projectTag = s.project ? ` [${s.project}]` : '';
+    lines.push(`## ${s.taskName}${projectTag} (${s.sid})`);
     lines.push(`- **Duration**: ${s.durationStr} (${s.iterationStr})`);
     lines.push(`- **Mode**: ${s.mode}`);
     if (s.commits.length > 0) {

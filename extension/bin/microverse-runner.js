@@ -60,6 +60,7 @@ export function measureLlmMetric(goal, timeoutSeconds, cwd, judgeModel, history)
             cwd,
             timeout: timeoutSeconds * 1000,
             encoding: 'utf-8',
+            stdio: ['pipe', 'pipe', 'pipe'],
         }).trim();
         const lines = output.split('\n');
         const lastLine = lines[lines.length - 1].trim();
@@ -112,14 +113,18 @@ export function buildMicroverseHandoff(mvState, iteration, workingDir) {
     parts.push(`${dir === 'lower' ? 'Focus on reducing the metric.' : 'Focus on improving the metric.'} Make targeted changes and commit.`);
     return parts.join('\n');
 }
+function getBestScore(mvState) {
+    const bestFn = (mvState.key_metric.direction ?? 'higher') === 'lower' ? Math.min : Math.max;
+    const accepted = mvState.convergence.history.filter(h => h.action === 'accept').map(h => h.score);
+    if (accepted.length === 0)
+        return mvState.baseline_score;
+    return bestFn(...accepted, mvState.baseline_score);
+}
 function writeFinalReport(sessionDir, mvState, exitReason, iterations, elapsedSeconds) {
     const history = mvState.convergence.history;
     const accepted = history.filter(h => h.action === 'accept').length;
     const reverted = history.filter(h => h.action === 'revert').length;
-    const bestFn = (mvState.key_metric.direction ?? 'higher') === 'lower' ? Math.min : Math.max;
-    const bestScore = history.length > 0
-        ? bestFn(...history.filter(h => h.action === 'accept').map(h => h.score), mvState.baseline_score)
-        : mvState.baseline_score;
+    const bestScore = getBestScore(mvState);
     const report = [
         `# Microverse Final Report`,
         '',
@@ -445,10 +450,7 @@ export async function main(sessionDir) {
         mode: 'tmux',
         ...(exitReason === 'error' || exitReason === 'rate_limit_exhausted' ? { error: exitReason } : {}),
     });
-    const panelBestFn = (currentMv.key_metric.direction ?? 'higher') === 'lower' ? Math.min : Math.max;
-    const panelBestScore = currentMv.convergence.history.length > 0
-        ? panelBestFn(...currentMv.convergence.history.filter(h => h.action === 'accept').map(h => h.score), currentMv.baseline_score)
-        : currentMv.baseline_score;
+    const panelBestScore = getBestScore(currentMv);
     printMinimalPanel('microverse-runner Complete', {
         Iterations: iteration,
         Elapsed: formatTime(totalElapsed),
