@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { writeStateFile } from './services/pickle-utils.js';
+import { writeStateFile } from './pickle-utils.js';
 const MICROVERSE_FILE = 'microverse.json';
 export function compareMetric(current, previous, tolerance, direction) {
     if (!Number.isFinite(current) || !Number.isFinite(previous) || !Number.isFinite(tolerance)) {

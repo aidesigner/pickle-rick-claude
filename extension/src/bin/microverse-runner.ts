@@ -12,7 +12,7 @@ import {
   recordFailedApproach,
   isConverged,
   compareMetric,
-} from '../microverse-state.js';
+} from '../services/microverse-state.js';
 import { getHeadSha, resetToSha, isWorkingTreeDirty } from '../services/git-utils.js';
 import {
   writeStateFile,

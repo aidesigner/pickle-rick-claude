@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import type { MicroverseSessionState, MicroverseMetric, MicroverseHistoryEntry } from './types/index.js';
-import { writeStateFile } from './services/pickle-utils.js';
+import type { MicroverseSessionState, MicroverseMetric, MicroverseHistoryEntry } from '../types/index.js';
+import { writeStateFile } from './pickle-utils.js';
 
 const MICROVERSE_FILE = 'microverse.json';
 
