@@ -334,14 +334,29 @@ export async function main(sessionDir) {
             }
             const { waitMs, waitSource } = rlAction;
             log(`Rate limit wait: ${Math.ceil(waitMs / 60_000)}min (source: ${waitSource})`);
+            // Clamp wait to remaining session wall-clock time (mirrors mux-runner.ts behaviour)
+            const rawStartEpochForWait = Number(state.start_time_epoch);
+            const startEpochForWait = Number.isFinite(rawStartEpochForWait) ? rawStartEpochForWait : 0;
+            const rawMaxTimeMinsForWait = Number(state.max_time_minutes);
+            const maxTimeMinsForWait = Number.isFinite(rawMaxTimeMinsForWait) ? rawMaxTimeMinsForWait : 0;
+            let actualWaitMs = waitMs;
+            if (maxTimeMinsForWait > 0 && startEpochForWait > 0) {
+                const elapsedForWait = Math.floor(Date.now() / 1000) - startEpochForWait;
+                const remainingForWait = (maxTimeMinsForWait * 60) - elapsedForWait;
+                if (remainingForWait <= 0) {
+                    exitReason = 'limit_reached';
+                    break;
+                }
+                actualWaitMs = Math.min(actualWaitMs, remainingForWait * 1000);
+            }
             writeStateFile(path.join(sessionDir, 'rate_limit_wait.json'), {
                 waiting: true, reason: 'API rate limit',
                 started_at: new Date().toISOString(),
-                wait_until: new Date(Date.now() + waitMs).toISOString(),
+                wait_until: new Date(Date.now() + actualWaitMs).toISOString(),
                 consecutive_waits: consecutiveRateLimits,
             });
-            // Cancellable sleep
-            const waitEnd = Date.now() + waitMs;
+            // Cancellable + time-limit-aware sleep (mirrors mux-runner.ts)
+            const waitEnd = Date.now() + actualWaitMs;
             while (Date.now() < waitEnd) {
                 await sleep(Defaults.RATE_LIMIT_POLL_MS);
                 try {
@@ -355,8 +370,15 @@ export async function main(sessionDir) {
                     const msg = err instanceof Error ? err.message : String(err);
                     log(`WARNING: Could not read state.json during rate limit wait: ${msg}`);
                 }
+                if (maxTimeMinsForWait > 0 && startEpochForWait > 0) {
+                    const elapsedNow = Math.floor(Date.now() / 1000) - startEpochForWait;
+                    if (elapsedNow >= maxTimeMinsForWait * 60) {
+                        exitReason = 'limit_reached';
+                        break;
+                    }
+                }
             }
-            if (exitReason === 'stopped')
+            if (exitReason === 'stopped' || exitReason === 'limit_reached')
                 break;
             try {
                 fs.unlinkSync(path.join(sessionDir, 'rate_limit_wait.json'));

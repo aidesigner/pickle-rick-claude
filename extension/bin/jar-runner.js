@@ -197,6 +197,7 @@ async function main() {
     };
     process.on('SIGTERM', () => handleShutdownSignal('SIGTERM'));
     process.on('SIGINT', () => handleShutdownSignal('SIGINT'));
+    process.on('SIGHUP', () => handleShutdownSignal('SIGHUP'));
     console.log(`\n🥒 Pickle Jar Night Shift — ${tasks.length} task(s) queued\n`);
     logActivity({ event: 'jar_start', source: 'pickle' });
     let succeeded = 0;
