@@ -84,6 +84,24 @@ A PRD that passes validation has: a title, at least one actionable section, and 
    approach_b -> select_best
    ```
 
+   #### Fan-In Selection Strategy
+
+   The `tripleoctagon` fan-in node selects the best branch using a three-tier strategy:
+
+   1. **Structured scoring** (`eval_criteria`): Uses scorer functions (e.g., `completeness`, `faithfulness`, `answer-relevancy`) to numerically evaluate branch content. Branches below `eval_threshold` are rejected. Use for objective, repeatable selection criteria:
+      ```
+      select_best [shape=tripleoctagon, eval_criteria="completeness,faithfulness", eval_threshold=0.7, eval_max_branches=5]
+      ```
+
+   2. **LLM-based evaluation** (`prompt` + backend): Sends a summary of all candidates to an LLM, which picks the best by ID. Use when selection criteria are qualitative or context-dependent:
+      ```
+      select_best [shape=tripleoctagon, prompt="Evaluate implementations for correctness, performance, and maintainability. Select the best candidate."]
+      ```
+
+   3. **Heuristic fallback** (automatic): Ranks by status (SUCCESS > PARTIAL_SUCCESS > SKIPPED > RETRY > FAIL), then by score descending, then lexical tiebreak. Always available as a safety net — no configuration needed.
+
+   Choose structured scoring for pipelines where selection criteria are measurable. Choose LLM-based for nuanced architectural or design decisions. The heuristic fallback handles cases where neither is configured or available.
+
 5. **Human Gates**: Review/approval steps use hexagon with revision loops:
    ```
    review [shape=hexagon, label="Review Changes"]
@@ -104,6 +122,46 @@ A PRD that passes validation has: a title, at least one actionable section, and 
 - **Parallel sibling dependencies**: Nodes inside a fan-out (between component and tripleoctagon) that depend on each other — this defeats parallelism and can deadlock since siblings execute concurrently with no ordering guarantee
 - **Test retrying wrong implementation**: A test/verification failure edge that routes to a different node than the one that produced the code under test — the fix runs in the wrong context and can never address the actual failure
 
+## Model Routing Guidance
+
+Use `model_stylesheet` to route nodes to different LLM models based on task complexity. This is a CSS-like graph attribute — selectors target nodes by ID (`#node`), class (`.class`), or universally (`*`).
+
+| Task Type | Model | Why |
+|-----------|-------|-----|
+| Architecture decisions, complex reasoning, code review | Opus (`claude-opus-4-6`) | Deep reasoning, nuanced trade-offs |
+| Implementation, boilerplate, test generation | Sonnet (`claude-sonnet-4-6`) | Fast, cost-effective for well-scoped tasks |
+| Fan-in evaluation (tripleoctagon with `prompt`) | Opus | Comparing competing approaches requires judgment |
+| Research, planning | Sonnet (default) or Opus for critical paths | Match effort to stakes |
+
+**Syntax** — assign `class` attributes to nodes, then write stylesheet rules:
+
+```dot
+model_stylesheet = "* { llm_model: claude-sonnet-4-6; } .critical { llm_model: claude-opus-4-6; reasoning_effort: high; }"
+
+implement [class="critical", prompt="..."]  // → Opus with high reasoning
+run_tests [shape=parallelogram, ...]        // → Sonnet (default)
+```
+
+**Resolution order**: explicit node `llm_model` attr > stylesheet (ID > class > `*`) > graph-level `llm_model` > system default. See `attractor/DOT_SCHEMA.md` for full grammar.
+
+## Prompt Depth Guidance
+
+Every codergen (box) node prompt MUST include context, constraints, and acceptance criteria — not just a task label. One-liner prompts like `prompt="Implement feature"` waste LLM capability and produce generic output.
+
+**A substantive prompt includes:**
+
+1. **Context**: What exists, where to find it, what patterns to follow
+2. **Constraints**: Boundaries, tech stack requirements, what NOT to do
+3. **Acceptance criteria**: How to verify the output is correct
+4. **Goal reference**: Use `$goal` interpolation to inherit the graph's goal
+
+| Quality | Example |
+|---------|---------|
+| Bad | `prompt="Add auth"` |
+| Good | `prompt="Implement JWT middleware for token validation on protected routes. Use the existing Express app structure in src/middleware/. Tokens must expire after 1h. Follow OWASP auth guidelines. Verify: all auth tests pass."` |
+
+When parsing a PRD, carry forward the PRD's context into each node's prompt. The LLM executing the node has NO access to the original PRD — the prompt IS its entire instruction.
+
 ## Step 4: Generate DOT
 
 Syntax: one `digraph`, bare IDs (`[A-Za-z_][A-Za-z0-9_]*`), `->` only, commas between attrs, double-quoted strings.
@@ -116,7 +174,7 @@ digraph ${SLUG} {
     retry_target = "${FIRST_IMPLEMENTATION_NODE}"
     acceptance_criteria = "${CRITERIA_FROM_PRD}"
     // working_dir = "/repos/${REPO_NAME}"
-    // model_stylesheet = "* { llm_model: claude-sonnet-4-6; } .critical { llm_model: claude-opus-4-6; reasoning_effort: high; }"
+    model_stylesheet = "* { llm_model: claude-sonnet-4-6; } .critical { llm_model: claude-opus-4-6; reasoning_effort: high; }"
 
     start [shape=Mdiamond, label="Begin"]
 
