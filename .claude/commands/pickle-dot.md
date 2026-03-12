@@ -122,6 +122,64 @@ Show DOT in ```dot block. Summary table including:
 
 Ask where to save (default: `./${SLUG}.dot`). Offer Graphviz render if `dot` available: `dot -Tsvg file.dot -o file.svg`.
 
+**Next step**: Run `/attract` to submit the generated `.dot` file to the attractor server for execution. `/attract` handles validation, server health checks, submission, and monitoring automatically.
+
+## Example: End-to-End PRD → DOT
+
+Given this PRD snippet:
+
+> **Project**: user-auth-api
+> **Goal**: Add JWT authentication to the REST API.
+> **Requirements**:
+> 1. Implement JWT middleware that validates tokens on protected routes
+> 2. Add login endpoint that issues tokens
+> 3. All tests must pass before merge
+> 4. Code review required before deploy
+>
+> **Acceptance Criteria**: All auth tests pass, no regressions in existing tests.
+
+### Node mapping
+
+| PRD Requirement | Node | Shape | Why |
+|-----------------|-------|-------|-----|
+| — | `start` | Mdiamond | Entry point |
+| Req 1 + 2 | `implement_auth` | box | Core implementation (prompt carries PRD context) |
+| Req 3 | `run_tests` | parallelogram (tool) | Verification — routes back on failure |
+| Req 3 (fail) | `run_tests → implement_auth` | edge | Self-correction loop |
+| Req 4 | `code_review` | hexagon | Human gate with revision path |
+| — | `done` | Msquare | Exit point |
+
+### Resulting DOT
+
+```dot
+digraph user_auth_api {
+    goal = "Add JWT authentication to the REST API"
+    label = "user-auth-api: JWT Auth"
+    default_max_retry = 2
+    retry_target = "implement_auth"
+    acceptance_criteria = "context.tests_pass=true && context.build_status=passing"
+
+    start [shape=Mdiamond, label="Begin"]
+
+    implement_auth [shape=box, goal_gate=true, prompt="Implement JWT middleware for token validation on protected routes and add a login endpoint that issues JWT tokens. Use the existing Express app structure. Follow project auth patterns."]
+
+    run_tests [shape=parallelogram, label="Run Tests", prompt="Run the full test suite: npm test. Verify auth tests pass and no regressions.", max_visits=3]
+
+    code_review [shape=hexagon, label="Code Review", prompt="Review auth implementation for security best practices: token expiry, secret rotation, OWASP auth guidelines."]
+
+    done [shape=Msquare, label="Complete"]
+
+    start -> implement_auth
+    implement_auth -> run_tests
+    run_tests -> code_review [condition="outcome=success", weight=2]
+    run_tests -> implement_auth [condition="outcome=fail", label="Fix failures"]
+    code_review -> done [label="[A] Approve", weight=2]
+    code_review -> implement_auth [label="[R] Revise"]
+}
+```
+
+**Key convergence features**: `run_tests` loops back to `implement_auth` on failure (self-correction). `code_review` as hexagon gate can send revisions back. `goal_gate=true` on implementation with `retry_target` at graph level. `max_visits=3` prevents infinite loops.
+
 ## Reference: Condition Language
 `ConditionExpr ::= Clause ('&&' Clause)*` where `Clause ::= Key Op Literal`. Keys: `outcome`, `preferred_label`, `context.PATH`. Ops: `=`, `!=`. Status values lowercase: success, fail, partial_success, retry.
 
