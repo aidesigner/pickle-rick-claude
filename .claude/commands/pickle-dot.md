@@ -20,6 +20,16 @@ Extract:
 - **Acceptance criteria**: extract ALL acceptance criteria from the PRD → `acceptance_criteria` graph attr + `goal_gate=true` markers
 - **Failure modes**: for each task, identify what can go wrong. These become conditional edges.
 
+## Step 2.5: Validate PRD
+
+Before building the graph, validate that the parsed PRD meets minimum requirements:
+
+1. **Title**: PRD must have a project name or title. If missing → **STOP** and ask the user.
+2. **Sections**: PRD must contain at least one requirement or task section. If empty → **STOP** and ask the user.
+3. **Acceptance criteria**: PRD should define acceptance criteria (what "done" looks like). If missing → **WARN** the user that the graph will lack `acceptance_criteria` and `goal_gate` convergence. Ask if they want to provide criteria or proceed without self-correction guarantees.
+
+A PRD that passes validation has: a title, at least one actionable section, and (ideally) acceptance criteria. This prevents generating graphs from malformed or stub PRDs that would lack convergence properties.
+
 ## Step 3: Build Convergence Graph
 
 **Structure**: exactly one `Mdiamond` start + one `Msquare` exit. All nodes reachable from start. Exit reachable from all non-terminal nodes. No orphans. DAG only (`->`, never `--`).
@@ -41,6 +51,19 @@ Extract:
    graph [retry_target="implement"]
    test_step [goal_gate=true]
    ```
+
+   #### acceptance_criteria Semantics
+
+   `acceptance_criteria` is a **graph-level contract**, not a per-node check. It declares the conditions that must hold for the entire graph to be considered converged. The attractor evaluates it after every `goal_gate=true` node completes.
+
+   - **Scope**: Graph-level. Applies to the whole pipeline, not individual nodes. A node with `goal_gate=true` triggers evaluation of the graph's `acceptance_criteria`.
+   - **Failure behavior**: When `acceptance_criteria` evaluates to false after a goal gate, the attractor automatically retries from the graph-level `retry_target` node. Without `retry_target`, the graph cannot self-correct and the run fails.
+   - **Context variables**: Conditions reference `context.*` variables populated by tool and test nodes during execution. Common variables:
+     - `context.tests_pass` — set by test runner nodes (parallelogram shape)
+     - `context.build_status` — set by build/compile tool nodes
+     - `context.lint_status` — set by linter tool nodes
+     - `context.review_status` — set by human gate (hexagon) nodes
+   - **Syntax**: `acceptance_criteria = "context.tests_pass=true && context.build_status=passing"` — uses the same condition language as edge conditions (see Reference: Condition Language).
 
 3. **Conditional Routing**: Use diamond nodes for decisions, NOT linear assumptions:
    ```
@@ -76,6 +99,10 @@ Extract:
 - **Orphan test nodes**: Tests that don't route failures back for correction
 - **Missing retry paths**: `goal_gate=true` without `retry_target`
 - **Acceptance criteria without retry_target**: The system can't self-correct
+- **Approval node without rejection path**: A hexagon gate with only an approve edge and no revise/reject edge — the graph assumes reviews always pass, eliminating the self-correction that human gates provide
+- **Conditional without default branch**: A diamond node whose outgoing conditions don't cover all possible values — if no condition matches, execution stalls with no path forward
+- **Parallel sibling dependencies**: Nodes inside a fan-out (between component and tripleoctagon) that depend on each other — this defeats parallelism and can deadlock since siblings execute concurrently with no ordering guarantee
+- **Test retrying wrong implementation**: A test/verification failure edge that routes to a different node than the one that produced the code under test — the fix runs in the wrong context and can never address the actual failure
 
 ## Step 4: Generate DOT
 
