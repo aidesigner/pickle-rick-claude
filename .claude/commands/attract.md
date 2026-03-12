@@ -50,15 +50,31 @@ Read the DOT file and submit via HTTP:
 
 ```bash
 DOT_CONTENT=$(cat "$DOT_FILE")
-PIPELINE_ID=$(curl -sf -X POST "$ATTRACTOR_URL/pipelines" \
+SUBMIT_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$ATTRACTOR_URL/pipelines" \
   -H "Content-Type: application/json" \
   -H "x-api-key: ${ATTRACTOR_API_KEY:-}" \
-  -d "$(jq -n --arg dot "$DOT_CONTENT" '{dot: $dot}')" \
-  | jq -r '.id')
+  -d "$(jq -n --arg dot "$DOT_CONTENT" '{dot: $dot}')")
+SUBMIT_HTTP_CODE=$(echo "$SUBMIT_RESPONSE" | tail -1)
+SUBMIT_BODY=$(echo "$SUBMIT_RESPONSE" | sed '$d')
+echo "HTTP $SUBMIT_HTTP_CODE"
+```
+
+**HTTP error classification** for submission:
+| HTTP Code | Meaning | Action |
+|-----------|---------|--------|
+| `200`/`201` | Success | Extract pipeline ID, continue |
+| `400` | Bad request — malformed DOT | Show error body, fix DOT syntax, re-validate with `/pickle-dot`, **stop** |
+| `429` | Rate limited | Show `Retry-After` header if present, wait and retry |
+| `500`+ | Server error | Show error body, retry once after 5s, then **stop** |
+| `0` / network error | Server unreachable | Check server health (Step 3), **stop** |
+
+On success:
+```bash
+PIPELINE_ID=$(echo "$SUBMIT_BODY" | jq -r '.id')
 echo "PIPELINE_ID=$PIPELINE_ID"
 ```
 
-If submission fails, show the error response and stop.
+If submission fails, show the HTTP status code, error response body, and stop.
 
 Track the pipeline ID for the monitor dashboard:
 ```bash
@@ -67,26 +83,70 @@ echo "$PIPELINE_ID" >> /tmp/attractor-monitor-pipelines.txt
 
 ## Step 5: Monitor Execution
 
-Report the submission, then poll for status every 5s until completion:
+Report the submission, then poll for status until completion with exponential backoff.
+
+**Signal handling**: trap Ctrl+C so the pipeline ID is always printed before exit:
+```bash
+trap 'echo ""; echo "⚠ Interrupted. Pipeline still running server-side."; echo "  Pipeline ID: $PIPELINE_ID"; echo "  Resume: curl -sf $ATTRACTOR_URL/pipelines/$PIPELINE_ID | jq ."; exit 130' INT TERM
+```
 
 ```bash
 POLL_TIMEOUT="${POLLING_TIMEOUT:-3600}"
+BACKOFF=5
 POLL_START=$(date +%s)
+PREV_STATUS=""
 while true; do
-  STATUS_JSON=$(curl -sf "$ATTRACTOR_URL/pipelines/$PIPELINE_ID" -H "x-api-key: ${ATTRACTOR_API_KEY:-}")
-  STATUS=$(echo "$STATUS_JSON" | jq -r '.status')
-  ELAPSED=$(( $(date +%s) - POLL_START ))
-  echo "$(date +%H:%M:%S) Status: $STATUS (${ELAPSED}s elapsed)"
-  if [ "$STATUS" = "completed" ] || [ "$STATUS" = "failed" ]; then
-    echo "$STATUS_JSON" | jq .
+  POLL_RESPONSE=$(curl -s -w "\n%{http_code}" "$ATTRACTOR_URL/pipelines/$PIPELINE_ID" -H "x-api-key: ${ATTRACTOR_API_KEY:-}")
+  POLL_HTTP_CODE=$(echo "$POLL_RESPONSE" | tail -1)
+  POLL_BODY=$(echo "$POLL_RESPONSE" | sed '$d')
+
+  # HTTP error classification for polling
+  if [ "$POLL_HTTP_CODE" -eq 0 ] 2>/dev/null || [ "$POLL_HTTP_CODE" = "000" ]; then
+    echo "$(date +%H:%M:%S) ⚠ Network error — server unreachable. Retrying in ${BACKOFF}s..."
+    sleep "$BACKOFF"
+    BACKOFF=$(( BACKOFF * 2 > 30 ? 30 : BACKOFF * 2 ))
+    continue
+  elif [ "$POLL_HTTP_CODE" -ge 500 ]; then
+    echo "$(date +%H:%M:%S) ⚠ HTTP $POLL_HTTP_CODE server error. Retrying in ${BACKOFF}s..."
+    sleep "$BACKOFF"
+    BACKOFF=$(( BACKOFF * 2 > 30 ? 30 : BACKOFF * 2 ))
+    continue
+  elif [ "$POLL_HTTP_CODE" -eq 429 ]; then
+    echo "$(date +%H:%M:%S) ⚠ HTTP 429 rate limited. Waiting ${BACKOFF}s..."
+    sleep "$BACKOFF"
+    BACKOFF=$(( BACKOFF * 2 > 30 ? 30 : BACKOFF * 2 ))
+    continue
+  elif [ "$POLL_HTTP_CODE" -ge 400 ]; then
+    echo "$(date +%H:%M:%S) ✗ HTTP $POLL_HTTP_CODE client error:"
+    echo "$POLL_BODY" | jq . 2>/dev/null || echo "$POLL_BODY"
     break
   fi
+
+  STATUS=$(echo "$POLL_BODY" | jq -r '.status')
+  ELAPSED=$(( $(date +%s) - POLL_START ))
+  echo "$(date +%H:%M:%S) Status: $STATUS (${ELAPSED}s elapsed)"
+
+  # Terminal states: completed, failed, cancelled, timeout, paused
+  case "$STATUS" in
+    completed|failed|cancelled|timeout|paused)
+      echo "$POLL_BODY" | jq .
+      break
+      ;;
+  esac
+
   if [ "$POLL_TIMEOUT" -gt 0 ] && [ "$ELAPSED" -ge "$POLL_TIMEOUT" ]; then
     echo "⏱ Polling timeout (${POLL_TIMEOUT}s) exceeded. Pipeline ID: $PIPELINE_ID"
     echo "Resume monitoring: curl -sf $ATTRACTOR_URL/pipelines/$PIPELINE_ID | jq ."
     break
   fi
-  sleep 5
+
+  # Exponential backoff: 5s start, 30s cap, reset on state change
+  if [ "$STATUS" != "$PREV_STATUS" ] && [ -n "$PREV_STATUS" ]; then
+    BACKOFF=5
+  fi
+  PREV_STATUS="$STATUS"
+  sleep "$BACKOFF"
+  BACKOFF=$(( BACKOFF * 2 > 30 ? 30 : BACKOFF * 2 ))
 done
 ```
 
@@ -114,14 +174,17 @@ curl -sf -X POST "$ATTRACTOR_URL/pipelines/$PIPELINE_ID/questions/$QID/answer" \
 
 ## Step 6: Report Results
 
-When the pipeline completes or fails:
+When the pipeline reaches a terminal state:
 
-1. **Status**: completed or failed
+1. **Status**: `completed`, `failed`, `cancelled`, `timeout`, or `paused`
 2. **Pipeline ID**: full UUID + short form
 3. **Duration**: from submission to completion
 4. Fetch final context: `curl -sf "$ATTRACTOR_URL/pipelines/$PIPELINE_ID/context" -H "x-api-key: ${ATTRACTOR_API_KEY:-}" | jq .`
 
-If failed, suggest:
+If `cancelled` or `paused`, suggest resuming: `curl -sf -X POST $ATTRACTOR_URL/pipelines/$PIPELINE_ID/resume`
+If `timeout`, suggest checking server load and resubmitting the pipeline.
+
+If `failed`, suggest:
 - Check logs in the monitor: `./scripts/monitor.sh`
 - View events: `curl -sN $ATTRACTOR_URL/pipelines/$PIPELINE_ID/events`
 - Resume from checkpoint (if available): `curl -sf $ATTRACTOR_URL/pipelines/$PIPELINE_ID/checkpoint`
