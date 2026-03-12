@@ -15,7 +15,7 @@ import {
     isConverged,
     writeMicroverseState,
     readMicroverseState,
-} from '../microverse-state.js';
+} from '../services/microverse-state.js';
 
 function createTempGitRepo() {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-microverse-'));
