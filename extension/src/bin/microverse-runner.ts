@@ -8,6 +8,7 @@ import {
   readMicroverseState,
   writeMicroverseState,
   recordIteration as stateRecordIteration,
+  recordStall,
   recordFailedApproach,
   isConverged,
   compareMetric,
@@ -52,7 +53,9 @@ export function measureMetric(
     const score = parseFloat(lastLine);
     if (!Number.isFinite(score)) return null;
     return { raw: output, score };
-  } catch {
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[microverse] measureMetric failed: ${msg}\n`);
     return null;
   }
 }
@@ -114,7 +117,9 @@ export function measureLlmMetric(
     const score = parseFloat(lastLine);
     if (!Number.isFinite(score)) return null;
     return { raw: output, score };
-  } catch {
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[microverse] measureLlmMetric failed (model=${model}): ${msg}\n`);
     return null;
   }
 }
@@ -433,7 +438,10 @@ export async function main(sessionDir: string): Promise<void> {
         try {
           const ws = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
           if (ws.active !== true) { exitReason = 'stopped'; break; }
-        } catch { /* proceed */ }
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          log(`WARNING: Could not read state.json during rate limit wait: ${msg}`);
+        }
       }
       if (exitReason === 'stopped') break;
 
@@ -460,7 +468,7 @@ export async function main(sessionDir: string): Promise<void> {
     const postIterSha = getHeadSha(workingDir);
     if (postIterSha === preIterSha) {
       log('No commits made — stall (no rollback)');
-      currentMv = { ...currentMv, convergence: { ...currentMv.convergence, stall_counter: currentMv.convergence.stall_counter + 1 } };
+      currentMv = recordStall(currentMv);
       writeMicroverseState(sessionDir, currentMv);
 
       if (isConverged(currentMv)) {
@@ -488,7 +496,7 @@ export async function main(sessionDir: string): Promise<void> {
 
     if (!metricResult) {
       log('WARNING: Could not measure metric — treating as stall');
-      currentMv = { ...currentMv, convergence: { ...currentMv.convergence, stall_counter: currentMv.convergence.stall_counter + 1 } };
+      currentMv = recordStall(currentMv);
       writeMicroverseState(sessionDir, currentMv);
 
       if (isConverged(currentMv)) {

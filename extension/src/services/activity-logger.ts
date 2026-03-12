@@ -19,8 +19,10 @@ export function logActivity(
     const line = JSON.stringify(fullEvent) + '\n';
     // mode only applies on file creation (ignored if file exists) — first write = 0o600
     fs.appendFileSync(filepath, line, { mode: 0o600 });
-  } catch {
-    // Silent failure — activity logging must never break the caller
+  } catch (err) {
+    // Activity logging must never break the caller, but warn so data loss is visible
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`[activity-logger] Failed to log event: ${msg}\n`);
   }
 }
 

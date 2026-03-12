@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { Defaults } from '../types/index.js';
-import { readMicroverseState, writeMicroverseState, recordIteration as stateRecordIteration, recordFailedApproach, isConverged, compareMetric, } from '../microverse-state.js';
+import { readMicroverseState, writeMicroverseState, recordIteration as stateRecordIteration, recordStall, recordFailedApproach, isConverged, compareMetric, } from '../microverse-state.js';
 import { getHeadSha, resetToSha, isWorkingTreeDirty } from '../services/git-utils.js';
 import { writeStateFile, getExtensionRoot, sleep, Style, formatTime, printMinimalPanel, } from '../services/pickle-utils.js';
 import { runIteration, loadRateLimitSettings, classifyIterationExit, computeRateLimitAction, killCurrentChild, } from './mux-runner.js';
@@ -27,7 +27,9 @@ export function measureMetric(validation, timeoutSeconds, cwd) {
             return null;
         return { raw: output, score };
     }
-    catch {
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`[microverse] measureMetric failed: ${msg}\n`);
         return null;
     }
 }
@@ -69,7 +71,9 @@ export function measureLlmMetric(goal, timeoutSeconds, cwd, judgeModel, history)
             return null;
         return { raw: output, score };
     }
-    catch {
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`[microverse] measureLlmMetric failed (model=${model}): ${msg}\n`);
         return null;
     }
 }
@@ -347,7 +351,10 @@ export async function main(sessionDir) {
                         break;
                     }
                 }
-                catch { /* proceed */ }
+                catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    log(`WARNING: Could not read state.json during rate limit wait: ${msg}`);
+                }
             }
             if (exitReason === 'stopped')
                 break;
@@ -376,7 +383,7 @@ export async function main(sessionDir) {
         const postIterSha = getHeadSha(workingDir);
         if (postIterSha === preIterSha) {
             log('No commits made — stall (no rollback)');
-            currentMv = { ...currentMv, convergence: { ...currentMv.convergence, stall_counter: currentMv.convergence.stall_counter + 1 } };
+            currentMv = recordStall(currentMv);
             writeMicroverseState(sessionDir, currentMv);
             if (isConverged(currentMv)) {
                 log('Converged (stall limit reached with no new commits)');
@@ -396,7 +403,7 @@ export async function main(sessionDir) {
         }
         if (!metricResult) {
             log('WARNING: Could not measure metric — treating as stall');
-            currentMv = { ...currentMv, convergence: { ...currentMv.convergence, stall_counter: currentMv.convergence.stall_counter + 1 } };
+            currentMv = recordStall(currentMv);
             writeMicroverseState(sessionDir, currentMv);
             if (isConverged(currentMv)) {
                 log('Converged (stall limit reached — metric unmeasurable)');

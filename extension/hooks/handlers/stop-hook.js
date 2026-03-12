@@ -255,24 +255,6 @@ async function main() {
     // in an infinite 2-char-response loop that never advances.
     const trimmed = responseText.trim();
     const DEGENERATE_MAX_LENGTH = 10;
-    if (responseText.length > 0 && trimmed.length === 0) {
-        log(`Decision: APPROVE (Whitespace-only response — ${responseText.length} raw chars)`);
-        if (!isWorker && !isRefinementWorker && state.tmux_mode !== true) {
-            state.active = false;
-            writeStateFile(stateFile, state);
-        }
-        approve();
-        return;
-    }
-    if (trimmed.length > 0 && trimmed.length <= DEGENERATE_MAX_LENGTH) {
-        log(`Decision: APPROVE (Degenerate short response: "${trimmed}" — ${trimmed.length} chars)`);
-        if (!isWorker && !isRefinementWorker && state.tmux_mode !== true) {
-            state.active = false;
-            writeStateFile(stateFile, state);
-        }
-        approve();
-        return;
-    }
     const NO_OP_MAX_LENGTH = 100;
     const NO_OP_PATTERNS = [
         /^acknowledged\.?$/i,
@@ -286,9 +268,16 @@ async function main() {
         /^will do\.?$/i,
         /^roger\.?$/i,
     ];
-    if (trimmed.length > 0 && trimmed.length <= NO_OP_MAX_LENGTH &&
-        NO_OP_PATTERNS.some(p => p.test(trimmed))) {
-        log(`Decision: APPROVE (No-op response detected: "${trimmed}" — breaking ack loop)`);
+    const isDegenerateResponse = ((responseText.length > 0 && trimmed.length === 0) ||
+        (trimmed.length > 0 && trimmed.length <= DEGENERATE_MAX_LENGTH) ||
+        (trimmed.length > 0 && trimmed.length <= NO_OP_MAX_LENGTH && NO_OP_PATTERNS.some(p => p.test(trimmed))));
+    if (isDegenerateResponse) {
+        const reason = trimmed.length === 0
+            ? `Whitespace-only response — ${responseText.length} raw chars`
+            : trimmed.length <= DEGENERATE_MAX_LENGTH
+                ? `Degenerate short response: "${trimmed}" — ${trimmed.length} chars`
+                : `No-op response detected: "${trimmed}" — breaking ack loop`;
+        log(`Decision: APPROVE (${reason})`);
         if (!isWorker && !isRefinementWorker && state.tmux_mode !== true) {
             state.active = false;
             writeStateFile(stateFile, state);

@@ -78,8 +78,9 @@ async function main() {
         timeLimit = settings.default_max_time_minutes;
       if (typeof settings.default_worker_timeout_seconds === 'number' && settings.default_worker_timeout_seconds > 0)
         workerTimeout = settings.default_worker_timeout_seconds;
-    } catch {
-      /* ignore */
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`Warning: could not parse pickle_settings.json — using defaults: ${msg}`);
     }
   }
 

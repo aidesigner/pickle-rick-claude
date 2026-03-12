@@ -20,6 +20,12 @@ export function compareMetric(current, previous, tolerance, direction) {
     return 'held';
 }
 export function createMicroverseState(prdPath, metric, stallLimit) {
+    if (!Number.isInteger(stallLimit) || stallLimit < 1) {
+        throw new Error(`stall_limit must be a positive integer, got ${stallLimit}`);
+    }
+    if (!Number.isFinite(metric.tolerance) || metric.tolerance < 0) {
+        throw new Error(`tolerance must be a non-negative number, got ${metric.tolerance}`);
+    }
     return {
         status: 'gap_analysis',
         prd_path: prdPath,
@@ -34,9 +40,12 @@ export function createMicroverseState(prdPath, metric, stallLimit) {
         baseline_score: 0,
     };
 }
+/**
+ * Record a scored iteration (agent made commits and metric was measured).
+ * Stall counter resets on accepted improvements, increments otherwise.
+ */
 export function recordIteration(state, entry) {
     const history = [...state.convergence.history, entry];
-    // Use last *accepted* entry's score as baseline, not last entry (which may be a reverted score)
     const lastAccepted = [...state.convergence.history].reverse().find(h => h.action === 'accept');
     const previousScore = lastAccepted ? lastAccepted.score : state.baseline_score;
     const classification = compareMetric(entry.score, previousScore, state.key_metric.tolerance, state.key_metric.direction);
@@ -49,6 +58,20 @@ export function recordIteration(state, entry) {
             ...state.convergence,
             history,
             stall_counter: stallCounter,
+        },
+    };
+}
+/**
+ * Record a stall (no commits or metric unmeasurable). Increments stall_counter
+ * without adding a history entry. This is the ONLY place stall_counter is
+ * incremented outside of recordIteration — centralizing stall logic.
+ */
+export function recordStall(state) {
+    return {
+        ...state,
+        convergence: {
+            ...state.convergence,
+            stall_counter: state.convergence.stall_counter + 1,
         },
     };
 }

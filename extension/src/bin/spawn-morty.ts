@@ -230,6 +230,14 @@ For simple file/string lookups, Grep/Glob are still fine.`;
   // Safety net: if the Promise doesn't resolve within timeout + 30s, force exit.
   const hangGuard = setTimeout(() => {
     console.error(`${Style.RED}❌ Worker hang detected — forcing exit${Style.RESET}`);
+    try { logStream.destroy(); } catch { /* best-effort */ }
+    try {
+      // Sync flush any pending log data before exit
+      const fd = fs.openSync(sessionLog, 'a');
+      fs.fdatasyncSync(fd);
+      fs.closeSync(fd);
+    } catch { /* best-effort */ }
+    try { updateTicketStatus(ticketId, 'Failed', sessionRoot); } catch { /* best-effort */ }
     process.exit(1);
   }, (effectiveTimeout + 30) * 1000);
   hangGuard.unref(); // Don't keep the process alive just for the guard
@@ -264,16 +272,14 @@ For simple file/string lookups, Grep/Glob are still fine.`;
       clearTimeout(hangGuard);
       if (process.stdout.isTTY) process.stdout.write('\r\x1b[K');
 
-      let finalized = false;
-
-      // Register finish listener BEFORE calling end() to avoid missing synchronous completion.
-      // Guard against logStream.finish never firing (e.g., disk I/O failure)
+      // Wait for log stream to flush before reading. Use once() to prevent
+      // double-finalization if both the finish event and timeout fire.
       const flushTimeout = setTimeout(() => {
         console.error(`${Style.YELLOW}⚠️  Log flush timed out — reading partial log${Style.RESET}`);
         finalize(code);
       }, 5000);
 
-      logStream.on('finish', () => {
+      logStream.once('finish', () => {
         clearTimeout(flushTimeout);
         finalize(code);
       });
@@ -283,11 +289,19 @@ For simple file/string lookups, Grep/Glob are still fine.`;
       // the WORKER_DONE token could be missed — causing a false failure.
       logStream.end();
 
+      let finalized = false;
       function finalize(exitCode: number | null) {
         if (finalized) return;
         finalized = true;
+        clearTimeout(flushTimeout);
+
         let logContent = '';
-        try { logContent = fs.readFileSync(sessionLog, 'utf-8'); } catch { /* missing log */ }
+        try {
+          logContent = fs.readFileSync(sessionLog, 'utf-8');
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.error(`${Style.YELLOW}⚠️  Could not read worker log: ${msg}${Style.RESET}`);
+        }
         const isSuccess = !timedOut && hasToken(logContent, PromiseTokens.WORKER_DONE);
 
         // Update ticket frontmatter so monitor/status reflect the outcome

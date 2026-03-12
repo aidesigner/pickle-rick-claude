@@ -10,6 +10,7 @@ import {
     compareMetric,
     createMicroverseState,
     recordIteration,
+    recordStall,
     recordFailedApproach,
     isConverged,
     writeMicroverseState,
@@ -553,6 +554,60 @@ test('recordIteration with all-reverts falls back to baseline_score', () => {
 
 // --- Convergence detection ---
 
+// --- recordStall tests ---
+
+test('recordStall increments stall_counter without adding history', () => {
+    let state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 5);
+    state.baseline_score = 40;
+    assert.equal(state.convergence.stall_counter, 0);
+    assert.equal(state.convergence.history.length, 0);
+
+    state = recordStall(state);
+    assert.equal(state.convergence.stall_counter, 1);
+    assert.equal(state.convergence.history.length, 0, 'no history entry for stall');
+
+    state = recordStall(state);
+    assert.equal(state.convergence.stall_counter, 2);
+    assert.equal(state.convergence.history.length, 0);
+});
+
+test('recordStall triggers convergence when hitting stall_limit', () => {
+    let state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 2);
+    state = recordStall(state);
+    assert.equal(isConverged(state), false);
+    state = recordStall(state);
+    assert.equal(isConverged(state), true);
+});
+
+// --- createMicroverseState validation tests ---
+
+test('createMicroverseState rejects stall_limit < 1', () => {
+    assert.throws(() => createMicroverseState('/tmp/prd.md', TEST_METRIC, 0), /stall_limit must be a positive integer/);
+    assert.throws(() => createMicroverseState('/tmp/prd.md', TEST_METRIC, -1), /stall_limit must be a positive integer/);
+});
+
+test('createMicroverseState rejects non-integer stall_limit', () => {
+    assert.throws(() => createMicroverseState('/tmp/prd.md', TEST_METRIC, 1.5), /stall_limit must be a positive integer/);
+    assert.throws(() => createMicroverseState('/tmp/prd.md', TEST_METRIC, NaN), /stall_limit must be a positive integer/);
+    assert.throws(() => createMicroverseState('/tmp/prd.md', TEST_METRIC, Infinity), /stall_limit must be a positive integer/);
+});
+
+test('createMicroverseState rejects negative tolerance', () => {
+    const badMetric = { ...TEST_METRIC, tolerance: -1 };
+    assert.throws(() => createMicroverseState('/tmp/prd.md', badMetric, 3), /tolerance must be a non-negative number/);
+});
+
+test('createMicroverseState rejects NaN/Infinity tolerance', () => {
+    assert.throws(() => createMicroverseState('/tmp/prd.md', { ...TEST_METRIC, tolerance: NaN }, 3), /tolerance must be a non-negative number/);
+    assert.throws(() => createMicroverseState('/tmp/prd.md', { ...TEST_METRIC, tolerance: Infinity }, 3), /tolerance must be a non-negative number/);
+});
+
+test('createMicroverseState accepts valid parameters', () => {
+    const state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+    assert.equal(state.convergence.stall_limit, 3);
+    assert.equal(state.key_metric.tolerance, TEST_METRIC.tolerance);
+});
+
 test('convergence: 3 consecutive holds with stall_limit=3 stops loop', () => {
     let mvState = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
     mvState.baseline_score = 40;
@@ -905,7 +960,7 @@ test('LLM measurement failure treated as stall', () => {
 
         // Replicate the runner's stall handling for null metricResult
         if (!metricResult) {
-            currentMv = { ...currentMv, convergence: { ...currentMv.convergence, stall_counter: currentMv.convergence.stall_counter + 1 } };
+            currentMv = recordStall(currentMv);
         }
 
         assert.equal(currentMv.convergence.stall_counter, 1, 'stall_counter should increment on null metric');

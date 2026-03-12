@@ -100,8 +100,9 @@ function saveCache(cachePath, cache) {
         fs.writeFileSync(tmp, JSON.stringify(cache));
         fs.renameSync(tmp, cachePath);
     }
-    catch {
-        // Cache write failure is non-fatal
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`[metrics] Cache write failed (non-fatal): ${msg}\n`);
     }
 }
 export function scanSessionFiles(projectsDir, since, until, cachePath) {
@@ -303,13 +304,23 @@ export function buildReport(tokens, loc, since, until, grouping) {
         }
         projectTotals.set(slug, t);
     }
-    // Merge LOC into project totals where repo name matches a slug suffix
+    // Merge LOC into project totals — pre-build a repo→slug lookup to avoid O(n²)
+    const repoToSlug = new Map();
+    for (const slug of projectTotals.keys()) {
+        // Match repo name against the last segment of the slug (e.g. "l-loanlight-api" → "loanlight-api")
+        // Use full suffix match to avoid ambiguity (e.g. "api" matching multiple slugs)
+        for (const [repo] of loc) {
+            if (slug.endsWith(repo) || slug.endsWith('-' + repo)) {
+                repoToSlug.set(repo, slug);
+            }
+        }
+    }
     for (const [repo, dateMap] of loc) {
+        const matchedSlug = repoToSlug.get(repo);
+        if (!matchedSlug && !projectTotals.has(repo))
+            projectTotals.set(repo, emptyTotals());
+        const target = matchedSlug ? projectTotals.get(matchedSlug) : projectTotals.get(repo);
         for (const dl of dateMap.values()) {
-            const match = [...projectTotals.entries()].find(([slug]) => slug.endsWith(repo) || slug.endsWith('-' + repo));
-            if (!match && !projectTotals.has(repo))
-                projectTotals.set(repo, emptyTotals());
-            const target = match ? match[1] : projectTotals.get(repo);
             target.commits += dl.commits;
             target.added += dl.added;
             target.removed += dl.removed;
