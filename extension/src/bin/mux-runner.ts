@@ -401,18 +401,25 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
       }, 2000);
     }, iterTimeout * 1000) : null;
 
-    // Safety net: force-resolve if process doesn't exit within timeout + 30s
-    const hangGuard = iterTimeout > 0 ? setTimeout(() => {
+    // Safety net: force-resolve if process doesn't exit within timeout + 30s.
+    // When iterTimeout is 0, use an absolute ceiling (MAX_ITERATION_SECONDS)
+    // to prevent truly infinite hangs — the subprocess still runs without a
+    // soft timeout, but can't exceed the ceiling.
+    const hangGuardMs = iterTimeout > 0
+      ? (iterTimeout + 30) * 1000
+      : Defaults.MAX_ITERATION_SECONDS * 1000;
+    const hangGuard = setTimeout(() => {
       if (settled) return;
       settled = true;
       currentChildProc = null;
       if (timeoutHandle) clearTimeout(timeoutHandle);
       if (killEscalation) clearTimeout(killEscalation);
+      try { proc.kill('SIGTERM'); } catch { /* already dead */ }
       try { fs.closeSync(logFd); } catch { /* already closed */ }
       console.error(`${Style.RED}❌ Iteration ${iterationNum} hang detected — forcing failure${Style.RESET}`);
       resolve('error');
-    }, (iterTimeout + 30) * 1000) : null;
-    if (hangGuard) hangGuard.unref();
+    }, hangGuardMs);
+    hangGuard.unref();
 
     // Direct data handlers: write each chunk to both the log file (sync,
     // no buffering) and the terminal (for the tmux-runner pane).

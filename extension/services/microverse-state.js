@@ -43,12 +43,18 @@ export function createMicroverseState(prdPath, metric, stallLimit) {
 /**
  * Record a scored iteration (agent made commits and metric was measured).
  * Stall counter resets on accepted improvements, increments otherwise.
+ *
+ * The optional `classification` parameter allows the caller to pass the
+ * already-computed compareMetric result, avoiding a redundant (and
+ * potentially inconsistent) re-classification inside this function.
  */
-export function recordIteration(state, entry) {
+export function recordIteration(state, entry, classification) {
     const history = [...state.convergence.history, entry];
-    const lastAccepted = [...state.convergence.history].reverse().find(h => h.action === 'accept');
-    const previousScore = lastAccepted ? lastAccepted.score : state.baseline_score;
-    const classification = compareMetric(entry.score, previousScore, state.key_metric.tolerance, state.key_metric.direction);
+    if (!classification) {
+        const lastAccepted = [...state.convergence.history].reverse().find(h => h.action === 'accept');
+        const previousScore = lastAccepted ? lastAccepted.score : state.baseline_score;
+        classification = compareMetric(entry.score, previousScore, state.key_metric.tolerance, state.key_metric.direction);
+    }
     const stallCounter = entry.action === 'accept' && classification === 'improved'
         ? 0
         : state.convergence.stall_counter + 1;

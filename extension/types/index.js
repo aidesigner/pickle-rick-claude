@@ -3,6 +3,8 @@
 // ---------------------------------------------------------------------------
 export const Defaults = {
     WORKER_TIMEOUT_SECONDS: 1200,
+    /** Absolute ceiling for a single iteration when per-iteration timeout is disabled (4h). */
+    MAX_ITERATION_SECONDS: 14_400,
     MANAGER_MAX_TURNS: 50,
     RATE_LIMIT_POLL_MS: 10_000,
 };

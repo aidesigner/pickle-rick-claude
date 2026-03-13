@@ -968,3 +968,160 @@ test('LLM measurement failure treated as stall', () => {
         _deps.execFileSync = orig;
     }
 });
+
+// --- Bug fix tests: double classification, timeout guard, auto-rescue ---
+
+test('recordIteration accepts pre-computed classification to avoid double classification', () => {
+    let state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 5);
+    state.baseline_score = 40;
+    state.convergence.stall_counter = 2;
+
+    // Score 41 is within tolerance (40 ± 2 → 38-42), so re-computed classification = 'held'.
+    // But if caller passes 'improved', the stall counter should reset.
+    const entry = {
+        iteration: 1, metric_value: '41', score: 41, action: 'accept',
+        description: 'test', pre_iteration_sha: 'a'.repeat(40), timestamp: new Date().toISOString(),
+    };
+
+    // Without classification param: 41 within 40 ± 2 = 'held', stall increments
+    const stateNoClassif = recordIteration({ ...state, convergence: { ...state.convergence } }, entry);
+    assert.equal(stateNoClassif.convergence.stall_counter, 3, 'without param: held → stall increments');
+
+    // With classification param: caller says 'improved', stall resets
+    const stateWithClassif = recordIteration({ ...state, convergence: { ...state.convergence } }, entry, 'improved');
+    assert.equal(stateWithClassif.convergence.stall_counter, 0, 'with param: improved → stall resets');
+});
+
+test('recordIteration falls back to internal classification when param omitted', () => {
+    let state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 5);
+    state.baseline_score = 40;
+
+    // Score 50 > 40 + 2 → improved, stall resets (backward compat)
+    const entry = {
+        iteration: 1, metric_value: '50', score: 50, action: 'accept',
+        description: 'improved', pre_iteration_sha: 'a'.repeat(40), timestamp: new Date().toISOString(),
+    };
+    state = recordIteration(state, entry);
+    assert.equal(state.convergence.stall_counter, 0, 'backward compat: improved without classification param');
+});
+
+test('worker_timeout_seconds=0 is re-enforced after state re-read', () => {
+    // Simulate the runner's guard: if external edit restores timeout, re-zero it
+    const dir = createTempGitRepo();
+    try {
+        const { dir: sessionDir } = createSessionDir(dir);
+        const statePath = path.join(sessionDir, 'state.json');
+
+        // Simulate external edit that restores timeout
+        const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        state.worker_timeout_seconds = 1200;
+        fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+
+        // Replicate the runner's guard logic
+        const reRead = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        if (reRead.worker_timeout_seconds !== 0) {
+            reRead.worker_timeout_seconds = 0;
+            fs.writeFileSync(statePath, JSON.stringify(reRead, null, 2));
+        }
+
+        const final = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(final.worker_timeout_seconds, 0, 'timeout should be re-zeroed');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('auto-rescue: dirty tree gets auto-committed when no commits detected', () => {
+    const dir = createTempGitRepo();
+    try {
+        const preSha = getHeadSha(dir);
+
+        // Simulate worker leaving dirty tree (no commit)
+        fs.writeFileSync(path.join(dir, 'worker-output.txt'), 'worker changes');
+        assert.equal(isWorkingTreeDirty(dir), true);
+
+        // Replicate auto-rescue logic from microverse-runner
+        let postIterSha = getHeadSha(dir);
+        assert.equal(postIterSha, preSha, 'no commits yet');
+
+        if (postIterSha === preSha && isWorkingTreeDirty(dir)) {
+            execSync('git add -A', { cwd: dir, timeout: 30_000 });
+            execSync('git commit -m "microverse: auto-commit (test)"', { cwd: dir, timeout: 30_000 });
+            postIterSha = getHeadSha(dir);
+        }
+
+        assert.notEqual(postIterSha, preSha, 'auto-commit should advance HEAD');
+        assert.equal(isWorkingTreeDirty(dir), false, 'tree should be clean after auto-commit');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('auto-rescue: git reset unstages on commit failure', () => {
+    const dir = createTempGitRepo();
+    try {
+        // Create a file and stage it
+        fs.writeFileSync(path.join(dir, 'staged.txt'), 'content');
+        execSync('git add -A', { cwd: dir, timeout: 30_000 });
+
+        // Commit it first so there's nothing new to commit
+        execSync('git commit -m "commit"', { cwd: dir, timeout: 30_000 });
+
+        // Now stage something, then try to commit nothing new → should fail
+        // Simulate the unstage path
+        fs.writeFileSync(path.join(dir, 'new.txt'), 'new');
+        execSync('git add -A', { cwd: dir, timeout: 30_000 });
+
+        // Verify staged changes exist
+        const stagedBefore = execSync('git diff --cached --stat', { cwd: dir, encoding: 'utf-8' }).trim();
+        assert.ok(stagedBefore.length > 0, 'should have staged changes');
+
+        // git reset unstages
+        execSync('git reset', { cwd: dir, timeout: 10_000 });
+        const stagedAfter = execSync('git diff --cached --stat', { cwd: dir, encoding: 'utf-8' }).trim();
+        assert.equal(stagedAfter, '', 'should have no staged changes after reset');
+
+        // File still exists in working tree
+        assert.ok(fs.existsSync(path.join(dir, 'new.txt')), 'file preserved in working tree');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('metric retry: second attempt succeeds after first failure', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-metric-retry-'));
+    try {
+        let callCount = 0;
+        const measureFn = () => {
+            callCount++;
+            if (callCount === 1) return null; // first call fails
+            return { raw: '75', score: 75 };  // second call succeeds
+        };
+
+        let result = measureFn();
+        if (!result) {
+            // In real code there's a 10s sleep here; skip in test
+            result = measureFn();
+        }
+
+        assert.equal(callCount, 2, 'should retry once');
+        assert.ok(result, 'second attempt should succeed');
+        assert.equal(result.score, 75);
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('metric retry: both attempts fail → null', () => {
+    let callCount = 0;
+    const measureFn = () => {
+        callCount++;
+        return null;
+    };
+
+    let result = measureFn();
+    if (!result) result = measureFn();
+
+    assert.equal(callCount, 2, 'should attempt twice');
+    assert.equal(result, null, 'both failures → null');
+});

@@ -368,6 +368,12 @@ export async function main(sessionDir: string): Promise<void> {
       break;
     }
 
+    // Re-enforce disabled worker timeout (external edits could restore it)
+    if (state.worker_timeout_seconds !== 0) {
+      state.worker_timeout_seconds = 0;
+      writeStateFile(statePath, state);
+    }
+
     if (state.active !== true) {
       log('Session inactive. Exiting.');
       exitReason = 'stopped';
@@ -525,7 +531,6 @@ export async function main(sessionDir: string): Promise<void> {
     }
 
     // Measure metric (with one retry on failure)
-    let metricResult: { raw: string; score: number } | null = null;
     const measureFn = () => {
       if (currentMv.key_metric.type === 'command') {
         return measureMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir);
@@ -541,10 +546,10 @@ export async function main(sessionDir: string): Promise<void> {
       return null;
     };
 
-    metricResult = measureFn();
+    let metricResult = measureFn();
     if (!metricResult) {
       log('WARNING: Metric measurement failed — retrying once after 10s');
-      await sleep(10_000);
+      await sleep(Defaults.RATE_LIMIT_POLL_MS);
       metricResult = measureFn();
     }
 
@@ -587,7 +592,7 @@ export async function main(sessionDir: string): Promise<void> {
       currentMv = recordFailedApproach(currentMv, `Iteration ${iteration}: score dropped from ${previousScore} to ${metricResult.score}`);
     }
 
-    currentMv = stateRecordIteration(currentMv, entry);
+    currentMv = stateRecordIteration(currentMv, entry, classification);
     writeMicroverseState(sessionDir, currentMv);
 
     if (isConverged(currentMv)) {

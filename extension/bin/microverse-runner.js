@@ -271,6 +271,13 @@ export async function main(sessionDir) {
         writeMicroverseState(sessionDir, currentMv);
         log('Gap analysis complete — transitioning to iterating');
     }
+    // Disable per-iteration worker timeout for microverse. The session-level
+    // max_time_minutes is the only time gate — individual iterations can take
+    // as long as they need (slow metrics, large codebases). Setting to 0
+    // tells mux-runner's runIteration() to skip the timeout entirely.
+    state.worker_timeout_seconds = 0;
+    writeStateFile(statePath, state);
+    log('Worker timeout disabled — session time limit is the only gate');
     // --- Main Iteration Loop ---
     while (currentMv.status === 'iterating') {
         // Re-read state for external changes
@@ -282,6 +289,11 @@ export async function main(sessionDir) {
             log(`ERROR: Cannot read state.json: ${msg}. Exiting loop.`);
             exitReason = 'error';
             break;
+        }
+        // Re-enforce disabled worker timeout (external edits could restore it)
+        if (state.worker_timeout_seconds !== 0) {
+            state.worker_timeout_seconds = 0;
+            writeStateFile(statePath, state);
         }
         if (state.active !== true) {
             log('Session inactive. Exiting.');
@@ -402,29 +414,59 @@ export async function main(sessionDir) {
             break;
         }
         // Check if HEAD advanced (agent made commits)
-        const postIterSha = getHeadSha(workingDir);
+        let postIterSha = getHeadSha(workingDir);
         if (postIterSha === preIterSha) {
-            log('No commits made — stall (no rollback)');
-            currentMv = recordStall(currentMv);
-            writeMicroverseState(sessionDir, currentMv);
-            if (isConverged(currentMv)) {
-                log('Converged (stall limit reached with no new commits)');
-                exitReason = 'converged';
-                break;
+            // Auto-rescue: if the worker made changes but timed out before committing,
+            // commit on its behalf so we don't lose the work.
+            if (isWorkingTreeDirty(workingDir)) {
+                log('No commits but dirty tree detected — auto-committing worker changes');
+                try {
+                    execFileSync('git', ['add', '-A'], { cwd: workingDir, timeout: 30_000 });
+                    execFileSync('git', ['commit', '-m', `microverse: auto-commit (worker timed out before committing)`], { cwd: workingDir, timeout: 30_000 });
+                    postIterSha = getHeadSha(workingDir);
+                    log(`Auto-committed: ${postIterSha}`);
+                }
+                catch (commitErr) {
+                    const commitMsg = commitErr instanceof Error ? commitErr.message : String(commitErr);
+                    log(`Auto-commit failed: ${commitMsg} — unstaging and treating as stall`);
+                    // Unstage to prevent orphaned staged changes; preserve working tree
+                    try {
+                        execFileSync('git', ['reset'], { cwd: workingDir, timeout: 10_000 });
+                    }
+                    catch { /* best effort */ }
+                }
             }
-            await sleep(1000);
-            continue;
+            if (postIterSha === preIterSha) {
+                log('No commits made — stall (no rollback)');
+                currentMv = recordStall(currentMv);
+                writeMicroverseState(sessionDir, currentMv);
+                if (isConverged(currentMv)) {
+                    log('Converged (stall limit reached with no new commits)');
+                    exitReason = 'converged';
+                    break;
+                }
+                await sleep(1000);
+                continue;
+            }
         }
-        // Measure metric
-        let metricResult = null;
-        if (currentMv.key_metric.type === 'command') {
-            metricResult = measureMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir);
-        }
-        else if (currentMv.key_metric.type === 'llm') {
-            metricResult = measureLlmMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir, currentMv.key_metric.judge_model, currentMv.convergence.history);
+        // Measure metric (with one retry on failure)
+        const measureFn = () => {
+            if (currentMv.key_metric.type === 'command') {
+                return measureMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir);
+            }
+            else if (currentMv.key_metric.type === 'llm') {
+                return measureLlmMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir, currentMv.key_metric.judge_model, currentMv.convergence.history);
+            }
+            return null;
+        };
+        let metricResult = measureFn();
+        if (!metricResult) {
+            log('WARNING: Metric measurement failed — retrying once after 10s');
+            await sleep(Defaults.RATE_LIMIT_POLL_MS);
+            metricResult = measureFn();
         }
         if (!metricResult) {
-            log('WARNING: Could not measure metric — treating as stall');
+            log('WARNING: Metric measurement failed twice — treating as stall (commit preserved)');
             currentMv = recordStall(currentMv);
             writeMicroverseState(sessionDir, currentMv);
             if (isConverged(currentMv)) {
@@ -455,7 +497,7 @@ export async function main(sessionDir) {
             resetToSha(preIterSha, workingDir);
             currentMv = recordFailedApproach(currentMv, `Iteration ${iteration}: score dropped from ${previousScore} to ${metricResult.score}`);
         }
-        currentMv = stateRecordIteration(currentMv, entry);
+        currentMv = stateRecordIteration(currentMv, entry, classification);
         writeMicroverseState(sessionDir, currentMv);
         if (isConverged(currentMv)) {
             log(`Converged after ${iteration} iterations (stall_counter=${currentMv.convergence.stall_counter})`);
