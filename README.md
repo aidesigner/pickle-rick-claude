@@ -217,9 +217,33 @@ See [architecture](architecture.md#project-mayhem-internals) for module details,
 
 > *"I put a universe inside a box, Morty, and it powers my car battery. This is the same thing, except the universe is your codebase and the battery is a metric."*
 
-`/pickle-microverse` optimizes any metric through targeted, incremental changes. Give it a shell command (`--metric`) that outputs a numeric score, or a natural language goal (`--goal`) for LLM-as-judge scoring, plus a task description, and Rick will iterate — gap analysis first, then one focused change per iteration — measuring after each commit, auto-reverting regressions, and tracking failed approaches so he never repeats a dead end. Supports configurable optimization direction (`--direction higher|lower`) and judge model selection. When the score stops improving for N consecutive iterations (configurable stall limit), the loop converges and exits with a full report.
+`/pickle-microverse` is a convergence loop that optimizes your codebase toward a measurable goal. You define **what to measure** and **what to improve** — Rick handles the iteration. Each cycle: make one targeted change, commit, measure, keep or revert. Failed approaches are tracked so he never repeats a dead end. When the score stops improving, the loop converges and exits with a full report.
 
-**How it works:**
+The key insight: **you define the metric per task**. Every optimization target needs its own measurement — there's no universal metric. Your job is to make the goal measurable; Rick's job is to hill-climb toward it.
+
+### Two Modes: Command Metric vs LLM Judge
+
+**Command Metric (`--metric`)** — You provide a shell command that outputs a numeric score. Rick runs it after every iteration to measure progress. This is the **high-confidence mode** — use it when you can write a script that objectively measures what you care about.
+
+Best for tasks with quantifiable outcomes:
+- Test coverage percentage → `--metric "npm run coverage:score"`
+- Required fields extracted from documents → `--metric "node benchmark.js"`
+- Lint error count → `--metric "eslint . --format json | jq '.[] | .errorCount' | paste -sd+ | bc" --direction lower`
+- Bundle size → `--metric "du -b dist/bundle.js | cut -f1" --direction lower`
+- Benchmark performance → `--metric "node perf-test.js" --tolerance 5`
+
+The metric command can be anything — a test runner, a custom benchmark script, a one-liner that parses logs. The only requirement is that the **last line of stdout is a number**. You often need to create this benchmark script first (e.g., "write a script that scores how many MISMO XML fields we extract correctly"), then feed it to the microverse.
+
+**LLM Judge (`--goal`)** — Instead of a shell command, you describe what "better" looks like in natural language. An LLM evaluates the codebase after each iteration and assigns a score. This is the **subjective mode** — use it when you can't easily write a scoring script.
+
+Best for qualitative improvements:
+- `--goal "code is clean, well-documented, and follows project conventions"`
+- `--goal "error messages are user-friendly and actionable"`
+- `--goal "API responses follow REST best practices with consistent schemas"`
+
+Results with LLM judge are less predictable than command metrics. The judge model is configurable (`--judge-model`).
+
+### How It Works
 
 ```
 Gap Analysis (iteration 0)
@@ -242,13 +266,33 @@ Gap Analysis (iteration 0)
      accepted/reverted counts, failed approaches)
 ```
 
+### When to Use Microverse vs Pickle
+
+| | **Microverse** | **Pickle** |
+|---|---|---|
+| **Goal** | Optimize toward a measurable target | Build features from a PRD |
+| **Iteration unit** | One atomic change per cycle | Full ticket lifecycle (research → implement → review) |
+| **Progress signal** | Metric score (command or LLM) | Ticket completion |
+| **Best for** | Coverage, performance, extraction accuracy, code quality | New features, refactors, bug fixes |
+| **Defines "done"** | Convergence (score stops improving) | All tickets complete |
+
+Microverse works best when the goal is **easily definable and measurable**. If you can write a benchmark script or clearly articulate what "better" looks like, microverse will grind toward it. If the task is "build a new auth module," use `/pickle` instead.
+
+### Usage
+
 Defaults to tmux mode (context clearing between iterations for long optimization runs). Use `--interactive` for inline convergence. Rate limit auto-recovery works in tmux mode.
 
 ```bash
-/pickle-microverse --metric "npm test 2>&1 | tail -1" --task "increase test coverage"
-/pickle-microverse --metric "node benchmark.js" --task "reduce p99 latency" --tolerance 5 --stall-limit 10 --direction lower
-/pickle-microverse --goal "code is clean, well-documented, and follows project conventions" --task "improve code quality" --judge-model claude-sonnet-4-6
-/pickle-microverse --interactive --metric "npm run lint:score" --task "fix lint errors"  # inline mode
+# Command metric mode — objective, high-confidence
+/pickle-microverse --metric "node benchmark.js" --task "increase MISMO field extraction accuracy"
+/pickle-microverse --metric "npm run coverage:score" --task "hit 90% test coverage" --max-iterations 50
+/pickle-microverse --metric "node perf-test.js" --task "reduce p99 latency" --tolerance 5 --stall-limit 10 --direction lower
+
+# LLM judge mode — subjective, use when you can't script a metric
+/pickle-microverse --goal "code is clean, well-documented, and follows project conventions" --task "improve code quality"
+
+# Inline mode (no tmux) for quick runs
+/pickle-microverse --interactive --metric "npm run lint:score" --task "fix lint errors"
 ```
 
 See [architecture](architecture.md#microverse-internals) for the runner state machine, metric comparison logic, and `microverse.json` schema.
