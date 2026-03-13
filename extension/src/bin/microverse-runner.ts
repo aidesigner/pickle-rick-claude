@@ -503,7 +503,9 @@ export async function main(sessionDir: string): Promise<void> {
           log(`Auto-committed: ${postIterSha}`);
         } catch (commitErr) {
           const commitMsg = commitErr instanceof Error ? commitErr.message : String(commitErr);
-          log(`Auto-commit failed: ${commitMsg} — treating as stall`);
+          log(`Auto-commit failed: ${commitMsg} — unstaging and treating as stall`);
+          // Unstage to prevent orphaned staged changes; preserve working tree
+          try { execFileSync('git', ['reset'], { cwd: workingDir, timeout: 10_000 }); } catch { /* best effort */ }
         }
       }
 

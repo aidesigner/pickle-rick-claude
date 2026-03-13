@@ -98,14 +98,14 @@ chmod +x "$EXTENSION_ROOT/extension/scripts/tmux-monitor.sh"
 if [ -d "$SCRIPT_DIR/templates" ]; then
   rsync -a "$SCRIPT_DIR/templates/" "$EXTENSION_ROOT/templates/"
 fi
-# Clean up legacy: remove microverse.md from commands dir if it was deployed there
-rm -f "$COMMANDS_DIR/microverse.md"
-# Clean up legacy: remove pickle-microverse-tmux.md (merged into pickle-microverse.md)
-rm -f "$COMMANDS_DIR/pickle-microverse-tmux.md"
 
 # --- COMMANDS ---
 # rsync all commands from .claude/commands/; no --delete to preserve user commands.
 rsync -a "$SCRIPT_DIR/.claude/commands/" "$COMMANDS_DIR/"
+
+# Clean up legacy commands AFTER rsync (so they're removed even if source still had them)
+rm -f "$COMMANDS_DIR/microverse.md"
+rm -f "$COMMANDS_DIR/pickle-microverse-tmux.md"
 
 # --- STOP HOOK (idempotent jq merge, $HOME stays LITERAL in JSON) ---
 if jq -e '.hooks.Stop // [] | map(.hooks // [] | map(.command)) | flatten | any(. == "node $HOME/.claude/pickle-rick/extension/hooks/dispatch.js stop-hook")' \
