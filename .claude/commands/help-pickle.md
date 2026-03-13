@@ -23,4 +23,4 @@ Summarize the available commands for the user:
 
 **Internal:** `/send-to-morty` — auto-sent to worker subprocesses, not for direct use
 
-**Flags for /pickle:** `--resume [PATH]` | `--max-iterations <N>` (default:100) | `--max-time <M>` (default:720min) | `--worker-timeout <S>` (default:1200) | `--completion-promise "TEXT"`
+**Flags for /pickle:** `--resume [PATH]` | `--max-iterations <N>` (default:500) | `--max-time <M>` (default:720min) | `--worker-timeout <S>` (default:1200) | `--completion-promise "TEXT"`

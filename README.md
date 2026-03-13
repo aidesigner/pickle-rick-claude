@@ -453,7 +453,7 @@ Sit back. Rick handles the rest. 🥒
 ### Flags
 
 ```
---max-iterations <N>       Stop after N iterations (default: 100; 0 = unlimited)
+--max-iterations <N>       Stop after N iterations (default: 500; 0 = unlimited)
 --max-time <M>             Stop after M minutes (default: 720 / 12 hours; 0 = unlimited)
 --worker-timeout <S>       Timeout for individual workers in seconds (default: 1200)
 --completion-promise "TXT" Only stop when the agent outputs <promise>TXT</promise>
@@ -518,7 +518,7 @@ All defaults are configurable via `~/.claude/pickle-rick/pickle_settings.json`:
 
 | Setting | Default | Description |
 |---|---|---|
-| `default_max_iterations` | 100 | Max loop iterations before auto-stop |
+| `default_max_iterations` | 500 | Max loop iterations before auto-stop |
 | `default_max_time_minutes` | 720 | Session wall-clock limit in minutes (12 hours) |
 | `default_worker_timeout_seconds` | 1200 | Per-worker subprocess timeout |
 | `default_manager_max_turns` | 50 | Max Claude turns per iteration (interactive/jar) |

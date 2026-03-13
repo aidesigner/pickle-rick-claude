@@ -19,7 +19,7 @@ Extract from `$ARGUMENTS`:
 | `--task "<text>"` | — | Yes | What to optimize (becomes the PRD objective) |
 | `--tolerance <N>` | `0` | No | Score delta within which changes count as "held" |
 | `--stall-limit <N>` | `5` | No | Non-improving iterations before convergence |
-| `--max-iterations <N>` | `100` | No | Hard cap on total iterations |
+| `--max-iterations <N>` | `500` | No | Hard cap on total iterations |
 | `--resume [path]` | — | No | Resume existing session (skips --metric/--task/--goal) |
 | `--interactive` | — | No | Run inline instead of tmux (default is tmux mode) |
 

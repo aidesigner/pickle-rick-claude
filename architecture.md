@@ -493,7 +493,7 @@ Every Pickle Rick session creates a directory under `~/.claude/pickle-rick/sessi
   "working_dir": "/path/to/project",
   "step": "implement",
   "iteration": 7,
-  "max_iterations": 100,
+  "max_iterations": 500,
   "max_time_minutes": 720,
   "worker_timeout_seconds": 1200,
   "start_time_epoch": 1772287760,
