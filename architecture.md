@@ -315,6 +315,8 @@ The `microverse-runner.ts` reuses core infrastructure from `mux-runner.ts`:
 
 Each iteration's worker gets a fresh context with only the handoff summary — no conversational drift. The worker template (`microverse.md`) is a focused optimizer: read context → plan one change → implement → commit → exit. The runner handles all measurement, comparison, and rollback externally.
 
+**Default mode is tmux** — `/pickle-microverse` launches in tmux with context clearing between iterations. Pass `--interactive` to run the convergence loop inline (useful for short runs or environments without tmux). `/pickle-microverse-tmux` remains as a legacy alias.
+
 ### Final Report
 
 On exit, the runner writes `microverse_report_<date>.md` to the session's `memory/` directory:

@@ -1,4 +1,4 @@
-Start the Pickle Rick microverse convergence loop — optimize a metric through targeted, incremental changes.
+Start the Pickle Rick microverse convergence loop — optimize a metric through targeted, incremental changes. Defaults to tmux mode; use --interactive for inline.
 
 # /pickle-microverse
 
@@ -21,7 +21,7 @@ Extract from `$ARGUMENTS`:
 | `--stall-limit <N>` | `5` | No | Non-improving iterations before convergence |
 | `--max-iterations <N>` | `100` | No | Hard cap on total iterations |
 | `--resume [path]` | — | No | Resume existing session (skips --metric/--task/--goal) |
-| `--tmux` | — | No | Run in tmux with context clearing between iterations |
+| `--interactive` | — | No | Run inline instead of tmux (default is tmux mode) |
 
 If `--resume`: `--metric`/`--goal` and `--task` are NOT required.
 Otherwise:
@@ -33,13 +33,15 @@ Otherwise:
 
 ### New Session
 ```bash
-node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --command-template microverse.md [--tmux] [--max-iterations <N>] --task "<TASK_TEXT>"
+node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --command-template microverse.md --tmux [--max-iterations <N>] --task "<TASK_TEXT>"
 ```
+If `--interactive` flag was passed, omit `--tmux` from the setup.js call.
 
 ### Resume
 ```bash
-node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --command-template microverse.md --resume [<PATH>] [--tmux] [--max-iterations <N>]
+node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --command-template microverse.md --resume [<PATH>] --tmux [--max-iterations <N>]
 ```
+If `--interactive` flag was passed, omit `--tmux` from the setup.js call.
 
 Extract `SESSION_ROOT=<path>` from output. If `--resume`, skip Steps 3 and 4.
 
@@ -119,7 +121,7 @@ Continuously improve the metric score through targeted, incremental changes unti
 
 ## Step 5: Launch
 
-### Option A: tmux mode (`--tmux` flag present)
+### Option A: tmux mode (default — no `--interactive` flag)
 
 1. Check tmux: `tmux -V`. If missing → print "Install tmux: `brew install tmux`" and STOP.
 
@@ -148,7 +150,7 @@ bash "$HOME/.claude/pickle-rick/extension/scripts/tmux-monitor.sh" <name> ${SESS
 
 Output: `<promise>TASK_COMPLETED</promise>`
 
-### Option B: Interactive mode (no `--tmux`)
+### Option B: Interactive mode (`--interactive` flag present)
 
 You ARE the convergence loop. Run it inline.
 

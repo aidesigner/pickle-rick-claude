@@ -242,13 +242,13 @@ Gap Analysis (iteration 0)
      accepted/reverted counts, failed approaches)
 ```
 
-Supports both interactive mode (inline convergence) and tmux mode (context clearing between iterations for long optimization runs). Rate limit auto-recovery works in tmux mode.
+Defaults to tmux mode (context clearing between iterations for long optimization runs). Use `--interactive` for inline convergence. Rate limit auto-recovery works in tmux mode.
 
 ```bash
 /pickle-microverse --metric "npm test 2>&1 | tail -1" --task "increase test coverage"
 /pickle-microverse --metric "node benchmark.js" --task "reduce p99 latency" --tolerance 5 --stall-limit 10 --direction lower
 /pickle-microverse --goal "code is clean, well-documented, and follows project conventions" --task "improve code quality" --judge-model claude-sonnet-4-6
-/pickle-microverse-tmux --metric "npm run coverage:score" --task "hit 90% coverage" --max-iterations 50
+/pickle-microverse --interactive --metric "npm run lint:score" --task "fix lint errors"  # inline mode
 ```
 
 See [architecture](architecture.md#microverse-internals) for the runner state machine, metric comparison logic, and `microverse.json` schema.
@@ -390,8 +390,8 @@ Sit back. Rick handles the rest. 🥒
 | `/pickle-refine-prd --meeseeks [path]` | 🔬🖥️👋 Full pipeline: refine + decompose + execute all tickets + auto-transition to Meeseeks review (implies `--run`) |
 | `/pickle-dot [path \| inline]` | 🔀 Convert a PRD into a [strongdm/attractor](https://github.com/strongdm/attractor)-compatible DOT digraph — generates a validated `.dot` file with node shapes, edge conditions, parallel fan-out/in, and model stylesheets |
 | `/attract [file.dot]` | 🚀 Submit a `.dot` pipeline to the [attractor](https://github.com/strongdm/attractor) server for execution — validates locally, submits via HTTP, monitors status, handles human gates. Auto-detects most recent `.dot` file if none specified. |
-| `/pickle-microverse` | 🔬 Microverse convergence loop — optimize a numeric metric through targeted, incremental changes. Measures after each iteration, reverts regressions, stops when converged. Interactive or `--tmux` mode. |
-| `/pickle-microverse-tmux` | 🔬🖥️ Microverse convergence loop in tmux with context clearing between iterations. Same flags as `/pickle-microverse`. Requires `tmux`. |
+| `/pickle-microverse` | 🔬🖥️ Microverse convergence loop — optimize a numeric metric through targeted, incremental changes. Defaults to tmux mode with context clearing. Use `--interactive` for inline mode. Requires `tmux` (unless `--interactive`). |
+| `/pickle-microverse-tmux` | 🔬🖥️ *(legacy alias)* Same as `/pickle-microverse` — tmux is now the default. |
 | `/portal-gun <source>` | 🔫 [Gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) — extract patterns from another codebase and generate a transplant PRD with behavioral validation tests and automatic refinement |
 | `/portal-gun --run <source>` | 🔫🖥️ Extract pattern + generate PRD + refine + auto-launch tmux session |
 | `/project-mayhem` | 💥 Chaos engineering — mutation testing, dependency downgrades, config corruption. Non-destructive, language-agnostic, comprehensive report. |
@@ -426,6 +426,7 @@ Sit back. Rick handles the rest. 🥒
 --max-turns <N>            (/portal-gun only) Max turns per refinement worker (default: 100)
 --gitnexus                 (/council-of-ricks only) Enable GitNexus graph queries for layer violations and impact analysis
 --repo <PATH>              (/council-of-ricks only) Target repo path (default: cwd)
+--interactive              (/pickle-microverse) Run inline instead of tmux (default is tmux mode)
 --metric "<CMD>"           (/pickle-microverse) Shell command whose last stdout line is a numeric score (XOR with --goal)
 --goal "<TEXT>"             (/pickle-microverse) Natural language goal for LLM judge scoring (XOR with --metric)
 --direction <higher|lower> (/pickle-microverse) Optimization direction (default: higher)
