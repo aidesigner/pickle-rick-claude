@@ -299,9 +299,14 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
   if (templateName.includes('/') || templateName.includes('\\') || templateName.includes('..')) {
     throw new Error(`Invalid command_template in state.json: "${templateName}" — must be a plain filename`);
   }
-  const picklePromptPath = path.join(os.homedir(), '.claude/commands', templateName);
+  // Check internal templates first (hidden from slash command list), then user-facing commands
+  const templatesDir = path.join(os.homedir(), '.claude/pickle-rick/templates');
+  const commandsDir = path.join(os.homedir(), '.claude/commands');
+  const picklePromptPath = fs.existsSync(path.join(templatesDir, templateName))
+    ? path.join(templatesDir, templateName)
+    : path.join(commandsDir, templateName);
   if (!fs.existsSync(picklePromptPath)) {
-    throw new Error(`${templateName} not found at ${picklePromptPath}. Run install.sh first.`);
+    throw new Error(`${templateName} not found in ${templatesDir} or ${commandsDir}. Run install.sh first.`);
   }
   let managerPrompt = fs.readFileSync(picklePromptPath, 'utf-8')
     .replace(/\$ARGUMENTS/g, `--resume ${sessionDir}`);

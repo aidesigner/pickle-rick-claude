@@ -43,7 +43,7 @@ cp "$SETTINGS_FILE" "$HOME/.claude/backups/settings.json.pickle-backup.$(date +%
 echo "✅ Backed up settings.json to ~/.claude/backups/"
 
 # --- DIRECTORIES ---
-mkdir -p "$EXTENSION_ROOT" "$COMMANDS_DIR" "$EXTENSION_ROOT/activity"
+mkdir -p "$EXTENSION_ROOT" "$COMMANDS_DIR" "$EXTENSION_ROOT/activity" "$EXTENSION_ROOT/templates"
 chmod 700 "$EXTENSION_ROOT/activity"
 
 # --- EXTENSION SCRIPTS ---
@@ -93,6 +93,15 @@ chmod +x "$EXTENSION_ROOT/extension/bin/standup.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/metrics.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/circuit-reset.js"
 chmod +x "$EXTENSION_ROOT/extension/scripts/tmux-monitor.sh"
+
+# --- INTERNAL TEMPLATES (hidden from slash command list) ---
+if [ -d "$SCRIPT_DIR/templates" ]; then
+  rsync -a "$SCRIPT_DIR/templates/" "$EXTENSION_ROOT/templates/"
+fi
+# Clean up legacy: remove microverse.md from commands dir if it was deployed there
+rm -f "$COMMANDS_DIR/microverse.md"
+# Clean up legacy: remove pickle-microverse-tmux.md (merged into pickle-microverse.md)
+rm -f "$COMMANDS_DIR/pickle-microverse-tmux.md"
 
 # --- COMMANDS ---
 # rsync all commands from .claude/commands/; no --delete to preserve user commands.
