@@ -348,6 +348,18 @@ export async function main(sessionDir: string): Promise<void> {
     log('Gap analysis complete — transitioning to iterating');
   }
 
+  // Auto-scale worker timeout: if the metric takes a long time (e.g. 600s),
+  // ensure the worker has enough time for edits + metric run + commit.
+  // Minimum: 2 * metric_timeout + 300s (5 min buffer for edits/commit).
+  const metricTimeout = currentMv.key_metric.timeout_seconds || 60;
+  const minWorkerTimeout = (metricTimeout * 2) + 300;
+  const currentWorkerTimeout = Number(state.worker_timeout_seconds) || Defaults.WORKER_TIMEOUT_SECONDS;
+  if (currentWorkerTimeout < minWorkerTimeout) {
+    log(`Auto-scaling worker_timeout: ${currentWorkerTimeout}s → ${minWorkerTimeout}s (metric timeout is ${metricTimeout}s)`);
+    state.worker_timeout_seconds = minWorkerTimeout;
+    writeStateFile(statePath, state);
+  }
+
   // --- Main Iteration Loop ---
   while (currentMv.status === 'iterating') {
     // Re-read state for external changes
@@ -482,37 +494,64 @@ export async function main(sessionDir: string): Promise<void> {
     }
 
     // Check if HEAD advanced (agent made commits)
-    const postIterSha = getHeadSha(workingDir);
+    let postIterSha = getHeadSha(workingDir);
     if (postIterSha === preIterSha) {
-      log('No commits made — stall (no rollback)');
-      currentMv = recordStall(currentMv);
-      writeMicroverseState(sessionDir, currentMv);
-
-      if (isConverged(currentMv)) {
-        log('Converged (stall limit reached with no new commits)');
-        exitReason = 'converged';
-        break;
+      // Auto-rescue: if the worker made changes but timed out before committing,
+      // commit on its behalf so we don't lose the work.
+      if (isWorkingTreeDirty(workingDir)) {
+        log('No commits but dirty tree detected — auto-committing worker changes');
+        try {
+          execFileSync('git', ['add', '-A'], { cwd: workingDir, timeout: 30_000 });
+          execFileSync('git', ['commit', '-m', `microverse: auto-commit (worker timed out before committing)`], { cwd: workingDir, timeout: 30_000 });
+          postIterSha = getHeadSha(workingDir);
+          log(`Auto-committed: ${postIterSha}`);
+        } catch (commitErr) {
+          const commitMsg = commitErr instanceof Error ? commitErr.message : String(commitErr);
+          log(`Auto-commit failed: ${commitMsg} — treating as stall`);
+        }
       }
-      await sleep(1000);
-      continue;
+
+      if (postIterSha === preIterSha) {
+        log('No commits made — stall (no rollback)');
+        currentMv = recordStall(currentMv);
+        writeMicroverseState(sessionDir, currentMv);
+
+        if (isConverged(currentMv)) {
+          log('Converged (stall limit reached with no new commits)');
+          exitReason = 'converged';
+          break;
+        }
+        await sleep(1000);
+        continue;
+      }
     }
 
-    // Measure metric
+    // Measure metric (with one retry on failure)
     let metricResult: { raw: string; score: number } | null = null;
-    if (currentMv.key_metric.type === 'command') {
-      metricResult = measureMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir);
-    } else if (currentMv.key_metric.type === 'llm') {
-      metricResult = measureLlmMetric(
-        currentMv.key_metric.validation,
-        currentMv.key_metric.timeout_seconds,
-        workingDir,
-        currentMv.key_metric.judge_model,
-        currentMv.convergence.history,
-      );
+    const measureFn = () => {
+      if (currentMv.key_metric.type === 'command') {
+        return measureMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir);
+      } else if (currentMv.key_metric.type === 'llm') {
+        return measureLlmMetric(
+          currentMv.key_metric.validation,
+          currentMv.key_metric.timeout_seconds,
+          workingDir,
+          currentMv.key_metric.judge_model,
+          currentMv.convergence.history,
+        );
+      }
+      return null;
+    };
+
+    metricResult = measureFn();
+    if (!metricResult) {
+      log('WARNING: Metric measurement failed — retrying once after 10s');
+      await sleep(10_000);
+      metricResult = measureFn();
     }
 
     if (!metricResult) {
-      log('WARNING: Could not measure metric — treating as stall');
+      log('WARNING: Metric measurement failed twice — treating as stall (commit preserved)');
       currentMv = recordStall(currentMv);
       writeMicroverseState(sessionDir, currentMv);
 

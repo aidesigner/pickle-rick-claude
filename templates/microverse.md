@@ -36,9 +36,7 @@ Check the handoff for metric history:
 This is the first iteration. Your job is to understand the codebase and the metric.
 
 1. Read the PRD (path from handoff)
-2. Check the **Type** field from the handoff:
-   - If Type is `command`: Run the validation command shown in `Validation:` to see current output
-   - If Type is `llm`: The validation field is a goal description — read it but do NOT execute as a shell command. The runner's judge will score your work after commit.
+2. Read the **Validation** field from the handoff to understand what the metric measures. **Do NOT run the metric command yourself** — the runner measures baseline after this iteration. For slow metrics (minutes per run), running it here wastes your time budget.
 3. Analyze the codebase — use **Glob** and **Grep** (not bash grep) to understand:
    - What the metric measures
    - Where the relevant code lives
@@ -59,9 +57,7 @@ You are in an active convergence loop. The runner measures the metric after each
 2. Read the **Failed Approaches** — these were tried and made things worse. Do NOT repeat them.
 3. Read the PRD for requirements context
 4. If a gap analysis exists, read it for structural understanding
-5. Check the **Type** field from the handoff:
-   - If Type is `command`: Run the validation command to confirm current score matches expectations
-   - If Type is `llm`: Review the validation goal description to understand what the judge will evaluate. Do NOT execute it as a shell command.
+5. Review the **Validation** field to understand what the metric measures. **Do NOT run the metric command** — the runner handles all measurement. Use the handoff's history scores as your reference.
 
 #### 4b: Plan One Change
 
@@ -76,11 +72,9 @@ Rules:
 #### 4c: Implement
 
 1. Make the targeted change
-2. Verify improvement locally before committing:
-   - If Type is `command`: Run the validation command to check the metric
-   - If Type is `llm`: Review your changes against the validation goal description. Do NOT execute it as a shell command — the runner's judge will score after commit.
-3. If the change doesn't improve the metric, **undo it** and try a different approach
-4. If you find a better approach, implement that instead
+2. **Do NOT run the metric command yourself** — the runner measures the metric after you commit. Running it in the worker wastes time (especially for slow metrics) and risks timeout before you can commit.
+3. Instead, verify your change makes sense by reviewing the code logic, running fast sanity checks (type check, quick test), or reading the output of a smaller subset.
+4. If you realize the approach is wrong before committing, undo it and try a different approach.
 
 #### 4d: Commit
 
