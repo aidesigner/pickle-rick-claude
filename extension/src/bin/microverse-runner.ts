@@ -348,17 +348,13 @@ export async function main(sessionDir: string): Promise<void> {
     log('Gap analysis complete — transitioning to iterating');
   }
 
-  // Auto-scale worker timeout: if the metric takes a long time (e.g. 600s),
-  // ensure the worker has enough time for edits + metric run + commit.
-  // Minimum: 2 * metric_timeout + 300s (5 min buffer for edits/commit).
-  const metricTimeout = currentMv.key_metric.timeout_seconds || 60;
-  const minWorkerTimeout = (metricTimeout * 2) + 300;
-  const currentWorkerTimeout = Number(state.worker_timeout_seconds) || Defaults.WORKER_TIMEOUT_SECONDS;
-  if (currentWorkerTimeout < minWorkerTimeout) {
-    log(`Auto-scaling worker_timeout: ${currentWorkerTimeout}s → ${minWorkerTimeout}s (metric timeout is ${metricTimeout}s)`);
-    state.worker_timeout_seconds = minWorkerTimeout;
-    writeStateFile(statePath, state);
-  }
+  // Disable per-iteration worker timeout for microverse. The session-level
+  // max_time_minutes is the only time gate — individual iterations can take
+  // as long as they need (slow metrics, large codebases). Setting to 0
+  // tells mux-runner's runIteration() to skip the timeout entirely.
+  state.worker_timeout_seconds = 0;
+  writeStateFile(statePath, state);
+  log('Worker timeout disabled — session time limit is the only gate');
 
   // --- Main Iteration Loop ---
   while (currentMv.status === 'iterating') {

@@ -368,10 +368,14 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
   // Per-iteration timeout: mirrors spawn-morty.ts + jar-runner.ts.
   // max_time_minutes is checked between iterations; if claude hangs mid-iteration
   // (e.g. stuck on a tool call), the outer loop never regains control without this.
+  // A value of 0 means no per-iteration timeout (microverse uses this — relies
+  // on session-level max_time_minutes instead).
   const rawIterTimeout = Number(state.worker_timeout_seconds);
-  const iterTimeout = Number.isFinite(rawIterTimeout) && rawIterTimeout > 0
-    ? rawIterTimeout
-    : Defaults.WORKER_TIMEOUT_SECONDS;
+  const iterTimeout = rawIterTimeout === 0
+    ? 0
+    : (Number.isFinite(rawIterTimeout) && rawIterTimeout > 0
+      ? rawIterTimeout
+      : Defaults.WORKER_TIMEOUT_SECONDS);
 
   return new Promise((resolve) => {
     let settled = false;
@@ -385,27 +389,30 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
 
     // SIGTERM first, escalate to SIGKILL after 2s if still alive
     let killEscalation: ReturnType<typeof setTimeout> | null = null;
-    const timeoutHandle = setTimeout(() => {
+    // When iterTimeout is 0, skip both the timeout and hang guard —
+    // the iteration runs until the subprocess exits naturally.
+    // Session-level max_time_minutes is the only time gate.
+    const timeoutHandle = iterTimeout > 0 ? setTimeout(() => {
       if (settled) return;
       console.error(`\n${Style.YELLOW}⚠️  Iteration ${iterationNum} timed out after ${iterTimeout}s — killing${Style.RESET}`);
       try { proc.kill('SIGTERM'); } catch { /* already dead */ }
       killEscalation = setTimeout(() => {
         try { proc.kill('SIGKILL'); } catch { /* already dead */ }
       }, 2000);
-    }, iterTimeout * 1000);
+    }, iterTimeout * 1000) : null;
 
     // Safety net: force-resolve if process doesn't exit within timeout + 30s
-    const hangGuard = setTimeout(() => {
+    const hangGuard = iterTimeout > 0 ? setTimeout(() => {
       if (settled) return;
       settled = true;
       currentChildProc = null;
-      clearTimeout(timeoutHandle);
+      if (timeoutHandle) clearTimeout(timeoutHandle);
       if (killEscalation) clearTimeout(killEscalation);
       try { fs.closeSync(logFd); } catch { /* already closed */ }
       console.error(`${Style.RED}❌ Iteration ${iterationNum} hang detected — forcing failure${Style.RESET}`);
       resolve('error');
-    }, (iterTimeout + 30) * 1000);
-    hangGuard.unref();
+    }, (iterTimeout + 30) * 1000) : null;
+    if (hangGuard) hangGuard.unref();
 
     // Direct data handlers: write each chunk to both the log file (sync,
     // no buffering) and the terminal (for the tmux-runner pane).
@@ -422,9 +429,9 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
       if (settled) return;
       settled = true;
       currentChildProc = null;
-      clearTimeout(timeoutHandle);
+      if (timeoutHandle) clearTimeout(timeoutHandle);
       if (killEscalation) clearTimeout(killEscalation);
-      clearTimeout(hangGuard);
+      if (hangGuard) clearTimeout(hangGuard);
       try { fs.closeSync(logFd); } catch { /* already closed */ }
       const exitCodeFile = logFile.replace('.log', '.exitcode');
       try { fs.writeFileSync(exitCodeFile, String(code ?? -1)); } catch { /* best effort */ }
@@ -437,9 +444,9 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
       if (settled) return;
       settled = true;
       currentChildProc = null;
-      clearTimeout(timeoutHandle);
+      if (timeoutHandle) clearTimeout(timeoutHandle);
       if (killEscalation) clearTimeout(killEscalation);
-      clearTimeout(hangGuard);
+      if (hangGuard) clearTimeout(hangGuard);
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`${Style.RED}Failed to spawn claude: ${msg}${Style.RESET}`);
       try { fs.closeSync(logFd); } catch { /* already closed */ }
