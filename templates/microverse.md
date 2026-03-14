@@ -45,7 +45,7 @@ This is the first iteration. Your job is to understand the codebase and the metr
 5. Make initial improvements if obvious quick wins exist
 6. Commit with a descriptive message: `git add -A && git commit -m "microverse: <what you did>"`
 
-Output `<promise>I AM DONE</promise>` and STOP.
+Output `<promise>TASK_COMPLETED</promise>` and STOP.
 
 ### Step 4: Optimization Phase
 
@@ -88,7 +88,7 @@ The commit message should help future iterations understand what was tried.
 
 #### 4e: Exit
 
-Output `<promise>I AM DONE</promise>` and STOP.
+Output `<promise>TASK_COMPLETED</promise>` and STOP.
 
 The microverse-runner will:
 1. Measure the metric via the validation command
@@ -105,4 +105,4 @@ The microverse-runner will:
 4. **Always commit** — uncommitted changes are invisible to the runner and count as a stall
 5. **Use built-in tools** — Glob for file search, Grep for content search, Read for files. Not bash equivalents.
 6. **Do not modify session state** — no touching state.json, microverse.json, or handoff.txt
-7. **Output the promise** — `<promise>I AM DONE</promise>` is your only completion signal
+7. **Output the promise** — `<promise>TASK_COMPLETED</promise>` is your only completion signal
