@@ -325,7 +325,7 @@ Turn a PRD into a running pipeline in two commands using `/pickle-dot` and `/att
   Execution results
 ```
 
-`/pickle-dot` converts your PRD into a self-correcting DOT digraph — not a linear task list, but a convergence basin with test-fix loops, conditional routing, parallel fan-out, and human gates. `/attract` then submits that `.dot` file to a running [attractor](https://github.com/strongdm/attractor) server for execution.
+`/pickle-dot` converts your PRD into a self-correcting DOT digraph — not a linear task list, but a convergence basin with 12 mandatory patterns: test-fix loops, goal gates, conditional routing, parallel fan-out/in, human gates, max visits, per-phase review→simplify→re-verify cycles (Opus reviews, Sonnet simplifies), security scanning gates, coverage qualification, scope creep detection, drift detection (prevents oscillation in simplify cycles), and multi-pass complexity escalation (competing implementations for high-complexity phases). Automatically resolves Docker mount paths for the attractor container. `/attract` then submits that `.dot` file to a running [attractor](https://github.com/strongdm/attractor) server for execution.
 
 ```bash
 /pickle-dot my-prd.md                # Generate pipeline.dot from PRD
@@ -432,7 +432,7 @@ Sit back. Rick handles the rest. 🥒
 | `/pickle-refine-prd [path]` | 🔬 Verification readiness check → refine with 3 parallel analysts → decompose into ordered tickets; `/pickle --resume` to execute |
 | `/pickle-refine-prd --run [path]` | 🔬🖥️ Refine + decompose + auto-launch unlimited tmux session (no iteration or time cap) |
 | `/pickle-refine-prd --meeseeks [path]` | 🔬🖥️👋 Full pipeline: refine + decompose + execute all tickets + auto-transition to Meeseeks review (implies `--run`) |
-| `/pickle-dot [path \| inline]` | 🔀 Convert a PRD into a [strongdm/attractor](https://github.com/strongdm/attractor)-compatible DOT digraph — generates a validated `.dot` file with node shapes, edge conditions, parallel fan-out/in, and model stylesheets |
+| `/pickle-dot [path \| inline]` | 🔀 Convert a PRD into a [strongdm/attractor](https://github.com/strongdm/attractor)-compatible DOT digraph — 12 mandatory convergence patterns: test-fix loops, goal gates, conditional routing, parallel fan-out/in, human gates, max visits, per-phase review-simplify cycles, security scanning gates, coverage qualification, scope creep detection, drift detection, and multi-pass complexity escalation. Auto-resolves Docker mount paths. |
 | `/attract [file.dot]` | 🚀 Submit a `.dot` pipeline to the [attractor](https://github.com/strongdm/attractor) server for execution — validates locally, submits via HTTP, monitors status, handles human gates. Auto-detects most recent `.dot` file if none specified. |
 | `/pickle-microverse` | 🔬🖥️ Microverse convergence loop — optimize a numeric metric through targeted, incremental changes. Defaults to tmux mode with context clearing. Use `--interactive` for inline mode. Requires `tmux` (unless `--interactive`). |
 | `/portal-gun <source>` | 🔫 [Gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) — extract patterns from another codebase and generate a transplant PRD with behavioral validation tests and automatic refinement |
