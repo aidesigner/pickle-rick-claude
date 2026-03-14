@@ -4,7 +4,8 @@ node_modules/
 .DS_Store
 .gitnexus
 # User-specific Claude Code files (memories, conversations)
+.claude/pickle-rick/
 .claude/projects/
 .claude/todos/
 # .claude/commands/ and .claude/skills/ are tracked — they're the product
-scripts/
+/scripts/

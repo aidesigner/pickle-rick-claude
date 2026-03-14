@@ -19,6 +19,9 @@ fi
 #   ├──────────────┼──────────────┤
 #   │ 2: workers   │ 3: raw-morty │  40%
 #   └──────────────┴──────────────┘
+# Enable mouse: scroll, pane select, resize
+tmux set-option -t "$NAME" mouse on
+
 tmux new-window -t "$NAME" -n monitor
 tmux split-window -v -t "$NAME:monitor" -l 40%
 tmux split-window -h -t "$NAME:monitor.0"
