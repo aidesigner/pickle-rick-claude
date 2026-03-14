@@ -19,7 +19,7 @@ Attractor = **convergence basin**, not task list. Failures route back toward the
 
 ## Step 2: Parse & Validate
 
-Extract: slug (lowercase+underscores), goal, tasks (ID/type/prompt/critical/deps), gates (hexagon=human, diamond=conditional), parallelism (component↔tripleoctagon), acceptance criteria → `acceptance_criteria` attr + `goal_gate=true`, failure modes → conditional edges.
+Extract: slug (lowercase+underscores), goal, tasks (ID/type/prompt/critical/deps), gates (diamond=conditional), parallelism (component↔tripleoctagon), acceptance criteria → `acceptance_criteria` attr + `goal_gate=true`, failure modes → conditional edges.
 
 **Validate**: Must have title + ≥1 requirement section. Missing acceptance criteria → WARN (no self-correction guarantees). Missing title/sections → STOP and ask.
 
@@ -27,11 +27,23 @@ Extract: slug (lowercase+underscores), goal, tasks (ID/type/prompt/critical/deps
 
 **Structure**: 1 `Mdiamond` start, 1 `Msquare` exit. All reachable. No orphans. `->` only.
 
-**Shapes**: Mdiamond=start, Msquare=exit, box=codergen, diamond=conditional, hexagon=human, component=fan-out, tripleoctagon=fan-in, parallelogram=tool, house=manager_loop
+**Shapes**: Mdiamond=start, Msquare=exit, box=codergen, diamond=conditional, component=fan-out, tripleoctagon=fan-in, parallelogram=tool, house=manager_loop. (hexagon=human exists in attractor but is NOT IMPLEMENTED for claude-code backend — do not emit)
 
 **Permission modes** (claude-code backend, codergen nodes): `plan` (default), `bypassPermissions`, `acceptEdits`, `auto`, `default`, `dontAsk`. Do NOT use `full` — it is not a valid CLI value.
 
 ### Mandatory Patterns
+
+**0. Dependency Setup Node** — first node after `start`, before any implementation or verification. The attractor runs in Docker where `node_modules` are not present. Emit a `shape=parallelogram` tool node that installs dependencies in the `working_dir`. This avoids LLM overhead — it's a raw command, not codergen:
+```
+setup_deps [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm install 2>&1", timeout=120s]
+start -> setup_deps -> first_impl
+```
+Detect package manager from the PRD or repo context: `npm install`, `pnpm install`, `yarn install`, `pip install -r requirements.txt`, etc. If multiple subdirectories need deps, chain them: `cd dir1 && npm install && cd ../dir2 && npm install`.
+
+**0b. max_parallel=1 for claude-code backend** — all `shape=component` (fan-out) nodes MUST use `max_parallel=1`. Parallel `claude -p` processes OOM the Docker container (7GB memory limit). Sequential execution is safer — one claude process at a time. This applies to ALL fan-out nodes in the graph:
+```
+split [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
+```
 
 **1. Test-Fix Loops** — every impl has verification routing back on failure:
 ```
@@ -56,16 +68,17 @@ check -> b [condition="context.status!=ready"]
 
 **4. Parallel Fan-Out/Fan-In**:
 ```
-split [shape=component, max_parallel=4, join_policy="wait_all", error_policy="continue"]
+split [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
 merge [shape=tripleoctagon, prompt="Select best"]  // or eval_criteria="completeness,faithfulness", eval_threshold=0.7
 ```
 Fan-in selection: (1) structured scoring via `eval_criteria`, (2) LLM eval via `prompt`, (3) heuristic fallback (auto).
 
-**5. Human Gates** — hexagon with approve+revise edges:
+**5. Human Gates** — NOT IMPLEMENTED. The attractor engine supports hexagon nodes with an Interviewer interface (CLI, HTTP API, callback), but no polling/notification infrastructure exists for the claude-code Docker backend. Pipelines block indefinitely at hexagon nodes. Use automated review-simplify cycles (Pattern 7) and goal gates (Pattern 2) instead. Do NOT emit hexagon nodes in generated DOT files.
 ```
-review [shape=hexagon, label="Review"]
-review -> next [label="[A] Approve", weight=2]
-review -> fix [label="[R] Revise"]
+// FUTURE: when a question-polling service exists, hexagon gates can be re-enabled:
+// review [shape=hexagon, label="Review"]
+// review -> next [label="[A] Approve", weight=2]
+// review -> fix [label="[R] Revise"]
 ```
 
 **6. Max Visits** — `max_visits` on looping nodes prevents infinite convergence.
@@ -128,7 +141,7 @@ Drift detection prevents infinite oscillation where simplify breaks things, fix 
 **12. Multi-Pass Complexity Escalation** — for high-complexity phases (many files, cross-cutting concerns, architectural changes), use multiple independent implementation attempts with best-selection instead of single-shot:
 ```
 // When PRD marks a task as high-complexity or it touches >5 files:
-split_approaches [shape=component, max_parallel=2, join_policy="wait_all", error_policy="continue"]
+split_approaches [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
 approach_a [prompt="Implement using strategy A: ..."]
 approach_b [prompt="Implement using strategy B: ..."]
 select_best [shape=tripleoctagon, class="critical", prompt="Compare both implementations. Evaluate: correctness, test coverage, minimal diff size, adherence to project patterns. Select the best. If neither is adequate, document why for retry."]
@@ -141,7 +154,7 @@ Complexity indicators that trigger multi-pass: >5 files modified, cross-module d
 - Orphan tests (no failure routing)
 - `goal_gate=true` without `retry_target`
 - `acceptance_criteria` without `retry_target`
-- Hexagon with only approve (no reject edge)
+- Hexagon nodes (human gates not implemented — pipeline will deadlock)
 - Diamond without default branch (stalls)
 - Parallel siblings depending on each other (deadlock)
 - Test failure routing to wrong implementation node
@@ -185,7 +198,7 @@ digraph ${SLUG} {
     start [shape=Mdiamond]
     // impl nodes (box, prompt, goal_gate), verify nodes (parallelogram, tool_command)
     // per-phase review (Opus) → simplify (Sonnet) → re-verify cycles
-    // diamond routing, hexagon gates, component↔tripleoctagon parallel
+    // diamond routing, component↔tripleoctagon parallel
     done [shape=Msquare]
     // edges: weight=2 happy path, condition on failures
 }
@@ -217,6 +230,7 @@ digraph user_auth_api {
     model_stylesheet = "* { llm_model: claude-sonnet-4-6; } .critical { llm_model: claude-opus-4-6; reasoning_effort: high; } .review { llm_model: claude-opus-4-6; }"
 
     start [shape=Mdiamond]
+    setup_deps [shape=parallelogram, tool_command="npm install 2>&1", timeout=120s]
     implement_auth [goal_gate=true, prompt="Implement JWT middleware + login endpoint. Express structure. OWASP auth patterns."]
     run_tests [shape=parallelogram, tool_command="npm test 2>&1", max_visits=3]
     check_tests [shape=diamond]
@@ -224,21 +238,18 @@ digraph user_auth_api {
     simplify_auth [prompt="Simplify auth code: redundant checks, complex parsing, duplication, naming. Preserve functionality."]
     reverify_auth [shape=parallelogram, tool_command="npm test 2>&1", goal_gate=true, retry_target="simplify_auth", max_visits=3]
     check_clean [shape=diamond]
-    code_review [shape=hexagon, label="Final Review"]
     done [shape=Msquare]
 
-    start -> implement_auth -> run_tests -> check_tests
+    start -> setup_deps -> implement_auth -> run_tests -> check_tests
     check_tests -> review_auth [condition="outcome=success", weight=2]
     check_tests -> implement_auth [condition="outcome=fail"]
     review_auth -> simplify_auth -> reverify_auth -> check_clean
-    check_clean -> code_review [condition="outcome=success", weight=2]
+    check_clean -> done [condition="outcome=success", weight=2]
     check_clean -> simplify_auth [condition="outcome=fail"]
-    code_review -> done [label="[A] Approve", weight=2]
-    code_review -> implement_auth [label="[R] Revise"]
 }
 ```
 
-Convergence: test→impl loop, review→simplify→reverify cycle, human gate with reject path. `max_visits=3` bounds loops.
+Convergence: test→impl loop, review→simplify→reverify cycle. `max_visits=3` bounds loops.
 
 ## Schema Reference
 
