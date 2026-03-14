@@ -2,5 +2,8 @@ node_modules/
 *.log
 .DS_Store
 .gitnexus
-.claude/
+# User-specific Claude Code files (memories, conversations)
+.claude/projects/
+.claude/todos/
+# .claude/commands/ and .claude/skills/ are tracked — they're the product
 scripts/
