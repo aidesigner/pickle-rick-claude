@@ -118,37 +118,6 @@ Best for: Small, well-understood changes. Risky for anything complex.
 
 ---
 
-## What Happens After Your PRD Is Ready
-
-### Refinement (automatic)
-
-When you run `/pickle-refine-prd`, three AI analysts explore your project in parallel:
-
-| Analyst | What It Does |
-|:--------|:-------------|
-| **Requirements** | Finds gaps, ambiguities, missing acceptance criteria, untestable requirements |
-| **Codebase** | Maps requirements to existing code — finds file paths, patterns to follow, integration points, potential conflicts |
-| **Risk & Scope** | Identifies scope creep potential, dependency risks, ordering concerns, missing edge cases |
-
-They run 3 cycles, cross-referencing each other's findings. The output is a **refined PRD** with concrete file paths, interface contracts, and decomposed tickets.
-
-### Implementation (autonomous)
-
-After refinement, the system executes autonomously. Each ticket goes through 8 phases:
-
-1. **Research** — reads the codebase to understand context
-2. **Review research** — validates understanding before planning
-3. **Plan** — architects the solution
-4. **Review plan** — catches design issues before coding
-5. **Implement** — writes the code
-6. **Spec conformance** — runs every acceptance criterion automatically
-7. **Code review** — security, correctness, architecture audit
-8. **Simplify** — removes dead code, cleans up
-
-You don't need to be involved. But review the PRD carefully before launching — it's the source of truth for everything downstream.
-
----
-
 ## Writing a Better PRD (optional — the system helps you)
 
 You don't *need* to write a formal PRD — the guided conversation produces one for you. But if you prefer to write your own, or want to understand what makes a good one, here's the template:
@@ -250,33 +219,94 @@ Beyond the minimum, these sections significantly improve what the system produce
 
 ---
 
-## What Happens During Refinement
+## Example: Minimal PRD That Works
 
-When you say *"refine this PRD"* (or run `/pickle-refine-prd`), here's what actually happens:
+```markdown
+# Loan Status Caching PRD
 
-1. **Verification readiness check** — The system scans your PRD for:
-   - Interface contracts with exact types
-   - Verification commands that can actually run
-   - Test expectations with file paths and assertions
-   - Machine-checkable acceptance criteria
+## Problem
+The loan status API (`GET /api/loans/:id/status`) hits the database on every request.
+At current volume (500 req/min), this adds unnecessary load and increases p95 latency to 800ms.
+Operations team has flagged this as a scaling concern before Q3 volume increase.
 
-   If anything is missing or vague, it pauses and asks you to fill gaps.
+## Goal
+Cache loan status responses in Redis with intelligent invalidation,
+reducing p95 latency to under 100ms for cache hits.
 
-2. **Parallel analysis** (3 workers x 3 cycles) — Each analyst reads your PRD and the codebase, produces a report, then cross-references the other analysts' findings in subsequent cycles.
+## Scope
+### In-scope
+- Redis cache layer for loan status endpoint
+- Cache invalidation when loan status changes
+- Cache TTL configuration
+- Cache hit/miss metrics logging
 
-3. **Synthesis** — Findings are merged into a refined PRD. Changes are attributed: `*(refined: requirements analyst)*` so you can trace what changed.
+### Out of scope
+- Caching other endpoints (separate PRD per endpoint)
+- Redis cluster setup (ops team handles infrastructure)
+- Cache warming on deployment
 
-4. **Decomposition** — The refined PRD is broken into atomic tickets:
-   - Each ticket is < 30 minutes of coding work
-   - Each touches < 5 files
-   - Each has < 4 acceptance criteria
-   - Each is self-contained (the worker doesn't need the full PRD)
-   - Each has embedded research seeds (file paths, patterns, APIs to look at)
+## Requirements
+| Priority | Requirement | Verification |
+|:---------|:------------|:-------------|
+| P0 | Cached responses return in <100ms at p95 | `npm run bench -- loan-status --p95` |
+| P0 | Cache invalidates when status changes via PUT /api/loans/:id/status | `npm test -- cache-invalidation.test.ts` |
+| P0 | Cache TTL is configurable via environment variable | `CACHE_TTL=60 npm test -- cache-ttl.test.ts` |
+| P1 | Cache hit/miss ratio logged to application metrics | `grep "cache.hit\|cache.miss" src/api/routes/loan-status.ts` |
+| P1 | Graceful degradation — DB fallback if Redis is unavailable | `npm test -- cache-fallback.test.ts` |
 
-5. **Output** — You get:
-   - `prd_refined.md` — your PRD with refinement additions
-   - `linear_ticket_parent.md` — the epic
-   - `<hash>/linear_ticket_<hash>.md` — one per ticket, ordered
+## Context
+- Endpoint: `src/api/routes/loan-status.ts`
+- Redis client: `src/services/redis.ts` (already configured)
+- Test pattern: see `tests/api/loan-notes.test.ts`
+- Status update handler: `src/api/routes/loan-mutations.ts:updateStatus()`
+```
+
+This is ~40 lines. Refinement expands it to ~200 with contracts, test expectations, and implementation details. The tickets practically write themselves.
+
+---
+
+## What Happens After Your PRD Is Ready
+
+### Refinement (automatic)
+
+When you say *"refine this PRD"* (or run `/pickle-refine-prd`), the system first checks your PRD for **verification readiness** — interface contracts with exact types, verification commands that can actually run, test expectations with file paths, and machine-checkable acceptance criteria. If anything is missing or vague, it pauses and asks you to fill gaps.
+
+Then three AI analysts explore your project in parallel:
+
+| Analyst | What It Does |
+|:--------|:-------------|
+| **Requirements** | Finds gaps, ambiguities, missing acceptance criteria, untestable requirements |
+| **Codebase** | Maps requirements to existing code — finds file paths, patterns to follow, integration points, potential conflicts |
+| **Risk & Scope** | Identifies scope creep potential, dependency risks, ordering concerns, missing edge cases |
+
+They run 3 cycles, cross-referencing each other's findings. Changes are attributed — `*(refined: requirements analyst)*` — so you can trace what changed.
+
+The output is:
+- `prd_refined.md` — your PRD with refinement additions, concrete file paths, and interface contracts
+- `linear_ticket_parent.md` — the epic
+- `<hash>/linear_ticket_<hash>.md` — one per ticket, ordered
+
+Each ticket is decomposed to be atomic:
+- < 30 minutes of coding work
+- Touches < 5 files
+- < 4 acceptance criteria
+- Self-contained (the worker doesn't need the full PRD)
+- Embedded research seeds (file paths, patterns, APIs to look at)
+
+### Implementation (autonomous)
+
+After refinement, the system executes autonomously. Each ticket goes through 8 phases:
+
+1. **Research** — reads the codebase to understand context
+2. **Review research** — validates understanding before planning
+3. **Plan** — architects the solution
+4. **Review plan** — catches design issues before coding
+5. **Implement** — writes the code
+6. **Spec conformance** — runs every acceptance criterion automatically
+7. **Code review** — security, correctness, architecture audit
+8. **Simplify** — removes dead code, cleans up
+
+You don't need to be involved. But review the PRD carefully before launching — it's the source of truth for everything downstream.
 
 ---
 
@@ -343,52 +373,6 @@ The interview pushes on verification, contracts, and scope — questions you mig
 
 **Q: Do I need to include time estimates?**
 No. The system ignores them. Focus on scope, acceptance criteria, and priority.
-
----
-
-## Example: Minimal PRD That Works
-
-```markdown
-# Loan Status Caching PRD
-
-## Problem
-The loan status API (`GET /api/loans/:id/status`) hits the database on every request.
-At current volume (500 req/min), this adds unnecessary load and increases p95 latency to 800ms.
-Operations team has flagged this as a scaling concern before Q3 volume increase.
-
-## Goal
-Cache loan status responses in Redis with intelligent invalidation,
-reducing p95 latency to under 100ms for cache hits.
-
-## Scope
-### In-scope
-- Redis cache layer for loan status endpoint
-- Cache invalidation when loan status changes
-- Cache TTL configuration
-- Cache hit/miss metrics logging
-
-### Out of scope
-- Caching other endpoints (separate PRD per endpoint)
-- Redis cluster setup (ops team handles infrastructure)
-- Cache warming on deployment
-
-## Requirements
-| Priority | Requirement | Verification |
-|:---------|:------------|:-------------|
-| P0 | Cached responses return in <100ms at p95 | `npm run bench -- loan-status --p95` |
-| P0 | Cache invalidates when status changes via PUT /api/loans/:id/status | `npm test -- cache-invalidation.test.ts` |
-| P0 | Cache TTL is configurable via environment variable | `CACHE_TTL=60 npm test -- cache-ttl.test.ts` |
-| P1 | Cache hit/miss ratio logged to application metrics | `grep "cache.hit\|cache.miss" src/api/routes/loan-status.ts` |
-| P1 | Graceful degradation — DB fallback if Redis is unavailable | `npm test -- cache-fallback.test.ts` |
-
-## Context
-- Endpoint: `src/api/routes/loan-status.ts`
-- Redis client: `src/services/redis.ts` (already configured)
-- Test pattern: see `tests/api/loan-notes.test.ts`
-- Status update handler: `src/api/routes/loan-mutations.ts:updateStatus()`
-```
-
-This is ~40 lines. Refinement expands it to ~200 with contracts, test expectations, and implementation details. The tickets practically write themselves.
 
 ---
 
