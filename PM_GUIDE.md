@@ -211,24 +211,6 @@ If you can't think of how to verify a requirement automatically, that's a signal
 
 Beyond the minimum, these sections significantly improve what the system produces:
 
-**Interface Contracts** — If your feature touches APIs, shared types, or crosses module boundaries, define the exact shapes:
-
-```markdown
-## Interface Contracts
-| Endpoint | Input | Output | Error |
-|:---------|:------|:-------|:------|
-| POST /api/loans/:id/status | `{ status: "approved" \| "denied", reason?: string }` | `{ id: string, status: string, updatedAt: string }` | `{ error: string, code: number }` |
-```
-
-**Codebase Context** — Point at existing files, patterns, or conventions:
-
-```markdown
-## Context
-- Similar feature: `src/api/routes/loan-notes.ts` — follow this pattern
-- Shared types: `packages/shared/types/loan.ts`
-- Test pattern: see `tests/api/loan-notes.test.ts` for integration test structure
-```
-
 **User Journeys** — Step-by-step flows become acceptance tests:
 
 ```markdown
@@ -407,3 +389,150 @@ reducing p95 latency to under 100ms for cache hits.
 ```
 
 This is ~40 lines. Refinement expands it to ~200 with contracts, test expectations, and implementation details. The tickets practically write themselves.
+
+---
+
+## Advanced: Beyond Linear Execution
+
+The standard Pickle Rick workflow — PRD → tickets → sequential execution — works well for most features. But some problems don't fit a linear ticket queue. This section covers two advanced modes for when you need something different.
+
+### Microverse: Optimizing a Metric
+
+Sometimes you don't want to build a feature — you want to **improve a number**. Response time. Test coverage. Bundle size. Error rate. The microverse is a convergence loop: it makes a change, measures the metric, keeps improvements, rolls back regressions, and repeats until the metric stops improving.
+
+**When to use it:**
+- Performance optimization ("reduce API p95 from 800ms to 100ms")
+- Code quality improvement ("increase test coverage from 60% to 85%")
+- Size reduction ("shrink the Docker image from 2GB to under 500MB")
+- Any goal that can be expressed as a single number going up or down
+
+**How to start it:**
+
+Just describe what you want to optimize:
+
+> "Optimize the loan status API response time. The metric command is `npm run bench -- loan-status --p95` and I want it lower."
+
+Or with a natural-language goal instead of a numeric command:
+
+> "Improve the test coverage of the auth module. Judge it by how thorough the tests are."
+
+The system runs in a loop:
+1. Analyze the current state and propose a targeted change
+2. Implement the change
+3. Measure the metric (or have an LLM judge score it)
+4. If improved → keep the change, commit it
+5. If regressed → roll back automatically
+6. If stalled (no improvement for N iterations) → declare convergence
+7. Repeat
+
+**What you control:**
+- **metric** or **goal** — what to optimize (a shell command that outputs a number, or a natural-language goal for LLM scoring)
+- **direction** — higher or lower is better
+- **stall-limit** — how many flat iterations before stopping (default: 5)
+- **tolerance** — score delta within which changes count as "held" (default: 0)
+
+**What makes it different from regular implementation:**
+The microverse doesn't follow a ticket queue. It has *autonomy* to choose what to change each iteration. It might optimize an algorithm, then refactor a hot path, then add caching — whatever moves the metric. You define the destination, it finds the path.
+
+**Example — reduce bundle size:**
+
+> "Use the microverse to reduce the production bundle size. Metric: `npm run build && du -sb dist | cut -f1`. Direction: lower. Stop after 5 iterations with no improvement."
+
+The system might tree-shake unused imports in iteration 1, replace a heavy library with a lighter one in iteration 2, split a large module in iteration 3 — each time measuring, keeping wins, rolling back losses.
+
+### Pipeline Mode: Self-Correcting DAGs
+
+For complex epics with parallel workstreams, conditional logic, and multiple quality gates, you can define the work as a **convergence graph** — a DAG (directed acyclic graph) where failures automatically route back for correction instead of stopping the pipeline.
+
+This is fundamentally different from a ticket queue:
+- **Ticket queue**: do task 1, then task 2, then task 3. If task 2 fails, everything stops.
+- **Convergence graph**: do tasks 1-3 in parallel, verify each one, route failures back to retry, run security scanning and code review as separate gates, and only proceed to the next phase when all gates pass.
+
+**When to use it:**
+- Multi-phase epics with 10+ tickets across independent workstreams
+- Work that benefits from parallel execution (multiple features that don't conflict)
+- Projects requiring multiple quality gates (security, coverage, scope audit, code review)
+- Situations where you want automated retry and self-correction, not manual intervention
+
+**How it works:**
+
+1. Start with a PRD (written or generated through the normal process)
+2. Say *"Create a pipeline from my PRD"* — this generates a `.dot` file
+3. The system asks about your project structure and automatically figures out paths
+4. Say *"Run the pipeline"* — submits it to the attractor server for execution
+
+**What the pipeline gives you that tickets don't:**
+
+| Capability | Ticket Queue | Pipeline |
+|:-----------|:-------------|:---------|
+| Parallel execution | Sequential only | Fan-out with configurable parallelism |
+| Failure handling | Stop and wait for human | Auto-retry, route back to implementation |
+| Quality gates | Single test pass | Separate gates: tests, security, coverage, scope, drift |
+| Code review | End of ticket | Per-phase review→simplify→re-verify cycles |
+| Complex phases | Manual ordering | Conditional routing, diamond decision nodes |
+| High-complexity tasks | Single attempt | Multi-pass: competing implementations, best selected |
+
+**The 12 quality gates built into every pipeline:**
+
+1. **Test-fix loops** — every implementation retries on test failure
+2. **Goal gates** — critical steps must pass acceptance criteria or the whole graph retries
+3. **Conditional routing** — diamond decision nodes route based on outcomes
+4. **Parallel fan-out/in** — independent tasks run simultaneously
+5. **Human gates** — optional approval points (hexagon nodes)
+6. **Max visits** — bounded retries prevent infinite loops
+7. **Review-simplify cycles** — per-phase: AI reviews code quality, simplifies, re-verifies
+8. **Security scanning** — separate SAST/audit gate with distinct failure routing
+9. **Coverage qualification** — verifies test coverage on new/changed code
+10. **Scope creep detection** — audits changes against the original prompt
+11. **Drift detection** — prevents oscillation in review-simplify cycles
+12. **Multi-pass complexity** — competing implementations for hard problems
+
+**Example — what a pipeline phase looks like:**
+
+```
+Phase 2 (Atomic State Manager):
+  ┌─ Implement StateManager class
+  │     ↓
+  │  Verify (tsc + tests)  ──fail──→  Re-implement
+  │     ↓ pass
+  │  ┌─ Fan-out: Migrate writers ──┐
+  │  └─ Fan-out: Harden locks ─────┘
+  │     ↓ merge
+  │  Verify (tsc + tests)  ──fail──→  Re-implement
+  │     ↓ pass
+  │  Security scan  ──fail──→  Fix security issues
+  │     ↓ pass
+  │  Scope check  ──fail──→  Revert out-of-scope changes
+  │     ↓ pass
+  │  Review (Opus)  →  Simplify (Sonnet)  →  Re-verify
+  │     ↓ pass                                  │ fail → re-simplify (with drift detection)
+  │  Next phase
+```
+
+Every arrow labeled "fail" is an automatic retry path. No human intervention needed — the system self-corrects until convergence or until retry limits are reached.
+
+**What you need to run pipelines:**
+- An [attractor](https://github.com/strongdm/attractor) server running (local Docker or remote)
+- A PRD to convert into a `.dot` file
+- That's it — the system handles validation, submission, and monitoring
+
+**Starting simple:**
+
+You don't need to understand DAG theory or DOT syntax. Just say:
+
+> "Create a pipeline from my PRD and run it."
+
+The system generates the convergence graph, validates it, and submits it. You can inspect the `.dot` file if you're curious, but you don't have to.
+
+### Choosing the Right Mode
+
+| Situation | Use |
+|:----------|:----|
+| Single feature, < 5 files | Standard: *"Build X"* |
+| Feature with clear tickets, sequential work | Standard with refinement: *"Refine and implement"* |
+| Optimize a measurable metric | Microverse: *"Optimize X, metric is Y"* |
+| Multi-phase epic, parallel workstreams | Pipeline: *"Create a pipeline from my PRD"* |
+| High-risk changes needing multiple quality gates | Pipeline (security, coverage, scope, drift gates) |
+| Hard problems where multiple approaches might work | Pipeline with multi-pass (competing implementations) |
+
+All three modes start the same way: describe what you want in plain language. The system helps you choose the right tool, or you can be explicit.
