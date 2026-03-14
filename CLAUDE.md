@@ -13,6 +13,10 @@ Canonical → Deployed (`bash install.sh` rsyncs, overwrites):
 
 NEVER edit deployed files. Edit source, run `bash install.sh`.
 
+## Generated Artifacts
+
+DOT pipeline files (`*.dot`) and PRD files (`*.md` in `extension/`) are generated artifacts — do NOT commit them to this repo. They are consumed by the attractor server, not by this project. Add `*.dot` to `.gitignore`.
+
 ## Build & Test
 
 From `extension/`: `npx tsc --noEmit && npx tsc && npm test`

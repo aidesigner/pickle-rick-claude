@@ -1,5 +1,6 @@
 node_modules/
 *.log
+*.dot
 .DS_Store
 .gitnexus
 # User-specific Claude Code files (memories, conversations)
