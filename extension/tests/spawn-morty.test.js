@@ -116,14 +116,17 @@ test('spawn-morty: valid args but no claude binary → exit 1 (spawn failure, no
     try {
         // Set PATH to only /usr/bin so `claude` cannot be found.
         // The process should get past all validation and fail when spawning claude.
-        const result = run(
-            [
+        // Use a longer timeout (15s) — under full-suite concurrency the ENOENT
+        // async error can take longer than the default 10s to surface.
+        const result = spawnSync(process.execPath, [SPAWN_MORTY_BIN,
                 'implement the thing',
                 '--ticket-id', 'ticket-42',
                 '--ticket-path', tmpDir,
-            ],
-            { PATH: '/usr/bin' }
-        );
+            ], {
+            env: { ...process.env, PATH: '/usr/bin' },
+            encoding: 'utf-8',
+            timeout: 15000,
+        });
         assert.equal(result.status, 1, 'should exit with code 1');
         // It should NOT be a validation error — it got past validation
         assert.ok(
