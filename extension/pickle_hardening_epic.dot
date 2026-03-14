@@ -1,0 +1,178 @@
+digraph pickle_hardening_epic {
+    goal = "Harden pickle-rick-claude v1.15.0: atomic state management (StateManager with file-based locking for 61 call sites across 11 files), process lifecycle fixes (dispatch EPIPE, refinement sibling kill, fsync), integration tests for orchestration loops, and defensive coding improvements. All 31 review findings resolved."
+    label = "Pickle Rick Hardening Epic v1.15.0"
+    default_max_retry = 2
+    retry_target = "phase1_package_sync"
+    acceptance_criteria = "context.tests_pass=true && context.lint_pass=true && context.typecheck_pass=true"
+    model_stylesheet = "* { llm_model: claude-sonnet-4-6; } .critical { llm_model: claude-opus-4-6; reasoning_effort: high; } .review { llm_model: claude-opus-4-6; }"
+
+    // ===== ENTRY =====
+    start [shape=Mdiamond, label="Begin Hardening Epic"]
+
+    // ===== PHASE 1: BUILD HYGIENE =====
+    phase1_package_sync [prompt="Sync package-lock.json to match package.json v1.14.0+. Run 'npm install' in extension/. Then run 'npm audit --json' and examine the flatted CVE (CVE-2024-43800). flatted@3.3.4 is a transitive devDependency of ESLint via flat-cache — verify if it has production security impact. If dev-only and not HIGH/CRITICAL in production path, document as P3 hygiene. Working dir: extension/. Files: package.json, package-lock.json.", timeout="120s", permission_mode="bypassPermissions"]
+
+    phase1_tests_eslint [prompt="Fix 4 failing spawn-morty tests in extension/tests/spawn-morty.test.js — these are test harness issues with error handler Promise resolution, not production bugs. Examine the test file, identify why the 4 tests fail (likely Promise rejection handling in error paths), and fix the test assertions. Then suppress 98 ESLint 'no-sync-in-async' warnings by adding '// eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call' to each intentional sync call site in async functions across ~15-20 source files. These are orchestration calls that MUST block. Working dir: extension/. Verify: 'npm test' exits 0, 'npx eslint src/ --max-warnings=-1' exits 0.", timeout="600s", max_visits=4, permission_mode="bypassPermissions"]
+
+    verify_phase1 [shape=parallelogram, label="Verify Phase 1", tool_command="cd /Users/gregorydickson/loanlight/pickle-rick/pickle-rick-claude/extension && npx tsc --noEmit 2>&1 && npx eslint src/ --max-warnings=-1 2>&1 && npm test 2>&1 && npm audit --audit-level=high 2>&1 && node -e \"const p=require('./package.json'),l=require('./package-lock.json');if(p.version!==l.version){console.error('Version mismatch');process.exit(1)}\" 2>&1", goal_gate=true, retry_target="phase1_tests_eslint", max_visits=4, timeout="300s"]
+
+    check_phase1 [shape=diamond]
+
+    // ===== PHASE 2: ATOMIC STATE MANAGER =====
+    phase2_state_manager [class="critical", prompt="Implement StateManager class in extension/src/services/state-manager.ts. This wraps the EXISTING atomic writeStateFile (pickle-utils.ts:543-551 already does tmpfile+rename) with file-based locking for read-modify-write cycles. Key methods: (1) StateManager.read(statePath) — parse JSON, validate, run recovery protocol: check for orphan .tmp.* files (promote if valid+newer, delete if invalid), check PID liveness on active=true (clear if dead), check cross-file iteration mismatch (microverse.json vs state.json — use higher value), migrate schema_version undefined→1. (2) StateManager.update(statePath, mutator) — acquire lock via fs.openSync(lockPath, O_CREAT|O_EXCL), read state, call mutator, writeStateFile, release lock in finally. (3) StateManager.transaction(paths, mutator) — lock all paths, read all, mutate all, write all, rollback first file if second write fails. (4) StateManager.forceWrite(statePath, state) — write WITHOUT lock, for crash-path signal handlers only, never throws. Types to add to extension/src/types/index.ts: StateManagerOptions {maxLockRetries:10, baseLockDelayMs:100, lockJitter:true, staleLockTimeoutMs:30000, schemaVersion:1}, StateError extends Error {code: MISSING|CORRUPT|SCHEMA_MISMATCH|LOCK_FAILED|WRITE_FAILED, path: string}, TransactionError {failedPath, rolledBackPaths}, LockError {lockPath, retriesAttempted}. Update State interface: add schema_version:number and pid?:number. EXDEV on rename → throw StateError WRITE_FAILED (no non-atomic fallback for state files). Write comprehensive tests in extension/tests/state-manager.test.js using node:test. Working dir: extension/.", timeout="900s", max_visits=4, permission_mode="bypassPermissions"]
+
+    phase2_parallel [shape=component, max_parallel=2, join_policy="wait_all", error_policy="fail_fast"]
+
+    phase2_migration [class="critical", prompt="Migrate ALL state.json writers (11 files, 61 call sites) to StateManager. Categorized inventory: IN SCOPE StateManager.update() (26 calls): stop-hook.ts lines 193,245,259,305; cancel.ts lines 48,71; setup.ts lines 209,250; jar-utils.ts line 76; pickle-utils.ts/updateState line 596; retry-ticket.ts line 82; mux-runner.ts 15 state.json calls. IN SCOPE StateManager.transaction() (12 calls): microverse-runner.ts 10 state.json + 1 mvPath; microverse-state.ts line 119. CRASH-PATH StateManager.forceWrite() (3 calls): mux-runner.ts:494, microverse-runner.ts:272, jar-runner.ts:186 — these are { active: false } writes in signal/error handlers where acquiring a lock could deadlock. EXCLUDED (10 calls): jar-runner.ts metaPath 7 calls (meta.json not state), rate_limit_wait.json 2 calls, circuit-breaker.ts:378 cbPath. Implement error propagation per caller: stop-hook → fail-open (approve, log warning); mux-runner → retry once after 1s then deactivate+exit; jar-runner → skip ticket, advance, log to manifest; microverse-runner → deactivate, exit loop; setup.ts → catch LockError, PROCEED WITHOUT LOCK (session start must not be blocked); cancel.ts → catch LockError, PROCEED WITHOUT LOCK; pickle-utils/updateState → throw to CLI; retry-ticket → throw to CLI; circuit-breaker → log warning, continue; jar-utils → log warning, continue; microverse-state → log warning, continue. Add ESLint rule no-raw-state-write to catch direct writeStateFile usage with 3 documented crash-path exceptions. Working dir: extension/.", timeout="900s", max_visits=4, permission_mode="bypassPermissions"]
+
+    phase2_lock_hardening [prompt="Replace withSessionMapLock in extension/src/services/pickle-utils.ts:362-404 with withRetryLock using exponential backoff. Current behavior: fixed 50ms retry (RETRY_MS=50 at line 395), 3s deadline, DEGRADES TO NO-LOCK on timeout (lines 390-393). New behavior: exponential backoff (100ms base, doubling per retry, with jitter), configurable stale lock timeout (default 30s — current STALE_MS=5000 at line 365 is too aggressive), NEVER silent fallthrough — throws LockError after maxRetries. Add PID liveness check: if recorded PID in sessions map is dead (process.kill(pid, 0) throws ESRCH), auto-clear stale entry and log recovery. Modify setup.ts to catch LockError and proceed WITHOUT lock with warning (session start must not be blocked by contention). Modify cancel.ts similarly. All other callers propagate LockError. Working dir: extension/.", timeout="600s", max_visits=4, permission_mode="bypassPermissions"]
+
+    phase2_merge [shape=tripleoctagon, prompt="Verify both Phase 2 parallel branches completed successfully. Migration and lock hardening must both pass."]
+
+    verify_phase2 [shape=parallelogram, label="Verify Phase 2", tool_command="cd /Users/gregorydickson/loanlight/pickle-rick/pickle-rick-claude/extension && npx tsc --noEmit 2>&1 && npm test 2>&1 && npx eslint src/ --max-warnings=-1 2>&1", goal_gate=true, retry_target="phase2_state_manager", max_visits=4, timeout="300s"]
+
+    check_phase2 [shape=diamond]
+
+    // ===== PHASE 3: PROCESS LIFECYCLE =====
+    phase3_parallel [shape=component, max_parallel=2, join_policy="wait_all", error_policy="continue"]
+
+    phase3_dispatch_lifecycle [prompt="Fix dispatch.ts stdin error handling and spawn-refinement-team process cleanup. (1) dispatch.ts has TWO EPIPE code paths: async 'error' event handler at line 117-119 (currently returns silently on EPIPE) and sync child.stdin.write() catch at line 125-127 (currently returns silently). BOTH must call child.kill('SIGKILL') before returning. The async handler at line 117 should kill for ALL error types, not just return on EPIPE. (2) spawn-refinement-team.ts: add 'close' and 'error' event handlers on each spawned child that call activeWorkerProcs.delete(proc). On 'error', iterate remaining procs in the Set and call proc.kill('SIGTERM') to kill siblings. Update tests in tests/dispatch.test.js (mock child with broken stdin, assert kill called for both paths) and tests/spawn-refinement-team.test.js (simulate 1-of-3 crash, assert other 2 killed; verify Set cleanup on close). Working dir: extension/.", timeout="600s", max_visits=4, permission_mode="bypassPermissions"]
+
+    phase3_fsync_handoff [prompt="Fix mux-runner.ts log file handling and handoff.txt race condition. (1) Add fs.fsyncSync(logFd) before every fs.closeSync(logFd) call in mux-runner.ts to ensure log data survives process crashes. Search for all closeSync calls and add fsync before each. (2) handoff.txt race at mux-runner.ts:317-322: wrap fs.unlinkSync(handoffPath) in try/catch — on EACCES/EPERM, log warning but continue. For rename: if fs.renameSync fails, fall back to fs.writeFileSync to the target path directly. If BOTH unlink and rename/write fail, log error and continue (don't crash the session). Add 3 test cases to tests/mux-runner.test.js: unlink EACCES → warning logged; rename failure → fallback writeFileSync; both fail → error logged, session continues. Working dir: extension/.", timeout="600s", max_visits=4, permission_mode="bypassPermissions"]
+
+    phase3_merge [shape=tripleoctagon, prompt="Verify both Phase 3 branches completed."]
+
+    verify_phase3 [shape=parallelogram, label="Verify Phase 3", tool_command="cd /Users/gregorydickson/loanlight/pickle-rick/pickle-rick-claude/extension && npx tsc --noEmit 2>&1 && npm test 2>&1", goal_gate=true, retry_target="phase3_dispatch_lifecycle", max_visits=4, timeout="300s"]
+
+    check_phase3 [shape=diamond]
+
+    // ===== PHASE 4: DEFENSIVE CODING =====
+    phase4_parallel [shape=component, max_parallel=3, join_policy="wait_all", error_policy="continue"]
+
+    phase4_type_git_timeout [prompt="Fix three defensive coding issues. (1) F13: microverse-runner.ts worker_timeout re-enforcement (~lines 371-375) uses strict equality (===) but state.json may store worker_timeout_seconds as string '0'. Fix: use Number(state.worker_timeout_seconds) before comparison to avoid unnecessary writeStateFile calls. (2) F14: microverse-runner.ts auto-commit (~lines 501-516) doesn't validate git repo existence. Add isGitRepo check (try runGit('rev-parse', '--git-dir')) before auto-commit call. On failure, log descriptive error mentioning 'not a git repository' instead of confusing 'stall' error. Scope: microverse-runner.ts ONLY — mux-runner.ts does NOT use git utilities. (3) F15: spawn-morty.ts timeout arithmetic can produce negative values. Add Math.max(30_000, remainingMs) to enforce 30s minimum timeout floor. Add tests to tests/microverse.test.js (string '0' → no write, non-git cwd → clear error) and tests/spawn-morty.test.js (negative remaining → timeout >= 30s, small remaining 5s → timeout === 30s). Working dir: extension/.", timeout="600s", max_visits=4, permission_mode="bypassPermissions"]
+
+    phase4_promise_template [class="critical", prompt="Fix promise token false positives (F16) and template validation (F20). CRITICAL: F16 — extractAssistantContent at mux-runner.ts:60-88 MUST CONTINUE including result-type blocks (line 78). These contain the session's final response text needed for promise token detection in classifyCompletion at line 99-100. The ORIGINAL PRD requirement to exclude result blocks was WRONG and would break production. The ACTUAL false positive vector is non-JSON plaintext lines included via the catch block at lines 82-84 — reviewed source code in plain-text mode could contain TASK_COMPLETED tokens. Fix: detect stream-json mode (at least one line successfully parsed as JSON). In stream-json mode, SKIP lines that fail JSON.parse instead of including them verbatim. Test cases: plaintext 'TASK_COMPLETED' excluded in stream-json mode; result-type JSON TASK_COMPLETED included; assistant-type TASK_COMPLETED included. F20: template validation at mux-runner.ts:297-310 — replace current blacklist check with directory listing validation. Check file existence in templates/ dir then commands/ dir (resolved paths). Reject if not found in either. KEEP path traversal rejection (/, \\, ..) as defense-in-depth. Do NOT use hardcoded whitelist — that would break user-defined commands in ~/.claude/commands/. Tests: path traversal rejected, unknown template rejected, valid user command accepted. Working dir: extension/.", timeout="600s", max_visits=4, permission_mode="bypassPermissions"]
+
+    phase4_cb_logger_stophook [prompt="Fix three defensive coding issues. (1) F17: Circuit breaker state at mux-runner.ts:785 is written independently from state.json at line 791 — no transactional guarantee. Combine into StateManager.transaction([statePath, cbPath], ...). Note: these happen in different branches of the main loop logic — may require refactoring the branch structure. (2) F18: Activity logger (log-activity.ts or log-activity.js) has no retry or buffering. Add: on write failure, retry once after 100ms. If retry fails, buffer up to 100 events in an in-memory array. On next successful write, flush the buffer first. Tests in tests/activity-logger.test.js: mock ENOSPC → retries once; persistent failure → buffers; success after failure → buffer flushed. (3) F19: stop-hook.ts doesn't distinguish empty input (normal — approve) from corrupted input (abnormal). Check input.length > 0 before JSON.parse. If non-empty and parse fails, log warning with truncated input preview (first 100 chars). Tests in tests/stop-hook.test.js: empty string → approve without warning; non-empty bad JSON → warning with preview. Working dir: extension/.", timeout="600s", max_visits=4, permission_mode="bypassPermissions"]
+
+    phase4_merge [shape=tripleoctagon, prompt="Verify all three Phase 4 branches completed."]
+
+    verify_phase4 [shape=parallelogram, label="Verify Phase 4", tool_command="cd /Users/gregorydickson/loanlight/pickle-rick/pickle-rick-claude/extension && npx tsc --noEmit 2>&1 && npm test 2>&1 && npx eslint src/ --max-warnings=-1 2>&1", goal_gate=true, retry_target="phase4_type_git_timeout", max_visits=4, timeout="300s"]
+
+    check_phase4 [shape=diamond]
+
+    // ===== PHASE 5: INTEGRATION TESTING =====
+    phase5_harness [prompt="Build integration test harness and concurrent state write tests. Create extension/tests/integration/ directory. (1) tests/integration/helpers.js — shared utilities: createTempSession() creates temp dir with initial state.json, cleanupTempSession() removes it, mockRunIteration() returns predetermined classifications. (2) tests/integration/concurrent-state.test.js — 4 test cases: (a) 10 parallel StateManager.update() calls each incrementing iteration counter → assert final counter === 10, no lost increments; (b) 5 parallel addToSessionMap() with different cwds → all 5 entries present; (c) 2 parallel addToSessionMap() with SAME cwd → second detects conflict; (d) session start with stale active=true entry (dead PID via fake PID 999999) → stale entry auto-cleared, new session proceeds. (3) tests/integration/mux-loop.test.js — mock runIteration, run real state mutations through StateManager: (a) 3 iterations: success, rate_limit, success → rate limit wait triggered, state preserved, loop resumes; (b) stall → CB opens → deactivated; (c) TASK_COMPLETED with chain_meeseeks=true → template transitions. All tests use node:test and os.tmpdir(). No real sleeps — use deterministic mocks. Working dir: extension/.", timeout="600s", max_visits=4, permission_mode="bypassPermissions"]
+
+    phase5_parallel [shape=component, max_parallel=2, join_policy="wait_all", error_policy="continue"]
+
+    phase5_microverse_crash [prompt="Add microverse convergence and crash recovery integration tests. (1) tests/integration/microverse-convergence.test.js: 5-iteration scenario with mock metric function returning scores [0.5, 0.7, 0.3, null, 0.8]. Assert: 3 accepted, 1 reverted (0.3 regression), 1 stall (null); final status=converged. Second test: 2 non-consecutive metric failures → stall counter NOT incremented (only consecutive failures trigger stall). (2) tests/integration/crash-recovery.test.js: (a) Create orphan .tmp.PID file with valid JSON and higher iteration → StateManager.read() promotes it via rename; (b) Create invalid .tmp file → deleted; (c) Set state.active=true with dead PID (999999) → active cleared on read; (d) Set microverse.json.iteration=42, state.json.iteration=41 → state.json updated to 42. (3) tests/integration/jar-batch.test.js: (a) Simulate crash on ticket 4 of 8 → restart detects incomplete batch, resumes from ticket 4; (b) State write failure on ticket 5 → skip to ticket 6, ticket 5 marked 'failed' in manifest. Working dir: extension/.", timeout="600s", max_visits=4, permission_mode="bypassPermissions"]
+
+    phase5_ratelimit_process [prompt="Add rate limit recovery and process cleanup integration tests. (1) tests/integration/rate-limit-recovery.test.js: (a) Rate limit → wait → user sets active=false during wait → loop breaks cleanly, state.active=false, no orphan processes; (b) Rate limit → wait → max_time_minutes expires during wait → loop breaks with limit_reached status, accurate elapsed time. (2) tests/integration/process-cleanup.test.js: (a) Mock dispatch child process with broken stdin → both async EPIPE handler (line 117) and sync write catch (line 125) → child.kill called, hook returns approve, no zombie; (b) Spawn 3 mock refinement workers, kill worker 2 → workers 1 and 3 receive SIGTERM, activeWorkerProcs.size === 0 after cleanup. Use node:test, deterministic mocks, no real sleeps. Working dir: extension/.", timeout="600s", max_visits=4, permission_mode="bypassPermissions"]
+
+    phase5_merge [shape=tripleoctagon, prompt="Verify both Phase 5 parallel branches completed."]
+
+    verify_phase5 [shape=parallelogram, label="Verify Phase 5", tool_command="cd /Users/gregorydickson/loanlight/pickle-rick/pickle-rick-claude/extension && npx tsc --noEmit 2>&1 && npm test 2>&1 && node --test tests/integration/*.test.js 2>&1", goal_gate=true, retry_target="phase5_harness", max_visits=4, timeout="300s"]
+
+    check_phase5 [shape=diamond]
+
+    // ===== PHASE 6: LOW-PRIORITY HARDENING =====
+    phase6_parallel [shape=component, max_parallel=3, join_policy="wait_all", error_policy="continue"]
+
+    phase6_array_caps [prompt="Cap unbounded array growth and add engines field. (1) F26: In extension/src/services/circuit-breaker.ts, after every history.push() call, add: if (history.length > 1000) history.splice(0, history.length - 1000) to trim oldest entries. Add test in tests/circuit-breaker.test.js: 1001 transitions → history.length === 1000, oldest entry trimmed. (2) F27: In extension/src/services/microverse-state.ts, after every failed_approaches.push() call, add same pattern with cap of 100. Test in tests/microverse.test.js: 101 approaches → length === 100, oldest trimmed. (3) F28: Add '\"engines\": {\"node\": \">=20.0.0\"}' to extension/package.json. Node 20, not 18 — the project uses Node 25 and node --test features were stabilized in Node 20. Working dir: extension/.", timeout="300s", max_visits=4, permission_mode="bypassPermissions"]
+
+    phase6_docs_schema [prompt="Document ESLint rules and verify schema version validation. (1) F29: Create extension/ESLINT_RULES.md documenting all 12+ custom ESLint rules (including the new no-raw-state-write from Phase 2). For each rule: name, rationale (why it exists), what it catches, how to fix violations, and an example. List all rules by examining the ESLint plugin exports in src/eslint-rules/ or the ESLint config. (2) F30: Verify that StateManager.read() (implemented in Phase 2) correctly handles schema_version: undefined → migrates to 1 (adds field, logs migration); schema_version=1 → loads normally; schema_version=99 → throws StateError SCHEMA_MISMATCH. If these tests don't exist in tests/state-manager.test.js, add them. If the migration logic isn't implemented, add it to StateManager.read(). Working dir: extension/.", timeout="300s", max_visits=4, permission_mode="bypassPermissions"]
+
+    phase6_safe_error [prompt="Extract safeErrorMessage utility and replace inline patterns. (1) Add to extension/src/services/pickle-utils.ts: export function safeErrorMessage(err: unknown): string { if (err === null) return 'null'; if (err === undefined) return 'undefined'; if (err instanceof Error) return err.message; return String(err); } (2) Replace 65 inline 'err instanceof Error ? err.message : String(err)' patterns across 26 files with safeErrorMessage(err). IMPORTANT: review each call site individually. Do NOT replace patterns that inspect .code property (e.g., (err as NodeJS.ErrnoException).code at pickle-utils.ts:388) or check error subtypes (e.g., err instanceof StateError). Only replace simple message extraction patterns. (3) Tests in tests/pickle-utils.test.js: safeErrorMessage(null) → 'null', safeErrorMessage(new Error('x')) → 'x', safeErrorMessage(42) → '42', safeErrorMessage(undefined) → 'undefined', safeErrorMessage('oops') → 'oops'. (4) Verify no remaining simple instanceof Error patterns via grep. Working dir: extension/.", timeout="600s", max_visits=4, permission_mode="bypassPermissions"]
+
+    phase6_merge [shape=tripleoctagon, prompt="Verify all three Phase 6 branches completed."]
+
+    verify_phase6 [shape=parallelogram, label="Verify Phase 6", tool_command="cd /Users/gregorydickson/loanlight/pickle-rick/pickle-rick-claude/extension && npx tsc --noEmit 2>&1 && npm test 2>&1 && npx eslint src/ --max-warnings=-1 2>&1 && test -f ESLINT_RULES.md 2>&1", goal_gate=true, retry_target="phase6_array_caps", max_visits=4, timeout="300s"]
+
+    check_phase6 [shape=diamond]
+
+    // ===== RELEASE =====
+    release_review [shape=hexagon, label="Review all changes before release. Verify: all 31 findings addressed, no regressions, state management is atomic, process lifecycle is clean, integration tests cover orchestration loops."]
+
+    version_bump [prompt="Bump version to 1.15.0 in extension/package.json and extension/package-lock.json. Run 'npx tsc' to compile TypeScript and produce updated JS files. Verify compiled JS matches TS source. Run 'bash install.sh' from the pickle-rick-claude root to deploy. Working dir: extension/.", timeout="120s", permission_mode="bypassPermissions"]
+
+    final_verify [shape=parallelogram, label="Final Release Gate", tool_command="cd /Users/gregorydickson/loanlight/pickle-rick/pickle-rick-claude/extension && npx tsc --noEmit 2>&1 && npx eslint src/ --max-warnings=-1 2>&1 && npx tsc 2>&1 && npm test 2>&1 && npm audit --audit-level=high 2>&1 && node -e \"if(require('./package.json').version!=='1.15.0'){console.error('Version not 1.15.0');process.exit(1)}\" 2>&1", goal_gate=true, retry_target="version_bump", max_visits=3, timeout="300s"]
+
+    check_final [shape=diamond]
+
+    done [shape=Msquare, label="v1.15.0 Released"]
+
+    // ===== EDGES =====
+
+    // Phase 1: Build Hygiene
+    start -> phase1_package_sync
+    phase1_package_sync -> phase1_tests_eslint
+    phase1_tests_eslint -> verify_phase1
+    verify_phase1 -> check_phase1
+    check_phase1 -> phase2_state_manager [condition="outcome=success", weight=2]
+    check_phase1 -> phase1_tests_eslint [condition="outcome=fail"]
+
+    // Phase 2: Atomic State Manager
+    phase2_state_manager -> phase2_parallel
+    phase2_parallel -> phase2_migration
+    phase2_parallel -> phase2_lock_hardening
+    phase2_migration -> phase2_merge
+    phase2_lock_hardening -> phase2_merge
+    phase2_merge -> verify_phase2
+    verify_phase2 -> check_phase2
+    check_phase2 -> phase3_parallel [condition="outcome=success", weight=2]
+    check_phase2 -> phase2_state_manager [condition="outcome=fail"]
+
+    // Phase 3: Process Lifecycle
+    phase3_parallel -> phase3_dispatch_lifecycle
+    phase3_parallel -> phase3_fsync_handoff
+    phase3_dispatch_lifecycle -> phase3_merge
+    phase3_fsync_handoff -> phase3_merge
+    phase3_merge -> verify_phase3
+    verify_phase3 -> check_phase3
+    check_phase3 -> phase4_parallel [condition="outcome=success", weight=2]
+    check_phase3 -> phase3_parallel [condition="outcome=fail"]
+
+    // Phase 4: Defensive Coding
+    phase4_parallel -> phase4_type_git_timeout
+    phase4_parallel -> phase4_promise_template
+    phase4_parallel -> phase4_cb_logger_stophook
+    phase4_type_git_timeout -> phase4_merge
+    phase4_promise_template -> phase4_merge
+    phase4_cb_logger_stophook -> phase4_merge
+    phase4_merge -> verify_phase4
+    verify_phase4 -> check_phase4
+    check_phase4 -> phase5_harness [condition="outcome=success", weight=2]
+    check_phase4 -> phase4_parallel [condition="outcome=fail"]
+
+    // Phase 5: Integration Testing
+    phase5_harness -> phase5_parallel
+    phase5_parallel -> phase5_microverse_crash
+    phase5_parallel -> phase5_ratelimit_process
+    phase5_microverse_crash -> phase5_merge
+    phase5_ratelimit_process -> phase5_merge
+    phase5_merge -> verify_phase5
+    verify_phase5 -> check_phase5
+    check_phase5 -> phase6_parallel [condition="outcome=success", weight=2]
+    check_phase5 -> phase5_harness [condition="outcome=fail"]
+
+    // Phase 6: Low-Priority Hardening
+    phase6_parallel -> phase6_array_caps
+    phase6_parallel -> phase6_docs_schema
+    phase6_parallel -> phase6_safe_error
+    phase6_array_caps -> phase6_merge
+    phase6_docs_schema -> phase6_merge
+    phase6_safe_error -> phase6_merge
+    phase6_merge -> verify_phase6
+    verify_phase6 -> check_phase6
+    check_phase6 -> release_review [condition="outcome=success", weight=2]
+    check_phase6 -> phase6_parallel [condition="outcome=fail"]
+
+    // Release
+    release_review -> version_bump [label="[A] Approve", weight=2]
+    release_review -> phase4_parallel [label="[R] Revise — defensive coding"]
+    version_bump -> final_verify
+    final_verify -> check_final
+    check_final -> done [condition="outcome=success", weight=2]
+    check_final -> version_bump [condition="outcome=fail"]
+}

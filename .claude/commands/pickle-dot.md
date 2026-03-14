@@ -29,6 +29,8 @@ Extract: slug (lowercase+underscores), goal, tasks (ID/type/prompt/critical/deps
 
 **Shapes**: Mdiamond=start, Msquare=exit, box=codergen, diamond=conditional, hexagon=human, component=fan-out, tripleoctagon=fan-in, parallelogram=tool, house=manager_loop
 
+**Permission modes** (claude-code backend, codergen nodes): `plan` (default), `bypassPermissions`, `acceptEdits`, `auto`, `default`, `dontAsk`. Do NOT use `full` — it is not a valid CLI value.
+
 ### Mandatory Patterns
 
 **1. Test-Fix Loops** — every impl has verification routing back on failure:
