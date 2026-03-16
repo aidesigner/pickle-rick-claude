@@ -72,10 +72,11 @@ check -> next [condition="outcome=success", weight=2]
 check -> impl [condition="outcome=fail"]
 ```
 
-**2. Goal Gates** — P0/critical nodes get `goal_gate=true`. PRD acceptance criteria → graph-level `acceptance_criteria` (evaluated after every goal_gate node; fails → retry from `retry_target`):
+**2. Goal Gates** — P0/critical nodes get `goal_gate=true`. PRD acceptance criteria → graph-level `acceptance_criteria` (evaluated after every goal_gate node; fails → retry from node-level `retry_target`). Prefer per-node `retry_target` over graph-level — graph-level retry causes full pipeline re-runs and is dangerous with fan-outs:
 ```
-graph [acceptance_criteria="context.tests_pass=true && context.build_status=passing", retry_target="impl"]
-test [goal_gate=true]
+graph [acceptance_criteria="context.tests_pass=true && context.build_status=passing"]
+impl [goal_gate=true, retry_target="impl"]
+test [goal_gate=true, retry_target="impl"]
 ```
 Context vars: `context.tests_pass`, `context.build_status`, `context.lint_status`, `context.typecheck_status`, `context.review_status`, `context.conformance_status`.
 
@@ -194,17 +195,77 @@ conformance -> conformance_gate
 conformance_gate -> done [condition="outcome=success", weight=2]
 conformance_gate -> impl [condition="outcome=fail"]
 ```
-Conformance uses Opus (`.review` class) and is a `goal_gate` — failing conformance triggers retry from impl. Runs AFTER review-simplify cycle, BEFORE the final exit — it's the last gate before `done`. On failure, routes back to impl with the list of unmet requirements. The prompt for the conformance node MUST include or reference the original task requirements so the LLM can compare.
+Conformance uses Opus (`.review` class) and is a `goal_gate` — failing conformance triggers retry from impl. Runs AFTER review-simplify cycle, BEFORE the final exit. On failure, routes back to impl with the list of unmet requirements. The prompt for the conformance node MUST include or reference the original task requirements so the LLM can compare.
+
+**16. Spec-First TDD** — generate tests FROM the spec BEFORE implementation. The impl node's job is to make pre-written tests pass, not invent its own. This is the single highest-leverage pattern — it inverts "implement then test" into "define convergence target then converge." Mandatory for every `goal_gate=true` impl node:
+```
+spec_tests [class="review", prompt="Read the implementation prompt for the next node. Write failing tests that verify EVERY requirement and edge case listed in that prompt. Do NOT implement production code — only write tests. Run them to confirm they all fail (red phase). Tests define the behavioral contract.", goal_gate=true, retry_target="spec_tests"]
+impl [prompt="Make all failing tests pass. Do NOT modify test files — only write production code. ${REQUIREMENTS}", goal_gate=true, retry_target="impl"]
+verify_tests [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm test 2>&1", max_visits=3]
+check_tests [shape=diamond]
+spec_tests -> impl -> verify_tests -> check_tests
+check_tests -> next [condition="outcome=success", weight=2]
+check_tests -> impl [condition="outcome=fail"]
+```
+`spec_tests` uses Opus (`.review` class) because test design requires deep understanding of requirements — it's architecture work, not code generation. The impl node is explicitly forbidden from modifying tests — it can only write production code. This enforces behavioral contracts: tests define what convergence means, impl converges toward it. The spec_tests prompt MUST reference the impl node's prompt so the LLM knows what to test.
+
+**17. Adversarial Red Team** — a dedicated agent that tries to BREAK the implementation after all other gates pass. Distinct from review (pattern 7) which looks for issues — red team actively attempts exploits, race conditions, and unhandled edge cases. **Optional** — ask the user if they want adversarial red teaming. Default to YES for phases touching security, auth, data integrity, or financial logic:
+```
+red_team [class="review", prompt="Adversarial audit: attempt to break this implementation. Try: 1) Invalid/malicious inputs not covered by existing tests. 2) Concurrent access races. 3) Resource exhaustion (large payloads, deep nesting). 4) State corruption via unexpected call order. 5) Dependency failure modes (network down, disk full, OOM). Write reproducing test cases for any issues found — these become additional constraints on impl retry. Output PASS if no exploitable issues, FAIL with descriptions and repro tests.", goal_gate=true, retry_target="impl"]
+red_team_gate [shape=diamond]
+red_team -> red_team_gate
+red_team_gate -> done [condition="outcome=success", weight=2]
+red_team_gate -> impl [condition="outcome=fail"]
+```
+Red team runs AFTER conformance, BEFORE done — it's the final adversarial gate. Uses Opus (`.review` class). On failure, the repro test cases it wrote become additional constraints the impl must satisfy on retry. Only emit for phases marked critical or touching security/auth/data surfaces. When asking the user, frame it as: "This phase touches [auth/data/security]. Add adversarial red team? (burns ~10K extra tokens per phase)."
+
+**18. Competing Implementations** — two parallel approaches with different optimization targets, fan-in selects best. Upgrades pattern 12 from optional to **default for any `goal_gate=true` phase touching >3 files**. **Optional** for smaller phases — ask the user if they want competing approaches. Frame as: "Phase N touches [N files / cross-cutting concern]. Use competing implementations? (doubles impl token cost)":
+```
+split_impl [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
+approach_minimal [prompt="Implement using MINIMAL changes — smallest possible diff that satisfies all spec tests. Prefer modifying existing code over creating new files. ${REQUIREMENTS}"]
+approach_clean [prompt="Implement with CLEAN architecture — best long-term design even if diff is larger. Prefer clear abstractions and separation of concerns. ${REQUIREMENTS}"]
+select_best [shape=tripleoctagon, class="critical", eval_criteria="completeness,faithfulness", eval_threshold=0.7, prompt="Compare both implementations against the spec tests. Evaluate: 1) All spec tests pass? 2) Diff size (smaller is better at equal correctness). 3) Adherence to project patterns. 4) Long-term maintainability. Select the best. If neither passes all tests, select the closer one and document gaps for retry."]
+split_impl -> approach_minimal
+split_impl -> approach_clean
+approach_minimal -> select_best
+approach_clean -> select_best
+```
+The two approaches have DIFFERENT optimization targets: minimal diff (conservative, low risk) vs clean design (higher quality, larger diff). Fan-in uses Opus (`.critical` class). This eliminates single-point-of-failure on implementation strategy — if one approach hits a dead end, the other may succeed.
+
+**Integration with spec-first TDD (Pattern 16)**: spec_tests runs ONCE before the fan-out — both approaches share the same spec tests as their convergence target. Each approach's prompt includes "Do NOT modify test files." The fan-in evaluates which approach better satisfies the shared spec tests:
+```
+spec_tests -> split_impl -> [approach_minimal, approach_clean] -> select_best -> verify_lint -> ...
+```
+
+### Retry Target Scoping
+
+**Do NOT use graph-level `retry_target` pointing to early nodes** (e.g., `setup_deps`). This causes entire pipeline re-execution when only one phase fails — wasteful and can trigger recursion in fan-out branches. Instead:
+
+- **Omit graph-level `retry_target`** or set it to the first impl node (never to setup/start)
+- **Use per-node `retry_target`** on every `goal_gate=true` node — these are precise and scope-aware
+- **Fan-out branch retry targets MUST stay within the branch** — nodes inside a `component→tripleoctagon` pair should only retry to other nodes within the same parallel branch. The engine strips out-of-scope retry targets, but don't rely on the engine as a safety net:
+```
+// CORRECT: retry stays within the branch
+approach_a [goal_gate=true, retry_target="approach_a"]
+
+// WRONG: retry escapes the branch scope
+approach_a [goal_gate=true, retry_target="setup_deps"]  // causes full pipeline re-run
+approach_a [goal_gate=true, retry_target="approach_b"]   // cross-branch deadlock risk
+```
 
 ### Verification Chain Order
 
-After implementation, verification nodes MUST follow this order. Each gate is separate so failures produce actionable routing:
+The full chain with spec-first TDD and optional gates:
 
 ```
-impl → lint → typecheck → test → security → coverage → scope_check → review → simplify → reverify → conformance → done
+spec_tests → impl → lint → typecheck → test → security → coverage → scope_check → review → simplify → reverify → conformance → [red_team] → done
 ```
 
-Skip gates that don't apply (no linter, no type checker, no security tooling), but never reorder or bundle them. Early gates (lint, typecheck) are cheap tool nodes that catch trivial errors before expensive LLM review.
+- `spec_tests` comes BEFORE impl — tests define the convergence target
+- `[red_team]` is optional — include for security/auth/data phases
+- Competing implementations (pattern 18) replace the single `impl` node when applicable
+- Skip gates that don't apply (no linter, no type checker, no security tooling), but never reorder or bundle them
+- Early gates (lint, typecheck) are cheap tool nodes that catch trivial errors before expensive LLM review
 
 ### Anti-Patterns (NEVER)
 
@@ -212,6 +273,8 @@ Skip gates that don't apply (no linter, no type checker, no security tooling), b
 - Orphan tests (no failure routing)
 - `goal_gate=true` without `retry_target`
 - `acceptance_criteria` without `retry_target`
+- Graph-level `retry_target` pointing to setup/start nodes (causes full pipeline re-run on any failure)
+- Fan-out branch `retry_target` referencing nodes outside the branch (cross-scope retry)
 - Hexagon nodes (human gates not implemented — pipeline will deadlock)
 - Diamond without default branch (stalls)
 - Parallel siblings depending on each other (deadlock)
@@ -219,6 +282,9 @@ Skip gates that don't apply (no linter, no type checker, no security tooling), b
 - Security scanning bundled into test gate (distinct failure routing needed)
 - Lint/typecheck/test bundled into one gate (distinct failure classes need distinct routing)
 - Conformance check skipped (passing tests ≠ correct implementation)
+- Implementation before spec tests on critical paths (tests define convergence target, not impl)
+- Review as only quality gate (deterministic verification > LLM opinion)
+- Single implementation attempt on high-complexity phases (competing approaches reduce variance)
 - Simplify cycle without drift detection (oscillation risk)
 - High-complexity phase without multi-pass or elevated review (single-shot gamble)
 - Scope check skipped on fan-out branches (gold-plating risk)
@@ -230,7 +296,7 @@ Two semantic tiers — `${DEFAULT_MODEL}` and `${REVIEW_MODEL}` — resolved fro
 | Tier | Task | Class |
 |------|------|-------|
 | Default | Implementation, simplification, lint, typecheck, tests, security scanning | `*` (unclassed) |
-| Review | Architecture, review, fan-in eval, scope audit, drift detection, conformance | `.critical` / `.review` |
+| Review | Spec test design, architecture, review, fan-in eval, scope audit, drift detection, conformance, red team | `.critical` / `.review` |
 
 **Stylesheet template** — substitute resolved model IDs and provider. Include `llm_provider` only when provider is NOT `anthropic` (anthropic is the attractor default):
 
@@ -269,8 +335,8 @@ digraph ${SLUG} {
     goal = "${GOAL}"
     label = "${LABEL}"
     default_max_retry = 2
-    retry_target = "${FIRST_IMPL}"
     acceptance_criteria = "${CRITERIA}"
+    // Omit graph-level retry_target — use per-node retry_target instead (see Retry Target Scoping)
     model_stylesheet = "${MODEL_STYLESHEET}"  // from Step 1 flags — see Model Routing section
 
     start [shape=Mdiamond]
@@ -288,7 +354,7 @@ Conditions: `outcome=success`, `outcome=fail`, `context.KEY=VALUE`, combine with
 
 **Errors**: single start/exit, no incoming→start, no outgoing←exit, all reachable, valid targets, diamond 2+ edges, component↔tripleoctagon paired, valid conditions/IDs/syntax, `->` only, single digraph.
 
-**Warnings**: every box has prompt, happy-path higher weight, goal_gate has retry, acceptance_criteria has retry_target, no linear chains, every impl has verification, every phase has review-simplify cycle, lint/typecheck/test are separate gates (not bundled), security scanning not bundled with tests, scope check on fan-out branches, drift detection in simplify cycles, high-complexity phases use multi-pass, conformance check before exit.
+**Warnings**: every box has prompt, happy-path higher weight, goal_gate has per-node retry_target, no graph-level retry_target to early nodes, fan-out retry_targets stay within branch scope, no linear chains, every impl has verification, goal_gate impl nodes have spec_tests before them, every phase has review-simplify cycle, lint/typecheck/test are separate gates (not bundled), security scanning not bundled with tests, scope check on fan-out branches, drift detection in simplify cycles, high-complexity phases use multi-pass, conformance check before exit, security/auth phases have red_team gate.
 
 ## Step 6: Summary & Save
 
@@ -296,14 +362,14 @@ Show DOT in ```dot block. Summary: nodes by type, edges (total/conditional/feedb
 
 ## Example
 
-PRD: JWT auth API (TypeScript/Express). Requirements: middleware + login endpoint, tests pass, code review. This example demonstrates patterns 0, 1, 7, 13, 14, 15. Security (8), coverage (9), and scope (10) gates are omitted for brevity — add them when the target repo has security tooling or when the PRD scope warrants it.
+PRD: JWT auth API (TypeScript/Express). Requirements: middleware + login endpoint, tests pass, code review. Demonstrates patterns 0, 1, 7, 13, 14, 15, 16, 17. Security (8), coverage (9), scope (10), and competing impls (18) omitted for brevity.
 
 ```dot
 digraph user_auth_api {
     goal = "Add JWT authentication to the REST API"
     label = "user-auth-api: JWT Auth"
     default_max_retry = 2
-    retry_target = "implement_auth"
+    // No graph-level retry_target — per-node retry_targets are more precise (see Retry Target Scoping)
     acceptance_criteria = "context.tests_pass=true && context.lint_status=passing && context.typecheck_status=passing"
     // No --provider/--models flags → anthropic defaults
     model_stylesheet = "* { llm_model: claude-sonnet-4-6; } .critical { llm_model: claude-opus-4-6; reasoning_effort: high; } .review { llm_model: claude-opus-4-6; }"
@@ -313,8 +379,11 @@ digraph user_auth_api {
     start [shape=Mdiamond]
     setup_deps [shape=parallelogram, tool_command="npm install 2>&1", timeout=120s]
 
-    // Implementation
-    implement_auth [goal_gate=true, prompt="Implement JWT middleware + login endpoint. Express structure. OWASP auth patterns. 1h token expiry, refresh token rotation, bcrypt password hashing."]
+    // Spec-First TDD: write failing tests FROM the spec BEFORE implementation (Pattern 16)
+    spec_tests_auth [class="review", prompt="Write failing tests for JWT auth. Cover: 1) Middleware rejects missing/expired/malformed tokens with 401. 2) Login endpoint returns token on valid credentials, 401 on invalid. 3) Token expiry is 1h. 4) Refresh token rotation — old refresh token invalidated after use. 5) Passwords stored as bcrypt hashes, never plaintext. 6) OWASP: no token in URL params, secure cookie flags. Run tests to confirm they all FAIL (red phase). Do NOT write production code.", goal_gate=true, retry_target="spec_tests_auth"]
+
+    // Implementation: make the spec tests pass (do NOT modify test files)
+    implement_auth [goal_gate=true, retry_target="implement_auth", prompt="Make all failing auth tests pass. Do NOT modify test files. Implement JWT middleware + login endpoint. Express structure. 1h token expiry, refresh token rotation, bcrypt password hashing. OWASP auth patterns."]
 
     // Verification chain: lint → typecheck → test (cheap gates first)
     verify_lint [shape=parallelogram, tool_command="npm run lint 2>&1", max_visits=3]
@@ -326,7 +395,7 @@ digraph user_auth_api {
 
     // Review-simplify cycle (Opus reviews, Sonnet simplifies)
     review_auth [class="review", prompt="Review auth: correctness, edge cases (expired/malformed tokens, clock skew, missing headers), error handling, OWASP adherence. List issues with file:line."]
-    simplify_auth [prompt="Simplify auth code: redundant checks, complex parsing, duplication, naming. Preserve functionality and tests."]
+    simplify_auth [prompt="Simplify auth code: redundant checks, complex parsing, duplication, naming. Preserve functionality and tests. Do NOT modify test files."]
     reverify_auth [shape=parallelogram, tool_command="npm run lint 2>&1 && npx tsc --noEmit 2>&1 && npm test 2>&1", goal_gate=true, retry_target="simplify_auth", max_visits=3]
     check_clean [shape=diamond]
 
@@ -334,10 +403,14 @@ digraph user_auth_api {
     conformance [class="review", goal_gate=true, retry_target="implement_auth", prompt="Conformance audit: verify the git diff addresses ALL requirements: 1) JWT middleware exists and protects routes. 2) Login endpoint accepts credentials, returns token. 3) Token expiry is 1h. 4) Refresh token rotation implemented. 5) Passwords hashed with bcrypt. 6) OWASP auth patterns followed. Output PASS or FAIL with unmet requirements."]
     conformance_gate [shape=diamond]
 
+    // Adversarial Red Team: auth is a security surface (Pattern 17)
+    red_team_auth [class="review", prompt="Adversarial audit of JWT auth: attempt to break it. Try: 1) Token forgery with wrong secret. 2) Expired token replay. 3) Refresh token reuse after rotation. 4) SQL/NoSQL injection in login credentials. 5) Timing attacks on password comparison. 6) JWT algorithm confusion (none/HS256 swap). Write reproducing test cases for any issues found. Output PASS or FAIL.", goal_gate=true, retry_target="implement_auth"]
+    red_team_gate [shape=diamond]
+
     done [shape=Msquare]
 
-    // Edges
-    start -> setup_deps -> implement_auth
+    // Edges — spec_tests BEFORE impl, red_team AFTER conformance
+    start -> setup_deps -> spec_tests_auth -> implement_auth
     implement_auth -> verify_lint -> check_lint
     check_lint -> verify_types [condition="outcome=success", weight=2]
     check_lint -> implement_auth [condition="outcome=fail"]
@@ -351,12 +424,15 @@ digraph user_auth_api {
     check_clean -> conformance [condition="outcome=success", weight=2]
     check_clean -> simplify_auth [condition="outcome=fail"]
     conformance -> conformance_gate
-    conformance_gate -> done [condition="outcome=success", weight=2]
+    conformance_gate -> red_team_auth [condition="outcome=success", weight=2]
     conformance_gate -> implement_auth [condition="outcome=fail"]
+    red_team_auth -> red_team_gate
+    red_team_gate -> done [condition="outcome=success", weight=2]
+    red_team_gate -> implement_auth [condition="outcome=fail"]
 }
 ```
 
-Convergence: lint→typecheck→test chain catches cheap errors early, review→simplify→reverify cycle polishes, conformance gate verifies requirements are met. `max_visits=3` bounds all loops.
+Convergence: spec tests define the target (red), impl converges (green). Lint→typecheck→test catches cheap errors. Review→simplify→reverify polishes. Conformance verifies requirements. Red team attempts to break auth. All per-node retry_targets — no graph-level retry. `max_visits=3` bounds loops.
 
 ## Schema Reference
 
