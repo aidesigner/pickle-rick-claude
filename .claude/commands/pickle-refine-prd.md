@@ -15,6 +15,19 @@ If `--resume` has a path argument → `RESUME_SESSION = <path>`. If `--resume` w
 
 Not found → "Run `/pickle-prd` first or pass path." Stop.
 
+## Step 1b: Gather Organizational Context
+
+Check for a `context/` or `voice-of-customer/` directory in the working directory (or repo root). If present, read its contents — these are PM-curated customer signals that should ground the refinement in real user needs:
+
+- **Call summaries** — themes from customer/prospect calls
+- **Feedback** — aggregated feature requests, complaints, NPS verbatims
+- **Support issues** — top support tickets, common pain points
+- **Market signals** — competitor moves, analyst reports, sales objections
+
+If found, carry this context forward into Steps 5-7. The refinement team should reference real customer feedback when prioritizing requirements, identifying gaps, and decomposing tasks — not just analyze the PRD in isolation.
+
+If no context directory exists, continue without it — this step is additive, not blocking.
+
 ## Step 2: Verification Readiness Check
 Read PRD. Gate on verification quality before spending tokens on refinement.
 
