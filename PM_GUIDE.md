@@ -102,11 +102,12 @@ The interview covers:
 Best for: PMs who already have a draft or are comfortable writing requirements.
 
 1. Write a `prd.md` (see template below)
-2. Say *"Refine my prd.md"* — the system finds it and launches refinement
-3. It checks your PRD for verification readiness — if it's thin, it interviews you
-4. Three analysts explore your codebase and refine the PRD in parallel
-5. Atomic tickets are generated
-6. Review, then say *"Implement it"* or *"Resume"*
+2. *(Optional)* Add a `context/` directory with customer signals — call summaries, feedback themes, support issues. The refinement team reads this to ground analysis in real user needs rather than abstract requirements.
+3. Say *"Refine my prd.md"* — the system finds it and launches refinement
+4. It checks your PRD for verification readiness — if it's thin, it interviews you
+5. Three analysts explore your codebase and refine the PRD in parallel
+6. Atomic tickets are generated
+7. Review, then say *"Implement it"* or *"Resume"*
 
 ### Approach 3: One sentence, full automation
 
@@ -192,6 +193,18 @@ Beyond the minimum, these sections significantly improve what the system produce
 6. Audit log entry created
 7. Notification sent to borrower
 ```
+
+**Customer context (`context/` directory)** — Drop a `context/` folder in your repo root with curated customer signals. The refinement team reads these files and uses them to prioritize requirements and identify gaps you might miss from code alone:
+
+```
+context/
+  call-themes-q1.md          # Themes from customer/prospect calls
+  top-support-issues.md       # Most common support tickets
+  feature-requests.md         # Aggregated feedback and requests
+  sales-objections.md         # Why deals stall or are lost
+```
+
+Keep these curated and concise — a 2-page summary of call themes is more useful than 50 raw transcripts. The refinement analysts will reference specific customer feedback when they find gaps in your PRD.
 
 **Not-in-scope** — Explicitly listing what you're NOT building prevents the AI from over-engineering:
 
