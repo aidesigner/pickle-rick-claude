@@ -25,6 +25,7 @@ Attractor = **convergence basin**, not task list. Failures route back toward the
 | `gemini` | `gemini-2.5-flash` | `gemini-2.5-pro` |
 | `deepseek` | `deepseek-chat` | `deepseek-reasoner` |
 | `ollama` | `qwen3:32b` | `qwen3:32b` |
+| `vllm` | *(ask user — no standard model IDs)* | *(ask user)* |
 
 If `--provider` is given without `--models`, use the provider's defaults from the table above. If `--models` is given without `--provider`, infer provider from the model ID prefix or ask the user.
 
@@ -43,6 +44,17 @@ Extract: slug (lowercase+underscores), goal, tasks (ID/type/prompt/critical/deps
 
 **Validate**: Must have title + ≥1 requirement section. Missing acceptance criteria → WARN (no self-correction guarantees). Missing title/sections → STOP and ask.
 
+**Review team planning**: For each implementation phase, determine review team composition and ratchet depth:
+1. Start with `correctness` + `patterns` (always included)
+2. Add `architecture` if phase creates new modules or changes >5 files
+3. Add `security` if phase touches auth, data, crypto, or user input
+4. Add `performance` if phase touches hot paths, queries, or caching
+5. Add `api_compatibility` if phase changes public interfaces or contracts
+6. Present suggested team: "Review team for Phase N: [roles]. Customize? (default: use suggested)"
+7. Ask: "How many consecutive clean review passes? (default: 2)"
+8. For phases touching security/auth/data: ask "Add adversarial red team? (burns ~10K extra tokens per phase)" (Pattern 17)
+9. For high-complexity phases (>3 files, cross-cutting): ask "Use competing implementations? (doubles impl token cost)" (Pattern 18)
+
 ## Step 3: Build Graph
 
 **Structure**: 1 `Mdiamond` start, 1 `Msquare` exit. All reachable. No orphans. `->` only.
@@ -55,7 +67,7 @@ Extract: slug (lowercase+underscores), goal, tasks (ID/type/prompt/critical/deps
 
 **0. Dependency Setup Node** — first node after `start`, before any implementation or verification. The attractor runs in Docker where `node_modules` are not present. Emit a `shape=parallelogram` tool node that installs dependencies in the `working_dir`. This avoids LLM overhead — it's a raw command, not codergen:
 ```
-setup_deps [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm install 2>&1", timeout=120s]
+setup_deps [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm install 2>&1", timeout="120s"]
 start -> setup_deps -> first_impl
 ```
 Detect package manager from the PRD or repo context: `npm install`, `pnpm install`, `yarn install`, `pip install -r requirements.txt`, etc. If multiple subdirectories need deps, chain them: `cd dir1 && npm install && cd ../dir2 && npm install`.
@@ -104,7 +116,7 @@ Fan-in selection: (1) structured scoring via `eval_criteria`, (2) LLM eval via `
 
 **6. Max Visits** — `max_visits` on looping nodes prevents infinite convergence.
 
-**7. Per-Phase Review-Simplify Cycle** — every implementation phase MUST include review→simplify→re-verify after initial verification passes:
+**7. Per-Phase Review-Simplify Cycle** — **Superseded by Pattern 19 (Review Convergence Ratchet) when present — Pattern 19 is the default.** Pattern 7 applies only as a standalone fallback for explicitly simplified pipelines. When used standalone, every implementation phase MUST include review→simplify→re-verify after initial verification passes:
 ```
 verify -> check
 check -> review [condition="outcome=success", weight=2]
@@ -237,6 +249,91 @@ The two approaches have DIFFERENT optimization targets: minimal diff (conservati
 spec_tests -> split_impl -> [approach_minimal, approach_clean] -> select_best -> verify_lint -> ...
 ```
 
+**19. Review Convergence Ratchet** — iterative agent team reviews where N consecutive clean passes are required before exit. Any fix resets the counter. This models the human workflow: review → fix → re-review until stable. **Default for all pipelines** — the review-simplify cycle (Pattern 7) becomes the inner loop within each ratchet pass. Ask the user: "How many consecutive clean review passes? (default: 2)":
+
+**Team composition** — each review pass uses a fan-out agent team (`component→tripleoctagon`), not a single reviewer. The command suggests reviewer roles based on phase context, then asks the user to confirm:
+
+| Phase touches | Default team |
+|---------------|-------------|
+| Any code change | `correctness`, `patterns` (always) |
+| Architecture / new modules / >5 files | + `architecture` |
+| Security / auth / data / crypto | + `security` |
+| Performance / hot paths / queries | + `performance` |
+| API / contracts / public interfaces | + `api_compatibility` |
+
+Prompt the user: "Review team for Phase N: [suggested roles]. Customize? (default: use suggested)" and "How many consecutive clean passes? (default: 2)". Cap at 2–4 reviewers per team (more rarely finds new issues).
+
+**Single pass structure** — each review pass is a component→tripleoctagon fan-out with specialized reviewers, merged by an Opus fan-in that classifies findings as BLOCKER or ADVISORY:
+```
+// Review pass N — agent team fan-out
+split_review_N [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
+reviewer_correctness_N [class="review", prompt="Correctness ONLY: logic errors, off-by-one, null/undefined, async correctness, error propagation. Ignore style, naming, architecture. List issues with file:line."]
+reviewer_patterns_N [class="review", prompt="Project patterns ONLY: naming conventions, file structure, existing abstractions, test patterns. Compare against surrounding code. Ignore logic correctness. List deviations with file:line."]
+merge_review_N [shape=tripleoctagon, class="review", prompt="Consolidate all reviewer findings. Deduplicate (same issue found by multiple reviewers). Classify each as BLOCKER (must fix) or ADVISORY (nice to have). Output: CLEAN if zero blockers, DIRTY with blocker list."]
+check_review_N [shape=diamond]
+fix_N [prompt="Fix all BLOCKER issues from the review team. Also simplify: redundant logic, complex conditionals, duplication, unclear naming. Preserve functionality and tests. Do NOT modify test files.", max_visits=5]
+reverify_N [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm test 2>&1"]
+```
+
+**Consecutive enforcement via reset-on-fail** — the graph topology itself enforces "N consecutive clean." No counters or state variables needed. When pass K fails, the failure edge routes back to **pass 1**, not pass K. The fix invalidated all prior clean results, so the ratchet resets:
+```
+// 2-pass ratchet (default)
+
+// Pass 1 — fan-out review team
+split_review_1 [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
+reviewer_correctness_1 [class="review", prompt="Correctness ONLY: logic errors, off-by-one, null/undefined, async correctness, error propagation. Ignore style. List issues with file:line."]
+reviewer_patterns_1 [class="review", prompt="Project patterns ONLY: naming, file structure, existing abstractions, test patterns. Ignore logic. List deviations with file:line."]
+merge_review_1 [shape=tripleoctagon, class="review", prompt="Consolidate findings. Deduplicate. Classify as BLOCKER or ADVISORY. Output CLEAN or DIRTY."]
+check_review_1 [shape=diamond]
+fix_1 [prompt="Fix all BLOCKER issues from the review team. Also simplify: redundant logic, complex conditionals, duplication, unclear naming. Preserve functionality and tests. Do NOT modify test files.", max_visits=5]
+reverify_1 [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm test 2>&1"]
+
+// Pass 2 — confirmation pass (fresh eyes, re-examine ALL code)
+split_review_2 [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
+reviewer_correctness_2 [class="review", prompt="Fresh correctness review of ALL code — not just recent changes. Assume nothing from prior reviews. Logic errors, off-by-one, null/undefined, async. List issues with file:line."]
+reviewer_patterns_2 [class="review", prompt="Fresh patterns review of ALL code — not just recent changes. Naming, structure, abstractions, tests. List deviations with file:line."]
+merge_review_2 [shape=tripleoctagon, class="review", prompt="Consolidate findings. Deduplicate. Classify as BLOCKER or ADVISORY. Output CLEAN or DIRTY."]
+check_review_2 [shape=diamond]
+fix_2 [prompt="Fix all BLOCKER issues from the confirmation review. Also simplify: redundant logic, complex conditionals, duplication, unclear naming. Preserve functionality and tests. Do NOT modify test files.", max_visits=5]
+reverify_2 [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm test 2>&1"]
+
+// Wiring — pass 1 loop
+split_review_1 -> reviewer_correctness_1 -> merge_review_1
+split_review_1 -> reviewer_patterns_1 -> merge_review_1
+merge_review_1 -> check_review_1
+check_review_1 -> split_review_2 [condition="outcome=success", weight=2]   // clean → advance
+check_review_1 -> fix_1 [condition="outcome=fail"]                         // dirty → fix
+fix_1 -> reverify_1 -> split_review_1                                      // re-review pass 1
+
+// Wiring — pass 2, failure RESETS to pass 1
+split_review_2 -> reviewer_correctness_2 -> merge_review_2
+split_review_2 -> reviewer_patterns_2 -> merge_review_2
+merge_review_2 -> check_review_2
+check_review_2 -> next_phase [condition="outcome=success", weight=2]       // 2 consecutive clean → exit
+check_review_2 -> fix_2 [condition="outcome=fail"]                         // dirty → fix
+fix_2 -> reverify_2 -> split_review_1                                      // RESET to pass 1, not pass 2
+```
+
+**For 3 consecutive clean** — add a pass 3 where failure also resets to pass 1:
+```
+check_review_3 -> done [condition="outcome=success", weight=2]       // 3 consecutive clean
+check_review_3 -> fix_3 [condition="outcome=fail"]
+fix_3 -> reverify_3 -> split_review_1                               // RESET to pass 1
+```
+
+**Reviewer prompt rules**:
+- Each reviewer has a **narrow focus** — one concern per reviewer, no overlap (wastes tokens)
+- Pass 2+ reviewers get **"fresh eyes" prompts** — explicitly told "re-examine ALL code, not just recent changes, assume nothing from prior passes"
+- The fan-in merge prompt is **identical across passes** — same BLOCKER/ADVISORY classification
+- Additional roles (security, architecture, etc.) use the same prompt across passes but with fresh-eyes framing on pass 2+
+
+**Integration with Pattern 7 (Review-Simplify)**: The ratchet REPLACES the single review-simplify cycle from Pattern 7. Each ratchet pass includes the simplify step within the fix node — when fix_N addresses blockers, it simplifies as part of the fix. The ratchet subsumes Pattern 7 for pipelines that use it. For simple pipelines without the ratchet, Pattern 7 still applies standalone.
+
+**Integration with Pattern 15 (Conformance)**: Conformance runs AFTER the ratchet exits — it's a final "did we build the right thing" check, not part of the review loop. The ratchet ensures code quality; conformance ensures requirements coverage:
+```
+... → check_review_2 [pass] → conformance → conformance_gate → [red_team] → done
+```
+
 ### Retry Target Scoping
 
 **Do NOT use graph-level `retry_target` pointing to early nodes** (e.g., `setup_deps`). This causes entire pipeline re-execution when only one phase fails — wasteful and can trigger recursion in fan-out branches. Instead:
@@ -255,13 +352,15 @@ approach_a [goal_gate=true, retry_target="approach_b"]   // cross-branch deadloc
 
 ### Verification Chain Order
 
-The full chain with spec-first TDD and optional gates:
+The full chain with spec-first TDD, review ratchet, and optional gates:
 
 ```
-spec_tests → impl → lint → typecheck → test → security → coverage → scope_check → review → simplify → reverify → conformance → [red_team] → done
+spec_tests → impl → lint → typecheck → test → security → coverage → scope_check → review_ratchet(pass_1 → pass_2) → conformance → [red_team] → done
 ```
 
 - `spec_tests` comes BEFORE impl — tests define the convergence target
+- `review_ratchet` replaces the single review→simplify→reverify cycle (Pattern 7) — each pass is a fan-out agent team
+- Ratchet pass failure resets to pass 1 (consecutive enforcement)
 - `[red_team]` is optional — include for security/auth/data phases
 - Competing implementations (pattern 18) replace the single `impl` node when applicable
 - Skip gates that don't apply (no linter, no type checker, no security tooling), but never reorder or bundle them
@@ -285,9 +384,13 @@ spec_tests → impl → lint → typecheck → test → security → coverage �
 - Implementation before spec tests on critical paths (tests define convergence target, not impl)
 - Review as only quality gate (deterministic verification > LLM opinion)
 - Single implementation attempt on high-complexity phases (competing approaches reduce variance)
-- Simplify cycle without drift detection (oscillation risk)
+- Simplify cycle without drift detection (oscillation risk) — applies to standalone Pattern 7 only; Pattern 19 ratchet handles this via reset-on-fail
 - High-complexity phase without multi-pass or elevated review (single-shot gamble)
 - Scope check skipped on fan-out branches (gold-plating risk)
+- Single review pass as final quality gate (consecutive-clean ratchet catches issues single pass misses)
+- Ratchet pass failure routing back to same pass instead of pass 1 (defeats consecutive enforcement)
+- More than 4 reviewers per team (diminishing returns, wasted tokens)
+- Reviewer with broad prompt covering multiple concerns (narrow focus per reviewer, no overlap)
 
 ## Model Routing
 
@@ -354,15 +457,15 @@ Conditions: `outcome=success`, `outcome=fail`, `context.KEY=VALUE`, combine with
 
 **Errors**: single start/exit, no incoming→start, no outgoing←exit, all reachable, valid targets, diamond 2+ edges, component↔tripleoctagon paired, valid conditions/IDs/syntax, `->` only, single digraph.
 
-**Warnings**: every box has prompt, happy-path higher weight, goal_gate has per-node retry_target, no graph-level retry_target to early nodes, fan-out retry_targets stay within branch scope, no linear chains, every impl has verification, goal_gate impl nodes have spec_tests before them, every phase has review-simplify cycle, lint/typecheck/test are separate gates (not bundled), security scanning not bundled with tests, scope check on fan-out branches, drift detection in simplify cycles, high-complexity phases use multi-pass, conformance check before exit, security/auth phases have red_team gate.
+**Warnings**: dep setup node exists before first impl (Pattern 0), all component nodes have max_parallel=1 (Pattern 0b), looping nodes have max_visits (Pattern 6), every box has prompt, happy-path higher weight, goal_gate has per-node retry_target, no graph-level retry_target to early nodes, fan-out retry_targets stay within branch scope, no linear chains, every impl has verification, goal_gate impl nodes have spec_tests before them, review uses agent team fan-out (not single reviewer), review ratchet has ≥2 consecutive passes, ratchet pass failure routes to pass 1 (not same pass), lint/typecheck/test are separate gates (not bundled), security scanning not bundled with tests, scope check on fan-out branches, drift detection in simplify cycles, high-complexity phases use multi-pass, conformance check before exit (after ratchet), security/auth phases have red_team gate.
 
 ## Step 6: Summary & Save
 
-Show DOT in ```dot block. Summary: nodes by type, edges (total/conditional/feedback), goal gates, acceptance criteria, self-correction paths, quality gate types (test/security/coverage/scope/drift), model routing (provider, default tier model, review tier model). Save to `./${SLUG}.dot`. Offer `dot -Tsvg`. Next: `/attract` to submit.
+Show DOT in ```dot block. Summary: nodes by type, edges (total/conditional/feedback), goal gates, acceptance criteria, self-correction paths, quality gate types (test/security/coverage/scope/drift), review ratchet (team roles, consecutive passes), model routing (provider, default tier model, review tier model). Save to `./${SLUG}.dot`. Offer `dot -Tsvg`. Next: `/attract` to submit.
 
 ## Example
 
-PRD: JWT auth API (TypeScript/Express). Requirements: middleware + login endpoint, tests pass, code review. Demonstrates patterns 0, 1, 7, 13, 14, 15, 16, 17. Security (8), coverage (9), scope (10), and competing impls (18) omitted for brevity.
+PRD: JWT auth API (TypeScript/Express). Requirements: middleware + login endpoint, tests pass, code review. Demonstrates patterns 0, 1, 13, 14, 15, 16, 17, 19. Security (8), coverage (9), scope (10), and competing impls (18) omitted for brevity. Review ratchet (19) replaces single review-simplify (7).
 
 ```dot
 digraph user_auth_api {
@@ -377,7 +480,7 @@ digraph user_auth_api {
     // model_stylesheet = "* { llm_model: qwen-plus; llm_provider: qwen; } .critical { llm_model: qwen-max; reasoning_effort: high; } .review { llm_model: qwen-max; }"
 
     start [shape=Mdiamond]
-    setup_deps [shape=parallelogram, tool_command="npm install 2>&1", timeout=120s]
+    setup_deps [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm install 2>&1", timeout="120s"]
 
     // Spec-First TDD: write failing tests FROM the spec BEFORE implementation (Pattern 16)
     spec_tests_auth [class="review", prompt="Write failing tests for JWT auth. Cover: 1) Middleware rejects missing/expired/malformed tokens with 401. 2) Login endpoint returns token on valid credentials, 401 on invalid. 3) Token expiry is 1h. 4) Refresh token rotation — old refresh token invalidated after use. 5) Passwords stored as bcrypt hashes, never plaintext. 6) OWASP: no token in URL params, secure cookie flags. Run tests to confirm they all FAIL (red phase). Do NOT write production code.", goal_gate=true, retry_target="spec_tests_auth"]
@@ -386,18 +489,31 @@ digraph user_auth_api {
     implement_auth [goal_gate=true, retry_target="implement_auth", prompt="Make all failing auth tests pass. Do NOT modify test files. Implement JWT middleware + login endpoint. Express structure. 1h token expiry, refresh token rotation, bcrypt password hashing. OWASP auth patterns."]
 
     // Verification chain: lint → typecheck → test (cheap gates first)
-    verify_lint [shape=parallelogram, tool_command="npm run lint 2>&1", max_visits=3]
+    verify_lint [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm run lint 2>&1", max_visits=3]
     check_lint [shape=diamond]
-    verify_types [shape=parallelogram, tool_command="npx tsc --noEmit 2>&1", max_visits=3]
+    verify_types [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npx tsc --noEmit 2>&1", max_visits=3]
     check_types [shape=diamond]
-    run_tests [shape=parallelogram, tool_command="npm test 2>&1", max_visits=3]
+    run_tests [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm test 2>&1", max_visits=3]
     check_tests [shape=diamond]
 
-    // Review-simplify cycle (Opus reviews, Sonnet simplifies)
-    review_auth [class="review", prompt="Review auth: correctness, edge cases (expired/malformed tokens, clock skew, missing headers), error handling, OWASP adherence. List issues with file:line."]
-    simplify_auth [prompt="Simplify auth code: redundant checks, complex parsing, duplication, naming. Preserve functionality and tests. Do NOT modify test files."]
-    reverify_auth [shape=parallelogram, tool_command="npm run lint 2>&1 && npx tsc --noEmit 2>&1 && npm test 2>&1", goal_gate=true, retry_target="simplify_auth", max_visits=3]
-    check_clean [shape=diamond]
+    // Review Convergence Ratchet — 2 consecutive clean passes with agent team (Pattern 19)
+    // Pass 1: correctness + security reviewers (auth = security surface)
+    split_review_1 [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
+    reviewer_correctness_1 [class="review", prompt="Correctness ONLY: logic errors in JWT validation, token expiry math, refresh rotation state, bcrypt comparison, middleware ordering. Ignore style. List issues with file:line."]
+    reviewer_security_1 [class="review", prompt="Security ONLY: token forgery vectors, timing attacks on password comparison, algorithm confusion, secrets in logs/URLs, cookie flags, OWASP auth patterns. List vulnerabilities with file:line and severity."]
+    merge_review_1 [shape=tripleoctagon, class="review", prompt="Consolidate findings. Deduplicate. Classify as BLOCKER or ADVISORY. Output CLEAN or DIRTY with blocker list."]
+    check_review_1 [shape=diamond]
+    fix_1 [prompt="Fix all BLOCKER issues from the review team. Also simplify: redundant logic, complex conditionals, duplication, unclear naming. Preserve functionality and tests. Do NOT modify test files.", max_visits=5]
+    reverify_1 [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm run lint 2>&1 && npx tsc --noEmit 2>&1 && npm test 2>&1"]
+
+    // Pass 2: confirmation (fresh eyes, re-examine ALL code)
+    split_review_2 [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
+    reviewer_correctness_2 [class="review", prompt="Fresh correctness review of ALL auth code — assume nothing from prior reviews. Logic errors, off-by-one, null handling, async correctness. List issues with file:line."]
+    reviewer_security_2 [class="review", prompt="Fresh security review of ALL auth code — assume nothing from prior reviews. All OWASP auth vectors. List vulnerabilities with file:line."]
+    merge_review_2 [shape=tripleoctagon, class="review", prompt="Consolidate findings. Deduplicate. Classify as BLOCKER or ADVISORY. Output CLEAN or DIRTY."]
+    check_review_2 [shape=diamond]
+    fix_2 [prompt="Fix all BLOCKER issues from the confirmation review. Also simplify: redundant logic, complex conditionals, duplication, unclear naming. Preserve functionality and tests. Do NOT modify test files.", max_visits=5]
+    reverify_2 [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm run lint 2>&1 && npx tsc --noEmit 2>&1 && npm test 2>&1"]
 
     // Conformance: did we actually build what was asked?
     conformance [class="review", goal_gate=true, retry_target="implement_auth", prompt="Conformance audit: verify the git diff addresses ALL requirements: 1) JWT middleware exists and protects routes. 2) Login endpoint accepts credentials, returns token. 3) Token expiry is 1h. 4) Refresh token rotation implemented. 5) Passwords hashed with bcrypt. 6) OWASP auth patterns followed. Output PASS or FAIL with unmet requirements."]
@@ -418,11 +534,24 @@ digraph user_auth_api {
     check_types -> run_tests [condition="outcome=success", weight=2]
     check_types -> implement_auth [condition="outcome=fail"]
     run_tests -> check_tests
-    check_tests -> review_auth [condition="outcome=success", weight=2]
+    check_tests -> split_review_1 [condition="outcome=success", weight=2]
     check_tests -> implement_auth [condition="outcome=fail"]
-    review_auth -> simplify_auth -> reverify_auth -> check_clean
-    check_clean -> conformance [condition="outcome=success", weight=2]
-    check_clean -> simplify_auth [condition="outcome=fail"]
+
+    // Review ratchet pass 1 — agent team
+    split_review_1 -> reviewer_correctness_1 -> merge_review_1
+    split_review_1 -> reviewer_security_1 -> merge_review_1
+    merge_review_1 -> check_review_1
+    check_review_1 -> split_review_2 [condition="outcome=success", weight=2]
+    check_review_1 -> fix_1 [condition="outcome=fail"]
+    fix_1 -> reverify_1 -> split_review_1
+
+    // Review ratchet pass 2 — failure RESETS to pass 1
+    split_review_2 -> reviewer_correctness_2 -> merge_review_2
+    split_review_2 -> reviewer_security_2 -> merge_review_2
+    merge_review_2 -> check_review_2
+    check_review_2 -> conformance [condition="outcome=success", weight=2]
+    check_review_2 -> fix_2 [condition="outcome=fail"]
+    fix_2 -> reverify_2 -> split_review_1
     conformance -> conformance_gate
     conformance_gate -> red_team_auth [condition="outcome=success", weight=2]
     conformance_gate -> implement_auth [condition="outcome=fail"]
@@ -432,7 +561,7 @@ digraph user_auth_api {
 }
 ```
 
-Convergence: spec tests define the target (red), impl converges (green). Lint→typecheck→test catches cheap errors. Review→simplify→reverify polishes. Conformance verifies requirements. Red team attempts to break auth. All per-node retry_targets — no graph-level retry. `max_visits=3` bounds loops.
+Convergence: spec tests define the target (red), impl converges (green). Lint→typecheck→test catches cheap errors. Review ratchet (2 consecutive clean passes with correctness+security agent teams) polishes — pass 2 failure resets to pass 1. Conformance verifies requirements. Red team attempts to break auth. All per-node retry_targets — no graph-level retry. `max_visits` bounds loops.
 
 ## Schema Reference
 
