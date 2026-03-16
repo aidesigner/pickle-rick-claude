@@ -31,6 +31,8 @@ echo "[install.sh] Mode: $INSTALL_MODE" >&2
 
 # --- COMPILE (git mode only) ---
 if [ "$INSTALL_MODE" = "git" ]; then
+  echo "📦 Installing dependencies..."
+  (cd "$SCRIPT_DIR/extension" && npm install --no-fund --no-audit)
   echo "🔨 Compiling TypeScript..."
   (cd "$SCRIPT_DIR/extension" && npx tsc)
 else
