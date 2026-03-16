@@ -44,6 +44,12 @@ Extract: slug (lowercase+underscores), goal, tasks (ID/type/prompt/critical/deps
 
 **Validate**: Must have title + ≥1 requirement section. Missing acceptance criteria → WARN (no self-correction guarantees). Missing title/sections → STOP and ask.
 
+**Microverse detection**: Scan PRD for metric convergence indicators — these phases need Pattern 20 (Microverse Convergence Loop) instead of standard impl→verify:
+- Quantitative targets: "reduce below X", "improve to Y%", "optimize under N ms", "minimize", "maximize"
+- Measurable outcomes: bundle size, latency, test coverage %, memory usage, response time, error rate
+- Iterative refinement: "incrementally", "iteratively optimize", "converge toward"
+If detected, flag those phases for microverse pattern and determine the measurement command.
+
 **Review team planning**: For each implementation phase, determine review team composition and ratchet depth:
 1. Start with `correctness` + `patterns` (always included)
 2. Add `architecture` if phase creates new modules or changes >5 files
@@ -334,6 +340,58 @@ fix_3 -> reverify_3 -> split_review_1                               // RESET to 
 ... → check_review_2 [pass] → conformance → conformance_gate → [red_team] → done
 ```
 
+**20. Microverse Convergence Loop** — for phases with quantitative targets (metric optimization), replace the standard impl→verify chain with an incremental measure→change→remeasure→compare loop. Each iteration makes ONE small change, measures the result, and rolls back if it regressed. This models iterative optimization, not feature implementation. **Mandatory** when the PRD specifies measurable numeric targets for a phase:
+
+```
+// Commit baseline before optimization (safety checkpoint for rollback)
+// git -c flags set identity for Docker containers without global git config
+commit_baseline_<phase> [shape=parallelogram, tool_command="cd ${WORKING_DIR} && git add -u && git -c user.name=attractor -c user.email=attractor@local commit -m 'microverse: baseline checkpoint' --allow-empty 2>&1"]
+
+// Measure baseline
+baseline_<phase> [shape=parallelogram, tool_command="cd ${WORKING_DIR} && <measurement_cmd> 2>&1"]
+
+// Targeted change (ONE change per iteration — smallest possible diff)
+optimize_<phase> [prompt="Current metric: read the tool output from the previous measurement node. Target: <TARGET_VALUE>. Make ONE targeted change to move the metric toward the target. Smallest possible diff. Do not refactor unrelated code.", max_visits=8]
+
+// Re-measure after change
+measure_<phase> [shape=parallelogram, tool_command="cd ${WORKING_DIR} && <measurement_cmd> 2>&1"]
+
+// Compare: improved, regressed, or target met? (Opus evaluates)
+// CRITICAL: output must use STATUS: markers — the engine parses these to set outcome
+compare_<phase> [class="review", prompt="Read the measurement output. Compare against the target (<TARGET_VALUE>). Determine: 1) Has the target been met? If yes, output STATUS: SUCCESS on its own line. 2) Did the metric improve vs the previous measurement? If improved but not at target, output STATUS: PARTIAL_SUCCESS on its own line. 3) Did the metric regress or stall? If so, output STATUS: FAIL on its own line.", max_visits=10]
+check_<phase> [shape=diamond]
+
+// Rollback regression (only reverts uncommitted changes since last commit)
+rollback_<phase> [shape=parallelogram, tool_command="cd ${WORKING_DIR} && git checkout . 2>&1"]
+
+// Routing — 3 outgoing edges covering all outcome cases
+check_<phase> -> next_phase [condition="outcome=success", weight=2]
+check_<phase> -> optimize_<phase> [condition="outcome=partial_success"]
+check_<phase> -> rollback_<phase> [condition="outcome=fail"]
+rollback_<phase> -> optimize_<phase>
+
+// Full wiring
+commit_baseline_<phase> -> baseline_<phase> -> optimize_<phase> -> measure_<phase> -> compare_<phase> -> check_<phase>
+```
+
+**Key differences from standard impl→verify:**
+- Each iteration makes **ONE small change**, not a full implementation — smallest possible diff
+- **Rollback is explicit** (`git checkout .`) on regression — only reverts changes since the baseline commit checkpoint
+- **Commit before optimize** — a baseline commit with `git add -u` (tracked files only) ensures `git checkout .` only rolls back the current iteration, not prior phases' work. The `git -c user.name=...` flags ensure commits work in Docker containers without global git config
+- The measurement command must be **deterministic** (e.g., `npm run benchmark 2>&1`, `npx c8 report --reporter=text-summary 2>&1`)
+- The compare node uses Opus (`.review` class) and **MUST output `STATUS:` markers** — the engine's `parseStatusMarker` only recognizes `STATUS: SUCCESS`, `STATUS: PARTIAL_SUCCESS`, `STATUS: FAIL` (line-anchored, case-insensitive). Bare "PASS"/"FAIL" words are ignored by the parser
+- `max_visits` on optimize bounds the loop — **`max_visits` exhaustion is a pipeline error** that terminates the pipeline, so set it high enough for the expected convergence range (default: 8). If the target may require many iterations, increase `max_visits` accordingly. Set `compare` max_visits ≥ optimize max_visits to avoid premature exhaustion
+- The optimize prompt references the target value directly (interpolated from the PRD) rather than context variables — this avoids dependency on context-writing mechanisms
+
+**Coexistence with standard patterns:** Microverse and standard impl→verify can coexist in the same graph — some phases may be feature work (standard patterns 1-19) while others are metric optimization (Pattern 20). Connect them sequentially. The microverse phase feeds into the standard review ratchet (Pattern 19) and conformance (Pattern 15) like any other phase:
+```
+// Feature phase → optimization phase → review ratchet
+... -> check_tests [pass] -> commit_baseline_perf -> baseline_perf -> optimize_perf -> measure_perf -> compare_perf -> check_perf
+check_perf [pass] -> split_review_1 -> ... (Pattern 19 ratchet) ... -> conformance -> done
+```
+
+**When to use:** PRD says "reduce bundle size below 200KB", "improve p95 latency to under 100ms", "increase test coverage to 90%", "minimize memory usage". When NOT to use: "add authentication", "implement API endpoint", "refactor module" — these are feature work, not metric optimization.
+
 ### Retry Target Scoping
 
 **Do NOT use graph-level `retry_target` pointing to early nodes** (e.g., `setup_deps`). This causes entire pipeline re-execution when only one phase fails — wasteful and can trigger recursion in fan-out branches. Instead:
@@ -391,6 +449,7 @@ spec_tests → impl → lint → typecheck → test → security → coverage �
 - Ratchet pass failure routing back to same pass instead of pass 1 (defeats consecutive enforcement)
 - More than 4 reviewers per team (diminishing returns, wasted tokens)
 - Reviewer with broad prompt covering multiple concerns (narrow focus per reviewer, no overlap)
+- Standard impl→verify for metric optimization (no rollback mechanism, no incremental convergence — use microverse Pattern 20)
 
 ## Model Routing
 
@@ -451,13 +510,13 @@ digraph ${SLUG} {
 }
 ```
 
-Conditions: `outcome=success`, `outcome=fail`, `context.KEY=VALUE`, combine with `&&`.
+Conditions: `outcome=success`, `outcome=fail`, `outcome=partial_success`, `outcome=retry`, `outcome=skipped`, `context.KEY=VALUE`, combine with `&&`.
 
 ## Step 5: Validate
 
 **Errors**: single start/exit, no incoming→start, no outgoing←exit, all reachable, valid targets, diamond 2+ edges, component↔tripleoctagon paired, valid conditions/IDs/syntax, `->` only, single digraph.
 
-**Warnings**: dep setup node exists before first impl (Pattern 0), all component nodes have max_parallel=1 (Pattern 0b), looping nodes have max_visits (Pattern 6), every box has prompt, happy-path higher weight, goal_gate has per-node retry_target, no graph-level retry_target to early nodes, fan-out retry_targets stay within branch scope, no linear chains, every impl has verification, goal_gate impl nodes have spec_tests before them, review uses agent team fan-out (not single reviewer), review ratchet has ≥2 consecutive passes, ratchet pass failure routes to pass 1 (not same pass), lint/typecheck/test are separate gates (not bundled), security scanning not bundled with tests, scope check on fan-out branches, drift detection in simplify cycles, high-complexity phases use multi-pass, conformance check before exit (after ratchet), security/auth phases have red_team gate.
+**Warnings**: dep setup node exists before first impl (Pattern 0), all component nodes have max_parallel=1 (Pattern 0b), looping nodes have max_visits (Pattern 6), every box has prompt, happy-path higher weight, goal_gate has per-node retry_target, no graph-level retry_target to early nodes, fan-out retry_targets stay within branch scope, no linear chains, every impl has verification, goal_gate impl nodes have spec_tests before them, review uses agent team fan-out (not single reviewer), review ratchet has ≥2 consecutive passes, ratchet pass failure routes to pass 1 (not same pass), lint/typecheck/test are separate gates (not bundled), security scanning not bundled with tests, scope check on fan-out branches, drift detection in simplify cycles, high-complexity phases use multi-pass, conformance check before exit (after ratchet), security/auth phases have red_team gate, PRD with quantitative targets uses microverse pattern (Pattern 20) not standard impl→verify.
 
 ## Step 6: Summary & Save
 
