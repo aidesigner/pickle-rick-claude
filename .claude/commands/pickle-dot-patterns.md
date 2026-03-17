@@ -158,7 +158,8 @@ rollback -> optimize
 - Linear chains without feedback loops
 - `goal_gate=true` without `retry_target`
 - Graph-level `retry_target` to setup_deps/start/per-phase impl (full re-run or scoped-only retry)
-- Fan-out `retry_target` outside branch scope
+- Fan-out `retry_target` outside branch scope (stripped at runtime — retry is ineffective)
+- `retry_target` inside a fan-out branch pointing before the component node (causes infinite recursion without engine scoping, ineffective with it — retry logic belongs at fan-in or post-merge level)
 - Hexagon nodes (deadlock)
 - Diamond without 2+ edges (stalls)
 - Parallel siblings depending on each other (deadlock)
