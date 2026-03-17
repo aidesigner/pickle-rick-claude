@@ -405,9 +405,10 @@ check_perf [pass] -> split_review_1 -> ... (Pattern 19 ratchet) ... -> conforman
 
 ### Retry Target Scoping
 
-**Do NOT use graph-level `retry_target` pointing to early nodes** (e.g., `setup_deps`). This causes entire pipeline re-execution when only one phase fails — wasteful and can trigger recursion in fan-out branches. Instead:
+**Graph-level `retry_target` MUST point to the last impl node before `verify_final`** — this is the node whose output determines whether acceptance criteria pass. When acceptance criteria fail after all nodes complete, the engine retries from `retry_target`. If it points to `setup_deps` or the first impl node, the entire 70-node pipeline re-runs pointlessly. This is the #1 cause of runaway pipelines in production.
 
-- **Omit graph-level `retry_target`** or set it to the first impl node (never to setup/start)
+- **Set graph-level `retry_target` to the last impl node** (e.g., `impl_release`, `implement_auth`) — the one immediately upstream of `verify_final`
+- **NEVER point graph-level `retry_target` to `setup_deps`, `start`, or early nodes** — this causes full pipeline re-execution on acceptance criteria failure
 - **Use per-node `retry_target`** on every `goal_gate=true` node — these are precise and scope-aware
 - **Fan-out branch retry targets MUST stay within the branch** — nodes inside a `component→tripleoctagon` pair should only retry to other nodes within the same parallel branch. The engine strips out-of-scope retry targets, but don't rely on the engine as a safety net:
 ```
@@ -510,7 +511,7 @@ digraph ${SLUG} {
     label = "${LABEL}"
     default_max_retry = 2
     acceptance_criteria = "${CRITERIA}"
-    // Omit graph-level retry_target — use per-node retry_target instead (see Retry Target Scoping)
+    retry_target = "${LAST_IMPL_NODE}"  // MUST point to last impl node before verify_final — NEVER setup_deps (see Retry Target Scoping)
     model_stylesheet = "${MODEL_STYLESHEET}"  // from Step 1 flags — see Model Routing section
 
     start [shape=Mdiamond]
@@ -526,7 +527,7 @@ Conditions: `outcome=success`, `outcome=fail`, `outcome=partial_success`, `outco
 
 ## Step 5: Validate
 
-**Errors**: single start/exit, no incoming→start, no outgoing←exit, all reachable, valid targets, diamond 2+ edges, component↔tripleoctagon paired, valid conditions/IDs/syntax, `->` only, single digraph.
+**Errors**: single start/exit, no incoming→start, no outgoing←exit, all reachable, valid targets, diamond 2+ edges, component↔tripleoctagon paired, valid conditions/IDs/syntax, `->` only, single digraph, acceptance_criteria references context key not set by any `context_on_success` (infinite retry), graph-level retry_target points to setup_deps or start node (full pipeline re-execution on criteria failure).
 
 **Warnings**: dep setup node exists before first impl (Pattern 0), all component nodes have max_parallel=1 (Pattern 0b), looping nodes have max_visits (Pattern 6), every box has prompt, happy-path higher weight, goal_gate has per-node retry_target, no graph-level retry_target to early nodes, fan-out retry_targets stay within branch scope, no linear chains, every impl has verification, goal_gate impl nodes have spec_tests before them, review uses agent team fan-out (not single reviewer), review ratchet has ≥2 consecutive passes, ratchet pass failure routes to pass 1 (not same pass), lint/typecheck/test are separate gates (not bundled), security scanning not bundled with tests, scope check on fan-out branches, drift detection in simplify cycles, high-complexity phases use multi-pass, conformance check before exit (after ratchet), security/auth phases have red_team gate, PRD with quantitative targets uses microverse pattern (Pattern 20) not standard impl→verify, acceptance_criteria context keys are all set by a `context_on_success` attribute on an upstream tool node.
 
@@ -543,7 +544,7 @@ digraph user_auth_api {
     goal = "Add JWT authentication to the REST API"
     label = "user-auth-api: JWT Auth"
     default_max_retry = 2
-    // No graph-level retry_target — per-node retry_targets are more precise (see Retry Target Scoping)
+    retry_target = "implement_auth"  // MUST point to last impl node before verify_final — NEVER setup_deps
     acceptance_criteria = "context.tests_pass=true && context.lint_status=passing && context.typecheck_status=passing"
     // No --provider/--models flags → anthropic defaults
     model_stylesheet = "* { llm_model: claude-sonnet-4-6; } .critical { llm_model: claude-opus-4-6; reasoning_effort: high; } .review { llm_model: claude-opus-4-6; }"
