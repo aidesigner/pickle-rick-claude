@@ -403,12 +403,31 @@ check_perf [pass] -> split_review_1 -> ... (Pattern 19 ratchet) ... -> conforman
 
 **When to use:** PRD says "reduce bundle size below 200KB", "improve p95 latency to under 100ms", "increase test coverage to 90%", "minimize memory usage". When NOT to use: "add authentication", "implement API endpoint", "refactor module" — these are feature work, not metric optimization.
 
+**21. Cross-Phase Cleanup Node** — before `verify_final`, ALWAYS emit a `fix_all` codergen node that fixes ALL remaining issues across all phases. Per-phase verification catches issues within each phase's scope, but phases can introduce cross-cutting issues — a Phase 1 change adds an unused variable that Phase 1's linter doesn't flag at warning level, but `verify_final` runs with `--max-warnings=-1` and fails. No per-phase retry can fix this. **Mandatory** for all multi-phase pipelines:
+```
+// fix_all cleans up cross-phase issues before final verification
+fix_all [prompt="Fix ALL remaining issues across the entire codebase. Run each check and fix failures: 1) cd ${WORKING_DIR} && npx eslint src/ --fix 2>&1 — fix auto-fixable lint errors, manually fix remaining. 2) npx tsc --noEmit 2>&1 — fix type errors. 3) npm test 2>&1 — fix test failures. 4) npm audit fix 2>&1 — fix audit vulnerabilities. Iterate until all four pass with zero errors. Do NOT skip or suppress errors.", permission_mode="bypassPermissions", max_visits=5]
+
+// Wiring — fix_all sits between last phase and verify_final
+... -> fix_all -> verify_final -> check_final
+check_final -> done [condition="outcome=success", weight=2]
+check_final -> fix_all [condition="outcome=fail"]
+```
+
+**Key rules:**
+- `verify_final` and graph-level `retry_target` MUST point to `fix_all`, NOT to any impl node — `fix_all` can fix issues from ANY phase, while `impl_release` can only fix issues in its own scope
+- `fix_all` uses `permission_mode="bypassPermissions"` — it needs to edit files across all phases' scopes
+- `fix_all` has `max_visits=5` — if it can't fix after 5 attempts, the issues are structural (stop, don't retry forever)
+- The cleanup prompt must be **specific to the repo's tooling** — detect the linter, type checker, test runner, and audit tool from the repo context (eslint/ruff/golangci-lint, tsc/mypy/go vet, npm test/pytest/go test, npm audit/pip-audit)
+- `fix_all` does NOT replace per-phase verification — per-phase verify nodes still catch issues early. `fix_all` is the safety net for cross-cutting issues that accumulate across phases
+
 ### Retry Target Scoping
 
-**Graph-level `retry_target` MUST point to the last impl node before `verify_final`** — this is the node whose output determines whether acceptance criteria pass. When acceptance criteria fail after all nodes complete, the engine retries from `retry_target`. If it points to `setup_deps` or the first impl node, the entire 70-node pipeline re-runs pointlessly. This is the #1 cause of runaway pipelines in production.
+**Graph-level `retry_target` MUST point to `fix_all`** (the cross-phase cleanup node) — this is the node that can fix issues from ANY phase. When acceptance criteria fail after all nodes complete, the engine retries from `retry_target`. If it points to `setup_deps` or an early impl node, the entire 70-node pipeline re-runs pointlessly. If it points to a per-phase impl node (e.g., `impl_release`), it can only fix issues within that phase's scope — cross-phase issues cause infinite retry.
 
-- **Set graph-level `retry_target` to the last impl node** (e.g., `impl_release`, `implement_auth`) — the one immediately upstream of `verify_final`
-- **NEVER point graph-level `retry_target` to `setup_deps`, `start`, or early nodes** — this causes full pipeline re-execution on acceptance criteria failure
+- **Set graph-level `retry_target` to `fix_all`** — the cross-phase cleanup node immediately upstream of `verify_final`
+- **NEVER point graph-level `retry_target` to `setup_deps`, `start`, or early nodes** — full pipeline re-execution
+- **NEVER point `verify_final` retry_target to a per-phase impl node** — it can't fix issues from other phases
 - **Use per-node `retry_target`** on every `goal_gate=true` node — these are precise and scope-aware
 - **Fan-out branch retry targets MUST stay within the branch** — nodes inside a `component→tripleoctagon` pair should only retry to other nodes within the same parallel branch. The engine strips out-of-scope retry targets, but don't rely on the engine as a safety net:
 ```
@@ -425,7 +444,7 @@ approach_a [goal_gate=true, retry_target="approach_b"]   // cross-branch deadloc
 The full chain with spec-first TDD, review ratchet, and optional gates:
 
 ```
-spec_tests → impl → lint → typecheck → test → security → coverage → scope_check → review_ratchet(pass_1 → pass_2) → conformance → [red_team] → verify_final(context_on_success) → done
+spec_tests → impl → lint → typecheck → test → security → coverage → scope_check → review_ratchet(pass_1 → pass_2) → conformance → [red_team] → fix_all → verify_final(context_on_success) → done
 ```
 
 - `spec_tests` comes BEFORE impl — tests define the convergence target
@@ -463,6 +482,8 @@ spec_tests → impl → lint → typecheck → test → security → coverage �
 - Reviewer with broad prompt covering multiple concerns (narrow focus per reviewer, no overlap)
 - Standard impl→verify for metric optimization (no rollback mechanism, no incremental convergence — use microverse Pattern 20)
 - acceptance_criteria checking context keys that no tool node sets via `context_on_success` (causes infinite retry — pipeline completes all nodes then restarts from retry_target because criteria never evaluate to true)
+- verify_final retry_target pointing to a per-phase impl node (can't fix cross-phase issues — use fix_all node)
+- Missing fix_all node before verify_final in multi-phase pipelines (cross-cutting lint/type/test failures from earlier phases cause verify_final to fail with no recovery path)
 
 ## Model Routing
 
@@ -511,7 +532,7 @@ digraph ${SLUG} {
     label = "${LABEL}"
     default_max_retry = 2
     acceptance_criteria = "${CRITERIA}"
-    retry_target = "${LAST_IMPL_NODE}"  // MUST point to last impl node before verify_final — NEVER setup_deps (see Retry Target Scoping)
+    retry_target = "fix_all"  // MUST point to fix_all (cross-phase cleanup) — NEVER setup_deps (see Retry Target Scoping + Pattern 21)
     model_stylesheet = "${MODEL_STYLESHEET}"  // from Step 1 flags — see Model Routing section
 
     start [shape=Mdiamond]
@@ -544,7 +565,7 @@ digraph user_auth_api {
     goal = "Add JWT authentication to the REST API"
     label = "user-auth-api: JWT Auth"
     default_max_retry = 2
-    retry_target = "implement_auth"  // MUST point to last impl node before verify_final — NEVER setup_deps
+    retry_target = "fix_all"  // MUST point to fix_all (cross-phase cleanup) — NEVER setup_deps or per-phase impl
     acceptance_criteria = "context.tests_pass=true && context.lint_status=passing && context.typecheck_status=passing"
     // No --provider/--models flags → anthropic defaults
     model_stylesheet = "* { llm_model: claude-sonnet-4-6; } .critical { llm_model: claude-opus-4-6; reasoning_effort: high; } .review { llm_model: claude-opus-4-6; }"
@@ -595,11 +616,15 @@ digraph user_auth_api {
     red_team_auth [class="review", prompt="Adversarial audit of JWT auth: attempt to break it. Try: 1) Token forgery with wrong secret. 2) Expired token replay. 3) Refresh token reuse after rotation. 4) SQL/NoSQL injection in login credentials. 5) Timing attacks on password comparison. 6) JWT algorithm confusion (none/HS256 swap). Write reproducing test cases for any issues found. Output PASS or FAIL.", goal_gate=true, retry_target="implement_auth"]
     red_team_gate [shape=diamond]
 
+    // Cross-phase cleanup — fixes ALL remaining issues across all phases (Pattern 21)
+    fix_all [prompt="Fix ALL remaining issues across the entire codebase. Run each check and fix failures: 1) cd ${WORKING_DIR} && npx eslint src/ --fix 2>&1 — fix auto-fixable lint errors, manually fix remaining. 2) npx tsc --noEmit 2>&1 — fix type errors. 3) npm test 2>&1 — fix test failures. Iterate until all pass with zero errors. Do NOT skip or suppress errors.", permission_mode="bypassPermissions", max_visits=5]
+
     // Final verification — sets acceptance_criteria context keys via context_on_success
     verify_final [shape=parallelogram,
-        tool_command="cd ${WORKING_DIR} && npm run lint 2>&1 && npx tsc --noEmit 2>&1 && npm test 2>&1",
-        goal_gate=true, retry_target="implement_auth", max_visits=3,
+        tool_command="cd ${WORKING_DIR} && npx eslint src/ --max-warnings=-1 2>&1 && npx tsc --noEmit 2>&1 && npm test 2>&1",
+        goal_gate=true, retry_target="fix_all", max_visits=3,
         context_on_success="tests_pass=true,lint_status=passing,typecheck_status=passing"]
+    check_final [shape=diamond]
 
     done [shape=Msquare]
 
@@ -634,9 +659,11 @@ digraph user_auth_api {
     conformance_gate -> red_team_auth [condition="outcome=success", weight=2]
     conformance_gate -> implement_auth [condition="outcome=fail"]
     red_team_auth -> red_team_gate
-    red_team_gate -> verify_final [condition="outcome=success", weight=2]
+    red_team_gate -> fix_all [condition="outcome=success", weight=2]
     red_team_gate -> implement_auth [condition="outcome=fail"]
-    verify_final -> done
+    fix_all -> verify_final -> check_final
+    check_final -> done [condition="outcome=success", weight=2]
+    check_final -> fix_all [condition="outcome=fail"]
 }
 ```
 
