@@ -13,9 +13,21 @@ Attractor = **convergence basin**, not task list. Failures route back toward the
 - `--models default=<id>,review=<id>` — model IDs for two semantic tiers
 - `--model <id>` — shorthand: one model for both tiers
 
+**Provider defaults** (when `--models` not given):
+
+| Provider | Default tier | Review tier |
+|----------|-------------|-------------|
+| `anthropic` | `claude-sonnet-4-6` | `claude-opus-4-6` |
+| `openai` | `gpt-4.1` | `o3` |
+| `qwen` | `qwen-plus` | `qwen-max` |
+| `gemini` | `gemini-2.5-flash` | `gemini-2.5-pro` |
+| `deepseek` | `deepseek-chat` | `deepseek-reasoner` |
+| `ollama` | `qwen3:32b` | `qwen3:32b` |
+| `vllm` | *(ask user)* | *(ask user)* |
+
 **PRD source**: path (has `/` or `.md`) → read file. Text → use directly. Empty → ask user.
 
-**Working directory**: attractor runs in Docker, project mounted at `/repos/`. Use `git rev-parse --show-toplevel` to determine mount path. All `tool_command` paths use `cd ${WORKING_DIR} &&`. **Never** use absolute local paths.
+**Working directory**: attractor runs in Docker, project mounted at `/repos/`. Use `git rev-parse --show-toplevel` to determine mount path. If not a git repo or ambiguous, **ask the user**: "What path will this repo be mounted at inside `/repos/`?" All `tool_command` paths use `cd ${WORKING_DIR} &&`. **Never** use absolute local paths.
 
 ## Step 2: Analyze PRD
 
@@ -26,7 +38,7 @@ Extract: slug, goal, tasks, acceptance criteria.
 | Signal in PRD | Pattern to emit |
 |---------------|-----------------|
 | Security/auth/data/crypto surface | 8 (security scan), 17 (red team) — ask user for red team |
-| Quantitative target ("reduce to X", "improve to Y%") | 20 (microverse) — replaces standard impl→verify for that phase |
+| Quantitative/optimization target ("reduce to X", "improve to Y%", "optimize", "minimize", "maximize", or any measurable metric goal) | 20 (microverse) — replaces standard impl→verify for that phase |
 | High-complexity phase (>3 files, cross-cutting) | 18 (competing impls) — ask user |
 | Coverage requirements | 9 (coverage gate) |
 | Multiple independent workstreams | 4 (fan-out/fan-in) |
@@ -43,7 +55,7 @@ Extract: slug, goal, tasks, acceptance criteria.
 
 ## Step 3: Build Graph from Template
 
-Read the pattern reference: `.claude/commands/pickle-dot-patterns.md`
+**STOP. Read `.claude/commands/pickle-dot-patterns.md` NOW** before proceeding. It contains all pattern definitions, anti-patterns, and shape/condition references needed for graph construction.
 
 **Start from this template** and customize based on Step 2 analysis:
 

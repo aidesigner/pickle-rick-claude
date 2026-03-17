@@ -27,6 +27,7 @@ verify_final [shape=parallelogram,
     goal_gate=true, retry_target="fix_all", max_visits=3,
     context_on_success="tests_pass=true,lint_status=passing,typecheck_status=passing"]
 ```
+Do NOT put `context_on_success` on intermediate per-phase verify nodes — those use goal gates for convergence. Only the final verify_final before exit sets acceptance criteria context.
 
 **3. Conditional Routing** — diamond nodes, 2+ edges covering all cases:
 ```
@@ -128,7 +129,7 @@ commit_baseline [shape=parallelogram, tool_command="cd ${WORKING_DIR} && git add
 baseline [shape=parallelogram, tool_command="cd ${WORKING_DIR} && <measurement_cmd> 2>&1"]
 optimize [prompt="Make ONE targeted change toward <TARGET>. Smallest diff.", max_visits=8]
 measure [shape=parallelogram, tool_command="cd ${WORKING_DIR} && <measurement_cmd> 2>&1"]
-compare [class="review", prompt="Compare measurement vs target. Output STATUS: SUCCESS (met) / STATUS: PARTIAL_SUCCESS (improved) / STATUS: FAIL (regressed).", max_visits=10]
+compare [class="review", prompt="Compare measurement vs target. MUST output STATUS: marker on its own line — the engine's parseStatusMarker ONLY recognizes: STATUS: SUCCESS (target met), STATUS: PARTIAL_SUCCESS (improved but not at target), STATUS: FAIL (regressed/stalled). Bare words like PASS/FAIL are ignored.", max_visits=10]
 check [shape=diamond]
 rollback [shape=parallelogram, tool_command="cd ${WORKING_DIR} && git checkout . 2>&1"]
 
