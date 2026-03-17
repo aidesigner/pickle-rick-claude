@@ -181,9 +181,12 @@ Two tiers: `${DEFAULT_MODEL}` (impl/tools) and `${REVIEW_MODEL}` (review/conform
 ```dot
 // anthropic (default):
 model_stylesheet = "* { llm_model: claude-sonnet-4-6; } .critical { llm_model: claude-opus-4-6; reasoning_effort: high; } .review { llm_model: claude-opus-4-6; }"
-// non-anthropic:
+// single non-anthropic provider:
 model_stylesheet = "* { llm_model: ${DEFAULT}; llm_provider: ${PROVIDER}; } .critical { llm_model: ${REVIEW}; reasoning_effort: high; } .review { llm_model: ${REVIEW}; }"
+// mixed provider (e.g., --provider qwen --review-provider anthropic):
+model_stylesheet = "* { llm_model: qwen-plus; llm_provider: qwen; } .critical { llm_model: claude-opus-4-6; llm_provider: anthropic; reasoning_effort: high; } .review { llm_model: claude-opus-4-6; llm_provider: anthropic; }"
 ```
+When `--review-provider` differs from `--provider`, `.review`/`.critical` MUST include `llm_provider` to override `*`. Per-node `llm_model`/`llm_provider` attributes override stylesheet for edge cases.
 
 | Provider | Default | Review |
 |----------|---------|--------|

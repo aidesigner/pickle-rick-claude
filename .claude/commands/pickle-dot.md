@@ -10,6 +10,7 @@ Attractor = **convergence basin**, not task list. Failures route back toward the
 
 **Flags** (all optional):
 - `--provider <name>` — `anthropic` (default), `openai`, `qwen`, `gemini`, `deepseek`, `ollama`, `vllm`
+- `--review-provider <name>` — separate provider for review/critical nodes (`.review`, `.critical` classes). Enables mixed-provider workflows (e.g., `--provider qwen --review-provider anthropic` = Qwen for impl, Opus for adversarial review)
 - `--models default=<id>,review=<id>` — model IDs for two semantic tiers
 - `--model <id>` — shorthand: one model for both tiers
 
@@ -105,13 +106,19 @@ digraph ${SLUG} {
 }
 ```
 
-**Model stylesheet** — resolve from flags (see pattern reference for provider defaults):
+**Model stylesheet** — resolve from flags:
 ```dot
-// anthropic (default):
+// anthropic (default — no llm_provider needed):
 model_stylesheet = "* { llm_model: claude-sonnet-4-6; } .critical { llm_model: claude-opus-4-6; reasoning_effort: high; } .review { llm_model: claude-opus-4-6; }"
-// non-anthropic (add llm_provider):
+
+// single non-anthropic provider (add llm_provider to all):
 model_stylesheet = "* { llm_model: ${DEFAULT}; llm_provider: ${PROVIDER}; } .critical { llm_model: ${REVIEW}; reasoning_effort: high; } .review { llm_model: ${REVIEW}; }"
+
+// mixed provider (--provider qwen --review-provider anthropic):
+// .review and .critical override llm_provider to route adversarial validation to Opus
+model_stylesheet = "* { llm_model: qwen-plus; llm_provider: qwen; } .critical { llm_model: claude-opus-4-6; llm_provider: anthropic; reasoning_effort: high; } .review { llm_model: claude-opus-4-6; llm_provider: anthropic; }"
 ```
+When `--review-provider` differs from `--provider`, the `.review` and `.critical` selectors MUST include `llm_provider` to override the `*` default. Per-node `llm_model` and `llm_provider` attributes can also override the stylesheet for edge cases.
 
 ## Step 5: Validate
 
