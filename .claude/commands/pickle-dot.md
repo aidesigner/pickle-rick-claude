@@ -103,9 +103,9 @@ Context vars: `context.tests_pass`, `context.build_status`, `context.lint_status
 // acceptance_criteria = "context.tests_pass=true && context.lint_status=passing"
 // → the final verify node MUST set these keys on success:
 verify_final [shape=parallelogram,
-    tool_command="cd ${WORKING_DIR} && npm run lint 2>&1 && npx tsc --noEmit 2>&1 && npm test 2>&1",
-    goal_gate=true, retry_target="impl", max_visits=3,
-    context_on_success="tests_pass=true,lint_status=passing"]
+    tool_command="cd ${WORKING_DIR} && ${LINT_CMD} 2>&1 && ${TYPECHECK_CMD} 2>&1 && ${TEST_CMD} 2>&1",
+    goal_gate=true, retry_target="fix_all", max_visits=3,
+    context_on_success="tests_pass=true,lint_status=passing,typecheck_status=passing"]
 ```
 Do NOT put `context_on_success` on intermediate per-phase verify nodes — those use goal gates for convergence. Only the final verification before exit sets the acceptance criteria context.
 
@@ -406,7 +406,8 @@ check_perf [pass] -> split_review_1 -> ... (Pattern 19 ratchet) ... -> conforman
 **21. Cross-Phase Cleanup Node** — before `verify_final`, ALWAYS emit a `fix_all` codergen node that fixes ALL remaining issues across all phases. Per-phase verification catches issues within each phase's scope, but phases can introduce cross-cutting issues — a Phase 1 change adds an unused variable that Phase 1's linter doesn't flag at warning level, but `verify_final` runs with `--max-warnings=-1` and fails. No per-phase retry can fix this. **Mandatory** for all multi-phase pipelines:
 ```
 // fix_all cleans up cross-phase issues before final verification
-fix_all [prompt="Fix ALL remaining issues across the entire codebase. Run each check and fix failures: 1) cd ${WORKING_DIR} && npx eslint src/ --fix 2>&1 — fix auto-fixable lint errors, manually fix remaining. 2) npx tsc --noEmit 2>&1 — fix type errors. 3) npm test 2>&1 — fix test failures. 4) npm audit fix 2>&1 — fix audit vulnerabilities. Iterate until all four pass with zero errors. Do NOT skip or suppress errors.", permission_mode="bypassPermissions", max_visits=5]
+// Adapt commands to the repo's tooling: eslint/ruff/golangci-lint, tsc/mypy/go vet, npm test/pytest/go test
+fix_all [prompt="Fix ALL remaining issues across the entire codebase. Run each check and fix failures: 1) cd ${WORKING_DIR} && ${LINT_FIX_CMD} 2>&1 — fix auto-fixable lint errors, manually fix remaining. 2) ${TYPECHECK_CMD} 2>&1 — fix type errors. 3) ${TEST_CMD} 2>&1 — fix test failures. Iterate until all pass with zero errors. Do NOT skip or suppress errors.", permission_mode="bypassPermissions", max_visits=5]
 
 // Wiring — fix_all sits between last phase and verify_final
 ... -> fix_all -> verify_final -> check_final
@@ -414,12 +415,18 @@ check_final -> done [condition="outcome=success", weight=2]
 check_final -> fix_all [condition="outcome=fail"]
 ```
 
+**Resolve tooling placeholders** — detect from the repo and substitute:
+- `${LINT_FIX_CMD}`: `npx eslint src/ --fix` (Node), `ruff check --fix .` (Python), `golangci-lint run --fix` (Go)
+- `${TYPECHECK_CMD}`: `npx tsc --noEmit` (TS), `mypy .` (Python), `go vet ./...` (Go)
+- `${TEST_CMD}`: `npm test` (Node), `pytest` (Python), `go test ./...` (Go)
+
 **Key rules:**
 - `verify_final` and graph-level `retry_target` MUST point to `fix_all`, NOT to any impl node — `fix_all` can fix issues from ANY phase, while `impl_release` can only fix issues in its own scope
+- `fix_all` uses Default tier (no `class` attribute) — it's remediation work (editing code to fix errors), not evaluation. Sonnet is the right model for this.
 - `fix_all` uses `permission_mode="bypassPermissions"` — it needs to edit files across all phases' scopes
 - `fix_all` has `max_visits=5` — if it can't fix after 5 attempts, the issues are structural (stop, don't retry forever)
-- The cleanup prompt must be **specific to the repo's tooling** — detect the linter, type checker, test runner, and audit tool from the repo context (eslint/ruff/golangci-lint, tsc/mypy/go vet, npm test/pytest/go test, npm audit/pip-audit)
 - `fix_all` does NOT replace per-phase verification — per-phase verify nodes still catch issues early. `fix_all` is the safety net for cross-cutting issues that accumulate across phases
+- **Single-phase pipelines**: `fix_all` is still recommended as the graph-level retry_target — it provides a safe recovery point even without cross-phase issues. For trivial single-phase pipelines, the graph-level retry_target may point to the sole impl node instead.
 
 ### Retry Target Scoping
 
@@ -548,9 +555,9 @@ Conditions: `outcome=success`, `outcome=fail`, `outcome=partial_success`, `outco
 
 ## Step 5: Validate
 
-**Errors**: single start/exit, no incoming→start, no outgoing←exit, all reachable, valid targets, diamond 2+ edges, component↔tripleoctagon paired, valid conditions/IDs/syntax, `->` only, single digraph, acceptance_criteria references context key not set by any `context_on_success` (infinite retry), graph-level retry_target points to setup_deps or start node (full pipeline re-execution on criteria failure).
+**Errors**: single start/exit, no incoming→start, no outgoing←exit, all reachable, valid targets, diamond 2+ edges, component↔tripleoctagon paired, valid conditions/IDs/syntax, `->` only, single digraph, acceptance_criteria references context key not set by any `context_on_success` (infinite retry), graph-level retry_target points to setup_deps/start/per-phase impl node instead of fix_all (full pipeline re-execution or scoped-only retry on criteria failure).
 
-**Warnings**: dep setup node exists before first impl (Pattern 0), all component nodes have max_parallel=1 (Pattern 0b), looping nodes have max_visits (Pattern 6), every box has prompt, happy-path higher weight, goal_gate has per-node retry_target, no graph-level retry_target to early nodes, fan-out retry_targets stay within branch scope, no linear chains, every impl has verification, goal_gate impl nodes have spec_tests before them, review uses agent team fan-out (not single reviewer), review ratchet has ≥2 consecutive passes, ratchet pass failure routes to pass 1 (not same pass), lint/typecheck/test are separate gates (not bundled), security scanning not bundled with tests, scope check on fan-out branches, drift detection in simplify cycles, high-complexity phases use multi-pass, conformance check before exit (after ratchet), security/auth phases have red_team gate, PRD with quantitative targets uses microverse pattern (Pattern 20) not standard impl→verify, acceptance_criteria context keys are all set by a `context_on_success` attribute on an upstream tool node.
+**Warnings**: dep setup node exists before first impl (Pattern 0), all component nodes have max_parallel=1 (Pattern 0b), looping nodes have max_visits (Pattern 6), every box has prompt, happy-path higher weight, goal_gate has per-node retry_target, no graph-level retry_target to early nodes, fan-out retry_targets stay within branch scope, no linear chains, every impl has verification, goal_gate impl nodes have spec_tests before them, review uses agent team fan-out (not single reviewer), review ratchet has ≥2 consecutive passes, ratchet pass failure routes to pass 1 (not same pass), lint/typecheck/test are separate gates (not bundled), security scanning not bundled with tests, scope check on fan-out branches, drift detection in simplify cycles, high-complexity phases use multi-pass, conformance check before exit (after ratchet), security/auth phases have red_team gate, PRD with quantitative targets uses microverse pattern (Pattern 20) not standard impl→verify, acceptance_criteria context keys are all set by a `context_on_success` attribute on an upstream tool node, multi-phase pipelines have fix_all node before verify_final (Pattern 21).
 
 ## Step 6: Summary & Save
 
@@ -667,7 +674,7 @@ digraph user_auth_api {
 }
 ```
 
-Convergence: spec tests define the target (red), impl converges (green). Lint→typecheck→test catches cheap errors. Review ratchet (2 consecutive clean passes with correctness+security agent teams) polishes — pass 2 failure resets to pass 1. Conformance verifies requirements. Red team attempts to break auth. All per-node retry_targets — no graph-level retry. `max_visits` bounds loops.
+Convergence: spec tests define the target (red), impl converges (green). Lint→typecheck→test catches cheap errors. Review ratchet (2 consecutive clean passes with correctness+security agent teams) polishes — pass 2 failure resets to pass 1. Conformance verifies requirements. Red team attempts to break auth. fix_all cleans cross-phase issues before verify_final. Graph-level `retry_target="fix_all"` ensures acceptance criteria failures retry from cleanup, not from scratch. `max_visits` bounds loops.
 
 ## Schema Reference
 
