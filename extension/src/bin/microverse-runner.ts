@@ -21,7 +21,11 @@ import {
   Style,
   formatTime,
   printMinimalPanel,
+  safeErrorMessage,
 } from '../services/pickle-utils.js';
+import { StateManager } from '../services/state-manager.js';
+
+const sm = new StateManager();
 import {
   runIteration,
   loadRateLimitSettings,
@@ -54,7 +58,7 @@ export function measureMetric(
     if (!Number.isFinite(score)) return null;
     return { raw: output, score };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = safeErrorMessage(err);
     process.stderr.write(`[microverse] measureMetric failed: ${msg}\n`);
     return null;
   }
@@ -118,7 +122,7 @@ export function measureLlmMetric(
     if (!Number.isFinite(score)) return null;
     return { raw: output, score };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = safeErrorMessage(err);
     process.stderr.write(`[microverse] measureLlmMetric failed (model=${model}): ${msg}\n`);
     return null;
   }
@@ -235,9 +239,10 @@ export async function main(sessionDir: string): Promise<void> {
   // Read initial state
   let state: State;
   try {
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = safeErrorMessage(err);
     throw new Error(`Cannot read state.json: ${msg}`);
   }
 
@@ -255,22 +260,19 @@ export async function main(sessionDir: string): Promise<void> {
   }
 
   // Ensure tmux_mode and command_template
-  state.tmux_mode = true;
-  state.command_template = 'microverse.md';
-  if (!state.active) state.active = true;
-  writeStateFile(statePath, state);
+  sm.update(statePath, s => {
+    s.tmux_mode = true;
+    s.command_template = 'microverse.md';
+    if (!s.active) s.active = true;
+  });
 
   // Signal handlers
   const handleShutdownSignal = (signal: string) => {
     log(`Received ${signal} — deactivating session`);
     killCurrentChild();
-    try {
-      const s = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-      s.active = false;
-      writeStateFile(statePath, s);
-    } catch {
-      try { writeStateFile(statePath, { active: false }); } catch { /* nothing we can do */ }
-    }
+    sm.forceWrite(statePath, (() => {
+      try { const s = JSON.parse(fs.readFileSync(statePath, 'utf-8')); s.active = false; return s; } catch { return { active: false }; }
+    })());
     const finalMv = readMicroverseState(sessionDir);
     if (finalMv) {
       finalMv.status = 'stopped';
@@ -300,10 +302,10 @@ export async function main(sessionDir: string): Promise<void> {
 
     // Write gap analysis handoff
     const handoffContent = buildMicroverseHandoff(currentMv, iteration, workingDir);
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     fs.writeFileSync(path.join(sessionDir, 'handoff.txt'), handoffContent);
 
-    state.iteration = iteration;
-    writeStateFile(statePath, state);
+    sm.update(statePath, s => { s.iteration = iteration; });
 
     const result = await runIteration(sessionDir, iteration, extensionRoot, '');
 
@@ -313,8 +315,7 @@ export async function main(sessionDir: string): Promise<void> {
       currentMv.exit_reason = 'error';
       writeMicroverseState(sessionDir, currentMv);
       exitReason = 'error';
-      state.active = false;
-      writeStateFile(statePath, state);
+      try { sm.update(statePath, s => { s.active = false; }); } catch { sm.forceWrite(statePath, { active: false }); }
       writeFinalReport(sessionDir, currentMv, exitReason, iteration, Math.floor((Date.now() - startTime) / 1000));
       process.exit(1);
     }
@@ -352,26 +353,27 @@ export async function main(sessionDir: string): Promise<void> {
   // max_time_minutes is the only time gate — individual iterations can take
   // as long as they need (slow metrics, large codebases). Setting to 0
   // tells mux-runner's runIteration() to skip the timeout entirely.
-  state.worker_timeout_seconds = 0;
-  writeStateFile(statePath, state);
+  sm.update(statePath, s => { s.worker_timeout_seconds = 0; });
   log('Worker timeout disabled — session time limit is the only gate');
 
   // --- Main Iteration Loop ---
   while (currentMv.status === 'iterating') {
     // Re-read state for external changes
     try {
+      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
       state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = safeErrorMessage(err);
       log(`ERROR: Cannot read state.json: ${msg}. Exiting loop.`);
       exitReason = 'error';
       break;
     }
 
-    // Re-enforce disabled worker timeout (external edits could restore it)
-    if (state.worker_timeout_seconds !== 0) {
-      state.worker_timeout_seconds = 0;
-      writeStateFile(statePath, state);
+    // Re-enforce disabled worker timeout (external edits could restore it).
+    // Coerce to Number first — JSON round-trips may deserialize 0 as '0' (string),
+    // and '0' !== 0 is true, which would trigger a spurious write on every tick.
+    if (Number(state.worker_timeout_seconds) !== 0) {
+      sm.update(statePath, s => { s.worker_timeout_seconds = 0; });
     }
 
     if (state.active !== true) {
@@ -410,10 +412,10 @@ export async function main(sessionDir: string): Promise<void> {
 
     // Write microverse-specific handoff
     const handoffContent = buildMicroverseHandoff(currentMv, iteration, workingDir);
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     fs.writeFileSync(path.join(sessionDir, 'handoff.txt'), handoffContent);
 
-    state.iteration = iteration;
-    writeStateFile(statePath, state);
+    sm.update(statePath, s => { s.iteration = iteration; });
 
     // Run iteration
     const result = await runIteration(sessionDir, iteration, extensionRoot, '');
@@ -463,10 +465,11 @@ export async function main(sessionDir: string): Promise<void> {
       while (Date.now() < waitEnd) {
         await sleep(Defaults.RATE_LIMIT_POLL_MS);
         try {
+          // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
           const ws = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
           if (ws.active !== true) { exitReason = 'stopped'; break; }
         } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
+          const msg = safeErrorMessage(err);
           log(`WARNING: Could not read state.json during rate limit wait: ${msg}`);
         }
         if (maxTimeMinsForWait > 0 && startEpochForWait > 0) {
@@ -476,6 +479,7 @@ export async function main(sessionDir: string): Promise<void> {
       }
       if (exitReason === 'stopped' || exitReason === 'limit_reached') break;
 
+      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
       try { fs.unlinkSync(path.join(sessionDir, 'rate_limit_wait.json')); } catch { /* ok */ }
       if (rlAction.resetCounter) consecutiveRateLimits = 0;
       logActivity({ event: 'rate_limit_resume', source: 'pickle', session: path.basename(sessionDir) });
@@ -502,16 +506,21 @@ export async function main(sessionDir: string): Promise<void> {
       // commit on its behalf so we don't lose the work.
       if (isWorkingTreeDirty(workingDir)) {
         log('No commits but dirty tree detected — auto-committing worker changes');
-        try {
-          execFileSync('git', ['add', '-A'], { cwd: workingDir, timeout: 30_000 });
-          execFileSync('git', ['commit', '-m', `microverse: auto-commit (worker timed out before committing)`], { cwd: workingDir, timeout: 30_000 });
-          postIterSha = getHeadSha(workingDir);
-          log(`Auto-committed: ${postIterSha}`);
-        } catch (commitErr) {
-          const commitMsg = commitErr instanceof Error ? commitErr.message : String(commitErr);
-          log(`Auto-commit failed: ${commitMsg} — unstaging and treating as stall`);
-          // Unstage to prevent orphaned staged changes; preserve working tree
-          try { execFileSync('git', ['reset'], { cwd: workingDir, timeout: 10_000 }); } catch { /* best effort */ }
+        // eslint-disable-next-line pickle/no-sync-in-async -- sync guard is fine here; async context already uses execFileSync
+        if (!fs.existsSync(path.join(workingDir, '.git'))) {
+          log(`Auto-commit skipped: not a git repository (${workingDir})`);
+        } else {
+          try {
+            execFileSync('git', ['add', '-A'], { cwd: workingDir, timeout: 30_000 });
+            execFileSync('git', ['commit', '-m', `microverse: auto-commit (worker timed out before committing)`], { cwd: workingDir, timeout: 30_000 });
+            postIterSha = getHeadSha(workingDir);
+            log(`Auto-committed: ${postIterSha}`);
+          } catch (commitErr) {
+            const commitMsg = safeErrorMessage(commitErr);
+            log(`Auto-commit failed: ${commitMsg} — unstaging and treating as stall`);
+            // Unstage to prevent orphaned staged changes; preserve working tree
+            try { execFileSync('git', ['reset'], { cwd: workingDir, timeout: 10_000 }); } catch { /* best effort */ }
+          }
         }
       }
 
@@ -611,8 +620,7 @@ export async function main(sessionDir: string): Promise<void> {
   currentMv.exit_reason = exitReason;
   writeMicroverseState(sessionDir, currentMv);
 
-  state.active = false;
-  writeStateFile(statePath, state);
+  try { sm.update(statePath, s => { s.active = false; }); } catch { sm.forceWrite(statePath, { active: false }); }
 
   writeFinalReport(sessionDir, currentMv, exitReason, iteration, totalElapsed);
 
@@ -646,22 +654,18 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'microverse-runner.js'
     process.exit(1);
   }
   main(sessionDir).catch((err) => {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = safeErrorMessage(err);
     console.error(`${Style.RED}[FATAL] ${msg}${Style.RESET}`);
-    // Best-effort state deactivation
-    try {
-      const statePath = path.join(sessionDir, 'state.json');
-      const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-      state.active = false;
-      writeStateFile(statePath, state);
-    } catch { /* best effort */ }
+    sm.forceWrite(path.join(sessionDir, 'state.json'), (() => {
+      try { const s = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8')); s.active = false; return s; } catch { return { active: false }; }
+    })());
     try {
       const mvPath = path.join(sessionDir, 'microverse.json');
       if (fs.existsSync(mvPath)) {
         const mv = JSON.parse(fs.readFileSync(mvPath, 'utf-8'));
         mv.status = 'stopped';
         mv.exit_reason = 'error';
-        writeStateFile(mvPath, mv);
+        sm.forceWrite(mvPath, mv);
       }
     } catch { /* best effort */ }
     process.exit(1);

@@ -1,3 +1,32 @@
+export const STATE_MANAGER_DEFAULTS = {
+    maxLockRetries: 10,
+    baseLockDelayMs: 100,
+    lockJitter: true,
+    staleLockTimeoutMs: 30_000,
+    schemaVersion: 1,
+};
+export class StateError extends Error {
+    code;
+    constructor(code, message) {
+        super(message);
+        this.name = 'StateError';
+        this.code = code;
+    }
+}
+export class LockError extends StateError {
+    constructor(message) {
+        super('LOCK_FAILED', message);
+        this.name = 'LockError';
+    }
+}
+export class TransactionError extends StateError {
+    rollbackErrors;
+    constructor(message, rollbackErrors = []) {
+        super('WRITE_FAILED', message);
+        this.name = 'TransactionError';
+        this.rollbackErrors = rollbackErrors;
+    }
+}
 // ---------------------------------------------------------------------------
 // Default Configuration Values
 // ---------------------------------------------------------------------------

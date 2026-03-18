@@ -11,12 +11,33 @@ import {
     formatTime,
     buildHandoffSummary,
     withSessionMapLock,
+    withRetryLock,
     pruneOldSessions,
     extractFrontmatter,
     getExtensionRoot,
     markTicketDone,
     markTicketSkipped,
+    safeErrorMessage,
 } from '../services/pickle-utils.js';
+import { LockError } from '../types/index.js';
+
+// --- safeErrorMessage ---
+
+test('safeErrorMessage: returns message from Error instance', () => {
+    assert.equal(safeErrorMessage(new Error('boom')), 'boom');
+});
+
+test('safeErrorMessage: coerces number to string', () => {
+    assert.equal(safeErrorMessage(42), '42');
+});
+
+test('safeErrorMessage: coerces null to string', () => {
+    assert.equal(safeErrorMessage(null), 'null');
+});
+
+test('safeErrorMessage: coerces undefined to string', () => {
+    assert.equal(safeErrorMessage(undefined), 'undefined');
+});
 
 // --- getExtensionRoot ---
 
@@ -921,6 +942,142 @@ test('buildHandoffSummary: omits MULTI-REPO warning for single working_dir', () 
 
         const summary = buildHandoffSummary({ step: 'implement', iteration: 1 }, dir);
         assert.ok(!summary.includes('MULTI-REPO'), 'should NOT contain MULTI-REPO warning');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+// --- withRetryLock ---
+
+test('withRetryLock: executes fn and returns result', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-retrylock-'));
+    try {
+        const lockPath = path.join(dir, 'test.lock');
+        const result = withRetryLock(lockPath, () => 99);
+        assert.equal(result, 99);
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('withRetryLock: lock file cleaned up after fn', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-retrylock-'));
+    try {
+        const lockPath = path.join(dir, 'test.lock');
+        withRetryLock(lockPath, () => {});
+        assert.equal(fs.existsSync(lockPath), false);
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('withRetryLock: lock file cleaned up when fn throws', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-retrylock-'));
+    try {
+        const lockPath = path.join(dir, 'test.lock');
+        assert.throws(() => withRetryLock(lockPath, () => { throw new Error('kaboom'); }), /kaboom/);
+        assert.equal(fs.existsSync(lockPath), false);
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('withRetryLock: writes PID into lock file', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-retrylock-'));
+    try {
+        const lockPath = path.join(dir, 'test.lock');
+        let pidInLock;
+        withRetryLock(lockPath, () => {
+            pidInLock = fs.readFileSync(lockPath, 'utf-8').trim();
+        });
+        assert.equal(pidInLock, String(process.pid));
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('withRetryLock: throws LockError after maxRetries exhausted', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-retrylock-'));
+    try {
+        const lockPath = path.join(dir, 'stuck.lock');
+        // Place a fresh lock that won't be stolen (mtime = now, staleLockTimeoutMs = 30s default)
+        const fd = fs.openSync(lockPath, 'w');
+        fs.writeSync(fd, '99999');
+        fs.closeSync(fd);
+
+        let threw = false;
+        try {
+            // maxRetries=2, baseLockDelayMs=1 — fast failure for test
+            withRetryLock(lockPath, () => {}, { maxRetries: 2, baseLockDelayMs: 1, lockJitter: false });
+        } catch (e) {
+            threw = true;
+            assert.ok(e instanceof LockError, `Expected LockError, got ${e?.constructor?.name}`);
+            assert.match(e.message, /after 2 retries/);
+        }
+        assert.ok(threw, 'Should have thrown LockError');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('withRetryLock: retries and steals lock that becomes stale during backoff sleep', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-retrylock-'));
+    try {
+        const lockPath = path.join(dir, 'becomes-stale.lock');
+        // Place a fresh lock (mtime = now)
+        fs.writeFileSync(lockPath, '0');
+
+        // staleLockTimeoutMs=50ms, baseLockDelayMs=60ms, lockJitter=false
+        // First attempt: lock fresh → EEXIST, sleep 60ms (2^0 * 60)
+        // Second attempt: lock is now ~60ms old > 50ms → stolen → success
+        const result = withRetryLock(lockPath, () => 'retried-ok', {
+            maxRetries: 3,
+            baseLockDelayMs: 60,
+            lockJitter: false,
+            staleLockTimeoutMs: 50,
+        });
+        assert.equal(result, 'retried-ok');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('withRetryLock: steals stale lock (age > staleLockTimeoutMs) and succeeds', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-retrylock-'));
+    try {
+        const lockPath = path.join(dir, 'stale.lock');
+        // Write a lock with mtime 35 seconds in the past
+        fs.writeFileSync(lockPath, '12345');
+        const staleTime = new Date(Date.now() - 35_000);
+        fs.utimesSync(lockPath, staleTime, staleTime);
+
+        const result = withRetryLock(lockPath, () => 'stolen', { staleLockTimeoutMs: 30_000 });
+        assert.equal(result, 'stolen');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('withRetryLock: does NOT steal fresh lock (age < staleLockTimeoutMs)', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-retrylock-'));
+    try {
+        const lockPath = path.join(dir, 'fresh.lock');
+        // Lock mtime = now (fresh)
+        fs.writeFileSync(lockPath, '12345');
+
+        let threw = false;
+        try {
+            withRetryLock(lockPath, () => {}, {
+                maxRetries: 1,
+                baseLockDelayMs: 1,
+                lockJitter: false,
+                staleLockTimeoutMs: 30_000,
+            });
+        } catch (e) {
+            threw = true;
+            assert.ok(e instanceof LockError);
+        }
+        assert.ok(threw, 'Fresh lock should not be stolen — LockError expected');
     } finally {
         fs.rmSync(dir, { recursive: true });
     }

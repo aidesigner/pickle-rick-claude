@@ -3,9 +3,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
-import { printMinimalPanel, Style, getExtensionRoot, withSessionMapLock, pruneOldSessions, writeStateFile } from '../services/pickle-utils.js';
-import { Defaults } from '../types/index.js';
+import { printMinimalPanel, Style, getExtensionRoot, withSessionMapLock, pruneOldSessions, writeStateFile, safeErrorMessage } from '../services/pickle-utils.js';
+import { Defaults, LockError } from '../types/index.js';
+import { StateManager } from '../services/state-manager.js';
 import { logActivity, pruneActivity } from '../services/activity-logger.js';
+const sm = new StateManager();
 function die(message) {
     console.error(`${Style.RED}❌ Error: ${message}${Style.RESET}`);
     process.exit(1);
@@ -67,8 +69,10 @@ async function main() {
     const startEpoch = Math.floor(Date.now() / 1000);
     // Load Settings
     const settingsFile = path.join(ROOT_DIR, 'pickle_settings.json');
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     if (fs.existsSync(settingsFile)) {
         try {
+            // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
             const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf-8'));
             if (typeof settings.default_max_iterations === 'number' && settings.default_max_iterations > 0)
                 loopLimit = settings.default_max_iterations;
@@ -78,7 +82,7 @@ async function main() {
                 workerTimeout = settings.default_worker_timeout_seconds;
         }
         catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
+            const msg = safeErrorMessage(err);
             console.error(`Warning: could not parse pickle_settings.json — using defaults: ${msg}`);
         }
     }
@@ -167,9 +171,11 @@ async function main() {
     if (resumeMode) {
         if (resumePath) {
             fullSessionPath = resolvePath(resumePath);
+            // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         }
         else if (fs.existsSync(SESSIONS_MAP)) {
             try {
+                // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
                 const map = JSON.parse(fs.readFileSync(SESSIONS_MAP, 'utf-8'));
                 fullSessionPath = map[process.cwd()] || '';
             }
@@ -177,42 +183,44 @@ async function main() {
                 /* corrupt map — no session path */
             }
         }
+        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         if (!fullSessionPath || !fs.existsSync(fullSessionPath)) {
             die(`No active session found or path invalid: ${fullSessionPath}`);
         }
         const statePath = path.join(fullSessionPath, 'state.json');
         let state;
         try {
-            state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+            state = sm.update(statePath, s => {
+                s.active = !pausedMode;
+                if (resetMode) {
+                    s.iteration = 0;
+                    s.start_time_epoch = startEpoch;
+                }
+                // Only override limits that were explicitly passed on the command line;
+                // otherwise preserve the values from the stored session state.
+                if (explicitFlags.has('max-iterations'))
+                    s.max_iterations = loopLimit;
+                if (explicitFlags.has('max-time'))
+                    s.max_time_minutes = timeLimit;
+                if (explicitFlags.has('worker-timeout'))
+                    s.worker_timeout_seconds = workerTimeout;
+                if (promiseToken)
+                    s.completion_promise = promiseToken;
+                if (explicitFlags.has('min-iterations'))
+                    s.min_iterations = minIterations;
+                if (explicitFlags.has('command-template'))
+                    s.command_template = commandTemplate;
+                // Propagate tmux mode on resume — needed when transitioning a paused/non-tmux
+                // session into tmux mode (e.g. /pickle-refine-prd --run).
+                if (tmuxMode)
+                    s.tmux_mode = true;
+                if (chainMeeseeks)
+                    s.chain_meeseeks = true;
+            });
         }
         catch {
             die(`state.json is missing or corrupt in ${fullSessionPath}`);
         }
-        state.active = !pausedMode;
-        if (resetMode) {
-            state.iteration = 0;
-            state.start_time_epoch = startEpoch;
-        }
-        // Only override limits that were explicitly passed on the command line;
-        // otherwise preserve the values from the stored session state.
-        if (explicitFlags.has('max-iterations'))
-            state.max_iterations = loopLimit;
-        if (explicitFlags.has('max-time'))
-            state.max_time_minutes = timeLimit;
-        if (explicitFlags.has('worker-timeout'))
-            state.worker_timeout_seconds = workerTimeout;
-        if (promiseToken)
-            state.completion_promise = promiseToken;
-        if (explicitFlags.has('min-iterations'))
-            state.min_iterations = minIterations;
-        if (explicitFlags.has('command-template'))
-            state.command_template = commandTemplate;
-        // Propagate tmux mode on resume — needed when transitioning a paused/non-tmux
-        // session into tmux mode (e.g. /pickle-refine-prd --run).
-        if (tmuxMode)
-            state.tmux_mode = true;
-        if (chainMeeseeks)
-            state.chain_meeseeks = true;
         // Sync local vars with (potentially preserved) state for display — coerce
         // to Number to guard against string-typed values from external edits / old state.
         // Use Number.isFinite so that 0 (meaning infinite) is preserved rather than
@@ -227,10 +235,10 @@ async function main() {
         minIterations = Number.isFinite(rawMinIter) ? rawMinIter : 0;
         commandTemplate = state.command_template;
         chainMeeseeks = state.chain_meeseeks === true;
-        writeStateFile(statePath, state);
         currentIteration = (Number(state.iteration) || 0) + 1;
         promiseToken = state.completion_promise;
         // Only overwrite the validated fullSessionPath if the stored path exists on disk
+        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         if (state.session_dir && fs.existsSync(state.session_dir)) {
             fullSessionPath = state.session_dir;
         }
@@ -244,6 +252,7 @@ async function main() {
         const hash = crypto.randomBytes(4).toString('hex');
         const sessionId = `${today}-${hash}`;
         fullSessionPath = path.join(SESSIONS_ROOT, sessionId);
+        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         if (!fs.existsSync(fullSessionPath))
             fs.mkdirSync(fullSessionPath, { recursive: true });
         const state = {
@@ -275,7 +284,17 @@ async function main() {
         catch { /* must not block session start */ }
         logActivity({ event: 'session_start', source: 'pickle', session: sessionId, mode: tmuxMode ? 'tmux' : 'inline', original_prompt: taskStr });
     }
-    updateSessionMap(process.cwd(), fullSessionPath);
+    try {
+        updateSessionMap(process.cwd(), fullSessionPath);
+    }
+    catch (err) {
+        if (err instanceof LockError) {
+            console.error(`[pickle] WARNING: session map not updated — ${err instanceof Error ? err.message : String(err)}`);
+        }
+        else {
+            throw err;
+        }
+    }
     printMinimalPanel('Pickle Rick Activated!', {
         Iteration: currentIteration,
         Limit: loopLimit > 0 ? loopLimit : '∞',
@@ -303,5 +322,5 @@ function resolvePath(p) {
     return path.resolve(p);
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'setup.js') {
-    main().catch((err) => die(err instanceof Error ? err.message : String(err)));
+    main().catch((err) => die(safeErrorMessage(err)));
 }

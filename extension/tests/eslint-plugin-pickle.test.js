@@ -10,36 +10,50 @@ const ruleTester = new RuleTester({
 // ─── no-raw-state-write ─────────────────────────────────────────────────────
 
 describe('pickle/no-raw-state-write', () => {
-  it('catches raw fs.writeFileSync on state.json and allows safe patterns', () => {
+  it('catches raw fs.writeFileSync and writeStateFile on state.json, allows StateManager', () => {
     ruleTester.run('no-raw-state-write', pickle.rules['no-raw-state-write'], {
       valid: [
         // Non-state file
         { code: `import * as fs from 'fs'; fs.writeFileSync('/tmp/config.json', '{}');` },
-        // writeStateFile is fine
-        { code: `writeStateFile(statePath, state);` },
+        // writeStateFile on non-state file (e.g. meta.json)
+        { code: `writeStateFile(metaPath, meta);` },
+        // StateManager.update is the correct approach
+        { code: `sm.update(statePath, s => { s.active = false; });` },
+        // StateManager.forceWrite is allowed
+        { code: `sm.forceWrite(statePath, state);` },
         // fs.readFileSync on state is fine
         { code: `import * as fs from 'fs'; fs.readFileSync(statePath, 'utf-8');` },
       ],
       invalid: [
-        // Literal state.json path
+        // Literal state.json path via fs.writeFileSync
         {
           code: `import * as fs from 'fs'; fs.writeFileSync('/tmp/state.json', '{}');`,
           errors: [{ messageId: 'useWriteStateFile' }],
         },
-        // statePath variable
+        // statePath variable via fs.writeFileSync
         {
           code: `import * as fs from 'fs'; const statePath = 'x'; fs.writeFileSync(statePath, '{}');`,
           errors: [{ messageId: 'useWriteStateFile' }],
         },
-        // stateFile variable
+        // stateFile variable via fs.writeFileSync
         {
           code: `import * as fs from 'fs'; const stateFile = 'x'; fs.writeFileSync(stateFile, '{}');`,
           errors: [{ messageId: 'useWriteStateFile' }],
         },
-        // Template literal with state.json
+        // Template literal with state.json via fs.writeFileSync
         {
           code: 'import * as fs from \'fs\'; fs.writeFileSync(`${dir}/state.json`, \'{}\');',
           errors: [{ messageId: 'useWriteStateFile' }],
+        },
+        // writeStateFile on statePath — should use StateManager
+        {
+          code: `writeStateFile(statePath, state);`,
+          errors: [{ messageId: 'useStateManager' }],
+        },
+        // writeStateFile on stateFile — should use StateManager
+        {
+          code: `writeStateFile(stateFile, state);`,
+          errors: [{ messageId: 'useStateManager' }],
         },
       ],
     });

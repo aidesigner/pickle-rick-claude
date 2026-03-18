@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { collectTickets, statusSymbol, formatTime, getWidth, Style, sleep, MatrixStyle, matrixSeparator, latestIterationLog } from '../services/pickle-utils.js';
+import { collectTickets, statusSymbol, formatTime, getWidth, Style, sleep, MatrixStyle, matrixSeparator, latestIterationLog, safeErrorMessage } from '../services/pickle-utils.js';
 import { State } from '../types/index.js';
 
 /**
@@ -202,6 +202,7 @@ function render(sessionDir: string): boolean {
 
 async function main() {
   const sessionDir = process.argv[2];
+  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   if (!sessionDir || sessionDir.startsWith('--') || !fs.existsSync(sessionDir)) {
     console.error('Usage: node monitor.js <session-dir>');
     process.exit(1);
@@ -228,7 +229,7 @@ async function main() {
 
 if (process.argv[1] && path.basename(process.argv[1]) === 'monitor.js') {
   main().catch((err) => {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = safeErrorMessage(err);
     console.error(`${Style.RED}[monitor] ${msg}${Style.RESET}`);
     process.exit(1);
   });

@@ -7,6 +7,7 @@ import {
   Style,
   formatTime,
   getExtensionRoot,
+  safeErrorMessage,
 } from '../services/pickle-utils.js';
 import { PromiseTokens, hasToken, Defaults } from '../types/index.js';
 
@@ -181,6 +182,7 @@ interface WorkerResult {
   success: boolean;
   logPath: string;
   cycle: number;
+  exitCode: number | null;
 }
 
 function spawnWorker(
@@ -198,7 +200,7 @@ function spawnWorker(
   const logPath = path.join(refinementDir, `worker_${roleId}_c${cycle}.log`);
   const logStream = fs.createWriteStream(logPath, { flags: 'w' });
   logStream.on('error', (err) => {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = safeErrorMessage(err);
     console.error(`${Style.RED}❌ Log stream error (${roleId}): ${msg}${Style.RESET}`);
   });
 
@@ -245,6 +247,7 @@ function spawnWorker(
 
   return new Promise<WorkerResult>((resolve) => {
     let settled = false;
+    let workerExitCode: number | null = null;
 
     function settleWith(result: WorkerResult) {
       if (settled) return;
@@ -259,18 +262,19 @@ function spawnWorker(
 
     // Safety net: force-resolve if the process hangs (mirrors spawn-morty.ts)
     const hangGuard = setTimeout(() => {
-      settleWith({ roleId, success: false, logPath, cycle });
+      settleWith({ roleId, success: false, logPath, cycle, exitCode: null });
     }, (timeout + 30) * 1000);
     hangGuard.unref();
 
     proc.on('error', (err) => {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = safeErrorMessage(err);
       console.error(`${Style.RED}Failed to spawn claude (${roleId}): ${msg}${Style.RESET}`);
       logStream.end();
-      settleWith({ roleId, success: false, logPath, cycle });
+      settleWith({ roleId, success: false, logPath, cycle, exitCode: null });
     });
 
-    proc.on('close', () => {
+    proc.on('close', (code) => {
+      workerExitCode = code ?? null;
       if (settled) return; // error handler already resolved
       clearTimeout(timeoutHandle);
       if (killEscalation) clearTimeout(killEscalation);
@@ -291,7 +295,7 @@ function spawnWorker(
         let logContent = '';
         try { logContent = fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf-8') : ''; } catch { /* */ }
         const success = !workerTimedOut && hasToken(logContent, PromiseTokens.ANALYSIS_DONE);
-        settleWith({ roleId, success, logPath, cycle });
+        settleWith({ roleId, success, logPath, cycle, exitCode: workerExitCode });
       }
     });
   });
@@ -316,6 +320,7 @@ async function main() {
     process.exit(1);
   }
 
+  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   if (!fs.existsSync(prdPath)) {
     console.error(`${Style.RED}❌ PRD not found: ${prdPath}${Style.RESET}`);
     process.exit(1);
@@ -327,8 +332,10 @@ async function main() {
   let defaultCycles = 3;
   let defaultMaxTurns = 100;
   let defaultWorkerTimeout = Defaults.WORKER_TIMEOUT_SECONDS;
+  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   if (fs.existsSync(settingsFile)) {
     try {
+      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
       const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf-8'));
       if (typeof settings.default_refinement_cycles === 'number' && settings.default_refinement_cycles > 0)
         defaultCycles = settings.default_refinement_cycles;
@@ -365,8 +372,10 @@ async function main() {
   const rawTimeout = timeoutIndex !== -1 ? parseInt(args[timeoutIndex + 1], 10) : NaN;
   let timeout = !isNaN(rawTimeout) && rawTimeout > 0 ? rawTimeout : defaultWorkerTimeout;
   const statePath = path.join(sessionDir, 'state.json');
+  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   if (fs.existsSync(statePath)) {
     try {
+      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
       const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
       if (timeoutIndex === -1) {
         const stateTimeout = Number(state.worker_timeout_seconds);
@@ -393,17 +402,20 @@ async function main() {
   const refinementDir = path.join(sessionDir, 'refinement');
 
   try {
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     fs.mkdirSync(refinementDir, { recursive: true });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = safeErrorMessage(err);
     console.error(`${Style.RED}❌ Failed to create ${refinementDir}: ${msg}${Style.RESET}`);
     process.exit(1);
   }
 
+  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   const prdContent = fs.readFileSync(prdPath, 'utf-8');
 
   // Detect portal artifacts for refinement workers
   const portalDir = path.join(sessionDir, 'portal');
+  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   const hasPortal = fs.existsSync(portalDir);
   const portalContext: PortalContext | undefined = hasPortal
     ? { portalDir, patternSummaryLines: 50 }
@@ -458,8 +470,10 @@ async function main() {
       for (const { id } of WORKER_ROLES) {
         // Read from the canonical analysis file (written by previous cycle)
         const prevFile = path.join(refinementDir, `analysis_${id}.md`);
+        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         if (fs.existsSync(prevFile)) {
           try {
+            // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
             previousAnalyses.set(id, fs.readFileSync(prevFile, 'utf-8'));
           } catch { /* skip unreadable */ }
         }
@@ -497,6 +511,15 @@ async function main() {
 
         return spawnWorker(id, prompt, refinementDir, extensionRoot, timeout, workingDir, maxTurns, cycle, (result) => {
           statuses.set(id, result.success ? '✅' : '❌');
+          if (result.exitCode !== null && result.exitCode !== 0) {
+            const siblings = [...activeWorkerProcs];
+            if (siblings.length > 0) {
+              console.error(`\n${Style.RED}⚠️  Worker ${result.roleId} crashed (exit ${result.exitCode}) — killing ${siblings.length} sibling(s)${Style.RESET}`);
+              for (const sibling of siblings) {
+                try { sibling.kill('SIGTERM'); } catch { /* already dead */ }
+              }
+            }
+          }
         }, sessionDir);
       });
 
@@ -511,7 +534,9 @@ async function main() {
       for (const { id } of WORKER_ROLES) {
         const canonical = path.join(refinementDir, `analysis_${id}.md`);
         const cycleArchive = path.join(refinementDir, `analysis_${id}_c${cycle}.md`);
+        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         if (fs.existsSync(canonical)) {
+          // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
           try { fs.copyFileSync(canonical, cycleArchive); } catch { /* best-effort */ }
         }
       }
@@ -572,9 +597,12 @@ async function main() {
   const manifestPath = path.join(sessionDir, 'refinement_manifest.json');
   const manifestTmp = manifestPath + `.tmp.${process.pid}`;
   try {
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     fs.writeFileSync(manifestTmp, JSON.stringify(manifest, null, 2));
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     fs.renameSync(manifestTmp, manifestPath);
   } catch (err) {
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     try { fs.unlinkSync(manifestTmp); } catch { /* ignore cleanup failure */ }
     throw err;
   }
@@ -593,7 +621,7 @@ async function main() {
 
 if (process.argv[1] && path.basename(process.argv[1]) === 'spawn-refinement-team.js') {
   main().catch((err) => {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = safeErrorMessage(err);
     console.error(`${Style.RED}❌ Fatal: ${msg}${Style.RESET}`);
     process.exit(1);
   });

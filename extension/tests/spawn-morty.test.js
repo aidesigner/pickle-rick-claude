@@ -114,7 +114,7 @@ test('spawn-morty: --ticket-id value starts with -- → exit 1', () => {
 test('spawn-morty: valid args but no claude binary → exit 1 (spawn failure, not validation)', () => {
     const tmpDir = makeTmpDir();
     try {
-        // Set PATH to only /usr/bin so `claude` cannot be found.
+        // Set PATH to a non-existent directory so `claude` cannot be found.
         // The process should get past all validation and fail when spawning claude.
         // Use a longer timeout (15s) — under full-suite concurrency the ENOENT
         // async error can take longer than the default 10s to surface.
@@ -123,7 +123,7 @@ test('spawn-morty: valid args but no claude binary → exit 1 (spawn failure, no
                 '--ticket-id', 'ticket-42',
                 '--ticket-path', tmpDir,
             ], {
-            env: { ...process.env, PATH: '/usr/bin' },
+            env: { ...process.env, PATH: '/nonexistent' },
             encoding: 'utf-8',
             timeout: 15000,
         });
@@ -161,7 +161,7 @@ test('spawn-morty: --output-format as last arg (no value) defaults to text', () 
                 '--ticket-path', tmpDir,
                 '--output-format',
             ],
-            { PATH: '/usr/bin' }
+            { PATH: '/nonexistent' }
         );
         // Should get past validation (no crash, no validation error)
         assert.equal(result.status, 1, 'should exit with code 1 (no claude)');
@@ -188,7 +188,7 @@ test('spawn-morty: --ticket-file with value starting with -- does not crash', ()
                 '--ticket-path', tmpDir,
                 '--ticket-file', '--bogus-flag',
             ],
-            { PATH: '/usr/bin' }
+            { PATH: '/nonexistent' }
         );
         // Should get past validation without crashing
         assert.equal(result.status, 1, 'should exit with code 1 (no claude)');
@@ -212,7 +212,7 @@ test('spawn-morty: --timeout with custom value is accepted (no validation error)
                 '--ticket-path', tmpDir,
                 '--timeout', '30',
             ],
-            { PATH: '/usr/bin' }
+            { PATH: '/nonexistent' }
         );
         assert.equal(result.status, 1, 'should exit with code 1 (no claude)');
         // No validation errors — it accepted the timeout and moved on
@@ -243,7 +243,7 @@ test('spawn-morty: --review flag accepted without validation error', () => {
                 '--ticket-path', tmpDir,
                 '--review',
             ],
-            { PATH: '/usr/bin' }
+            { PATH: '/nonexistent' }
         );
         assert.equal(result.status, 1, 'should exit with code 1 (no claude)');
         // Should get past validation — no Usage or required errors
@@ -264,7 +264,7 @@ test('spawn-morty: --review flag shows Review Worker panel title', () => {
                 '--ticket-path', tmpDir,
                 '--review',
             ],
-            { PATH: '/usr/bin' }
+            { PATH: '/nonexistent' }
         );
         const combined = result.stdout + result.stderr;
         // Must match the actual panel title, not just the word "review" which appears in the command
@@ -316,6 +316,77 @@ test('spawn-morty: spawn error (no claude binary) reports spawn-error status', (
             combined.includes('spawn-error') || combined.includes('failed'),
             'should report spawn-error or failed status'
         );
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// F15: 30s minimum timeout floor
+// ---------------------------------------------------------------------------
+
+test('spawn-morty F15: 5s remaining is clamped to 30s minimum', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        // session/ticket structure so state.json is found as parentState
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketDir = path.join(sessionDir, 'ticket-f15a');
+        fs.mkdirSync(ticketDir, { recursive: true });
+
+        // Started 55s ago with 1-minute max → 5s remaining
+        const startEpoch = Math.floor(Date.now() / 1000) - 55;
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({ active: true, max_time_minutes: 1, start_time_epoch: startEpoch })
+        );
+
+        const result = spawnSync(process.execPath, [SPAWN_MORTY_BIN,
+            'implement the thing',
+            '--ticket-id', 'ticket-f15a',
+            '--ticket-path', ticketDir,
+            '--timeout', '600',
+        ], {
+            env: { ...process.env, PATH: '/nonexistent' },
+            encoding: 'utf-8',
+            timeout: 15000,
+        });
+
+        const combined = result.stdout + result.stderr;
+        // Panel shows "Timeout: 30s (Req: 600s)" — floor applied since remaining=5 < 30
+        assert.match(combined, /Timeout.*\b30s\b/, 'effectiveTimeout should be clamped to 30s floor');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('spawn-morty F15: negative remaining with short --timeout yields >=30s', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketDir = path.join(sessionDir, 'ticket-f15b');
+        fs.mkdirSync(ticketDir, { recursive: true });
+
+        // Started 120s ago with 1-minute max → remaining is negative
+        const startEpoch = Math.floor(Date.now() / 1000) - 120;
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({ active: true, max_time_minutes: 1, start_time_epoch: startEpoch })
+        );
+
+        const result = spawnSync(process.execPath, [SPAWN_MORTY_BIN,
+            'implement the thing',
+            '--ticket-id', 'ticket-f15b',
+            '--ticket-path', ticketDir,
+            '--timeout', '5',
+        ], {
+            env: { ...process.env, PATH: '/nonexistent' },
+            encoding: 'utf-8',
+            timeout: 15000,
+        });
+
+        const combined = result.stdout + result.stderr;
+        // With remaining<=0 and --timeout 5, effectiveTimeout = max(30, 5) = 30
+        assert.match(combined, /Timeout.*\b30s\b/, 'effectiveTimeout should be at least 30s even when session elapsed');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

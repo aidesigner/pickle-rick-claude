@@ -4,9 +4,11 @@ import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import { spawn, spawnSync } from 'child_process';
-import { printMinimalPanel, Style, getExtensionRoot, writeStateFile } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, getExtensionRoot, writeStateFile, safeErrorMessage } from '../services/pickle-utils.js';
+import { StateManager } from '../services/state-manager.js';
 import { Defaults } from '../types/index.js';
 import { logActivity } from '../services/activity-logger.js';
+const sm = new StateManager();
 // Tracks the currently-running task's session dir and subprocess so signal
 // handlers can deactivate it and kill the child on shutdown.
 let activeTaskSessionDir = null;
@@ -29,21 +31,25 @@ async function runTask(sessionDir, repoCwd, extensionRoot) {
     const statePath = path.join(sessionDir, 'state.json');
     let state;
     try {
+        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
     }
     catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = safeErrorMessage(err);
         throw new Error(`Failed to read state.json for ${path.basename(sessionDir)}: ${msg}`);
     }
-    state.active = true;
-    state.completion_promise = null;
-    writeStateFile(statePath, state);
+    state = sm.update(statePath, s => {
+        s.active = true;
+        s.completion_promise = null;
+    });
     activeTaskSessionDir = sessionDir;
     const taskTimeout = loadJarTaskTimeout(extensionRoot, state);
     const picklePromptPath = path.join(os.homedir(), '.claude/commands/pickle.md');
     let prompt = `You are Pickle Rick. Resume the session.\n\nRun:\nnode "${extensionRoot}/extension/bin/setup.js" --resume ${sessionDir}\n\nThen continue the manager lifecycle from the current phase.`;
     try {
+        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         if (fs.existsSync(picklePromptPath)) {
+            // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
             prompt = fs.readFileSync(picklePromptPath, 'utf-8').replace(/\$ARGUMENTS/g, `--resume ${sessionDir}`);
         }
     }
@@ -51,6 +57,7 @@ async function runTask(sessionDir, repoCwd, extensionRoot) {
     const settingsPath = path.join(extensionRoot, 'pickle_settings.json');
     let managerMaxTurns = Defaults.MANAGER_MAX_TURNS;
     try {
+        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
         if (typeof settings.default_manager_max_turns === 'number' && settings.default_manager_max_turns > 0)
             managerMaxTurns = settings.default_manager_max_turns;
@@ -125,7 +132,7 @@ async function runTask(sessionDir, repoCwd, extensionRoot) {
             clearTimeout(hangGuard);
             activeTaskSessionDir = null;
             activeTaskProc = null;
-            console.error(`${Style.RED}Failed to spawn claude: ${err instanceof Error ? err.message : String(err)}${Style.RESET}`);
+            console.error(`${Style.RED}Failed to spawn claude: ${safeErrorMessage(err)}${Style.RESET}`);
             resolve(false);
         });
     });
@@ -134,12 +141,14 @@ async function main() {
     const ROOT_DIR = getExtensionRoot();
     const JAR_ROOT = path.join(ROOT_DIR, 'jar');
     const SESSIONS_ROOT = path.join(ROOT_DIR, 'sessions');
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     if (!fs.existsSync(JAR_ROOT)) {
         console.log('🥒 Pickle Jar is empty. No tasks to run.');
         console.log('Signal: Jar Complete');
         return;
     }
     const tasks = [];
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     for (const day of fs.readdirSync(JAR_ROOT).sort()) {
         const dayPath = path.join(JAR_ROOT, day);
         let dayIsDir;
@@ -151,12 +160,15 @@ async function main() {
         }
         if (!dayIsDir)
             continue;
+        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         for (const taskId of fs.readdirSync(dayPath).sort()) {
             const metaPath = path.join(dayPath, taskId, 'meta.json');
+            // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
             if (!fs.existsSync(metaPath))
                 continue;
             let meta;
             try {
+                // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
                 meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
             }
             catch {
@@ -177,18 +189,16 @@ async function main() {
     const handleShutdownSignal = (signal) => {
         console.error(`\n${Style.YELLOW}⚠️  Received ${signal} — deactivating current task session${Style.RESET}`);
         if (activeTaskSessionDir) {
-            try {
-                const taskStatePath = path.join(activeTaskSessionDir, 'state.json');
-                const taskState = JSON.parse(fs.readFileSync(taskStatePath, 'utf-8'));
-                taskState.active = false;
-                writeStateFile(taskStatePath, taskState);
-            }
-            catch {
+            sm.forceWrite(path.join(activeTaskSessionDir, 'state.json'), (() => {
                 try {
-                    writeStateFile(path.join(activeTaskSessionDir, 'state.json'), { active: false });
+                    const s = JSON.parse(fs.readFileSync(path.join(activeTaskSessionDir, 'state.json'), 'utf-8'));
+                    s.active = false;
+                    return s;
                 }
-                catch { /* nothing we can do */ }
-            }
+                catch {
+                    return { active: false };
+                }
+            })());
         }
         if (activeTaskProc && !activeTaskProc.killed) {
             activeTaskProc.kill('SIGTERM');
@@ -204,6 +214,7 @@ async function main() {
     let failed = 0;
     for (const { taskId, metaPath, meta } of tasks) {
         const sessionDir = path.join(SESSIONS_ROOT, taskId);
+        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         if (!fs.existsSync(sessionDir)) {
             console.error(`${Style.RED}⚠️  Session dir not found for ${taskId}${Style.RESET}`);
             meta.status = 'failed';
@@ -233,6 +244,7 @@ async function main() {
                 continue;
             }
             try {
+                // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
                 const prdContent = fs.readFileSync(prdPath, 'utf-8');
                 const currentHash = crypto.createHash('sha256').update(prdContent).digest('hex');
                 if (currentHash !== meta.prd_hash) {
@@ -256,7 +268,7 @@ async function main() {
             ok = await runTask(sessionDir, repoPath, ROOT_DIR);
         }
         catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
+            const msg = safeErrorMessage(err);
             console.error(`${Style.RED}⚠️  runTask error for ${taskId}: ${msg}${Style.RESET}`);
             ok = false;
         }
@@ -265,9 +277,7 @@ async function main() {
         // Deactivate session after task completes (runTask sets active=true on start)
         try {
             const taskStatePath = path.join(sessionDir, 'state.json');
-            const taskState = JSON.parse(fs.readFileSync(taskStatePath, 'utf-8'));
-            taskState.active = false;
-            writeStateFile(taskStatePath, taskState);
+            sm.update(taskStatePath, s => { s.active = false; });
         }
         catch { /* best-effort */ }
         if (ok) {
@@ -302,7 +312,7 @@ function sendJarNotification(succeeded, failed) {
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'jar-runner.js') {
     main().catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = safeErrorMessage(err);
         console.error(`${Style.RED}Error: ${msg}${Style.RESET}`);
         if (process.platform === 'darwin') {
             const esc = (s) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { Style, sleep, formatTime, drainStreamJsonLines } from '../services/pickle-utils.js';
+import { Style, sleep, formatTime, drainStreamJsonLines, safeErrorMessage } from '../services/pickle-utils.js';
 import { processLine } from './log-watcher.js';
 const ROLES = ['requirements', 'codebase', 'risk-scope'];
 const ROLE_ICONS = {
@@ -48,6 +48,7 @@ function roleStatus(refinementDir, roleId) {
 }
 async function main() {
     const sessionDir = process.argv[2];
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     if (!sessionDir || sessionDir.startsWith('--') || !fs.existsSync(sessionDir)) {
         console.error('Usage: node refinement-watcher.js <session-dir>');
         process.exit(1);
@@ -71,6 +72,7 @@ async function main() {
     let lastStatusPrint = 0;
     while (true) {
         // Check if manifest exists (refinement complete)
+        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         if (fs.existsSync(manifestPath)) {
             // Final drain of all logs
             for (const role of ROLES) {
@@ -88,6 +90,7 @@ async function main() {
             }
             // Read manifest and show summary
             try {
+                // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
                 const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
                 const elapsed = Math.floor((Date.now() - startTime) / 1000);
                 process.stdout.write(`\n${sep()}\n`);
@@ -103,6 +106,7 @@ async function main() {
             break;
         }
         // Wait for refinement directory to exist
+        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         if (!fs.existsSync(refinementDir)) {
             const elapsed = Math.floor((Date.now() - startTime) / 1000);
             process.stdout.write(`\r${d}Waiting for refinement workers... (${formatTime(elapsed)})${r}\x1b[K`);
@@ -168,11 +172,13 @@ async function main() {
         // the spawner likely crashed. Don't hang forever.
         try {
             const statePath = path.join(sessionDir, 'state.json');
+            // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
             const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
             if (state.active === false && state.step !== 'prd') {
                 // state advanced past prd (setup --paused sets step=prd, active=false)
                 // but no manifest — something went wrong
                 await sleep(3000);
+                // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
                 if (!fs.existsSync(manifestPath)) {
                     process.stdout.write(`\n${sep()}\n${Style.YELLOW}⚠️  Session inactive with no manifest — refinement may have failed.${r}\n`);
                     break;
@@ -185,7 +191,7 @@ async function main() {
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'refinement-watcher.js') {
     main().catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = safeErrorMessage(err);
         console.error(`${Style.RED}[refinement-watcher] ${msg}${Style.RESET}`);
         process.exit(1);
     });

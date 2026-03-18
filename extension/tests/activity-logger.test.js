@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { VALID_ACTIVITY_EVENTS } from '../types/index.js';
+import { _setRetryDelayMs, _getPendingBuffer, _clearPendingBuffer } from '../services/activity-logger.js';
 
 // Helper: create temp dir that acts as extension root, return activity dir path
 function withTempActivityDir(fn) {
@@ -367,5 +368,112 @@ test('CLI: accepts all 21 valid event types', () => {
         }
     } finally {
         fs.rmSync(extRoot, { recursive: true, force: true });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// Retry + buffer (F18)
+// ---------------------------------------------------------------------------
+
+test('logActivity: buffers event when write fails on both attempts (ENOSPC simulation)', async () => {
+    _setRetryDelayMs(0); // no sleep in tests
+    _clearPendingBuffer();
+    const logActivity = await getLogActivity();
+
+    const extRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-activity-'));
+    const activityDir = path.join(extRoot, 'activity');
+    const origEnv = process.env.EXTENSION_DIR;
+    process.env.EXTENSION_DIR = extRoot;
+    try {
+        fs.mkdirSync(activityDir);
+        const date = new Date().toLocaleDateString('en-CA');
+        const filepath = path.join(activityDir, `${date}.jsonl`);
+        // Create file as read-only so both write attempts fail
+        fs.writeFileSync(filepath, '', { mode: 0o444 });
+
+        logActivity({ event: 'commit', source: 'hook', commit_hash: 'abc123' });
+
+        assert.equal(_getPendingBuffer().length, 1, 'failed event should be buffered');
+        assert.ok(
+            _getPendingBuffer()[0].includes('"commit"'),
+            'buffered entry should contain the event type'
+        );
+    } finally {
+        fs.chmodSync(path.join(activityDir, new Date().toLocaleDateString('en-CA') + '.jsonl'), 0o644);
+        process.env.EXTENSION_DIR = origEnv;
+        if (origEnv === undefined) delete process.env.EXTENSION_DIR;
+        fs.rmSync(extRoot, { recursive: true, force: true });
+        _clearPendingBuffer();
+        _setRetryDelayMs(500);
+    }
+});
+
+test('logActivity: flushes buffer on next successful write', async () => {
+    _setRetryDelayMs(0);
+    _clearPendingBuffer();
+    const logActivity = await getLogActivity();
+
+    const extRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-activity-'));
+    const activityDir = path.join(extRoot, 'activity');
+    const origEnv = process.env.EXTENSION_DIR;
+    process.env.EXTENSION_DIR = extRoot;
+    try {
+        fs.mkdirSync(activityDir);
+        const date = new Date().toLocaleDateString('en-CA');
+        const filepath = path.join(activityDir, `${date}.jsonl`);
+        fs.writeFileSync(filepath, '', { mode: 0o444 });
+
+        // First call fails → buffered
+        logActivity({ event: 'commit', source: 'hook', commit_hash: 'aaa' });
+        assert.equal(_getPendingBuffer().length, 1);
+
+        // Restore write permission
+        fs.chmodSync(filepath, 0o644);
+
+        // Second call succeeds → new event written, then buffer flushed
+        logActivity({ event: 'feature', source: 'persona', title: 'flush test' });
+        assert.equal(_getPendingBuffer().length, 0, 'buffer should be empty after flush');
+
+        const lines = fs.readFileSync(filepath, 'utf8').trim().split('\n').filter(Boolean);
+        assert.equal(lines.length, 2, 'file should have new event + flushed buffered event');
+        assert.equal(JSON.parse(lines[0]).event, 'feature', 'new event written first');
+        assert.equal(JSON.parse(lines[1]).event, 'commit', 'buffered event flushed second');
+    } finally {
+        process.env.EXTENSION_DIR = origEnv;
+        if (origEnv === undefined) delete process.env.EXTENSION_DIR;
+        fs.rmSync(extRoot, { recursive: true, force: true });
+        _clearPendingBuffer();
+        _setRetryDelayMs(500);
+    }
+});
+
+test('logActivity: buffer capped at 100 events — excess events dropped', async () => {
+    _setRetryDelayMs(0);
+    _clearPendingBuffer();
+    const logActivity = await getLogActivity();
+
+    const extRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-activity-'));
+    const activityDir = path.join(extRoot, 'activity');
+    const date = new Date().toLocaleDateString('en-CA');
+    const filepath = path.join(activityDir, `${date}.jsonl`);
+    const origEnv = process.env.EXTENSION_DIR;
+    process.env.EXTENSION_DIR = extRoot;
+    try {
+        fs.mkdirSync(activityDir);
+        fs.writeFileSync(filepath, '', { mode: 0o444 });
+
+        // Write 150 events — only first 100 should be buffered
+        for (let i = 0; i < 150; i++) {
+            logActivity({ event: 'commit', source: 'hook', commit_hash: `hash${i}` });
+        }
+
+        assert.equal(_getPendingBuffer().length, 100, 'buffer must be capped at 100 events');
+    } finally {
+        fs.chmodSync(filepath, 0o644);
+        process.env.EXTENSION_DIR = origEnv;
+        if (origEnv === undefined) delete process.env.EXTENSION_DIR;
+        fs.rmSync(extRoot, { recursive: true, force: true });
+        _clearPendingBuffer();
+        _setRetryDelayMs(500);
     }
 });

@@ -17,6 +17,55 @@ export interface State {
   min_iterations?: number;
   command_template?: string;
   chain_meeseeks?: boolean;
+  schema_version?: number;
+  pid?: number;
+}
+
+// ---------------------------------------------------------------------------
+// StateManager Types & Errors
+// ---------------------------------------------------------------------------
+
+export interface StateManagerOptions {
+  maxLockRetries: number;
+  baseLockDelayMs: number;
+  lockJitter: boolean;
+  staleLockTimeoutMs: number;
+  schemaVersion: number;
+}
+
+export const STATE_MANAGER_DEFAULTS: StateManagerOptions = {
+  maxLockRetries: 10,
+  baseLockDelayMs: 100,
+  lockJitter: true,
+  staleLockTimeoutMs: 30_000,
+  schemaVersion: 1,
+};
+
+export type StateErrorCode = 'MISSING' | 'CORRUPT' | 'SCHEMA_MISMATCH' | 'LOCK_FAILED' | 'WRITE_FAILED';
+
+export class StateError extends Error {
+  readonly code: StateErrorCode;
+  constructor(code: StateErrorCode, message: string) {
+    super(message);
+    this.name = 'StateError';
+    this.code = code;
+  }
+}
+
+export class LockError extends StateError {
+  constructor(message: string) {
+    super('LOCK_FAILED', message);
+    this.name = 'LockError';
+  }
+}
+
+export class TransactionError extends StateError {
+  readonly rollbackErrors: Error[];
+  constructor(message: string, rollbackErrors: Error[] = []) {
+    super('WRITE_FAILED', message);
+    this.name = 'TransactionError';
+    this.rollbackErrors = rollbackErrors;
+  }
 }
 
 export interface HookInput {

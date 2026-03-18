@@ -3,7 +3,13 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { StringDecoder } from 'string_decoder';
-import { State, VALID_STEPS } from '../types/index.js';
+import { State, VALID_STEPS, LockError } from '../types/index.js';
+import { StateManager } from './state-manager.js';
+
+/** Extracts a string message from any thrown value. Never throws. */
+export function safeErrorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
 
 export const Style = {
   GREEN: '\x1b[32m',
@@ -129,7 +135,7 @@ export function runCmd(
       const stderr = error instanceof Error && 'stderr' in error
         ? String((error as ShellError).stderr || '')
         : '';
-      const msg = stderr || (error instanceof Error ? error.message : String(error));
+      const msg = stderr || safeErrorMessage(error);
       throw new Error(`Command failed: ${cmd}\nError: ${msg}`);
     }
     const stdout = error instanceof Error && 'stdout' in error
@@ -354,55 +360,83 @@ function sleepMs(ms: number): void {
   Atomics.wait(_sleepBuf, 0, 0, ms);
 }
 
+export interface RetryLockOptions {
+  /** Maximum number of retry attempts before throwing LockError. Default: 10. */
+  maxRetries?: number;
+  /** Base delay in ms for exponential backoff. Default: 100. */
+  baseLockDelayMs?: number;
+  /** Age threshold in ms after which a lock file is considered stale and stolen. Default: 30000. */
+  staleLockTimeoutMs?: number;
+  /** Whether to add random jitter to backoff delays. Default: true. */
+  lockJitter?: boolean;
+}
+
+const RETRY_LOCK_DEFAULTS = {
+  maxRetries: 10,
+  baseLockDelayMs: 100,
+  staleLockTimeoutMs: 30_000,
+  lockJitter: true,
+} as const;
+
 /**
  * Acquires an exclusive file lock before executing fn, then releases it.
- * Uses O_EXCL atomic create for lock acquisition. Retries for up to 3 seconds
- * and steals locks older than 5 seconds. Degrades gracefully on timeout.
+ * Uses O_EXCL atomic create for lock acquisition. Retries with exponential
+ * backoff and optional jitter, stealing locks older than staleLockTimeoutMs.
+ * Writes PID to lock file for stale detection. NEVER silently falls through —
+ * throws LockError if maxRetries is exhausted.
  */
-export function withSessionMapLock<T>(lockPath: string, fn: () => T): T {
-  const MAX_WAIT_MS = 3000;
-  const RETRY_MS = 50;
-  const STALE_MS = 5000;
-  const deadline = Date.now() + MAX_WAIT_MS;
-  let acquired = false;
+export function withRetryLock<T>(lockPath: string, fn: () => T, opts: RetryLockOptions = {}): T {
+  const maxRetries = opts.maxRetries ?? RETRY_LOCK_DEFAULTS.maxRetries;
+  const baseLockDelayMs = opts.baseLockDelayMs ?? RETRY_LOCK_DEFAULTS.baseLockDelayMs;
+  const staleLockTimeoutMs = opts.staleLockTimeoutMs ?? RETRY_LOCK_DEFAULTS.staleLockTimeoutMs;
+  const lockJitter = opts.lockJitter ?? RETRY_LOCK_DEFAULTS.lockJitter;
 
-  while (!acquired) {
+  let attempt = 0;
+
+  while (true) {
     // Steal stale lock if present — unlink + create in tight sequence to minimize TOCTOU window
-    let stale = false;
     try {
       const stats = fs.statSync(lockPath);
-      stale = Date.now() - stats.mtimeMs > STALE_MS;
+      if (Date.now() - stats.mtimeMs > staleLockTimeoutMs) {
+        try { fs.unlinkSync(lockPath); } catch { /* already gone — race is fine */ }
+      }
     } catch { /* lock file doesn't exist — expected */ }
 
-    if (stale) {
-      // Attempt atomic steal: unlink then immediately try exclusive create
-      try { fs.unlinkSync(lockPath); } catch { /* already gone */ }
-    }
-
-    // Atomic exclusive create
+    // Atomic exclusive create; write PID for stale-detection by other processes
     try {
       const fd = fs.openSync(lockPath, 'wx');
-      fs.closeSync(fd);
-      acquired = true;
+      try { fs.writeSync(fd, String(process.pid)); } finally { fs.closeSync(fd); }
+
+      try {
+        return fn();
+      } finally {
+        try { fs.unlinkSync(lockPath); } catch { /* ignore cleanup failure */ }
+      }
     } catch (e) {
       const code = e instanceof Error ? (e as NodeJS.ErrnoException).code : undefined;
       if (code !== 'EEXIST') throw e;
-      if (Date.now() >= deadline) {
-        // Proceeding without lock — concurrent writes to sessions map are possible
-        console.error(`[pickle] WARNING: lock acquisition timed out (${lockPath}), proceeding without lock`);
-        break;
-      }
-      sleepMs(Math.min(RETRY_MS, deadline - Date.now()));
-    }
-  }
 
-  try {
-    return fn();
-  } finally {
-    if (acquired) {
-      try { fs.unlinkSync(lockPath); } catch { /* ignore */ }
+      if (attempt >= maxRetries) {
+        throw new LockError(
+          `[pickle] Lock acquisition failed after ${maxRetries} retries (${lockPath})`
+        );
+      }
+
+      // Exponential backoff with optional jitter — cap at 5s per sleep
+      const backoff = baseLockDelayMs * Math.pow(2, attempt);
+      const jitter = lockJitter ? Math.random() * baseLockDelayMs : 0;
+      sleepMs(Math.min(backoff + jitter, 5000));
+      attempt++;
     }
   }
+}
+
+/**
+ * @deprecated Use withRetryLock instead. This wrapper exists for call-sites that
+ * have not yet been migrated and callers that intentionally tolerate LockError.
+ */
+export function withSessionMapLock<T>(lockPath: string, fn: () => T): T {
+  return withRetryLock(lockPath, fn);
 }
 
 /** Matrix palette shared across all monitor panes. */
@@ -577,23 +611,28 @@ export function updateState(key: string, value: string, sessionDir: string): voi
     throw new Error(`Unknown state key "${key}". Allowed: ${[...ALLOWED_KEYS].join(', ')}`);
   }
 
-  const state: Record<string, unknown> = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+  // Validate value BEFORE acquiring lock to fail fast
   if (NUMERIC_KEYS.has(key)) {
     const num = Number(value);
     if (!Number.isFinite(num)) {
       throw new Error(`Key "${key}" requires a finite number, got "${value}"`);
     }
-    state[key] = num;
   } else if (BOOLEAN_KEYS.has(key)) {
     if (value !== 'true' && value !== 'false') {
       throw new Error(`Key "${key}" requires "true" or "false", got "${value}"`);
     }
-    state[key] = value === 'true';
-  } else {
-    state[key] = value;
   }
 
-  writeStateFile(statePath, state);
+  const sm = new StateManager();
+  sm.update(statePath, state => {
+    if (NUMERIC_KEYS.has(key)) {
+      (state as unknown as Record<string, unknown>)[key] = Number(value);
+    } else if (BOOLEAN_KEYS.has(key)) {
+      (state as unknown as Record<string, unknown>)[key] = value === 'true';
+    } else {
+      (state as unknown as Record<string, unknown>)[key] = value;
+    }
+  });
   console.log(`Successfully updated ${key} to ${value} in ${statePath}`);
 }
 

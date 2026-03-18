@@ -83,6 +83,9 @@ merge_review_N [shape=tripleoctagon, class="review", prompt="Consolidate. BLOCKE
 check_review_N [shape=diamond]
 fix_N [prompt="Fix all BLOCKERs. Also simplify. Do NOT modify test files.", max_visits=5]
 reverify_N [shape=parallelogram, tool_command="cd ${WORKING_DIR} && ..."]
+check_reverify_N [shape=diamond]
+// check_reverify_N -> split_review_1 [condition="outcome=success", weight=2]
+// check_reverify_N -> fix_N [condition="outcome=fail"]
 ```
 
 ## Tier 3: Conditional (emit when PRD analysis flags them)
@@ -114,6 +117,7 @@ scope_check [class="review", prompt="Compare git diff against prompt. Flag out-o
 ```
 red_team [class="review", prompt="Attempt to break: invalid inputs, races, exhaustion, state corruption. Write repro tests.", goal_gate=true, retry_target="impl"]
 ```
+Note: `retry_target="impl"` is correct here (unlike verify_final) because red_team is mid-pipeline — retry re-enters the full lint→typecheck→test→review ratchet via graph edges. verify_final is the FINAL gate where impl retry can't fix cross-phase issues.
 
 **18. Competing Implementations** — two parallel approaches for high-complexity phases (>3 files). Ask user:
 ```

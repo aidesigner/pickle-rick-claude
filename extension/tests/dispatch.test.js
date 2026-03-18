@@ -488,6 +488,73 @@ test('dispatch: two valid JSON decisions → last one wins (backward scan)', () 
   }
 });
 
+// ---------------------------------------------------------------------------
+// EPIPE / broken stdin — child.kill() paths
+// ---------------------------------------------------------------------------
+
+test('dispatch: EPIPE on child stdin triggers child.kill — dispatcher completes without hanging', () => {
+  const tmpRoot = makeTmpRoot();
+  try {
+    const handlersDir = makeHandlersDir(tmpRoot);
+    // Handler: closes fd 0 (read end of stdin pipe) synchronously via closeSync so the
+    // parent's next write gets EPIPE immediately, then hangs for 30s.
+    // process.stdin.destroy() is NOT used here because Node.js defers the actual fd close
+    // via libuv's uv_close(), creating a race window where EPIPE never fires.
+    // closeSync(0) closes the fd immediately at the OS level, making EPIPE deterministic.
+    // Without child.kill() on EPIPE: dispatcher blocks on child.close for 30s → timeout.
+    // With child.kill('SIGKILL') on EPIPE: child exits instantly → close fires → approve.
+    writeHandler(handlersDir, 'test-epipe-kill', `
+      const { closeSync } = require('fs');
+      try { closeSync(0); } catch {}
+      setInterval(() => {}, 500); // keep alive until killed
+    `);
+
+    // 2 MB — well above the OS pipe buffer (~64 KB) so the parent definitely has pending
+    // writes when the child closes its stdin fd.
+    const largeInput = 'x'.repeat(1024 * 1024 * 2);
+
+    const { stdout, status } = runDispatch({
+      extRoot: tmpRoot,
+      args: ['test-epipe-kill'],
+      input: largeInput,
+    });
+
+    // child.kill('SIGKILL') fires on EPIPE → child exits → dispatcher emits approve
+    assert.ok(status !== null, 'dispatcher should not time out (child must be killed on EPIPE)');
+    const parsed = JSON.parse(stdout.trim());
+    assert.equal(parsed.decision, 'approve', 'should fail-open with approve after killing hung child');
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
+test('dispatch: sync write to already-destroyed child stdin does not throw — dispatcher completes', () => {
+  const tmpRoot = makeTmpRoot();
+  try {
+    const handlersDir = makeHandlersDir(tmpRoot);
+    // Handler that exits immediately, ensuring its stdin pipe is already closed
+    // when the dispatcher's synchronous write executes.
+    writeHandler(handlersDir, 'test-epipe-sync', `
+      process.exit(0);
+    `);
+
+    const largeInput = JSON.stringify({ data: 'x'.repeat(1024 * 128) });
+
+    const { stdout, status } = runDispatch({
+      extRoot: tmpRoot,
+      args: ['test-epipe-sync'],
+      input: largeInput,
+    });
+
+    // Either child already gone (close fires) or EPIPE caught — either way: approve
+    assert.ok(status !== null, 'dispatcher should not hang');
+    const parsed = JSON.parse(stdout.trim());
+    assert.equal(parsed.decision, 'approve', 'should fail-open with approve');
+  } finally {
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  }
+});
+
 test('dispatch: EXTENSION_DIR env var is passed to the handler', () => {
   const tmpRoot = makeTmpRoot();
   try {

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { Style, sleep, drainLog, MatrixStyle, matrixSeparator } from '../services/pickle-utils.js';
+import { Style, sleep, drainLog, MatrixStyle, matrixSeparator, safeErrorMessage } from '../services/pickle-utils.js';
 const ARTIFACT_IGNORE = new Set(['state.json']);
 const ARTIFACT_RECENCY_MS = 30000;
 /**
@@ -107,6 +107,7 @@ function discoverWorkerLogs(sessionDir) {
 }
 async function main() {
     const sessionDir = process.argv[2];
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     if (!sessionDir || sessionDir.startsWith('--') || !fs.existsSync(sessionDir)) {
         console.error('Usage: node morty-watcher.js <session-dir>');
         process.exit(1);
@@ -139,6 +140,7 @@ async function main() {
             }
             else {
                 try {
+                    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
                     const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
                     if (state.active !== true) {
                         process.stdout.write(`\n${sep()}\n${MX.BRIGHT}◤ FEED TERMINATED ◢${MX.R}\n`);
@@ -167,6 +169,7 @@ async function main() {
         }
         offset = drainLog(currentLog, offset);
         try {
+            // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
             const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
             if (state.active !== true) {
                 await sleep(2000);
@@ -183,7 +186,7 @@ async function main() {
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'morty-watcher.js') {
     main().catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = safeErrorMessage(err);
         console.error(`${Style.RED}[morty-watcher] ${msg}${Style.RESET}`);
         process.exit(1);
     });

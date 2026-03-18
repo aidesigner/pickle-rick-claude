@@ -8,7 +8,7 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
-import { sleep, MatrixStyle, matrixSeparator, latestIterationLog, drainStreamJsonLines, RAIN_CHARS } from '../services/pickle-utils.js';
+import { sleep, MatrixStyle, matrixSeparator, latestIterationLog, drainStreamJsonLines, RAIN_CHARS, safeErrorMessage } from '../services/pickle-utils.js';
 
 const MX = {
   ...MatrixStyle,
@@ -121,6 +121,7 @@ export function processLineRaw(line: string): string | null {
 // ── Main loop ───────────────────────────────────────────────────
 async function main() {
   const sessionDir = process.argv[2];
+  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   if (!sessionDir || sessionDir.startsWith('--') || !fs.existsSync(sessionDir)) {
     console.error('Usage: node raw-morty.js <session-dir>');
     process.exit(1);
@@ -151,6 +152,7 @@ async function main() {
 
     if (!log) {
       try {
+        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
         if (state.active !== true) {
           process.stdout.write(`\n${sep()}\n${MX.BRIGHT}◤ FEED TERMINATED ◢${MX.R}\n`);
@@ -175,6 +177,7 @@ async function main() {
     lineBuf = result.lineBuf;
 
     try {
+      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
       const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
       if (state.active !== true) {
         await sleep(2000);
@@ -190,7 +193,7 @@ async function main() {
 
 if (process.argv[1] && path.basename(process.argv[1]) === 'raw-morty.js') {
   main().catch((err) => {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = safeErrorMessage(err);
     console.error(`${MX.ERR}[raw-morty] ${msg}${MX.R}`);
     process.exit(1);
   });

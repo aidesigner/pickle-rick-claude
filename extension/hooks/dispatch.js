@@ -3,6 +3,7 @@ import { spawn } from 'child_process';
 import { existsSync, appendFileSync } from 'fs';
 import { join } from 'path';
 import * as os from 'os';
+import { safeErrorMessage } from '../services/pickle-utils.js';
 const EXTENSION_DIR = process.env.EXTENSION_DIR || join(os.homedir(), '.claude/pickle-rick');
 const HANDLERS_DIR = join(EXTENSION_DIR, 'extension', 'hooks', 'handlers');
 const LOG_PATH = join(EXTENSION_DIR, 'debug.log');
@@ -97,7 +98,7 @@ async function main() {
             log(`Input received: ${inputData.length} bytes`);
         }
         catch (e) {
-            log(`Error reading stdin: ${e instanceof Error ? e.message : String(e)}`);
+            log(`Error reading stdin: ${safeErrorMessage(e)}`);
         }
     }
     try {
@@ -106,17 +107,23 @@ async function main() {
             stdio: ['pipe', 'pipe', 'pipe'],
         });
         child.stdin?.on('error', (err) => {
-            if (err.code === 'EPIPE')
+            if (err.code === 'EPIPE') {
+                child.kill('SIGKILL');
                 return;
-            logError(`Child stdin error: ${err instanceof Error ? err.message : String(err)}`);
+            }
+            logError(`Child stdin error: ${safeErrorMessage(err)}`);
         });
         if (inputData) {
             try {
                 child.stdin?.write(inputData);
             }
             catch (err) {
-                if (!(err instanceof Error && err.code === 'EPIPE'))
+                if (err instanceof Error && err.code === 'EPIPE') {
+                    child.kill('SIGKILL');
+                }
+                else {
                     throw err;
+                }
             }
         }
         child.stdin?.end();
@@ -165,13 +172,13 @@ async function main() {
             process.exit(code ?? 0);
         });
         child.on('error', (err) => {
-            logError(`Failed to start child process: ${err instanceof Error ? err.message : String(err)}`);
+            logError(`Failed to start child process: ${safeErrorMessage(err)}`);
             approve();
             process.exit(0);
         });
     }
     catch (e) {
-        logError(`Unexpected execution error: ${e instanceof Error ? e.message : String(e)}`);
+        logError(`Unexpected execution error: ${safeErrorMessage(e)}`);
         approve();
         process.exit(0);
     }

@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
-import { getExtensionRoot } from '../services/pickle-utils.js';
+import { getExtensionRoot, safeErrorMessage } from '../services/pickle-utils.js';
 const CACHE_FILE = 'update-check.json';
 const SETTINGS_FILE = 'pickle_settings.json';
 const DEBUG_LOG = 'debug.log';
@@ -61,7 +61,7 @@ export function writeCache(cache) {
         log(`Cache written: ${cache.latest_version}`);
     }
     catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = safeErrorMessage(err);
         log(`Failed to write cache: ${msg}`);
     }
 }
@@ -110,7 +110,7 @@ export function getLatestRelease() {
         };
     }
     catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = safeErrorMessage(err);
         log(`getLatestRelease error: ${msg}`);
         return null;
     }
@@ -151,7 +151,7 @@ export function downloadRelease(tag) {
         return path.join(tmpDir, files[0]);
     }
     catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = safeErrorMessage(err);
         log(`downloadRelease error: ${msg}`);
         if (tmpDir) {
             try {
@@ -197,7 +197,7 @@ export function extractAndInstall(tarballPath) {
         return { success: true };
     }
     catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = safeErrorMessage(err);
         log(`extractAndInstall error: ${msg}`);
         return { success: false, error: msg };
     }
@@ -237,7 +237,7 @@ export function performUpgrade(from, to, tag) {
         return { success: true };
     }
     catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = safeErrorMessage(err);
         log(`performUpgrade error: ${msg}`);
         return { success: false, error: msg };
     }
@@ -285,7 +285,7 @@ export function checkForUpdate(options) {
         return { status: 'up-to-date', currentVersion, latestVersion };
     }
     catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = safeErrorMessage(err);
         log(`checkForUpdate error: ${msg}`);
         return { ...errorResult, error: msg };
     }

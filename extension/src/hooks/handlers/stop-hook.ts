@@ -3,8 +3,11 @@ import * as path from 'path';
 import { spawn } from 'child_process';
 import { State, HookInput, PromiseTokens, hasToken } from '../../types/index.js';
 import { resolveStateFile, approve } from '../resolve-state.js';
-import { getExtensionRoot, writeStateFile } from '../../services/pickle-utils.js';
+import { getExtensionRoot, safeErrorMessage } from '../../services/pickle-utils.js';
+import { StateManager } from '../../services/state-manager.js';
 import { logActivity } from '../../services/activity-logger.js';
+
+const sm = new StateManager();
 
 function maybeSpawnUpdateCheck(extensionDir: string, log: (msg: string) => void): void {
   const checkUpdatePath = path.join(extensionDir, 'extension', 'bin', 'check-update.js');
@@ -25,7 +28,7 @@ function maybeSpawnUpdateCheck(extensionDir: string, log: (msg: string) => void)
   log('Spawning detached check-update process');
   const child = spawn('node', [checkUpdatePath], { detached: true, stdio: 'ignore' });
   child.on('error', (err) => {
-    log(`check-update spawn error: ${err instanceof Error ? err.message : String(err)}`);
+    log(`check-update spawn error: ${safeErrorMessage(err)}`);
   });
   child.unref();
 }
@@ -37,6 +40,7 @@ async function main() {
 
   // 0. Check disabled marker — /disable-pickle creates this file to globally suppress the hook
   const disabledMarker = path.join(extensionDir, 'disabled');
+  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   if (fs.existsSync(disabledMarker)) {
     approve();
     return;
@@ -54,6 +58,7 @@ async function main() {
   // 1. Read Input
   let inputData: string;
   try {
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     inputData = fs.readFileSync(0, 'utf8');
   } catch {
     log('Failed to read stdin');
@@ -61,11 +66,19 @@ async function main() {
     return;
   }
 
+  // Empty stdin: approve silently — normal when hook runs outside active session
+  if (!inputData.trim()) {
+    approve();
+    return;
+  }
+
   let input: HookInput;
   try {
-    input = JSON.parse(inputData || '{}');
-  } catch (e) {
-    log(`Failed to parse input JSON: ${e instanceof Error ? e.message : String(e)}`);
+    input = JSON.parse(inputData);
+  } catch {
+    const preview = inputData.slice(0, 100);
+    const ellipsis = inputData.length > 100 ? '...' : '';
+    log(`WARN: corrupted hook input, approving fail-open. First 100 chars: "${preview}"${ellipsis}`);
     approve();
     return;
   }
@@ -85,6 +98,7 @@ async function main() {
   // 3. Read State
   let state: State;
   try {
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
   } catch {
     log('Failed to parse state.json');
@@ -189,8 +203,7 @@ async function main() {
     // In tmux mode, tmux-runner owns the active flag — don't deactivate here.
     // The runner reads classifyCompletion output and manages state transitions itself.
     if (!isWorker && !isRefinementWorker && state.tmux_mode !== true) {
-      state.active = false;
-      writeStateFile(stateFile, state);
+      try { sm.update(stateFile, s => { s.active = false; }); } catch { /* fail-open */ }
     }
     maybeSpawnUpdateCheck(extensionDir, log);
     approve();
@@ -241,8 +254,7 @@ async function main() {
   if (maxIter > 0 && curIter >= maxIter) {
     log(`Decision: APPROVE (Max iterations reached: ${curIter}/${maxIter})`);
     if (state.tmux_mode !== true) {
-      state.active = false;
-      writeStateFile(stateFile, state);
+      try { sm.update(stateFile, s => { s.active = false; }); } catch { /* fail-open */ }
     }
     approve();
     if (state.tmux_mode !== true) {
@@ -255,8 +267,7 @@ async function main() {
   if (maxTimeMins > 0 && startEpoch > 0 && elapsedSeconds >= maxTimeSeconds) {
     log(`Decision: APPROVE (Time limit reached: ${elapsedSeconds}/${maxTimeSeconds}s)`);
     if (state.tmux_mode !== true) {
-      state.active = false;
-      writeStateFile(stateFile, state);
+      try { sm.update(stateFile, s => { s.active = false; }); } catch { /* fail-open */ }
     }
     approve();
     if (state.tmux_mode !== true) {
@@ -301,8 +312,7 @@ async function main() {
         : `No-op response detected: "${trimmed}" — breaking ack loop`;
     log(`Decision: APPROVE (${reason})`);
     if (!isWorker && !isRefinementWorker && state.tmux_mode !== true) {
-      state.active = false;
-      writeStateFile(stateFile, state);
+      try { sm.update(stateFile, s => { s.active = false; }); } catch { /* fail-open */ }
     }
     approve();
     return;
@@ -311,8 +321,8 @@ async function main() {
   // 8. Default: Continue Loop (Prevent Exit)
   log('Decision: BLOCK (Default continuation)');
 
-  let defaultFeedback = `🥒 **Pickle Rick Loop Active** (Iteration ${curIter})`;
-  if (maxIter > 0) defaultFeedback += ` of ${maxIter}`;
+  const iterSuffix = maxIter > 0 ? ` of ${maxIter}` : '';
+  const defaultFeedback = `🥒 **Pickle Rick Loop Active** (Iteration ${curIter}${iterSuffix})`;
 
   console.log(JSON.stringify({ decision: 'block', reason: defaultFeedback }));
 }

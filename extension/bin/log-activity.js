@@ -1,6 +1,7 @@
 import * as path from 'path';
 import { VALID_ACTIVITY_EVENTS } from '../types/index.js';
 import { logActivity } from '../services/activity-logger.js';
+import { safeErrorMessage } from '../services/pickle-utils.js';
 if (process.argv[1] && path.basename(process.argv[1]) === 'log-activity.js') {
     const [eventType, rawTitle] = process.argv.slice(2);
     if (!eventType || eventType.startsWith('--')) {
@@ -25,7 +26,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'log-activity.js') {
         logActivity({ event: eventType, title, source: 'persona' });
     }
     catch (err) {
-        console.error(`Failed to log activity: ${err instanceof Error ? err.message : String(err)}`);
+        console.error(`Failed to log activity: ${safeErrorMessage(err)}`);
         process.exit(1);
     }
 }

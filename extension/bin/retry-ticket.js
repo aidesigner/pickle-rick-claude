@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { getExtensionRoot, extractFrontmatter, writeStateFile, updateState } from '../services/pickle-utils.js';
+import { getExtensionRoot, extractFrontmatter, updateState, safeErrorMessage } from '../services/pickle-utils.js';
+import { StateManager } from '../services/state-manager.js';
 import { Defaults } from '../types/index.js';
+const sm = new StateManager();
 export function retryTicket(ticketId, cwd) {
     // Validate ticketId to prevent path traversal
     if (!/^[a-zA-Z0-9_-]+$/.test(ticketId)) {
@@ -75,8 +77,7 @@ export function retryTicket(ticketId, cwd) {
         throw err;
     }
     // Re-activate session and set current ticket
-    state.active = true;
-    writeStateFile(statePath, state);
+    sm.update(statePath, s => { s.active = true; });
     updateState('current_ticket', ticketId, sessionDir);
     // Read final state for timeout/prompt values
     let finalState;
@@ -108,7 +109,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'retry-ticket.js') {
         retryTicket(ticketId, process.cwd());
     }
     catch (err) {
-        console.error(err instanceof Error ? err.message : String(err));
+        console.error(safeErrorMessage(err));
         process.exit(1);
     }
 }

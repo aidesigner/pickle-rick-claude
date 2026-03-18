@@ -454,6 +454,87 @@ test('mux-runner: rejects command_template with forward slash', () => {
     }
 });
 
+// F20: unknown template rejected (not present in extensionRoot/templates or ~/.claude/commands)
+test('mux-runner: rejects command_template not found in any directory', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = path.join(tmpRoot, 'session');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        // Use a name that cannot exist in the real ~/.claude/commands either
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            step: 'prd',
+            iteration: 0,
+            max_iterations: 5,
+            original_prompt: 'test unknown template',
+            working_dir: tmpRoot,
+            command_template: 'definitely-nonexistent-template-xyz123abc.md',
+        }, null, 2));
+
+        const result = run(tmpRoot, [sessionDir]);
+
+        const runnerLog = path.join(sessionDir, 'mux-runner.log');
+        let logContent = '';
+        if (fs.existsSync(runnerLog)) {
+            logContent = fs.readFileSync(runnerLog, 'utf-8');
+        }
+        const combined = result.stdout + result.stderr + logContent;
+
+        assert.ok(
+            combined.includes('not found'),
+            `Expected "not found" error for unknown template, got stdout: ${result.stdout}, stderr: ${result.stderr}, log: ${logContent}`
+        );
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+// F20: user command accepted when template exists in extensionRoot/templates
+test('mux-runner: accepts command_template found in extensionRoot/templates', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = path.join(tmpRoot, 'session');
+        fs.mkdirSync(sessionDir, { recursive: true });
+
+        // Create the templates directory and a valid template inside it
+        const templatesDir = path.join(tmpRoot, 'templates');
+        fs.mkdirSync(templatesDir, { recursive: true });
+        fs.writeFileSync(path.join(templatesDir, 'test-valid-template.md'),
+            '# Test Template\nThis template exists and should be accepted.\n');
+
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            step: 'prd',
+            iteration: 0,
+            max_iterations: 1,
+            original_prompt: 'test valid template',
+            working_dir: tmpRoot,
+            command_template: 'test-valid-template.md',
+        }, null, 2));
+
+        const result = run(tmpRoot, [sessionDir]);
+
+        const runnerLog = path.join(sessionDir, 'mux-runner.log');
+        let logContent = '';
+        if (fs.existsSync(runnerLog)) {
+            logContent = fs.readFileSync(runnerLog, 'utf-8');
+        }
+        const combined = result.stdout + result.stderr + logContent;
+
+        // Template validation must pass — no "not found" or "Invalid" error
+        assert.ok(
+            !combined.includes('not found in'),
+            `Template should be accepted, got: ${combined.slice(0, 600)}`
+        );
+        assert.ok(
+            !combined.includes('Invalid command_template'),
+            `Template should not be rejected, got: ${combined.slice(0, 600)}`
+        );
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
 test('mux-runner: creates mux-runner.log in session directory', () => {
     const tmpRoot = makeTmpRoot();
     try {
@@ -489,7 +570,7 @@ test('mux-runner: creates mux-runner.log in session directory', () => {
 
 // --- Completion classification (classifyCompletion) ---
 
-import { buildTmuxNotification, classifyCompletion, classifyTicketCompletion, extractAssistantContent, transitionToMeeseeks, loadRateLimitSettings, loadMeeseeksModel, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText, stripSetupSection, detectMultiRepo } from '../bin/mux-runner.js';
+import { buildTmuxNotification, classifyCompletion, classifyTicketCompletion, extractAssistantContent, transitionToMeeseeks, loadRateLimitSettings, loadMeeseeksModel, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText, stripSetupSection, detectMultiRepo, writeHandoffAtomic } from '../bin/mux-runner.js';
 
 test('classifyCompletion: TASK_COMPLETED returns continue (single ticket, loop continues)', () => {
     assert.equal(classifyCompletion('<promise>TASK_COMPLETED</promise>'), 'continue');
@@ -573,6 +654,48 @@ test('extractAssistantContent: raw text passes through for backward compat', () 
     const raw = 'Just plain text with <promise>EXISTENCE_IS_PAIN</promise>';
     const content = extractAssistantContent(raw);
     assert.ok(content.includes('EXISTENCE_IS_PAIN'), 'Should include raw text');
+});
+
+// F16: non-JSON line excluded in stream-json mode (prevents catch-block false positives)
+test('extractAssistantContent: non-JSON plaintext excluded when stream-json lines present', () => {
+    // A JSON line marks this as stream-json output; the subsequent plain-text line
+    // (e.g. from a catch block printing an error) must NOT be included.
+    const jsonLine = JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'Working on it...' }] },
+    });
+    const catchArtifact = '<promise>TASK_COMPLETED</promise>'; // stray non-JSON line
+    const output = [jsonLine, catchArtifact].join('\n');
+
+    const content = extractAssistantContent(output);
+    assert.ok(!content.includes('TASK_COMPLETED'),
+        'Non-JSON line should be excluded in stream-json mode');
+    assert.ok(content.includes('Working on it...'),
+        'JSON assistant text should still be included');
+});
+
+// F16: result-type blocks must be included (session final response for promise detection)
+test('extractAssistantContent: result-type block included in stream-json mode', () => {
+    const jsonLine = JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'All done.' }] },
+    });
+    const resultLine = JSON.stringify({ type: 'result', result: '<promise>EPIC_COMPLETED</promise>' });
+    const output = [jsonLine, resultLine].join('\n');
+
+    const content = extractAssistantContent(output);
+    assert.ok(content.includes('EPIC_COMPLETED'),
+        'result-type block must be included for promise detection');
+});
+
+// F16: assistant-type blocks included (sanity check alongside result-type)
+test('extractAssistantContent: assistant-type text block included in stream-json mode', () => {
+    const line = JSON.stringify({
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: '<promise>EXISTENCE_IS_PAIN</promise>' }] },
+    });
+    const content = extractAssistantContent(line);
+    assert.ok(content.includes('EXISTENCE_IS_PAIN'), 'assistant text block must be included');
 });
 
 // --- Regression: EPIC_COMPLETED in tool_result must not override EXISTENCE_IS_PAIN in assistant ---
@@ -1643,3 +1766,93 @@ test('extractAssistantContent: assistant-type included in stream-json mode', () 
 
 // validateTemplateName tests removed — function not yet exported from mux-runner.ts
 // (part of pending StateManager refactor). Re-add when the function is exported.
+
+// ---------------------------------------------------------------------------
+// writeHandoffAtomic — handoff.txt race / fallback scenarios (ticket 38b76eb5)
+// ---------------------------------------------------------------------------
+
+test('writeHandoffAtomic: unlink EACCES on tmp cleanup logs warning', () => {
+    const logs = [];
+    const log = (msg) => logs.push(msg);
+
+    // rename throws so we reach the tmp-cleanup path; unlinkSync throws EACCES
+    const fsOps = {
+        writeFileSync: () => {},
+        renameSync: () => { const e = new Error('cross-device link'); e.code = 'EXDEV'; throw e; },
+        unlinkSync: () => {
+            const e = new Error('permission denied');
+            e.code = 'EACCES';
+            throw e;
+        },
+    };
+
+    const tmpRoot = makeTmpRoot();
+    try {
+        writeHandoffAtomic(tmpRoot, 'content', 9999, log, fsOps);
+        assert.ok(
+            logs.some(l => l.includes('WARNING') && l.includes('EACCES')),
+            `Expected EACCES warning in logs, got: ${JSON.stringify(logs)}`
+        );
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('writeHandoffAtomic: rename fail falls back to direct writeFileSync', () => {
+    const logs = [];
+    const log = (msg) => logs.push(msg);
+    const writes = [];
+
+    const fsOps = {
+        writeFileSync: (p, content) => writes.push({ p, content }),
+        renameSync: () => { const e = new Error('cross-device link'); e.code = 'EXDEV'; throw e; },
+        unlinkSync: () => {},
+    };
+
+    const tmpRoot = makeTmpRoot();
+    try {
+        writeHandoffAtomic(tmpRoot, 'handoff content', 1234, log, fsOps);
+
+        assert.ok(
+            logs.some(l => l.includes('WARNING') && l.includes('rename failed')),
+            `Expected rename-failed warning in logs, got: ${JSON.stringify(logs)}`
+        );
+        const handoffWrite = writes.find(w => w.p.endsWith('handoff.txt') && !w.p.includes('.tmp.'));
+        assert.ok(handoffWrite, `Expected a direct handoff.txt write, got writes: ${JSON.stringify(writes.map(w => w.p))}`);
+        assert.equal(handoffWrite.content, 'handoff content', 'Fallback write must use original content');
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('writeHandoffAtomic: both rename and fallback fail, error logged, does not throw', () => {
+    const logs = [];
+    const log = (msg) => logs.push(msg);
+
+    const fsOps = {
+        writeFileSync: (p) => {
+            // tmp write succeeds, direct write fails
+            if (!p.includes('.tmp.')) {
+                const e = new Error('read-only filesystem');
+                e.code = 'EROFS';
+                throw e;
+            }
+        },
+        renameSync: () => { const e = new Error('cross-device link'); e.code = 'EXDEV'; throw e; },
+        unlinkSync: () => {},
+    };
+
+    const tmpRoot = makeTmpRoot();
+    try {
+        // Must NOT throw
+        assert.doesNotThrow(() => {
+            writeHandoffAtomic(tmpRoot, 'content', 5678, log, fsOps);
+        });
+        assert.ok(
+            logs.some(l => l.includes('ERROR') && l.includes('handoff.txt write failed')),
+            `Expected ERROR log for both-fail scenario, got: ${JSON.stringify(logs)}`
+        );
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});

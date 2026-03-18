@@ -130,25 +130,47 @@ function isInstanceofErrorCheck(test, paramName) {
 
 // ─── Rules ──────────────────────────────────────────────────────────────────
 
+/** Check if a node is a call to `writeStateFile` (bare identifier) */
+function isWriteStateFileCall(callee) {
+  return callee.type === 'Identifier' && callee.name === 'writeStateFile';
+}
+
 const noRawStateWrite = {
   meta: {
     type: 'problem',
     docs: {
-      description: 'Disallow raw fs.writeFileSync for state.json — use writeStateFile() for atomic writes',
+      description: 'Disallow raw state.json writes — use StateManager.update() / forceWrite()',
     },
     messages: {
       useWriteStateFile:
         'Use writeStateFile() instead of fs.writeFileSync for state.json. Raw writes risk corruption on crash.',
+      useStateManager:
+        'Use StateManager.update() or StateManager.forceWrite() instead of writeStateFile() for state.json. Direct writes bypass lock protection.',
     },
     schema: [],
   },
   create(context) {
+    const filename = context.filename || context.getFilename();
+    // Allow state-manager.ts (uses writeStateFile internally) and pickle-utils.ts (defines it)
+    if (/state-manager\.[tj]s$/.test(filename)) return {};
+    if (/pickle-utils\.[tj]s$/.test(filename)) return {};
+
     return {
       CallExpression(node) {
-        if (!isFsWriteFileSync(node.callee)) return;
-        const firstArg = node.arguments[0];
-        if (refersToStateJson(firstArg)) {
-          context.report({ node, messageId: 'useWriteStateFile' });
+        // Flag fs.writeFileSync on state.json
+        if (isFsWriteFileSync(node.callee)) {
+          const firstArg = node.arguments[0];
+          if (refersToStateJson(firstArg)) {
+            context.report({ node, messageId: 'useWriteStateFile' });
+          }
+          return;
+        }
+        // Flag writeStateFile() on state.json
+        if (isWriteStateFileCall(node.callee)) {
+          const firstArg = node.arguments[0];
+          if (refersToStateJson(firstArg)) {
+            context.report({ node, messageId: 'useStateManager' });
+          }
         }
       },
     };

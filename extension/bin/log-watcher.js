@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { Style, sleep, MatrixStyle, matrixSeparator, latestIterationLog, drainStreamJsonLines } from '../services/pickle-utils.js';
+import { Style, sleep, MatrixStyle, matrixSeparator, latestIterationLog, drainStreamJsonLines, safeErrorMessage } from '../services/pickle-utils.js';
 /**
  * Extracts the most informative parameter from a tool_use input object.
  */
@@ -81,6 +81,7 @@ export function processLine(line) {
 }
 async function main() {
     const sessionDir = process.argv[2];
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     if (!sessionDir || sessionDir.startsWith('--') || !fs.existsSync(sessionDir)) {
         console.error('Usage: node log-watcher.js <session-dir>');
         process.exit(1);
@@ -106,6 +107,7 @@ async function main() {
         const log = latestIterationLog(sessionDir);
         if (!log) {
             try {
+                // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
                 const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
                 if (state.active !== true) {
                     process.stdout.write(`\n${sep()}\n${MX.BRIGHT}◤ FEED TERMINATED ◢${MX.R}\n`);
@@ -128,6 +130,7 @@ async function main() {
         offset = result.offset;
         lineBuf = result.lineBuf;
         try {
+            // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
             const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
             if (state.active !== true) {
                 await sleep(2000);
@@ -144,7 +147,7 @@ async function main() {
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'log-watcher.js') {
     main().catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = safeErrorMessage(err);
         console.error(`${Style.RED}[log-watcher] ${msg}${Style.RESET}`);
         process.exit(1);
     });

@@ -85,6 +85,44 @@ function runHook(opts = {}) {
   }
 }
 
+/**
+ * Run stop-hook.js with raw stdin (no JSON wrapping) for testing empty/corrupted input.
+ * Returns { decision, debugLog }.
+ */
+function runHookRaw(opts = {}) {
+  const { state = baseState(), stdin = '', setStateFileEnv = true } = opts;
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-raw-'));
+  const sessionDir = path.join(tmpDir, 'session');
+  fs.mkdirSync(sessionDir);
+  const stateFile = path.join(sessionDir, 'state.json');
+  fs.writeFileSync(stateFile, JSON.stringify(state));
+  fs.writeFileSync(
+    path.join(tmpDir, 'current_sessions.json'),
+    JSON.stringify({ [process.cwd()]: sessionDir })
+  );
+
+  const env = { ...process.env, EXTENSION_DIR: tmpDir, FORCE_COLOR: '0' };
+  delete env.PICKLE_ROLE;
+  delete env.PICKLE_STATE_FILE;
+  if (setStateFileEnv) env.PICKLE_STATE_FILE = stateFile;
+
+  try {
+    const stdout = execFileSync(process.execPath, [STOP_HOOK], {
+      input: stdin,
+      encoding: 'utf-8',
+      env,
+    });
+    const debugLogPath = path.join(tmpDir, 'debug.log');
+    const debugLog = fs.existsSync(debugLogPath)
+      ? fs.readFileSync(debugLogPath, 'utf-8')
+      : '';
+    return { decision: JSON.parse(stdout.trim()), debugLog };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Bypass conditions — always approve, no state mutation
 // ---------------------------------------------------------------------------
@@ -1021,4 +1059,36 @@ test('stop-hook: whitespace-only response in tmux mode → approve', () => {
   });
   assert.equal(decision.decision, 'approve');
   assert.equal(state.active, true, 'whitespace approve must not deactivate');
+});
+
+// ---------------------------------------------------------------------------
+// F19: empty stdin + corrupted JSON handling
+// ---------------------------------------------------------------------------
+
+test('stop-hook: empty stdin → approve silently, no debug log written', () => {
+  const { decision, debugLog } = runHookRaw({ stdin: '' });
+  assert.deepEqual(decision, { decision: 'approve' });
+  assert.equal(debugLog, '', 'must not write any log entry for empty stdin');
+});
+
+test('stop-hook: whitespace-only stdin → approve silently', () => {
+  const { decision, debugLog } = runHookRaw({ stdin: '   \n  ' });
+  assert.deepEqual(decision, { decision: 'approve' });
+  assert.equal(debugLog, '', 'must not write any log entry for whitespace stdin');
+});
+
+test('stop-hook: corrupted non-empty JSON → warn with 100-char preview, approve fail-open', () => {
+  const corrupted = '{"broken": this is not valid json because values cannot be unquoted}';
+  const { decision, debugLog } = runHookRaw({ stdin: corrupted });
+  assert.deepEqual(decision, { decision: 'approve' });
+  assert.ok(debugLog.includes('WARN: corrupted hook input'), 'must log a WARN about corrupted input');
+  assert.ok(debugLog.includes(corrupted.slice(0, 40)), 'must include a preview of the corrupted input');
+});
+
+test('stop-hook: corrupted input longer than 100 chars → preview truncated with ellipsis', () => {
+  const corrupted = 'x'.repeat(200) + ' not json';
+  const { decision, debugLog } = runHookRaw({ stdin: corrupted });
+  assert.deepEqual(decision, { decision: 'approve' });
+  assert.ok(debugLog.includes('...'), 'must include ellipsis when input exceeds 100 chars');
+  assert.ok(!debugLog.includes(corrupted), 'must not log the full input');
 });

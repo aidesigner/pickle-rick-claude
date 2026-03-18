@@ -3,10 +3,22 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, runCmd } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, runCmd, safeErrorMessage } from '../services/pickle-utils.js';
 import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, type RateLimitInfo, type IterationExitResult, type RateLimitAction } from '../types/index.js';
+import { StateManager } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, type CircuitBreakerState } from '../services/circuit-breaker.js';
+
+const sm = new StateManager();
+
+/** Deactivate with retry-then-deactivate: try sm.update, fall back to forceWrite. */
+function safeDeactivate(statePath: string): void {
+  try {
+    sm.update(statePath, s => { s.active = false; });
+  } catch {
+    sm.forceWrite(statePath, { active: false });
+  }
+}
 
 let currentChildProc: import('child_process').ChildProcess | null = null;
 
@@ -54,11 +66,24 @@ export function detectMultiRepo(sessionDir: string): string[] | null {
  * embedded in reviewed source code (e.g. stop-hook.ts containing
  * `<promise>EPIC_COMPLETED</promise>`) do not cause false matches.
  *
- * For non-stream-json (plain text) output, every line fails JSON.parse
- * and is included as-is, preserving backward compatibility.
+ * Stream-json detection: if any non-empty line is valid JSON, the entire
+ * output is treated as stream-json. Non-JSON lines in stream-json output
+ * (e.g. error text from a catch block) are skipped — they are artifacts,
+ * not model responses, and must not trigger promise token matches.
+ *
+ * For pure plain-text output (zero JSON lines), every line is included
+ * as-is, preserving backward compatibility with non-stream-json callers.
  */
 export function extractAssistantContent(output: string): string {
   const lines = output.split('\n');
+
+  // First pass: detect stream-json mode
+  let isStreamJson = false;
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    try { JSON.parse(line); isStreamJson = true; break; } catch { /* not JSON */ }
+  }
+
   const parts: string[] = [];
   for (const line of lines) {
     if (!line.trim()) continue;
@@ -80,8 +105,12 @@ export function extractAssistantContent(output: string): string {
       }
       // Intentionally skip: user (tool_result), system, tool_use
     } catch {
-      // Not valid JSON — include raw text for backward compat with plain-text output
-      parts.push(line);
+      // Non-JSON line: only include in pure plain-text mode.
+      // In stream-json mode, non-JSON lines are catch/error artifacts — skip
+      // them to prevent false promise token matches.
+      if (!isStreamJson) {
+        parts.push(line);
+      }
     }
   }
   return parts.join('\n');
@@ -286,9 +315,10 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
   const statePath = path.join(sessionDir, 'state.json');
   let state: State;
   try {
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = safeErrorMessage(err);
     throw new Error(`Failed to read state.json for iteration ${iterationNum}: ${msg}`);
   }
 
@@ -299,24 +329,36 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
   if (templateName.includes('/') || templateName.includes('\\') || templateName.includes('..')) {
     throw new Error(`Invalid command_template in state.json: "${templateName}" — must be a plain filename`);
   }
-  // Check internal templates first (hidden from slash command list), then user-facing commands
-  const templatesDir = path.join(os.homedir(), '.claude/pickle-rick/templates');
+  // Check internal templates first (hidden from slash command list), then user-facing commands.
+  // Use extensionRoot for templatesDir so tests can inject an isolated directory via EXTENSION_DIR.
+  const templatesDir = path.join(extensionRoot, 'templates');
   const commandsDir = path.join(os.homedir(), '.claude/commands');
+  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   const picklePromptPath = fs.existsSync(path.join(templatesDir, templateName))
     ? path.join(templatesDir, templateName)
     : path.join(commandsDir, templateName);
+  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   if (!fs.existsSync(picklePromptPath)) {
     throw new Error(`${templateName} not found in ${templatesDir} or ${commandsDir}. Run install.sh first.`);
   }
+  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   let managerPrompt = fs.readFileSync(picklePromptPath, 'utf-8')
     .replace(/\$ARGUMENTS/g, `--resume ${sessionDir}`);
 
   managerPrompt = stripSetupSection(managerPrompt);
 
   const handoffPath = path.join(sessionDir, 'handoff.txt');
+  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   if (fs.existsSync(handoffPath)) {
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     managerPrompt += '\n\n' + fs.readFileSync(handoffPath, 'utf-8');
-    try { fs.unlinkSync(handoffPath); } catch { /* consumed — prevent stale re-reads */ }
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+    try { fs.unlinkSync(handoffPath); } catch (unlinkErr) {
+      const code = (unlinkErr as NodeJS.ErrnoException).code;
+      if (code === 'EACCES' || code === 'ENOENT') {
+        console.warn(`[mux-runner] WARNING: Cannot remove handoff.txt (${code})`);
+      }
+    }
   } else {
     managerPrompt += '\n\n' + buildHandoffSummary(state, sessionDir, iterationNum);
   }
@@ -324,6 +366,7 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
   const settingsPath = path.join(extensionRoot, 'pickle_settings.json');
   let maxTurns = Defaults.MANAGER_MAX_TURNS;
   try {
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
     if (typeof settings.default_tmux_max_turns === 'number' && settings.default_tmux_max_turns > 0) {
       maxTurns = settings.default_tmux_max_turns;
@@ -359,6 +402,7 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
   // Use a raw file descriptor with synchronous writes so every chunk hits
   // the disk immediately. Node's WriteStream buffers up to 16KB internally,
   // which starves log-watcher (it polls file size via statSync).
+  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   const logFd = fs.openSync(logFile, 'w');
 
   function writeToLog(chunk: Buffer) {
@@ -415,6 +459,7 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
       if (timeoutHandle) clearTimeout(timeoutHandle);
       if (killEscalation) clearTimeout(killEscalation);
       try { proc.kill('SIGTERM'); } catch { /* already dead */ }
+      try { fs.fsyncSync(logFd); } catch { /* already closed or error */ }
       try { fs.closeSync(logFd); } catch { /* already closed */ }
       console.error(`${Style.RED}❌ Iteration ${iterationNum} hang detected — forcing failure${Style.RESET}`);
       resolve('error');
@@ -439,6 +484,7 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
       if (timeoutHandle) clearTimeout(timeoutHandle);
       if (killEscalation) clearTimeout(killEscalation);
       if (hangGuard) clearTimeout(hangGuard);
+      try { fs.fsyncSync(logFd); } catch { /* already closed or error */ }
       try { fs.closeSync(logFd); } catch { /* already closed */ }
       const exitCodeFile = logFile.replace('.log', '.exitcode');
       try { fs.writeFileSync(exitCodeFile, String(code ?? -1)); } catch { /* best effort */ }
@@ -454,16 +500,76 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
       if (timeoutHandle) clearTimeout(timeoutHandle);
       if (killEscalation) clearTimeout(killEscalation);
       if (hangGuard) clearTimeout(hangGuard);
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = safeErrorMessage(err);
       console.error(`${Style.RED}Failed to spawn claude: ${msg}${Style.RESET}`);
+      try { fs.fsyncSync(logFd); } catch { /* already closed or error */ }
       try { fs.closeSync(logFd); } catch { /* already closed */ }
       resolve('error');
     });
   });
 }
 
+/**
+ * Atomically writes handoff.txt via a tmp file + rename.
+ * On rename failure, falls back to a direct (non-atomic) write.
+ * On both failures, logs an error but does NOT throw — handoff is non-critical.
+ * Warns (does not throw) when tmp cleanup unlinkSync hits EACCES/ENOENT.
+ *
+ * @param sessionDir  - session directory path
+ * @param content     - handoff content to write
+ * @param pid         - process id used to make tmp filename unique
+ * @param log         - logging function (e.g. the runner's log() closure)
+ * @param fsOps       - injectable fs subset (default: real fs — override in tests)
+ */
+export function writeHandoffAtomic(
+  sessionDir: string,
+  content: string,
+  pid: number,
+  log: (msg: string) => void,
+  fsOps: { writeFileSync: typeof fs.writeFileSync; renameSync: typeof fs.renameSync; unlinkSync: typeof fs.unlinkSync } = fs
+): void {
+  const handoffTmp = path.join(sessionDir, `handoff.txt.tmp.${pid}`);
+  const handoffPath = path.join(sessionDir, 'handoff.txt');
+
+  // Step 1: write to tmp
+  try {
+    fsOps.writeFileSync(handoffTmp, content);
+  } catch (err) {
+    const msg = safeErrorMessage(err);
+    log(`ERROR: handoff.txt tmp write failed (non-critical): ${msg}`);
+    return;
+  }
+
+  // Step 2: atomic rename
+  try {
+    fsOps.renameSync(handoffTmp, handoffPath);
+    return; // success
+  } catch {
+    log('WARNING: handoff.txt rename failed — falling back to direct write');
+  }
+
+  // Step 3: non-atomic fallback
+  try {
+    fsOps.writeFileSync(handoffPath, content);
+  } catch (writeErr) {
+    const msg = safeErrorMessage(writeErr);
+    log(`ERROR: handoff.txt write failed (non-critical): ${msg}`);
+  }
+
+  // Step 4: clean up leftover tmp
+  try {
+    fsOps.unlinkSync(handoffTmp);
+  } catch (unlinkErr) {
+    const code = (unlinkErr as NodeJS.ErrnoException).code;
+    if (code === 'EACCES' || code === 'ENOENT') {
+      log(`WARNING: Cannot remove tmp handoff file (${code})`);
+    }
+  }
+}
+
 async function main() {
   const sessionDir = process.argv[2];
+  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   if (!sessionDir || sessionDir.startsWith('--') || !fs.existsSync(path.join(sessionDir, 'state.json'))) {
     console.error('Usage: node mux-runner.js <session-dir>');
     process.exit(1);
@@ -485,14 +591,9 @@ async function main() {
   // remain orphaned with active: true when the tmux pane is closed.
   const handleShutdownSignal = (signal: string) => {
     log(`Received ${signal} — deactivating session`);
-    try {
-      const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-      state.active = false;
-      writeStateFile(statePath, state);
-    } catch {
-      // Best effort: if state is unreadable, write a minimal deactivation
-      try { writeStateFile(statePath, { active: false }); } catch { /* nothing we can do */ }
-    }
+    sm.forceWrite(statePath, (() => {
+      try { const s = JSON.parse(fs.readFileSync(statePath, 'utf-8')); s.active = false; return s; } catch { return { active: false }; }
+    })());
     if (currentChildProc && !currentChildProc.killed) {
       currentChildProc.kill('SIGTERM');
     }
@@ -508,18 +609,19 @@ async function main() {
   // before entering the loop so workers and state readers see a live session.
   let ownerState: State;
   try {
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     ownerState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = safeErrorMessage(err);
     throw new Error(`Cannot read initial state.json: ${msg}`);
   }
   if (ownerState.active !== true) {
-    ownerState.active = true;
-    writeStateFile(statePath, ownerState);
+    sm.update(statePath, s => { s.active = true; });
     log('Session ownership taken (active: false → true)');
   }
 
   // Clean up stale rate_limit_wait.json from a previous crashed session
+  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   try { fs.unlinkSync(path.join(sessionDir, 'rate_limit_wait.json')); } catch { /* not present */ }
 
   const cbSettings = loadSettings(extensionRoot);
@@ -541,9 +643,10 @@ async function main() {
   while (true) {
     let state: State;
     try {
+      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
       state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = safeErrorMessage(err);
       log(`ERROR: Cannot read state.json: ${msg}. Exiting loop.`);
       exitReason = 'error';
       break;
@@ -561,8 +664,7 @@ async function main() {
     const curIter = Number.isFinite(rawCurIter) ? rawCurIter : 0;
     if (maxIter > 0 && curIter >= maxIter) {
       log(`Max iterations reached (${curIter}/${maxIter}). Exiting.`);
-      state.active = false;
-      writeStateFile(statePath, state);
+      safeDeactivate(statePath);
       exitReason = 'limit';
       break;
     }
@@ -574,8 +676,7 @@ async function main() {
     const elapsed = startEpoch > 0 ? Math.max(0, Math.floor(Date.now() / 1000) - startEpoch) : 0;
     if (maxTimeMins > 0 && startEpoch > 0 && elapsed >= maxTimeMins * 60) {
       log(`Time limit reached (${elapsed}s). Exiting.`);
-      state.active = false;
-      writeStateFile(statePath, state);
+      safeDeactivate(statePath);
       exitReason = 'limit';
       break;
     }
@@ -583,8 +684,7 @@ async function main() {
     // Circuit breaker gate: if CB is OPEN, exit immediately
     if (cbEnabled && cbState && !canExecute(cbState)) {
       log(`Circuit breaker OPEN: ${cbState.reason}. Exiting.`);
-      state.active = false;
-      writeStateFile(statePath, state);
+      safeDeactivate(statePath);
       exitReason = 'circuit_open';
       break;
     }
@@ -595,8 +695,7 @@ async function main() {
         stallCount++;
         if (stallCount >= 3) {
           log(`WARNING: state.iteration has not advanced in 3 outer-loop iterations (stuck at ${state.iteration}). Exiting to avoid wasted API calls.`);
-          state.active = false;
-          writeStateFile(statePath, state);
+          safeDeactivate(statePath);
           exitReason = 'stall';
           break;
         }
@@ -628,6 +727,7 @@ async function main() {
 
     // Detect ticket transitions: validate completion before marking Done
     try {
+      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
       const postState: State = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
       const postTicket = postState.current_ticket || null;
       if (previousTicket && postTicket !== previousTicket) {
@@ -672,8 +772,7 @@ async function main() {
         exitReason = 'rate_limit_exhausted';
         logActivity({ event: 'rate_limit_exhausted', source: 'pickle',
           session: path.basename(sessionDir), error: `max retries (${maxRateLimitRetries}) exceeded, no resetsAt available` });
-        state.active = false;
-        writeStateFile(statePath, state);
+        safeDeactivate(statePath);
         break;
       }
 
@@ -704,7 +803,7 @@ async function main() {
       if (maxMins > 0 && epoch > 0) {
         const elapsed = Math.floor(Date.now() / 1000) - epoch;
         const remaining = (maxMins * 60) - elapsed;
-        if (remaining <= 0) { exitReason = 'limit'; state.active = false; writeStateFile(statePath, state); break; }
+        if (remaining <= 0) { exitReason = 'limit'; safeDeactivate(statePath); break; }
         actualWaitMs = Math.min(actualWaitMs, remaining * 1000);
       }
 
@@ -713,6 +812,7 @@ async function main() {
       while (Date.now() < waitEnd) {
         await sleep(Defaults.RATE_LIMIT_POLL_MS);
         try {
+          // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
           const ws = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
           if (ws.active !== true) { exitReason = 'cancelled'; break; }
         } catch { /* proceed */ }
@@ -722,10 +822,11 @@ async function main() {
         }
       }
       if (exitReason === 'cancelled' || exitReason === 'limit') {
-        state.active = false; writeStateFile(statePath, state); break;
+        safeDeactivate(statePath); break;
       }
 
       // Wake: cleanup + handoff
+      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
       try { fs.unlinkSync(path.join(sessionDir, 'rate_limit_wait.json')); } catch { /* ok */ }
       if (rlAction.resetCounter) consecutiveRateLimits = 0;
       logActivity({ event: 'rate_limit_resume', source: 'pickle', session: path.basename(sessionDir) });
@@ -735,13 +836,7 @@ async function main() {
         `NOTE: Resumed after ${waitedMinutes}-minute API rate limit wait (source: ${waitSource}).`,
         'Resume from current phase — do not repeat the rate-limited iteration.',
       ].join('\n');
-      const handoffTmp = path.join(sessionDir, `handoff.txt.tmp.${process.pid}`);
-      try {
-        fs.writeFileSync(handoffTmp, handoffContent);
-        fs.renameSync(handoffTmp, path.join(sessionDir, 'handoff.txt'));
-      } catch {
-        try { fs.unlinkSync(handoffTmp); } catch { /* ignore */ }
-      }
+      writeHandoffAtomic(sessionDir, handoffContent, process.pid, log);
       continue;  // Skip CB recording + result branching entirely
     }
     if (exitType === 'success') consecutiveRateLimits = 0;
@@ -750,45 +845,66 @@ async function main() {
 
     // Circuit breaker: record iteration outcome (skip for subprocess failures)
     if (cbEnabled && cbState && result !== 'error' && result !== 'inactive') {
-      let postIterState: State;
-      try {
-        postIterState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-      } catch {
-        postIterState = state;
-      }
-
-      const progress = detectProgress(
-        postIterState.working_dir || process.cwd(),
-        cbState.last_known_head,
-        cbState.last_known_step,
-        postIterState.step,
-        cbState.last_known_ticket,
-        postIterState.current_ticket
-      );
-
       let errorSig: string | null = null;
       try {
+        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         const logContent = fs.readFileSync(iterLogFile, 'utf-8');
         errorSig = extractErrorSignature(logContent);
       } catch { /* log may not exist */ }
 
-      const prevCBState = cbState.state;
-      cbState = recordIterationResult(
-        cbState,
-        { hasProgress: progress.hasProgress, errorSignature: errorSig },
-        iteration,
-        cbSettings
-      );
-      cbState.last_known_head = progress.currentHead;
-      cbState.last_known_step = postIterState.step;
-      cbState.last_known_ticket = postIterState.current_ticket;
-      writeStateFile(cbPath, cbState);
+      let prevCBState = cbState.state;
+      // Write CB state inside sm.update to keep circuit_breaker.json in sync with state.json iteration
+      try {
+        sm.update(statePath, s => {
+          const progress = detectProgress(
+            s.working_dir || process.cwd(),
+            cbState!.last_known_head,
+            cbState!.last_known_step,
+            s.step,
+            cbState!.last_known_ticket,
+            s.current_ticket
+          );
+          prevCBState = cbState!.state;
+          cbState = recordIterationResult(
+            cbState!,
+            { hasProgress: progress.hasProgress, errorSignature: errorSig },
+            iteration,
+            cbSettings
+          );
+          cbState.last_known_head = progress.currentHead;
+          cbState.last_known_step = s.step;
+          cbState.last_known_ticket = s.current_ticket;
+          writeStateFile(cbPath, cbState);
+        });
+      } catch {
+        // sm.update failed — fall back to direct reads/writes (iteration desync possible but non-fatal)
+        let postIterState: State = state;
+        try {
+          // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+          postIterState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        } catch { /* use last known state */ }
+        const progress = detectProgress(
+          postIterState.working_dir || process.cwd(),
+          cbState.last_known_head, cbState.last_known_step, postIterState.step,
+          cbState.last_known_ticket, postIterState.current_ticket
+        );
+        prevCBState = cbState.state;
+        cbState = recordIterationResult(
+          cbState,
+          { hasProgress: progress.hasProgress, errorSignature: errorSig },
+          iteration,
+          cbSettings
+        );
+        cbState.last_known_head = progress.currentHead;
+        cbState.last_known_step = postIterState.step;
+        cbState.last_known_ticket = postIterState.current_ticket;
+        writeStateFile(cbPath, cbState);
+      }
 
       if (prevCBState !== 'OPEN' && cbState.state === 'OPEN') {
         logActivity({ event: 'circuit_open', source: 'pickle', session: path.basename(sessionDir), error: cbState.reason });
         log(`Circuit breaker tripped: ${cbState.reason}`);
-        state.active = false;
-        writeStateFile(statePath, state);
+        safeDeactivate(statePath);
         exitReason = 'circuit_open';
         break;
       }
@@ -803,9 +919,10 @@ async function main() {
       // EPIC_COMPLETED / TASK_COMPLETED — check for meeseeks chain before exiting
       let curState: State;
       try {
+        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         curState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = safeErrorMessage(err);
         log(`ERROR: Cannot read state.json after task_completed: ${msg}. Exiting.`);
         exitReason = 'success';
         break;
@@ -817,11 +934,11 @@ async function main() {
         }
       }
       if (curState.chain_meeseeks === true) {
-        const newState = transitionToMeeseeks(curState, extensionRoot);
-        writeStateFile(statePath, newState);
+        sm.update(statePath, s => { Object.assign(s, transitionToMeeseeks(s, extensionRoot)); });
         lastStateIteration = -1;
         stallCount = 0;
         if (cbEnabled) {
+          // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
           try { fs.unlinkSync(cbPath); } catch { /* may not exist */ }
           cbState = initCircuitBreaker(sessionDir, cbSettings);
         }
@@ -829,17 +946,17 @@ async function main() {
         continue;
       }
       log('Task completed. Exiting loop.');
-      curState.active = false;
-      writeStateFile(statePath, curState);
+      safeDeactivate(statePath);
       exitReason = 'success';
       break;
     } else if (result === 'review_clean') {
       // review_clean (EXISTENCE_IS_PAIN / THE_CITADEL_APPROVES) — apply min_iterations gate
       let curState: State;
       try {
+        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         curState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = safeErrorMessage(err);
         log(`ERROR: Cannot read state.json after review_clean: ${msg}. Treating as completed.`);
         exitReason = 'success';
         break;
@@ -852,16 +969,14 @@ async function main() {
         log(`Clean pass at iteration ${curIterNow}, but min_iterations=${minIter}. Continuing.`);
       } else {
         log('Review clean. Exiting loop.');
-        curState.active = false;
-        writeStateFile(statePath, curState);
+        safeDeactivate(statePath);
         exitReason = 'success';
         break;
       }
     } else if (result === 'inactive') { log('Session deactivated. Exiting loop.'); exitReason = 'cancelled'; break; }
     else if (result === 'error') {
       log('Subprocess error. Exiting loop.');
-      state.active = false;
-      writeStateFile(statePath, state);
+      safeDeactivate(statePath);
       exitReason = 'error';
       break;
     }
@@ -876,6 +991,7 @@ async function main() {
   let finalActive = 'unknown';
   let finalMinIter = 0;
   try {
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     const finalState: State = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
     const rawStep = finalState.step || 'unknown';
     finalStep = (VALID_STEPS as readonly string[]).includes(rawStep) ? rawStep : 'unknown';
@@ -917,7 +1033,7 @@ export function buildTmuxNotification(exitReason: string, finalStep: string, ite
 
 if (process.argv[1] && path.basename(process.argv[1]) === 'mux-runner.js') {
   main().catch((err) => {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = safeErrorMessage(err);
     console.error(`${Style.RED}[FATAL] ${msg}${Style.RESET}`);
     process.exit(1);
   });

@@ -817,6 +817,65 @@ test('loadSettings: Infinity and negative values for numeric thresholds are reje
     }
 });
 
+// ---------------------------------------------------------------------------
+// CB + state.json iteration sync (F17 invariant)
+// ---------------------------------------------------------------------------
+
+test('CB last_progress_iteration stays in sync with state.json iteration — no false staleness', () => {
+    // When F17 writes CB inside sm.update, last_progress_iteration should equal
+    // the state.json iteration at write time. Reloading must NOT reset to fresh.
+    const tmpDir = makeTmpDir();
+    try {
+        const stateIter = 7;
+        fs.writeFileSync(path.join(tmpDir, 'state.json'), JSON.stringify({ iteration: stateIter }));
+
+        const settings = makeSettings();
+        let cbState = initCircuitBreaker(tmpDir, settings);
+
+        // Record progress at iteration matching state.json (as F17 does)
+        cbState = recordIterationResult(
+            cbState, { hasProgress: true, errorSignature: null }, stateIter, settings
+        );
+        // Write CB file (simulating mux-runner's sm.update-protected write)
+        fs.writeFileSync(path.join(tmpDir, 'circuit_breaker.json'), JSON.stringify(cbState));
+
+        // Reload: staleness check → last_progress_iteration(7) > stateIter+1(8) → false → no reset
+        const reloaded = initCircuitBreaker(tmpDir, settings);
+        assert.equal(reloaded.last_progress_iteration, stateIter,
+            'CB last_progress_iteration should match state.json iteration after synced write');
+        assert.equal(reloaded.consecutive_no_progress, 0,
+            'synced CB should not be reset (consecutive_no_progress must stay 0)');
+        assert.equal(reloaded.state, 'CLOSED', 'synced CB should remain CLOSED');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('CB iteration ahead of state.json triggers staleness reset (desync protection)', () => {
+    // Complement to the above: when CB is desync'd (last_progress_iteration >> state iteration),
+    // initCircuitBreaker must reset to prevent phantom-progress decisions.
+    const tmpDir = makeTmpDir();
+    try {
+        fs.writeFileSync(path.join(tmpDir, 'state.json'), JSON.stringify({ iteration: 3 }));
+
+        // Simulate a desync: CB claims progress at iteration 20 but state.json is at 3
+        const desynced = {
+            state: 'CLOSED', last_change: new Date().toISOString(),
+            consecutive_no_progress: 3, consecutive_same_error: 0,
+            last_error_signature: null, last_known_head: 'abc', last_known_step: null,
+            last_known_ticket: null, last_progress_iteration: 20,
+            total_opens: 0, reason: '', opened_at: null, history: [],
+        };
+        fs.writeFileSync(path.join(tmpDir, 'circuit_breaker.json'), JSON.stringify(desynced));
+
+        const reloaded = initCircuitBreaker(tmpDir, makeSettings());
+        assert.equal(reloaded.last_progress_iteration, 0, 'desync must reset last_progress_iteration');
+        assert.equal(reloaded.consecutive_no_progress, 0, 'desync must reset no-progress counter');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('extractErrorSignature: assistant with only tool_use blocks (no text) returns null', () => {
     const ndjson = [
         JSON.stringify({
@@ -831,4 +890,27 @@ test('extractErrorSignature: assistant with only tool_use blocks (no text) retur
     ].join('\n');
     const sig = extractErrorSignature(ndjson);
     assert.equal(sig, null, 'should return null when assistant has no text blocks');
+});
+
+// ---------------------------------------------------------------------------
+// F26: history array cap at 1000
+// ---------------------------------------------------------------------------
+
+test('history cap: 1001st transition shifts oldest, length stays 1000', () => {
+    const settings = makeSettings({ halfOpenAfter: 2, noProgressThreshold: 5, sameErrorThreshold: 5 });
+    // Pre-populate with exactly 1000 history entries
+    const prePopulated = Array.from({ length: 1000 }, (_, i) => ({
+        timestamp: new Date().toISOString(),
+        iteration: i,
+        from: 'CLOSED',
+        to: 'HALF_OPEN',
+        reason: `entry ${i}`,
+    }));
+    // State at 1 no-progress: one more triggers CLOSED → HALF_OPEN transition (1001st push)
+    let state = makeFreshState({ state: 'CLOSED', consecutive_no_progress: 1, history: prePopulated });
+    state = recordIterationResult(state, { hasProgress: false, errorSignature: null }, 1001, settings);
+    assert.equal(state.state, 'HALF_OPEN', 'should have transitioned to HALF_OPEN');
+    assert.equal(state.history.length, 1000, `expected 1000, got ${state.history.length}`);
+    assert.ok(!state.history.some(h => h.reason === 'entry 0'), 'oldest entry should have been trimmed');
+    assert.ok(state.history.some(h => h.reason === 'entry 1'), 'entry 1 should still be present');
 });

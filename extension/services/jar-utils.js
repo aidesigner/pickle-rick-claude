@@ -1,7 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { runCmd, Style, getExtensionRoot, writeStateFile } from './pickle-utils.js';
+import { runCmd, Style, getExtensionRoot, safeErrorMessage } from './pickle-utils.js';
+import { StateManager } from './state-manager.js';
+const sm = new StateManager();
 function getBranch(repoPath) {
     try {
         return runCmd(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repoPath });
@@ -60,15 +62,11 @@ export function addToJar(sessionDir) {
     const metaTmp = `${metaDest}.tmp.${process.pid}`;
     fs.writeFileSync(metaTmp, JSON.stringify(meta, null, 2));
     fs.renameSync(metaTmp, metaDest);
-    // 6. Re-read state to minimize race window with concurrent loop updates,
-    //    then deactivate the session to prevent immediate execution.
-    try {
-        state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-    }
-    catch { /* use previously read state if re-read fails */ }
-    state.active = false;
-    state.completion_promise = 'JARRED'; // Signal completion
-    writeStateFile(statePath, state);
+    // 6. Atomically deactivate the session to prevent immediate execution.
+    sm.update(statePath, s => {
+        s.active = false;
+        s.completion_promise = 'JARRED'; // Signal completion
+    });
     return taskDir;
 }
 // CLI Support — process.exit() is intentional here: this block only runs when
@@ -93,7 +91,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'jar-utils.js') {
         console.log(`Task successfully jarred at: ${resultPath}`);
     }
     catch (err) {
-        console.error(`${Style.RED}Error: ${err instanceof Error ? err.message : String(err)}${Style.RESET}`);
+        console.error(`${Style.RED}Error: ${safeErrorMessage(err)}${Style.RESET}`);
         // eslint-disable-next-line pickle/no-process-exit-in-library
         process.exit(1);
     }

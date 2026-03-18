@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { runCmd, writeStateFile } from './pickle-utils.js';
+import { runCmd, writeStateFile, safeErrorMessage } from './pickle-utils.js';
 
 // ---------------------------------------------------------------------------
 // Feature-local types
@@ -90,6 +90,7 @@ function transition(
   if (from === to) return;
   const now = new Date().toISOString();
   state.history.push({ timestamp: now, iteration, from, to, reason });
+  if (state.history.length > 1000) state.history.shift();
   state.state = to;
   state.last_change = now;
   state.reason = to === 'CLOSED' ? '' : reason;
@@ -378,7 +379,7 @@ export function resetCircuitBreaker(sessionDir: string, reason: string): void {
     writeStateFile(cbPath, resetState);
     console.error(`[circuit-breaker] Reset from ${current.state} to CLOSED: ${reason}`);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = safeErrorMessage(err);
     console.error(`[circuit-breaker] Failed to write reset state: ${msg}`);
   }
 }

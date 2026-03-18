@@ -1,7 +1,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { MicroverseSessionState, MicroverseMetric, MicroverseHistoryEntry } from '../types/index.js';
-import { writeStateFile } from './pickle-utils.js';
+import { StateManager } from './state-manager.js';
+import { safeErrorMessage } from './pickle-utils.js';
+
+const sm = new StateManager();
 
 const MICROVERSE_FILE = 'microverse.json';
 
@@ -102,9 +105,11 @@ export function recordFailedApproach(
   state: MicroverseSessionState,
   description: string
 ): MicroverseSessionState {
+  const approaches = [...state.failed_approaches, description];
+  if (approaches.length > 100) approaches.shift();
   return {
     ...state,
-    failed_approaches: [...state.failed_approaches, description],
+    failed_approaches: approaches,
   };
 }
 
@@ -116,7 +121,9 @@ export function writeMicroverseState(
   sessionDir: string,
   state: MicroverseSessionState
 ): void {
-  writeStateFile(path.join(sessionDir, MICROVERSE_FILE), state);
+  // microverse.json is not a State file but uses atomic writes for consistency.
+  // Uses forceWrite to avoid lock overhead — microverse state is single-writer.
+  sm.forceWrite(path.join(sessionDir, MICROVERSE_FILE), state);
 }
 
 export function readMicroverseState(
@@ -128,7 +135,7 @@ export function readMicroverseState(
     return JSON.parse(raw) as MicroverseSessionState;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = safeErrorMessage(err);
     console.error(`[microverse-state] Failed to read ${filePath}: ${msg}`);
     return null;
   }

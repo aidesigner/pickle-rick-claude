@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, safeErrorMessage, } from '../services/pickle-utils.js';
 import { spawn } from 'child_process';
 import { PromiseTokens, hasToken, Defaults } from '../types/index.js';
 import { updateTicketStatus } from '../services/git-utils.js';
@@ -42,15 +42,19 @@ async function main() {
     let ticketContent = '';
     if (ticketFileIndex !== -1) {
         const ticketFilePath = args[ticketFileIndex + 1];
+        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         if (ticketFilePath && !ticketFilePath.startsWith('--') && fs.existsSync(ticketFilePath)) {
+            // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
             ticketContent = fs.readFileSync(ticketFilePath, 'utf-8');
         }
     }
     // Normalize path
     if (ticketPath.endsWith('.md') ||
+        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         (fs.existsSync(ticketPath) && fs.statSync(ticketPath).isFile())) {
         ticketPath = path.dirname(ticketPath);
     }
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     fs.mkdirSync(ticketPath, { recursive: true });
     const sessionLog = path.join(ticketPath, `worker_session_${process.pid}.log`);
     // --- Timeout Logic ---
@@ -59,25 +63,34 @@ async function main() {
     const parentState = path.join(sessionRoot, 'state.json');
     const workerState = path.join(ticketPath, 'state.json');
     let timeoutStatePath = null;
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     if (fs.existsSync(parentState)) {
         timeoutStatePath = parentState;
+        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     }
     else if (fs.existsSync(workerState)) {
         timeoutStatePath = workerState;
     }
     if (timeoutStatePath) {
         try {
+            // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
             const state = JSON.parse(fs.readFileSync(timeoutStatePath, 'utf-8'));
             const maxMins = Number(state.max_time_minutes);
             const startEpoch = Number(state.start_time_epoch);
             if (Number.isFinite(maxMins) && maxMins > 0 && Number.isFinite(startEpoch) && startEpoch > 0) {
                 const remaining = Math.floor(maxMins * 60 - (Math.floor(Date.now() / 1000) - startEpoch));
+                const MIN_TIMEOUT = 30;
                 if (remaining <= 0) {
-                    // Session wall-clock already elapsed; stop-hook will handle the limit on next turn
+                    // Session wall-clock already elapsed; enforce a minimum timeout floor so the
+                    // worker gets at least 30s to produce output (stop-hook handles the limit).
+                    effectiveTimeout = Math.max(MIN_TIMEOUT, effectiveTimeout);
                     console.log(`${Style.YELLOW}⚠️  Session time already elapsed; running with requested timeout.${Style.RESET}`);
                 }
                 else if (remaining < effectiveTimeout) {
-                    effectiveTimeout = remaining;
+                    // Clamp to remaining wall time, but never below the 30s floor — a worker
+                    // with less than 30s almost certainly can't complete, but it's better than
+                    // killing it instantly on a slow machine.
+                    effectiveTimeout = Math.max(MIN_TIMEOUT, remaining);
                     console.log(`${Style.YELLOW}⚠️  Worker timeout clamped: ${effectiveTimeout}s${Style.RESET}`);
                 }
             }
@@ -98,6 +111,7 @@ async function main() {
     const includes = [extensionRoot, ticketPath];
     const cmdArgs = ['--dangerously-skip-permissions'];
     for (const p of includes) {
+        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         if (fs.existsSync(p)) {
             cmdArgs.push('--add-dir', p);
         }
@@ -110,7 +124,9 @@ async function main() {
     const promptFilename = isReviewTicket ? 'send-to-morty-review.md' : 'send-to-morty.md';
     const mortyPromptPath = path.join(os.homedir(), '.claude', 'commands', promptFilename);
     let workerPrompt;
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     if (fs.existsSync(mortyPromptPath)) {
+        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         workerPrompt = fs.readFileSync(mortyPromptPath, 'utf-8')
             .replace(/\$ARGUMENTS/g, task);
     }
@@ -127,6 +143,7 @@ async function main() {
         '\n\n**IMPORTANT**: You are a localized worker. You are FORBIDDEN from working on ANY other tickets. Once you output `<promise>I AM DONE</promise>`, you MUST STOP and let the manager take over.';
     // Conditionally inject GitNexus MCP awareness when the repo has a knowledge graph index
     let gitnexusIndexed = false;
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     try {
         gitnexusIndexed = fs.statSync(path.join(process.cwd(), '.gitnexus')).isDirectory();
     }
@@ -151,7 +168,7 @@ For simple file/string lookups, Grep/Glob are still fine.`;
     catch { /* best-effort */ }
     const logStream = fs.createWriteStream(sessionLog, { flags: 'w' });
     logStream.on('error', (err) => {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = safeErrorMessage(err);
         console.error(`${Style.RED}❌ Log stream error: ${msg}${Style.RESET}`);
     });
     const env = {
@@ -233,7 +250,7 @@ For simple file/string lookups, Grep/Glob are still fine.`;
             if (process.stdout.isTTY)
                 process.stdout.write('\r\x1b[K');
             logStream.end();
-            const msg = err instanceof Error ? err.message : String(err);
+            const msg = safeErrorMessage(err);
             console.error(`${Style.RED}Failed to spawn claude: ${msg}${Style.RESET}`);
             try {
                 updateTicketStatus(ticketId, 'Failed', sessionRoot);
@@ -275,7 +292,7 @@ For simple file/string lookups, Grep/Glob are still fine.`;
                     logContent = fs.readFileSync(sessionLog, 'utf-8');
                 }
                 catch (err) {
-                    const msg = err instanceof Error ? err.message : String(err);
+                    const msg = safeErrorMessage(err);
                     console.error(`${Style.YELLOW}⚠️  Could not read worker log: ${msg}${Style.RESET}`);
                 }
                 const isSuccess = !timedOut && hasToken(logContent, PromiseTokens.WORKER_DONE);
@@ -305,7 +322,7 @@ For simple file/string lookups, Grep/Glob are still fine.`;
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'spawn-morty.js') {
     main().catch((err) => {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = safeErrorMessage(err);
         console.error(`${Style.RED}${msg}${Style.RESET}`);
         process.exit(1);
     });

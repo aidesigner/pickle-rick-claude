@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { printMinimalPanel, getExtensionRoot, withSessionMapLock, writeStateFile } from '../services/pickle-utils.js';
+import { printMinimalPanel, getExtensionRoot, withSessionMapLock } from '../services/pickle-utils.js';
+import { StateManager } from '../services/state-manager.js';
+import { LockError } from '../types/index.js';
+const sm = new StateManager();
 export function cancelSession(cwd) {
     const SESSIONS_MAP = path.join(getExtensionRoot(), 'current_sessions.json');
     if (!fs.existsSync(SESSIONS_MAP)) {
@@ -32,16 +35,13 @@ export function cancelSession(cwd) {
     try {
         withSessionMapLock(SESSIONS_MAP + '.lock', () => {
             // Deactivate state.json
-            let state;
             try {
-                state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+                sm.update(statePath, s => { s.active = false; });
             }
             catch {
                 console.log('State file is unreadable.');
                 return;
             }
-            state.active = false;
-            writeStateFile(statePath, state);
             cancelled = true;
             // Remove stale entry from the sessions map
             let freshMap = {};
@@ -64,15 +64,19 @@ export function cancelSession(cwd) {
             }
         });
     }
-    catch {
-        // Fallback: deactivate state without lock if lock acquisition fails
-        try {
-            const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-            state.active = false;
-            writeStateFile(statePath, state);
-            cancelled = true;
+    catch (err) {
+        if (err instanceof LockError) {
+            // Lock exhausted — deactivate state without map consistency guarantee
+            console.error(`[pickle] WARNING: session map not updated — ${err instanceof Error ? err.message : String(err)}`);
+            try {
+                sm.update(statePath, s => { s.active = false; });
+                cancelled = true;
+            }
+            catch { /* session already deactivated or unreadable */ }
         }
-        catch { /* session already deactivated or unreadable */ }
+        else {
+            throw err;
+        }
     }
     if (cancelled) {
         printMinimalPanel('Loop Cancelled', {

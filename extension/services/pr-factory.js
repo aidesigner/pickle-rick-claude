@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { runCmd, Style } from './pickle-utils.js';
+import { runCmd, Style, safeErrorMessage } from './pickle-utils.js';
 export function createPR(sessionDir) {
     const statePath = path.join(sessionDir, 'state.json');
     if (!fs.existsSync(statePath)) {
@@ -34,7 +34,7 @@ export function createPR(sessionDir) {
         return output.trim();
     }
     catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = safeErrorMessage(err);
         throw new Error(`Failed to create PR: ${msg}`);
     }
 }
@@ -53,7 +53,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'pr-factory.js') {
         console.log(`${Style.GREEN}PR Created: ${url}${Style.RESET}`);
     }
     catch (err) {
-        console.error(`${Style.RED}Error: ${err instanceof Error ? err.message : String(err)}${Style.RESET}`);
+        console.error(`${Style.RED}Error: ${safeErrorMessage(err)}${Style.RESET}`);
         // eslint-disable-next-line pickle/no-process-exit-in-library
         process.exit(1);
     }

@@ -81,7 +81,7 @@ start → setup_deps → [spec_tests →] impl → lint → typecheck → test
 - `setup_deps` before first impl (Pattern 0)
 - All `component` nodes: `max_parallel=1` (Pattern 0b)
 - `max_visits` on looping nodes (Pattern 6)
-- `spec_tests` before impl on `goal_gate=true` paths (Pattern 16)
+- `spec_tests` before impl on `goal_gate=true` paths (Pattern 16, default — skip only if explicitly simplified)
 - Review ratchet with ≥2 consecutive passes (Pattern 19)
 - `fix_all` before `verify_final` (Pattern 21)
 - `verify_final` with `context_on_success` setting ALL `acceptance_criteria` keys
@@ -146,8 +146,8 @@ digraph user_auth_api {
     start [shape=Mdiamond]
     setup_deps [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm install 2>&1", timeout="120s"]
 
-    spec_tests_auth [class="review", prompt="Write failing tests for JWT auth. Cover: middleware rejects missing/expired/malformed tokens, login returns token on valid creds, 1h expiry, refresh rotation, bcrypt hashing, OWASP patterns. Run to confirm FAIL. Do NOT write production code.", goal_gate=true, retry_target="spec_tests_auth"]
-    implement_auth [goal_gate=true, retry_target="implement_auth", prompt="Make all failing auth tests pass. Do NOT modify test files. JWT middleware + login endpoint. 1h expiry, refresh rotation, bcrypt. OWASP patterns."]
+    spec_tests_auth [class="review", prompt="Write failing tests for JWT auth. Cover: middleware rejects missing/expired/malformed tokens, login returns token on valid creds, 1h expiry, refresh rotation, bcrypt hashing, OWASP patterns. Run to confirm FAIL. Do NOT write production code.", goal_gate=true, retry_target="spec_tests_auth", max_visits=5]
+    implement_auth [goal_gate=true, retry_target="implement_auth", prompt="Make all failing auth tests pass. Do NOT modify test files. JWT middleware + login endpoint. 1h expiry, refresh rotation, bcrypt. OWASP patterns.", max_visits=8]
 
     verify_lint [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm run lint 2>&1", max_visits=3]
     check_lint [shape=diamond]
@@ -159,19 +159,23 @@ digraph user_auth_api {
     // Review ratchet — 2 consecutive clean passes (Pattern 19)
     split_review_1 [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
     reviewer_correctness_1 [class="review", prompt="Correctness ONLY: logic errors, off-by-one, null handling, async. List issues with file:line."]
+    reviewer_patterns_1 [class="review", prompt="Patterns ONLY: anti-patterns, duplication, naming conventions, error handling consistency. List with file:line."]
     reviewer_security_1 [class="review", prompt="Security ONLY: token forgery, timing attacks, algorithm confusion, secrets exposure. List with file:line."]
     merge_review_1 [shape=tripleoctagon, class="review", prompt="Consolidate. BLOCKER or ADVISORY. CLEAN or DIRTY."]
     check_review_1 [shape=diamond]
     fix_1 [prompt="Fix all BLOCKERs. Also simplify: redundant logic, duplication, naming. Do NOT modify test files.", max_visits=5]
     reverify_1 [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm run lint 2>&1 && npx tsc --noEmit 2>&1 && npm test 2>&1"]
+    check_reverify_1 [shape=diamond]
 
     split_review_2 [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
     reviewer_correctness_2 [class="review", prompt="Fresh correctness review of ALL code — assume nothing from prior reviews. List issues with file:line."]
+    reviewer_patterns_2 [class="review", prompt="Fresh patterns review of ALL code — assume nothing. Anti-patterns, duplication, naming, error handling. List with file:line."]
     reviewer_security_2 [class="review", prompt="Fresh security review of ALL code — assume nothing. All OWASP vectors. List with file:line."]
     merge_review_2 [shape=tripleoctagon, class="review", prompt="Consolidate. BLOCKER or ADVISORY. CLEAN or DIRTY."]
     check_review_2 [shape=diamond]
     fix_2 [prompt="Fix all BLOCKERs. Also simplify. Do NOT modify test files.", max_visits=5]
     reverify_2 [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm run lint 2>&1 && npx tsc --noEmit 2>&1 && npm test 2>&1"]
+    check_reverify_2 [shape=diamond]
 
     conformance [class="review", goal_gate=true, retry_target="implement_auth", prompt="Conformance audit: verify git diff addresses ALL requirements. Output PASS or FAIL with unmet requirements."]
     conformance_gate [shape=diamond]
@@ -203,19 +207,25 @@ digraph user_auth_api {
 
     // Ratchet pass 1
     split_review_1 -> reviewer_correctness_1 -> merge_review_1
+    split_review_1 -> reviewer_patterns_1 -> merge_review_1
     split_review_1 -> reviewer_security_1 -> merge_review_1
     merge_review_1 -> check_review_1
     check_review_1 -> split_review_2 [condition="outcome=success", weight=2]
     check_review_1 -> fix_1 [condition="outcome=fail"]
-    fix_1 -> reverify_1 -> split_review_1
+    fix_1 -> reverify_1 -> check_reverify_1
+    check_reverify_1 -> split_review_1 [condition="outcome=success", weight=2]
+    check_reverify_1 -> fix_1 [condition="outcome=fail"]
 
     // Ratchet pass 2 — failure RESETS to pass 1
     split_review_2 -> reviewer_correctness_2 -> merge_review_2
+    split_review_2 -> reviewer_patterns_2 -> merge_review_2
     split_review_2 -> reviewer_security_2 -> merge_review_2
     merge_review_2 -> check_review_2
     check_review_2 -> conformance [condition="outcome=success", weight=2]
     check_review_2 -> fix_2 [condition="outcome=fail"]
-    fix_2 -> reverify_2 -> split_review_1
+    fix_2 -> reverify_2 -> check_reverify_2
+    check_reverify_2 -> split_review_1 [condition="outcome=success", weight=2]
+    check_reverify_2 -> fix_2 [condition="outcome=fail"]
 
     conformance -> conformance_gate
     conformance_gate -> red_team_auth [condition="outcome=success", weight=2]

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { printMinimalPanel, getExtensionRoot } from '../services/pickle-utils.js';
+import { printMinimalPanel, getExtensionRoot, safeErrorMessage } from '../services/pickle-utils.js';
 function main() {
     const args = process.argv.slice(2);
     let sessionPath = '';
@@ -36,7 +36,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'worker-setup.js') {
         main();
     }
     catch (err) {
-        console.error(err instanceof Error ? err.message : String(err));
+        console.error(safeErrorMessage(err));
         process.exit(1);
     }
 }

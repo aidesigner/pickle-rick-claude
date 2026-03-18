@@ -1,11 +1,27 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { ActivityEvent, ActivityEventType } from '../types/index.js';
-import { getExtensionRoot } from './pickle-utils.js';
+import { getExtensionRoot, safeErrorMessage } from './pickle-utils.js';
 
 export function getActivityDir(): string {
   return path.join(getExtensionRoot(), 'activity');
 }
+
+const MAX_BUFFER = 100;
+const pendingBuffer: string[] = [];
+
+// Configurable retry delay — override in tests via _setRetryDelayMs(0)
+let retryDelayMs = 500;
+
+function sleepSync(ms: number): void {
+  const end = Date.now() + ms;
+  while (Date.now() < end) { /* spin */ }
+}
+
+/** Exported for tests only. */
+export function _setRetryDelayMs(ms: number): void { retryDelayMs = ms; }
+export function _getPendingBuffer(): string[] { return pendingBuffer; }
+export function _clearPendingBuffer(): void { pendingBuffer.splice(0); }
 
 export function logActivity(
   event: Partial<ActivityEvent> & { event: ActivityEventType; source: ActivityEvent['source'] }
@@ -17,11 +33,40 @@ export function logActivity(
     const filepath = path.join(activityDir, `${date}.jsonl`);
     const fullEvent: ActivityEvent = { ts: new Date().toISOString(), ...event };
     const line = JSON.stringify(fullEvent) + '\n';
-    // mode only applies on file creation (ignored if file exists) — first write = 0o600
-    fs.appendFileSync(filepath, line, { mode: 0o600 });
+
+    // Attempt primary write; retry once after retryDelayMs on failure
+    let writeErr: Error | null = null;
+    try {
+      // mode only applies on file creation (ignored if file exists) — first write = 0o600
+      fs.appendFileSync(filepath, line, { mode: 0o600 });
+    } catch {
+      sleepSync(retryDelayMs);
+      try {
+        fs.appendFileSync(filepath, line, { mode: 0o600 });
+      } catch (retryErr) {
+        writeErr = retryErr instanceof Error ? retryErr : new Error(String(retryErr));
+      }
+    }
+
+    if (writeErr) {
+      // Buffer event (capped at MAX_BUFFER) for flush on next success
+      if (pendingBuffer.length < MAX_BUFFER) {
+        pendingBuffer.push(line);
+      }
+      process.stderr.write(`[activity-logger] Failed to log event (buffered ${pendingBuffer.length}/${MAX_BUFFER}): ${writeErr.message}\n`);
+      return;
+    }
+
+    // Flush buffered events on success
+    if (pendingBuffer.length > 0) {
+      const toFlush = pendingBuffer.splice(0);
+      try {
+        fs.appendFileSync(filepath, toFlush.join(''), { mode: 0o600 });
+      } catch { /* flush failed — buffered events lost, non-fatal */ }
+    }
   } catch (err) {
     // Activity logging must never break the caller, but warn so data loss is visible
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = safeErrorMessage(err);
     process.stderr.write(`[activity-logger] Failed to log event: ${msg}\n`);
   }
 }

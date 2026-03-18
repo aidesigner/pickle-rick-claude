@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawnSync } from 'child_process';
+import { safeErrorMessage } from './pickle-utils.js';
 // ---------------------------------------------------------------------------
 // Utility Functions
 // ---------------------------------------------------------------------------
@@ -101,7 +102,7 @@ function saveCache(cachePath, cache) {
         fs.renameSync(tmp, cachePath);
     }
     catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
+        const msg = safeErrorMessage(err);
         process.stderr.write(`[metrics] Cache write failed (non-fatal): ${msg}\n`);
     }
 }

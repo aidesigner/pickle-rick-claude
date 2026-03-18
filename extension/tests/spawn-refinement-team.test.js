@@ -399,6 +399,58 @@ test('spawn-refinement-team: manifest workers report failure when claude exits n
     }
 });
 
+// --- Sibling kill on worker crash ---
+
+test('spawn-refinement-team: crashing worker kills siblings — completes without waiting for slow workers', () => {
+    const tmp = makeTmpDir();
+    const fakeBin = makeTmpDir('fake-bin-');
+    try {
+        const prd = path.join(tmp, 'prd.md');
+        fs.writeFileSync(prd, '# PRD\nContent');
+
+        // requirements role crashes immediately (exit 1).
+        // codebase and risk-scope sleep 30s — they must be killed by the sibling logic.
+        // Without sibling kill: test times out waiting for the sleepers.
+        // With sibling kill: all three settle in <5s.
+        fs.writeFileSync(path.join(fakeBin, 'claude'), `#!/usr/bin/env node
+const idx = process.argv.indexOf('-p');
+const prompt = idx !== -1 ? process.argv[idx + 1] : '';
+if (prompt.includes('Requirements Analyst')) {
+  process.exit(1);
+}
+// Sibling — hangs until killed by parent
+setTimeout(() => process.exit(0), 30000);
+`);
+        fs.chmodSync(path.join(fakeBin, 'claude'), 0o755);
+
+        const start = Date.now();
+        const result = spawnSync(
+            process.execPath,
+            [BIN, '--prd', prd, '--session-dir', tmp, '--cycles', '1', '--timeout', '60'],
+            {
+                env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}` },
+                encoding: 'utf-8',
+                timeout: 15000, // test budget; siblings sleeping 30s would exceed this
+            }
+        );
+        const elapsed = Date.now() - start;
+
+        assert.ok(result.status !== null, 'process should not time out (siblings must be killed)');
+        assert.ok(elapsed < 10000, `should complete quickly when siblings are killed, took ${elapsed}ms`);
+
+        // Manifest is written and covers all 3 workers (Set was cleared — no orphans)
+        const manifestPath = path.join(tmp, 'refinement_manifest.json');
+        assert.ok(fs.existsSync(manifestPath), 'manifest must be written after sibling kill');
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+        assert.strictEqual(manifest.workers.length, 3, 'all 3 workers should appear in manifest');
+        // requirements crashed; codebase and risk-scope were killed (no ANALYSIS_DONE token)
+        assert.strictEqual(manifest.all_success, false, 'all_success should be false');
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+        fs.rmSync(fakeBin, { recursive: true, force: true });
+    }
+});
+
 // --- Portal context in buildWorkerPrompt ---
 
 test('buildWorkerPrompt includes portal context for codebase role', () => {

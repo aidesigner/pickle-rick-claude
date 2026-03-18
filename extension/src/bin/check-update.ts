@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
-import { getExtensionRoot } from '../services/pickle-utils.js';
+import { getExtensionRoot, safeErrorMessage } from '../services/pickle-utils.js';
 import type { UpdateCheckCache, UpdateResult, UpdateSettings, ReleaseInfo, UpgradeResult } from '../types/index.js';
 
 const CACHE_FILE = 'update-check.json';
@@ -65,7 +65,7 @@ export function writeCache(cache: UpdateCheckCache): void {
     fs.writeFileSync(filePath, JSON.stringify(cache, null, 2) + '\n');
     log(`Cache written: ${cache.latest_version}`);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = safeErrorMessage(err);
     log(`Failed to write cache: ${msg}`);
   }
 }
@@ -116,7 +116,7 @@ export function getLatestRelease(): ReleaseInfo | null {
       assets: Array.isArray(parsed.assets) ? parsed.assets : [],
     };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = safeErrorMessage(err);
     log(`getLatestRelease error: ${msg}`);
     return null;
   }
@@ -161,7 +161,7 @@ export function downloadRelease(tag: string): string | null {
 
     return path.join(tmpDir, files[0]);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = safeErrorMessage(err);
     log(`downloadRelease error: ${msg}`);
     if (tmpDir) {
       try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* best-effort */ }
@@ -210,7 +210,7 @@ export function extractAndInstall(tarballPath: string): UpgradeResult {
     log('install.sh completed successfully');
     return { success: true };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = safeErrorMessage(err);
     log(`extractAndInstall error: ${msg}`);
     return { success: false, error: msg };
   } finally {
@@ -247,7 +247,7 @@ export function performUpgrade(from: string, to: string, tag: string): UpgradeRe
     log(`Upgrade complete: ${from} → ${to}`);
     return { success: true };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = safeErrorMessage(err);
     log(`performUpgrade error: ${msg}`);
     return { success: false, error: msg };
   }
@@ -307,7 +307,7 @@ export function checkForUpdate(options?: CheckForUpdateOptions): UpdateResult {
     log(`Up to date: ${currentVersion}`);
     return { status: 'up-to-date', currentVersion, latestVersion };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = safeErrorMessage(err);
     log(`checkForUpdate error: ${msg}`);
     return { ...errorResult, error: msg };
   }

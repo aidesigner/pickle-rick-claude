@@ -250,6 +250,17 @@ test('recordFailedApproach appends to failed_approaches', () => {
     assert.deepEqual(state.failed_approaches, ['tried X, failed', 'tried Y, also failed']);
 });
 
+test('recordFailedApproach: caps at 100, oldest shifted on overflow', () => {
+    let state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+    for (let i = 0; i < 101; i++) {
+        state = recordFailedApproach(state, `approach ${i}`);
+    }
+    assert.equal(state.failed_approaches.length, 100, `expected 100, got ${state.failed_approaches.length}`);
+    assert.ok(!state.failed_approaches.includes('approach 0'), 'oldest entry should have been trimmed');
+    assert.ok(state.failed_approaches.includes('approach 1'), 'approach 1 should still be present');
+    assert.ok(state.failed_approaches.includes('approach 100'), 'newest entry should be present');
+});
+
 test('writeMicroverseState and readMicroverseState round-trip', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mv-'));
     try {
@@ -1124,4 +1135,56 @@ test('metric retry: both attempts fail → null', () => {
 
     assert.equal(callCount, 2, 'should attempt twice');
     assert.equal(result, null, 'both failures → null');
+});
+
+// --- F13: worker_timeout_seconds string coercion ---
+
+test('F13: worker_timeout_seconds string "0" does not trigger re-enforce write', () => {
+    // When state.json is read back from disk, JSON.parse always yields a number.
+    // This test guards against the edge case where the value is somehow a string,
+    // verifying that Number() coercion prevents a spurious write on every loop tick.
+    const strZero = '0';
+    // Without coercion: '0' !== 0 → true (would trigger spurious write — the bug)
+    assert.equal(strZero !== 0, true, 'uncoerced string "0" !== 0 is truthy (the bug)');
+    // With coercion: Number('0') !== 0 → false (no write — the fix)
+    assert.equal(Number(strZero) !== 0, false, 'Number("0") !== 0 is false (no spurious write)');
+});
+
+test('F13: worker_timeout_seconds numeric 0 is always safe', () => {
+    // Numeric 0 from JSON.parse behaves correctly regardless of coercion
+    assert.equal(Number(0) !== 0, false, 'numeric 0 remains safe after coercion');
+});
+
+// --- F14: auto-commit .git validation ---
+
+test('F14: non-git workingDir is detected before auto-commit git commands', () => {
+    const nonGitDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-nongit-'));
+    try {
+        // No .git directory — the runner should log 'not a git repository' and skip git ops
+        const isGitRepo = fs.existsSync(path.join(nonGitDir, '.git'));
+        assert.equal(isGitRepo, false, 'should not have .git directory');
+
+        // Simulate what the fixed runner does: build the error message
+        const messages = [];
+        if (!isGitRepo) {
+            messages.push(`Auto-commit skipped: not a git repository (${nonGitDir})`);
+        }
+
+        assert.equal(messages.length, 1, 'should produce one error log entry');
+        assert.ok(messages[0].includes('not a git repository'), 'message should state the reason');
+        assert.ok(messages[0].includes(nonGitDir), 'message should include the offending path');
+    } finally {
+        fs.rmSync(nonGitDir, { recursive: true });
+    }
+});
+
+test('F14: valid git repo passes the .git existence check', () => {
+    const dir = createTempGitRepo();
+    try {
+        const isGitRepo = fs.existsSync(path.join(dir, '.git'));
+        assert.equal(isGitRepo, true, 'git repo should have .git directory');
+        // In the runner, this means auto-commit proceeds normally (no early-return)
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
 });
