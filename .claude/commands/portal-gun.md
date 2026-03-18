@@ -36,12 +36,14 @@ Extract `SESSION_ROOT=<path>`. Extension root: `$HOME/.claude/pickle-rick` (`${E
 
 Detect exemplar type and acquire source:
 
+**NO FILE LIMITS.** Acquire ALL source files — completeness is critical. Missing files = missing PRD requirements = incomplete migration.
+
 ### GitHub URL
 Patterns: `github.com/`, `raw.githubusercontent.com/`, `gist.github.com/`
 
 - **Single file**: `gh api` or WebFetch to retrieve raw content
-- **Directory/tree**: `gh api repos/{owner}/{repo}/contents/{path}` — list files, fetch key source files (prioritize implementation over tests/docs, max 10 files)
-- **Full repo**: clone sparse or fetch README + key source dirs. Use `gh repo view` for overview, then target specific paths
+- **Directory/tree**: `gh api repos/{owner}/{repo}/contents/{path}` — recursively list ALL files, fetch ALL source files
+- **Full repo**: clone to `${SESSION_ROOT}/portal/donor/`. Use `gh repo clone` or sparse checkout. Fetch entire source tree.
 - **Gist**: `gh gist view <id>`
 - **PR**: `gh pr diff <url>` to see the changes as the exemplar
 
@@ -49,7 +51,7 @@ Save all fetched source to `${SESSION_ROOT}/portal/donor/` preserving relative p
 
 ### Local Path
 - File: copy to `${SESSION_ROOT}/portal/donor/`
-- Directory: copy key source files (same prioritization — implementation > tests > docs, max 15 files)
+- Directory: Use Glob to discover ALL source files. Copy everything — source, tests, types, config, middleware, models, routes, services. Do NOT filter or prioritize. The only exclusions are: `node_modules/`, `.git/`, `dist/`, `build/`, `__pycache__/`, `.next/`, coverage reports.
 
 ### Package Name
 - npm: `npm info <pkg>` for repo URL → treat as GitHub URL. If no repo, `npm pack <pkg> | tar xf` to extract source
@@ -60,7 +62,7 @@ Save all fetched source to `${SESSION_ROOT}/portal/donor/` preserving relative p
 - Write a `${SESSION_ROOT}/portal/pattern_description.md` capturing the user's intent
 - Skip to Step 4 (no donor code to analyze)
 
-Announce what was acquired: file count, languages detected, estimated complexity.
+Announce what was acquired: **total file count**, languages detected, directory structure summary.
 
 **Error handling**: If acquisition fails (gh api error, file not found, npm pack failure, network timeout):
 1. Print what failed and why
@@ -88,45 +90,65 @@ Before analyzing, check if a matching pattern already exists:
 5. On no library or no match: proceed with full analysis below
 <!-- [Improvement I: Pattern Library Search -- END] -->
 
-### 3b: Analyze Donor
+### 3b: Analyze Donor — Migration Inventory
 
-Analyze the donor code. Produce `${SESSION_ROOT}/portal/pattern_analysis.md`:
+Analyze the donor code EXHAUSTIVELY. Produce `${SESSION_ROOT}/portal/migration_inventory.md`:
+
+**Read every source file.** Do not skim, sample, or summarize. The inventory drives the PRD — anything missing here won't be ported.
 
 ```markdown
-# Pattern Analysis: [Name]
+# Migration Inventory: [Name]
 
 ## Source
 [URL/path/package]
 
-## Pattern Summary
-[1-2 paragraph description of what this code does and WHY it works]
+## Summary
+[1-2 paragraph description of what this codebase does]
 
-## Structural Pattern
-[The abstract pattern — independent of language/framework]
-- Entry points
-- Data flow
-- Key abstractions
-- State management approach
-- Error handling strategy
+## Routes / Endpoints / Entry Points
+Enumerate EVERY route, endpoint, handler, or entry point. For each:
+| Route/Entry | Method | File | Handler | Description |
+|:---|:---|:---|:---|:---|
+| /api/users | GET | src/routes/users.ts:15 | listUsers | Returns paginated user list |
+[... EVERY route — do not truncate]
+
+## Models / Schemas / Types
+Enumerate EVERY model, schema, type definition, interface, enum:
+| Name | File | Fields/Shape | Used By |
+|:---|:---|:---|:---|
+| User | src/models/user.ts:5 | id, email, name, role, createdAt | routes/users, services/auth |
+[... EVERY model — do not truncate]
+
+## Services / Business Logic
+Enumerate EVERY service, utility, helper, middleware:
+| Service | File | Methods | Description |
+|:---|:---|:---|:---|
+| AuthService | src/services/auth.ts | login, verify, refresh | JWT auth with bcrypt |
+[... EVERY service — do not truncate]
+
+## Config / Environment
+| Variable/Config | File | Purpose |
+|:---|:---|:---|
+| DATABASE_URL | .env, src/config.ts | PostgreSQL connection |
+[... ALL config]
+
+## Dependencies (external)
+| Package | Version | Purpose | Target Equivalent |
+|:---|:---|:---|:---|
+| express | 4.18.2 | HTTP framework | [what target uses or needs] |
 
 ## Invariants
-[Rules that MUST hold for this pattern to work correctly]
-- [Invariant 1]
-- [Invariant 2]
+[Rules that MUST hold for correctness — auth flows, data integrity, ordering guarantees]
 
-## Edge Cases & Gotchas
-[Things that break if you're not careful]
-
-## Key Implementation Details
-[Specific techniques worth preserving]
-- [Detail 1 with code reference]
-- [Detail 2 with code reference]
-
-## Dependencies & Prerequisites
-[What the pattern requires to function]
-
-## Anti-Patterns
-[What NOT to do when implementing this — common mistakes]
+## Migration Complexity
+| Category | Count | Notes |
+|:---|:---|:---|
+| Routes/endpoints | [N] | |
+| Models/schemas | [N] | |
+| Services/utilities | [N] | |
+| Test files | [N] | |
+| Config items | [N] | |
+| **Total items to port** | **[N]** | |
 
 <!-- [Improvement B: File Manifest -- START] -->
 ## File Manifest
@@ -199,8 +221,28 @@ Categories and detection heuristics:
 <!-- [Improvement D: Transplant Classification -- END] -->
 ```
 
-For `--depth shallow`: focus on Summary, Structural Pattern, and Invariants only.
+For `--depth shallow`: focus on Summary, Routes/Endpoints, Models, and Invariants only.
 For `--depth deep`: complete all sections with code-level detail.
+
+## Step 3.5: Scope Confirmation
+
+Present the migration inventory to the user before proceeding. This prevents wasted work on items the user doesn't want ported.
+
+Print a summary:
+```
+Portal Inventory: [N] items to port
+  Routes/endpoints: [N]
+  Models/schemas:   [N]
+  Services:         [N]
+  Config items:     [N]
+  Test files:       [N]
+
+Confirm scope? (y = proceed, or list items to EXCLUDE)
+```
+
+If user excludes items, mark them in `migration_inventory.md` with `[EXCLUDED]` and remove from the Migration Complexity totals. The PRD will only cover non-excluded items.
+
+If user confirms, proceed to Step 4.
 
 ## Step 4: Survey This Side (Target Analysis)
 
@@ -253,77 +295,86 @@ Use GitNexus (`mcp__gitnexus__query`) if indexed, otherwise Glob/Grep/Read.
 
 ## Step 5: Synthesize the PRD
 
-Cross-reference `pattern_analysis.md` and `target_analysis.md`. Write `${SESSION_ROOT}/prd.md`:
+Cross-reference `migration_inventory.md` and `target_analysis.md`. Write `${SESSION_ROOT}/prd.md`:
 
-Use the standard PRD template but tailor it for pattern transplantation:
+**The PRD must enumerate EVERY item from the migration inventory.** If the inventory has 30 routes, the PRD has 30 requirements. Nothing gets "summarized away." The inventory is the checklist — the PRD is the spec.
 
 ```markdown
-# [Pattern Name] Transplant PRD
-| [Pattern Name] Transplant PRD | | [Summary] |
+# [Name] Migration PRD
+| [Name] Migration PRD | | [Summary] |
 |:---|:---|:---|
 | **Author**: Pickle Rick **Audience**: Engineering | **Status**: Draft **Created**: [Date] | **Visibility**: Internal |
 
-## Completion Checklist
-- [ ] Introduction - [ ] Problem Statement - [ ] Objective & Scope - [ ] CUJs - [ ] Functional Requirements - [ ] Assumptions - [ ] Risks & Mitigations - [ ] Business Impact
-
 ## Introduction
-Transplanting [pattern] from [source] into [target codebase].
-Source: [URL/path]. Analysis: `portal/pattern_analysis.md`.
-
-## Problem Statement
-**Current Process**: [What the target codebase does today without this pattern]
-**Primary Users**: [Who benefits]
-**Pain Points**: [Why the current approach is insufficient]
-**Importance**: [Why transplant this specific pattern vs. build from scratch]
+Migrating [donor] functionality into [target codebase].
+Source: [URL/path]. Inventory: `portal/migration_inventory.md`.
 
 ## Objective & Scope
-**Objective**: Replicate the behavioral semantics of [donor pattern] adapted to [target] conventions.
-**Ideal Outcome**: Functionally equivalent implementation that passes behavioral validation tests.
+**Objective**: Port all confirmed-scope items from donor to target, adapted to target conventions.
+**Coverage target**: 100% of non-excluded inventory items.
 
-### In-scope / Goals
-[Specific behaviors to transplant]
+### In-scope (from Migration Inventory)
+[List EVERY confirmed item — routes, models, services. Reference inventory line items by name.]
 
-### Not-in-scope / Non-Goals
-[Parts of the donor that are NOT being transplanted and why]
+### Excluded (user-confirmed)
+[Items marked [EXCLUDED] in inventory, with reason]
 
-## Product Requirements
+## Migration Plan — Routes/Endpoints
+ONE requirement per route. Each row = one ticket-worthy unit of work.
 
-### Critical User Journeys (CUJs)
-[Map donor pattern's user journeys to target context]
+| # | Donor Route | Donor File | Target Route | Target File | Adaptation |
+|:---|:---|:---|:---|:---|:---|
+| R1 | GET /api/users | src/routes/users.ts | GET /api/users | src/modules/users/users.controller.ts | Express → NestJS controller |
+[... EVERY route from inventory — do not truncate, do not summarize]
 
-### Functional Requirements
-| Priority | Requirement | Donor Reference | Adaptation Notes |
+## Migration Plan — Models/Schemas
+| # | Donor Model | Donor File | Target Model | Target File | Adaptation |
+|:---|:---|:---|:---|:---|:---|
+| M1 | User | src/models/user.ts | User | src/modules/users/user.entity.ts | Mongoose → TypeORM/Drizzle |
+[... EVERY model from inventory]
+
+## Migration Plan — Services/Business Logic
+| # | Donor Service | Donor File | Target Service | Target File | Adaptation |
+|:---|:---|:---|:---|:---|:---|
+| S1 | AuthService | src/services/auth.ts | AuthService | src/modules/auth/auth.service.ts | Adapt to NestJS DI |
+[... EVERY service from inventory]
+
+## Migration Plan — Config/Environment
+| # | Donor Config | Target Config | Notes |
 |:---|:---|:---|:---|
-| P0 | [Invariant-preserving requirement] | [donor file:line] | [what changes for target] |
+| C1 | DATABASE_URL | Already exists | Verify connection string format |
+[... ALL config items]
 
-### Behavioral Validation Tests
-Require at least one test per invariant from pattern_analysis.md.
+## Acceptance Criteria
+For EACH migration item above:
+- [ ] R1: GET /api/users returns equivalent response shape
+- [ ] R2: POST /api/users creates user with same validation rules
+- [ ] M1: User model has all fields from donor
+[... ONE checkbox per inventory item — this is the convergence checklist]
 
-| Priority | Test | Invariant | Donor Behavior | Expected Target Behavior |
-|:---|:---|:---|:---|:---|
-| P0 | [Test 1] | [Which invariant this validates] | [What donor does] | [What target should do — same semantics, different implementation] |
-
-## Assumptions
-- Donor pattern is correct and battle-tested
-- [Target-specific assumptions]
+## Behavioral Validation Tests
+| Test | Inventory Item | Donor Behavior | Expected Target Behavior |
+|:---|:---|:---|:---|
+| test_list_users | R1 | Returns paginated array | Same response shape, same pagination |
+[... at least one test per route/service]
 
 ## Risks & Mitigations
 | Risk | Severity | Mitigation |
 |:---|:---|:---|
-| Pattern doesn't translate to [target language/framework] | High | [Adaptation strategy from target_analysis.md] |
-| Semantic drift from donor | Medium | Behavioral validation tests |
-
-## Business Benefits/Impact/Metrics
-| Metric | Current | Target | Impact |
-|:---|:---|:---|:---|
+| Framework differences (Express→NestJS, etc.) | Medium | Adapt patterns, preserve behavior |
+| Missing shared utilities | Medium | Port utilities as separate tickets |
 
 ## Portal Artifacts
-- Pattern analysis: `portal/pattern_analysis.md`
+- Migration inventory: `portal/migration_inventory.md`
 - Target analysis: `portal/target_analysis.md`
 - Donor source: `portal/donor/`
+
+## Coverage Tracking
+Total items: [N] | Ported: 0 | Remaining: [N] | Coverage: 0%
+(Updated by convergence loop after each execution pass)
 ```
 
-Mark checkboxes as sections are drafted.
+**Every inventory item MUST appear in a Migration Plan table AND as an Acceptance Criteria checkbox.** If the inventory has N items, the PRD has N rows + N checkboxes. This is the completeness guarantee.
 
 <!-- [Improvement A: PRD Validation -- START] -->
 ## Step 5.5: PRD Validation Pass
@@ -585,52 +636,90 @@ Offer next steps:
 
 **If `AUTO_RUN` is true**: Proceed to Step 9.
 
-## Step 9: Auto-Launch (AUTO_RUN=true only)
+## Step 9: Convergence Loop (AUTO_RUN=true only)
+
+The portal-gun convergence loop: execute → measure coverage → generate delta PRD → re-execute → repeat until all inventory items are ported.
 
 ### 9a: Check multiplexer
-`tmux -V`. If present → set MUX=tmux, proceed to 9b.
+`tmux -V`. If present → set MUX=tmux. If missing, check Zellij (>= 0.40.0). If neither: suggest install, note PRD is ready for manual resume. Stop.
 
-If tmux missing, check Zellij:
-```bash
-ZELLIJ_VER=$(zellij --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
-```
-If Zellij present and >= 0.40.0 → set MUX=zellij, proceed to 9b-zellij.
+### 9b: Execute Pass
 
-If neither available: suggest install, note PRD is ready for manual resume. Stop.
-
-### 9b: Re-initialize (tmux)
+Re-initialize for execution:
 ```bash
 node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --resume "${SESSION_ROOT}" --max-iterations 0 --max-time 0
 ```
 If CHAIN_MEESEEKS: append `--chain-meeseeks`.
 
-### 9b-zellij: Re-initialize (Zellij)
+Launch tmux session and runner:
 ```bash
-node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --resume "${SESSION_ROOT}" --max-iterations 0 --max-time 0
-```
-If CHAIN_MEESEEKS: append `--chain-meeseeks`.
-Then create Zellij session per /pickle-zellij Steps 3-4.
-
-### 9c: tmux Session (MUX=tmux only)
-Session name: `portal-<hash>` from SESSION_ROOT basename.
-```bash
-tmux new-session -d -s <name> -c <working_dir>
+PORTAL_HASH="$(basename "${SESSION_ROOT}" | sed 's/.*\(.\{8\}\)$/\1/')"
+PORTAL_SESSION="portal-${PORTAL_HASH}"
+tmux new-session -d -s "$PORTAL_SESSION" -c <working_dir>
 sleep 1
+tmux send-keys -t "$PORTAL_SESSION":0 "node $HOME/.claude/pickle-rick/extension/bin/mux-runner.js ${SESSION_ROOT}; echo ''; echo 'Pass complete. Checking coverage...'; read" Enter
+bash "$HOME/.claude/pickle-rick/extension/scripts/tmux-monitor.sh" "$PORTAL_SESSION" ${SESSION_ROOT} pickle
 ```
-Print attach command: `tmux attach -t <name>`.
+Print: `tmux attach -t $PORTAL_SESSION`
 
-### 9d: Launch Runner
+Wait for runner to complete (state.json `active: false`).
+
+### 9c: Coverage Scan
+
+After each execution pass, measure migration coverage against the inventory:
+
+1. Read `${SESSION_ROOT}/portal/migration_inventory.md` — get the full list of in-scope items
+2. For each inventory item (routes, models, services), scan the target codebase:
+   - **Route/endpoint**: Grep target for the route path or handler name
+   - **Model/schema**: Grep target for the model name, check if fields match
+   - **Service**: Grep target for the service name or equivalent functions
+   - **Config**: Check if env vars / config keys exist in target
+3. Classify each item: `PORTED` (found in target with equivalent behavior), `PARTIAL` (exists but incomplete), `MISSING` (not found)
+4. Write `${SESSION_ROOT}/portal/coverage_report.md`:
+
+```markdown
+# Coverage Report — Pass [N]
+Generated: [timestamp]
+
+## Summary
+Total items: [N] | Ported: [N] | Partial: [N] | Missing: [N] | Coverage: [%]
+
+## Details
+| # | Item | Category | Status | Notes |
+|:---|:---|:---|:---|:---|
+| R1 | GET /api/users | Route | PORTED | Found at src/modules/users/users.controller.ts |
+| R2 | POST /api/users | Route | MISSING | No equivalent found |
+| M1 | User model | Model | PARTIAL | Missing 2 fields: role, createdAt |
+[... every item]
+```
+
+5. Update the PRD's Coverage Tracking section with current numbers.
+
+### 9d: Convergence Check
+
+If coverage = 100% → converged. Print report. If CHAIN_MEESEEKS, transition to Meeseeks. Output `<promise>TASK_COMPLETED</promise>`.
+
+If coverage < 100% AND this is pass 1-3 → generate delta PRD and re-execute (Step 9e).
+
+If coverage < 100% AND this is pass 4+ → print coverage report, list remaining items, ask user:
+> Coverage at [N]% after [pass] passes. [M] items remaining. Continue iterating? (y/n)
+
+### 9e: Delta PRD Generation
+
+For MISSING and PARTIAL items from the coverage report:
+
+1. Write `${SESSION_ROOT}/prd_delta_pass_[N].md` containing ONLY the unported items:
+   - MISSING items get full migration plan rows (same format as original PRD)
+   - PARTIAL items get specific "fix" requirements (e.g., "Add missing fields role, createdAt to User model")
+2. Copy delta PRD to `${SESSION_ROOT}/prd.md` (preserve original as `prd_pass_[N-1].md`)
+3. Reset state to `breakdown`:
 ```bash
-tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/mux-runner.js ${SESSION_ROOT}; echo ''; echo 'Portal closed. Pattern transplanted.'; read" Enter
+node "${EXTENSION_ROOT}/extension/bin/update-state.js" step breakdown "${SESSION_ROOT}"
 ```
+4. Return to Step 9b (re-execute)
 
-### 9e: Monitor (3-pane via canonical script)
-```bash
-bash "$HOME/.claude/pickle-rick/extension/scripts/tmux-monitor.sh" <name> ${SESSION_ROOT} pickle
-```
-
-### 9f: Report
-Print: session name, attach command, window layout, cancel/kill commands.
+### 9f: Final Report
+Print: total passes, final coverage, items ported per pass, session path, attach command.
 If CHAIN_MEESEEKS: note auto-transition to Meeseeks review.
 
 Output: `<promise>TASK_COMPLETED</promise>`
