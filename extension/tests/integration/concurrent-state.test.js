@@ -23,11 +23,21 @@ if (!isMainThread && workerData != null) {
   const { op } = workerData;
 
   if (op === 'increment') {
-    // Fast retry settings for tests: low delay, no jitter
-    const sm = new StateManager({ baseLockDelayMs: 20, maxLockRetries: 50, staleLockTimeoutMs: 15_000, lockJitter: true });
-    sm.update(workerData.statePath, (s) => {
-      s.counter = (Number(s.counter) || 0) + 1;
-    });
+    const sm = new StateManager({ baseLockDelayMs: 50, maxLockRetries: 100, staleLockTimeoutMs: 15_000, lockJitter: true });
+    // Retry the entire update if lock acquisition fails under heavy contention
+    let done = false;
+    for (let r = 0; r < 3 && !done; r++) {
+      try {
+        sm.update(workerData.statePath, (s) => {
+          s.counter = (Number(s.counter) || 0) + 1;
+        });
+        done = true;
+      } catch {
+        // LockError — brief pause then retry
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50 + Math.random() * 100);
+      }
+    }
+    if (!done) throw new Error('increment failed after 3 outer retries');
     parentPort.postMessage({ ok: true });
 
   } else if (op === 'add_session') {

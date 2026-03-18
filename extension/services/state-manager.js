@@ -15,10 +15,11 @@ import { writeStateFile, safeErrorMessage } from './pickle-utils.js';
 function lockPath(statePath) {
     return `${statePath}.lock`;
 }
-/** Sleep with optional jitter. */
+// Shared buffer for Atomics.wait()-based synchronous sleep (no CPU spin).
+const _sleepBuf = new Int32Array(new SharedArrayBuffer(4));
+/** Synchronous sleep that yields to the OS scheduler instead of busy-waiting. */
 function sleepSync(ms) {
-    const end = Date.now() + ms;
-    while (Date.now() < end) { /* spin */ }
+    Atomics.wait(_sleepBuf, 0, 0, ms);
 }
 function isProcessAlive(pid) {
     try {
@@ -184,6 +185,8 @@ export class StateManager {
     // -----------------------------------------------------------------------
     acquireLock(statePath) {
         const lp = lockPath(statePath);
+        let steals = 0;
+        const maxSteals = 3; // Cap stale-steal retries to prevent unbounded loops
         for (let attempt = 0; attempt <= this.opts.maxLockRetries; attempt++) {
             try {
                 // O_CREAT | O_EXCL — fails if file already exists (atomic)
@@ -194,8 +197,9 @@ export class StateManager {
                 return;
             }
             catch {
-                // Check if existing lock is stale
-                if (this.tryStealStaleLock(lp)) {
+                // Check if existing lock is stale (bounded steal attempts)
+                if (steals < maxSteals && this.tryStealStaleLock(lp)) {
+                    steals++;
                     // Stolen — retry immediately (don't count as attempt)
                     attempt--;
                     continue;
@@ -226,38 +230,43 @@ export class StateManager {
             // Can't read lock file — might have been removed by holder
             return false;
         }
-        let lock;
+        const shouldSteal = (() => {
+            try {
+                const lock = JSON.parse(raw);
+                const lockPid = Number(lock.pid);
+                const lockTs = Number(lock.ts);
+                if (!Number.isFinite(lockPid) || !Number.isFinite(lockTs))
+                    return true;
+                return !isProcessAlive(lockPid) || (Date.now() - lockTs > this.opts.staleLockTimeoutMs);
+            }
+            catch {
+                // Corrupt JSON — safe to steal
+                return true;
+            }
+        })();
+        if (!shouldSteal)
+            return false;
+        // Atomic steal: rename to a unique tombstone, then delete. This prevents
+        // two processes from both unlinking the same lock and both believing they
+        // stole it (the classic TOCTOU race with unlink).
+        const tombstone = `${lp}.tomb.${process.pid}.${Date.now()}`;
         try {
-            lock = JSON.parse(raw);
+            fs.renameSync(lp, tombstone);
+            // We won the rename — lock is ours to clean up
+            try {
+                fs.unlinkSync(tombstone);
+            }
+            catch { /* best-effort */ }
+            return true;
         }
         catch {
-            // Corrupt JSON in lock file — safe to steal
+            // Another process already renamed/removed it — we lost the race
             try {
-                fs.unlinkSync(lp);
+                fs.unlinkSync(tombstone);
             }
-            catch { /* race */ }
-            return true;
+            catch { /* might not exist */ }
+            return false;
         }
-        const lockPid = Number(lock.pid);
-        const lockTs = Number(lock.ts);
-        if (!Number.isFinite(lockPid) || !Number.isFinite(lockTs)) {
-            // Invalid pid/ts — safe to steal
-            try {
-                fs.unlinkSync(lp);
-            }
-            catch { /* race */ }
-            return true;
-        }
-        // Stale if process is dead OR lock is older than staleLockTimeoutMs
-        const isStale = !isProcessAlive(lockPid) || (Date.now() - lockTs > this.opts.staleLockTimeoutMs);
-        if (isStale) {
-            try {
-                fs.unlinkSync(lp);
-            }
-            catch { /* race */ }
-            return true;
-        }
-        return false;
     }
     // -----------------------------------------------------------------------
     // Recovery: orphan tmp files
