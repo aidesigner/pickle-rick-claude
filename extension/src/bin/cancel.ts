@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { printMinimalPanel, getExtensionRoot, withSessionMapLock, resolveSessionPath } from '../services/pickle-utils.js';
+import { printMinimalPanel, getExtensionRoot, withSessionMapLock, resolveSessionPath, safeErrorMessage } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { LockError } from '../types/index.js';
 
@@ -67,7 +67,7 @@ export function cancelSession(cwd: string) {
   } catch (err) {
     if (err instanceof LockError) {
       // Lock exhausted — deactivate state without map consistency guarantee
-      console.error(`[pickle] WARNING: session map not updated — ${err instanceof Error ? err.message : String(err)}`);
+      console.error(`[pickle] WARNING: session map not updated — ${safeErrorMessage(err)}`);
       try {
         sm.update(statePath, s => { s.active = false; });
         cancelled = true;

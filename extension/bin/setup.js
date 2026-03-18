@@ -290,7 +290,7 @@ async function main() {
     }
     catch (err) {
         if (err instanceof LockError) {
-            console.error(`[pickle] WARNING: session map not updated — ${err instanceof Error ? err.message : String(err)}`);
+            console.error(`[pickle] WARNING: session map not updated — ${safeErrorMessage(err)}`);
         }
         else {
             throw err;
