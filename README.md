@@ -435,8 +435,8 @@ Sit back. Rick handles the rest. 🥒
 | `/pickle-dot [path \| inline]` | 🔀 Convert a PRD into a [strongdm/attractor](https://github.com/strongdm/attractor)-compatible DOT digraph — 5-layer quality gates (spec-driven acceptance, permission scoping, adversarial review), 23 convergence patterns, BDD contracts, review ratchets, microverse optimization loops. Auto-resolves Docker mount paths. |
 | `/attract [file.dot]` | 🚀 Submit a `.dot` pipeline to the [attractor](https://github.com/strongdm/attractor) server for execution — validates locally, submits via HTTP, monitors status, handles human gates. Auto-detects most recent `.dot` file if none specified. |
 | `/pickle-microverse` | 🔬🖥️ Microverse convergence loop — optimize a numeric metric through targeted, incremental changes. Defaults to tmux mode with context clearing. Use `--interactive` for inline mode. Requires `tmux` (unless `--interactive`). |
-| `/portal-gun <source>` | 🔫 [Gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) — extract patterns from another codebase and generate a transplant PRD with behavioral validation tests and automatic refinement |
-| `/portal-gun --run <source>` | 🔫🖥️ Extract pattern + generate PRD + refine + auto-launch tmux session |
+| `/portal-gun <source>` | 🔫 [Gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) — exhaustive migration inventory from donor codebase, scope confirmation, concrete migration PRD with per-item acceptance criteria, automatic refinement |
+| `/portal-gun --run <source>` | 🔫🖥️ Inventory + PRD + refine + convergence loop — executes, scans coverage against inventory, generates delta PRD for missing items, re-executes until 100% coverage |
 | `/project-mayhem` | 💥 Chaos engineering — mutation testing, dependency downgrades, config corruption. Non-destructive, language-agnostic, comprehensive report. |
 | `/pickle-metrics` | 📊 Token usage, turns, commits, and lines changed — daily or `--weekly`, per-project, with `--json` export |
 | `/pickle-standup` | 📰 Show a formatted standup summary from activity logs (last 24h by default) |
@@ -460,11 +460,13 @@ Sit back. Rick handles the rest. 🥒
 --resume [PATH]            Resume from an existing session
 --reset                    Reset iteration counter and start time (use with --resume)
 --paused                   Start in paused mode (PRD only)
---run                      (/pickle-refine-prd, /portal-gun) Auto-launch tmux with no limits after refinement
+--run                      (/pickle-refine-prd, /portal-gun) Auto-launch tmux. portal-gun: convergence loop until 100% coverage
 --meeseeks                 (/pickle-refine-prd, /portal-gun) Full pipeline: --run + auto-chain Meeseeks review after tickets complete
 --target <PATH>            (/portal-gun only) Target repo for the transplant (default: cwd)
 --depth <shallow|deep>     (/portal-gun only) Extraction depth — shallow for summary, structural pattern, and invariants only; deep for full analysis (default: deep)
 --no-refine                (/portal-gun only) Skip the automatic refinement cycle
+--max-passes <N>           (/portal-gun only) Max convergence passes before prompting (default: 3)
+--no-converge              (/portal-gun only) Single execution pass — no coverage loop (use with --run)
 --save-pattern <NAME>      (/portal-gun only) Persist extracted pattern to ~/.claude/pickle-rick/patterns/ for future reuse
 --cycles <N>               (/portal-gun only) Number of refinement cycles (default: 3)
 --max-turns <N>            (/portal-gun only) Max turns per refinement worker (default: 100)

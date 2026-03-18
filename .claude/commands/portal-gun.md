@@ -8,11 +8,13 @@ Scan `$ARGUMENTS`:
 
 | Flag | Default | Effect |
 |------|---------|--------|
-| `--run` | false | Auto-launch `/pickle-tmux` after PRD is ready |
-| `--meeseeks` | false | Chain Meeseeks review after execution (implies `--run`) |
+| `--run` | false | Auto-launch convergence loop: execute → coverage scan → delta PRD → re-execute until 100% |
+| `--meeseeks` | false | Chain Meeseeks review after convergence completes (implies `--run`) |
 | `--target <path>` | cwd | Target repo/directory for the transplant |
-| `--depth <shallow\|deep>` | `deep` | `shallow` = summary, structural pattern, and invariants only; `deep` = full structural analysis |
+| `--depth <shallow\|deep>` | `deep` | `shallow` = summary, routes, models, invariants only; `deep` = full inventory with services, config, imports |
 | `--no-refine` | false | Skip the automatic refinement cycle (Step 6) |
+| `--no-converge` | false | Single execution pass — no coverage loop (use with `--run` for one-shot) |
+| `--max-passes <N>` | 3 | Auto-continue convergence for N passes before prompting user (0 = always prompt) |
 | `--cycles <N>` | 3 | Number of refinement cycles (ignored if `--no-refine`) |
 | `--max-turns <N>` | 100 | Max turns per refinement worker (ignored if `--no-refine`) |
 | `--save-pattern <name>` | — | Save extracted pattern to persistent library for future reuse |
@@ -21,7 +23,7 @@ Remaining text = `${EXEMPLAR}` (the portal destination — a GitHub URL, local f
 
 If `CHAIN_MEESEEKS` is true, set `AUTO_RUN` to true (implies `--run`).
 
-Store: `AUTO_RUN`, `CHAIN_MEESEEKS`, `TARGET_DIR`, `DEPTH`, `SKIP_REFINE`, `CYCLES`, `MAX_TURNS`, `SAVE_PATTERN`, `EXEMPLAR`.
+Store: `AUTO_RUN`, `CHAIN_MEESEEKS`, `TARGET_DIR`, `DEPTH`, `SKIP_REFINE`, `NO_CONVERGE`, `MAX_PASSES`, `CYCLES`, `MAX_TURNS`, `SAVE_PATTERN`, `EXEMPLAR`.
 
 If `EXEMPLAR` is empty → ask user: "Where should I open the portal? Give me a GitHub URL, file path, package name, or describe the pattern you want to steal."
 
@@ -699,11 +701,13 @@ Total items: [N] | Ported: [N] | Partial: [N] | Missing: [N] | Coverage: [%]
 
 ### 9d: Convergence Check
 
+If `NO_CONVERGE` is true → skip to 9f (single pass, no loop).
+
 If coverage = 100% → converged. Print report. If CHAIN_MEESEEKS, transition to Meeseeks. Output `<promise>TASK_COMPLETED</promise>`.
 
-If coverage < 100% AND this is pass 1-3 → generate delta PRD and re-execute (Step 9e).
+If coverage < 100% AND this is pass 1 through `MAX_PASSES` (default: 3) → generate delta PRD and re-execute (Step 9e).
 
-If coverage < 100% AND this is pass 4+ → print coverage report, list remaining items, ask user:
+If coverage < 100% AND this is pass `MAX_PASSES + 1`+ → print coverage report, list remaining items, ask user:
 > Coverage at [N]% after [pass] passes. [M] items remaining. Continue iterating? (y/n)
 
 ### 9e: Delta PRD Generation

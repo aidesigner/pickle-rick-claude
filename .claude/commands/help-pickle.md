@@ -14,7 +14,7 @@ Summarize the available commands for the user:
 - `/council-of-ricks`: Iterative Graphite stack reviewer (Council of Ricks). Reviews every branch, generates agent-executable directives. Requires `gt`, `tmux`, `CLAUDE.md`, lint with architectural rules. Flags: `--gitnexus`, `--min-iterations`, `--max-iterations`, `--repo`
 - `/pickle-microverse`: Microverse convergence loop — optimize a numeric metric through targeted changes. Requires `tmux` (or `--interactive`)
 - `/attract [file.dot]`: Submit a `.dot` pipeline to the attractor server for execution
-- `/portal-gun <source>`: Gene transfusion — extract patterns from another codebase, generate transplant PRD
+- `/portal-gun <source>`: Migration/transfusion — exhaustive inventory of donor codebase, scope confirmation, concrete migration PRD. `--run` enables convergence loop (execute → coverage scan → delta PRD → re-execute until 100%). Flags: `--run`, `--target <path>`, `--depth <shallow|deep>`, `--no-refine`, `--save-pattern <name>`, `--max-passes <N>`, `--no-converge`
 - `/project-mayhem`: Chaos engineering — mutation testing, dependency downgrades, config corruption
 - `/eat-pickle`: Stop/cancel current loop
 - `/help-pickle`: This message
