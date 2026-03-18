@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { resolveSessionPath } from '../services/pickle-utils.js';
 const ALLOW = JSON.stringify({ decision: 'approve' });
 /**
  * Resolves the state file path from env or the sessions map.
@@ -12,7 +13,7 @@ export function resolveStateFile(extensionDir) {
         if (fs.existsSync(sessionsMapPath)) {
             try {
                 const map = JSON.parse(fs.readFileSync(sessionsMapPath, 'utf8'));
-                const sessionPath = map[process.cwd()];
+                const sessionPath = resolveSessionPath(map[process.cwd()]);
                 if (sessionPath)
                     stateFile = path.join(sessionPath, 'state.json');
             }

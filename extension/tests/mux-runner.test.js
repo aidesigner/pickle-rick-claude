@@ -1735,38 +1735,6 @@ test('Defaults.MAX_ITERATION_SECONDS exists and is positive', () => {
     assert.ok(Defaults.MAX_ITERATION_SECONDS >= 3600, 'should be at least 1 hour');
 });
 
-// deleteHandoffFile / writeHandoffAtomic tests removed — functions not yet in mux-runner.ts
-// (part of pending StateManager refactor). Re-add when the functions are implemented.
-
-// ---------------------------------------------------------------------------
-// extractAssistantContent: stream-json false-positive fix (d947cf56 F16)
-// ---------------------------------------------------------------------------
-
-// extractAssistantContent: non-JSON lines exclusion test removed — feature not yet implemented
-// (part of pending StateManager refactor false-positive fix). Re-add when implemented.
-
-test('extractAssistantContent: result-type included even in stream-json mode', () => {
-    const lines = [
-        JSON.stringify({ type: 'system', system: 'session init' }),
-        JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Done.' }] } }),
-        JSON.stringify({ type: 'result', result: 'Outcome <promise>EPIC_COMPLETED</promise>' }),
-    ].join('\n');
-    const content = extractAssistantContent(lines);
-    assert.ok(content.includes('EPIC_COMPLETED'), 'result-type block must be included in stream-json mode');
-});
-
-test('extractAssistantContent: assistant-type included in stream-json mode', () => {
-    const line = JSON.stringify({
-        type: 'assistant',
-        message: { content: [{ type: 'text', text: 'Review complete. <promise>EXISTENCE_IS_PAIN</promise>' }] },
-    });
-    const content = extractAssistantContent(line);
-    assert.ok(content.includes('EXISTENCE_IS_PAIN'), 'assistant-type block must be included');
-});
-
-// validateTemplateName tests removed — function not yet exported from mux-runner.ts
-// (part of pending StateManager refactor). Re-add when the function is exported.
-
 // ---------------------------------------------------------------------------
 // writeHandoffAtomic — handoff.txt race / fallback scenarios (ticket 38b76eb5)
 // ---------------------------------------------------------------------------

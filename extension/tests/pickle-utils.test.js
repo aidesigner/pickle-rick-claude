@@ -12,6 +12,7 @@ import {
     buildHandoffSummary,
     withSessionMapLock,
     withRetryLock,
+    resolveSessionPath,
     pruneOldSessions,
     extractFrontmatter,
     getExtensionRoot,
@@ -1061,8 +1062,7 @@ test('withRetryLock: steals stale lock (age > staleLockTimeoutMs) and succeeds',
 test('withRetryLock: does NOT steal fresh lock (age < staleLockTimeoutMs)', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-retrylock-'));
     try {
-        const lockPath = path.join(dir, 'fresh.lock');
-        // Lock mtime = now (fresh)
+        const lockPath = path.join(dir, 'fresh.lock');        // Lock mtime = now (fresh)
         fs.writeFileSync(lockPath, '12345');
 
         let threw = false;
@@ -1081,4 +1081,67 @@ test('withRetryLock: does NOT steal fresh lock (age < staleLockTimeoutMs)', () =
     } finally {
         fs.rmSync(dir, { recursive: true });
     }
+});
+
+// --- resolveSessionPath ---
+
+test('resolveSessionPath: returns string entry unchanged (legacy format)', () => {
+    assert.equal(resolveSessionPath('/some/session/path'), '/some/session/path');
+});
+
+test('resolveSessionPath: extracts sessionPath from SessionMapEntry object', () => {
+    assert.equal(
+        resolveSessionPath({ sessionPath: '/session/dir', pid: 12345 }),
+        '/session/dir'
+    );
+});
+
+test('resolveSessionPath: returns empty string for undefined entry', () => {
+    assert.equal(resolveSessionPath(undefined), '');
+});
+
+test('resolveSessionPath: returns empty string for null entry', () => {
+    assert.equal(resolveSessionPath(null), '');
+});
+
+test('resolveSessionPath: returns empty string for object missing sessionPath', () => {
+    assert.equal(resolveSessionPath({ pid: 9999 }), '');
+});
+
+test('resolveSessionPath: returns empty string for empty string', () => {
+    assert.equal(resolveSessionPath(''), '');
+});
+
+// --- Session map entry PID ---
+
+test('session map entry: setup writes SessionMapEntry with PID', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-sessions-map-'));
+    try {
+        const mapPath = path.join(dir, 'current_sessions.json');
+        const lockPath = mapPath + '.lock';
+        const sessionPath = path.join(dir, 'session-abc');
+        const cwd = '/fake/working/dir';
+
+        // Simulate what setup.ts:updateSessionMap writes
+        withRetryLock(lockPath, () => {
+            const entry = { sessionPath, pid: process.pid };
+            fs.writeFileSync(mapPath, JSON.stringify({ [cwd]: entry }, null, 2));
+        });
+
+        const map = JSON.parse(fs.readFileSync(mapPath, 'utf-8'));
+        const entry = map[cwd];
+        assert.equal(typeof entry, 'object', 'Entry should be an object');
+        assert.equal(entry.sessionPath, sessionPath);
+        assert.equal(entry.pid, process.pid);
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('session map entry: resolveSessionPath handles both old and new format in same map', () => {
+    const legacyEntry = '/legacy/session/path';
+    const newEntry = { sessionPath: '/new/session/path', pid: 42 };
+
+    assert.equal(resolveSessionPath(legacyEntry), '/legacy/session/path');
+    assert.equal(resolveSessionPath(newEntry), '/new/session/path');
 });

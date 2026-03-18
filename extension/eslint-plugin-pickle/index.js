@@ -36,6 +36,17 @@ function refersToStateJson(node) {
   if (node.type === 'Identifier') {
     return /state/i.test(node.name) && /path|file/i.test(node.name);
   }
+  // path.join(..., 'state.json') — any argument containing 'state.json'
+  if (
+    node.type === 'CallExpression' &&
+    node.callee.type === 'MemberExpression' &&
+    node.callee.object.type === 'Identifier' &&
+    node.callee.object.name === 'path' &&
+    node.callee.property.type === 'Identifier' &&
+    node.callee.property.name === 'join'
+  ) {
+    return node.arguments.some((arg) => refersToStateJson(arg));
+  }
   return false;
 }
 
@@ -135,6 +146,15 @@ function isWriteStateFileCall(callee) {
   return callee.type === 'Identifier' && callee.name === 'writeStateFile';
 }
 
+/** Check if a node is sm.forceWrite() or *.forceWrite() */
+function isForceWriteCall(callee) {
+  return (
+    callee.type === 'MemberExpression' &&
+    callee.property.type === 'Identifier' &&
+    callee.property.name === 'forceWrite'
+  );
+}
+
 const noRawStateWrite = {
   meta: {
     type: 'problem',
@@ -146,6 +166,8 @@ const noRawStateWrite = {
         'Use writeStateFile() instead of fs.writeFileSync for state.json. Raw writes risk corruption on crash.',
       useStateManager:
         'Use StateManager.update() or StateManager.forceWrite() instead of writeStateFile() for state.json. Direct writes bypass lock protection.',
+      forceWriteNeedsComment:
+        'StateManager.forceWrite() bypasses lock protection. Add eslint-disable comment explaining why lock cannot be acquired (e.g. signal handler crash path).',
     },
     schema: [],
   },
@@ -170,6 +192,14 @@ const noRawStateWrite = {
           const firstArg = node.arguments[0];
           if (refersToStateJson(firstArg)) {
             context.report({ node, messageId: 'useStateManager' });
+          }
+          return;
+        }
+        // Flag sm.forceWrite() on state.json — requires eslint-disable with justification
+        if (isForceWriteCall(node.callee)) {
+          const firstArg = node.arguments[0];
+          if (refersToStateJson(firstArg)) {
+            context.report({ node, messageId: 'forceWriteNeedsComment' });
           }
         }
       },

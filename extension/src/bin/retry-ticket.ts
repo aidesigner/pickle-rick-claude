@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { getExtensionRoot, extractFrontmatter, updateState, safeErrorMessage } from '../services/pickle-utils.js';
+import { getExtensionRoot, extractFrontmatter, updateState, safeErrorMessage, resolveSessionPath } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { State, Defaults } from '../types/index.js';
 
@@ -18,13 +18,13 @@ export function retryTicket(ticketId: string, cwd: string): void {
     throw new Error('No active Pickle Rick session found.');
   }
 
-  let map: Record<string, string>;
+  let map: Record<string, unknown>;
   try {
     map = JSON.parse(fs.readFileSync(sessionsMap, 'utf-8'));
   } catch {
     throw new Error('current_sessions.json is corrupt or unreadable.');
   }
-  const sessionPath = map[cwd];
+  const sessionPath = resolveSessionPath(map[cwd]);
   if (!sessionPath || !fs.existsSync(sessionPath)) {
     throw new Error('No active session found for this directory.');
   }

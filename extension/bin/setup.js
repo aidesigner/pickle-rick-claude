@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
-import { printMinimalPanel, Style, getExtensionRoot, withSessionMapLock, pruneOldSessions, writeStateFile, safeErrorMessage } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, getExtensionRoot, withSessionMapLock, pruneOldSessions, safeErrorMessage, resolveSessionPath } from '../services/pickle-utils.js';
 import { Defaults, LockError } from '../types/index.js';
 import { StateManager } from '../services/state-manager.js';
 import { logActivity, pruneActivity } from '../services/activity-logger.js';
@@ -29,7 +29,7 @@ async function main() {
                     /* ignore */
                 }
             }
-            map[cwd] = sessionPath;
+            map[cwd] = { sessionPath, pid: process.pid };
             const tmpMap = SESSIONS_MAP + `.tmp.${process.pid}.${Date.now()}`;
             try {
                 fs.writeFileSync(tmpMap, JSON.stringify(map, null, 2));
@@ -177,7 +177,7 @@ async function main() {
             try {
                 // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
                 const map = JSON.parse(fs.readFileSync(SESSIONS_MAP, 'utf-8'));
-                fullSessionPath = map[process.cwd()] || '';
+                fullSessionPath = resolveSessionPath(map[process.cwd()]);
             }
             catch {
                 /* corrupt map — no session path */
@@ -277,7 +277,8 @@ async function main() {
             command_template: commandTemplate,
             chain_meeseeks: chainMeeseeks,
         };
-        writeStateFile(path.join(fullSessionPath, 'state.json'), state);
+        // eslint-disable-next-line pickle/no-raw-state-write -- initial creation: no existing state to lock against
+        sm.forceWrite(path.join(fullSessionPath, 'state.json'), state);
         try {
             pruneActivity();
         }

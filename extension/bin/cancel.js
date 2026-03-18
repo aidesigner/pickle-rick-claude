@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { printMinimalPanel, getExtensionRoot, withSessionMapLock } from '../services/pickle-utils.js';
+import { printMinimalPanel, getExtensionRoot, withSessionMapLock, resolveSessionPath } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { LockError } from '../types/index.js';
 const sm = new StateManager();
@@ -19,7 +19,7 @@ export function cancelSession(cwd) {
         console.log('Sessions map is unreadable.');
         return;
     }
-    const sessionPath = map[cwd];
+    const sessionPath = resolveSessionPath(map[cwd]);
     if (!sessionPath || !fs.existsSync(sessionPath)) {
         console.log('No active session found for this directory.');
         return;

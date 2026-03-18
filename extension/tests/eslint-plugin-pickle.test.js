@@ -19,10 +19,14 @@ describe('pickle/no-raw-state-write', () => {
         { code: `writeStateFile(metaPath, meta);` },
         // StateManager.update is the correct approach
         { code: `sm.update(statePath, s => { s.active = false; });` },
-        // StateManager.forceWrite is allowed
-        { code: `sm.forceWrite(statePath, state);` },
+        // StateManager.forceWrite on non-state file is allowed
+        { code: `sm.forceWrite(metaPath, state);` },
+        // StateManager.update on state is the correct approach
+        { code: `sm.update(path.join(sessionDir, 'state.json'), s => { s.active = false; });` },
         // fs.readFileSync on state is fine
         { code: `import * as fs from 'fs'; fs.readFileSync(statePath, 'utf-8');` },
+        // writeStateFile on path.join with non-state file is fine
+        { code: `writeStateFile(path.join(sessionDir, 'meta.json'), meta);` },
       ],
       invalid: [
         // Literal state.json path via fs.writeFileSync
@@ -54,6 +58,26 @@ describe('pickle/no-raw-state-write', () => {
         {
           code: `writeStateFile(stateFile, state);`,
           errors: [{ messageId: 'useStateManager' }],
+        },
+        // path.join with 'state.json' via writeStateFile — should use StateManager
+        {
+          code: `writeStateFile(path.join(sessionDir, 'state.json'), state);`,
+          errors: [{ messageId: 'useStateManager' }],
+        },
+        // path.join with 'state.json' via fs.writeFileSync — should use writeStateFile
+        {
+          code: `import * as fs from 'fs'; fs.writeFileSync(path.join(dir, 'state.json'), '{}');`,
+          errors: [{ messageId: 'useWriteStateFile' }],
+        },
+        // sm.forceWrite on statePath — needs eslint-disable justification
+        {
+          code: `sm.forceWrite(statePath, state);`,
+          errors: [{ messageId: 'forceWriteNeedsComment' }],
+        },
+        // sm.forceWrite on path.join state.json — needs eslint-disable justification
+        {
+          code: `sm.forceWrite(path.join(dir, 'state.json'), state);`,
+          errors: [{ messageId: 'forceWriteNeedsComment' }],
         },
       ],
     });

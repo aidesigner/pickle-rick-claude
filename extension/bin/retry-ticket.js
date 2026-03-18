@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { getExtensionRoot, extractFrontmatter, updateState, safeErrorMessage } from '../services/pickle-utils.js';
+import { getExtensionRoot, extractFrontmatter, updateState, safeErrorMessage, resolveSessionPath } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { Defaults } from '../types/index.js';
 const sm = new StateManager();
@@ -21,7 +21,7 @@ export function retryTicket(ticketId, cwd) {
     catch {
         throw new Error('current_sessions.json is corrupt or unreadable.');
     }
-    const sessionPath = map[cwd];
+    const sessionPath = resolveSessionPath(map[cwd]);
     if (!sessionPath || !fs.existsSync(sessionPath)) {
         throw new Error('No active session found for this directory.');
     }

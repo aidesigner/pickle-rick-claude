@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { printMinimalPanel, getExtensionRoot, withSessionMapLock } from '../services/pickle-utils.js';
+import { printMinimalPanel, getExtensionRoot, withSessionMapLock, resolveSessionPath } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { LockError } from '../types/index.js';
 
@@ -15,14 +15,14 @@ export function cancelSession(cwd: string) {
     return;
   }
 
-  let map: Record<string, string>;
+  let map: Record<string, unknown>;
   try {
     map = JSON.parse(fs.readFileSync(SESSIONS_MAP, 'utf-8'));
   } catch {
     console.log('Sessions map is unreadable.');
     return;
   }
-  const sessionPath = map[cwd];
+  const sessionPath = resolveSessionPath(map[cwd]);
 
   if (!sessionPath || !fs.existsSync(sessionPath)) {
     console.log('No active session found for this directory.');
@@ -50,7 +50,7 @@ export function cancelSession(cwd: string) {
       cancelled = true;
 
       // Remove stale entry from the sessions map
-      let freshMap: Record<string, string> = {};
+      let freshMap: Record<string, unknown> = {};
       try {
         freshMap = JSON.parse(fs.readFileSync(SESSIONS_MAP, 'utf-8'));
       } catch { /* ignore */ }

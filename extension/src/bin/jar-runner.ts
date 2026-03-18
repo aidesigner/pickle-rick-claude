@@ -190,6 +190,7 @@ async function main() {
   const handleShutdownSignal = (signal: string) => {
     console.error(`\n${Style.YELLOW}⚠️  Received ${signal} — deactivating current task session${Style.RESET}`);
     if (activeTaskSessionDir) {
+      // eslint-disable-next-line pickle/no-raw-state-write -- crash-path bypass: signal handler cannot await lock
       sm.forceWrite(path.join(activeTaskSessionDir, 'state.json'), (() => {
         try { const s = JSON.parse(fs.readFileSync(path.join(activeTaskSessionDir!, 'state.json'), 'utf-8')); s.active = false; return s; } catch { return { active: false }; }
       })());

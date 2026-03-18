@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { StringDecoder } from 'string_decoder';
-import { State, VALID_STEPS, LockError } from '../types/index.js';
+import { State, VALID_STEPS, LockError, SessionMapEntry } from '../types/index.js';
 import { StateManager } from './state-manager.js';
 
 /** Extracts a string message from any thrown value. Never throws. */
@@ -437,6 +437,19 @@ export function withRetryLock<T>(lockPath: string, fn: () => T, opts: RetryLockO
  */
 export function withSessionMapLock<T>(lockPath: string, fn: () => T): T {
   return withRetryLock(lockPath, fn);
+}
+
+/**
+ * Extracts the session path from a session map entry.
+ * Handles both the legacy string format and the current object format ({ sessionPath, pid })
+ * for backward compatibility with existing current_sessions.json files.
+ */
+export function resolveSessionPath(entry: string | SessionMapEntry | unknown): string {
+  if (typeof entry === 'string') return entry;
+  if (entry !== null && typeof entry === 'object' && typeof (entry as SessionMapEntry).sessionPath === 'string') {
+    return (entry as SessionMapEntry).sessionPath;
+  }
+  return '';
 }
 
 /** Matrix palette shared across all monitor panes. */

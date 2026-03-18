@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { getExtensionRoot } from '../services/pickle-utils.js';
+import { getExtensionRoot, resolveSessionPath } from '../services/pickle-utils.js';
 export function getSessionPath(cwd) {
     const SESSIONS_MAP = path.join(getExtensionRoot(), 'current_sessions.json');
     if (!fs.existsSync(SESSIONS_MAP)) {
@@ -14,7 +14,7 @@ export function getSessionPath(cwd) {
     catch {
         return null;
     }
-    const sessionPath = map[cwd];
+    const sessionPath = resolveSessionPath(map[cwd]);
     if (!sessionPath || !fs.existsSync(sessionPath)) {
         return null;
     }

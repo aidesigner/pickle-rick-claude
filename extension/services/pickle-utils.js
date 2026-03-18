@@ -395,6 +395,19 @@ export function withRetryLock(lockPath, fn, opts = {}) {
 export function withSessionMapLock(lockPath, fn) {
     return withRetryLock(lockPath, fn);
 }
+/**
+ * Extracts the session path from a session map entry.
+ * Handles both the legacy string format and the current object format ({ sessionPath, pid })
+ * for backward compatibility with existing current_sessions.json files.
+ */
+export function resolveSessionPath(entry) {
+    if (typeof entry === 'string')
+        return entry;
+    if (entry !== null && typeof entry === 'object' && typeof entry.sessionPath === 'string') {
+        return entry.sessionPath;
+    }
+    return '';
+}
 /** Matrix palette shared across all monitor panes. */
 export const MatrixStyle = {
     BRIGHT: '\x1b[1;32m', // bold green

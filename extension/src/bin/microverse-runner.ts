@@ -270,6 +270,7 @@ export async function main(sessionDir: string): Promise<void> {
   const handleShutdownSignal = (signal: string) => {
     log(`Received ${signal} — deactivating session`);
     killCurrentChild();
+    // eslint-disable-next-line pickle/no-raw-state-write -- crash-path bypass: signal handler cannot await lock
     sm.forceWrite(statePath, (() => {
       try { const s = JSON.parse(fs.readFileSync(statePath, 'utf-8')); s.active = false; return s; } catch { return { active: false }; }
     })());
@@ -315,6 +316,7 @@ export async function main(sessionDir: string): Promise<void> {
       currentMv.exit_reason = 'error';
       writeMicroverseState(sessionDir, currentMv);
       exitReason = 'error';
+      // eslint-disable-next-line pickle/no-raw-state-write -- fallback after lock acquisition failure
       try { sm.update(statePath, s => { s.active = false; }); } catch { sm.forceWrite(statePath, { active: false }); }
       writeFinalReport(sessionDir, currentMv, exitReason, iteration, Math.floor((Date.now() - startTime) / 1000));
       process.exit(1);
@@ -620,6 +622,7 @@ export async function main(sessionDir: string): Promise<void> {
   currentMv.exit_reason = exitReason;
   writeMicroverseState(sessionDir, currentMv);
 
+  // eslint-disable-next-line pickle/no-raw-state-write -- fallback after lock acquisition failure
   try { sm.update(statePath, s => { s.active = false; }); } catch { sm.forceWrite(statePath, { active: false }); }
 
   writeFinalReport(sessionDir, currentMv, exitReason, iteration, totalElapsed);
@@ -656,6 +659,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'microverse-runner.js'
   main(sessionDir).catch((err) => {
     const msg = safeErrorMessage(err);
     console.error(`${Style.RED}[FATAL] ${msg}${Style.RESET}`);
+    // eslint-disable-next-line pickle/no-raw-state-write -- crash-path bypass: fatal error handler cannot await lock
     sm.forceWrite(path.join(sessionDir, 'state.json'), (() => {
       try { const s = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8')); s.active = false; return s; } catch { return { active: false }; }
     })());

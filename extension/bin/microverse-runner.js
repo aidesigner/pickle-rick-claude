@@ -199,6 +199,7 @@ export async function main(sessionDir) {
     const handleShutdownSignal = (signal) => {
         log(`Received ${signal} — deactivating session`);
         killCurrentChild();
+        // eslint-disable-next-line pickle/no-raw-state-write -- crash-path bypass: signal handler cannot await lock
         sm.forceWrite(statePath, (() => {
             try {
                 const s = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
@@ -244,6 +245,7 @@ export async function main(sessionDir) {
             currentMv.exit_reason = 'error';
             writeMicroverseState(sessionDir, currentMv);
             exitReason = 'error';
+            // eslint-disable-next-line pickle/no-raw-state-write -- fallback after lock acquisition failure
             try {
                 sm.update(statePath, s => { s.active = false; });
             }
@@ -527,6 +529,7 @@ export async function main(sessionDir) {
     currentMv.status = exitReason === 'converged' ? 'converged' : 'stopped';
     currentMv.exit_reason = exitReason;
     writeMicroverseState(sessionDir, currentMv);
+    // eslint-disable-next-line pickle/no-raw-state-write -- fallback after lock acquisition failure
     try {
         sm.update(statePath, s => { s.active = false; });
     }
@@ -561,6 +564,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'microverse-runner.js'
     main(sessionDir).catch((err) => {
         const msg = safeErrorMessage(err);
         console.error(`${Style.RED}[FATAL] ${msg}${Style.RESET}`);
+        // eslint-disable-next-line pickle/no-raw-state-write -- crash-path bypass: fatal error handler cannot await lock
         sm.forceWrite(path.join(sessionDir, 'state.json'), (() => {
             try {
                 const s = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));

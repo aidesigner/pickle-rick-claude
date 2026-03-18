@@ -16,6 +16,7 @@ function safeDeactivate(statePath: string): void {
   try {
     sm.update(statePath, s => { s.active = false; });
   } catch {
+    // eslint-disable-next-line pickle/no-raw-state-write -- fallback after lock acquisition failure
     sm.forceWrite(statePath, { active: false });
   }
 }
@@ -591,6 +592,7 @@ async function main() {
   // remain orphaned with active: true when the tmux pane is closed.
   const handleShutdownSignal = (signal: string) => {
     log(`Received ${signal} — deactivating session`);
+    // eslint-disable-next-line pickle/no-raw-state-write -- crash-path bypass: signal handler cannot await lock
     sm.forceWrite(statePath, (() => {
       try { const s = JSON.parse(fs.readFileSync(statePath, 'utf-8')); s.active = false; return s; } catch { return { active: false }; }
     })());

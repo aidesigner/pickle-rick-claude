@@ -187,6 +187,16 @@ export interface ActivityEvent {
 // Auto-Update Types
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Session Map Types
+// ---------------------------------------------------------------------------
+
+/** A session map entry in current_sessions.json. Stores the session path and PID of the process that created it. */
+export interface SessionMapEntry {
+  sessionPath: string;
+  pid: number;
+}
+
 export interface UpdateCheckCache {
   last_check_epoch: number;
   latest_version: string;
