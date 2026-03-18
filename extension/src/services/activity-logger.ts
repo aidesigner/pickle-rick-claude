@@ -13,9 +13,11 @@ const pendingBuffer: string[] = [];
 // Configurable retry delay — override in tests via _setRetryDelayMs(0)
 let retryDelayMs = 500;
 
+// Shared buffer for Atomics.wait()-based synchronous sleep (no CPU spin).
+const _sleepBuf = new Int32Array(new SharedArrayBuffer(4));
+
 function sleepSync(ms: number): void {
-  const end = Date.now() + ms;
-  while (Date.now() < end) { /* spin */ }
+  Atomics.wait(_sleepBuf, 0, 0, ms);
 }
 
 /** Exported for tests only. */

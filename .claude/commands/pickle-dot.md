@@ -110,7 +110,7 @@ start → setup_deps → [bdd_scenarios →] [spec_tests →] impl → lint → 
 - `setup_deps` before first impl (Pattern 0)
 - All `component` nodes: `max_parallel=1` (Pattern 0b)
 - `max_visits` on looping nodes (Pattern 6)
-- `bdd_scenarios` before `spec_tests` for phases with 3+ requirements (Pattern 16b)
+- `bdd_scenarios` before `spec_tests` for phases with 3+ requirements (Pattern 16b, recommended)
 - `spec_tests` before impl on `goal_gate=true` paths (Pattern 16, default — skip only if explicitly simplified)
 - `allowed_paths` on all codergen (box) impl nodes (Layer 4)
 - `escalate_on` on all codergen impl nodes — always include lock files, schema, config, auth

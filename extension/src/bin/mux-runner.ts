@@ -11,13 +11,15 @@ import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractEr
 
 const sm = new StateManager();
 
-/** Deactivate with retry-then-deactivate: try sm.update, fall back to forceWrite. */
+/** Deactivate with retry-then-deactivate: try sm.update, fall back to read-then-forceWrite. */
 function safeDeactivate(statePath: string): void {
   try {
     sm.update(statePath, s => { s.active = false; });
   } catch {
-    // eslint-disable-next-line pickle/no-raw-state-write -- fallback after lock acquisition failure
-    sm.forceWrite(statePath, { active: false });
+    // eslint-disable-next-line pickle/no-raw-state-write -- crash-path bypass: lock unavailable, preserve full state
+    sm.forceWrite(statePath, (() => {
+      try { const s = JSON.parse(fs.readFileSync(statePath, 'utf-8')); s.active = false; return s; } catch { return { active: false }; }
+    })());
   }
 }
 

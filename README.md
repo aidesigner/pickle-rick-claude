@@ -444,6 +444,7 @@ Sit back. Rick handles the rest. 🥒
 | `/help-pickle` | ❓ Show all commands and flags |
 | `/add-to-pickle-jar` | 🫙 Save current session to the Jar for later |
 | `/pickle-jar-open` | 🌙 Run all Jar tasks sequentially (Night Shift) |
+| `/pickle-prd` | 📝 Draft a PRD with verification strategy + interface contracts (standalone, no execution) |
 | `/pickle-status` | 📊 Show current session phase, iteration, and ticket status |
 | `/pickle-retry <ticket-id>` | 🔄 Reset a failed ticket to Todo and re-spawn a Morty for it |
 | `/disable-pickle` | 🔇 Disable the stop hook globally (without uninstalling) |
@@ -470,6 +471,10 @@ Sit back. Rick handles the rest. 🥒
 --gitnexus                 (/council-of-ricks only) Enable GitNexus graph queries for layer violations and impact analysis
 --repo <PATH>              (/council-of-ricks only) Target repo path (default: cwd)
 --interactive              (/pickle-microverse) Run inline instead of tmux (default is tmux mode)
+--provider <name>          (/pickle-dot) LLM provider: anthropic (default), openai, qwen, gemini, deepseek, ollama, vllm
+--review-provider <name>   (/pickle-dot) Separate provider for review/critical nodes (e.g., --provider qwen --review-provider anthropic)
+--isolated                 (/pickle-dot) Use isolated workspace mode (clone repo into /workspace/<run-id>/)
+--shared                   (/pickle-dot) Use shared workspace mode (default — edit /repos/ directly)
 --metric "<CMD>"           (/pickle-microverse) Shell command whose last stdout line is a numeric score (XOR with --goal)
 --goal "<TEXT>"             (/pickle-microverse) Natural language goal for LLM judge scoring (XOR with --metric)
 --direction <higher|lower> (/pickle-microverse) Optimization direction (default: higher)

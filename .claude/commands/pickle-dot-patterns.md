@@ -230,15 +230,7 @@ model_stylesheet = "* { llm_model: qwen-plus; llm_provider: qwen; } .critical { 
 ```
 When `--review-provider` differs from `--provider`, `.review`/`.critical` MUST include `llm_provider` to override `*`. Per-node `llm_model`/`llm_provider` attributes override stylesheet for edge cases.
 
-| Provider | Default | Review |
-|----------|---------|--------|
-| `anthropic` | `claude-sonnet-4-6` | `claude-opus-4-6` |
-| `openai` | `gpt-4.1` | `o3` |
-| `qwen` | `qwen-plus` | `qwen-max` |
-| `gemini` | `gemini-2.5-flash` | `gemini-2.5-pro` |
-| `deepseek` | `deepseek-chat` | `deepseek-reasoner` |
-| `ollama` | `qwen3:32b` | `qwen3:32b` |
-| `vllm` | *(ask user)* | *(ask user)* |
+Provider default table: see **pickle-dot.md Step 1** (single source of truth — do not duplicate here).
 
 ## Conditions Reference
 
