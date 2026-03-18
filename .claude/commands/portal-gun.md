@@ -58,9 +58,9 @@ Save all fetched source to `${SESSION_ROOT}/portal/donor/` preserving relative p
 - PyPI: `pip show <pkg>` for home-page → treat as GitHub URL
 
 ### Plain-Text Description
-- No source to fetch. Agent must synthesize the pattern from its training knowledge
-- Write a `${SESSION_ROOT}/portal/pattern_description.md` capturing the user's intent
-- Skip to Step 4 (no donor code to analyze)
+- No source to fetch. Agent must synthesize from training knowledge.
+- Write `${SESSION_ROOT}/portal/pattern_description.md` capturing the user's intent.
+- Still produce `migration_inventory.md` in Step 3b — synthesize the expected routes, models, services, and config from the pattern description. Mark all items as `[SYNTHESIZED]` (no donor file references). This is required so Step 5 can generate the PRD from the inventory.
 
 Announce what was acquired: **total file count**, languages detected, directory structure summary.
 
@@ -84,7 +84,7 @@ Before analyzing, check if a matching pattern already exists:
 3. On **HIT**: Read the cached pattern file (`~/.claude/pickle-rick/patterns/${name}.md`). If the file is missing or unreadable, warn: "Pattern `${name}` listed in index but file missing — proceeding with full analysis." and treat as no match. Otherwise print: "Found cached pattern: `${name}`. Using as baseline — will verify against current donor and update if stale."
    - Use the cached analysis as a starting template — verify each section against the actual donor files (they may have changed since extraction)
    - Skip sections that match, update sections that diverged
-   - If donor files are identical: skip to Step 4 with cached analysis (copy to `${SESSION_ROOT}/portal/pattern_analysis.md`)
+   - If donor files are identical: skip to Step 4 with cached analysis (copy to `${SESSION_ROOT}/portal/migration_inventory.md`). Note: cached patterns in old format (pre-migration-inventory) should be treated as partial — perform full fresh analysis.
 4. On **PARTIAL**: Print: "Found related pattern: `${name}` from `${source}`. Cross-referencing during analysis."
    - Read the cached pattern and use it as context (related patterns, shared conventions) but perform full fresh analysis
 5. On no library or no match: proceed with full analysis below
@@ -240,9 +240,11 @@ Portal Inventory: [N] items to port
 Confirm scope? (y = proceed, or list items to EXCLUDE)
 ```
 
+**STOP and wait for user response.** Do not proceed to Step 4 until the user confirms or provides exclusions.
+
 If user excludes items, mark them in `migration_inventory.md` with `[EXCLUDED]` and remove from the Migration Complexity totals. The PRD will only cover non-excluded items.
 
-If user confirms, proceed to Step 4.
+If user confirms (or says "y", "yes", "looks good", etc.), proceed to Step 4.
 
 ## Step 4: Survey This Side (Target Analysis)
 
@@ -484,7 +486,7 @@ The 3 parallel analysts per cycle:
 - **Codebase Context** → `analysis_codebase.md` — checks integration points, convention alignment, conflict detection
 - **Risk & Scope** → `analysis_risk-scope.md` — evaluates transplant risks, semantic drift potential, test coverage gaps
 
-Cycle 2+ cross-references all prior analyses + portal artifacts (`pattern_analysis.md`, `target_analysis.md`).
+Cycle 2+ cross-references all prior analyses + portal artifacts (`migration_inventory.md`, `target_analysis.md`).
 
 ### 6c: Cleanup Monitor
 ```bash
@@ -590,11 +592,11 @@ Derive `PATTERN_NAME`: use `SAVE_PATTERN` value if set, otherwise infer from exe
    - If not exists: prompt user: "Save this pattern to the library for future portal-gun sessions? (name suggestion: `${PATTERN_NAME}`)"
      - User accepts → save with suggested or user-provided name
      - User declines → skip, no further action
-3. `--save-pattern` not set AND `--no-refine` set → skip with hint: "Pattern available at `${SESSION_ROOT}/portal/pattern_analysis.md` — use `--save-pattern <name>` to persist."
+3. `--save-pattern` not set AND `--no-refine` set → skip with hint: "Pattern available at `${SESSION_ROOT}/portal/migration_inventory.md` — use `--save-pattern <name>` to persist."
 
 **When saving:**
 1. Create `~/.claude/pickle-rick/patterns/` if it doesn't exist. If creation fails, warn and skip (non-fatal).
-2. Copy `${SESSION_ROOT}/portal/pattern_analysis.md` → `~/.claude/pickle-rick/patterns/${PATTERN_NAME}.md`
+2. Copy `${SESSION_ROOT}/portal/migration_inventory.md` → `~/.claude/pickle-rick/patterns/${PATTERN_NAME}.md`
 3. Create or append to `~/.claude/pickle-rick/patterns/index.md`:
 
 If `index.md` doesn't exist, create with header:
@@ -615,7 +617,7 @@ If `index.md` exists but doesn't contain the expected table header, warn "Patter
 
 ### 7b: Project-Local Copy
 Runs only if `PATTERN_NAME` was set (i.e., pattern was saved in 7a or `--save-pattern` was provided).
-Copy `${SESSION_ROOT}/portal/pattern_analysis.md` → `${TARGET_DIR}/.patterns/${PATTERN_NAME}.md` if `.patterns/` dir exists. If not, skip silently.
+Copy `${SESSION_ROOT}/portal/migration_inventory.md` → `${TARGET_DIR}/.patterns/${PATTERN_NAME}.md` if `.patterns/` dir exists. If not, skip silently.
 
 ## Step 8: Advance State & Handoff
 
@@ -708,9 +710,10 @@ If coverage < 100% AND this is pass 4+ → print coverage report, list remaining
 
 For MISSING and PARTIAL items from the coverage report:
 
-1. Write `${SESSION_ROOT}/prd_delta_pass_[N].md` containing ONLY the unported items:
-   - MISSING items get full migration plan rows (same format as original PRD)
-   - PARTIAL items get specific "fix" requirements (e.g., "Add missing fields role, createdAt to User model")
+1. Write `${SESSION_ROOT}/prd_delta_pass_[N].md` using the SAME full PRD template structure (Introduction, Objective, Migration Plan tables, Acceptance Criteria) but scoped to remaining items only:
+   - MISSING items get full migration plan rows
+   - PARTIAL items get specific "complete" requirements (e.g., "Add missing fields role, createdAt to User model")
+   - Include updated Coverage Tracking with pass history
 2. Copy delta PRD to `${SESSION_ROOT}/prd.md` (preserve original as `prd_pass_[N-1].md`)
 3. Reset state to `breakdown`:
 ```bash
