@@ -12,6 +12,10 @@ Summarize the available commands for the user:
 - `/meeseeks`: Launch iterative code review loop (Mr. Meeseeks)
 - `/meeseeks-zellij`: Launch Mr. Meeseeks code review in Zellij. Same as /meeseeks but for Zellij users. Requires Zellij >= 0.40.0
 - `/council-of-ricks`: Iterative Graphite stack reviewer (Council of Ricks). Reviews every branch, generates agent-executable directives. Requires `gt`, `tmux`, `CLAUDE.md`, lint with architectural rules. Flags: `--gitnexus`, `--min-iterations`, `--max-iterations`, `--repo`
+- `/pickle-microverse`: Microverse convergence loop — optimize a numeric metric through targeted changes. Requires `tmux` (or `--interactive`)
+- `/attract [file.dot]`: Submit a `.dot` pipeline to the attractor server for execution
+- `/portal-gun <source>`: Gene transfusion — extract patterns from another codebase, generate transplant PRD
+- `/project-mayhem`: Chaos engineering — mutation testing, dependency downgrades, config corruption
 - `/eat-pickle`: Stop/cancel current loop
 - `/help-pickle`: This message
 - `/disable-pickle`: Disable stop hook globally

@@ -9,8 +9,9 @@ Run `tmux -V`. If missing: "Install tmux: `brew install tmux` or `apt install tm
 Extract flags from `$ARGUMENTS` (`--resume <path>`, `--max-iterations <N>`, etc.). Pass flags before `--task`. Task text goes in `--task "..."`.
 
 ```bash
-node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux [--flags] --task "$ARGUMENTS"
+node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux <FLAGS> --task "<TASK_TEXT>"
 ```
+No flags: `setup.js --tmux --task "$ARGUMENTS"`.
 Resume example: `setup.js --tmux --resume /sessions/057f0263` (no --task needed).
 Flags+task example: `setup.js --tmux --max-iterations 10 --task "refactor auth"`
 

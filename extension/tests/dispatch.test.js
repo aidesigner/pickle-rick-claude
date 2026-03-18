@@ -73,14 +73,12 @@ function runDispatch(opts) {
 // Tests
 // ---------------------------------------------------------------------------
 
-test('dispatch: missing hook name exits with code 1 and prints Usage', () => {
+test('dispatch: missing hook name approves and exits cleanly (fail-open)', () => {
   const tmpRoot = makeTmpRoot();
   try {
-    const { stdout, stderr, status } = runDispatch({ extRoot: tmpRoot, args: [] });
-    assert.equal(status, 1, 'should exit with code 1');
-    assert.ok(stderr.includes('Usage'), `stderr should contain "Usage", got: ${stderr}`);
-    // Should not output any approve/block JSON
-    assert.ok(!stdout.includes('"decision"'), 'should not output a decision on missing args');
+    const { stdout, status } = runDispatch({ extRoot: tmpRoot, args: [] });
+    assert.equal(status, 0, 'should exit with code 0 (fail-open)');
+    assert.ok(stdout.includes('"approve"'), 'should approve on missing args (never deadlock Claude Code)');
   } finally {
     fs.rmSync(tmpRoot, { recursive: true, force: true });
   }

@@ -44,10 +44,19 @@ function findExecutable(name) {
     return null;
 }
 async function main() {
+    // Watchdog: if the hook hangs for any reason, approve and exit.
+    // This prevents Claude Code from deadlocking on a stuck handler.
+    const WATCHDOG_MS = Number(process.env.PICKLE_DISPATCH_TIMEOUT_MS) || 10_000;
+    const watchdog = setTimeout(() => {
+        log('Watchdog timeout — approving and exiting');
+        approve();
+        process.exit(0);
+    }, WATCHDOG_MS);
+    watchdog.unref();
     const args = process.argv.slice(2);
     if (args.length < 1) {
-        console.error('Usage: dispatch_hook <hook_name> [args...]');
-        process.exit(1);
+        approve();
+        process.exit(0);
     }
     const [hookName, ...extraArgs] = args;
     if (hookName.includes('/') || hookName.includes('\\') || hookName.includes('..')) {
