@@ -13,6 +13,8 @@ Attractor = **convergence basin**, not task list. Failures route back toward the
 - `--review-provider <name>` — separate provider for review/critical nodes (`.review`, `.critical` classes). Enables mixed-provider workflows (e.g., `--provider qwen --review-provider anthropic` = Qwen for impl, Opus for adversarial review)
 - `--models default=<id>,review=<id>` — model IDs for two semantic tiers
 - `--model <id>` — shorthand: one model for both tiers
+- `--isolated` — skip workspace prompt, use isolated workspace mode
+- `--shared` — skip workspace prompt, use shared mode (default)
 
 **Provider defaults** (when `--models` not given):
 
@@ -29,6 +31,24 @@ Attractor = **convergence basin**, not task list. Failures route back toward the
 **PRD source**: path (has `/` or `.md`) → read file. Text → use directly. Empty → ask user.
 
 **Working directory**: attractor runs in Docker, project mounted at `/repos/`. Use `git rev-parse --show-toplevel` to determine mount path. If not a git repo or ambiguous, **ask the user**: "What path will this repo be mounted at inside `/repos/`?" All `tool_command` paths use `cd ${WORKING_DIR} &&`. **Never** use absolute local paths.
+
+**Workspace isolation**: After resolving the working directory, determine workspace mode:
+- If `--isolated` flag → use isolated mode (skip prompt)
+- If `--shared` flag → use shared mode (skip prompt)
+- Otherwise → ask the user:
+
+> **Workspace mode:** Run against your local repo (**shared**) or clone a fresh copy (**isolated**)?
+> - **shared** (default) — pipeline edits `/repos/...` directly. You'll need to `git checkout . && git clean -fd` between retries.
+> - **isolated** — pipeline clones the repo into `/workspace/<run-id>/`. Your local files are untouched. Pushes a branch on success.
+
+**If isolated**: emit these graph-level attributes in Step 4:
+1. `workspace = "isolated"`
+2. `repo_url` — derive from `git remote get-url origin` in the target repo. Must be HTTPS. Convert SSH if needed: `git@github.com:org/repo.git` → `https://github.com/org/repo.git`
+3. `repo_branch` — current branch name (e.g., `"main"`)
+4. `workspace_cleanup = "delete"` (default). Mention `"preserve"` option for debugging.
+5. `working_dir` stays the same (`/repos/...`) — the engine rewrites it automatically.
+
+**If shared**: do NOT emit `workspace`, `repo_url`, `repo_branch`, or `workspace_cleanup`. Current behavior unchanged.
 
 ## Step 2: Analyze PRD
 
@@ -99,6 +119,11 @@ digraph ${SLUG} {
     retry_target = "fix_all"
     acceptance_criteria = "${CRITERIA}"
     model_stylesheet = "${MODEL_STYLESHEET}"
+    // If isolated mode:
+    // workspace = "isolated"
+    // repo_url = "https://github.com/org/repo.git"
+    // repo_branch = "main"
+    // workspace_cleanup = "delete"
 
     start [shape=Mdiamond]
     // ... nodes and edges from Step 3 ...
