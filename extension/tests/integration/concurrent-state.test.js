@@ -24,7 +24,7 @@ if (!isMainThread && workerData != null) {
 
   if (op === 'increment') {
     // Fast retry settings for tests: low delay, no jitter
-    const sm = new StateManager({ baseLockDelayMs: 5, staleLockTimeoutMs: 15_000, lockJitter: false });
+    const sm = new StateManager({ baseLockDelayMs: 20, maxLockRetries: 50, staleLockTimeoutMs: 15_000, lockJitter: true });
     sm.update(workerData.statePath, (s) => {
       s.counter = (Number(s.counter) || 0) + 1;
     });

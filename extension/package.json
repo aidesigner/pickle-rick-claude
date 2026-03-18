@@ -1,6 +1,6 @@
 {
   "name": "pickle-rick-scripts",
-  "version": "1.17.5",
+  "version": "1.18.0",
   "private": true,
   "type": "module",
   "engines": { "node": ">=20.0.0" },

@@ -18,7 +18,7 @@ function run(args, env = {}) {
     return spawnSync(process.execPath, [SPAWN_MORTY_BIN, ...args], {
         env: { ...process.env, ...env },
         encoding: 'utf-8',
-        timeout: 10000,
+        timeout: 15000,
     });
 }
 

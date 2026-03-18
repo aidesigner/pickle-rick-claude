@@ -60,16 +60,49 @@ Uses Default tier (no `class`). Graph-level and verify_final `retry_target` MUST
 
 ## Tier 2: Default (emit unless explicitly simplified)
 
-**15. Conformance Check** — LLM gate verifying requirements met. Opus (`.review` class), `goal_gate=true`:
+**15. Conformance Check** — LLM gate verifying requirements against `$spec_file`. Opus (`.review` class), `goal_gate=true`:
 ```
-conformance [class="review", goal_gate=true, retry_target="impl", prompt="Conformance audit: read the original prompt and git diff. Verify every requirement addressed. Output PASS or FAIL with unmet requirements."]
+conformance [class="review", goal_gate=true, retry_target="impl", prompt="Conformance audit: read the spec file at $spec_file. Compare every requirement against the current git diff. Verify: 1) Every requirement has a corresponding code change. 2) Acceptance criteria are testable and tested. 3) No requirements silently dropped. Output PASS or FAIL with unmet requirements."]
 ```
+`$spec_file` is interpolated by the engine from the graph-level `spec_file` attribute (like `$goal`).
 
 **16. Spec-First TDD** — write failing tests FROM spec BEFORE impl. Mandatory for `goal_gate=true` impl nodes:
 ```
 spec_tests [class="review", prompt="Write failing tests for EVERY requirement. Do NOT write production code.", goal_gate=true, retry_target="spec_tests"]
-impl [prompt="Make all failing tests pass. Do NOT modify test files.", goal_gate=true, retry_target="impl"]
+impl [prompt="Make all failing tests pass. Do NOT modify test files.", allowed_paths="src/*, tests/*", goal_gate=true, retry_target="impl"]
 ```
+
+**16b. BDD Scenario Generation** — behavioral contracts before spec_tests. Emit for phases with 3+ requirements. For 1-2 requirements, spec_tests alone is sufficient:
+```
+bdd_scenarios [class="review", prompt="Read the spec file at $spec_file. For each requirement, generate BDD scenarios in Given/When/Then format. Output as executable test descriptions. Do NOT implement — only define the behavioral contracts."]
+spec_tests [class="review", prompt="Read the BDD scenarios from the previous node's output. Write failing test cases that verify each scenario. Run them to confirm they fail. Do NOT write production code.", goal_gate=true, retry_target="spec_tests"]
+impl [prompt="Make all failing tests pass. Do NOT modify test files.", allowed_paths="src/*", goal_gate=true, retry_target="impl"]
+```
+The BDD node reads `$spec_file`, generates Given/When/Then scenarios. spec_tests converts them to executable tests. impl makes them pass.
+
+**22. Permission Scoping (allowed_paths + escalate_on)** — every codergen (box) impl node declares its file scope:
+```
+impl_auth [prompt="Implement JWT middleware",
+    allowed_paths="src/auth/*, src/middleware/*, tests/auth/*",
+    escalate_on="package.json, package-lock.json, .env*, prisma/schema.prisma"]
+```
+Rules:
+- `allowed_paths`: derive from PRD's affected files/directories. Include source + test dirs. Use globs.
+- `escalate_on`: always include `package.json, package-lock.json, *.lock`, schema files (`*.prisma, *.sql, migrations/*`), config (`.env*, *.config.*`), and auth-related files.
+- If PRD lacks affected-files section → emit `// WARNING: PRD lacks affected-files section` and use broad `allowed_paths="src/*, tests/*"`.
+- Tool nodes (parallelogram) don't need allowed_paths — they run shell commands, not agents.
+- Review/simplify/conformance nodes don't need them — they only read, not write.
+
+**23. Defense Matrix** — comment block at top of every DOT file, after graph attributes:
+```
+// Defense Matrix:
+//   Layer 1 (Competitive):  [YES/NO] — fan-out/fan-in for complex phases
+//   Layer 2 (Guardrails):   YES — lint → typecheck → test → audit
+//   Layer 3 (Spec-Driven):  YES — spec_file, BDD contracts, conformance
+//   Layer 4 (Permissions):  YES — allowed_paths on impl nodes
+//   Layer 5 (Adversarial):  YES — multi-model review, red team, scope check
+```
+Layer 1 = YES when Pattern 18 (competing impls) or Pattern 4 (fan-out) is present. Layer 5 = YES when multi-model review routing or red_team is present. Layers 2-4 are always YES.
 
 **19. Review Convergence Ratchet** — N consecutive clean agent team passes required. Default for all pipelines. Replaces Pattern 7.
 
@@ -171,6 +204,10 @@ rollback -> optimize
 - Security scanning bundled with tests
 - Conformance skipped
 - Impl before spec tests on critical paths
+- Codergen node without `allowed_paths` (unbounded file scope)
+- `allowed_paths` without test directories (agent can't write tests alongside impl)
+- Missing `spec_file` graph attribute
+- Missing defense matrix comment block
 - Single review pass as final gate (use ratchet)
 - Ratchet fail routing to same pass (defeats consecutive enforcement)
 - Standard impl→verify for metric optimization (use microverse)
@@ -212,6 +249,14 @@ When `--review-provider` differs from `--provider`, `.review`/`.critical` MUST i
 Mdiamond=start, Msquare=exit, box=codergen, diamond=conditional, component=fan-out, tripleoctagon=fan-in, parallelogram=tool, house=manager_loop. (hexagon=human — NOT IMPLEMENTED)
 
 Permission modes: `plan` (default), `bypassPermissions`, `acceptEdits`, `auto`, `default`, `dontAsk`. NOT `full`.
+
+## Graph Attributes Reference
+
+| Attribute | Scope | Description |
+|-----------|-------|-------------|
+| `spec_file` | graph | Path to PRD inside workspace. Engine interpolates `$spec_file` in prompts. |
+| `allowed_paths` | node (codergen) | Glob patterns for files the agent can write. Comma-separated. |
+| `escalate_on` | node (codergen) | File patterns that trigger escalation review. Comma-separated. |
 
 ## DOT Schema
 
