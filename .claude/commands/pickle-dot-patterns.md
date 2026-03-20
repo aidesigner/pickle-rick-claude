@@ -204,21 +204,47 @@ approach_clean [prompt="CLEAN architecture — best design..."]
 select_best [shape=tripleoctagon, class="critical", eval_criteria="completeness,faithfulness", eval_model="anthropic/claude-sonnet-4-6", eval_threshold=0.7, eval_max_branches=5]
 ```
 
-**20. Microverse Convergence Loop** — for quantitative targets (metric optimization). Replaces standard impl→verify:
+**20. Microverse Convergence Loop** — for quantitative targets (metric optimization). Replaces standard impl→verify when the PRD has a numeric goal and a measurable metric (see pickle-dot.md Step 2 microverse detection).
+
+**Three-way classification**: The `compare` node outputs a STATUS marker parsed by the engine into edge conditions:
+- `STATUS: SUCCESS` → target met (exits loop, continues to lint/typecheck/test/review)
+- `STATUS: PARTIAL_SUCCESS` → improved but target not reached (loops back to optimize)
+- `STATUS: FAIL` → regressed or stalled (rollback, then retry)
+
+`auto_status=true` enables engine-side parsing. `allow_partial=true` enables `outcome=partial_success` on diamond edges. Without these, the engine only recognizes success/fail.
+
+**Target and direction**: Extract from PRD. "reduce bundle to 50kb" → target=50, direction=lower. "achieve 90% coverage" → target=90, direction=higher. Embed both in the compare prompt.
+
+**Measurement command**: Must print a number on its last line. Same command for `baseline` and `measure` nodes. See pickle-dot.md Step 2 for derivation patterns.
+
 ```
 commit_baseline [shape=parallelogram, tool_command="cd ${WORKING_DIR} && git add -u && git -c user.name=attractor -c user.email=attractor@local commit -m 'microverse: baseline' --allow-empty 2>&1"]
 baseline [shape=parallelogram, tool_command="cd ${WORKING_DIR} && <measurement_cmd> 2>&1"]
-optimize [prompt="Make ONE targeted change toward <TARGET>. Smallest diff.", max_visits=8]
+optimize [prompt="Make ONE targeted change toward <TARGET>. Direction: <DIRECTION>. Smallest diff. Do NOT repeat failed approaches.", max_visits=8, allowed_paths="<from PRD>", escalate_on="<standard>"]
 measure [shape=parallelogram, tool_command="cd ${WORKING_DIR} && <measurement_cmd> 2>&1"]
-compare [class="review", prompt="Compare measurement vs target. MUST output STATUS: marker on its own line — the engine's parseStatusMarker ONLY recognizes: STATUS: SUCCESS (target met), STATUS: PARTIAL_SUCCESS (improved but not at target), STATUS: FAIL (regressed/stalled). Bare words like PASS/FAIL are ignored.", max_visits=10, auto_status=true, allow_partial=true]
-check [shape=diamond]
+compare [class="review", prompt="Compare measurement against target. Target: <TARGET>. Direction: <DIRECTION> (<DIRECTION> is better). If target met → STATUS: SUCCESS. If improved toward target but not met → STATUS: PARTIAL_SUCCESS. If regressed or unchanged → STATUS: FAIL. Show before/after values.", max_visits=10, auto_status=true, allow_partial=true]
+check_mv [shape=diamond]
 rollback [shape=parallelogram, tool_command="cd ${WORKING_DIR} && git checkout . 2>&1"]
 
-check -> next [condition="outcome=success", weight=2]
-check -> optimize [condition="outcome=partial_success"]
-check -> rollback [condition="outcome=fail"]
+// Three-way routing
+check_mv -> next_gate [condition="outcome=success", weight=2]
+check_mv -> optimize [condition="outcome=partial_success"]
+check_mv -> rollback [condition="outcome=fail"]
 rollback -> optimize
 ```
+
+**Wiring into full pipeline**: Microverse replaces `impl → lint → typecheck → test`. On `outcome=success`, flow exits to the first post-impl gate (typically `verify_lint`):
+```
+start -> setup_deps -> capture_baseline -> spec_tests -> commit_baseline -> baseline -> optimize
+optimize -> measure -> compare -> check_mv
+check_mv -> verify_lint [condition="outcome=success", weight=2]
+check_mv -> optimize [condition="outcome=partial_success"]
+check_mv -> rollback [condition="outcome=fail"]
+rollback -> optimize
+verify_lint -> check_lint -> ... // normal review ratchet continues
+```
+
+**Do NOT use microverse for binary targets** (pass/fail, "tests must pass"). Use standard impl→verify. Microverse is for gradual convergence where PARTIAL_SUCCESS is meaningful.
 
 **24. Manager Loop (supervisor)** — for nodes that supervise long-running external processes (CI, deploy, migration). Emit when PRD has "wait for", "monitor", or "poll" requirements:
 ```
@@ -262,7 +288,8 @@ The house node polls a child pipeline or external process. `manager.stop_conditi
 - Missing defense matrix comment block
 - Single review pass as final gate (use ratchet)
 - Ratchet fail routing to same pass (defeats consecutive enforcement)
-- Standard impl→verify for metric optimization (use microverse)
+- Standard impl→verify for metric optimization (use microverse — see detection criteria in pickle-dot.md Step 2)
+- Microverse for binary targets like "tests must pass" (use standard impl→verify — microverse needs gradual convergence)
 - acceptance_criteria keys without matching `context_on_success`
 - verify_final `retry_target` to per-phase impl (can't fix cross-phase issues)
 - Conformance and verify_final sharing the same fix node in multi-phase pipelines (max_visits collision — verify_final retries exhaust conformance visits)

@@ -40,13 +40,9 @@ Attractor = **convergence basin**, not task list. Failures route back toward the
 - Emit `spec_file` as a graph attribute in Step 4. The engine interpolates `$spec_file` in node prompts.
 
 **Workspace isolation**: After resolving the working directory, determine workspace mode:
-- If `--isolated` flag → use isolated mode (skip prompt)
-- If `--shared` flag → use shared mode (skip prompt)
-- Otherwise → ask the user:
-
-> **Workspace mode:** Run against your local repo (**shared**) or clone a fresh copy (**isolated**)?
-> - **shared** (default) — pipeline edits `/repos/...` directly. You'll need to `git checkout . && git clean -fd` between retries.
-> - **isolated** — pipeline clones the repo into `/workspace/<run-id>/`. Your local files are untouched. Pushes a branch on success.
+- If `--isolated` flag → use isolated mode
+- If `--shared` flag → use shared mode
+- Otherwise → defer to Step 2b checklist (recommend isolated for greenfield/risky, shared for iterative/quick)
 
 **If isolated**: emit these graph-level attributes in Step 4:
 1. `workspace = "isolated"`
@@ -66,10 +62,10 @@ Extract: slug, goal, tasks, acceptance criteria.
 
 | Signal in PRD | Pattern to emit |
 |---------------|-----------------|
-| Security/auth/data/crypto surface | 8 (security scan), 17 (red team) — ask user for red team |
-| Quantitative/optimization target ("reduce to X", "improve to Y%", "optimize", "minimize", "maximize", or any measurable metric goal) | 20 (microverse) — replaces standard impl→verify for that phase |
+| Security/auth/data/crypto surface | 8 (security scan), 17 (red team) — recommend in Step 2b |
+| Quantitative target with measurable metric (see microverse detection below) | 20 (microverse) — replaces standard impl→verify for that phase |
 | Long-running external process ("wait for", "monitor", "poll", deploy, migration, CI wait) | 24 (manager loop) — supervisor polling node |
-| High-complexity phase (>3 files, cross-cutting) | 18 (competing impls) — ask user |
+| High-complexity phase (>3 files, cross-cutting) | 18 (competing impls) — recommend in Step 2b |
 | Coverage requirements | 9 (coverage gate) |
 | Multiple independent workstreams | 4 (fan-out/fan-in) |
 
@@ -78,16 +74,80 @@ Extract: slug, goal, tasks, acceptance criteria.
 2. + `architecture` if >5 files or new modules
 3. + `security` if auth/data/crypto
 4. + `performance` if hot paths
-5. Ask: "Review team for Phase N: [roles]. Customize?" and "Consecutive clean passes? (default: 2)"
-6. Ask about red team, competing impls where applicable
+5. Default: 2 consecutive clean passes. Present in Step 2b checklist for user confirmation.
 
 **Extract affected files** (Layer 4 — Permission Scoping): From the PRD's "affected files", "scope", or "changes" section, derive per-phase `allowed_paths` and `escalate_on` lists. If the PRD doesn't specify affected files, emit a `// WARNING: PRD lacks affected-files section — using broad allowed_paths` comment and default to `src/**, tests/**`.
 
 **Count requirements per phase**: For phases with 3+ requirements, flag for BDD scenario generation (Layer 3 strengthening). Phases with 1-2 requirements use spec_tests alone.
 
+**Microverse detection** (Pattern 20): A phase qualifies for microverse when ALL of:
+1. **Numeric target** — PRD states a quantitative goal: "reduce to N", "improve to Z%", "keep under N ms", "achieve N% coverage", "at least/at most N", or any number + comparison.
+2. **Measurable** — you can construct a shell command that runs in <60s and prints a number on its last line. If the answer requires human judgment or visual inspection → NOT measurable (use standard impl with LLM judge).
+3. **Gradual, not binary** — intermediate progress has value. "Get coverage from 60% to 90%" = microverse. "Make tests pass" = binary → standard impl.
+4. **Direction is clear** — "reduce", "minimize", "below", "under", "fewer" → `direction: "lower"`. "Improve", "maximize", "above", "at least", "increase" → `direction: "higher"`. Ambiguous → ask user.
+
+Derive the measurement command from PRD context:
+| PRD signal | Command pattern |
+|---|---|
+| Coverage % | `npx jest --coverage --coverageReporters=text-summary 2>&1 \| grep 'Statements' \| grep -oE '[0-9.]+'` |
+| Bundle size | `npm run build 2>/dev/null && wc -c < dist/bundle.js` |
+| Lint error count | `(npx eslint src/ 2>&1 \|\| true) \| grep -c 'error'` |
+| Build/response time | `{ time npm run build 2>/dev/null; } 2>&1 \| grep real \| grep -oE '[0-9]+\.[0-9]+'` |
+| Custom metric | Extract script/command from PRD; wrap so last stdout line is a number |
+
+The command MUST output a single number on its last line. Use the same command for both `baseline` and `measure` nodes.
+
 **Count total nodes**: If >20 nodes or >3 phases, plan fidelity tiers — use `default_fidelity = "compact"` at graph level, `fidelity = "full"` on review/conformance nodes and fix nodes after review.
 
 **Validate**: Must have title + ≥1 requirement. Missing acceptance criteria → WARN. Missing title → STOP.
+
+## Step 2b: Confirm Plan with User
+
+**Do NOT proceed to graph construction without user confirmation.** Present your analysis as a single checklist. Show your best guesses — the user corrects what's wrong in one shot.
+
+Format:
+
+```
+I analyzed the PRD. Here's my plan — confirm or correct anything:
+
+**Slug**: ${SLUG}
+**Goal**: ${GOAL} (1 sentence)
+**Phases**: N — [phase names]
+**Tech stack**: ${LANG}/${RUNTIME} — lint: ${LINT_CMD}, typecheck: ${TC_CMD}, test: ${TEST_CMD}, pkg: ${PKG_MGR}
+**Workspace**: [shared / isolated] ${reason}
+
+**Per-phase breakdown:**
+
+Phase 1: ${PHASE_NAME}
+  Scope: ${allowed_paths} | Escalate: ${escalate_on}
+  Requirements: N → [BDD scenarios: yes/no]
+  Microverse: [yes — target: N, direction: higher/lower, cmd: `...` / no — ${reason}]
+  Review team: [roles] — ${N} consecutive passes
+  Red team: [yes / no] — ${reason}
+  Competing impls: [yes / no] — ${reason}
+
+[repeat per phase]
+
+**Pipeline shape:**
+  ${template_summary — e.g., "single-phase with microverse loop, 2-pass review ratchet, conformance, red team"}
+
+**Defense matrix:**
+  L1 Competitive: [YES/NO]  L2 Guardrails: YES  L3 Spec-Driven: [YES/PARTIAL]
+  L4 Permissions: YES  L5 Adversarial: [YES/NO]
+
+Anything to change?
+```
+
+**Rules for the checklist:**
+- **Tech stack**: Detect from PRD context, file extensions, or `package.json`/`pyproject.toml`/`go.mod` mentions. If ambiguous → show `[unknown — please specify]`
+- **Microverse**: For each phase with a quantitative target, show the target, direction, and proposed measurement command. Let the user confirm the command works in their repo.
+- **Scope**: If PRD lacks affected files, show `src/**, tests/** [broad — PRD lacks file list]` and ask if narrower scope is possible.
+- **Review team**: Show your recommendation with reasoning. Default 2 passes unless user overrides.
+- **Red team / Competing impls**: Show recommendation. Don't ask open-ended — present a yes/no with your reasoning.
+- **Workspace**: If not flagged, recommend based on context (isolated for greenfield/risky, shared for iterative/quick).
+- **Omit items already resolved by flags** (e.g., `--isolated` → don't ask workspace, `--shared` → don't ask workspace).
+
+Wait for user response. Apply corrections to your analysis, then proceed to Step 3.
 
 ## Step 3: Build Graph from Template
 
@@ -104,7 +164,15 @@ start → setup_deps → capture_baseline → [bdd_scenarios →] [spec_tests �
 ```
 
 **Customizations:**
-- **Microverse phase** (quantitative target): replace `impl → lint → typecheck → test` with Pattern 20 loop
+- **Microverse phase** (quantitative target): replace `impl → lint → typecheck → test` with Pattern 20 loop. Wire into the full pipeline:
+    ```
+    ... → [spec_tests →] commit_baseline → baseline → optimize → measure → compare → check_mv
+    check_mv → verify_lint [condition="outcome=success"]  // exits to normal gates
+    check_mv → optimize [condition="outcome=partial_success"]  // improved, keep going
+    check_mv → rollback → optimize [condition="outcome=fail"]  // regressed, undo + retry
+    verify_lint → ... review_ratchet → conformance → ...
+    ```
+    On SUCCESS (target met), flow exits to lint/typecheck/test and the normal review ratchet. PARTIAL_SUCCESS loops back for another iteration. FAIL rolls back and retries. The `compare` node uses `auto_status=true` + `allow_partial=true` so the engine parses `STATUS: SUCCESS|PARTIAL_SUCCESS|FAIL` from the LLM output. Embed the concrete target and direction from the PRD in the compare prompt.
 - **Competing impls** (high complexity): replace `impl` with Pattern 18 fan-out
 - **Multi-phase**: replicate template per phase, connect sequentially. Each phase gets its own review ratchet. Emit `thread_id = "phase_N"` on impl and fix nodes within the same phase — groups conversational context in the engine
 - **Multi-phase final gate**: Use separate fix nodes for conformance and verify_final. Conformance failures route to `fix_conformance → conformance` (own retry loop). verify_final failures route to `fix_all → verify_final` (own retry loop). Never merge these paths — shared max_visits causes premature pipeline crashes:
