@@ -15,6 +15,8 @@ Attractor = **convergence basin**, not task list. Failures route back toward the
 - `--model <id>` — shorthand: one model for both tiers
 - `--isolated` — skip workspace prompt, use isolated workspace mode
 - `--shared` — skip workspace prompt, use shared mode (default)
+- `--exit-validation` — prefer `exit_validation` graph attribute over a separate `verify_final` tool node for simple pipelines (single test command, no delta logic)
+- `--multimodal` — enable `attachments_context_key` on relevant nodes for PRDs referencing screenshots, mockups, or images
 
 **Provider defaults** (when `--models` not given):
 
@@ -66,6 +68,7 @@ Extract: slug, goal, tasks, acceptance criteria.
 |---------------|-----------------|
 | Security/auth/data/crypto surface | 8 (security scan), 17 (red team) — ask user for red team |
 | Quantitative/optimization target ("reduce to X", "improve to Y%", "optimize", "minimize", "maximize", or any measurable metric goal) | 20 (microverse) — replaces standard impl→verify for that phase |
+| Long-running external process ("wait for", "monitor", "poll", deploy, migration, CI wait) | 24 (manager loop) — supervisor polling node |
 | High-complexity phase (>3 files, cross-cutting) | 18 (competing impls) — ask user |
 | Coverage requirements | 9 (coverage gate) |
 | Multiple independent workstreams | 4 (fan-out/fan-in) |
@@ -81,6 +84,8 @@ Extract: slug, goal, tasks, acceptance criteria.
 **Extract affected files** (Layer 4 — Permission Scoping): From the PRD's "affected files", "scope", or "changes" section, derive per-phase `allowed_paths` and `escalate_on` lists. If the PRD doesn't specify affected files, emit a `// WARNING: PRD lacks affected-files section — using broad allowed_paths` comment and default to `src/*, tests/*`.
 
 **Count requirements per phase**: For phases with 3+ requirements, flag for BDD scenario generation (Layer 3 strengthening). Phases with 1-2 requirements use spec_tests alone.
+
+**Count total nodes**: If >20 nodes or >3 phases, plan fidelity tiers — use `default_fidelity = "compact"` at graph level, `fidelity = "full"` on review/conformance nodes and fix nodes after review.
 
 **Validate**: Must have title + ≥1 requirement. Missing acceptance criteria → WARN. Missing title → STOP.
 
@@ -101,9 +106,12 @@ start → setup_deps → capture_baseline → [bdd_scenarios →] [spec_tests �
 **Customizations:**
 - **Microverse phase** (quantitative target): replace `impl → lint → typecheck → test` with Pattern 20 loop
 - **Competing impls** (high complexity): replace `impl` with Pattern 18 fan-out
-- **Multi-phase**: replicate template per phase, connect sequentially. Each phase gets its own review ratchet
+- **Multi-phase**: replicate template per phase, connect sequentially. Each phase gets its own review ratchet. Emit `thread_id = "phase_N"` on impl and fix nodes within the same phase — groups conversational context in the engine
 - **Single-phase**: template as-is, fix_all still recommended
+- **Catastrophic failure**: use `loop_restart=true` on edges as an alternative to `retry_target` when the pipeline needs a full restart: `check_final -> start [condition="outcome=fail", loop_restart=true]`. This clears RunContext — use sparingly, only when incremental retry cannot recover
 - **Skip what doesn't apply**: no linter → skip lint. No type checker → skip typecheck. No security tooling → skip security scan
+
+**Multimodal** (`--multimodal`): If PRD references screenshots, mockups, or images, emit a tool node that captures them into a context key, then add `attachments_context_key="<key>"` on codergen nodes that need the visual context.
 
 **Every box prompt MUST have context + constraints + acceptance criteria.** The executing LLM has NO access to the PRD — the prompt IS its instruction.
 
@@ -133,11 +141,19 @@ Syntax: one `digraph`, bare IDs (`[A-Za-z_][A-Za-z0-9_]*`), `->` only, commas be
 digraph ${SLUG} {
     goal = "${GOAL}"
     label = "${LABEL}"
+    working_dir = "${WORKING_DIR}"
     default_max_retry = 2
     retry_target = "fix_all"
+    fallback_retry_target = "fix_all"
     acceptance_criteria = "${CRITERIA}"
     model_stylesheet = "${MODEL_STYLESHEET}"
     spec_file = "${SPEC_FILE_PATH}"
+    // If >20 nodes or >3 phases:
+    // default_fidelity = "compact"
+    // (then add fidelity = "full" on review/conformance/fix nodes)
+    // If --exit-validation and simple final gate (single test command, no delta logic):
+    // exit_validation = "npm test 2>&1 && npx tsc --noEmit 2>&1"
+    // (omit verify_final tool node — exit_validation replaces it)
     // If isolated mode:
     // workspace = "isolated"
     // repo_url = "https://github.com/org/repo.git"
@@ -191,8 +207,10 @@ JWT auth API (TypeScript/Express). Demonstrates all 5 layers: spec_file + BDD co
 digraph user_auth_api {
     goal = "Add JWT authentication to the REST API"
     label = "user-auth-api: JWT Auth"
+    working_dir = "/repos/my-api"
     default_max_retry = 2
     retry_target = "fix_all"
+    fallback_retry_target = "fix_all"
     acceptance_criteria = "context.tests_pass=true && context.lint_status=passing && context.typecheck_status=passing"
     model_stylesheet = "* { llm_model: claude-sonnet-4-6; } .critical { llm_model: claude-opus-4-6; reasoning_effort: high; } .review { llm_model: claude-opus-4-6; }"
     spec_file = "/repos/my-api/prd.md"
@@ -208,7 +226,7 @@ digraph user_auth_api {
     setup_deps [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm install 2>&1", timeout="120s"]
     capture_baseline [shape=parallelogram, tool_command="cd ${WORKING_DIR} && echo '=== BASELINE SNAPSHOT ===' && (npx eslint src/ 2>&1 || true) | grep -c 'error' > /tmp/baseline_lint_errors.txt && (npx tsc --noEmit 2>&1 || true) | grep -c 'error TS' > /tmp/baseline_ts_errors.txt && echo \"lint=$(cat /tmp/baseline_lint_errors.txt) ts=$(cat /tmp/baseline_ts_errors.txt)\" 2>&1", timeout="120s"]
 
-    bdd_scenarios_auth [class="review", prompt="Read the spec file at $spec_file. For each JWT auth requirement, generate BDD scenarios in Given/When/Then format: token validation (missing, expired, malformed), login flow, refresh rotation, bcrypt hashing, OWASP patterns. Output as executable test descriptions. Do NOT implement — only define the behavioral contracts."]
+    bdd_scenarios_auth [class="review", timeout="300s", prompt="Read the spec file at $spec_file. For each JWT auth requirement, generate BDD scenarios in Given/When/Then format: token validation (missing, expired, malformed), login flow, refresh rotation, bcrypt hashing, OWASP patterns. Output as executable test descriptions. Do NOT implement — only define the behavioral contracts."]
     spec_tests_auth [class="review", prompt="Read the BDD scenarios from the previous node's output. Write failing test cases that verify each scenario. Run them to confirm they fail. Do NOT write production code.", goal_gate=true, retry_target="spec_tests_auth", max_visits=5]
     implement_auth [goal_gate=true, retry_target="implement_auth", prompt="Make all failing auth tests pass. Do NOT modify test files. JWT middleware + login endpoint. 1h expiry, refresh rotation, bcrypt. OWASP patterns.", allowed_paths="src/auth/*, src/middleware/*, tests/auth/*", escalate_on="package.json, package-lock.json, .env*, prisma/schema.prisma", max_visits=8]
 
@@ -227,7 +245,7 @@ digraph user_auth_api {
     merge_review_1 [shape=tripleoctagon, class="review", prompt="Consolidate. BLOCKER or ADVISORY. CLEAN or DIRTY."]
     check_review_1 [shape=diamond]
     fix_1 [prompt="Fix all BLOCKERs. Also simplify: redundant logic, duplication, naming. Do NOT modify test files.", allowed_paths="src/auth/*, src/middleware/*", escalate_on="package.json, package-lock.json, .env*", max_visits=5]
-    reverify_1 [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm run lint 2>&1 && npx tsc --noEmit 2>&1 && npm test 2>&1"]
+    reverify_1 [shape=parallelogram, tool_command="cd ${WORKING_DIR} && BASELINE_LINT=$(cat /tmp/baseline_lint_errors.txt 2>/dev/null || echo 0) && CURRENT_LINT=$((npm run lint 2>&1 || true) | grep -c 'error') && BASELINE_TS=$(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) && CURRENT_TS=$((npx tsc --noEmit 2>&1 || true) | grep -c 'error TS') && npm test 2>&1 && [ $CURRENT_LINT -le $BASELINE_LINT ] && [ $CURRENT_TS -le $BASELINE_TS ] && echo 'DELTA: CLEAN' || (echo 'DELTA: REGRESSION' && exit 1)"]
     check_reverify_1 [shape=diamond]
 
     split_review_2 [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
@@ -237,19 +255,19 @@ digraph user_auth_api {
     merge_review_2 [shape=tripleoctagon, class="review", prompt="Consolidate. BLOCKER or ADVISORY. CLEAN or DIRTY."]
     check_review_2 [shape=diamond]
     fix_2 [prompt="Fix all BLOCKERs. Also simplify. Do NOT modify test files.", allowed_paths="src/auth/*, src/middleware/*", escalate_on="package.json, package-lock.json, .env*", max_visits=5]
-    reverify_2 [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm run lint 2>&1 && npx tsc --noEmit 2>&1 && npm test 2>&1"]
+    reverify_2 [shape=parallelogram, tool_command="cd ${WORKING_DIR} && BASELINE_LINT=$(cat /tmp/baseline_lint_errors.txt 2>/dev/null || echo 0) && CURRENT_LINT=$((npm run lint 2>&1 || true) | grep -c 'error') && BASELINE_TS=$(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) && CURRENT_TS=$((npx tsc --noEmit 2>&1 || true) | grep -c 'error TS') && npm test 2>&1 && [ $CURRENT_LINT -le $BASELINE_LINT ] && [ $CURRENT_TS -le $BASELINE_TS ] && echo 'DELTA: CLEAN' || (echo 'DELTA: REGRESSION' && exit 1)"]
     check_reverify_2 [shape=diamond]
 
-    conformance [class="review", goal_gate=true, retry_target="implement_auth", prompt="Conformance audit: read the spec file at $spec_file. Compare every requirement against the current git diff. Verify: 1) Every requirement has a corresponding code change. 2) Acceptance criteria are testable and tested. 3) No requirements silently dropped. Output PASS or FAIL with unmet requirements."]
+    conformance [class="review", goal_gate=true, retry_target="implement_auth", max_visits=5, prompt="Conformance audit: read the spec file at $spec_file. Compare every requirement against the current git diff. Verify: 1) Every requirement has a corresponding code change. 2) Acceptance criteria are testable and tested. 3) No requirements silently dropped. Output PASS or FAIL with unmet requirements."]
     conformance_gate [shape=diamond]
 
-    red_team_auth [class="review", prompt="Adversarial audit: token forgery, expired replay, refresh reuse, injection, timing attacks, algorithm confusion. Write repro tests. Output PASS or FAIL.", goal_gate=true, retry_target="implement_auth"]
+    red_team_auth [class="review", prompt="Adversarial audit: token forgery, expired replay, refresh reuse, injection, timing attacks, algorithm confusion. Write repro tests. Output PASS or FAIL.", goal_gate=true, retry_target="implement_auth", max_visits=5]
     red_team_gate [shape=diamond]
 
     fix_all [prompt="Fix ALL remaining issues across the entire codebase. Run: 1) npx eslint src/ --fix 2>&1. 2) npx tsc --noEmit 2>&1. 3) npm test 2>&1. Iterate until all pass. Do NOT skip errors.", permission_mode="bypassPermissions", allowed_paths="src/*, tests/*", escalate_on="package.json, package-lock.json, .env*, prisma/schema.prisma", max_visits=5]
 
     verify_final [shape=parallelogram,
-        tool_command="cd ${WORKING_DIR} && npx eslint src/ --max-warnings=-1 2>&1 && npx tsc --noEmit 2>&1 && npm test 2>&1",
+        tool_command="cd ${WORKING_DIR} && BASELINE_LINT=$(cat /tmp/baseline_lint_errors.txt 2>/dev/null || echo 0) && CURRENT_LINT=$((npx eslint src/ 2>&1 || true) | grep -c 'error') && BASELINE_TS=$(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) && CURRENT_TS=$((npx tsc --noEmit 2>&1 || true) | grep -c 'error TS') && npm test 2>&1 && [ $CURRENT_LINT -le $BASELINE_LINT ] && [ $CURRENT_TS -le $BASELINE_TS ] && echo 'DELTA: CLEAN' || (echo 'DELTA: REGRESSION' && exit 1)",
         goal_gate=true, retry_target="fix_all", max_visits=3,
         context_on_success="tests_pass=true,lint_status=passing,typecheck_status=passing"]
     check_final [shape=diamond]

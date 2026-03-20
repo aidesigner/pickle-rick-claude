@@ -14,6 +14,7 @@ fix_all -> commit_and_push -> verify_final
 **Why this exists:** Isolated workspaces are ephemeral. `workspace_cleanup="delete"` (engine default) destroys the workspace after completion. Even with `"preserve"`, workspaces are swept after 24h. Pushing a branch is the ONLY durable way to preserve pipeline output.
 
 Anti-pattern: `workspace="isolated"` without a `commit_and_push` node = **all work lost on completion**.
+Validator rule 23 enforces this — pipelines will warn if `workspace=isolated` lacks a push node.
 
 **0a. Dependency Setup** — first node after start. Tool node installs deps in `working_dir`:
 ```
@@ -21,6 +22,7 @@ setup_deps [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm install 
 start -> setup_deps -> first_impl
 ```
 Detect package manager: `npm install`, `pnpm install`, `yarn install`, `pip install -r requirements.txt`, etc.
+For repos needing pre-install steps (e.g., VPN, auth tokens), use `tool_hooks.pre` on setup_deps: `tool_hooks.pre="./scripts/pre-install.sh"`.
 
 **0b. max_parallel=1** — ALL `shape=component` fan-out nodes MUST use `max_parallel=1`. Parallel claude processes OOM the Docker container (7GB limit).
 
@@ -111,7 +113,7 @@ impl [prompt="Make all failing tests pass. Do NOT modify test files.", allowed_p
 ```
 bdd_scenarios [class="review", prompt="Read the spec file at $spec_file. For each requirement, generate BDD scenarios in Given/When/Then format. Output as executable test descriptions. Do NOT implement — only define the behavioral contracts."]
 spec_tests [class="review", prompt="Read the BDD scenarios from the previous node's output. Write failing test cases that verify each scenario. Run them to confirm they fail. Do NOT write production code.", goal_gate=true, retry_target="spec_tests"]
-impl [prompt="Make all failing tests pass. Do NOT modify test files.", allowed_paths="src/*", goal_gate=true, retry_target="impl"]
+impl [prompt="Make all failing tests pass. Do NOT modify test files.", allowed_paths="src/*, tests/*", escalate_on="package.json, package-lock.json, .env*, *.config.*", goal_gate=true, retry_target="impl"]
 ```
 The BDD node reads `$spec_file`, generates Given/When/Then scenarios. spec_tests converts them to executable tests. impl makes them pass.
 
@@ -147,7 +149,7 @@ Each pass = `component→tripleoctagon` fan-out. Pass K failure resets to pass 1
 ```
 split_review_N [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
 reviewer_X_N [class="review", prompt="<narrow focus> ONLY. List issues with file:line."]
-merge_review_N [shape=tripleoctagon, class="review", prompt="Consolidate. BLOCKER or ADVISORY. CLEAN or DIRTY."]
+merge_review_N [shape=tripleoctagon, class="review", prompt="Consolidate. BLOCKER or ADVISORY. CLEAN or DIRTY."]  // CAN use eval_criteria for structured scoring, but defaults to LLM prompt-based merge for simplicity
 check_review_N [shape=diamond]
 fix_N [prompt="Fix all BLOCKERs. Also simplify. Do NOT modify test files.", max_visits=5]
 reverify_N [shape=parallelogram, tool_command="cd ${WORKING_DIR} && ..."]
@@ -171,7 +173,7 @@ verify_security [shape=parallelogram, tool_command="npm audit --audit-level=high
 
 **9. Coverage Qualification** — score-based gate on new/changed code (>=80%):
 ```
-check_coverage [shape=diamond, prompt="Check coverage on new/changed code..."]
+check_coverage [prompt="Analyze test coverage on new/changed code. Target >=80% on new lines. Output PASS or FAIL with uncovered files.", goal_gate=true, retry_target="impl", max_visits=3]
 ```
 
 **10. Scope Creep Detection** — post-implementation, before review. Opus (`.review`):
@@ -192,7 +194,7 @@ Note: `retry_target="impl"` is correct here (unlike verify_final) because red_te
 split_impl [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
 approach_minimal [prompt="MINIMAL changes — smallest diff..."]
 approach_clean [prompt="CLEAN architecture — best design..."]
-select_best [shape=tripleoctagon, class="critical", eval_criteria="completeness,faithfulness", eval_threshold=0.7]
+select_best [shape=tripleoctagon, class="critical", eval_criteria="completeness,faithfulness", eval_model="anthropic/claude-sonnet-4-6", eval_threshold=0.7, eval_max_branches=5]
 ```
 
 **20. Microverse Convergence Loop** — for quantitative targets (metric optimization). Replaces standard impl→verify:
@@ -201,7 +203,7 @@ commit_baseline [shape=parallelogram, tool_command="cd ${WORKING_DIR} && git add
 baseline [shape=parallelogram, tool_command="cd ${WORKING_DIR} && <measurement_cmd> 2>&1"]
 optimize [prompt="Make ONE targeted change toward <TARGET>. Smallest diff.", max_visits=8]
 measure [shape=parallelogram, tool_command="cd ${WORKING_DIR} && <measurement_cmd> 2>&1"]
-compare [class="review", prompt="Compare measurement vs target. MUST output STATUS: marker on its own line — the engine's parseStatusMarker ONLY recognizes: STATUS: SUCCESS (target met), STATUS: PARTIAL_SUCCESS (improved but not at target), STATUS: FAIL (regressed/stalled). Bare words like PASS/FAIL are ignored.", max_visits=10]
+compare [class="review", prompt="Compare measurement vs target. MUST output STATUS: marker on its own line — the engine's parseStatusMarker ONLY recognizes: STATUS: SUCCESS (target met), STATUS: PARTIAL_SUCCESS (improved but not at target), STATUS: FAIL (regressed/stalled). Bare words like PASS/FAIL are ignored.", max_visits=10, auto_status=true, allow_partial=true]
 check [shape=diamond]
 rollback [shape=parallelogram, tool_command="cd ${WORKING_DIR} && git checkout . 2>&1"]
 
@@ -211,9 +213,17 @@ check -> rollback [condition="outcome=fail"]
 rollback -> optimize
 ```
 
+**24. Manager Loop (supervisor)** — for nodes that supervise long-running external processes (CI, deploy, migration). Emit when PRD has "wait for", "monitor", or "poll" requirements:
+```
+mgr [shape=house, manager.poll_interval="45s", manager.max_cycles=100,
+     manager.stop_condition="context.stack.child.status=completed",
+     manager.actions="observe,steer,wait", manager.max_duration_ms=1800000]
+```
+The house node polls a child pipeline or external process. `manager.stop_condition` evaluates against RunContext. Well-known child keys: `context.stack.child.status` (`starting`, `completed`, `failed`), `context.stack.child.current_node`, `context.stack.child.completed_nodes`. `manager.actions` controls what the supervisor can do each cycle: `observe` (read status), `steer` (intervene via `manager.steer_content`), `wait` (sleep until next poll). Use `stack.child_autostart="true"` to auto-launch a child DOT pipeline.
+
 ## Superseded (reference only)
 
-**5. Human Gates** — NOT IMPLEMENTED for claude-code backend. Do not emit hexagon nodes.
+**5. Human Gates** — NOT IMPLEMENTED for claude-code backend. Available for LLM and API backends. Do not emit for `--backend claude-code` pipelines (default).
 
 **7. Review-Simplify Cycle** — superseded by Pattern 19 (ratchet). Standalone fallback only.
 
@@ -232,7 +242,7 @@ rollback -> optimize
 - Graph-level `retry_target` to setup_deps/start/per-phase impl (full re-run or scoped-only retry)
 - Fan-out `retry_target` outside branch scope (stripped at runtime — retry is ineffective)
 - `retry_target` inside a fan-out branch pointing before the component node (causes infinite recursion without engine scoping, ineffective with it — retry logic belongs at fan-in or post-merge level)
-- Hexagon nodes (deadlock)
+- Hexagon nodes for claude-code backend (deadlock — use for LLM/API backends only)
 - Diamond without 2+ edges (stalls)
 - Parallel siblings depending on each other (deadlock)
 - Lint/typecheck/test bundled into one gate
@@ -269,6 +279,8 @@ model_stylesheet = "* { llm_model: qwen-plus; llm_provider: qwen; } .critical { 
 ```
 When `--review-provider` differs from `--provider`, `.review`/`.critical` MUST include `llm_provider` to override `*`. Per-node `llm_model`/`llm_provider` attributes override stylesheet for edge cases.
 
+> Future: `harness` property for per-node backend routing (PRD-v3 — not yet in schema).
+
 Provider default table: see **pickle-dot.md Step 1** (single source of truth — do not duplicate here).
 
 ## Conditions Reference
@@ -281,13 +293,23 @@ Mdiamond=start, Msquare=exit, box=codergen, diamond=conditional, component=fan-o
 
 Permission modes: `plan` (default), `bypassPermissions`, `acceptEdits`, `auto`, `default`, `dontAsk`. NOT `full`.
 
-## Graph Attributes Reference
+## Quick Reference (beyond what patterns already cover)
 
-| Attribute | Scope | Description |
-|-----------|-------|-------------|
-| `spec_file` | graph | Path to PRD inside workspace. Engine interpolates `$spec_file` in prompts. |
-| `allowed_paths` | node (codergen) | Glob patterns for files the agent can write. Comma-separated. |
-| `escalate_on` | node (codergen) | File patterns that trigger escalation review. Comma-separated. |
+**Graph attributes** (emit in digraph header):
+`working_dir`, `goal`, `label`, `acceptance_criteria`, `retry_target`, `fallback_retry_target`, `default_max_retry`, `default_fidelity`, `exit_validation`, `model_stylesheet`, `spec_file`, `workspace`, `repo_url`, `repo_branch`, `workspace_cleanup`, `llm_model`, `llm_provider`, `reasoning_effort`
+
+**Common node attributes** (all node types):
+`label`, `shape`, `goal_gate`, `retry_target`, `fallback_retry_target`, `max_retries` (retry count, distinct from `max_visits`), `max_visits`, `timeout`, `fidelity`, `llm_model`, `llm_provider`, `reasoning_effort`, `thread_id`, `class`, `auto_status`, `allow_partial`
+
+**Codergen** (box): `prompt`, `attachments_context_key`, `working_dir` (claude-code), `permission_mode` (claude-code), `allowed_paths`, `escalate_on`
+
+**Tool** (parallelogram): `tool_command`, `context_on_success`, `tool_hooks.pre`, `tool_hooks.post`
+
+**Parallel** (component): `max_parallel`, `join_policy` (`wait_all`, `first_success`, `k_of_n`, `quorum`), `error_policy` (`continue`, `fail_fast`, `ignore`), `join_k`, `join_quorum`
+
+**Fan-in** (tripleoctagon): `prompt`, `eval_criteria`, `eval_model`, `eval_threshold`, `eval_max_branches`
+
+**Edge attributes**: `condition`, `label`, `weight`, `fidelity`, `loop_restart`
 
 ## DOT Schema
 
