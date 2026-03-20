@@ -1327,11 +1327,13 @@ function runAndCollectActivity(stateOverrides = {}) {
     // gets past template validation and reaches the claude spawn (which then
     // fails because claude is stripped from PATH). Without this, the runner
     // throws on template lookup before logging any iteration events.
+    // Write pickle.md to templates/ (not commands/) — runIteration checks
+    // extensionRoot/templates/ first, then falls back to ~/.claude/commands/.
+    // In CI, ~/.claude/commands/pickle.md doesn't exist, so the template must
+    // be in the EXTENSION_DIR-relative templates/ directory.
     const templatesDir = path.join(tmpRoot, 'templates');
-    const commandsDir = path.join(tmpRoot, 'commands');
     fs.mkdirSync(templatesDir, { recursive: true });
-    fs.mkdirSync(commandsDir, { recursive: true });
-    fs.writeFileSync(path.join(commandsDir, 'pickle.md'), 'placeholder');
+    fs.writeFileSync(path.join(templatesDir, 'pickle.md'), 'placeholder');
     fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
         active: true,
         step: 'implement',
