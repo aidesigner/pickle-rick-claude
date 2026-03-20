@@ -156,7 +156,7 @@ Wait for user response. Apply corrections to your analysis, then proceed to Step
 **Start from this template** and customize based on Step 2 analysis:
 
 ```
-start → setup_deps → capture_baseline → [bdd_scenarios →] [spec_tests →] impl → lint → typecheck → test
+start → setup_deps → capture_baseline → [bdd_scenarios →] [spec_tests →] impl → check_progress → lint → typecheck → test
   → [security →] [coverage →] [scope_check →]
   → review_ratchet(pass_1 → pass_2)
   → conformance → [red_team →]
@@ -201,6 +201,7 @@ start → setup_deps → capture_baseline → [bdd_scenarios →] [spec_tests �
 - `setup_deps` before first impl (Pattern 0a)
 - `capture_baseline` after `setup_deps`, before first impl (Pattern 0c) — snapshots pre-existing lint/typecheck/test errors
 - All verify/reverify `tool_command` values MUST use delta-aware checking (Pattern 0d) — fail on regressions, not pre-existing debt
+- `check_progress` tool node after each impl, before lint gates (Pattern 0e) — catches stalled impls with zero file changes
 - All `component` nodes: `max_parallel=1` (Pattern 0b)
 - `max_visits` on looping nodes (Pattern 6)
 - `bdd_scenarios` before `spec_tests` for phases with 3+ requirements (Pattern 16b, recommended)
@@ -274,7 +275,7 @@ When `--review-provider` differs from `--provider`, the `.review` and `.critical
 
 **Errors** (STOP and fix): single start/exit, no incoming→start, no outgoing←exit, all reachable, valid targets, diamond 2+ edges, component↔tripleoctagon paired, valid conditions/IDs/syntax, `->` only, single digraph, acceptance_criteria keys not set by `context_on_success` (infinite retry), graph-level retry_target to setup_deps/start/per-phase impl instead of fix_all.
 
-**Warnings** (emit but continue): dep setup exists, max_parallel=1 on components, max_visits on loops, every box has prompt, happy-path weight=2, goal_gate has retry_target, no linear chains, spec_tests before goal_gate impls, review ratchet ≥2 passes with reset-on-fail, lint/typecheck/test separate gates, fix_all before verify_final in multi-phase, conformance before exit, security/auth phases have red_team, node inside component→tripleoctagon fan-out has retry_target pointing outside branch scope (stripped at runtime — retry ineffective), graph-level retry_target points before a component fan-out (branches retry entire pipeline — wasteful), codergen node without `allowed_paths` (unbounded file scope), `allowed_paths` doesn't include test directories (agent can't write tests), missing `spec_file` graph attribute, BDD scenarios missing for phase with 3+ requirements, defense matrix comment block missing, missing `capture_baseline` before first impl (Pattern 0c — pre-existing errors cause infinite retry), verify nodes using raw lint/typecheck commands instead of delta-aware checking (Pattern 0d), **isolated workspace without `commit_and_push` node after check_final success (Pattern 0 — all code lost on cleanup)**.
+**Warnings** (emit but continue): dep setup exists, max_parallel=1 on components, max_visits on loops, every box has prompt, happy-path weight=2, goal_gate has retry_target, no linear chains, spec_tests before goal_gate impls, review ratchet ≥2 passes with reset-on-fail, lint/typecheck/test separate gates, fix_all before verify_final in multi-phase, conformance before exit, security/auth phases have red_team, node inside component→tripleoctagon fan-out has retry_target pointing outside branch scope (stripped at runtime — retry ineffective), graph-level retry_target points before a component fan-out (branches retry entire pipeline — wasteful), codergen node without `allowed_paths` (unbounded file scope), `allowed_paths` doesn't include test directories (agent can't write tests), missing `spec_file` graph attribute, BDD scenarios missing for phase with 3+ requirements, defense matrix comment block missing, missing `capture_baseline` before first impl (Pattern 0c — pre-existing errors cause infinite retry), verify nodes using raw lint/typecheck commands instead of delta-aware checking (Pattern 0d), impl node without progress gate (Pattern 0e — stalled impls waste retry budgets), **isolated workspace without `commit_and_push` node after check_final success (Pattern 0 — all code lost on cleanup)**.
 
 ## Step 6: Summary & Save
 
@@ -312,6 +313,9 @@ digraph user_auth_api {
     bdd_scenarios_auth [class="review", timeout="300s", prompt="Read the spec file at $spec_file. For each JWT auth requirement, generate BDD scenarios in Given/When/Then format: token validation (missing, expired, malformed), login flow, refresh rotation, bcrypt hashing, OWASP patterns. Output as executable test descriptions. Do NOT implement — only define the behavioral contracts."]
     spec_tests_auth [class="review", prompt="Read the BDD scenarios from the previous node's output. Write failing test cases that verify each scenario. Run them to confirm they fail. Do NOT write production code.", goal_gate=true, retry_target="spec_tests_auth", max_visits=5]
     implement_auth [goal_gate=true, retry_target="implement_auth", prompt="Make all failing auth tests pass. Do NOT modify test files. JWT middleware + login endpoint. 1h expiry, refresh rotation, bcrypt. OWASP patterns.", allowed_paths="src/auth/**, src/middleware/**, tests/auth/**", escalate_on="package.json, package-lock.json, .env*, prisma/schema.prisma", max_visits=8]
+
+    check_progress [shape=parallelogram, tool_command="cd ${WORKING_DIR} && CHANGED=$(git status --porcelain | wc -l | tr -d ' ') && if [ \"$CHANGED\" -eq 0 ]; then echo 'STALL: impl produced zero file changes — retrying'; exit 1; fi && echo \"progress: $CHANGED files modified\" 2>&1", max_visits=3]
+    check_progress_gate [shape=diamond]
 
     verify_lint [shape=parallelogram, tool_command="cd ${WORKING_DIR} && BASELINE=$(cat /tmp/baseline_lint_errors.txt 2>/dev/null || echo 0) && CURRENT=$((npm run lint 2>&1 || true) | grep -c 'error') && echo \"lint baseline=$BASELINE current=$CURRENT\" && [ $CURRENT -le $BASELINE ] || (echo 'LINT REGRESSION' && exit 1)", max_visits=3]
     check_lint [shape=diamond]
@@ -359,7 +363,10 @@ digraph user_auth_api {
 
     // Edges
     start -> setup_deps -> capture_baseline -> bdd_scenarios_auth -> spec_tests_auth -> implement_auth
-    implement_auth -> verify_lint -> check_lint
+    implement_auth -> check_progress -> check_progress_gate
+    check_progress_gate -> verify_lint [condition="outcome=success", weight=2]
+    check_progress_gate -> implement_auth [condition="outcome=fail"]
+    verify_lint -> check_lint
     check_lint -> verify_types [condition="outcome=success", weight=2]
     check_lint -> implement_auth [condition="outcome=fail"]
     verify_types -> check_types

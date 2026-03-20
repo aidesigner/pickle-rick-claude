@@ -37,6 +37,18 @@ capture_baseline [shape=parallelogram, tool_command="cd ${WORKING_DIR} && echo '
 ```
 Placed after `setup_deps`, before first impl. All verify/reverify `tool_command` values MUST use the delta-check script (Pattern 0d) instead of raw lint/typecheck/test commands.
 
+**0e. Progress Gate** — after each impl node, verify files were actually modified. Catches stalled impls that produce no changes (common with permission errors, wrong paths, or LLM refusals). Place between impl and first lint gate:
+```
+check_progress [shape=parallelogram, tool_command="cd ${WORKING_DIR} && CHANGED=$(git status --porcelain | wc -l | tr -d ' ') && if [ \"$CHANGED\" -eq 0 ]; then echo 'STALL: impl produced zero file changes — retrying'; exit 1; fi && echo \"progress: $CHANGED files modified\" 2>&1", max_visits=3]
+```
+Wiring (extends Pattern 1 test-fix loop):
+```
+impl -> check_progress -> check_progress_gate [shape=diamond]
+check_progress_gate -> verify_lint [condition="outcome=success", weight=2]
+check_progress_gate -> impl [condition="outcome=fail"]
+```
+`max_visits=3` prevents infinite stall loops — after 3 zero-progress attempts, the node fails and graph-level `retry_target` (fix_all) takes over. Uses `git status --porcelain` (not `git diff --stat HEAD`) because it catches unstaged, staged, and untracked files regardless of commit state.
+
 **0d. Delta-Aware Verification** — verify commands compare current errors against baseline. Fail ONLY on regressions (new errors introduced by pipeline), not pre-existing debt:
 ```
 // Per-phase verify and reverify tool_command template:
@@ -294,6 +306,7 @@ The house node polls a child pipeline or external process. `manager.stop_conditi
 - verify_final `retry_target` to per-phase impl (can't fix cross-phase issues)
 - Conformance and verify_final sharing the same fix node in multi-phase pipelines (max_visits collision — verify_final retries exhaust conformance visits)
 - Missing fix_all before verify_final in multi-phase pipelines
+- Impl node without progress gate (Pattern 0e — stalled impls waste entire retry budgets silently)
 - Verify nodes assuming clean baseline (use Pattern 0c/0d — pre-existing errors cause infinite retry loops)
 - Missing capture_baseline before first impl in isolated workspace pipelines
 - `workspace="isolated"` without `commit_and_push` node after check_final success (all code lost on cleanup)
