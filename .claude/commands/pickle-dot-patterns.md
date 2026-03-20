@@ -2,14 +2,19 @@ Pickle-dot pattern reference. Read by `/pickle-dot` on demand — do NOT load th
 
 ## Tier 1: Always Emit
 
-**0. Isolated Workspace Commit & Push** — **MANDATORY** when `workspace="isolated"`. Without this, all code is lost on cleanup. Place before `verify_final`:
+**0. Isolated Workspace Commit & Push** — **MANDATORY** when `workspace="isolated"`. Without this, all code is lost on cleanup. Place AFTER `verify_final` succeeds — `commit_and_push` runs exactly once on the success path, pushing only verified working code:
 ```
 // Branch name derived from pipeline slug + short run ID
-commit_and_push [shape=parallelogram, tool_command="cd ${WORKING_DIR} && BRANCH=\"attractor/${SLUG}-$(echo $ATTRACTOR_RUN_ID | cut -c1-8)\" && git checkout -b \"$BRANCH\" && git add -A && git -c user.name=attractor -c user.email=attractor@local commit -m \"feat: ${SLUG} — attractor pipeline output\" --allow-empty && git push origin \"$BRANCH\" 2>&1 && echo \"Pushed branch: $BRANCH\"", timeout="120s"]
+// -B is idempotent (force-creates branch), --force handles partial prior runs pushing to the same branch
+commit_and_push [shape=parallelogram, tool_command="cd ${WORKING_DIR} && BRANCH=\"attractor/${SLUG}-$(echo $ATTRACTOR_RUN_ID | cut -c1-8)\" && git checkout -B \"$BRANCH\" && git add -A && git -c user.name=attractor -c user.email=attractor@local commit -m \"feat: ${SLUG} — attractor pipeline output\" --allow-empty && git push origin \"$BRANCH\" --force 2>&1 && echo \"Pushed branch: $BRANCH\"", timeout="120s"]
 ```
-Edges: place after `fix_all`, before `verify_final`:
+Edges: place after `check_final` success, before `done`:
 ```
-fix_all -> commit_and_push -> verify_final
+verify_final -> check_final
+check_final -> commit_and_push [condition="outcome=success", weight=2]
+check_final -> fix_all [condition="outcome=fail"]
+fix_all -> verify_final
+commit_and_push -> done
 ```
 **Why this exists:** Isolated workspaces are ephemeral. `workspace_cleanup="delete"` (engine default) destroys the workspace after completion. Even with `"preserve"`, workspaces are swept after 24h. Pushing a branch is the ONLY durable way to preserve pipeline output.
 
@@ -89,7 +94,7 @@ Detect: `tsc --noEmit`, `mypy .`, `go vet ./...`. Skip for dynamically-typed pro
 
 **21. Cross-Phase Cleanup (fix_all)** — before verify_final, fixes ALL remaining issues across all phases:
 ```
-fix_all [prompt="Fix ALL remaining issues across the entire codebase. Run each check and fix failures: 1) cd ${WORKING_DIR} && ${LINT_FIX_CMD} 2>&1. 2) ${TYPECHECK_CMD} 2>&1. 3) ${TEST_CMD} 2>&1. Iterate until all pass with zero errors. Do NOT skip or suppress errors.", permission_mode="bypassPermissions", max_visits=5]
+fix_all [prompt="Fix ALL remaining issues across the entire codebase. Run each check and fix failures: 1) cd ${WORKING_DIR} && ${LINT_FIX_CMD} 2>&1. 2) ${TYPECHECK_CMD} 2>&1. 3) ${TEST_CMD} 2>&1. Iterate until all pass with zero errors. Do NOT skip or suppress errors.", permission_mode="bypassPermissions", allowed_paths="src/**, tests/**", escalate_on="package.json, package-lock.json, .env*, *.config.*", max_visits=5]
 ```
 Resolve: `${LINT_FIX_CMD}` = `npx eslint src/ --fix` (Node), `ruff check --fix .` (Python), `golangci-lint run --fix` (Go). `${TYPECHECK_CMD}` = `npx tsc --noEmit` / `mypy .` / `go vet ./...`. `${TEST_CMD}` = `npm test` / `pytest` / `go test ./...`.
 
@@ -103,30 +108,32 @@ conformance [class="review", goal_gate=true, retry_target="impl", prompt="Confor
 ```
 `$spec_file` is interpolated by the engine from the graph-level `spec_file` attribute (like `$goal`).
 
+**Multi-phase pipelines**: Use a dedicated `fix_conformance` node. Do NOT share `fix_all` between conformance and verify_final retry loops — their max_visits interact and cause premature crashes. See Step 3 in pickle-dot.md for the split pattern.
+
 **16. Spec-First TDD** — write failing tests FROM spec BEFORE impl. Mandatory for `goal_gate=true` impl nodes:
 ```
 spec_tests [class="review", prompt="Write failing tests for EVERY requirement. Do NOT write production code.", goal_gate=true, retry_target="spec_tests"]
-impl [prompt="Make all failing tests pass. Do NOT modify test files.", allowed_paths="src/*, tests/*", goal_gate=true, retry_target="impl"]
+impl [prompt="Make all failing tests pass. Do NOT modify test files.", allowed_paths="src/**, tests/**", goal_gate=true, retry_target="impl"]
 ```
 
 **16b. BDD Scenario Generation** — behavioral contracts before spec_tests. Emit for phases with 3+ requirements. For 1-2 requirements, spec_tests alone is sufficient:
 ```
 bdd_scenarios [class="review", prompt="Read the spec file at $spec_file. For each requirement, generate BDD scenarios in Given/When/Then format. Output as executable test descriptions. Do NOT implement — only define the behavioral contracts."]
 spec_tests [class="review", prompt="Read the BDD scenarios from the previous node's output. Write failing test cases that verify each scenario. Run them to confirm they fail. Do NOT write production code.", goal_gate=true, retry_target="spec_tests"]
-impl [prompt="Make all failing tests pass. Do NOT modify test files.", allowed_paths="src/*, tests/*", escalate_on="package.json, package-lock.json, .env*, *.config.*", goal_gate=true, retry_target="impl"]
+impl [prompt="Make all failing tests pass. Do NOT modify test files.", allowed_paths="src/**, tests/**", escalate_on="package.json, package-lock.json, .env*, *.config.*", goal_gate=true, retry_target="impl"]
 ```
 The BDD node reads `$spec_file`, generates Given/When/Then scenarios. spec_tests converts them to executable tests. impl makes them pass.
 
 **22. Permission Scoping (allowed_paths + escalate_on)** — every codergen (box) impl node declares its file scope:
 ```
 impl_auth [prompt="Implement JWT middleware",
-    allowed_paths="src/auth/*, src/middleware/*, tests/auth/*",
+    allowed_paths="src/auth/**, src/middleware/**, tests/auth/**",
     escalate_on="package.json, package-lock.json, .env*, prisma/schema.prisma"]
 ```
 Rules:
-- `allowed_paths`: derive from PRD's affected files/directories. Include source + test dirs. Use globs.
+- `allowed_paths`: derive from PRD's affected files/directories. Include source + test dirs. Use `**` for recursive matching when the scope includes subdirectories (e.g., `src/auth/**` matches `src/auth/middleware/jwt.ts`). Use `*` only for intentionally narrow single-level scopes.
 - `escalate_on`: always include `package.json, package-lock.json, *.lock`, schema files (`*.prisma, *.sql, migrations/*`), config (`.env*, *.config.*`), and auth-related files.
-- If PRD lacks affected-files section → emit `// WARNING: PRD lacks affected-files section` and use broad `allowed_paths="src/*, tests/*"`.
+- If PRD lacks affected-files section → emit `// WARNING: PRD lacks affected-files section` and use broad `allowed_paths="src/**, tests/**"`.
 - Tool nodes (parallelogram) don't need allowed_paths — they run shell commands, not agents.
 - Review/simplify/conformance nodes don't need them — they only read, not write.
 
@@ -135,11 +142,11 @@ Rules:
 // Defense Matrix:
 //   Layer 1 (Competitive):  [YES/NO] — fan-out/fan-in for complex phases
 //   Layer 2 (Guardrails):   YES — lint → typecheck → test → audit
-//   Layer 3 (Spec-Driven):  YES — spec_file, BDD contracts, conformance
+//   Layer 3 (Spec-Driven):  [YES/PARTIAL] — spec_file, BDD contracts, conformance
 //   Layer 4 (Permissions):  YES — allowed_paths on impl nodes
 //   Layer 5 (Adversarial):  YES — multi-model review, red team, scope check
 ```
-Layer 1 = YES when Pattern 18 (competing impls) or Pattern 4 (fan-out) is present. Layer 5 = YES when multi-model review routing or red_team is present. Layers 2-4 are always YES.
+Layer 1 = YES when Pattern 18 (competing impls) or Pattern 4 (fan-out) is present. Layer 3 = YES when all of: spec_file, BDD/spec_tests, conformance are present. Use PARTIAL when BDD/spec_tests are omitted: `Layer 3 (Spec-Driven): PARTIAL — spec_file + conformance (no BDD/spec_tests)`. Layer 5 = YES when multi-model review routing or red_team is present. Layers 2 and 4 are always YES.
 
 **19. Review Convergence Ratchet** — N consecutive clean agent team passes required. Default for all pipelines. Replaces Pattern 7.
 
@@ -148,7 +155,7 @@ Team composition: `correctness` + `patterns` always. Add `architecture` (>5 file
 Each pass = `component→tripleoctagon` fan-out. Pass K failure resets to pass 1. Fix prompts include simplification.
 ```
 split_review_N [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
-reviewer_X_N [class="review", prompt="<narrow focus> ONLY. List issues with file:line."]
+reviewer_X_N [class="review", timeout="15m", prompt="<narrow focus> ONLY. List issues with file:line."]
 merge_review_N [shape=tripleoctagon, class="review", prompt="Consolidate. BLOCKER or ADVISORY. CLEAN or DIRTY."]  // CAN use eval_criteria for structured scoring, but defaults to LLM prompt-based merge for simplicity
 check_review_N [shape=diamond]
 fix_N [prompt="Fix all BLOCKERs. Also simplify. Do NOT modify test files.", max_visits=5]
@@ -258,10 +265,11 @@ The house node polls a child pipeline or external process. `manager.stop_conditi
 - Standard impl→verify for metric optimization (use microverse)
 - acceptance_criteria keys without matching `context_on_success`
 - verify_final `retry_target` to per-phase impl (can't fix cross-phase issues)
+- Conformance and verify_final sharing the same fix node in multi-phase pipelines (max_visits collision — verify_final retries exhaust conformance visits)
 - Missing fix_all before verify_final in multi-phase pipelines
 - Verify nodes assuming clean baseline (use Pattern 0c/0d — pre-existing errors cause infinite retry loops)
 - Missing capture_baseline before first impl in isolated workspace pipelines
-- `workspace="isolated"` without `commit_and_push` node before exit (all code lost on cleanup)
+- `workspace="isolated"` without `commit_and_push` node after check_final success (all code lost on cleanup)
 - `workspace_cleanup="delete"` without a tool node that runs `git push` (pipeline output destroyed)
 - >4 reviewers per team
 
