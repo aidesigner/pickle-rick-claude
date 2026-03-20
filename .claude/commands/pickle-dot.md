@@ -84,7 +84,7 @@ Extract: slug, goal, tasks, acceptance criteria.
 1. **Numeric target** — PRD states a quantitative goal: "reduce to N", "improve to Z%", "keep under N ms", "achieve N% coverage", "at least/at most N", or any number + comparison.
 2. **Measurable** — you can construct a shell command that runs in <60s and prints a number on its last line. If the answer requires human judgment or visual inspection → NOT measurable (use standard impl with LLM judge).
 3. **Gradual, not binary** — intermediate progress has value. "Get coverage from 60% to 90%" = microverse. "Make tests pass" = binary → standard impl.
-4. **Direction is clear** — "reduce", "minimize", "below", "under", "fewer" → `direction: "lower"`. "Improve", "maximize", "above", "at least", "increase" → `direction: "higher"`. Ambiguous → ask user.
+4. **Direction is clear** — "reduce", "minimize", "below", "under", "fewer" → `direction: "lower"`. "Improve", "maximize", "above", "at least", "increase" → `direction: "higher"`. Ambiguous → flag in Step 2b checklist for user clarification.
 
 Derive the measurement command from PRD context:
 | PRD signal | Command pattern |
@@ -208,8 +208,8 @@ start → setup_deps → capture_baseline → [bdd_scenarios →] [spec_tests �
 - `allowed_paths` on all codergen (box) impl nodes (Layer 4)
 - `escalate_on` on all codergen impl nodes — always include lock files, schema, config, auth
 - Review ratchet with ≥2 consecutive passes (Pattern 19)
-- `fix_all` before `verify_final` (Pattern 21)
-- `verify_final` with `context_on_success` setting ALL `acceptance_criteria` keys
+- `fix_all` before `verify_final` (Pattern 21) — **exception**: when `--exit-validation` is set and the pipeline is simple (single test command, no delta logic), omit `fix_all` and `verify_final` — `exit_validation` replaces them
+- `verify_final` with `context_on_success` setting ALL `acceptance_criteria` keys (skip when using `exit_validation`)
 - Graph-level `retry_target = "fix_all"` — NEVER setup_deps or per-phase impl
 - Graph-level `spec_file` pointing to PRD location (Layer 3)
 - Defense matrix comment block after graph attributes (Layer 5)
@@ -239,7 +239,7 @@ digraph ${SLUG} {
     // workspace = "isolated"
     // repo_url = "https://github.com/org/repo.git"
     // repo_branch = "main"
-    // workspace_cleanup = "delete"
+    // workspace_cleanup = "preserve"  // "delete" only when commit_and_push is present
 
     // Defense Matrix:
     //   Layer 1 (Competitive):  [YES/NO] — fan-out/fan-in for complex phases
@@ -282,7 +282,9 @@ Show DOT in ```dot block. Summary: nodes by type, edges (total/conditional/feedb
 
 ## Example
 
-JWT auth API (TypeScript/Express). Demonstrates all 5 layers: spec_file + BDD contracts (L3), allowed_paths + escalate_on (L4), setup, spec-first TDD, lint/typecheck/test gates, 2-pass review ratchet with correctness+security teams, conformance, red team (L5), fix_all, verify_final with context_on_success, defense matrix.
+JWT auth API (TypeScript/Express). **Shared workspace** — no `commit_and_push` needed. For isolated workspace additions (`workspace`, `repo_url`, `repo_branch`, `workspace_cleanup="preserve"`, `commit_and_push` node wiring), see Pattern 0 in the patterns file.
+
+Demonstrates all 5 layers: spec_file + BDD contracts (L3), allowed_paths + escalate_on (L4), setup, spec-first TDD, lint/typecheck/test gates, 2-pass review ratchet with correctness+security teams, conformance, red team (L5), fix_all, verify_final with context_on_success, defense matrix.
 
 ```dot
 digraph user_auth_api {

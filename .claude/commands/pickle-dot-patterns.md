@@ -150,7 +150,7 @@ Layer 1 = YES when Pattern 18 (competing impls) or Pattern 4 (fan-out) is presen
 
 **19. Review Convergence Ratchet** — N consecutive clean agent team passes required. Default for all pipelines. Replaces Pattern 7.
 
-Team composition: `correctness` + `patterns` always. Add `architecture` (>5 files), `security` (auth/data), `performance` (hot paths), `api_compatibility` (contracts). Ask user: "Review team? Consecutive passes? (default: 2)"
+Team composition: `correctness` + `patterns` always. Add `architecture` (>5 files), `security` (auth/data), `performance` (hot paths), `api_compatibility` (contracts). Present in Step 2b checklist for user confirmation (default: 2 consecutive passes).
 
 Each pass = `component→tripleoctagon` fan-out. Pass K failure resets to pass 1. Fix prompts include simplification.
 ```
@@ -298,6 +298,7 @@ The house node polls a child pipeline or external process. `manager.stop_conditi
 - Missing capture_baseline before first impl in isolated workspace pipelines
 - `workspace="isolated"` without `commit_and_push` node after check_final success (all code lost on cleanup)
 - `workspace_cleanup="delete"` without a tool node that runs `git push` (pipeline output destroyed)
+- Manager node without `manager.stop_condition` (polls forever)
 - >4 reviewers per team
 
 ## Model Routing
