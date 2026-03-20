@@ -50,8 +50,9 @@ Attractor = **convergence basin**, not task list. Failures route back toward the
 1. `workspace = "isolated"`
 2. `repo_url` — derive from `git remote get-url origin` in the target repo. Must be HTTPS. Convert SSH if needed: `git@github.com:org/repo.git` → `https://github.com/org/repo.git`
 3. `repo_branch` — current branch name (e.g., `"main"`)
-4. `workspace_cleanup = "delete"` (default). Mention `"preserve"` option for debugging.
+4. `workspace_cleanup = "preserve"` — **always preserve by default**. Isolated workspaces are ephemeral; `"delete"` destroys all pipeline output. Use `"delete"` only if the pipeline has a `commit_and_push` node (Pattern 0).
 5. `working_dir` stays the same (`/repos/...`) — the engine rewrites it automatically.
+6. **MANDATORY**: Emit a `commit_and_push` tool node (Pattern 0) before `verify_final`. This pushes a branch with all pipeline output. Without this, code is lost when the workspace is cleaned up.
 
 **If shared**: do NOT emit `workspace`, `repo_url`, `repo_branch`, or `workspace_cleanup`. Current behavior unchanged.
 
@@ -90,11 +91,11 @@ Extract: slug, goal, tasks, acceptance criteria.
 **Start from this template** and customize based on Step 2 analysis:
 
 ```
-start → setup_deps → [bdd_scenarios →] [spec_tests →] impl → lint → typecheck → test
+start → setup_deps → capture_baseline → [bdd_scenarios →] [spec_tests →] impl → lint → typecheck → test
   → [security →] [coverage →] [scope_check →]
   → review_ratchet(pass_1 → pass_2)
   → conformance → [red_team →]
-  → fix_all → verify_final → check_final → done
+  → fix_all → [commit_and_push →] verify_final → check_final → done
 ```
 
 **Customizations:**
@@ -107,7 +108,10 @@ start → setup_deps → [bdd_scenarios →] [spec_tests →] impl → lint → 
 **Every box prompt MUST have context + constraints + acceptance criteria.** The executing LLM has NO access to the PRD — the prompt IS its instruction.
 
 **Mandatory for every graph:**
-- `setup_deps` before first impl (Pattern 0)
+- `commit_and_push` before `verify_final` when `workspace="isolated"` (Pattern 0) — pushes a branch to preserve output
+- `setup_deps` before first impl (Pattern 0a)
+- `capture_baseline` after `setup_deps`, before first impl (Pattern 0c) — snapshots pre-existing lint/typecheck/test errors
+- All verify/reverify `tool_command` values MUST use delta-aware checking (Pattern 0d) — fail on regressions, not pre-existing debt
 - All `component` nodes: `max_parallel=1` (Pattern 0b)
 - `max_visits` on looping nodes (Pattern 6)
 - `bdd_scenarios` before `spec_tests` for phases with 3+ requirements (Pattern 16b, recommended)
@@ -173,7 +177,7 @@ When `--review-provider` differs from `--provider`, the `.review` and `.critical
 
 **Errors** (STOP and fix): single start/exit, no incoming→start, no outgoing←exit, all reachable, valid targets, diamond 2+ edges, component↔tripleoctagon paired, valid conditions/IDs/syntax, `->` only, single digraph, acceptance_criteria keys not set by `context_on_success` (infinite retry), graph-level retry_target to setup_deps/start/per-phase impl instead of fix_all.
 
-**Warnings** (emit but continue): dep setup exists, max_parallel=1 on components, max_visits on loops, every box has prompt, happy-path weight=2, goal_gate has retry_target, no linear chains, spec_tests before goal_gate impls, review ratchet ≥2 passes with reset-on-fail, lint/typecheck/test separate gates, fix_all before verify_final in multi-phase, conformance before exit, security/auth phases have red_team, node inside component→tripleoctagon fan-out has retry_target pointing outside branch scope (stripped at runtime — retry ineffective), graph-level retry_target points before a component fan-out (branches retry entire pipeline — wasteful), codergen node without `allowed_paths` (unbounded file scope), `allowed_paths` doesn't include test directories (agent can't write tests), missing `spec_file` graph attribute, BDD scenarios missing for phase with 3+ requirements, defense matrix comment block missing.
+**Warnings** (emit but continue): dep setup exists, max_parallel=1 on components, max_visits on loops, every box has prompt, happy-path weight=2, goal_gate has retry_target, no linear chains, spec_tests before goal_gate impls, review ratchet ≥2 passes with reset-on-fail, lint/typecheck/test separate gates, fix_all before verify_final in multi-phase, conformance before exit, security/auth phases have red_team, node inside component→tripleoctagon fan-out has retry_target pointing outside branch scope (stripped at runtime — retry ineffective), graph-level retry_target points before a component fan-out (branches retry entire pipeline — wasteful), codergen node without `allowed_paths` (unbounded file scope), `allowed_paths` doesn't include test directories (agent can't write tests), missing `spec_file` graph attribute, BDD scenarios missing for phase with 3+ requirements, defense matrix comment block missing, missing `capture_baseline` before first impl (Pattern 0c — pre-existing errors cause infinite retry), verify nodes using raw lint/typecheck commands instead of delta-aware checking (Pattern 0d), **isolated workspace without `commit_and_push` node (Pattern 0 — all code lost on cleanup)**.
 
 ## Step 6: Summary & Save
 
@@ -202,14 +206,15 @@ digraph user_auth_api {
 
     start [shape=Mdiamond]
     setup_deps [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm install 2>&1", timeout="120s"]
+    capture_baseline [shape=parallelogram, tool_command="cd ${WORKING_DIR} && echo '=== BASELINE SNAPSHOT ===' && (npx eslint src/ 2>&1 || true) | grep -c 'error' > /tmp/baseline_lint_errors.txt && (npx tsc --noEmit 2>&1 || true) | grep -c 'error TS' > /tmp/baseline_ts_errors.txt && echo \"lint=$(cat /tmp/baseline_lint_errors.txt) ts=$(cat /tmp/baseline_ts_errors.txt)\" 2>&1", timeout="120s"]
 
     bdd_scenarios_auth [class="review", prompt="Read the spec file at $spec_file. For each JWT auth requirement, generate BDD scenarios in Given/When/Then format: token validation (missing, expired, malformed), login flow, refresh rotation, bcrypt hashing, OWASP patterns. Output as executable test descriptions. Do NOT implement — only define the behavioral contracts."]
     spec_tests_auth [class="review", prompt="Read the BDD scenarios from the previous node's output. Write failing test cases that verify each scenario. Run them to confirm they fail. Do NOT write production code.", goal_gate=true, retry_target="spec_tests_auth", max_visits=5]
     implement_auth [goal_gate=true, retry_target="implement_auth", prompt="Make all failing auth tests pass. Do NOT modify test files. JWT middleware + login endpoint. 1h expiry, refresh rotation, bcrypt. OWASP patterns.", allowed_paths="src/auth/*, src/middleware/*, tests/auth/*", escalate_on="package.json, package-lock.json, .env*, prisma/schema.prisma", max_visits=8]
 
-    verify_lint [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm run lint 2>&1", max_visits=3]
+    verify_lint [shape=parallelogram, tool_command="cd ${WORKING_DIR} && BASELINE=$(cat /tmp/baseline_lint_errors.txt 2>/dev/null || echo 0) && CURRENT=$((npm run lint 2>&1 || true) | grep -c 'error') && echo \"lint baseline=$BASELINE current=$CURRENT\" && [ $CURRENT -le $BASELINE ] || (echo 'LINT REGRESSION' && exit 1)", max_visits=3]
     check_lint [shape=diamond]
-    verify_types [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npx tsc --noEmit 2>&1", max_visits=3]
+    verify_types [shape=parallelogram, tool_command="cd ${WORKING_DIR} && BASELINE=$(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) && CURRENT=$((npx tsc --noEmit 2>&1 || true) | grep -c 'error TS') && echo \"typecheck baseline=$BASELINE current=$CURRENT\" && [ $CURRENT -le $BASELINE ] || (echo 'TYPECHECK REGRESSION' && exit 1)", max_visits=3]
     check_types [shape=diamond]
     run_tests [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm test 2>&1", max_visits=3]
     check_tests [shape=diamond]
@@ -252,7 +257,7 @@ digraph user_auth_api {
     done [shape=Msquare]
 
     // Edges
-    start -> setup_deps -> bdd_scenarios_auth -> spec_tests_auth -> implement_auth
+    start -> setup_deps -> capture_baseline -> bdd_scenarios_auth -> spec_tests_auth -> implement_auth
     implement_auth -> verify_lint -> check_lint
     check_lint -> verify_types [condition="outcome=success", weight=2]
     check_lint -> implement_auth [condition="outcome=fail"]
