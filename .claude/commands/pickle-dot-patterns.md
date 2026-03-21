@@ -147,6 +147,7 @@ Rules:
 - `allowed_paths`: derive from PRD's affected files/directories. Include source + test dirs. Use `**` for recursive matching when the scope includes subdirectories (e.g., `src/auth/**` matches `src/auth/middleware/jwt.ts`). Use `*` only for intentionally narrow single-level scopes.
 - `escalate_on`: always include `package.json, package-lock.json, *.lock`, schema files (`*.prisma, *.sql, migrations/*`), config (`.env*, *.config.*`), and auth-related files.
 - If PRD lacks affected-files section → emit `// WARNING: PRD lacks affected-files section` and use broad `allowed_paths="src/**, tests/**"`.
+- Cross-check: after generating each impl node, verify every file path mentioned in `prompt=` text appears in `allowed_paths` (or is covered by a glob). If the prompt says "edit parser.ts" but `allowed_paths` doesn't include it, the agent will do the work and scope enforcement will throw it away — wasted tokens and time. Validator rule 26 (`prompt_files_in_allowed_paths`) catches this at submission, but fix it at generation time.
 - Tool nodes (parallelogram) don't need allowed_paths — they run shell commands, not agents.
 - Review/simplify/conformance nodes don't need them — they only read, not write.
 
@@ -330,6 +331,7 @@ The house node polls a child pipeline or external process. `manager.stop_conditi
 - `workspace_cleanup="delete"` without a tool node that runs `git push` (pipeline output destroyed)
 - Manager node without `manager.stop_condition` (polls forever)
 - Codergen node without `timeout` (unbounded LLM execution = unbounded cost)
+- Prompt referencing files not in `allowed_paths` (wasted session — agent edits file, scope enforcement rejects it — validator rule 26 warns)
 - >4 reviewers per team
 
 ## Model Routing
