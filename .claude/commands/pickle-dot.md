@@ -47,7 +47,7 @@ Attractor = **convergence basin**, not task list. Failures route back toward the
 
 **If isolated**: emit these graph-level attributes in Step 4:
 1. `workspace = "isolated"`
-2. `repo_url` — derive from `git remote get-url origin` in the target repo. Must be HTTPS. Convert SSH if needed: `git@github.com:org/repo.git` → `https://github.com/org/repo.git`
+2. `repo_url` — derive from `git remote get-url origin` in the target repo. **Must be HTTPS** — attractor validator rule 22 (`workspace_config`) rejects SSH URLs because isolated workspaces clone inside Docker where SSH keys aren't available. Convert SSH format: `git@github.com:org/repo.git` → `https://github.com/org/repo.git`. For private repos, the Docker container must have a GitHub token available (e.g., via `GITHUB_TOKEN` env var in attractor's Docker config)
 3. `repo_branch` — current branch name (e.g., `"main"`)
 4. `workspace_cleanup = "preserve"` — **always preserve by default**. Isolated workspaces are ephemeral; `"delete"` destroys all pipeline output. Use `"delete"` only if the pipeline has a `commit_and_push` node (Pattern 0).
 5. `working_dir` stays the same (`/repos/...`) — the engine rewrites it automatically for codergen (box) nodes.
@@ -189,7 +189,7 @@ start → setup_deps → capture_baseline → [bdd_scenarios →] [spec_tests �
     fix_all → verify_final
   `fix_conformance` has the same attributes as fix_all but its prompt focuses on unmet PRD requirements rather than lint/test regressions. For single-phase pipelines, conformance `retry_target="impl"` is fine — it naturally re-enters the full chain.
 - **Single-phase**: template as-is, fix_all still recommended
-- **Catastrophic failure**: use `loop_restart=true` on edges as an alternative to `retry_target` when the pipeline needs a full restart: `check_final -> start [condition="outcome=fail", loop_restart=true]`. This clears RunContext — use sparingly, only when incremental retry cannot recover
+- **Catastrophic failure**: use `loop_restart=true` on edges as an alternative to `retry_target` when the pipeline needs a full restart: `check_final -> setup_deps [condition="outcome=fail", loop_restart=true]`. Route to `setup_deps`, NOT `start` (validator rule 3 rejects incoming edges on start). This clears RunContext — use sparingly, only when incremental retry cannot recover
 - **Skip what doesn't apply**: no linter → skip lint. No type checker → skip typecheck. No security tooling → skip security scan
 
 **Multimodal** (`--multimodal`): If PRD references screenshots, mockups, or images, emit a tool node that captures them into a context key, then add `attachments_context_key="<key>"` on codergen nodes that need the visual context.
@@ -210,6 +210,7 @@ start → setup_deps → capture_baseline → [bdd_scenarios →] [spec_tests �
 - `spec_tests` before impl on `goal_gate=true` paths (Pattern 16, default — skip only if explicitly simplified)
 - `permission_mode="bypassPermissions"` on all codergen (box) nodes in headless pipelines — NEVER use `plan` (deadlocks waiting for human approval that never arrives; validator rule 24 warns)
 - `timeout` on all codergen (box) nodes — `30m` for impl, `15m` for review/fix (unbounded LLM = unbounded cost)
+- `STATUS: SUCCESS` / `STATUS: FAIL` output instruction in prompts of all read-only codergen nodes (conformance, scope_check, red_team, reviewers, bdd_scenarios, check_coverage) — prevents no-op detection infinite retry (Pattern 6b)
 - `allowed_paths` on all codergen (box) impl nodes (Layer 4, validator rule 25 warns if missing)
 - `escalate_on` on all codergen impl nodes — always include lock files, schema, config, auth
 - Review ratchet with ≥2 consecutive passes (Pattern 19)
@@ -277,12 +278,13 @@ When `--review-provider` differs from `--provider`, the `.review` and `.critical
 
 ## Step 5: Validate
 
-**Errors** (STOP and fix): single start/exit, no incoming→start, no outgoing←exit, all reachable, valid targets, diamond 2+ edges, component↔tripleoctagon paired, valid conditions/IDs/syntax, `->` only, single digraph, graph-level retry_target to setup_deps/start/per-phase impl instead of fix_all.
+**Errors** (STOP and fix): single start/exit, no incoming→start, no outgoing←exit, all reachable, valid targets, diamond 2+ edges, component↔tripleoctagon paired (validator rule 20 — every `shape=component` must have a corresponding `shape=tripleoctagon` fan-in node), retry targets inside fan-out branches must point within the same component→tripleoctagon scope (validator rule 17), valid conditions/IDs/syntax, `->` only, single digraph, graph-level retry_target to setup_deps/start/per-phase impl instead of fix_all, `goal_gate=true` with `retry_target` but no `max_visits` (validator rule 19).
 
 **Pre-submission check** (STOP if violated):
 - For each key in `acceptance_criteria`, verify exactly one node has `context_on_success` setting that key. Missing mapping → retry until engine safety limit (10 retries), then hard failure.
 - Every codergen (box) node has `timeout` (recommended: `30m` impl, `15m` review/fix). Unbounded LLM = unbounded cost.
 - For each codergen node with `allowed_paths`, verify every file path in `prompt=` is covered. Same check as validator rule 26 (`prompt_files_in_allowed_paths`) but caught at generation time.
+- For each read-only codergen node (conformance, scope_check, red_team, reviewers, bdd_scenarios, check_coverage), verify the prompt includes explicit `STATUS: SUCCESS` / `STATUS: FAIL` output instruction (Pattern 6b). Missing STATUS on read-only nodes → no-op detection → wasted retries.
 
 **Warnings** (emit but continue): dep setup exists, max_parallel=1 on components, max_visits on loops, every box has prompt, happy-path weight=2, goal_gate has retry_target, no linear chains, spec_tests before goal_gate impls, review ratchet ≥2 passes with reset-on-fail, lint/typecheck/test separate gates, fix_all before verify_final in multi-phase, conformance before exit, security/auth phases have red_team, node inside component→tripleoctagon fan-out has retry_target pointing outside branch scope (stripped at runtime — retry ineffective), graph-level retry_target points before a component fan-out (branches retry entire pipeline — wasteful), codergen node without `allowed_paths` (unbounded file scope), `allowed_paths` doesn't include test directories (agent can't write tests), missing `spec_file` graph attribute, BDD scenarios missing for phase with 3+ requirements, defense matrix comment block missing, missing `capture_baseline` before first impl (Pattern 0c — pre-existing errors cause infinite retry), verify nodes using raw lint/typecheck commands instead of delta-aware checking (Pattern 0d), impl node without progress gate (Pattern 0e — stalled impls waste retry budgets), **isolated workspace without `commit_and_push` node after check_final success (Pattern 0 — all code lost on cleanup)**.
 
@@ -319,8 +321,8 @@ digraph user_auth_api {
     setup_deps [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm install 2>&1", timeout="120s"]
     capture_baseline [shape=parallelogram, tool_command="cd ${WORKING_DIR} && echo '=== BASELINE SNAPSHOT ===' && (npx eslint src/ 2>&1 || true) | grep -c 'error' > /tmp/baseline_lint_errors.txt && (npx tsc --noEmit 2>&1 || true) | grep -c 'error TS' > /tmp/baseline_ts_errors.txt && echo \"lint=$(cat /tmp/baseline_lint_errors.txt) ts=$(cat /tmp/baseline_ts_errors.txt)\" 2>&1", timeout="120s"]
 
-    bdd_scenarios_auth [class="review", timeout="300s", prompt="Read the spec file at $spec_file. For each JWT auth requirement, generate BDD scenarios in Given/When/Then format: token validation (missing, expired, malformed), login flow, refresh rotation, bcrypt hashing, OWASP patterns. Output as executable test descriptions. Do NOT implement — only define the behavioral contracts."]
-    spec_tests_auth [class="review", prompt="Read the BDD scenarios from the previous node's output. Write failing test cases that verify each scenario. Run them to confirm they fail. Do NOT write production code.", goal_gate=true, retry_target="spec_tests_auth", max_visits=5]
+    bdd_scenarios_auth [class="review", timeout="10m", prompt="Read the spec file at $spec_file. For each JWT auth requirement, generate BDD scenarios in Given/When/Then format: token validation (missing, expired, malformed), login flow, refresh rotation, bcrypt hashing, OWASP patterns. Output as executable test descriptions. Do NOT implement — only define the behavioral contracts. Then output 'STATUS: SUCCESS' on its own line."]
+    spec_tests_auth [class="review", timeout="15m", prompt="Read the BDD scenarios from the previous node's output. Write failing test cases that verify each scenario. Run them to confirm they fail. Do NOT write production code.", goal_gate=true, retry_target="spec_tests_auth", max_visits=5]
     implement_auth [goal_gate=true, retry_target="implement_auth", permission_mode="bypassPermissions", timeout="30m", prompt="Make all failing auth tests pass. Do NOT modify test files. JWT middleware + login endpoint. 1h expiry, refresh rotation, bcrypt. OWASP patterns.", allowed_paths="src/auth/**, src/middleware/**, tests/auth/**", escalate_on="package.json, package-lock.json, .env*, prisma/schema.prisma", max_visits=8]
 
     check_progress [shape=parallelogram, tool_command="cd ${WORKING_DIR} && CHANGED=$(git status --porcelain | wc -l | tr -d ' ') && if [ \"$CHANGED\" -eq 0 ]; then echo 'STALL: impl produced zero file changes — retrying'; exit 1; fi && echo \"progress: $CHANGED files modified\" 2>&1", max_visits=3]
@@ -335,9 +337,9 @@ digraph user_auth_api {
 
     // Review ratchet — 2 consecutive clean passes (Pattern 19)
     split_review_1 [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
-    reviewer_correctness_1 [class="review", timeout="15m", prompt="Correctness ONLY: logic errors, off-by-one, null handling, async. List issues with file:line."]
-    reviewer_patterns_1 [class="review", timeout="15m", prompt="Patterns ONLY: anti-patterns, duplication, naming conventions, error handling consistency. List with file:line."]
-    reviewer_security_1 [class="review", timeout="15m", prompt="Security ONLY: token forgery, timing attacks, algorithm confusion, secrets exposure. List with file:line."]
+    reviewer_correctness_1 [class="review", timeout="15m", prompt="Correctness ONLY: logic errors, off-by-one, null handling, async. List issues with file:line. Then output 'STATUS: SUCCESS' on its own line."]
+    reviewer_patterns_1 [class="review", timeout="15m", prompt="Patterns ONLY: anti-patterns, duplication, naming conventions, error handling consistency. List with file:line. Then output 'STATUS: SUCCESS' on its own line."]
+    reviewer_security_1 [class="review", timeout="15m", prompt="Security ONLY: token forgery, timing attacks, algorithm confusion, secrets exposure. List with file:line. Then output 'STATUS: SUCCESS' on its own line."]
     merge_review_1 [shape=tripleoctagon, class="review", timeout="15m", prompt="Consolidate. BLOCKER or ADVISORY. CLEAN or DIRTY."]
     check_review_1 [shape=diamond]
     fix_1 [prompt="Fix all BLOCKERs. Also simplify: redundant logic, duplication, naming. Do NOT modify test files.", permission_mode="bypassPermissions", timeout="15m", allowed_paths="src/auth/**, src/middleware/**", escalate_on="package.json, package-lock.json, .env*", max_visits=5]
@@ -345,19 +347,19 @@ digraph user_auth_api {
     check_reverify_1 [shape=diamond]
 
     split_review_2 [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
-    reviewer_correctness_2 [class="review", timeout="15m", prompt="Fresh correctness review of ALL code — assume nothing from prior reviews. List issues with file:line."]
-    reviewer_patterns_2 [class="review", timeout="15m", prompt="Fresh patterns review of ALL code — assume nothing. Anti-patterns, duplication, naming, error handling. List with file:line."]
-    reviewer_security_2 [class="review", timeout="15m", prompt="Fresh security review of ALL code — assume nothing. All OWASP vectors. List with file:line."]
+    reviewer_correctness_2 [class="review", timeout="15m", prompt="Fresh correctness review of ALL code — assume nothing from prior reviews. List issues with file:line. Then output 'STATUS: SUCCESS' on its own line."]
+    reviewer_patterns_2 [class="review", timeout="15m", prompt="Fresh patterns review of ALL code — assume nothing. Anti-patterns, duplication, naming, error handling. List with file:line. Then output 'STATUS: SUCCESS' on its own line."]
+    reviewer_security_2 [class="review", timeout="15m", prompt="Fresh security review of ALL code — assume nothing. All OWASP vectors. List with file:line. Then output 'STATUS: SUCCESS' on its own line."]
     merge_review_2 [shape=tripleoctagon, class="review", timeout="15m", prompt="Consolidate. BLOCKER or ADVISORY. CLEAN or DIRTY."]
     check_review_2 [shape=diamond]
     fix_2 [prompt="Fix all BLOCKERs. Also simplify. Do NOT modify test files.", permission_mode="bypassPermissions", timeout="15m", allowed_paths="src/auth/**, src/middleware/**", escalate_on="package.json, package-lock.json, .env*", max_visits=5]
     reverify_2 [shape=parallelogram, tool_command="cd ${WORKING_DIR} && BASELINE_LINT=$(cat /tmp/baseline_lint_errors.txt 2>/dev/null || echo 0) && CURRENT_LINT=$((npm run lint 2>&1 || true) | grep -c 'error') && BASELINE_TS=$(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) && CURRENT_TS=$((npx tsc --noEmit 2>&1 || true) | grep -c 'error TS') && npm test 2>&1 && [ $CURRENT_LINT -le $BASELINE_LINT ] && [ $CURRENT_TS -le $BASELINE_TS ] && echo 'DELTA: CLEAN' || (echo 'DELTA: REGRESSION' && exit 1)"]
     check_reverify_2 [shape=diamond]
 
-    conformance [class="review", goal_gate=true, retry_target="implement_auth", max_visits=5, prompt="Conformance audit: read the spec file at $spec_file. Compare every requirement against the current git diff. Verify: 1) Every requirement has a corresponding code change. 2) Acceptance criteria are testable and tested. 3) No requirements silently dropped. Output PASS or FAIL with unmet requirements."]
+    conformance [class="review", timeout="15m", goal_gate=true, retry_target="implement_auth", max_visits=5, prompt="Conformance audit: read the spec file at $spec_file. Compare every requirement against the current git diff. Verify: 1) Every requirement has a corresponding code change. 2) Acceptance criteria are testable and tested. 3) No requirements silently dropped. Output PASS or FAIL with unmet requirements. Then output 'STATUS: SUCCESS' if PASS, 'STATUS: FAIL' if FAIL on its own line."]
     conformance_gate [shape=diamond]
 
-    red_team_auth [class="review", prompt="Adversarial audit: token forgery, expired replay, refresh reuse, injection, timing attacks, algorithm confusion. Write repro tests. Output PASS or FAIL.", goal_gate=true, retry_target="implement_auth", max_visits=5]
+    red_team_auth [class="review", timeout="15m", prompt="Adversarial audit: token forgery, expired replay, refresh reuse, injection, timing attacks, algorithm confusion. Write repro tests. Output PASS or FAIL. Then output 'STATUS: SUCCESS' if PASS, 'STATUS: FAIL' if FAIL on its own line.", goal_gate=true, retry_target="implement_auth", max_visits=5]
     red_team_gate [shape=diamond]
 
     fix_all [prompt="Fix ALL remaining issues across the entire codebase. Run: 1) npx eslint src/ --fix 2>&1. 2) npx tsc --noEmit 2>&1. 3) npm test 2>&1. Iterate until all pass. Do NOT skip errors.", permission_mode="bypassPermissions", timeout="30m", allowed_paths="src/**, tests/**", escalate_on="package.json, package-lock.json, .env*, prisma/schema.prisma", max_visits=5]

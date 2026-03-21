@@ -72,7 +72,7 @@ check -> next [condition="outcome=success", weight=2]
 check -> impl [condition="outcome=fail"]
 ```
 
-**2. Goal Gates** — P0/critical nodes get `goal_gate=true`. PRD acceptance criteria → `acceptance_criteria` attr + `goal_gate=true`. Prefer per-node `retry_target`. Context vars: `context.tests_pass`, `context.build_status`, `context.lint_status`, `context.typecheck_status`.
+**2. Goal Gates** — P0/critical nodes get `goal_gate=true`. PRD acceptance criteria → `acceptance_criteria` attr + `goal_gate=true`. Prefer per-node `retry_target`. Every `goal_gate=true` node with a `retry_target` MUST also have `max_visits` (validator rule 19 enforces this — without it, the gate can retry infinitely). Recommended: `max_visits=5` for impl, `max_visits=3` for verify/conformance. Context vars: `context.tests_pass`, `context.build_status`, `context.lint_status`, `context.typecheck_status`.
 
 **CRITICAL: `context_on_success` bridge** — every key in `acceptance_criteria` MUST be set by `context_on_success="key=value,key2=value2"` on the final verification tool node. Without this, criteria always fail → retry until engine safety limit (10 retries, then hard failure):
 ```
@@ -90,7 +90,17 @@ check -> a [condition="outcome=success", weight=2]
 check -> b [condition="outcome=fail"]
 ```
 
-**6. Max Visits** — `max_visits` on looping nodes prevents infinite convergence.
+**6. Max Visits** — `max_visits` on looping nodes prevents infinite convergence. Required on all `goal_gate=true` nodes with `retry_target` (validator rule 19).
+
+**6b. No-Op Detection Warning** — the claude-code backend returns `RETRY` when a codergen node produces zero edits (`editWriteCount === 0`) and no explicit `STATUS:` marker. This means **read-only nodes** (analysis, conformance, scope check) that only read code without writing files will RETRY forever unless their prompt instructs the LLM to output `STATUS: SUCCESS` (or `FAIL`/`PARTIAL_SUCCESS`) on its own line. All review/conformance/red_team/scope_check nodes MUST include explicit STATUS output instructions in their prompts:
+```
+// Good — explicit STATUS marker:
+conformance [class="review", prompt="... Output PASS or FAIL with unmet requirements. Then output 'STATUS: SUCCESS' if PASS, 'STATUS: FAIL' if FAIL on its own line."]
+
+// Bad — no STATUS marker, will RETRY forever because no files are edited:
+conformance [class="review", prompt="... Output PASS or FAIL with unmet requirements."]
+```
+Exception: review ratchet merge nodes (tripleoctagon) don't need STATUS markers. The fan-in handler (`handlers/fan-in.ts`) has its own `execute()` that always returns `SUCCESS` — it calls the backend only to extract candidate selection text, then discards the backend's outcome. No-op detection is swallowed by the handler.
 
 **13. Lint Gate** — separate tool node for linter, BEFORE tests. MUST be delta-aware (Pattern 0d) when repo has pre-existing lint errors:
 ```
@@ -116,7 +126,7 @@ Uses Default tier (no `class`). Graph-level and verify_final `retry_target` MUST
 
 **15. Conformance Check** — LLM gate verifying requirements against `$spec_file`. Opus (`.review` class), `goal_gate=true`:
 ```
-conformance [class="review", goal_gate=true, retry_target="impl", prompt="Conformance audit: read the spec file at $spec_file. Compare every requirement against the current git diff. Verify: 1) Every requirement has a corresponding code change. 2) Acceptance criteria are testable and tested. 3) No requirements silently dropped. Output PASS or FAIL with unmet requirements."]
+conformance [class="review", goal_gate=true, retry_target="impl", max_visits=3, prompt="Conformance audit: read the spec file at $spec_file. Compare every requirement against the current git diff. Verify: 1) Every requirement has a corresponding code change. 2) Acceptance criteria are testable and tested. 3) No requirements silently dropped. Output PASS or FAIL with unmet requirements. Then output 'STATUS: SUCCESS' if PASS, 'STATUS: FAIL' if FAIL on its own line."]
 ```
 `$spec_file` is interpolated by the engine from the graph-level `spec_file` attribute (like `$goal`).
 
@@ -124,15 +134,15 @@ conformance [class="review", goal_gate=true, retry_target="impl", prompt="Confor
 
 **16. Spec-First TDD** — write failing tests FROM spec BEFORE impl. Mandatory for `goal_gate=true` impl nodes:
 ```
-spec_tests [class="review", prompt="Write failing tests for EVERY requirement. Do NOT write production code.", goal_gate=true, retry_target="spec_tests"]
-impl [prompt="Make all failing tests pass. Do NOT modify test files.", allowed_paths="src/**, tests/**", goal_gate=true, retry_target="impl"]
+spec_tests [class="review", timeout="15m", prompt="Write failing tests for EVERY requirement. Do NOT write production code.", goal_gate=true, retry_target="spec_tests", max_visits=5]
+impl [prompt="Make all failing tests pass. Do NOT modify test files.", allowed_paths="src/**, tests/**", goal_gate=true, retry_target="impl", max_visits=8]
 ```
 
 **16b. BDD Scenario Generation** — behavioral contracts before spec_tests. Emit for phases with 3+ requirements. For 1-2 requirements, spec_tests alone is sufficient:
 ```
-bdd_scenarios [class="review", prompt="Read the spec file at $spec_file. For each requirement, generate BDD scenarios in Given/When/Then format. Output as executable test descriptions. Do NOT implement — only define the behavioral contracts."]
-spec_tests [class="review", prompt="Read the BDD scenarios from the previous node's output. Write failing test cases that verify each scenario. Run them to confirm they fail. Do NOT write production code.", goal_gate=true, retry_target="spec_tests"]
-impl [prompt="Make all failing tests pass. Do NOT modify test files.", allowed_paths="src/**, tests/**", escalate_on="package.json, package-lock.json, .env*, *.config.*", goal_gate=true, retry_target="impl"]
+bdd_scenarios [class="review", timeout="10m", prompt="Read the spec file at $spec_file. For each requirement, generate BDD scenarios in Given/When/Then format. Output as executable test descriptions. Do NOT implement — only define the behavioral contracts. Then output 'STATUS: SUCCESS' on its own line."]
+spec_tests [class="review", timeout="15m", prompt="Read the BDD scenarios from the previous node's output. Write failing test cases that verify each scenario. Run them to confirm they fail. Do NOT write production code.", goal_gate=true, retry_target="spec_tests", max_visits=5]
+impl [prompt="Make all failing tests pass. Do NOT modify test files.", allowed_paths="src/**, tests/**", escalate_on="package.json, package-lock.json, .env*, *.config.*", goal_gate=true, retry_target="impl", max_visits=8]
 ```
 The BDD node reads `$spec_file`, generates Given/When/Then scenarios. spec_tests converts them to executable tests. impl makes them pass.
 
@@ -169,8 +179,8 @@ Team composition: `correctness` + `patterns` always. Add `architecture` (>5 file
 Each pass = `component→tripleoctagon` fan-out. Pass K failure resets to pass 1. Fix prompts include simplification.
 ```
 split_review_N [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
-reviewer_X_N [class="review", timeout="15m", prompt="<narrow focus> ONLY. List issues with file:line."]
-merge_review_N [shape=tripleoctagon, class="review", timeout="10m", prompt="Consolidate. BLOCKER or ADVISORY. CLEAN or DIRTY."]  // CAN use eval_criteria for structured scoring, but defaults to LLM prompt-based merge for simplicity
+reviewer_X_N [class="review", timeout="15m", prompt="<narrow focus> ONLY. List issues with file:line. Then output 'STATUS: SUCCESS' on its own line."]
+merge_review_N [shape=tripleoctagon, class="review", timeout="10m", prompt="Consolidate. BLOCKER or ADVISORY. CLEAN or DIRTY."]  // CAN use eval_criteria for structured scoring, but defaults to LLM prompt-based merge for simplicity. Fan-in handler swallows backend outcome — no STATUS needed.
 check_review_N [shape=diamond]
 fix_N [prompt="Fix all BLOCKERs. Also simplify. Do NOT modify test files.", max_visits=5]
 reverify_N [shape=parallelogram, tool_command="cd ${WORKING_DIR} && ..."]
@@ -194,27 +204,27 @@ verify_security [shape=parallelogram, tool_command="npm audit --audit-level=high
 
 **9. Coverage Qualification** — score-based gate on new/changed code (>=80%):
 ```
-check_coverage [prompt="Analyze test coverage on new/changed code. Target >=80% on new lines. Output PASS or FAIL with uncovered files.", goal_gate=true, retry_target="impl", max_visits=3]
+check_coverage [prompt="Analyze test coverage on new/changed code. Target >=80% on new lines. Output PASS or FAIL with uncovered files. Then output 'STATUS: SUCCESS' if PASS, 'STATUS: FAIL' if FAIL on its own line.", goal_gate=true, retry_target="impl", max_visits=3, timeout="15m"]
 ```
 
 **10. Scope Creep Detection** — post-implementation, before review. Opus (`.review`):
 ```
-scope_check [class="review", prompt="Compare git diff against prompt. Flag out-of-scope changes."]
+scope_check [class="review", timeout="15m", prompt="Compare git diff against prompt. Flag out-of-scope changes. Output 'STATUS: SUCCESS' if all changes are in scope, 'STATUS: FAIL' if out-of-scope changes detected on its own line."]
 ```
 
 **11. Drift Detection** — in review-simplify cycles (Pattern 7 standalone only). Pattern 19 ratchet handles via reset-on-fail.
 
 **17. Adversarial Red Team** — AFTER conformance. Ask user for security/auth/data phases:
 ```
-red_team [class="review", prompt="Attempt to break: invalid inputs, races, exhaustion, state corruption. Write repro tests.", goal_gate=true, retry_target="impl"]
+red_team [class="review", timeout="15m", prompt="Attempt to break: invalid inputs, races, exhaustion, state corruption. Write repro tests. Then output 'STATUS: SUCCESS' if no critical vulnerabilities found, 'STATUS: FAIL' if exploits discovered on its own line.", goal_gate=true, retry_target="impl", max_visits=5]
 ```
 Note: `retry_target="impl"` is correct here (unlike verify_final) because red_team is mid-pipeline — retry re-enters the full lint→typecheck→test→review ratchet via graph edges. verify_final is the FINAL gate where impl retry can't fix cross-phase issues.
 
 **18. Competing Implementations** — two parallel approaches for high-complexity phases (>3 files). Ask user:
 ```
 split_impl [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
-approach_minimal [prompt="MINIMAL changes — smallest diff..."]
-approach_clean [prompt="CLEAN architecture — best design..."]
+approach_minimal [prompt="MINIMAL changes — smallest diff...", timeout="30m", permission_mode="bypassPermissions", allowed_paths="<from PRD>", escalate_on="<standard>", max_visits=8]
+approach_clean [prompt="CLEAN architecture — best design...", timeout="30m", permission_mode="bypassPermissions", allowed_paths="<from PRD>", escalate_on="<standard>", max_visits=8]
 select_best [shape=tripleoctagon, class="critical", eval_criteria="completeness,faithfulness", eval_model="anthropic/claude-sonnet-4-6", eval_threshold=0.7, eval_max_branches=5]
 ```
 
@@ -240,9 +250,9 @@ select_best [shape=tripleoctagon, class="critical", eval_criteria="completeness,
 ```
 commit_baseline [shape=parallelogram, tool_command="cd ${WORKING_DIR} && git add -u && git -c user.name=attractor -c user.email=attractor@local commit -m 'microverse: baseline' --allow-empty 2>&1"]
 baseline [shape=parallelogram, tool_command="cd ${WORKING_DIR} && <measurement_cmd> 2>&1"]
-optimize [prompt="Make ONE targeted change toward <TARGET>. Direction: <DIRECTION>. Smallest diff. Do NOT repeat failed approaches.", max_visits=8, allowed_paths="<from PRD>", escalate_on="<standard>"]
+optimize [prompt="Make ONE targeted change toward <TARGET>. Direction: <DIRECTION>. Smallest diff. Do NOT repeat failed approaches.", timeout="30m", max_visits=8, allowed_paths="<from PRD>", escalate_on="<standard>"]
 measure [shape=parallelogram, tool_command="cd ${WORKING_DIR} && <measurement_cmd> 2>&1"]
-compare [class="review", prompt="Compare measurement against target. Target: <TARGET>. Direction: <DIRECTION> (<DIRECTION> is better). If target met → STATUS: SUCCESS. If improved toward target but not met → STATUS: PARTIAL_SUCCESS. If regressed or unchanged → STATUS: FAIL. Show before/after values.", max_visits=10, auto_status=true, allow_partial=true]
+compare [class="review", timeout="15m", prompt="Compare measurement against target. Target: <TARGET>. Direction: <DIRECTION> (<DIRECTION> is better). If target met → STATUS: SUCCESS. If improved toward target but not met → STATUS: PARTIAL_SUCCESS. If regressed or unchanged → STATUS: FAIL. Show before/after values.", max_visits=10, auto_status=true, allow_partial=true]
 check_mv [shape=diamond]
 rollback [shape=parallelogram, tool_command="cd ${WORKING_DIR} && git checkout . 2>&1"]
 
@@ -274,9 +284,39 @@ mgr [shape=house, manager.poll_interval="45s", manager.max_cycles=100,
 ```
 The house node polls a child pipeline or external process. `manager.stop_condition` evaluates against RunContext. Well-known child keys: `context.stack.child.status` (`starting`, `completed`, `failed`), `context.stack.child.current_node`, `context.stack.child.completed_nodes`. `manager.actions` controls what the supervisor can do each cycle: `observe` (read status), `steer` (intervene via `manager.steer_content`), `wait` (sleep until next poll). Use `stack.child_autostart="true"` to auto-launch a child DOT pipeline.
 
+Wiring example (CI deploy wait):
+```
+impl -> verify_lint -> ... -> review_ratchet -> deploy_trigger
+deploy_trigger [shape=parallelogram, tool_command="cd ${WORKING_DIR} && gh workflow run deploy.yml --ref $(git rev-parse --abbrev-ref HEAD) 2>&1", timeout="60s"]
+deploy_trigger -> wait_deploy
+wait_deploy [shape=house, manager.poll_interval="45s", manager.max_cycles=40,
+    manager.stop_condition="context.deploy_status=completed",
+    manager.actions="observe,wait", manager.max_duration_ms=1800000]
+wait_deploy -> check_deploy [shape=diamond]
+check_deploy -> done [condition="outcome=success", weight=2]
+check_deploy -> fix_all [condition="outcome=fail"]
+```
+Anti-pattern: `house` without `manager.stop_condition` (polls forever until max_cycles/max_duration).
+
+**25. Catastrophic Recovery (loop_restart)** — use `loop_restart=true` on edges when incremental retry cannot recover and the pipeline needs a full context reset. This clears the RunContext and restarts from the beginning, incrementing `loop.restart.count`:
+```
+check_final -> setup_deps [condition="outcome=fail", loop_restart=true, label="catastrophic restart"]
+```
+**IMPORTANT**: Route to `setup_deps`, NOT `start` — validator rule 3 (`start_no_incoming`) rejects incoming edges on start nodes. The start node is entry-only.
+
+Use sparingly — most failures should be handled by `retry_target` → `fix_all`. Reserve `loop_restart` for:
+- Pipelines where accumulated context drift causes cascading failures
+- Multi-phase pipelines where early-phase corruption propagates
+- Long-running convergence pipelines that need a clean slate
+
+Engine tracks `loop.restart.count` in RunContext — use `max_visits` on the restart target to prevent infinite restarts:
+```
+setup_deps [shape=parallelogram, ..., max_visits=3]  // max 3 full restarts
+```
+
 ## Superseded (reference only)
 
-**5. Human Gates** — NOT IMPLEMENTED for claude-code backend. Available for LLM and API backends. Do not emit for `--backend claude-code` pipelines (default).
+**5. Human Gates** — `hexagon` shape maps to `wait.human` which pauses the pipeline waiting for human input via the `/pipelines/:id/questions/:qid/answer` API. **Never emit for autonomous pipelines** — the pipeline will deadlock waiting for input that never arrives. Only relevant for interactive/supervised workflows (non-default).
 
 **7. Review-Simplify Cycle** — superseded by Pattern 19 (ratchet). Standalone fallback only.
 
@@ -303,7 +343,7 @@ The house node polls a child pipeline or external process. `manager.stop_conditi
 - Graph-level `retry_target` to setup_deps/start/per-phase impl (full re-run or scoped-only retry)
 - Fan-out `retry_target` outside branch scope (stripped at runtime — retry is ineffective)
 - `retry_target` inside a fan-out branch pointing before the component node (causes infinite recursion without engine scoping, ineffective with it — retry logic belongs at fan-in or post-merge level)
-- Hexagon nodes for claude-code backend (deadlock — use for LLM/API backends only)
+- Hexagon nodes for claude-code backend (deadlock — `hexagon` = `wait.human` which pauses the pipeline waiting for human input via API; autonomous pipelines must never wait for humans)
 - Diamond without 2+ edges (stalls)
 - Parallel siblings depending on each other (deadlock)
 - Lint/typecheck/test bundled into one gate
@@ -332,6 +372,10 @@ The house node polls a child pipeline or external process. `manager.stop_conditi
 - Manager node without `manager.stop_condition` (polls forever)
 - Codergen node without `timeout` (unbounded LLM execution = unbounded cost)
 - Prompt referencing files not in `allowed_paths` (wasted session — agent edits file, scope enforcement rejects it — validator rule 26 warns)
+- Read-only codergen node without explicit `STATUS: SUCCESS` in prompt (no-op detection: claude-code backend returns RETRY when `editWriteCount === 0` and no STATUS marker — causes infinite retry loop for nodes that only read/analyze code)
+- `goal_gate=true` with `retry_target` but no `max_visits` (validator rule 19 — infinite retry loop)
+- Fan-out (`component`) without matching fan-in (`tripleoctagon`) (validator rule 20 — pipeline stalls)
+- Fan-out branch `retry_target` pointing outside its `component→tripleoctagon` scope (validator rule 17 — stripped at runtime, retry is silently ineffective)
 - >4 reviewers per team
 
 ## Model Routing
@@ -358,7 +402,7 @@ Provider default table: see **pickle-dot.md Step 1** (single source of truth —
 
 ## Shapes Reference
 
-Mdiamond=start, Msquare=exit, box=codergen, diamond=conditional, component=fan-out, tripleoctagon=fan-in, parallelogram=tool, house=manager_loop. (hexagon=human — NOT IMPLEMENTED)
+Mdiamond=start, Msquare=exit, box=codergen, diamond=conditional, component=fan-out, tripleoctagon=fan-in, parallelogram=tool, house=manager_loop, hexagon=wait.human (deadlocks autonomous pipelines — see Superseded §5)
 
 Permission modes: `bypassPermissions` (default), `plan`, `acceptEdits`, `auto`, `default`, `dontAsk`. **WARNING**: `plan` requires human approval for edits — NEVER use in headless/pipeline contexts. Validator rule 24 warns on explicit `plan` mode.
 
@@ -369,6 +413,12 @@ Permission modes: `bypassPermissions` (default), `plan`, `acceptEdits`, `auto`, 
 
 **Common node attributes** (all node types):
 `label`, `shape`, `goal_gate`, `retry_target`, `fallback_retry_target`, `max_retries` (retry count, distinct from `max_visits`), `max_visits`, `timeout`, `fidelity`, `llm_model`, `llm_provider`, `reasoning_effort`, `thread_id`, `class`, `auto_status`, `allow_partial`
+
+**`auto_status`** — when `true`, the engine parses `STATUS: SUCCESS|FAIL|PARTIAL_SUCCESS|RETRY|SKIPPED` from the LLM's output text (case-insensitive, must be at start of line). Without this, the engine only uses exit code / tool results to determine outcome. Required on microverse `compare` nodes and any node that needs fine-grained outcome control.
+
+**`allow_partial`** — when `true`, enables `outcome=partial_success` on outgoing diamond edges. Without this, `PARTIAL_SUCCESS` is treated as `FAIL`. Required on microverse `check_mv` diamonds.
+
+**`fidelity`** — controls how much prior context the engine passes to each node. Graph-level `default_fidelity` sets the baseline; per-node `fidelity` overrides. Values: `"full"` (all prior context), `"truncate"` (recent only), `"compact"` (compressed), `"summary:low"` / `"summary:medium"` / `"summary:high"` (LLM-summarized at varying detail). Use `default_fidelity = "compact"` on large pipelines (>20 nodes / >3 phases) with `fidelity = "full"` on review/conformance/fix nodes that need complete context.
 
 **`thread_id`** — groups conversational context in the engine. In multi-phase pipelines, all impl and fix nodes within the same phase should share a `thread_id` (e.g., `thread_id="phase_1"`). This preserves conversation continuity so phase 1's fix node knows what phase 1's impl node did. Different phases use different thread_ids.
 
