@@ -358,7 +358,7 @@ Provider default table: see **pickle-dot.md Step 1** (single source of truth —
 
 Mdiamond=start, Msquare=exit, box=codergen, diamond=conditional, component=fan-out, tripleoctagon=fan-in, parallelogram=tool, house=manager_loop. (hexagon=human — NOT IMPLEMENTED)
 
-Permission modes: `bypassPermissions` (default), `plan`, `acceptEdits`, `auto`, `default`, `dontAsk`. Legacy alias `full` maps to `bypassPermissions`. **WARNING**: `plan` requires human approval for edits — NEVER use in headless/pipeline contexts. Validator rule 24 warns on explicit `plan` mode.
+Permission modes: `bypassPermissions` (default), `plan`, `acceptEdits`, `auto`, `default`, `dontAsk`. **WARNING**: `plan` requires human approval for edits — NEVER use in headless/pipeline contexts. Validator rule 24 warns on explicit `plan` mode.
 
 ## Quick Reference (beyond what patterns already cover)
 
