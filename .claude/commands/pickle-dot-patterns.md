@@ -74,7 +74,7 @@ check -> impl [condition="outcome=fail"]
 
 **2. Goal Gates** — P0/critical nodes get `goal_gate=true`. PRD acceptance criteria → `acceptance_criteria` attr + `goal_gate=true`. Prefer per-node `retry_target`. Context vars: `context.tests_pass`, `context.build_status`, `context.lint_status`, `context.typecheck_status`.
 
-**CRITICAL: `context_on_success` bridge** — every key in `acceptance_criteria` MUST be set by `context_on_success="key=value,key2=value2"` on the final verification tool node. Without this, criteria always fail → infinite retry:
+**CRITICAL: `context_on_success` bridge** — every key in `acceptance_criteria` MUST be set by `context_on_success="key=value,key2=value2"` on the final verification tool node. Without this, criteria always fail → retry until engine safety limit (10 retries, then hard failure):
 ```
 verify_final [shape=parallelogram,
     tool_command="cd ${WORKING_DIR} && ${LINT_CMD} 2>&1 && ${TYPECHECK_CMD} 2>&1 && ${TEST_CMD} 2>&1",
@@ -106,7 +106,7 @@ Detect: `tsc --noEmit`, `mypy .`, `go vet ./...`. Skip for dynamically-typed pro
 
 **21. Cross-Phase Cleanup (fix_all)** — before verify_final, fixes ALL remaining issues across all phases:
 ```
-fix_all [prompt="Fix ALL remaining issues across the entire codebase. Run each check and fix failures: 1) cd ${WORKING_DIR} && ${LINT_FIX_CMD} 2>&1. 2) ${TYPECHECK_CMD} 2>&1. 3) ${TEST_CMD} 2>&1. Iterate until all pass with zero errors. Do NOT skip or suppress errors.", permission_mode="bypassPermissions", allowed_paths="src/**, tests/**", escalate_on="package.json, package-lock.json, .env*, *.config.*", max_visits=5]
+fix_all [prompt="Fix ALL remaining issues across the entire codebase. Run each check and fix failures: 1) cd ${WORKING_DIR} && ${LINT_FIX_CMD} 2>&1. 2) ${TYPECHECK_CMD} 2>&1. 3) ${TEST_CMD} 2>&1. Iterate until all pass with zero errors. Do NOT skip or suppress errors.", permission_mode="bypassPermissions", timeout="30m", allowed_paths="src/**, tests/**", escalate_on="package.json, package-lock.json, .env*, *.config.*", max_visits=5]
 ```
 Resolve: `${LINT_FIX_CMD}` = `npx eslint src/ --fix` (Node), `ruff check --fix .` (Python), `golangci-lint run --fix` (Go). `${TYPECHECK_CMD}` = `npx tsc --noEmit` / `mypy .` / `go vet ./...`. `${TEST_CMD}` = `npm test` / `pytest` / `go test ./...`.
 
@@ -226,6 +226,12 @@ select_best [shape=tripleoctagon, class="critical", eval_criteria="completeness,
 
 `auto_status=true` enables engine-side parsing. `allow_partial=true` enables `outcome=partial_success` on diamond edges. Without these, the engine only recognizes success/fail.
 
+**Status marker parsing** (engine regex: `/^STATUS: (SUCCESS|PARTIAL_SUCCESS|FAIL)$/m`):
+- The compare node's LLM output is scanned line-by-line for a `STATUS:` marker
+- If marker not found → defaults to FAIL (triggers rollback)
+- If `allow_partial=true` not set on diamond → PARTIAL_SUCCESS treated as FAIL
+- Prompts MUST instruct the LLM to output the exact marker: `"output 'STATUS: SUCCESS' on its own line"`
+
 **Target and direction**: Extract from PRD. "reduce bundle to 50kb" → target=50, direction=lower. "achieve 90% coverage" → target=90, direction=higher. Embed both in the compare prompt.
 
 **Measurement command**: Must print a number on its last line. Same command for `baseline` and `measure` nodes. See pickle-dot.md Step 2 for derivation patterns.
@@ -277,9 +283,17 @@ The house node polls a child pipeline or external process. `manager.stop_conditi
 
 ## Retry Target Scoping
 
+**Precedence** (engine resolves in order):
+1. Node-level `retry_target` (highest priority)
+2. Node-level `fallback_retry_target` (if retry_target unreachable)
+3. Graph-level `retry_target` (applied to all goal gates without node-level override)
+4. Graph-level `fallback_retry_target` (final fallback)
+
+**Rules:**
 - **Graph-level `retry_target` MUST point to `fix_all`** — not setup_deps, not per-phase impl
 - **Per-node `retry_target`** on every `goal_gate=true` node
 - **Fan-out branches stay within scope** — retry only to nodes in the same component→tripleoctagon pair
+- Use `fallback_retry_target` when a node should prefer a scoped retry but fall back to a wider scope if unreachable (e.g., per-phase impl → fix_all)
 
 ## Anti-Patterns (NEVER)
 
@@ -315,6 +329,7 @@ The house node polls a child pipeline or external process. `manager.stop_conditi
 - `workspace="isolated"` without `commit_and_push` node after check_final success (all code lost on cleanup)
 - `workspace_cleanup="delete"` without a tool node that runs `git push` (pipeline output destroyed)
 - Manager node without `manager.stop_condition` (polls forever)
+- Codergen node without `timeout` (unbounded LLM execution = unbounded cost)
 - >4 reviewers per team
 
 ## Model Routing
@@ -343,7 +358,7 @@ Provider default table: see **pickle-dot.md Step 1** (single source of truth —
 
 Mdiamond=start, Msquare=exit, box=codergen, diamond=conditional, component=fan-out, tripleoctagon=fan-in, parallelogram=tool, house=manager_loop. (hexagon=human — NOT IMPLEMENTED)
 
-Permission modes: `bypassPermissions` (default), `plan`, `acceptEdits`, `auto`, `default`, `dontAsk`. NOT `full`. **WARNING**: `plan` requires human approval for edits — NEVER use in headless/pipeline contexts. Validator rule 24 warns on explicit `plan` mode.
+Permission modes: `bypassPermissions` (default), `plan`, `acceptEdits`, `auto`, `default`, `dontAsk`. Legacy alias `full` maps to `bypassPermissions`. **WARNING**: `plan` requires human approval for edits — NEVER use in headless/pipeline contexts. Validator rule 24 warns on explicit `plan` mode.
 
 ## Quick Reference (beyond what patterns already cover)
 
@@ -352,6 +367,10 @@ Permission modes: `bypassPermissions` (default), `plan`, `acceptEdits`, `auto`, 
 
 **Common node attributes** (all node types):
 `label`, `shape`, `goal_gate`, `retry_target`, `fallback_retry_target`, `max_retries` (retry count, distinct from `max_visits`), `max_visits`, `timeout`, `fidelity`, `llm_model`, `llm_provider`, `reasoning_effort`, `thread_id`, `class`, `auto_status`, `allow_partial`
+
+**`thread_id`** — groups conversational context in the engine. In multi-phase pipelines, all impl and fix nodes within the same phase should share a `thread_id` (e.g., `thread_id="phase_1"`). This preserves conversation continuity so phase 1's fix node knows what phase 1's impl node did. Different phases use different thread_ids.
+
+**`timeout`** — MUST be set on all codergen (box) nodes. Prevents unbounded LLM execution. Recommended: `timeout="30m"` for impl nodes, `timeout="15m"` for review/fix nodes. Tool nodes should also have timeouts (e.g., `timeout="120s"` for builds).
 
 **Codergen** (box): `prompt`, `attachments_context_key`, `working_dir` (claude-code), `permission_mode` (claude-code), `allowed_paths`, `escalate_on`
 
