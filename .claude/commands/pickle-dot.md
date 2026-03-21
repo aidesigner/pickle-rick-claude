@@ -211,6 +211,7 @@ start → setup_deps → capture_baseline → [bdd_scenarios →] [spec_tests �
 - `permission_mode="bypassPermissions"` on all codergen (box) nodes in headless pipelines — NEVER use `plan` (deadlocks waiting for human approval that never arrives; validator rule 24 warns)
 - `timeout` on all codergen (box) nodes — `30m` for impl, `15m` for review/fix (unbounded LLM = unbounded cost)
 - `STATUS: SUCCESS` / `STATUS: FAIL` output instruction in prompts of all read-only codergen nodes (conformance, scope_check, red_team, reviewers, bdd_scenarios, check_coverage) — prevents no-op detection infinite retry (Pattern 6b)
+- `read_only=true` on all review box nodes (reviewers, bdd_scenarios, red_team, scope_check) — prevents code backend no-op detection from triggering RETRY on nodes that intentionally make 0 Edit/Write calls (defense-in-depth alongside STATUS markers)
 - `allowed_paths` on all codergen (box) impl nodes (Layer 4, validator rule 25 warns if missing)
 - `escalate_on` on all codergen impl nodes — always include lock files, schema, config, auth
 - Review ratchet with ≥2 consecutive passes (Pattern 19)
@@ -285,6 +286,7 @@ When `--review-provider` differs from `--provider`, the `.review` and `.critical
 - Every codergen (box) node has `timeout` (recommended: `30m` impl, `15m` review/fix). Unbounded LLM = unbounded cost.
 - For each codergen node with `allowed_paths`, verify every file path in `prompt=` is covered. Same check as validator rule 26 (`prompt_files_in_allowed_paths`) but caught at generation time.
 - For each read-only codergen node (conformance, scope_check, red_team, reviewers, bdd_scenarios, check_coverage), verify the prompt includes explicit `STATUS: SUCCESS` / `STATUS: FAIL` output instruction (Pattern 6b). Missing STATUS on read-only nodes → no-op detection → wasted retries.
+- Every review/read-only codergen node (reviewers, bdd_scenarios, red_team, scope_check) has `read_only=true` attribute. Missing `read_only` on read-only nodes → no-op detection RETRY if STATUS marker is absent from output.
 
 **Warnings** (emit but continue): dep setup exists, max_parallel=1 on components, max_visits on loops, every box has prompt, happy-path weight=2, goal_gate has retry_target, no linear chains, spec_tests before goal_gate impls, review ratchet ≥2 passes with reset-on-fail, lint/typecheck/test separate gates, fix_all before verify_final in multi-phase, conformance before exit, security/auth phases have red_team, node inside component→tripleoctagon fan-out has retry_target pointing outside branch scope (stripped at runtime — retry ineffective), graph-level retry_target points before a component fan-out (branches retry entire pipeline — wasteful), codergen node without `allowed_paths` (unbounded file scope), `allowed_paths` doesn't include test directories (agent can't write tests), missing `spec_file` graph attribute, BDD scenarios missing for phase with 3+ requirements, defense matrix comment block missing, missing `capture_baseline` before first impl (Pattern 0c — pre-existing errors cause infinite retry), verify nodes using raw lint/typecheck commands instead of delta-aware checking (Pattern 0d), impl node without progress gate (Pattern 0e — stalled impls waste retry budgets), **isolated workspace without `commit_and_push` node after check_final success (Pattern 0 — all code lost on cleanup)**.
 
@@ -321,7 +323,7 @@ digraph user_auth_api {
     setup_deps [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm install 2>&1", timeout="120s"]
     capture_baseline [shape=parallelogram, tool_command="cd ${WORKING_DIR} && echo '=== BASELINE SNAPSHOT ===' && (npx eslint src/ 2>&1 || true) | grep -c 'error' > /tmp/baseline_lint_errors.txt && (npx tsc --noEmit 2>&1 || true) | grep -c 'error TS' > /tmp/baseline_ts_errors.txt && echo \"lint=$(cat /tmp/baseline_lint_errors.txt) ts=$(cat /tmp/baseline_ts_errors.txt)\" 2>&1", timeout="120s"]
 
-    bdd_scenarios_auth [class="review", timeout="10m", prompt="Read the spec file at $spec_file. For each JWT auth requirement, generate BDD scenarios in Given/When/Then format: token validation (missing, expired, malformed), login flow, refresh rotation, bcrypt hashing, OWASP patterns. Output as executable test descriptions. Do NOT implement — only define the behavioral contracts. Then output 'STATUS: SUCCESS' on its own line."]
+    bdd_scenarios_auth [class="review", read_only=true, timeout="10m", prompt="Read the spec file at $spec_file. For each JWT auth requirement, generate BDD scenarios in Given/When/Then format: token validation (missing, expired, malformed), login flow, refresh rotation, bcrypt hashing, OWASP patterns. Output as executable test descriptions. Do NOT implement — only define the behavioral contracts. Then output 'STATUS: SUCCESS' on its own line."]
     spec_tests_auth [class="review", timeout="15m", prompt="Read the BDD scenarios from the previous node's output. Write failing test cases that verify each scenario. Run them to confirm they fail. Do NOT write production code.", goal_gate=true, retry_target="spec_tests_auth", max_visits=5]
     implement_auth [goal_gate=true, retry_target="implement_auth", permission_mode="bypassPermissions", timeout="30m", prompt="Make all failing auth tests pass. Do NOT modify test files. JWT middleware + login endpoint. 1h expiry, refresh rotation, bcrypt. OWASP patterns.", allowed_paths="src/auth/**, src/middleware/**, tests/auth/**", escalate_on="package.json, package-lock.json, .env*, prisma/schema.prisma", max_visits=8]
 
@@ -337,9 +339,9 @@ digraph user_auth_api {
 
     // Review ratchet — 2 consecutive clean passes (Pattern 19)
     split_review_1 [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
-    reviewer_correctness_1 [class="review", timeout="15m", prompt="Correctness ONLY: logic errors, off-by-one, null handling, async. List issues with file:line. Then output 'STATUS: SUCCESS' on its own line."]
-    reviewer_patterns_1 [class="review", timeout="15m", prompt="Patterns ONLY: anti-patterns, duplication, naming conventions, error handling consistency. List with file:line. Then output 'STATUS: SUCCESS' on its own line."]
-    reviewer_security_1 [class="review", timeout="15m", prompt="Security ONLY: token forgery, timing attacks, algorithm confusion, secrets exposure. List with file:line. Then output 'STATUS: SUCCESS' on its own line."]
+    reviewer_correctness_1 [class="review", read_only=true, timeout="15m", prompt="Correctness ONLY: logic errors, off-by-one, null handling, async. List issues with file:line. Then output 'STATUS: SUCCESS' on its own line."]
+    reviewer_patterns_1 [class="review", read_only=true, timeout="15m", prompt="Patterns ONLY: anti-patterns, duplication, naming conventions, error handling consistency. List with file:line. Then output 'STATUS: SUCCESS' on its own line."]
+    reviewer_security_1 [class="review", read_only=true, timeout="15m", prompt="Security ONLY: token forgery, timing attacks, algorithm confusion, secrets exposure. List with file:line. Then output 'STATUS: SUCCESS' on its own line."]
     merge_review_1 [shape=tripleoctagon, class="review", timeout="15m", prompt="Consolidate. BLOCKER or ADVISORY. CLEAN or DIRTY."]
     check_review_1 [shape=diamond]
     fix_1 [prompt="Fix all BLOCKERs. Also simplify: redundant logic, duplication, naming. Do NOT modify test files.", permission_mode="bypassPermissions", timeout="15m", allowed_paths="src/auth/**, src/middleware/**", escalate_on="package.json, package-lock.json, .env*", max_visits=5]
@@ -347,19 +349,19 @@ digraph user_auth_api {
     check_reverify_1 [shape=diamond]
 
     split_review_2 [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
-    reviewer_correctness_2 [class="review", timeout="15m", prompt="Fresh correctness review of ALL code — assume nothing from prior reviews. List issues with file:line. Then output 'STATUS: SUCCESS' on its own line."]
-    reviewer_patterns_2 [class="review", timeout="15m", prompt="Fresh patterns review of ALL code — assume nothing. Anti-patterns, duplication, naming, error handling. List with file:line. Then output 'STATUS: SUCCESS' on its own line."]
-    reviewer_security_2 [class="review", timeout="15m", prompt="Fresh security review of ALL code — assume nothing. All OWASP vectors. List with file:line. Then output 'STATUS: SUCCESS' on its own line."]
+    reviewer_correctness_2 [class="review", read_only=true, timeout="15m", prompt="Fresh correctness review of ALL code — assume nothing from prior reviews. List issues with file:line. Then output 'STATUS: SUCCESS' on its own line."]
+    reviewer_patterns_2 [class="review", read_only=true, timeout="15m", prompt="Fresh patterns review of ALL code — assume nothing. Anti-patterns, duplication, naming, error handling. List with file:line. Then output 'STATUS: SUCCESS' on its own line."]
+    reviewer_security_2 [class="review", read_only=true, timeout="15m", prompt="Fresh security review of ALL code — assume nothing. All OWASP vectors. List with file:line. Then output 'STATUS: SUCCESS' on its own line."]
     merge_review_2 [shape=tripleoctagon, class="review", timeout="15m", prompt="Consolidate. BLOCKER or ADVISORY. CLEAN or DIRTY."]
     check_review_2 [shape=diamond]
     fix_2 [prompt="Fix all BLOCKERs. Also simplify. Do NOT modify test files.", permission_mode="bypassPermissions", timeout="15m", allowed_paths="src/auth/**, src/middleware/**", escalate_on="package.json, package-lock.json, .env*", max_visits=5]
     reverify_2 [shape=parallelogram, tool_command="cd ${WORKING_DIR} && BASELINE_LINT=$(cat /tmp/baseline_lint_errors.txt 2>/dev/null || echo 0) && CURRENT_LINT=$((npm run lint 2>&1 || true) | grep -c 'error') && BASELINE_TS=$(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) && CURRENT_TS=$((npx tsc --noEmit 2>&1 || true) | grep -c 'error TS') && npm test 2>&1 && [ $CURRENT_LINT -le $BASELINE_LINT ] && [ $CURRENT_TS -le $BASELINE_TS ] && echo 'DELTA: CLEAN' || (echo 'DELTA: REGRESSION' && exit 1)"]
     check_reverify_2 [shape=diamond]
 
-    conformance [class="review", timeout="15m", goal_gate=true, retry_target="implement_auth", max_visits=5, prompt="Conformance audit: read the spec file at $spec_file. Compare every requirement against the current git diff. Verify: 1) Every requirement has a corresponding code change. 2) Acceptance criteria are testable and tested. 3) No requirements silently dropped. Output PASS or FAIL with unmet requirements. Then output 'STATUS: SUCCESS' if PASS, 'STATUS: FAIL' if FAIL on its own line."]
+    conformance [class="review", read_only=true, timeout="15m", goal_gate=true, retry_target="implement_auth", max_visits=5, prompt="Conformance audit: read the spec file at $spec_file. Compare every requirement against the current git diff. Verify: 1) Every requirement has a corresponding code change. 2) Acceptance criteria are testable and tested. 3) No requirements silently dropped. Output PASS or FAIL with unmet requirements. Then output 'STATUS: SUCCESS' if PASS, 'STATUS: FAIL' if FAIL on its own line."]
     conformance_gate [shape=diamond]
 
-    red_team_auth [class="review", timeout="15m", prompt="Adversarial audit: token forgery, expired replay, refresh reuse, injection, timing attacks, algorithm confusion. Write repro tests. Output PASS or FAIL. Then output 'STATUS: SUCCESS' if PASS, 'STATUS: FAIL' if FAIL on its own line.", goal_gate=true, retry_target="implement_auth", max_visits=5]
+    red_team_auth [class="review", read_only=true, timeout="15m", prompt="Adversarial audit: token forgery, expired replay, refresh reuse, injection, timing attacks, algorithm confusion. Write repro tests. Output PASS or FAIL. Then output 'STATUS: SUCCESS' if PASS, 'STATUS: FAIL' if FAIL on its own line.", goal_gate=true, retry_target="implement_auth", max_visits=5]
     red_team_gate [shape=diamond]
 
     fix_all [prompt="Fix ALL remaining issues across the entire codebase. Run: 1) npx eslint src/ --fix 2>&1. 2) npx tsc --noEmit 2>&1. 3) npm test 2>&1. Iterate until all pass. Do NOT skip errors.", permission_mode="bypassPermissions", timeout="30m", allowed_paths="src/**, tests/**", escalate_on="package.json, package-lock.json, .env*, prisma/schema.prisma", max_visits=5]

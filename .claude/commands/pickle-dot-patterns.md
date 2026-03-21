@@ -100,7 +100,9 @@ conformance [class="review", prompt="... Output PASS or FAIL with unmet requirem
 // Bad — no STATUS marker, will RETRY forever because no files are edited:
 conformance [class="review", prompt="... Output PASS or FAIL with unmet requirements."]
 ```
-Exception: review ratchet merge nodes (tripleoctagon) don't need STATUS markers. The fan-in handler (`handlers/fan-in.ts`) has its own `execute()` that always returns `SUCCESS` — it calls the backend only to extract candidate selection text, then discards the backend's outcome. No-op detection is swallowed by the handler.
+**`read_only=true`** — set on all read-only codergen nodes (reviewers, conformance, bdd_scenarios, scope_check, red_team, check_coverage). The claude-code backend skips no-op detection when `read_only=true`, so 0 Edit/Write calls are expected behavior. Use BOTH `read_only=true` AND STATUS markers — `read_only` is the engine-level defense, STATUS markers are the prompt-level defense.
+
+Exception: review ratchet merge nodes (tripleoctagon) don't need `read_only` or STATUS markers. The fan-in handler (`handlers/fan-in.ts`) has its own `execute()` that always returns `SUCCESS` — it calls the backend only to extract candidate selection text, then discards the backend's outcome. No-op detection is swallowed by the handler.
 
 **13. Lint Gate** — separate tool node for linter, BEFORE tests. MUST be delta-aware (Pattern 0d) when repo has pre-existing lint errors:
 ```
@@ -126,7 +128,7 @@ Uses Default tier (no `class`). Graph-level and verify_final `retry_target` MUST
 
 **15. Conformance Check** — LLM gate verifying requirements against `$spec_file`. Opus (`.review` class), `goal_gate=true`:
 ```
-conformance [class="review", goal_gate=true, retry_target="impl", max_visits=3, prompt="Conformance audit: read the spec file at $spec_file. Compare every requirement against the current git diff. Verify: 1) Every requirement has a corresponding code change. 2) Acceptance criteria are testable and tested. 3) No requirements silently dropped. Output PASS or FAIL with unmet requirements. Then output 'STATUS: SUCCESS' if PASS, 'STATUS: FAIL' if FAIL on its own line."]
+conformance [class="review", read_only=true, goal_gate=true, retry_target="impl", max_visits=3, prompt="Conformance audit: read the spec file at $spec_file. Compare every requirement against the current git diff. Verify: 1) Every requirement has a corresponding code change. 2) Acceptance criteria are testable and tested. 3) No requirements silently dropped. Output PASS or FAIL with unmet requirements. Then output 'STATUS: SUCCESS' if PASS, 'STATUS: FAIL' if FAIL on its own line."]
 ```
 `$spec_file` is interpolated by the engine from the graph-level `spec_file` attribute (like `$goal`).
 
@@ -140,7 +142,7 @@ impl [prompt="Make all failing tests pass. Do NOT modify test files.", allowed_p
 
 **16b. BDD Scenario Generation** — behavioral contracts before spec_tests. Emit for phases with 3+ requirements. For 1-2 requirements, spec_tests alone is sufficient:
 ```
-bdd_scenarios [class="review", timeout="10m", prompt="Read the spec file at $spec_file. For each requirement, generate BDD scenarios in Given/When/Then format. Output as executable test descriptions. Do NOT implement — only define the behavioral contracts. Then output 'STATUS: SUCCESS' on its own line."]
+bdd_scenarios [class="review", read_only=true, timeout="10m", prompt="Read the spec file at $spec_file. For each requirement, generate BDD scenarios in Given/When/Then format. Output as executable test descriptions. Do NOT implement — only define the behavioral contracts. Then output 'STATUS: SUCCESS' on its own line."]
 spec_tests [class="review", timeout="15m", prompt="Read the BDD scenarios from the previous node's output. Write failing test cases that verify each scenario. Run them to confirm they fail. Do NOT write production code.", goal_gate=true, retry_target="spec_tests", max_visits=5]
 impl [prompt="Make all failing tests pass. Do NOT modify test files.", allowed_paths="src/**, tests/**", escalate_on="package.json, package-lock.json, .env*, *.config.*", goal_gate=true, retry_target="impl", max_visits=8]
 ```
@@ -179,7 +181,7 @@ Team composition: `correctness` + `patterns` always. Add `architecture` (>5 file
 Each pass = `component→tripleoctagon` fan-out. Pass K failure resets to pass 1. Fix prompts include simplification.
 ```
 split_review_N [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
-reviewer_X_N [class="review", timeout="15m", prompt="<narrow focus> ONLY. List issues with file:line. Then output 'STATUS: SUCCESS' on its own line."]
+reviewer_X_N [class="review", read_only=true, timeout="15m", prompt="<narrow focus> ONLY. List issues with file:line. Then output 'STATUS: SUCCESS' on its own line."]
 merge_review_N [shape=tripleoctagon, class="review", timeout="10m", prompt="Consolidate. BLOCKER or ADVISORY. CLEAN or DIRTY."]  // CAN use eval_criteria for structured scoring, but defaults to LLM prompt-based merge for simplicity. Fan-in handler swallows backend outcome — no STATUS needed.
 check_review_N [shape=diamond]
 fix_N [prompt="Fix all BLOCKERs. Also simplify. Do NOT modify test files.", max_visits=5]
@@ -204,19 +206,19 @@ verify_security [shape=parallelogram, tool_command="npm audit --audit-level=high
 
 **9. Coverage Qualification** — score-based gate on new/changed code (>=80%):
 ```
-check_coverage [prompt="Analyze test coverage on new/changed code. Target >=80% on new lines. Output PASS or FAIL with uncovered files. Then output 'STATUS: SUCCESS' if PASS, 'STATUS: FAIL' if FAIL on its own line.", goal_gate=true, retry_target="impl", max_visits=3, timeout="15m"]
+check_coverage [read_only=true, prompt="Analyze test coverage on new/changed code. Target >=80% on new lines. Output PASS or FAIL with uncovered files. Then output 'STATUS: SUCCESS' if PASS, 'STATUS: FAIL' if FAIL on its own line.", goal_gate=true, retry_target="impl", max_visits=3, timeout="15m"]
 ```
 
 **10. Scope Creep Detection** — post-implementation, before review. Opus (`.review`):
 ```
-scope_check [class="review", timeout="15m", prompt="Compare git diff against prompt. Flag out-of-scope changes. Output 'STATUS: SUCCESS' if all changes are in scope, 'STATUS: FAIL' if out-of-scope changes detected on its own line."]
+scope_check [class="review", read_only=true, timeout="15m", prompt="Compare git diff against prompt. Flag out-of-scope changes. Output 'STATUS: SUCCESS' if all changes are in scope, 'STATUS: FAIL' if out-of-scope changes detected on its own line."]
 ```
 
 **11. Drift Detection** — in review-simplify cycles (Pattern 7 standalone only). Pattern 19 ratchet handles via reset-on-fail.
 
 **17. Adversarial Red Team** — AFTER conformance. Ask user for security/auth/data phases:
 ```
-red_team [class="review", timeout="15m", prompt="Attempt to break: invalid inputs, races, exhaustion, state corruption. Write repro tests. Then output 'STATUS: SUCCESS' if no critical vulnerabilities found, 'STATUS: FAIL' if exploits discovered on its own line.", goal_gate=true, retry_target="impl", max_visits=5]
+red_team [class="review", read_only=true, timeout="15m", prompt="Attempt to break: invalid inputs, races, exhaustion, state corruption. Write repro tests. Then output 'STATUS: SUCCESS' if no critical vulnerabilities found, 'STATUS: FAIL' if exploits discovered on its own line.", goal_gate=true, retry_target="impl", max_visits=5]
 ```
 Note: `retry_target="impl"` is correct here (unlike verify_final) because red_team is mid-pipeline — retry re-enters the full lint→typecheck→test→review ratchet via graph edges. verify_final is the FINAL gate where impl retry can't fix cross-phase issues.
 
@@ -252,7 +254,7 @@ commit_baseline [shape=parallelogram, tool_command="cd ${WORKING_DIR} && git add
 baseline [shape=parallelogram, tool_command="cd ${WORKING_DIR} && <measurement_cmd> 2>&1"]
 optimize [prompt="Make ONE targeted change toward <TARGET>. Direction: <DIRECTION>. Smallest diff. Do NOT repeat failed approaches.", timeout="30m", max_visits=8, allowed_paths="<from PRD>", escalate_on="<standard>"]
 measure [shape=parallelogram, tool_command="cd ${WORKING_DIR} && <measurement_cmd> 2>&1"]
-compare [class="review", timeout="15m", prompt="Compare measurement against target. Target: <TARGET>. Direction: <DIRECTION> (<DIRECTION> is better). If target met → STATUS: SUCCESS. If improved toward target but not met → STATUS: PARTIAL_SUCCESS. If regressed or unchanged → STATUS: FAIL. Show before/after values.", max_visits=10, auto_status=true, allow_partial=true]
+compare [class="review", read_only=true, timeout="15m", prompt="Compare measurement against target. Target: <TARGET>. Direction: <DIRECTION> (<DIRECTION> is better). If target met → STATUS: SUCCESS. If improved toward target but not met → STATUS: PARTIAL_SUCCESS. If regressed or unchanged → STATUS: FAIL. Show before/after values.", max_visits=10, auto_status=true, allow_partial=true]
 check_mv [shape=diamond]
 rollback [shape=parallelogram, tool_command="cd ${WORKING_DIR} && git checkout . 2>&1"]
 
@@ -424,7 +426,9 @@ Permission modes: `bypassPermissions` (default), `plan`, `acceptEdits`, `auto`, 
 
 **`timeout`** — MUST be set on all codergen (box) nodes. Prevents unbounded LLM execution. Recommended: `timeout="30m"` for impl nodes, `timeout="15m"` for review/fix nodes. Tool nodes should also have timeouts (e.g., `timeout="120s"` for builds).
 
-**Codergen** (box): `prompt`, `attachments_context_key`, `working_dir` (claude-code), `permission_mode` (claude-code), `allowed_paths`, `escalate_on`
+**`read_only`** — when `true`, the claude-code backend skips no-op detection (0 Edit/Write calls = expected, not a stuck agent). Set on all review/analysis nodes that intentionally only read code. Defense-in-depth alongside STATUS markers.
+
+**Codergen** (box): `prompt`, `read_only`, `attachments_context_key`, `working_dir` (claude-code), `permission_mode` (claude-code), `allowed_paths`, `escalate_on`
 
 **Tool** (parallelogram): `tool_command`, `context_on_success`, `tool_hooks.pre`, `tool_hooks.post`
 
