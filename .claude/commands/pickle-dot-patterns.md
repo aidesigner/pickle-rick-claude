@@ -139,6 +139,7 @@ The BDD node reads `$spec_file`, generates Given/When/Then scenarios. spec_tests
 **22. Permission Scoping (allowed_paths + escalate_on)** — every codergen (box) impl node declares its file scope:
 ```
 impl_auth [prompt="Implement JWT middleware",
+    permission_mode="bypassPermissions",
     allowed_paths="src/auth/**, src/middleware/**, tests/auth/**",
     escalate_on="package.json, package-lock.json, .env*, prisma/schema.prisma"]
 ```
@@ -168,7 +169,7 @@ Each pass = `component→tripleoctagon` fan-out. Pass K failure resets to pass 1
 ```
 split_review_N [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
 reviewer_X_N [class="review", timeout="15m", prompt="<narrow focus> ONLY. List issues with file:line."]
-merge_review_N [shape=tripleoctagon, class="review", prompt="Consolidate. BLOCKER or ADVISORY. CLEAN or DIRTY."]  // CAN use eval_criteria for structured scoring, but defaults to LLM prompt-based merge for simplicity
+merge_review_N [shape=tripleoctagon, class="review", timeout="10m", prompt="Consolidate. BLOCKER or ADVISORY. CLEAN or DIRTY."]  // CAN use eval_criteria for structured scoring, but defaults to LLM prompt-based merge for simplicity
 check_review_N [shape=diamond]
 fix_N [prompt="Fix all BLOCKERs. Also simplify. Do NOT modify test files.", max_visits=5]
 reverify_N [shape=parallelogram, tool_command="cd ${WORKING_DIR} && ..."]
@@ -294,8 +295,10 @@ The house node polls a child pipeline or external process. `manager.stop_conditi
 - Security scanning bundled with tests
 - Conformance skipped
 - Impl before spec tests on critical paths
-- Codergen node without `allowed_paths` (unbounded file scope)
+- Codergen node without `allowed_paths` (unbounded file scope — validator rule 25 warns)
+- Codergen node with explicit `permission_mode="plan"` in headless pipeline (deadlock — validator rule 24 warns)
 - `allowed_paths` without test directories (agent can't write tests alongside impl)
+- Merge/tripleoctagon node without timeout in review ratchet (process death = indefinite pipeline stall)
 - Missing `spec_file` graph attribute
 - Missing defense matrix comment block
 - Single review pass as final gate (use ratchet)
@@ -340,7 +343,7 @@ Provider default table: see **pickle-dot.md Step 1** (single source of truth —
 
 Mdiamond=start, Msquare=exit, box=codergen, diamond=conditional, component=fan-out, tripleoctagon=fan-in, parallelogram=tool, house=manager_loop. (hexagon=human — NOT IMPLEMENTED)
 
-Permission modes: `plan` (default), `bypassPermissions`, `acceptEdits`, `auto`, `default`, `dontAsk`. NOT `full`.
+Permission modes: `bypassPermissions` (default), `plan`, `acceptEdits`, `auto`, `default`, `dontAsk`. NOT `full`. **WARNING**: `plan` requires human approval for edits — NEVER use in headless/pipeline contexts. Validator rule 24 warns on explicit `plan` mode.
 
 ## Quick Reference (beyond what patterns already cover)
 

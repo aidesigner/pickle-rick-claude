@@ -14,9 +14,12 @@ From `$ARGUMENTS`:
 Parse flags:
 ```bash
 DETACH=false
+BACKEND="claude-code"
 for arg in $ARGUMENTS; do
   case "$arg" in
     --detach) DETACH=true ;;
+    --backend) shift; BACKEND="$1" ;;
+    --backend=*) BACKEND="${arg#*=}" ;;
   esac
 done
 ```
@@ -83,7 +86,7 @@ DOT_CONTENT=$(cat "$DOT_FILE")
 SUBMIT_RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "$ATTRACTOR_URL/pipelines" \
   -H "Content-Type: application/json" \
   -H "x-api-key: ${ATTRACTOR_API_KEY:-}" \
-  -d "$(jq -n --arg dot "$DOT_CONTENT" '{dot: $dot}')")
+  -d "$(jq -n --arg dot "$DOT_CONTENT" --arg backend "${BACKEND:-claude-code}" '{dot: $dot, backend: $backend}')")
 SUBMIT_HTTP_CODE=$(echo "$SUBMIT_RESPONSE" | tail -1)
 SUBMIT_BODY=$(echo "$SUBMIT_RESPONSE" | sed '$d')
 echo "HTTP $SUBMIT_HTTP_CODE"
@@ -258,3 +261,4 @@ If `failed`, suggest:
 | `ATTRACTOR_API_KEY` | _(unset)_ | API key if server auth is enabled |
 | `ATTRACTOR_ROOT` | _(auto-detected)_ | Path to attractor repo root |
 | `POLLING_TIMEOUT` | `3600` | Polling timeout in seconds (0 = unlimited) |
+| `BACKEND` | `claude-code` | Execution backend: `claude-code`, `llm`, `mastra`, `qwen-code`, `none` |

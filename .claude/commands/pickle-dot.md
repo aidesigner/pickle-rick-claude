@@ -17,6 +17,7 @@ Attractor = **convergence basin**, not task list. Failures route back toward the
 - `--shared` — skip workspace prompt, use shared mode (default)
 - `--exit-validation` — prefer `exit_validation` graph attribute over a separate `verify_final` tool node for simple pipelines (single test command, no delta logic)
 - `--multimodal` — enable `attachments_context_key` on relevant nodes for PRDs referencing screenshots, mockups, or images
+- `--backend <name>` — execution backend: `claude-code` (default), `llm`, `mastra`, `qwen-code`, `none`. Passed through to `/attract` on submission
 
 **Provider defaults** (when `--models` not given):
 
@@ -49,7 +50,8 @@ Attractor = **convergence basin**, not task list. Failures route back toward the
 2. `repo_url` — derive from `git remote get-url origin` in the target repo. Must be HTTPS. Convert SSH if needed: `git@github.com:org/repo.git` → `https://github.com/org/repo.git`
 3. `repo_branch` — current branch name (e.g., `"main"`)
 4. `workspace_cleanup = "preserve"` — **always preserve by default**. Isolated workspaces are ephemeral; `"delete"` destroys all pipeline output. Use `"delete"` only if the pipeline has a `commit_and_push` node (Pattern 0).
-5. `working_dir` stays the same (`/repos/...`) — the engine rewrites it automatically.
+5. `working_dir` stays the same (`/repos/...`) — the engine rewrites it automatically for codergen (box) nodes.
+   **IMPORTANT**: `tool_command` strings are NOT rewritten by the engine. For isolated workspaces, tool_commands must use relative paths (`bun test 2>&1`) or `cd ${WORKING_DIR} &&` (which the engine resolves as an env var). Do NOT hardcode `/repos/` paths in tool_commands — they break when the real workspace is `/workspace/<run-id>/<repo>`.
 6. **MANDATORY**: Emit a `commit_and_push` tool node (Pattern 0) after `check_final` success, before `done`. This pushes only verified working code. Without this, code is lost when the workspace is cleaned up.
 
 **If shared**: do NOT emit `workspace`, `repo_url`, `repo_branch`, or `workspace_cleanup`. Current behavior unchanged.
@@ -74,7 +76,7 @@ Extract: slug, goal, tasks, acceptance criteria.
 2. + `architecture` if >5 files or new modules
 3. + `security` if auth/data/crypto
 4. + `performance` if hot paths
-5. Default: 2 consecutive clean passes. Present in Step 2b checklist for user confirmation.
+5. Default: 2 consecutive clean passes. **Maximum**: 3 passes for any single phase (>3 has diminishing returns and multiplies stall risk — each pass creates N review nodes + merge + fix cycle). Present in Step 2b checklist for user confirmation.
 
 **Extract affected files** (Layer 4 — Permission Scoping): From the PRD's "affected files", "scope", or "changes" section, derive per-phase `allowed_paths` and `escalate_on` lists. If the PRD doesn't specify affected files, emit a `// WARNING: PRD lacks affected-files section — using broad allowed_paths` comment and default to `src/**, tests/**`.
 
@@ -206,6 +208,7 @@ start → setup_deps → capture_baseline → [bdd_scenarios →] [spec_tests �
 - `max_visits` on looping nodes (Pattern 6)
 - `bdd_scenarios` before `spec_tests` for phases with 3+ requirements (Pattern 16b, recommended)
 - `spec_tests` before impl on `goal_gate=true` paths (Pattern 16, default — skip only if explicitly simplified)
+- `permission_mode="bypassPermissions"` on all codergen (box) nodes in headless pipelines — explicit is safer than relying on backend defaults
 - `allowed_paths` on all codergen (box) impl nodes (Layer 4)
 - `escalate_on` on all codergen impl nodes — always include lock files, schema, config, auth
 - Review ratchet with ≥2 consecutive passes (Pattern 19)
@@ -279,7 +282,7 @@ When `--review-provider` differs from `--provider`, the `.review` and `.critical
 
 ## Step 6: Summary & Save
 
-Show DOT in ```dot block. Summary: nodes by type, edges (total/conditional/feedback), goal gates, review ratchet (roles, passes), model routing. Save to `./${SLUG}.dot`. Offer `dot -Tsvg`. Next: `/attract` to submit.
+Show DOT in ```dot block. Summary: nodes by type, edges (total/conditional/feedback), goal gates, review ratchet (roles, passes), model routing. Save to `./${SLUG}.dot`. Offer `dot -Tsvg`. Next: `/attract ${SLUG}.dot` to submit (uses `--backend claude-code` by default).
 
 ## Example
 
@@ -312,7 +315,7 @@ digraph user_auth_api {
 
     bdd_scenarios_auth [class="review", timeout="300s", prompt="Read the spec file at $spec_file. For each JWT auth requirement, generate BDD scenarios in Given/When/Then format: token validation (missing, expired, malformed), login flow, refresh rotation, bcrypt hashing, OWASP patterns. Output as executable test descriptions. Do NOT implement — only define the behavioral contracts."]
     spec_tests_auth [class="review", prompt="Read the BDD scenarios from the previous node's output. Write failing test cases that verify each scenario. Run them to confirm they fail. Do NOT write production code.", goal_gate=true, retry_target="spec_tests_auth", max_visits=5]
-    implement_auth [goal_gate=true, retry_target="implement_auth", prompt="Make all failing auth tests pass. Do NOT modify test files. JWT middleware + login endpoint. 1h expiry, refresh rotation, bcrypt. OWASP patterns.", allowed_paths="src/auth/**, src/middleware/**, tests/auth/**", escalate_on="package.json, package-lock.json, .env*, prisma/schema.prisma", max_visits=8]
+    implement_auth [goal_gate=true, retry_target="implement_auth", permission_mode="bypassPermissions", prompt="Make all failing auth tests pass. Do NOT modify test files. JWT middleware + login endpoint. 1h expiry, refresh rotation, bcrypt. OWASP patterns.", allowed_paths="src/auth/**, src/middleware/**, tests/auth/**", escalate_on="package.json, package-lock.json, .env*, prisma/schema.prisma", max_visits=8]
 
     check_progress [shape=parallelogram, tool_command="cd ${WORKING_DIR} && CHANGED=$(git status --porcelain | wc -l | tr -d ' ') && if [ \"$CHANGED\" -eq 0 ]; then echo 'STALL: impl produced zero file changes — retrying'; exit 1; fi && echo \"progress: $CHANGED files modified\" 2>&1", max_visits=3]
     check_progress_gate [shape=diamond]
@@ -331,7 +334,7 @@ digraph user_auth_api {
     reviewer_security_1 [class="review", timeout="15m", prompt="Security ONLY: token forgery, timing attacks, algorithm confusion, secrets exposure. List with file:line."]
     merge_review_1 [shape=tripleoctagon, class="review", timeout="15m", prompt="Consolidate. BLOCKER or ADVISORY. CLEAN or DIRTY."]
     check_review_1 [shape=diamond]
-    fix_1 [prompt="Fix all BLOCKERs. Also simplify: redundant logic, duplication, naming. Do NOT modify test files.", allowed_paths="src/auth/**, src/middleware/**", escalate_on="package.json, package-lock.json, .env*", max_visits=5]
+    fix_1 [prompt="Fix all BLOCKERs. Also simplify: redundant logic, duplication, naming. Do NOT modify test files.", permission_mode="bypassPermissions", allowed_paths="src/auth/**, src/middleware/**", escalate_on="package.json, package-lock.json, .env*", max_visits=5]
     reverify_1 [shape=parallelogram, tool_command="cd ${WORKING_DIR} && BASELINE_LINT=$(cat /tmp/baseline_lint_errors.txt 2>/dev/null || echo 0) && CURRENT_LINT=$((npm run lint 2>&1 || true) | grep -c 'error') && BASELINE_TS=$(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) && CURRENT_TS=$((npx tsc --noEmit 2>&1 || true) | grep -c 'error TS') && npm test 2>&1 && [ $CURRENT_LINT -le $BASELINE_LINT ] && [ $CURRENT_TS -le $BASELINE_TS ] && echo 'DELTA: CLEAN' || (echo 'DELTA: REGRESSION' && exit 1)"]
     check_reverify_1 [shape=diamond]
 
@@ -341,7 +344,7 @@ digraph user_auth_api {
     reviewer_security_2 [class="review", timeout="15m", prompt="Fresh security review of ALL code — assume nothing. All OWASP vectors. List with file:line."]
     merge_review_2 [shape=tripleoctagon, class="review", timeout="15m", prompt="Consolidate. BLOCKER or ADVISORY. CLEAN or DIRTY."]
     check_review_2 [shape=diamond]
-    fix_2 [prompt="Fix all BLOCKERs. Also simplify. Do NOT modify test files.", allowed_paths="src/auth/**, src/middleware/**", escalate_on="package.json, package-lock.json, .env*", max_visits=5]
+    fix_2 [prompt="Fix all BLOCKERs. Also simplify. Do NOT modify test files.", permission_mode="bypassPermissions", allowed_paths="src/auth/**, src/middleware/**", escalate_on="package.json, package-lock.json, .env*", max_visits=5]
     reverify_2 [shape=parallelogram, tool_command="cd ${WORKING_DIR} && BASELINE_LINT=$(cat /tmp/baseline_lint_errors.txt 2>/dev/null || echo 0) && CURRENT_LINT=$((npm run lint 2>&1 || true) | grep -c 'error') && BASELINE_TS=$(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) && CURRENT_TS=$((npx tsc --noEmit 2>&1 || true) | grep -c 'error TS') && npm test 2>&1 && [ $CURRENT_LINT -le $BASELINE_LINT ] && [ $CURRENT_TS -le $BASELINE_TS ] && echo 'DELTA: CLEAN' || (echo 'DELTA: REGRESSION' && exit 1)"]
     check_reverify_2 [shape=diamond]
 
