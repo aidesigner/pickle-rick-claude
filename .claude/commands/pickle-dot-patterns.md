@@ -316,6 +316,36 @@ Engine tracks `loop.restart.count` in RunContext — use `max_visits` on the res
 setup_deps [shape=parallelogram, ..., max_visits=3]  // max 3 full restarts
 ```
 
+**26. Stream Lifecycle** — every `createWriteStream` or `createReadStream` must have `.end()` / `.close()` called on ALL return paths. `TextDecoder` with `{ stream: true }` must be flushed with `decoder.decode(new Uint8Array(), { stream: false })` before the function returns.
+
+Anti-pattern:
+```typescript
+const stream = createWriteStream(path);
+// ... use stream ...
+stream.end(); // ← only called on happy path
+const exitCode = await proc.exited;
+if (exitCode === null) return RETRY; // ← stream leaked!
+```
+
+Fix: flush and end before any early return, or use try/finally.
+
+**27. Optional Narrowing** — after an optional-chained guard (`obj?.method()`), bind to a local variable. Never re-access the optional chain inside the guarded block — TypeScript narrows the local but not the original expression.
+
+Anti-pattern:
+```typescript
+if (config.signal?.isPaused()) {
+  await config.signal.waitForResume(); // ← crash if signal is undefined
+}
+```
+
+Fix:
+```typescript
+const signal = config.signal;
+if (signal?.isPaused()) {
+  await signal.waitForResume(); // ← safe, narrowed by binding
+}
+```
+
 ## Superseded (reference only)
 
 **5. Human Gates** — `hexagon` shape maps to `wait.human` which pauses the pipeline waiting for human input via the `/pipelines/:id/questions/:qid/answer` API. **Never emit for autonomous pipelines** — the pipeline will deadlock waiting for input that never arrives. Only relevant for interactive/supervised workflows (non-default).

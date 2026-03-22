@@ -76,7 +76,8 @@ Extract: slug, goal, tasks, acceptance criteria.
 2. + `architecture` if >5 files or new modules
 3. + `security` if auth/data/crypto
 4. + `performance` if hot paths
-5. Default: 2 consecutive clean passes. **Maximum**: 3 passes for any single phase (>3 has diminishing returns and multiplies stall risk — each pass creates N review nodes + merge + fix cycle). Present in Step 2b checklist for user confirmation.
+5. + `resources` if new I/O code (streams, file handles, spawned processes, database connections)
+6. Default: 2 consecutive clean passes. **Maximum**: 3 passes for any single phase (>3 has diminishing returns and multiplies stall risk — each pass creates N review nodes + merge + fix cycle). Present in Step 2b checklist for user confirmation.
 
 **Extract affected files** (Layer 4 — Permission Scoping): From the PRD's "affected files", "scope", or "changes" section, derive per-phase `allowed_paths` and `escalate_on` lists. If the PRD doesn't specify affected files, emit a `// WARNING: PRD lacks affected-files section — using broad allowed_paths` comment and default to `src/**, tests/**`. When building per-node `allowed_paths`, use the prompt text as the source of truth — not just the PRD's file list. After drafting each impl node's `prompt=`, scan it for file-path references and ensure every referenced file is in `allowed_paths`. The prompt IS the contract with the agent; `allowed_paths` must cover everything it asks the agent to touch.
 
@@ -202,6 +203,7 @@ start → setup_deps → capture_baseline → [bdd_scenarios →] [spec_tests �
 **Every box prompt MUST have context + constraints + acceptance criteria.** The executing LLM has NO access to the PRD — the prompt IS its instruction.
 
 - **Never hardcode line numbers** in prompts (e.g., "at line 23"). Earlier phases modify files, shifting all line numbers. Use searchable landmarks instead: "find the existing `.replaceAll('$goal', ...)` call", "find the `VALID_PROPS` set", "find `drainQueue()`".
+- **Defensive coding clauses** in every impl prompt: For all I/O resources (streams, file handles, spawned processes), ensure cleanup on ALL exit paths including timeout and error — use try/finally or flush before every return. For all optional values accessed after a conditional check, bind to a local variable first (`const local = obj; if (local?.method()) { local.otherMethod(); }`). These two patterns prevent the most common pipeline-generated bugs.
 
 **Mandatory for every graph:**
 - `commit_and_push` after `check_final` success, before `done` when `workspace="isolated"` (Pattern 0) — pushes only verified working code
@@ -219,6 +221,7 @@ start → setup_deps → capture_baseline → [bdd_scenarios →] [spec_tests �
 - `read_only=true` on all review box nodes that do NOT write files (reviewers, bdd_scenarios, scope_check, conformance) — prevents code backend no-op detection from triggering RETRY on nodes that intentionally make 0 Edit/Write calls (defense-in-depth alongside STATUS markers). **Exception**: nodes whose prompts instruct file writes (e.g., red_team with "write repro tests", spec_tests with "write test files") must NOT have `read_only=true` — it would suppress legitimate no-op detection if the node genuinely stalls
 - `allowed_paths` on all codergen (box) impl nodes (Layer 4, validator rule 25 warns if missing)
 - `escalate_on` on all codergen impl nodes — always include lock files, schema, config, auth
+- Every impl prompt that creates streams, file handles, or spawned processes MUST include: "Ensure all I/O resources are closed on every exit path (success, error, timeout, early return). Flush TextDecoder/streams before returning. Bind optional values to local variables before using inside conditional blocks."
 - Review ratchet with ≥2 consecutive passes (Pattern 19)
 - `fix_all` before `verify_final` (Pattern 21) — **exception**: when `--exit-validation` is set and the pipeline is simple (single test command, no delta logic), omit `fix_all` and `verify_final` — `exit_validation` replaces them
 - `verify_final` with `context_on_success` setting ALL `acceptance_criteria` keys (skip when using `exit_validation`)
