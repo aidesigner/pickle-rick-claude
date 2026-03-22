@@ -346,6 +346,88 @@ if (signal?.isPaused()) {
 }
 ```
 
+**28. Silent Failure Prevention** — every `catch` block must either re-throw, return a typed error, or emit a warning. Never return a sentinel value (empty array, null, default object) that looks like success.
+
+Anti-pattern:
+```typescript
+function getChangedFiles(): Set<string> {
+  try {
+    const result = execSync('git diff --name-only');
+    return new Set(result.toString().split('\n'));
+  } catch {
+    return new Set(); // ← caller thinks "no changes" — actually git is broken
+  }
+}
+```
+
+Fix:
+```typescript
+function getChangedFiles(): Set<string> | { error: string } {
+  try {
+    const result = execSync('git diff --name-only');
+    return new Set(result.toString().split('\n'));
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[getChangedFiles] git failed: ${msg}`);
+    return { error: msg }; // ← caller can distinguish "no results" from "broken"
+  }
+}
+```
+
+Also applies to: checkpoint saves with empty catch, config parsing that defaults on error, scope enforcement that silently disables on failure. The rule: callers must be able to distinguish "nothing found" from "search failed."
+
+**29. Concurrency Safety** — for every shared resource (file, database, state object), verify behavior under simultaneous access. Emit events/callbacks AFTER state transitions, never before.
+
+Anti-pattern (event before state):
+```typescript
+this.emit('RateLimitPause', { duration });  // ← consumers react
+this.pauseController.pause();               // ← but pause isn't active yet!
+```
+
+Fix:
+```typescript
+this.pauseController.pause();               // ← state change first
+this.emit('RateLimitPause', { duration });  // ← THEN notify consumers
+```
+
+Anti-pattern (shared file path in parallel):
+```typescript
+const logPath = `logs/${nodeId}.jsonl`;
+const stream = createWriteStream(logPath, { flags: 'w' }); // ← truncates if parallel node uses same ID
+```
+
+Fix:
+```typescript
+const logPath = `logs/${runId}/${nodeId}.jsonl`; // ← run-scoped, no collision
+const stream = createWriteStream(logPath, { flags: 'a' }); // ← append mode as defense-in-depth
+```
+
+Also applies to: workspace sweepers that don't check active runs, stall detectors that fire before first output, any `setInterval`/`setTimeout` that assumes sequential execution.
+
+**30. Allocation Hygiene** — compile-once objects (Regex, Glob, parsed configs, template engines) must be instantiated outside hot loops. Constructor in inner loop = per-iteration allocation waste.
+
+Anti-pattern:
+```typescript
+for (const file of changedFiles) {           // 10K files
+  for (const pattern of patterns) {          // × 5 patterns
+    const glob = new Bun.Glob(pattern);      // ← 50K Glob objects!
+    if (glob.match(file)) { /* ... */ }
+  }
+}
+```
+
+Fix:
+```typescript
+const compiledGlobs = patterns.map(p => new Bun.Glob(p)); // ← compile once
+for (const file of changedFiles) {
+  for (const glob of compiledGlobs) {
+    if (glob.match(file)) { /* ... */ }       // ← reuse, 0 allocations
+  }
+}
+```
+
+Detection heuristic: any `new` expression inside `for`/`while`/`.map()`/`.forEach()` where constructor arguments don't change per iteration.
+
 ## Superseded (reference only)
 
 **5. Human Gates** — `hexagon` shape maps to `wait.human` which pauses the pipeline waiting for human input via the `/pipelines/:id/questions/:qid/answer` API. **Never emit for autonomous pipelines** — the pipeline will deadlock waiting for input that never arrives. Only relevant for interactive/supervised workflows (non-default).
