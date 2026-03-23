@@ -183,7 +183,7 @@ Attractor adds a new attribute `reasoning_budget`. Developer runs `npm run sync-
 | 13 | Lint Gate | auto | `.build()` internal | In verify chain | No |
 | 14 | Type-Check Gate | auto | `.build()` internal | In verify chain | No |
 | 15 | Conformance Check | auto | `.build()` internal | Review node | No |
-| 16 | Spec-First TDD | default-on | `.phase({ specFirst: true })` | `true` when `goalGate` | Yes — opt-out |
+| 16 | Spec-First TDD | default-on | `.phase({ specFirst: true \| false })` | `true` when phase has `goalGate: true`; `false` otherwise. Explicitly setting `specFirst: false` on a goal-gated phase disables it (opt-out). Explicitly setting `specFirst: true` on a non-goal-gated phase enables it (opt-in). | Yes — opt-out on goal-gated phases, opt-in on others |
 | 16b | BDD Scenarios | opt-in | `.phase({ bddScenarios: true })` | `false` | Yes *(review: changed from auto/heuristic to explicit opt-in for determinism)* |
 | 17 | Red Team | opt-in | `.phase({ redTeam: true })` | `false` | Yes |
 | 18 | Competing Impls | opt-in | `.phase({ competing: true })` | `false` | Yes |
@@ -230,7 +230,7 @@ These specifications resolve the "always emitted" ambiguity for auto-applied pat
 | 0a (Dependency Setup) | `setup_deps` | After `start`, before first phase | `tool_command="cd \${WORKING_DIR} && npm install 2>&1 \|\| pnpm install 2>&1 \|\| yarn install 2>&1"` — detect package manager from lockfile presence |
 | 0c (Baseline Snapshot) | `capture_baseline` | After `setup_deps`, before first impl | `tool_command="cd \${WORKING_DIR} && (npx tsc --noEmit 2>&1 \| grep -c 'error TS' > /tmp/baseline_ts_errors.txt \|\| echo 0 > /tmp/baseline_ts_errors.txt) && (npx eslint src/ 2>&1 \| grep -c 'error' > /tmp/baseline_lint_errors.txt \|\| echo 0 > /tmp/baseline_lint_errors.txt)"` |
 | 0d (Delta-Aware Verify) | `verify_lint_${phase}`, `verify_types_${phase}` | Wraps verify commands | Prepend: `BASELINE=$(cat /tmp/baseline_*.txt 2>/dev/null \|\| echo 0) &&` Append: `&& CURRENT=$(...) && [ $CURRENT -le $BASELINE ]` |
-| 0e (Progress Gate) | `check_progress_${phase}` | After each impl node, before `verify_lint` | `tool_command="cd \${WORKING_DIR} && [ $(git status --porcelain \| wc -l) -gt 0 ] && echo 'STATUS: SUCCESS' \|\| echo 'STATUS: FAIL'"` with `read_only=true`, `max_visits=3` |
+| 0e (Progress Gate) | `check_progress_${phase}` | After each impl node, before `verify_lint`. Always emitted for every phase — the `git status` command works in any directory (git-initialized or not; in non-git directories, it exits non-zero which triggers STATUS: FAIL, correctly flagging no progress). | `tool_command="cd \${WORKING_DIR} && [ $(git status --porcelain \| wc -l) -gt 0 ] && echo 'STATUS: SUCCESS' \|\| echo 'STATUS: FAIL'"` with `read_only=true`, `max_visits=3` |
 | 1 (Test-Fix Loops) | `test_${phase}` → diamond → `fix_${phase}` | After verify chain per phase | Diamond routes: `outcome=success` → next, `outcome=fail` → `fix_${phase}` → back to `impl_${phase}` |
 | 3 (Conditional Routing) | `check_${name}` (diamond shape) | At branching points | All diamonds MUST have ≥2 outgoing edges covering success/fail |
 | 4 (Fan-Out) | `split_phases` / `merge_phases` | When ≥2 phases have no `dependsOn` relationship (phases without `dependsOn` are independent; phases with `dependsOn` are serialized after their dependencies) *(council: C5)* | `split_phases [shape=component, max_parallel=1]` → parallel phase nodes (flat, no DOT subgraph blocks) → `merge_phases [shape=tripleoctagon]` |
@@ -254,7 +254,7 @@ These specifications resolve the "always emitted" ambiguity for auto-applied pat
 |:---|:---|:---|:---|
 | 0 (Isolated Workspace) | N/A (graph-level + `commit_and_push`) | Graph-level `workspace="isolated"` attribute; `commit_and_push` node on success path before `exit` | `commit_and_push [shape="box", class="codergen", tool_command="cd \${WORKING_DIR} && git add -A && git commit -m 'Pipeline results' && git push"]`. `WorkspaceOpts` fields (`repoUrl`, `repoBranch`, `cleanup`) emitted as graph-level attributes. |
 | 2 (Goal Gates) | N/A (attribute injection on existing nodes) | On phase impl/verify nodes where `goalGate: true` | Inject `goal_gate="true"`, `retry_target="fix_${phase}"`, `max_visits` (Pattern 6 default) on the phase's test diamond node. The diamond's fail edge loops back to fix, which loops to impl. |
-| 8 (Security Scan) | `security_scan_${phase}` | After phase impl, before verify chain | `class="codergen"`, `tool_command="cd \${WORKING_DIR} && npm audit --audit-level=high 2>&1 \|\| true"`, `timeout="15m"`, `read_only=true`. Prompt: `"Run security scan on phase changes. Check for known vulnerabilities, secrets in code, injection vectors. Output STATUS: SUCCESS \| FAIL."` |
+| 8 (Security Scan) | `security_scan_${phase}` | After `check_progress_${phase}` (Pattern 0e), before `verify_lint_${phase}` — i.e., between progress gate and verify chain | `class="codergen"`, `tool_command="cd \${WORKING_DIR} && npm audit --audit-level=high 2>&1 \|\| true"`, `timeout="15m"`, `read_only=true`. Prompt: `"Run security scan on phase changes. Check for known vulnerabilities, secrets in code, injection vectors. Output STATUS: SUCCESS \| FAIL."` |
 | 9 (Coverage Gate) | `coverage_check_${phase}` | After test node, before scope_check | `class="codergen"`, `tool_command="cd \${WORKING_DIR} && npx jest --coverage --coverageReporters=text 2>&1 \| tail -20"`, `read_only=true`, `timeout="15m"`. Prompt: `"Verify test coverage meets target of ${coverageTarget}%. Output STATUS: SUCCESS \| FAIL."` |
 | 17 (Red Team) | `red_team_${phase}` | After phase conformance node (per emission order step 6d2) | `class="review"`, `read_only=true`, `timeout="15m"`. Prompt: `"Attempt to break the implementation: find edge cases, invalid inputs, race conditions, security holes. Focus on ${phase} scope. Output STATUS: SUCCESS (no issues) \| FAIL (issues found)."` |
 | 18 (Competing Impls) | `competing_${phase}` (component) + 2 impl nodes + merge + select | Replaces single impl node for the phase | `competing_${phase} [shape="component", max_parallel="1"]` → `impl_${phase}_a`, `impl_${phase}_b` (both `class="codergen"`) → `merge_competing_${phase} [shape="tripleoctagon"]` → `select_${phase} [shape="diamond"]`. Diamond edges: `select_${phase} -> check_progress_${phase} [outcome="selected"]` (winner proceeds to verify chain), `select_${phase} -> fix_${phase} [outcome="rejected"]` (loser triggers fix). Selection prompt: `"Compare implementations A and B against the phase spec. Select the better one. Output STATUS: SUCCESS (A selected) \| FAIL (B selected)."` *(review: added missing outcome labels and downstream edges)* |
@@ -423,7 +423,7 @@ interface MicroverseOpts {
   direction: 'reduce' | 'improve';
   allowedPaths: string[];
   timeout?: string;           // default "30m"
-  maxVisits?: number;         // default: 8 on optimize, 10 on compare
+  maxVisits?: number;         // default: 8 on optimize nodes, 10 on compare nodes. When explicitly set, the user's value overrides both defaults and applies uniformly to all microverse loop nodes (optimize, measure, compare, check).
 }
 // (refined: added maxVisits — Pattern 20 specifies defaults)
 
@@ -532,7 +532,7 @@ class BuildError extends Error {
 | `WORKSPACE_NO_HTTPS` | `workspace="isolated"` with non-HTTPS `repoUrl` | Rule 12: workspace_config |
 | `WORKSPACE_NO_PUSH` | `workspace="isolated"` without `commit_and_push` node | Rule 13: workspace_push |
 | `PLAN_MODE_DEADLOCK` | `permission_mode="plan"` in headless pipeline | Rule 14: permission_mode_plan |
-| `MISSING_ALLOWED_PATHS` | Per-phase codergen impl node lacks `allowed_paths` (does NOT apply to cross-phase nodes — those get `severity: 'warning'` if union is empty) | Rule 15: allowed_paths_required *(review: scoped to per-phase impl nodes)* |
+| `MISSING_ALLOWED_PATHS` | Per-phase codergen **impl** node (e.g., `impl_${phase}`, `fix_${phase}`) lacks `allowed_paths`. Does NOT apply to: (a) non-impl codergen nodes with `read_only=true` (`security_scan_${phase}`, `coverage_check_${phase}`) — these inherit phase `allowed_paths` for context but are read-only so missing paths is non-blocking; (b) cross-phase codergen nodes (`fix_all`, `verify_final`) — those derive `allowed_paths` from the union of all phase paths and get `severity: 'warning'` if the union is empty. | Rule 15: allowed_paths_required *(review: scoped to per-phase impl nodes; microverse: iter3 — clarified non-impl and cross-phase exclusions)* |
 | `INVALID_SPEC` | `fromSpec()` receives valid JSON that fails schema validation: not an object, missing `phases` array, wrong field types. For field-level validation, `fromSpec()` reuses constructor-level codes: `EMPTY_SLUG`, `EMPTY_GOAL`, `DUPLICATE_PHASE`, etc. `INVALID_SPEC` is for structurally valid JSON with schema violations — NOT for unparseable input (which triggers exit 2 before `fromSpec()` is called). *(council: H7; post-review: clarified JSON parse vs schema validation boundary)* | `fromSpec()` |
 | `INVALID_TIMEOUT` | `timeout` value doesn't match `\d+(ms\|s\|m\|h)` or is zero duration | `fromSpec()` per-phase validation *(microverse: iter4 #6)* |
 | `INVALID_ALLOWED_PATHS` | `allowedPaths` entry is an absolute path (starts with `/`) | `fromSpec()` per-phase validation *(microverse: iter4 #6)* |
@@ -549,10 +549,13 @@ Tier 1: Explicit mapping via PhaseSpec.contextOnSuccess
 
 Tier 2: Auto-generated standard keys on verify_final
   The builder always generates these standard AC key mappings on verify_final:
-    - "types_compile=true" (from tsc --noEmit command)
-    - "lint_clean=true" (from eslint command)
-    - "tests_pass=true" (from npm test command)
-  These are generated at node-creation time, not detected post-hoc.
+    - "types_compile=true" (from tsc --noEmit in verify_final tool_command)
+    - "lint_clean=true" (from eslint in verify_final tool_command)
+    - "tests_pass=true" (from npm test in verify_final tool_command)
+    - "cli_contract=true" (from npm test — CLI contract tests run as part of the test suite)
+    - "determinism=true" (from npm test — determinism snapshot tests run as part of the test suite)
+    - "validation_rules=true" (from npm test — validation rule tests run as part of the test suite)
+  These 6 keys map to the 3 commands in verify_final's tool_command. The last 3 are logically distinct AC dimensions but are all validated by the test suite. Generated at node-creation time, not detected post-hoc.
 
 Validation (runs during .build()):
   For each key K in BuilderSpec.acceptanceCriteria:
@@ -600,7 +603,7 @@ The builder emits DOT using **flat node declarations with shape markers** — NO
       - split_phases (if fan-out)
       - spec_file_${phase} (Pattern 16, when specFirst is active — before impl, after split_phases)
       - bdd_scenarios_${phase} (Pattern 16b, when active — after spec_file, before impl)
-      - impl node → check_progress → verify_lint → verify_types → test → diamond → fix
+      - impl node → check_progress → security_scan (if opt-in, Pattern 8) → verify_lint → verify_types → test → coverage_check (if opt-in, Pattern 9) → diamond → fix
       - scope_check → review/conformance nodes
       - merge_phases
    d. Cross-phase nodes (conditional): fix_all (always), then — only when `reviewRatchet ≥ 2` — fix_review, then review ratchet passes in pass order (each pass: component → inner review nodes → merge → check diamond). If `reviewRatchet` is not set, step 6d emits only fix_all. *(review: fix_review emission was unconditional but only exists when reviewRatchet is active)*
@@ -634,9 +637,9 @@ The builder emits DOT using **flat node declarations with shape markers** — NO
   // Edges:
   split_phases -> impl_auth
   split_phases -> impl_api
-  // ... phase edges ...
-  verify_types_auth -> merge_phases
-  verify_types_api -> merge_phases
+  // ... per-phase edge chains (impl → check_progress → verify_lint → verify_types → test → ... → conformance) ...
+  conformance_auth -> merge_phases
+  conformance_api -> merge_phases
 ```
 
 ### `fromSpec()` Runtime Validation
@@ -1000,7 +1003,7 @@ Each phase MUST include a conformance node (Pattern 15) with phase-specific revi
 
 ### Cross-Phase Synthesis Gate *(new — addresses multi-phase coherence gap)*
 
-After all 8 phases complete but before `red_team` and `verify_final`, the pipeline MUST include a **synthesis conformance** node that validates end-to-end coherence:
+After all 10 implementation phases (10, 20, 30, 40, 50, 60, 65, 70, 80, 85) complete but before `red_team` and `verify_final`, the pipeline MUST include a **synthesis conformance** node that validates end-to-end coherence:
 
 ```dot
 synthesis_check [shape="box", class="review", read_only="true", timeout="15m",
