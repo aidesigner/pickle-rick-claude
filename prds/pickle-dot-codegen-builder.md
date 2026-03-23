@@ -1031,7 +1031,7 @@ When generating the pipeline from this PRD, `/pickle-dot` should apply:
 | Goal Gates (2) | **Phases 20, 30, 40, 60** — core builder, validation engine, auto patterns (highest complexity, 18 patterns), and CLI are the critical-path deliverables |
 | Review Ratchet (19) | **2 passes** — the builder is a single-file service; 3+ passes have diminishing returns |
 | Conformance (15) | **All phases** — each task has explicit entry/exit criteria |
-| BDD Scenarios (16b) | **Phases 20, 30, 40** — explicit opt-in via `bddScenarios: true` on each phase; these phases have 3+ requirements with Given/When/Then potential |
+| BDD Scenarios (16b) | **Phases 20, 30, 40** — explicit opt-in via `bddScenarios: true` on each PhaseSpec (not auto-triggered by requirement count or any heuristic) |
 | Coverage Gate (9) | **Phase 50** (after all patterns implemented) — target ≥85% on `services/dot-builder.ts` |
 | Scope Creep (10) | **All impl phases** — builder must stay in its `services/` + `bin/` + `types/` lanes |
 | Red Team (17) | **Final gate only** — attempt to break the builder with adversarial BuilderSpec inputs |
