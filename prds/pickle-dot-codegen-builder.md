@@ -879,6 +879,7 @@ For each path P in allowedPaths:
 4. The LLM calling the builder constructs `BuilderSpec` JSON and pipes to CLI — same LLM running `/pickle-dot`, no separate invocation.
 5. All 30 pipeline composition patterns (plus 3 superseded and 5 defensive coding patterns) are fully documented in `pickle-dot-patterns.md`. The 28 active v1 patterns can be encoded programmatically. *(refined: corrected count; taxonomy clarified)*
 6. Zero runtime dependencies — builder uses Node.js built-ins only. No external DOT parsing library. *(refined: new — codebase constraint)*
+7. Builder targets TypeScript/Node.js pipelines — Tier 2 auto-generated AC keys (`types_compile`, `lint_clean`, `tests_pass`) and `verify_final`'s `tool_command` assume `npx tsc`, `npx eslint`, `npm test` tooling. Non-TypeScript pipelines are not in scope for v1. *(microverse: gap-analysis observation A — made implicit assumption explicit)*
 
 ## Risks & Mitigations
 
