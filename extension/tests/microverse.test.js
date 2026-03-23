@@ -932,6 +932,34 @@ test('buildJudgePrompt does not include codebase evaluation preamble', () => {
     assert.ok(!prompt.includes('You are evaluating a codebase'), 'preamble moved to system prompt');
 });
 
+test('buildJudgePrompt includes prdPath when provided', () => {
+    const prompt = buildJudgePrompt('fix bugs', '/tmp', undefined, '/tmp/prds/my-prd.md');
+    assert.ok(prompt.includes('/tmp/prds/my-prd.md'), 'should include prd path');
+    assert.ok(prompt.includes('Read this file first'), 'should instruct to read the file');
+});
+
+test('buildJudgePrompt omits target file when prdPath not provided', () => {
+    const prompt = buildJudgePrompt('fix bugs', '/tmp');
+    assert.ok(!prompt.includes('Target file:'), 'should not include target file without prdPath');
+});
+
+test('measureLlmMetric passes prdPath to buildJudgePrompt', () => {
+    const orig = _deps.execFileSync;
+    let capturedArgs;
+    _deps.execFileSync = (_cmd, args) => {
+        capturedArgs = args;
+        return '50';
+    };
+    try {
+        measureLlmMetric('fix bugs', 30, '/tmp', undefined, undefined, '/tmp/prds/test.md');
+        // The prompt (second arg after -p) should contain the prd path
+        const promptIdx = capturedArgs.indexOf('-p') + 1;
+        assert.ok(capturedArgs[promptIdx].includes('/tmp/prds/test.md'), 'prompt should contain prd path');
+    } finally {
+        _deps.execFileSync = orig;
+    }
+});
+
 test('measureLlmMetric defaults to claude-sonnet-4-6 model', () => {
     const orig = _deps.execFileSync;
     let capturedArgs;
@@ -945,6 +973,64 @@ test('measureLlmMetric defaults to claude-sonnet-4-6 model', () => {
     } finally {
         _deps.execFileSync = orig;
     }
+});
+
+// --- Late baseline adoption tests ---
+
+test('late baseline: first measurement becomes baseline when initial baseline failed', () => {
+    // Simulate: baseline_score=0, no accepted history, first measurement = 8
+    let state = createMicroverseState('/tmp/prd.md', { ...TEST_METRIC, direction: 'lower' }, 5);
+    state.status = 'iterating';
+    state.baseline_score = 0; // baseline measurement failed
+
+    const metricScore = 8;
+    const lastAccepted = [...state.convergence.history].reverse().find(h => h.action === 'accept');
+
+    // This is the logic from the runner
+    if (state.baseline_score === 0 && !lastAccepted) {
+        state.baseline_score = metricScore;
+    }
+
+    assert.equal(state.baseline_score, 8, 'should adopt first measurement as baseline');
+
+    // Now compare — should be "held" (8 vs 8), not "regressed" (8 vs 0)
+    const previousScore = lastAccepted ? lastAccepted.score : state.baseline_score;
+    const classification = compareMetric(metricScore, previousScore, 0, 'lower');
+    assert.equal(classification, 'held', 'first measurement should be held, not regressed');
+});
+
+test('late baseline: does not override when baseline was successfully measured', () => {
+    let state = createMicroverseState('/tmp/prd.md', { ...TEST_METRIC, direction: 'lower' }, 5);
+    state.status = 'iterating';
+    state.baseline_score = 12; // baseline was measured successfully
+
+    const metricScore = 8;
+    const lastAccepted = [...state.convergence.history].reverse().find(h => h.action === 'accept');
+
+    if (state.baseline_score === 0 && !lastAccepted) {
+        state.baseline_score = metricScore;
+    }
+
+    assert.equal(state.baseline_score, 12, 'should not override successful baseline');
+});
+
+test('late baseline: does not override when accepted history exists', () => {
+    let state = createMicroverseState('/tmp/prd.md', { ...TEST_METRIC, direction: 'lower' }, 5);
+    state.status = 'iterating';
+    state.baseline_score = 0; // baseline failed
+    state.convergence.history.push({
+        iteration: 1, metric_value: '10', score: 10, action: 'accept',
+        description: 'held', pre_iteration_sha: 'a'.repeat(40), timestamp: new Date().toISOString(),
+    });
+
+    const metricScore = 5;
+    const lastAccepted = [...state.convergence.history].reverse().find(h => h.action === 'accept');
+
+    if (state.baseline_score === 0 && !lastAccepted) {
+        state.baseline_score = metricScore;
+    }
+
+    assert.equal(state.baseline_score, 0, 'should not override when accepted history exists');
 });
 
 // --- LLM runner integration tests (ticket 7351399a) ---

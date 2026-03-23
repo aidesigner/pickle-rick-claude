@@ -46,12 +46,16 @@ const JUDGE_SYSTEM_PROMPT = [
     'Use Read, Glob, and Grep tools to examine files as needed.',
     'Your final output MUST be a single line containing ONLY a number.',
 ].join(' ');
-export function buildJudgePrompt(goal, cwd, history) {
+export function buildJudgePrompt(goal, cwd, history, prdPath) {
     const parts = [
         `Goal: ${goal}`,
         `Working directory: ${cwd}`,
-        '',
     ];
+    if (prdPath) {
+        parts.push(`Target file: ${prdPath}`);
+        parts.push('Read this file first before scoring.');
+    }
+    parts.push('');
     if (history && history.length > 0) {
         parts.push('Previous iterations:');
         for (const entry of history) {
@@ -79,10 +83,10 @@ export function extractScore(output) {
     }
     return null;
 }
-export function measureLlmMetric(goal, timeoutSeconds, cwd, judgeModel, history) {
+export function measureLlmMetric(goal, timeoutSeconds, cwd, judgeModel, history, prdPath) {
     const model = judgeModel || DEFAULT_JUDGE_MODEL;
     const timeout = Math.max(timeoutSeconds, DEFAULT_JUDGE_TIMEOUT);
-    const prompt = buildJudgePrompt(goal, cwd, history);
+    const prompt = buildJudgePrompt(goal, cwd, history, prdPath);
     try {
         const output = _deps.execFileSync('claude', [
             '-p', prompt,
@@ -323,7 +327,7 @@ export async function main(sessionDir) {
             }
         }
         else if (currentMv.key_metric.type === 'llm') {
-            const baseline = measureLlmMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir, currentMv.key_metric.judge_model);
+            const baseline = measureLlmMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir, currentMv.key_metric.judge_model, undefined, currentMv.prd_path);
             if (baseline) {
                 currentMv.baseline_score = baseline.score;
                 log(`LLM baseline metric: ${baseline.score}`);
@@ -529,7 +533,7 @@ export async function main(sessionDir) {
                 return measureMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir);
             }
             else if (currentMv.key_metric.type === 'llm') {
-                return measureLlmMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir, currentMv.key_metric.judge_model, currentMv.convergence.history);
+                return measureLlmMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir, currentMv.key_metric.judge_model, currentMv.convergence.history, currentMv.prd_path);
             }
             return null;
         };
@@ -552,8 +556,14 @@ export async function main(sessionDir) {
             continue;
         }
         log(`Metric: ${metricResult.score} (raw: ${metricResult.raw})`);
-        // Compare with last accepted score (not last entry, which may be a reverted score)
+        // Late baseline: if baseline measurement failed (stayed 0) and this is the first
+        // successful measurement, adopt it as baseline instead of comparing against 0.
         const lastAccepted = [...currentMv.convergence.history].reverse().find(h => h.action === 'accept');
+        if (currentMv.baseline_score === 0 && !lastAccepted) {
+            currentMv.baseline_score = metricResult.score;
+            log(`Late baseline adopted: ${metricResult.score} (initial measurement failed)`);
+            writeMicroverseState(sessionDir, currentMv);
+        }
         const previousScore = lastAccepted ? lastAccepted.score : currentMv.baseline_score;
         const classification = compareMetric(metricResult.score, previousScore, currentMv.key_metric.tolerance, currentMv.key_metric.direction);
         log(`Classification: ${classification} (previous=${previousScore}, tolerance=${currentMv.key_metric.tolerance})`);

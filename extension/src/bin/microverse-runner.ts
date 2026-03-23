@@ -82,12 +82,19 @@ export function buildJudgePrompt(
   goal: string,
   cwd: string,
   history?: MicroverseHistoryEntry[],
+  prdPath?: string,
 ): string {
   const parts: string[] = [
     `Goal: ${goal}`,
     `Working directory: ${cwd}`,
-    '',
   ];
+
+  if (prdPath) {
+    parts.push(`Target file: ${prdPath}`);
+    parts.push('Read this file first before scoring.');
+  }
+
+  parts.push('');
 
   if (history && history.length > 0) {
     parts.push('Previous iterations:');
@@ -130,10 +137,11 @@ export function measureLlmMetric(
   cwd: string,
   judgeModel?: string,
   history?: MicroverseHistoryEntry[],
+  prdPath?: string,
 ): { raw: string; score: number } | null {
   const model = judgeModel || DEFAULT_JUDGE_MODEL;
   const timeout = Math.max(timeoutSeconds, DEFAULT_JUDGE_TIMEOUT);
-  const prompt = buildJudgePrompt(goal, cwd, history);
+  const prompt = buildJudgePrompt(goal, cwd, history, prdPath);
   try {
     const output = _deps.execFileSync('claude', [
       '-p', prompt,
@@ -391,6 +399,8 @@ export async function main(sessionDir: string): Promise<void> {
         currentMv.key_metric.timeout_seconds,
         workingDir,
         currentMv.key_metric.judge_model,
+        undefined,
+        currentMv.prd_path,
       );
       if (baseline) {
         currentMv.baseline_score = baseline.score;
@@ -606,6 +616,7 @@ export async function main(sessionDir: string): Promise<void> {
           workingDir,
           currentMv.key_metric.judge_model,
           currentMv.convergence.history,
+          currentMv.prd_path,
         );
       }
       return null;
@@ -634,8 +645,15 @@ export async function main(sessionDir: string): Promise<void> {
 
     log(`Metric: ${metricResult.score} (raw: ${metricResult.raw})`);
 
-    // Compare with last accepted score (not last entry, which may be a reverted score)
+    // Late baseline: if baseline measurement failed (stayed 0) and this is the first
+    // successful measurement, adopt it as baseline instead of comparing against 0.
     const lastAccepted = [...currentMv.convergence.history].reverse().find(h => h.action === 'accept');
+    if (currentMv.baseline_score === 0 && !lastAccepted) {
+      currentMv.baseline_score = metricResult.score;
+      log(`Late baseline adopted: ${metricResult.score} (initial measurement failed)`);
+      writeMicroverseState(sessionDir, currentMv);
+    }
+
     const previousScore = lastAccepted ? lastAccepted.score : currentMv.baseline_score;
 
     const classification = compareMetric(metricResult.score, previousScore, currentMv.key_metric.tolerance, currentMv.key_metric.direction);
