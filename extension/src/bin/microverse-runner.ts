@@ -251,6 +251,17 @@ export async function main(sessionDir: string): Promise<void> {
     throw new Error('microverse.json not found — run setup first');
   }
 
+  // Recovery: reset stale status on resume so the session isn't permanently dead
+  if (mvState.status === 'stopped') {
+    const hasHistory = mvState.convergence?.history?.length > 0;
+    const hasBaseline = mvState.baseline_score !== 0;
+    const newStatus = (hasHistory || hasBaseline) ? 'iterating' : 'gap_analysis';
+    log(`Resuming from failed state — resetting status to ${newStatus}`);
+    mvState.status = newStatus;
+    delete mvState.exit_reason;
+    writeMicroverseState(sessionDir, mvState);
+  }
+
   const workingDir = state.working_dir || process.cwd();
 
   // Pre-flight: dirty tree check — auto-commit instead of aborting

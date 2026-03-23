@@ -1188,3 +1188,93 @@ test('F14: valid git repo passes the .git existence check', () => {
         fs.rmSync(dir, { recursive: true });
     }
 });
+
+// --- Resume recovery tests ---
+
+test('resume recovery: stopped state with no history resets to gap_analysis', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mv-resume-'));
+    try {
+        let state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+        state.status = 'stopped';
+        state.exit_reason = 'error';
+        writeMicroverseState(dir, state);
+
+        // Simulate runner recovery logic
+        const mvState = readMicroverseState(dir);
+        if (mvState.status === 'stopped') {
+            const hasHistory = mvState.convergence?.history?.length > 0;
+            const hasBaseline = mvState.baseline_score !== 0;
+            const newStatus = (hasHistory || hasBaseline) ? 'iterating' : 'gap_analysis';
+            mvState.status = newStatus;
+            delete mvState.exit_reason;
+            writeMicroverseState(dir, mvState);
+        }
+
+        const recovered = readMicroverseState(dir);
+        assert.equal(recovered.status, 'gap_analysis', 'should reset to gap_analysis when no history');
+        assert.equal(recovered.exit_reason, undefined, 'exit_reason should be cleared');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('resume recovery: stopped state with history resets to iterating', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mv-resume-'));
+    try {
+        let state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+        state.status = 'stopped';
+        state.exit_reason = 'error';
+        state.baseline_score = 42;
+        state.convergence.history.push({
+            iteration: 1,
+            metric_value: '42',
+            score: 42,
+            action: 'accept',
+            description: 'initial',
+            pre_iteration_sha: 'a'.repeat(40),
+            timestamp: new Date().toISOString(),
+        });
+        writeMicroverseState(dir, state);
+
+        // Simulate runner recovery logic
+        const mvState = readMicroverseState(dir);
+        if (mvState.status === 'stopped') {
+            const hasHistory = mvState.convergence?.history?.length > 0;
+            const hasBaseline = mvState.baseline_score !== 0;
+            const newStatus = (hasHistory || hasBaseline) ? 'iterating' : 'gap_analysis';
+            mvState.status = newStatus;
+            delete mvState.exit_reason;
+            writeMicroverseState(dir, mvState);
+        }
+
+        const recovered = readMicroverseState(dir);
+        assert.equal(recovered.status, 'iterating', 'should reset to iterating when history exists');
+        assert.equal(recovered.exit_reason, undefined, 'exit_reason should be cleared');
+        assert.equal(recovered.convergence.history.length, 1, 'history should be preserved');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('resume recovery: non-failed status is not modified', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mv-resume-'));
+    try {
+        let state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+        state.status = 'iterating';
+        writeMicroverseState(dir, state);
+
+        // Simulate runner recovery logic — should NOT modify
+        const mvState = readMicroverseState(dir);
+        const statusBefore = mvState.status;
+        if (mvState.status === 'stopped') {
+            mvState.status = 'gap_analysis';
+            delete mvState.exit_reason;
+            writeMicroverseState(dir, mvState);
+        }
+
+        const recovered = readMicroverseState(dir);
+        assert.equal(recovered.status, statusBefore, 'iterating status should not be modified');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
