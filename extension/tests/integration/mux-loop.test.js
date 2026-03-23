@@ -405,7 +405,7 @@ test('ML-23: loadRateLimitSettings — returns defaults when no settings file', 
     // No pickle_settings.json
 
     const { waitMinutes, maxRetries } = loadRateLimitSettings(extRoot);
-    assert.equal(waitMinutes, 60, 'default wait is 60 minutes');
+    assert.equal(waitMinutes, 5, 'default wait is 5 minutes');
     assert.equal(maxRetries, 3, 'default max retries is 3');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -441,7 +441,7 @@ test('ML-25: loadRateLimitSettings — ignores sub-1 values (uses defaults)', ()
     );
 
     const { waitMinutes, maxRetries } = loadRateLimitSettings(extRoot);
-    assert.equal(waitMinutes, 60, 'zero wait must use default');
+    assert.equal(waitMinutes, 5, 'zero wait must use default');
     assert.equal(maxRetries, 3, 'zero retries must use default');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

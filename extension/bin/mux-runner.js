@@ -211,7 +211,7 @@ export function loadMeeseeksModel(extensionRoot) {
     return 'sonnet';
 }
 export function loadRateLimitSettings(extensionRoot) {
-    let waitMinutes = 60;
+    let waitMinutes = 5;
     let maxRetries = 3;
     try {
         const raw = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
@@ -226,7 +226,7 @@ export function loadRateLimitSettings(extensionRoot) {
     return { waitMinutes, maxRetries };
 }
 export function detectRateLimitInLog(logFile) {
-    const result = { limited: false };
+    const result = { limited: false, sawEvents: false };
     try {
         const content = fs.readFileSync(logFile, 'utf-8');
         const lines = content.split('\n');
@@ -236,6 +236,7 @@ export function detectRateLimitInLog(logFile) {
                 const parsed = JSON.parse(line);
                 if (parsed.type !== 'rate_limit_event')
                     continue;
+                result.sawEvents = true;
                 // Real API nests under rate_limit_info; check both paths for robustness
                 const info = parsed.rate_limit_info ?? parsed;
                 const status = info.status;
@@ -257,10 +258,27 @@ export function detectRateLimitInText(logFile) {
     try {
         const content = fs.readFileSync(logFile, 'utf-8');
         const lines = content.split('\n');
-        const tail = lines.slice(-100);
-        const filtered = tail.filter(l => !l.includes('"type":"user"') && !l.includes('"type":"tool_result"'));
+        // Only check the very tail — rate limit messages appear at the end when
+        // the process is killed. 20 lines is plenty; 100 was catching assistant
+        // text *about* rate limits as false positives.
+        const tail = lines.slice(-20);
+        // Filter out JSON content fields (assistant text, user messages, tool results)
+        // to avoid matching on *discussion about* rate limits
+        const filtered = tail.filter(l => !l.includes('"type":"user"') &&
+            !l.includes('"type":"tool_result"') &&
+            !l.includes('"type":"assistant"') &&
+            !l.includes('"type":"text"') &&
+            !l.includes('"content":[') &&
+            !l.includes('"content":"'));
         const text = filtered.join('\n');
-        const patterns = [/5.*hour.*limit/i, /limit.*reached.*try.*back/i, /usage.*limit.*reached/i, /rate limit/i, /out of (extra )?usage/i];
+        // Tightened patterns — require more specific phrasing to avoid matching
+        // code comments or discussions about rate limiting
+        const patterns = [
+            /your .* usage limit has been reached/i,
+            /usage is limited.*try again/i,
+            /out of (extra )?usage/i,
+            /rate limited.*try again/i,
+        ];
         return patterns.some(p => p.test(text));
     }
     catch { /* file missing */ }
@@ -276,7 +294,10 @@ export function classifyIterationExit(completionResult, logFile) {
     const rlInfo = detectRateLimitInLog(logFile);
     if (rlInfo.limited)
         return { type: 'api_limit', rateLimitInfo: rlInfo };
-    if (detectRateLimitInText(logFile))
+    // Only fall back to text detection if we found NO structured rate_limit_event
+    // entries at all. If structured events exist but none say 'rejected', trust
+    // that — don't let fuzzy text matching override structured signals.
+    if (!rlInfo.sawEvents && detectRateLimitInText(logFile))
         return { type: 'api_limit' };
     return { type: 'success' };
 }

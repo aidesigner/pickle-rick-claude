@@ -172,57 +172,50 @@ test('detectRateLimitInLog: last rejected event wins (takes latest resetsAt)', (
 // detectRateLimitInText
 // ---------------------------------------------------------------------------
 
-test('detectRateLimitInText: detects "5 per hour limit" pattern', () => {
+test('detectRateLimitInText: detects "usage limit has been reached" in plain text', () => {
     const tmpDir = makeTmpDir();
     const logFile = path.join(tmpDir, 'iter.log');
     try {
-        const lines = [
-            JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'You have exceeded your 5 requests per hour limit.' }] } }),
-        ];
-        fs.writeFileSync(logFile, lines.join('\n'));
+        // Plain text lines (not JSON content) should match
+        fs.writeFileSync(logFile, 'your daily usage limit has been reached\n');
         assert.equal(detectRateLimitInText(logFile), true);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
 
-test('detectRateLimitInText: detects "limit reached try back" pattern', () => {
+test('detectRateLimitInText: detects "usage is limited...try again" in plain text', () => {
     const tmpDir = makeTmpDir();
     const logFile = path.join(tmpDir, 'iter.log');
     try {
-        const lines = [
-            JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Limit has been reached. Please try back later.' }] } }),
-        ];
-        fs.writeFileSync(logFile, lines.join('\n'));
+        fs.writeFileSync(logFile, 'Your usage is limited. Please try again later.\n');
         assert.equal(detectRateLimitInText(logFile), true);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
 
-test('detectRateLimitInText: detects "usage limit reached" pattern', () => {
+test('detectRateLimitInText: detects "rate limited...try again" in plain text', () => {
     const tmpDir = makeTmpDir();
     const logFile = path.join(tmpDir, 'iter.log');
     try {
-        const lines = [
-            JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'Your usage limit has been reached for today.' }] } }),
-        ];
-        fs.writeFileSync(logFile, lines.join('\n'));
+        fs.writeFileSync(logFile, 'You are rate limited. Please try again in a few minutes.\n');
         assert.equal(detectRateLimitInText(logFile), true);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
 
-test('detectRateLimitInText: detects "rate limit" pattern', () => {
+test('detectRateLimitInText: filters out JSON assistant/text content lines (no false positives)', () => {
     const tmpDir = makeTmpDir();
     const logFile = path.join(tmpDir, 'iter.log');
     try {
+        // Lines containing "type":"assistant" or "type":"text" are filtered out
         const lines = [
             JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'API rate limit exceeded.' }] } }),
         ];
         fs.writeFileSync(logFile, lines.join('\n'));
-        assert.equal(detectRateLimitInText(logFile), true);
+        assert.equal(detectRateLimitInText(logFile), false);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -256,13 +249,13 @@ test('detectRateLimitInText: ignores rate limit text inside user lines', () => {
     }
 });
 
-test('detectRateLimitInText: does not detect text beyond last 100 lines', () => {
+test('detectRateLimitInText: does not detect text beyond last 20 lines', () => {
     const tmpDir = makeTmpDir();
     const logFile = path.join(tmpDir, 'iter.log');
     try {
-        const lines = ['Rate limit exceeded'];
-        for (let i = 0; i < 150; i++) {
-            lines.push(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: `clean line ${i}` }] } }));
+        const lines = ["You're out of usage for today"];
+        for (let i = 0; i < 30; i++) {
+            lines.push(`clean line ${i}`);
         }
         fs.writeFileSync(logFile, lines.join('\n'));
         assert.equal(detectRateLimitInText(logFile), false);
@@ -275,28 +268,22 @@ test('detectRateLimitInText: returns false for missing file', () => {
     assert.equal(detectRateLimitInText('/nonexistent/path/iter.log'), false);
 });
 
-test('detectRateLimitInText: detects "out of extra usage" pattern', () => {
+test('detectRateLimitInText: detects "out of extra usage" in plain text', () => {
     const tmpDir = makeTmpDir();
     const logFile = path.join(tmpDir, 'iter.log');
     try {
-        const lines = [
-            JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: "You're out of extra usage · resets Mar 6 at 11am" }] } }),
-        ];
-        fs.writeFileSync(logFile, lines.join('\n'));
+        fs.writeFileSync(logFile, "You're out of extra usage · resets Mar 6 at 11am\n");
         assert.equal(detectRateLimitInText(logFile), true);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
 
-test('detectRateLimitInText: detects "out of usage" (without extra) pattern', () => {
+test('detectRateLimitInText: detects "out of usage" (without extra) in plain text', () => {
     const tmpDir = makeTmpDir();
     const logFile = path.join(tmpDir, 'iter.log');
     try {
-        const lines = [
-            JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: "You're out of usage for today" }] } }),
-        ];
-        fs.writeFileSync(logFile, lines.join('\n'));
+        fs.writeFileSync(logFile, "You're out of usage for today\n");
         assert.equal(detectRateLimitInText(logFile), true);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -358,14 +345,12 @@ test('classifyIterationExit: continue with rate_limit_event in log → api_limit
     }
 });
 
-test('classifyIterationExit: continue with rate limit text in log → api_limit without rateLimitInfo', () => {
+test('classifyIterationExit: continue with rate limit plain text in log → api_limit without rateLimitInfo', () => {
     const tmpDir = makeTmpDir();
     const logFile = path.join(tmpDir, 'iter.log');
     try {
-        const lines = [
-            JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'API rate limit hit' }] } }),
-        ];
-        fs.writeFileSync(logFile, lines.join('\n'));
+        // Plain text (not inside JSON content) triggers text fallback
+        fs.writeFileSync(logFile, "your daily usage limit has been reached\n");
         const r = classifyIterationExit('continue', logFile);
         assert.equal(r.type, 'api_limit');
         assert.equal(r.rateLimitInfo, undefined);
@@ -419,6 +404,24 @@ test('classifyIterationExit: text-only api_limit has no rateLimitInfo (wait_sour
         const r = classifyIterationExit('continue', logFile);
         assert.equal(r.type, 'api_limit');
         assert.equal(r.rateLimitInfo, undefined);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('classifyIterationExit: structured events present but not rejected → skips text fallback', () => {
+    const tmpDir = makeTmpDir();
+    const logFile = path.join(tmpDir, 'iter.log');
+    try {
+        // Structured rate_limit_event with 'accepted' status + text that would match
+        const lines = [
+            JSON.stringify({ type: 'rate_limit_event', status: 'accepted' }),
+            "your daily usage limit has been reached",
+        ];
+        fs.writeFileSync(logFile, lines.join('\n'));
+        const r = classifyIterationExit('continue', logFile);
+        // Should be 'success' — structured events exist, none rejected, so text fallback is skipped
+        assert.equal(r.type, 'success');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

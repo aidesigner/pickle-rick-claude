@@ -879,7 +879,7 @@ test('loadRateLimitSettings: returns defaults when no settings file', () => {
     const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-')));
     try {
         const result = loadRateLimitSettings(fakeRoot);
-        assert.equal(result.waitMinutes, 60);
+        assert.equal(result.waitMinutes, 5);
         assert.equal(result.maxRetries, 3);
     } finally {
         fs.rmSync(fakeRoot, { recursive: true, force: true });
@@ -909,7 +909,7 @@ test('loadRateLimitSettings: zero values fall back to floor of 1', () => {
             default_max_rate_limit_retries: 0,
         }));
         const result = loadRateLimitSettings(fakeRoot);
-        assert.equal(result.waitMinutes, 60, 'wait_minutes: 0 should fall back to default 60');
+        assert.equal(result.waitMinutes, 5, 'wait_minutes: 0 should fall back to default 5');
         assert.equal(result.maxRetries, 3, 'retries: 0 should fall back to default 3');
     } finally {
         fs.rmSync(fakeRoot, { recursive: true, force: true });
@@ -924,7 +924,7 @@ test('loadRateLimitSettings: negative values fall back to defaults', () => {
             default_max_rate_limit_retries: -1,
         }));
         const result = loadRateLimitSettings(fakeRoot);
-        assert.equal(result.waitMinutes, 60);
+        assert.equal(result.waitMinutes, 5);
         assert.equal(result.maxRetries, 3);
     } finally {
         fs.rmSync(fakeRoot, { recursive: true, force: true });
@@ -939,7 +939,7 @@ test('loadRateLimitSettings: non-number values fall back to defaults', () => {
             default_max_rate_limit_retries: true,
         }));
         const result = loadRateLimitSettings(fakeRoot);
-        assert.equal(result.waitMinutes, 60);
+        assert.equal(result.waitMinutes, 5);
         assert.equal(result.maxRetries, 3);
     } finally {
         fs.rmSync(fakeRoot, { recursive: true, force: true });
@@ -1103,7 +1103,7 @@ test('classifyIterationExit: continue with rate limit text pattern returns api_l
     const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-exit-')));
     try {
         const logFile = path.join(tmpDir, 'test.log');
-        fs.writeFileSync(logFile, 'You have reached your 5 hour limit. Please try back later.\n');
+        fs.writeFileSync(logFile, "You're out of extra usage · resets Mar 6 at 11am\n");
         assert.equal(classifyIterationExit('continue', logFile).type, 'api_limit');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -1169,34 +1169,34 @@ test('detectRateLimitInLog: only checks last 100 lines', () => {
     }
 });
 
-test('detectRateLimitInText: returns true for "5 hour limit" pattern', () => {
+test('detectRateLimitInText: returns true for "usage limit has been reached" pattern', () => {
     const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rl-')));
     try {
         const logFile = path.join(tmpDir, 'test.log');
-        fs.writeFileSync(logFile, 'You have reached your 5 hour limit.\n');
+        fs.writeFileSync(logFile, 'Your daily usage limit has been reached.\n');
         assert.equal(detectRateLimitInText(logFile), true);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
 
-test('detectRateLimitInText: returns true for "usage limit reached" pattern', () => {
+test('detectRateLimitInText: returns true for "out of usage" pattern', () => {
     const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rl-')));
     try {
         const logFile = path.join(tmpDir, 'test.log');
-        fs.writeFileSync(logFile, 'Your usage limit has been reached. Please try again later.\n');
+        fs.writeFileSync(logFile, "You're out of extra usage · resets Mar 6 at 11am\n");
         assert.equal(detectRateLimitInText(logFile), true);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
 
-test('detectRateLimitInText: returns true for "rate limit" pattern', () => {
+test('detectRateLimitInText: does not match generic "rate limit" mentions', () => {
     const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rl-')));
     try {
         const logFile = path.join(tmpDir, 'test.log');
         fs.writeFileSync(logFile, 'API rate limit hit, backing off.\n');
-        assert.equal(detectRateLimitInText(logFile), true);
+        assert.equal(detectRateLimitInText(logFile), false);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

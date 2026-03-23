@@ -15,7 +15,7 @@
   "default_cb_no_progress_threshold": 5,
   "default_cb_same_error_threshold": 5,
   "default_cb_half_open_after": 2,
-  "default_rate_limit_wait_minutes": 60,
+  "default_rate_limit_wait_minutes": 5,
   "default_max_rate_limit_retries": 3,
   "auto_update_enabled": true,
   "update_check_interval_hours": 24

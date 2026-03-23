@@ -206,11 +206,11 @@ test('RL-10: detectRateLimitInLog — returns not limited for missing file', () 
 // detectRateLimitInText — pattern matching
 // ---------------------------------------------------------------------------
 
-test('RL-11: detectRateLimitInText — matches "rate limit" in log', () => {
+test('RL-11: detectRateLimitInText — matches "usage limit has been reached" in log', () => {
   const dir = tmpDir();
   try {
     const logFile = path.join(dir, 'iter.log');
-    fs.writeFileSync(logFile, 'Claude: Your rate limit has been reached\n');
+    fs.writeFileSync(logFile, 'your daily usage limit has been reached\n');
     assert.equal(detectRateLimitInText(logFile), true);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
@@ -299,7 +299,7 @@ test('RL-18: classifyIterationExit — "continue" with text-only rate limit → 
   try {
     const logFile = path.join(dir, 'iter.log');
     // Text rate limit (no JSON event) — falls through to detectRateLimitInText
-    fs.writeFileSync(logFile, 'I apologize — you have hit the rate limit for this hour.\n');
+    fs.writeFileSync(logFile, "You're out of extra usage · resets Mar 6 at 11am\n");
 
     const result = classifyIterationExit('continue', logFile);
     assert.equal(result.type, 'api_limit');
