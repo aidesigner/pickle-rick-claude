@@ -183,10 +183,28 @@ export async function main(sessionDir) {
         throw new Error('microverse.json not found — run setup first');
     }
     const workingDir = state.working_dir || process.cwd();
-    // Pre-flight: dirty tree check
+    // Pre-flight: dirty tree check — auto-commit instead of aborting
     if (isWorkingTreeDirty(workingDir)) {
-        log('ERROR: Working tree is dirty. Aborting (tmux mode — no interactive prompt).');
-        throw new Error('Working tree is dirty — stash or commit changes first');
+        // eslint-disable-next-line pickle/no-sync-in-async -- sync guard is fine here; pre-flight before async work
+        if (!fs.existsSync(path.join(workingDir, '.git'))) {
+            log('ERROR: Working tree is dirty and not a git repository. Aborting.');
+            throw new Error('Working tree is dirty — not a git repo, cannot auto-commit');
+        }
+        log('Working tree is dirty — auto-committing before microverse start');
+        try {
+            execFileSync('git', ['add', '-A'], { cwd: workingDir, timeout: 30_000 });
+            execFileSync('git', ['commit', '-m', 'microverse: auto-commit dirty tree before start'], { cwd: workingDir, timeout: 30_000 });
+            log(`Auto-committed pre-flight: ${getHeadSha(workingDir)}`);
+        }
+        catch (commitErr) {
+            const commitMsg = safeErrorMessage(commitErr);
+            log(`Pre-flight auto-commit failed: ${commitMsg} — aborting`);
+            try {
+                execFileSync('git', ['reset'], { cwd: workingDir, timeout: 10_000 });
+            }
+            catch { /* best effort */ }
+            throw new Error(`Working tree is dirty and auto-commit failed: ${commitMsg}`);
+        }
     }
     // Ensure tmux_mode and command_template
     sm.update(statePath, s => {
