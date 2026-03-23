@@ -371,11 +371,11 @@ Exit 1 (recoverable `BuildError`):
 ```
 Where `error` is the specific `BuildErrorCode` (e.g., `"MISSING_AC_MAPPING"`, `"INVALID_SPEC"`). The LLM uses this code to determine the fix strategy.
 
-Exit 2 (unexpected/non-recoverable — e.g., unparseable stdin, runtime crash):
+Exit 2 (non-recoverable — e.g., unparseable stdin, runtime crash, input too large):
 ```json
-{ "error": "UNEXPECTED_ERROR", "message": "..." }
+{ "error": "<ErrorString>", "message": "..." }
 ```
-No `diagnostics` field on exit 2 — the error is not structured enough to fix programmatically. Note: unparseable JSON (not valid JSON at all) triggers exit 2, NOT `INVALID_SPEC`. `INVALID_SPEC` (exit 1) is for valid JSON that fails schema validation (missing required fields, wrong types).
+Where `error` is a descriptive string: `"UNEXPECTED_ERROR"` for unknown failures (runtime crash, unparseable JSON), `"INPUT_TOO_LARGE"` for stdin exceeding 512KB. No `diagnostics` field on exit 2 — the error is not structured enough to fix programmatically. Note: unparseable JSON (not valid JSON at all) triggers exit 2, NOT `INVALID_SPEC`. `INVALID_SPEC` (exit 1) is for valid JSON that fails schema validation (missing required fields, wrong types).
 
 ### Type Contracts
 
