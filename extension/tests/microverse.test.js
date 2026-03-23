@@ -288,7 +288,7 @@ test('runIteration is exported from mux-runner', () => {
 
 // --- microverse-runner tests ---
 
-import { measureMetric, measureLlmMetric, buildJudgePrompt, buildMicroverseHandoff, main, _deps } from '../bin/microverse-runner.js';
+import { measureMetric, measureLlmMetric, extractScore, buildJudgePrompt, buildMicroverseHandoff, main, _deps } from '../bin/microverse-runner.js';
 import { resetToSha } from '../services/git-utils.js';
 import { writeStateFile } from '../services/pickle-utils.js';
 
@@ -762,6 +762,44 @@ test('pre-iteration SHA recorded correctly', () => {
     }
 });
 
+// --- extractScore tests ---
+
+test('extractScore: clean number on last line', () => {
+    assert.equal(extractScore('analysis\n42'), 42);
+});
+
+test('extractScore: number with markdown bold', () => {
+    assert.equal(extractScore('reasoning...\n**7**'), 7);
+});
+
+test('extractScore: number with backticks', () => {
+    assert.equal(extractScore('here is the score\n`12`'), 12);
+});
+
+test('extractScore: decimal number', () => {
+    assert.equal(extractScore('stuff\n3.5'), 3.5);
+});
+
+test('extractScore: number buried in middle (last numeric line wins)', () => {
+    assert.equal(extractScore('analysis\n15\nsome trailing text'), 15);
+});
+
+test('extractScore: zero is valid', () => {
+    assert.equal(extractScore('no issues found\n0'), 0);
+});
+
+test('extractScore: returns null for pure text', () => {
+    assert.equal(extractScore('great job, no issues!'), null);
+});
+
+test('extractScore: returns null for fractions', () => {
+    assert.equal(extractScore('7/10'), null);
+});
+
+test('extractScore: returns null for empty string', () => {
+    assert.equal(extractScore(''), null);
+});
+
 // --- measureLlmMetric + buildJudgePrompt tests ---
 
 test('measureLlmMetric extracts numeric score from last line', () => {
@@ -776,7 +814,7 @@ test('measureLlmMetric extracts numeric score from last line', () => {
     }
 });
 
-test('measureLlmMetric spawns claude subprocess with --model flag', () => {
+test('measureLlmMetric spawns claude with --system-prompt and --allowedTools', () => {
     const orig = _deps.execFileSync;
     let capturedArgs;
     _deps.execFileSync = (cmd, args) => {
@@ -789,6 +827,40 @@ test('measureLlmMetric spawns claude subprocess with --model flag', () => {
         assert.ok(capturedArgs.args.includes('-p'));
         assert.ok(capturedArgs.args.includes('--model'));
         assert.ok(capturedArgs.args.includes('claude-opus-4-6'));
+        assert.ok(capturedArgs.args.includes('--system-prompt'), 'should include --system-prompt');
+        assert.ok(capturedArgs.args.includes('--allowedTools'), 'should include --allowedTools');
+        assert.ok(capturedArgs.args.includes('Read,Glob,Grep'), 'should restrict to read-only tools');
+        assert.ok(capturedArgs.args.includes('--no-session-persistence'), 'should not persist judge sessions');
+    } finally {
+        _deps.execFileSync = orig;
+    }
+});
+
+test('measureLlmMetric enforces minimum 180s timeout', () => {
+    const orig = _deps.execFileSync;
+    let capturedOpts;
+    _deps.execFileSync = (_cmd, _args, opts) => {
+        capturedOpts = opts;
+        return '50';
+    };
+    try {
+        measureLlmMetric('fix bugs', 30, '/tmp');
+        assert.equal(capturedOpts.timeout, 180 * 1000, 'should floor timeout to 180s');
+    } finally {
+        _deps.execFileSync = orig;
+    }
+});
+
+test('measureLlmMetric respects timeout above 180s', () => {
+    const orig = _deps.execFileSync;
+    let capturedOpts;
+    _deps.execFileSync = (_cmd, _args, opts) => {
+        capturedOpts = opts;
+        return '50';
+    };
+    try {
+        measureLlmMetric('fix bugs', 300, '/tmp');
+        assert.equal(capturedOpts.timeout, 300 * 1000, 'should use provided timeout when above floor');
     } finally {
         _deps.execFileSync = orig;
     }
@@ -831,6 +903,18 @@ test('measureLlmMetric returns null on non-numeric output', () => {
     }
 });
 
+test('measureLlmMetric extracts score from markdown-formatted output', () => {
+    const mockOutput = 'I found several issues.\n\nHere is my score:\n\n**5**';
+    const orig = _deps.execFileSync;
+    _deps.execFileSync = () => mockOutput;
+    try {
+        const result = measureLlmMetric('fix bugs', 30, '/tmp');
+        assert.deepEqual(result, { raw: mockOutput, score: 5 });
+    } finally {
+        _deps.execFileSync = orig;
+    }
+});
+
 test('buildJudgePrompt includes goal, cwd, and scoring format instructions', () => {
     const prompt = buildJudgePrompt('fix bugs', '/tmp');
     assert.ok(prompt.includes('fix bugs'), 'should include goal');
@@ -841,6 +925,11 @@ test('buildJudgePrompt includes goal, cwd, and scoring format instructions', () 
 test('buildJudgePrompt instructs no fractions', () => {
     const prompt = buildJudgePrompt('fix bugs', '/tmp');
     assert.ok(prompt.includes('Do NOT use fractions'), 'should instruct no fractions');
+});
+
+test('buildJudgePrompt does not include codebase evaluation preamble', () => {
+    const prompt = buildJudgePrompt('fix bugs', '/tmp');
+    assert.ok(!prompt.includes('You are evaluating a codebase'), 'preamble moved to system prompt');
 });
 
 test('measureLlmMetric defaults to claude-sonnet-4-6 model', () => {
