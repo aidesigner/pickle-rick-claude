@@ -352,6 +352,8 @@ check_pass_3 -> fix_review [outcome="issues"]
 
 **`.build()` return-vs-throw contract** *(council review: C4)*: `.build()` returns `BuildResult` when all diagnostics have `severity: 'warning'` or `severity: 'info'`. It throws `BuildError` when ANY diagnostic has `severity: 'error'`. The `BuildError.diagnostics` array contains ALL diagnostics (errors + warnings + infos). On success, `BuildResult.diagnostics` contains only warnings and infos. The fix loop triggers on `BuildError` catch, not on `BuildResult` inspection.
 
+**`BuildError.code` selection when multiple rules fail** *(microverse: iter6)*: When `.build()` collects multiple error-severity diagnostics from different validation rules, `BuildError.code` is set to the code of the **first** error diagnostic in rule evaluation order (rules 1–15, evaluated sequentially). The `BuildError.diagnostics` array contains ALL diagnostics regardless of which code is selected. The LLM fix loop should iterate `diagnostics`, not rely on `.code` alone — `.code` is a convenience for programmatic callers that need a single error category.
+
 ### CLI Stdin Contract *(refined: new section)*
 
 The CLI at `bin/dot-builder.ts` reads JSON from stdin using synchronous `fs.readFileSync(0, 'utf8')`, matching the `log-commit.ts` pattern. Input size guard: 512KB.
@@ -530,7 +532,7 @@ class BuildError extends Error {
 | `REVIEW_MISSING_READONLY` | Review node lacks `read_only=true` or STATUS marker | Rule 9: read_only+STATUS |
 | `COMPONENT_NO_MERGE` | `component` node has no matching `tripleoctagon` | Rule 10: component↔tripleoctagon |
 | `FAN_OUT_SCOPE_LEAK` | `retry_target` escapes component scope | Rule 11: fan_out_scope |
-| `WORKSPACE_NO_HTTPS` | `workspace="isolated"` with non-HTTPS `repoUrl` | Rule 12: workspace_config |
+| `WORKSPACE_NO_HTTPS` | `workspace="isolated"` with `repoUrl` present AND not starting with `https://`. If `repoUrl` is absent/undefined, Rule 12 does NOT fire — absent means the workspace uses the current working directory (no clone needed). | Rule 12: workspace_config |
 | `WORKSPACE_NO_PUSH` | `workspace="isolated"` without `commit_and_push` node | Rule 13: workspace_push |
 | `PLAN_MODE_DEADLOCK` | `permission_mode="plan"` in headless pipeline | Rule 14: permission_mode_plan |
 | `MISSING_ALLOWED_PATHS` | Per-phase codergen **impl** node (e.g., `impl_${phase}`, `fix_${phase}`) lacks `allowed_paths`. Does NOT apply to: (a) non-impl codergen nodes with `read_only=true` (`security_scan_${phase}`, `coverage_check_${phase}`) — these inherit phase `allowed_paths` for context but are read-only so missing paths is non-blocking; (b) cross-phase codergen nodes (`fix_all`, `verify_final`) — those derive `allowed_paths` from the union of all phase paths and get `severity: 'warning'` if the union is empty. | Rule 15: allowed_paths_required *(review: scoped to per-phase impl nodes; microverse: iter3 — clarified non-impl and cross-phase exclusions)* |
@@ -546,7 +548,8 @@ The builder resolves `context_on_success` sources using a two-tier approach:
 Tier 1: Explicit mapping via PhaseSpec.contextOnSuccess
   For each phase P with contextOnSuccess defined:
     For each key K in P.contextOnSuccess:
-      - Tag the phase's verify node with context_on_success containing K=V
+      - Tag the phase's `conformance_${phase}` node with context_on_success containing K=V
+        (conformance is the last review node in the phase pipeline — after scope_check, before cross-phase nodes)
 
 Tier 2: Auto-generated standard keys on verify_final
   The builder always generates these standard AC key mappings on verify_final:
@@ -859,10 +862,10 @@ The builder MUST pass `npx eslint src/ --max-warnings=-1`. Key constraints from 
 
 ```
 For each path P in allowedPaths:
-  1. If P starts with "src/" or "lib/" or "packages/*/src/":
+  1. If P starts with "src/" or "lib/" or matches the pattern "packages/<segment>/src/" (where <segment> is any non-slash path segment, matched via regex `^packages/[^/]+/src/`):
      - Extract the prefix before "src/" or "lib/" (e.g., "packages/foo/")
      - Add "{prefix}tests/**" AND "{prefix}__tests__/**"
-  2. If P is a bare glob (e.g., "*.ts"):
+  2. If P is a bare glob (e.g., "*.ts") — no directory prefix:
      - Add "tests/**" and "__tests__/**" (project root)
   3. If P already contains "test" or "__tests__":
      - No-op (already covered)
