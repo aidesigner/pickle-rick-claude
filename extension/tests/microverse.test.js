@@ -483,6 +483,18 @@ test('buildMicroverseHandoff with direction=higher says "improving the metric"',
     assert.ok(handoff.includes('Focus on improving the metric.'));
 });
 
+test('buildMicroverseHandoff includes PRD path when sessionDir provided', () => {
+    const mvState = createMicroverseState('/tmp/target', TEST_METRIC, 3);
+    const handoff = buildMicroverseHandoff(mvState, 1, '/tmp/work', '/tmp/sessions/abc123');
+    assert.ok(handoff.includes('## PRD: /tmp/sessions/abc123/prd.md'), 'should include PRD path');
+});
+
+test('buildMicroverseHandoff omits PRD section when sessionDir not provided', () => {
+    const mvState = createMicroverseState('/tmp/target', TEST_METRIC, 3);
+    const handoff = buildMicroverseHandoff(mvState, 1, '/tmp/work');
+    assert.ok(!handoff.includes('## PRD:'), 'should not include PRD section without sessionDir');
+});
+
 // --- Accept/reject cycle simulation ---
 
 test('accept/reject cycle: 3 iterations (improve, regress, hold) → 2 accepted, 1 reset, stall_counter=1', () => {

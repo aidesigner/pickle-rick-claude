@@ -41,9 +41,37 @@ Count source files. Print: "Target: TARGET (N source files)"
 If DRY_RUN mode: perform gap analysis without creating a session or modifying code:
 1. Read `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md`. If DOMAIN is set, also read `$HOME/.claude/pickle-rick/szechuan-sauce-${DOMAIN}-principles.md`.
 2. Read all target source files
-3. Catalog all violations with priority (P0–P4), principle, file:line, and suggested fix
-4. Print summary: violation count by priority, estimated iteration count
-5. Do NOT modify any code. Output `<promise>TASK_COMPLETED</promise>` and stop.
+3. Catalog all violations using this format:
+
+```
+## Violations
+
+### P0: Critical
+- **[Principle]** `file:line` — description. Fix: suggested fix.
+
+### P1: High
+...
+
+### P2: Medium
+...
+
+### P3: Low
+...
+
+### P4: Optional
+...
+
+## Summary
+| Priority | Count |
+|----------|-------|
+| P0       | N     |
+| ...      | ...   |
+| **Total**| N     |
+
+Estimated iterations: N
+```
+
+4. Do NOT modify any code. Output `<promise>TASK_COMPLETED</promise>` and stop.
 
 Skip Steps 5–8 entirely.
 
@@ -164,6 +192,7 @@ The metric is **violation count** (lower is better). Each iteration:
 2. If gap analysis is stale or missing, read the target code directly (Glob + Read)
 3. Find the **single highest-priority** remaining violation (P0 > P1 > P2 > P3 > P4) that is NOT in the failed approaches list from the handoff
 4. If no violations found: print "The sauce is obtained." and exit cleanly
+5. After fixing and committing, **update** `gap_analysis.md` — remove the fixed violation and note any new violations introduced by the fix. This keeps the gap analysis current for the next iteration.
 
 ### Override 3: Commit Message Format
 

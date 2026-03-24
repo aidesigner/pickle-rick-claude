@@ -35,6 +35,7 @@ Based on [Theta-Tech-AI/deslop](https://github.com/Theta-Tech-AI/llm-public-util
 | KISS vs. DRY | Three obvious lines beat one clever abstraction. Optimize for reader. |
 | DRY vs. Clarity | Obvious > clever. If abstraction hides intent, keep duplicates. |
 | Abstraction vs. Indirection | Every layer must earn its keep. Indirection without payoff is slop. |
+| SRP vs. Cohesion | Split only when responsibilities have different change rates. Scattering related logic is worse than a slightly large class. |
 
 ## Priority Matrix
 

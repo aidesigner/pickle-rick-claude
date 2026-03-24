@@ -117,7 +117,7 @@ export function measureLlmMetric(goal, timeoutSeconds, cwd, judgeModel, history,
         return null;
     }
 }
-export function buildMicroverseHandoff(mvState, iteration, workingDir) {
+export function buildMicroverseHandoff(mvState, iteration, workingDir, sessionDir) {
     const dir = mvState.key_metric.direction ?? 'higher';
     const parts = [
         `# Microverse Iteration ${iteration}`,
@@ -150,6 +150,9 @@ export function buildMicroverseHandoff(mvState, iteration, workingDir) {
             parts.push(`- ${approach}`);
         }
         parts.push('');
+    }
+    if (sessionDir) {
+        parts.push(`## PRD: ${path.join(sessionDir, 'prd.md')}`);
     }
     parts.push(`## Target Path: ${mvState.prd_path}`);
     parts.push(`## Working Directory: ${workingDir}`);
@@ -311,7 +314,7 @@ export async function main(sessionDir) {
         log('Starting gap analysis phase');
         iteration++;
         // Write gap analysis handoff
-        const handoffContent = buildMicroverseHandoff(currentMv, iteration, workingDir);
+        const handoffContent = buildMicroverseHandoff(currentMv, iteration, workingDir, sessionDir);
         // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         fs.writeFileSync(path.join(sessionDir, 'handoff.txt'), handoffContent);
         sm.update(statePath, s => { s.iteration = iteration; });
@@ -408,7 +411,7 @@ export async function main(sessionDir) {
         // Record pre-iteration SHA
         const preIterSha = getHeadSha(workingDir);
         // Write microverse-specific handoff
-        const handoffContent = buildMicroverseHandoff(currentMv, iteration, workingDir);
+        const handoffContent = buildMicroverseHandoff(currentMv, iteration, workingDir, sessionDir);
         // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         fs.writeFileSync(path.join(sessionDir, 'handoff.txt'), handoffContent);
         sm.update(statePath, s => { s.iteration = iteration; });

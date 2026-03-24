@@ -179,6 +179,7 @@ export function buildMicroverseHandoff(
   mvState: MicroverseSessionState,
   iteration: number,
   workingDir: string,
+  sessionDir?: string,
 ): string {
   const dir = mvState.key_metric.direction ?? 'higher';
   const parts: string[] = [
@@ -217,6 +218,9 @@ export function buildMicroverseHandoff(
     parts.push('');
   }
 
+  if (sessionDir) {
+    parts.push(`## PRD: ${path.join(sessionDir, 'prd.md')}`);
+  }
   parts.push(`## Target Path: ${mvState.prd_path}`);
   parts.push(`## Working Directory: ${workingDir}`);
   parts.push('');
@@ -383,7 +387,7 @@ export async function main(sessionDir: string): Promise<void> {
     iteration++;
 
     // Write gap analysis handoff
-    const handoffContent = buildMicroverseHandoff(currentMv, iteration, workingDir);
+    const handoffContent = buildMicroverseHandoff(currentMv, iteration, workingDir, sessionDir);
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     fs.writeFileSync(path.join(sessionDir, 'handoff.txt'), handoffContent);
 
@@ -493,7 +497,7 @@ export async function main(sessionDir: string): Promise<void> {
     const preIterSha = getHeadSha(workingDir);
 
     // Write microverse-specific handoff
-    const handoffContent = buildMicroverseHandoff(currentMv, iteration, workingDir);
+    const handoffContent = buildMicroverseHandoff(currentMv, iteration, workingDir, sessionDir);
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     fs.writeFileSync(path.join(sessionDir, 'handoff.txt'), handoffContent);
 
