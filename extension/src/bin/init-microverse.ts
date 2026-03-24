@@ -34,6 +34,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'init-microverse.js') 
   const stallLimit = Number(parseFlag(args, '--stall-limit') ?? '5');
   const rawConvergence = parseFlag(args, '--convergence-target');
   const rawMetricJson = parseFlag(args, '--metric-json');
+  const judgeContextPath = parseFlag(args, '--judge-context');
 
   let metric: MicroverseMetric;
   if (rawMetricJson) {
@@ -52,6 +53,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'init-microverse.js') 
     const convergenceTarget = rawConvergence != null ? Number(rawConvergence) : undefined;
     const state = createMicroverseState(targetPath, metric, stallLimit, convergenceTarget);
     state.gap_analysis_path = path.join(sessionDir, 'gap_analysis.md');
+    if (judgeContextPath) state.judge_context_path = judgeContextPath;
     writeMicroverseState(sessionDir, state);
     console.log('microverse.json created');
   } catch (err) {

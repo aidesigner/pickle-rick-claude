@@ -86,11 +86,17 @@ export function buildJudgePrompt(
   cwd: string,
   history?: MicroverseHistoryEntry[],
   prdPath?: string,
+  judgeContextPath?: string,
 ): string {
   const parts: string[] = [
     `Goal: ${goal}`,
     `Working directory: ${cwd}`,
   ];
+
+  if (judgeContextPath) {
+    parts.push(`Scoring reference: ${judgeContextPath}`);
+    parts.push('Read this file FIRST — it defines the scoring criteria, priority matrix, and violation taxonomy you must use.');
+  }
 
   if (prdPath) {
     parts.push(`Target path: ${prdPath}`);
@@ -141,10 +147,11 @@ export function measureLlmMetric(
   judgeModel?: string,
   history?: MicroverseHistoryEntry[],
   prdPath?: string,
+  judgeContextPath?: string,
 ): { raw: string; score: number } | null {
   const model = judgeModel || DEFAULT_JUDGE_MODEL;
   const timeout = Math.max(timeoutSeconds, DEFAULT_JUDGE_TIMEOUT);
-  const prompt = buildJudgePrompt(goal, cwd, history, prdPath);
+  const prompt = buildJudgePrompt(goal, cwd, history, prdPath, judgeContextPath);
   try {
     const output = _deps.execFileSync('claude', [
       '-p', prompt,
@@ -413,6 +420,7 @@ export async function main(sessionDir: string): Promise<void> {
         currentMv.key_metric.judge_model,
         undefined,
         currentMv.prd_path,
+        currentMv.judge_context_path,
       );
       if (baseline) {
         currentMv.baseline_score = baseline.score;
@@ -618,6 +626,7 @@ export async function main(sessionDir: string): Promise<void> {
           currentMv.key_metric.judge_model,
           currentMv.convergence.history,
           currentMv.prd_path,
+          currentMv.judge_context_path,
         );
       }
       return null;

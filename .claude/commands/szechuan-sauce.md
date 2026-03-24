@@ -58,7 +58,7 @@ Extract `SESSION_ROOT=<path>` from output.
 ### Step 7: Create microverse.json
 
 ```bash
-node "$HOME/.claude/pickle-rick/extension/bin/init-microverse.js" "${SESSION_ROOT}" "${TARGET_ABSOLUTE_PATH}" --stall-limit ${STALL_LIMIT} --convergence-target 0
+node "$HOME/.claude/pickle-rick/extension/bin/init-microverse.js" "${SESSION_ROOT}" "${TARGET_ABSOLUTE_PATH}" --stall-limit ${STALL_LIMIT} --convergence-target 0 --judge-context "$HOME/.claude/pickle-rick/szechuan-sauce-principles.md"
 ```
 
 Replace shell variables with actual values. The `--convergence-target 0` tells the runner to stop immediately when the violation count reaches zero (instead of waiting for stall_limit iterations of finding nothing).
@@ -163,17 +163,11 @@ Examples:
 - `szechuan-sauce: Fail-Fast — add input validation at API boundary`
 - `szechuan-sauce: YAGNI — remove unused AbstractFactoryProvider`
 
-### Override 4: State Updates
-
-```bash
-node "$HOME/.claude/pickle-rick/extension/bin/update-state.js" iteration <current+1> <SESSION_ROOT>
-node "$HOME/.claude/pickle-rick/extension/bin/update-state.js" step implement <SESSION_ROOT>
-```
-
 ### Standard Protocol
 
-For everything else — loading context, reading the handoff, making one change per iteration, staging specific files (no `git add -A`), running tests, and exiting cleanly — follow the Microverse Worker protocol defined in `templates/microverse.md`.
+For everything not covered by the overrides above — loading context, reading the handoff, making one change per iteration, staging specific files (no `git add -A`), running tests, and exiting cleanly — follow the Microverse Worker protocol (this template is invoked with the microverse.md base; the handoff is appended below).
 
+Do NOT call `update-state.js` — the microverse-runner manages all state transitions.
 Do NOT output any promise tokens — the microverse-runner manages the loop.
 
 ---

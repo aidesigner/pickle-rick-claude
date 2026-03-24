@@ -1001,6 +1001,41 @@ test('measureLlmMetric passes prdPath to buildJudgePrompt', () => {
     }
 });
 
+test('buildJudgePrompt includes judgeContextPath when provided', () => {
+    const prompt = buildJudgePrompt('fix bugs', '/tmp', undefined, '/tmp/target', '/tmp/principles.md');
+    assert.ok(prompt.includes('/tmp/principles.md'), 'should include judge context path');
+    assert.ok(prompt.includes('Scoring reference:'), 'should label the context path');
+    assert.ok(prompt.includes('Read this file FIRST'), 'should instruct judge to read it first');
+});
+
+test('buildJudgePrompt omits scoring reference when judgeContextPath not provided', () => {
+    const prompt = buildJudgePrompt('fix bugs', '/tmp', undefined, '/tmp/target');
+    assert.ok(!prompt.includes('Scoring reference:'), 'should not include scoring reference without judgeContextPath');
+});
+
+test('buildJudgePrompt places scoring reference before target path', () => {
+    const prompt = buildJudgePrompt('fix bugs', '/tmp', undefined, '/tmp/target', '/tmp/principles.md');
+    const refIdx = prompt.indexOf('Scoring reference:');
+    const targetIdx = prompt.indexOf('Target path:');
+    assert.ok(refIdx < targetIdx, 'scoring reference should appear before target path');
+});
+
+test('measureLlmMetric passes judgeContextPath to buildJudgePrompt', () => {
+    const orig = _deps.execFileSync;
+    let capturedArgs;
+    _deps.execFileSync = (_cmd, args) => {
+        capturedArgs = args;
+        return '5';
+    };
+    try {
+        measureLlmMetric('fix bugs', 30, '/tmp', undefined, undefined, '/tmp/target', '/tmp/principles.md');
+        const promptIdx = capturedArgs.indexOf('-p') + 1;
+        assert.ok(capturedArgs[promptIdx].includes('/tmp/principles.md'), 'prompt should contain judge context path');
+    } finally {
+        _deps.execFileSync = orig;
+    }
+});
+
 test('measureLlmMetric defaults to claude-sonnet-4-6 model', () => {
     const orig = _deps.execFileSync;
     let capturedArgs;

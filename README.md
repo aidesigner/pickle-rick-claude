@@ -19,6 +19,7 @@ Pickle Rick is a complete agentic engineering toolbelt built on the [Ralph Wiggu
 - **Council of Ricks** reviews your Graphite PR stack iteratively, generating agent-executable directives instead of fixing code directly
 - **Portal Gun** opens a portal to another codebase, extracts patterns via [gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) with import graph tracing, transplant classification, PRD validation, and a persistent pattern library
 - **Microverse** convergence loop optimizes any numeric metric through targeted, incremental changes — measuring after each iteration, auto-reverting regressions, and stopping when converged
+- **Szechuan Sauce** iterative deslopping loop grinds code to zero principle violations — P0 security through P4 style — using the microverse infrastructure with a principles-aware LLM judge
 - **GitNexus integration** gives workers a code knowledge graph for impact analysis, execution flow tracing, and safe refactoring
 
 All modes support both tmux and Zellij monitor layouts.
@@ -299,6 +300,55 @@ Defaults to tmux mode (context clearing between iterations for long optimization
 ```
 
 See [architecture](architecture.md#microverse-internals) for the runner state machine, metric comparison logic, and `microverse.json` schema.
+
+---
+
+## 🍗 Szechuan Sauce — Iterative Code Deslopping
+
+> *"I'm not driven by avenging my dead family, Morty. That was fake. I-I-I'm driven by finding that McNugget sauce."*
+
+`/szechuan-sauce` is a specialized microverse loop that hunts and eliminates coding principle violations one at a time until there are zero left. The sauce is perfect code — and Rick won't stop until he gets it.
+
+It reads a curated principles reference (KISS, YAGNI, DRY, SOLID, Guard Clauses, Fail-Fast, Encapsulation, Cognitive Load, etc.) and scores the codebase against a priority matrix (P0 security/data-loss through P4 style). Each iteration finds the single highest-priority remaining violation, fixes it atomically, runs tests, commits, and measures. Regressions are auto-reverted. When the violation count hits zero, the loop converges.
+
+### When to Use It
+
+| Scenario | Use Szechuan Sauce? |
+|---|---|
+| Inherited codebase with accumulated tech debt | Yes — systematic cleanup by priority |
+| Post-feature polish before merging a PR | Yes — catches violations the author missed |
+| Pre-release hardening pass | Yes — P0/P1 violations get caught first |
+| Greenfield feature implementation | No — use `/pickle` instead |
+| Performance optimization toward a benchmark | No — use `/pickle-microverse --metric` |
+| Subjective "make it better" without clear violations | No — use `/pickle-microverse --goal` |
+
+**Szechuan Sauce vs Meeseeks**: Meeseeks reviews across 8 categories (deps, security, correctness, architecture, tests, resilience, quality, polish) with escalating focus per pass. Szechuan Sauce is principle-driven — it scores against a fixed taxonomy of coding principles and converges to zero violations. Use Meeseeks for broad review; use Szechuan Sauce when you want to grind a specific file or directory to principle-perfect code.
+
+**Szechuan Sauce vs Microverse**: Szechuan Sauce *is* a microverse — it uses the same runner, convergence loop, and auto-revert infrastructure. The difference is the metric: microverse takes any measurement (shell command or LLM goal), while Szechuan Sauce hardcodes an LLM judge that scores against the principles reference. You don't need to define a metric — it knows what it's looking for.
+
+### Usage
+
+```bash
+/szechuan-sauce src/services/             # Deslop a directory
+/szechuan-sauce src/utils/parser.ts       # Deslop a single file
+/szechuan-sauce --dry-run src/            # Catalog violations without modifying code
+/szechuan-sauce --max-iterations 30 src/  # Cap at 30 iterations (default: 50)
+/szechuan-sauce --stall-limit 3 src/      # Stop after 3 iterations with no improvement (default: 5)
+```
+
+The `--dry-run` flag performs a gap analysis only — it catalogs all violations by priority with file:line references and suggested fixes, prints a summary, and exits without modifying code. Useful for scoping the work before committing to a full run.
+
+### How It Works
+
+1. **Validates target** — confirms source files exist at the path
+2. **Runs test baseline** — ensures the codebase is green before deslopping
+3. **Initializes a microverse session** — sets up `microverse.json` with LLM judge, convergence target of 0, and the principles file as judge context
+4. **Launches tmux** — context-clearing outer loop with monitor panes
+5. **Gap analysis** (iteration 1) — reads all target code, catalogs violations, writes `gap_analysis.md`
+6. **Iteration loop** — each cycle: read principles, find highest-priority violation not in the failed list, fix it, commit as `szechuan-sauce: <principle> — <description>`, measure
+7. **Convergence** — exits when violation count reaches 0 or stall limit is hit
+
+The LLM judge reads the principles reference file directly (via `judge_context_path` in `microverse.json`), ensuring scoring is consistent with the worker's understanding of what constitutes a violation.
 
 ---
 

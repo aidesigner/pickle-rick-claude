@@ -48,11 +48,15 @@ const JUDGE_SYSTEM_PROMPT = [
     'Use Read, Glob, and Grep tools to examine files as needed.',
     'Your final output MUST be a single line containing ONLY a number.',
 ].join(' ');
-export function buildJudgePrompt(goal, cwd, history, prdPath) {
+export function buildJudgePrompt(goal, cwd, history, prdPath, judgeContextPath) {
     const parts = [
         `Goal: ${goal}`,
         `Working directory: ${cwd}`,
     ];
+    if (judgeContextPath) {
+        parts.push(`Scoring reference: ${judgeContextPath}`);
+        parts.push('Read this file FIRST — it defines the scoring criteria, priority matrix, and violation taxonomy you must use.');
+    }
     if (prdPath) {
         parts.push(`Target path: ${prdPath}`);
         parts.push('Examine the code at this path before scoring. If it is a directory, use Glob to find source files and Read to examine them.');
@@ -85,10 +89,10 @@ export function extractScore(output) {
     }
     return null;
 }
-export function measureLlmMetric(goal, timeoutSeconds, cwd, judgeModel, history, prdPath) {
+export function measureLlmMetric(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath) {
     const model = judgeModel || DEFAULT_JUDGE_MODEL;
     const timeout = Math.max(timeoutSeconds, DEFAULT_JUDGE_TIMEOUT);
-    const prompt = buildJudgePrompt(goal, cwd, history, prdPath);
+    const prompt = buildJudgePrompt(goal, cwd, history, prdPath, judgeContextPath);
     try {
         const output = _deps.execFileSync('claude', [
             '-p', prompt,
@@ -340,7 +344,7 @@ export async function main(sessionDir) {
             }
         }
         else if (currentMv.key_metric.type === 'llm') {
-            const baseline = measureLlmMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir, currentMv.key_metric.judge_model, undefined, currentMv.prd_path);
+            const baseline = measureLlmMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir, currentMv.key_metric.judge_model, undefined, currentMv.prd_path, currentMv.judge_context_path);
             if (baseline) {
                 currentMv.baseline_score = baseline.score;
                 log(`LLM baseline metric: ${baseline.score}`);
@@ -535,7 +539,7 @@ export async function main(sessionDir) {
                 return measureMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir);
             }
             else if (currentMv.key_metric.type === 'llm') {
-                return measureLlmMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir, currentMv.key_metric.judge_model, currentMv.convergence.history, currentMv.prd_path);
+                return measureLlmMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir, currentMv.key_metric.judge_model, currentMv.convergence.history, currentMv.prd_path, currentMv.judge_context_path);
             }
             return null;
         };
