@@ -239,3 +239,126 @@ test('isConverged returns false when last accepted score does not equal converge
     ];
     assert.equal(isConverged(state), false, 'should not converge when score > convergence_target');
 });
+
+// ---------------------------------------------------------------------------
+// isConverged: direction-aware convergence_target (not just strict equality)
+// ---------------------------------------------------------------------------
+
+test('isConverged returns true when score overshoots convergence_target (lower direction)', () => {
+    // If target is 0 and score is -1 (overshot), should still converge
+    const state = createMicroverseState('/tmp/target', {
+        description: 'violations',
+        validation: 'count',
+        type: 'llm',
+        timeout_seconds: 60,
+        tolerance: 0,
+        direction: 'lower',
+    }, 5, 0);
+    state.baseline_score = 10;
+    state.convergence.history = [
+        { iteration: 1, metric_value: '-1', score: -1, action: 'accept', description: 'overshot', pre_iteration_sha: 'abc', timestamp: new Date().toISOString() },
+    ];
+    assert.equal(isConverged(state), true, 'should converge when score undershoots target in lower direction');
+});
+
+test('isConverged returns true when score overshoots convergence_target (higher direction)', () => {
+    const state = createMicroverseState('/tmp/target', {
+        description: 'coverage',
+        validation: 'test coverage',
+        type: 'command',
+        timeout_seconds: 60,
+        tolerance: 0,
+        direction: 'higher',
+    }, 5, 90);
+    state.baseline_score = 50;
+    state.convergence.history = [
+        { iteration: 1, metric_value: '95', score: 95, action: 'accept', description: 'exceeded target', pre_iteration_sha: 'abc', timestamp: new Date().toISOString() },
+    ];
+    assert.equal(isConverged(state), true, 'should converge when score exceeds target in higher direction');
+});
+
+test('isConverged returns false when score has not reached target (higher direction)', () => {
+    const state = createMicroverseState('/tmp/target', {
+        description: 'coverage',
+        validation: 'test coverage',
+        type: 'command',
+        timeout_seconds: 60,
+        tolerance: 0,
+        direction: 'higher',
+    }, 5, 90);
+    state.baseline_score = 50;
+    state.convergence.history = [
+        { iteration: 1, metric_value: '70', score: 70, action: 'accept', description: 'partial', pre_iteration_sha: 'abc', timestamp: new Date().toISOString() },
+    ];
+    assert.equal(isConverged(state), false, 'should not converge when score < target in higher direction');
+});
+
+// ---------------------------------------------------------------------------
+// Financial domain principles file
+// ---------------------------------------------------------------------------
+
+const FINANCIAL_PRINCIPLES_PATH = path.resolve(import.meta.dirname, '../szechuan-sauce-financial-principles.md');
+
+test('szechuan-sauce-financial-principles.md exists', () => {
+    assert.ok(fs.existsSync(FINANCIAL_PRINCIPLES_PATH), `missing: ${FINANCIAL_PRINCIPLES_PATH}`);
+});
+
+test('financial principles file has priority matrix', () => {
+    const content = fs.readFileSync(FINANCIAL_PRINCIPLES_PATH, 'utf-8');
+    assert.ok(content.includes('## Priority Matrix'), 'missing Priority Matrix section');
+    assert.ok(content.includes('P0'), 'missing P0 priority');
+});
+
+test('financial principles file has diagnostic guide', () => {
+    const content = fs.readFileSync(FINANCIAL_PRINCIPLES_PATH, 'utf-8');
+    assert.ok(content.includes('## Quick Diagnostic Guide'), 'missing Quick Diagnostic Guide');
+});
+
+// ---------------------------------------------------------------------------
+// Dry-run format validation
+// ---------------------------------------------------------------------------
+
+test('szechuan-sauce.md dry-run section includes priority buckets', () => {
+    const content = readCommand();
+    assert.ok(content.includes('### P0: Critical'), 'missing P0 bucket in dry-run format');
+    assert.ok(content.includes('### P1: High'), 'missing P1 bucket in dry-run format');
+    assert.ok(content.includes('### P2: Medium'), 'missing P2 bucket in dry-run format');
+    assert.ok(content.includes('### P3: Low'), 'missing P3 bucket in dry-run format');
+    assert.ok(content.includes('### P4: Optional'), 'missing P4 bucket in dry-run format');
+});
+
+test('szechuan-sauce.md has dry-run mode in Setup', () => {
+    const content = readCommand();
+    assert.ok(content.includes('--dry-run'), 'missing --dry-run flag');
+    assert.ok(content.includes('DRY_RUN'), 'missing DRY_RUN variable');
+});
+
+// ---------------------------------------------------------------------------
+// init-microverse: --metric-json accepts custom metric
+// ---------------------------------------------------------------------------
+
+test('init-microverse accepts --metric-json for custom metrics', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-szechuan-custom-'));
+    try {
+        const initScript = path.resolve(import.meta.dirname, '../bin/init-microverse.js');
+        const customMetric = JSON.stringify({
+            description: 'test coverage',
+            validation: 'npm test -- --coverage',
+            type: 'command',
+            timeout_seconds: 120,
+            tolerance: 1,
+            direction: 'higher',
+        });
+        execSync(
+            `node ${initScript} ${dir} /tmp/target --stall-limit 3 --metric-json '${customMetric}'`,
+            { stdio: 'pipe' }
+        );
+        const state = readMicroverseState(dir);
+        assert.ok(state, 'microverse.json should exist');
+        assert.equal(state.key_metric.type, 'command', 'should use custom metric type');
+        assert.equal(state.key_metric.direction, 'higher', 'should use custom direction');
+        assert.equal(state.key_metric.tolerance, 1, 'should use custom tolerance');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});

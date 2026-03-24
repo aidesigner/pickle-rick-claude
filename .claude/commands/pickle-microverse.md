@@ -47,40 +47,16 @@ Extract `SESSION_ROOT=<path>` from output. If `--resume`, skip Steps 3 and 4.
 
 ## Step 3: Create microverse.json (new sessions only)
 
-Write `${SESSION_ROOT}/microverse.json` conforming to `MicroverseSessionState`:
+Build a JSON metric object and pass it to `init-microverse.js`:
 
 ```bash
-node -e "
-const fs = require('fs');
-const path = require('path');
-const sessionDir = process.argv[1];
-const type = process.argv[6] || 'command';
-const direction = process.argv[7] || 'higher';
-const keyMetric = {
-  description: process.argv[2],
-  validation: process.argv[3],
-  type: type,
-  timeout_seconds: 60,
-  tolerance: Number(process.argv[4]),
-  direction: direction
-};
-if (type === 'llm') keyMetric.judge_model = process.argv[8] || 'claude-sonnet-4-6';
-const state = {
-  status: 'gap_analysis',
-  prd_path: path.join(sessionDir, 'prd.md'),
-  key_metric: keyMetric,
-  convergence: {
-    stall_limit: Number(process.argv[5]),
-    stall_counter: 0,
-    history: []
-  },
-  gap_analysis_path: '',
-  failed_approaches: [],
-  baseline_score: 0
-};
-fs.writeFileSync(path.join(sessionDir, 'microverse.json'), JSON.stringify(state, null, 2));
-console.log('microverse.json created');
-" "${SESSION_ROOT}" "<TASK_TEXT>" "<VALIDATION>" "<TOLERANCE>" "<STALL_LIMIT>" "<TYPE>" "<DIRECTION>" "<JUDGE_MODEL>"
+METRIC_JSON='{"description":"<TASK_TEXT>","validation":"<VALIDATION>","type":"<TYPE>","timeout_seconds":60,"tolerance":<TOLERANCE>,"direction":"<DIRECTION>"}'
+```
+
+If type is `llm`, add `judge_model` to the JSON: `"judge_model":"<JUDGE_MODEL>"` (default `claude-sonnet-4-6`).
+
+```bash
+node "$HOME/.claude/pickle-rick/extension/bin/init-microverse.js" "${SESSION_ROOT}" "${SESSION_ROOT}/prd.md" --stall-limit <STALL_LIMIT> --metric-json "${METRIC_JSON}"
 ```
 
 Replace placeholders with parsed values:
@@ -88,8 +64,7 @@ Replace placeholders with parsed values:
 - `<TYPE>` = `command` (if `--metric`) or `llm` (if `--goal`)
 - `<DIRECTION>` = from `--direction` flag (default `higher`)
 - `<JUDGE_MODEL>` = from `--judge-model` flag (default `claude-sonnet-4-6`, only used when type=`llm`)
-
-Verify: `node -e "const s=JSON.parse(require('fs').readFileSync('${SESSION_ROOT}/microverse.json','utf-8')); console.log('status:', s.status, 'metric:', s.key_metric.validation, 'stall_limit:', s.convergence.stall_limit)"`
+- `<TOLERANCE>` = from `--tolerance` flag (default `0`)
 
 ## Step 4: Write prd.md (new sessions only)
 

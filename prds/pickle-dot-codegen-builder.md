@@ -1009,9 +1009,23 @@ For each path P in allowedPaths:
 | 50 | 67181c43 | Opt-in + default-on patterns — spec-first (16), BDD scenarios (16b), microverse, review ratchet, workspace, competing impls, security, red team, model stylesheet | Medium | Auto patterns working | All 28 active v1 patterns; 28 snapshot tests pass; opt-in patterns absent when not requested; `.modelStylesheet()` generates valid CSS-like syntax (P2 but included in this phase) *(review: 16b moved here from Phase 40 — now opt-in not auto)* | `services/dot-builder.ts`, `tests/dot-builder-patterns.test.js` | `extension/src/services/**`, `extension/tests/**` | No |
 | 60 | 7f98dd6a | CLI entry point + fromSpec() with JSON schema validation | High | All patterns done | CLI exits 0/1/2 correctly; `npx eslint src/ --max-warnings=-1` passes; `install.sh` has chmod; all 4 test files registered in `package.json` | `bin/dot-builder.ts`, `tests/dot-builder-cli.test.js`, `install.sh`, `package.json` (test script) | `extension/src/bin/**`, `extension/tests/**`, `extension/package.json`, `install.sh` | Yes |
 | 65 | a1b3c5d7 | Fallback schema creation | Medium | CLI working | `types/attractor-schema.fallback.ts` committed with all builder-emitted attributes (node: `class`, `shape`, `goal_gate`, `retry_target`, `max_visits`, `thread_id`, `timeout`, `allowed_paths`, `read_only`, `context_on_success`, `prompt`, `tool_command`, `max_parallel`, `escalate_on`, `permission_mode`, `auto_status`, `allow_partial`; graph: `goal`, `working_dir`, `default_max_retry`, `label`, `acceptance_criteria`, `model_stylesheet`, `spec_file`, `workspace`, `repo_url`, `repo_branch`, `workspace_cleanup`, `retry_target`; edge: `outcome`, `loop_restart`); builder loads it when `$ATTRACTOR_ROOT` unavailable *(microverse: iter1 — expanded from "minimum viable" to exhaustive list; iter4 — added `shape`; iter8 — added `retry_target` to graph list per line 144/614)* | `types/attractor-schema.fallback.ts` | `extension/src/types/**`, `extension/tests/**` | No |
-| 70 | 045a571a | Schema sync script | Medium | Fallback exists | `npm run sync-schema` reads `$ATTRACTOR_ROOT/schema.json` and generates `types/attractor-schema.ts`; falls back gracefully | `bin/sync-schema.ts`, `types/attractor-schema.ts`, `package.json` (script entry) | `extension/src/bin/**`, `extension/src/types/**`, `extension/tests/**`, `extension/package.json` | No |
+| 70 | 045a571a | Schema sync script | Medium | Fallback exists | `npm run sync-schema` reads `$ATTRACTOR_ROOT/schema.json` and generates `types/attractor-schema.ts` (gitignored — auto-generated; fallback file `attractor-schema.fallback.ts` is hand-maintained and committed); falls back gracefully; add `types/attractor-schema.ts` to `.gitignore` | `bin/sync-schema.ts`, `types/attractor-schema.ts`, `package.json` (script entry), `.gitignore` | `extension/src/bin/**`, `extension/src/types/**`, `extension/tests/**`, `extension/package.json` | No |
 | 80 | e3a7d523 | /pickle-dot command prompt rewrite + --legacy/--builder flags | High | CLI working | Prompt has BuilderSpec instructions, ≥3 few-shot examples, fix-loop instructions, `--builder` flag for Phase 1 opt-in, `--legacy` flag for rollback, default remains prompt-only; no raw DOT instructions remain | `.claude/commands/pickle-dot.md` | `.claude/commands/pickle-dot.md` | No |
 | 85 | f2e4d6c8 | README documentation update | Medium | Prompt rewrite done | README documents: builder API, BuilderSpec JSON structure, `/pickle-dot` invocation (normal + `--legacy`), fix-loop flow | `README.md` | `README.md` | No |
+
+## Generated Pipeline Configuration
+
+When `/pickle-dot` generates a pipeline from this PRD, use these values:
+
+| Field | Value | Rationale |
+|:---|:---|:---|
+| `slug` | `pickle-dot-codegen-builder` | Matches PRD filename |
+| `goal` | `Build TypeScript DOT pipeline codegen builder with 28 patterns, 15 validation rules, and deterministic output` | From PRD Objective |
+| `working_dir` | `${WORKING_DIR}` | Attractor resolves at runtime to the mounted repo root; all phase commands use relative paths from `extension/` via `cd extension &&` prefix |
+| `spec_file` | `prds/pickle-dot-codegen-builder.md` | This PRD — canonical spec for conformance checks |
+| `workspace` | shared (omit field — default) | Same repo, no isolation needed |
+| `label` | `Pickle-Dot Codegen Builder` | Human-readable pipeline label |
+| `default_max_retry` | `3` | Standard retry budget |
 
 ## Pipeline Quality Gate Specification
 
@@ -1039,18 +1053,18 @@ context_on_success="cli_contract=true,determinism=true,lint_clean=true,tests_pas
 
 ### Per-Phase Verification Commands
 
-Each phase should use scoped verification rather than running the full gate. This prevents early phases from failing on tests that don't exist yet.
+Each phase should use scoped verification rather than running the full gate. This prevents early phases from failing on tests that don't exist yet. Test files are registered in `package.json` incrementally — each phase adds its test file(s) in the same commit, so `npm test` only runs tests that exist at that point. Existing tests (1307 at baseline) must continue to pass at every phase.
 
 | Phase | Task | Phase Verify Command | Why Scoped |
 |:---|:---|:---|:---|
-| 10 | Scaffold types | `npx tsc --noEmit` | Only types exist — no tests or service yet |
-| 20 | Core builder | `npx tsc --noEmit && npm test` (core builder tests only) | Tests created in this phase |
-| 30 | Validation engine | `npx tsc --noEmit && npm test` | Validation tests added |
-| 40 | Auto patterns | `npx tsc --noEmit && npm test` | Snapshot tests for auto patterns added |
-| 50 | Opt-in patterns | `npx tsc --noEmit && npm test` | Snapshot tests for opt-in patterns added |
-| 60 | CLI + fromSpec | `npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npm test` | Full lint gate — CLI must pass cli-guard-basename |
-| 65 | Fallback schema | `npx tsc --noEmit` | Fallback type file compiles *(council: H2)* |
-| 70 | Schema sync | `npx tsc --noEmit && npm test` | Schema sync script tests |
+| 10 | Scaffold types | `cd extension && npx tsc --noEmit` | Only types exist — no tests or service yet |
+| 20 | Core builder | `cd extension && npx tsc --noEmit && npm test` | `dot-builder.test.js` registered in this phase; runs core API tests only (validation/pattern test files don't exist yet) |
+| 30 | Validation engine | `cd extension && npx tsc --noEmit && npm test` | `dot-builder-validation.test.js` registered in this phase; runs alongside Phase 20 tests |
+| 40 | Auto patterns | `cd extension && npx tsc --noEmit && npm test` | `dot-builder-patterns.test.js` registered in this phase; runs auto-pattern snapshot tests alongside Phases 20–30 tests |
+| 50 | Opt-in patterns | `cd extension && npx tsc --noEmit && npm test` | Opt-in pattern snapshot tests added to existing `dot-builder-patterns.test.js`; all prior tests continue to pass |
+| 60 | CLI + fromSpec | `cd extension && npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npm test` | Full lint gate — `dot-builder-cli.test.js` registered; CLI guard validated by eslint `pickle/cli-guard-basename` rule AND by CLI test suite |
+| 65 | Fallback schema | `cd extension && npx tsc --noEmit` | Fallback type file compiles; no new test file (fallback is a static data file) *(council: H2)* |
+| 70 | Schema sync | `cd extension && npx tsc --noEmit && npm test` | Sync script tests added; generated `types/attractor-schema.ts` is gitignored (auto-generated from `$ATTRACTOR_ROOT/schema.json`; fallback file is hand-maintained and committed) |
 | 80 | Prompt rewrite | N/A (markdown file — no compile/test) | Verify manually or via integration |
 | 85 | README update | N/A (documentation) | README documents builder API, BuilderSpec structure, `/pickle-dot` invocation (normal + `--builder` + `--legacy`), fix-loop flow *(council: H3)* |
 
@@ -1073,7 +1087,9 @@ Each phase MUST include a conformance node (Pattern 15) with phase-specific revi
 
 ### Cross-Phase Synthesis Gate *(new — addresses multi-phase coherence gap)*
 
-After all 10 implementation phases (10, 20, 30, 40, 50, 60, 65, 70, 80, 85) complete but before `red_team` and `verify_final`, the pipeline MUST include a **synthesis conformance** node that validates end-to-end coherence:
+**This is a pipeline-specific node for this PRD's generated pipeline, NOT a general builder pattern.** When `/pickle-dot` generates the pipeline from this PRD, it MUST manually include this node in the BuilderSpec as an additional phase (order 75, after Phase 70 and before Phase 80) with `goalGate: true`. The builder does not auto-generate synthesis gates — they are PRD-specific quality checks.
+
+After all code implementation phases (10–70) complete but before prompt rewrite (80) and `verify_final`, the pipeline MUST include a **synthesis conformance** node that validates end-to-end coherence:
 
 ```dot
 synthesis_check [shape="box", class="review", read_only="true", timeout="15m",
@@ -1104,16 +1120,16 @@ When generating the pipeline from this PRD, `/pickle-dot` should apply:
 | Goal Gates (2) | **Phases 20, 30, 40, 60** — core builder, validation engine, auto patterns (highest complexity, 18 patterns), and CLI are the critical-path deliverables |
 | Review Ratchet (19) | **2 passes** — the builder is a single-file service; 3+ passes have diminishing returns |
 | Conformance (15) | **All phases** — each task has explicit entry/exit criteria |
-| BDD Scenarios (16b) | **Phases 20, 30, 40** — explicit opt-in via `bddScenarios: true` on each PhaseSpec (not auto-triggered by requirement count or any heuristic) |
+| BDD Scenarios (16b) | **Applied to this pipeline's Phases 20, 30, 40** via `bddScenarios: true` on each PhaseSpec — these phases have well-defined contracts suitable for Given/When/Then scenarios. Note: the builder's Pattern 16b *implementation* is in Phase 50 (opt-in patterns); this row specifies where 16b is *used* in the generated pipeline. |
 | Coverage Gate (9) | **Phase 50** (after all patterns implemented) — target ≥85% on `services/dot-builder.ts` |
 | Scope Creep (10) | **All impl phases** — builder must stay in its `services/` + `bin/` + `types/` lanes |
 | Red Team (17) | **Final gate only** — attempt to break the builder with adversarial BuilderSpec inputs |
 
-Patterns to **skip**:
+Patterns **not applied to this pipeline** (the builder still implements them as opt-in for other pipelines):
 - Security Scan (8) — no auth, no user input beyond JSON spec
 - Competing Impls (18) — single correct implementation path
 - Microverse (20) — no numeric optimization target
-- Workspace Isolation (0) — same repo, no isolation needed
+- Workspace Isolation (0) — same repo, no isolation needed; builder implements Pattern 0 as opt-in in Phase 50 but this pipeline uses shared workspace (default)
 
 ### Model Stylesheet Serialization Format
 

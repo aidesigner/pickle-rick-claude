@@ -210,8 +210,9 @@ test('isConverged uses last accepted score for convergence_target check', () => 
 });
 
 test('isConverged returns false when convergence_target not reached', () => {
-    const state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 5, 0);
-    state.baseline_score = 10;
+    // direction: higher, target: 90 — score of 5 has not reached 90
+    const state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 5, 90);
+    state.baseline_score = 0;
     state.convergence.history = [
         { iteration: 1, metric_value: '5', score: 5, action: 'accept', description: 'improved', pre_iteration_sha: 'abc', timestamp: new Date().toISOString() },
     ];

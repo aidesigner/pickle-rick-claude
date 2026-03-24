@@ -118,11 +118,15 @@ export function recordFailedApproach(
 
 export function isConverged(state: MicroverseSessionState): boolean {
   if (state.convergence.stall_counter >= state.convergence.stall_limit) return true;
-  // Early exit: if a convergence_target is set and the last accepted score matches it, we're done
+  // Early exit: if a convergence_target is set and score has reached (or passed) it, we're done.
+  // Direction-aware: for 'lower', score <= target; for 'higher', score >= target.
   if (state.convergence_target != null) {
     const lastAccepted = [...state.convergence.history].reverse().find(h => h.action === 'accept');
     const currentScore = lastAccepted ? lastAccepted.score : state.baseline_score;
-    if (currentScore === state.convergence_target) return true;
+    const direction = state.key_metric.direction ?? 'higher';
+    if (direction === 'lower'
+      ? currentScore <= state.convergence_target
+      : currentScore >= state.convergence_target) return true;
   }
   return false;
 }
