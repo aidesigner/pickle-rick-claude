@@ -305,6 +305,10 @@ See [architecture](architecture.md#microverse-internals) for the runner state ma
 
 ## 🍗 Szechuan Sauce — Iterative Code Deslopping
 
+<p align="center">
+  <img src="images/szechwan-sauce.jpeg" alt="Command: Szechwan Sauce — The Quest for Clean Code" width="600" />
+</p>
+
 > *"I'm not driven by avenging my dead family, Morty. That was fake. I-I-I'm driven by finding that McNugget sauce."*
 
 `/szechuan-sauce` is a specialized microverse loop that hunts and eliminates coding principle violations one at a time until there are zero left. The sauce is perfect code — and Rick won't stop until he gets it.
