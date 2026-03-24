@@ -23,6 +23,8 @@ Based on [Theta-Tech-AI/deslop](https://github.com/Theta-Tech-AI/llm-public-util
 | Boolean parameters | Small Functions, KISS | Separate functions |
 | Silent failures | Fail-Fast, Observability | Fail loudly, log |
 | Getters exposing internals | Encapsulation | Tell, don't ask |
+| Migration without rollback | Migration Safety | Add rollback script |
+| Non-idempotent migration | Migration Safety | Add IF NOT EXISTS / guards |
 
 ## Principle Tensions
 
@@ -145,6 +147,11 @@ Minimum permissions necessary. Applies at every level: file access, API scopes, 
 ### Observability
 Understand what systems do in production. Three pillars: structured logging, metrics, distributed tracing. If you can't observe it, you can't debug it.
 
+### Migration Safety
+Database migrations must be idempotent, forward-only by default, and registered in the migration journal. Every migration needs a corresponding rollback script. Never use destructive DDL (`DROP TABLE`, `DROP COLUMN`) without a data-preservation step first. Migrations must be reviewable as source files — they are code, not ops.
+
+**Violations**: Migration not registered in journal, missing rollback script, destructive DDL without backup/copy step, non-idempotent migration (re-running it fails), migration that depends on application runtime state.
+
 ### Boy Scout Rule
 Leave code better than you found it. Small, incremental improvements compound over time. NOT: rewrite everything you touch. Just: fix one thing nearby.
 
@@ -166,3 +173,5 @@ Leave code better than you found it. Small, incremental improvements compound ov
 | Log and throw | Fail-Fast | Pick one |
 | Catch Exception | Fail-Fast | Catch specific types |
 | Silent swallow | Observability | Log or rethrow |
+| DROP without backup | Migration Safety | Copy data first |
+| Unregistered migration | Migration Safety | Add to journal |

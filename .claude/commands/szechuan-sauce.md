@@ -21,14 +21,17 @@ From `$ARGUMENTS`:
 - `--max-iterations <N>` → MAX_ITER (default: 50)
 - `--stall-limit <N>` → STALL_LIMIT (default: 5)
 - `--dry-run` → DRY_RUN mode (gap analysis only — catalog violations without fixing)
+- `--domain <name>` → DOMAIN (loads `szechuan-sauce-<name>-principles.md` as supplemental principles)
 - Remainder = TARGET (file or directory to deslop; default: current directory)
 
 Resolve TARGET to an absolute path. Verify it exists (file or directory). If not found, print error and stop.
 
+If DOMAIN is set, verify `$HOME/.claude/pickle-rick/szechuan-sauce-${DOMAIN}-principles.md` exists. If not found, print "Unknown domain: DOMAIN. Available domains:" then glob `$HOME/.claude/pickle-rick/szechuan-sauce-*-principles.md` and list them. Stop.
+
 ### Step 3: Validate Target
 
 Read the target to confirm it contains code:
-- If directory: Glob for source files (`**/*.{ts,js,py,go,rs,java,tsx,jsx,vue,svelte}`). If none found, print "No source files found in TARGET" and stop.
+- If directory: Glob for source files (`**/*.{ts,js,py,go,rs,java,tsx,jsx,vue,svelte,sql}`). If none found, print "No source files found in TARGET" and stop.
 - If file: confirm it exists and is readable.
 
 Count source files. Print: "Target: TARGET (N source files)"
@@ -36,7 +39,7 @@ Count source files. Print: "Target: TARGET (N source files)"
 ### Step 4: Dry Run (if `--dry-run`)
 
 If DRY_RUN mode: perform gap analysis without creating a session or modifying code:
-1. Read `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md`
+1. Read `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md`. If DOMAIN is set, also read `$HOME/.claude/pickle-rick/szechuan-sauce-${DOMAIN}-principles.md`.
 2. Read all target source files
 3. Catalog all violations with priority (P0–P4), principle, file:line, and suggested fix
 4. Print summary: violation count by priority, estimated iteration count
@@ -57,8 +60,16 @@ Extract `SESSION_ROOT=<path>` from output.
 
 ### Step 7: Create microverse.json
 
+If DOMAIN is set, first create a combined judge context file:
+1. Read `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md`
+2. Read `$HOME/.claude/pickle-rick/szechuan-sauce-${DOMAIN}-principles.md`
+3. Write both contents (base first, then domain, separated by a blank line) to `${SESSION_ROOT}/judge-context.md`
+4. Use `${SESSION_ROOT}/judge-context.md` as JUDGE_CONTEXT_PATH
+
+If DOMAIN is not set, use `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md` as JUDGE_CONTEXT_PATH.
+
 ```bash
-node "$HOME/.claude/pickle-rick/extension/bin/init-microverse.js" "${SESSION_ROOT}" "${TARGET_ABSOLUTE_PATH}" --stall-limit ${STALL_LIMIT} --convergence-target 0 --judge-context "$HOME/.claude/pickle-rick/szechuan-sauce-principles.md"
+node "$HOME/.claude/pickle-rick/extension/bin/init-microverse.js" "${SESSION_ROOT}" "${TARGET_ABSOLUTE_PATH}" --stall-limit ${STALL_LIMIT} --convergence-target 0 --judge-context "${JUDGE_CONTEXT_PATH}"
 ```
 
 Replace shell variables with actual values. The `--convergence-target 0` tells the runner to stop immediately when the violation count reaches zero (instead of waiting for stall_limit iterations of finding nothing).
@@ -78,6 +89,8 @@ TARGET_ABSOLUTE_PATH
 
 ## Principles Reference
 Read: $HOME/.claude/pickle-rick/szechuan-sauce-principles.md
+[If DOMAIN is set, add this line]: Read: $HOME/.claude/pickle-rick/szechuan-sauce-${DOMAIN}-principles.md
+[Domain principles override base principles where they conflict.]
 
 ## Key Metric
 - **Type**: llm (LLM judge scoring)
@@ -142,7 +155,7 @@ Follow the **Microverse Worker protocol** (the standard microverse iteration loo
 
 ### Override 1: Principles Reference
 
-Before assessing the codebase, read `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md`. Use it as the authoritative reference for identifying violations. Cross-reference each finding against the priority matrix (P0–P4) and the diagnostic guide.
+Before assessing the codebase, read `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md`. If the PRD's Principles Reference section lists a domain-specific principles file, also read that file. Use both as the authoritative reference for identifying violations. Domain principles take precedence over base principles where they overlap. Cross-reference each finding against the priority matrix (P0–P4) and the diagnostic guide.
 
 ### Override 2: Violation-Oriented Scoring
 
