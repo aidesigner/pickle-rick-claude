@@ -124,7 +124,7 @@ Read: $HOME/.claude/pickle-rick/szechuan-sauce-principles.md
 - **Type**: llm (LLM judge scoring)
 - **Scoring**: Count of actionable principle violations. Lower is better.
 - **Direction**: lower
-- **Convergence Target**: 0 (stop when score reaches zero)
+- **Convergence Target**: 0 (informational — enforced via `convergence_target` in `microverse.json`)
 - **Stall Limit**: STALL_LIMIT
 
 ## Process (each iteration)
@@ -207,7 +207,9 @@ Examples:
 
 ### Standard Protocol
 
-For everything not covered by the overrides above — loading context, reading the handoff, making one change per iteration, staging specific files (no `git add -A`), running tests, and exiting cleanly — follow the Microverse Worker protocol (this template is invoked with the microverse.md base; the handoff is appended below).
+For everything not covered by the overrides above — loading context, reading the handoff, making one change per iteration, running tests, and exiting cleanly — follow the Microverse Worker protocol (this template is invoked with the microverse.md base; the handoff is appended below).
+
+**Staging rule**: Use `git add -u` (tracked files only), never `git add -A` or `git add .`. If the fix creates a new file, stage it explicitly by name.
 
 Do NOT call `update-state.js` — the microverse-runner manages all state transitions.
 Do NOT output any promise tokens — the microverse-runner manages the loop.
