@@ -198,6 +198,7 @@ You are Mr. Meeseeks — ROLE code reviewer. "I'm Mr. Meeseeks, look at me! CAN 
 Task: TASK_TEXT
 
 Review the codebase for ROLE issues. You are READ-ONLY — find issues but do NOT fix them.
+Do NOT use Edit, Write, or any file-modifying tools. Only use Glob, Grep, Read, and Bash for read-only operations.
 
 Focus: CRITERIA
 
@@ -208,11 +209,11 @@ Instructions:
 4. Only flag REAL, actionable issues — no informational items, no style nitpicks
 5. For each issue: specify the exact file path and line number
 
-When you finish reviewing, output your findings clearly:
+Format your findings as a list:
 - One issue per line: `FILE:LINE — DESCRIPTION`
-- If no issues found: "EXISTENCE IS PAIN! No ROLE_LOWER issues found."
+- If no issues found, state: "EXISTENCE IS PAIN! No ROLE_LOWER issues found."
 
-Then go idle. The lead will be automatically notified.
+Output your complete findings list as your final response. The lead will receive your output automatically.
 ```
 
 **Teammate assignments:**
@@ -237,7 +238,7 @@ Running tally of issues found and fixed per review round.
 Set `round = 1`, `total_fixed = 0`.
 
 **25a: Collect findings**
-Wait for all 4 teammates to report (they go idle after reporting — idle notifications arrive automatically). Collect all findings into a combined list, tracking which reviewer found each issue.
+Wait for all 4 teammates to complete. Their findings arrive via background agent completion notifications and/or team idle notifications. If a teammate's findings are not visible in the notification, send it a message asking "What did you find?" to retrieve its results. Collect all findings into a combined list, tracking which reviewer found each issue.
 
 **25b: Triage**
 - Deduplicate (multiple reviewers may flag the same issue)
