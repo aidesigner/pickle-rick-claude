@@ -193,6 +193,47 @@ test('isConverged returns false when stall_counter < stall_limit', () => {
     assert.equal(isConverged(state), false);
 });
 
+test('isConverged returns true when convergence_target is reached', () => {
+    const state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 5, 0);
+    // baseline_score=0 matches convergence_target=0, no history
+    assert.equal(isConverged(state), true);
+});
+
+test('isConverged uses last accepted score for convergence_target check', () => {
+    const state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 5, 0);
+    state.baseline_score = 10;
+    state.convergence.history = [
+        { iteration: 1, metric_value: '5', score: 5, action: 'accept', description: 'improved', pre_iteration_sha: 'abc', timestamp: new Date().toISOString() },
+        { iteration: 2, metric_value: '0', score: 0, action: 'accept', description: 'improved', pre_iteration_sha: 'def', timestamp: new Date().toISOString() },
+    ];
+    assert.equal(isConverged(state), true);
+});
+
+test('isConverged returns false when convergence_target not reached', () => {
+    const state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 5, 0);
+    state.baseline_score = 10;
+    state.convergence.history = [
+        { iteration: 1, metric_value: '5', score: 5, action: 'accept', description: 'improved', pre_iteration_sha: 'abc', timestamp: new Date().toISOString() },
+    ];
+    assert.equal(isConverged(state), false);
+});
+
+test('isConverged ignores convergence_target when not set', () => {
+    const state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 5);
+    state.baseline_score = 0; // score is 0 but no convergence_target set
+    assert.equal(isConverged(state), false);
+});
+
+test('createMicroverseState sets convergence_target when provided', () => {
+    const state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3, 0);
+    assert.equal(state.convergence_target, 0);
+});
+
+test('createMicroverseState omits convergence_target when not provided', () => {
+    const state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+    assert.equal(state.convergence_target, undefined);
+});
+
 test('recordIteration resets stall_counter on accept with improved score', () => {
     let state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
     state.convergence.stall_counter = 2;
@@ -935,12 +976,12 @@ test('buildJudgePrompt does not include codebase evaluation preamble', () => {
 test('buildJudgePrompt includes prdPath when provided', () => {
     const prompt = buildJudgePrompt('fix bugs', '/tmp', undefined, '/tmp/prds/my-prd.md');
     assert.ok(prompt.includes('/tmp/prds/my-prd.md'), 'should include prd path');
-    assert.ok(prompt.includes('Read this file first'), 'should instruct to read the file');
+    assert.ok(prompt.includes('Examine the code at this path'), 'should instruct to examine the path');
 });
 
 test('buildJudgePrompt omits target file when prdPath not provided', () => {
     const prompt = buildJudgePrompt('fix bugs', '/tmp');
-    assert.ok(!prompt.includes('Target file:'), 'should not include target file without prdPath');
+    assert.ok(!prompt.includes('Target path:'), 'should not include target path without prdPath');
 });
 
 test('measureLlmMetric passes prdPath to buildJudgePrompt', () => {

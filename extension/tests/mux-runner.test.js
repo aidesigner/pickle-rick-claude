@@ -1455,6 +1455,25 @@ test('stripSetupSection: preserves content before setup and after review pass', 
     assert.ok(!result.includes('Gate checks'));
 });
 
+test('stripSetupSection: strips setup through any next ## heading (e.g. WORKER MODE)', () => {
+    const input = 'Header\n\n## SETUP MODE\n\nSetup stuff\n\n## WORKER MODE\n\nWorker stuff';
+    const result = stripSetupSection(input);
+    assert.equal(result, 'Header\n\n## WORKER MODE\n\nWorker stuff');
+    assert.ok(!result.includes('Setup stuff'));
+});
+
+test('stripSetupSection: strips setup through arbitrary section name', () => {
+    const input = 'Intro\n\n## SETUP\n\nInit steps\n\n## EXECUTION PHASE\n\nDo the thing\n\n## CLEANUP\n\nTidy up';
+    const result = stripSetupSection(input);
+    assert.equal(result, 'Intro\n\n## EXECUTION PHASE\n\nDo the thing\n\n## CLEANUP\n\nTidy up');
+    assert.ok(!result.includes('Init steps'));
+});
+
+test('stripSetupSection: returns unchanged when setup is the only/last section', () => {
+    const input = 'Header\n\n## SETUP MODE\n\nSetup stuff and nothing else';
+    assert.equal(stripSetupSection(input), input);
+});
+
 // --- classifyTicketCompletion ---
 
 test('classifyTicketCompletion: returns completed when TASK_COMPLETED token found in log', () => {

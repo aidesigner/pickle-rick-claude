@@ -30,7 +30,8 @@ export function compareMetric(
 export function createMicroverseState(
   prdPath: string,
   metric: MicroverseMetric,
-  stallLimit: number
+  stallLimit: number,
+  convergenceTarget?: number,
 ): MicroverseSessionState {
   if (!Number.isInteger(stallLimit) || stallLimit < 1) {
     throw new Error(`stall_limit must be a positive integer, got ${stallLimit}`);
@@ -38,7 +39,7 @@ export function createMicroverseState(
   if (!Number.isFinite(metric.tolerance) || metric.tolerance < 0) {
     throw new Error(`tolerance must be a non-negative number, got ${metric.tolerance}`);
   }
-  return {
+  const state: MicroverseSessionState = {
     status: 'gap_analysis',
     prd_path: prdPath,
     key_metric: { ...metric, direction: metric.direction ?? 'higher' },
@@ -51,6 +52,8 @@ export function createMicroverseState(
     failed_approaches: [],
     baseline_score: 0,
   };
+  if (convergenceTarget != null) state.convergence_target = convergenceTarget;
+  return state;
 }
 
 /**
@@ -114,7 +117,14 @@ export function recordFailedApproach(
 }
 
 export function isConverged(state: MicroverseSessionState): boolean {
-  return state.convergence.stall_counter >= state.convergence.stall_limit;
+  if (state.convergence.stall_counter >= state.convergence.stall_limit) return true;
+  // Early exit: if a convergence_target is set and the last accepted score matches it, we're done
+  if (state.convergence_target != null) {
+    const lastAccepted = [...state.convergence.history].reverse().find(h => h.action === 'accept');
+    const currentScore = lastAccepted ? lastAccepted.score : state.baseline_score;
+    if (currentScore === state.convergence_target) return true;
+  }
+  return false;
 }
 
 export function writeMicroverseState(

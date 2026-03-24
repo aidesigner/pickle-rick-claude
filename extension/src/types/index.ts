@@ -269,6 +269,7 @@ export interface MicroverseSessionState {
   gap_analysis_path: string;
   failed_approaches: string[];
   baseline_score: number;
+  convergence_target?: number;
   exit_reason?: string;
   stash_ref?: string;
 }

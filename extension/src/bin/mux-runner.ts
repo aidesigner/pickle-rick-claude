@@ -32,20 +32,25 @@ export function killCurrentChild(): void {
 }
 
 /**
- * Strips the Setup section from dual-mode templates (e.g. meeseeks.md, council-of-ricks.md).
+ * Strips the Setup section from dual-mode templates (e.g. meeseeks.md, szechuan-sauce.md).
  * The mux-runner always invokes with --resume, so Setup instructions are dead weight
- * that confuse the model. Matches both "## SETUP MODE" and "## SETUP" (with or without
- * the " MODE" suffix) to prevent silent failures when templates use variant headers.
+ * that confuse the model. Strips from "## SETUP" (with or without " MODE" suffix) to
+ * the next ##-level heading, regardless of its name. This avoids coupling to a specific
+ * end-marker like "## REVIEW PASS MODE" — any template layout works.
  */
 export function stripSetupSection(prompt: string): string {
   const setupRe = /^## SETUP(?: MODE)?$/m;
-  const reviewRe = /^## REVIEW PASS(?: MODE)?$/m;
   const setupMatch = setupRe.exec(prompt);
-  const reviewMatch = reviewRe.exec(prompt);
-  if (setupMatch && reviewMatch && setupMatch.index < reviewMatch.index) {
-    return prompt.slice(0, setupMatch.index) + prompt.slice(reviewMatch.index);
-  }
-  return prompt;
+  if (!setupMatch) return prompt;
+
+  // Find the next ##-level heading after the setup section
+  const afterSetup = prompt.slice(setupMatch.index + setupMatch[0].length);
+  const nextHeadingRe = /^## \S/m;
+  const nextMatch = nextHeadingRe.exec(afterSetup);
+  if (!nextMatch) return prompt; // Setup is the last section — nothing to strip to
+
+  const endIndex = setupMatch.index + setupMatch[0].length + nextMatch.index;
+  return prompt.slice(0, setupMatch.index) + prompt.slice(endIndex);
 }
 
 /**

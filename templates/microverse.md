@@ -43,7 +43,8 @@ This is the first iteration. Your job is to understand the codebase and the metr
    - What the current bottlenecks or gaps are
 4. If a gap analysis path is specified, write your analysis there. Otherwise write it to `<SESSION_ROOT>/gap_analysis.md`
 5. Make initial improvements if obvious quick wins exist
-6. Commit with a descriptive message: `git add -A && git commit -m "microverse: <what you did>"`
+6. Stage only changed files: `git add <file1> <file2> ...` — do NOT use `git add -A` (risks staging unrelated files or secrets)
+7. Commit: `git commit -m "microverse: <what you did>"`
 
 Output `<promise>TASK_COMPLETED</promise>` and STOP.
 
@@ -80,8 +81,10 @@ Rules:
 
 Commit with a descriptive message explaining what was changed and why:
 
+Stage only the files you changed — do NOT use `git add -A`:
 ```bash
-git add -A && git commit -m "microverse: <concise description of change and expected impact>"
+git add <file1> <file2> ...
+git commit -m "microverse: <concise description of change and expected impact>"
 ```
 
 The commit message should help future iterations understand what was tried.
@@ -96,6 +99,7 @@ The microverse-runner will:
 3. Accept the change if the metric improved or held steady
 4. Revert to the pre-iteration SHA if the metric regressed
 5. Record the result in history for the next iteration
+6. If a `convergence_target` is set in microverse.json and the score equals it, stop immediately
 
 ## Rules
 

@@ -21,14 +21,14 @@ export function compareMetric(current, previous, tolerance, direction) {
         return 'regressed';
     return 'held';
 }
-export function createMicroverseState(prdPath, metric, stallLimit) {
+export function createMicroverseState(prdPath, metric, stallLimit, convergenceTarget) {
     if (!Number.isInteger(stallLimit) || stallLimit < 1) {
         throw new Error(`stall_limit must be a positive integer, got ${stallLimit}`);
     }
     if (!Number.isFinite(metric.tolerance) || metric.tolerance < 0) {
         throw new Error(`tolerance must be a non-negative number, got ${metric.tolerance}`);
     }
-    return {
+    const state = {
         status: 'gap_analysis',
         prd_path: prdPath,
         key_metric: { ...metric, direction: metric.direction ?? 'higher' },
@@ -41,6 +41,9 @@ export function createMicroverseState(prdPath, metric, stallLimit) {
         failed_approaches: [],
         baseline_score: 0,
     };
+    if (convergenceTarget != null)
+        state.convergence_target = convergenceTarget;
+    return state;
 }
 /**
  * Record a scored iteration (agent made commits and metric was measured).
@@ -93,7 +96,16 @@ export function recordFailedApproach(state, description) {
     };
 }
 export function isConverged(state) {
-    return state.convergence.stall_counter >= state.convergence.stall_limit;
+    if (state.convergence.stall_counter >= state.convergence.stall_limit)
+        return true;
+    // Early exit: if a convergence_target is set and the last accepted score matches it, we're done
+    if (state.convergence_target != null) {
+        const lastAccepted = [...state.convergence.history].reverse().find(h => h.action === 'accept');
+        const currentScore = lastAccepted ? lastAccepted.score : state.baseline_score;
+        if (currentScore === state.convergence_target)
+            return true;
+    }
+    return false;
 }
 export function writeMicroverseState(sessionDir, state) {
     // microverse.json is not a State file but uses atomic writes for consistency.

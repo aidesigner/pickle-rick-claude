@@ -25,8 +25,10 @@ export function measureMetric(validation, timeoutSeconds, cwd) {
         const lines = output.split('\n');
         const lastLine = lines[lines.length - 1].trim();
         const score = parseFloat(lastLine);
-        if (!Number.isFinite(score))
+        if (!Number.isFinite(score)) {
+            process.stderr.write(`[microverse] measureMetric: non-numeric output (last line: "${lastLine}")\n`);
             return null;
+        }
         return { raw: output, score };
     }
     catch (err) {
@@ -52,8 +54,8 @@ export function buildJudgePrompt(goal, cwd, history, prdPath) {
         `Working directory: ${cwd}`,
     ];
     if (prdPath) {
-        parts.push(`Target file: ${prdPath}`);
-        parts.push('Read this file first before scoring.');
+        parts.push(`Target path: ${prdPath}`);
+        parts.push('Examine the code at this path before scoring. If it is a directory, use Glob to find source files and Read to examine them.');
     }
     parts.push('');
     if (history && history.length > 0) {
@@ -145,7 +147,7 @@ export function buildMicroverseHandoff(mvState, iteration, workingDir) {
         }
         parts.push('');
     }
-    parts.push(`## PRD: ${mvState.prd_path}`);
+    parts.push(`## Target Path: ${mvState.prd_path}`);
     parts.push(`## Working Directory: ${workingDir}`);
     parts.push('');
     parts.push(`${dir === 'lower' ? 'Focus on reducing the metric.' : 'Focus on improving the metric.'} Make targeted changes and commit.`);
@@ -189,6 +191,16 @@ function writeFinalReport(sessionDir, mvState, exitReason, iterations, elapsedSe
     catch { /* exists */ }
     const reportPath = path.join(memoryDir, `microverse_report_${new Date().toISOString().split('T')[0]}.md`);
     fs.writeFileSync(reportPath, report);
+}
+function remainingSessionSeconds(state) {
+    const startEpoch = Number(state.start_time_epoch);
+    const maxTimeMins = Number(state.max_time_minutes);
+    if (!Number.isFinite(startEpoch) || startEpoch <= 0)
+        return null;
+    if (!Number.isFinite(maxTimeMins) || maxTimeMins <= 0)
+        return null;
+    const elapsed = Math.floor(Date.now() / 1000) - startEpoch;
+    return Math.max(0, (maxTimeMins * 60) - elapsed);
 }
 export async function main(sessionDir) {
     const extensionRoot = getExtensionRoot();
@@ -251,7 +263,8 @@ export async function main(sessionDir) {
     // Ensure tmux_mode and command_template
     sm.update(statePath, s => {
         s.tmux_mode = true;
-        s.command_template = 'microverse.md';
+        if (!s.command_template)
+            s.command_template = 'microverse.md';
         if (!s.active)
             s.active = true;
     });
@@ -379,13 +392,9 @@ export async function main(sessionDir) {
             break;
         }
         // Check max_time_minutes
-        const rawStartEpoch = Number(state.start_time_epoch);
-        const startEpoch = Number.isFinite(rawStartEpoch) ? rawStartEpoch : 0;
-        const rawMaxTimeMins = Number(state.max_time_minutes);
-        const maxTimeMins = Number.isFinite(rawMaxTimeMins) ? rawMaxTimeMins : 0;
-        const elapsed = startEpoch > 0 ? Math.max(0, Math.floor(Date.now() / 1000) - startEpoch) : 0;
-        if (maxTimeMins > 0 && startEpoch > 0 && elapsed >= maxTimeMins * 60) {
-            log(`Time limit reached (${elapsed}s). Exiting.`);
+        const remaining = remainingSessionSeconds(state);
+        if (remaining !== null && remaining <= 0) {
+            log('Time limit reached. Exiting.');
             exitReason = 'limit_reached';
             break;
         }
@@ -417,19 +426,14 @@ export async function main(sessionDir) {
             const { waitMs, waitSource } = rlAction;
             log(`Rate limit wait: ${Math.ceil(waitMs / 60_000)}min (source: ${waitSource})`);
             // Clamp wait to remaining session wall-clock time (mirrors mux-runner.ts behaviour)
-            const rawStartEpochForWait = Number(state.start_time_epoch);
-            const startEpochForWait = Number.isFinite(rawStartEpochForWait) ? rawStartEpochForWait : 0;
-            const rawMaxTimeMinsForWait = Number(state.max_time_minutes);
-            const maxTimeMinsForWait = Number.isFinite(rawMaxTimeMinsForWait) ? rawMaxTimeMinsForWait : 0;
             let actualWaitMs = waitMs;
-            if (maxTimeMinsForWait > 0 && startEpochForWait > 0) {
-                const elapsedForWait = Math.floor(Date.now() / 1000) - startEpochForWait;
-                const remainingForWait = (maxTimeMinsForWait * 60) - elapsedForWait;
-                if (remainingForWait <= 0) {
+            const remainingWait = remainingSessionSeconds(state);
+            if (remainingWait !== null) {
+                if (remainingWait <= 0) {
                     exitReason = 'limit_reached';
                     break;
                 }
-                actualWaitMs = Math.min(actualWaitMs, remainingForWait * 1000);
+                actualWaitMs = Math.min(actualWaitMs, remainingWait * 1000);
             }
             writeStateFile(path.join(sessionDir, 'rate_limit_wait.json'), {
                 waiting: true, reason: 'API rate limit',
@@ -453,12 +457,10 @@ export async function main(sessionDir) {
                     const msg = safeErrorMessage(err);
                     log(`WARNING: Could not read state.json during rate limit wait: ${msg}`);
                 }
-                if (maxTimeMinsForWait > 0 && startEpochForWait > 0) {
-                    const elapsedNow = Math.floor(Date.now() / 1000) - startEpochForWait;
-                    if (elapsedNow >= maxTimeMinsForWait * 60) {
-                        exitReason = 'limit_reached';
-                        break;
-                    }
+                const remainingPoll = remainingSessionSeconds(state);
+                if (remainingPoll !== null && remainingPoll <= 0) {
+                    exitReason = 'limit_reached';
+                    break;
                 }
             }
             if (exitReason === 'stopped' || exitReason === 'limit_reached')
@@ -584,7 +586,8 @@ export async function main(sessionDir) {
         currentMv = stateRecordIteration(currentMv, entry, classification);
         writeMicroverseState(sessionDir, currentMv);
         if (isConverged(currentMv)) {
-            log(`Converged after ${iteration} iterations (stall_counter=${currentMv.convergence.stall_counter})`);
+            const targetHit = currentMv.convergence_target != null && metricResult.score === currentMv.convergence_target;
+            log(`Converged after ${iteration} iterations (${targetHit ? `target=${currentMv.convergence_target} reached` : `stall_counter=${currentMv.convergence.stall_counter}`})`);
             exitReason = 'converged';
             break;
         }
