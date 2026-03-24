@@ -253,7 +253,7 @@ export async function main(sessionDir) {
         }
         log('Working tree is dirty — auto-committing before microverse start');
         try {
-            execFileSync('git', ['add', '-A'], { cwd: workingDir, timeout: 30_000 });
+            execFileSync('git', ['add', '-u'], { cwd: workingDir, timeout: 30_000 });
             execFileSync('git', ['commit', '-m', 'microverse: auto-commit dirty tree before start'], { cwd: workingDir, timeout: 30_000 });
             log(`Auto-committed pre-flight: ${getHeadSha(workingDir)}`);
         }
@@ -507,7 +507,7 @@ export async function main(sessionDir) {
                 }
                 else {
                     try {
-                        execFileSync('git', ['add', '-A'], { cwd: workingDir, timeout: 30_000 });
+                        execFileSync('git', ['add', '-u'], { cwd: workingDir, timeout: 30_000 });
                         execFileSync('git', ['commit', '-m', `microverse: auto-commit (worker timed out before committing)`], { cwd: workingDir, timeout: 30_000 });
                         postIterSha = getHeadSha(workingDir);
                         log(`Auto-committed: ${postIterSha}`);

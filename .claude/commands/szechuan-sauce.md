@@ -188,11 +188,11 @@ Before assessing the codebase, check the handoff's `microverse.json` for a `judg
 ### Override 2: Violation-Oriented Scoring
 
 The metric is **violation count** (lower is better). Each iteration:
-1. Read the gap analysis (`${SESSION_ROOT}/gap_analysis.md`) if it exists — use it to find remaining violations efficiently
-2. If gap analysis is stale or missing, read the target code directly (Glob + Read)
+1. **Always read the target code** (Glob + Read) — the code is the source of truth, never skip this
+2. Consult `${SESSION_ROOT}/gap_analysis.md` if it exists as a **checklist hint** to speed up scanning, but do NOT trust it over what the code actually says — fixes may have introduced new violations or resolved ones the gap analysis still lists
 3. Find the **single highest-priority** remaining violation (P0 > P1 > P2 > P3 > P4) that is NOT in the failed approaches list from the handoff
 4. If no violations found: print "The sauce is obtained." and exit cleanly
-5. After fixing and committing, **update** `gap_analysis.md` — remove the fixed violation and note any new violations introduced by the fix. This keeps the gap analysis current for the next iteration.
+5. After fixing and committing, **update** `gap_analysis.md`: remove the fixed violation, add any new violations introduced by the fix, and update the summary counts. This is mandatory — stale gap analysis misleads future iterations.
 
 ### Override 3: Commit Message Format
 
