@@ -320,7 +320,7 @@ review_pass_3 -> review_patterns_3
 review_correctness_3 -> merge_pass_3
 review_patterns_3 -> merge_pass_3
 merge_pass_3 -> check_pass_3
-check_pass_3 -> next_stage [outcome="clean"]
+check_pass_3 -> fix_all [outcome="clean"]
 check_pass_3 -> fix_review [outcome="issues"]
 // fix_review -> review_pass_1 (reset — same edge as above)
 
@@ -706,7 +706,7 @@ N/A — the builder is stateless (functional construction → output). No persis
 **LLM state tracking**: The fix loop is executed by the LLM within the `/pickle-dot` command prompt — not by programmatic code. The updated `/pickle-dot` prompt MUST include explicit instructions for the LLM to:
 1. After each builder invocation, count the number of `severity: 'error'` diagnostics in the response
 2. Maintain a mental log: `Attempt 0: N errors, Attempt 1: M errors, ...`
-3. If error count increases vs. the best prior attempt, STOP fixing and save the best prior BuilderSpec as the draft
+3. If error count increases vs. the best prior attempt, revert to the best prior BuilderSpec and attempt a *different* fix strategy (per the revert-and-retry rule above — this counts as 1 used iteration)
 4. Track which BuilderSpec JSON produced the fewest errors (the "best attempt")
 5. After 3 fix attempts with errors remaining, save the best attempt as `.dot.draft`
 
