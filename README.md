@@ -339,11 +339,16 @@ It reads a curated principles reference (KISS, YAGNI, DRY, SOLID, Guard Clauses,
 /szechuan-sauce --max-iterations 30 src/  # Cap at 30 iterations (default: 50)
 /szechuan-sauce --stall-limit 3 src/      # Stop after 3 iterations with no improvement (default: 5)
 /szechuan-sauce --domain financial src/   # Load financial domain principles (monetary precision, rounding, etc.)
+/szechuan-sauce --focus "error handling" src/services/  # Hunt error-handling violations first
+/szechuan-sauce --focus "accessibility" --dry-run src/  # Scope a11y violations without fixing
+/szechuan-sauce --focus "rounding logic" --domain financial src/calc/  # Combine focus + domain
 ```
 
 The `--dry-run` flag performs a gap analysis only — it catalogs all violations by priority with file:line references and suggested fixes, prints a summary, and exits without modifying code. Useful for scoping the work before committing to a full run.
 
 The `--domain <name>` flag loads supplemental domain-specific principles from `szechuan-sauce-<name>-principles.md`. Domain principles extend the base principles and take precedence where they conflict. Available domains: `financial` (monetary precision, rounding consistency, statistical correctness, regulatory compliance).
+
+The `--focus "<text>"` flag directs the review toward a specific concern. Violations matching the focus are elevated by one priority level (e.g. P2 → P1) and take precedence over same-priority non-focus violations. Composable with `--domain` and `--dry-run`.
 
 ### How It Works
 
@@ -489,7 +494,7 @@ Sit back. Rick handles the rest. 🥒
 | `/pickle-tmux prd.md` | 🖥️ Pick up an existing PRD in tmux mode — fresh subprocess per iteration, no context drift |
 | `/pickle-zellij "task"` | 🖥️ Same PRD-driven loop in Zellij with KDL layouts — fresh subprocess per iteration. Best for long epics (8+ iterations). Requires Zellij >= 0.40.0 |
 | `/meeseeks-zellij` | 👋 Autonomous code review in Zellij with KDL layouts. Same as `/meeseeks` but for Zellij users. Requires Zellij >= 0.40.0 |
-| `/szechuan-sauce [target]` | 🫙 Iterative principle-driven deslopping — microverse convergence loop that reviews code against 30+ coding principles (KISS, YAGNI, DRY, SOLID, etc.), fixes violations one at a time, and re-scores with LLM judge until clean. Supports `--domain <name>` for domain-specific principles (e.g., `--domain financial`). Tmux by default. |
+| `/szechuan-sauce [target]` | 🫙 Iterative principle-driven deslopping — microverse convergence loop that reviews code against 30+ coding principles (KISS, YAGNI, DRY, SOLID, etc.), fixes violations one at a time, and re-scores with LLM judge until clean. Supports `--domain <name>` for domain-specific principles, `--focus "<text>"` to direct the review toward a specific concern. Tmux by default. |
 | `/pickle-refine-prd [path]` | 🔬 Verification readiness check → refine with 3 parallel analysts → decompose into ordered tickets. Reads `context/` directory if present for customer signals. `/pickle --resume` to execute |
 | `/pickle-refine-prd --run [path]` | 🔬🖥️ Refine + decompose + auto-launch unlimited tmux session (no iteration or time cap) |
 | `/pickle-refine-prd --meeseeks [path]` | 🔬🖥️👋 Full pipeline: refine + decompose + execute all tickets + auto-transition to Meeseeks review (implies `--run`) |

@@ -22,6 +22,7 @@ From `$ARGUMENTS`:
 - `--stall-limit <N>` → STALL_LIMIT (default: 5)
 - `--dry-run` → DRY_RUN mode (gap analysis only — catalog violations without fixing)
 - `--domain <name>` → DOMAIN (loads `szechuan-sauce-<name>-principles.md` as supplemental principles)
+- `--focus "<text>"` → FOCUS (natural language review directive — narrows what to hunt for, elevates matching violations by one priority level)
 - Remainder = TARGET (file or directory to deslop; default: current directory)
 
 Resolve TARGET to an absolute path. Verify it exists (file or directory). If not found, print error and stop.
@@ -40,8 +41,9 @@ Count source files. Print: "Target: TARGET (N source files)"
 
 If DRY_RUN mode: perform gap analysis without creating a session or modifying code:
 1. Read `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md`. If DOMAIN is set, also read `$HOME/.claude/pickle-rick/szechuan-sauce-${DOMAIN}-principles.md`.
-2. Read all target source files
-3. Catalog all violations using this format:
+2. If FOCUS is set, apply it as a review lens: prioritize violations matching the focus and elevate them by one priority level (e.g. a P2 violation matching the focus becomes P1).
+3. Read all target source files
+4. Catalog all violations using this format:
 
 ```
 ## Violations
@@ -71,7 +73,7 @@ If DRY_RUN mode: perform gap analysis without creating a session or modifying co
 Estimated iterations: N
 ```
 
-4. Do NOT modify any code. Output `<promise>TASK_COMPLETED</promise>` and stop.
+5. Do NOT modify any code. Output `<promise>TASK_COMPLETED</promise>` and stop.
 
 Skip Steps 5–10 entirely.
 
@@ -88,13 +90,22 @@ Extract `SESSION_ROOT=<path>` from output.
 
 ### Step 7: Create microverse.json
 
-If DOMAIN is set, first create a combined judge context file:
+If DOMAIN is set or FOCUS is set, create a combined judge context file:
 1. Read `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md`
-2. Read `$HOME/.claude/pickle-rick/szechuan-sauce-${DOMAIN}-principles.md`
-3. Write both contents (base first, then domain, separated by a blank line) to `${SESSION_ROOT}/judge-context.md`
-4. Use `${SESSION_ROOT}/judge-context.md` as JUDGE_CONTEXT_PATH
+2. If DOMAIN is set, read `$HOME/.claude/pickle-rick/szechuan-sauce-${DOMAIN}-principles.md`
+3. If FOCUS is set, append a Focus section:
+```markdown
 
-If DOMAIN is not set, use `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md` as JUDGE_CONTEXT_PATH.
+## Focus Directive
+
+FOCUS_TEXT
+
+Violations matching this focus are elevated by one priority level (e.g. P2 → P1). When two violations share the same priority, fix the one matching the focus first.
+```
+4. Write all contents to `${SESSION_ROOT}/judge-context.md`
+5. Use `${SESSION_ROOT}/judge-context.md` as JUDGE_CONTEXT_PATH
+
+If neither DOMAIN nor FOCUS is set, use `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md` as JUDGE_CONTEXT_PATH.
 
 ```bash
 node "$HOME/.claude/pickle-rick/extension/bin/init-microverse.js" "${SESSION_ROOT}" "${TARGET_ABSOLUTE_PATH}" --stall-limit ${STALL_LIMIT} --convergence-target 0 --judge-context "${JUDGE_CONTEXT_PATH}"
@@ -119,6 +130,10 @@ TARGET_ABSOLUTE_PATH
 Read: $HOME/.claude/pickle-rick/szechuan-sauce-principles.md
 [If DOMAIN is set, add this line]: Read: $HOME/.claude/pickle-rick/szechuan-sauce-${DOMAIN}-principles.md
 [Domain principles override base principles where they conflict.]
+[If FOCUS is set, add this section]:
+## Focus
+FOCUS_TEXT
+Violations matching this focus are elevated by one priority level. When tied, fix focus-matching violations first.
 
 ## Key Metric
 - **Type**: llm (LLM judge scoring)
@@ -162,6 +177,7 @@ Print:
 Szechuan Sauce Deslopping Session
 
 Target: TARGET
+[If FOCUS is set]: Focus: FOCUS_TEXT
 Session: tmux attach -t <name>
 Monitor: Ctrl+B 1 | Runner: Ctrl+B 0 | Detach: Ctrl+B D
 Cancel: /eat-pickle | Emergency: tmux kill-session -t <name>
@@ -183,7 +199,7 @@ Follow the **Microverse Worker protocol** (the standard microverse iteration loo
 
 ### Override 1: Principles Reference
 
-Before assessing the codebase, check the handoff's `microverse.json` for a `judge_context_path`. If set, read that file — it contains the combined base + domain principles. If not set, read `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md`. If the PRD's Principles Reference section lists additional domain-specific principles files, also read those. Domain principles take precedence over base principles where they overlap. Cross-reference each finding against the priority matrix (P0–P4) and the diagnostic guide.
+Before assessing the codebase, check the handoff's `microverse.json` for a `judge_context_path`. If set, read that file — it contains the combined base + domain principles and any focus directive. If not set, read `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md`. If the PRD's Principles Reference section lists additional domain-specific principles files, also read those. Domain principles take precedence over base principles where they overlap. If a Focus Directive section is present, apply it: violations matching the focus are elevated by one priority level and take precedence over same-priority non-focus violations. Cross-reference each finding against the priority matrix (P0–P4) and the diagnostic guide.
 
 ### Override 2: Violation-Oriented Scoring
 

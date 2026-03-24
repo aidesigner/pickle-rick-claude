@@ -315,6 +315,33 @@ test('financial principles file has diagnostic guide', () => {
 });
 
 // ---------------------------------------------------------------------------
+// --focus flag validation
+// ---------------------------------------------------------------------------
+
+test('szechuan-sauce.md has --focus flag in argument parsing', () => {
+    const content = readCommand();
+    assert.ok(content.includes('--focus'), 'missing --focus flag');
+    assert.ok(content.includes('FOCUS'), 'missing FOCUS variable');
+});
+
+test('szechuan-sauce.md --focus injects Focus Directive into judge context', () => {
+    const content = readCommand();
+    assert.ok(content.includes('## Focus Directive'), 'missing Focus Directive section in judge context assembly');
+});
+
+test('szechuan-sauce.md --focus elevates matching violations by one priority level', () => {
+    const content = readCommand();
+    assert.ok(content.includes('elevated by one priority level'), 'missing priority elevation rule for focus');
+});
+
+test('szechuan-sauce.md Worker Mode Override 1 handles focus directive', () => {
+    const content = readCommand();
+    const workerStart = content.indexOf('## WORKER MODE');
+    const workerSection = content.slice(workerStart);
+    assert.ok(workerSection.includes('Focus Directive'), 'Worker Override 1 should reference Focus Directive');
+});
+
+// ---------------------------------------------------------------------------
 // Dry-run format validation
 // ---------------------------------------------------------------------------
 
