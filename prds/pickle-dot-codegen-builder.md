@@ -571,6 +571,22 @@ Validation (runs during .build()):
     - Emit Diagnostic { severity: 'warning', message: 'Orphaned context key "${K}" not in acceptanceCriteria' }
 ```
 
+### Acceptance Criteria String Formatting *(microverse: iter7 — unspecified algorithm violated determinism)*
+
+The graph-level `acceptance_criteria` attribute is formatted from `BuilderSpec.acceptanceCriteria: Record<string, string>` using a deterministic algorithm:
+
+```
+1. Collect all keys from BuilderSpec.acceptanceCriteria
+2. Sort keys alphabetically (locale-independent, case-sensitive — same as Object.keys() on a sorted insertion)
+3. For each key K with value V: format as "context.${K}=${V}"
+4. Join all formatted entries with " && " (space-ampersand-ampersand-space)
+5. If acceptanceCriteria is empty ({}): emit empty string ""
+```
+
+Example: `{ lint_clean: "true", tests_pass: "true", types_compile: "true" }` → `"context.lint_clean=true && context.tests_pass=true && context.types_compile=true"`
+
+The `context.` prefix is required — attractor resolves AC keys from the `context_on_success` namespace. Alphabetical ordering satisfies the byte-identical determinism requirement (P1).
+
 ### DOT String Escaping
 
 All string attributes in generated DOT MUST be escaped:
@@ -601,7 +617,7 @@ The builder emits DOT using **flat node declarations with shape markers** — NO
 3. Blank line
 4. Defense matrix comment block: `/* DEFENSE MATRIX ... */`
 5. Blank line
-6. Nodes in pipeline-order (topological sort, ties broken by insertion order):
+6. Nodes in declaration order (forward-reference safe — DOT allows referencing nodes before declaration, so edges in section 8 define the actual pipeline flow; declaration order is chosen for readability and determinism, not strict topological sort):
    a. start node (Mdiamond)
    b. setup_deps, capture_baseline (auto infrastructure)
    c. Per-phase nodes in phase declaration order:
@@ -611,7 +627,7 @@ The builder emits DOT using **flat node declarations with shape markers** — NO
       - impl node → check_progress → security_scan (if opt-in, Pattern 8) → verify_lint → verify_types → test → diamond → fix (fail) / coverage_check (success, if opt-in, Pattern 9)
       - scope_check → review/conformance nodes → red_team_${phase} (Pattern 17, if opt-in)
       - merge_phases
-   d. Cross-phase nodes (conditional): fix_all (always), then — only when `reviewRatchet ≥ 2` — fix_review, then review ratchet passes in pass order (each pass: component → inner review nodes → merge → check diamond). If `reviewRatchet` is not set, step 6d emits only fix_all. *(review: fix_review emission was unconditional but only exists when reviewRatchet is active; microverse: red_team moved from step 6d2 to step 6c to maintain topological sort)*
+   d. Cross-phase nodes: review ratchet passes first (when `reviewRatchet ≥ 2` — each pass: component → inner review nodes → merge → check diamond, preceded by fix_review declaration), then fix_all (always). If `reviewRatchet` is not set, step 6d emits only fix_all. Pipeline flow: last phase conformance → ratchet passes → fix_all → verify_final. *(review: fix_review emission was unconditional but only exists when reviewRatchet is active; microverse: red_team moved from step 6d2 to step 6c; iter7 — reordered ratchet before fix_all to match pipeline flow)*
    e. verify_final
    f. exit node (Msquare)
 7. Blank line
@@ -653,6 +669,7 @@ The builder emits DOT using **flat node declarations with shape markers** — NO
 - `slug` and `goal` are non-empty strings
 - `phases` is an array (empty for start→exit pipeline, non-empty for all others)
 - Each phase has `name`, `prompt`, `allowedPaths` (all must be present/defined; `allowedPaths` must be an array but may be empty — empty arrays pass `fromSpec()` and produce a warning diagnostic at `.build()` time) *(microverse: iter4 #3)*
+- `workspaceOpts` without `workspace: 'isolated'` emits warning diagnostic and is ignored — workspace options have no effect without isolation mode *(microverse: iter7 — unspecified edge case)*
 - Unknown top-level fields emit warning diagnostic (not error — forward compatibility)
 - Unknown `PhaseSpec` fields emit warning diagnostic
 
@@ -862,8 +879,12 @@ The builder MUST pass `npx eslint src/ --max-warnings=-1`. Key constraints from 
 ```
 For each path P in allowedPaths:
   1. If P starts with "src/" or "lib/" or matches the pattern "packages/<segment>/src/" (where <segment> is any non-slash path segment, matched via regex `^packages/[^/]+/src/`):
+     - Split P into: {prefix} (before "src/" or "lib/") + {root} ("src/" or "lib/") + {subpath} (after root)
      - Extract the prefix before "src/" or "lib/" (e.g., "packages/foo/")
-     - Add "{prefix}tests/**" AND "{prefix}__tests__/**"
+     - Extract the subpath after "src/" or "lib/" (e.g., "auth/**" from "src/auth/**")
+     - Add "{prefix}tests/{subpath}" AND "{prefix}__tests__/{subpath}"
+     - Example: "src/auth/**" → prefix="", subpath="auth/**" → adds "tests/auth/**" and "__tests__/auth/**"
+     - Example: "packages/foo/src/bar/**" → prefix="packages/foo/", subpath="bar/**" → adds "packages/foo/tests/bar/**" and "packages/foo/__tests__/bar/**"
   2. If P is a bare glob (e.g., "*.ts") — no directory prefix:
      - Add "tests/**" and "__tests__/**" (project root)
   3. If P already contains "test" or "__tests__":

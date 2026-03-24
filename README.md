@@ -113,8 +113,11 @@ Minimum 10 passes. Maximum 50. Each pass runs tests first, then reviews with esc
 **Model routing**: Meeseeks review passes use **Sonnet** by default instead of Opus. Reviews are pattern-matching tasks — finding unused imports, missing tests, style issues — that don't need Opus-level reasoning. This significantly reduces token cost for 10-50 pass review chains. Configure via `default_meeseeks_model` in `pickle_settings.json` (set to `"opus"` to restore previous behavior, or use a full model ID like `"claude-sonnet-4-6"`).
 
 ```bash
-/meeseeks "review this codebase"     # Summon a Meeseeks. He takes it from here.
+/meeseeks "review this codebase"        # Sequential mode (tmux, one reviewer per pass)
+/meeseeks --team "review this codebase" # Team mode (4 parallel reviewers, inline)
 ```
+
+**Team mode** (`--team`): Spawns 4 specialized Meeseeks reviewers (security, correctness, architecture, quality) that review in parallel using agent teams. The lead coordinates findings, fixes issues, runs tests, and commits. Requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` in settings — the command checks and tells you how to enable it if missing. Flags: `--min-rounds <N>` (default: 2), `--max-rounds <N>` (default: 10).
 
 <br clear="right" />
 
@@ -422,7 +425,7 @@ Sit back. Rick handles the rest. 🥒
 | Command | Description |
 |---|---|
 | `/pickle "task"` | 🥒 Start the full autonomous loop — drafts a PRD (with verification strategy + interface contracts), decomposes into tickets, then executes each through 8 phases: Research → Review → Plan → Review → Implement → Spec Conformance → Code Review → Simplify |
-| `/meeseeks [task]` | 👋 Autonomous code review loop — tmux only, minimum 10 passes, commits per pass, exits when clean (`EXISTENCE_IS_PAIN`) |
+| `/meeseeks [task]` | 👋 Autonomous code review loop — tmux, minimum 10 passes, commits per pass, exits when clean (`EXISTENCE_IS_PAIN`). Add `--team` for parallel 4-reviewer mode (requires agent teams) |
 | `/council-of-ricks` | 🏛️ Graphite PR stack review loop — walks every branch, generates agent-executable directives, never fixes code directly. Exits when clean (`THE_CITADEL_APPROVES`) |
 | `/pickle prd.md` | 🥒 Pick up an existing PRD and skip drafting — goes straight to breakdown and execution |
 | `/pickle-tmux "task"` | 🖥️ Same PRD-driven loop, but with true context clearing — fresh subprocess per iteration via tmux. Best for long epics (8+ iterations). Requires `tmux`. |
@@ -560,6 +563,7 @@ For the full directory structure, memory system, stop hook loop, context clearin
 - **tmux** *(optional — for `/pickle-tmux` and `/meeseeks`)*
 - **Zellij** >= 0.40.0 *(optional — for `/pickle-zellij` and `/meeseeks-zellij`)*
 - **Graphite CLI** (`gt`) *(optional — for `/council-of-ricks`)*
+- **Agent teams** *(optional — for `/meeseeks --team`; set `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` in settings)*
 - macOS or Linux (Windows not supported)
 
 ---
