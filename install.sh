@@ -69,8 +69,10 @@ else
 fi
 # Store persona snippet — append this to your project's CLAUDE.md
 cp "$SCRIPT_DIR/persona.md" "$EXTENSION_ROOT/persona.md"
-# Szechuan Sauce principles reference — used by /szechuan-sauce command
-cp "$SCRIPT_DIR/extension/szechuan-sauce-principles.md" "$EXTENSION_ROOT/szechuan-sauce-principles.md"
+# Szechuan Sauce principles references — used by /szechuan-sauce command
+for f in "$SCRIPT_DIR"/extension/szechuan-sauce-*-principles.md "$SCRIPT_DIR/extension/szechuan-sauce-principles.md"; do
+  [ -f "$f" ] && cp "$f" "$EXTENSION_ROOT/$(basename "$f")"
+done
 
 # --- PERMISSIONS (files with shebangs that may be invoked directly) ---
 chmod +x "$EXTENSION_ROOT/extension/hooks/dispatch.js"

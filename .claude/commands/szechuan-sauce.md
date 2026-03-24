@@ -73,7 +73,7 @@ Estimated iterations: N
 
 4. Do NOT modify any code. Output `<promise>TASK_COMPLETED</promise>` and stop.
 
-Skip Steps 5–8 entirely.
+Skip Steps 5–10 entirely.
 
 ### Step 5: Run Tests Baseline
 
@@ -183,7 +183,7 @@ Follow the **Microverse Worker protocol** (the standard microverse iteration loo
 
 ### Override 1: Principles Reference
 
-Before assessing the codebase, read `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md`. If the PRD's Principles Reference section lists a domain-specific principles file, also read that file. Use both as the authoritative reference for identifying violations. Domain principles take precedence over base principles where they overlap. Cross-reference each finding against the priority matrix (P0–P4) and the diagnostic guide.
+Before assessing the codebase, check the handoff's `microverse.json` for a `judge_context_path`. If set, read that file — it contains the combined base + domain principles. If not set, read `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md`. If the PRD's Principles Reference section lists additional domain-specific principles files, also read those. Domain principles take precedence over base principles where they overlap. Cross-reference each finding against the priority matrix (P0–P4) and the diagnostic guide.
 
 ### Override 2: Violation-Oriented Scoring
 

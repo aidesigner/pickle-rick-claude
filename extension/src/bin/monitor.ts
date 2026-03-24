@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { collectTickets, statusSymbol, formatTime, getWidth, Style, sleep, MatrixStyle, matrixSeparator, latestIterationLog, safeErrorMessage } from '../services/pickle-utils.js';
-import { State } from '../types/index.js';
+import { State, MicroverseSessionState } from '../types/index.js';
 
 /**
  * Extracts a short readable summary from a stream-json log line.
@@ -48,6 +48,68 @@ export function summarizeLine(raw: string): string {
 }
 
 const MX = MatrixStyle;
+
+/** Unicode sparkline from a sequence of numbers. */
+export function sparkline(values: number[]): string {
+  if (values.length === 0) return '';
+  const blocks = '▁▂▃▄▅▆▇█';
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+  return values
+    .map(v => blocks[Math.min(blocks.length - 1, Math.round(((v - min) / range) * (blocks.length - 1)))])
+    .join('');
+}
+
+/** Render a compact microverse convergence trend section. */
+export function renderMicroverseTrend(mv: MicroverseSessionState, width: number): string[] {
+  const out: string[] = [];
+  const sep = matrixSeparator(width);
+  const history = mv.convergence.history;
+  const direction = mv.key_metric.direction ?? 'higher';
+  const targetLabel = mv.convergence_target != null ? String(mv.convergence_target) : '—';
+
+  out.push(`\n${sep}\n${MX.BRIGHT}Metric Trend${MX.R} ${MX.DIM}(${direction} is better, target: ${targetLabel})${MX.R}\n`);
+
+  if (history.length === 0) {
+    out.push(`  ${MX.DIM}No measurements yet${MX.R}\n`);
+    return out;
+  }
+
+  // Sparkline of all scores (accepted + reverted)
+  const scores = history.map(h => h.score);
+  const spark = sparkline(scores);
+  const latest = scores[scores.length - 1];
+  const latestAction = history[history.length - 1].action;
+  const latestColor = latestAction === 'accept' ? MX.GREEN : MX.ERR;
+
+  out.push(`  ${MX.DIM}Score:${MX.R} ${latestColor}${latest}${MX.R}  ${MX.GREEN}${spark}${MX.R}\n`);
+
+  // Compact history: last 8 entries as "iter:score(action)"
+  const tail = history.slice(-8);
+  const entries = tail.map(h => {
+    const sym = h.action === 'accept' ? '✓' : '✗';
+    const c = h.action === 'accept' ? MX.GREEN : MX.ERR;
+    return `${c}${h.iteration}:${h.score}${sym}${MX.R}`;
+  });
+  out.push(`  ${entries.join(` ${MX.DIM}→${MX.R} `)}\n`);
+
+  // Stall counter
+  const { stall_counter, stall_limit } = mv.convergence;
+  if (stall_counter > 0) {
+    const stallColor = stall_counter >= stall_limit - 1 ? MX.ERR : MX.WARN;
+    out.push(`  ${stallColor}Stall: ${stall_counter}/${stall_limit}${MX.R}\n`);
+  }
+
+  // Status badge
+  if (mv.status === 'converged') {
+    out.push(`  ${MX.BRIGHT}${MX.GREEN}◆ CONVERGED${MX.R}\n`);
+  } else if (mv.status === 'stopped') {
+    out.push(`  ${MX.WARN}◇ STOPPED${mv.exit_reason ? ` (${mv.exit_reason})` : ''}${MX.R}\n`);
+  }
+
+  return out;
+}
 
 function render(sessionDir: string): boolean {
   // If the session directory itself is gone, signal exit (not just "waiting")
@@ -130,6 +192,17 @@ function render(sessionDir: string): boolean {
   out.push(`${sep}\n`);
   for (const [k, v] of fields) {
     out.push(`  ${MX.DIM}${k + ':'}${' '.repeat(keyWidth - k.length)}${MX.R} ${v}\n`);
+  }
+
+  // Microverse convergence trend (szechuan-sauce, pickle-microverse, etc.)
+  try {
+    const mvRaw = fs.readFileSync(path.join(sessionDir, 'microverse.json'), 'utf-8');
+    const mv = JSON.parse(mvRaw) as MicroverseSessionState;
+    if (mv.convergence?.history) {
+      out.push(...renderMicroverseTrend(mv, width));
+    }
+  } catch {
+    // No microverse session — skip
   }
 
   if (tickets.length > 0) {

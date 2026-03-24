@@ -99,7 +99,7 @@ The microverse-runner will:
 3. Accept the change if the metric improved or held steady
 4. Revert to the pre-iteration SHA if the metric regressed
 5. Record the result in history for the next iteration
-6. If a `convergence_target` is set in microverse.json and the score equals it, stop immediately
+6. If a `convergence_target` is set in microverse.json and the score has reached it (direction-aware: `<=` for lower, `>=` for higher), stop immediately
 
 ## Rules
 
