@@ -603,6 +603,31 @@ Example: `{ lint_clean: "true", tests_pass: "true", types_compile: "true" }` →
 
 Alphabetical ordering satisfies the byte-identical determinism requirement (P1). Comma separator (no spaces) matches attractor's parser expectation.
 
+### `model_stylesheet` Attribute Formatting *(microverse: iter4 — unspecified format violated determinism)*
+
+The graph-level `model_stylesheet` attribute is formatted from `StylesheetConfig` using a deterministic algorithm:
+
+```
+1. Build tier blocks in fixed order: .default, .critical, .review
+2. For each tier:
+   a. .default → uses `defaultModel` (required) + `defaultProvider` (optional)
+   b. .critical → uses `criticalModel` + `criticalProvider` (optional) + `reasoningEffort` (optional). Omit entire block if `criticalModel` is undefined.
+   c. .review → uses `reviewModel` + `reviewProvider` (optional). Omit entire block if `reviewModel` is undefined.
+3. Within each tier block, emit properties in fixed order:
+   - llm_model (always present in the block)
+   - llm_provider (if defined for this tier)
+   - reasoning_effort (only in .critical block, if defined)
+4. Format each block as: `.${tier} { ${properties} }`
+   - Properties formatted as: `${key}: ${value}`
+   - Multiple properties separated by "; " (semicolon-space)
+5. Join all non-empty tier blocks with " " (single space)
+6. If only defaultModel is set (no other tiers): emit single block `.default { llm_model: ${defaultModel} }`
+```
+
+Example: `{ defaultModel: "claude-sonnet-4-6", defaultProvider: "anthropic", criticalModel: "claude-opus-4-6", criticalProvider: "anthropic", reasoningEffort: "high", reviewModel: "claude-sonnet-4-6" }` → `model_stylesheet=".default { llm_model: claude-sonnet-4-6; llm_provider: anthropic } .critical { llm_model: claude-opus-4-6; llm_provider: anthropic; reasoning_effort: high } .review { llm_model: claude-sonnet-4-6 }"`
+
+Fixed tier ordering and fixed property ordering within tiers satisfies the byte-identical determinism requirement (P1).
+
 ### DOT String Escaping
 
 All string attributes in generated DOT MUST be escaped:
@@ -659,7 +684,7 @@ The builder emits DOT using **flat node declarations with shape markers** — NO
 - Shape values are also quoted (unlike some hand-written DOT): `shape="diamond"` not `shape=diamond`
 - Multiple attributes comma-separated inside brackets, **alphabetical by key**: `[class="codergen", shape="box", timeout="30m"]` *(microverse: iter4 #4 — required for byte-identical determinism)*
 - Node declarations: `  ${nodeId} [${attributes}]` (2-space indent)
-- Edge declarations: `  ${source} -> ${target}` or `  ${source} -> ${target} [${attributes}]` (2-space indent)
+- Edge declarations: `  ${source} -> ${target}` or `  ${source} -> ${target} [${attributes}]` (2-space indent). Edge attributes follow the same **alphabetical by key** rule as node attributes for byte-identical determinism.
 - Graph attributes: `  ${key}="${escaped_value}"` (2-space indent)
 - Section comments: `// ========== PHASE ${N}: ${phase_name} ==========` before each phase's nodes
 - Blank lines between: graph attributes, defense matrix, node sections, edge section
