@@ -866,7 +866,7 @@ The builder MUST pass `npx eslint src/ --max-warnings=-1`. Key constraints from 
 | `fromSpec()` with unknown fields (`{unknownField: "x"}`) | Warning diagnostic (not error); unknown fields ignored for forward compatibility | Unit test *(council: contracts)* |
 | Builder crash (exit 2) during fix loop | Fix loop stops; saves best prior attempt as `.dot.draft`; does NOT count as fix attempt | Unit test *(council: adversarial)* |
 | `context_on_success` sets key not in `acceptance_criteria` | Warning: orphaned context key `${K}` | Unit test *(council: adversarial)* |
-| Fan-out with 1 branch (degenerate) | Not reachable via public BuilderSpec API — Pattern 4 only triggers when ≥2 independent phases exist. Internal invariant only: if somehow triggered, builder throws. | Internal validation test *(council: adversarial; microverse: reclassified as unreachable via public API, same as 0-branch case at line 838)* |
+| Fan-out with 1 branch (degenerate) | Not reachable via public BuilderSpec API — Pattern 4 only triggers when ≥2 independent phases exist. Internal invariant only: if somehow triggered, builder throws. | Internal validation test *(council: adversarial; microverse: reclassified as unreachable via public API, same as 0-branch case at line 855)* |
 | Microverse `target=0, direction='reduce'` | Valid — reducing to 0 is legitimate (e.g., zero errors) | Unit test *(council: H9)* |
 | Microverse `target=0, direction='improve'` | Throws: target must be > 0 for direction='improve' | Unit test *(council: H9)* |
 | Microverse `target=-1` | Throws: target must be >= 0 | Unit test *(council: adversarial)* |
@@ -964,7 +964,7 @@ For each path P in allowedPaths:
 | 40 | 76be09d5 | Pattern auto-application — 18 auto-mode patterns with shell command templates | High | Validation available | 18 auto patterns enforced (0a-0e, 1, 3, 4, 6, 6b, 10, 13, 14, 15, 21, 22, 23, 25); snapshot tests pass; `BuildResult.patternsApplied` includes all auto patterns for a 2-phase spec *with no `dependsOn` relationships* *(council: I-3 clarification; microverse: Pattern 4 requires independent phases; Pattern 16 moved to Phase 50; review: 16b moved from auto to opt-in, count 19→18)* | `services/dot-builder.ts`, `tests/dot-builder-patterns.test.js` | `extension/src/services/**`, `extension/tests/**` | Yes |
 | 50 | 67181c43 | Opt-in + default-on patterns — spec-first (16), BDD scenarios (16b), microverse, review ratchet, workspace, competing impls, security, red team, model stylesheet | Medium | Auto patterns working | All 28 active v1 patterns; 28 snapshot tests pass; opt-in patterns absent when not requested; `.modelStylesheet()` generates valid CSS-like syntax (P2 but included in this phase) *(review: 16b moved here from Phase 40 — now opt-in not auto)* | `services/dot-builder.ts`, `tests/dot-builder-patterns.test.js` | `extension/src/services/**`, `extension/tests/**` | No |
 | 60 | 7f98dd6a | CLI entry point + fromSpec() with JSON schema validation | High | All patterns done | CLI exits 0/1/2 correctly; `npx eslint src/ --max-warnings=-1` passes; `install.sh` has chmod; all 4 test files registered in `package.json` | `bin/dot-builder.ts`, `tests/dot-builder-cli.test.js`, `install.sh`, `package.json` (test script) | `extension/src/bin/**`, `extension/tests/**`, `extension/package.json`, `install.sh` | Yes |
-| 65 | a1b3c5d7 | Fallback schema creation | Medium | CLI working | `types/attractor-schema.fallback.ts` committed with all builder-emitted attributes (node: `class`, `shape`, `goal_gate`, `retry_target`, `max_visits`, `thread_id`, `timeout`, `allowed_paths`, `read_only`, `context_on_success`, `prompt`, `tool_command`, `max_parallel`, `escalate_on`, `permission_mode`, `auto_status`, `allow_partial`; graph: `goal`, `working_dir`, `default_max_retry`, `label`, `acceptance_criteria`, `model_stylesheet`, `spec_file`, `workspace`, `repo_url`, `repo_branch`, `workspace_cleanup`, `retry_target`; edge: `outcome`, `loop_restart`); builder loads it when `$ATTRACTOR_ROOT` unavailable *(microverse: iter1 — expanded from "minimum viable" to exhaustive list; iter4 — added `shape`; iter8 — added `retry_target` to graph list per line 144/600)* | `types/attractor-schema.fallback.ts` | `extension/src/types/**`, `extension/tests/**` | No |
+| 65 | a1b3c5d7 | Fallback schema creation | Medium | CLI working | `types/attractor-schema.fallback.ts` committed with all builder-emitted attributes (node: `class`, `shape`, `goal_gate`, `retry_target`, `max_visits`, `thread_id`, `timeout`, `allowed_paths`, `read_only`, `context_on_success`, `prompt`, `tool_command`, `max_parallel`, `escalate_on`, `permission_mode`, `auto_status`, `allow_partial`; graph: `goal`, `working_dir`, `default_max_retry`, `label`, `acceptance_criteria`, `model_stylesheet`, `spec_file`, `workspace`, `repo_url`, `repo_branch`, `workspace_cleanup`, `retry_target`; edge: `outcome`, `loop_restart`); builder loads it when `$ATTRACTOR_ROOT` unavailable *(microverse: iter1 — expanded from "minimum viable" to exhaustive list; iter4 — added `shape`; iter8 — added `retry_target` to graph list per line 144/614)* | `types/attractor-schema.fallback.ts` | `extension/src/types/**`, `extension/tests/**` | No |
 | 70 | 045a571a | Schema sync script | Medium | Fallback exists | `npm run sync-schema` reads `$ATTRACTOR_ROOT/schema.json` and generates `types/attractor-schema.ts`; falls back gracefully | `bin/sync-schema.ts`, `types/attractor-schema.ts`, `package.json` (script entry) | `extension/src/bin/**`, `extension/src/types/**`, `extension/tests/**`, `extension/package.json` | No |
 | 80 | e3a7d523 | /pickle-dot command prompt rewrite + --legacy/--builder flags | High | CLI working | Prompt has BuilderSpec instructions, ≥3 few-shot examples, fix-loop instructions, `--builder` flag for Phase 1 opt-in, `--legacy` flag for rollback, default remains prompt-only; no raw DOT instructions remain | `.claude/commands/pickle-dot.md` | `.claude/commands/pickle-dot.md` | No |
 | 85 | f2e4d6c8 | README documentation update | Medium | Prompt rewrite done | README documents: builder API, BuilderSpec JSON structure, `/pickle-dot` invocation (normal + `--legacy`), fix-loop flow | `README.md` | `README.md` | No |
@@ -1070,3 +1070,28 @@ Patterns to **skip**:
 - Competing Impls (18) — single correct implementation path
 - Microverse (20) — no numeric optimization target
 - Workspace Isolation (0) — same repo, no isolation needed
+
+### Model Stylesheet Serialization Format *(microverse: iter9 — unspecified format violated determinism)*
+
+The `model_stylesheet` graph-level attribute is serialized from `StylesheetConfig` using a deterministic algorithm:
+
+```
+1. Emit blocks in fixed order: .default, .critical (if criticalModel set), .review (if reviewModel set)
+2. Each block: ".${tier} { ${properties} }" where properties are key-value pairs
+3. Properties within each block in fixed order:
+   a. llm_model = ${model}
+   b. llm_provider = ${provider} (if set)
+   c. reasoning_effort = ${effort} (only in .critical block, if reasoningEffort set)
+4. Property format: "key = value" (space around =)
+5. Multiple properties separated by "; " (semicolon-space)
+6. Multiple blocks separated by "\n" (newline)
+7. If only .default block exists (no critical/review overrides): emit single block
+```
+
+Example: `StylesheetConfig { defaultModel: "claude-sonnet-4-6", defaultProvider: "anthropic", reviewModel: "claude-haiku-4-5", reviewProvider: "anthropic" }` →
+```
+.default { llm_model = claude-sonnet-4-6; llm_provider = anthropic }
+.review { llm_model = claude-haiku-4-5; llm_provider = anthropic }
+```
+
+The fixed block and property ordering satisfies the byte-identical determinism requirement (P1). The `.critical` block inherits from `.default` values when `criticalModel` is not explicitly set — it is NOT emitted in that case (no redundant blocks).

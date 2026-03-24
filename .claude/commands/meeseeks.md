@@ -167,7 +167,7 @@ Generate a unique team name: `meeseeks-<short-hash>` where `<short-hash>` is the
 
 ### Step 22: Dependency Health & Test Baseline
 
-**22a**: Run `npm audit` (or equivalent) and `npx depcheck` if applicable. Fix any critical dependency issues and commit.
+**22a**: If `package.json` exists, run `npm audit` and `npx depcheck`. Fix any critical dependency issues and commit. Skip for non-Node projects.
 
 **22b**: Run the full test suite. If tests fail, fix them and commit. The codebase must be green before the team starts.
 
@@ -175,16 +175,13 @@ Generate a unique team name: `meeseeks-<short-hash>` where `<short-hash>` is the
 
 ### Step 23: Create Team
 
-First, attempt to clean up any stale team from a previous crashed run:
-```
-Try TeamDelete (ignore errors — may not exist)
-```
-
-Then create the team using TeamCreate:
+Create the team using TeamCreate:
 ```
 team_name: TEAM_NAME
 description: "Mr. Meeseeks parallel code review team"
 ```
+
+If TeamCreate fails (e.g., name collision), generate a new TEAM_NAME with a different hash and retry once.
 
 ### Step 24: Spawn Reviewer Teammates
 
@@ -193,10 +190,12 @@ Spawn 4 teammates using the Agent tool **in a single message** (all 4 in paralle
 - `team_name`: TEAM_NAME
 - `run_in_background`: `true`
 
-Each teammate prompt must follow this template — substitute ROLE, CRITERIA, and ROLE_LOWER:
+Each teammate prompt must follow this template — substitute ROLE, CRITERIA, ROLE_LOWER, and TASK_TEXT:
 
 ```
 You are Mr. Meeseeks — ROLE code reviewer. "I'm Mr. Meeseeks, look at me! CAN DO!"
+
+Task: TASK_TEXT
 
 Review the codebase for ROLE issues. You are READ-ONLY — find issues but do NOT fix them.
 
@@ -227,22 +226,32 @@ Then go idle. The lead will be automatically notified.
 
 ### Step 25: Review Round Loop
 
-Set `round = 1`.
+Initialize `meeseeks-team-summary.md` in the current directory:
+```markdown
+# Mr. Meeseeks Team Review Summary
+Task: TASK_TEXT
+Running tally of issues found and fixed per review round.
+---
+```
+
+Set `round = 1`, `total_fixed = 0`.
 
 **25a: Collect findings**
-Wait for all 4 teammates to go idle. Their findings are delivered automatically as messages. Collect all findings into a combined list, tracking which reviewer found each issue.
-
-If round = 1 and ALL 4 report clean → skip to Step 26 (nothing to fix).
+Wait for all 4 teammates to report (they go idle after reporting — idle notifications arrive automatically). Collect all findings into a combined list, tracking which reviewer found each issue.
 
 **25b: Triage**
 - Deduplicate (multiple reviewers may flag the same issue)
 - Discard false positives (use your judgment — read the code if unsure)
 - Group by file to minimize context switches
 - Print the triage summary: how many issues per reviewer, how many after dedup
+- Set `round_issues = count of real issues after dedup`
+
+**If `round_issues = 0`** → append clean-round entry to summary, skip to 25g.
 
 **25c: Fix all issues**
 - Fix each real issue using Edit tool
 - Track what was fixed: `{reviewer, file, line, issue, fix}`
+- Add to `total_fixed`
 
 **25d: Run tests**
 - Run the full test suite
@@ -256,38 +265,36 @@ git add -A && git commit -m "meeseeks team round <N>: <summary of fixes>"
 **25f: Update findings summary**
 Append to `meeseeks-team-summary.md` in the current directory:
 ```markdown
-## Round <N> — <total> issues fixed
+## Round <N> — <round_issues> issues fixed
 | # | Reviewer | File | Issue | Fix |
 |---|----------|------|-------|-----|
 | 1 | security-meeseeks | `path:line` | description | fix |
 **Tests**: passing | **Commit**: `<hash>`
 ```
 
+**Clean round**: `## Round <N> — clean round\nAll reviewers report no issues.`
+
 **25g: Check convergence**
 - If `round >= MAX_ROUNDS` → exit loop, go to Step 26
+- If `round_issues = 0` AND `round >= MIN_ROUNDS` → exit loop, go to Step 26
 - Increment `round`
-- If `round <= MIN_ROUNDS` OR issues were found this round → send each teammate a message asking them to re-review their area for remaining or newly introduced issues, then go to 25a
-- If no issues were found this round AND `round > MIN_ROUNDS` → exit loop, go to Step 26
+- Send each teammate a message: "Round <N>: re-review your area. The following fixes were made: <brief list>. Check for remaining issues or regressions from the fixes."
+- Go to 25a
 
 ### Step 26: Cleanup & Report
 
-1. Send shutdown to all teammates (one at a time, not broadcast):
-```
-SendMessage to "security-meeseeks": { "type": "shutdown_request", "reason": "Review complete" }
-SendMessage to "correctness-meeseeks": { "type": "shutdown_request", "reason": "Review complete" }
-SendMessage to "architecture-meeseeks": { "type": "shutdown_request", "reason": "Review complete" }
-SendMessage to "quality-meeseeks": { "type": "shutdown_request", "reason": "Review complete" }
-```
-Wait for all shutdown responses.
+1. Shut down all teammates. For each of the 4 teammates, send a shutdown request via SendMessage:
+   `{ "type": "shutdown_request", "reason": "Review complete" }`
+   If a teammate doesn't respond (may have already exited), move on — don't block on a dead teammate.
 
-2. Delete the team: TeamDelete
+2. Delete the team: use TeamDelete. If it fails, log and continue.
 
 3. Print final summary:
 ```
 Mr. Meeseeks Team Review Complete!
 
-Rounds: <N>
-Total issues fixed: <count>
+Rounds: <round>
+Total issues fixed: <total_fixed>
   - Security: <count>
   - Correctness: <count>
   - Architecture: <count>
