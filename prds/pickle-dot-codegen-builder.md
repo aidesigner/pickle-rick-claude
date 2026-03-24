@@ -157,7 +157,7 @@ Attractor adds a new attribute `reasoning_budget`. Developer runs `npm run sync-
 | P2 | Builder cross-checks prompt file paths against `allowed_paths` | As a pipeline author, token waste from rejected edits must be prevented | `.build()` warns if prompt references paths outside allowed_paths |
 | P3 | Builder logs which patterns were applied | As a debugger, I need to know what the builder decided | `.build()` returns metadata with applied pattern list |
 
-**Thread ID assignment for cross-phase nodes** *(microverse: iter3 #2)*: The `thread_id` auto-assignment rule applies only to per-phase nodes. Cross-phase infrastructure nodes (`start`, `exit`, `setup_deps`, `capture_baseline`, `split_phases`, `merge_phases`, `fix_all`, `fix_review`, `verify_final`) do NOT receive a `thread_id` attribute — they execute in attractor's default thread context. This is correct because these nodes are not scoped to a single phase's conversation history.
+**Thread ID assignment for cross-phase nodes** *(microverse: iter3 #2)*: The `thread_id` auto-assignment rule applies only to per-phase nodes. Cross-phase infrastructure nodes (`start`, `exit`, `setup_deps`, `capture_baseline`, `split_phases`, `merge_phases`, `fix_all`, `fix_review`, `verify_final`) do NOT receive a `thread_id` attribute — they execute in attractor's default thread context (no phase context). This is correct because these nodes are not scoped to a single phase's conversation history. In particular, `fix_review` operates across all phases' code without phase-specific context, same as `fix_all` and `verify_final`. Cross-phase nodes (`fix_all`, `fix_review`) do not set `context_on_success` keys — their role is remediation, not AC evidence collection. Only `verify_final` and per-phase conformance nodes set `context_on_success`.
 
 ## Pattern Application Matrix *(refined: new section — addresses hidden scope gap)*
 
@@ -167,7 +167,7 @@ Attractor adds a new attribute `reasoning_budget`. Developer runs `npm run sync-
 |:---|:---|:---|:---|:---|:---|
 | 0 | Isolated Workspace | opt-in | `.workspace("isolated")` | N/A | Yes |
 | 0a | Dependency Setup | auto | `.build()` internal | Always emitted | No |
-| 0b | Parallel Limit | auto | `.build()` internal | `max_parallel=1` | No |
+| 0b | Parallel Limit | auto | `.build()` internal | `max_parallel=1` — included in `patternsApplied` only when `split_phases` nodes exist in the output graph (i.e., Pattern 4 is active) | No |
 | 0c | Baseline Snapshot | auto | `.build()` internal | Always emitted | No |
 | 0d | Delta-Aware Verify | auto | `.build()` internal | On all verify nodes | No |
 | 0e | Progress Gate | auto | `.build()` internal | After each impl node | No |
@@ -241,12 +241,12 @@ These specifications resolve the "always emitted" ambiguity for auto-applied pat
 | 14 (Type-Check Gate) | `verify_types_${phase}` | After `verify_lint`, before `test_${phase}` | Delta-aware typecheck command (see 0d) |
 | 21 (Fix All) | `fix_all` | Before `verify_final` | Single node; `class="codergen"`, attributes per cross-phase inheritance rule. Graph-level and `verify_final` `retry_target` MUST point here. Edge: `fix_all` → `verify_final` (direct — does NOT re-enter the review ratchet on retry). The ratchet is a pre-verify_final gate that runs once per forward pass. *(microverse: iter3 #3)* |
 | (verify_final) | `verify_final` | After review ratchet (or after last phase's conformance if no ratchet), before `exit` | `shape="box"`, `class="codergen"`, `timeout="30m"`, `tool_command="cd \${WORKING_DIR} && npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npm test"`, `retry_target="fix_all"`, `max_visits=3`. Sets `context_on_success` with all 6 Tier 2 auto-generated keys (`types_compile=true`, `lint_clean=true`, `tests_pass=true`, `cli_contract=true`, `determinism=true`, `validation_rules=true` — see AC Mapping Algorithm §Tier 2) plus any Tier 1 explicit keys not already set by phase verify nodes. Attributes (`allowed_paths`, `escalate_on`, `permission_mode`) per cross-phase inheritance rule. *(microverse: iter3 #6)* |
-| 25 (Catastrophic Recovery) | N/A (edge attribute) | On `verify_final` → `setup_deps` edge | `loop_restart=true` on edge; emitted when any node in the pipeline has ≥1 incoming edge from a diamond non-success outcome branch (any outcome other than `"success"` or `"clean"` — includes `"fail"`, `"issues"`, `"rejected"`, `"partial_success"`) or is referenced by a `retry_target` attribute (i.e., the pipeline contains retry loops). NOT emitted for zero-phase pipelines (even though `verify_final` has `retry_target="fix_all"` — catastrophic recovery restarts from `setup_deps` which only makes sense when per-phase impl nodes exist to re-execute; zero-phase has nothing to re-implement) or pipelines with only forward edges. *(review: replaced qualitative "max_visits exhaustion risk" with binary predicate; microverse: iter5 — broadened "outcome=fail" to non-success outcomes covering review ratchet/competing impls/microverse; gap-analysis — clarified zero-phase carve-out rationale)* |
+| 25 (Catastrophic Recovery) | N/A (edge attribute) | On `verify_final` → `setup_deps` edge | `loop_restart=true` on edge; emitted when any node in the pipeline has ≥1 incoming edge from a diamond non-success outcome branch (any outcome other than `"success"` or `"clean"` — includes `"fail"`, `"issues"`, `"rejected"`, `"partial_success"`) or is referenced by a `retry_target` attribute (i.e., the pipeline contains retry loops). NOT emitted for zero-phase pipelines — this is an explicit exception (carve-out), not a natural precondition miss: the retry-loop predicate IS satisfied (`verify_final` has `retry_target="fix_all"`), but catastrophic recovery restarts from `setup_deps` which only makes sense when per-phase impl nodes exist to re-execute; zero-phase has nothing to re-implement. Also not emitted for pipelines with only forward edges (natural precondition miss — no retry loops). *(review: replaced qualitative "max_visits exhaustion risk" with binary predicate; microverse: iter5 — broadened "outcome=fail" to non-success outcomes covering review ratchet/competing impls/microverse; gap-analysis — clarified zero-phase carve-out rationale)* |
 | 0b (Parallel Limit) | N/A (attribute injection) | On all `shape=component` fan-out nodes | Inject `max_parallel="1"` attribute. No separate node — attribute added to existing `split_phases` or per-phase `component` nodes |
 | 6 (Max Visits) | N/A (attribute injection) | On all nodes with incoming retry/loop edges | Inject `max_visits="5"` (default) only when the node does not already have an explicit `max_visits` from another pattern (e.g., 0e sets `max_visits=3`; Pattern 6 does not overwrite it). Trigger: node has ≥1 incoming edge from a diamond non-success outcome branch (any outcome other than `"success"` or `"clean"` — includes `"fail"`, `"issues"`, `"rejected"`, `"partial_success"`) or a `retry_target` reference. Does not apply to nodes reachable only via forward edges. *(microverse: iter3 #5; iter5 — broadened "outcome=fail" to non-success outcomes covering review ratchet `outcome="issues"`, competing impls `outcome="rejected"`, microverse `outcome="partial_success"`/`"fail"`)* |
 | 15 (Conformance Check) | `conformance_${phase}` | After scope_check, before review ratchet (or before `fix_all` if no ratchet) | `class="review"`, `read_only=true`, `timeout="15m"`, prompt: `"Review the implementation against the phase spec and PRD requirements. Check: correct files modified, API contracts match, no regressions. Output STATUS: SUCCESS \| FAIL."` |
 | 22 (Permission Scoping) | N/A (attribute injection) | On all `class="codergen"` nodes (per-phase and cross-phase) | For per-phase nodes: inject `allowed_paths` from `PhaseSpec.allowedPaths` (with test dir heuristic applied), `escalate_on` from `PhaseSpec.escalateOn` (default: `["package.json","*.lock","*.config.*"]`), and `permission_mode="auto"`. For cross-phase codergen nodes (`fix_all`, `fix_review`, `verify_final`): `allowed_paths` = union of all `PhaseSpec.allowedPaths` (with test dir heuristic applied to each), `escalate_on` = union of all `PhaseSpec.escalateOn` values (deduplicated), `permission_mode="auto"`. *(microverse: iter3 #1)* |
-| 23 (Defense Matrix) | N/A (comment block) | After graph-level attributes, before first node | Generate `/* DEFENSE MATRIX\n * competitive: ${bool}\n * guardrails: ${list}\n * specDriven: ${string}\n * permissions: ${list}\n * adversarial: ${bool}\n */` from `DefenseMatrix` values computed during `.build()`. **specDriven computation**: if zero phases → `"NONE"`; otherwise build string from active patterns: `"spec_file"` if any phase has Pattern 16 active (specFirst=true explicitly or default-on via goalGate), `" + BDD"` if any phase has Pattern 16b active (bddScenarios=true), `" + conformance"` always (Pattern 15 is auto on all phases). Result is one of: `"conformance"`, `"BDD + conformance"`, `"spec_file + conformance"`, `"spec_file + BDD + conformance"`. **competitive**: true if any phase has `competing: true` (Pattern 18). **adversarial**: true if any phase has `redTeam: true` (Pattern 17). **guardrails**: collect from active patterns — `"max_visits"` (Pattern 6), `"no-op"` (read_only nodes), `"read_only"` (Pattern 6b). **permissions**: collect — `"allowed_paths"` (Pattern 22), `"escalate_on"` (Pattern 22). |
+| 23 (Defense Matrix) | N/A (comment block) | After graph-level attributes, before first node | Generate `/* DEFENSE MATRIX\n * competitive: ${bool}\n * guardrails: ${list}\n * specDriven: ${string}\n * permissions: ${list}\n * adversarial: ${bool}\n */` from `DefenseMatrix` values computed during `.build()`. **specDriven computation**: if zero phases → `"NONE"`; otherwise build string from active patterns: `"spec_file"` if any phase has Pattern 16 active (specFirst=true explicitly or default-on via goalGate), `" + BDD"` if any phase has Pattern 16b active (bddScenarios=true), `" + conformance"` when ≥1 phase exists (Pattern 15 is auto on all phases; excluded for zero-phase since there are no phases to apply conformance to). Result is one of: `"NONE"` (zero-phase), `"conformance"`, `"BDD + conformance"`, `"spec_file + conformance"`, `"spec_file + BDD + conformance"`. **competitive**: true if any phase has `competing: true` (Pattern 18). **adversarial**: true if any phase has `redTeam: true` (Pattern 17). **guardrails**: collect from active patterns — `"max_visits"` (Pattern 6), `"no-op"` (read_only nodes), `"read_only"` (Pattern 6b). **permissions**: collect — `"allowed_paths"` (Pattern 22), `"escalate_on"` (Pattern 22). |
 
 ### Opt-In Pattern Implementation Detail *(microverse: iter4 #5)*
 
@@ -265,7 +265,7 @@ These specifications resolve the "always emitted" ambiguity for auto-applied pat
 
 **Pattern 0e (Progress Gate) behavior**: Progress gate uses `git status --porcelain`. Builder always emits this node for every phase — the `git status` command works in any directory (git-initialized or not; in non-git directories, it exits non-zero which triggers STATUS: FAIL, correctly flagging no progress). No BuilderSpec field controls emission; it is unconditional on phases.
 
-**Pattern 4 (Fan-Out) mixed dependency topology** *(microverse: iter3 #4)*: When some phases have `dependsOn` and others do not, the builder partitions phases into: (a) **independent set** — all phases with no `dependsOn` (fan out via `split_phases`/`merge_phases`), (b) **dependent set** — phases with `dependsOn`, serialized after `merge_phases` in dependency order. Example: phases A (no deps), B (no deps), C (dependsOn: ["A"]) produces: `split_phases` → A, B in parallel → `merge_phases` → C. C waits for `merge_phases` even though it only depends on A, because the builder does not support partial fan-in (partial fan-in requires subgraph nesting, which attractor does not parse). If ALL phases have `dependsOn` chains (no independent phases), Pattern 4 is not emitted — phases are serialized with direct edges in dependency order.
+**Pattern 4 (Fan-Out) mixed dependency topology** *(microverse: iter3 #4)*: When some phases have `dependsOn` and others do not, the builder partitions phases into: (a) **independent set** — all phases with no `dependsOn` (fan out via `split_phases`/`merge_phases`), (b) **dependent set** — phases with `dependsOn`, serialized after `merge_phases` in dependency order. Example: phases A (no deps), B (no deps), C (dependsOn: ["A"]) produces: `split_phases` → A, B in parallel → `merge_phases` → C. C waits for `merge_phases` even though it only depends on A, because the builder does not support partial fan-in (partial fan-in requires subgraph nesting, which attractor does not parse). If ALL phases have `dependsOn` chains (no independent phases), Pattern 4 is not emitted — phases are serialized with direct edges following the dependency order. Example: phases A (dependsOn: []), B (dependsOn: ["A"]), C (dependsOn: ["B"]) emits edges `impl_a → ... → conformance_a → impl_b → ... → conformance_b → impl_c → ... → conformance_c`, with no `split_phases`/`merge_phases` nodes.
 
 **Review Ratchet topology example** (`.reviewRatchet(3)`):
 ```dot
@@ -348,11 +348,11 @@ check_pass_3 -> fix_review [outcome="issues"]
 
 **DotBuilder instances are single-use.** After `.build()`, the instance is consumed. The fix loop must construct a new `DotBuilder` from the corrected spec for each iteration. *(refined: new)*
 
-**`fromSpec()` field mapping and error behavior**: `fromSpec()` is **fail-fast** — it throws on the first validation error encountered. It first runs the runtime validations from the `fromSpec() Runtime Validation` section (required fields, type checks), throwing `INVALID_SPEC` on structural issues. Then it creates a `new DotBuilder(spec.slug, spec.goal)` and internally calls the corresponding fluent methods for each populated BuilderSpec field: `.phase()` for each entry in `phases`, `.reviewRatchet()` for `reviewRatchet`, `.microverse()` for `microverse`, `.workspace()` for `workspace`/`workspaceOpts`, `.modelStylesheet()` for `modelStylesheet`, and `.acceptanceCriteria()` for `acceptanceCriteria`. Graph-level config fields (`workingDir`, `label`, `defaultMaxRetry`, `specFile`) are set via internal property assignment on the builder instance — these do not have public fluent methods since they are simple scalar values with no validation beyond type checking. Per-phase `threadId` overrides are passed through to the phase's nodes — if `PhaseSpec.threadId` is set, it takes precedence over auto-assignment; if omitted, auto-assigned as `"phase_${N}"`. *(microverse: iter4 #7)* *(council review: makes implicit mapping explicit; post-review: added 4 missing graph-level fields)*
+**`fromSpec()` field mapping and error behavior**: `fromSpec()` is **fail-fast** — it throws on the first validation error encountered. Phase name duplicate detection uses sanitized node IDs (not raw names), throwing `DUPLICATE_PHASE` on the second collision (e.g., phases `"auth scan"` and `"auth-scan"` both sanitize to `auth_scan` — the second `.phase()` call throws). It first runs the runtime validations from the `fromSpec() Runtime Validation` section (required fields, type checks), throwing `INVALID_SPEC` on structural issues. Then it creates a `new DotBuilder(spec.slug, spec.goal)` and internally calls the corresponding fluent methods for each populated BuilderSpec field: `.phase()` for each entry in `phases`, `.reviewRatchet()` for `reviewRatchet`, `.microverse()` for `microverse`, `.workspace()` for `workspace`/`workspaceOpts`, `.modelStylesheet()` for `modelStylesheet`, and `.acceptanceCriteria()` for `acceptanceCriteria`. Graph-level config fields (`workingDir`, `label`, `defaultMaxRetry`, `specFile`) are set via internal property assignment on the builder instance — these do not have public fluent methods since they are simple scalar values with no validation beyond type checking. Per-phase `threadId` overrides are passed through to the phase's nodes — if `PhaseSpec.threadId` is set, it takes precedence over auto-assignment; if omitted, auto-assigned as `"phase_${N}"`. *(microverse: iter4 #7)* *(council review: makes implicit mapping explicit; post-review: added 4 missing graph-level fields)*
 
 **`.build()` return-vs-throw contract** *(council review: C4)*: `.build()` returns `BuildResult` when all diagnostics have `severity: 'warning'` or `severity: 'info'`. It throws `BuildError` when ANY diagnostic has `severity: 'error'`. The `BuildError.diagnostics` array contains ALL diagnostics (errors + warnings + infos). On success, `BuildResult.diagnostics` contains only warnings and infos. The fix loop triggers on `BuildError` catch, not on `BuildResult` inspection.
 
-**`BuildError.code` selection when multiple rules fail** *(microverse: iter6)*: When `.build()` collects multiple error-severity diagnostics from different validation rules, `BuildError.code` is set to the code of the **first** error diagnostic in rule evaluation order (rules 1–15, evaluated sequentially). The `BuildError.diagnostics` array contains ALL diagnostics regardless of which code is selected. The LLM fix loop should iterate `diagnostics`, not rely on `.code` alone — `.code` is a convenience for programmatic callers that need a single error category.
+**`BuildError.code` selection when multiple rules fail** *(microverse: iter6)*: Rules 1–15 are evaluated sequentially by rule number on the complete graph. Each rule examines all relevant nodes/edges before moving to the next rule. The first rule (by number) that produces an error-severity diagnostic sets `BuildError.code`. The `BuildError.diagnostics` array contains ALL diagnostics regardless of which code is selected. The LLM fix loop should iterate `diagnostics`, not rely on `.code` alone — `.code` is a convenience for programmatic callers that need a single error category.
 
 ### CLI Stdin Contract *(refined: new section)*
 
@@ -406,9 +406,9 @@ interface PhaseSpec {
   dependsOn?: string[];           // Phase names this phase depends on; omit for independent phases *(council: C5 — fan-out inference)*
   contextOnSuccess?: Record<string, string>;  // Explicit AC key→value mappings set on this phase's verify node *(council: C6 — replaces post-hoc scanning)*
   escalateOn?: string[];          // default: ["package.json","*.lock","*.config.*"]
-  specFirst?: boolean;            // Pattern 16: default true when goalGate is true
+  specFirst?: boolean;            // Pattern 16: default true when goalGate is true, false otherwise. Explicitly setting specFirst works independently of goalGate — `specFirst: true` on a non-goal-gated phase enables spec-first (opt-in), `specFirst: false` on a goal-gated phase disables it (opt-out).
   goalGate?: boolean;             // Pattern 2: default false
-  retryTarget?: string;           // Node ID for goal gate retry; default: "fix_${phase_name}"
+  retryTarget?: string;           // Node ID for goal gate retry; default: "fix_${phase_name}". Setting retryTarget without goalGate is silently ignored (no error, no effect).
   timeout?: string;               // Duration string, default "30m"
   threadId?: string;              // Auto: "phase_${N}" where N is the phase's 1-based position in BuilderSpec.phases array (declaration order). Only applies to per-phase nodes; cross-phase nodes (fix_all, fix_review, verify_final, start, exit, setup_deps, capture_baseline, split_phases, merge_phases) have no thread_id — they run in attractor's default thread context. *(microverse: iter3 #2, #8)*
   securityScan?: boolean;         // Pattern 8: default false
@@ -426,14 +426,14 @@ interface MicroverseOpts {
   direction: 'reduce' | 'improve';
   allowedPaths: string[];
   timeout?: string;           // default "30m"
-  maxVisits?: number;         // default: 8 on optimize nodes, 10 on compare nodes. When explicitly set, the user's value overrides both defaults and applies uniformly to all microverse loop nodes (optimize, measure, compare, check).
+  maxVisits?: number;         // default: 8 on optimize nodes, 10 on compare nodes. When explicitly set, the user's value overrides both defaults and applies uniformly to all microverse loop nodes (optimize, measure, compare, check). Builder accepts any positive integer ≥1. No minimum enforced beyond positivity.
 }
 // (refined: added maxVisits — Pattern 20 specifies defaults)
 
 interface WorkspaceOpts {
   repoUrl?: string;
   repoBranch?: string;
-  cleanup?: 'delete' | 'preserve';
+  cleanup?: 'delete' | 'preserve';  // default: 'delete' when omitted
 }
 // (refined: removed 'archive' — not documented in patterns or attractor)
 
@@ -532,9 +532,9 @@ class BuildError extends Error {
 | `REVIEW_MISSING_READONLY` | Review node lacks `read_only=true` or STATUS marker | Rule 9: read_only+STATUS |
 | `COMPONENT_NO_MERGE` | `component` node has no matching `tripleoctagon` | Rule 10: component↔tripleoctagon |
 | `FAN_OUT_SCOPE_LEAK` | `retry_target` escapes component scope | Rule 11: fan_out_scope |
-| `WORKSPACE_NO_HTTPS` | `workspace="isolated"` with `repoUrl` present AND not starting with `https://`. If `repoUrl` is absent/undefined, Rule 12 does NOT fire — absent means the workspace uses the current working directory (no clone needed). | Rule 12: workspace_config |
+| `WORKSPACE_NO_HTTPS` | `workspace="isolated"` with `repoUrl` present AND not starting with `https://`. If `repoUrl` is absent/undefined, Rule 12 does NOT fire — absent means the workspace uses the current working directory (no clone needed). When `workspace='isolated'` but `repoUrl` is omitted, the `workspace` attribute is emitted in the graph but `repo_url` is omitted entirely. | Rule 12: workspace_config |
 | `WORKSPACE_NO_PUSH` | `workspace="isolated"` without `commit_and_push` node | Rule 13: workspace_push |
-| `PLAN_MODE_DEADLOCK` | `permission_mode="plan"` in headless pipeline | Rule 14: permission_mode_plan |
+| `PLAN_MODE_DEADLOCK` | `permission_mode="plan"` in headless pipeline (a headless pipeline is one executed by attractor without an interactive user session — e.g., CI/CD, batch mode, tmux-runner — where no human is available to approve plan-mode permission prompts) | Rule 14: permission_mode_plan |
 | `MISSING_ALLOWED_PATHS` | Per-phase codergen **impl** node (e.g., `impl_${phase}`, `fix_${phase}`) lacks `allowed_paths`. Does NOT apply to: (a) non-impl codergen nodes with `read_only=true` (`security_scan_${phase}`, `coverage_check_${phase}`) — these inherit phase `allowed_paths` for context but are read-only so missing paths is non-blocking; (b) cross-phase codergen nodes (`fix_all`, `verify_final`) — those derive `allowed_paths` from the union of all phase paths and get `severity: 'warning'` if the union is empty. | Rule 15: allowed_paths_required *(review: scoped to per-phase impl nodes; microverse: iter3 — clarified non-impl and cross-phase exclusions)* |
 | `INVALID_SPEC` | `fromSpec()` receives valid JSON that fails schema validation: not an object, missing `phases` array, wrong field types. For field-level validation, `fromSpec()` reuses constructor-level codes: `EMPTY_SLUG`, `EMPTY_GOAL`, `DUPLICATE_PHASE`, etc. `INVALID_SPEC` is for structurally valid JSON with schema violations — NOT for unparseable input (which triggers exit 2 before `fromSpec()` is called). *(council: H7; post-review: clarified JSON parse vs schema validation boundary)* | `fromSpec()` |
 | `INVALID_TIMEOUT` | `timeout` value doesn't match `\d+(ms\|s\|m\|h)` or is zero duration | `fromSpec()` per-phase validation *(microverse: iter4 #6)* |
@@ -559,14 +559,14 @@ Tier 2: Auto-generated standard keys on verify_final
     - "cli_contract=true" (from npm test — CLI contract tests run as part of the test suite)
     - "determinism=true" (from npm test — determinism snapshot tests run as part of the test suite)
     - "validation_rules=true" (from npm test — validation rule tests run as part of the test suite)
-  These 6 keys map to the 3 commands in verify_final's tool_command. The last 3 are logically distinct AC dimensions but are all validated by the test suite. Generated at node-creation time, not detected post-hoc.
+  These 6 keys map to the 3 commands in verify_final's tool_command. The last 3 are logically distinct AC dimensions but are all validated by the test suite. Generated at node-creation time, not detected post-hoc. If a user-specified Tier 1 contextOnSuccess key matches a Tier 2 auto-generated key, the user's value takes precedence (Tier 1 wins). No warning emitted.
 
 Validation (runs during .build()):
   For each key K in BuilderSpec.acceptanceCriteria:
     1. Collect all nodes with context_on_success containing K
     2. If exactly 1 node sets K → mapping valid
     3. If 0 nodes set K → emit Diagnostic { rule: 'acceptance_criteria_sources', severity: 'error', message: 'AC key "${K}" has no context_on_success source. Add contextOnSuccess to a PhaseSpec.' }
-    4. If >1 node sets K → emit Diagnostic { severity: 'warning', message: 'AC key "${K}" set by multiple nodes: [${nodeIds}]' }
+    4. If >1 node sets K → emit Diagnostic { severity: 'warning', message: 'AC key "${K}" set by multiple nodes: [${nodeIds}]' } (build succeeds — this is a warning, not an error; distinct from case 3 where 0 nodes set K which is an error)
   For each key K set by any contextOnSuccess but NOT in acceptanceCriteria:
     - Emit Diagnostic { severity: 'warning', message: 'Orphaned context key "${K}" not in acceptanceCriteria' }
 ```
@@ -580,7 +580,7 @@ The graph-level `acceptance_criteria` attribute is formatted from `BuilderSpec.a
 2. Sort keys alphabetically (locale-independent, case-sensitive — same as Object.keys() on a sorted insertion)
 3. For each key K with value V: format as "context.${K}=${V}"
 4. Join all formatted entries with " && " (space-ampersand-ampersand-space)
-5. If acceptanceCriteria is empty ({}): emit empty string ""
+5. If acceptanceCriteria is empty ({}): emit `acceptance_criteria=""` (empty quoted string — attribute is present with empty value, not omitted, because attractor checks for attribute presence)
 ```
 
 Example: `{ lint_clean: "true", tests_pass: "true", types_compile: "true" }` → `"context.lint_clean=true && context.tests_pass=true && context.types_compile=true"`
@@ -600,7 +600,7 @@ Escaping rules (applied to all attribute values):
   5. Wrap all attribute values in double quotes
 ```
 
-Node IDs use only `[a-zA-Z_][a-zA-Z0-9_]*`. Phase names and slugs are sanitized: non-ASCII and special characters convert to `_`, consecutive `_` collapsed.
+Node IDs use only `[a-zA-Z_][a-zA-Z0-9_]*`. Phase names and slugs are sanitized with: replace all non-alphanumeric characters with `_` (regex: `/[^a-zA-Z0-9]/g` → `'_'`), then collapse consecutive `_` to single `_` (regex: `/_{2,}/g` → `'_'`), then strip leading/trailing `_`.
 
 ### DOT Serialization Algorithm *(council review: C1+C2 — unspecified serialization and subgraph ambiguity)*
 
@@ -669,7 +669,7 @@ The builder emits DOT using **flat node declarations with shape markers** — NO
 - `slug` and `goal` are non-empty strings
 - `phases` is an array (empty for start→exit pipeline, non-empty for all others)
 - Each phase has `name`, `prompt`, `allowedPaths` (all must be present/defined; `allowedPaths` must be an array but may be empty — empty arrays pass `fromSpec()` and produce a warning diagnostic at `.build()` time) *(microverse: iter4 #3)*
-- `workspaceOpts` without `workspace: 'isolated'` emits warning diagnostic and is ignored — workspace options have no effect without isolation mode *(microverse: iter7 — unspecified edge case)*
+- `workspaceOpts` present (non-undefined) without `workspace: 'isolated'` emits warning diagnostic and is ignored — workspace options (`repoUrl`, `repoBranch`, `cleanup`) have no effect unless `workspace` field is `'isolated'` *(microverse: iter7 — unspecified edge case)*
 - `StylesheetConfig` partial tier override: `criticalProvider` without `criticalModel` (or `reviewProvider` without `reviewModel`) emits warning diagnostic and ignores the orphaned provider — a tier block requires at minimum a model to emit; provider-only is meaningless *(microverse: iter10 — unspecified partial config)*
 - Unknown top-level fields emit warning diagnostic (not error — forward compatibility)
 - Unknown `PhaseSpec` fields emit warning diagnostic
@@ -748,7 +748,7 @@ The builder MUST pass `npx eslint src/ --max-warnings=-1`. Key constraints from 
    - `tests/dot-builder-validation.test.js` — 15 validation rule tests
    - `tests/dot-builder-cli.test.js` — CLI contract tests (stdin/stdout/stderr, exit codes)
 5. Add `chmod +x "$EXTENSION_ROOT/extension/bin/dot-builder.js"` to `install.sh` permissions section
-6. If `sync-schema` CLI: add `bin/sync-schema.ts`, `package.json` script entry, `install.sh` chmod
+6. If `sync-schema` CLI: add `bin/sync-schema.ts`, `install.sh` chmod, and add `"sync-schema": "node bin/sync-schema.js"` to the `scripts` section in `package.json` (CUJ-4 depends on `npm run sync-schema` being a valid invocation)
 7. Import paths must use `.js` extensions: `import { DotBuilder } from '../services/dot-builder.js'` (per `moduleResolution: NodeNext`)
 8. Zero runtime dependencies — builder uses Node.js built-ins only
 9. Run full gate: `npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npx tsc && npm test`
@@ -812,7 +812,7 @@ The builder MUST pass `npx eslint src/ --max-warnings=-1`. Key constraints from 
 | Graph-level specFile | `dot-builder.test.js` | BuilderSpec with `specFile: "prds/my-prd.md"` | Output graph attributes contain `spec_file="prds/my-prd.md"` *(microverse: iter2 #2)* |
 | Graph-level label override | `dot-builder.test.js` | BuilderSpec with `label: "Custom Label"` | Output graph `label` is `"Custom Label"`, not the goal string *(microverse: iter2 #2)* |
 | Graph-level defaultMaxRetry | `dot-builder.test.js` | BuilderSpec with `defaultMaxRetry: 5` | Output graph attributes contain `default_max_retry="5"` *(microverse: iter2 #2)* |
-| AC Tier 2 auto-generation | `dot-builder.test.js` | BuilderSpec with `acceptanceCriteria: { types_compile: "...", lint_clean: "...", tests_pass: "..." }` and NO `contextOnSuccess` on any phase | `.build()` succeeds; `verify_final` node has `context_on_success` containing all 3 keys *(microverse: iter2 #4)* |
+| AC Tier 2 auto-generation | `dot-builder.test.js` | BuilderSpec with `acceptanceCriteria: { types_compile: "...", lint_clean: "...", tests_pass: "...", cli_contract: "...", determinism: "...", validation_rules: "..." }` and NO `contextOnSuccess` on any phase | `.build()` succeeds; `verify_final` node has `context_on_success` containing all 6 Tier 2 keys (`types_compile`, `lint_clean`, `tests_pass`, `cli_contract`, `determinism`, `validation_rules`) *(microverse: iter2 #4)* |
 | Catastrophic recovery present | `dot-builder-patterns.test.js` | Pipeline with retry loops (goal gate or test-fix) | `verify_final` has edge to `setup_deps` with `loop_restart="true"` *(microverse: iter2 #6)* |
 | Catastrophic recovery absent | `dot-builder-patterns.test.js` | Pipeline with no retry loops | No `loop_restart` edge exists *(microverse: iter2 #6)* |
 | escalateOn default | `dot-builder.test.js` | Phase without explicit `escalateOn` | Impl node has `escalate_on` with default `["package.json","*.lock","*.config.*"]` *(microverse: iter2 #10)* |
