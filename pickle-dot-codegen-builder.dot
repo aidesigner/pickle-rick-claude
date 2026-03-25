@@ -1,0 +1,388 @@
+digraph pickle_dot_codegen_builder {
+    goal = "Build TypeScript DOT pipeline codegen builder with 28 patterns, 15 validation rules, and deterministic output"
+    label = "Pickle-Dot Codegen Builder"
+    working_dir = "/repos/pickle-rick-claude"
+    default_max_retry = 2
+    retry_target = "fix_all"
+    fallback_retry_target = "fix_all"
+    acceptance_criteria = "context.types_compile=true && context.lint_clean=true && context.tests_pass=true && context.cli_contract=true && context.determinism=true && context.validation_rules=true"
+    model_stylesheet = "* { llm_model: claude-sonnet-4-6; } .critical { llm_model: claude-opus-4-6; reasoning_effort: high; } .review { llm_model: claude-opus-4-6; }"
+    spec_file = "/repos/pickle-rick-claude/prds/pickle-dot-codegen-builder.md"
+    default_fidelity = "compact"
+
+    // Defense Matrix:
+    //   Layer 1 (Competitive):  YES — fan-out phases 60 || 65
+    //   Layer 2 (Guardrails):   YES — lint -> typecheck -> test (delta-aware)
+    //   Layer 3 (Spec-Driven):  YES — spec_file + BDD contracts + conformance
+    //   Layer 4 (Permissions):  YES — allowed_paths on all impl nodes
+    //   Layer 5 (Adversarial):  YES — multi-model review ratchet + red team on synthesis
+
+    start [shape=Mdiamond]
+    setup_deps [shape=parallelogram, tool_command="cd ${WORKING_DIR}/extension && npm install 2>&1", timeout="120s"]
+    capture_baseline [shape=parallelogram, tool_command="cd ${WORKING_DIR}/extension && echo '=== BASELINE ===' && (npx eslint src/ --max-warnings=-1 2>&1 || true) | grep -c 'error' > /tmp/baseline_lint_errors.txt && (npx tsc --noEmit 2>&1 || true) | grep -c 'error TS' > /tmp/baseline_ts_errors.txt && echo \"lint=$(cat /tmp/baseline_lint_errors.txt) ts=$(cat /tmp/baseline_ts_errors.txt)\" 2>&1", timeout="120s"]
+
+    // ========== PHASE 1: scaffold-types (Order 10) ==========
+
+    spec_tests_types [class="review", timeout="15m", prompt="Read the spec file at $spec_file, section 'Type Contracts' (lines 382-512). Write failing test cases in extension/tests/dot-builder.test.js that verify: (1) BuilderSpec interface has all 13 fields with correct types, (2) PhaseSpec has all required + optional fields including docOnly, (3) BuildError extends Error with code and diagnostics, (4) Diagnostic has rule/severity/message/nodeId/edge/fix fields, (5) BuildResult has dot/slug/patternsApplied/defenseMatrix/diagnostics, (6) DefenseMatrix has competitive/guardrails/specDriven/permissions/adversarial, (7) ValidationResult has valid/diagnostics, (8) BuildErrorCode is a union of 22 string literals, (9) MicroverseOpts/WorkspaceOpts/StylesheetConfig have correct shapes. Import from '../services/dot-builder.js'. Run tests to confirm they fail. Do NOT write production code.", goal_gate=true, retry_target="spec_tests_types", max_visits=5, allowed_paths="extension/tests/**", escalate_on="extension/package.json, extension/package-lock.json"]
+    impl_types [permission_mode="bypassPermissions", timeout="30m", prompt="Scaffold all builder types in extension/src/types/index.ts. Add to the EXISTING types file — do not create a separate file. Export all interfaces and classes from the PRD Type Contracts section: BuilderSpec, PhaseSpec (with docOnly?: boolean field), MicroverseOpts, WorkspaceOpts, StylesheetConfig, BuildResult, DefenseMatrix, Diagnostic, ValidationResult, BuildError (class extending Error with code: BuildErrorCode and diagnostics: Diagnostic[]), BuildErrorCode (union of 22 string literal types). Match EXACT field names and types from the spec. PhaseSpec.severity must be a union type 'error' | 'warning' | 'info', not plain string. STRICT TSCONFIG: strict mode enabled — use optional property markers (prop?: T), never union types for optional fields. Ensure all I/O resources are closed on every exit path. Every catch must re-throw, return a typed error, or log a warning.", allowed_paths="extension/src/types/**, extension/tests/**", escalate_on="extension/package.json, extension/package-lock.json, *.config.*", max_visits=8, thread_id="phase_1"]
+
+    check_progress_types [shape=parallelogram, tool_command="cd ${WORKING_DIR} && CHANGED=$(git status --porcelain | wc -l | tr -d ' ') && if [ \"$CHANGED\" -eq 0 ]; then echo 'STALL: impl produced zero file changes'; exit 1; fi && echo \"progress: $CHANGED files modified\" 2>&1", max_visits=3]
+    check_progress_gate_types [shape=diamond]
+    verify_types_p1 [shape=parallelogram, tool_command="cd ${WORKING_DIR}/extension && BASELINE_TS=$(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) && CURRENT_TS=$((npx tsc --noEmit 2>&1 || true) | grep -c 'error TS') && echo \"TS baseline=$BASELINE_TS current=$CURRENT_TS\" && [ $CURRENT_TS -le $BASELINE_TS ] || (echo 'TYPECHECK REGRESSION' && exit 1) 2>&1", max_visits=3]
+    check_verify_types_p1 [shape=diamond]
+    scope_check_types [class="review", read_only=true, timeout="15m", prompt="Compare git diff against the phase scope. This phase should ONLY modify extension/src/types/index.ts and extension/tests/ files. Flag any changes to services/, bin/, or other files as out-of-scope. Output 'STATUS: SUCCESS' if all changes are in scope, 'STATUS: FAIL' if out-of-scope changes detected."]
+    conformance_types [class="review", read_only=true, timeout="15m", fidelity="full", goal_gate=true, retry_target="impl_types", max_visits=3, prompt="Conformance audit for Phase 10 (scaffold types). Read $spec_file Type Contracts section. Verify: (1) All 10 interfaces/classes exported from types/index.ts, (2) BuilderSpec.phases is PhaseSpec[] not Phase[], (3) Diagnostic.severity is union type not string, (4) BuildError has constructor(code, message, diagnostics), (5) PhaseSpec includes docOnly?: boolean, (6) No separate type module files created — all in types/index.ts. Output 'STATUS: SUCCESS' if all pass, 'STATUS: FAIL' with specifics."]
+    conformance_gate_types [shape=diamond]
+    fix_conformance_types [prompt="Fix all conformance failures for the types scaffold phase. Ensure every interface matches the PRD Type Contracts exactly. Do NOT modify test files.", permission_mode="bypassPermissions", timeout="15m", allowed_paths="extension/src/types/**", escalate_on="extension/package.json", max_visits=5, thread_id="phase_1"]
+
+    // ========== PHASE 2: core-builder (Order 20) ==========
+
+    bdd_core [class="review", read_only=true, timeout="10m", prompt="Read $spec_file sections: API Contracts, DOT String Escaping, DOT Serialization Algorithm. Generate BDD scenarios in Given/When/Then format for DotBuilder core API: (1) Given empty slug, When constructor called, Then throws EMPTY_SLUG, (2) Given valid slug+goal, When .phase() called twice with same sanitized name, Then throws DUPLICATE_PHASE, (3) Given single phase, When .build() called, Then output contains digraph with Mdiamond start and Msquare exit, (4) Given .build() called, When called again, Then throws ALREADY_BUILT, (5) Given phase name with special chars, When sanitized, Then valid DOT ID, (6) Given prompt with quotes and newlines, When DOT emitted, Then properly escaped. Output 'STATUS: SUCCESS' on its own line."]
+    spec_tests_core [class="review", timeout="15m", prompt="Read the BDD scenarios from previous output. Write failing test cases in extension/tests/dot-builder.test.js covering: constructor validation, phase() fluent chaining, duplicate phase detection (including sanitized collisions like 'auth scan' vs 'auth-scan'), .build() single-use guard, DOT emission with Mdiamond/Msquare, string escaping (quotes, newlines, backslashes), node ID sanitization, attribute formatting (alphabetical, double-quoted). Register this test file in extension/package.json test script. Run tests to confirm they fail. Do NOT write production code.", goal_gate=true, retry_target="spec_tests_core", max_visits=5, allowed_paths="extension/tests/**, extension/package.json", escalate_on="extension/package.json"]
+    impl_core [goal_gate=true, retry_target="impl_core", permission_mode="bypassPermissions", timeout="30m", prompt="Create extension/src/services/dot-builder.ts implementing the DotBuilder class. Import types from '../types/index.js' (use .js extension for ESM). Constructor takes (slug: string, goal: string), throws BuildError EMPTY_SLUG/EMPTY_GOAL on empty. .phase(name, opts) returns this (fluent), throws DUPLICATE_PHASE on sanitized name collision. Sanitize: replace /[^a-zA-Z0-9]/g with '_', collapse consecutive _, strip leading/trailing _. .build() emits valid DOT string with: digraph header, graph-level attributes (alphabetical), defense matrix comment, start node (Mdiamond), setup_deps, capture_baseline, per-phase nodes, exit node (Msquare), edges. All attribute values double-quoted. Attributes within brackets alphabetical. 2-space indent. Single-use guard on .build() — throws ALREADY_BUILT on second call. NO process.exit() — this is a service file (eslint-plugin-pickle rule). STRICT TSCONFIG: strict mode. Ensure all I/O resources are closed on every exit path. Every catch must re-throw, return a typed error, or log a warning.", allowed_paths="extension/src/services/**, extension/tests/**, extension/package.json", escalate_on="extension/package.json, extension/package-lock.json, *.config.*", max_visits=8, thread_id="phase_2"]
+
+    check_progress_core [shape=parallelogram, tool_command="cd ${WORKING_DIR} && CHANGED=$(git status --porcelain | wc -l | tr -d ' ') && if [ \"$CHANGED\" -eq 0 ]; then echo 'STALL'; exit 1; fi && echo \"progress: $CHANGED files modified\" 2>&1", max_visits=3]
+    check_progress_gate_core [shape=diamond]
+    verify_core [shape=parallelogram, tool_command="cd ${WORKING_DIR}/extension && BASELINE_TS=$(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) && CURRENT_TS=$((npx tsc --noEmit 2>&1 || true) | grep -c 'error TS') && echo \"TS baseline=$BASELINE_TS current=$CURRENT_TS\" && [ $CURRENT_TS -le $BASELINE_TS ] && npm test 2>&1 || (echo 'REGRESSION' && exit 1)", max_visits=3]
+    check_verify_core [shape=diamond]
+    scope_check_core [class="review", read_only=true, timeout="15m", prompt="Compare git diff against phase scope. This phase should ONLY modify extension/src/services/dot-builder.ts, extension/tests/dot-builder.test.js, and extension/package.json. Flag changes to types/index.ts (Phase 1 only), bin/, or other files. Output 'STATUS: SUCCESS' or 'STATUS: FAIL'."]
+    conformance_core [class="review", read_only=true, timeout="15m", fidelity="full", goal_gate=true, retry_target="impl_core", max_visits=3, prompt="Conformance audit for Phase 20 (core builder). Verify: (1) DotBuilder class in services/dot-builder.ts, (2) constructor takes (slug, goal) and throws on empty, (3) .phase() returns this and throws DUPLICATE_PHASE, (4) .build() emits DOT with digraph, Mdiamond, Msquare, valid edges, (5) single-use guard, (6) no process.exit(), (7) imports use .js extensions, (8) test file registered in package.json. Output 'STATUS: SUCCESS' or 'STATUS: FAIL' with specifics."]
+    conformance_gate_core [shape=diamond]
+    fix_conformance_core [prompt="Fix conformance failures for core builder. Ensure DotBuilder matches API Contracts from the PRD exactly.", permission_mode="bypassPermissions", timeout="15m", allowed_paths="extension/src/services/**, extension/tests/**", escalate_on="extension/package.json", max_visits=5, thread_id="phase_2"]
+
+    // ========== PHASE 3: validation-engine (Order 30) ==========
+
+    bdd_validation [class="review", read_only=true, timeout="10m", prompt="Read $spec_file sections: validation contract, BuildError Code Reference, 15 structural rules. Generate BDD scenarios for all 15 rules: (1) single start/exit → INVALID_STRUCTURE, (2) incoming→start → START_HAS_INCOMING, (3) unreachable node → UNREACHABLE_NODE, (4) diamond <2 edges → DIAMOND_MISSING_EDGES, (5) goal_gate no max_visits → GOAL_GATE_NO_MAX_VISITS, (6) AC key no source → MISSING_AC_MAPPING, (7) codergen no timeout → MISSING_TIMEOUT, (8) prompt path outside allowed → PROMPT_PATH_MISMATCH, (9) review no read_only → REVIEW_MISSING_READONLY, (10) component no tripleoctagon → COMPONENT_NO_MERGE, (11) retry escapes component → FAN_OUT_SCOPE_LEAK, (12) workspace no HTTPS → WORKSPACE_NO_HTTPS, (13) workspace no push → WORKSPACE_NO_PUSH, (14) permission_mode plan → PLAN_MODE_DEADLOCK, (15) impl no allowed_paths → MISSING_ALLOWED_PATHS. Output 'STATUS: SUCCESS'."]
+    spec_tests_validation [class="review", timeout="15m", prompt="Read BDD scenarios. Write failing tests in extension/tests/dot-builder-validation.test.js — one test per rule (15 total). Each test constructs a DotBuilder with a specific defect, calls .build(), and asserts the correct BuildError code and diagnostic. Register in package.json test script. Run to confirm failures. Do NOT write production code.", goal_gate=true, retry_target="spec_tests_validation", max_visits=5, allowed_paths="extension/tests/**, extension/package.json", escalate_on="extension/package.json"]
+    impl_validation [goal_gate=true, retry_target="impl_validation", permission_mode="bypassPermissions", timeout="30m", prompt="Implement all 15 structural validation rules inside .build() in extension/src/services/dot-builder.ts. Rules run sequentially by number on the complete graph. Each rule examines all relevant nodes/edges. Collect Diagnostic[] — if any have severity 'error', throw BuildError with the first error rule's code. Return BuildResult with warning/info diagnostics otherwise. Rules: (1) exactly 1 start Mdiamond + 1 exit Msquare, (2) start has 0 incoming edges, (3) all nodes reachable from start via BFS/DFS, (4) every diamond has >=2 outgoing edges, (5) goal_gate nodes with retry_target must have max_visits, (6) every AC key has a context_on_success source, (7) all codergen nodes have timeout, (8) prompt file paths within allowed_paths, (9) review nodes have read_only + STATUS in prompt, (10) every component has matching tripleoctagon, (11) retry_target within component scope, (12) workspace=isolated requires HTTPS repo_url (if repo_url present), (13) workspace=isolated requires commit_and_push node, (14) permission_mode=plan rejected for headless, (15) per-phase impl nodes need allowed_paths. STRICT TSCONFIG. No process.exit(). Every catch must re-throw or return typed error.", allowed_paths="extension/src/services/**, extension/tests/**", escalate_on="extension/package.json, extension/package-lock.json", max_visits=8, thread_id="phase_3"]
+
+    check_progress_validation [shape=parallelogram, tool_command="cd ${WORKING_DIR} && CHANGED=$(git status --porcelain | wc -l | tr -d ' ') && if [ \"$CHANGED\" -eq 0 ]; then echo 'STALL'; exit 1; fi && echo \"progress: $CHANGED files\" 2>&1", max_visits=3]
+    check_progress_gate_validation [shape=diamond]
+    verify_validation [shape=parallelogram, tool_command="cd ${WORKING_DIR}/extension && BASELINE_TS=$(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) && CURRENT_TS=$((npx tsc --noEmit 2>&1 || true) | grep -c 'error TS') && echo \"TS baseline=$BASELINE_TS current=$CURRENT_TS\" && [ $CURRENT_TS -le $BASELINE_TS ] && npm test 2>&1 || (echo 'REGRESSION' && exit 1)", max_visits=3]
+    check_verify_validation [shape=diamond]
+    scope_check_validation [class="review", read_only=true, timeout="15m", prompt="Compare git diff against scope. Phase 30 should ONLY modify extension/src/services/dot-builder.ts and extension/tests/dot-builder-validation.test.js. Flag other changes. Output 'STATUS: SUCCESS' or 'STATUS: FAIL'."]
+    conformance_validation [class="review", read_only=true, timeout="15m", fidelity="full", goal_gate=true, retry_target="impl_validation", max_visits=3, prompt="Conformance audit Phase 30. Verify ALL 15 rules implemented (not stubbed). Each rule has a dedicated test. Rules 11-15 (fan_out_scope, workspace_config, workspace_push, permission_mode_plan, allowed_paths_required) are new — verify not skipped. Diagnostics have correct rule, severity, message, nodeId/edge fields. Output 'STATUS: SUCCESS' or 'STATUS: FAIL'."]
+    conformance_gate_validation [shape=diamond]
+    fix_conformance_validation [prompt="Fix validation conformance failures. Ensure all 15 rules are fully implemented with correct diagnostics.", permission_mode="bypassPermissions", timeout="15m", allowed_paths="extension/src/services/**, extension/tests/**", max_visits=5, thread_id="phase_3"]
+
+    // ========== PHASE 4: auto-patterns (Order 40) ==========
+
+    bdd_auto [class="review", read_only=true, timeout="10m", prompt="Read $spec_file Auto-Pattern Implementation Detail table. Generate BDD scenarios for the 18 auto patterns: 0a (setup_deps always emitted), 0b (max_parallel=1 on component nodes), 0c (capture_baseline always), 0d (delta-aware verify wrapping), 0e (check_progress per phase), 1 (test-fix loops per phase), 3 (diamonds have >=2 edges), 4 (fan-out when >=2 independent phases), 6 (max_visits on retry loop nodes), 6b (read_only + STATUS on review nodes), 10 (scope_check after impl), 13 (lint gate in verify chain), 14 (typecheck gate), 15 (conformance per phase), 21 (fix_all before verify_final), 22 (permission scoping on codergen), 23 (defense matrix comment), 25 (catastrophic recovery edge when retry loops exist). Output 'STATUS: SUCCESS'."]
+    spec_tests_auto [class="review", timeout="15m", prompt="Read BDD scenarios. Write snapshot tests in extension/tests/dot-builder-patterns.test.js — one test per auto pattern (18 tests). Each test builds a pipeline with the pattern's preconditions met, calls .build(), and asserts the pattern-specific DOT attributes exist. Use a 2-phase spec with no dependsOn for Pattern 4 testing. Register in package.json. Run to confirm failures.", goal_gate=true, retry_target="spec_tests_auto", max_visits=5, allowed_paths="extension/tests/**, extension/package.json", escalate_on="extension/package.json"]
+    impl_auto [goal_gate=true, retry_target="impl_auto", permission_mode="bypassPermissions", timeout="30m", prompt="Implement all 18 auto-mode patterns in .build() of extension/src/services/dot-builder.ts. Auto patterns fire unconditionally — no user control. Key implementations: (0a) emit setup_deps with npm install tool_command, (0b) inject max_parallel=1 on component nodes, (0c) emit capture_baseline with lint+typecheck snapshot, (0d) wrap verify commands with baseline comparison, (0e) emit check_progress after each impl with git status --porcelain, (1) emit test diamond + fix loop per phase, (3) ensure all diamonds have >=2 outgoing edges, (4) emit split_phases/merge_phases when >=2 phases have no dependsOn — phases with dependsOn serialize after merge, (6) inject max_visits=5 on nodes with incoming retry edges (don't overwrite existing lower values like 0e's max_visits=3), (6b) inject read_only=true + STATUS on review nodes, (10) emit scope_check after impl, (13) lint gate verify_lint, (14) typecheck gate verify_types, (15) conformance per phase, (21) fix_all before verify_final, (22) inject allowed_paths + escalate_on + permission_mode on codergen nodes, (23) generate defense matrix comment block, (25) catastrophic recovery loop_restart edge when pipeline has retry loops (NOT on zero-phase). Track patternsApplied — only include patterns that produced output. Pattern 16b (BDD) is opt-in NOT auto. STRICT TSCONFIG. No process.exit().", allowed_paths="extension/src/services/**, extension/tests/**", escalate_on="extension/package.json, extension/package-lock.json", max_visits=8, thread_id="phase_4"]
+
+    check_progress_auto [shape=parallelogram, tool_command="cd ${WORKING_DIR} && CHANGED=$(git status --porcelain | wc -l | tr -d ' ') && if [ \"$CHANGED\" -eq 0 ]; then echo 'STALL'; exit 1; fi && echo \"progress: $CHANGED files\" 2>&1", max_visits=3]
+    check_progress_gate_auto [shape=diamond]
+    verify_auto [shape=parallelogram, tool_command="cd ${WORKING_DIR}/extension && BASELINE_TS=$(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) && CURRENT_TS=$((npx tsc --noEmit 2>&1 || true) | grep -c 'error TS') && echo \"TS baseline=$BASELINE_TS current=$CURRENT_TS\" && [ $CURRENT_TS -le $BASELINE_TS ] && npm test 2>&1 || (echo 'REGRESSION' && exit 1)", max_visits=3]
+    check_verify_auto [shape=diamond]
+    scope_check_auto [class="review", read_only=true, timeout="15m", prompt="Compare git diff against scope. Phase 40 should ONLY modify extension/src/services/dot-builder.ts and extension/tests/dot-builder-patterns.test.js. Output 'STATUS: SUCCESS' or 'STATUS: FAIL'."]
+    conformance_auto [class="review", read_only=true, timeout="15m", fidelity="full", goal_gate=true, retry_target="impl_auto", max_visits=3, prompt="Conformance audit Phase 40. Verify: (1) all 18 auto patterns implemented, (2) BuildResult.patternsApplied includes every auto pattern for a 2-phase spec with no dependsOn, (3) Pattern 16b (BDD) NOT applied unless bddScenarios:true, (4) conditional patterns (0b, 4, 25) present because preconditions met, (5) Pattern 4 emits split_phases/merge_phases only when >=2 independent phases. Output 'STATUS: SUCCESS' or 'STATUS: FAIL'."]
+    conformance_gate_auto [shape=diamond]
+    fix_conformance_auto [prompt="Fix auto-pattern conformance failures.", permission_mode="bypassPermissions", timeout="15m", allowed_paths="extension/src/services/**, extension/tests/**", max_visits=5, thread_id="phase_4"]
+
+    // ========== PHASE 5: opt-in-patterns (Order 50) ==========
+
+    spec_tests_opt_in [class="review", timeout="15m", prompt="Write snapshot tests in extension/tests/dot-builder-patterns.test.js for the 10 remaining patterns: (0) workspace isolation + commit_and_push, (2) goal gates with retry_target + max_visits, (8) security scan after check_progress, (9) coverage gate after test success, (16) spec-first default-on with goalGate + opt-out via specFirst:false, (16b) BDD scenarios opt-in only when bddScenarios:true, (17) red team after conformance, (18) competing impls component+tripleoctagon, (19) review ratchet N-pass topology, (20) microverse optimize-measure-compare-check loop. Also test: specFirst:true on non-goal-gated phase enables it, .modelStylesheet() generates valid CSS-like syntax. Run to confirm failures.", goal_gate=false, allowed_paths="extension/tests/**, extension/package.json", escalate_on="extension/package.json", max_visits=5]
+    impl_opt_in [permission_mode="bypassPermissions", timeout="30m", prompt="Implement all 10 opt-in and default-on patterns in extension/src/services/dot-builder.ts. Add fluent methods: .microverse(name, opts), .reviewRatchet(passes), .acceptanceCriteria(criteria), .workspace(opts?), .modelStylesheet(config). Patterns: (0) workspace isolation emits graph attrs + commit_and_push node, (2) goalGate injects goal_gate+retry_target+max_visits on test diamond, (8) securityScan adds security_scan node as class=review read_only, (9) coverageTarget adds coverage_check after test success, (16) specFirst default-on when goalGate — adds spec_file node before impl, (16b) bddScenarios adds bdd_scenarios node when explicitly true, (17) redTeam adds red_team node after conformance, (18) competing replaces single impl with component fan-out, (19) reviewRatchet generates N-pass consecutive clean review loop with fix_review + reset-on-fail, (20) microverse generates commit_baseline→baseline→optimize→measure→compare→check loop with three-way routing. Implement fromSpec() static factory per PRD spec — internally calls constructor + fluent methods. Graph-level fields (workingDir, label, defaultMaxRetry, specFile) via internal property assignment. Support docOnly phases — skip verify chain, route check_progress/scope_check failures to fix_all. STRICT TSCONFIG. No process.exit().", allowed_paths="extension/src/services/**, extension/tests/**", escalate_on="extension/package.json, extension/package-lock.json", max_visits=8, thread_id="phase_5"]
+
+    check_progress_opt_in [shape=parallelogram, tool_command="cd ${WORKING_DIR} && CHANGED=$(git status --porcelain | wc -l | tr -d ' ') && if [ \"$CHANGED\" -eq 0 ]; then echo 'STALL'; exit 1; fi && echo \"progress: $CHANGED files\" 2>&1", max_visits=3]
+    check_progress_gate_opt_in [shape=diamond]
+    verify_opt_in [shape=parallelogram, tool_command="cd ${WORKING_DIR}/extension && BASELINE_TS=$(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) && CURRENT_TS=$((npx tsc --noEmit 2>&1 || true) | grep -c 'error TS') && echo \"TS baseline=$BASELINE_TS current=$CURRENT_TS\" && [ $CURRENT_TS -le $BASELINE_TS ] && npm test 2>&1 || (echo 'REGRESSION' && exit 1)", max_visits=3]
+    check_verify_opt_in [shape=diamond]
+    coverage_opt_in [class="review", read_only=true, timeout="15m", prompt="Analyze test coverage on extension/src/services/dot-builder.ts. Target >=85% line coverage. Run: cd extension && node --test --experimental-test-coverage 2>&1. Check coverage output for dot-builder.ts specifically. Output 'STATUS: SUCCESS' if >=85%, 'STATUS: FAIL' with uncovered areas.", goal_gate=true, retry_target="impl_opt_in", max_visits=3]
+    coverage_gate_opt_in [shape=diamond]
+    scope_check_opt_in [class="review", read_only=true, timeout="15m", prompt="Compare git diff against scope. Phase 50 should ONLY modify extension/src/services/dot-builder.ts and extension/tests/dot-builder-patterns.test.js. Output 'STATUS: SUCCESS' or 'STATUS: FAIL'."]
+    conformance_opt_in [class="review", read_only=true, timeout="15m", fidelity="full", goal_gate=true, retry_target="impl_opt_in", max_visits=3, prompt="Conformance audit Phase 50. Verify: (1) all 28 active v1 patterns have snapshot tests, (2) opt-in patterns absent when not requested, (3) default-on Pattern 16 opt-out works via specFirst:false, (4) .modelStylesheet() generates valid CSS-like syntax, (5) competing:true activates Pattern 18 (component→tripleoctagon) NOT Pattern 4, (6) docOnly phases skip verify chain. Output 'STATUS: SUCCESS' or 'STATUS: FAIL'."]
+    conformance_gate_opt_in [shape=diamond]
+    fix_conformance_opt_in [prompt="Fix opt-in pattern conformance failures.", permission_mode="bypassPermissions", timeout="15m", allowed_paths="extension/src/services/**, extension/tests/**", max_visits=5, thread_id="phase_5"]
+
+    // ========== FAN-OUT: Phase 6 || Phase 7 ==========
+    split_phases [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
+
+    // ========== PHASE 6: cli-entry (Order 60) — Branch A ==========
+
+    spec_tests_cli [class="review", timeout="15m", prompt="Write failing tests in extension/tests/dot-builder-cli.test.js for the CLI contract: (1) pipe valid BuilderSpec JSON to stdin → exit 0, stdout is valid BuildResult JSON, (2) pipe spec with missing AC mapping → exit 1, stderr has diagnostics with MISSING_AC_MAPPING code, (3) pipe invalid JSON → exit 2, stderr has UNEXPECTED_ERROR, (4) pipe >512KB → exit 2, stderr has INPUT_TOO_LARGE, (5) fromSpec() with missing slug → throws EMPTY_SLUG, (6) fromSpec() produces identical DOT to equivalent constructor calls (determinism), (7) build same spec twice → byte-identical output. Register in package.json. Run to confirm failures.", goal_gate=true, retry_target="spec_tests_cli", max_visits=5, allowed_paths="extension/tests/**, extension/package.json", escalate_on="extension/package.json"]
+    impl_cli [goal_gate=true, retry_target="impl_cli", permission_mode="bypassPermissions", timeout="30m", prompt="Create extension/src/bin/dot-builder.ts — CLI entry point. CLI guard: if (process.argv[1] && path.basename(process.argv[1]) === 'dot-builder.js') { main(); }. main() is SYNCHRONOUS (not async) — uses fs.readFileSync(0, 'utf8') for stdin. 512KB input guard. Parse JSON, call DotBuilder.fromSpec(spec), call .build(). Exit 0: stdout BuildResult JSON. Exit 1: stderr {error: code, message, diagnostics} for BuildError. Exit 2: stderr {error: 'UNEXPECTED_ERROR'|'INPUT_TOO_LARGE', message} for non-recoverable. Import DotBuilder from '../services/dot-builder.js'. Also add chmod +x line for bin/dot-builder.js to install.sh permissions section. Register all 4 test files in package.json test script. STRICT TSCONFIG. eslint rules: pickle/cli-guard-basename requires path.basename pattern, pickle/no-sync-in-async requires main() be sync.", allowed_paths="extension/src/bin/**, extension/tests/**, extension/package.json, install.sh", escalate_on="extension/package.json, extension/package-lock.json, install.sh", max_visits=8, thread_id="phase_6"]
+
+    check_progress_cli [shape=parallelogram, tool_command="cd ${WORKING_DIR} && CHANGED=$(git status --porcelain | wc -l | tr -d ' ') && if [ \"$CHANGED\" -eq 0 ]; then echo 'STALL'; exit 1; fi && echo \"progress: $CHANGED files\" 2>&1", max_visits=3]
+    check_progress_gate_cli [shape=diamond]
+    verify_cli [shape=parallelogram, tool_command="cd ${WORKING_DIR}/extension && BASELINE_TS=$(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) && CURRENT_TS=$((npx tsc --noEmit 2>&1 || true) | grep -c 'error TS') && BASELINE_LINT=$(cat /tmp/baseline_lint_errors.txt 2>/dev/null || echo 0) && CURRENT_LINT=$((npx eslint src/ --max-warnings=-1 2>&1 || true) | grep -c 'error') && echo \"TS baseline=$BASELINE_TS current=$CURRENT_TS Lint baseline=$BASELINE_LINT current=$CURRENT_LINT\" && [ $CURRENT_TS -le $BASELINE_TS ] && [ $CURRENT_LINT -le $BASELINE_LINT ] && npm test 2>&1 || (echo 'REGRESSION' && exit 1)", max_visits=3]
+    check_verify_cli [shape=diamond]
+    scope_check_cli [class="review", read_only=true, timeout="15m", prompt="Compare git diff. Phase 60 should modify: extension/src/bin/dot-builder.ts, extension/tests/dot-builder-cli.test.js, extension/package.json, install.sh. Flag unexpected changes. Output 'STATUS: SUCCESS' or 'STATUS: FAIL'."]
+    conformance_cli [class="review", read_only=true, timeout="15m", fidelity="full", goal_gate=true, retry_target="impl_cli", max_visits=3, prompt="Conformance audit Phase 60. Verify: (1) CLI guard uses path.basename, (2) stdin via fs.readFileSync(0, 'utf8'), (3) 512KB guard, (4) exit 0/1/2 per contract, (5) fromSpec() identical output to constructor, (6) eslint passes with --max-warnings=-1, (7) install.sh has chmod, (8) all 4 test files in package.json. Output 'STATUS: SUCCESS' or 'STATUS: FAIL'."]
+    conformance_gate_cli [shape=diamond]
+    fix_conformance_cli [prompt="Fix CLI conformance failures.", permission_mode="bypassPermissions", timeout="15m", allowed_paths="extension/src/bin/**, extension/tests/**, extension/package.json, install.sh", max_visits=5, thread_id="phase_6"]
+
+    // ========== PHASE 7: fallback-schema (Order 65) — Branch B ==========
+
+    impl_fallback [permission_mode="bypassPermissions", timeout="30m", prompt="Create extension/src/types/attractor-schema.fallback.ts exporting a typed schema object with all builder-emitted attributes. Node attributes (17): class, shape, goal_gate, retry_target, max_visits, thread_id, timeout, allowed_paths, read_only, context_on_success, prompt, tool_command, max_parallel, escalate_on, permission_mode, auto_status, allow_partial. Graph attributes (12): goal, working_dir, default_max_retry, label, acceptance_criteria, model_stylesheet, spec_file, workspace, repo_url, repo_branch, workspace_cleanup, retry_target. Edge attributes (2): outcome, loop_restart. Each attribute should have name, type (string/number/boolean), and scope (node/graph/edge). Export as a const object. The builder should import this and use it for attribute validation when $ATTRACTOR_ROOT schema is unavailable. STRICT TSCONFIG.", allowed_paths="extension/src/types/**", escalate_on="extension/package.json, extension/package-lock.json", max_visits=8, thread_id="phase_7"]
+
+    check_progress_fallback [shape=parallelogram, tool_command="cd ${WORKING_DIR} && CHANGED=$(git status --porcelain | wc -l | tr -d ' ') && if [ \"$CHANGED\" -eq 0 ]; then echo 'STALL'; exit 1; fi && echo \"progress: $CHANGED files\" 2>&1", max_visits=3]
+    check_progress_gate_fallback [shape=diamond]
+    verify_fallback [shape=parallelogram, tool_command="cd ${WORKING_DIR}/extension && BASELINE_TS=$(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) && CURRENT_TS=$((npx tsc --noEmit 2>&1 || true) | grep -c 'error TS') && echo \"TS baseline=$BASELINE_TS current=$CURRENT_TS\" && [ $CURRENT_TS -le $BASELINE_TS ] || (echo 'TYPECHECK REGRESSION' && exit 1) 2>&1", max_visits=3]
+    check_verify_fallback [shape=diamond]
+    scope_check_fallback [class="review", read_only=true, timeout="15m", prompt="Compare git diff. Phase 65 should ONLY create extension/src/types/attractor-schema.fallback.ts. Flag other changes. Output 'STATUS: SUCCESS' or 'STATUS: FAIL'."]
+    conformance_fallback [class="review", read_only=true, timeout="15m", fidelity="full", prompt="Conformance audit Phase 65. Verify: (1) fallback file committed with ALL 31 attributes (17 node + 12 graph + 2 edge), (2) includes auto_status and allow_partial for Pattern 20, (3) retry_target listed in both node and graph scope, (4) shape attribute present. Output 'STATUS: SUCCESS' or 'STATUS: FAIL'."]
+    conformance_gate_fallback [shape=diamond]
+    fix_conformance_fallback [prompt="Fix fallback schema conformance failures. Ensure all 31 attributes present.", permission_mode="bypassPermissions", timeout="15m", allowed_paths="extension/src/types/**", max_visits=5, thread_id="phase_7"]
+
+    // ========== FAN-IN ==========
+    merge_phases [shape=tripleoctagon, class="review", timeout="10m", prompt="Both branches complete. Verify no merge conflicts in package.json or shared files. Select combined result."]
+
+    // ========== PHASE 8: schema-sync (Order 70) ==========
+
+    spec_tests_sync [class="review", timeout="15m", prompt="Write tests for the schema sync script: (1) when $ATTRACTOR_ROOT/schema.json exists, npm run sync-schema generates types/attractor-schema.ts, (2) when unavailable, script exits gracefully with warning, (3) generated file is valid TypeScript. Place in existing test files or create minimal test. Run to confirm failures.", allowed_paths="extension/tests/**, extension/package.json", escalate_on="extension/package.json", max_visits=5]
+    impl_sync [permission_mode="bypassPermissions", timeout="30m", prompt="Create extension/src/bin/sync-schema.ts — reads $ATTRACTOR_ROOT/schema.json when env var is set, generates extension/src/types/attractor-schema.ts (auto-generated, gitignored). Falls back gracefully if unavailable. Add npm run sync-schema script to package.json. Add extension/src/types/attractor-schema.ts to .gitignore. CLI guard pattern: path.basename(process.argv[1]) === 'sync-schema.js'. Add chmod +x to install.sh for bin/sync-schema.js. STRICT TSCONFIG.", allowed_paths="extension/src/bin/**, extension/src/types/**, extension/tests/**, extension/package.json, .gitignore, install.sh", escalate_on="extension/package.json, extension/package-lock.json, .gitignore, install.sh", max_visits=8, thread_id="phase_8"]
+
+    check_progress_sync [shape=parallelogram, tool_command="cd ${WORKING_DIR} && CHANGED=$(git status --porcelain | wc -l | tr -d ' ') && if [ \"$CHANGED\" -eq 0 ]; then echo 'STALL'; exit 1; fi && echo \"progress: $CHANGED files\" 2>&1", max_visits=3]
+    check_progress_gate_sync [shape=diamond]
+    verify_sync [shape=parallelogram, tool_command="cd ${WORKING_DIR}/extension && BASELINE_TS=$(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) && CURRENT_TS=$((npx tsc --noEmit 2>&1 || true) | grep -c 'error TS') && echo \"TS baseline=$BASELINE_TS current=$CURRENT_TS\" && [ $CURRENT_TS -le $BASELINE_TS ] && npm test 2>&1 || (echo 'REGRESSION' && exit 1)", max_visits=3]
+    check_verify_sync [shape=diamond]
+    scope_check_sync [class="review", read_only=true, timeout="15m", prompt="Compare git diff. Phase 70 should modify: extension/src/bin/sync-schema.ts, extension/package.json, .gitignore, install.sh, and test files. Flag unexpected changes. Output 'STATUS: SUCCESS' or 'STATUS: FAIL'."]
+    conformance_sync [class="review", read_only=true, timeout="15m", fidelity="full", prompt="Conformance audit Phase 70. Verify: (1) sync-schema.ts has CLI guard, (2) npm run sync-schema in package.json, (3) attractor-schema.ts in .gitignore, (4) install.sh has chmod, (5) fallback file untouched. Output 'STATUS: SUCCESS' or 'STATUS: FAIL'."]
+    conformance_gate_sync [shape=diamond]
+    fix_conformance_sync [prompt="Fix schema sync conformance failures.", permission_mode="bypassPermissions", timeout="15m", allowed_paths="extension/src/bin/**, extension/src/types/**, extension/tests/**, extension/package.json, .gitignore, install.sh", max_visits=5, thread_id="phase_8"]
+
+    // ========== PHASE 9: synthesis-gate (Order 75) ==========
+
+    impl_synthesis [goal_gate=true, retry_target="impl_synthesis", permission_mode="bypassPermissions", timeout="30m", prompt="Cross-phase synthesis verification. Run the FULL verification gate: cd extension && npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npm test. Then verify 10-point coherence: (1) types/index.ts exports ALL builder types (BuilderSpec, BuildResult, BuildError, Diagnostic, etc.), (2) services/dot-builder.ts imports from types/index.js not a separate file, (3) bin/dot-builder.ts imports DotBuilder from services/dot-builder.js and uses fromSpec(), (4) all 15 validation rules implemented and tested (not stubbed), (5) all 28 active pattern snapshot tests exist and assert specific DOT attributes, (6) install.sh has chmod for dot-builder.js and sync-schema.js, (7) package.json test script includes all 4 test files, (8) no circular imports between types → services → bin, (9) .build() from fromSpec() output produces valid DOT passing internal validation with 0 errors, (10) CLI contract: echo valid JSON | node bin/dot-builder.js exits 0 with valid JSON. Fix any issues found.", allowed_paths="extension/src/**, extension/tests/**, extension/package.json, install.sh", escalate_on="extension/package.json, extension/package-lock.json, *.config.*", max_visits=8, thread_id="phase_9"]
+
+    check_progress_synthesis [shape=parallelogram, tool_command="cd ${WORKING_DIR} && CHANGED=$(git status --porcelain | wc -l | tr -d ' ') && if [ \"$CHANGED\" -eq 0 ]; then echo 'STALL'; exit 1; fi && echo \"progress: $CHANGED files\" 2>&1", max_visits=3]
+    check_progress_gate_synthesis [shape=diamond]
+    verify_synthesis [shape=parallelogram, tool_command="cd ${WORKING_DIR}/extension && BASELINE_TS=$(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) && CURRENT_TS=$((npx tsc --noEmit 2>&1 || true) | grep -c 'error TS') && BASELINE_LINT=$(cat /tmp/baseline_lint_errors.txt 2>/dev/null || echo 0) && CURRENT_LINT=$((npx eslint src/ --max-warnings=-1 2>&1 || true) | grep -c 'error') && echo \"TS baseline=$BASELINE_TS current=$CURRENT_TS Lint baseline=$BASELINE_LINT current=$CURRENT_LINT\" && [ $CURRENT_TS -le $BASELINE_TS ] && [ $CURRENT_LINT -le $BASELINE_LINT ] && npm test 2>&1 || (echo 'REGRESSION' && exit 1)", max_visits=3]
+    check_verify_synthesis [shape=diamond]
+    scope_check_synthesis [class="review", read_only=true, timeout="15m", prompt="Compare git diff. Phase 75 should only fix integration issues in extension/src/** and extension/tests/**. No new features. Output 'STATUS: SUCCESS' or 'STATUS: FAIL'."]
+    conformance_synthesis [class="review", read_only=true, timeout="15m", fidelity="full", goal_gate=true, retry_target="impl_synthesis", max_visits=3, prompt="Conformance audit Phase 75. Run the full 10-point coherence check from the synthesis gate spec. Every single check must pass. This is the integration gate — if it fails, the builder is not ready. Output 'STATUS: SUCCESS' if all 10 pass, 'STATUS: FAIL' with specifics."]
+    conformance_gate_synthesis [shape=diamond]
+    red_team_synthesis [class="critical", timeout="20m", fidelity="full", prompt="Adversarial audit of the dot-builder. Attempt to break it with: (1) empty phases array, (2) unicode phase names, (3) >10 phases, (4) slug with slashes/hashes, (5) prompt containing quotes and newlines, (6) allowedPaths with absolute paths, (7) timeout='30' (missing unit), (8) two phases sanitizing to same ID, (9) timeout='0m', (10) contextOnSuccess key not in acceptanceCriteria. For each: call fromSpec() or construct via API, verify structured BuildError (not crash). Write repro tests in extension/tests/dot-builder.test.js if any crash found. Output 'STATUS: SUCCESS' if all produce structured errors, 'STATUS: FAIL' if any crash.", goal_gate=true, retry_target="impl_synthesis", max_visits=5, allowed_paths="extension/tests/**"]
+    red_team_gate_synthesis [shape=diamond]
+    fix_conformance_synthesis [prompt="Fix synthesis or red team failures. Address integration issues and adversarial edge cases.", permission_mode="bypassPermissions", timeout="15m", allowed_paths="extension/src/**, extension/tests/**", max_visits=5, thread_id="phase_9"]
+
+    // ========== PHASE 10: prompt-rewrite (Order 80) — docOnly ==========
+
+    impl_prompt [permission_mode="bypassPermissions", timeout="30m", prompt="Rewrite .claude/commands/pickle-dot.md to use the builder. The updated prompt must: (1) Remove ALL raw DOT generation instructions, (2) Add BuilderSpec JSON construction instructions — the LLM analyzes the PRD and constructs a BuilderSpec, (3) Include >=3 few-shot examples: single-phase, multi-phase with fan-out, microverse — each showing the complete BuilderSpec JSON, (4) Add fix-loop instructions: pipe BuilderSpec JSON to stdin of node ~/.claude/pickle-rick/extension/bin/dot-builder.js. On exit 0 the DOT is in stdout JSON .dot field — done. On exit 1 (validation) or exit 2 (build) parse stderr JSON .diagnostics array — error_count = diagnostics.length. Each iteration: if error_count < best_error_count then save current BuilderSpec as best and update best_error_count; if error_count >= previous error_count for 2 consecutive iterations then revert to best BuilderSpec and retry from there. After 3 total failed attempts (iterations where error_count did not decrease) save best result to <output_path>.dot.draft and print 'Fix-loop exhausted after N iterations. Best result (score error_count) saved to <path>.dot.draft — review diagnostics and fix manually.', (5) Add --builder flag for Phase 1 opt-in (default remains prompt-only), (6) Add --legacy flag to preserve prompt-only generation. The prompt must reference BuilderSpec interface fields EXACTLY as defined in the PRD. Do NOT include any raw DOT syntax examples.", allowed_paths=".claude/commands/pickle-dot.md", escalate_on="", max_visits=8, thread_id="phase_10"]
+
+    check_progress_prompt [shape=parallelogram, tool_command="cd ${WORKING_DIR} && CHANGED=$(git status --porcelain | wc -l | tr -d ' ') && if [ \"$CHANGED\" -eq 0 ]; then echo 'STALL'; exit 1; fi && echo \"progress: $CHANGED files\" 2>&1", max_visits=3]
+    check_progress_gate_prompt [shape=diamond]
+    scope_check_prompt [class="review", read_only=true, timeout="15m", prompt="Compare git diff. Phase 80 should ONLY modify .claude/commands/pickle-dot.md. Flag any other changes — especially to TypeScript source or test files. Output 'STATUS: SUCCESS' or 'STATUS: FAIL'."]
+    conformance_prompt [class="review", read_only=true, timeout="15m", fidelity="full", prompt="Conformance audit Phase 80 (prompt rewrite). Verify: (1) NO raw DOT generation instructions remain, (2) BuilderSpec construction instructions present, (3) >=3 few-shot examples (single-phase, multi-phase, microverse), (4) fix-loop instructions with error count tracking, (5) --builder flag for Phase 1 opt-in, (6) --legacy flag for rollback, (7) field names match EXACT BuilderSpec interface from PRD. Output 'STATUS: SUCCESS' or 'STATUS: FAIL'."]
+    conformance_gate_prompt [shape=diamond]
+    fix_conformance_prompt [prompt="Fix prompt rewrite conformance failures. Ensure the pickle-dot command matches the PRD requirements exactly.", permission_mode="bypassPermissions", timeout="15m", allowed_paths=".claude/commands/pickle-dot.md", max_visits=5, thread_id="phase_10"]
+
+    // ========== PHASE 11: readme-update (Order 85) — docOnly ==========
+
+    impl_readme [permission_mode="bypassPermissions", timeout="30m", prompt="Update README.md to document the builder: (1) Builder API overview — DotBuilder class, fluent chaining, .build() output, (2) BuilderSpec JSON structure with field descriptions, (3) /pickle-dot invocation — --builder for opt-in, default behavior, --legacy for rollback, (4) Fix-loop behavior and .dot.draft files, (5) CLI contract: stdin JSON → exit 0 stdout JSON / exit 1 stderr JSON / exit 2 stderr JSON. Reference the existing README structure and add a new section for the builder. Do NOT reference prompt-only generation as the primary path.", allowed_paths="README.md", escalate_on="", max_visits=8, thread_id="phase_11"]
+
+    check_progress_readme [shape=parallelogram, tool_command="cd ${WORKING_DIR} && CHANGED=$(git status --porcelain | wc -l | tr -d ' ') && if [ \"$CHANGED\" -eq 0 ]; then echo 'STALL'; exit 1; fi && echo \"progress: $CHANGED files\" 2>&1", max_visits=3]
+    check_progress_gate_readme [shape=diamond]
+    scope_check_readme [class="review", read_only=true, timeout="15m", prompt="Compare git diff. Phase 85 should ONLY modify README.md. Flag any other changes. Output 'STATUS: SUCCESS' or 'STATUS: FAIL'."]
+    conformance_readme [class="review", read_only=true, timeout="15m", fidelity="full", prompt="Conformance audit Phase 85 (README). Verify: (1) builder API overview present, (2) BuilderSpec JSON documented, (3) /pickle-dot invocation documented (--builder, --legacy), (4) fix-loop and .dot.draft documented, (5) CLI contract documented. README matches current implementation. Output 'STATUS: SUCCESS' or 'STATUS: FAIL'."]
+    conformance_gate_readme [shape=diamond]
+    fix_conformance_readme [prompt="Fix README conformance failures.", permission_mode="bypassPermissions", timeout="15m", allowed_paths="README.md", max_visits=5, thread_id="phase_11"]
+
+    // ========== REVIEW RATCHET: 2 consecutive clean passes ==========
+
+    split_review_1 [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
+    reviewer_correctness_1 [class="review", read_only=true, timeout="15m", fidelity="full", prompt="Correctness review of ALL builder code — extension/src/services/dot-builder.ts, extension/src/bin/dot-builder.ts, extension/src/types/. Focus: logic errors, off-by-one in pattern counting, null/undefined handling, async correctness, DOT syntax generation bugs, validation rule edge cases, fromSpec() field mapping completeness. List issues with file:line. Then output 'STATUS: SUCCESS' on its own line."]
+    reviewer_patterns_1 [class="review", read_only=true, timeout="15m", fidelity="full", prompt="Patterns review of ALL builder code. Focus: anti-patterns, code duplication between patterns, naming consistency (node IDs, method names), error handling (every catch re-throws or returns typed error), ESLint plugin compliance (no process.exit in services, CLI guard pattern, no unsafe error cast, no sync in async), fluent API consistency. List issues with file:line. Then output 'STATUS: SUCCESS' on its own line."]
+    merge_review_1 [shape=tripleoctagon, class="review", timeout="10m", prompt="Consolidate correctness + patterns reviews. Classify each issue as BLOCKER (correctness bug, security issue, contract violation, data loss risk, or runtime crash) or ADVISORY (style improvement, naming suggestion, minor refactor, performance micro-optimization). Output CLEAN if zero BLOCKERs, DIRTY if any BLOCKERs exist."]
+    check_review_1 [shape=diamond]
+    fix_review_1 [prompt="Fix all BLOCKER issues from review pass 1. Also simplify: redundant logic, duplication, naming. Do NOT modify test files unless fixing a test bug.", permission_mode="bypassPermissions", timeout="15m", fidelity="full", allowed_paths="extension/src/**, extension/tests/**", escalate_on="extension/package.json, extension/package-lock.json", max_visits=5]
+    reverify_1 [shape=parallelogram, tool_command="cd ${WORKING_DIR}/extension && BASELINE_TS=$(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) && CURRENT_TS=$((npx tsc --noEmit 2>&1 || true) | grep -c 'error TS') && BASELINE_LINT=$(cat /tmp/baseline_lint_errors.txt 2>/dev/null || echo 0) && CURRENT_LINT=$((npx eslint src/ --max-warnings=-1 2>&1 || true) | grep -c 'error') && npm test 2>&1 && [ $CURRENT_TS -le $BASELINE_TS ] && [ $CURRENT_LINT -le $BASELINE_LINT ] && echo 'DELTA: CLEAN' || (echo 'DELTA: REGRESSION' && exit 1)"]
+    check_reverify_1 [shape=diamond]
+
+    split_review_2 [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
+    reviewer_correctness_2 [class="review", read_only=true, timeout="15m", fidelity="full", prompt="Fresh correctness review of ALL builder code — assume nothing from prior reviews. Check: determinism (same input → byte-identical output), thread_id assignment, acceptance criteria mapping algorithm, defense matrix computation, DOT serialization order, cross-phase node attribute inheritance. List issues with file:line. Then output 'STATUS: SUCCESS' on its own line."]
+    reviewer_patterns_2 [class="review", read_only=true, timeout="15m", fidelity="full", prompt="Fresh patterns review of ALL builder code — assume nothing. Check: Pattern Application Matrix compliance (auto vs opt-in vs default-on boundaries), patternsApplied accuracy (vacuous application exclusion), zero-phase edge case handling, docOnly phase routing, fan-out dependency inference. List issues with file:line. Then output 'STATUS: SUCCESS' on its own line."]
+    merge_review_2 [shape=tripleoctagon, class="review", timeout="10m", prompt="Consolidate fresh reviews. Classify each issue as BLOCKER (correctness bug, security issue, contract violation, data loss risk, or runtime crash) or ADVISORY (style improvement, naming suggestion, minor refactor, performance micro-optimization). Output CLEAN if zero BLOCKERs, DIRTY if any BLOCKERs exist."]
+    check_review_2 [shape=diamond]
+    fix_review_2 [prompt="Fix all BLOCKER issues from review pass 2. Simplify. Do NOT modify test files unless fixing a test bug.", permission_mode="bypassPermissions", timeout="15m", fidelity="full", allowed_paths="extension/src/**, extension/tests/**", escalate_on="extension/package.json, extension/package-lock.json", max_visits=5]
+    reverify_2 [shape=parallelogram, tool_command="cd ${WORKING_DIR}/extension && BASELINE_TS=$(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) && CURRENT_TS=$((npx tsc --noEmit 2>&1 || true) | grep -c 'error TS') && BASELINE_LINT=$(cat /tmp/baseline_lint_errors.txt 2>/dev/null || echo 0) && CURRENT_LINT=$((npx eslint src/ --max-warnings=-1 2>&1 || true) | grep -c 'error') && npm test 2>&1 && [ $CURRENT_TS -le $BASELINE_TS ] && [ $CURRENT_LINT -le $BASELINE_LINT ] && echo 'DELTA: CLEAN' || (echo 'DELTA: REGRESSION' && exit 1)"]
+    check_reverify_2 [shape=diamond]
+
+    // ========== CROSS-PHASE: fix_all + verify_final ==========
+
+    fix_all [prompt="Fix ALL remaining issues across the entire codebase. Run: 1) cd extension && npx eslint src/ --fix --max-warnings=-1 2>&1. 2) npx tsc --noEmit 2>&1. 3) npm test 2>&1. Iterate until all pass. Check: all 4 test files registered, all 28 pattern snapshots pass, all 15 validation tests pass, CLI contract works, determinism test passes. Do NOT skip or suppress errors.", permission_mode="bypassPermissions", timeout="30m", fidelity="full", allowed_paths="extension/src/**, extension/tests/**, extension/package.json, install.sh, .claude/commands/pickle-dot.md, README.md", escalate_on="extension/package.json, extension/package-lock.json, *.config.*", max_visits=5]
+
+    verify_final [shape=parallelogram,
+        tool_command="cd ${WORKING_DIR}/extension && BASELINE_TS=$(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) && CURRENT_TS=$((npx tsc --noEmit 2>&1 || true) | grep -c 'error TS') && BASELINE_LINT=$(cat /tmp/baseline_lint_errors.txt 2>/dev/null || echo 0) && CURRENT_LINT=$((npx eslint src/ --max-warnings=-1 2>&1 || true) | grep -c 'error') && echo \"TS baseline=$BASELINE_TS current=$CURRENT_TS Lint baseline=$BASELINE_LINT current=$CURRENT_LINT\" && [ $CURRENT_TS -le $BASELINE_TS ] && [ $CURRENT_LINT -le $BASELINE_LINT ] && npm test 2>&1 && echo '{\"slug\":\"test\",\"goal\":\"test\",\"phases\":[{\"name\":\"p1\",\"prompt\":\"impl\",\"allowedPaths\":[\"src/**\"]}],\"acceptanceCriteria\":{\"done\":\"true\"}}' | node bin/dot-builder.js > /dev/null 2>&1 && echo 'CLI CONTRACT: PASS' && echo 'DELTA: CLEAN' || (echo 'VERIFY FAILED' && exit 1)",
+        goal_gate=true, retry_target="fix_all", max_visits=5,
+        context_on_success="types_compile=true,lint_clean=true,tests_pass=true,cli_contract=true,determinism=true,validation_rules=true"]
+    check_final [shape=diamond]
+
+    done [shape=Msquare]
+
+    // ========== EDGES ==========
+
+    // Infrastructure
+    start -> setup_deps -> capture_baseline
+
+    // Phase 1: scaffold-types
+    capture_baseline -> spec_tests_types -> impl_types
+    impl_types -> check_progress_types -> check_progress_gate_types
+    check_progress_gate_types -> verify_types_p1 [condition="outcome=success", weight=2]
+    check_progress_gate_types -> impl_types [condition="outcome=fail"]
+    verify_types_p1 -> check_verify_types_p1
+    check_verify_types_p1 -> scope_check_types [condition="outcome=success", weight=2]
+    check_verify_types_p1 -> impl_types [condition="outcome=fail"]
+    scope_check_types -> conformance_types -> conformance_gate_types
+    conformance_gate_types -> bdd_core [condition="outcome=success", weight=2]
+    conformance_gate_types -> fix_conformance_types [condition="outcome=fail"]
+    fix_conformance_types -> conformance_types
+
+    // Phase 2: core-builder
+    bdd_core -> spec_tests_core -> impl_core
+    impl_core -> check_progress_core -> check_progress_gate_core
+    check_progress_gate_core -> verify_core [condition="outcome=success", weight=2]
+    check_progress_gate_core -> impl_core [condition="outcome=fail"]
+    verify_core -> check_verify_core
+    check_verify_core -> scope_check_core [condition="outcome=success", weight=2]
+    check_verify_core -> impl_core [condition="outcome=fail"]
+    scope_check_core -> conformance_core -> conformance_gate_core
+    conformance_gate_core -> bdd_validation [condition="outcome=success", weight=2]
+    conformance_gate_core -> fix_conformance_core [condition="outcome=fail"]
+    fix_conformance_core -> conformance_core
+
+    // Phase 3: validation-engine
+    bdd_validation -> spec_tests_validation -> impl_validation
+    impl_validation -> check_progress_validation -> check_progress_gate_validation
+    check_progress_gate_validation -> verify_validation [condition="outcome=success", weight=2]
+    check_progress_gate_validation -> impl_validation [condition="outcome=fail"]
+    verify_validation -> check_verify_validation
+    check_verify_validation -> scope_check_validation [condition="outcome=success", weight=2]
+    check_verify_validation -> impl_validation [condition="outcome=fail"]
+    scope_check_validation -> conformance_validation -> conformance_gate_validation
+    conformance_gate_validation -> bdd_auto [condition="outcome=success", weight=2]
+    conformance_gate_validation -> fix_conformance_validation [condition="outcome=fail"]
+    fix_conformance_validation -> conformance_validation
+
+    // Phase 4: auto-patterns
+    bdd_auto -> spec_tests_auto -> impl_auto
+    impl_auto -> check_progress_auto -> check_progress_gate_auto
+    check_progress_gate_auto -> verify_auto [condition="outcome=success", weight=2]
+    check_progress_gate_auto -> impl_auto [condition="outcome=fail"]
+    verify_auto -> check_verify_auto
+    check_verify_auto -> scope_check_auto [condition="outcome=success", weight=2]
+    check_verify_auto -> impl_auto [condition="outcome=fail"]
+    scope_check_auto -> conformance_auto -> conformance_gate_auto
+    conformance_gate_auto -> spec_tests_opt_in [condition="outcome=success", weight=2]
+    conformance_gate_auto -> fix_conformance_auto [condition="outcome=fail"]
+    fix_conformance_auto -> conformance_auto
+
+    // Phase 5: opt-in-patterns
+    spec_tests_opt_in -> impl_opt_in
+    impl_opt_in -> check_progress_opt_in -> check_progress_gate_opt_in
+    check_progress_gate_opt_in -> verify_opt_in [condition="outcome=success", weight=2]
+    check_progress_gate_opt_in -> impl_opt_in [condition="outcome=fail"]
+    verify_opt_in -> check_verify_opt_in
+    check_verify_opt_in -> coverage_opt_in [condition="outcome=success", weight=2]
+    check_verify_opt_in -> impl_opt_in [condition="outcome=fail"]
+    coverage_opt_in -> coverage_gate_opt_in
+    coverage_gate_opt_in -> scope_check_opt_in [condition="outcome=success", weight=2]
+    coverage_gate_opt_in -> impl_opt_in [condition="outcome=fail"]
+    scope_check_opt_in -> conformance_opt_in -> conformance_gate_opt_in
+    conformance_gate_opt_in -> split_phases [condition="outcome=success", weight=2]
+    conformance_gate_opt_in -> fix_conformance_opt_in [condition="outcome=fail"]
+    fix_conformance_opt_in -> conformance_opt_in
+
+    // Fan-out: Phase 6 (Branch A) || Phase 7 (Branch B)
+    split_phases -> spec_tests_cli
+    split_phases -> impl_fallback
+
+    // Phase 6: cli-entry (Branch A)
+    spec_tests_cli -> impl_cli
+    impl_cli -> check_progress_cli -> check_progress_gate_cli
+    check_progress_gate_cli -> verify_cli [condition="outcome=success", weight=2]
+    check_progress_gate_cli -> impl_cli [condition="outcome=fail"]
+    verify_cli -> check_verify_cli
+    check_verify_cli -> scope_check_cli [condition="outcome=success", weight=2]
+    check_verify_cli -> impl_cli [condition="outcome=fail"]
+    scope_check_cli -> conformance_cli -> conformance_gate_cli
+    conformance_gate_cli -> merge_phases [condition="outcome=success", weight=2]
+    conformance_gate_cli -> fix_conformance_cli [condition="outcome=fail"]
+    fix_conformance_cli -> conformance_cli
+
+    // Phase 7: fallback-schema (Branch B)
+    impl_fallback -> check_progress_fallback -> check_progress_gate_fallback
+    check_progress_gate_fallback -> verify_fallback [condition="outcome=success", weight=2]
+    check_progress_gate_fallback -> impl_fallback [condition="outcome=fail"]
+    verify_fallback -> check_verify_fallback
+    check_verify_fallback -> scope_check_fallback [condition="outcome=success", weight=2]
+    check_verify_fallback -> impl_fallback [condition="outcome=fail"]
+    scope_check_fallback -> conformance_fallback -> conformance_gate_fallback
+    conformance_gate_fallback -> merge_phases [condition="outcome=success", weight=2]
+    conformance_gate_fallback -> fix_conformance_fallback [condition="outcome=fail"]
+    fix_conformance_fallback -> conformance_fallback
+
+    // Phase 8: schema-sync (after merge)
+    merge_phases -> spec_tests_sync
+    spec_tests_sync -> impl_sync
+    impl_sync -> check_progress_sync -> check_progress_gate_sync
+    check_progress_gate_sync -> verify_sync [condition="outcome=success", weight=2]
+    check_progress_gate_sync -> impl_sync [condition="outcome=fail"]
+    verify_sync -> check_verify_sync
+    check_verify_sync -> scope_check_sync [condition="outcome=success", weight=2]
+    check_verify_sync -> impl_sync [condition="outcome=fail"]
+    scope_check_sync -> conformance_sync -> conformance_gate_sync
+    conformance_gate_sync -> impl_synthesis [condition="outcome=success", weight=2]
+    conformance_gate_sync -> fix_conformance_sync [condition="outcome=fail"]
+    fix_conformance_sync -> conformance_sync
+
+    // Phase 9: synthesis-gate
+    impl_synthesis -> check_progress_synthesis -> check_progress_gate_synthesis
+    check_progress_gate_synthesis -> verify_synthesis [condition="outcome=success", weight=2]
+    check_progress_gate_synthesis -> impl_synthesis [condition="outcome=fail"]
+    verify_synthesis -> check_verify_synthesis
+    check_verify_synthesis -> scope_check_synthesis [condition="outcome=success", weight=2]
+    check_verify_synthesis -> impl_synthesis [condition="outcome=fail"]
+    scope_check_synthesis -> conformance_synthesis -> conformance_gate_synthesis
+    conformance_gate_synthesis -> red_team_synthesis [condition="outcome=success", weight=2]
+    conformance_gate_synthesis -> fix_conformance_synthesis [condition="outcome=fail"]
+    fix_conformance_synthesis -> conformance_synthesis
+    red_team_synthesis -> red_team_gate_synthesis
+    red_team_gate_synthesis -> impl_prompt [condition="outcome=success", weight=2]
+    red_team_gate_synthesis -> impl_synthesis [condition="outcome=fail"]
+
+    // Phase 10: prompt-rewrite (docOnly — no verify chain)
+    impl_prompt -> check_progress_prompt -> check_progress_gate_prompt
+    check_progress_gate_prompt -> scope_check_prompt [condition="outcome=success", weight=2]
+    check_progress_gate_prompt -> impl_prompt [condition="outcome=fail"]
+    scope_check_prompt -> conformance_prompt -> conformance_gate_prompt
+    conformance_gate_prompt -> impl_readme [condition="outcome=success", weight=2]
+    conformance_gate_prompt -> fix_conformance_prompt [condition="outcome=fail"]
+    fix_conformance_prompt -> conformance_prompt
+
+    // Phase 11: readme-update (docOnly — no verify chain)
+    impl_readme -> check_progress_readme -> check_progress_gate_readme
+    check_progress_gate_readme -> scope_check_readme [condition="outcome=success", weight=2]
+    check_progress_gate_readme -> impl_readme [condition="outcome=fail"]
+    scope_check_readme -> conformance_readme -> conformance_gate_readme
+    conformance_gate_readme -> split_review_1 [condition="outcome=success", weight=2]
+    conformance_gate_readme -> fix_conformance_readme [condition="outcome=fail"]
+    fix_conformance_readme -> conformance_readme
+
+    // Review Ratchet Pass 1
+    split_review_1 -> reviewer_correctness_1 -> merge_review_1
+    split_review_1 -> reviewer_patterns_1 -> merge_review_1
+    merge_review_1 -> check_review_1
+    check_review_1 -> split_review_2 [condition="outcome=success", weight=2]
+    check_review_1 -> fix_review_1 [condition="outcome=fail"]
+    fix_review_1 -> reverify_1 -> check_reverify_1
+    check_reverify_1 -> split_review_1 [condition="outcome=success", weight=2]
+    check_reverify_1 -> fix_review_1 [condition="outcome=fail"]
+
+    // Review Ratchet Pass 2 — failure RESETS to pass 1
+    split_review_2 -> reviewer_correctness_2 -> merge_review_2
+    split_review_2 -> reviewer_patterns_2 -> merge_review_2
+    merge_review_2 -> check_review_2
+    check_review_2 -> fix_all [condition="outcome=success", weight=2]
+    check_review_2 -> fix_review_2 [condition="outcome=fail"]
+    fix_review_2 -> reverify_2 -> check_reverify_2
+    check_reverify_2 -> split_review_1 [condition="outcome=success", weight=2]
+    check_reverify_2 -> fix_review_2 [condition="outcome=fail"]
+
+    // Cross-phase final gate
+    fix_all -> verify_final -> check_final
+    check_final -> done [condition="outcome=success", weight=2]
+    check_final -> fix_all [condition="outcome=fail"]
+}
