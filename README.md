@@ -193,6 +193,67 @@ See [architecture](architecture.md#portal-gun-internals) for the full pipeline a
 
 ---
 
+## 🏥 Anatomy Park — Deep Subsystem Review
+
+> *"Welcome to Anatomy Park! It's like Jurassic Park but inside a human body. Way more dangerous."*
+
+`/anatomy-park` is a microverse-based deep review loop that goes through your codebase subsystem by subsystem, applying a strict three-phase protocol: **review** (read-only data flow tracing), **fix** (targeted edits + regression tests), and **verify** (self-review with revert on regression). It auto-discovers subsystems, rotates through them round-robin, and converges when every subsystem passes clean twice consecutively.
+
+The key differentiator: **trap door cataloging**. When Anatomy Park finds files that keep breaking — structural invariants that aren't enforced by types or tests — it writes them to `CLAUDE.md` in the subsystem directory so future agents (and humans) know where the landmines are.
+
+### When to Use It
+
+| Scenario | Use Anatomy Park? |
+|---|---|
+| Stabilizing a subsystem that keeps regressing | Yes — finds root causes and catalogs trap doors |
+| Pre-release hardening across multiple subsystems | Yes — systematic rotation with regression prevention |
+| Onboarding to unfamiliar codebase with hidden invariants | Yes — trap doors document tribal knowledge |
+| Single file cleanup | No — use `/szechuan-sauce` |
+| Broad code review without fixes | No — use `/meeseeks` |
+| Feature implementation | No — use `/pickle` |
+
+**Anatomy Park vs Meeseeks**: Meeseeks reviews across 8 categories with escalating focus. Anatomy Park traces complete data flows through one subsystem at a time, enforces strict phase separation (never diagnose and operate simultaneously), and persists trap doors for future sessions.
+
+**Anatomy Park vs Szechuan Sauce**: Szechuan Sauce hunts principle violations (KISS, DRY, SOLID) in a target directory. Anatomy Park hunts data flow bugs (corruption, timezone, rounding, schema drift) across subsystems and builds institutional memory via trap doors.
+
+### Usage
+
+```bash
+/anatomy-park                              # Auto-discover subsystems, review all
+/anatomy-park src/                         # Scope to src/ subdirectories
+/anatomy-park --dry-run                    # Review only — catalog findings without fixing
+/anatomy-park --max-iterations 50          # Cap iterations (default: 100)
+/anatomy-park --stall-limit 5              # Skip subsystem after 5 failed fixes (default: 3)
+```
+
+### How It Works
+
+1. **Auto-discovers subsystems** — scans for directories with 3+ source files, excluding node_modules/dist/test-only dirs
+2. **Runs test baseline** — ensures green before surgery
+3. **Initializes microverse session** — tmux with context clearing
+4. **Round-robin rotation** — one subsystem per iteration, cycles through all
+5. **Three-phase protocol per iteration**:
+   - Phase 1 (read-only): trace data flows, check git history, rate CRITICAL/HIGH, propose fixes
+   - Phase 2 (fix): apply minimal edits, write regression tests, run full suite
+   - Phase 3 (read-only): verify callers/consumers/dead-code/boolean-logic, revert on regression
+6. **Trap door cataloging** — files with repeated fixes or structural invariants get documented in subsystem CLAUDE.md
+7. **Convergence** — exits when all subsystems pass clean twice consecutively
+
+### Trap Door Format
+
+Trap doors are written to `CLAUDE.md` in each subsystem directory:
+
+```markdown
+## Trap Doors
+
+- `bank-statement.service.ts` — borrowerFileId MUST equal S3 batch UUID (set on insert); S3 key regex must NOT be case-insensitive; tenant isolation depends on effectiveLenderId threading
+- `transaction.processor.ts` — rounding must use bankersRound() at both parse and aggregate; raw Math.round() drifts on large sets
+```
+
+One line per file. Token-optimized for coding agents — no decoration, no verbose explanations.
+
+---
+
 ## 💥 Project Mayhem — Chaos Engineering
 
 <img src="images/project-mayhem.png" alt="Project Mayhem — Pickle Rick chaos engineering" width="400" align="right" />
@@ -503,6 +564,7 @@ Sit back. Rick handles the rest. 🥒
 | `/pickle-microverse` | 🔬🖥️ Microverse convergence loop — optimize a numeric metric through targeted, incremental changes. Defaults to tmux mode with context clearing. Use `--interactive` for inline mode. Requires `tmux` (unless `--interactive`). |
 | `/portal-gun <source>` | 🔫 [Gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) — exhaustive migration inventory from donor codebase, scope confirmation, concrete migration PRD with per-item acceptance criteria, automatic refinement |
 | `/portal-gun --run <source>` | 🔫🖥️ Inventory + PRD + refine + convergence loop — executes, scans coverage against inventory, generates delta PRD for missing items, re-executes until 100% coverage |
+| `/anatomy-park` | 🏥 Three-phase deep subsystem review — auto-discovers subsystems, traces data flows, fixes without regression, catalogs trap doors in subsystem CLAUDE.md files. Microverse convergence loop via tmux. |
 | `/project-mayhem` | 💥 Chaos engineering — mutation testing, dependency downgrades, config corruption. Non-destructive, language-agnostic, comprehensive report. |
 | `/pickle-metrics` | 📊 Token usage, turns, commits, and lines changed — daily or `--weekly`, per-project, with `--json` export |
 | `/pickle-standup` | 📰 Show a formatted standup summary from activity logs (last 24h by default) |
