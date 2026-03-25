@@ -195,11 +195,15 @@ See [architecture](architecture.md#portal-gun-internals) for the full pipeline a
 
 ## 🏥 Anatomy Park — Deep Subsystem Review
 
+<img src="images/anatomy-park.jpeg" alt="Anatomy Park — Deep Subsystem Review" width="400" align="right" />
+
 > *"Welcome to Anatomy Park! It's like Jurassic Park but inside a human body. Way more dangerous."*
 
 `/anatomy-park` is a microverse-based deep review loop that goes through your codebase subsystem by subsystem, applying a strict three-phase protocol: **review** (read-only data flow tracing), **fix** (targeted edits + regression tests), and **verify** (self-review with revert on regression). It auto-discovers subsystems, rotates through them round-robin, and converges when every subsystem passes clean twice consecutively.
 
 The key differentiator: **trap door cataloging**. When Anatomy Park finds files that keep breaking — structural invariants that aren't enforced by types or tests — it writes them to `CLAUDE.md` in the subsystem directory so future agents (and humans) know where the landmines are.
+
+<br clear="right" />
 
 ### When to Use It
 
