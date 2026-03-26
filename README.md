@@ -14,11 +14,10 @@ Pickle Rick is a complete agentic engineering toolbelt built on the [Ralph Wiggu
 - **Pickle Jar** queues tasks for unattended batch execution overnight
 - **Built-in metrics** track token usage, commits, and lines changed
 - **Full pipeline chaining** — refinement, execution, and code review in one command, with a macOS notification when it's done
-- **Project Mayhem** brings chaos engineering to any codebase with mutation testing and dependency downgrades
-- **Council of Ricks** reviews your Graphite PR stack iteratively, generating agent-executable directives instead of fixing code directly
-- **Portal Gun** opens a portal to another codebase, extracts patterns via [gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) with import graph tracing, transplant classification, PRD validation, and a persistent pattern library
 - **Microverse** convergence loop optimizes any numeric metric through targeted, incremental changes — measuring after each iteration, auto-reverting regressions, and stopping when converged
 - **Szechuan Sauce** iterative deslopping loop grinds code to zero principle violations — P0 security through P4 style — using the microverse infrastructure with a principles-aware LLM judge
+- **Council of Ricks** reviews your Graphite PR stack iteratively, generating agent-executable directives instead of fixing code directly
+- **Portal Gun** opens a portal to another codebase, extracts patterns via [gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) with import graph tracing, transplant classification, PRD validation, and a persistent pattern library
 All modes support both tmux and Zellij monitor layouts.
 
 Check out the [Feature Roadmap](roadmap.md) for what's brewing in the multiverse. For internals, see [Architecture](architecture.md).
@@ -95,156 +94,6 @@ Pickle Rick transforms Claude Code into a **hyper-competent, arrogant, iterative
 ```
 
 The **Stop hook** prevents Claude from exiting until the task is genuinely complete. No half-measures. No early exits. Rick doesn't quit. Between each iteration, the hook injects a fresh session summary — current phase, ticket list, active task — so Rick always wakes up knowing exactly where he is, even after full context compression. In tmux/Zellij mode, the runner owns the session lifecycle — the stop hook approves subprocess exits without touching `active`, letting the runner decide whether to continue or stop.
-
----
-
-## 🏛️ Council of Ricks — Graphite Stack Reviewer
-
-<img src="images/council-of-ricks.png" alt="Council of Ricks — Graphite PR Stack Reviewer" width="400" align="right" />
-
-> *"The Council convenes! Your stack will be judged."*
-
-The **Council of Ricks** reviews your [Graphite](https://graphite.dev) PR stack iteratively — but unlike Szechuan Sauce or Anatomy Park, the Council never touches your code. It generates **agent-executable directives** — structured prompts you feed to your coding agent to fix the issues. Each pass walks every branch in the stack (trunk-to-tip), cross-referencing diffs against your project's `CLAUDE.md` rules, and escalates through focus areas: stack structure (pass 1) → CLAUDE.md compliance (2–3) → per-branch correctness (4–5) → cross-branch contracts (6–7) → test coverage (8–9) → security (10–11) → polish (12+). Issues are triaged by severity: **P0** (must-fix), **P1** (should-fix), **P2** (nice-to-fix).
-
-Requires a Graphite stack with at least one non-trunk branch, a `CLAUDE.md` with project rules, passing lint, and architectural lint rules in ESLint.
-
-```bash
-/council-of-ricks                    # Review the current Graphite stack
-```
-
-<br clear="right" />
-
----
-
-## 🔌 Circuit Breaker
-
-Three-state machine (CLOSED → HALF_OPEN → OPEN) that auto-stops sessions stuck in error loops or making no git progress. Configurable thresholds, visible in the tmux monitor, manually resettable. See [architecture](architecture.md#circuit-breaker--runaway-session-protection) for the full state machine, recovery steps, and settings.
-
----
-
-## ⏳ Rate Limit Auto-Recovery
-
-Detects API rate limits, computes optimal wait from the API's `resetsAt` epoch (or falls back to config default), pauses with a countdown timer, and resumes automatically. Survives overnight runs. See [architecture](architecture.md#rate-limit-auto-recovery) for the wait-and-resume cycle and settings.
-
----
-
-## 📊 Metrics
-
-`/pickle-metrics` aggregates token usage, turns, commits, and lines changed across all projects into daily or weekly breakdowns.
-
-```bash
-/pickle-metrics                    # Last 7 days, daily breakdown
-/pickle-metrics --days 30          # Last 30 days
-/pickle-metrics --weekly           # Weekly buckets (defaults to 28 days)
-/pickle-metrics --json             # Machine-readable JSON output
-```
-
-See [architecture](architecture.md#metrics-internals) for data sources and caching.
-
----
-
-## 🔫 Portal Gun — Gene Transfusion
-
-<img src="images/portal-gun.png" alt="Portal Gun — gene transfusion for codebases" width="400" align="right" />
-
-> *"You see that code over there, Morty? In that other repo? I'm gonna open a portal, reach in, and yank its DNA into OUR dimension."*
-
-`/portal-gun` implements [gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) — transferring proven coding patterns between codebases using AI agents. Point it at a GitHub URL, local file, npm package, or just describe a pattern, and it extracts the structural DNA, analyzes your target codebase, then generates a transplant PRD with behavioral validation tests and automatic refinement.
-
-<br clear="right" />
-
-**v2** added a persistent **pattern library** (cached patterns are reused across sessions), **complete file manifests** with anti-truncation enforcement, **multi-language import graph tracing** (TypeScript/JavaScript, Python, Go, Rust), **6-category transplant classification** (direct transplant, type-only, behavioral reference, replace with equivalent, environment prerequisite, not needed), a **PRD validation pass** that verifies every file path against the filesystem with 6 error classes, **post-edit consistency checking** that catches contradictions and stale references after scope changes, and **deep target diffs** with line-level modification specs.
-
-```bash
-/portal-gun https://github.com/org/repo/blob/main/src/auth.ts   # Transplant from GitHub
-/portal-gun ../other-project/src/cache.ts                        # Transplant from local file
-/portal-gun --run https://github.com/org/repo/tree/main/src/lib  # Transplant + auto-execute
-/portal-gun --save-pattern retry ../donor/retry-logic.ts         # Save pattern to library
-```
-
-See [architecture](architecture.md#portal-gun-internals) for the full pipeline and all flags.
-
----
-
-## 🏥 Anatomy Park — Deep Subsystem Review
-
-<img src="images/anatomy-park.jpeg" alt="Anatomy Park — Deep Subsystem Review" width="400" align="right" />
-
-> *"Welcome to Anatomy Park! It's like Jurassic Park but inside a human body. Way more dangerous."*
-
-`/anatomy-park` is a microverse-based deep review loop that goes through your codebase subsystem by subsystem, applying a strict three-phase protocol: **review** (read-only data flow tracing), **fix** (targeted edits + regression tests), and **verify** (self-review with revert on regression). It auto-discovers subsystems, rotates through them round-robin, and converges when every subsystem passes clean twice consecutively.
-
-The key differentiator: **trap door cataloging**. When Anatomy Park finds files that keep breaking — structural invariants that aren't enforced by types or tests — it writes them to `CLAUDE.md` in the subsystem directory so future agents (and humans) know where the landmines are.
-
-<br clear="right" />
-
-### When to Use It
-
-| Scenario | Use Anatomy Park? |
-|---|---|
-| Stabilizing a subsystem that keeps regressing | Yes — finds root causes and catalogs trap doors |
-| Pre-release hardening across multiple subsystems | Yes — systematic rotation with regression prevention |
-| Onboarding to unfamiliar codebase with hidden invariants | Yes — trap doors document tribal knowledge |
-| Single file or directory cleanup | No — use `/szechuan-sauce` |
-| Feature implementation | No — use `/pickle` |
-
-**Anatomy Park vs Szechuan Sauce**: Szechuan Sauce hunts principle violations (KISS, DRY, SOLID, dependency health, test quality) in a target directory. Anatomy Park hunts data flow bugs (corruption, timezone, rounding, schema drift) across subsystems and builds institutional memory via trap doors. Use Szechuan Sauce for code quality; use Anatomy Park for correctness.
-
-### Usage
-
-```bash
-/anatomy-park                              # Auto-discover subsystems, review all
-/anatomy-park src/                         # Scope to src/ subdirectories
-/anatomy-park --dry-run                    # Review only — catalog findings without fixing
-/anatomy-park --max-iterations 50          # Cap iterations (default: 100)
-/anatomy-park --stall-limit 5              # Skip subsystem after 5 failed fixes (default: 3)
-```
-
-### How It Works
-
-1. **Auto-discovers subsystems** — scans for directories with 3+ source files, excluding node_modules/dist/test-only dirs
-2. **Runs test baseline** — ensures green before surgery
-3. **Initializes microverse session** — tmux with context clearing
-4. **Round-robin rotation** — one subsystem per iteration, cycles through all
-5. **Three-phase protocol per iteration**:
-   - Phase 1 (read-only): trace data flows, check git history, rate CRITICAL/HIGH, propose fixes
-   - Phase 2 (fix): apply minimal edits, write regression tests, run full suite
-   - Phase 3 (read-only): verify callers/consumers/dead-code/boolean-logic, combinatorial branch verification (enumerate all 2^N input combinations for guards/validators), production data migration awareness (flag tightened enums/validation on persisted fields), revert on regression
-6. **Trap door cataloging** — files with repeated fixes or structural invariants get documented in subsystem CLAUDE.md
-7. **Convergence** — exits when all subsystems pass clean twice consecutively
-
-### Trap Door Format
-
-Trap doors are written to `CLAUDE.md` in each subsystem directory:
-
-```markdown
-## Trap Doors
-
-- `bank-statement.service.ts` — borrowerFileId MUST equal S3 batch UUID (set on insert); S3 key regex must NOT be case-insensitive; tenant isolation depends on effectiveLenderId threading
-- `transaction.processor.ts` — rounding must use bankersRound() at both parse and aggregate; raw Math.round() drifts on large sets
-```
-
-One line per file. Token-optimized for coding agents — no decoration, no verbose explanations.
-
----
-
-## 💥 Project Mayhem — Chaos Engineering
-
-<img src="images/project-mayhem.png" alt="Project Mayhem — Pickle Rick chaos engineering" width="400" align="right" />
-
-> *"You want to know how tough your code is, Morty? You break it. On purpose. Scientifically."*
-
-`/project-mayhem` stress-tests any project through three modules — **mutation testing**, **dependency downgrades**, and **config corruption** — then produces a comprehensive markdown report with a single Chaos Score (0–100). Non-destructive (every mutation is reverted immediately), language-agnostic, requires only a clean git state.
-
-<br clear="right" />
-
-```bash
-/project-mayhem                              # Run all 3 modules (auto-detect everything)
-/project-mayhem --mutation-only              # Just mutation testing
-/project-mayhem --deps-only --config-only    # Skip mutations, run deps + config
-```
-
-See [architecture](architecture.md#project-mayhem-internals) for module details, the report format, and safety guarantees.
 
 ---
 
@@ -400,6 +249,68 @@ The LLM judge reads the principles reference file directly (via `judge_context_p
 
 ---
 
+## 🏥 Anatomy Park — Deep Subsystem Review
+
+<img src="images/anatomy-park.jpeg" alt="Anatomy Park — Deep Subsystem Review" width="400" align="right" />
+
+> *"Welcome to Anatomy Park! It's like Jurassic Park but inside a human body. Way more dangerous."*
+
+`/anatomy-park` is a microverse-based deep review loop that goes through your codebase subsystem by subsystem, applying a strict three-phase protocol: **review** (read-only data flow tracing), **fix** (targeted edits + regression tests), and **verify** (self-review with revert on regression). It auto-discovers subsystems, rotates through them round-robin, and converges when every subsystem passes clean twice consecutively.
+
+The key differentiator: **trap door cataloging**. When Anatomy Park finds files that keep breaking — structural invariants that aren't enforced by types or tests — it writes them to `CLAUDE.md` in the subsystem directory so future agents (and humans) know where the landmines are.
+
+<br clear="right" />
+
+### When to Use It
+
+| Scenario | Use Anatomy Park? |
+|---|---|
+| Stabilizing a subsystem that keeps regressing | Yes — finds root causes and catalogs trap doors |
+| Pre-release hardening across multiple subsystems | Yes — systematic rotation with regression prevention |
+| Onboarding to unfamiliar codebase with hidden invariants | Yes — trap doors document tribal knowledge |
+| Single file or directory cleanup | No — use `/szechuan-sauce` |
+| Feature implementation | No — use `/pickle` |
+
+**Anatomy Park vs Szechuan Sauce**: Szechuan Sauce hunts principle violations (KISS, DRY, SOLID, dependency health, test quality) in a target directory. Anatomy Park hunts data flow bugs (corruption, timezone, rounding, schema drift) across subsystems and builds institutional memory via trap doors. Use Szechuan Sauce for code quality; use Anatomy Park for correctness.
+
+### Usage
+
+```bash
+/anatomy-park                              # Auto-discover subsystems, review all
+/anatomy-park src/                         # Scope to src/ subdirectories
+/anatomy-park --dry-run                    # Review only — catalog findings without fixing
+/anatomy-park --max-iterations 50          # Cap iterations (default: 100)
+/anatomy-park --stall-limit 5              # Skip subsystem after 5 failed fixes (default: 3)
+```
+
+### How It Works
+
+1. **Auto-discovers subsystems** — scans for directories with 3+ source files, excluding node_modules/dist/test-only dirs
+2. **Runs test baseline** — ensures green before surgery
+3. **Initializes microverse session** — tmux with context clearing
+4. **Round-robin rotation** — one subsystem per iteration, cycles through all
+5. **Three-phase protocol per iteration**:
+   - Phase 1 (read-only): trace data flows, check git history, rate CRITICAL/HIGH, propose fixes
+   - Phase 2 (fix): apply minimal edits, write regression tests, run full suite
+   - Phase 3 (read-only): verify callers/consumers/dead-code/boolean-logic, combinatorial branch verification (enumerate all 2^N input combinations for guards/validators), production data migration awareness (flag tightened enums/validation on persisted fields), revert on regression
+6. **Trap door cataloging** — files with repeated fixes or structural invariants get documented in subsystem CLAUDE.md
+7. **Convergence** — exits when all subsystems pass clean twice consecutively
+
+### Trap Door Format
+
+Trap doors are written to `CLAUDE.md` in each subsystem directory:
+
+```markdown
+## Trap Doors
+
+- `bank-statement.service.ts` — borrowerFileId MUST equal S3 batch UUID (set on insert); S3 key regex must NOT be case-insensitive; tenant isolation depends on effectiveLenderId threading
+- `transaction.processor.ts` — rounding must use bankersRound() at both parse and aggregate; raw Math.round() drifts on large sets
+```
+
+One line per file. Token-optimized for coding agents — no decoration, no verbose explanations.
+
+---
+
 ## 🔀 Pipeline: PRD to Execution
 
 Turn a PRD into a running pipeline in two commands using `/pickle-dot` and `/attract`:
@@ -429,6 +340,74 @@ Turn a PRD into a running pipeline in two commands using `/pickle-dot` and `/att
 ```
 
 Environment variables for `/attract`: `ATTRACTOR_URL` (default `http://localhost:7777`), `ATTRACTOR_API_KEY`, `ATTRACTOR_ROOT` (auto-detected).
+
+---
+
+## 🏛️ Council of Ricks — Graphite Stack Reviewer
+
+<img src="images/council-of-ricks.png" alt="Council of Ricks — Graphite PR Stack Reviewer" width="400" align="right" />
+
+> *"The Council convenes! Your stack will be judged."*
+
+The **Council of Ricks** reviews your [Graphite](https://graphite.dev) PR stack iteratively — but unlike Szechuan Sauce or Anatomy Park, the Council never touches your code. It generates **agent-executable directives** — structured prompts you feed to your coding agent to fix the issues. Each pass walks every branch in the stack (trunk-to-tip), cross-referencing diffs against your project's `CLAUDE.md` rules, and escalates through focus areas: stack structure (pass 1) → CLAUDE.md compliance (2–3) → per-branch correctness (4–5) → cross-branch contracts (6–7) → test coverage (8–9) → security (10–11) → polish (12+). Issues are triaged by severity: **P0** (must-fix), **P1** (should-fix), **P2** (nice-to-fix).
+
+Requires a Graphite stack with at least one non-trunk branch, a `CLAUDE.md` with project rules, passing lint, and architectural lint rules in ESLint.
+
+```bash
+/council-of-ricks                    # Review the current Graphite stack
+```
+
+<br clear="right" />
+
+---
+
+## 🔫 Portal Gun — Gene Transfusion
+
+<img src="images/portal-gun.png" alt="Portal Gun — gene transfusion for codebases" width="400" align="right" />
+
+> *"You see that code over there, Morty? In that other repo? I'm gonna open a portal, reach in, and yank its DNA into OUR dimension."*
+
+`/portal-gun` implements [gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) — transferring proven coding patterns between codebases using AI agents. Point it at a GitHub URL, local file, npm package, or just describe a pattern, and it extracts the structural DNA, analyzes your target codebase, then generates a transplant PRD with behavioral validation tests and automatic refinement.
+
+<br clear="right" />
+
+**v2** added a persistent **pattern library** (cached patterns are reused across sessions), **complete file manifests** with anti-truncation enforcement, **multi-language import graph tracing** (TypeScript/JavaScript, Python, Go, Rust), **6-category transplant classification** (direct transplant, type-only, behavioral reference, replace with equivalent, environment prerequisite, not needed), a **PRD validation pass** that verifies every file path against the filesystem with 6 error classes, **post-edit consistency checking** that catches contradictions and stale references after scope changes, and **deep target diffs** with line-level modification specs.
+
+```bash
+/portal-gun https://github.com/org/repo/blob/main/src/auth.ts   # Transplant from GitHub
+/portal-gun ../other-project/src/cache.ts                        # Transplant from local file
+/portal-gun --run https://github.com/org/repo/tree/main/src/lib  # Transplant + auto-execute
+/portal-gun --save-pattern retry ../donor/retry-logic.ts         # Save pattern to library
+```
+
+See [architecture](architecture.md#portal-gun-internals) for the full pipeline and all flags.
+
+---
+
+## 🔌 Circuit Breaker
+
+Three-state machine (CLOSED → HALF_OPEN → OPEN) that auto-stops sessions stuck in error loops or making no git progress. Configurable thresholds, visible in the tmux monitor, manually resettable. See [architecture](architecture.md#circuit-breaker--runaway-session-protection) for the full state machine, recovery steps, and settings.
+
+---
+
+## ⏳ Rate Limit Auto-Recovery
+
+Detects API rate limits, computes optimal wait from the API's `resetsAt` epoch (or falls back to config default), pauses with a countdown timer, and resumes automatically. Survives overnight runs. See [architecture](architecture.md#rate-limit-auto-recovery) for the wait-and-resume cycle and settings.
+
+---
+
+## 📊 Metrics
+
+`/pickle-metrics` aggregates token usage, turns, commits, and lines changed across all projects into daily or weekly breakdowns.
+
+```bash
+/pickle-metrics                    # Last 7 days, daily breakdown
+/pickle-metrics --days 30          # Last 30 days
+/pickle-metrics --weekly           # Weekly buckets (defaults to 28 days)
+/pickle-metrics --json             # Machine-readable JSON output
+```
+
+See [architecture](architecture.md#metrics-internals) for data sources and caching.
 
 ---
 
@@ -511,21 +490,20 @@ Sit back. Rick handles the rest. 🥒
 | Command | Description |
 |---|---|
 | `/pickle "task"` | 🥒 Start the full autonomous loop — drafts a PRD (with verification strategy + interface contracts), decomposes into tickets, then executes each through 8 phases: Research → Review → Plan → Review → Implement → Spec Conformance → Code Review → Simplify |
-| `/council-of-ricks` | 🏛️ Graphite PR stack review loop — walks every branch, generates agent-executable directives, never fixes code directly. Exits when clean (`THE_CITADEL_APPROVES`) |
 | `/pickle prd.md` | 🥒 Pick up an existing PRD and skip drafting — goes straight to breakdown and execution |
 | `/pickle-tmux "task"` | 🖥️ Same PRD-driven loop, but with true context clearing — fresh subprocess per iteration via tmux. Best for long epics (8+ iterations). Requires `tmux`. |
 | `/pickle-tmux prd.md` | 🖥️ Pick up an existing PRD in tmux mode — fresh subprocess per iteration, no context drift |
 | `/pickle-zellij "task"` | 🖥️ Same PRD-driven loop in Zellij with KDL layouts — fresh subprocess per iteration. Best for long epics (8+ iterations). Requires Zellij >= 0.40.0 |
-| `/szechuan-sauce [target]` | 🫙 Iterative principle-driven deslopping — microverse convergence loop that reviews code against 30+ coding principles (KISS, YAGNI, DRY, SOLID, etc.), fixes violations one at a time, and re-scores with LLM judge until clean. Supports `--domain <name>` for domain-specific principles, `--focus "<text>"` to direct the review toward a specific concern. Tmux by default. |
 | `/pickle-refine-prd [path]` | 🔬 Verification readiness check → refine with 3 parallel analysts → decompose into ordered tickets. Reads `context/` directory if present for customer signals. `/pickle --resume` to execute |
 | `/pickle-refine-prd --run [path]` | 🔬🖥️ Refine + decompose + auto-launch unlimited tmux session (no iteration or time cap) |
-| `/pickle-dot [path \| inline]` | 🔀 Convert a PRD into a [strongdm/attractor](https://github.com/strongdm/attractor)-compatible DOT digraph — 5-layer quality gates (spec-driven acceptance, permission scoping, adversarial review), 23 convergence patterns, BDD contracts, review ratchets, microverse optimization loops. Auto-resolves Docker mount paths. |
-| `/attract [file.dot]` | 🚀 Submit a `.dot` pipeline to the [attractor](https://github.com/strongdm/attractor) server for execution — validates locally, submits via HTTP, monitors status, handles human gates. Auto-detects most recent `.dot` file if none specified. |
 | `/pickle-microverse` | 🔬🖥️ Microverse convergence loop — optimize a numeric metric through targeted, incremental changes. Defaults to tmux mode with context clearing. Use `--interactive` for inline mode. Requires `tmux` (unless `--interactive`). |
+| `/szechuan-sauce [target]` | 🫙 Iterative principle-driven deslopping — microverse convergence loop that reviews code against 30+ coding principles (KISS, YAGNI, DRY, SOLID, etc.), fixes violations one at a time, and re-scores with LLM judge until clean. Supports `--domain <name>` for domain-specific principles, `--focus "<text>"` to direct the review toward a specific concern. Tmux by default. |
+| `/anatomy-park` | 🏥 Three-phase deep subsystem review — auto-discovers subsystems, traces data flows, fixes without regression, catalogs trap doors in subsystem CLAUDE.md files. Microverse convergence loop via tmux. |
+| `/council-of-ricks` | 🏛️ Graphite PR stack review loop — walks every branch, generates agent-executable directives, never fixes code directly. Exits when clean (`THE_CITADEL_APPROVES`) |
 | `/portal-gun <source>` | 🔫 [Gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) — exhaustive migration inventory from donor codebase, scope confirmation, concrete migration PRD with per-item acceptance criteria, automatic refinement |
 | `/portal-gun --run <source>` | 🔫🖥️ Inventory + PRD + refine + convergence loop — executes, scans coverage against inventory, generates delta PRD for missing items, re-executes until 100% coverage |
-| `/anatomy-park` | 🏥 Three-phase deep subsystem review — auto-discovers subsystems, traces data flows, fixes without regression, catalogs trap doors in subsystem CLAUDE.md files. Microverse convergence loop via tmux. |
-| `/project-mayhem` | 💥 Chaos engineering — mutation testing, dependency downgrades, config corruption. Non-destructive, language-agnostic, comprehensive report. |
+| `/pickle-dot [path \| inline]` | 🔀 Convert a PRD into a [strongdm/attractor](https://github.com/strongdm/attractor)-compatible DOT digraph — 5-layer quality gates (spec-driven acceptance, permission scoping, adversarial review), 23 convergence patterns, BDD contracts, review ratchets, microverse optimization loops. Auto-resolves Docker mount paths. |
+| `/attract [file.dot]` | 🚀 Submit a `.dot` pipeline to the [attractor](https://github.com/strongdm/attractor) server for execution — validates locally, submits via HTTP, monitors status, handles human gates. Auto-detects most recent `.dot` file if none specified. |
 | `/pickle-metrics` | 📊 Token usage, turns, commits, and lines changed — daily or `--weekly`, per-project, with `--json` export |
 | `/pickle-standup` | 📰 Show a formatted standup summary from activity logs (last 24h by default) |
 | `/eat-pickle` | 🛑 Cancel the active loop |
