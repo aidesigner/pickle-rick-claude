@@ -254,7 +254,17 @@ After fixing, review your own work:
    - **Dead code**: no new export without an importer, no unused variables
    - **Boolean logic**: trace both true/false branches with concrete values
    - **Index arithmetic**: trace construction to every deconstruction site
-3. Run tests again to confirm nothing drifted.
+3. **Combinatorial branch verification**: For any function touched by the fix that has N boolean/nullable inputs determining control flow (guards, validators, state machines), enumerate all 2^N input combinations and verify each has explicit handling. A branch that falls through to a default return without an explicit check is a HIGH finding. Format:
+   ```
+   Guard: hoaConsistency
+   Inputs: hasFee (bool), hasFreq (bool), field.field (2 values)
+   Matrix: 2 × 2 × 2 = 8 combinations
+   ✓ hasFee=F, hasFreq=T, field=frequency → corrected_value: null
+   ✗ hasFee=T, hasFreq=F, field=frequency → MISSING (falls through to passed: true)
+   ```
+   If any combination is unhandled and was NOT already documented as a trap door in Phase 2 step 3, this is a verification failure — trigger the revert protocol below.
+4. **Production data migration awareness**: If the fix changes the set of accepted values for a field (tightens an enum, changes canonical vocabulary, adds validation), ask: "Could production data contain values that were valid before this fix but are now rejected/cleared?" This check applies ONLY to fields persisted in the database — grep for the field name in database schema files (`db/schema/*.ts`, `drizzle/schema/*.ts`, `src/db/schema/*.ts`, `*.sql` migration files) to confirm. If the field is persisted AND old values could exist, the fix must include one of: a data migration, backward-compatible acceptance (add old values to valid set), or an explicit trap door documented in Phase 2 step 3. If none is present, this is a verification failure — trigger the revert protocol below.
+5. Run tests again to confirm nothing drifted.
 
 If verification finds a regression:
 - Revert the specific fix (`git reset --hard <pre-iteration-SHA>`)

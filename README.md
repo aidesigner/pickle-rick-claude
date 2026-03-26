@@ -209,7 +209,7 @@ The key differentiator: **trap door cataloging**. When Anatomy Park finds files 
 5. **Three-phase protocol per iteration**:
    - Phase 1 (read-only): trace data flows, check git history, rate CRITICAL/HIGH, propose fixes
    - Phase 2 (fix): apply minimal edits, write regression tests, run full suite
-   - Phase 3 (read-only): verify callers/consumers/dead-code/boolean-logic, revert on regression
+   - Phase 3 (read-only): verify callers/consumers/dead-code/boolean-logic, combinatorial branch verification (enumerate all 2^N input combinations for guards/validators), production data migration awareness (flag tightened enums/validation on persisted fields), revert on regression
 6. **Trap door cataloging** — files with repeated fixes or structural invariants get documented in subsystem CLAUDE.md
 7. **Convergence** — exits when all subsystems pass clean twice consecutively
 
@@ -391,9 +391,10 @@ The `--focus "<text>"` flag directs the review toward a specific concern. Violat
 2. **Runs test baseline** — ensures the codebase is green before deslopping
 3. **Initializes a microverse session** — sets up `microverse.json` with LLM judge, convergence target of 0, and the principles file as judge context
 4. **Launches tmux** — context-clearing outer loop with monitor panes
-5. **Gap analysis** (iteration 1) — reads all target code, catalogs violations, writes `gap_analysis.md`
-6. **Iteration loop** — each cycle: read principles, find highest-priority violation not in the failed list, fix it, commit as `szechuan-sauce: <principle> — <description>`, measure
-7. **Convergence** — exits when violation count reaches 0 or stall limit is hit
+5. **Phase 0: Contract Discovery** (iteration 1) — greps the entire codebase for importers of every export in the target files, builds a contract map (producer → consumers), and flags cross-module mismatches: Zod schemas missing type variants, divergent regex validation, incomplete switch/if-else coverage of union types. Mismatches are scored P1 and tracked in `gap_analysis.md`. Re-checked after every fix.
+6. **Gap analysis** (iteration 1) — reads all target code, catalogs violations, writes `gap_analysis.md`
+7. **Iteration loop** — each cycle: read principles, find highest-priority violation not in the failed list, fix it, commit as `szechuan-sauce: <principle> — <description>`, measure, re-check contract map for new mismatches
+8. **Convergence** — exits when violation count reaches 0 or stall limit is hit
 
 The LLM judge reads the principles reference file directly (via `judge_context_path` in `microverse.json`), ensuring scoring is consistent with the worker's understanding of what constitutes a violation.
 

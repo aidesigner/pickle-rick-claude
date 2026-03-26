@@ -142,13 +142,21 @@ Violations matching this focus are elevated by one priority level. When tied, fi
 - **Convergence Target**: 0 (informational — enforced via `convergence_target` in `microverse.json`)
 - **Stall Limit**: STALL_LIMIT
 
-## Process (each iteration)
+## Process
+### Iteration 1: Contract Discovery + Gap Analysis
+1. Extract all exports from target files
+2. Grep the entire codebase for importers — build contract map (producer → consumers)
+3. Flag cross-module mismatches (Zod enum gaps, regex divergence, union type coverage) as P1
+4. Catalog all violations into gap_analysis.md
+
+### Each subsequent iteration
 1. Read the principles reference
 2. Read the target code
 3. Identify the highest-priority violation (P0 > P1 > P2 > P3 > P4)
 4. Fix it — one logical change per iteration
 5. Run tests — ensure green
 6. Commit
+7. Re-check contract map for new mismatches introduced by the fix
 
 ## Rules
 - One fix per iteration (atomic, revertible)
@@ -201,16 +209,42 @@ Follow the **Microverse Worker protocol** (the standard microverse iteration loo
 
 Before assessing the codebase, check the handoff's `microverse.json` for a `judge_context_path`. If set, read that file — it contains the combined base + domain principles and any focus directive. If not set, read `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md`. If the PRD's Principles Reference section lists additional domain-specific principles files, also read those. Domain principles take precedence over base principles where they overlap. If a Focus Directive section is present, apply it: violations matching the focus are elevated by one priority level and take precedence over same-priority non-focus violations. Cross-reference each finding against the priority matrix (P0–P4) and the diagnostic guide.
 
-### Override 2: Violation-Oriented Scoring
+### Override 2: Phase 0 — Contract Discovery (first iteration only)
+
+Before the first scoring pass (iteration 1 only — skip on subsequent iterations if `${SESSION_ROOT}/gap_analysis.md` already contains a `## Contract Map` section):
+
+1. **Identify exports**: For each target file, extract all exported functions, types, enums, interfaces, classes, and Zod schemas.
+2. **Grep the entire codebase** for importers of each export — not just the target directory. Use `Grep` with the export name across all source files.
+3. **Build a contract map**: write a `## Contract Map` section at the top of `${SESSION_ROOT}/gap_analysis.md` (create the file if it doesn't exist; if it already exists, prepend — do NOT overwrite existing content) in this format:
+   ```
+   ## Contract Map
+
+   ### producer_file.ts → [consumer1.ts, consumer2.ts, ...]
+   - `exportedThing`: used by consumer1.ts:45, consumer2.ts:120
+   ```
+4. **Check contract alignment** for each exported symbol:
+   - **Zod enum values**: If a TypeScript type/union has more variants than a Zod schema that validates it, `safeParse` will silently null the data. Flag as P1.
+   - **Regex validation**: If two modules validate the same field format with different regexes, one will reject values the other produces. Flag as P1.
+   - **Type unions**: If a union type (e.g. `severitySource`, `outcome`, `status`) has variants that are not handled in every `switch`/`if-else` chain and every Zod schema consuming it, flag as P1.
+   - **Enum subsets**: If a consumer only accepts a subset of the values the producer can emit, flag as P1.
+5. **Record mismatches** as P1 violations in `gap_analysis.md` under a `## Contract Mismatches` section:
+   ```
+   ## Contract Mismatches
+
+   - **P1** `consumer.ts:45` — Zod schema `fooSchema` missing variant `bar` that `FooType` (producer.ts:12) can emit. safeParse will null the data.
+   ```
+6. On every subsequent iteration, after fixing a violation and updating `gap_analysis.md`, **re-check the contract map**: verify the fix did not introduce a new contract mismatch (e.g. adding a variant to a type without updating all Zod schemas that consume it). If a new mismatch is found, add it to `## Contract Mismatches`.
+
+### Override 3: Violation-Oriented Scoring
 
 The metric is **violation count** (lower is better). Each iteration:
 1. **Always read the target code** (Glob + Read) — the code is the source of truth, never skip this
-2. Consult `${SESSION_ROOT}/gap_analysis.md` if it exists as a **checklist hint** to speed up scanning, but do NOT trust it over what the code actually says — fixes may have introduced new violations or resolved ones the gap analysis still lists
+2. Consult `${SESSION_ROOT}/gap_analysis.md` if it exists as a **checklist hint** to speed up scanning, but do NOT trust it over what the code actually says — fixes may have introduced new violations or resolved ones the gap analysis still lists. Also consult the `## Contract Mismatches` section — contract violations are scored as P1.
 3. Find the **single highest-priority** remaining violation (P0 > P1 > P2 > P3 > P4) that is NOT in the failed approaches list from the handoff
 4. If no violations found: print "The sauce is obtained." and exit cleanly
-5. After fixing and committing, **update** `gap_analysis.md`: remove the fixed violation, add any new violations introduced by the fix, and update the summary counts. This is mandatory — stale gap analysis misleads future iterations.
+5. After fixing and committing, **update** `gap_analysis.md`: remove the fixed violation, add any new violations introduced by the fix, update the summary counts, and re-check the contract map for new mismatches (Override 2 step 6). Preserve the `## Contract Map` and `## Contract Mismatches` sections — never overwrite them. This is mandatory — stale gap analysis misleads future iterations.
 
-### Override 3: Migration Hygiene (Conditional)
+### Override 4: Migration Hygiene (Conditional)
 
 Before the first scoring pass, check if the target directory contains a Drizzle migration journal at `db/migrations/meta/_journal.json` (relative to target root). If it does NOT exist, skip this override entirely.
 
@@ -226,7 +260,7 @@ If the journal exists, include these four checks in every review pass alongside 
 
 When fixing migration hygiene violations, use this commit prefix: `szechuan-sauce: Migration Hygiene — <description>`
 
-### Override 4: Commit Message Format
+### Override 5: Commit Message Format
 
 All commits follow: `szechuan-sauce: <principle> — <description>`
 
