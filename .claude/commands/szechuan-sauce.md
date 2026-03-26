@@ -210,7 +210,23 @@ The metric is **violation count** (lower is better). Each iteration:
 4. If no violations found: print "The sauce is obtained." and exit cleanly
 5. After fixing and committing, **update** `gap_analysis.md`: remove the fixed violation, add any new violations introduced by the fix, and update the summary counts. This is mandatory — stale gap analysis misleads future iterations.
 
-### Override 3: Commit Message Format
+### Override 3: Migration Hygiene (Conditional)
+
+Before the first scoring pass, check if the target directory contains a Drizzle migration journal at `db/migrations/meta/_journal.json` (relative to target root). If it does NOT exist, skip this override entirely.
+
+If the journal exists, include these four checks in every review pass alongside the standard principles scan. Score findings as HIGH (P1) or MEDIUM (P2) as noted. Do NOT duplicate mechanical checks (timestamp ordering, file↔journal parity) — those are handled by the CI lint script at `scripts/validate-migrations.ts`.
+
+1. **CHECK Constraint Drift** (HIGH — P1): For each CHECK constraint in migration SQL files under `db/migrations/`, find the corresponding TypeScript enum, union, or type in the codebase. Flag any value present in code but missing from the constraint (INSERT will fail at runtime), or present in the constraint but absent from code (dead value).
+
+2. **Redundant Constraint Churn** (MEDIUM — P2): Scan migration history for any constraint that has been dropped and re-created 3+ times. These should be collapsed into a single canonical migration. Report the constraint name and the migration files involved.
+
+3. **Idempotency** (MEDIUM — P2): Every `ALTER TABLE`, `CREATE TABLE`, `CREATE INDEX`, `ADD COLUMN` in migration SQL should use `IF EXISTS`/`IF NOT EXISTS` or be wrapped in a DO/EXCEPTION block. Non-idempotent statements break re-runs and rollback recovery.
+
+4. **Schema Drift** (HIGH — P1): Compare Drizzle schema TS files (glob `db/schema/*.ts` or `src/db/schema/*.ts` or `drizzle/schema/*.ts`) against the latest migration SQL. Flag columns, constraints, or column types that diverge between the two sources of truth.
+
+When fixing migration hygiene violations, use this commit prefix: `szechuan-sauce: Migration Hygiene — <description>`
+
+### Override 4: Commit Message Format
 
 All commits follow: `szechuan-sauce: <principle> — <description>`
 

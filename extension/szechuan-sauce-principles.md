@@ -25,6 +25,14 @@ Based on [Theta-Tech-AI/deslop](https://github.com/Theta-Tech-AI/llm-public-util
 | Getters exposing internals | Encapsulation | Tell, don't ask |
 | Migration without rollback | Migration Safety | Add rollback script |
 | Non-idempotent migration | Migration Safety | Add IF NOT EXISTS / guards |
+| CHECK values ≠ TS enum | Migration Hygiene | Sync constraint with code enum |
+| Constraint dropped/recreated 3+ times | Migration Hygiene | Collapse into single migration |
+| ALTER without IF EXISTS | Migration Hygiene | Add idempotency guard |
+| Schema TS ≠ latest migration SQL | Migration Hygiene | Reconcile schema and migration |
+| `npm audit` shows critical CVEs | Dependency Health | Update or replace vulnerable dep |
+| Package imported but never used | Dependency Health | Remove from manifest |
+| Tests always pass regardless | Test Quality | Assert on real behavior |
+| Only happy path tested | Test Quality | Add error/boundary tests |
 
 ## Principle Tensions
 
@@ -153,6 +161,29 @@ Database migrations must be idempotent, forward-only by default, and registered 
 
 **Violations**: Migration not registered in journal, missing rollback script, destructive DDL without backup/copy step, non-idempotent migration (re-running it fails), migration that depends on application runtime state.
 
+### Migration Hygiene (Drizzle)
+**Conditional**: Only applies when the target contains a Drizzle migration journal (`db/migrations/meta/_journal.json`). Does NOT duplicate mechanical checks (timestamp ordering, file↔journal parity) handled by CI lint (`scripts/validate-migrations.ts`).
+
+Four checks, scored HIGH or MEDIUM:
+
+1. **CHECK Constraint Drift** (HIGH): For each CHECK constraint in migration SQL, verify the allowed values match the corresponding TypeScript enum/union/type in the codebase. Flag any value present in code but missing from the constraint, or present in the constraint but absent from code. Drift causes runtime INSERT failures.
+
+2. **Redundant Constraint Churn** (MEDIUM): Flag any constraint that has been dropped and re-created 3+ times across migration history. These should be collapsed into a single canonical migration to reduce noise and migration runtime.
+
+3. **Idempotency** (MEDIUM): Every ALTER/CREATE in migration SQL should use IF EXISTS/IF NOT EXISTS or be wrapped in an exception handler. Non-idempotent migrations break re-runs and rollback recovery.
+
+4. **Schema Drift** (HIGH): Compare the Drizzle schema TS files against the latest migration SQL. Flag columns, constraints, or types that diverge between the two sources of truth. The schema TS is what the app believes; the migration SQL is what the database has.
+
+### Dependency Health
+Project dependencies are attack surface and maintenance burden. Audit regularly: known CVEs (`npm audit`, `pip audit`), phantom/unused deps (`depcheck`), lockfile integrity (lockfile should match manifest). Pin versions in production. Don't import a library for one function you could write in 5 lines.
+
+**Violations**: Dependencies with known critical CVEs, packages in lockfile but not in manifest (phantom deps), packages in manifest but never imported (dead deps), lockfile out of sync with manifest, importing a large library for a single utility function.
+
+### Test Quality
+Tests are only valuable if they can fail for the right reasons. Every test must assert on observable behavior, not implementation details. Tests that always pass are worse than no tests — they give false confidence.
+
+**Violations**: Tautological assertions (`expect(true).toBe(true)`, asserting on mocked return values), flaky tests (time-dependent, order-dependent, network-dependent without mocking), missing error path coverage (only testing happy path), unrealistic mocks that diverge from production behavior, boundary conditions untested (empty arrays, zero, null, max values), assertions on implementation details (internal state, private methods, call counts on non-critical deps).
+
 ### Boy Scout Rule
 Leave code better than you found it. Small, incremental improvements compound over time. NOT: rewrite everything you touch. Just: fix one thing nearby.
 
@@ -176,3 +207,12 @@ Leave code better than you found it. Small, incremental improvements compound ov
 | Silent swallow | Observability | Log or rethrow |
 | DROP without backup | Migration Safety | Copy data first |
 | Unregistered migration | Migration Safety | Add to journal |
+| CHECK constraint ≠ TS enum values | Migration Hygiene | Sync constraint allowed values with code |
+| Same constraint dropped/recreated 3+ | Migration Hygiene | Collapse into canonical migration |
+| ALTER/CREATE without IF [NOT] EXISTS | Migration Hygiene | Add idempotency guard |
+| Schema TS diverges from migration SQL | Migration Hygiene | Reconcile schema source of truth |
+| Critical CVE in dependency | Dependency Health | Update, replace, or remove |
+| Dead/phantom dependency | Dependency Health | Remove from manifest/lockfile |
+| Tautological test assertion | Test Quality | Assert on real behavior |
+| Missing error path coverage | Test Quality | Add failure case tests |
+| Flaky time/order-dependent test | Test Quality | Isolate or mock correctly |

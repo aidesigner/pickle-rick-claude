@@ -9,8 +9,10 @@ Summarize the available commands for the user:
 - `/pickle-prd <prompt>`: Interactive PRD drafting, then resume with `/pickle --resume`
 - `/pickle-refine-prd [path]`: Refine PRD via 3 parallel Morty analysts, decompose into atomic tickets. Resume with `/pickle --resume` or `/pickle-tmux --resume`
 - `/pickle-dot [path | inline PRD]`: Convert PRD to strongdm/attractor-compatible DOT digraph
-- `/meeseeks`: Launch iterative code review loop (Mr. Meeseeks)
-- `/meeseeks-zellij`: Launch Mr. Meeseeks code review in Zellij. Same as /meeseeks but for Zellij users. Requires Zellij >= 0.40.0
+- `/szechuan-sauce [target]`: Principle-driven code quality review (iterative deslopping). Flags: `--domain <name>`, `--focus "<text>"`, `--dry-run`, `--max-iterations`, `--stall-limit`
+- `/anatomy-park [target]`: Deep subsystem review — trace data flows, fix bugs, catalog trap doors. Flags: `--dry-run`, `--max-iterations`, `--stall-limit`
+- ~~/meeseeks~~: **DEPRECATED** — use `/szechuan-sauce` or `/anatomy-park`
+- ~~/meeseeks-zellij~~: **DEPRECATED** — use `/szechuan-sauce` or `/anatomy-park`
 - `/council-of-ricks`: Iterative Graphite stack reviewer (Council of Ricks). Reviews every branch, generates agent-executable directives. Requires `gt`, `tmux`, `CLAUDE.md`, lint with architectural rules. Flags: `--gitnexus`, `--min-iterations`, `--max-iterations`, `--repo`
 - `/pickle-microverse`: Microverse convergence loop — optimize a numeric metric through targeted changes. Requires `tmux` (or `--interactive`)
 - `/attract [file.dot]`: Submit a `.dot` pipeline to the attractor server for execution

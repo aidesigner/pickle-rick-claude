@@ -193,7 +193,7 @@ test('init-microverse omits judge_context_path when --judge-context not provided
 });
 
 // ---------------------------------------------------------------------------
-// szechuan-sauce.md: no Override 4 (state update race)
+// szechuan-sauce.md: workers must not call update-state.js (runner owns state)
 // ---------------------------------------------------------------------------
 
 test('szechuan-sauce.md Worker Mode does not instruct workers to call update-state.js', () => {
@@ -339,6 +339,104 @@ test('szechuan-sauce.md Worker Mode Override 1 handles focus directive', () => {
     const workerStart = content.indexOf('## WORKER MODE');
     const workerSection = content.slice(workerStart);
     assert.ok(workerSection.includes('Focus Directive'), 'Worker Override 1 should reference Focus Directive');
+});
+
+// ---------------------------------------------------------------------------
+// Dependency Health and Test Quality principles (ported from meeseeks)
+// ---------------------------------------------------------------------------
+
+test('principles file has Dependency Health section', () => {
+    const content = fs.readFileSync(PRINCIPLES_PATH, 'utf-8');
+    assert.ok(content.includes('### Dependency Health'), 'missing Dependency Health principle');
+    assert.ok(content.includes('CVE'), 'Dependency Health should mention CVEs');
+    assert.ok(content.includes('phantom'), 'Dependency Health should mention phantom deps');
+    assert.ok(content.includes('lockfile'), 'Dependency Health should mention lockfile integrity');
+});
+
+test('principles file has Test Quality section', () => {
+    const content = fs.readFileSync(PRINCIPLES_PATH, 'utf-8');
+    assert.ok(content.includes('### Test Quality'), 'missing Test Quality principle');
+    assert.ok(content.includes('Tautological'), 'Test Quality should mention tautological assertions');
+    assert.ok(content.includes('flaky') || content.includes('Flaky'), 'Test Quality should mention flaky tests');
+    assert.ok(content.includes('boundary') || content.includes('Boundary'), 'Test Quality should mention boundary conditions');
+});
+
+// ---------------------------------------------------------------------------
+// Migration Hygiene dimension
+// ---------------------------------------------------------------------------
+
+test('principles file has Migration Hygiene section', () => {
+    const content = fs.readFileSync(PRINCIPLES_PATH, 'utf-8');
+    assert.ok(content.includes('### Migration Hygiene'), 'missing Migration Hygiene principle');
+});
+
+test('principles file Migration Hygiene defines four checks', () => {
+    const content = fs.readFileSync(PRINCIPLES_PATH, 'utf-8');
+    assert.ok(content.includes('CHECK Constraint Drift'), 'missing CHECK Constraint Drift check');
+    assert.ok(content.includes('Redundant Constraint Churn'), 'missing Redundant Constraint Churn check');
+    assert.ok(content.includes('Idempotency') && content.includes('IF NOT EXISTS'), 'missing Idempotency check');
+    assert.ok(content.includes('Schema Drift'), 'missing Schema Drift check');
+});
+
+test('principles file Migration Hygiene is conditional on Drizzle journal', () => {
+    const content = fs.readFileSync(PRINCIPLES_PATH, 'utf-8');
+    assert.ok(content.includes('_journal.json'), 'should reference Drizzle migration journal');
+    assert.ok(content.includes('Conditional'), 'should be marked as conditional');
+});
+
+test('principles file Migration Hygiene scores as HIGH or MEDIUM only', () => {
+    const content = fs.readFileSync(PRINCIPLES_PATH, 'utf-8');
+    const hygieneStart = content.indexOf('### Migration Hygiene');
+    const hygieneEnd = content.indexOf('###', hygieneStart + 1);
+    const section = content.slice(hygieneStart, hygieneEnd > -1 ? hygieneEnd : undefined);
+    assert.ok(section.includes('HIGH'), 'should have HIGH severity findings');
+    assert.ok(section.includes('MEDIUM'), 'should have MEDIUM severity findings');
+    // Should not introduce LOW or OPTIONAL for this dimension
+    assert.ok(!section.includes('(LOW)'), 'should not have LOW severity');
+});
+
+test('principles file Migration Hygiene does not duplicate CI lint checks', () => {
+    const content = fs.readFileSync(PRINCIPLES_PATH, 'utf-8');
+    const hygieneStart = content.indexOf('### Migration Hygiene');
+    const hygieneEnd = content.indexOf('###', hygieneStart + 1);
+    const section = content.slice(hygieneStart, hygieneEnd > -1 ? hygieneEnd : undefined);
+    assert.ok(section.includes('validate-migrations.ts'), 'should reference CI lint script exclusion');
+});
+
+test('szechuan-sauce.md Worker Mode has Migration Hygiene override', () => {
+    const content = readCommand();
+    const workerStart = content.indexOf('## WORKER MODE');
+    const workerSection = content.slice(workerStart);
+    assert.ok(workerSection.includes('Migration Hygiene'), 'Worker Mode should have Migration Hygiene override');
+    assert.ok(workerSection.includes('_journal.json'), 'should check for Drizzle journal');
+});
+
+test('szechuan-sauce.md Migration Hygiene override is conditional', () => {
+    const content = readCommand();
+    const workerStart = content.indexOf('## WORKER MODE');
+    const workerSection = content.slice(workerStart);
+    // Must check for journal existence before applying
+    assert.ok(
+        workerSection.includes('If it does NOT exist, skip'),
+        'Migration Hygiene must be skipped when no Drizzle journal found'
+    );
+});
+
+test('szechuan-sauce.md Migration Hygiene override defines all four checks', () => {
+    const content = readCommand();
+    const workerStart = content.indexOf('## WORKER MODE');
+    const workerSection = content.slice(workerStart);
+    assert.ok(workerSection.includes('CHECK Constraint Drift'), 'missing CHECK Constraint Drift');
+    assert.ok(workerSection.includes('Redundant Constraint Churn'), 'missing Redundant Constraint Churn');
+    assert.ok(workerSection.includes('Idempotency'), 'missing Idempotency');
+    assert.ok(workerSection.includes('Schema Drift'), 'missing Schema Drift');
+});
+
+test('szechuan-sauce.md Migration Hygiene excludes CI lint overlap', () => {
+    const content = readCommand();
+    const workerStart = content.indexOf('## WORKER MODE');
+    const workerSection = content.slice(workerStart);
+    assert.ok(workerSection.includes('validate-migrations.ts'), 'should reference CI lint exclusion');
 });
 
 // ---------------------------------------------------------------------------

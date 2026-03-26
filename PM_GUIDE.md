@@ -437,6 +437,53 @@ The microverse doesn't follow a ticket queue. It has *autonomy* to choose what t
 
 The system might tree-shake unused imports in iteration 1, replace a heavy library with a lighter one in iteration 2, split a large module in iteration 3 — each time measuring, keeping wins, rolling back losses.
 
+### Szechuan Sauce: Grinding Out Code Quality
+
+Sometimes the code works but it's *messy*. Tech debt, copy-pasted logic, missing error handling, dead code, inconsistent naming. Szechuan Sauce is a convergence loop that reviews code against 30+ coding principles (KISS, DRY, SOLID, dependency health, test quality, migration hygiene) and fixes violations one at a time until there are zero left.
+
+**When to use it:**
+- Post-feature polish before merging a PR
+- Inherited codebase cleanup ("clean up the services directory")
+- Pre-release hardening pass (security and data-loss violations are fixed first)
+- Dependency health audit ("are there CVEs, unused packages, lockfile drift?")
+
+**How to start it:**
+
+> "Run szechuan sauce on the services directory"
+
+> "Deslop src/api/ — focus on error handling"
+
+> "Do a dry run on src/ to see what violations exist without fixing anything"
+
+The system reads every file, scores against a priority matrix (P0 security/data-loss → P4 style), fixes the highest-priority violation each iteration, runs tests, commits, and re-scores. Regressions are auto-reverted. When the count hits zero, it stops.
+
+**What you control:**
+- **target** — file or directory to review
+- **dry-run** — catalog violations without fixing (useful for scoping)
+- **focus** — narrow the review to a specific concern ("error handling", "accessibility", "rounding logic")
+- **domain** — load domain-specific principles (e.g., `financial` adds monetary precision, regulatory compliance rules)
+
+### Anatomy Park: Deep Subsystem Bug Hunting
+
+Anatomy Park goes deeper than code quality — it traces **data flows** through your subsystems looking for runtime bugs: data corruption, timezone issues, financial rounding errors, schema drift. It's the tool you reach for when something keeps breaking and you don't know why.
+
+**When to use it:**
+- Stabilizing a subsystem that keeps regressing
+- Pre-release hardening across multiple subsystems
+- Onboarding to an unfamiliar codebase with hidden invariants
+- Finding bugs that static analysis and linters miss
+
+**How to start it:**
+
+> "Run anatomy park on src/"
+
+> "Do a dry run of anatomy park to see what it finds"
+
+The system auto-discovers subsystems, rotates through them, and applies a strict three-phase protocol per iteration: **review** (read-only data flow tracing), **fix** (targeted edit + regression test), and **verify** (self-review with revert on regression). When it finds files that keep breaking — structural invariants that aren't enforced by types or tests — it catalogs them as **trap doors** in `CLAUDE.md` files so future engineers know where the landmines are.
+
+**What makes it different from Szechuan Sauce:**
+Szechuan Sauce asks *"Is this code well-designed?"* — it catches DRY violations, dead code, missing error handling. Anatomy Park asks *"Is this code correct?"* — it traces data from input to output and finds where values go wrong. Use Szechuan Sauce for quality; use Anatomy Park for correctness.
+
 ### Pipeline Mode: Self-Correcting DAGs
 
 For complex epics with parallel workstreams, conditional logic, and multiple quality gates, you can define the work as a **convergence graph** — a DAG (directed acyclic graph) where failures automatically route back for correction instead of stopping the pipeline.
@@ -528,6 +575,8 @@ The system generates the convergence graph, validates it, and submits it. You ca
 | Single feature, < 5 files | Standard: *"Build X"* |
 | Feature with clear tickets, sequential work | Standard with refinement: *"Refine and implement"* |
 | Optimize a measurable metric | Microverse: *"Optimize X, metric is Y"* |
+| Clean up tech debt, polish before merge | Szechuan Sauce: *"Deslop src/services/"* |
+| Find data flow bugs, stabilize flaky subsystems | Anatomy Park: *"Run anatomy park on src/"* |
 | Multi-phase epic, parallel workstreams | Pipeline: *"Create a pipeline from my PRD"* |
 | High-risk changes needing multiple quality gates | Pipeline (security, coverage, scope, drift gates) |
 | Hard problems where multiple approaches might work | Pipeline with multi-pass (competing implementations) |

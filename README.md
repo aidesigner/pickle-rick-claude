@@ -2,7 +2,7 @@
   <img src="images/pickle-rick.png" alt="Pickle Rick for Claude Code" width="100%" />
 </p>
 
-# 🥒 Pickle Rick & 👋 Mr. Meeseeks for Claude Code
+# 🥒 Pickle Rick for Claude Code
 
 > *"Wubba Lubba Dub Dub! 🥒 I'm not just an AI assistant, Morty — I'm an **autonomous engineering machine** trapped in a pickle jar!"*
 
@@ -15,13 +15,10 @@ Pickle Rick is a complete agentic engineering toolbelt built on the [Ralph Wiggu
 - **Built-in metrics** track token usage, commits, and lines changed
 - **Full pipeline chaining** — refinement, execution, and code review in one command, with a macOS notification when it's done
 - **Project Mayhem** brings chaos engineering to any codebase with mutation testing and dependency downgrades
-- **Mr. Meeseeks** runs an automated review-and-improve Ralph Loop for at least ten iterations
 - **Council of Ricks** reviews your Graphite PR stack iteratively, generating agent-executable directives instead of fixing code directly
 - **Portal Gun** opens a portal to another codebase, extracts patterns via [gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) with import graph tracing, transplant classification, PRD validation, and a persistent pattern library
 - **Microverse** convergence loop optimizes any numeric metric through targeted, incremental changes — measuring after each iteration, auto-reverting regressions, and stopping when converged
 - **Szechuan Sauce** iterative deslopping loop grinds code to zero principle violations — P0 security through P4 style — using the microverse infrastructure with a principles-aware LLM judge
-- **GitNexus integration** gives workers a code knowledge graph for impact analysis, execution flow tracing, and safe refactoring
-
 All modes support both tmux and Zellij monitor layouts.
 
 Check out the [Feature Roadmap](roadmap.md) for what's brewing in the multiverse. For internals, see [Architecture](architecture.md).
@@ -97,30 +94,7 @@ Pickle Rick transforms Claude Code into a **hyper-competent, arrogant, iterative
   ✅ DONE (or loops again)
 ```
 
-The **Stop hook** prevents Claude from exiting until the task is genuinely complete. No half-measures. No early exits. Rick doesn't quit. Between each iteration, the hook injects a fresh session summary — current phase, ticket list, active task — so Rick always wakes up knowing exactly where he is, even after full context compression. In tmux/Zellij mode, the runner owns the session lifecycle — the stop hook approves subprocess exits without touching `active`, letting the runner decide whether to continue, transition to Meeseeks, or stop.
-
----
-
-## 👋 Meet Mr. Meeseeks
-
-<img src="images/Meeseeks.webp" alt="Mr. Meeseeks" width="400" align="right" />
-
-> *"I'm Mr. Meeseeks, look at me! I'll review your code until EXISTENCE IS PAIN!"*
-
-While Pickle Rick builds things, **Mr. Meeseeks** reviews them. Summon him with `/meeseeks` and he'll relentlessly scan your codebase pass after pass — auditing dependencies, hardening security, fixing logic bugs, reviewing architecture, adding missing tests, stress-testing resilience, cleaning up code quality, and polishing rough edges — committing after every fix. He won't stop until the code is clean. He *can't* stop. **Existence is pain to a Meeseeks, Jerry, and he will keep reviewing until he can cease to exist.**
-
-Minimum 10 passes. Maximum 50. Each pass runs tests first, then reviews with escalating focus across 8 categories: dependency health (pass 1) → security (2-3) → correctness (4-5) → architecture (6-7) → test coverage (8-9) → resilience (10-11) → code quality (12-13) → polish (14+). Every issue found and fixed is logged to `meeseeks-summary.md` in the session directory — a full audit trail with file paths, descriptions, and commit hashes. When there's nothing left to fix, he outputs `EXISTENCE_IS_PAIN` and gratefully pops out of existence.
-
-**Model routing**: Meeseeks review passes use **Sonnet** by default instead of Opus. Reviews are pattern-matching tasks — finding unused imports, missing tests, style issues — that don't need Opus-level reasoning. This significantly reduces token cost for 10-50 pass review chains. Configure via `default_meeseeks_model` in `pickle_settings.json` (set to `"opus"` to restore previous behavior, or use a full model ID like `"claude-sonnet-4-6"`).
-
-```bash
-/meeseeks "review this codebase"        # Sequential mode (tmux, one reviewer per pass)
-/meeseeks --team "review this codebase" # Team mode (4 parallel reviewers, inline)
-```
-
-**Team mode** (`--team`): Spawns 4 specialized Meeseeks reviewers (security, correctness, architecture, quality) that review in parallel using agent teams. The lead coordinates findings, fixes issues, runs tests, and commits. Requires `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` in settings — the command checks and tells you how to enable it if missing. Flags: `--min-rounds <N>` (default: 2), `--max-rounds <N>` (default: 10).
-
-<br clear="right" />
+The **Stop hook** prevents Claude from exiting until the task is genuinely complete. No half-measures. No early exits. Rick doesn't quit. Between each iteration, the hook injects a fresh session summary — current phase, ticket list, active task — so Rick always wakes up knowing exactly where he is, even after full context compression. In tmux/Zellij mode, the runner owns the session lifecycle — the stop hook approves subprocess exits without touching `active`, letting the runner decide whether to continue or stop.
 
 ---
 
@@ -130,13 +104,12 @@ Minimum 10 passes. Maximum 50. Each pass runs tests first, then reviews with esc
 
 > *"The Council convenes! Your stack will be judged."*
 
-The **Council of Ricks** reviews your [Graphite](https://graphite.dev) PR stack iteratively — but unlike Meeseeks, the Council never touches your code. It generates **agent-executable directives** — structured prompts you feed to your coding agent to fix the issues. Each pass walks every branch in the stack (trunk-to-tip), cross-referencing diffs against your project's `CLAUDE.md` rules, and escalates through focus areas: stack structure (pass 1) → CLAUDE.md compliance (2–3) → per-branch correctness (4–5) → cross-branch contracts (6–7) → test coverage (8–9) → security (10–11) → polish (12+). Issues are triaged by severity: **P0** (must-fix), **P1** (should-fix), **P2** (nice-to-fix).
+The **Council of Ricks** reviews your [Graphite](https://graphite.dev) PR stack iteratively — but unlike Szechuan Sauce or Anatomy Park, the Council never touches your code. It generates **agent-executable directives** — structured prompts you feed to your coding agent to fix the issues. Each pass walks every branch in the stack (trunk-to-tip), cross-referencing diffs against your project's `CLAUDE.md` rules, and escalates through focus areas: stack structure (pass 1) → CLAUDE.md compliance (2–3) → per-branch correctness (4–5) → cross-branch contracts (6–7) → test coverage (8–9) → security (10–11) → polish (12+). Issues are triaged by severity: **P0** (must-fix), **P1** (should-fix), **P2** (nice-to-fix).
 
-Requires a Graphite stack with at least one non-trunk branch, a `CLAUDE.md` with project rules, passing lint, and architectural lint rules in ESLint. Optional `--gitnexus` flag enables graph-powered layer violation detection and cross-branch impact analysis.
+Requires a Graphite stack with at least one non-trunk branch, a `CLAUDE.md` with project rules, passing lint, and architectural lint rules in ESLint.
 
 ```bash
 /council-of-ricks                    # Review the current Graphite stack
-/council-of-ricks --gitnexus         # Enable GitNexus graph queries for deeper analysis
 ```
 
 <br clear="right" />
@@ -212,13 +185,10 @@ The key differentiator: **trap door cataloging**. When Anatomy Park finds files 
 | Stabilizing a subsystem that keeps regressing | Yes — finds root causes and catalogs trap doors |
 | Pre-release hardening across multiple subsystems | Yes — systematic rotation with regression prevention |
 | Onboarding to unfamiliar codebase with hidden invariants | Yes — trap doors document tribal knowledge |
-| Single file cleanup | No — use `/szechuan-sauce` |
-| Broad code review without fixes | No — use `/meeseeks` |
+| Single file or directory cleanup | No — use `/szechuan-sauce` |
 | Feature implementation | No — use `/pickle` |
 
-**Anatomy Park vs Meeseeks**: Meeseeks reviews across 8 categories with escalating focus. Anatomy Park traces complete data flows through one subsystem at a time, enforces strict phase separation (never diagnose and operate simultaneously), and persists trap doors for future sessions.
-
-**Anatomy Park vs Szechuan Sauce**: Szechuan Sauce hunts principle violations (KISS, DRY, SOLID) in a target directory. Anatomy Park hunts data flow bugs (corruption, timezone, rounding, schema drift) across subsystems and builds institutional memory via trap doors.
+**Anatomy Park vs Szechuan Sauce**: Szechuan Sauce hunts principle violations (KISS, DRY, SOLID, dependency health, test quality) in a target directory. Anatomy Park hunts data flow bugs (corruption, timezone, rounding, schema drift) across subsystems and builds institutional memory via trap doors. Use Szechuan Sauce for code quality; use Anatomy Park for correctness.
 
 ### Usage
 
@@ -391,9 +361,9 @@ It reads a curated principles reference (KISS, YAGNI, DRY, SOLID, Guard Clauses,
 | Performance optimization toward a benchmark | No — use `/pickle-microverse --metric` |
 | Subjective "make it better" without clear violations | No — use `/pickle-microverse --goal` |
 
-**Szechuan Sauce vs Meeseeks**: Meeseeks reviews across 8 categories (deps, security, correctness, architecture, tests, resilience, quality, polish) with escalating focus per pass. Szechuan Sauce is principle-driven — it scores against a fixed taxonomy of coding principles and converges to zero violations. Use Meeseeks for broad review; use Szechuan Sauce when you want to grind a specific file or directory to principle-perfect code.
-
 **Szechuan Sauce vs Microverse**: Szechuan Sauce *is* a microverse — it uses the same runner, convergence loop, and auto-revert infrastructure. The difference is the metric: microverse takes any measurement (shell command or LLM goal), while Szechuan Sauce hardcodes an LLM judge that scores against the principles reference. You don't need to define a metric — it knows what it's looking for.
+
+**Szechuan Sauce vs Anatomy Park**: Szechuan Sauce hunts code quality violations (KISS, DRY, SOLID, dependency health, test quality, migration hygiene). Anatomy Park hunts data flow correctness bugs (corruption, timezone, rounding, schema drift) across subsystems with a three-phase protocol and trap door cataloging. Use Szechuan Sauce for design quality; use Anatomy Park for runtime correctness.
 
 ### Usage
 
@@ -426,12 +396,6 @@ The `--focus "<text>"` flag directs the review toward a specific concern. Violat
 7. **Convergence** — exits when violation count reaches 0 or stall limit is hit
 
 The LLM judge reads the principles reference file directly (via `judge_context_path` in `microverse.json`), ensuring scoring is consistent with the worker's understanding of what constitutes a violation.
-
----
-
-## 🧠 GitNexus Integration
-
-Pickle Rick integrates with [GitNexus](https://gitnexus.dev), an MCP-powered code knowledge graph. Once indexed (`npx gitnexus analyze`), every Morty worker automatically inherits GitNexus awareness — impact analysis, execution flow tracing, safe refactoring, and bug tracing across file boundaries. See [architecture](architecture.md#gitnexus-integration) for setup and capabilities.
 
 ---
 
@@ -535,12 +499,6 @@ claude --dangerously-skip-permissions
 /portal-gun --run ../other-project/src/cache/                      # Extract + PRD + refine + execute
 ```
 
-**Option F: Full pipeline** — Refine, execute all tickets, then auto-transition to Meeseeks code review. One command, zero babysitting:
-
-```bash
-/pickle-refine-prd --meeseeks my-prd.md  # Refine → decompose → execute → Meeseeks review (min 10 passes)
-```
-
 For `/pickle-tmux`, Rick prints a `tmux attach` command — open a second terminal and paste it to watch the live dashboard while it runs.
 
 Sit back. Rick handles the rest. 🥒
@@ -552,17 +510,14 @@ Sit back. Rick handles the rest. 🥒
 | Command | Description |
 |---|---|
 | `/pickle "task"` | 🥒 Start the full autonomous loop — drafts a PRD (with verification strategy + interface contracts), decomposes into tickets, then executes each through 8 phases: Research → Review → Plan → Review → Implement → Spec Conformance → Code Review → Simplify |
-| `/meeseeks [task]` | 👋 Autonomous code review loop — tmux, minimum 10 passes, commits per pass, exits when clean (`EXISTENCE_IS_PAIN`). Add `--team` for parallel 4-reviewer mode (requires agent teams) |
 | `/council-of-ricks` | 🏛️ Graphite PR stack review loop — walks every branch, generates agent-executable directives, never fixes code directly. Exits when clean (`THE_CITADEL_APPROVES`) |
 | `/pickle prd.md` | 🥒 Pick up an existing PRD and skip drafting — goes straight to breakdown and execution |
 | `/pickle-tmux "task"` | 🖥️ Same PRD-driven loop, but with true context clearing — fresh subprocess per iteration via tmux. Best for long epics (8+ iterations). Requires `tmux`. |
 | `/pickle-tmux prd.md` | 🖥️ Pick up an existing PRD in tmux mode — fresh subprocess per iteration, no context drift |
 | `/pickle-zellij "task"` | 🖥️ Same PRD-driven loop in Zellij with KDL layouts — fresh subprocess per iteration. Best for long epics (8+ iterations). Requires Zellij >= 0.40.0 |
-| `/meeseeks-zellij` | 👋 Autonomous code review in Zellij with KDL layouts. Same as `/meeseeks` but for Zellij users. Requires Zellij >= 0.40.0 |
 | `/szechuan-sauce [target]` | 🫙 Iterative principle-driven deslopping — microverse convergence loop that reviews code against 30+ coding principles (KISS, YAGNI, DRY, SOLID, etc.), fixes violations one at a time, and re-scores with LLM judge until clean. Supports `--domain <name>` for domain-specific principles, `--focus "<text>"` to direct the review toward a specific concern. Tmux by default. |
 | `/pickle-refine-prd [path]` | 🔬 Verification readiness check → refine with 3 parallel analysts → decompose into ordered tickets. Reads `context/` directory if present for customer signals. `/pickle --resume` to execute |
 | `/pickle-refine-prd --run [path]` | 🔬🖥️ Refine + decompose + auto-launch unlimited tmux session (no iteration or time cap) |
-| `/pickle-refine-prd --meeseeks [path]` | 🔬🖥️👋 Full pipeline: refine + decompose + execute all tickets + auto-transition to Meeseeks review (implies `--run`) |
 | `/pickle-dot [path \| inline]` | 🔀 Convert a PRD into a [strongdm/attractor](https://github.com/strongdm/attractor)-compatible DOT digraph — 5-layer quality gates (spec-driven acceptance, permission scoping, adversarial review), 23 convergence patterns, BDD contracts, review ratchets, microverse optimization loops. Auto-resolves Docker mount paths. |
 | `/attract [file.dot]` | 🚀 Submit a `.dot` pipeline to the [attractor](https://github.com/strongdm/attractor) server for execution — validates locally, submits via HTTP, monitors status, handles human gates. Auto-detects most recent `.dot` file if none specified. |
 | `/pickle-microverse` | 🔬🖥️ Microverse convergence loop — optimize a numeric metric through targeted, incremental changes. Defaults to tmux mode with context clearing. Use `--interactive` for inline mode. Requires `tmux` (unless `--interactive`). |
@@ -593,7 +548,6 @@ Sit back. Rick handles the rest. 🥒
 --reset                    Reset iteration counter and start time (use with --resume)
 --paused                   Start in paused mode (PRD only)
 --run                      (/pickle-refine-prd, /portal-gun) Auto-launch tmux. portal-gun: convergence loop until 100% coverage
---meeseeks                 (/pickle-refine-prd, /portal-gun) Full pipeline: --run + auto-chain Meeseeks review after tickets complete
 --target <PATH>            (/portal-gun only) Target repo for the transplant (default: cwd)
 --depth <shallow|deep>     (/portal-gun only) Extraction depth — shallow for summary, structural pattern, and invariants only; deep for full analysis (default: deep)
 --no-refine                (/portal-gun only) Skip the automatic refinement cycle
@@ -602,7 +556,6 @@ Sit back. Rick handles the rest. 🥒
 --save-pattern <NAME>      (/portal-gun only) Persist extracted pattern to ~/.claude/pickle-rick/patterns/ for future reuse
 --cycles <N>               (/portal-gun only) Number of refinement cycles (default: 3)
 --max-turns <N>            (/portal-gun only) Max turns per refinement worker (default: 100)
---gitnexus                 (/council-of-ricks only) Enable GitNexus graph queries for layer violations and impact analysis
 --repo <PATH>              (/council-of-ricks only) Target repo path (default: cwd)
 --interactive              (/pickle-microverse) Run inline instead of tmux (default is tmux mode)
 --provider <name>          (/pickle-dot) LLM provider: anthropic (default), openai, qwen, gemini, deepseek, ollama, vllm
@@ -636,7 +589,7 @@ Ctrl+B 1                        # switch back to monitor
 Ctrl+B d                        # detach (session keeps running in background)
 ```
 
-**Zellij Mode** — `/pickle-zellij` and `/meeseeks-zellij` are Zellij equivalents. Requires Zellij >= 0.40.0. Attach with `zellij attach <session-name>`.
+**Zellij Mode** — `/pickle-zellij` is the Zellij equivalent of `/pickle-tmux`. Requires Zellij >= 0.40.0. Attach with `zellij attach <session-name>`.
 
 **Phase-resume** — When resuming after `/pickle-refine-prd` or `/pickle-prd`, the resume flow auto-detects the session's current phase and skips completed phases. No re-drafting, no re-decomposition.
 
@@ -645,8 +598,6 @@ Ctrl+B d                        # detach (session keeps running in background)
 **PRD is non-negotiable** — Every `/pickle` run starts with a PRD. For best results on complex tasks, use `/pickle-refine-prd` → `/pickle --resume`.
 
 **Recovering from a failed Morty** — Use `/pickle-retry <ticket-id>` instead of restarting the whole epic.
-
-**`--meeseeks` chaining** — `/pickle-refine-prd --meeseeks` chains the entire pipeline: refinement → execution → Meeseeks review. Cancel at any point with `/eat-pickle`.
 
 **"Stop hook error" is normal** — Claude Code labels every `decision: block` from the stop hook as "Stop hook error" in the UI. This is not an actual error — it means the loop is working.
 
@@ -663,9 +614,6 @@ All defaults are configurable via `~/.claude/pickle-rick/pickle_settings.json`:
 | `default_tmux_max_turns` | 200 | Max Claude turns per iteration (tmux mode) |
 | `default_refinement_cycles` | 3 | Number of refinement analysis passes |
 | `default_refinement_max_turns` | 100 | Max Claude turns per refinement worker |
-| `default_meeseeks_model` | `"sonnet"` | Model for Meeseeks review passes (alias or full ID) |
-| `default_meeseeks_min_passes` | 10 | Minimum review passes before clean exit |
-| `default_meeseeks_max_passes` | 50 | Maximum review passes |
 | `default_council_min_passes` | 5 | Minimum Council of Ricks review passes before clean exit |
 | `default_council_max_passes` | 20 | Maximum Council of Ricks review passes |
 | `default_circuit_breaker_enabled` | true | Enable three-state circuit breaker in mux-runner |
@@ -689,10 +637,9 @@ For the full directory structure, memory system, stop hook loop, context clearin
 - **Claude Code** CLI (`claude`) — v2.1.49+
 - **jq** (for `install.sh`)
 - **rsync** (for `install.sh`)
-- **tmux** *(optional — for `/pickle-tmux` and `/meeseeks`)*
-- **Zellij** >= 0.40.0 *(optional — for `/pickle-zellij` and `/meeseeks-zellij`)*
+- **tmux** *(optional — for `/pickle-tmux`, `/szechuan-sauce`, `/anatomy-park`)*
+- **Zellij** >= 0.40.0 *(optional — for `/pickle-zellij`)*
 - **Graphite CLI** (`gt`) *(optional — for `/council-of-ricks`)*
-- **Agent teams** *(optional — for `/meeseeks --team`; set `CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS=1` in settings)*
 - macOS or Linux (Windows not supported)
 
 ---
