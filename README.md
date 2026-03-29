@@ -6,7 +6,7 @@
 
 > *"Wubba Lubba Dub Dub! 🥒 I'm not just an AI assistant, Morty — I'm an **autonomous engineering machine** trapped in a pickle jar!"*
 
-Pickle Rick is a complete agentic engineering toolbelt built on the [Ralph Wiggum loop](https://ghuntley.com/ralph/). Hand it a PRD — or let it draft one — and it decomposes work into tickets, spawns isolated worker subprocesses, and drives each through a full **research → plan → implement → verify → review → simplify** lifecycle without human intervention. The spec IS the review — PRDs require machine-verifiable acceptance criteria, interface contracts, and test expectations. Automated conformance checking replaces human code review; Graphite becomes the audit trail, not the bottleneck. You can also use any tool in discrete steps. New to PRDs? See the **[PRD Writing Guide](PRD_GUIDE.md)** for developers or the **[Product Manager's Guide](PM_GUIDE.md)** for PMs defining and refining requirements.
+Pickle Rick is a complete agentic engineering toolbelt built on the [Ralph Wiggum loop](https://ghuntley.com/ralph/) and ideas from Andrej Karpathy's [AutoResearch](https://github.com/karpathy/autoresearch) project. Hand it a PRD — or let it draft one — and it decomposes work into tickets, spawns isolated worker subprocesses, and drives each through a full **research → plan → implement → verify → review → simplify** lifecycle without human intervention. The spec IS the review — PRDs require machine-verifiable acceptance criteria, interface contracts, and test expectations. Automated conformance checking replaces human code review; Graphite becomes the audit trail, not the bottleneck. You can also use any tool in discrete steps. New to PRDs? See the **[PRD Writing Guide](PRD_GUIDE.md)** for developers or the **[Product Manager's Guide](PM_GUIDE.md)** for PMs defining and refining requirements.
 
 - **Context clearing** between every iteration — no drift or context rot, even on 500+ iteration epics
 - **Three-state circuit breaker** auto-stops runaway sessions by tracking git-diff progress and repeated errors
@@ -343,6 +343,135 @@ Environment variables for `/attract`: `ATTRACTOR_URL` (default `http://localhost
 
 ---
 
+## 🏗️ DotBuilder — Programmatic DOT Codegen
+
+`/pickle-dot` uses a TypeScript builder (`DotBuilder`) to construct DOT pipelines programmatically. The LLM's role shifts from generating raw DOT syntax to constructing a `BuilderSpec` JSON — a higher-level, less error-prone task. The builder enforces all 28 active patterns and 15 structural validation rules before the file is saved, eliminating the pattern-omission and schema-drift failure modes of prompt-only generation.
+
+### Builder API
+
+```typescript
+import { DotBuilder } from '~/.claude/pickle-rick/extension/services/dot-builder.js';
+
+const result = DotBuilder.fromSpec(spec).build();
+// result: BuildResult { dot, slug, patternsApplied, defenseMatrix, diagnostics }
+```
+
+`DotBuilder` uses a fluent chain: `fromSpec` (static factory, parses + validates) → `.build()` (emits DOT). `fromSpec` returns a `DotBuilder` instance; `.build()` emits the DOT string with all Tier 1/2 patterns applied. The call is one-shot — `ALREADY_BUILT` is thrown if `.build()` is called twice on the same instance. Output is fully deterministic: same spec, same DOT.
+
+**`BuildResult` fields**:
+
+| Field | Type | Description |
+|---|---|---|
+| `dot` | `string` | Complete attractor-compatible DOT digraph |
+| `slug` | `string` | Sanitized pipeline identifier (used as filename) |
+| `patternsApplied` | `string[]` | List of pattern names emitted (e.g. `["test_fix_loop", "goal_gate", "fan_out_in"]`) |
+| `defenseMatrix` | `DefenseMatrix` | Auto-generated 5-layer defense summary (spec-driven, BDD, permissions, adversarial, competitive flags) |
+| `diagnostics` | `Diagnostic[]` | Warnings and info diagnostics (errors throw instead of populating this field) |
+
+### BuilderSpec JSON
+
+```jsonc
+{
+  "slug": "auth-refactor",           // required — sanitized to valid DOT id
+  "goal": "Refactor auth module",    // required — pipeline description
+  "phases": [                        // required — ordered list of phases
+    {
+      "name": "implement",           // required — phase label
+      "prompt": "...",               // required — node instruction text
+      "allowedPaths": ["src/auth/"], // required — file paths this phase may write
+      "dependsOn": ["research"],     // optional — explicit edge sources
+      "goalGate": true,              // optional — emit goal_gate node after this phase
+      "specFirst": true,             // optional — emit spec_first preamble
+      "timeout": "30m",              // optional — node-level timeout
+      "threadId": "impl",            // optional — ties fix node to same thread context
+      "securityScan": true,          // optional — emit security_scan gate after phase
+      "coverageTarget": 80,          // optional — emit coverage_gate at this %
+      "competing": true,             // optional — Pattern 18: competing implementations
+      "redTeam": true,               // optional — Pattern 17: adversarial reviewer node
+      "bddScenarios": true,          // optional — emit BDD scenario node
+      "docOnly": false,              // optional — read-only node (no file writes)
+      "escalateOn": ["BLOCKED"],     // optional — conditions that route to human gate
+      "contextOnSuccess": { "k": "v" } // optional — data passed downstream on success
+    }
+  ],
+  "acceptanceCriteria": {           // required — maps AC keys to pass conditions
+    "tests_pass": "exit 0",
+    "auth_secure": "token audit clean"
+  },
+  "workingDir": "/repos/myproject", // optional — default working directory
+  "label": "Auth Refactor v2",      // optional — human-readable pipeline label
+  "defaultMaxRetry": 3,             // optional — retry limit for all nodes (default: 3)
+  "workspace": "isolated",          // optional — isolated workspace mode
+  "reviewRatchet": 2,               // optional — Pattern 19: review ratchet pass count
+  "modelStylesheet": {              // optional — model assignments per tier
+    "defaultModel": "claude-sonnet-4-6",
+    "reviewModel": "claude-opus-4-6"
+  }
+}
+```
+
+All AC keys in `acceptanceCriteria` must have a matching `contextOnSuccess` source somewhere in the phase list — the builder enforces this at `.build()` time with error code `MISSING_AC_MAPPING`.
+
+### `/pickle-dot` Invocation
+
+By default, `/pickle-dot` uses the builder path: the LLM constructs a `BuilderSpec` JSON and pipes it to the builder CLI. Use `--builder` to make the opt-in explicit (identical to default), or `--legacy` to fall back to prompt-only DOT generation (no builder, no structural validation):
+
+```bash
+/pickle-dot my-prd.md              # Builder path (default) — validated, deterministic output
+/pickle-dot --builder my-prd.md    # Explicit builder opt-in — same as default, useful in scripts
+/pickle-dot --legacy my-prd.md     # Legacy path — prompt-only generation, no validation
+```
+
+### Fix-Loop Behavior
+
+If the builder returns validation errors (exit 1), `/pickle-dot` enters a fix loop: the LLM reads the structured diagnostics, modifies the `BuilderSpec`, re-pipes to the CLI, and re-validates. Up to 3 fix attempts are made.
+
+**Fix-loop exhaustion** — If all 3 attempts fail, `/pickle-dot` selects the attempt with the fewest remaining errors, saves it as `${SLUG}.dot.draft`, and prints:
+
+```
+Auto-fix exhausted after 3 attempts. Draft saved to ${SLUG}.dot.draft with N remaining errors.
+```
+
+The `.dot.draft` file is a best-effort artifact — review the printed diagnostics, edit the spec manually, and re-run.
+
+### CLI Contract
+
+The builder CLI (`dot-builder.js`) reads a `BuilderSpec` JSON from stdin and writes to stdout/stderr:
+
+| Exit | Stream | Payload |
+|---|---|---|
+| `0` | stdout | `BuildResult` JSON — `{ dot, slug, patternsApplied, defenseMatrix, diagnostics }` |
+| `1` | stderr | `BuildError` JSON — `{ error: BuildErrorCode, message, diagnostics }` — validation failed |
+| `2` | stderr | `{ code: "UNEXPECTED_ERROR" \| "INPUT_TOO_LARGE", message }` — I/O or parse failure |
+
+**Exit 1 error codes** (validation failures):
+
+| Code | Description |
+|---|---|
+| `EMPTY_SLUG` | `slug` is missing or empty |
+| `EMPTY_GOAL` | `goal` is missing or empty |
+| `DUPLICATE_PHASE` | Two phases share the same name |
+| `INVALID_RATCHET` | `reviewRatchet` is not a positive integer |
+| `NON_NUMERIC_TARGET` | `coverageTarget` is not a number |
+| `ALREADY_BUILT` | `.build()` called twice on same instance |
+| `MISSING_AC_MAPPING` | Acceptance criteria key has no `contextOnSuccess` source |
+| `MISSING_TIMEOUT` | Required node-level timeout is missing |
+| `MISSING_ALLOWED_PATHS` | Phase has no `allowedPaths` |
+| `INVALID_STRUCTURE` / `START_HAS_INCOMING` / `UNREACHABLE_NODE` | Graph topology errors |
+| `GOAL_GATE_NO_MAX_VISITS` | `goalGate: true` without `maxVisits` bound |
+| `REVIEW_MISSING_READONLY` | Review node missing `docOnly: true` |
+| `WORKSPACE_NO_HTTPS` / `WORKSPACE_NO_PUSH` | Isolated workspace config errors |
+| `PLAN_MODE_DEADLOCK` | Plan-mode node with no approval path |
+
+**Usage**:
+
+```bash
+echo '{"slug":"my-pipeline","goal":"..","phases":[...],"acceptanceCriteria":{}}' \
+  | node ~/.claude/pickle-rick/extension/bin/dot-builder.js
+```
+
+---
+
 ## 🏛️ Council of Ricks — Graphite Stack Reviewer
 
 <img src="images/council-of-ricks.png" alt="Council of Ricks — Graphite PR Stack Reviewer" width="400" align="right" />
@@ -502,7 +631,7 @@ Sit back. Rick handles the rest. 🥒
 | `/council-of-ricks` | 🏛️ Graphite PR stack review loop — walks every branch, generates agent-executable directives, never fixes code directly. Exits when clean (`THE_CITADEL_APPROVES`) |
 | `/portal-gun <source>` | 🔫 [Gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) — exhaustive migration inventory from donor codebase, scope confirmation, concrete migration PRD with per-item acceptance criteria, automatic refinement |
 | `/portal-gun --run <source>` | 🔫🖥️ Inventory + PRD + refine + convergence loop — executes, scans coverage against inventory, generates delta PRD for missing items, re-executes until 100% coverage |
-| `/pickle-dot [path \| inline]` | 🔀 Convert a PRD into a [strongdm/attractor](https://github.com/strongdm/attractor)-compatible DOT digraph — 5-layer quality gates (spec-driven acceptance, permission scoping, adversarial review), 23 convergence patterns, BDD contracts, review ratchets, microverse optimization loops. Auto-resolves Docker mount paths. |
+| `/pickle-dot [path \| inline]` | 🔀 Convert a PRD into a [strongdm/attractor](https://github.com/strongdm/attractor)-compatible DOT digraph — LLM constructs `BuilderSpec` JSON → builder CLI enforces 28 patterns + 15 validation rules → validated DOT saved. Fix loop auto-corrects diagnostics (up to 3 attempts). Use `--legacy` for prompt-only generation (no validation). |
 | `/attract [file.dot]` | 🚀 Submit a `.dot` pipeline to the [attractor](https://github.com/strongdm/attractor) server for execution — validates locally, submits via HTTP, monitors status, handles human gates. Auto-detects most recent `.dot` file if none specified. |
 | `/pickle-metrics` | 📊 Token usage, turns, commits, and lines changed — daily or `--weekly`, per-project, with `--json` export |
 | `/pickle-standup` | 📰 Show a formatted standup summary from activity logs (last 24h by default) |
@@ -537,6 +666,7 @@ Sit back. Rick handles the rest. 🥒
 --max-turns <N>            (/portal-gun only) Max turns per refinement worker (default: 100)
 --repo <PATH>              (/council-of-ricks only) Target repo path (default: cwd)
 --interactive              (/pickle-microverse) Run inline instead of tmux (default is tmux mode)
+--legacy                   (/pickle-dot) Fall back to prompt-only DOT generation — skips builder CLI and structural validation
 --provider <name>          (/pickle-dot) LLM provider: anthropic (default), openai, qwen, gemini, deepseek, ollama, vllm
 --review-provider <name>   (/pickle-dot) Separate provider for review/critical nodes (e.g., --provider qwen --review-provider anthropic)
 --isolated                 (/pickle-dot) Use isolated workspace mode (clone repo into /workspace/<run-id>/)
