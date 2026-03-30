@@ -99,6 +99,12 @@ chmod +x "$EXTENSION_ROOT/extension/bin/prune-activity.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/standup.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/metrics.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/circuit-reset.js"
+chmod +x "$EXTENSION_ROOT/extension/bin/sync-schema.js"
+# Make tsc resolvable from the repo root for sync-schema validation (npx tsc from parent dir)
+mkdir -p "$SCRIPT_DIR/node_modules/.bin"
+ln -sf "$SCRIPT_DIR/extension/node_modules/.bin/tsc" "$SCRIPT_DIR/node_modules/.bin/tsc"
+chmod +x "$EXTENSION_ROOT/extension/bin/dot-builder-cli.js"
+chmod +x "$EXTENSION_ROOT/extension/bin/dot-builder.js"
 chmod +x "$EXTENSION_ROOT/extension/scripts/tmux-monitor.sh"
 
 # --- INTERNAL TEMPLATES (hidden from slash command list) ---

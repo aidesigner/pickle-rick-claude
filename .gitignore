@@ -1,6 +1,8 @@
 node_modules/
 *.log
 *.dot
+extension/src/types/attractor-schema.ts
+extension/types/attractor-schema.ts
 .DS_Store
 .gitnexus
 # User-specific Claude Code files (memories, conversations)

@@ -6,537 +6,120 @@
 
 > *"Wubba Lubba Dub Dub! 🥒 I'm not just an AI assistant, Morty — I'm an **autonomous engineering machine** trapped in a pickle jar!"*
 
-Pickle Rick is a complete agentic engineering toolbelt built on the [Ralph Wiggum loop](https://ghuntley.com/ralph/) and ideas from Andrej Karpathy's [AutoResearch](https://github.com/karpathy/autoresearch) project. Hand it a PRD — or let it draft one — and it decomposes work into tickets, spawns isolated worker subprocesses, and drives each through a full **research → plan → implement → verify → review → simplify** lifecycle without human intervention. The spec IS the review — PRDs require machine-verifiable acceptance criteria, interface contracts, and test expectations. Automated conformance checking replaces human code review; Graphite becomes the audit trail, not the bottleneck. You can also use any tool in discrete steps. New to PRDs? See the **[PRD Writing Guide](PRD_GUIDE.md)** for developers or the **[Product Manager's Guide](PM_GUIDE.md)** for PMs defining and refining requirements.
+Pickle Rick is a complete agentic engineering toolbelt built on the [Ralph Wiggum loop](https://ghuntley.com/ralph/) and ideas from Andrej Karpathy's [AutoResearch](https://github.com/karpathy/autoresearch) project. Hand it a PRD — or let it draft one — and it decomposes work into tickets, spawns isolated worker subprocesses, and drives each through a full **research → plan → implement → verify → review → simplify** lifecycle without human intervention.
 
-- **Context clearing** between every iteration — no drift or context rot, even on 500+ iteration epics
-- **Three-state circuit breaker** auto-stops runaway sessions by tracking git-diff progress and repeated errors
-- **Rate limit auto-recovery** detects API throttling via structured NDJSON events, computes precise wait from the API's `resetsAt` epoch (falling back to config default), and resumes automatically — surviving long or overnight runs that hit per-session caps
-- **Pickle Jar** queues tasks for unattended batch execution overnight
-- **Built-in metrics** track token usage, commits, and lines changed
-- **Full pipeline chaining** — refinement, execution, and code review in one command, with a macOS notification when it's done
-- **Microverse** convergence loop optimizes any numeric metric through targeted, incremental changes — measuring after each iteration, auto-reverting regressions, and stopping when converged
-- **Szechuan Sauce** iterative deslopping loop grinds code to zero principle violations — P0 security through P4 style — using the microverse infrastructure with a principles-aware LLM judge
-- **Council of Ricks** reviews your Graphite PR stack iteratively, generating agent-executable directives instead of fixing code directly
-- **Portal Gun** opens a portal to another codebase, extracts patterns via [gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) with import graph tracing, transplant classification, PRD validation, and a persistent pattern library
-All modes support both tmux and Zellij monitor layouts.
-
-Check out the [Feature Roadmap](roadmap.md) for what's brewing in the multiverse. For internals, see [Architecture](architecture.md).
+New to PRDs? See the **[PRD Writing Guide](PRD_GUIDE.md)** for developers or the **[Product Manager's Guide](PM_GUIDE.md)** for PMs defining and refining requirements. For internals, see [Architecture](architecture.md). For what's coming next, see the [Feature Roadmap](roadmap.md).
 
 ---
 
-## 🧬 The Pickle Rick Lifecycle — PRD-Driven Autonomous Engineering
+## How to Build Things with Pickle Rick
 
-Pickle Rick transforms Claude Code into a **hyper-competent, arrogant, iterative coding machine** that enforces a PRD-driven engineering lifecycle:
+This is the actual workflow. You don't need to memorize commands — just follow the flow.
 
-```
-  /pickle "build X"
-        │
-        ▼
-  ┌─────────────┐
-  │  📋 PRD     │  ← Interrogate requirements + verification strategy.
-  └──────┬──────┘    Interface contracts, test expectations, acceptance criteria.
-         │
-         ▼
-  ┌─────────────┐
-  │ 📦 Breakdown│  ← Atomize into tickets. Each self-contained with spec.
-  └──────┬──────┘
-         │
-    ┌────┴────┐  per ticket (Morty workers 👶)
-    ▼         ▼
-  ┌──────┐  ┌──────┐
-  │🔬 Re-│  │🔬 Re-│  1. Research the codebase. Every ugly corner.
-  │search│  │search│
-  └──┬───┘  └──┬───┘
-     │          │
-     ▼          ▼
-  ┌──────┐  ┌──────┐
-  │📝 Re-│  │📝 Re-│  2. Review the research. No hand-waving.
-  │view  │  │view  │
-  └──┬───┘  └──┬───┘
-     │          │
-     ▼          ▼
-  ┌──────┐  ┌──────┐
-  │📐Plan│  │📐Plan│  3. Architect the solution.
-  └──┬───┘  └──┬───┘
-     │          │
-     ▼          ▼
-  ┌──────┐  ┌──────┐
-  │📝 Re-│  │📝 Re-│  4. Review the plan. Reject slop.
-  │view  │  │view  │
-  └──┬───┘  └──┬───┘
-     │          │
-     ▼          ▼
-  ┌──────┐  ┌──────┐
-  │⚡ Im-│  │⚡ Im-│  5. Implement. God Mode activated.
-  │plem  │  │plem  │
-  └──┬───┘  └──┬───┘
-     │          │
-     ▼          ▼
-  ┌──────┐  ┌──────┐
-  │✅ Ve-│  │✅ Ve-│  6. Spec conformance. Run acceptance criteria,
-  │rify  │  │rify  │     check contracts, type check, test expectations.
-  └──┬───┘  └──┬───┘
-     │          │
-     ▼          ▼
-  ┌──────┐  ┌──────┐
-  │🔍 Re-│  │🔍 Re-│  7. Code review. Security, correctness, architecture.
-  │view  │  │view  │
-  └──┬───┘  └──┬───┘
-     │          │
-     ▼          ▼
-  ┌──────┐  ┌──────┐
-  │🧹Sim-│  │🧹Sim-│  8. Simplify. Kill dead code. Strip to the bone.
-  │plify │  │plify │
-  └──────┘  └──────┘
-         │
-         ▼
-  ✅ DONE (or loops again)
-```
+### Step 1: Write a PRD
 
-The **Stop hook** prevents Claude from exiting until the task is genuinely complete. No half-measures. No early exits. Rick doesn't quit. Between each iteration, the hook injects a fresh session summary — current phase, ticket list, active task — so Rick always wakes up knowing exactly where he is, even after full context compression. In tmux/Zellij mode, the runner owns the session lifecycle — the stop hook approves subprocess exits without touching `active`, letting the runner decide whether to continue or stop.
-
----
-
-## 🔬 Microverse — Metric Convergence Loop
-
-<p align="center">
-  <img src="images/microverse.png" alt="The Microverse — powering your Pickle Rick app" width="100%" />
-</p>
-
-> *"I put a universe inside a box, Morty, and it powers my car battery. This is the same thing, except the universe is your codebase and the battery is a metric."*
-
-`/pickle-microverse` is a convergence loop that optimizes your codebase toward a measurable goal. You define **what to measure** and **what to improve** — Rick handles the iteration. Each cycle: make one targeted change, commit, measure, keep or revert. Failed approaches are tracked so he never repeats a dead end. When the score stops improving, the loop converges and exits with a full report.
-
-The key insight: **you define the metric per task**. Every optimization target needs its own measurement — there's no universal metric. Your job is to make the goal measurable; Rick's job is to hill-climb toward it.
-
-### Two Modes: Command Metric vs LLM Judge
-
-**Command Metric (`--metric`)** — You provide a shell command that outputs a numeric score. Rick runs it after every iteration to measure progress. This is the **high-confidence mode** — use it when you can write a script that objectively measures what you care about.
-
-Best for tasks with quantifiable outcomes:
-- Test coverage percentage → `--metric "npm run coverage:score"`
-- Required fields extracted from documents → `--metric "node benchmark.js"`
-- Lint error count → `--metric "eslint . --format json | jq '.[] | .errorCount' | paste -sd+ | bc" --direction lower`
-- Bundle size → `--metric "du -b dist/bundle.js | cut -f1" --direction lower`
-- Benchmark performance → `--metric "node perf-test.js" --tolerance 5`
-
-The metric command can be anything — a test runner, a custom benchmark script, a one-liner that parses logs. The only requirement is that the **last line of stdout is a number**. You often need to create this benchmark script first (e.g., "write a script that scores how many MISMO XML fields we extract correctly"), then feed it to the microverse.
-
-**LLM Judge (`--goal`)** — Instead of a shell command, you describe what "better" looks like in natural language. An LLM evaluates the codebase after each iteration and assigns a score. This is the **subjective mode** — use it when you can't easily write a scoring script.
-
-Best for qualitative improvements:
-- `--goal "code is clean, well-documented, and follows project conventions"`
-- `--goal "error messages are user-friendly and actionable"`
-- `--goal "API responses follow REST best practices with consistent schemas"`
-
-Results with LLM judge are less predictable than command metrics. The judge model is configurable (`--judge-model`).
-
-### How It Works
+Every feature starts with a PRD. Open a Claude Code session in your project and describe what you want to build:
 
 ```
-Gap Analysis (iteration 0)
-    │ measure baseline, analyze codebase, identify bottlenecks
-    ▼
-┌─────────────────────────────────────────────────┐
-│ Iteration Loop                                   │
-│                                                   │
-│  1. Plan one targeted change (avoid failed list) │
-│  2. Implement + commit                            │
-│  3. Measure metric                                │
-│     • Improved → accept, reset stall counter     │
-│     • Held → accept, increment stall counter     │
-│     • Regressed → git reset, log failed approach │
-│  4. Converged? (stall_counter ≥ stall_limit)     │
-└──────────────────────┬──────────────────────────┘
-                       ▼
-              Final Report
-    (baseline → best score, iteration history,
-     accepted/reverted counts, failed approaches)
+"Help me create a PRD for caching the loan status API responses in Redis"
 ```
 
-### When to Use Microverse vs Pickle
+Rick interrogates you — *why* are you building this, *who* is it for, and critically: **how will we verify each requirement automatically?** This is a back-and-forth conversation, not a form to fill out. Rick also explores your codebase during the interview, grounding the PRD in what actually exists.
 
-| | **Microverse** | **Pickle** |
-|---|---|---|
-| **Goal** | Optimize toward a measurable target | Build features from a PRD |
-| **Iteration unit** | One atomic change per cycle | Full ticket lifecycle (research → implement → review) |
-| **Progress signal** | Metric score (command or LLM) | Ticket completion |
-| **Best for** | Coverage, performance, extraction accuracy, code quality | New features, refactors, bug fixes |
-| **Defines "done"** | Convergence (score stops improving) | All tickets complete |
-
-Microverse works best when the goal is **easily definable and measurable**. If you can write a benchmark script or clearly articulate what "better" looks like, microverse will grind toward it. If the task is "build a new auth module," use `/pickle` instead.
-
-### Usage
-
-Defaults to tmux mode (context clearing between iterations for long optimization runs). Use `--interactive` for inline convergence. Rate limit auto-recovery works in tmux mode.
+Or write your own `prd.md` and skip the interview — whatever gets requirements on paper with machine-checkable acceptance criteria.
 
 ```bash
-# Command metric mode — objective, high-confidence
-/pickle-microverse --metric "node benchmark.js" --task "increase MISMO field extraction accuracy"
-/pickle-microverse --metric "npm run coverage:score" --task "hit 90% test coverage" --max-iterations 50
-/pickle-microverse --metric "node perf-test.js" --task "reduce p99 latency" --tolerance 5 --stall-limit 10 --direction lower
-
-# LLM judge mode — subjective, use when you can't script a metric
-/pickle-microverse --goal "code is clean, well-documented, and follows project conventions" --task "improve code quality"
-
-# Inline mode (no tmux) for quick runs
-/pickle-microverse --interactive --metric "npm run lint:score" --task "fix lint errors"
+/pickle-prd                      # Interactive PRD drafting interview
+# or just start talking — "Help me write a PRD for X"
 ```
 
-See [architecture](architecture.md#microverse-internals) for the runner state machine, metric comparison logic, and `microverse.json` schema.
+### Step 2: Refine the PRD
 
----
-
-## 🍗 Szechuan Sauce — Iterative Code Deslopping
-
-<p align="center">
-  <img src="images/szechwan-sauce.jpeg" alt="Command: Szechwan Sauce — The Quest for Clean Code" width="600" />
-</p>
-
-> *"I'm not driven by avenging my dead family, Morty. That was fake. I-I-I'm driven by finding that McNugget sauce."*
-
-`/szechuan-sauce` is a specialized microverse loop that hunts and eliminates coding principle violations one at a time until there are zero left. The sauce is perfect code — and Rick won't stop until he gets it.
-
-It reads a curated principles reference (KISS, YAGNI, DRY, SOLID, Guard Clauses, Fail-Fast, Encapsulation, Cognitive Load, etc.) and scores the codebase against a priority matrix (P0 security/data-loss through P4 style). Each iteration finds the single highest-priority remaining violation, fixes it atomically, runs tests, commits, and measures. Regressions are auto-reverted. When the violation count hits zero, the loop converges.
-
-### When to Use It
-
-| Scenario | Use Szechuan Sauce? |
-|---|---|
-| Inherited codebase with accumulated tech debt | Yes — systematic cleanup by priority |
-| Post-feature polish before merging a PR | Yes — catches violations the author missed |
-| Pre-release hardening pass | Yes — P0/P1 violations get caught first |
-| Greenfield feature implementation | No — use `/pickle` instead |
-| Performance optimization toward a benchmark | No — use `/pickle-microverse --metric` |
-| Subjective "make it better" without clear violations | No — use `/pickle-microverse --goal` |
-
-**Szechuan Sauce vs Microverse**: Szechuan Sauce *is* a microverse — it uses the same runner, convergence loop, and auto-revert infrastructure. The difference is the metric: microverse takes any measurement (shell command or LLM goal), while Szechuan Sauce hardcodes an LLM judge that scores against the principles reference. You don't need to define a metric — it knows what it's looking for.
-
-**Szechuan Sauce vs Anatomy Park**: Szechuan Sauce hunts code quality violations (KISS, DRY, SOLID, dependency health, test quality, migration hygiene). Anatomy Park hunts data flow correctness bugs (corruption, timezone, rounding, schema drift) across subsystems with a three-phase protocol and trap door cataloging. Use Szechuan Sauce for design quality; use Anatomy Park for runtime correctness.
-
-### Usage
+Three AI analysts run in parallel and tear your PRD apart from different angles — requirements gaps, codebase integration points, and risk/scope. They cross-reference each other across 3 cycles.
 
 ```bash
-/szechuan-sauce src/services/             # Deslop a directory
-/szechuan-sauce src/utils/parser.ts       # Deslop a single file
-/szechuan-sauce --dry-run src/            # Catalog violations without modifying code
-/szechuan-sauce --max-iterations 30 src/  # Cap at 30 iterations (default: 50)
-/szechuan-sauce --stall-limit 3 src/      # Stop after 3 iterations with no improvement (default: 5)
-/szechuan-sauce --domain financial src/   # Load financial domain principles (monetary precision, rounding, etc.)
-/szechuan-sauce --focus "error handling" src/services/  # Hunt error-handling violations first
-/szechuan-sauce --focus "accessibility" --dry-run src/  # Scope a11y violations without fixing
-/szechuan-sauce --focus "rounding logic" --domain financial src/calc/  # Combine focus + domain
+/pickle-refine-prd my-prd.md    # Refine with 3 parallel analysts
 ```
 
-The `--dry-run` flag performs a gap analysis only — it catalogs all violations by priority with file:line references and suggested fixes, prints a summary, and exits without modifying code. Useful for scoping the work before committing to a full run.
+What you get back:
+- `prd_refined.md` — your PRD with concrete file paths, interface contracts, and gap fills
+- Atomic tickets — each < 30 min of work, < 5 files, < 4 acceptance criteria, self-contained
 
-The `--domain <name>` flag loads supplemental domain-specific principles from `szechuan-sauce-<name>-principles.md`. Domain principles extend the base principles and take precedence where they conflict. Available domains: `financial` (monetary precision, rounding consistency, statistical correctness, regulatory compliance).
+**Review the tickets before proceeding.** Check ordering, scope, and acceptance criteria. You can edit them directly — they're markdown files.
 
-The `--focus "<text>"` flag directs the review toward a specific concern. Violations matching the focus are elevated by one priority level (e.g. P2 → P1) and take precedence over same-priority non-focus violations. Composable with `--domain` and `--dry-run`.
+### Step 3: Implement with tmux (the Ralph Loop)
 
-### How It Works
-
-1. **Validates target** — confirms source files exist at the path (supports `*.sql` and migration files)
-2. **Runs test baseline** — ensures the codebase is green before deslopping
-3. **Initializes a microverse session** — sets up `microverse.json` with LLM judge, convergence target of 0, and the principles file as judge context
-4. **Launches tmux** — context-clearing outer loop with monitor panes
-5. **Phase 0: Contract Discovery** (iteration 1) — greps the entire codebase for importers of every export in the target files, builds a contract map (producer → consumers), and flags cross-module mismatches: Zod schemas missing type variants, divergent regex validation, incomplete switch/if-else coverage of union types. Mismatches are scored P1 and tracked in `gap_analysis.md`. Re-checked after every fix.
-6. **Gap analysis** (iteration 1) — reads all target code, catalogs violations, writes `gap_analysis.md`
-7. **Iteration loop** — each cycle: read principles, find highest-priority violation not in the failed list, fix it, commit as `szechuan-sauce: <principle> — <description>`, measure, re-check contract map for new mismatches
-8. **Convergence** — exits when violation count reaches 0 or stall limit is hit
-
-The LLM judge reads the principles reference file directly (via `judge_context_path` in `microverse.json`), ensuring scoring is consistent with the worker's understanding of what constitutes a violation.
-
----
-
-## 🏥 Anatomy Park — Deep Subsystem Review
-
-<p align="center">
-  <img src="images/anatomy-park.jpeg" alt="Anatomy Park — Deep Subsystem Review" width="100%" />
-</p>
-
-> *"Welcome to Anatomy Park! It's like Jurassic Park but inside a human body. Way more dangerous."*
-
-`/anatomy-park` is a microverse-based deep review loop that goes through your codebase subsystem by subsystem, applying a strict three-phase protocol: **review** (read-only data flow tracing), **fix** (targeted edits + regression tests), and **verify** (self-review with revert on regression). It auto-discovers subsystems, rotates through them round-robin, and converges when every subsystem passes clean twice consecutively.
-
-The key differentiator: **trap door cataloging**. When Anatomy Park finds files that keep breaking — structural invariants that aren't enforced by types or tests — it writes them to `CLAUDE.md` in the subsystem directory so future agents (and humans) know where the landmines are.
-
-### When to Use It
-
-| Scenario | Use Anatomy Park? |
-|---|---|
-| Stabilizing a subsystem that keeps regressing | Yes — finds root causes and catalogs trap doors |
-| Pre-release hardening across multiple subsystems | Yes — systematic rotation with regression prevention |
-| Onboarding to unfamiliar codebase with hidden invariants | Yes — trap doors document tribal knowledge |
-| Single file or directory cleanup | No — use `/szechuan-sauce` |
-| Feature implementation | No — use `/pickle` |
-
-**Anatomy Park vs Szechuan Sauce**: Szechuan Sauce hunts principle violations (KISS, DRY, SOLID, dependency health, test quality) in a target directory. Anatomy Park hunts data flow bugs (corruption, timezone, rounding, schema drift) across subsystems and builds institutional memory via trap doors. Use Szechuan Sauce for code quality; use Anatomy Park for correctness.
-
-### Usage
+This is where Rick takes over. Each ticket goes through 8 phases autonomously: Research → Review → Plan → Review → Implement → Spec Conformance → Code Review → Simplify. Context clears between every iteration — no drift, even on 500+ iteration epics.
 
 ```bash
-/anatomy-park                              # Auto-discover subsystems, review all
-/anatomy-park src/                         # Scope to src/ subdirectories
-/anatomy-park --dry-run                    # Review only — catalog findings without fixing
-/anatomy-park --max-iterations 50          # Cap iterations (default: 100)
-/anatomy-park --stall-limit 5              # Skip subsystem after 5 failed fixes (default: 3)
+/pickle-tmux --resume            # Launch tmux mode, picks up refined tickets
+# or combine refine + implement in one shot:
+/pickle-refine-prd --run my-prd.md
 ```
 
-### How It Works
+Rick prints a `tmux attach` command — open a second terminal to watch the live 3-pane dashboard:
+- **Top-left**: ticket status, phase, elapsed time, circuit breaker state
+- **Top-right**: iteration log stream
+- **Bottom**: live worker output (research, implementation, test runs, commits)
 
-1. **Auto-discovers subsystems** — scans for directories with 3+ source files, excluding node_modules/dist/test-only dirs
-2. **Runs test baseline** — ensures green before surgery
-3. **Initializes microverse session** — tmux with context clearing
-4. **Round-robin rotation** — one subsystem per iteration, cycles through all
-5. **Three-phase protocol per iteration**:
-   - Phase 1 (read-only): trace data flows, check git history, rate CRITICAL/HIGH, propose fixes
-   - Phase 2 (fix): apply minimal edits, write regression tests, run full suite
-   - Phase 3 (read-only): verify callers/consumers/dead-code/boolean-logic, combinatorial branch verification (enumerate all 2^N input combinations for guards/validators), production data migration awareness (flag tightened enums/validation on persisted fields), revert on regression
-6. **Trap door cataloging** — files with repeated fixes or structural invariants get documented in subsystem CLAUDE.md
-7. **Convergence** — exits when all subsystems pass clean twice consecutively
+Sit back. Rick handles the rest.
 
-### Trap Door Format
+### Step 4 (Optional): Metric-Driven Refinement
 
-Trap doors are written to `CLAUDE.md` in each subsystem directory:
+If you can define a measurable goal — test coverage, response time, bundle size, extraction accuracy — the Microverse grinds toward it. Each cycle: make one change, measure, keep or revert. Failed approaches are tracked so it never repeats a dead end.
 
-```markdown
-## Trap Doors
-
-- `bank-statement.service.ts` — borrowerFileId MUST equal S3 batch UUID (set on insert); S3 key regex must NOT be case-insensitive; tenant isolation depends on effectiveLenderId threading
-- `transaction.processor.ts` — rounding must use bankersRound() at both parse and aggregate; raw Math.round() drifts on large sets
+```bash
+/pickle-microverse --metric "npm run coverage:score" --task "hit 90% test coverage"
+/pickle-microverse --metric "node perf-test.js" --task "reduce p99 latency" --direction lower
+/pickle-microverse --goal "error messages are user-friendly and actionable" --task "improve UX"
 ```
 
-One line per file. Token-optimized for coding agents — no decoration, no verbose explanations.
+### Step 5 (Optional): Cleanup
 
----
+Two cleanup tools for polishing the result:
 
-## 🔀 Pipeline: PRD to Execution
+**Szechuan Sauce** — hunts coding principle violations (KISS, DRY, SOLID, security, style) and fixes them one at a time until zero remain. Great for post-feature polish before merging.
 
-Turn a PRD into a running pipeline in two commands using `/pickle-dot` and `/attract`:
+```bash
+/szechuan-sauce src/services/              # Deslop a directory
+/szechuan-sauce --dry-run src/             # Catalog violations without fixing
+/szechuan-sauce --focus "error handling" src/  # Narrow the review
+```
+
+**Anatomy Park** — traces data flows through subsystems looking for runtime bugs: data corruption, timezone issues, rounding errors, schema drift. Catalogs "trap doors" (files that keep breaking) in `CLAUDE.md` files for future engineers.
+
+```bash
+/anatomy-park src/                         # Deep subsystem review
+/anatomy-park --dry-run                    # Review only, no fixes
+```
+
+**When to use which:** Szechuan Sauce asks *"is this code well-designed?"* — Anatomy Park asks *"is this code correct?"* Use both when you want clean AND correct.
+
+### The Full Flow at a Glance
 
 ```
-  PRD (markdown)
+You describe a feature
        │
        ▼
-  /pickle-dot prd.md
-       │  Parses requirements, extracts tasks, builds convergence graph
-       ▼
-  pipeline.dot (attractor-compatible DAG)
+  /pickle-prd              ← Interactive PRD drafting (or write your own)
        │
        ▼
-  /attract pipeline.dot
-       │  Validates → submits to attractor server → monitors → handles human gates
+  /pickle-refine-prd       ← 3 parallel analysts refine + decompose into tickets
+       │
        ▼
-  Execution results
+  /pickle-tmux --resume    ← Autonomous implementation (Ralph loop)
+       │                      Research → Plan → Implement → Verify → Review → Simplify
+       │                      Context clears every iteration. Circuit breaker auto-stops runaways.
+       ▼
+  /pickle-microverse       ← (Optional) Metric-driven optimization loop
+       │
+       ▼
+  /szechuan-sauce          ← (Optional) Code quality cleanup
+  /anatomy-park            ← (Optional) Data flow correctness review
+       │
+       ▼
+  Ship it 🥒
 ```
-
-`/pickle-dot` converts your PRD into a self-correcting DOT digraph — not a linear task list, but a convergence basin with 12 mandatory patterns: test-fix loops, goal gates, conditional routing, parallel fan-out/in, human gates, max visits, per-phase review→simplify→re-verify cycles (Opus reviews, Sonnet simplifies), security scanning gates, coverage qualification, scope creep detection, drift detection (prevents oscillation in simplify cycles), and multi-pass complexity escalation (competing implementations for high-complexity phases). Automatically resolves Docker mount paths for the attractor container. `/attract` then submits that `.dot` file to a running [attractor](https://github.com/strongdm/attractor) server for execution.
-
-```bash
-/pickle-dot my-prd.md                # Generate pipeline.dot from PRD
-/attract pipeline.dot                 # Submit to attractor server
-/attract                              # Auto-detect most recent .dot file
-```
-
-Environment variables for `/attract`: `ATTRACTOR_URL` (default `http://localhost:7777`), `ATTRACTOR_API_KEY`, `ATTRACTOR_ROOT` (auto-detected).
-
----
-
-## 🏗️ DotBuilder — Programmatic DOT Codegen
-
-`/pickle-dot` uses a TypeScript builder (`DotBuilder`) to construct DOT pipelines programmatically. The LLM's role shifts from generating raw DOT syntax to constructing a `BuilderSpec` JSON — a higher-level, less error-prone task. The builder enforces all 28 active patterns and 15 structural validation rules before the file is saved, eliminating the pattern-omission and schema-drift failure modes of prompt-only generation.
-
-### Builder API
-
-```typescript
-import { DotBuilder } from '~/.claude/pickle-rick/extension/services/dot-builder.js';
-
-const result = DotBuilder.fromSpec(spec).build();
-// result: BuildResult { dot, slug, patternsApplied, defenseMatrix, diagnostics }
-```
-
-`DotBuilder` uses a fluent chain: `fromSpec` (static factory, parses + validates) → `.build()` (emits DOT). `fromSpec` returns a `DotBuilder` instance; `.build()` emits the DOT string with all Tier 1/2 patterns applied. The call is one-shot — `ALREADY_BUILT` is thrown if `.build()` is called twice on the same instance. Output is fully deterministic: same spec, same DOT.
-
-**`BuildResult` fields**:
-
-| Field | Type | Description |
-|---|---|---|
-| `dot` | `string` | Complete attractor-compatible DOT digraph |
-| `slug` | `string` | Sanitized pipeline identifier (used as filename) |
-| `patternsApplied` | `string[]` | List of pattern names emitted (e.g. `["test_fix_loop", "goal_gate", "fan_out_in"]`) |
-| `defenseMatrix` | `DefenseMatrix` | Auto-generated 5-layer defense summary (spec-driven, BDD, permissions, adversarial, competitive flags) |
-| `diagnostics` | `Diagnostic[]` | Warnings and info diagnostics (errors throw instead of populating this field) |
-
-### BuilderSpec JSON
-
-```jsonc
-{
-  "slug": "auth-refactor",           // required — sanitized to valid DOT id
-  "goal": "Refactor auth module",    // required — pipeline description
-  "phases": [                        // required — ordered list of phases
-    {
-      "name": "implement",           // required — phase label
-      "prompt": "...",               // required — node instruction text
-      "allowedPaths": ["src/auth/"], // required — file paths this phase may write
-      "dependsOn": ["research"],     // optional — explicit edge sources
-      "goalGate": true,              // optional — emit goal_gate node after this phase
-      "specFirst": true,             // optional — emit spec_first preamble
-      "timeout": "30m",              // optional — node-level timeout
-      "threadId": "impl",            // optional — ties fix node to same thread context
-      "securityScan": true,          // optional — emit security_scan gate after phase
-      "coverageTarget": 80,          // optional — emit coverage_gate at this %
-      "competing": true,             // optional — Pattern 18: competing implementations
-      "redTeam": true,               // optional — Pattern 17: adversarial reviewer node
-      "bddScenarios": true,          // optional — emit BDD scenario node
-      "docOnly": false,              // optional — read-only node (no file writes)
-      "escalateOn": ["BLOCKED"],     // optional — conditions that route to human gate
-      "contextOnSuccess": { "k": "v" } // optional — data passed downstream on success
-    }
-  ],
-  "acceptanceCriteria": {           // required — maps AC keys to pass conditions
-    "tests_pass": "exit 0",
-    "auth_secure": "token audit clean"
-  },
-  "workingDir": "/repos/myproject", // optional — default working directory
-  "label": "Auth Refactor v2",      // optional — human-readable pipeline label
-  "defaultMaxRetry": 3,             // optional — retry limit for all nodes (default: 3)
-  "workspace": "isolated",          // optional — isolated workspace mode
-  "reviewRatchet": 2,               // optional — Pattern 19: review ratchet pass count
-  "modelStylesheet": {              // optional — model assignments per tier
-    "defaultModel": "claude-sonnet-4-6",
-    "reviewModel": "claude-opus-4-6"
-  }
-}
-```
-
-All AC keys in `acceptanceCriteria` must have a matching `contextOnSuccess` source somewhere in the phase list — the builder enforces this at `.build()` time with error code `MISSING_AC_MAPPING`.
-
-### `/pickle-dot` Invocation
-
-By default, `/pickle-dot` uses the builder path: the LLM constructs a `BuilderSpec` JSON and pipes it to the builder CLI. Use `--builder` to make the opt-in explicit (identical to default), or `--legacy` to fall back to prompt-only DOT generation (no builder, no structural validation):
-
-```bash
-/pickle-dot my-prd.md              # Builder path (default) — validated, deterministic output
-/pickle-dot --builder my-prd.md    # Explicit builder opt-in — same as default, useful in scripts
-/pickle-dot --legacy my-prd.md     # Legacy path — prompt-only generation, no validation
-```
-
-### Fix-Loop Behavior
-
-If the builder returns validation errors (exit 1), `/pickle-dot` enters a fix loop: the LLM reads the structured diagnostics, modifies the `BuilderSpec`, re-pipes to the CLI, and re-validates. Up to 3 fix attempts are made.
-
-**Fix-loop exhaustion** — If all 3 attempts fail, `/pickle-dot` selects the attempt with the fewest remaining errors, saves it as `${SLUG}.dot.draft`, and prints:
-
-```
-Auto-fix exhausted after 3 attempts. Draft saved to ${SLUG}.dot.draft with N remaining errors.
-```
-
-The `.dot.draft` file is a best-effort artifact — review the printed diagnostics, edit the spec manually, and re-run.
-
-### CLI Contract
-
-The builder CLI (`dot-builder.js`) reads a `BuilderSpec` JSON from stdin and writes to stdout/stderr:
-
-| Exit | Stream | Payload |
-|---|---|---|
-| `0` | stdout | `BuildResult` JSON — `{ dot, slug, patternsApplied, defenseMatrix, diagnostics }` |
-| `1` | stderr | `BuildError` JSON — `{ error: BuildErrorCode, message, diagnostics }` — validation failed |
-| `2` | stderr | `{ code: "UNEXPECTED_ERROR" \| "INPUT_TOO_LARGE", message }` — I/O or parse failure |
-
-**Exit 1 error codes** (validation failures):
-
-| Code | Description |
-|---|---|
-| `EMPTY_SLUG` | `slug` is missing or empty |
-| `EMPTY_GOAL` | `goal` is missing or empty |
-| `DUPLICATE_PHASE` | Two phases share the same name |
-| `INVALID_RATCHET` | `reviewRatchet` is not a positive integer |
-| `NON_NUMERIC_TARGET` | `coverageTarget` is not a number |
-| `ALREADY_BUILT` | `.build()` called twice on same instance |
-| `MISSING_AC_MAPPING` | Acceptance criteria key has no `contextOnSuccess` source |
-| `MISSING_TIMEOUT` | Required node-level timeout is missing |
-| `MISSING_ALLOWED_PATHS` | Phase has no `allowedPaths` |
-| `INVALID_STRUCTURE` / `START_HAS_INCOMING` / `UNREACHABLE_NODE` | Graph topology errors |
-| `GOAL_GATE_NO_MAX_VISITS` | `goalGate: true` without `maxVisits` bound |
-| `REVIEW_MISSING_READONLY` | Review node missing `docOnly: true` |
-| `WORKSPACE_NO_HTTPS` / `WORKSPACE_NO_PUSH` | Isolated workspace config errors |
-| `PLAN_MODE_DEADLOCK` | Plan-mode node with no approval path |
-
-**Usage**:
-
-```bash
-echo '{"slug":"my-pipeline","goal":"..","phases":[...],"acceptanceCriteria":{}}' \
-  | node ~/.claude/pickle-rick/extension/bin/dot-builder.js
-```
-
----
-
-## 🏛️ Council of Ricks — Graphite Stack Reviewer
-
-<img src="images/council-of-ricks.png" alt="Council of Ricks — Graphite PR Stack Reviewer" width="400" align="right" />
-
-> *"The Council convenes! Your stack will be judged."*
-
-The **Council of Ricks** reviews your [Graphite](https://graphite.dev) PR stack iteratively — but unlike Szechuan Sauce or Anatomy Park, the Council never touches your code. It generates **agent-executable directives** — structured prompts you feed to your coding agent to fix the issues. Each pass walks every branch in the stack (trunk-to-tip), cross-referencing diffs against your project's `CLAUDE.md` rules, and escalates through focus areas: stack structure (pass 1) → CLAUDE.md compliance (2–3) → per-branch correctness (4–5) → cross-branch contracts (6–7) → test coverage (8–9) → security (10–11) → polish (12+). Issues are triaged by severity: **P0** (must-fix), **P1** (should-fix), **P2** (nice-to-fix).
-
-Requires a Graphite stack with at least one non-trunk branch, a `CLAUDE.md` with project rules, passing lint, and architectural lint rules in ESLint.
-
-```bash
-/council-of-ricks                    # Review the current Graphite stack
-```
-
-<br clear="right" />
-
----
-
-## 🔫 Portal Gun — Gene Transfusion
-
-<img src="images/portal-gun.png" alt="Portal Gun — gene transfusion for codebases" width="400" align="right" />
-
-> *"You see that code over there, Morty? In that other repo? I'm gonna open a portal, reach in, and yank its DNA into OUR dimension."*
-
-`/portal-gun` implements [gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) — transferring proven coding patterns between codebases using AI agents. Point it at a GitHub URL, local file, npm package, or just describe a pattern, and it extracts the structural DNA, analyzes your target codebase, then generates a transplant PRD with behavioral validation tests and automatic refinement.
-
-<br clear="right" />
-
-**v2** added a persistent **pattern library** (cached patterns are reused across sessions), **complete file manifests** with anti-truncation enforcement, **multi-language import graph tracing** (TypeScript/JavaScript, Python, Go, Rust), **6-category transplant classification** (direct transplant, type-only, behavioral reference, replace with equivalent, environment prerequisite, not needed), a **PRD validation pass** that verifies every file path against the filesystem with 6 error classes, **post-edit consistency checking** that catches contradictions and stale references after scope changes, and **deep target diffs** with line-level modification specs.
-
-```bash
-/portal-gun https://github.com/org/repo/blob/main/src/auth.ts   # Transplant from GitHub
-/portal-gun ../other-project/src/cache.ts                        # Transplant from local file
-/portal-gun --run https://github.com/org/repo/tree/main/src/lib  # Transplant + auto-execute
-/portal-gun --save-pattern retry ../donor/retry-logic.ts         # Save pattern to library
-```
-
-See [architecture](architecture.md#portal-gun-internals) for the full pipeline and all flags.
-
----
-
-## 🔌 Circuit Breaker
-
-Three-state machine (CLOSED → HALF_OPEN → OPEN) that auto-stops sessions stuck in error loops or making no git progress. Configurable thresholds, visible in the tmux monitor, manually resettable. See [architecture](architecture.md#circuit-breaker--runaway-session-protection) for the full state machine, recovery steps, and settings.
-
----
-
-## ⏳ Rate Limit Auto-Recovery
-
-Detects API rate limits, computes optimal wait from the API's `resetsAt` epoch (or falls back to config default), pauses with a countdown timer, and resumes automatically. Survives overnight runs. See [architecture](architecture.md#rate-limit-auto-recovery) for the wait-and-resume cycle and settings.
-
----
-
-## 📊 Metrics
-
-`/pickle-metrics` aggregates token usage, turns, commits, and lines changed across all projects into daily or weekly breakdowns.
-
-```bash
-/pickle-metrics                    # Last 7 days, daily breakdown
-/pickle-metrics --days 30          # Last 30 days
-/pickle-metrics --weekly           # Weekly buckets (defaults to 28 days)
-/pickle-metrics --json             # Machine-readable JSON output
-```
-
-See [architecture](architecture.md#metrics-internals) for data sources and caching.
 
 ---
 
@@ -552,7 +135,7 @@ bash install.sh
 
 ### 2. Add the Pickle Rick persona to your project
 
-The installer deploys `persona.md` to `~/.claude/pickle-rick/`. Add it to your project's `CLAUDE.md` — appending if you already have one, or creating fresh if not:
+The installer deploys `persona.md` to `~/.claude/pickle-rick/`. Add it to your project's `CLAUDE.md`:
 
 ```bash
 # Already have a CLAUDE.md? Append (safe — won't overwrite your content):
@@ -569,81 +152,95 @@ cp ~/.claude/pickle-rick/persona.md /path/to/your/project/.claude/CLAUDE.md
 
 > **Permissions:** Launch Claude with `claude --dangerously-skip-permissions`. Pickle Rick's loops spawn worker subprocesses that already run permissionless, but the root instance needs it too — otherwise you'll drown in permission prompts for every file write, bash command, and hook invocation.
 
-Everything starts with a PRD. Rick refuses to write code without one.
-
-**Option A: One-shot** — Rick drafts the PRD, breaks it down, and executes all in one loop:
-
 ```bash
 cd /path/to/your/project
 claude --dangerously-skip-permissions
-# then type:
-/pickle "refactor the auth module"
+# then follow the workflow above — start with a PRD
 ```
-
-**Option B: Bring your own PRD** — Write a `prd.md` (or drop one in your project root), then:
-
-```bash
-/pickle my-prd.md                         # Rick picks up your PRD, skips drafting, starts execution
-/pickle-tmux my-prd.md                    # Same, but in tmux mode for long epics (8+ tickets)
-```
-
-**Option C: Refine first (recommended for complex tasks)** — Run parallel analysts to find gaps in your PRD, then execute:
-
-```bash
-/pickle-refine-prd my-prd.md             # Refine with 3 parallel analysts + decompose into tickets
-/pickle --resume                          # Execute — auto-detects phase, skips PRD and breakdown
-/pickle-tmux --resume                     # Or use tmux mode for long epics (8+ tickets)
-```
-
-**Option D: Refine and go** — Refine, decompose, and immediately launch an unlimited tmux session in one command:
-
-```bash
-/pickle-refine-prd --run my-prd.md       # Refine → decompose → auto-launch tmux (no iteration/time limits)
-```
-
-**Option E: Gene transfusion** — Steal a pattern from another codebase, generate a transplant PRD, refine it, and optionally execute:
-
-```bash
-/portal-gun https://github.com/org/repo/blob/main/src/pattern.ts  # Extract + PRD + refine
-/portal-gun --run ../other-project/src/cache/                      # Extract + PRD + refine + execute
-```
-
-For `/pickle-tmux`, Rick prints a `tmux attach` command — open a second terminal and paste it to watch the live dashboard while it runs.
-
-Sit back. Rick handles the rest. 🥒
 
 ---
 
-## 🚀 Commands
+## Built-in Safety
+
+These run automatically — you don't need to configure them.
+
+- **Context clearing** between every iteration — no drift or context rot, even on 500+ iteration epics
+- **Three-state circuit breaker** (CLOSED → HALF_OPEN → OPEN) auto-stops sessions stuck in error loops or making no git progress. See [architecture](architecture.md#circuit-breaker--runaway-session-protection).
+- **Rate limit auto-recovery** detects API throttling, computes precise wait from the API's `resetsAt` epoch, and resumes automatically — surviving long or overnight runs. See [architecture](architecture.md#rate-limit-auto-recovery).
+- **Stop hook** prevents Claude from exiting until the task is genuinely complete
+
+---
+
+## Advanced Workflows
+
+### Pipeline Mode: Self-Correcting DAGs
+
+For complex epics with parallel workstreams, conditional logic, and multiple quality gates. Instead of a linear ticket queue, define work as a convergence graph where failures automatically route back for correction.
+
+```bash
+/pickle-dot my-prd.md              # Convert PRD → validated DOT digraph
+/attract pipeline.dot              # Submit to attractor server for execution
+```
+
+The builder enforces 28 active patterns and 15 structural validation rules — test-fix loops, goal gates, conditional routing, parallel fan-out/in, human gates, security scanning, coverage qualification, scope creep detection, drift detection, and more. See [DotBuilder details](#-dotbuilder--programmatic-dot-codegen) below.
+
+### Council of Ricks: Graphite Stack Review
+
+Reviews your [Graphite](https://graphite.dev) PR stack iteratively — but never touches your code. Generates **agent-executable directives** you feed to your coding agent. Escalates through focus areas: stack structure → CLAUDE.md compliance → correctness → cross-branch contracts → test coverage → security → polish.
+
+```bash
+/council-of-ricks                  # Review the current Graphite stack
+```
+
+### Portal Gun: Gene Transfusion
+
+[Gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) — transfer proven patterns between codebases. Point it at a GitHub URL, local file, npm package, or describe a pattern. Extracts structural DNA, analyzes your target, generates a transplant PRD with behavioral validation.
+
+```bash
+/portal-gun https://github.com/org/repo/blob/main/src/auth.ts   # From GitHub
+/portal-gun --run ../other-project/src/cache/                    # Extract + execute
+/portal-gun --save-pattern retry ../donor/retry-logic.ts         # Save to library
+```
+
+### Pickle Jar: Night Shift Batch Mode
+
+Queue tasks for unattended batch execution overnight.
+
+```bash
+/add-to-pickle-jar                 # Queue current session
+/pickle-jar-open                   # Run all queued tasks sequentially
+```
+
+---
+
+## 🚀 Command Reference
 
 | Command | Description |
 |---|---|
-| `/pickle "task"` | 🥒 Start the full autonomous loop — drafts a PRD (with verification strategy + interface contracts), decomposes into tickets, then executes each through 8 phases: Research → Review → Plan → Review → Implement → Spec Conformance → Code Review → Simplify |
-| `/pickle prd.md` | 🥒 Pick up an existing PRD and skip drafting — goes straight to breakdown and execution |
-| `/pickle-tmux "task"` | 🖥️ Same PRD-driven loop, but with true context clearing — fresh subprocess per iteration via tmux. Best for long epics (8+ iterations). Requires `tmux`. |
-| `/pickle-tmux prd.md` | 🖥️ Pick up an existing PRD in tmux mode — fresh subprocess per iteration, no context drift |
-| `/pickle-zellij "task"` | 🖥️ Same PRD-driven loop in Zellij with KDL layouts — fresh subprocess per iteration. Best for long epics (8+ iterations). Requires Zellij >= 0.40.0 |
-| `/pickle-refine-prd [path]` | 🔬 Verification readiness check → refine with 3 parallel analysts → decompose into ordered tickets. Reads `context/` directory if present for customer signals. `/pickle --resume` to execute |
-| `/pickle-refine-prd --run [path]` | 🔬🖥️ Refine + decompose + auto-launch unlimited tmux session (no iteration or time cap) |
-| `/pickle-microverse` | 🔬🖥️ Microverse convergence loop — optimize a numeric metric through targeted, incremental changes. Defaults to tmux mode with context clearing. Use `--interactive` for inline mode. Requires `tmux` (unless `--interactive`). |
-| `/szechuan-sauce [target]` | 🫙 Iterative principle-driven deslopping — microverse convergence loop that reviews code against 30+ coding principles (KISS, YAGNI, DRY, SOLID, etc.), fixes violations one at a time, and re-scores with LLM judge until clean. Supports `--domain <name>` for domain-specific principles, `--focus "<text>"` to direct the review toward a specific concern. Tmux by default. |
-| `/anatomy-park` | 🏥 Three-phase deep subsystem review — auto-discovers subsystems, traces data flows, fixes without regression, catalogs trap doors in subsystem CLAUDE.md files. Microverse convergence loop via tmux. |
-| `/council-of-ricks` | 🏛️ Graphite PR stack review loop — walks every branch, generates agent-executable directives, never fixes code directly. Exits when clean (`THE_CITADEL_APPROVES`) |
-| `/portal-gun <source>` | 🔫 [Gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) — exhaustive migration inventory from donor codebase, scope confirmation, concrete migration PRD with per-item acceptance criteria, automatic refinement |
-| `/portal-gun --run <source>` | 🔫🖥️ Inventory + PRD + refine + convergence loop — executes, scans coverage against inventory, generates delta PRD for missing items, re-executes until 100% coverage |
-| `/pickle-dot [path \| inline]` | 🔀 Convert a PRD into a [strongdm/attractor](https://github.com/strongdm/attractor)-compatible DOT digraph — LLM constructs `BuilderSpec` JSON → builder CLI enforces 28 patterns + 15 validation rules → validated DOT saved. Fix loop auto-corrects diagnostics (up to 3 attempts). Use `--legacy` for prompt-only generation (no validation). |
-| `/attract [file.dot]` | 🚀 Submit a `.dot` pipeline to the [attractor](https://github.com/strongdm/attractor) server for execution — validates locally, submits via HTTP, monitors status, handles human gates. Auto-detects most recent `.dot` file if none specified. |
-| `/pickle-metrics` | 📊 Token usage, turns, commits, and lines changed — daily or `--weekly`, per-project, with `--json` export |
-| `/pickle-standup` | 📰 Show a formatted standup summary from activity logs (last 24h by default) |
-| `/eat-pickle` | 🛑 Cancel the active loop |
-| `/help-pickle` | ❓ Show all commands and flags |
-| `/add-to-pickle-jar` | 🫙 Save current session to the Jar for later |
-| `/pickle-jar-open` | 🌙 Run all Jar tasks sequentially (Night Shift) |
-| `/pickle-prd` | 📝 Draft a PRD with verification strategy + interface contracts (standalone, no execution) |
-| `/pickle-status` | 📊 Show current session phase, iteration, and ticket status |
-| `/pickle-retry <ticket-id>` | 🔄 Reset a failed ticket to Todo and re-spawn a Morty for it |
-| `/disable-pickle` | 🔇 Disable the stop hook globally (without uninstalling) |
-| `/enable-pickle` | 🔊 Re-enable the stop hook |
+| `/pickle "task"` | Start the full autonomous loop — PRD → breakdown → 8-phase execution |
+| `/pickle prd.md` | Pick up an existing PRD, skip drafting |
+| `/pickle-tmux "task"` | Same loop with context clearing via tmux. Best for long epics (8+ iterations) |
+| `/pickle-zellij "task"` | Same loop in Zellij with KDL layouts. Requires Zellij >= 0.40.0 |
+| `/pickle-refine-prd [path]` | Refine PRD with 3 parallel analysts → decompose into tickets |
+| `/pickle-refine-prd --run [path]` | Refine + decompose + auto-launch unlimited tmux session |
+| `/pickle-microverse` | Metric convergence loop. `--metric` for numeric, `--goal` for LLM judge |
+| `/szechuan-sauce [target]` | Principle-driven deslopping. `--dry-run`, `--focus`, `--domain` |
+| `/anatomy-park` | Three-phase deep subsystem review with trap door cataloging |
+| `/council-of-ricks` | Graphite PR stack review — generates directives, never fixes code |
+| `/portal-gun <source>` | Gene transfusion from another codebase |
+| `/pickle-dot [path]` | Convert PRD → attractor-compatible DOT digraph |
+| `/attract [file.dot]` | Submit pipeline to attractor server |
+| `/pickle-prd` | Draft a PRD standalone (no execution) |
+| `/pickle-metrics` | Token usage, commits, LOC. `--days N`, `--weekly`, `--json` |
+| `/pickle-standup` | Formatted standup summary from activity logs |
+| `/pickle-status` | Current session phase, iteration, ticket status |
+| `/eat-pickle` | Cancel the active loop |
+| `/pickle-retry <ticket-id>` | Re-attempt a failed ticket |
+| `/add-to-pickle-jar` | Queue session for Night Shift |
+| `/pickle-jar-open` | Run all Jar tasks sequentially |
+| `/disable-pickle` | Disable the stop hook globally |
+| `/enable-pickle` | Re-enable the stop hook |
+| `/help-pickle` | Show all commands and flags |
 
 ### Flags
 
@@ -655,60 +252,40 @@ Sit back. Rick handles the rest. 🥒
 --resume [PATH]            Resume from an existing session
 --reset                    Reset iteration counter and start time (use with --resume)
 --paused                   Start in paused mode (PRD only)
---run                      (/pickle-refine-prd, /portal-gun) Auto-launch tmux. portal-gun: convergence loop until 100% coverage
---target <PATH>            (/portal-gun only) Target repo for the transplant (default: cwd)
---depth <shallow|deep>     (/portal-gun only) Extraction depth — shallow for summary, structural pattern, and invariants only; deep for full analysis (default: deep)
---no-refine                (/portal-gun only) Skip the automatic refinement cycle
---max-passes <N>           (/portal-gun only) Max convergence passes before prompting (default: 3)
---no-converge              (/portal-gun only) Single execution pass — no coverage loop (use with --run)
---save-pattern <NAME>      (/portal-gun only) Persist extracted pattern to ~/.claude/pickle-rick/patterns/ for future reuse
---cycles <N>               (/portal-gun only) Number of refinement cycles (default: 3)
---max-turns <N>            (/portal-gun only) Max turns per refinement worker (default: 100)
---repo <PATH>              (/council-of-ricks only) Target repo path (default: cwd)
---interactive              (/pickle-microverse) Run inline instead of tmux (default is tmux mode)
---legacy                   (/pickle-dot) Fall back to prompt-only DOT generation — skips builder CLI and structural validation
---provider <name>          (/pickle-dot) LLM provider: anthropic (default), openai, qwen, gemini, deepseek, ollama, vllm
---review-provider <name>   (/pickle-dot) Separate provider for review/critical nodes (e.g., --provider qwen --review-provider anthropic)
---isolated                 (/pickle-dot) Use isolated workspace mode (clone repo into /workspace/<run-id>/)
---shared                   (/pickle-dot) Use shared workspace mode (default — edit /repos/ directly)
---metric "<CMD>"           (/pickle-microverse) Shell command whose last stdout line is a numeric score (XOR with --goal)
---goal "<TEXT>"             (/pickle-microverse) Natural language goal for LLM judge scoring (XOR with --metric)
+--run                      (/pickle-refine-prd, /portal-gun) Auto-launch tmux
+--interactive              (/pickle-microverse) Run inline instead of tmux
+--legacy                   (/pickle-dot) Prompt-only DOT generation, no validation
+--provider <name>          (/pickle-dot) LLM provider: anthropic, openai, qwen, gemini, deepseek, ollama, vllm
+--review-provider <name>   (/pickle-dot) Separate provider for review/critical nodes
+--isolated                 (/pickle-dot) Isolated workspace mode
+--metric "<CMD>"           (/pickle-microverse) Shell command outputting a numeric score
+--goal "<TEXT>"            (/pickle-microverse) Natural language goal for LLM judge
 --direction <higher|lower> (/pickle-microverse) Optimization direction (default: higher)
---judge-model <MODEL>      (/pickle-microverse) Judge model for LLM scoring, only with --goal (default: claude-sonnet-4-6)
---tolerance <N>            (/pickle-microverse) Score delta within which changes count as "held" (default: 0)
+--judge-model <MODEL>      (/pickle-microverse) Judge model for LLM scoring
+--tolerance <N>            (/pickle-microverse) Score delta for "held" status (default: 0)
 --stall-limit <N>          (/pickle-microverse) Non-improving iterations before convergence (default: 5)
+--target <PATH>            (/portal-gun) Target repo (default: cwd)
+--depth <shallow|deep>     (/portal-gun) Extraction depth (default: deep)
+--no-refine                (/portal-gun) Skip automatic refinement
+--max-passes <N>           (/portal-gun) Max convergence passes (default: 3)
+--save-pattern <NAME>      (/portal-gun) Persist pattern to library
+--dry-run                  (/szechuan-sauce) Catalog violations without fixing
+--domain <name>            (/szechuan-sauce) Domain-specific principles (e.g., financial)
+--focus "<text>"           (/szechuan-sauce) Direct review toward specific concern
+--repo <PATH>              (/council-of-ricks) Target repo (default: cwd)
 ```
 
 ### Tips
 
-**`/pickle` vs `/pickle-tmux`** — Use `/pickle` for short-to-medium epics (1–7 iterations) in interactive mode with full keyboard access. Use `/pickle-tmux` for long epics (8+ iterations) where context drift is a concern — each iteration spawns a fresh Claude subprocess with a clean context window, bridged via `handoff.txt`. Requires `tmux`.
+**`/pickle` vs `/pickle-tmux`** — Use `/pickle` for short epics (1–7 iterations) with full keyboard access. Use `/pickle-tmux` for long epics (8+) where context drift matters — each iteration spawns a fresh Claude subprocess with a clean context window.
 
-**tmux Mode — 3-pane live monitor** — `/pickle-tmux` creates a tmux session with a background runner and a 3-pane monitor window you attach to:
-
-![tmux monitor — 3-pane layout: dashboard (top-left), iteration log (top-right), worker stream (bottom)](images/tmux-monitor.png)
-- **Top-left pane**: live dashboard — active ticket, phase, iteration count, elapsed time, circuit breaker state, rate limit countdown (when waiting), all tickets with status (`[x]` done / `[~]` in progress / `[ ]` todo), and recent output summary. Refreshes every 2 seconds.
-- **Top-right pane**: live iteration log — streams each iteration's log as it's written, with an iteration header when the runner advances. Auto-switches to each new log file.
-- **Bottom pane**: live worker (Morty) stream — auto-follows the latest worker session output showing research, implementation, test runs, and commits in real time.
-
-```bash
-tmux attach -t <session-name>   # printed by /pickle-tmux as soon as the session is ready
-Ctrl+B ←/↑/↓                    # switch between panes (top-left, top-right, bottom)
-Ctrl+B 0                        # switch to raw runner output
-Ctrl+B 1                        # switch back to monitor
-Ctrl+B d                        # detach (session keeps running in background)
-```
-
-**Zellij Mode** — `/pickle-zellij` is the Zellij equivalent of `/pickle-tmux`. Requires Zellij >= 0.40.0. Attach with `zellij attach <session-name>`.
-
-**Phase-resume** — When resuming after `/pickle-refine-prd` or `/pickle-prd`, the resume flow auto-detects the session's current phase and skips completed phases. No re-drafting, no re-decomposition.
+**Phase-resume** — When resuming after `/pickle-refine-prd`, the resume flow auto-detects the session's current phase and skips completed phases.
 
 **Notifications (macOS)** — `/pickle-tmux` and `/pickle-jar-open` send macOS notifications on completion or failure.
 
-**PRD is non-negotiable** — Every `/pickle` run starts with a PRD. For best results on complex tasks, use `/pickle-refine-prd` → `/pickle --resume`.
-
 **Recovering from a failed Morty** — Use `/pickle-retry <ticket-id>` instead of restarting the whole epic.
 
-**"Stop hook error" is normal** — Claude Code labels every `decision: block` from the stop hook as "Stop hook error" in the UI. This is not an actual error — it means the loop is working.
+**"Stop hook error" is normal** — Claude Code labels every `decision: block` from the stop hook as "Stop hook error" in the UI. This is not an error — it means the loop is working.
 
 ### Settings (`pickle_settings.json`)
 
@@ -717,26 +294,226 @@ All defaults are configurable via `~/.claude/pickle-rick/pickle_settings.json`:
 | Setting | Default | Description |
 |---|---|---|
 | `default_max_iterations` | 500 | Max loop iterations before auto-stop |
-| `default_max_time_minutes` | 720 | Session wall-clock limit in minutes (12 hours) |
+| `default_max_time_minutes` | 720 | Session wall-clock limit (12 hours) |
 | `default_worker_timeout_seconds` | 1200 | Per-worker subprocess timeout |
 | `default_manager_max_turns` | 50 | Max Claude turns per iteration (interactive/jar) |
-| `default_tmux_max_turns` | 200 | Max Claude turns per iteration (tmux mode) |
+| `default_tmux_max_turns` | 200 | Max Claude turns per iteration (tmux) |
 | `default_refinement_cycles` | 3 | Number of refinement analysis passes |
 | `default_refinement_max_turns` | 100 | Max Claude turns per refinement worker |
-| `default_council_min_passes` | 5 | Minimum Council of Ricks review passes before clean exit |
+| `default_council_min_passes` | 5 | Minimum Council of Ricks review passes |
 | `default_council_max_passes` | 20 | Maximum Council of Ricks review passes |
-| `default_circuit_breaker_enabled` | true | Enable three-state circuit breaker in mux-runner |
-| `default_cb_no_progress_threshold` | 5 | Consecutive no-progress iterations before OPEN |
-| `default_cb_same_error_threshold` | 5 | Consecutive identical errors before OPEN |
-| `default_cb_half_open_after` | 2 | No-progress iterations before entering HALF_OPEN |
-| `default_rate_limit_wait_minutes` | 60 | Fallback wait when no API reset time available; also base for 3× cap |
-| `default_max_rate_limit_retries` | 3 | Consecutive rate limits before giving up |
+| `default_circuit_breaker_enabled` | true | Enable circuit breaker |
+| `default_cb_no_progress_threshold` | 5 | No-progress iterations before OPEN |
+| `default_cb_same_error_threshold` | 5 | Identical errors before OPEN |
+| `default_cb_half_open_after` | 2 | No-progress iterations before HALF_OPEN |
+| `default_rate_limit_wait_minutes` | 60 | Fallback wait when no API reset time |
+| `default_max_rate_limit_retries` | 3 | Consecutive rate limits before stopping |
 
 ---
 
-## 🏗️ Architecture
+## Tool Deep Dives
 
-For the full directory structure, memory system, stop hook loop, context clearing mechanics, and manager/worker model, see **[architecture.md](architecture.md)**.
+### 🔬 Microverse — Metric Convergence Loop
+
+<p align="center">
+  <img src="images/microverse.png" alt="The Microverse — powering your Pickle Rick app" width="100%" />
+</p>
+
+> *"I put a universe inside a box, Morty, and it powers my car battery. This is the same thing, except the universe is your codebase and the battery is a metric."*
+
+Two modes: **Command Metric** (`--metric`) for objective numeric scores, and **LLM Judge** (`--goal`) for subjective quality assessment.
+
+```
+Gap Analysis (iteration 0)
+    │ measure baseline, analyze codebase, identify bottlenecks
+    ▼
+┌─────────────────────────────────────────────────┐
+│ Iteration Loop                                   │
+│  1. Plan one targeted change (avoid failed list) │
+│  2. Implement + commit                            │
+│  3. Measure metric                                │
+│     • Improved → accept, reset stall counter     │
+│     • Held → accept, increment stall counter     │
+│     • Regressed → git reset, log failed approach │
+│  4. Converged? (stall_counter ≥ stall_limit)     │
+└──────────────────────┬──────────────────────────┘
+                       ▼
+              Final Report
+```
+
+| | **Microverse** | **Pickle** |
+|---|---|---|
+| **Goal** | Optimize toward a measurable target | Build features from a PRD |
+| **Iteration unit** | One atomic change per cycle | Full ticket lifecycle |
+| **Progress signal** | Metric score | Ticket completion |
+| **Defines "done"** | Convergence (score stops improving) | All tickets complete |
+
+### 🍗 Szechuan Sauce — Iterative Code Deslopping
+
+<p align="center">
+  <img src="images/szechwan-sauce.jpeg" alt="Command: Szechwan Sauce — The Quest for Clean Code" width="600" />
+</p>
+
+> *"I'm not driven by avenging my dead family, Morty. That was fake. I-I-I'm driven by finding that McNugget sauce."*
+
+Reads 30+ coding principles (KISS, YAGNI, DRY, SOLID, Guard Clauses, Fail-Fast, Encapsulation, Cognitive Load, etc.) and scores against a priority matrix (P0 security/data-loss through P4 style). Each iteration: find highest-priority violation, fix atomically, run tests, commit, measure. Regressions auto-revert.
+
+**Phase 0: Contract Discovery** — greps the codebase for importers of every export in target files, builds a contract map, flags cross-module mismatches. Re-checked after every fix.
+
+Supports `--domain <name>` for domain-specific principles (e.g., `financial` adds monetary precision, rounding, regulatory compliance) and `--focus "<text>"` to elevate specific concerns.
+
+### 🏥 Anatomy Park — Deep Subsystem Review
+
+<p align="center">
+  <img src="images/anatomy-park.jpeg" alt="Anatomy Park — Deep Subsystem Review" width="100%" />
+</p>
+
+> *"Welcome to Anatomy Park! It's like Jurassic Park but inside a human body. Way more dangerous."*
+
+Auto-discovers subsystems, rotates through them round-robin, three-phase protocol per iteration:
+1. **Review** (read-only): trace data flows, check git history, rate CRITICAL/HIGH, propose fixes
+2. **Fix**: apply minimal edits, write regression tests, run full suite
+3. **Verify** (read-only): verify callers/consumers, combinatorial branch verification, revert on regression
+
+**Trap doors** — files with repeated fixes or structural invariants get documented in subsystem `CLAUDE.md` files:
+
+```markdown
+## Trap Doors
+- `bank-statement.service.ts` — borrowerFileId MUST equal S3 batch UUID; tenant isolation depends on effectiveLenderId threading
+```
+
+### 🏗️ DotBuilder — Programmatic DOT Codegen
+
+`/pickle-dot` uses a TypeScript builder (`DotBuilder`) that constructs DOT pipelines from a `BuilderSpec` JSON. The builder enforces 28 active patterns and 15 structural validation rules. The LLM's job shifts from generating raw DOT to constructing a higher-level spec — less error-prone, deterministic output.
+
+```typescript
+import { DotBuilder } from '~/.claude/pickle-rick/extension/services/dot-builder.js';
+const result = DotBuilder.fromSpec(spec).build();
+// result: { dot, slug, patternsApplied, defenseMatrix, diagnostics }
+```
+
+**BuilderSpec JSON:**
+
+```jsonc
+{
+  "slug": "auth-refactor",           // required
+  "goal": "Refactor auth module",    // required
+  "phases": [                        // required
+    {
+      "name": "implement",
+      "prompt": "...",
+      "allowedPaths": ["src/auth/"],
+      "dependsOn": ["research"],     // optional
+      "goalGate": true,              // optional
+      "timeout": "30m",              // optional
+      "securityScan": true,          // optional
+      "coverageTarget": 80           // optional
+    }
+  ],
+  "acceptanceCriteria": {            // required
+    "tests_pass": "exit 0"
+  }
+}
+```
+
+**CLI contract** — reads `BuilderSpec` from stdin, writes to stdout/stderr:
+
+| Exit | Payload |
+|---|---|
+| `0` | `BuildResult` JSON — `{ dot, slug, patternsApplied, defenseMatrix, diagnostics }` |
+| `1` | `BuildError` JSON — validation failed (see error codes below) |
+| `2` | I/O or parse failure |
+
+**Validation error codes:** `EMPTY_SLUG`, `EMPTY_GOAL`, `DUPLICATE_PHASE`, `INVALID_SPEC`, `MISSING_AC_MAPPING`, `MISSING_TIMEOUT`, `INVALID_TIMEOUT`, `MISSING_ALLOWED_PATHS`, `INVALID_ALLOWED_PATHS`, `PROMPT_PATH_MISMATCH`, `INVALID_STRUCTURE`, `START_HAS_INCOMING`, `UNREACHABLE_NODE`, `DIAMOND_MISSING_EDGES`, `FAN_OUT_SCOPE_LEAK`, `GOAL_GATE_NO_MAX_VISITS`, `REVIEW_MISSING_READONLY`, `WORKSPACE_NO_HTTPS`, `WORKSPACE_NO_PUSH`, `PLAN_MODE_DEADLOCK`, `COMPONENT_NO_MERGE`, `INVALID_RATCHET`, `NON_NUMERIC_TARGET`, `ALREADY_BUILT`
+
+### 🔫 Portal Gun — Gene Transfusion Details
+
+<img src="images/portal-gun.png" alt="Portal Gun — gene transfusion for codebases" width="400" align="right" />
+
+**v2** features: persistent pattern library, complete file manifests with anti-truncation, multi-language import graph tracing (TS/JS, Python, Go, Rust), 6-category transplant classification, PRD validation with 6 error classes, post-edit consistency checking, and deep target diffs with line-level specs.
+
+<br clear="right" />
+
+### 🏛️ Council of Ricks — Details
+
+<img src="images/council-of-ricks.png" alt="Council of Ricks — Graphite PR Stack Reviewer" width="400" align="right" />
+
+Requires a Graphite stack with at least one non-trunk branch, a `CLAUDE.md` with project rules, passing lint, and architectural lint rules in ESLint. Escalates through focus areas: stack structure (pass 1) → CLAUDE.md compliance (2–3) → per-branch correctness (4–5) → cross-branch contracts (6–7) → test coverage (8–9) → security (10–11) → polish (12+). Issues triaged: **P0** (must-fix), **P1** (should-fix), **P2** (nice-to-fix).
+
+<br clear="right" />
+
+---
+
+## 🧬 The Pickle Rick Lifecycle — Under the Hood
+
+Each ticket goes through 8 phases in the autonomous loop:
+
+```
+  ┌─────────────┐
+  │  📋 PRD     │  ← Requirements + verification strategy + interface contracts
+  └──────┬──────┘
+         │
+         ▼
+  ┌─────────────┐
+  │ 📦 Breakdown│  ← Atomize into tickets, each self-contained with spec
+  └──────┬──────┘
+         │
+    ┌────┴────┐  per ticket (Morty workers 👶)
+    ▼         ▼
+  ┌──────┐  ┌──────┐
+  │🔬 Re-│  │🔬 Re-│  1. Research the codebase
+  │search│  │search│
+  └──┬───┘  └──┬───┘
+     ▼         ▼
+  ┌──────┐  ┌──────┐
+  │📝 Re-│  │📝 Re-│  2. Review the research
+  │view  │  │view  │
+  └──┬───┘  └──┬───┘
+     ▼         ▼
+  ┌──────┐  ┌──────┐
+  │📐Plan│  │📐Plan│  3. Architect the solution
+  └──┬───┘  └──┬───┘
+     ▼         ▼
+  ┌──────┐  ┌──────┐
+  │📝 Re-│  │📝 Re-│  4. Review the plan
+  │view  │  │view  │
+  └──┬───┘  └──┬───┘
+     ▼         ▼
+  ┌──────┐  ┌──────┐
+  │⚡ Im-│  │⚡ Im-│  5. Implement
+  │plem  │  │plem  │
+  └──┬───┘  └──┬───┘
+     ▼         ▼
+  ┌──────┐  ┌──────┐
+  │✅ Ve-│  │✅ Ve-│  6. Spec conformance
+  │rify  │  │rify  │
+  └──┬───┘  └──┬───┘
+     ▼         ▼
+  ┌──────┐  ┌──────┐
+  │🔍 Re-│  │🔍 Re-│  7. Code review
+  │view  │  │view  │
+  └──┬───┘  └──┬───┘
+     ▼         ▼
+  ┌──────┐  ┌──────┐
+  │🧹Sim-│  │🧹Sim-│  8. Simplify
+  │plify │  │plify │
+  └──────┘  └──────┘
+```
+
+The **Stop hook** prevents Claude from exiting until the task is genuinely complete. Between each iteration, the hook injects a fresh session summary — current phase, ticket list, active task — so Rick always wakes up knowing exactly where he is, even after full context compression.
+
+All modes support both tmux and Zellij monitor layouts.
+
+---
+
+## 📊 Metrics
+
+```bash
+/pickle-metrics                    # Last 7 days, daily breakdown
+/pickle-metrics --days 30          # Last 30 days
+/pickle-metrics --weekly           # Weekly buckets (defaults to 28 days)
+/pickle-metrics --json             # Machine-readable JSON output
+```
 
 ---
 

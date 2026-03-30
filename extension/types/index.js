@@ -77,3 +77,13 @@ export const VALID_ACTIVITY_EVENTS = [
     'rate_limit_wait', 'rate_limit_resume', 'rate_limit_exhausted',
     'multi_repo_warning',
 ];
+export class BuildError extends Error {
+    code;
+    diagnostics;
+    constructor(code, message, diagnostics = []) {
+        super(message);
+        this.name = 'BuildError';
+        this.code = code;
+        this.diagnostics = diagnostics;
+    }
+}

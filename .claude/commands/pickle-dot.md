@@ -18,6 +18,8 @@ Attractor = **convergence basin**, not task list. Failures route back toward the
 - `--exit-validation` — prefer `exit_validation` graph attribute over a separate `verify_final` tool node for simple pipelines (single test command, no delta logic)
 - `--multimodal` — enable `attachments_context_key` on relevant nodes for PRDs referencing screenshots, mockups, or images
 - `--backend <name>` — execution backend: `claude-code` (default), `llm`, `mastra`, `qwen-code`, `none`. Passed through to `/attract` on submission
+- `--builder` — enable the BuilderSpec codegen path (Phase 1 opt-in; default remains prompt-only until Phase 2 rollout)
+- `--legacy` — explicit prompt-only generation path; identical to default, use to bypass `--builder` if set globally
 
 **Provider defaults** (when `--models` not given):
 
@@ -38,23 +40,20 @@ Attractor = **convergence basin**, not task list. Failures route back toward the
 **Spec file** (Layer 3 — Spec-Driven Acceptance): After resolving working dir, determine the PRD file path for `spec_file`:
 - If PRD was a file path → use that path remapped to workspace (e.g., `/workspace/<run-id>/prd.md` for isolated, `/repos/<repo>/prd.md` for shared)
 - If PRD was inline text → write it to `${WORKING_DIR}/prd.md` and reference that path
-- Emit `spec_file` as a graph attribute in Step 4. The engine interpolates `$spec_file` in node prompts.
+- Emit `spec_file` as a graph attribute in the BuilderSpec. The engine interpolates `$spec_file` in node prompts.
 
 **Workspace isolation**: After resolving the working directory, determine workspace mode:
 - If `--isolated` flag → use isolated mode
 - If `--shared` flag → use shared mode
 - Otherwise → defer to Step 2b checklist (recommend isolated for greenfield/risky, shared for iterative/quick)
 
-**If isolated**: emit these graph-level attributes in Step 4:
-1. `workspace = "isolated"`
-2. `repo_url` — derive from `git remote get-url origin` in the target repo. **Must be HTTPS** — attractor validator rule 22 (`workspace_config`) rejects SSH URLs because isolated workspaces clone inside Docker where SSH keys aren't available. Convert SSH format: `git@github.com:org/repo.git` → `https://github.com/org/repo.git`. For private repos, the Docker container must have a GitHub token available (e.g., via `GITHUB_TOKEN` env var in attractor's Docker config)
-3. `repo_branch` — current branch name (e.g., `"main"`)
-4. `workspace_cleanup = "preserve"` — **always preserve by default**. Isolated workspaces are ephemeral; `"delete"` destroys all pipeline output. Use `"delete"` only if the pipeline has a `commit_and_push` node (Pattern 0).
-5. `working_dir` stays the same (`/repos/...`) — the engine rewrites it automatically for codergen (box) nodes.
-   **IMPORTANT**: `tool_command` strings are NOT rewritten by the engine. For isolated workspaces, tool_commands must use relative paths (`bun test 2>&1`) or `cd ${WORKING_DIR} &&` (which the engine resolves as an env var). Do NOT hardcode `/repos/` paths in tool_commands — they break when the real workspace is `/workspace/<run-id>/<repo>`.
-6. **MANDATORY**: Emit a `commit_and_push` tool node (Pattern 0) after `check_final` success, before `done`. This pushes only verified working code. Without this, code is lost when the workspace is cleaned up.
+**If isolated**: set `workspace: "isolated"` in BuilderSpec and populate `workspaceOpts`:
+1. `workspaceOpts.repoUrl` — derive from `git remote get-url origin`. **Must be HTTPS** — validator rule 22 (`workspace_config`) rejects SSH URLs. Convert SSH format: `git@github.com:org/repo.git` → `https://github.com/org/repo.git`.
+2. `workspaceOpts.repoBranch` — current branch name (e.g., `"main"`)
+3. `workspaceOpts.cleanup` — **always `"preserve"` by default**. Use `"delete"` only when the pipeline has a `commit_and_push` node.
+4. **MANDATORY for isolated**: at least one phase must push verified code. The builder auto-emits a `commit_and_push` tool node when `workspace: "isolated"`. Without this, code is lost on cleanup.
 
-**If shared**: do NOT emit `workspace`, `repo_url`, `repo_branch`, or `workspace_cleanup`. Current behavior unchanged.
+**If shared**: omit `workspace`, `workspaceOpts` from BuilderSpec.
 
 ## Step 2: Analyze PRD
 
@@ -81,15 +80,15 @@ Extract: slug, goal, tasks, acceptance criteria.
 7. + `error-handling` if error recovery paths, retries, fault tolerance, or external service calls
 8. Default: 2 consecutive clean passes. **Maximum**: 3 passes for any single phase (>3 has diminishing returns and multiplies stall risk — each pass creates N review nodes + merge + fix cycle). Present in Step 2b checklist for user confirmation.
 
-**Extract affected files** (Layer 4 — Permission Scoping): From the PRD's "affected files", "scope", or "changes" section, derive per-phase `allowed_paths` and `escalate_on` lists. If the PRD doesn't specify affected files, emit a `// WARNING: PRD lacks affected-files section — using broad allowed_paths` comment and default to `src/**, tests/**`. When building per-node `allowed_paths`, use the prompt text as the source of truth — not just the PRD's file list. After drafting each impl node's `prompt=`, scan it for file-path references and ensure every referenced file is in `allowed_paths`. The prompt IS the contract with the agent; `allowed_paths` must cover everything it asks the agent to touch.
+**Extract affected files** (Layer 4 — Permission Scoping): From the PRD's "affected files", "scope", or "changes" section, derive per-phase `allowedPaths` and `escalateOn` lists. If the PRD doesn't specify affected files, emit a comment and default to `["src/**", "tests/**"]`. When building per-phase `allowedPaths`, use the prompt text as the source of truth — not just the PRD's file list. After drafting each phase's `prompt`, scan it for file-path references and ensure every referenced file is in `allowedPaths`.
 
-**Count requirements per phase**: For phases with 3+ requirements, flag for BDD scenario generation (Layer 3 strengthening). Phases with 1-2 requirements use spec_tests alone.
+**Count requirements per phase**: For phases with 3+ requirements, flag for BDD scenario generation (`bddScenarios: true`). Phases with 1-2 requirements use spec_tests alone.
 
 **Microverse detection** (Pattern 20): A phase qualifies for microverse when ALL of:
 1. **Numeric target** — PRD states a quantitative goal: "reduce to N", "improve to Z%", "keep under N ms", "achieve N% coverage", "at least/at most N", or any number + comparison.
 2. **Measurable** — you can construct a shell command that runs in <60s and prints a number on its last line. If the answer requires human judgment or visual inspection → NOT measurable (use standard impl with LLM judge).
 3. **Gradual, not binary** — intermediate progress has value. "Get coverage from 60% to 90%" = microverse. "Make tests pass" = binary → standard impl.
-4. **Direction is clear** — "reduce", "minimize", "below", "under", "fewer" → `direction: "lower"`. "Improve", "maximize", "above", "at least", "increase" → `direction: "higher"`. Ambiguous → flag in Step 2b checklist for user clarification.
+4. **Direction is clear** — "reduce", "minimize", "below", "under", "fewer" → `direction: "reduce"`. "Improve", "maximize", "above", "at least", "increase" → `direction: "improve"`. Ambiguous → flag in Step 2b checklist for user clarification.
 
 Derive the measurement command from PRD context:
 | PRD signal | Command pattern |
@@ -102,9 +101,9 @@ Derive the measurement command from PRD context:
 
 The command MUST output a single number on its last line. Use the same command for both `baseline` and `measure` nodes.
 
-**TypeScript strictness detection**: If the target project uses TypeScript, check `tsconfig.json` for strict flags: `exactOptionalPropertyTypes`, `strict`, `strictNullChecks`, `noUncheckedIndexedAccess`, `strictPropertyInitialization`. Record active flags as `${STRICT_FLAGS}`. If any are enabled, these MUST be embedded in every impl node's prompt in Step 3 — agents default to `prop: T | undefined` instead of `prop?: T` under strict configs, causing type regressions that exhaust verify retries.
+**TypeScript strictness detection**: If the target project uses TypeScript, check `tsconfig.json` for strict flags: `exactOptionalPropertyTypes`, `strict`, `strictNullChecks`, `noUncheckedIndexedAccess`, `strictPropertyInitialization`. Record active flags as `${STRICT_FLAGS}`. If any are enabled, these MUST be embedded in every phase's `prompt` in Step 3 — agents default to `prop: T | undefined` instead of `prop?: T` under strict configs, causing type regressions that exhaust verify retries.
 
-**Count total nodes**: If >20 nodes or >3 phases, plan fidelity tiers — use `default_fidelity = "compact"` at graph level, `fidelity = "full"` on review/conformance nodes and fix nodes after review.
+**Count total nodes**: If >20 nodes or >3 phases, plan fidelity tiers — use `defaultFidelity = "compact"` at graph level (builder handles this), `fidelity = "full"` on review/conformance/fix nodes.
 
 **Validate**: Must have title + ≥1 requirement. Missing acceptance criteria → WARN. Missing title → STOP.
 
@@ -127,9 +126,9 @@ I analyzed the PRD. Here's my plan — confirm or correct anything:
 **Per-phase breakdown:**
 
 Phase 1: ${PHASE_NAME}
-  Scope: ${allowed_paths} | Escalate: ${escalate_on}
+  Scope: ${allowedPaths} | Escalate: ${escalateOn}
   Requirements: N → [BDD scenarios: yes/no]
-  Microverse: [yes — target: N, direction: higher/lower, cmd: `...` / no — ${reason}]
+  Microverse: [yes — target: N, direction: reduce/improve, cmd: `...` / no — ${reason}]
   Review team: [roles] — ${N} consecutive passes
   Red team: [yes / no] — ${reason}
   Competing impls: [yes / no] — ${reason}
@@ -149,292 +148,379 @@ Anything to change?
 **Rules for the checklist:**
 - **Tech stack**: Detect from PRD context, file extensions, or `package.json`/`pyproject.toml`/`go.mod` mentions. If ambiguous → show `[unknown — please specify]`
 - **Microverse**: For each phase with a quantitative target, show the target, direction, and proposed measurement command. Let the user confirm the command works in their repo.
-- **Scope**: If PRD lacks affected files, show `src/**, tests/** [broad — PRD lacks file list]` and ask if narrower scope is possible. Always verify test dirs are included in `allowed_paths` (agent needs to write tests). Show `escalate_on` list for user review.
+- **Scope**: If PRD lacks affected files, show `src/**, tests/** [broad — PRD lacks file list]` and ask if narrower scope is possible. Always verify test dirs are included in `allowedPaths` (agent needs to write tests). Show `escalateOn` list for user review.
 - **Review team**: Show your recommendation with reasoning. Default 2 passes unless user overrides.
 - **Red team / Competing impls**: Show recommendation. Don't ask open-ended — present a yes/no with your reasoning.
 - **Workspace**: If not flagged, recommend based on context (isolated for greenfield/risky, shared for iterative/quick).
 - **Omit items already resolved by flags** (e.g., `--isolated` → don't ask workspace, `--shared` → don't ask workspace).
 
-Wait for user response. Apply corrections to your analysis, then proceed to Step 3.
+Wait for user response. Apply corrections to your analysis, then proceed to **Step 3** (`--builder` flag) or **Step 3L** (prompt-only / `--legacy` or no flag).
 
-## Step 3: Build Graph from Template
+---
 
-**STOP. Read `.claude/commands/pickle-dot-patterns.md` NOW** before proceeding. It contains all pattern definitions, anti-patterns, and shape/condition references needed for graph construction.
+## Step 3L: Prompt-Only Path (default or `--legacy`)
 
-**Start from this template** and customize based on Step 2 analysis:
+If `--builder` is **not** set (or `--legacy` is explicitly set), generate DOT directly from your Step 2 analysis without invoking the builder CLI. Read `.claude/commands/pickle-dot-patterns.md` for the complete pattern reference. Apply every pattern detected in Step 2, emit a `digraph ${SLUG} { ... }` using standard attractor DOT syntax, validate structurally (single start/exit, reachability, AC mapping completeness), then save to `./${SLUG}.dot`. Print a brief summary and offer `/attract ${SLUG}.dot` as the next step.
 
-```
-start → setup_deps → capture_baseline → [bdd_scenarios →] [spec_tests →] impl → check_progress → lint → typecheck → test
-  → [security →] [coverage →] [scope_check →]
-  → review_ratchet(pass_1 → pass_2)
-  → conformance → [red_team →]
-  → fix_all → verify_final → check_final → [commit_and_push →] done
-```
+---
 
-**Customizations:**
-- **Microverse phase** (quantitative target): replace `impl → lint → typecheck → test` with Pattern 20 loop. Wire into the full pipeline:
-    ```
-    ... → [spec_tests →] commit_baseline → baseline → optimize → measure → compare → check_mv
-    check_mv → verify_lint [condition="outcome=success"]  // exits to normal gates
-    check_mv → optimize [condition="outcome=partial_success"]  // improved, keep going
-    check_mv → rollback → optimize [condition="outcome=fail"]  // regressed, undo + retry
-    verify_lint → ... review_ratchet → conformance → ...
-    ```
-    On SUCCESS (target met), flow exits to lint/typecheck/test and the normal review ratchet. PARTIAL_SUCCESS loops back for another iteration. FAIL rolls back and retries. The `compare` node uses `auto_status=true` + `allow_partial=true` so the engine parses `STATUS: SUCCESS|PARTIAL_SUCCESS|FAIL` from the LLM output. Embed the concrete target and direction from the PRD in the compare prompt.
-- **Competing impls** (high complexity): replace `impl` with Pattern 18 fan-out
-- **Multi-phase**: replicate template per phase, connect sequentially. Each phase gets its own review ratchet. Emit `thread_id = "phase_N"` on ALL impl and fix nodes within the same phase — groups conversational context so each phase's fix node knows what its impl node did. Different phases MUST use different thread_ids
-- **Multi-phase final gate**: Use separate fix nodes for conformance and verify_final. Conformance failures route to `fix_conformance → conformance` (own retry loop). verify_final failures route to `fix_all → verify_final` (own retry loop). Never merge these paths — shared max_visits causes premature pipeline crashes:
-    conformance → conformance_gate
-    conformance_gate → verify_final [success]
-    conformance_gate → fix_conformance [fail]
-    fix_conformance → conformance
+## Step 3: Construct BuilderSpec JSON (`--builder` path)
 
-    verify_final → check_final
-    check_final → [commit_and_push →] done [success]
-    check_final → fix_all [fail]
-    fix_all → verify_final
-  `fix_conformance` has the same attributes as fix_all (including `max_visits=5`, `thread_id`, and `timeout="30m"`) but its prompt focuses on unmet PRD requirements rather than lint/test regressions. For single-phase pipelines, conformance `retry_target="impl"` is fine — it naturally re-enters the full chain.
-- **Single-phase**: template as-is, fix_all still recommended
-- **Catastrophic failure**: use `loop_restart=true` on edges as an alternative to `retry_target` when the pipeline needs a full restart: `check_final -> setup_deps [condition="outcome=fail", loop_restart=true]`. Route to `setup_deps`, NOT `start` (validator rule 3 rejects incoming edges on start). This clears RunContext — use sparingly, only when incremental retry cannot recover
-- **Skip what doesn't apply**: no linter → skip lint. No type checker → skip typecheck. No security tooling → skip security scan
+Translate your Step 2 analysis into a `BuilderSpec` JSON object. The builder CLI (`node ~/.claude/pickle-rick/extension/bin/dot-builder.js`) enforces all 15 validation rules, auto-applies Tier 1/2 patterns, and produces deterministic DOT output. Your role shifts from "write raw DOT" to "analyze PRD and construct typed JSON."
 
-**Multimodal** (`--multimodal`): If PRD references screenshots, mockups, or images, emit a tool node that captures them into a context key, then add `attachments_context_key="<key>"` on codergen nodes that need the visual context.
+### BuilderSpec Interface
 
-**TypeScript strictness in prompts**: If `${STRICT_FLAGS}` is non-empty (from Step 2), append to every impl and fix node's `prompt=`: "STRICT TSCONFIG: ${STRICT_FLAGS} enabled. Use optional property markers (prop?: T), never union types (prop: T | undefined). Run npx tsc --noEmit before finishing." This prevents type regressions under strict configs that exhaust verify retries.
+```typescript
+interface BuilderSpec {
+  slug: string;                   // URL-safe identifier; lowercase underscores
+  goal: string;                   // Single-sentence goal from PRD
+  phases: PhaseSpec[];            // May be empty for microverse-only pipelines
+  acceptanceCriteria: Record<string, string>;  // Exit gate conditions (see AC Mapping below)
+  workingDir?: string;            // Default: "${WORKING_DIR}" (attractor resolves at runtime)
+  label?: string;                 // Graph display label; default: goal value
+  defaultMaxRetry?: number;       // Graph-level default_max_retry; default: 3
+  workspace?: 'isolated';         // Omit for shared (default)
+  workspaceOpts?: WorkspaceOpts;  // Required when workspace: 'isolated'
+  microverse?: { name: string; opts: MicroverseOpts };
+  reviewRatchet?: number;         // Min 2 — N consecutive clean passes required
+  modelStylesheet?: StylesheetConfig;
+  specFile?: string;              // Path to PRD/spec; emitted as graph-level spec_file attribute
+}
 
-**Every box prompt MUST have context + constraints + acceptance criteria.** The executing LLM has NO access to the PRD — the prompt IS its instruction.
+interface PhaseSpec {
+  name: string;                   // Lowercase underscores; duplicates throw DUPLICATE_PHASE
+  prompt: string;                 // Full impl instruction — agent has NO access to PRD
+  allowedPaths: string[];         // Glob patterns; required on all impl phases
+  severity?: 'error' | 'warning' | 'info';  // Diagnostic severity override; default 'error'
+  dependsOn?: string[];           // Phase names this phase depends on; omit for independence
+  contextOnSuccess?: Record<string, unknown>;  // Tier 1 (custom) AC keys emitted on conformance node
+  escalateOn?: string[];          // Default: ["package.json","*.lock","*.config.*"]
+  specFirst?: boolean;            // Pattern 16: default true when goalGate true, false otherwise
+  goalGate?: boolean;             // Pattern 2: default false
+  retryTarget?: string;           // Goal gate retry node; default: "fix_${phase_name}"
+  timeout?: string;               // Duration string; default "30m"
+  threadId?: string;              // Auto-assigned "phase_${N}" (1-based); override rarely
+  securityScan?: boolean;         // Pattern 8: npm audit node after progress gate
+  coverageTarget?: number;        // Pattern 9: e.g., 80 for 80% coverage gate
+  competing?: boolean;            // Pattern 18: fan-out to two competing implementations
+  redTeam?: boolean;              // Pattern 17: adversarial review after conformance
+  bddScenarios?: boolean;         // Pattern 16b: explicit opt-in for Given/When/Then scenarios
+  docOnly?: boolean;              // Suppress verify chain; use for doc-only phases
+}
 
-- **Never hardcode line numbers** in prompts (e.g., "at line 23"). Earlier phases modify files, shifting all line numbers. Use searchable landmarks instead: "find the existing `.replaceAll('$goal', ...)` call", "find the `VALID_PROPS` set", "find `drainQueue()`".
-- **Defensive coding clauses** in every impl prompt: For all I/O resources (streams, file handles, spawned processes), ensure cleanup on ALL exit paths including timeout and error — use try/finally or flush before every return. For all optional values accessed after a conditional check, bind to a local variable first (`const local = obj; if (local?.method()) { local.otherMethod(); }`). These two patterns prevent the most common pipeline-generated bugs.
-- **Silent failure prevention** in every impl prompt with error handling: Never swallow errors in empty catch blocks — every catch must re-throw, return a typed error, or emit a warning. Functions returning sentinel values (empty array, null, default) on error must log the original error. Callers must be able to distinguish "no results" from "search failed."
-- **Concurrency safety** in every impl prompt touching shared state or parallel execution: For every shared resource (file, database, state object, workspace), verify correct behavior when two callers access simultaneously. Emit events/callbacks AFTER state transitions complete, never before. Use run-scoped or caller-scoped paths for any file written by potentially-parallel code.
-- **Explicit contracts** in every impl prompt creating module boundaries: No side-channel data propagation — data between modules goes through explicit typed interfaces, not stuffed into generic containers. No post-construction dependency binding — inject all dependencies at construction time. Numeric thresholds must be named constants or config values, never magic numbers in logic.
+interface MicroverseOpts {
+  prompt: string;                 // Optimization instruction for each iteration
+  measureCommand: string;         // Shell command; MUST output single number on last stdout line
+  target: number;                 // Numeric goal (e.g., 819200 for 800KB)
+  direction: 'reduce' | 'improve';
+  allowedPaths: string[];
+  timeout?: string;               // Default "30m"
+  maxVisits?: number;             // Overrides defaults (8 on optimize, 10 on compare) uniformly
+}
 
-**Mandatory for every graph:**
-- `commit_and_push` after `check_final` success, before `done` when `workspace="isolated"` (Pattern 0) — pushes only verified working code
-- `setup_deps` before first impl (Pattern 0a)
-- `capture_baseline` after `setup_deps`, before first impl (Pattern 0c) — snapshots pre-existing lint/typecheck/test errors
-- All verify/reverify `tool_command` values MUST use delta-aware checking (Pattern 0d) — fail on regressions, not pre-existing debt
-- `check_progress` tool node after each impl, before lint gates (Pattern 0e) — catches stalled impls with zero file changes
-- All `component` nodes: `max_parallel=1` (Pattern 0b)
-- `max_visits` on looping nodes (Pattern 6)
-- `bdd_scenarios` before `spec_tests` for phases with 3+ requirements (Pattern 16b, recommended)
-- `spec_tests` before impl on `goal_gate=true` paths (Pattern 16, default — skip only if explicitly simplified)
-- `permission_mode="bypassPermissions"` on all codergen (box) nodes in headless pipelines — NEVER use `plan` (deadlocks waiting for human approval that never arrives; validator rule 24 warns)
-- `timeout` on all codergen (box) nodes — `30m` for impl, `15m` for review/fix (unbounded LLM = unbounded cost)
-- `STATUS: SUCCESS` / `STATUS: FAIL` output instruction in prompts of all read-only codergen nodes (conformance, scope_check, red_team, reviewers, bdd_scenarios, check_coverage) — prevents no-op detection infinite retry (Pattern 6b)
-- `read_only=true` on all review box nodes that do NOT write files (reviewers, bdd_scenarios, scope_check, conformance) — prevents code backend no-op detection from triggering RETRY on nodes that intentionally make 0 Edit/Write calls (defense-in-depth alongside STATUS markers). **Exception**: nodes whose prompts instruct file writes (e.g., red_team with "write repro tests", spec_tests with "write test files") must NOT have `read_only=true` — it would suppress legitimate no-op detection if the node genuinely stalls
-- `allowed_paths` on all codergen (box) impl nodes (Layer 4, validator rule 25 warns if missing)
-- `escalate_on` on all codergen impl nodes — always include lock files, schema, config, auth
-- Every impl prompt that creates streams, file handles, or spawned processes MUST include: "Ensure all I/O resources are closed on every exit path (success, error, timeout, early return). Flush TextDecoder/streams before returning. Bind optional values to local variables before using inside conditional blocks."
-- Every impl prompt with error handling MUST include: "Never use empty catch blocks. Every catch must re-throw, return a typed error result, or log a warning with the original error. Functions that return defaults on error (empty array, null, 0) must log the error so callers can distinguish 'no results' from 'operation failed'."
-- Every impl prompt with shared state or parallel access MUST include: "For shared resources (files, databases, state), use run-scoped or caller-scoped identifiers to prevent collisions. Emit events AFTER state transitions complete. Verify behavior under concurrent access — test with two simultaneous callers."
-- Every impl prompt creating reusable objects in loops MUST include: "Compile-once objects (Regex, Glob, parsed configs, template engines) must be instantiated outside hot loops. If a constructor appears inside for/while/map/forEach and its arguments don't change per iteration, hoist it."
-- Review ratchet with ≥2 consecutive passes (Pattern 19)
-- `fix_all` before `verify_final` (Pattern 21) — **exception**: when `--exit-validation` is set and the pipeline is simple (single test command, no delta logic), omit `fix_all` and `verify_final` — `exit_validation` replaces them
-- `verify_final` with `context_on_success` setting ALL `acceptance_criteria` keys (skip when using `exit_validation`)
-- Graph-level `retry_target = "fix_all"` — NEVER setup_deps or per-phase impl
-- Graph-level `spec_file` pointing to PRD location (Layer 3)
-- Defense matrix comment block after graph attributes (Layer 5)
+interface WorkspaceOpts {
+  repoUrl?: string;               // HTTPS URL required for isolated workspace
+  repoBranch?: string;
+  cleanup?: 'delete' | 'preserve';  // Default: 'delete' when omitted
+}
 
-## Step 4: Generate DOT
+interface StylesheetOverride {
+  selector: string;
+  model: string;
+  effort?: string;
+}
 
-Syntax: one `digraph`, bare IDs (`[A-Za-z_][A-Za-z0-9_]*`), `->` only, commas between attrs, double-quoted strings.
-
-```dot
-digraph ${SLUG} {
-    goal = "${GOAL}"
-    label = "${LABEL}"
-    working_dir = "${WORKING_DIR}"
-    default_max_retry = 2
-    retry_target = "fix_all"
-    fallback_retry_target = "fix_all"
-    acceptance_criteria = "${CRITERIA}"
-    model_stylesheet = "${MODEL_STYLESHEET}"
-    spec_file = "${SPEC_FILE_PATH}"
-    // If >20 nodes or >3 phases:
-    // default_fidelity = "compact"
-    // (then add fidelity = "full" on review/conformance/fix nodes)
-    // If --exit-validation and simple final gate (single test command, no delta logic):
-    // exit_validation = "npm test 2>&1 && npx tsc --noEmit 2>&1"
-    // (omit verify_final tool node — exit_validation replaces it)
-    // If isolated mode:
-    // workspace = "isolated"
-    // repo_url = "https://github.com/org/repo.git"
-    // repo_branch = "main"
-    // workspace_cleanup = "preserve"  // "delete" only when commit_and_push is present
-
-    // Defense Matrix:
-    //   Layer 1 (Competitive):  [YES/NO] — fan-out/fan-in for complex phases
-    //   Layer 2 (Guardrails):   YES — lint → typecheck → test → audit
-    //   Layer 3 (Spec-Driven):  [YES/PARTIAL] — spec_file, BDD contracts, conformance
-    //   Layer 4 (Permissions):  YES — allowed_paths on impl nodes
-    //   Layer 5 (Adversarial):  YES — multi-model review, red team, scope check
-
-    start [shape=Mdiamond]
-    // ... nodes and edges from Step 3 ...
-    done [shape=Msquare]
+interface StylesheetConfig {
+  defaultModel: string;
+  defaultEffort?: string;
+  overrides?: StylesheetOverride[];
+  defaultProvider?: string;
+  criticalModel?: string;
+  criticalProvider?: string;
+  reviewModel?: string;
+  reviewProvider?: string;
+  reasoningEffort?: string;       // e.g., "high" for critical tier
 }
 ```
 
-**Defense matrix**: Layer 1 is YES when competing impls (Pattern 18) or parallel fan-out (Pattern 4) is emitted. Layer 3 is YES when all of: spec_file, BDD/spec_tests, conformance are present. Use PARTIAL when BDD/spec_tests are omitted: `Layer 3 (Spec-Driven): PARTIAL — spec_file + conformance (no BDD/spec_tests)`. Layer 5 is YES when review ratchet uses multi-model routing OR red_team is present. Layers 2 and 4 are always YES for standard pipelines.
+### Mapping Step 2 Analysis → BuilderSpec
 
-**Model stylesheet** — resolve from flags:
-```dot
-// anthropic (default — no llm_provider needed):
-model_stylesheet = "* { llm_model: claude-sonnet-4-6; } .critical { llm_model: claude-opus-4-6; reasoning_effort: high; } .review { llm_model: claude-opus-4-6; }"
+| Step 2 result | BuilderSpec field |
+|---|---|
+| Slug from PRD title | `slug` |
+| One-sentence goal | `goal` |
+| Phase list + prompts + scopes | `phases[]` (one `PhaseSpec` per phase) |
+| Custom AC keys from PRD | `acceptanceCriteria` + matching `contextOnSuccess` in phases |
+| Working dir from Step 1 | `workingDir` |
+| Spec file path from Step 1 | `specFile` |
+| Workspace mode from Step 1 | `workspace`, `workspaceOpts` |
+| Review ratchet pass count | `reviewRatchet` |
+| Microverse detection | `microverse.opts.measureCommand`, `.target`, `.direction` |
+| Provider/model flags | `modelStylesheet` fields |
+| Fan-out: ≥2 phases with no `dependsOn` | Omit `dependsOn` on independent phases — builder auto-emits Pattern 4 |
+| Serial phases | Set `dependsOn: ["prior_phase"]` on dependent phases |
 
-// single non-anthropic provider (add llm_provider to all):
-model_stylesheet = "* { llm_model: ${DEFAULT}; llm_provider: ${PROVIDER}; } .critical { llm_model: ${REVIEW}; reasoning_effort: high; } .review { llm_model: ${REVIEW}; }"
+### AC Mapping Rules
 
-// mixed provider (--provider qwen --review-provider anthropic):
-// .review and .critical override llm_provider to route adversarial validation to Opus
-model_stylesheet = "* { llm_model: qwen-plus; llm_provider: qwen; } .critical { llm_model: claude-opus-4-6; llm_provider: anthropic; reasoning_effort: high; } .review { llm_model: claude-opus-4-6; llm_provider: anthropic; }"
-```
-When `--review-provider` differs from `--provider`, the `.review` and `.critical` selectors MUST include `llm_provider` to override the `*` default. Per-node `llm_model` and `llm_provider` attributes can also override the stylesheet for edge cases.
+The builder validates every key in `acceptanceCriteria` has exactly one source node:
 
-## Step 5: Validate
+- **Tier 2 keys** (auto-sourced by `verify_final` — do NOT add to any `contextOnSuccess`):
+  `tests_pass`, `lint_clean`, `types_compile`, `cli_contract`, `determinism`, `validation_rules`
+- **Tier 1 keys** (custom, PRD-specific): MUST appear in `PhaseSpec.contextOnSuccess` for exactly one phase. The builder maps them to that phase's `conformance_${phase}` node. Missing mapping → `BuildError: MISSING_AC_MAPPING`.
 
-**Errors** (STOP and fix): single start/exit, no incoming→start, no outgoing←exit, all reachable, valid targets, diamond 2+ edges, component↔tripleoctagon paired (validator rule 20 — every `shape=component` must have a corresponding `shape=tripleoctagon` fan-in node), retry targets inside fan-out branches must point within the same component→tripleoctagon scope (validator rule 17), valid conditions/IDs/syntax, `->` only, single digraph, graph-level retry_target to setup_deps/start/per-phase impl instead of fix_all, `goal_gate=true` with `retry_target` but no `max_visits` (validator rule 19).
+Example: PRD acceptance criterion "auth must be secure" → add `"auth_secure": "true"` to `acceptanceCriteria` AND add `contextOnSuccess: { auth_secure: "true" }` to the auth phase.
 
-**Pre-submission check** (STOP if violated):
-- For each key in `acceptance_criteria`, verify exactly one node has `context_on_success` setting that key. Missing mapping → retry until engine safety limit (10 retries), then hard failure.
-- Every codergen (box) node has `timeout` (recommended: `30m` impl, `15m` review/fix). Unbounded LLM = unbounded cost.
-- For each codergen node with `allowed_paths`, verify every file path in `prompt=` is covered. Same check as validator rule 26 (`prompt_files_in_allowed_paths`) but caught at generation time.
-- For each read-only codergen node (conformance, scope_check, red_team, reviewers, bdd_scenarios, check_coverage), verify the prompt includes explicit `STATUS: SUCCESS` / `STATUS: FAIL` output instruction (Pattern 6b). Missing STATUS on read-only nodes → no-op detection → wasted retries.
-- Every review/read-only codergen node (reviewers, bdd_scenarios, red_team, scope_check) has `read_only=true` attribute. Missing `read_only` on read-only nodes → no-op detection RETRY if STATUS marker is absent from output.
+### Prompt Quality Rules
 
-**Warnings** (emit but continue): TypeScript project with strict tsconfig flags (exactOptionalPropertyTypes, strict, strictNullChecks, noUncheckedIndexedAccess) detected in Step 2 but no impl node prompt mentions strictness constraints (agents will write `T | undefined` instead of `?: T`, exhausting verify retries), dep setup exists, max_parallel=1 on components, max_visits on loops, every box has prompt, happy-path weight=2, goal_gate has retry_target, no linear chains, spec_tests before goal_gate impls, review ratchet ≥2 passes with reset-on-fail, lint/typecheck/test separate gates, fix_all before verify_final in multi-phase, conformance before exit, security/auth phases have red_team, node inside component→tripleoctagon fan-out has retry_target pointing outside branch scope (stripped at runtime — retry ineffective), graph-level retry_target points before a component fan-out (branches retry entire pipeline — wasteful), codergen node without `allowed_paths` (unbounded file scope), `allowed_paths` doesn't include test directories (agent can't write tests), missing `spec_file` graph attribute, BDD scenarios missing for phase with 3+ requirements, defense matrix comment block missing, missing `capture_baseline` before first impl (Pattern 0c — pre-existing errors cause infinite retry), verify nodes using raw lint/typecheck commands instead of delta-aware checking (Pattern 0d), impl node without progress gate (Pattern 0e — stalled impls waste retry budgets), **isolated workspace without `commit_and_push` node after check_final success (Pattern 0 — all code lost on cleanup)**.
+Each `PhaseSpec.prompt` must be complete — the executing agent has NO access to the PRD:
+- Include: goal, specific files to create/modify, API contracts, test requirements, edge cases.
+- **Never hardcode line numbers** — use searchable landmarks instead ("find the existing `.replaceAll('$goal', ...)` call").
+- **Strict TypeScript**: If `${STRICT_FLAGS}` non-empty from Step 2, append: `"STRICT TSCONFIG: ${STRICT_FLAGS} enabled. Use optional property markers (prop?: T), never union types (prop: T | undefined). Run npx tsc --noEmit before finishing."`
+- **I/O resources**: "Ensure all streams, file handles, and spawned processes are closed on every exit path (success, error, timeout). Flush TextDecoder/streams before returning."
+- **Error handling**: "Never use empty catch blocks. Every catch must re-throw, return a typed error result, or log a warning with the original error."
+- **Shared state**: "For shared resources (files, databases, state), use run-scoped or caller-scoped identifiers. Emit events AFTER state transitions complete."
 
-## Step 6: Summary & Save
+---
 
-Show DOT in ```dot block. Summary: nodes by type, edges (total/conditional/feedback), goal gates, review ratchet (roles, passes), model routing. Save to `./${SLUG}.dot`. Offer `dot -Tsvg`. Next: `/attract ${SLUG}.dot` to submit (uses `--backend claude-code` by default).
+### Few-Shot Examples
 
-## Example
+#### Example 1: Single-Phase Pipeline
 
-JWT auth API (TypeScript/Express). **Shared workspace** — no `commit_and_push` needed. For isolated workspace additions (`workspace`, `repo_url`, `repo_branch`, `workspace_cleanup="preserve"`, `commit_and_push` node wiring), see Pattern 0 in the patterns file.
+PRD: Add full-text search to an articles API (TypeScript/Node, PostgreSQL).
 
-Demonstrates all 5 layers: spec_file + BDD contracts (L3), allowed_paths + escalate_on (L4), setup, spec-first TDD, lint/typecheck/test gates, 2-pass review ratchet with correctness+security teams, conformance, red team (L5), fix_all, verify_final with context_on_success, defense matrix.
-
-```dot
-digraph user_auth_api {
-    goal = "Add JWT authentication to the REST API"
-    label = "user-auth-api: JWT Auth"
-    working_dir = "/repos/my-api"
-    default_max_retry = 2
-    retry_target = "fix_all"
-    fallback_retry_target = "fix_all"
-    acceptance_criteria = "context.tests_pass=true && context.lint_status=passing && context.typecheck_status=passing"
-    model_stylesheet = "* { llm_model: claude-sonnet-4-6; } .critical { llm_model: claude-opus-4-6; reasoning_effort: high; } .review { llm_model: claude-opus-4-6; }"
-    spec_file = "/repos/my-api/prd.md"
-
-    // Defense Matrix:
-    //   Layer 1 (Competitive):  NO — single-phase, no competing impls
-    //   Layer 2 (Guardrails):   YES — lint → typecheck → test → audit
-    //   Layer 3 (Spec-Driven):  YES — spec_file, BDD contracts, conformance
-    //   Layer 4 (Permissions):  YES — allowed_paths on impl nodes
-    //   Layer 5 (Adversarial):  YES — multi-model review, red team, scope check
-
-    start [shape=Mdiamond]
-    setup_deps [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm install 2>&1", timeout="120s"]
-    capture_baseline [shape=parallelogram, tool_command="cd ${WORKING_DIR} && echo '=== BASELINE SNAPSHOT ===' && (npx eslint src/ 2>&1 || true) | grep -c 'error' > /tmp/baseline_lint_errors.txt && (npx tsc --noEmit 2>&1 || true) | grep -c 'error TS' > /tmp/baseline_ts_errors.txt && echo \"lint=$(cat /tmp/baseline_lint_errors.txt) ts=$(cat /tmp/baseline_ts_errors.txt)\" 2>&1", timeout="120s"]
-
-    bdd_scenarios_auth [class="review", read_only=true, timeout="10m", prompt="Read the spec file at $spec_file. For each JWT auth requirement, generate BDD scenarios in Given/When/Then format: token validation (missing, expired, malformed), login flow, refresh rotation, bcrypt hashing, OWASP patterns. Output as executable test descriptions. Do NOT implement — only define the behavioral contracts. Then output 'STATUS: SUCCESS' on its own line."]
-    spec_tests_auth [class="review", timeout="15m", prompt="Read the BDD scenarios from the previous node's output. Write failing test cases that verify each scenario. Run them to confirm they fail. Do NOT write production code.", goal_gate=true, retry_target="spec_tests_auth", max_visits=5]
-    implement_auth [goal_gate=true, retry_target="implement_auth", permission_mode="bypassPermissions", timeout="30m", prompt="Make all failing auth tests pass. Do NOT modify test files. JWT middleware + login endpoint. 1h expiry, refresh rotation, bcrypt. OWASP patterns.", allowed_paths="src/auth/**, src/middleware/**, tests/auth/**", escalate_on="package.json, package-lock.json, .env*, prisma/schema.prisma", max_visits=8, thread_id="phase_1"]
-
-    check_progress [shape=parallelogram, tool_command="cd ${WORKING_DIR} && CHANGED=$(git status --porcelain | wc -l | tr -d ' ') && if [ \"$CHANGED\" -eq 0 ]; then echo 'STALL: impl produced zero file changes — retrying'; exit 1; fi && echo \"progress: $CHANGED files modified\" 2>&1", max_visits=3]
-    check_progress_gate [shape=diamond]
-
-    verify_lint [shape=parallelogram, tool_command="cd ${WORKING_DIR} && BASELINE=$(cat /tmp/baseline_lint_errors.txt 2>/dev/null || echo 0) && CURRENT=$((npm run lint 2>&1 || true) | grep -c 'error') && echo \"lint baseline=$BASELINE current=$CURRENT\" && [ $CURRENT -le $BASELINE ] || (echo 'LINT REGRESSION' && exit 1)", max_visits=3]
-    check_lint [shape=diamond]
-    verify_types [shape=parallelogram, tool_command="cd ${WORKING_DIR} && BASELINE=$(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) && CURRENT=$((npx tsc --noEmit 2>&1 || true) | grep -c 'error TS') && echo \"typecheck baseline=$BASELINE current=$CURRENT\" && [ $CURRENT -le $BASELINE ] || (echo 'TYPECHECK REGRESSION' && exit 1)", max_visits=3]
-    check_types [shape=diamond]
-    run_tests [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npm test 2>&1", max_visits=3]
-    check_tests [shape=diamond]
-
-    // Review ratchet — 2 consecutive clean passes (Pattern 19)
-    split_review_1 [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
-    reviewer_correctness_1 [class="review", read_only=true, timeout="15m", prompt="Correctness ONLY: logic errors, off-by-one, null handling, async. List issues with file:line. Then output 'STATUS: SUCCESS' on its own line."]
-    reviewer_patterns_1 [class="review", read_only=true, timeout="15m", prompt="Patterns ONLY: anti-patterns, duplication, naming conventions, error handling consistency. List with file:line. Then output 'STATUS: SUCCESS' on its own line."]
-    reviewer_security_1 [class="review", read_only=true, timeout="15m", prompt="Security ONLY: token forgery, timing attacks, algorithm confusion, secrets exposure. List with file:line. Then output 'STATUS: SUCCESS' on its own line."]
-    merge_review_1 [shape=tripleoctagon, class="review", timeout="15m", prompt="Consolidate. BLOCKER or ADVISORY. CLEAN or DIRTY."]
-    check_review_1 [shape=diamond]
-    fix_1 [prompt="Fix all BLOCKERs. Also simplify: redundant logic, duplication, naming. Do NOT modify test files.", permission_mode="bypassPermissions", timeout="15m", allowed_paths="src/auth/**, src/middleware/**", escalate_on="package.json, package-lock.json, .env*", max_visits=5, thread_id="phase_1"]
-    reverify_1 [shape=parallelogram, tool_command="cd ${WORKING_DIR} && BASELINE_LINT=$(cat /tmp/baseline_lint_errors.txt 2>/dev/null || echo 0) && CURRENT_LINT=$((npm run lint 2>&1 || true) | grep -c 'error') && BASELINE_TS=$(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) && CURRENT_TS=$((npx tsc --noEmit 2>&1 || true) | grep -c 'error TS') && npm test 2>&1 && [ $CURRENT_LINT -le $BASELINE_LINT ] && [ $CURRENT_TS -le $BASELINE_TS ] && echo 'DELTA: CLEAN' || (echo 'DELTA: REGRESSION' && exit 1)"]
-    check_reverify_1 [shape=diamond]
-
-    split_review_2 [shape=component, max_parallel=1, join_policy="wait_all", error_policy="continue"]
-    reviewer_correctness_2 [class="review", read_only=true, timeout="15m", prompt="Fresh correctness review of ALL code — assume nothing from prior reviews. List issues with file:line. Then output 'STATUS: SUCCESS' on its own line."]
-    reviewer_patterns_2 [class="review", read_only=true, timeout="15m", prompt="Fresh patterns review of ALL code — assume nothing. Anti-patterns, duplication, naming, error handling. List with file:line. Then output 'STATUS: SUCCESS' on its own line."]
-    reviewer_security_2 [class="review", read_only=true, timeout="15m", prompt="Fresh security review of ALL code — assume nothing. All OWASP vectors. List with file:line. Then output 'STATUS: SUCCESS' on its own line."]
-    merge_review_2 [shape=tripleoctagon, class="review", timeout="15m", prompt="Consolidate. BLOCKER or ADVISORY. CLEAN or DIRTY."]
-    check_review_2 [shape=diamond]
-    fix_2 [prompt="Fix all BLOCKERs. Also simplify. Do NOT modify test files.", permission_mode="bypassPermissions", timeout="15m", allowed_paths="src/auth/**, src/middleware/**", escalate_on="package.json, package-lock.json, .env*", max_visits=5, thread_id="phase_1"]
-    reverify_2 [shape=parallelogram, tool_command="cd ${WORKING_DIR} && BASELINE_LINT=$(cat /tmp/baseline_lint_errors.txt 2>/dev/null || echo 0) && CURRENT_LINT=$((npm run lint 2>&1 || true) | grep -c 'error') && BASELINE_TS=$(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) && CURRENT_TS=$((npx tsc --noEmit 2>&1 || true) | grep -c 'error TS') && npm test 2>&1 && [ $CURRENT_LINT -le $BASELINE_LINT ] && [ $CURRENT_TS -le $BASELINE_TS ] && echo 'DELTA: CLEAN' || (echo 'DELTA: REGRESSION' && exit 1)"]
-    check_reverify_2 [shape=diamond]
-
-    conformance [class="review", read_only=true, timeout="15m", goal_gate=true, retry_target="implement_auth", max_visits=5, prompt="Conformance audit: read the spec file at $spec_file. Compare every requirement against the current git diff. Verify: 1) Every requirement has a corresponding code change. 2) Acceptance criteria are testable and tested. 3) No requirements silently dropped. Output PASS or FAIL with unmet requirements. Then output 'STATUS: SUCCESS' if PASS, 'STATUS: FAIL' if FAIL on its own line."]
-    conformance_gate [shape=diamond]
-
-    red_team_auth [class="review", timeout="15m", prompt="Adversarial audit: token forgery, expired replay, refresh reuse, injection, timing attacks, algorithm confusion. Write repro tests. Output PASS or FAIL. Then output 'STATUS: SUCCESS' if PASS, 'STATUS: FAIL' if FAIL on its own line.", goal_gate=true, retry_target="implement_auth", max_visits=5, allowed_paths="tests/auth/**", escalate_on="package.json"]
-    red_team_gate [shape=diamond]
-
-    fix_all [prompt="Fix ALL remaining issues across the entire codebase. Run: 1) npx eslint src/ --fix 2>&1. 2) npx tsc --noEmit 2>&1. 3) npm test 2>&1. Iterate until all pass. Do NOT skip errors.", permission_mode="bypassPermissions", timeout="30m", allowed_paths="src/**, tests/**", escalate_on="package.json, package-lock.json, .env*, prisma/schema.prisma", max_visits=5, thread_id="phase_1"]
-
-    verify_final [shape=parallelogram,
-        tool_command="cd ${WORKING_DIR} && BASELINE_LINT=$(cat /tmp/baseline_lint_errors.txt 2>/dev/null || echo 0) && CURRENT_LINT=$((npx eslint src/ 2>&1 || true) | grep -c 'error') && BASELINE_TS=$(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) && CURRENT_TS=$((npx tsc --noEmit 2>&1 || true) | grep -c 'error TS') && npm test 2>&1 && [ $CURRENT_LINT -le $BASELINE_LINT ] && [ $CURRENT_TS -le $BASELINE_TS ] && echo 'DELTA: CLEAN' || (echo 'DELTA: REGRESSION' && exit 1)",
-        goal_gate=true, retry_target="fix_all", max_visits=5,
-        context_on_success="tests_pass=true,lint_status=passing,typecheck_status=passing"]
-    check_final [shape=diamond]
-
-    done [shape=Msquare]
-
-    // Edges
-    start -> setup_deps -> capture_baseline -> bdd_scenarios_auth -> spec_tests_auth -> implement_auth
-    implement_auth -> check_progress -> check_progress_gate
-    check_progress_gate -> verify_lint [condition="outcome=success", weight=2]
-    check_progress_gate -> implement_auth [condition="outcome=fail"]
-    verify_lint -> check_lint
-    check_lint -> verify_types [condition="outcome=success", weight=2]
-    check_lint -> implement_auth [condition="outcome=fail"]
-    verify_types -> check_types
-    check_types -> run_tests [condition="outcome=success", weight=2]
-    check_types -> implement_auth [condition="outcome=fail"]
-    run_tests -> check_tests
-    check_tests -> split_review_1 [condition="outcome=success", weight=2]
-    check_tests -> implement_auth [condition="outcome=fail"]
-
-    // Ratchet pass 1
-    split_review_1 -> reviewer_correctness_1 -> merge_review_1
-    split_review_1 -> reviewer_patterns_1 -> merge_review_1
-    split_review_1 -> reviewer_security_1 -> merge_review_1
-    merge_review_1 -> check_review_1
-    check_review_1 -> split_review_2 [condition="outcome=success", weight=2]
-    check_review_1 -> fix_1 [condition="outcome=fail"]
-    fix_1 -> reverify_1 -> check_reverify_1
-    check_reverify_1 -> split_review_1 [condition="outcome=success", weight=2]
-    check_reverify_1 -> fix_1 [condition="outcome=fail"]
-
-    // Ratchet pass 2 — failure RESETS to pass 1
-    split_review_2 -> reviewer_correctness_2 -> merge_review_2
-    split_review_2 -> reviewer_patterns_2 -> merge_review_2
-    split_review_2 -> reviewer_security_2 -> merge_review_2
-    merge_review_2 -> check_review_2
-    check_review_2 -> conformance [condition="outcome=success", weight=2]
-    check_review_2 -> fix_2 [condition="outcome=fail"]
-    fix_2 -> reverify_2 -> check_reverify_2
-    check_reverify_2 -> split_review_1 [condition="outcome=success", weight=2]
-    check_reverify_2 -> fix_2 [condition="outcome=fail"]
-
-    conformance -> conformance_gate
-    conformance_gate -> red_team_auth [condition="outcome=success", weight=2]
-    conformance_gate -> implement_auth [condition="outcome=fail"]
-    red_team_auth -> red_team_gate
-    red_team_gate -> fix_all [condition="outcome=success", weight=2]
-    red_team_gate -> implement_auth [condition="outcome=fail"]
-    fix_all -> verify_final -> check_final
-    check_final -> done [condition="outcome=success", weight=2]
-    check_final -> fix_all [condition="outcome=fail"]
+```json
+{
+  "slug": "articles_search",
+  "goal": "Add full-text search to the articles API via PostgreSQL tsvector",
+  "workingDir": "${WORKING_DIR}",
+  "specFile": "/repos/my-api/prd.md",
+  "phases": [
+    {
+      "name": "search",
+      "prompt": "Implement full-text search on the articles table using PostgreSQL tsvector/tsquery. Add GET /articles/search?q=<term> endpoint returning ranked results (ts_rank). Add a GIN index on the tsvector column via migration. Ensure existing GET /articles endpoint is unaffected. Write tests covering: empty query, single term, multi-term, special characters, no results. Do NOT modify unrelated endpoints.",
+      "allowedPaths": ["src/articles/**", "src/db/**", "tests/articles/**"],
+      "escalateOn": ["package.json", "*.lock", "*.config.*", "prisma/schema.prisma"],
+      "specFirst": true,
+      "contextOnSuccess": { "search_returns_ranked_results": "true" }
+    }
+  ],
+  "acceptanceCriteria": {
+    "tests_pass": "true",
+    "lint_clean": "true",
+    "types_compile": "true",
+    "search_returns_ranked_results": "true"
+  },
+  "reviewRatchet": 2,
+  "modelStylesheet": {
+    "defaultModel": "claude-sonnet-4-6",
+    "criticalModel": "claude-opus-4-6",
+    "reviewModel": "claude-opus-4-6"
+  }
 }
 ```
+
+Builder applies (auto): 0a `setup_deps`, 0c `capture_baseline`, 0d delta-aware verify, 0e progress gate, 1 test-fix loop, 3 conditional routing, 6 `max_visits`, 6b `read_only`+STATUS, 10 scope creep, 13 lint gate, 14 typecheck gate, 15 conformance, 16 spec-first TDD, 21 `fix_all`, 22 permission scoping, 23 defense matrix. `search_returns_ranked_results` maps to `conformance_search` via `contextOnSuccess`.
+
+---
+
+#### Example 2: Multi-Phase with Fan-Out
+
+PRD: JWT auth module + protected REST endpoints (TypeScript/Express). Phases are independent — no `dependsOn`.
+
+```json
+{
+  "slug": "jwt_auth_api",
+  "goal": "Add JWT authentication and protected REST endpoints to the Express API",
+  "workingDir": "${WORKING_DIR}",
+  "specFile": "/repos/my-api/prd.md",
+  "phases": [
+    {
+      "name": "auth",
+      "prompt": "Implement JWT auth middleware: POST /auth/login (bcrypt verify, issue 1h JWT + refresh token), POST /auth/refresh (rotate refresh token), middleware that validates Authorization: Bearer <token> header. Algorithm allowlist: HS256 only. Timing-safe compare for bcrypt. Write tests for: missing token, expired token, malformed token, valid token, refresh rotation, algorithm confusion. STRICT TSCONFIG: strict enabled. Use optional property markers (prop?: T), never union types (prop: T | undefined). Run npx tsc --noEmit before finishing.",
+      "allowedPaths": ["src/auth/**", "tests/auth/**"],
+      "escalateOn": ["package.json", "*.lock", "*.config.*", ".env*"],
+      "specFirst": true,
+      "bddScenarios": true,
+      "securityScan": true,
+      "contextOnSuccess": { "auth_middleware_complete": "true" }
+    },
+    {
+      "name": "api",
+      "prompt": "Implement protected REST endpoints: GET /users/me, PUT /users/me, GET /users/:id/settings. Apply auth middleware from the auth phase (import from src/auth/middleware). Input validation with zod. Standardized error responses (401 unauthenticated, 403 forbidden, 404 not found, 422 validation). Write tests for: unauthenticated access (401), wrong user (403), valid access, validation errors. STRICT TSCONFIG: strict enabled. Use optional property markers (prop?: T).",
+      "allowedPaths": ["src/api/**", "tests/api/**"],
+      "escalateOn": ["package.json", "*.lock", "*.config.*"],
+      "goalGate": true,
+      "specFirst": true,
+      "contextOnSuccess": { "api_endpoints_protected": "true" }
+    }
+  ],
+  "acceptanceCriteria": {
+    "tests_pass": "true",
+    "lint_clean": "true",
+    "types_compile": "true",
+    "auth_middleware_complete": "true",
+    "api_endpoints_protected": "true"
+  },
+  "reviewRatchet": 2,
+  "modelStylesheet": {
+    "defaultModel": "claude-sonnet-4-6",
+    "criticalModel": "claude-opus-4-6",
+    "reviewModel": "claude-opus-4-6"
+  }
+}
+```
+
+Neither `auth` nor `api` has `dependsOn` → builder emits Pattern 4 fan-out: `split_phases → [auth_nodes ∥ api_nodes] → merge_phases`. Thread IDs auto-assigned: `thread_id="phase_1"` on all auth nodes, `thread_id="phase_2"` on all api nodes. `auth_middleware_complete` maps to `conformance_auth.contextOnSuccess`; `api_endpoints_protected` maps to `conformance_api.contextOnSuccess`.
+
+---
+
+#### Example 3: Microverse (Numeric Optimization)
+
+PRD: Reduce main bundle size from 2.1 MB to under 800 KB. No phase impl nodes — microverse replaces the entire impl/verify chain.
+
+```json
+{
+  "slug": "reduce_bundle_size",
+  "goal": "Reduce main bundle from 2.1MB to under 800KB via dead code elimination and code splitting",
+  "workingDir": "${WORKING_DIR}",
+  "specFile": "/repos/my-app/prd.md",
+  "phases": [],
+  "microverse": {
+    "name": "bundle_opt",
+    "opts": {
+      "prompt": "Analyze bundle composition (use webpack-bundle-analyzer or source-map-explorer). Eliminate dead code via tree-shaking, apply dynamic import() for route-level code splitting, move large dependencies to lazy chunks, deduplicate shared modules. Focus on the largest contributors first. Do NOT break existing functionality or routing.",
+      "measureCommand": "npm run build 2>/dev/null && wc -c < dist/bundle.js",
+      "target": 819200,
+      "direction": "reduce",
+      "allowedPaths": ["src/**", "webpack.config.*", "vite.config.*"],
+      "maxVisits": 10
+    }
+  },
+  "acceptanceCriteria": {
+    "tests_pass": "true",
+    "lint_clean": "true",
+    "types_compile": "true",
+    "cli_contract": "true",
+    "determinism": "true",
+    "validation_rules": "true"
+  },
+  "modelStylesheet": {
+    "defaultModel": "claude-sonnet-4-6",
+    "criticalModel": "claude-opus-4-6",
+    "reviewModel": "claude-opus-4-6"
+  }
+}
+```
+
+`phases: []` → no fan-out (Pattern 4 not applied), no conformance nodes. Microverse generates: `commit_baseline_bundle_opt → baseline_bundle_opt → optimize_bundle_opt → measure_bundle_opt → compare_bundle_opt → check_bundle_opt` with three-way routing: `outcome="success"` (target met) → ratchet or `fix_all`, `outcome="partial_success"` → loop back to `optimize`, `outcome="fail"` (regressed) → `rollback → optimize`. All 6 Tier 2 AC keys auto-sourced by `verify_final` — no custom `contextOnSuccess` needed. Defense matrix `specDriven = "NONE"` (zero phases).
+
+---
+
+## Step 4: Invoke Builder CLI + Fix Loop
+
+Pipe the BuilderSpec JSON to the builder CLI. Run the fix loop on validation failure.
+
+**Invocation:**
+```bash
+echo '<BuilderSpec JSON>' | node ~/.claude/pickle-rick/extension/bin/dot-builder.js
+```
+
+**Exit codes:**
+- `0` — success: `BuildResult` JSON on stdout. Extract `.dot` field.
+- `1` — build/validation error: `BuildError` JSON on stderr `{ "error": "<BuildErrorCode>", "message": "...", "diagnostics": [...] }`. Recoverable — LLM can fix BuilderSpec.
+- `2` — unexpected error: plain error JSON on stderr `{ "error": "UNEXPECTED_ERROR", "message": "..." }`. Not recoverable — fix the input structure or escalate.
+
+**Fix loop algorithm:**
+
+```
+best_spec             = initial BuilderSpec JSON
+best_error_count      = ∞
+prev_error_count      = ∞
+consecutive_no_progress = 0
+total_failed          = 0
+iteration             = 1
+
+loop:
+  pipe current BuilderSpec JSON to builder CLI
+
+  on exit 0:
+    dot = parse stdout JSON → extract .dot field
+    save to ./<slug>.dot
+    → proceed to Step 5 (Success)
+
+  on exit 1 or exit 2:
+    diagnostics  = parse stderr JSON .diagnostics  // array of Diagnostic objects
+    error_count  = diagnostics.length
+
+    // Track best attempt
+    if error_count < best_error_count:
+      best_spec        = current BuilderSpec
+      best_error_count = error_count
+    else:
+      total_failed += 1
+
+    // Convergence guard: revert after 2 consecutive non-improvements
+    if error_count >= prev_error_count:
+      consecutive_no_progress += 1
+      if consecutive_no_progress >= 2:
+        revert current BuilderSpec to best_spec
+        consecutive_no_progress = 0
+    else:
+      consecutive_no_progress = 0
+
+    // Termination: 3 total iterations without improvement
+    if total_failed >= 3:
+      save best_spec output as ./<slug>.dot.draft
+      print: "Fix-loop exhausted after <iteration> iterations. Best result (<best_error_count> errors) saved to <slug>.dot.draft — review diagnostics and fix manually."
+      list all remaining diagnostics with their .fix hints
+      → STOP
+
+    // Fix each diagnostic in the current BuilderSpec
+    for each diagnostic in diagnostics:
+      read: diagnostic.rule, diagnostic.message, diagnostic.nodeId, diagnostic.fix
+      apply minimum-scope fix to BuilderSpec that resolves this diagnostic
+
+    prev_error_count = error_count
+    iteration += 1
+    continue
+```
+
+**Diagnostic-to-fix mapping** (most common `BuildErrorCode` values):
+
+| `error` code | Fix in BuilderSpec |
+|---|---|
+| `MISSING_AC_MAPPING` | Add `contextOnSuccess: { "<key>": "<value>" }` to the phase whose conformance node should emit this key. Or remove the orphaned key from `acceptanceCriteria`. |
+| `MISSING_ALLOWED_PATHS` | Add `allowedPaths: [...]` to the failing phase. |
+| `INVALID_STRUCTURE` | Check `phases` for duplicate names or conflicting `dependsOn` chains. |
+| `MISSING_TIMEOUT` | Add `timeout: "30m"` to the failing phase. |
+| `WORKSPACE_NO_HTTPS` | Set `workspaceOpts.repoUrl` to an HTTPS URL (not SSH `git@...`). |
+| `WORKSPACE_NO_PUSH` | Set `workspace: "isolated"` and populate `workspaceOpts` with valid HTTPS `repoUrl`. |
+| `GOAL_GATE_NO_MAX_VISITS` | Builder should auto-set this; if error persists, add explicit `retryTarget: "fix_<phase>"`. |
+| `INVALID_RATCHET` | `reviewRatchet` must be ≥ 2. |
+| `PLAN_MODE_DEADLOCK` | Never set `permission_mode: "plan"` in prompts — deadlocks headless pipelines. |
+| `INVALID_SPEC` | Missing required field (`slug`, `goal`, `phases`, `acceptanceCriteria`). Check for null/undefined. |
+| `COMPONENT_NO_MERGE` | Paired `shape=component` must have a corresponding `shape=tripleoctagon` fan-in. Check `competing` phase settings. |
+| `FAN_OUT_SCOPE_LEAK` | A `retryTarget` inside a fan-out branch points outside its component scope — use default target. |
+
+## Step 5: Save & Summary
+
+**On success (exit 0):**
+
+1. Save the `.dot` string to `./${SLUG}.dot`
+2. Print summary:
+
+```
+Pipeline saved to ${SLUG}.dot
+  Slug: ${SLUG}
+  Patterns applied: ${BuildResult.patternsApplied.join(', ')}
+  Defense matrix: competitive=${defenseMatrix.competitive}, specDriven=${defenseMatrix.specDriven}, adversarial=${defenseMatrix.adversarial}
+  Diagnostics: ${warnings} warning(s), ${infos} info(s)
+
+Next: /attract ${SLUG}.dot
+```
+
+3. If `BuildResult.diagnostics` contains warnings or infos, list them — non-blocking but worth reviewing.
+
+**On draft save (fix-loop exhaustion):**
+
+List all remaining diagnostics from `best_spec` builder output with their `diagnostic.fix` hints. User must resolve manually and re-run `/pickle-dot --builder <prd>`.

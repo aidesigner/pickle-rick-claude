@@ -274,3 +274,145 @@ export interface MicroverseSessionState {
   exit_reason?: string;
   stash_ref?: string;
 }
+
+// ---------------------------------------------------------------------------
+// DOT Builder Types
+// ---------------------------------------------------------------------------
+
+export type BuildErrorCode =
+  | 'EMPTY_SLUG'
+  | 'EMPTY_GOAL'
+  | 'DUPLICATE_PHASE'
+  | 'INVALID_RATCHET'
+  | 'NON_NUMERIC_TARGET'
+  | 'ALREADY_BUILT'
+  | 'INVALID_STRUCTURE'
+  | 'START_HAS_INCOMING'
+  | 'UNREACHABLE_NODE'
+  | 'DIAMOND_MISSING_EDGES'
+  | 'GOAL_GATE_NO_MAX_VISITS'
+  | 'MISSING_AC_MAPPING'
+  | 'MISSING_TIMEOUT'
+  | 'PROMPT_PATH_MISMATCH'
+  | 'REVIEW_MISSING_READONLY'
+  | 'COMPONENT_NO_MERGE'
+  | 'FAN_OUT_SCOPE_LEAK'
+  | 'WORKSPACE_NO_HTTPS'
+  | 'WORKSPACE_NO_PUSH'
+  | 'PLAN_MODE_DEADLOCK'
+  | 'MISSING_ALLOWED_PATHS'
+  | 'INVALID_SPEC'
+  | 'INVALID_TIMEOUT'
+  | 'INVALID_ALLOWED_PATHS';
+
+export interface Diagnostic {
+  rule: string;
+  severity: 'error' | 'warning' | 'info';
+  message: string;
+  nodeId?: string;
+  edge?: [string, string];
+  fix?: string;
+}
+
+export interface ValidationResult {
+  valid: boolean;
+  diagnostics: Diagnostic[];
+}
+
+export class BuildError extends Error {
+  readonly code: BuildErrorCode;
+  readonly diagnostics: Diagnostic[];
+  constructor(code: BuildErrorCode, message: string, diagnostics: Diagnostic[] = []) {
+    super(message);
+    this.name = 'BuildError';
+    this.code = code;
+    this.diagnostics = diagnostics;
+  }
+}
+
+export interface MicroverseOpts {
+  prompt: string;
+  measureCommand: string;
+  target: number;
+  direction: 'reduce' | 'improve';
+  allowedPaths: string[];
+  timeout?: string;
+  maxVisits?: number;
+}
+
+export interface WorkspaceOpts {
+  repoUrl?: string;
+  repoBranch?: string;
+  cleanup?: 'delete' | 'preserve';
+}
+
+export interface StylesheetOverride {
+  selector: string;
+  model: string;
+  effort?: string;
+}
+
+export interface StylesheetConfig {
+  defaultModel: string;
+  defaultEffort?: string;
+  overrides?: StylesheetOverride[];
+  defaultProvider?: string;
+  criticalModel?: string;
+  criticalProvider?: string;
+  reviewModel?: string;
+  reviewProvider?: string;
+  reasoningEffort?: string;
+}
+
+export interface PhaseSpec {
+  name: string;
+  prompt: string;
+  allowedPaths: string[];
+  severity?: 'error' | 'warning' | 'info';
+  dependsOn?: string[];
+  contextOnSuccess?: Record<string, string>;
+  escalateOn?: string[];
+  specFirst?: boolean;
+  goalGate?: boolean;
+  retryTarget?: string;
+  timeout?: string;
+  threadId?: string;
+  securityScan?: boolean;
+  coverageTarget?: number;
+  competing?: boolean;
+  redTeam?: boolean;
+  bddScenarios?: boolean;
+  docOnly?: boolean;
+}
+
+export interface DefenseMatrix {
+  competitive: boolean;
+  guardrails: string[];
+  specDriven: 'NONE' | 'conformance' | 'BDD + conformance' | 'spec_file + conformance' | 'spec_file + BDD + conformance';
+  permissions: string[];
+  adversarial: boolean;
+}
+
+export interface BuildResult {
+  dot: string;
+  slug: string;
+  patternsApplied: string[];
+  defenseMatrix: DefenseMatrix;
+  diagnostics: Diagnostic[];
+}
+
+export interface BuilderSpec {
+  slug: string;
+  goal: string;
+  phases: PhaseSpec[];
+  acceptanceCriteria: Record<string, string>;
+  workingDir?: string;
+  label?: string;
+  defaultMaxRetry?: number;
+  workspace?: 'isolated';
+  workspaceOpts?: WorkspaceOpts;
+  microverse?: { name: string; opts: MicroverseOpts };
+  reviewRatchet?: number;
+  modelStylesheet?: StylesheetConfig;
+  specFile?: string;
+}
