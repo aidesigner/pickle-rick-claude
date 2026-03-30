@@ -160,17 +160,6 @@ claude --dangerously-skip-permissions
 
 ---
 
-## Built-in Safety
-
-These run automatically — you don't need to configure them.
-
-- **Context clearing** between every iteration — no drift or context rot, even on 500+ iteration epics
-- **Three-state circuit breaker** (CLOSED → HALF_OPEN → OPEN) auto-stops sessions stuck in error loops or making no git progress. See [architecture](architecture.md#circuit-breaker--runaway-session-protection).
-- **Rate limit auto-recovery** detects API throttling, computes precise wait from the API's `resetsAt` epoch, and resumes automatically — surviving long or overnight runs. See [architecture](architecture.md#rate-limit-auto-recovery).
-- **Stop hook** prevents Claude from exiting until the task is genuinely complete
-
----
-
 ## Advanced Workflows
 
 ### Pipeline Mode: Self-Correcting DAGs
@@ -194,12 +183,24 @@ Reviews your [Graphite](https://graphite.dev) PR stack iteratively — but never
 
 ### Portal Gun: Gene Transfusion
 
-[Gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) — transfer proven patterns between codebases. Point it at a GitHub URL, local file, npm package, or describe a pattern. Extracts structural DNA, analyzes your target, generates a transplant PRD with behavioral validation.
+<img src="images/portal-gun.png" alt="Portal Gun — gene transfusion for codebases" width="400" align="right" />
+
+> *"You see that code over there, Morty? In that other repo? I'm gonna open a portal, reach in, and yank its DNA into OUR dimension."*
+
+`/portal-gun` implements [gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) — transferring proven coding patterns between codebases using AI agents. Point it at a GitHub URL, local file, npm package, or just describe a pattern, and it extracts the structural DNA, analyzes your target codebase, then generates a transplant PRD with behavioral validation tests and automatic refinement.
+
+The `--run` flag goes further: after generating the transplant PRD, it launches a convergence loop that executes the migration, scans coverage against the original inventory, generates a delta PRD for any missing items, and re-executes until 100% of the donor pattern has been transplanted.
+
+**v2** added a persistent **pattern library** (cached patterns reused across sessions), **complete file manifests** with anti-truncation enforcement, **multi-language import graph tracing** (TypeScript/JavaScript, Python, Go, Rust), **6-category transplant classification** (direct transplant, type-only, behavioral reference, replace with equivalent, environment prerequisite, not needed), a **PRD validation pass** that verifies every file path against the filesystem with 6 error classes, **post-edit consistency checking** that catches contradictions after scope changes, and **deep target diffs** with line-level modification specs.
+
+<br clear="right" />
 
 ```bash
-/portal-gun https://github.com/org/repo/blob/main/src/auth.ts   # From GitHub
-/portal-gun --run ../other-project/src/cache/                    # Extract + execute
-/portal-gun --save-pattern retry ../donor/retry-logic.ts         # Save to library
+/portal-gun https://github.com/org/repo/blob/main/src/auth.ts   # Transplant from GitHub
+/portal-gun ../other-project/src/cache.ts                        # Transplant from local file
+/portal-gun --run https://github.com/org/repo/tree/main/src/lib  # Transplant + auto-execute convergence loop
+/portal-gun --save-pattern retry ../donor/retry-logic.ts         # Save pattern to library for reuse
+/portal-gun --depth shallow https://github.com/org/repo           # Summary + structural pattern only
 ```
 
 ### Pickle Jar: Night Shift Batch Mode
@@ -425,14 +426,6 @@ const result = DotBuilder.fromSpec(spec).build();
 | `2` | I/O or parse failure |
 
 **Validation error codes:** `EMPTY_SLUG`, `EMPTY_GOAL`, `DUPLICATE_PHASE`, `INVALID_SPEC`, `MISSING_AC_MAPPING`, `MISSING_TIMEOUT`, `INVALID_TIMEOUT`, `MISSING_ALLOWED_PATHS`, `INVALID_ALLOWED_PATHS`, `PROMPT_PATH_MISMATCH`, `INVALID_STRUCTURE`, `START_HAS_INCOMING`, `UNREACHABLE_NODE`, `DIAMOND_MISSING_EDGES`, `FAN_OUT_SCOPE_LEAK`, `GOAL_GATE_NO_MAX_VISITS`, `REVIEW_MISSING_READONLY`, `WORKSPACE_NO_HTTPS`, `WORKSPACE_NO_PUSH`, `PLAN_MODE_DEADLOCK`, `COMPONENT_NO_MERGE`, `INVALID_RATCHET`, `NON_NUMERIC_TARGET`, `ALREADY_BUILT`
-
-### 🔫 Portal Gun — Gene Transfusion Details
-
-<img src="images/portal-gun.png" alt="Portal Gun — gene transfusion for codebases" width="400" align="right" />
-
-**v2** features: persistent pattern library, complete file manifests with anti-truncation, multi-language import graph tracing (TS/JS, Python, Go, Rust), 6-category transplant classification, PRD validation with 6 error classes, post-edit consistency checking, and deep target diffs with line-level specs.
-
-<br clear="right" />
 
 ### 🏛️ Council of Ricks — Details
 
