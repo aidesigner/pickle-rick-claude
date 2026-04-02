@@ -286,7 +286,7 @@ test('CR-11: orphan tmp promoted while microverse.json lags — both remain inde
     fs.writeFileSync(tmpPath, JSON.stringify(makeState({ iteration: 7 })));
 
     // Microverse was NOT updated — still reflects the pre-crash state
-    const mvState = createMicroverseState('prd.md', MV_METRIC, 3);
+    const mvState = createMicroverseState({ prdPath: 'prd.md', metric: MV_METRIC, stallLimit: 3 });
     writeMicroverseState(dir, { ...mvState, baseline_score: 50, convergence: { ...mvState.convergence, stall_counter: 2 } });
 
     // Recovery: StateManager promotes the tmp (iteration 7)
@@ -314,7 +314,7 @@ test('CR-12: stale active=true + dead PID cleared, microverse.json is not touche
     writeStateFile(statePath, makeState({ active: true, pid: 99_999_999, iteration: 3 }));
 
     // Microverse reflects the in-progress session
-    const mvBase = createMicroverseState('prd.md', MV_METRIC, 3);
+    const mvBase = createMicroverseState({ prdPath: 'prd.md', metric: MV_METRIC, stallLimit: 3 });
     const mvBefore = { ...mvBase, status: 'iterating', convergence: { ...mvBase.convergence, stall_counter: 1 } };
     writeMicroverseState(dir, mvBefore);
 

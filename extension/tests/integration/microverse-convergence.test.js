@@ -40,7 +40,7 @@ function tmpDir() {
 test('MV-int-1: createMicroverseState produces a valid initial state persisted to disk', () => {
   const dir = tmpDir();
   try {
-    const state = createMicroverseState('prd.md', TEST_METRIC, 3);
+    const state = createMicroverseState({ prdPath: 'prd.md', metric: TEST_METRIC, stallLimit: 3 });
     writeMicroverseState(dir, state);
 
     const restored = readMicroverseState(dir);
@@ -57,7 +57,7 @@ test('MV-int-1: createMicroverseState produces a valid initial state persisted t
 test('MV-int-2: isConverged returns false when stall_counter < stall_limit', () => {
   const dir = tmpDir();
   try {
-    let state = createMicroverseState('prd.md', TEST_METRIC, 3);
+    let state = createMicroverseState({ prdPath: 'prd.md', metric: TEST_METRIC, stallLimit: 3 });
     state = { ...state, convergence: { ...state.convergence, stall_counter: 2 } };
     writeMicroverseState(dir, state);
     assert.equal(isConverged(readMicroverseState(dir)), false);
@@ -69,7 +69,7 @@ test('MV-int-2: isConverged returns false when stall_counter < stall_limit', () 
 test('MV-int-3: isConverged returns true when stall_counter >= stall_limit', () => {
   const dir = tmpDir();
   try {
-    let state = createMicroverseState('prd.md', TEST_METRIC, 3);
+    let state = createMicroverseState({ prdPath: 'prd.md', metric: TEST_METRIC, stallLimit: 3 });
     state = { ...state, convergence: { ...state.convergence, stall_counter: 3 } };
     writeMicroverseState(dir, state);
     assert.equal(isConverged(readMicroverseState(dir)), true);
@@ -85,7 +85,7 @@ test('MV-int-3: isConverged returns true when stall_counter >= stall_limit', () 
 test('MV-int-4: improve → stall → stall convergence cycle with real tmpdir', () => {
   const dir = tmpDir();
   try {
-    let state = createMicroverseState('prd.md', TEST_METRIC, 2);
+    let state = createMicroverseState({ prdPath: 'prd.md', metric: TEST_METRIC, stallLimit: 2 });
     state = { ...state, baseline_score: 50 };
 
     // Iteration 1: improve (score rises well above tolerance)
@@ -112,7 +112,7 @@ test('MV-int-4: improve → stall → stall convergence cycle with real tmpdir',
 test('MV-int-5: stall then recovery resets stall_counter', () => {
   const dir = tmpDir();
   try {
-    let state = createMicroverseState('prd.md', TEST_METRIC, 3);
+    let state = createMicroverseState({ prdPath: 'prd.md', metric: TEST_METRIC, stallLimit: 3 });
     state = { ...state, baseline_score: 50 };
 
     // Stall twice
@@ -138,7 +138,7 @@ test('MV-int-5: stall then recovery resets stall_counter', () => {
 test('MV-int-6: recordFailedApproach persists across read/write cycle', () => {
   const dir = tmpDir();
   try {
-    let state = createMicroverseState('prd.md', TEST_METRIC, 3);
+    let state = createMicroverseState({ prdPath: 'prd.md', metric: TEST_METRIC, stallLimit: 3 });
     state = recordFailedApproach(state, 'tried memoization — no gain');
     state = recordFailedApproach(state, 'tried loop unrolling — regressed');
     writeMicroverseState(dir, state);
@@ -188,7 +188,7 @@ test('MV-int-9: compareMetric direction=higher classifies score rise as improved
 test('MV-int-10: writeMicroverseState leaves no .tmp files after successful write', () => {
   const dir = tmpDir();
   try {
-    const state = createMicroverseState('prd.md', TEST_METRIC, 3);
+    const state = createMicroverseState({ prdPath: 'prd.md', metric: TEST_METRIC, stallLimit: 3 });
     writeMicroverseState(dir, state);
 
     const tmpFiles = fs.readdirSync(dir).filter((f) => f.includes('.tmp'));
@@ -207,7 +207,7 @@ test('MV-int-11: 5-iteration walk: improve×2, revert, stall (non-consecutive), 
   const dir = tmpDir();
   try {
     // stall_limit=3 so one stall + one revert don't trigger convergence
-    let state = createMicroverseState('prd.md', TEST_METRIC, 3);
+    let state = createMicroverseState({ prdPath: 'prd.md', metric: TEST_METRIC, stallLimit: 3 });
     state = { ...state, baseline_score: 50 };
 
     // Iter 1: improved vs baseline 50 → accept, stall_counter resets to 0

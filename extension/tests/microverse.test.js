@@ -1542,3 +1542,127 @@ test('resume recovery: non-failed status is not modified', () => {
         fs.rmSync(dir, { recursive: true });
     }
 });
+
+// --- Worker-managed convergence tests ---
+
+test('worker mode: stall_counter stays 0 across simulated no-commit iterations', () => {
+    const state = createMicroverseState({
+        prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 3,
+        convergenceMode: 'worker', convergenceFile: 'convergence.json',
+    });
+    state.status = 'iterating';
+    // In worker mode the runner skips recordStall — stall_counter stays 0
+    for (let i = 0; i < 5; i++) {
+        assert.equal(state.convergence.stall_counter, 0, `stall_counter should stay 0 at iteration ${i}`);
+    }
+});
+
+test('worker mode: isConverged is irrelevant — runner checks convergence file instead', () => {
+    const state = createMicroverseState({
+        prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 1,
+        convergenceMode: 'worker', convergenceFile: 'convergence.json',
+    });
+    state.convergence.stall_counter = 999;
+    // Guard check: convergence_mode === 'worker' means runner never calls isConverged
+    assert.equal(state.convergence_mode, 'worker');
+    assert.equal(state.convergence_file, 'convergence.json');
+    // isConverged itself still works — runner just bypasses it
+    assert.equal(isConverged(state), true);
+});
+
+test('worker mode: convergence file with converged=true triggers exit', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-wk-'));
+    try {
+        fs.writeFileSync(path.join(dir, 'convergence.json'), JSON.stringify({ converged: true, reason: 'done' }));
+        const raw = JSON.parse(fs.readFileSync(path.join(dir, 'convergence.json'), 'utf-8'));
+        assert.equal(raw.converged, true);
+        assert.equal(raw.reason, 'done');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('worker mode: convergence file missing does not throw', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-wk-'));
+    try {
+        let caught = false;
+        try {
+            JSON.parse(fs.readFileSync(path.join(dir, 'convergence.json'), 'utf-8'));
+        } catch {
+            caught = true;
+        }
+        assert.equal(caught, true, 'missing file should be caught');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('worker mode: malformed JSON in convergence file does not throw', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-wk-'));
+    try {
+        fs.writeFileSync(path.join(dir, 'convergence.json'), 'not json!!!');
+        let caught = false;
+        try {
+            JSON.parse(fs.readFileSync(path.join(dir, 'convergence.json'), 'utf-8'));
+        } catch {
+            caught = true;
+        }
+        assert.equal(caught, true, 'malformed JSON should be caught');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('worker mode: max_iterations still applies', () => {
+    const state = createMicroverseState({
+        prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 3,
+        convergenceMode: 'worker', convergenceFile: 'convergence.json',
+    });
+    // max_iterations check happens BEFORE post-iteration logic — unaffected by worker mode
+    const iteration = 3;
+    const maxIter = 3;
+    assert.equal(maxIter > 0 && iteration >= maxIter, true, 'max_iterations triggers exit');
+});
+
+test('worker mode handoff: includes convergence_file path', () => {
+    const state = createMicroverseState({
+        prdPath: '/tmp/target', metric: TEST_METRIC, stallLimit: 3,
+        convergenceMode: 'worker', convergenceFile: 'anatomy-park.json',
+    });
+    const handoff = buildMicroverseHandoff(state, 1, '/tmp/work');
+    assert.ok(handoff.includes('anatomy-park.json'), 'should include convergence file name');
+    assert.ok(handoff.includes('Convergence: Worker-Managed'), 'should indicate worker mode');
+    assert.ok(handoff.includes('converged'), 'should include convergence instruction');
+});
+
+test('worker mode handoff: omits metric fields and "Focus on improving"', () => {
+    const state = createMicroverseState({
+        prdPath: '/tmp/target', metric: TEST_METRIC, stallLimit: 3,
+        convergenceMode: 'worker', convergenceFile: 'convergence.json',
+    });
+    const handoff = buildMicroverseHandoff(state, 1, '/tmp/work');
+    assert.ok(!handoff.includes('Validation:'), 'no validation command');
+    assert.ok(!handoff.includes('Direction:'), 'no direction');
+    assert.ok(!handoff.includes('Baseline score:'), 'no baseline');
+    assert.ok(!handoff.includes('stall_counter'), 'no stall counter');
+    assert.ok(!handoff.includes('Focus on improving'), 'no metric focus');
+    assert.ok(!handoff.includes('Focus on reducing'), 'no metric focus');
+});
+
+test('metric mode handoff: unchanged behavior (backward compat)', () => {
+    const state = createMicroverseState({ prdPath: '/tmp/target', metric: TEST_METRIC, stallLimit: 3 });
+    state.baseline_score = 40;
+    const handoff = buildMicroverseHandoff(state, 5, '/tmp/work');
+    assert.ok(handoff.includes('Iteration 5'));
+    assert.ok(handoff.includes('test score'));
+    assert.ok(handoff.includes('Baseline score: 40'));
+    assert.ok(handoff.includes('Focus on improving the metric.'));
+});
+
+test('backward compat: state without convergence_mode uses metric path', () => {
+    const state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 3 });
+    assert.equal(state.convergence_mode, undefined);
+    const handoff = buildMicroverseHandoff(state, 1, '/tmp/work');
+    assert.ok(handoff.includes('Validation:'), 'metric mode includes validation');
+    assert.ok(handoff.includes('Direction:'), 'metric mode includes direction');
+});

@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import type { MicroverseSessionState, MicroverseMetric, MicroverseHistoryEntry, CreateMicroverseOpts } from '../types/index.js';
+import type { MicroverseSessionState, MicroverseHistoryEntry, CreateMicroverseOpts } from '../types/index.js';
 import { StateManager } from './state-manager.js';
 import { safeErrorMessage } from './pickle-utils.js';
 

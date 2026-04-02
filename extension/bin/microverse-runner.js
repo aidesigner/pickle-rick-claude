@@ -118,6 +118,37 @@ export function measureLlmMetric(goal, timeoutSeconds, cwd, judgeModel, history,
     }
 }
 export function buildMicroverseHandoff(mvState, iteration, workingDir, sessionDir) {
+    // Worker-managed convergence: skip metric context entirely
+    if (mvState.convergence_mode === 'worker') {
+        const parts = [
+            `# Microverse Iteration ${iteration}`,
+            '',
+            `## Convergence: Worker-Managed`,
+            `- Convergence file: \`${mvState.convergence_file}\``,
+            `- Write \`{"converged": true, "reason": "..."}\` to signal completion`,
+            '',
+        ];
+        if (mvState.gap_analysis_path) {
+            parts.push(`## Gap Analysis`);
+            parts.push(`See: ${mvState.gap_analysis_path}`);
+            parts.push('');
+        }
+        if (mvState.failed_approaches.length > 0) {
+            parts.push('## Failed Approaches (DO NOT RETRY)');
+            for (const approach of mvState.failed_approaches) {
+                parts.push(`- ${approach}`);
+            }
+            parts.push('');
+        }
+        if (sessionDir) {
+            parts.push(`## PRD: ${path.join(sessionDir, 'prd.md')}`);
+        }
+        parts.push(`## Target Path: ${mvState.prd_path}`);
+        parts.push(`## Working Directory: ${workingDir}`);
+        parts.push('');
+        parts.push('Make targeted changes and commit.');
+        return parts.join('\n');
+    }
     const dir = mvState.key_metric.direction ?? 'higher';
     const parts = [
         `# Microverse Iteration ${iteration}`,
@@ -356,6 +387,9 @@ export async function main(sessionDir) {
                 log('WARNING: Could not measure LLM baseline — defaulting to 0');
             }
         }
+        else {
+            log(`Baseline measurement skipped — metric type '${currentMv.key_metric.type}' has no measurement branch`);
+        }
         currentMv.status = 'iterating';
         writeMicroverseState(sessionDir, currentMv);
         log('Gap analysis complete — transitioning to iterating');
@@ -493,6 +527,26 @@ export async function main(sessionDir) {
             log('Session deactivated. Exiting loop.');
             exitReason = 'stopped';
             break;
+        }
+        // --- Worker-managed convergence bypass ---
+        // When convergence_mode === 'worker', the worker writes a convergence file.
+        // Skip ALL metric logic (measureMetric, recordStall, isConverged).
+        if (currentMv.convergence_mode === 'worker') {
+            const cfPath = path.join(sessionDir, currentMv.convergence_file);
+            try {
+                const raw = JSON.parse(fs.readFileSync(cfPath, 'utf-8'));
+                if (raw.converged === true) {
+                    log(`Converged (worker-managed: ${raw.reason ?? 'no reason'})`);
+                    exitReason = 'converged';
+                    break;
+                }
+                log(`Iteration ${iteration} — worker convergence: not yet`);
+            }
+            catch {
+                log(`Iteration ${iteration} — convergence file not found/unparseable — continuing`);
+            }
+            await sleep(1000);
+            continue;
         }
         // Check if HEAD advanced (agent made commits)
         let postIterSha = getHeadSha(workingDir);

@@ -136,6 +136,18 @@ describe('DotBuilder.fromSpec()', () => {
         );
     });
 
+    test('(6b) phase with missing name field → throws BuildError with INVALID_SPEC code', () => {
+        const spec = validSpec();
+        // Simulate JSON deserialization with wrong field name (e.g. "id" instead of "name")
+        spec.phases = [{ id: 'impl', prompt: 'do stuff', allowedPaths: ['src/'], timeout: '30m' }];
+
+        assert.throws(
+            () => DotBuilder.fromSpec(spec),
+            (err) => err.name === 'BuildError' && err.code === 'INVALID_SPEC',
+            'phase missing string "name" field must throw BuildError with INVALID_SPEC',
+        );
+    });
+
     test('(7) fromSpec().build() is deterministic — two invocations produce byte-identical DOT', () => {
         const spec = validSpec();
 

@@ -56,48 +56,9 @@ function sanitizeId(name) {
 // Structural validation helpers
 // ---------------------------------------------------------------------------
 const RESERVED_IDS = new Set(['start', 'done', 'setup_deps', 'capture_baseline']);
-/** A phase is "codergen" (subject to Rule 7 timeout check) when it is a plain
- *  implementation node — not a gate/review/plan-mode node, has non-docs
- *  allowedPaths, is not in an isolated workspace, and is not part of a fan-out
- *  scenario where phases become component nodes instead. */
-function isCodergenPhase(phase, phases, workspace) {
-    if (phase.goalGate)
-        return false;
-    if (phase.securityScan)
-        return false;
-    if (phase.specFirst)
-        return false;
-    if (!phase.allowedPaths || phase.allowedPaths.length === 0)
-        return false;
-    if (phase.allowedPaths.every(p => p.startsWith('docs')))
-        return false;
-    if (workspace === 'isolated')
-        return false;
-    // In a fan-out (2+ independent phases), phases become component nodes, not codergen
-    const independent = phases.filter(p => !p.dependsOn || p.dependsOn.length === 0);
-    if (independent.length >= 2)
-        return false;
-    return true;
-}
 /** Extract path-like tokens (containing '/') from a prompt string. */
 function extractPromptPaths(prompt) {
     return (prompt.match(/\b[\w.-]+(?:\/[\w.-]+)+/g) ?? []);
-}
-/** Returns true if any phase's retryTarget refers to a node belonging to a
- *  different independent branch in a fan-out scenario. */
-function hasCrossBranchRetry(phases) {
-    const independent = phases.filter(p => !p.dependsOn || p.dependsOn.length === 0);
-    const indIds = new Set(independent.map(p => sanitizeId(p.name)));
-    for (const phase of independent) {
-        if (!phase.retryTarget)
-            continue;
-        const thisId = sanitizeId(phase.name);
-        for (const otherId of indIds) {
-            if (otherId !== thisId && phase.retryTarget.includes(otherId))
-                return true;
-        }
-    }
-    return false;
 }
 // ---------------------------------------------------------------------------
 // Pre-flight spec validation — runs before emission; throws on first error

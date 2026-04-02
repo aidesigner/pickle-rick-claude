@@ -209,14 +209,14 @@ test('szechuan-sauce.md Worker Mode does not instruct workers to call update-sta
 // ---------------------------------------------------------------------------
 
 test('isConverged returns true when last accepted score equals convergence_target 0', () => {
-    const state = createMicroverseState('/tmp/target', {
+    const state = createMicroverseState({ prdPath: '/tmp/target', metric: {
         description: 'violations',
         validation: 'count',
         type: 'llm',
         timeout_seconds: 60,
         tolerance: 0,
         direction: 'lower',
-    }, 5, 0);
+    }, stallLimit: 5, convergenceTarget: 0 });
     state.baseline_score = 10;
     state.convergence.history = [
         { iteration: 1, metric_value: '0', score: 0, action: 'accept', description: 'fixed all', pre_iteration_sha: 'abc', timestamp: new Date().toISOString() },
@@ -225,14 +225,14 @@ test('isConverged returns true when last accepted score equals convergence_targe
 });
 
 test('isConverged returns false when last accepted score does not equal convergence_target', () => {
-    const state = createMicroverseState('/tmp/target', {
+    const state = createMicroverseState({ prdPath: '/tmp/target', metric: {
         description: 'violations',
         validation: 'count',
         type: 'llm',
         timeout_seconds: 60,
         tolerance: 0,
         direction: 'lower',
-    }, 5, 0);
+    }, stallLimit: 5, convergenceTarget: 0 });
     state.baseline_score = 10;
     state.convergence.history = [
         { iteration: 1, metric_value: '3', score: 3, action: 'accept', description: 'some fixes', pre_iteration_sha: 'abc', timestamp: new Date().toISOString() },
@@ -246,14 +246,14 @@ test('isConverged returns false when last accepted score does not equal converge
 
 test('isConverged returns true when score overshoots convergence_target (lower direction)', () => {
     // If target is 0 and score is -1 (overshot), should still converge
-    const state = createMicroverseState('/tmp/target', {
+    const state = createMicroverseState({ prdPath: '/tmp/target', metric: {
         description: 'violations',
         validation: 'count',
         type: 'llm',
         timeout_seconds: 60,
         tolerance: 0,
         direction: 'lower',
-    }, 5, 0);
+    }, stallLimit: 5, convergenceTarget: 0 });
     state.baseline_score = 10;
     state.convergence.history = [
         { iteration: 1, metric_value: '-1', score: -1, action: 'accept', description: 'overshot', pre_iteration_sha: 'abc', timestamp: new Date().toISOString() },
@@ -262,14 +262,14 @@ test('isConverged returns true when score overshoots convergence_target (lower d
 });
 
 test('isConverged returns true when score overshoots convergence_target (higher direction)', () => {
-    const state = createMicroverseState('/tmp/target', {
+    const state = createMicroverseState({ prdPath: '/tmp/target', metric: {
         description: 'coverage',
         validation: 'test coverage',
         type: 'command',
         timeout_seconds: 60,
         tolerance: 0,
         direction: 'higher',
-    }, 5, 90);
+    }, stallLimit: 5, convergenceTarget: 90 });
     state.baseline_score = 50;
     state.convergence.history = [
         { iteration: 1, metric_value: '95', score: 95, action: 'accept', description: 'exceeded target', pre_iteration_sha: 'abc', timestamp: new Date().toISOString() },
@@ -278,14 +278,14 @@ test('isConverged returns true when score overshoots convergence_target (higher 
 });
 
 test('isConverged returns false when score has not reached target (higher direction)', () => {
-    const state = createMicroverseState('/tmp/target', {
+    const state = createMicroverseState({ prdPath: '/tmp/target', metric: {
         description: 'coverage',
         validation: 'test coverage',
         type: 'command',
         timeout_seconds: 60,
         tolerance: 0,
         direction: 'higher',
-    }, 5, 90);
+    }, stallLimit: 5, convergenceTarget: 90 });
     state.baseline_score = 50;
     state.convergence.history = [
         { iteration: 1, metric_value: '70', score: 70, action: 'accept', description: 'partial', pre_iteration_sha: 'abc', timestamp: new Date().toISOString() },

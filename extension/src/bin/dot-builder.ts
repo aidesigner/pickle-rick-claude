@@ -26,8 +26,8 @@ function main(): void {
     spec = JSON.parse(raw);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(JSON.stringify({ error: 'UNEXPECTED_ERROR', message: `JSON parse error: ${msg}` }) + '\n');
-    process.exit(2);
+    process.stderr.write(JSON.stringify({ error: 'INVALID_SPEC', message: `JSON parse error: ${msg}`, diagnostics: [] }) + '\n');
+    process.exit(1);
   }
 
   try {
