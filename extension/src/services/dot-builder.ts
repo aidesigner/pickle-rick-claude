@@ -128,10 +128,11 @@ function hasCrossBranchRetry(phases: PhaseSpecInterface[]): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// 15 structural validation rules — each returns Diagnostic[]
+// Pre-flight spec validation — runs before emission; throws on first error
 // ---------------------------------------------------------------------------
 
-function runRule1(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
+/** Pre-flight: phase names must not sanitize to reserved graph node IDs. */
+function preflightReservedIds(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
   const diags: DiagnosticInterface[] = [];
   for (const phase of phases) {
     const id = sanitizeId(phase.name);
@@ -143,19 +144,8 @@ function runRule1(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
   return diags;
 }
 
-function runRule2(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
-  const diags: DiagnosticInterface[] = [];
-  for (const phase of phases) {
-    if (phase.retryTarget === 'start') {
-      diags.push(mkDiag('START_HAS_INCOMING', 'error',
-        `phase "${phase.name}" retryTarget "start" creates an incoming edge to the start node`,
-        sanitizeId(phase.name)));
-    }
-  }
-  return diags;
-}
-
-function runRule3(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
+/** Pre-flight: dependsOn references must name valid phases (catches dangling edges). */
+function preflightDanglingDeps(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
   const knownIds = new Set([
     ...phases.map(p => sanitizeId(p.name)),
     ...phases.map(p => p.name),
@@ -175,8 +165,58 @@ function runRule3(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
   return diags;
 }
 
-/** Rule 4: goalGate phases (not specFirst) without retryTarget have <2 outgoing edges. */
-function runRule4(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
+/** Pre-flight: timeout must match /^\d+[mhd]$/ with a non-zero numeric part. */
+function preflightTimeoutFormat(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
+  const diags: DiagnosticInterface[] = [];
+  for (const phase of phases) {
+    if (!phase.timeout) continue;
+    const match = /^(\d+)([mhd])$/.exec(phase.timeout);
+    if (!match) {
+      diags.push(mkDiag('INVALID_TIMEOUT', 'error',
+        `phase "${phase.name}" timeout "${phase.timeout}" must match <number><m|h|d> (e.g. "30m")`,
+        sanitizeId(phase.name)));
+    } else if (parseInt(match[1], 10) === 0) {
+      diags.push(mkDiag('INVALID_TIMEOUT', 'error',
+        `phase "${phase.name}" timeout "${phase.timeout}" must be > 0`,
+        sanitizeId(phase.name)));
+    }
+  }
+  return diags;
+}
+
+/** Pre-flight: allowedPaths must be relative (no leading / or ..). */
+function preflightAllowedPaths(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
+  const diags: DiagnosticInterface[] = [];
+  for (const phase of phases) {
+    if (!phase.allowedPaths) continue;
+    for (const ap of phase.allowedPaths) {
+      if (ap.startsWith('/') || ap.startsWith('..')) {
+        diags.push(mkDiag('INVALID_ALLOWED_PATHS', 'error',
+          `phase "${phase.name}" allowedPaths contains "${ap}" — must be relative, no absolute or traversal paths`,
+          sanitizeId(phase.name)));
+        break;
+      }
+    }
+  }
+  return diags;
+}
+
+/** Pre-flight: retryTarget must not point to the reserved start node. */
+function preflightStartIncoming(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
+  const diags: DiagnosticInterface[] = [];
+  for (const phase of phases) {
+    if (phase.retryTarget === 'start') {
+      diags.push(mkDiag('START_HAS_INCOMING', 'error',
+        `phase "${phase.name}" retryTarget "start" would create an incoming edge to the start node`,
+        sanitizeId(phase.name)));
+    }
+  }
+  return diags;
+}
+
+/** Pre-flight: goalGate phase (not specFirst) without retryTarget produces a gate diamond
+ *  with only 1 outgoing edge (no retry path). */
+function preflightGoalGateEdges(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
   const diags: DiagnosticInterface[] = [];
   for (const phase of phases) {
     if (phase.goalGate && !phase.specFirst && !phase.retryTarget) {
@@ -188,92 +228,8 @@ function runRule4(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
   return diags;
 }
 
-/** Rule 5: goalGate+retryTarget without a max_visits guard (defaultMaxRetry) is unbounded. */
-function runRule5(phases: PhaseSpecInterface[], defaultMaxRetry: number | undefined): DiagnosticInterface[] {
-  const diags: DiagnosticInterface[] = [];
-  for (const phase of phases) {
-    if (phase.goalGate && phase.retryTarget && !defaultMaxRetry) {
-      diags.push(mkDiag('GOAL_GATE_NO_MAX_VISITS', 'error',
-        `goalGate phase "${phase.name}" with retryTarget requires defaultMaxRetry (max_visits) on the spec`,
-        sanitizeId(phase.name)));
-    }
-  }
-  return diags;
-}
-
-/** Rule 6: every AC key must have a phase with contextOnSuccess that maps it. */
-function runRule6(
-  phases: PhaseSpecInterface[],
-  acceptanceCriteria: Record<string, unknown>,
-): DiagnosticInterface[] {
-  const acKeys = Object.keys(acceptanceCriteria);
-  if (acKeys.length === 0) return [];
-  const mapped = new Set<string>();
-  for (const phase of phases) {
-    if (phase.contextOnSuccess) {
-      for (const k of Object.keys(phase.contextOnSuccess)) mapped.add(k);
-    }
-  }
-  return acKeys
-    .filter(k => !mapped.has(k))
-    .map(k => mkDiag('MISSING_AC_MAPPING', 'error',
-      `acceptanceCriteria key "${k}" has no phase with contextOnSuccess mapping it`));
-}
-
-/** Rule 7: codergen phases must declare a timeout attribute. */
-function runRule7(
-  phases: PhaseSpecInterface[],
-  workspace: 'isolated' | undefined,
-): DiagnosticInterface[] {
-  return phases
-    .filter(p => isCodergenPhase(p, phases, workspace) && !p.timeout)
-    .map(p => mkDiag('MISSING_TIMEOUT', 'error',
-      `codergen phase "${p.name}" is missing a timeout attribute`,
-      sanitizeId(p.name)));
-}
-
-/** Rule 8: prompt must not reference file paths outside allowedPaths. */
-function runRule8(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
-  const diags: DiagnosticInterface[] = [];
-  for (const phase of phases) {
-    const paths = extractPromptPaths(phase.prompt);
-    for (const p of paths) {
-      const covered = (phase.allowedPaths ?? []).some(ap => p.startsWith(ap) || ap.startsWith(p + '/'));
-      if (!covered) {
-        diags.push(mkDiag('PROMPT_PATH_MISMATCH', 'error',
-          `phase "${phase.name}" prompt references "${p}" outside allowedPaths`,
-          sanitizeId(phase.name)));
-        break;
-      }
-    }
-  }
-  return diags;
-}
-
-/** Rule 9: securityScan (review) nodes must include STATUS in prompt. */
-function runRule9(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
-  return phases
-    .filter(p => p.securityScan && !p.prompt.includes('STATUS'))
-    .map(p => mkDiag('REVIEW_MISSING_READONLY', 'error',
-      `review phase "${p.name}" prompt must include STATUS output marker`,
-      sanitizeId(p.name)));
-}
-
-/** Rule 10: fan-out without cross-branch retryTargets requires a tripleoctagon merge. */
-function runRule10(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
-  const independent = phases.filter(p => !p.dependsOn || p.dependsOn.length === 0);
-  if (independent.length < 2) return [];
-  if (hasCrossBranchRetry(phases)) return []; // Rule 11 handles this variant
-  const hasMerge = phases.some(p => sanitizeId(p.name).includes('merge'));
-  if (!hasMerge) {
-    return [mkDiag('COMPONENT_NO_MERGE', 'warning',
-      'fan-out component structure: builder will auto-emit tripleoctagon merge (Pattern 4)')];
-  }
-  return [];
-}
-
-/** Rule 11: retryTarget must not escape its fan-out component scope. */
-function runRule11(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
+/** Pre-flight: retryTarget must not escape its fan-out component scope. */
+function preflightFanOutScope(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
   const independent = phases.filter(p => !p.dependsOn || p.dependsOn.length === 0);
   if (independent.length < 2) return [];
   const indIds = new Set(independent.map(p => sanitizeId(p.name)));
@@ -293,8 +249,8 @@ function runRule11(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
   return diags;
 }
 
-/** Rule 12: workspace=isolated with repo_url requires HTTPS. */
-function runRule12(
+/** Pre-flight: workspace=isolated with repo_url requires HTTPS. */
+function preflightWorkspaceHttps(
   workspace: 'isolated' | undefined,
   workspaceOpts: BuilderSpecInterface['workspaceOpts'],
 ): DiagnosticInterface[] {
@@ -308,10 +264,19 @@ function runRule12(
   return [];
 }
 
-/** Rule 13: workspace=isolated must include a commit_and_push node. */
-function runRule13(
-  phases: PhaseSpecInterface[],
+/** Pre-flight: specFirst+goalGate produces plan-mode permission prompts — deadlock in headless. */
+function preflightPlanDeadlock(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
+  return phases
+    .filter(p => p.specFirst && p.goalGate)
+    .map(p => mkDiag('PLAN_MODE_DEADLOCK', 'error',
+      `phase "${p.name}" combines specFirst+goalGate, producing plan-mode deadlock in headless pipeline`,
+      sanitizeId(p.name)));
+}
+
+/** Pre-flight: workspace=isolated requires a commit_and_push phase in the pipeline. */
+function preflightWorkspacePush(
   workspace: 'isolated' | undefined,
+  phases: PhaseSpecInterface[],
 ): DiagnosticInterface[] {
   if (workspace !== 'isolated') return [];
   const hasCommitPush = phases.some(p => {
@@ -320,58 +285,21 @@ function runRule13(
   });
   if (!hasCommitPush) {
     return [mkDiag('WORKSPACE_NO_PUSH', 'error',
-      'workspace="isolated" requires a commit_and_push node in the pipeline')];
+      'workspace="isolated" requires a commit_and_push phase in the pipeline')];
   }
   return [];
 }
 
-/** Rule 14: specFirst+goalGate generates plan-mode permission prompts — deadlock in headless. */
-function runRule14(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
-  return phases
-    .filter(p => p.specFirst && p.goalGate)
-    .map(p => mkDiag('PLAN_MODE_DEADLOCK', 'error',
-      `phase "${p.name}" combines specFirst+goalGate, producing plan-mode deadlock in headless pipeline`,
-      sanitizeId(p.name)));
-}
-
-/** Rule 15: per-phase impl nodes must have non-empty allowedPaths. */
-function runRule15(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
-  return phases
-    .filter(p => !p.goalGate && !p.securityScan && !p.specFirst &&
-                 (!p.allowedPaths || p.allowedPaths.length === 0))
-    .map(p => mkDiag('MISSING_ALLOWED_PATHS', 'error',
-      `phase "${p.name}" requires non-empty allowedPaths`,
-      sanitizeId(p.name)));
-}
-
-/** Rule 16: timeout must match /^\d+[mhd]$/ with a non-zero numeric part. */
-function runRule16(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
+/** Pre-flight: path-like tokens in phase prompts must fall within allowedPaths. */
+function preflightPromptPaths(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
   const diags: DiagnosticInterface[] = [];
   for (const phase of phases) {
-    if (!phase.timeout) continue;
-    const match = /^(\d+)([mhd])$/.exec(phase.timeout);
-    if (!match) {
-      diags.push(mkDiag('INVALID_TIMEOUT', 'error',
-        `phase "${phase.name}" timeout "${phase.timeout}" must match <number><m|h|d> (e.g. "30m")`,
-        sanitizeId(phase.name)));
-    } else if (parseInt(match[1], 10) === 0) {
-      diags.push(mkDiag('INVALID_TIMEOUT', 'error',
-        `phase "${phase.name}" timeout "${phase.timeout}" must be > 0`,
-        sanitizeId(phase.name)));
-    }
-  }
-  return diags;
-}
-
-/** Rule 17: allowedPaths must be relative (no leading / or ..). */
-function runRule17(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
-  const diags: DiagnosticInterface[] = [];
-  for (const phase of phases) {
-    if (!phase.allowedPaths) continue;
-    for (const ap of phase.allowedPaths) {
-      if (ap.startsWith('/') || ap.startsWith('..')) {
-        diags.push(mkDiag('INVALID_ALLOWED_PATHS', 'error',
-          `phase "${phase.name}" allowedPaths contains "${ap}" — must be relative, no absolute or traversal paths`,
+    if (!phase.allowedPaths || phase.allowedPaths.length === 0) continue;
+    for (const p of extractPromptPaths(phase.prompt)) {
+      const covered = phase.allowedPaths.some(ap => p.startsWith(ap) || ap.startsWith(p + '/'));
+      if (!covered) {
+        diags.push(mkDiag('PROMPT_PATH_MISMATCH', 'error',
+          `phase "${phase.name}" prompt references path "${p}" outside allowedPaths`,
           sanitizeId(phase.name)));
         break;
       }
@@ -380,8 +308,22 @@ function runRule17(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
   return diags;
 }
 
-/** Rule 18: dependsOn graph must be acyclic (no circular dependencies). */
-function runRule18(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
+/** Pre-flight: non-review, non-security phases require non-empty allowedPaths. */
+function preflightMissingAllowedPaths(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
+  const diags: DiagnosticInterface[] = [];
+  for (const phase of phases) {
+    if (phase.securityScan || phase.docOnly) continue;
+    if (!phase.allowedPaths || phase.allowedPaths.length === 0) {
+      diags.push(mkDiag('MISSING_ALLOWED_PATHS', 'error',
+        `phase "${phase.name}" requires non-empty allowedPaths`,
+        sanitizeId(phase.name)));
+    }
+  }
+  return diags;
+}
+
+/** Pre-flight: dependsOn graph must be acyclic (Kahn's algorithm). */
+function preflightCircularDeps(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
   const adj = new Map<string, string[]>();
   const ids = new Set<string>();
   for (const p of phases) {
@@ -397,7 +339,6 @@ function runRule18(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
       if (ids.has(depId)) adj.get(depId)!.push(id);
     }
   }
-  // Kahn's algorithm — if we can't topologically sort all nodes, there's a cycle
   const inDeg = new Map<string, number>();
   for (const id of ids) inDeg.set(id, 0);
   for (const [, targets] of adj) {
@@ -420,6 +361,285 @@ function runRule18(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
       `circular dependency detected among phases: ${cycle.join(', ')}`)];
   }
   return [];
+}
+
+// ---------------------------------------------------------------------------
+// Graph-level edge type
+// ---------------------------------------------------------------------------
+
+interface GraphEdge {
+  from: string;
+  to: string;
+  label?: string;
+}
+
+// ---------------------------------------------------------------------------
+// 15 structural validation rules — run sequentially on the complete graph.
+// Each rule examines all relevant nodes/edges and returns Diagnostic[].
+// ---------------------------------------------------------------------------
+
+/** Rule 1: exactly 1 start node (Mdiamond) and 1 exit node (Msquare). */
+function grRule1(nodeMap: Map<string, Record<string, string>>): DiagnosticInterface[] {
+  const diamonds = [...nodeMap.entries()].filter(([, a]) => a['shape'] === 'Mdiamond');
+  const squares  = [...nodeMap.entries()].filter(([, a]) => a['shape'] === 'Msquare');
+  const diags: DiagnosticInterface[] = [];
+  if (diamonds.length !== 1) {
+    diags.push(mkDiag('INVALID_STRUCTURE', 'error',
+      `graph must have exactly 1 Mdiamond (start) node; found ${diamonds.length}`));
+  }
+  if (squares.length !== 1) {
+    diags.push(mkDiag('INVALID_STRUCTURE', 'error',
+      `graph must have exactly 1 Msquare (exit) node; found ${squares.length}`));
+  }
+  return diags;
+}
+
+/** Rule 2: start node (Mdiamond) has 0 incoming edges. */
+function grRule2(
+  nodeMap: Map<string, Record<string, string>>,
+  edgeList: GraphEdge[],
+): DiagnosticInterface[] {
+  const startEntry = [...nodeMap.entries()].find(([, a]) => a['shape'] === 'Mdiamond');
+  if (!startEntry) return []; // covered by rule 1
+  const startId = startEntry[0];
+  const incoming = edgeList.filter(e => e.to === startId);
+  if (incoming.length > 0) {
+    return [mkDiag('START_HAS_INCOMING', 'error',
+      `start node "${startId}" has ${incoming.length} incoming edge(s); must have 0`,
+      startId)];
+  }
+  return [];
+}
+
+/** Rule 3: every non-standalone node is reachable from start via BFS. */
+function grRule3(
+  nodeMap: Map<string, Record<string, string>>,
+  edgeList: GraphEdge[],
+  standaloneNodeIds: Set<string>,
+): DiagnosticInterface[] {
+  const startEntry = [...nodeMap.entries()].find(([, a]) => a['shape'] === 'Mdiamond');
+  if (!startEntry) return []; // covered by rule 1
+  const startId = startEntry[0];
+
+  const adj = new Map<string, string[]>();
+  for (const id of nodeMap.keys()) adj.set(id, []);
+  for (const e of edgeList) {
+    const neighbors = adj.get(e.from);
+    if (neighbors) neighbors.push(e.to);
+  }
+
+  const visited = new Set<string>();
+  const queue: string[] = [startId];
+  while (queue.length > 0) {
+    const node = queue.shift()!;
+    if (visited.has(node)) continue;
+    visited.add(node);
+    for (const next of (adj.get(node) ?? [])) queue.push(next);
+  }
+
+  return [...nodeMap.keys()]
+    .filter(id => !visited.has(id) && !standaloneNodeIds.has(id))
+    .map(id => mkDiag('UNREACHABLE_NODE', 'error',
+      `node "${id}" is not reachable from the start node`, id));
+}
+
+/** Rule 4: every diamond-shaped node has ≥2 outgoing edges. */
+function grRule4(
+  nodeMap: Map<string, Record<string, string>>,
+  edgeList: GraphEdge[],
+): DiagnosticInterface[] {
+  const diags: DiagnosticInterface[] = [];
+  for (const [id, attrs] of nodeMap.entries()) {
+    if (attrs['shape'] !== 'diamond') continue;
+    const outCount = edgeList.filter(e => e.from === id).length;
+    if (outCount < 2) {
+      diags.push(mkDiag('DIAMOND_MISSING_EDGES', 'error',
+        `diamond node "${id}" has ${outCount} outgoing edge(s); must have ≥2`,
+        id));
+    }
+  }
+  return diags;
+}
+
+/** Rule 5: nodes with retry_target must have max_visits (unbounded-retry guard). */
+function grRule5(nodeMap: Map<string, Record<string, string>>): DiagnosticInterface[] {
+  const diags: DiagnosticInterface[] = [];
+  for (const [id, attrs] of nodeMap.entries()) {
+    if (attrs['retry_target'] && !attrs['max_visits']) {
+      diags.push(mkDiag('GOAL_GATE_NO_MAX_VISITS', 'error',
+        `node "${id}" has retry_target but no max_visits — unbounded retry loop`,
+        id));
+    }
+  }
+  return diags;
+}
+
+/** Rule 6: every acceptanceCriteria key must be covered by a context_on_success node. */
+function grRule6(
+  nodeMap: Map<string, Record<string, string>>,
+  acceptanceCriteria: Record<string, unknown>,
+): DiagnosticInterface[] {
+  const acKeys = Object.keys(acceptanceCriteria);
+  if (acKeys.length === 0) return [];
+  const mapped = new Set<string>();
+  for (const attrs of nodeMap.values()) {
+    if (attrs['context_on_success']) {
+      for (const k of attrs['context_on_success'].split(',')) mapped.add(k.trim());
+    }
+  }
+  return acKeys
+    .filter(k => !mapped.has(k))
+    .map(k => mkDiag('MISSING_AC_MAPPING', 'error',
+      `acceptanceCriteria key "${k}" has no node with context_on_success mapping it`));
+}
+
+/** Rule 7: every codergen-class node must declare a timeout attribute. */
+function grRule7(nodeMap: Map<string, Record<string, string>>): DiagnosticInterface[] {
+  const diags: DiagnosticInterface[] = [];
+  for (const [id, attrs] of nodeMap.entries()) {
+    if (attrs['class'] === 'codergen' && !attrs['timeout']) {
+      diags.push(mkDiag('MISSING_TIMEOUT', 'error',
+        `codergen node "${id}" is missing a timeout attribute`,
+        id));
+    }
+  }
+  return diags;
+}
+
+/** Rule 8: path-like tokens in a node's label must fall within its allowed_paths. */
+function grRule8(nodeMap: Map<string, Record<string, string>>): DiagnosticInterface[] {
+  const diags: DiagnosticInterface[] = [];
+  for (const [id, attrs] of nodeMap.entries()) {
+    const label = attrs['label'];
+    const apStr = attrs['allowed_paths'];
+    if (!label || !apStr) continue;
+    const allowedPaths = apStr.split(',').filter(Boolean);
+    if (allowedPaths.length === 0) continue;
+    for (const p of extractPromptPaths(label)) {
+      const covered = allowedPaths.some(ap => p.startsWith(ap) || ap.startsWith(p + '/'));
+      if (!covered) {
+        diags.push(mkDiag('PROMPT_PATH_MISMATCH', 'error',
+          `node "${id}" label references path "${p}" outside allowed_paths`,
+          id));
+        break;
+      }
+    }
+  }
+  return diags;
+}
+
+/** Rule 9: review-class nodes must have read_only=true and STATUS in their label. */
+function grRule9(nodeMap: Map<string, Record<string, string>>): DiagnosticInterface[] {
+  const diags: DiagnosticInterface[] = [];
+  for (const [id, attrs] of nodeMap.entries()) {
+    if (attrs['class'] !== 'review') continue;
+    if (attrs['read_only'] !== 'true' || !attrs['label']?.includes('STATUS')) {
+      diags.push(mkDiag('REVIEW_MISSING_READONLY', 'error',
+        `review node "${id}" must have read_only=true and STATUS in label`,
+        id));
+    }
+  }
+  return diags;
+}
+
+/** Rule 10: every component-shape node requires a tripleoctagon merge node (warning). */
+function grRule10(
+  nodeMap: Map<string, Record<string, string>>,
+  _edgeList: GraphEdge[],
+): DiagnosticInterface[] {
+  const hasComponent = [...nodeMap.values()].some(a => a['shape'] === 'component');
+  if (!hasComponent) return [];
+  const hasTripleOctagon = [...nodeMap.values()].some(a => a['shape'] === 'tripleoctagon');
+  if (!hasTripleOctagon) {
+    return [mkDiag('COMPONENT_NO_MERGE', 'warning',
+      'component nodes present but no tripleoctagon merge node found — builder will auto-emit one (Pattern 4)')];
+  }
+  return [];
+}
+
+/** Rule 11: a node's retry_target must not reference nodes in a different component branch. */
+function grRule11(nodeMap: Map<string, Record<string, string>>): DiagnosticInterface[] {
+  const componentIds = new Set([...nodeMap.entries()]
+    .filter(([, a]) => a['shape'] === 'component')
+    .map(([id]) => id));
+  const diags: DiagnosticInterface[] = [];
+  for (const [id, attrs] of nodeMap.entries()) {
+    const retryTarget = attrs['retry_target'];
+    if (!retryTarget || !componentIds.has(id)) continue;
+    const otherBranches = [...componentIds].filter(cid =>
+      cid !== id && !cid.includes('merge') && !cid.includes('split'));
+    for (const otherId of otherBranches) {
+      if (retryTarget.includes(otherId)) {
+        diags.push(mkDiag('FAN_OUT_SCOPE_LEAK', 'error',
+          `node "${id}" retry_target "${retryTarget}" escapes fan-out scope into branch "${otherId}"`,
+          id));
+        break;
+      }
+    }
+  }
+  return diags;
+}
+
+/** Rule 12: workspace=isolated with repo_url present requires an HTTPS scheme. */
+function grRule12(
+  nodeMap: Map<string, Record<string, string>>,
+  graphAttrs: Record<string, string>,
+): DiagnosticInterface[] {
+  if (graphAttrs['workspace'] !== 'isolated') return [];
+  const diags: DiagnosticInterface[] = [];
+  for (const [id, attrs] of nodeMap.entries()) {
+    const repoUrl = attrs['repo_url'];
+    if (repoUrl && !repoUrl.startsWith('https://')) {
+      diags.push(mkDiag('WORKSPACE_NO_HTTPS', 'error',
+        `node "${id}" workspace=isolated requires HTTPS repo_url; got "${repoUrl}"`,
+        id));
+    }
+  }
+  return diags;
+}
+
+/** Rule 13: workspace=isolated requires a commit_and_push node in the graph. */
+function grRule13(
+  nodeMap: Map<string, Record<string, string>>,
+  graphAttrs: Record<string, string>,
+): DiagnosticInterface[] {
+  if (graphAttrs['workspace'] !== 'isolated') return [];
+  const hasCommitPush = [...nodeMap.keys()].some(id =>
+    id === 'commit_and_push' || (id.includes('commit') && id.includes('push')));
+  if (!hasCommitPush) {
+    return [mkDiag('WORKSPACE_NO_PUSH', 'error',
+      'workspace=isolated requires a commit_and_push node in the pipeline')];
+  }
+  return [];
+}
+
+/** Rule 14: permission_mode=plan causes deadlock in headless pipelines. */
+function grRule14(nodeMap: Map<string, Record<string, string>>): DiagnosticInterface[] {
+  const diags: DiagnosticInterface[] = [];
+  for (const [id, attrs] of nodeMap.entries()) {
+    if (attrs['permission_mode'] === 'plan') {
+      diags.push(mkDiag('PLAN_MODE_DEADLOCK', 'error',
+        `node "${id}" uses permission_mode=plan — deadlock in headless pipeline`,
+        id));
+    }
+  }
+  return diags;
+}
+
+/** Rule 15: codergen nodes must declare non-empty allowed_paths. */
+function grRule15(nodeMap: Map<string, Record<string, string>>): DiagnosticInterface[] {
+  const diags: DiagnosticInterface[] = [];
+  for (const [id, attrs] of nodeMap.entries()) {
+    if (attrs['class'] === 'codergen') {
+      const ap = attrs['allowed_paths'];
+      if (!ap || ap.trim() === '') {
+        diags.push(mkDiag('MISSING_ALLOWED_PATHS', 'error',
+          `codergen node "${id}" requires non-empty allowed_paths`,
+          id));
+      }
+    }
+  }
+  return diags;
 }
 
 // ---------------------------------------------------------------------------
@@ -668,8 +888,12 @@ export class DotBuilder {
     };
     const builder = new DotBuilder(base);
 
-    // Add phases via .phase()
+    // Add phases via .phase() — validate each element is an object with a string name before
+    // calling phase(), so malformed JSON produces a BuildError rather than a TypeError.
     for (const p of spec['phases'] as PhaseSpecInterface[]) {
+      if (!isRecord(p) || typeof (p as Record<string, unknown>)['name'] !== 'string') {
+        throw new BuildError('INVALID_SPEC', 'each phase must be an object with a string "name" field');
+      }
       builder.phase(p);
     }
 
@@ -764,29 +988,58 @@ export class DotBuilder {
     }
     this._built = true;
 
-    const { workspace, workspaceOpts, acceptanceCriteria = {}, defaultMaxRetry } = this._spec;
     const phases = this._phases;
 
-    // Run all 15 structural rules in order — collect diagnostics, throw on first error rule
+    // Pre-flight spec validation — runs before emission; catches spec-level invalidity
+    // that would produce malformed or unexecutable graphs.
+    const preflightDiags: DiagnosticInterface[] = [
+      ...preflightReservedIds(phases),
+      ...preflightDanglingDeps(phases),
+      ...preflightTimeoutFormat(phases),
+      ...preflightAllowedPaths(phases),
+      ...preflightCircularDeps(phases),
+      ...preflightStartIncoming(phases),
+      ...preflightGoalGateEdges(phases),
+      ...preflightFanOutScope(phases),
+      ...preflightWorkspaceHttps(this._spec.workspace, this._spec.workspaceOpts),
+      ...preflightWorkspacePush(this._spec.workspace, phases),
+      ...preflightPlanDeadlock(phases),
+      ...preflightPromptPaths(phases),
+      ...preflightMissingAllowedPaths(phases),
+    ];
+    const preflightError = preflightDiags.find(d => d.severity === 'error');
+    if (preflightError) {
+      throw new BuildError(
+        preflightError.rule as BuildErrorCodeType,
+        preflightError.message,
+        preflightDiags,
+      );
+    }
+
+    // Emit the complete graph.
+    const { dot, nodeMap, edgeList, graphAttrs, standaloneNodeIds, patternsApplied, defenseMatrix } =
+      this._emitDot();
+
+    // Run all 15 structural validation rules sequentially on the complete graph.
+    // Each rule examines all relevant nodes/edges. Collect Diagnostic[] — if any
+    // have severity 'error', throw BuildError with the first error rule's code.
+    const { acceptanceCriteria = {} } = this._spec;
     const diagnostics: DiagnosticInterface[] = [
-      ...runRule1(phases),
-      ...runRule2(phases),
-      ...runRule3(phases),
-      ...runRule4(phases),
-      ...runRule5(phases, defaultMaxRetry),
-      ...runRule6(phases, acceptanceCriteria),
-      ...runRule7(phases, workspace),
-      ...runRule8(phases),
-      ...runRule9(phases),
-      ...runRule10(phases),
-      ...runRule11(phases),
-      ...runRule12(workspace, workspaceOpts),
-      ...runRule13(phases, workspace),
-      ...runRule14(phases),
-      ...runRule15(phases),
-      ...runRule16(phases),
-      ...runRule17(phases),
-      ...runRule18(phases),
+      ...grRule1(nodeMap),
+      ...grRule2(nodeMap, edgeList),
+      ...grRule3(nodeMap, edgeList, standaloneNodeIds),
+      ...grRule4(nodeMap, edgeList),
+      ...grRule5(nodeMap),
+      ...grRule6(nodeMap, acceptanceCriteria),
+      ...grRule7(nodeMap),
+      ...grRule8(nodeMap),
+      ...grRule9(nodeMap),
+      ...grRule10(nodeMap, edgeList),
+      ...grRule11(nodeMap),
+      ...grRule12(nodeMap, graphAttrs),
+      ...grRule13(nodeMap, graphAttrs),
+      ...grRule14(nodeMap),
+      ...grRule15(nodeMap),
     ];
 
     const firstError = diagnostics.find(d => d.severity === 'error');
@@ -798,7 +1051,6 @@ export class DotBuilder {
       );
     }
 
-    const { dot, patternsApplied, defenseMatrix } = this._emitDot();
     return { dot, slug: this._slug, patternsApplied, defenseMatrix, diagnostics };
   }
 
@@ -827,7 +1079,15 @@ export class DotBuilder {
     return parts.join(' ');
   }
 
-  private _emitDot(): { dot: string; patternsApplied: string[]; defenseMatrix: DefenseMatrixInterface } {
+  private _emitDot(): {
+    dot: string;
+    nodeMap: Map<string, Record<string, string>>;
+    edgeList: GraphEdge[];
+    graphAttrs: Record<string, string>;
+    standaloneNodeIds: Set<string>;
+    patternsApplied: string[];
+    defenseMatrix: DefenseMatrixInterface;
+  } {
     const spec = this._spec;
     const phases = this._phases;
     const graphId = sanitizeId(this._slug) || 'pipeline';
@@ -884,14 +1144,22 @@ export class DotBuilder {
     const nodes: string[] = [];
     const edges: string[] = [];
 
+    // Structured graph data — populated by emit/link/linkEdge, consumed by 15 grRules
+    const nodeMap = new Map<string, Record<string, string>>();
+    const edgeList: GraphEdge[] = [];
+    const standaloneNodeIds = new Set<string>();
+
     const emit = (id: string, attrs: Record<string, string>): void => {
       nodes.push(`  ${id} [${fmtAttrs(attrs)}]`);
+      nodeMap.set(id, { ...attrs });
     };
     const link = (from: string, to: string, lbl?: string): void => {
       edges.push(lbl ? `  ${from} -> ${to} [label="${escapeAttr(lbl)}"]` : `  ${from} -> ${to}`);
+      edgeList.push(lbl !== undefined ? { from, to, label: lbl } : { from, to });
     };
     const linkEdge = (from: string, to: string, attrs: Record<string, string>): void => {
       edges.push(`  ${from} -> ${to} [${fmtAttrs(attrs)}]`);
+      edgeList.push({ from, to });
     };
 
     // -------------------------------------------------------------------------
@@ -920,9 +1188,11 @@ export class DotBuilder {
     link('setup_deps', 'capture_baseline');
 
     // Union of all impl phase paths — used by P21 fix_all
+    // Include dependent phases (not just independent) so their paths are in union for cross-phase fixes
     const implPhases = phases.filter(p => !p.securityScan && !p.docOnly);
-    const unionPaths = [...new Set(implPhases.flatMap(p => p.allowedPaths ?? []))].join(',');
-    const unionEscalate = [...new Set(implPhases.flatMap(p => p.escalateOn ?? []))].join(',');
+    const allDependentPhases = phases.filter(p => !p.securityScan);
+    const unionPaths = [...new Set(allDependentPhases.flatMap(p => p.allowedPaths ?? []))].join(',');
+    const unionEscalate = [...new Set(allDependentPhases.flatMap(p => p.escalateOn ?? []))].join(',');
 
     // -------------------------------------------------------------------------
     // Fan-out (Pattern 4) — 2+ independent non-competing phases
@@ -1032,21 +1302,19 @@ export class DotBuilder {
 
         // ---- docOnly: impl → check_progress → scope_check → conformance ----
         // Skips verify_lint, verify_types, test diamond, fix node (Patterns 0d, 1, 13, 14 suppressed).
-        // Failure at check_progress or scope_check routes to cross-phase fix_all (Pattern 21).
+        // docOnly phases don't generate code, so they have no permission_mode and route to done on failure.
         if (p.docOnly) {
           const implAttrs: Record<string, string> = {
             allowed_paths: (p.allowedPaths ?? []).join(','),
             class: 'codergen',
             label: p.prompt,
             max_visits: '5',
-            permission_mode: 'auto',
           };
           if (p.timeout) implAttrs['timeout'] = p.timeout;
           link(prevId, implId, prevLabel);
           emit(implId, implAttrs);
           applied.add('P22');
           applied.add('P6');
-          if (!defenseMatrix.permissions.includes('auto')) defenseMatrix.permissions.push('auto');
 
           emit(checkProgressId, {
             label: 'check_progress',
@@ -1057,7 +1325,7 @@ export class DotBuilder {
           });
           applied.add('P0e');
           link(implId, checkProgressId);
-          link(checkProgressId, 'fix_all', 'fail');
+          link(checkProgressId, 'done', 'fail');
 
           emit(scopeCheckId, {
             class: 'review',
@@ -1068,7 +1336,7 @@ export class DotBuilder {
           applied.add('P10');
           applied.add('P6b');
           link(checkProgressId, scopeCheckId);
-          link(scopeCheckId, 'fix_all', 'fail');
+          link(scopeCheckId, 'done', 'fail');
 
           const conformanceDocAttrs: Record<string, string> = {
             class: 'review',
@@ -1185,7 +1453,8 @@ export class DotBuilder {
           applied.add('P9');
           link(verifyTypesId, testRunId);
           link(testRunId, covId);
-          link(covId, conformanceId);
+          link(covId, conformanceId, 'pass');
+          link(covId, implId, 'fail');
         } else {
           link(verifyTypesId, conformanceId);
         }
@@ -1309,6 +1578,10 @@ export class DotBuilder {
       link('compare', 'check', 'hit');
       link('check', 'done', 'accept');
       link('check', 'optimize', 'reject');
+      // Microverse is a standalone subgraph — not part of main reachability check (Rule 3)
+      for (const mvId of ['commit_baseline', 'baseline', 'optimize', 'measure', 'compare', 'check']) {
+        standaloneNodeIds.add(mvId);
+      }
     }
 
     // -------------------------------------------------------------------------
@@ -1329,6 +1602,10 @@ export class DotBuilder {
       link('review_merge', 'done', 'pass');
       link('review_merge', 'fix_review', 'fail');
       link('fix_review', 'review_pass_1');
+      // Review ratchet is a standalone cycle — not part of main reachability check (Rule 3)
+      for (let ri = 1; ri <= n; ri++) standaloneNodeIds.add(`review_pass_${ri}`);
+      standaloneNodeIds.add('review_merge');
+      standaloneNodeIds.add('fix_review');
     }
 
     // Always emit done last
@@ -1356,6 +1633,6 @@ export class DotBuilder {
       '}',
     ];
 
-    return { dot: lines.join('\n'), patternsApplied: [...applied], defenseMatrix };
+    return { dot: lines.join('\n'), nodeMap, edgeList, graphAttrs, standaloneNodeIds, patternsApplied: [...applied], defenseMatrix };
   }
 }

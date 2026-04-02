@@ -204,9 +204,10 @@ describe('Structural validation — 15 rules', () => {
 
     // Rule 10: component ↔ tripleoctagon merge --------------------------------
     test('Rule 10 COMPONENT_NO_MERGE — builder auto-emits tripleoctagon merge for fan-out', () => {
-        // Two independent phases trigger fan-out. The builder always auto-emits
-        // a tripleoctagon merge_phases node (Pattern 4), so Rule 10 emits a
-        // warning diagnostic (not an error) and build() succeeds.
+        // Two independent phases trigger fan-out (Pattern 4). The builder always
+        // auto-emits a tripleoctagon merge_phases node, so Rule 10 finds both
+        // component and tripleoctagon present — no warning needed. This test
+        // verifies the auto-emission invariant rather than the warning path.
         const result = new DotBuilder(baseSpec({
             phases: [
                 phase('alpha'),
@@ -217,10 +218,9 @@ describe('Structural validation — 15 rules', () => {
         // DOT must contain the auto-emitted tripleoctagon merge node
         assert.match(result.dot, /merge_phases\s*\[.*shape="tripleoctagon"/, 'merge_phases must be tripleoctagon');
 
-        // Rule 10 warning diagnostic is present
+        // Rule 10 does NOT warn because builder guarantees the merge node exists
         const warn = result.diagnostics.find(d => d.rule === 'COMPONENT_NO_MERGE');
-        assert.ok(warn, 'COMPONENT_NO_MERGE warning diagnostic must be present');
-        assert.equal(warn.severity, 'warning', 'COMPONENT_NO_MERGE must be warning, not error');
+        assert.equal(warn, undefined, 'no COMPONENT_NO_MERGE warning when merge node is auto-emitted');
     });
 
     // Rule 11: fan_out_scope --------------------------------------------------
