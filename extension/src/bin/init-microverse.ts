@@ -27,7 +27,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'init-microverse.js') 
   const targetPath = positional[1];
 
   if (!sessionDir || !targetPath) {
-    console.error('Usage: init-microverse <session-dir> <target-path> [--stall-limit N] [--convergence-target N] [--metric-json \'...\']');
+    console.error('Usage: init-microverse <session-dir> <target-path> [--stall-limit N] [--convergence-target N] [--convergence-mode metric|worker] [--convergence-file <filename>] [--metric-json \'...\']');
     process.exit(1);
   }
 
@@ -35,6 +35,20 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'init-microverse.js') 
   const rawConvergence = parseFlag(args, '--convergence-target');
   const rawMetricJson = parseFlag(args, '--metric-json');
   const judgeContextPath = parseFlag(args, '--judge-context');
+  const rawConvergenceMode = parseFlag(args, '--convergence-mode');
+  const convergenceFile = parseFlag(args, '--convergence-file');
+
+  if (convergenceFile && (/[/\\]/.test(convergenceFile) || convergenceFile.includes('..'))) {
+    console.error('convergence_file must be a bare filename');
+    process.exit(1);
+  }
+
+  if (rawConvergenceMode === 'worker' && !convergenceFile) {
+    console.error('worker mode requires --convergence-file');
+    process.exit(1);
+  }
+
+  const convergenceMode = rawConvergenceMode as 'metric' | 'worker' | undefined;
 
   let metric: MicroverseMetric;
   if (rawMetricJson) {
@@ -49,9 +63,14 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'init-microverse.js') 
     metric = DEFAULT_METRIC;
   }
 
+  if (metric.type === 'none' && convergenceMode !== 'worker') {
+    console.error('type: none requires convergence_mode: worker');
+    process.exit(1);
+  }
+
   try {
     const convergenceTarget = rawConvergence != null ? Number(rawConvergence) : undefined;
-    const state = createMicroverseState(targetPath, metric, stallLimit, convergenceTarget);
+    const state = createMicroverseState({ prdPath: targetPath, metric, stallLimit, convergenceTarget, convergenceMode, convergenceFile });
     state.gap_analysis_path = path.join(sessionDir, 'gap_analysis.md');
     if (judgeContextPath) state.judge_context_path = judgeContextPath;
     writeMicroverseState(sessionDir, state);
