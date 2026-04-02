@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import type { MicroverseSessionState, MicroverseMetric, MicroverseHistoryEntry } from '../types/index.js';
+import type { MicroverseSessionState, MicroverseMetric, MicroverseHistoryEntry, CreateMicroverseOpts } from '../types/index.js';
 import { StateManager } from './state-manager.js';
 import { safeErrorMessage } from './pickle-utils.js';
 
@@ -27,12 +27,8 @@ export function compareMetric(
   return 'held';
 }
 
-export function createMicroverseState(
-  prdPath: string,
-  metric: MicroverseMetric,
-  stallLimit: number,
-  convergenceTarget?: number,
-): MicroverseSessionState {
+export function createMicroverseState(opts: CreateMicroverseOpts): MicroverseSessionState {
+  const { prdPath, metric, stallLimit, convergenceTarget, convergenceMode, convergenceFile } = opts;
   if (!Number.isInteger(stallLimit) || stallLimit < 1) {
     throw new Error(`stall_limit must be a positive integer, got ${stallLimit}`);
   }
@@ -53,6 +49,8 @@ export function createMicroverseState(
     baseline_score: 0,
   };
   if (convergenceTarget != null) state.convergence_target = convergenceTarget;
+  if (convergenceMode != null) state.convergence_mode = convergenceMode;
+  if (convergenceFile != null) state.convergence_file = convergenceFile;
   return state;
 }
 

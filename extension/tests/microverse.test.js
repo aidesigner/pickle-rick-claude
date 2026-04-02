@@ -125,7 +125,7 @@ test('compareMetric direction=lower: NaN guard still returns held', () => {
 
 test('recordIteration with direction=lower: score drop → stall_counter=0, action=accept', () => {
     const metricWithLower = { ...TEST_METRIC, direction: 'lower' };
-    let state = createMicroverseState('/tmp/prd.md', metricWithLower, 3);
+    let state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: metricWithLower, stallLimit: 3 });
     state.convergence.stall_counter = 2;
     state.baseline_score = 50;
     const entry = {
@@ -144,7 +144,7 @@ test('recordIteration with direction=lower: score drop → stall_counter=0, acti
 
 test('recordIteration with direction=lower: score rise → stall_counter increments', () => {
     const metricWithLower = { ...TEST_METRIC, direction: 'lower' };
-    let state = createMicroverseState('/tmp/prd.md', metricWithLower, 3);
+    let state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: metricWithLower, stallLimit: 3 });
     state.baseline_score = 50;
     const entry = {
         iteration: 1,
@@ -160,7 +160,7 @@ test('recordIteration with direction=lower: score rise → stall_counter increme
 });
 
 test('createMicroverseState returns valid initial state', () => {
-    const state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+    const state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 3 });
     assert.equal(state.status, 'gap_analysis');
     assert.equal(state.prd_path, '/tmp/prd.md');
     assert.deepEqual(state.convergence.history, []);
@@ -171,36 +171,36 @@ test('createMicroverseState returns valid initial state', () => {
 });
 
 test('createMicroverseState defaults direction to higher when not provided', () => {
-    const state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+    const state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 3 });
     assert.equal(state.key_metric.direction, 'higher');
 });
 
 test('createMicroverseState preserves explicit direction lower', () => {
     const metricWithDirection = { ...TEST_METRIC, direction: 'lower' };
-    const state = createMicroverseState('/tmp/prd.md', metricWithDirection, 3);
+    const state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: metricWithDirection, stallLimit: 3 });
     assert.equal(state.key_metric.direction, 'lower');
 });
 
 test('isConverged returns true when stall_counter >= stall_limit', () => {
-    const state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+    const state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 3 });
     state.convergence.stall_counter = 3;
     assert.equal(isConverged(state), true);
 });
 
 test('isConverged returns false when stall_counter < stall_limit', () => {
-    const state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+    const state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 3 });
     state.convergence.stall_counter = 2;
     assert.equal(isConverged(state), false);
 });
 
 test('isConverged returns true when convergence_target is reached', () => {
-    const state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 5, 0);
+    const state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 5, convergenceTarget: 0 });
     // baseline_score=0 matches convergence_target=0, no history
     assert.equal(isConverged(state), true);
 });
 
 test('isConverged uses last accepted score for convergence_target check', () => {
-    const state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 5, 0);
+    const state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 5, convergenceTarget: 0 });
     state.baseline_score = 10;
     state.convergence.history = [
         { iteration: 1, metric_value: '5', score: 5, action: 'accept', description: 'improved', pre_iteration_sha: 'abc', timestamp: new Date().toISOString() },
@@ -211,7 +211,7 @@ test('isConverged uses last accepted score for convergence_target check', () => 
 
 test('isConverged returns false when convergence_target not reached', () => {
     // direction: higher, target: 90 — score of 5 has not reached 90
-    const state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 5, 90);
+    const state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 5, convergenceTarget: 90 });
     state.baseline_score = 0;
     state.convergence.history = [
         { iteration: 1, metric_value: '5', score: 5, action: 'accept', description: 'improved', pre_iteration_sha: 'abc', timestamp: new Date().toISOString() },
@@ -220,23 +220,23 @@ test('isConverged returns false when convergence_target not reached', () => {
 });
 
 test('isConverged ignores convergence_target when not set', () => {
-    const state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 5);
+    const state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 5 });
     state.baseline_score = 0; // score is 0 but no convergence_target set
     assert.equal(isConverged(state), false);
 });
 
 test('createMicroverseState sets convergence_target when provided', () => {
-    const state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3, 0);
+    const state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 3, convergenceTarget: 0 });
     assert.equal(state.convergence_target, 0);
 });
 
 test('createMicroverseState omits convergence_target when not provided', () => {
-    const state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+    const state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 3 });
     assert.equal(state.convergence_target, undefined);
 });
 
 test('recordIteration resets stall_counter on accept with improved score', () => {
-    let state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+    let state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 3 });
     state.convergence.stall_counter = 2;
     state.baseline_score = 40;
     const entry = {
@@ -254,7 +254,7 @@ test('recordIteration resets stall_counter on accept with improved score', () =>
 });
 
 test('recordIteration increments stall_counter on held score', () => {
-    let state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+    let state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 3 });
     state.baseline_score = 40;
     const entry = {
         iteration: 1,
@@ -270,7 +270,7 @@ test('recordIteration increments stall_counter on held score', () => {
 });
 
 test('recordIteration increments stall_counter on revert', () => {
-    let state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+    let state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 3 });
     state.baseline_score = 40;
     const entry = {
         iteration: 1,
@@ -286,14 +286,14 @@ test('recordIteration increments stall_counter on revert', () => {
 });
 
 test('recordFailedApproach appends to failed_approaches', () => {
-    let state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+    let state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 3 });
     state = recordFailedApproach(state, 'tried X, failed');
     state = recordFailedApproach(state, 'tried Y, also failed');
     assert.deepEqual(state.failed_approaches, ['tried X, failed', 'tried Y, also failed']);
 });
 
 test('recordFailedApproach: caps at 100, oldest shifted on overflow', () => {
-    let state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+    let state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 3 });
     for (let i = 0; i < 101; i++) {
         state = recordFailedApproach(state, `approach ${i}`);
     }
@@ -306,7 +306,7 @@ test('recordFailedApproach: caps at 100, oldest shifted on overflow', () => {
 test('writeMicroverseState and readMicroverseState round-trip', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mv-'));
     try {
-        const state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+        const state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 3 });
         writeMicroverseState(dir, state);
         const loaded = readMicroverseState(dir);
         assert.deepEqual(loaded, state);
@@ -427,7 +427,7 @@ test('measureMetric parses last line when multi-line output', () => {
 // --- buildMicroverseHandoff tests ---
 
 test('buildMicroverseHandoff includes metric info and iteration number', () => {
-    const mvState = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+    const mvState = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 3 });
     mvState.baseline_score = 40;
     const handoff = buildMicroverseHandoff(mvState, 5, '/tmp/work');
     assert.ok(handoff.includes('Iteration 5'));
@@ -436,7 +436,7 @@ test('buildMicroverseHandoff includes metric info and iteration number', () => {
 });
 
 test('buildMicroverseHandoff includes failed approaches', () => {
-    let mvState = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+    let mvState = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 3 });
     mvState = recordFailedApproach(mvState, 'approach A failed');
     const handoff = buildMicroverseHandoff(mvState, 1, '/tmp/work');
     assert.ok(handoff.includes('Failed Approaches'));
@@ -444,7 +444,7 @@ test('buildMicroverseHandoff includes failed approaches', () => {
 });
 
 test('buildMicroverseHandoff includes recent history', () => {
-    let mvState = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+    let mvState = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 3 });
     mvState.baseline_score = 40;
     mvState = recordIteration(mvState, {
         iteration: 1, metric_value: '50', score: 50, action: 'accept',
@@ -457,14 +457,14 @@ test('buildMicroverseHandoff includes recent history', () => {
 
 test('buildMicroverseHandoff includes Type field from key_metric', () => {
     const llmMetric = { ...TEST_METRIC, type: 'llm', validation: 'Improve code quality' };
-    const mvState = createMicroverseState('/tmp/prd.md', llmMetric, 3);
+    const mvState = createMicroverseState({ prdPath: '/tmp/prd.md', metric: llmMetric, stallLimit: 3 });
     const handoff = buildMicroverseHandoff(mvState, 1, '/tmp/work');
     assert.ok(handoff.includes('Type: llm'));
 });
 
 test('buildMicroverseHandoff includes Direction field', () => {
     const lowerMetric = { ...TEST_METRIC, direction: 'lower' };
-    const mvState = createMicroverseState('/tmp/prd.md', lowerMetric, 3);
+    const mvState = createMicroverseState({ prdPath: '/tmp/prd.md', metric: lowerMetric, stallLimit: 3 });
     const handoff = buildMicroverseHandoff(mvState, 1, '/tmp/work');
     assert.ok(handoff.includes('Direction: lower'));
     assert.ok(handoff.includes('lower is better'));
@@ -472,26 +472,26 @@ test('buildMicroverseHandoff includes Direction field', () => {
 
 test('buildMicroverseHandoff with direction=lower says "reducing the metric"', () => {
     const lowerMetric = { ...TEST_METRIC, direction: 'lower' };
-    const mvState = createMicroverseState('/tmp/prd.md', lowerMetric, 3);
+    const mvState = createMicroverseState({ prdPath: '/tmp/prd.md', metric: lowerMetric, stallLimit: 3 });
     const handoff = buildMicroverseHandoff(mvState, 1, '/tmp/work');
     assert.ok(handoff.includes('Focus on reducing the metric.'));
 });
 
 test('buildMicroverseHandoff with direction=higher says "improving the metric"', () => {
     const higherMetric = { ...TEST_METRIC, direction: 'higher' };
-    const mvState = createMicroverseState('/tmp/prd.md', higherMetric, 3);
+    const mvState = createMicroverseState({ prdPath: '/tmp/prd.md', metric: higherMetric, stallLimit: 3 });
     const handoff = buildMicroverseHandoff(mvState, 1, '/tmp/work');
     assert.ok(handoff.includes('Focus on improving the metric.'));
 });
 
 test('buildMicroverseHandoff includes PRD path when sessionDir provided', () => {
-    const mvState = createMicroverseState('/tmp/target', TEST_METRIC, 3);
+    const mvState = createMicroverseState({ prdPath: '/tmp/target', metric: TEST_METRIC, stallLimit: 3 });
     const handoff = buildMicroverseHandoff(mvState, 1, '/tmp/work', '/tmp/sessions/abc123');
     assert.ok(handoff.includes('## PRD: /tmp/sessions/abc123/prd.md'), 'should include PRD path');
 });
 
 test('buildMicroverseHandoff omits PRD section when sessionDir not provided', () => {
-    const mvState = createMicroverseState('/tmp/target', TEST_METRIC, 3);
+    const mvState = createMicroverseState({ prdPath: '/tmp/target', metric: TEST_METRIC, stallLimit: 3 });
     const handoff = buildMicroverseHandoff(mvState, 1, '/tmp/work');
     assert.ok(!handoff.includes('## PRD:'), 'should not include PRD section without sessionDir');
 });
@@ -501,7 +501,7 @@ test('buildMicroverseHandoff omits PRD section when sessionDir not provided', ()
 test('accept/reject cycle: 3 iterations (improve, regress, hold) → 2 accepted, 1 reset, stall_counter=1', () => {
     const dir = createTempGitRepo();
     try {
-        let mvState = createMicroverseState('/tmp/prd.md', TEST_METRIC, 5);
+        let mvState = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 5 });
         mvState.baseline_score = 40;
         const sha = getHeadSha(dir);
 
@@ -547,7 +547,7 @@ test('accept/reject cycle: 3 iterations (improve, regress, hold) → 2 accepted,
 // --- Post-revert baseline (M1 fix) ---
 
 test('recordIteration after revert compares against last accepted score, not reverted score', () => {
-    let mvState = createMicroverseState('/tmp/prd.md', TEST_METRIC, 5);
+    let mvState = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 5 });
     mvState.baseline_score = 40;
     mvState.status = 'iterating';
     const sha = 'b'.repeat(40);
@@ -583,7 +583,7 @@ test('recordIteration after revert compares against last accepted score, not rev
 });
 
 test('recordIteration with all-reverts falls back to baseline_score', () => {
-    let mvState = createMicroverseState('/tmp/prd.md', TEST_METRIC, 10);
+    let mvState = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 10 });
     mvState.baseline_score = 50;
     mvState.status = 'iterating';
     const sha = 'c'.repeat(40);
@@ -622,7 +622,7 @@ test('recordIteration with all-reverts falls back to baseline_score', () => {
 // --- recordStall tests ---
 
 test('recordStall increments stall_counter without adding history', () => {
-    let state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 5);
+    let state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 5 });
     state.baseline_score = 40;
     assert.equal(state.convergence.stall_counter, 0);
     assert.equal(state.convergence.history.length, 0);
@@ -637,7 +637,7 @@ test('recordStall increments stall_counter without adding history', () => {
 });
 
 test('recordStall triggers convergence when hitting stall_limit', () => {
-    let state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 2);
+    let state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 2 });
     state = recordStall(state);
     assert.equal(isConverged(state), false);
     state = recordStall(state);
@@ -647,34 +647,34 @@ test('recordStall triggers convergence when hitting stall_limit', () => {
 // --- createMicroverseState validation tests ---
 
 test('createMicroverseState rejects stall_limit < 1', () => {
-    assert.throws(() => createMicroverseState('/tmp/prd.md', TEST_METRIC, 0), /stall_limit must be a positive integer/);
-    assert.throws(() => createMicroverseState('/tmp/prd.md', TEST_METRIC, -1), /stall_limit must be a positive integer/);
+    assert.throws(() => createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 0 }), /stall_limit must be a positive integer/);
+    assert.throws(() => createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: -1 }), /stall_limit must be a positive integer/);
 });
 
 test('createMicroverseState rejects non-integer stall_limit', () => {
-    assert.throws(() => createMicroverseState('/tmp/prd.md', TEST_METRIC, 1.5), /stall_limit must be a positive integer/);
-    assert.throws(() => createMicroverseState('/tmp/prd.md', TEST_METRIC, NaN), /stall_limit must be a positive integer/);
-    assert.throws(() => createMicroverseState('/tmp/prd.md', TEST_METRIC, Infinity), /stall_limit must be a positive integer/);
+    assert.throws(() => createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 1.5 }), /stall_limit must be a positive integer/);
+    assert.throws(() => createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: NaN }), /stall_limit must be a positive integer/);
+    assert.throws(() => createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: Infinity }), /stall_limit must be a positive integer/);
 });
 
 test('createMicroverseState rejects negative tolerance', () => {
     const badMetric = { ...TEST_METRIC, tolerance: -1 };
-    assert.throws(() => createMicroverseState('/tmp/prd.md', badMetric, 3), /tolerance must be a non-negative number/);
+    assert.throws(() => createMicroverseState({ prdPath: '/tmp/prd.md', metric: badMetric, stallLimit: 3 }), /tolerance must be a non-negative number/);
 });
 
 test('createMicroverseState rejects NaN/Infinity tolerance', () => {
-    assert.throws(() => createMicroverseState('/tmp/prd.md', { ...TEST_METRIC, tolerance: NaN }, 3), /tolerance must be a non-negative number/);
-    assert.throws(() => createMicroverseState('/tmp/prd.md', { ...TEST_METRIC, tolerance: Infinity }, 3), /tolerance must be a non-negative number/);
+    assert.throws(() => createMicroverseState({ prdPath: '/tmp/prd.md', metric: { ...TEST_METRIC, tolerance: NaN }, stallLimit: 3 }), /tolerance must be a non-negative number/);
+    assert.throws(() => createMicroverseState({ prdPath: '/tmp/prd.md', metric: { ...TEST_METRIC, tolerance: Infinity }, stallLimit: 3 }), /tolerance must be a non-negative number/);
 });
 
 test('createMicroverseState accepts valid parameters', () => {
-    const state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+    const state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 3 });
     assert.equal(state.convergence.stall_limit, 3);
     assert.equal(state.key_metric.tolerance, TEST_METRIC.tolerance);
 });
 
 test('convergence: 3 consecutive holds with stall_limit=3 stops loop', () => {
-    let mvState = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+    let mvState = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 3 });
     mvState.baseline_score = 40;
 
     const sha = 'a'.repeat(40);
@@ -1068,7 +1068,7 @@ test('measureLlmMetric defaults to claude-sonnet-4-6 model', () => {
 
 test('late baseline: first measurement becomes baseline when initial baseline failed', () => {
     // Simulate: baseline_score=0, no accepted history, first measurement = 8
-    let state = createMicroverseState('/tmp/prd.md', { ...TEST_METRIC, direction: 'lower' }, 5);
+    let state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: { ...TEST_METRIC, direction: 'lower' }, stallLimit: 5 });
     state.status = 'iterating';
     state.baseline_score = 0; // baseline measurement failed
 
@@ -1089,7 +1089,7 @@ test('late baseline: first measurement becomes baseline when initial baseline fa
 });
 
 test('late baseline: does not override when baseline was successfully measured', () => {
-    let state = createMicroverseState('/tmp/prd.md', { ...TEST_METRIC, direction: 'lower' }, 5);
+    let state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: { ...TEST_METRIC, direction: 'lower' }, stallLimit: 5 });
     state.status = 'iterating';
     state.baseline_score = 12; // baseline was measured successfully
 
@@ -1104,7 +1104,7 @@ test('late baseline: does not override when baseline was successfully measured',
 });
 
 test('late baseline: does not override when accepted history exists', () => {
-    let state = createMicroverseState('/tmp/prd.md', { ...TEST_METRIC, direction: 'lower' }, 5);
+    let state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: { ...TEST_METRIC, direction: 'lower' }, stallLimit: 5 });
     state.status = 'iterating';
     state.baseline_score = 0; // baseline failed
     state.convergence.history.push({
@@ -1137,7 +1137,7 @@ test('LLM baseline: measureLlmMetric result sets baseline_score in gap analysis'
             tolerance: 2,
             judge_model: 'claude-sonnet-4-6',
         };
-        let currentMv = createMicroverseState('/tmp/prd.md', LLM_METRIC, 3);
+        let currentMv = createMicroverseState({ prdPath: '/tmp/prd.md', metric: LLM_METRIC, stallLimit: 3 });
         currentMv.status = 'gap_analysis';
         const workingDir = '/tmp';
 
@@ -1172,7 +1172,7 @@ test('LLM iteration: measureLlmMetric result feeds into comparison pipeline', ()
             tolerance: 2,
             judge_model: 'claude-sonnet-4-6',
         };
-        let currentMv = createMicroverseState('/tmp/prd.md', LLM_METRIC, 3);
+        let currentMv = createMicroverseState({ prdPath: '/tmp/prd.md', metric: LLM_METRIC, stallLimit: 3 });
         currentMv.status = 'iterating';
         currentMv.baseline_score = 40;
         const workingDir = '/tmp';
@@ -1214,7 +1214,7 @@ test('LLM measurement failure treated as stall', () => {
             tolerance: 2,
             judge_model: 'claude-sonnet-4-6',
         };
-        let currentMv = createMicroverseState('/tmp/prd.md', LLM_METRIC, 3);
+        let currentMv = createMicroverseState({ prdPath: '/tmp/prd.md', metric: LLM_METRIC, stallLimit: 3 });
         currentMv.status = 'iterating';
         currentMv.baseline_score = 40;
         const workingDir = '/tmp';
@@ -1247,7 +1247,7 @@ test('LLM measurement failure treated as stall', () => {
 // --- Bug fix tests: double classification, timeout guard, auto-rescue ---
 
 test('recordIteration accepts pre-computed classification to avoid double classification', () => {
-    let state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 5);
+    let state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 5 });
     state.baseline_score = 40;
     state.convergence.stall_counter = 2;
 
@@ -1268,7 +1268,7 @@ test('recordIteration accepts pre-computed classification to avoid double classi
 });
 
 test('recordIteration falls back to internal classification when param omitted', () => {
-    let state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 5);
+    let state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 5 });
     state.baseline_score = 40;
 
     // Score 50 > 40 + 2 → improved, stall resets (backward compat)
@@ -1458,7 +1458,7 @@ test('F14: valid git repo passes the .git existence check', () => {
 test('resume recovery: stopped state with no history resets to gap_analysis', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mv-resume-'));
     try {
-        let state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+        let state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 3 });
         state.status = 'stopped';
         state.exit_reason = 'error';
         writeMicroverseState(dir, state);
@@ -1485,7 +1485,7 @@ test('resume recovery: stopped state with no history resets to gap_analysis', ()
 test('resume recovery: stopped state with history resets to iterating', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mv-resume-'));
     try {
-        let state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+        let state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 3 });
         state.status = 'stopped';
         state.exit_reason = 'error';
         state.baseline_score = 42;
@@ -1523,7 +1523,7 @@ test('resume recovery: stopped state with history resets to iterating', () => {
 test('resume recovery: non-failed status is not modified', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mv-resume-'));
     try {
-        let state = createMicroverseState('/tmp/prd.md', TEST_METRIC, 3);
+        let state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 3 });
         state.status = 'iterating';
         writeMicroverseState(dir, state);
 

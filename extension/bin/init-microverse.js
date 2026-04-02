@@ -45,7 +45,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'init-microverse.js') 
     }
     try {
         const convergenceTarget = rawConvergence != null ? Number(rawConvergence) : undefined;
-        const state = createMicroverseState(targetPath, metric, stallLimit, convergenceTarget);
+        const state = createMicroverseState({ prdPath: targetPath, metric, stallLimit, convergenceTarget });
         state.gap_analysis_path = path.join(sessionDir, 'gap_analysis.md');
         if (judgeContextPath)
             state.judge_context_path = judgeContextPath;

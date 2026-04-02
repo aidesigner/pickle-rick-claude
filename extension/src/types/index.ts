@@ -240,7 +240,7 @@ export interface UpgradeResult {
 export interface MicroverseMetric {
   description: string;
   validation: string;
-  type: 'command' | 'llm';
+  type: 'command' | 'llm' | 'none';
   timeout_seconds: number;
   tolerance: number;
   direction?: 'higher' | 'lower';
@@ -271,8 +271,19 @@ export interface MicroverseSessionState {
   failed_approaches: string[];
   baseline_score: number;
   convergence_target?: number;
+  convergence_mode?: 'metric' | 'worker';
+  convergence_file?: string;
   exit_reason?: string;
   stash_ref?: string;
+}
+
+export interface CreateMicroverseOpts {
+  prdPath: string;
+  metric: MicroverseMetric;
+  stallLimit: number;
+  convergenceTarget?: number;
+  convergenceMode?: 'metric' | 'worker';
+  convergenceFile?: string;
 }
 
 // ---------------------------------------------------------------------------

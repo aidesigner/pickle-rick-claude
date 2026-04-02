@@ -21,7 +21,8 @@ export function compareMetric(current, previous, tolerance, direction) {
         return 'regressed';
     return 'held';
 }
-export function createMicroverseState(prdPath, metric, stallLimit, convergenceTarget) {
+export function createMicroverseState(opts) {
+    const { prdPath, metric, stallLimit, convergenceTarget, convergenceMode, convergenceFile } = opts;
     if (!Number.isInteger(stallLimit) || stallLimit < 1) {
         throw new Error(`stall_limit must be a positive integer, got ${stallLimit}`);
     }
@@ -43,6 +44,10 @@ export function createMicroverseState(prdPath, metric, stallLimit, convergenceTa
     };
     if (convergenceTarget != null)
         state.convergence_target = convergenceTarget;
+    if (convergenceMode != null)
+        state.convergence_mode = convergenceMode;
+    if (convergenceFile != null)
+        state.convergence_file = convergenceFile;
     return state;
 }
 /**

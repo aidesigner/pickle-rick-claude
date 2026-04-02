@@ -85,7 +85,7 @@ test('convergence scenario: 5 events — 4 history entries, 3 accepted, 1 revert
         timeout_seconds: 10,
         direction: 'higher',
     };
-    let mv = createMicroverseState('prd.md', metric, 3);
+    let mv = createMicroverseState({ prdPath: 'prd.md', metric: metric, stallLimit: 3 });
     mv.baseline_score = 5.0;
     mv.status = 'iterating';
 
@@ -161,7 +161,7 @@ test('convergence: not triggered when stall_counter < stall_limit', () => {
         timeout_seconds: 10,
         direction: 'higher',
     };
-    let mv = createMicroverseState('prd.md', metric, 5);
+    let mv = createMicroverseState({ prdPath: 'prd.md', metric: metric, stallLimit: 5 });
     mv.baseline_score = 0;
     mv.status = 'iterating';
 
@@ -187,7 +187,7 @@ test('convergence: improvement resets stall_counter to 0', () => {
         timeout_seconds: 10,
         direction: 'higher',
     };
-    let mv = createMicroverseState('prd.md', metric, 3);
+    let mv = createMicroverseState({ prdPath: 'prd.md', metric: metric, stallLimit: 3 });
     mv.baseline_score = 0;
     mv.status = 'iterating';
 
@@ -216,7 +216,7 @@ test('convergence: regression increments stall, accept revert not accept', () =>
         timeout_seconds: 10,
         direction: 'higher',
     };
-    let mv = createMicroverseState('prd.md', metric, 3);
+    let mv = createMicroverseState({ prdPath: 'prd.md', metric: metric, stallLimit: 3 });
     mv.baseline_score = 10.0;
     mv.status = 'iterating';
 
@@ -241,7 +241,7 @@ test('writeMicroverseState / readMicroverseState: round-trip preserves all field
             timeout_seconds: 30,
             direction: 'higher',
         };
-        let mv = createMicroverseState('prd.md', metric, 3);
+        let mv = createMicroverseState({ prdPath: 'prd.md', metric: metric, stallLimit: 3 });
         mv.baseline_score = 75.0;
         mv.status = 'iterating';
 
@@ -288,7 +288,7 @@ test('convergence: direction=lower — regressed when score increases', () => {
         timeout_seconds: 10,
         direction: 'lower',
     };
-    let mv = createMicroverseState('prd.md', metric, 2);
+    let mv = createMicroverseState({ prdPath: 'prd.md', metric: metric, stallLimit: 2 });
     mv.baseline_score = 10.0;
     mv.status = 'iterating';
 
@@ -303,4 +303,78 @@ test('convergence: direction=lower — regressed when score increases', () => {
     const entry = makeEntry(1, 5.0, 'accept');
     mv = recordIteration(mv, entry, 'improved');
     assert.equal(mv.convergence.stall_counter, 0);
+});
+
+// ---------------------------------------------------------------------------
+// Worker-managed convergence: type='none', convergence_mode, convergence_file
+// ---------------------------------------------------------------------------
+
+test('createMicroverseState with type: none metric sets key_metric.type to none', () => {
+    const metric = {
+        description: 'worker-managed',
+        validation: '',
+        type: 'none',
+        tolerance: 0,
+        timeout_seconds: 0,
+        direction: 'higher',
+    };
+    const mv = createMicroverseState({ prdPath: 'prd.md', metric, stallLimit: 3 });
+    assert.equal(mv.key_metric.type, 'none');
+    assert.equal(mv.baseline_score, 0);
+});
+
+test('createMicroverseState with convergenceMode: worker sets convergence_mode', () => {
+    const metric = {
+        description: 'test',
+        validation: 'echo 1',
+        type: 'command',
+        tolerance: 0.5,
+        timeout_seconds: 10,
+    };
+    const mv = createMicroverseState({ prdPath: 'prd.md', metric, stallLimit: 3, convergenceMode: 'worker' });
+    assert.equal(mv.convergence_mode, 'worker');
+});
+
+test('createMicroverseState with convergenceFile sets convergence_file', () => {
+    const metric = {
+        description: 'test',
+        validation: 'echo 1',
+        type: 'none',
+        tolerance: 0,
+        timeout_seconds: 0,
+    };
+    const mv = createMicroverseState({
+        prdPath: 'prd.md',
+        metric,
+        stallLimit: 3,
+        convergenceMode: 'worker',
+        convergenceFile: 'ap.json',
+    });
+    assert.equal(mv.convergence_mode, 'worker');
+    assert.equal(mv.convergence_file, 'ap.json');
+});
+
+test('createMicroverseState without convergenceMode defaults to undefined', () => {
+    const metric = {
+        description: 'test',
+        validation: 'echo 1',
+        type: 'command',
+        tolerance: 0.5,
+        timeout_seconds: 10,
+    };
+    const mv = createMicroverseState({ prdPath: 'prd.md', metric, stallLimit: 3 });
+    assert.equal(mv.convergence_mode, undefined);
+    assert.equal(mv.convergence_file, undefined);
+});
+
+test('createMicroverseState with convergenceMode: metric sets convergence_mode to metric', () => {
+    const metric = {
+        description: 'test',
+        validation: 'echo 1',
+        type: 'command',
+        tolerance: 0.5,
+        timeout_seconds: 10,
+    };
+    const mv = createMicroverseState({ prdPath: 'prd.md', metric, stallLimit: 3, convergenceMode: 'metric' });
+    assert.equal(mv.convergence_mode, 'metric');
 });
