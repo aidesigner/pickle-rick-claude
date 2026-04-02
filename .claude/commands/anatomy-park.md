@@ -85,16 +85,16 @@ Write subsystem rotation state to `${SESSION_ROOT}/anatomy-park.json`:
 - `trap_doors_added`: all identified trap doors (subsystem, file, description)
 - `trap_doors_committed`: subset of `trap_doors_added` that have been written to CLAUDE.md and committed
 
-Compute `RUNNER_STALL_LIMIT` = number of discovered subsystems * 10. This is intentionally high — the runner is NOT the convergence authority. The worker manages per-subsystem convergence via `anatomy-park.json` and exits cleanly when done. The runner's stall limit is a safety net only.
+Compute `RUNNER_STALL_LIMIT` = number of discovered subsystems * 10. With worker-managed convergence, the runner defers to `anatomy-park.json` for the convergence signal. The stall limit serves as a hard ceiling — if the worker fails to converge or exit, the runner terminates after this many consecutive no-progress iterations.
 
-Build the metric JSON:
+Build the metric JSON (type `none` — convergence is worker-managed via `anatomy-park.json`):
 ```bash
-METRIC_JSON='{"description":"Count of CRITICAL + HIGH data-flow findings in the current subsystem (lower is better)","validation":"Review the current subsystem for data-flow bugs: data corruption, security bypass, pipeline breakage, wrong financial calculations (CRITICAL) and defense-in-depth gaps, incorrect non-corrupting behavior, resource exhaustion (HIGH). Count only findings with a traceable data path. Score = number of findings.","type":"llm","timeout_seconds":300,"tolerance":0,"direction":"lower","judge_model":"claude-sonnet-4-6"}'
+METRIC_JSON='{"description":"none","validation":"none","type":"none","timeout_seconds":0,"tolerance":0,"direction":"lower"}'
 ```
 
 Initialize microverse:
 ```bash
-node "$HOME/.claude/pickle-rick/extension/bin/init-microverse.js" "${SESSION_ROOT}" "${TARGET_ABSOLUTE_PATH}" --stall-limit ${RUNNER_STALL_LIMIT} --convergence-target 0 --metric-json "${METRIC_JSON}"
+node "$HOME/.claude/pickle-rick/extension/bin/init-microverse.js" "${SESSION_ROOT}" "${TARGET_ABSOLUTE_PATH}" --stall-limit ${RUNNER_STALL_LIMIT} --convergence-mode worker --convergence-file anatomy-park.json --metric-json "${METRIC_JSON}"
 ```
 
 ### Step 8: Write prd.md
@@ -114,11 +114,10 @@ TARGET_ABSOLUTE_PATH
 [list from discovery]
 
 ## Key Metric
-- **Type**: llm (LLM judge scoring)
-- **Scoring**: Count of CRITICAL + HIGH findings across current subsystem. Lower is better.
-- **Direction**: lower
-- **Stall Limit**: STALL_LIMIT per subsystem
-- **Convergence**: All subsystems pass clean (zero findings) for 2 consecutive passes
+- **Type**: none (worker-managed convergence)
+- **Convergence**: The worker writes `anatomy-park.json` with convergence state. The runner reads this file via `--convergence-file` to determine when to stop.
+- **Stall Limit**: STALL_LIMIT per subsystem (worker-enforced), RUNNER_STALL_LIMIT total (runner hard ceiling)
+- **Target**: All subsystems pass clean (zero findings) for 2 consecutive passes
 
 ## Process (each iteration)
 1. Select next subsystem from rotation
@@ -129,9 +128,9 @@ TARGET_ABSOLUTE_PATH
 6. Rotate to next subsystem
 
 ## Convergence Model
-The worker manages convergence via `anatomy-park.json`, NOT the runner. The runner's stall limit is set intentionally high (N_subsystems * 10) as a safety net. The worker exits cleanly when all subsystems have 2 consecutive zero-finding passes.
+The worker manages convergence via `anatomy-park.json`. The runner operates in `worker` convergence mode — it reads `anatomy-park.json` each iteration and stops when the file signals convergence. The runner's stall limit (N_subsystems * 10) is a hard ceiling, not the convergence signal.
 
-Note: Clean passes (zero findings, no code commits) appear as "stalls" in the runner log. This is expected — the runner's stall counter is a safety net, not the convergence signal.
+Clean passes (zero findings, no code commits) are expected and do not indicate stalling — the worker tracks per-subsystem convergence independently.
 
 ## Rules
 - One subsystem per iteration, one fix per iteration
