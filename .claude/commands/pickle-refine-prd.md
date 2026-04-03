@@ -160,10 +160,79 @@ links:
 ## Exit State / ## NOT in Scope
 ```
 
-### 7d: Append Breakdown
-Add `## Implementation Task Breakdown` table to `${SESSION_ROOT}/prd_refined.md`: Order | ID | Title | Priority | Entry | Exit | Files.
+### 7d: Create Wiring Ticket
+After all implementation tickets exist, always create one final integration ticket. This ticket is mandatory — every project decomposes into isolated modules that must eventually be connected.
 
-### 7e: Advance State
+Hash: `openssl rand -hex 4`. Dir: `${SESSION_ROOT}/[hash]/`. File: `linear_ticket_[hash].md`:
+
+```markdown
+---
+id: [hash]
+title: "Wire: integrate all modules into working [project name]"
+status: Todo
+priority: High
+order: [last order + 10]
+working_dir: [project root]
+created: [Date]
+updated: [Date]
+depends_on: [ALL prior ticket IDs, comma-separated]
+links:
+  - url: ../linear_ticket_parent.md
+    title: Parent
+---
+# Description
+## Problem
+Each implementation ticket was designed to be self-contained with fresh context. The modules, components, and subsystems have been built in isolation and must now be connected into one functioning piece of software. Without this wiring step, the project has parts but no whole.
+
+## Solution
+Connect every module, panel, service, or component produced by the prior tickets into the integrated application. This includes wiring up entry points, registering components, connecting data flows, mounting UI panels, linking handlers, and running the full end-to-end verification.
+
+## Entry Conditions
+All prior tickets (depends_on) are complete and individually verified.
+
+## Research Seeds
+- **Files**: Review all files modified/created across prior tickets — each ticket's "Exit State" section names them
+- **Patterns**: Entry point registration, component mounting, service wiring, dependency injection, module exports
+- **APIs/types**: Public interfaces defined in prior tickets' Interface Contracts sections
+- **Test patterns**: End-to-end tests, integration tests, smoke tests
+
+## Implementation Details
+**Files to modify/create**: Entry point files, top-level module registrations, root component, main application file, integration test file
+**Dependencies**: All modules produced by prior tickets
+
+## Interface Contracts
+**Inputs**: User/environment triggers the application entry point
+**Outputs**: Fully functional application — all features from the PRD reachable via the intended interface
+**Errors**: Any missing wiring surfaces as runtime error or missing feature — must be resolved here
+**Invariants**: No module is imported but unused; no module is needed but unimported
+
+## Acceptance Criteria
+- [ ] All modules/components from prior tickets are connected — Verify: run the application and exercise each feature from the PRD — Type: integration
+- [ ] No dead code or orphaned modules — Verify: grep for each module's export to confirm at least one import — Type: lint
+- [ ] End-to-end smoke test passes — Verify: `[project-specific run command]` — Type: test
+- [ ] Application starts without errors — Verify: `[start command]` exits cleanly or enters expected running state — Type: integration
+
+## Test Expectations
+| Criterion | Test File | Description | Assertion |
+|:---|:---|:---|:---|
+| Full app runs | [e2e test file] | Launch app, exercise all top-level features | No errors, all panels/routes/handlers respond |
+
+## Conformance Check
+- [ ] Type checker passes — no new errors
+- [ ] Test runner passes — all acceptance tests
+- [ ] All prior ticket Exit States are satisfied end-to-end
+
+## Exit State
+The application runs as a unified whole. Every feature described in the PRD is reachable via the intended interface. No module exists in isolation.
+
+## NOT in Scope
+Implementing new features. Fixing bugs in individual modules (those belong in the relevant ticket). Performance optimization.
+```
+
+### 7e: Append Breakdown
+Add `## Implementation Task Breakdown` table to `${SESSION_ROOT}/prd_refined.md`: Order | ID | Title | Priority | Entry | Exit | Files. Include the wiring ticket as the final row.
+
+### 7f: Advance State
 ```bash
 node "${EXTENSION_ROOT}/extension/bin/update-state.js" step research "${SESSION_ROOT}"
 node "${EXTENSION_ROOT}/extension/bin/update-state.js" current_ticket ${FIRST_ID} "${SESSION_ROOT}"
