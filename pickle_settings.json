@@ -17,6 +17,8 @@
   "default_cb_half_open_after": 2,
   "default_rate_limit_wait_minutes": 5,
   "default_max_rate_limit_retries": 3,
+  "meeseeks_model_tiers": { "1": "haiku", "3": "sonnet", "5": "opus" },
+  "max_opus_passes": 3,
   "auto_update_enabled": true,
   "update_check_interval_hours": 24
 }

@@ -138,6 +138,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'iteration_start', 'iteration_end',
   'rate_limit_wait', 'rate_limit_resume', 'rate_limit_exhausted',
   'multi_repo_warning',
+  'meeseeks_model_select',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];
@@ -182,6 +183,7 @@ export interface ActivityEvent {
   iteration?: number;
   exit_type?: IterationExitType;
   original_prompt?: string;
+  model?: string;
 }
 
 // ---------------------------------------------------------------------------

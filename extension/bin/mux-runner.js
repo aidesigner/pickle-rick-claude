@@ -272,15 +272,43 @@ export function transitionToMeeseeks(state, extensionRoot) {
         current_ticket: null,
     };
 }
-export function loadMeeseeksModel(extensionRoot) {
+export function loadMeeseeksModel(extensionRoot, passCount = 1) {
+    const fallback = 'sonnet';
+    let defaultModel = fallback;
+    let tiers = null;
+    let maxOpusPasses = 3;
     try {
         const raw = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
         if (typeof raw.default_meeseeks_model === 'string' && raw.default_meeseeks_model.length > 0) {
-            return raw.default_meeseeks_model;
+            defaultModel = raw.default_meeseeks_model;
+        }
+        if (raw.meeseeks_model_tiers && typeof raw.meeseeks_model_tiers === 'object') {
+            tiers = raw.meeseeks_model_tiers;
+        }
+        const rawCap = Number(raw.max_opus_passes);
+        if (Number.isFinite(rawCap) && rawCap > 0)
+            maxOpusPasses = rawCap;
+    }
+    catch { /* use defaults */ }
+    if (!tiers)
+        return defaultModel;
+    // Find the highest threshold that doesn't exceed passCount
+    let resolvedModel = defaultModel;
+    let highestThreshold = 0;
+    for (const [key, model] of Object.entries(tiers)) {
+        const threshold = Number(key);
+        if (Number.isFinite(threshold) && threshold <= passCount && threshold > highestThreshold) {
+            highestThreshold = threshold;
+            resolvedModel = String(model);
         }
     }
-    catch { /* use default */ }
-    return 'sonnet';
+    // Cap opus passes: if resolved model is opus and we've used more than the allowed count, fall back to sonnet
+    if (resolvedModel === 'opus') {
+        const opusPassNumber = passCount - highestThreshold + 1;
+        if (opusPassNumber > maxOpusPasses)
+            resolvedModel = 'sonnet';
+    }
+    return resolvedModel;
 }
 export function loadRateLimitSettings(extensionRoot) {
     let waitMinutes = 5;
@@ -779,9 +807,9 @@ async function main() {
     let cbState = cbEnabled ? initCircuitBreaker(sessionDir, cbSettings) : null;
     const cbPath = path.join(sessionDir, 'circuit_breaker.json');
     const { waitMinutes: rateLimitWaitMinutes, maxRetries: maxRateLimitRetries } = loadRateLimitSettings(extensionRoot);
-    const meeseeksModel = loadMeeseeksModel(extensionRoot);
     const startTime = Date.now();
     let iteration = 0;
+    let meeseeksPassCount = 0;
     let lastStateIteration = -1;
     let stallCount = 0;
     let consecutiveRateLimits = 0;
@@ -861,6 +889,15 @@ async function main() {
                 log(`⚠️  MULTI-REPO DETECTED: Tickets span [${multiRepoDirs.join(', ')}]. Pickle Rick works best with single-repo sessions.`);
                 logActivity({ event: 'multi_repo_warning', source: 'pickle', session: path.basename(sessionDir) });
             }
+        }
+        // Resolve meeseeks model per-pass based on tier mapping
+        const templateName = state.command_template || 'pickle.md';
+        if (templateName === 'meeseeks.md')
+            meeseeksPassCount++;
+        const meeseeksModel = loadMeeseeksModel(extensionRoot, meeseeksPassCount);
+        if (templateName === 'meeseeks.md') {
+            log(`Meeseeks pass ${meeseeksPassCount} → model: ${meeseeksModel}`);
+            logActivity({ event: 'meeseeks_model_select', source: 'pickle', session: path.basename(sessionDir), iteration, model: meeseeksModel, pass: meeseeksPassCount });
         }
         const result = await runIteration(sessionDir, iteration, extensionRoot, meeseeksModel);
         // Move iterLogFile computation BEFORE transition block (needed by classifyTicketCompletion)

@@ -1019,6 +1019,109 @@ test('loadMeeseeksModel: non-string value falls back to sonnet', () => {
 });
 
 // ---------------------------------------------------------------------------
+// loadMeeseeksModel tier transitions (e8562b7c)
+// ---------------------------------------------------------------------------
+
+test('loadMeeseeksModel: pass 1 returns haiku with default tiers', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mm-')));
+    try {
+        fs.writeFileSync(path.join(fakeRoot, 'pickle_settings.json'),
+            JSON.stringify({ meeseeks_model_tiers: { "1": "haiku", "3": "sonnet", "5": "opus" }, max_opus_passes: 3 }));
+        assert.equal(loadMeeseeksModel(fakeRoot, 1), 'haiku');
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
+});
+
+test('loadMeeseeksModel: pass 2 returns haiku', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mm-')));
+    try {
+        fs.writeFileSync(path.join(fakeRoot, 'pickle_settings.json'),
+            JSON.stringify({ meeseeks_model_tiers: { "1": "haiku", "3": "sonnet", "5": "opus" }, max_opus_passes: 3 }));
+        assert.equal(loadMeeseeksModel(fakeRoot, 2), 'haiku');
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
+});
+
+test('loadMeeseeksModel: pass 3 returns sonnet', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mm-')));
+    try {
+        fs.writeFileSync(path.join(fakeRoot, 'pickle_settings.json'),
+            JSON.stringify({ meeseeks_model_tiers: { "1": "haiku", "3": "sonnet", "5": "opus" }, max_opus_passes: 3 }));
+        assert.equal(loadMeeseeksModel(fakeRoot, 3), 'sonnet');
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
+});
+
+test('loadMeeseeksModel: pass 4 returns sonnet', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mm-')));
+    try {
+        fs.writeFileSync(path.join(fakeRoot, 'pickle_settings.json'),
+            JSON.stringify({ meeseeks_model_tiers: { "1": "haiku", "3": "sonnet", "5": "opus" }, max_opus_passes: 3 }));
+        assert.equal(loadMeeseeksModel(fakeRoot, 4), 'sonnet');
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
+});
+
+test('loadMeeseeksModel: pass 5 returns opus', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mm-')));
+    try {
+        fs.writeFileSync(path.join(fakeRoot, 'pickle_settings.json'),
+            JSON.stringify({ meeseeks_model_tiers: { "1": "haiku", "3": "sonnet", "5": "opus" }, max_opus_passes: 3 }));
+        assert.equal(loadMeeseeksModel(fakeRoot, 5), 'opus');
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
+});
+
+test('loadMeeseeksModel: pass 7 returns opus (3rd opus pass, within cap)', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mm-')));
+    try {
+        fs.writeFileSync(path.join(fakeRoot, 'pickle_settings.json'),
+            JSON.stringify({ meeseeks_model_tiers: { "1": "haiku", "3": "sonnet", "5": "opus" }, max_opus_passes: 3 }));
+        assert.equal(loadMeeseeksModel(fakeRoot, 7), 'opus');
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
+});
+
+test('loadMeeseeksModel: pass 8 falls back to sonnet (opus cap exceeded)', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mm-')));
+    try {
+        fs.writeFileSync(path.join(fakeRoot, 'pickle_settings.json'),
+            JSON.stringify({ meeseeks_model_tiers: { "1": "haiku", "3": "sonnet", "5": "opus" }, max_opus_passes: 3 }));
+        assert.equal(loadMeeseeksModel(fakeRoot, 8), 'sonnet');
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
+});
+
+test('loadMeeseeksModel: no tiers in settings uses default_meeseeks_model', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mm-')));
+    try {
+        fs.writeFileSync(path.join(fakeRoot, 'pickle_settings.json'),
+            JSON.stringify({ default_meeseeks_model: 'haiku' }));
+        assert.equal(loadMeeseeksModel(fakeRoot, 5), 'haiku');
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
+});
+
+test('loadMeeseeksModel: backward compat — no passCount arg defaults to pass 1', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mm-')));
+    try {
+        fs.writeFileSync(path.join(fakeRoot, 'pickle_settings.json'),
+            JSON.stringify({ meeseeks_model_tiers: { "1": "haiku", "3": "sonnet", "5": "opus" } }));
+        assert.equal(loadMeeseeksModel(fakeRoot), 'haiku');
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
+});
+
+// ---------------------------------------------------------------------------
 // Exit code sidecar file pattern (d6ed51ab)
 // ---------------------------------------------------------------------------
 
