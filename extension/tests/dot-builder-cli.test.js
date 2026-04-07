@@ -163,3 +163,119 @@ describe('DotBuilder.fromSpec()', () => {
         );
     });
 });
+
+// ---------------------------------------------------------------------------
+// Thread ID auto-assignment tests
+// ---------------------------------------------------------------------------
+
+describe('thread_id auto-assignment', () => {
+    function twoPhaseSpec() {
+        return {
+            slug: 'thread-test',
+            goal: 'Thread isolation',
+            phases: [
+                { name: 'auth', prompt: 'auth', allowedPaths: ['src/'], timeout: '30m', dependsOn: [] },
+                { name: 'api', prompt: 'api', allowedPaths: ['src/'], timeout: '30m', dependsOn: ['auth'] },
+            ],
+            acceptanceCriteria: {},
+        };
+    }
+
+    test('(8) per-phase nodes have thread_id=phase_N (1-based)', () => {
+        const r = DotBuilder.fromSpec(twoPhaseSpec()).build();
+        const dot = r.dot;
+        const perPhaseNodes = ['impl_auth', 'scope_check_auth', 'check_progress_auth',
+            'verify_lint_auth', 'verify_types_auth', 'conformance_auth', 'fix_auth',
+            'impl_api', 'scope_check_api', 'check_progress_api',
+            'verify_lint_api', 'verify_types_api', 'conformance_api', 'fix_api'];
+        for (const nodeId of perPhaseNodes) {
+            const expectedPhase = nodeId.includes('auth') ? 'phase_1' : 'phase_2';
+            const line = dot.split('\n').find(l => l.trim().startsWith(nodeId + ' '));
+            assert.ok(line, `node ${nodeId} should exist in DOT output`);
+            assert.ok(line.includes(`thread_id="${expectedPhase}"`),
+                `node ${nodeId} should have thread_id="${expectedPhase}", got: ${line.trim()}`);
+        }
+    });
+
+    test('(9) cross-phase structural nodes have NO thread_id', () => {
+        const r = DotBuilder.fromSpec(twoPhaseSpec()).build();
+        const dot = r.dot;
+        const structural = ['start', 'exit', 'setup_deps', 'capture_baseline', 'verify_final'];
+        for (const nodeId of structural) {
+            const line = dot.split('\n').find(l => l.trim().startsWith(nodeId + ' '));
+            assert.ok(line, `node ${nodeId} should exist in DOT output`);
+            assert.ok(!line.includes('thread_id'),
+                `structural node ${nodeId} should NOT have thread_id, got: ${line.trim()}`);
+        }
+    });
+
+    test('(10) fix nodes inherit parent phase thread_id', () => {
+        const r = DotBuilder.fromSpec(twoPhaseSpec()).build();
+        const dot = r.dot;
+        const fixAuth = dot.split('\n').find(l => l.trim().startsWith('fix_auth '));
+        const fixApi = dot.split('\n').find(l => l.trim().startsWith('fix_api '));
+        assert.ok(fixAuth.includes('thread_id="phase_1"'), 'fix_auth should have thread_id=phase_1');
+        assert.ok(fixApi.includes('thread_id="phase_2"'), 'fix_api should have thread_id=phase_2');
+    });
+
+    test('(10b) fan-out phase nodes have thread_id=phase_N', () => {
+        const spec = {
+            slug: 'fanout-thread-test',
+            goal: 'Fan-out thread isolation',
+            phases: [
+                { name: 'auth', prompt: 'auth', allowedPaths: ['src/'], timeout: '30m' },
+                { name: 'api', prompt: 'api', allowedPaths: ['src/'], timeout: '30m' },
+            ],
+            acceptanceCriteria: {},
+        };
+        const r = DotBuilder.fromSpec(spec).build();
+        const dot = r.dot;
+        const authLine = dot.split('\n').find(l => l.trim().startsWith('auth '));
+        const apiLine = dot.split('\n').find(l => l.trim().startsWith('api '));
+        assert.ok(authLine, 'auth node should exist');
+        assert.ok(apiLine, 'api node should exist');
+        assert.ok(authLine.includes('thread_id="phase_1"'),
+            `auth should have thread_id="phase_1", got: ${authLine.trim()}`);
+        assert.ok(apiLine.includes('thread_id="phase_2"'),
+            `api should have thread_id="phase_2", got: ${apiLine.trim()}`);
+        // structural nodes still clean
+        const splitLine = dot.split('\n').find(l => l.trim().startsWith('split_phases '));
+        const mergeLine = dot.split('\n').find(l => l.trim().startsWith('merge_phases '));
+        assert.ok(!splitLine?.includes('thread_id'), 'split_phases should NOT have thread_id');
+        assert.ok(!mergeLine?.includes('thread_id'), 'merge_phases should NOT have thread_id');
+    });
+
+    test('(10c) fan-out with explicit threadId override', () => {
+        const spec = {
+            slug: 'fanout-override-test',
+            goal: 'Fan-out override',
+            phases: [
+                { name: 'auth', prompt: 'auth', allowedPaths: ['src/'], timeout: '30m', threadId: 'custom_auth' },
+                { name: 'api', prompt: 'api', allowedPaths: ['src/'], timeout: '30m' },
+            ],
+            acceptanceCriteria: {},
+        };
+        const r = DotBuilder.fromSpec(spec).build();
+        const dot = r.dot;
+        const authLine = dot.split('\n').find(l => l.trim().startsWith('auth '));
+        assert.ok(authLine.includes('thread_id="custom_auth"'),
+            `auth should have thread_id="custom_auth", got: ${authLine.trim()}`);
+        const apiLine = dot.split('\n').find(l => l.trim().startsWith('api '));
+        assert.ok(apiLine.includes('thread_id="phase_2"'),
+            `api should have thread_id="phase_2", got: ${apiLine.trim()}`);
+    });
+
+    test('(11) explicit PhaseSpec.threadId overrides auto-assignment', () => {
+        const spec = twoPhaseSpec();
+        spec.phases[0].threadId = 'custom_thread';
+        const r = DotBuilder.fromSpec(spec).build();
+        const dot = r.dot;
+        const implAuth = dot.split('\n').find(l => l.trim().startsWith('impl_auth '));
+        assert.ok(implAuth.includes('thread_id="custom_thread"'),
+            `impl_auth should have thread_id="custom_thread", got: ${implAuth.trim()}`);
+        // Second phase still auto-assigned
+        const implApi = dot.split('\n').find(l => l.trim().startsWith('impl_api '));
+        assert.ok(implApi.includes('thread_id="phase_2"'),
+            `impl_api should still have thread_id="phase_2", got: ${implApi.trim()}`);
+    });
+});

@@ -509,3 +509,64 @@ describe('BDD: Builder .acceptanceCriteria() integration', () => {
             'acceptanceCriteria should appear as context_on_success or similar in DOT');
     });
 });
+
+// ===========================================================================
+// BDD: thread_id topology — per-phase isolation
+// ===========================================================================
+describe('BDD: thread_id topology', () => {
+    test('three sequential phases get thread_id phase_1, phase_2, phase_3', () => {
+        const r = buildWithPhases({}, [
+            validPhase('setup', 'setup db', { dependsOn: [] }),
+            validPhase('core', 'build core', { dependsOn: ['setup'] }),
+            validPhase('ui', 'build ui', { dependsOn: ['core'] }),
+        ]);
+        for (const [idx, name] of ['setup', 'core', 'ui'].entries()) {
+            const attrs = getNodeAttrs(r.dot, `impl_${name}`);
+            assert.ok(attrs, `impl_${name} should exist`);
+            assert.equal(attrs.thread_id, `phase_${idx + 1}`,
+                `impl_${name} should have thread_id=phase_${idx + 1}`);
+        }
+    });
+
+    test('spec_file and bdd_scenarios inherit parent phase thread_id', () => {
+        const r = buildWithPhases({}, [
+            validPhase('feat', 'build feat', { specFirst: true, bddScenarios: true, retryTarget: 'feat', dependsOn: [] }),
+        ]);
+        const specAttrs = getNodeAttrs(r.dot, 'spec_file_feat');
+        const bddAttrs = getNodeAttrs(r.dot, 'bdd_scenarios_feat');
+        assert.ok(specAttrs, 'spec_file_feat should exist');
+        assert.ok(bddAttrs, 'bdd_scenarios_feat should exist');
+        assert.equal(specAttrs.thread_id, 'phase_1');
+        assert.equal(bddAttrs.thread_id, 'phase_1');
+    });
+
+    test('red_team node inherits parent phase thread_id', () => {
+        const r = buildWithPhases({}, [
+            validPhase('sec', 'security impl', { redTeam: true, dependsOn: [] }),
+        ]);
+        const rtAttrs = getNodeAttrs(r.dot, 'red_team_sec');
+        assert.ok(rtAttrs, 'red_team_sec should exist');
+        assert.equal(rtAttrs.thread_id, 'phase_1');
+    });
+
+    test('fix_all has NO thread_id', () => {
+        const r = buildWithPhases({}, [
+            validPhase('a', 'do a', { dependsOn: [] }),
+            validPhase('b', 'do b', { dependsOn: ['a'] }),
+        ]);
+        const fixAllAttrs = getNodeAttrs(r.dot, 'fix_all');
+        if (fixAllAttrs) {
+            assert.equal(fixAllAttrs.thread_id, undefined,
+                'fix_all should NOT have thread_id');
+        }
+    });
+
+    test('securityScan phase node gets thread_id', () => {
+        const r = buildWithPhases({}, [
+            validPhase('vuln_scan', 'Scan for vulnerabilities. Output STATUS: SUCCESS | FAIL.', { securityScan: true, dependsOn: [] }),
+        ]);
+        const attrs = getNodeAttrs(r.dot, 'vuln_scan');
+        assert.ok(attrs, 'vuln_scan should exist');
+        assert.equal(attrs.thread_id, 'phase_1');
+    });
+});

@@ -1010,7 +1010,8 @@ export class DotBuilder {
             link('capture_baseline', 'split_phases');
             for (const p of independent) {
                 const id = sanitizeId(p.name);
-                emit(id, { label: p.name, shape: 'component' });
+                const threadId = p.threadId ?? `phase_${phases.indexOf(p) + 1}`;
+                emit(id, { label: p.name, shape: 'component', thread_id: threadId });
                 link('split_phases', id);
             }
             const dependent = phases.filter(p => p.dependsOn && p.dependsOn.length > 0);
@@ -1021,7 +1022,8 @@ export class DotBuilder {
             let afterMerge = mergeId;
             for (const p of dependent) {
                 const id = sanitizeId(p.name);
-                emit(id, { label: p.name, shape: 'component' });
+                const threadId = p.threadId ?? `phase_${phases.indexOf(p) + 1}`;
+                emit(id, { label: p.name, shape: 'component', thread_id: threadId });
                 link(afterMerge, id);
                 afterMerge = id;
             }
@@ -1064,6 +1066,7 @@ export class DotBuilder {
             for (let i = 0; i < phases.length; i++) {
                 const p = phases[i];
                 const id = sanitizeId(p.name);
+                const threadId = p.threadId ?? `phase_${i + 1}`;
                 const emitSpec = !p.securityScan && !p.docOnly && (p.specFirst === true || (p.goalGate && p.specFirst !== false));
                 const emitBDD = !p.securityScan && !p.docOnly && p.bddScenarios === true;
                 const specId = `spec_file_${id}`;
@@ -1074,6 +1077,7 @@ export class DotBuilder {
                         class: 'review',
                         label: p.prompt,
                         read_only: 'true',
+                        thread_id: threadId,
                     };
                     applied.add('P6b');
                     applied.add('P8');
@@ -1094,6 +1098,7 @@ export class DotBuilder {
                         class: 'documentation',
                         label: p.prompt,
                         max_visits: '5',
+                        thread_id: threadId,
                     };
                     if (p.timeout)
                         implAttrs['timeout'] = p.timeout;
@@ -1106,6 +1111,7 @@ export class DotBuilder {
                         max_visits: '3',
                         read_only: 'true',
                         shape: 'cds',
+                        thread_id: threadId,
                         tool_command: "cd ${WORKING_DIR} && [ $(git status --porcelain | wc -l) -gt 0 ] && echo 'STATUS: SUCCESS' || echo 'STATUS: FAIL'",
                     });
                     applied.add('P0e');
@@ -1116,6 +1122,7 @@ export class DotBuilder {
                         label: 'Compare git diff against phase prompt. Flag files modified outside allowed_paths. Output STATUS: SUCCESS | FAIL.',
                         read_only: 'true',
                         shape: 'cds',
+                        thread_id: threadId,
                     });
                     applied.add('P10');
                     applied.add('P6b');
@@ -1125,6 +1132,7 @@ export class DotBuilder {
                         class: 'review',
                         label: 'Review the implementation against the phase spec and PRD requirements. Check: correct files modified, API contracts match, no regressions. Output STATUS: SUCCESS | FAIL.',
                         read_only: 'true',
+                        thread_id: threadId,
                         timeout: '15m',
                     };
                     emit(conformanceId, conformanceDocAttrs);
@@ -1141,8 +1149,8 @@ export class DotBuilder {
                 const verifyTypesId = `verify_types_${id}`;
                 // Spec-first gates (P16 / P16b)
                 if (emitBDD && emitSpec) {
-                    emit(bddId, { label: 'bdd_scenarios' });
-                    emit(specId, { label: 'spec_file' });
+                    emit(bddId, { label: 'bdd_scenarios', thread_id: threadId });
+                    emit(specId, { label: 'spec_file', thread_id: threadId });
                     link(prevId, bddId, prevAttrs);
                     link(bddId, specId);
                     link(specId, implId);
@@ -1150,7 +1158,7 @@ export class DotBuilder {
                     applied.add('P16');
                 }
                 else if (emitSpec) {
-                    emit(specId, { label: 'spec_file' });
+                    emit(specId, { label: 'spec_file', thread_id: threadId });
                     link(prevId, specId, prevAttrs);
                     link(specId, implId);
                     applied.add('P16');
@@ -1165,6 +1173,7 @@ export class DotBuilder {
                     label: p.prompt,
                     max_visits: '5',
                     permission_mode: 'auto',
+                    thread_id: threadId,
                 };
                 if (p.escalateOn && p.escalateOn.length > 0) {
                     implAttrs['escalate_on'] = p.escalateOn.join(',');
@@ -1192,6 +1201,7 @@ export class DotBuilder {
                     label: 'Compare git diff against phase prompt. Flag files modified outside allowed_paths. Output STATUS: SUCCESS | FAIL.',
                     read_only: 'true',
                     shape: 'cds',
+                    thread_id: threadId,
                 });
                 applied.add('P10');
                 applied.add('P6b');
@@ -1202,6 +1212,7 @@ export class DotBuilder {
                     max_visits: '3',
                     read_only: 'true',
                     shape: 'cds',
+                    thread_id: threadId,
                     tool_command: "cd ${WORKING_DIR} && [ $(git status --porcelain | wc -l) -gt 0 ] && echo 'STATUS: SUCCESS' || echo 'STATUS: FAIL'",
                 });
                 applied.add('P0e');
@@ -1210,6 +1221,7 @@ export class DotBuilder {
                 emit(verifyLintId, {
                     label: 'verify_lint: BASELINE from cat baseline_lint_errors; CURRENT lint error count -le BASELINE',
                     shape: 'cds',
+                    thread_id: threadId,
                     tool_command: '[ $(npx eslint src/ 2>&1 | grep -c error || echo 0) -le $(cat /tmp/baseline_lint_errors.txt 2>/dev/null || echo 0) ]',
                 });
                 applied.add('P13');
@@ -1218,6 +1230,7 @@ export class DotBuilder {
                 // P14: verify_types
                 emit(verifyTypesId, {
                     label: 'verify_types: BASELINE from cat baseline_ts_errors; CURRENT TS error count -le BASELINE',
+                    thread_id: threadId,
                     tool_command: '[ $(npx tsc --noEmit 2>&1 | grep -c error || echo 0) -le $(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) ]',
                 });
                 applied.add('P14');
@@ -1243,6 +1256,7 @@ export class DotBuilder {
                     class: 'review',
                     label: 'Review the implementation against the phase spec and PRD requirements. Check: correct files modified, API contracts match, no regressions. Output STATUS: SUCCESS | FAIL.',
                     read_only: 'true',
+                    thread_id: threadId,
                     timeout: '15m',
                 };
                 if (p.contextOnSuccess) {
@@ -1281,13 +1295,13 @@ export class DotBuilder {
                 applied.add('P3');
                 link(conformanceId, testId);
                 // P1: fix loop
-                emit(fixId, { label: `fix ${id}` });
+                emit(fixId, { label: `fix ${id}`, thread_id: threadId });
                 link(testId, fixId, { condition: 'outcome=fail', label: 'fail' });
                 link(fixId, implId);
                 // P17: red_team after test pass
                 if (p.redTeam) {
                     const rtId = `red_team_${id}`;
-                    emit(rtId, { label: 'red_team', read_only: 'true' });
+                    emit(rtId, { label: 'red_team', read_only: 'true', thread_id: threadId });
                     applied.add('P17');
                     link(testId, rtId, { condition: 'outcome=success', label: 'pass' });
                     prevId = rtId;
