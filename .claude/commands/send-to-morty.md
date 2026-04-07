@@ -10,6 +10,19 @@ node "$HOME/.claude/pickle-rick/extension/bin/worker-setup.js" $ARGUMENTS
 ```
 Extract `${SESSION_ROOT}`, `${TICKET_ID}`, `${TICKET_DIR}`.
 
+## Session Knowledge Transfer
+
+At the start of your work:
+1. Read `TASK_NOTES.md` in your session directory if it exists
+2. Use the Dead Ends and Key Discoveries sections to avoid repeating failed approaches
+
+Before you finish:
+1. Update (or create) `TASK_NOTES.md` in your session directory with these sections:
+   - `## Progress` — What you accomplished this iteration
+   - `## Dead Ends` — Approaches that failed and why (be specific)
+   - `## Key Discoveries` — Important findings about the codebase, constraints, or environment
+   - `## Next` — What the next iteration should focus on
+
 ## Scope
 - **NEVER** modify `state.json`, `active`, or `completion_promise`
 - Write ONLY to `${TICKET_DIR}`. Signal done ONLY via `<promise>I AM DONE</promise>`
