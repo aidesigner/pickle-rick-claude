@@ -304,6 +304,34 @@ Every endgame `tool_command` implicitly depends on config files that must exist 
 - **No duplicate configs**: When a scaffold prompt uses a framework CLI (`nest new`, `create-next-app`, `npm init`) AND the prompt also specifies a custom config file (`jest.config.ts`, `next.config.js`, etc.), the prompt MUST include an explicit delete of the framework's default config. Example: scaffold creates `jest.config.ts` → prompt must say "delete `jest.config.js` if it exists". Common conflict pairs: `jest.config.ts` vs `jest.config.js`, `next.config.js` vs `next.config.mjs`, `vitest.config.ts` vs `vitest.config.js`. The `verify_test_setup` tool node should also `rm -f` known framework defaults as a safety net.
 - **Pre-gate cleanup**: Lightweight verify/sanity-check tool nodes between build phase and endgame gates should include cleanup of known conflict sources (duplicate configs, stale lock files, leftover build artifacts) before running their actual check. These nodes are cheap — a 2-second `rm -f` prevents a 10-minute rate-limited fix loop.
 
+### Import Syntax in Test Prompts (MANDATORY)
+
+Free-tier and mid-range models default to wrong import styles that cause entire test suites to fail to compile. When a test node prompt references a testing library, **specify the exact import statement** — never leave it to the model.
+
+**Known footguns:**
+
+| Library | Wrong (model default) | Correct | Why |
+|---|---|---|---|
+| `supertest` | `import * as request from 'supertest'` | `import request from 'supertest'` | Namespace import isn't callable under strict TS — every `request(app)` call fails with TS2349 |
+| `@nestjs/testing` | `import { Test } from '@nestjs/testing'` (sometimes wrong path) | `import { Test, TestingModule } from '@nestjs/testing'` | Missing `TestingModule` type causes implicit `any` under strict |
+| `jest` globals | `import { describe, it, expect } from 'jest'` | No import needed — Jest globals are ambient | Explicit import shadows globals, causes type conflicts |
+| `vitest` | No import (assuming ambient like Jest) | `import { describe, it, expect } from 'vitest'` | Opposite of Jest — vitest REQUIRES explicit imports; omitting them causes "not defined" errors |
+| `react-testing-library` | `import { render } from 'react-testing-library'` | `import { render } from '@testing-library/react'` | Old package name, deprecated |
+
+**Rule:** Every test node prompt MUST include the exact first 3-5 import lines as a code snippet. Example:
+
+```
+Create test/crud.e2e-spec.ts with these exact imports:
+  import request from 'supertest';
+  import { Test, TestingModule } from '@nestjs/testing';
+  import { INestApplication, ValidationPipe } from '@nestjs/common';
+  import { AppModule } from '../src/app.module';
+```
+
+This costs ~4 lines of prompt space and prevents an entire category of "all test suites fail to compile" endgame failures that burn 10+ fix loop iterations on rate-limited models.
+
+**General principle:** Any syntax where the "obvious" way is wrong under strict TypeScript must be specified verbatim in the prompt. The model will always pick the obvious way.
+
 ---
 
 ### Few-Shot Examples
