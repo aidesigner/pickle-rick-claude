@@ -985,10 +985,10 @@ export class DotBuilder {
     if (sc.defaultModel) universalProps.push(`llm_model: ${sc.defaultModel};`);
     const effort = sc.defaultEffort ?? sc.reasoningEffort;
     if (effort) universalProps.push(`reasoning_effort: ${effort};`);
-    if (universalProps.length > 0) parts.push(`* { ${universalProps.join(' ')} }`);
+    if (universalProps.length > 0) parts.push(`.default { ${universalProps.join(' ')} }`);
     if (sc.overrides && sc.overrides.length > 0) {
       for (const ov of sc.overrides as StylesheetOverride[]) {
-        const sel = ov.selector.startsWith('.') || ov.selector === '*' ? ov.selector : `.${ov.selector}`;
+        const sel = ov.selector === '*' ? '.default' : ov.selector.startsWith('.') ? ov.selector : `.${ov.selector}`;
         const props = [`llm_model: ${ov.model};`];
         if (ov.effort) props.push(`reasoning_effort: ${ov.effort};`);
         parts.push(`${sel} { ${props.join(' ')} }`);
@@ -1079,6 +1079,7 @@ export class DotBuilder {
 
     const nodes: string[] = [];
     const edges: string[] = [];
+    const seenEdges = new Set<string>();
     const nodeMap = new Map<string, Record<string, string>>();
     const edgeList: EdgeEntry[] = [];
     const standaloneNodeIds = new Set<string>();
@@ -1088,21 +1089,28 @@ export class DotBuilder {
       nodeMap.set(id, { ...attrs });
     };
     const link = (from: string, to: string, attrs?: Record<string, string>): void => {
+      const edgeLine = (attrs && Object.keys(attrs).length > 0)
+        ? `  ${from} -> ${to} [${fmtAttrs(attrs)}]`
+        : `  ${from} -> ${to}`;
+      if (seenEdges.has(edgeLine)) return;
+      seenEdges.add(edgeLine);
+      edges.push(edgeLine);
       if (attrs && Object.keys(attrs).length > 0) {
-        edges.push(`  ${from} -> ${to} [${fmtAttrs(attrs)}]`);
         edgeList.push({ from, to, label: attrs['label'], attrs });
       } else {
-        edges.push(`  ${from} -> ${to}`);
         edgeList.push({ from, to });
       }
     };
     const linkEdge = (from: string, to: string, attrs: Record<string, string>): void => {
-      edges.push(`  ${from} -> ${to} [${fmtAttrs(attrs)}]`);
+      const edgeLine = `  ${from} -> ${to} [${fmtAttrs(attrs)}]`;
+      if (seenEdges.has(edgeLine)) return;
+      seenEdges.add(edgeLine);
+      edges.push(edgeLine);
       edgeList.push({ from, to, attrs });
     };
 
     // P0a: setup_deps
-    emit('start', { label: 'start', shape: 'Mdiamond' });
+    emit('start', { shape: 'Mdiamond' });
     emit('setup_deps', {
       label: 'setup_deps',
       shape: 'cds',
@@ -1272,8 +1280,10 @@ export class DotBuilder {
       applied.add('P0b');
       link('capture_baseline', 'split_phases');
       for (const p of independent) {
+        const phaseIdx = phases.indexOf(p) + 1;
         const id = sanitizeId(p.name);
-        const threadId = p.threadId ?? `phase_${phases.indexOf(p) + 1}`;
+        const threadId = p.threadId ?? `phase_${phaseIdx}`;
+        nodes.push(`  // ========== PHASE ${phaseIdx}: ${id} ==========`);
         emit(id, { label: p.name, shape: 'component', thread_id: threadId });
         link('split_phases', id);
       }
@@ -1283,8 +1293,10 @@ export class DotBuilder {
       for (const p of independent) link(sanitizeId(p.name), mergeId);
       let afterMerge = mergeId;
       for (const p of dependent) {
+        const phaseIdx = phases.indexOf(p) + 1;
         const id = sanitizeId(p.name);
-        const threadId = p.threadId ?? `phase_${phases.indexOf(p) + 1}`;
+        const threadId = p.threadId ?? `phase_${phaseIdx}`;
+        nodes.push(`  // ========== PHASE ${phaseIdx}: ${id} ==========`);
         emit(id, { label: p.name, shape: 'component', thread_id: threadId });
         link(afterMerge, id);
         afterMerge = id;
@@ -1317,6 +1329,8 @@ export class DotBuilder {
         const p = phases[i];
         const id = sanitizeId(p.name);
         const threadId = p.threadId ?? `phase_${i + 1}`;
+
+        nodes.push(`  // ========== PHASE ${i + 1}: ${id} ==========`);
 
         const emitSpec = !p.securityScan && !p.docOnly && (p.specFirst === true || (p.goalGate && p.specFirst !== false));
         const emitBDD = !p.securityScan && !p.docOnly && p.bddScenarios === true;

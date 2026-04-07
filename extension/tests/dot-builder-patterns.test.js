@@ -651,20 +651,20 @@ describe('Remaining pattern snapshot tests', () => {
         assert.ok(ssMatch, 'must have model_stylesheet graph attribute');
         const ss = ssMatch[1];
 
-        // Validate universal selector
-        assert.match(ss, /\*\s*\{[^}]*llm_model:\s*claude-sonnet-4-5-20250514;/, '* selector must set llm_model');
-        assert.match(ss, /\*\s*\{[^}]*reasoning_effort:\s*high;/, '* selector must set reasoning_effort');
+        // Validate default selector
+        assert.match(ss, /\.default\s*\{[^}]*llm_model:\s*claude-sonnet-4-5-20250514;/, '.default selector must set llm_model');
+        assert.match(ss, /\.default\s*\{[^}]*reasoning_effort:\s*high;/, '.default selector must set reasoning_effort');
 
         // Validate class selectors
         assert.match(ss, /\.critical\s*\{[^}]*llm_model:\s*claude-opus-4-5-20250514;/, '.critical must set llm_model');
         assert.match(ss, /\.critical\s*\{[^}]*reasoning_effort:\s*max;/, '.critical must set reasoning_effort');
         assert.match(ss, /\.review\s*\{[^}]*llm_model:\s*claude-sonnet-4-5-20250514;/, '.review must set llm_model');
 
-        // Validate format: only valid selectors (* and .className) and valid properties (llm_model, reasoning_effort)
+        // Validate format: only valid selectors (.default and .className) and valid properties (llm_model, reasoning_effort)
         const selectors = [...ss.matchAll(/([^\s{]+)\s*\{/g)].map(m => m[1]);
         for (const sel of selectors) {
-            assert.ok(sel === '*' || /^\.[a-zA-Z][a-zA-Z0-9_]*$/.test(sel),
-                `selector "${sel}" must be * or .className`);
+            assert.ok(/^\.[a-zA-Z][a-zA-Z0-9_]*$/.test(sel),
+                `selector "${sel}" must be .className`);
         }
         const properties = [...ss.matchAll(/(\w+):/g)].map(m => m[1]);
         const validProps = new Set(['llm_model', 'reasoning_effort']);
