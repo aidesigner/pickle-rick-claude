@@ -1145,3 +1145,68 @@ test('session map entry: resolveSessionPath handles both old and new format in s
     assert.equal(resolveSessionPath(legacyEntry), '/legacy/session/path');
     assert.equal(resolveSessionPath(newEntry), '/new/session/path');
 });
+
+// --- parseTicketFrontmatter: complexity_tier ---
+
+test('parseTicketFrontmatter: parses valid complexity_tier', () => {
+    withTempFile(`---\nid: x\ntitle: T\nstatus: Todo\norder: 1\ncomplexity_tier: small\n---\n`, (file) => {
+        const result = parseTicketFrontmatter(file);
+        assert.equal(result.complexity_tier, 'small');
+    });
+});
+
+test('parseTicketFrontmatter: invalid complexity_tier defaults to medium', () => {
+    withTempFile(`---\nid: x\ntitle: T\nstatus: Todo\norder: 1\ncomplexity_tier: huge\n---\n`, (file) => {
+        const result = parseTicketFrontmatter(file);
+        assert.equal(result.complexity_tier, 'medium');
+    });
+});
+
+test('parseTicketFrontmatter: missing complexity_tier defaults to medium', () => {
+    withTempFile(`---\nid: x\ntitle: T\nstatus: Todo\norder: 1\n---\n`, (file) => {
+        const result = parseTicketFrontmatter(file);
+        assert.equal(result.complexity_tier, 'medium');
+    });
+});
+
+test('parseTicketFrontmatter: all 4 valid complexity_tier values accepted', () => {
+    for (const tier of ['trivial', 'small', 'medium', 'large']) {
+        withTempFile(`---\nid: x\ntitle: T\nstatus: Todo\norder: 1\ncomplexity_tier: ${tier}\n---\n`, (file) => {
+            const result = parseTicketFrontmatter(file);
+            assert.equal(result.complexity_tier, tier, `tier '${tier}' should be accepted`);
+        });
+    }
+});
+
+// --- buildHandoffSummary: complexity_tier display ---
+
+test('buildHandoffSummary: shows tier tag for non-medium tiers, omits for medium', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ active: true }));
+        const t1 = path.join(dir, 'triv1');
+        fs.mkdirSync(t1);
+        fs.writeFileSync(path.join(t1, 'linear_ticket_triv1.md'),
+            '---\nid: triv1\ntitle: Trivial task\nstatus: Todo\norder: 10\ncomplexity_tier: trivial\n---\n');
+        const t2 = path.join(dir, 'sm1');
+        fs.mkdirSync(t2);
+        fs.writeFileSync(path.join(t2, 'linear_ticket_sm1.md'),
+            '---\nid: sm1\ntitle: Small task\nstatus: Todo\norder: 20\ncomplexity_tier: small\n---\n');
+        const t3 = path.join(dir, 'med1');
+        fs.mkdirSync(t3);
+        fs.writeFileSync(path.join(t3, 'linear_ticket_med1.md'),
+            '---\nid: med1\ntitle: Medium task\nstatus: Todo\norder: 30\ncomplexity_tier: medium\n---\n');
+        const t4 = path.join(dir, 'lg1');
+        fs.mkdirSync(t4);
+        fs.writeFileSync(path.join(t4, 'linear_ticket_lg1.md'),
+            '---\nid: lg1\ntitle: Large task\nstatus: Todo\norder: 40\ncomplexity_tier: large\n---\n');
+
+        const summary = buildHandoffSummary({ step: 'implement', iteration: 1 }, dir);
+        assert.match(summary, /\[trivial\]/, 'trivial tier should show tag');
+        assert.match(summary, /\[small\]/, 'small tier should show tag');
+        assert.ok(!summary.includes('[medium]'), 'medium tier should NOT show tag');
+        assert.match(summary, /\[large\]/, 'large tier should show tag');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});

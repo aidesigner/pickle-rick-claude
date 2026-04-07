@@ -170,6 +170,11 @@ export function parseTicketFrontmatter(filePath) {
             const m = fm.body.match(new RegExp(`^${escaped}:\\s*(.+)$`, 'm'));
             return m ? m[1].trim().replace(/^["']|["']$/g, '') : null;
         };
+        const tierRaw = get('complexity_tier');
+        const validTiers = ['trivial', 'small', 'medium', 'large'];
+        const complexity_tier = tierRaw && validTiers.includes(tierRaw)
+            ? tierRaw
+            : 'medium';
         return {
             id: get('id'),
             title: get('title'),
@@ -179,6 +184,7 @@ export function parseTicketFrontmatter(filePath) {
             working_dir: get('working_dir'),
             completed_at: get('completed_at'),
             skipped_at: get('skipped_at'),
+            complexity_tier,
         };
     }
     catch {
@@ -295,10 +301,13 @@ export function buildHandoffSummary(state, sessionDir, iterationNum) {
                 : (t.title || '');
             const typeTag = t.type === 'review' ? ' [REVIEW]' : '';
             const dirTag = t.working_dir && t.working_dir !== state.working_dir ? ` (${t.working_dir})` : '';
+            const tierTag = t.complexity_tier && t.complexity_tier !== 'medium'
+                ? ` [${t.complexity_tier}]`
+                : '';
             const skippedNote = (t.status || '').toLowerCase().replace(/["']/g, '') === 'skipped'
                 ? ' (no verified completion — re-attempt)'
                 : '';
-            lines.push(`  ${sym} ${t.id || '?'}: ${title}${typeTag}${dirTag}${skippedNote}`);
+            lines.push(`  ${sym} ${t.id || '?'}: ${title}${typeTag}${tierTag}${dirTag}${skippedNote}`);
         }
     }
     const workingDirs = new Set(tickets.map(t => t.working_dir).filter(Boolean));

@@ -93,7 +93,16 @@ ${content}
     const cycleNote = cycle > 1
         ? `\n**THIS IS CYCLE ${cycle}** — you are deepening a previous analysis. Your output should be MORE SPECIFIC, MORE EVIDENCE-BACKED, and CROSS-REFERENCED with other analysts' findings.\n`
         : '';
-    const outputInstructions = `## Your Output
+    const tierClassification = `## Ticket Complexity Classification
+
+For each ticket, assign a complexity_tier in the frontmatter:
+- trivial: Single-file text change, no logic, no tests needed (prompt edits, config tweaks)
+- small: 1-2 files, straightforward logic, type-only or minimal tests
+- medium: 2-4 files, moderate logic, requires unit tests
+- large: 4+ files, complex integration, multiple test files, cross-cutting concerns
+`;
+    const outputInstructions = `${tierClassification}
+## Your Output
 
 Write ALL findings to this file: ${outputFile}
 ${cycleNote}
