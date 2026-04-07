@@ -164,6 +164,40 @@ else
   echo "✅ Registered PostToolUse hook in $SETTINGS_FILE"
 fi
 
+# --- PRE-TOOL-USE HOOKS (merge from source settings, preserving existing entries) ---
+SOURCE_SETTINGS="$SCRIPT_DIR/.claude/settings.json"
+SOURCE_PTU_COUNT=$(jq '.hooks.PreToolUse // [] | length' "$SOURCE_SETTINGS" 2>/dev/null || echo "0")
+if [ "$SOURCE_PTU_COUNT" -gt 0 ]; then
+  echo "🔧 Merging $SOURCE_PTU_COUNT PreToolUse hook group(s) from source..."
+  for i in $(seq 0 $((SOURCE_PTU_COUNT - 1))); do
+    # Extract the command from the source hook group
+    SRC_CMD=$(jq -r ".hooks.PreToolUse[$i].hooks[0].command" "$SOURCE_SETTINGS")
+    # Check if this command already exists in deployed settings
+    if jq -e --arg cmd "$SRC_CMD" \
+        '.hooks.PreToolUse // [] | map(.hooks // [] | map(.command)) | flatten | any(. == $cmd)' \
+        "$SETTINGS_FILE" >/dev/null 2>&1; then
+      echo "⚠️  PreToolUse hook already registered ($SRC_CMD) — skipping"
+    else
+      # Extract the full hook group from source and merge into deployed
+      TMPFILE="$(mktemp)"
+      SRC_GROUP=$(jq ".hooks.PreToolUse[$i]" "$SOURCE_SETTINGS")
+      jq --argjson group "$SRC_GROUP" '
+        if .hooks == null then
+          .hooks = {"PreToolUse": [$group]}
+        elif .hooks.PreToolUse == null then
+          .hooks.PreToolUse = [$group]
+        else
+          .hooks.PreToolUse += [$group]
+        end
+      ' "$SETTINGS_FILE" > "$TMPFILE" \
+        && mv "$TMPFILE" "$SETTINGS_FILE"
+      echo "✅ Registered PreToolUse hook: $SRC_CMD"
+    fi
+  done
+else
+  echo "ℹ️  No PreToolUse hooks in source settings — existing hooks preserved"
+fi
+
 # --- VALIDATE result ---
 jq . "$SETTINGS_FILE" >/dev/null 2>&1 || { echo "❌ settings.json corrupted after merge — restore from backup"; exit 1; }
 
