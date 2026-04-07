@@ -247,6 +247,15 @@ export interface MicroverseMetric {
   judge_model?: string;
 }
 
+export type FailureClass = 'tool_failure' | 'approach_exhaustion' | 'regression' | 'metric_unstable' | 'no_progress';
+
+export interface ClassifiedFailure {
+  iteration: number;
+  failure_class: FailureClass;
+  description: string;
+  timestamp: string;
+}
+
 export interface MicroverseHistoryEntry {
   iteration: number;
   metric_value: string;
@@ -255,6 +264,8 @@ export interface MicroverseHistoryEntry {
   description: string;
   pre_iteration_sha: string;
   timestamp: string;
+  classification?: 'improved' | 'held' | 'regressed';
+  failure_class?: FailureClass;
 }
 
 export interface MicroverseSessionState {
@@ -275,6 +286,8 @@ export interface MicroverseSessionState {
   convergence_file?: string;
   exit_reason?: string;
   stash_ref?: string;
+  failure_history: ClassifiedFailure[];
+  approach_exhaustion_fired: boolean;
 }
 
 export interface CreateMicroverseOpts {

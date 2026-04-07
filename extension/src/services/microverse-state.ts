@@ -47,6 +47,8 @@ export function createMicroverseState(opts: CreateMicroverseOpts): MicroverseSes
     gap_analysis_path: '',
     failed_approaches: [],
     baseline_score: 0,
+    failure_history: [],
+    approach_exhaustion_fired: false,
   };
   if (convergenceTarget != null) state.convergence_target = convergenceTarget;
   if (convergenceMode != null) state.convergence_mode = convergenceMode;
