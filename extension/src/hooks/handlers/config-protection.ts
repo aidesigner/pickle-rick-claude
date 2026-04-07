@@ -1,0 +1,136 @@
+import * as fs from 'fs';
+import * as path from 'path';
+import { resolveStateFile, loadActiveState, approve } from '../resolve-state.js';
+import { getExtensionRoot, extractFrontmatter } from '../../services/pickle-utils.js';
+
+interface PreToolUseInput {
+  tool_name?: string;
+  tool_input?: {
+    file_path?: string;
+    command?: string;
+    [key: string]: unknown;
+  };
+}
+
+const PROTECTED_PATTERNS = [
+  /^\.eslintrc(\..*)?$/,
+  /^\.prettierrc(\..*)?$/,
+  /^biome\.json$/,
+  /^tsconfig(\..*)?\.json$/,
+  /^pyproject\.toml$/,
+  /^\.ruff\.toml$/,
+  /^jest\.config\./,
+  /^vitest\.config\./,
+];
+
+function isProtectedFile(filePath: string): boolean {
+  const base = path.basename(filePath);
+  return PROTECTED_PATTERNS.some(p => p.test(base));
+}
+
+function isBashTargetingConfig(command: string): boolean {
+  // Extract space/quote-separated tokens and test each as a potential filename
+  const tokens = command.split(/[\s'"]+/).filter(t => t.length > 0);
+  return tokens.some(token => isProtectedFile(token));
+}
+
+function hasConfigChangeOverride(state: { session_dir?: string; current_ticket?: string | null }): boolean {
+  try {
+    if (!state.session_dir || !state.current_ticket) return false;
+    const ticketDir = path.join(state.session_dir, state.current_ticket);
+    const files = fs.readdirSync(ticketDir);
+    const ticketFile = files.find(f => f.startsWith('linear_ticket_') && f.endsWith('.md'));
+    if (!ticketFile) return false;
+    const content = fs.readFileSync(path.join(ticketDir, ticketFile), 'utf8');
+    const fm = extractFrontmatter(content);
+    if (!fm) return false;
+    return /^config_change:\s*true$/m.test(fm.body);
+  } catch {
+    return false;
+  }
+}
+
+function block(reason: string): void {
+  console.log(JSON.stringify({ decision: 'block', reason }));
+}
+
+async function main() {
+  const extensionDir = getExtensionRoot();
+
+  let inputData: string;
+  try {
+    inputData = fs.readFileSync(0, 'utf8');
+  } catch {
+    approve();
+    return;
+  }
+
+  if (!inputData.trim()) {
+    approve();
+    return;
+  }
+
+  let input: PreToolUseInput;
+  try {
+    input = JSON.parse(inputData);
+  } catch {
+    approve();
+    return;
+  }
+
+  // Activation guard: only active during automated sessions
+  const stateFile = resolveStateFile(extensionDir);
+  if (!stateFile) {
+    approve();
+    return;
+  }
+
+  const state = loadActiveState(stateFile);
+  if (!state) {
+    approve();
+    return;
+  }
+
+  const toolName = input.tool_name || '';
+  const filePath = input.tool_input?.file_path || '';
+  const command = input.tool_input?.command || '';
+
+  let targetedConfigFile: string | null = null;
+
+  if ((toolName === 'Write' || toolName === 'Edit') && filePath) {
+    if (isProtectedFile(filePath)) {
+      targetedConfigFile = path.basename(filePath);
+    }
+  } else if (toolName === 'Bash' && command) {
+    if (isBashTargetingConfig(command)) {
+      targetedConfigFile = '<config file>';
+    }
+  }
+
+  if (!targetedConfigFile) {
+    approve();
+    return;
+  }
+
+  // Check per-ticket override
+  if (hasConfigChangeOverride(state)) {
+    approve();
+    return;
+  }
+
+  block(`Config file protected: ${targetedConfigFile}. Set config_change: true in ticket frontmatter to override.`);
+}
+
+main().catch((err) => {
+  try {
+    const msg = err instanceof Error ? err.message : String(err);
+    const extensionDir = getExtensionRoot();
+    fs.appendFileSync(
+      path.join(extensionDir, 'debug.log'),
+      `[config-protection] FATAL: ${msg}\n`
+    );
+  } catch {
+    /* ignore */
+  }
+  approve();
+});
