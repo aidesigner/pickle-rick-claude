@@ -161,7 +161,16 @@ links:
 ```
 
 ### 7d: Create Wiring Ticket
-After all implementation tickets exist, always create one final integration ticket. This ticket is mandatory — every project decomposes into isolated modules that must eventually be connected.
+
+**Skip gate:** Skip this step if total implementation tickets ≤ 2 OR PRD scope is a single module/file (no cross-module integration needed).
+
+After all implementation tickets exist, create one final integration ticket. Isolated Morty workers build modules in fresh context — the wiring ticket connects them into a functioning whole.
+
+**Detect project type** from Step 2 tech stack analysis:
+- **Application** (has entry point: `main.ts`, `index.ts`, `app.ts`, `server.ts`, Next.js/NestJS/Express scaffold, UI framework): use the **Application** template variant below
+- **Library/CLI/Infrastructure** (exports modules, no launch entry point, internal tooling, SDK, CLI tool): use the **Library** template variant below
+
+**Derive verify commands** from Step 2 tech stack: use `${TEST_CMD}`, `${BUILD_CMD}`, `${LINT_CMD}` detected during PRD analysis. Never leave `[project-specific run command]` placeholders — the worker runs headless.
 
 Hash: `openssl rand -hex 4`. Dir: `${SESSION_ROOT}/[hash]/`. File: `linear_ticket_[hash].md`:
 
@@ -182,48 +191,58 @@ links:
 ---
 # Description
 ## Problem
-Each implementation ticket was designed to be self-contained with fresh context. The modules, components, and subsystems have been built in isolation and must now be connected into one functioning piece of software. Without this wiring step, the project has parts but no whole.
+Each implementation ticket was designed to be self-contained with fresh context. The modules, components, and subsystems have been built in isolation and must now be connected. Without this wiring step, the project has parts but no whole.
 
 ## Solution
-Connect every module, panel, service, or component produced by the prior tickets into the integrated application. This includes wiring up entry points, registering components, connecting data flows, mounting UI panels, linking handlers, and running the full end-to-end verification.
+
+### For Application projects:
+Connect every module, component, and service into the running application. Wire entry points, register components, connect data flows, mount UI panels, link handlers, and verify end-to-end.
+
+### For Library/CLI/Infrastructure projects:
+Wire all modules into the public API surface. Ensure exports are connected, CLI commands are registered, internal modules are properly imported, and the integration test exercises the full public interface.
 
 ## Entry Conditions
 All prior tickets (depends_on) are complete and individually verified.
 
 ## Research Seeds
 - **Files**: Review all files modified/created across prior tickets — each ticket's "Exit State" section names them
-- **Patterns**: Entry point registration, component mounting, service wiring, dependency injection, module exports
+- **Patterns**: [Application] Entry point registration, component mounting, service wiring, dependency injection | [Library] Public API exports, barrel files, CLI command registration, module re-exports
 - **APIs/types**: Public interfaces defined in prior tickets' Interface Contracts sections
-- **Test patterns**: End-to-end tests, integration tests, smoke tests
+- **Test patterns**: Integration tests, smoke tests, [Application] e2e tests | [Library] API surface tests
 
 ## Implementation Details
-**Files to modify/create**: Entry point files, top-level module registrations, root component, main application file, integration test file
+**Files to modify/create**: [Application] Entry point files, root component, main application file | [Library] Index/barrel export files, CLI entry point, public API surface
 **Dependencies**: All modules produced by prior tickets
 
 ## Interface Contracts
-**Inputs**: User/environment triggers the application entry point
-**Outputs**: Fully functional application — all features from the PRD reachable via the intended interface
+**Inputs**: [Application] User/environment triggers the entry point | [Library] Consumer imports the public API
+**Outputs**: [Application] Fully functional application — all PRD features reachable via intended interface | [Library] All public exports work end-to-end, CLI commands execute correctly
 **Errors**: Any missing wiring surfaces as runtime error or missing feature — must be resolved here
 **Invariants**: No module is imported but unused; no module is needed but unimported
 
 ## Acceptance Criteria
-- [ ] All modules/components from prior tickets are connected — Verify: run the application and exercise each feature from the PRD — Type: integration
+- [ ] All modules/components from prior tickets are connected — Verify: `${TEST_CMD}` — Type: integration
 - [ ] No dead code or orphaned modules — Verify: grep for each module's export to confirm at least one import — Type: lint
-- [ ] End-to-end smoke test passes — Verify: `[project-specific run command]` — Type: test
-- [ ] Application starts without errors — Verify: `[start command]` exits cleanly or enters expected running state — Type: integration
+- [ ] Build passes clean — Verify: `${BUILD_CMD}` — Type: build
+- [ ] Type checker passes — Verify: `${TC_CMD}` — Type: typecheck
+- [ ] [Application] Application starts without errors — Verify: `${BUILD_CMD} && ${START_CMD}` exits cleanly or enters expected running state — Type: integration
+- [ ] [Library] Public API surface matches Interface Contracts — Verify: `${TEST_CMD}` exercises all exports — Type: integration
 
 ## Test Expectations
 | Criterion | Test File | Description | Assertion |
 |:---|:---|:---|:---|
-| Full app runs | [e2e test file] | Launch app, exercise all top-level features | No errors, all panels/routes/handlers respond |
+| [Application] Full app runs | test/e2e/ or test/integration/ | Launch app, exercise top-level features | No errors, all routes/handlers respond |
+| [Library] API surface works | test/integration/ | Import public API, call each export | All exports resolve, return expected types |
 
 ## Conformance Check
 - [ ] Type checker passes — no new errors
 - [ ] Test runner passes — all acceptance tests
+- [ ] Lint passes — no new warnings
 - [ ] All prior ticket Exit States are satisfied end-to-end
 
 ## Exit State
-The application runs as a unified whole. Every feature described in the PRD is reachable via the intended interface. No module exists in isolation.
+[Application] The application runs as a unified whole. Every PRD feature is reachable via the intended interface.
+[Library] All public exports are connected and tested. The module/CLI/tool works end-to-end as specified in the PRD.
 
 ## NOT in Scope
 Implementing new features. Fixing bugs in individual modules (those belong in the relevant ticket). Performance optimization.
