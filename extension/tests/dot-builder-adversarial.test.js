@@ -344,8 +344,9 @@ describe('Adversarial audit', () => {
         // Exit node uses ID "exit" with shape=Msquare
         assert.ok(dot.match(/shape="Msquare"/), 'exit node with Msquare shape exists');
 
-        // Verify verify_final exists (connects to exit)
-        assert.ok(dot.includes('verify_final ['), 'verify_final node present');
+        // Verify disaggregated endgame chain exists
+        assert.ok(dot.includes('verify_typecheck ['), 'verify_typecheck node present');
+        assert.ok(dot.includes('verify_tests ['), 'verify_tests node present');
     });
 
     // (4) ALREADY_BUILT: Given built instance, When .build() called again, Then rejects to prevent reuse

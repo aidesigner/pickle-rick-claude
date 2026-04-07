@@ -574,15 +574,17 @@ describe('BDD: thread_id topology', () => {
         assert.ok(r.dot.includes('red_team_sec -> fix_sec'), 'red_team must have fail edge to fix node');
     });
 
-    test('fix_all has NO thread_id', () => {
+    test('endgame fix nodes have NO thread_id', () => {
         const r = buildWithPhases({}, [
             validPhase('a', 'do a', { dependsOn: [] }),
             validPhase('b', 'do b', { dependsOn: ['a'] }),
         ]);
-        const fixAllAttrs = getNodeAttrs(r.dot, 'fix_all');
-        if (fixAllAttrs) {
-            assert.equal(fixAllAttrs.thread_id, undefined,
-                'fix_all should NOT have thread_id');
+        for (const id of ['fix_types', 'fix_lint', 'fix_tests']) {
+            const attrs = getNodeAttrs(r.dot, id);
+            if (attrs) {
+                assert.equal(attrs.thread_id, undefined,
+                    `${id} should NOT have thread_id`);
+            }
         }
     });
 
@@ -603,26 +605,29 @@ describe('BDD: thread_id topology', () => {
             'fix allowed_paths should include tests/auth/**');
     });
 
-    test('cross-phase nodes (fix_all, verify_final) get union of all phase allowedPaths + test dirs', () => {
+    test('cross-phase fix nodes get union of all phase allowedPaths + test dirs; verify nodes have correct attrs', () => {
         const r = buildWithPhases({}, [
             validPhase('core', 'core impl', { allowedPaths: ['src/core/**'], dependsOn: [] }),
             validPhase('ui', 'ui impl', { allowedPaths: ['src/ui/**'], dependsOn: ['core'] }),
         ]);
-        const fixAllAttrs = getNodeAttrs(r.dot, 'fix_all');
-        assert.ok(fixAllAttrs, 'fix_all should exist');
-        assert.ok(fixAllAttrs.allowed_paths.includes('src/core/**'), 'fix_all should include src/core/**');
-        assert.ok(fixAllAttrs.allowed_paths.includes('src/ui/**'), 'fix_all should include src/ui/**');
-        assert.ok(fixAllAttrs.allowed_paths.includes('tests/core/**'), 'fix_all should include tests/core/**');
-        assert.ok(fixAllAttrs.allowed_paths.includes('tests/ui/**'), 'fix_all should include tests/ui/**');
-        // verify_final is a tool node — no allowed_paths, has tool attrs
-        const vfAttrs = getNodeAttrs(r.dot, 'verify_final');
-        assert.ok(vfAttrs, 'verify_final should exist');
-        assert.strictEqual(vfAttrs.shape, 'parallelogram', 'verify_final shape');
-        assert.strictEqual(vfAttrs.retry_target, 'fix_all', 'verify_final retry_target');
-        assert.strictEqual(vfAttrs.max_visits, '3', 'verify_final max_visits');
-        assert.strictEqual(vfAttrs.timeout, '30m', 'verify_final timeout');
-        assert.ok(vfAttrs.tool_command, 'verify_final should have tool_command');
-        assert.ok(!vfAttrs.allowed_paths, 'verify_final should NOT have allowed_paths');
+        // Each fix node gets union of allowed_paths
+        for (const fixId of ['fix_types', 'fix_lint', 'fix_tests']) {
+            const fixAttrs = getNodeAttrs(r.dot, fixId);
+            assert.ok(fixAttrs, `${fixId} should exist`);
+            assert.ok(fixAttrs.allowed_paths.includes('src/core/**'), `${fixId} should include src/core/**`);
+            assert.ok(fixAttrs.allowed_paths.includes('src/ui/**'), `${fixId} should include src/ui/**`);
+            assert.ok(fixAttrs.allowed_paths.includes('tests/core/**'), `${fixId} should include tests/core/**`);
+            assert.ok(fixAttrs.allowed_paths.includes('tests/ui/**'), `${fixId} should include tests/ui/**`);
+        }
+        // verify_typecheck is a tool node — no allowed_paths, has tool attrs
+        const vtAttrs = getNodeAttrs(r.dot, 'verify_typecheck');
+        assert.ok(vtAttrs, 'verify_typecheck should exist');
+        assert.strictEqual(vtAttrs.shape, 'parallelogram', 'verify_typecheck shape');
+        assert.strictEqual(vtAttrs.retry_target, 'fix_types', 'verify_typecheck retry_target');
+        assert.strictEqual(vtAttrs.max_visits, '5', 'verify_typecheck max_visits');
+        assert.strictEqual(vtAttrs.timeout, '30m', 'verify_typecheck timeout');
+        assert.ok(vtAttrs.tool_command, 'verify_typecheck should have tool_command');
+        assert.ok(!vtAttrs.allowed_paths, 'verify_typecheck should NOT have allowed_paths');
     });
 
     test('non-src paths pass through without test-dir expansion', () => {

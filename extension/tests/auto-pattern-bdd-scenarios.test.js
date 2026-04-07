@@ -461,11 +461,11 @@ describe('Pickle-Dot Builder Auto-Patterns - BDD Scenarios', () => {
     });
   });
 
-  describe('Pattern 21: Fix All before Verify Final', () => {
-    test('21: Given the final pipeline, When generated, Then fix_all precedes verify_final as a last-resort repair step', () => {
+  describe('Pattern 21: Disaggregated Verify/Fix Endgame Chain', () => {
+    test('21: Given the final pipeline, When generated, Then disaggregated verify/fix chain is emitted', () => {
       const result = new DotBuilder({
-        slug: 'fix-all-test',
-        goal: 'Test fix_all placement',
+        slug: 'endgame-chain-test',
+        goal: 'Test disaggregated endgame chain',
         phases: [
           phase('auth', { allowedPaths: ['src/auth/'] }),
           phase('api', { allowedPaths: ['src/api/'], dependsOn: ['auth'] }),
@@ -474,26 +474,30 @@ describe('Pickle-Dot Builder Auto-Patterns - BDD Scenarios', () => {
       }).build();
 
       const nodes = parseDotNodes(result.dot);
-      assert.ok(nodes.has('fix_all'), 'should have fix_all node');
-      assert.ok(nodes.has('verify_final'), 'should have verify_final node');
+      // All endgame nodes present
+      for (const id of ['audit', 'verify_typecheck', 'verify_lint', 'verify_tests',
+                        'fix_types', 'fix_lint', 'fix_tests', 'regression_check', 'quality_review']) {
+        assert.ok(nodes.has(id), `should have ${id} node`);
+      }
+      // No fix_all without broadPass
+      assert.ok(!nodes.has('fix_all'), 'fix_all should NOT exist without broadPass');
 
-      const fixAll = nodes.get('fix_all');
-      assert.equal(fixAll.get('class'), 'codergen', 'fix_all must be class=codergen');
-      assert.equal(fixAll.get('timeout'), '30m', 'fix_all must have timeout=30m');
-      assert.equal(fixAll.get('permission_mode'), 'auto', 'fix_all must have permission_mode=auto');
+      const fixTypes = nodes.get('fix_types');
+      assert.equal(fixTypes.get('class'), 'codergen', 'fix_types must be class=codergen');
+      assert.equal(fixTypes.get('timeout'), '30m', 'fix_types must have timeout=30m');
+      assert.equal(fixTypes.get('permission_mode'), 'auto', 'fix_types must have permission_mode=auto');
 
-      // fix_all allowed_paths = union of all phase paths
-      const ap = fixAll.get('allowed_paths') ?? '';
-      assert.ok(ap.includes('src/auth/'), 'fix_all allowed_paths must include auth paths');
-      assert.ok(ap.includes('src/api/'), 'fix_all allowed_paths must include api paths');
+      // fix_types allowed_paths = union of all phase paths
+      const ap = fixTypes.get('allowed_paths') ?? '';
+      assert.ok(ap.includes('src/auth/'), 'fix_types allowed_paths must include auth paths');
+      assert.ok(ap.includes('src/api/'), 'fix_types allowed_paths must include api paths');
 
       const edges = parseDotEdges(result.dot);
-      assert.ok(edges.some(e => e.source === 'fix_all' && e.target === 'verify_final'),
-        'must have fix_all -> verify_final edge');
+      assert.ok(edges.some(e => e.source === 'audit' && e.target === 'verify_typecheck'),
+        'must have audit -> verify_typecheck edge');
+      assert.ok(edges.some(e => e.source === 'regression_check' && e.target === 'quality_review'),
+        'must have regression_check -> quality_review edge');
 
-      const fixIdx = result.dot.indexOf('fix_all');
-      const verifyIdx = result.dot.indexOf('verify_final');
-      assert.ok(fixIdx < verifyIdx, 'fix_all must precede verify_final in DOT output');
       assert.ok(result.patternsApplied.includes('P21'), 'patternsApplied must include P21');
     });
   });
@@ -560,7 +564,7 @@ describe('Pickle-Dot Builder Auto-Patterns - BDD Scenarios', () => {
   });
 
   describe('Pattern 25: Catastrophic Recovery', () => {
-    test('25: Given a sequential pipeline with retry loops, When built, Then verify_final has a loop_restart edge back to setup_deps', () => {
+    test('25: Given a sequential pipeline with retry loops, When built, Then regression_check has a loop_restart edge back to setup_deps', () => {
       const result = new DotBuilder({
         slug: 'catastrophic-test',
         goal: 'Test catastrophic recovery',
@@ -570,10 +574,10 @@ describe('Pickle-Dot Builder Auto-Patterns - BDD Scenarios', () => {
 
       const edges = parseDotEdges(result.dot);
       const catastrophicEdge = edges.find(
-        e => e.source === 'verify_final' && e.target === 'setup_deps',
+        e => e.source === 'regression_check' && e.target === 'setup_deps',
       );
 
-      assert.ok(catastrophicEdge, 'must have verify_final -> setup_deps edge');
+      assert.ok(catastrophicEdge, 'must have regression_check -> setup_deps edge');
       assert.equal(catastrophicEdge.attrs.get('loop_restart'), 'true',
         'catastrophic edge must have loop_restart=true');
       assert.ok(result.patternsApplied.includes('P25'), 'patternsApplied must include P25');
@@ -643,8 +647,10 @@ describe('Pickle-Dot Builder Auto-Patterns - BDD Scenarios', () => {
       // P16b (opt-in via bddScenarios)
       assert.ok(nodes.has('bdd_scenarios_foundation'), 'P16b: foundation has bddScenarios=true');
       // P21
-      assert.ok(nodes.has('fix_all'), 'P21: should have fix_all');
-      assert.ok(nodes.has('verify_final'), 'P21: should have verify_final');
+      assert.ok(nodes.has('audit'), 'P21: should have audit');
+      assert.ok(nodes.has('verify_typecheck'), 'P21: should have verify_typecheck');
+      assert.ok(nodes.has('verify_tests'), 'P21: should have verify_tests');
+      assert.ok(nodes.has('regression_check'), 'P21: should have regression_check');
       // P22
       assert.ok(nodes.has('impl_foundation'), 'P22: should have impl nodes');
       assert.equal(nodes.get('impl_foundation').get('class'), 'codergen', 'P22: impl must be codergen');

@@ -30,7 +30,7 @@ export const BUILD_ERROR_CODES: BuildErrorCodeType[] = [
 export const BuildErrorCode = BUILD_ERROR_CODES;
 
 // ---------------------------------------------------------------------------
-// Tier 2 auto-keys — added to verify_final context_on_success
+// Tier 2 auto-keys — distributed across verify_typecheck/verify_lint/verify_tests
 // ---------------------------------------------------------------------------
 const TIER_2_AUTO_KEYS: Record<string, string> = {
   cli_contract: 'true',
@@ -786,6 +786,7 @@ interface InternalSpec {
   microverse?: { name: string; opts: Record<string, unknown> };
   reviewRatchet?: number;
   modelStylesheet?: Record<string, unknown>;
+  endgame?: { broadPass?: boolean };
 }
 
 export class DotBuilder {
@@ -835,6 +836,9 @@ export class DotBuilder {
     }
     if (isRecord(spec['modelStylesheet'])) {
       builder.modelStylesheet(spec['modelStylesheet']);
+    }
+    if (isRecord(spec['endgame'])) {
+      builder.endgame(spec['endgame'] as { broadPass?: boolean });
     }
     return builder;
   }
@@ -902,6 +906,12 @@ export class DotBuilder {
   modelStylesheet(config: Record<string, unknown>): this {
     if (this._built) throw new BuildError('ALREADY_BUILT', 'cannot call modelStylesheet() after build()');
     this._spec = { ...this._spec, modelStylesheet: config };
+    return this;
+  }
+
+  endgame(opts: { broadPass?: boolean }): this {
+    if (this._built) throw new BuildError('ALREADY_BUILT', 'cannot call endgame() after build()');
+    this._spec = { ...this._spec, endgame: opts };
     return this;
   }
 
@@ -1041,7 +1051,7 @@ export class DotBuilder {
       label: escapeAttr(`${this._slug}: ${this._goal}`),
       rankdir: 'LR',
       goal: escapeAttr(this._goal),
-      retry_target: 'fix_all',
+      retry_target: 'fix_types',
     };
     if (spec.workingDir) {
       graphAttrs['working_dir'] = escapeAttr(spec.workingDir);
@@ -1117,7 +1127,7 @@ export class DotBuilder {
     const unionPaths = expandWithTestDirs(rawUnionPaths).join(',');
     const unionEscalate = [...new Set(allDependentPhases.flatMap(p => p.escalateOn ?? []))].join(',');
 
-    // Tier 1 (explicit) + Tier 2 (auto) keys for verify_final context_on_success
+    // Tier 1 (explicit) + Tier 2 (auto) keys distributed across verify nodes
     const tier1Keys: Record<string, string> = {};
     for (const p of phases) {
       if (p.contextOnSuccess) {
@@ -1126,8 +1136,134 @@ export class DotBuilder {
         }
       }
     }
-    const verifyFinalKV: Record<string, string> = { ...TIER_2_AUTO_KEYS, ...tier1Keys };
-    const verifyFinalContextOnSuccess = serializeKV(verifyFinalKV);
+    // verify_typecheck gets types_compile; verify_lint gets lint_clean;
+    // verify_tests gets the rest (tests_pass, cli_contract, determinism, validation_rules) + tier1
+    const verifyTypecheckKV: Record<string, string> = { types_compile: 'true' };
+    const verifyLintKV: Record<string, string> = { lint_clean: 'true' };
+    const verifyTestsKV: Record<string, string> = {
+      cli_contract: 'true', determinism: 'true', tests_pass: 'true', validation_rules: 'true',
+      ...tier1Keys,
+    };
+
+    // Helper: emit the disaggregated endgame chain
+    const emitEndgameChain = (prevId: string, prevAttrs?: Record<string, string>): void => {
+      // audit: diagnostic node, never fails (|| true on all commands)
+      emit('audit', {
+        label: 'audit',
+        read_only: 'true',
+        shape: 'cds',
+        tool_command: "cd ${WORKING_DIR} && (npx tsc --noEmit 2>&1 || true) && (npx eslint src/ --max-warnings=-1 2>&1 || true) && (npm test 2>&1 || true)",
+      });
+      link(prevId, 'audit', prevAttrs);
+
+      let chainPrev = 'audit';
+
+      // Optional fix_all broad pass (only when endgame.broadPass=true)
+      if (spec.endgame?.broadPass) {
+        const fixAllAttrs: Record<string, string> = {
+          allowed_paths: unionPaths,
+          class: 'codergen',
+          label: 'fix_all',
+          max_visits: '2',
+          permission_mode: 'auto',
+          timeout: '30m',
+        };
+        if (unionEscalate) fixAllAttrs['escalate_on'] = unionEscalate;
+        emit('fix_all', fixAllAttrs);
+        link('audit', 'fix_all');
+        chainPrev = 'fix_all';
+      }
+
+      // verify_typecheck <-> fix_types
+      emit('verify_typecheck', {
+        context_on_success: serializeKV(verifyTypecheckKV),
+        label: 'verify_typecheck',
+        max_visits: '5',
+        retry_target: 'fix_types',
+        shape: 'parallelogram',
+        timeout: '30m',
+        tool_command: 'cd ${WORKING_DIR} && npx tsc --noEmit',
+      });
+      emit('fix_types', {
+        allowed_paths: unionPaths,
+        class: 'codergen',
+        escalate_on: unionEscalate || DEFAULT_ESCALATE_ON,
+        label: 'Fix ONLY type errors reported by tsc --noEmit',
+        max_visits: '5',
+        permission_mode: 'auto',
+        timeout: '30m',
+      });
+      link(chainPrev, 'verify_typecheck');
+      link('verify_typecheck', 'fix_types', { condition: 'outcome=fail', label: 'fail' });
+      link('fix_types', 'verify_typecheck');
+
+      // verify_lint <-> fix_lint
+      emit('verify_lint', {
+        context_on_success: serializeKV(verifyLintKV),
+        label: 'verify_lint',
+        max_visits: '5',
+        retry_target: 'fix_lint',
+        shape: 'parallelogram',
+        timeout: '30m',
+        tool_command: 'cd ${WORKING_DIR} && npx eslint src/ --max-warnings=-1',
+      });
+      emit('fix_lint', {
+        allowed_paths: unionPaths,
+        class: 'codergen',
+        escalate_on: unionEscalate || DEFAULT_ESCALATE_ON,
+        label: 'Fix ONLY lint errors reported by eslint',
+        max_visits: '5',
+        permission_mode: 'auto',
+        timeout: '30m',
+      });
+      link('verify_typecheck', 'verify_lint', { condition: 'outcome=success', label: 'pass' });
+      link('verify_lint', 'fix_lint', { condition: 'outcome=fail', label: 'fail' });
+      link('fix_lint', 'verify_lint');
+
+      // verify_tests <-> fix_tests
+      emit('verify_tests', {
+        context_on_success: serializeKV(verifyTestsKV),
+        label: 'verify_tests',
+        max_visits: '5',
+        retry_target: 'fix_tests',
+        shape: 'parallelogram',
+        timeout: '30m',
+        tool_command: 'cd ${WORKING_DIR} && npm test',
+      });
+      emit('fix_tests', {
+        allowed_paths: unionPaths,
+        class: 'codergen',
+        escalate_on: unionEscalate || DEFAULT_ESCALATE_ON,
+        label: 'Fix ONLY failing tests reported by npm test',
+        max_visits: '5',
+        permission_mode: 'auto',
+        timeout: '30m',
+      });
+      link('verify_lint', 'verify_tests', { condition: 'outcome=success', label: 'pass' });
+      link('verify_tests', 'fix_tests', { condition: 'outcome=fail', label: 'fail' });
+      link('fix_tests', 'verify_tests');
+
+      // regression_check — full suite re-run, failure routes to fix_types
+      emit('regression_check', {
+        label: 'regression_check',
+        shape: 'parallelogram',
+        timeout: '30m',
+        tool_command: 'cd ${WORKING_DIR} && npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npm test',
+      });
+      link('verify_tests', 'regression_check', { condition: 'outcome=success', label: 'pass' });
+      link('regression_check', 'fix_types', { condition: 'outcome=fail', label: 'fail' });
+
+      // quality_review gate
+      emit('quality_review', {
+        class: 'review',
+        label: 'Final quality review: verify all acceptance criteria met, no regressions, code is clean. Output STATUS: SUCCESS | FAIL.',
+        read_only: 'true',
+        timeout: '15m',
+      });
+      link('regression_check', 'quality_review', { condition: 'outcome=success', label: 'pass' });
+      link('quality_review', 'exit', { condition: 'outcome=success', label: 'pass' });
+      link('quality_review', 'fix_types', { condition: 'outcome=fail', label: 'fail' });
+    };
 
     // Fan-out (Pattern 4)
     if (isFanOut) {
@@ -1153,29 +1289,9 @@ export class DotBuilder {
         link(afterMerge, id);
         afterMerge = id;
       }
-      // P21: fix_all + verify_final
+      // P21: disaggregated verify/fix endgame chain
       applied.add('P21');
-      const fixAllAttrs: Record<string, string> = {
-        allowed_paths: unionPaths,
-        class: 'codergen',
-        label: 'fix_all',
-        permission_mode: 'auto',
-        timeout: '30m',
-      };
-      if (unionEscalate) fixAllAttrs['escalate_on'] = unionEscalate;
-      emit('fix_all', fixAllAttrs);
-      emit('verify_final', {
-        context_on_success: verifyFinalContextOnSuccess,
-        label: 'verify_final',
-        max_visits: '3',
-        retry_target: 'fix_all',
-        shape: 'parallelogram',
-        timeout: '30m',
-        tool_command: 'cd ${WORKING_DIR} && npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npm test',
-      });
-      link(afterMerge, 'fix_all');
-      link('fix_all', 'verify_final');
-      link('verify_final', 'exit');
+      emitEndgameChain(afterMerge);
 
     } else if (hasCompeting) {
       // Competing implementations (Pattern 18)
@@ -1474,34 +1590,10 @@ export class DotBuilder {
         }
       }
 
-      // P21: fix_all + verify_final
+      // P21: disaggregated verify/fix endgame chain
       if (hasAnyPhase) {
-        if (unionPaths) {
-          applied.add('P21');
-          const fixAllAttrs: Record<string, string> = {
-            allowed_paths: unionPaths,
-            class: 'codergen',
-            label: 'fix_all',
-            permission_mode: 'auto',
-            timeout: '30m',
-          };
-          if (unionEscalate) fixAllAttrs['escalate_on'] = unionEscalate;
-          emit('fix_all', fixAllAttrs);
-          link(prevId, 'fix_all', prevAttrs);
-          link('fix_all', 'verify_final');
-        } else {
-          link(prevId, 'verify_final');
-        }
-        emit('verify_final', {
-          context_on_success: verifyFinalContextOnSuccess,
-          label: 'verify_final',
-          max_visits: '3',
-          retry_target: 'fix_all',
-          shape: 'parallelogram',
-          timeout: '30m',
-          tool_command: 'cd ${WORKING_DIR} && npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npm test',
-        });
-        link('verify_final', 'exit');
+        applied.add('P21');
+        emitEndgameChain(prevId, prevAttrs);
       } else {
         link('capture_baseline', 'exit');
       }
@@ -1510,7 +1602,7 @@ export class DotBuilder {
     // P25: Catastrophic recovery loop
     if (!isFanOut && !hasCompeting && implPhases.length > 0) {
       applied.add('P25');
-      linkEdge('verify_final', 'setup_deps', { loop_restart: 'true' });
+      linkEdge('regression_check', 'setup_deps', { loop_restart: 'true' });
     }
 
     // Microverse loop (Pattern 20)

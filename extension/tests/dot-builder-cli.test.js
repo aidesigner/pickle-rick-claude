@@ -200,7 +200,9 @@ describe('thread_id auto-assignment', () => {
     test('(9) cross-phase structural nodes have NO thread_id', () => {
         const r = DotBuilder.fromSpec(twoPhaseSpec()).build();
         const dot = r.dot;
-        const structural = ['start', 'exit', 'setup_deps', 'capture_baseline', 'verify_final'];
+        const structural = ['start', 'exit', 'setup_deps', 'capture_baseline', 'audit',
+            'verify_typecheck', 'verify_lint', 'verify_tests', 'fix_types', 'fix_lint', 'fix_tests',
+            'regression_check', 'quality_review'];
         for (const nodeId of structural) {
             const line = dot.split('\n').find(l => l.trim().startsWith(nodeId + ' '));
             assert.ok(line, `node ${nodeId} should exist in DOT output`);

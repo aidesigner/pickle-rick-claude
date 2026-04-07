@@ -268,8 +268,8 @@ describe('Auto-pattern snapshot tests (18 auto-applied patterns)', () => {
         assert.ok(patternsApplied.includes('P15'));
     });
 
-    // P21: Fix All ------------------------------------------------------------
-    test('P21 — fix_all codergen node with timeout=30m, permission_mode=auto, union of allowed_paths', () => {
+    // P21: Disaggregated verify/fix endgame chain ------------------------------
+    test('P21 — disaggregated verify/fix chain with audit, verify_typecheck/lint/tests, fix_types/lint/tests, regression_check, quality_review', () => {
         const { dot, patternsApplied } = new DotBuilder(baseSpec({
             phases: [
                 phase('auth', { allowedPaths: ['src/auth/'] }),
@@ -278,18 +278,35 @@ describe('Auto-pattern snapshot tests (18 auto-applied patterns)', () => {
         })).build();
 
         const nodes = parseDotNodes(dot);
-        assert.ok(nodes.has('fix_all'), 'fix_all must exist');
-        const fa = nodes.get('fix_all');
-        assert.equal(fa.get('class'), 'codergen');
-        assert.equal(fa.get('timeout'), '30m');
-        assert.equal(fa.get('permission_mode'), 'auto');
-        const ap = fa.get('allowed_paths') ?? '';
+        // All endgame nodes must exist
+        for (const id of ['audit', 'verify_typecheck', 'verify_lint', 'verify_tests',
+                          'fix_types', 'fix_lint', 'fix_tests', 'regression_check', 'quality_review']) {
+            assert.ok(nodes.has(id), `${id} must exist`);
+        }
+        // fix_types has union of allowed_paths
+        const ft = nodes.get('fix_types');
+        assert.equal(ft.get('class'), 'codergen');
+        assert.equal(ft.get('timeout'), '30m');
+        assert.equal(ft.get('permission_mode'), 'auto');
+        const ap = ft.get('allowed_paths') ?? '';
         assert.ok(ap.includes('src/auth/'), 'must include auth paths');
         assert.ok(ap.includes('src/api/'), 'must include api paths');
 
+        // verify nodes have correct shapes and retry targets
+        assert.equal(nodes.get('verify_typecheck').get('shape'), 'parallelogram');
+        assert.equal(nodes.get('verify_typecheck').get('retry_target'), 'fix_types');
+        assert.equal(nodes.get('verify_lint').get('shape'), 'parallelogram');
+        assert.equal(nodes.get('verify_lint').get('retry_target'), 'fix_lint');
+        assert.equal(nodes.get('verify_tests').get('shape'), 'parallelogram');
+        assert.equal(nodes.get('verify_tests').get('retry_target'), 'fix_tests');
+
+        // No fix_all without broadPass
+        assert.ok(!nodes.has('fix_all'), 'fix_all should NOT exist without broadPass');
+
         const edges = parseDotEdges(dot);
-        assert.ok(edges.some(e => e.source === 'fix_all' && e.target === 'verify_final'), 'fix_all → verify_final');
-        assert.ok(dot.indexOf('fix_all') < dot.indexOf('verify_final'), 'fix_all before verify_final');
+        // Chain: audit -> verify_typecheck -> verify_lint -> verify_tests -> regression_check -> quality_review
+        assert.ok(edges.some(e => e.source === 'audit' && e.target === 'verify_typecheck'), 'audit -> verify_typecheck');
+        assert.ok(edges.some(e => e.source === 'regression_check' && e.target === 'quality_review'), 'regression_check -> quality_review');
         assert.ok(patternsApplied.includes('P21'));
     });
 
@@ -335,14 +352,14 @@ describe('Auto-pattern snapshot tests (18 auto-applied patterns)', () => {
     });
 
     // P25: Catastrophic Recovery ----------------------------------------------
-    test('P25 — verify_final → setup_deps loop_restart edge on sequential pipelines', () => {
+    test('P25 — regression_check → setup_deps loop_restart edge on sequential pipelines', () => {
         const { dot, patternsApplied } = new DotBuilder(baseSpec({
             phases: [phase('critical')],
         })).build();
 
         const edges = parseDotEdges(dot);
-        const recovery = edges.find(e => e.source === 'verify_final' && e.target === 'setup_deps');
-        assert.ok(recovery, 'must have verify_final → setup_deps edge');
+        const recovery = edges.find(e => e.source === 'regression_check' && e.target === 'setup_deps');
+        assert.ok(recovery, 'must have regression_check → setup_deps edge');
         assert.equal(recovery.attrs.get('loop_restart'), 'true');
         assert.ok(patternsApplied.includes('P25'));
     });
