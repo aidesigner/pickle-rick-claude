@@ -34,7 +34,8 @@ function main() {
     }
     catch (err) {
         if (err instanceof BuildError) {
-            process.stderr.write(JSON.stringify({ error: err.code, message: err.message, diagnostics: err.diagnostics }) + '\n');
+            const be = err;
+            process.stderr.write(JSON.stringify({ error: be.code, message: be.message, diagnostics: be.diagnostics }) + '\n');
             process.exit(1);
         }
         const msg = err instanceof Error ? err.message : String(err);

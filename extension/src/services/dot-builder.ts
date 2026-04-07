@@ -1113,7 +1113,7 @@ export class DotBuilder {
     emit('start', { shape: 'Mdiamond' });
     emit('setup_deps', {
       label: 'setup_deps',
-      shape: 'cds',
+      shape: 'parallelogram',
       tool_command: 'cd ${WORKING_DIR} && npm install 2>&1 || pnpm install 2>&1 || yarn install 2>&1',
     });
     applied.add('P0a');
@@ -1122,7 +1122,7 @@ export class DotBuilder {
     emit('capture_baseline', {
       label: 'capture_baseline',
       read_only: 'true',
-      shape: 'cds',
+      shape: 'parallelogram',
       tool_command: "cd ${WORKING_DIR} && (npx tsc --noEmit 2>&1 | grep -c 'error TS' > /tmp/baseline_ts_errors.txt || echo 0 > /tmp/baseline_ts_errors.txt) && (npx eslint src/ 2>&1 | grep -c 'error' > /tmp/baseline_lint_errors.txt || echo 0 > /tmp/baseline_lint_errors.txt)",
     });
     applied.add('P0c');
@@ -1159,7 +1159,7 @@ export class DotBuilder {
       emit('audit', {
         label: 'audit',
         read_only: 'true',
-        shape: 'cds',
+        shape: 'parallelogram',
         tool_command: "cd ${WORKING_DIR} && (npx tsc --noEmit 2>&1 || true) && (npx eslint src/ --max-warnings=-1 2>&1 || true) && (npm test 2>&1 || true)",
       });
       link(prevId, 'audit', prevAttrs);
@@ -1377,7 +1377,7 @@ export class DotBuilder {
             label: 'check_progress',
             max_visits: '3',
             read_only: 'true',
-            shape: 'cds',
+            shape: 'parallelogram',
             thread_id: threadId,
             tool_command: "cd ${WORKING_DIR} && [ $(git status --porcelain | wc -l) -gt 0 ] && echo 'STATUS: SUCCESS' || echo 'STATUS: FAIL'",
           });
@@ -1388,7 +1388,7 @@ export class DotBuilder {
             class: 'review',
             label: 'Compare git diff against phase prompt. Flag files modified outside allowed_paths. Output STATUS: SUCCESS | FAIL.',
             read_only: 'true',
-            shape: 'cds',
+            shape: 'parallelogram',
             thread_id: threadId,
           });
           applied.add('P10');
@@ -1479,7 +1479,7 @@ export class DotBuilder {
           class: 'review',
           label: 'Compare git diff against phase prompt. Flag files modified outside allowed_paths. Output STATUS: SUCCESS | FAIL.',
           read_only: 'true',
-          shape: 'cds',
+          shape: 'parallelogram',
           thread_id: threadId,
         });
         applied.add('P10');
@@ -1491,7 +1491,7 @@ export class DotBuilder {
           label: 'check_progress',
           max_visits: '3',
           read_only: 'true',
-          shape: 'cds',
+          shape: 'parallelogram',
           thread_id: threadId,
           tool_command: "cd ${WORKING_DIR} && [ $(git status --porcelain | wc -l) -gt 0 ] && echo 'STATUS: SUCCESS' || echo 'STATUS: FAIL'",
         });
@@ -1501,7 +1501,7 @@ export class DotBuilder {
         // P13: verify_lint
         emit(verifyLintId, {
           label: 'verify_lint: BASELINE from cat baseline_lint_errors; CURRENT lint error count -le BASELINE',
-          shape: 'cds',
+          shape: 'parallelogram',
           thread_id: threadId,
           tool_command: '[ $(npx eslint src/ 2>&1 | grep -c error || echo 0) -le $(cat /tmp/baseline_lint_errors.txt 2>/dev/null || echo 0) ]',
         });
@@ -1549,8 +1549,6 @@ export class DotBuilder {
           conformanceAttrs['goal_gate'] = 'true';
           applied.add('P2');
           conformanceAttrs['max_visits'] = String(spec.defaultMaxRetry ?? 3);
-          const acKeys = Object.keys(spec.acceptanceCriteria ?? {});
-          if (acKeys.length > 0) conformanceAttrs['acceptance_criteria'] = acKeys.join(',');
         }
         emit(conformanceId, conformanceAttrs);
         applied.add('P15');
@@ -1582,6 +1580,7 @@ export class DotBuilder {
           class: 'codergen',
           escalate_on: (p.escalateOn && p.escalateOn.length > 0) ? p.escalateOn.join(',') : DEFAULT_ESCALATE_ON,
           label: `fix ${id}`,
+          max_visits: '5',
           permission_mode: 'auto',
           thread_id: threadId,
           timeout: '30m',
@@ -1608,6 +1607,9 @@ export class DotBuilder {
       if (hasAnyPhase) {
         applied.add('P21');
         emitEndgameChain(prevId, prevAttrs);
+      } else if (spec.microverse) {
+        // Zero-phase + microverse: route into the microverse loop, not directly to exit
+        link('capture_baseline', 'commit_baseline');
       } else {
         link('capture_baseline', 'exit');
       }
@@ -1624,8 +1626,8 @@ export class DotBuilder {
       applied.add('P20');
       const mv = spec.microverse;
       const mvOpts = mv.opts as unknown as MicroverseOptsType;
-      emit('commit_baseline', { label: 'commit_baseline', shape: 'cds' });
-      emit('baseline', { label: `baseline ${mv.name}`, shape: 'cds' });
+      emit('commit_baseline', { label: 'commit_baseline', shape: 'parallelogram' });
+      emit('baseline', { label: `baseline ${mv.name}`, shape: 'parallelogram' });
       emit('optimize', { label: `optimize ${mv.name}` });
       emit('measure', { label: `measure ${mv.name}` });
       emit('compare', {
@@ -1644,8 +1646,12 @@ export class DotBuilder {
       link('compare', 'check', { condition: 'outcome=hit', label: 'hit' });
       link('check', 'exit', { condition: 'outcome=accept', label: 'accept' });
       link('check', 'optimize', { condition: 'outcome=reject', label: 'reject' });
-      for (const mvId of ['commit_baseline', 'baseline', 'optimize', 'measure', 'compare', 'check']) {
-        standaloneNodeIds.add(mvId);
+      // Microverse is standalone (exempt from reachability check) ONLY when phases exist.
+      // In zero-phase mode, microverse IS the main pipeline — connected via capture_baseline.
+      if (phases.length > 0) {
+        for (const mvId of ['commit_baseline', 'baseline', 'optimize', 'measure', 'compare', 'check']) {
+          standaloneNodeIds.add(mvId);
+        }
       }
     }
 
@@ -1657,7 +1663,7 @@ export class DotBuilder {
         emit(`review_pass_${i}`, { label: `review pass ${i}`, shape: 'component' });
       }
       emit('review_merge', { label: 'review_merge', ratchet_count: String(n), shape: 'tripleoctagon' });
-      emit('fix_review', { label: 'fix_review', shape: 'cds' });
+      emit('fix_review', { label: 'fix_review', shape: 'parallelogram' });
       for (let i = 1; i < n; i++) {
         link(`review_pass_${i}`, `review_pass_${i + 1}`);
       }

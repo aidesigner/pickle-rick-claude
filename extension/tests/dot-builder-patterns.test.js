@@ -63,7 +63,7 @@ describe('Auto-pattern snapshot tests (18 auto-applied patterns)', () => {
 
         const nodes = parseDotNodes(dot);
         assert.ok(nodes.has('setup_deps'), 'setup_deps node must exist');
-        assert.equal(nodes.get('setup_deps').get('shape'), 'cds');
+        assert.equal(nodes.get('setup_deps').get('shape'), 'parallelogram');
         const cmd = nodes.get('setup_deps').get('tool_command') ?? '';
         assert.ok(cmd.includes('npm install'), 'must include npm install');
         assert.ok(cmd.includes('pnpm install'), 'must include pnpm install');
@@ -220,7 +220,7 @@ describe('Auto-pattern snapshot tests (18 auto-applied patterns)', () => {
         const sc = nodes.get('scope_check_api');
         assert.equal(sc.get('class'), 'review');
         assert.equal(sc.get('read_only'), 'true');
-        assert.equal(sc.get('shape'), 'cds');
+        assert.equal(sc.get('shape'), 'parallelogram');
 
         const edges = parseDotEdges(dot);
         assert.ok(edges.some(e => e.source === 'impl_api' && e.target === 'scope_check_api'), 'impl → scope_check');

@@ -116,13 +116,27 @@ verify_types [shape=parallelogram, tool_command="cd ${WORKING_DIR} && BASELINE=$
 ```
 Detect: `tsc --noEmit`, `mypy .`, `go vet ./...`. Skip for dynamically-typed projects.
 
-**21. Cross-Phase Cleanup (fix_all)** — before verify_final, fixes ALL remaining issues across all phases:
-```
-fix_all [prompt="Fix ALL remaining issues across the entire codebase. Run each check and fix failures: 1) cd ${WORKING_DIR} && ${LINT_FIX_CMD} 2>&1. 2) ${TYPECHECK_CMD} 2>&1. 3) ${TEST_CMD} 2>&1. Iterate until all pass with zero errors. Do NOT skip or suppress errors.", permission_mode="bypassPermissions", timeout="30m", allowed_paths="src/**, tests/**", escalate_on="package.json, package-lock.json, .env*, *.config.*", max_visits=5]
-```
-Resolve: `${LINT_FIX_CMD}` = `npx eslint src/ --fix` (Node), `ruff check --fix .` (Python), `golangci-lint run --fix` (Go). `${TYPECHECK_CMD}` = `npx tsc --noEmit` / `mypy .` / `go vet ./...`. `${TEST_CMD}` = `npm test` / `pytest` / `go test ./...`.
+**21. Disaggregated Verify/Fix Endgame** — replaces the god-node `fix_all` anti-pattern with isolated fix-verify pairs. The builder auto-generates this chain after all per-phase nodes:
 
-Uses Default tier (no `class`). Graph-level and verify_final `retry_target` MUST point to `fix_all`. Single-phase pipelines: still recommended; trivial ones may use sole impl node.
+```
+audit [shape=parallelogram, tool_command="cd ${WORKING_DIR} && (npx tsc --noEmit 2>&1 || true) && (npx eslint src/ 2>&1 || true) && (npm test 2>&1 || true)", read_only=true]
+verify_typecheck [shape=parallelogram, goal_gate=true, retry_target="fix_types", max_visits=5, tool_command="cd ${WORKING_DIR} && npx tsc --noEmit 2>&1", context_on_success="types_compile=true"]
+fix_types [prompt="Fix ONLY TypeScript type errors. Do NOT modify test logic, lint config, or code unrelated to type errors.", class="codergen", timeout="30m", max_visits=5, allowed_paths="src/**"]
+verify_lint [shape=parallelogram, goal_gate=true, retry_target="fix_lint", max_visits=5, tool_command="cd ${WORKING_DIR} && npx eslint src/ --max-warnings=-1 2>&1", context_on_success="lint_clean=true"]
+fix_lint [prompt="Fix ONLY ESLint errors. Do NOT modify test files or change logic.", class="codergen", timeout="30m", max_visits=5, allowed_paths="src/**"]
+verify_tests [shape=parallelogram, goal_gate=true, retry_target="fix_tests", max_visits=5, tool_command="cd ${WORKING_DIR} && npm test 2>&1", context_on_success="tests_pass=true"]
+fix_tests [prompt="Fix ONLY failing tests. Do NOT delete or skip tests.", class="codergen", timeout="30m", max_visits=5, allowed_paths="src/**, tests/**"]
+regression_check [shape=parallelogram, tool_command="cd ${WORKING_DIR} && npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npm test 2>&1"]
+quality_review [class="review", read_only=true, prompt="Review git diff for code quality. Output STATUS: SUCCESS | FAIL."]
+```
+
+**Key principle:** Each fix node's `allowed_paths` is scoped to prevent cross-category regression. `fix_types` cannot touch tests, `fix_lint` cannot change type signatures. Empirically: 6/6 AC in 8min vs 4/6 in 7h with the god-node pattern.
+
+**Edges:** `audit → verify_typecheck → verify_lint → verify_tests → regression_check → quality_review → exit`. Each verify node has a fail→fix→verify isolated loop. `regression_check` failure re-enters at `fix_types`.
+
+**Validator rule `pipeline_convergence_gates`**: Warns when pipelines with 3+ codergen nodes lack `goal_gate=true` or `acceptance_criteria`.
+
+Graph-level `retry_target` points to `fix_types` (first node in the endgame chain). Optional `endgame.broadPass=true` adds an initial `fix_all` with `max_visits=2` before the chain — NOT referenced as `retry_target` by any verify node.
 
 ## Tier 2: Default (emit unless explicitly simplified)
 

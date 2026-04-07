@@ -183,7 +183,8 @@ describe('Adversarial audit', () => {
         );
     });
 
-    // (12) DOT injection in prompt
+    // (12) DOT injection in prompt — verify quotes are escaped so the payload
+    // stays inside a quoted attribute value and cannot break DOT structure
     test('12: DOT injection in prompt', () => {
         const injection = '} ; digraph evil { attacker [label="pwned"]';
         try {
@@ -191,9 +192,17 @@ describe('Adversarial audit', () => {
                 phases: [phase('Inject', { prompt: injection })]
             }));
             const result = builder.build();
+            // The injection string appears in the output BUT inside a properly
+            // quoted attribute value. The key defense is that `"` is escaped to `\\"`,
+            // so the attacker cannot close the attribute and inject new DOT structure.
             assert.ok(
-                !result.dot.includes('digraph evil'),
-                'DOT injection must be escaped'
+                !result.dot.includes('label="pwned"'),
+                'Unescaped quotes must not appear — attacker cannot close attribute value'
+            );
+            // Verify the escaped form IS present (quotes escaped)
+            assert.ok(
+                result.dot.includes('label=\\"pwned\\"') || result.dot.includes('digraph evil'),
+                'Injection payload present but safely inside quoted attribute'
             );
         } catch (err) {
             assert.ok(

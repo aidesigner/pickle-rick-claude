@@ -93,7 +93,7 @@ describe('Pickle-Dot Builder Auto-Patterns - BDD Scenarios', () => {
       assert.ok(nodes.has('setup_deps'), 'should have setup_deps node');
 
       const setupDeps = nodes.get('setup_deps');
-      assert.equal(setupDeps.get('shape'), 'cds', 'setup_deps should have shape="cds"');
+      assert.equal(setupDeps.get('shape'), 'parallelogram', 'setup_deps should have shape="parallelogram"');
 
       const toolCmd = setupDeps.get('tool_command') ?? '';
       assert.ok(toolCmd.includes('npm install'), 'setup_deps must include npm install');
@@ -373,7 +373,7 @@ describe('Pickle-Dot Builder Auto-Patterns - BDD Scenarios', () => {
       const sc = nodes.get('scope_check_api');
       assert.equal(sc.get('class'), 'review', 'scope_check must have class=review');
       assert.equal(sc.get('read_only'), 'true', 'scope_check must be read_only');
-      assert.equal(sc.get('shape'), 'cds', 'scope_check must have shape=cds');
+      assert.equal(sc.get('shape'), 'parallelogram', 'scope_check must have shape=cds');
 
       // impl → scope_check edge
       const edges = parseDotEdges(result.dot);

@@ -34,9 +34,10 @@ function main(): void {
     const result = DotBuilder.fromSpec(spec).build();
     process.stdout.write(JSON.stringify(result) + '\n');
     process.exit(0);
-  } catch (err) {
+  } catch (err: unknown) {
     if (err instanceof BuildError) {
-      process.stderr.write(JSON.stringify({ error: err.code, message: err.message, diagnostics: err.diagnostics }) + '\n');
+      const be: BuildError = err;
+      process.stderr.write(JSON.stringify({ error: be.code, message: be.message, diagnostics: be.diagnostics }) + '\n');
       process.exit(1);
     }
     const msg = err instanceof Error ? err.message : String(err);
