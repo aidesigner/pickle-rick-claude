@@ -265,4 +265,183 @@ describe('Adversarial audit', () => {
             'nonexistent dependency'
         );
     });
+
+    // ==========================================================================
+    // BDD SCENARIOS — Pipeline Author Perspective (PRD sections: API Contracts,
+    // DOT String Escaping, DOT Serialization Algorithm)
+    // ==========================================================================
+
+    // (1) EMPTY_SLUG: Given omitted slug field, When processed, Then rejects with clear error
+    test('BDD-1: EMPTY_SLUG error for empty slug', () => {
+        assertBuildError(
+            () => DotBuilder.fromSpec({ slug: '', goal: 'test', phases: [] }),
+            'EMPTY_SLUG',
+            'empty slug field'
+        );
+        assertBuildError(
+            () => DotBuilder.fromSpec({ slug: '   ', goal: 'test', phases: [] }),
+            'EMPTY_SLUG',
+            'whitespace-only slug'
+        );
+        // Constructor also validates slug via fromSpec internally
+        assertBuildError(
+            () => DotBuilder.fromSpec({ slug: 'test', goal: 'test goal', phases: [{ name: '', prompt: 'x', allowedPaths: ['x'] }] }),
+            'EMPTY_SLUG',
+            'empty phase name'
+        );
+    });
+
+    // (2) DUPLICATE_PHASE: Given two phases with sanitized ID collision, When processed, Then rejects with collision ID
+    test('BDD-2: DUPLICATE_PHASE error for sanitized collision', () => {
+        assertBuildError(
+            () => DotBuilder.fromSpec(spec({
+                phases: [phase('auth scan'), phase('auth-scan')]
+            })),
+            'DUPLICATE_PHASE',
+            'space vs hyphen collision → auth_scan'
+        );
+        assertBuildError(
+            () => DotBuilder.fromSpec(spec({
+                phases: [phase('Auth_Scan'), phase('auth-scan')]
+            })),
+            'DUPLICATE_PHASE',
+            'underscore vs hyphen collision → auth_scan'
+        );
+        assertBuildError(
+            () => DotBuilder.fromSpec(spec({
+                phases: [phase('test:stage'), phase('test_stage')]
+            })),
+            'DUPLICATE_PHASE',
+            'colon vs underscore collision → test_stage'
+        );
+    });
+
+    // (3) Single-phase digraph: Given single-phase pipeline, When built, Then output has Mdiamond start + Msquare exit
+    test('BDD-3: Single-phase pipeline generates valid digraph with Mdiamond/Msquare', () => {
+        const builder = DotBuilder.fromSpec({
+            slug: 'single-phase',
+            goal: 'Single phase test',
+            phases: [{
+                name: 'main',
+                prompt: 'Build the main module',
+                allowedPaths: ['src/main/**'],
+                timeout: '30m',
+            }],
+        });
+
+        const result = builder.build();
+        const dot = result.dot;
+
+        // Verify DOT structure
+        assert.ok(dot.startsWith('digraph "single_phase"'), 'digraph declaration present');
+        assert.ok(dot.trim().endsWith('}'), 'DOT ends with closing brace');
+
+        // Check for start node with Mdiamond shape
+        assert.ok(dot.includes('start ['), 'start node declared');
+        assert.ok(dot.match(/start\s+\[[\s\S]*?shape\s*=\s*"Mdiamond"/), 'start node has Mdiamond shape');
+
+        // Check for exit node with Msquare shape
+        // Exit node is named based on acceptance_criteria key, typically "done"
+        assert.ok(dot.match(/shape="Msquare"/), 'exit node with Msquare shape exists');
+
+        // Verify verify_final exists (connects to exit)
+        assert.ok(dot.includes('verify_final ['), 'verify_final node present');
+    });
+
+    // (4) ALREADY_BUILT: Given built instance, When .build() called again, Then rejects to prevent reuse
+    test('BDD-4: ALREADY_BUILT error for reusing built instance', () => {
+        const builder = DotBuilder.fromSpec({
+            slug: 'rebuild-test',
+            goal: 'Rebuild test',
+            phases: [{
+                name: 'first',
+                prompt: 'Build something',
+                allowedPaths: ['src/**'],
+                timeout: '30m',
+            }],
+        });
+
+        // First build - should succeed
+        const result1 = builder.build();
+        assert.ok(result1.dot, 'first build succeeded');
+        assert.equal(result1.slug, 'rebuild-test');
+
+        // Second build - should fail with ALREADY_BUILT
+        assertBuildError(
+            () => builder.build(),
+            'ALREADY_BUILT',
+            'second build call rejected'
+        );
+    });
+
+    // (5) Special chars sanitize: Given special chars in phase names, When sanitized, Then valid DOT identifiers result
+    test('BDD-5: Special characters in phase names sanitize to valid DOT identifiers', () => {
+        const builder = DotBuilder.fromSpec({
+            slug: 'special-chars',
+            goal: 'Special chars test',
+            phases: [
+                { name: 'auth scan', prompt: 'Build auth', allowedPaths: ['src/auth/**'], timeout: '30m' },
+                { name: 'build-v2', prompt: 'Build version 2', allowedPaths: ['src/v2/**'], timeout: '30m' },
+                { name: 'test:stage', prompt: 'Test stage', allowedPaths: ['tests/**'], timeout: '30m' },
+            ],
+        });
+
+        const result = builder.build();
+        const dot = result.dot;
+
+        // Extract node IDs from DOT output
+        const nodeRegex = /^\s*(\S+)\s+\[/gm;
+        const nodes = dot.match(nodeRegex) || [];
+
+        // Verify sanitized node IDs exist (not raw names with special chars)
+        // Phase names sanitize to IDs like auth_scan, build_v2, test_stage
+        assert.ok(nodes.some(n => n.includes('auth_scan')), 'space → underscore (auth_scan)');
+        assert.ok(nodes.some(n => n.includes('build_v2')), 'hyphen → underscore (build_v2)');
+        assert.ok(nodes.some(n => n.includes('test_stage')), 'colon → underscore (test_stage)');
+
+        // Verify no raw names with special chars in nodes
+        assert.ok(!nodes.some(n => n.includes('auth scan')), 'no space in node ID');
+        assert.ok(!nodes.some(n => n.includes('test:stage')), 'no colon in node ID');
+
+        // Verify all node IDs match valid DOT pattern: [a-zA-Z_][a-zA-Z0-9_]*
+        const validIdRegex = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
+        for (const nodeDecl of nodes) {
+            const nodeId = nodeDecl.trim().split('[')[0].trim();
+            assert.ok(validIdRegex.test(nodeId), `node ID "${nodeId}" is valid DOT identifier`);
+        }
+    });
+
+    // (6) Prompt escaping: Given quotes/newlines in prompt, When emitted, Then properly escaped in DOT
+    test('BDD-6: Quotes and newlines in prompt text are properly escaped in DOT output', () => {
+        const builder = DotBuilder.fromSpec({
+            slug: 'escape-test',
+            goal: 'Escape test',
+            phases: [{
+                name: 'escaped',
+                prompt: 'Build a "special" module\nwith multiple "lines"\nand "quotes" inside',
+                allowedPaths: ['src/**'],
+                timeout: '30m',
+            }],
+        });
+
+        const result = builder.build();
+        const dot = result.dot;
+
+        // Find the impl node and check its label attribute
+        // Note: The attribute may span multiple lines due to the escaped newlines
+        const implMatch = dot.match(/impl_escaped\s+\[[\s\S]*?label\s*=\s*"([\s\S]*?)"/);
+        assert.ok(implMatch, 'impl_escaped node with label attribute exists');
+        const promptValue = implMatch[1];
+
+        // Verify prompt is properly escaped (no unescaped quotes in the value)
+        // The value contains backslash-escaped quotes (\\") and backslash-n (\\n)
+        assert.ok(!promptValue.includes('"'), 'no unescaped quotes in label value');
+
+        // Verify newlines are escaped as literal backslash-n (the actual DOT has \n)
+        // The label attribute in the DOT contains escaped newlines as literal backslash-n
+        assert.ok(dot.includes('\\n'), 'newlines escaped as backslash-n in DOT');
+
+        // Verify the full DOT structure is valid
+        assert.ok(dot.includes('digraph "escape_test" {'), 'valid digraph structure');
+    });
 });

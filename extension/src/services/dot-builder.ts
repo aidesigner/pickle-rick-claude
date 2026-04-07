@@ -90,7 +90,13 @@ function sanitizeId(name: string): string {
 // Structural validation helpers
 // ---------------------------------------------------------------------------
 
-const RESERVED_IDS = new Set(['start', 'done', 'setup_deps', 'capture_baseline']);
+const RESERVED_IDS = new Set([
+  'start', 'exit', 'setup_deps', 'capture_baseline',
+  // Endgame structural nodes
+  'verify_typecheck', 'verify_lint', 'verify_tests',
+  'audit', 'regression_check', 'quality_review',
+  'fix_types', 'fix_lint', 'fix_tests', 'fix_quality', 'fix_all', 'fix_review',
+]);
 
 /** Extract path-like tokens (containing '/') from a prompt string. */
 function extractPromptPaths(prompt: string): string[] {
@@ -994,13 +1000,18 @@ export class DotBuilder {
       nodes.push(`  ${id} [${fmtAttrs(attrs)}]`);
       nodeMap.set(id, { ...attrs });
     };
-    const link = (from: string, to: string, lbl?: string): void => {
-      edges.push(lbl ? `  ${from} -> ${to} [label="${escapeAttr(lbl)}"]` : `  ${from} -> ${to}`);
-      edgeList.push(lbl !== undefined ? { from, to, label: lbl } : { from, to });
+    const link = (from: string, to: string, attrs?: Record<string, string>): void => {
+      if (attrs && Object.keys(attrs).length > 0) {
+        edges.push(`  ${from} -> ${to} [${fmtAttrs(attrs)}]`);
+        edgeList.push({ from, to, label: attrs['label'], attrs });
+      } else {
+        edges.push(`  ${from} -> ${to}`);
+        edgeList.push({ from, to });
+      }
     };
     const linkEdge = (from: string, to: string, attrs: Record<string, string>): void => {
       edges.push(`  ${from} -> ${to} [${fmtAttrs(attrs)}]`);
-      edgeList.push({ from, to });
+      edgeList.push({ from, to, attrs });
     };
 
     // P0a: setup_deps
@@ -1084,7 +1095,7 @@ export class DotBuilder {
       // Sequential execution
       const hasAnyPhase = phases.length > 0;
       let prevId = 'capture_baseline';
-      let prevLabel: string | undefined = undefined;
+      let prevAttrs: Record<string, string> | undefined = undefined;
 
       for (let i = 0; i < phases.length; i++) {
         const p = phases[i];
@@ -1092,8 +1103,8 @@ export class DotBuilder {
 
         const emitSpec = !p.securityScan && !p.docOnly && (p.specFirst === true || (p.goalGate && p.specFirst !== false));
         const emitBDD = !p.securityScan && !p.docOnly && p.bddScenarios === true;
-        const specId = i === 0 ? 'spec_tests' : `spec_tests_${i}`;
-        const bddId = i === 0 ? 'bdd_scenarios' : `bdd_scenarios_${i}`;
+        const specId = `spec_file_${id}`;
+        const bddId = `bdd_scenarios_${id}`;
 
         // securityScan: simple review pass-through
         if (p.securityScan) {
@@ -1105,16 +1116,16 @@ export class DotBuilder {
           applied.add('P6b');
           applied.add('P8');
           emit(id, phaseAttrs);
-          link(prevId, id, prevLabel);
+          link(prevId, id, prevAttrs);
           prevId = id;
-          prevLabel = undefined;
+          prevAttrs = undefined;
           continue;
         }
 
         const implId = `impl_${id}`;
-        const scopeCheckId = i === 0 ? 'scope_check' : `scope_check_${i}`;
-        const checkProgressId = i === 0 ? 'check_progress' : `check_progress_${i}`;
-        const conformanceId = i === 0 ? 'conformance' : `conformance_${i}`;
+        const scopeCheckId = `scope_check_${id}`;
+        const checkProgressId = `check_progress_${id}`;
+        const conformanceId = `conformance_${id}`;
 
         // docOnly phase
         if (p.docOnly) {
@@ -1125,7 +1136,7 @@ export class DotBuilder {
             max_visits: '5',
           };
           if (p.timeout) implAttrs['timeout'] = p.timeout;
-          link(prevId, implId, prevLabel);
+          link(prevId, implId, prevAttrs);
           emit(implId, implAttrs);
           applied.add('P22');
           applied.add('P6');
@@ -1138,7 +1149,7 @@ export class DotBuilder {
           });
           applied.add('P0e');
           link(implId, checkProgressId);
-          link(checkProgressId, 'done', 'fail');
+          link(checkProgressId, 'done', { condition: 'outcome=fail', label: 'fail' });
           emit(scopeCheckId, {
             class: 'review',
             label: 'Compare git diff against phase prompt. Flag files modified outside allowed_paths. Output STATUS: SUCCESS | FAIL.',
@@ -1148,7 +1159,7 @@ export class DotBuilder {
           applied.add('P10');
           applied.add('P6b');
           link(checkProgressId, scopeCheckId);
-          link(scopeCheckId, 'done', 'fail');
+          link(scopeCheckId, 'done', { condition: 'outcome=fail', label: 'fail' });
           const conformanceDocAttrs: Record<string, string> = {
             class: 'review',
             label: 'Review the implementation against the phase spec and PRD requirements. Check: correct files modified, API contracts match, no regressions. Output STATUS: SUCCESS | FAIL.',
@@ -1159,32 +1170,32 @@ export class DotBuilder {
           applied.add('P15');
           link(scopeCheckId, conformanceId);
           prevId = conformanceId;
-          prevLabel = undefined;
+          prevAttrs = undefined;
           continue;
         }
 
         // Regular impl phase
         const testId = `test_${id}`;
         const fixId = `fix_${id}`;
-        const verifyLintId = i === 0 ? 'verify_lint' : `verify_lint_${i}`;
-        const verifyTypesId = i === 0 ? 'verify_types' : `verify_types_${i}`;
+        const verifyLintId = `verify_lint_${id}`;
+        const verifyTypesId = `verify_types_${id}`;
 
         // Spec-first gates (P16 / P16b)
         if (emitBDD && emitSpec) {
           emit(bddId, { label: 'bdd_scenarios' });
-          emit(specId, { label: 'spec_tests' });
-          link(prevId, bddId, prevLabel);
+          emit(specId, { label: 'spec_file' });
+          link(prevId, bddId, prevAttrs);
           link(bddId, specId);
           link(specId, implId);
           applied.add('P16b');
           applied.add('P16');
         } else if (emitSpec) {
-          emit(specId, { label: 'spec_tests' });
-          link(prevId, specId, prevLabel);
+          emit(specId, { label: 'spec_file' });
+          link(prevId, specId, prevAttrs);
           link(specId, implId);
           applied.add('P16');
         } else {
-          link(prevId, implId, prevLabel);
+          link(prevId, implId, prevAttrs);
         }
 
         // P22: impl node
@@ -1256,15 +1267,15 @@ export class DotBuilder {
         // P9: optional coverage gate
         const hasCoverage = typeof p.coverageTarget === 'number';
         if (hasCoverage) {
-          const testRunId = i === 0 ? 'test_run' : `test_run_${i}`;
-          const covId = i === 0 ? 'coverage_gate' : `coverage_gate_${i}`;
+          const testRunId = `test_run_${id}`;
+          const covId = `coverage_gate_${id}`;
           emit(testRunId, { label: 'test' });
           emit(covId, { coverage_target: String(p.coverageTarget), label: 'coverage_gate', shape: 'diamond' });
           applied.add('P9');
           link(verifyTypesId, testRunId);
           link(testRunId, covId);
-          link(covId, conformanceId, 'pass');
-          link(covId, implId, 'fail');
+          link(covId, conformanceId, { condition: 'outcome=success', label: 'pass' });
+          link(covId, implId, { condition: 'outcome=fail', label: 'fail' });
         } else {
           link(verifyTypesId, conformanceId);
         }
@@ -1312,20 +1323,20 @@ export class DotBuilder {
 
         // P1: fix loop
         emit(fixId, { label: `fix ${id}` });
-        link(testId, fixId, 'fail');
+        link(testId, fixId, { condition: 'outcome=fail', label: 'fail' });
         link(fixId, implId);
 
         // P17: red_team after test pass
         if (p.redTeam) {
-          const rtId = i === 0 ? 'red_team' : `red_team_${i}`;
+          const rtId = `red_team_${id}`;
           emit(rtId, { label: 'red_team', read_only: 'true' });
           applied.add('P17');
-          link(testId, rtId, 'pass');
+          link(testId, rtId, { condition: 'outcome=success', label: 'pass' });
           prevId = rtId;
-          prevLabel = undefined;
+          prevAttrs = undefined;
         } else {
           prevId = testId;
-          prevLabel = 'pass';
+          prevAttrs = { condition: 'outcome=success', label: 'pass' };
         }
       }
 
@@ -1342,7 +1353,7 @@ export class DotBuilder {
           };
           if (unionEscalate) fixAllAttrs['escalate_on'] = unionEscalate;
           emit('fix_all', fixAllAttrs);
-          link(prevId, 'fix_all', prevLabel);
+          link(prevId, 'fix_all', prevAttrs);
           link('fix_all', 'verify_final');
         } else {
           link(prevId, 'verify_final');
@@ -1381,10 +1392,10 @@ export class DotBuilder {
       link('baseline', 'optimize');
       link('optimize', 'measure');
       link('measure', 'compare');
-      link('compare', 'optimize', 'miss');
-      link('compare', 'check', 'hit');
-      link('check', 'done', 'accept');
-      link('check', 'optimize', 'reject');
+      link('compare', 'optimize', { condition: 'outcome=miss', label: 'miss' });
+      link('compare', 'check', { condition: 'outcome=hit', label: 'hit' });
+      link('check', 'done', { condition: 'outcome=accept', label: 'accept' });
+      link('check', 'optimize', { condition: 'outcome=reject', label: 'reject' });
       for (const mvId of ['commit_baseline', 'baseline', 'optimize', 'measure', 'compare', 'check']) {
         standaloneNodeIds.add(mvId);
       }
@@ -1403,8 +1414,8 @@ export class DotBuilder {
         link(`review_pass_${i}`, `review_pass_${i + 1}`);
       }
       link(`review_pass_${n}`, 'review_merge');
-      link('review_merge', 'done', 'pass');
-      link('review_merge', 'fix_review', 'fail');
+      link('review_merge', 'done', { condition: 'outcome=success', label: 'pass' });
+      link('review_merge', 'fix_review', { condition: 'outcome=fail', label: 'fail' });
       link('fix_review', 'review_pass_1');
       for (let ri = 1; ri <= n; ri++) standaloneNodeIds.add(`review_pass_${ri}`);
       standaloneNodeIds.add('review_merge');

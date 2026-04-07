@@ -175,9 +175,9 @@ describe('Pickle-Dot Builder Auto-Patterns - BDD Scenarios', () => {
       }).build();
 
       const nodes = parseDotNodes(result.dot);
-      assert.ok(nodes.has('check_progress'), 'should have check_progress node');
+      assert.ok(nodes.has('check_progress_backend'), 'should have check_progress_backend node');
 
-      const cp = nodes.get('check_progress');
+      const cp = nodes.get('check_progress_backend');
       assert.equal(cp.get('read_only'), 'true', 'check_progress must be read_only');
       assert.equal(cp.get('max_visits'), '3', 'check_progress must have max_visits=3');
       const toolCmd = cp.get('tool_command') ?? '';
@@ -196,11 +196,11 @@ describe('Pickle-Dot Builder Auto-Patterns - BDD Scenarios', () => {
         acceptanceCriteria: {},
       }).build();
 
-      // Sequential pipeline emits check_progress (index 0) and check_progress_1 (index 1)
+      // Sequential pipeline emits check_progress_frontend and check_progress_backend
       assert.match(result.dot, /check_progress/, 'should have check_progress node(s)');
       const nodes = parseDotNodes(result.dot);
-      assert.ok(nodes.has('check_progress'), 'phase 0 should have check_progress');
-      assert.ok(nodes.has('check_progress_1'), 'phase 1 should have check_progress_1');
+      assert.ok(nodes.has('check_progress_frontend'), 'phase 0 should have check_progress_frontend');
+      assert.ok(nodes.has('check_progress_backend'), 'phase 1 should have check_progress_backend');
     });
   });
 
@@ -330,7 +330,7 @@ describe('Pickle-Dot Builder Auto-Patterns - BDD Scenarios', () => {
       }).build();
 
       // check_progress must keep max_visits=3
-      assert.match(result.dot, /check_progress\s*\[.*max_visits="3"/, 'check_progress must have max_visits=3');
+      assert.match(result.dot, /check_progress_feature\s*\[.*max_visits="3"/, 'check_progress must have max_visits=3');
       // impl must have max_visits=5
       assert.match(result.dot, /impl_feature\s*\[.*max_visits="5"/, 'impl must have max_visits=5');
     });
@@ -368,16 +368,16 @@ describe('Pickle-Dot Builder Auto-Patterns - BDD Scenarios', () => {
       }).build();
 
       const nodes = parseDotNodes(result.dot);
-      assert.ok(nodes.has('scope_check'), 'should have scope_check node');
+      assert.ok(nodes.has('scope_check_api'), 'should have scope_check_api node');
 
-      const sc = nodes.get('scope_check');
+      const sc = nodes.get('scope_check_api');
       assert.equal(sc.get('class'), 'review', 'scope_check must have class=review');
       assert.equal(sc.get('read_only'), 'true', 'scope_check must be read_only');
       assert.equal(sc.get('shape'), 'cds', 'scope_check must have shape=cds');
 
       // impl → scope_check edge
       const edges = parseDotEdges(result.dot);
-      assert.ok(edges.some(e => e.source === 'impl_api' && e.target === 'scope_check'),
+      assert.ok(edges.some(e => e.source === 'impl_api' && e.target === 'scope_check_api'),
         'impl must edge to scope_check');
       assert.ok(result.patternsApplied.includes('P10'), 'patternsApplied must include P10');
     });
@@ -406,8 +406,8 @@ describe('Pickle-Dot Builder Auto-Patterns - BDD Scenarios', () => {
 
       assert.match(result.dot, /verify_lint/, 'must have verify_lint node');
 
-      const cpIdx = result.dot.indexOf('check_progress');
-      const lintIdx = result.dot.indexOf('verify_lint');
+      const cpIdx = result.dot.indexOf('check_progress_module');
+      const lintIdx = result.dot.indexOf('verify_lint_module');
       assert.ok(cpIdx > -1 && lintIdx > -1, 'both check_progress and verify_lint must exist');
       assert.ok(cpIdx < lintIdx, 'check_progress must precede verify_lint');
       assert.ok(result.patternsApplied.includes('P13'), 'patternsApplied must include P13');
@@ -425,8 +425,8 @@ describe('Pickle-Dot Builder Auto-Patterns - BDD Scenarios', () => {
 
       assert.match(result.dot, /verify_types/, 'must have verify_types node');
 
-      const lintIdx = result.dot.indexOf('verify_lint');
-      const typesIdx = result.dot.indexOf('verify_types');
+      const lintIdx = result.dot.indexOf('verify_lint_module');
+      const typesIdx = result.dot.indexOf('verify_types_module');
       assert.ok(lintIdx > -1 && typesIdx > -1, 'both verify_lint and verify_types must exist');
       assert.ok(lintIdx < typesIdx, 'verify_lint must precede verify_types');
       assert.ok(result.patternsApplied.includes('P14'), 'patternsApplied must include P14');
@@ -447,11 +447,11 @@ describe('Pickle-Dot Builder Auto-Patterns - BDD Scenarios', () => {
 
       const nodes = parseDotNodes(result.dot);
 
-      // Phase 0 → conformance; Phase 1 → conformance_1
-      assert.ok(nodes.has('conformance'), 'should have conformance node for phase 0');
-      assert.ok(nodes.has('conformance_1'), 'should have conformance_1 node for phase 1');
+      // Phase 0 → conformance_auth; Phase 1 → conformance_data
+      assert.ok(nodes.has('conformance_auth'), 'should have conformance_auth node for phase 0');
+      assert.ok(nodes.has('conformance_data'), 'should have conformance_data node for phase 1');
 
-      for (const id of ['conformance', 'conformance_1']) {
+      for (const id of ['conformance_auth', 'conformance_data']) {
         const attrs = nodes.get(id);
         assert.equal(attrs.get('class'), 'review', `${id} must have class=review`);
         assert.equal(attrs.get('read_only'), 'true', `${id} must be read_only`);
@@ -618,7 +618,7 @@ describe('Pickle-Dot Builder Auto-Patterns - BDD Scenarios', () => {
       // P0d
       assert.match(result.dot, /BASELINE/, 'P0d: verify must reference BASELINE');
       // P0e
-      assert.ok(nodes.has('check_progress'), 'P0e: should have check_progress');
+      assert.ok(nodes.has('check_progress_foundation'), 'P0e: should have check_progress_foundation');
       // P1
       assert.ok(nodes.has('test_foundation'), 'P1: should have test diamond');
       // P3
@@ -633,15 +633,15 @@ describe('Pickle-Dot Builder Auto-Patterns - BDD Scenarios', () => {
       const reviewNodes = [...result.dot.matchAll(/(\w+)\s*\[.*?class="review"/g)].map(m => m[1]);
       assert.ok(reviewNodes.length > 0, 'P6b: must have review nodes');
       // P10
-      assert.ok(nodes.has('scope_check'), 'P10: should have scope_check');
+      assert.ok(nodes.has('scope_check_foundation'), 'P10: should have scope_check_foundation');
       // P13
       assert.match(result.dot, /verify_lint/, 'P13: must have verify_lint');
       // P14
       assert.match(result.dot, /verify_types/, 'P14: must have verify_types');
       // P15
-      assert.ok(nodes.has('conformance'), 'P15: should have conformance');
+      assert.ok(nodes.has('conformance_foundation'), 'P15: should have conformance_foundation');
       // P16b (opt-in via bddScenarios)
-      assert.ok(nodes.has('bdd_scenarios'), 'P16b: foundation has bddScenarios=true');
+      assert.ok(nodes.has('bdd_scenarios_foundation'), 'P16b: foundation has bddScenarios=true');
       // P21
       assert.ok(nodes.has('fix_all'), 'P21: should have fix_all');
       assert.ok(nodes.has('verify_final'), 'P21: should have verify_final');

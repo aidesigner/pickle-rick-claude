@@ -26,7 +26,7 @@ function main(): void {
     spec = JSON.parse(raw);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    process.stderr.write(JSON.stringify({ error: 'INVALID_SPEC', message: `JSON parse error: ${msg}`, diagnostics: [] }) + '\n');
+    process.stderr.write(JSON.stringify({ error: 'INVALID_SPEC', message: `JSON parse error: ${msg}` }) + '\n');
     process.exit(1);
   }
 
@@ -36,8 +36,7 @@ function main(): void {
     process.exit(0);
   } catch (err) {
     if (err instanceof BuildError) {
-      const { code, message, diagnostics } = err;
-      process.stderr.write(JSON.stringify({ error: code, message, diagnostics }) + '\n');
+      process.stderr.write(JSON.stringify({ error: err.code, message: err.message, diagnostics: err.diagnostics }) + '\n');
       process.exit(1);
     }
     const msg = err instanceof Error ? err.message : String(err);

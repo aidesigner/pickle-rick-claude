@@ -120,8 +120,8 @@ describe('Auto-pattern snapshot tests (18 auto-applied patterns)', () => {
         })).build();
 
         const nodes = parseDotNodes(dot);
-        assert.ok(nodes.has('check_progress'), 'check_progress must exist');
-        const cp = nodes.get('check_progress');
+        assert.ok(nodes.has('check_progress_backend'), 'check_progress_backend must exist');
+        const cp = nodes.get('check_progress_backend');
         assert.equal(cp.get('read_only'), 'true');
         assert.equal(cp.get('max_visits'), '3');
         assert.ok((cp.get('tool_command') ?? '').includes('git status --porcelain'));
@@ -189,7 +189,7 @@ describe('Auto-pattern snapshot tests (18 auto-applied patterns)', () => {
 
         const nodes = parseDotNodes(dot);
         assert.equal(nodes.get('impl_feature')?.get('max_visits'), '5', 'impl must have max_visits=5');
-        assert.equal(nodes.get('check_progress')?.get('max_visits'), '3', 'check_progress must keep max_visits=3');
+        assert.equal(nodes.get('check_progress_feature')?.get('max_visits'), '3', 'check_progress must keep max_visits=3');
         assert.ok(patternsApplied.includes('P6'));
     });
 
@@ -216,14 +216,14 @@ describe('Auto-pattern snapshot tests (18 auto-applied patterns)', () => {
         })).build();
 
         const nodes = parseDotNodes(dot);
-        assert.ok(nodes.has('scope_check'), 'scope_check must exist');
-        const sc = nodes.get('scope_check');
+        assert.ok(nodes.has('scope_check_api'), 'scope_check_api must exist');
+        const sc = nodes.get('scope_check_api');
         assert.equal(sc.get('class'), 'review');
         assert.equal(sc.get('read_only'), 'true');
         assert.equal(sc.get('shape'), 'cds');
 
         const edges = parseDotEdges(dot);
-        assert.ok(edges.some(e => e.source === 'impl_api' && e.target === 'scope_check'), 'impl → scope_check');
+        assert.ok(edges.some(e => e.source === 'impl_api' && e.target === 'scope_check_api'), 'impl → scope_check');
         assert.match(dot, /git diff.*allowed_paths|allowed_paths.*git diff/, 'prompt must reference git diff + allowed_paths');
         assert.ok(patternsApplied.includes('P10'));
     });
@@ -235,8 +235,8 @@ describe('Auto-pattern snapshot tests (18 auto-applied patterns)', () => {
         })).build();
 
         const nodes = parseDotNodes(dot);
-        assert.ok(nodes.has('verify_lint'), 'verify_lint must exist');
-        assert.ok(dot.indexOf('check_progress') < dot.indexOf('verify_lint'), 'check_progress before verify_lint');
+        assert.ok(nodes.has('verify_lint_module'), 'verify_lint_module must exist');
+        assert.ok(dot.indexOf('check_progress_module') < dot.indexOf('verify_lint_module'), 'check_progress before verify_lint');
         assert.ok(patternsApplied.includes('P13'));
     });
 
@@ -247,8 +247,8 @@ describe('Auto-pattern snapshot tests (18 auto-applied patterns)', () => {
         })).build();
 
         const nodes = parseDotNodes(dot);
-        assert.ok(nodes.has('verify_types'), 'verify_types must exist');
-        assert.ok(dot.indexOf('verify_lint') < dot.indexOf('verify_types'), 'verify_lint before verify_types');
+        assert.ok(nodes.has('verify_types_module'), 'verify_types_module must exist');
+        assert.ok(dot.indexOf('verify_lint_module') < dot.indexOf('verify_types_module'), 'verify_lint before verify_types');
         assert.ok(patternsApplied.includes('P14'));
     });
 
@@ -259,12 +259,12 @@ describe('Auto-pattern snapshot tests (18 auto-applied patterns)', () => {
         })).build();
 
         const nodes = parseDotNodes(dot);
-        assert.ok(nodes.has('conformance'), 'conformance must exist');
-        const conf = nodes.get('conformance');
+        assert.ok(nodes.has('conformance_feature'), 'conformance_feature must exist');
+        const conf = nodes.get('conformance_feature');
         assert.equal(conf.get('class'), 'review');
         assert.equal(conf.get('read_only'), 'true');
         assert.equal(conf.get('timeout'), '15m');
-        assert.ok(dot.indexOf('scope_check') < dot.indexOf('conformance'), 'scope_check before conformance');
+        assert.ok(dot.indexOf('scope_check_feature') < dot.indexOf('conformance_feature'), 'scope_check before conformance');
         assert.ok(patternsApplied.includes('P15'));
     });
 
@@ -382,8 +382,8 @@ describe('Remaining pattern snapshot tests', () => {
         assert.ok(patternsApplied.includes('P2'), 'P2 must be applied');
 
         const nodes = parseDotNodes(dot);
-        const conf = nodes.get('conformance');
-        assert.ok(conf, 'conformance node must exist');
+        const conf = nodes.get('conformance_gate');
+        assert.ok(conf, 'conformance_gate node must exist');
         assert.equal(conf.get('goal_gate'), 'true');
         assert.equal(conf.get('max_visits'), '3');
 
@@ -419,20 +419,20 @@ describe('Remaining pattern snapshot tests', () => {
         assert.ok(patternsApplied.includes('P9'), 'P9 must be applied');
 
         const nodes = parseDotNodes(dot);
-        assert.ok(nodes.has('test_run'), 'test_run must exist');
-        assert.ok(nodes.has('coverage_gate'), 'coverage_gate must exist');
-        assert.equal(nodes.get('coverage_gate').get('shape'), 'diamond');
-        assert.equal(nodes.get('coverage_gate').get('coverage_target'), '80');
+        assert.ok(nodes.has('test_run_tested'), 'test_run_tested must exist');
+        assert.ok(nodes.has('coverage_gate_tested'), 'coverage_gate_tested must exist');
+        assert.equal(nodes.get('coverage_gate_tested').get('shape'), 'diamond');
+        assert.equal(nodes.get('coverage_gate_tested').get('coverage_target'), '80');
 
         const edges = parseDotEdges(dot);
-        assert.ok(edges.some(e => e.source === 'verify_types' && e.target === 'test_run'), 'verify_types → test_run');
-        assert.ok(edges.some(e => e.source === 'test_run' && e.target === 'coverage_gate'), 'test_run → coverage_gate');
-        assert.ok(edges.some(e => e.source === 'coverage_gate' && e.target === 'conformance'), 'coverage_gate → conformance');
+        assert.ok(edges.some(e => e.source === 'verify_types_tested' && e.target === 'test_run_tested'), 'verify_types → test_run');
+        assert.ok(edges.some(e => e.source === 'test_run_tested' && e.target === 'coverage_gate_tested'), 'test_run → coverage_gate');
+        assert.ok(edges.some(e => e.source === 'coverage_gate_tested' && e.target === 'conformance_tested'), 'coverage_gate → conformance');
     });
 
     // P16: Spec-first default-on with goalGate + opt-out via specFirst:false ----
-    test('P16 — goalGate phase gets spec_tests by default; specFirst:false suppresses it', () => {
-        // goalGate without specFirst:false → spec_tests emitted
+    test('P16 — goalGate phase gets spec_file by default; specFirst:false suppresses it', () => {
+        // goalGate without specFirst:false → spec_file emitted
         const withSpec = new DotBuilder(baseSpec({
             phases: [phase('gated', { goalGate: true, retryTarget: 'impl_gated', allowedPaths: ['src/'] })],
             defaultMaxRetry: 3,
@@ -440,12 +440,12 @@ describe('Remaining pattern snapshot tests', () => {
 
         assert.ok(withSpec.patternsApplied.includes('P16'), 'P16 must be applied when goalGate default-on');
         const nodesWith = parseDotNodes(withSpec.dot);
-        assert.ok(nodesWith.has('spec_tests'), 'spec_tests must exist for goalGate without opt-out');
+        assert.ok(nodesWith.has('spec_file_gated'), 'spec_file_gated must exist for goalGate without opt-out');
 
         const edgesWith = parseDotEdges(withSpec.dot);
-        assert.ok(edgesWith.some(e => e.source === 'spec_tests' && e.target === 'impl_gated'), 'spec_tests → impl');
+        assert.ok(edgesWith.some(e => e.source === 'spec_file_gated' && e.target === 'impl_gated'), 'spec_file → impl');
 
-        // goalGate with specFirst:false → spec_tests suppressed
+        // goalGate with specFirst:false → spec_file suppressed
         const withoutSpec = new DotBuilder(baseSpec({
             phases: [phase('gated', { goalGate: true, retryTarget: 'impl_gated', specFirst: false, allowedPaths: ['src/'] })],
             defaultMaxRetry: 3,
@@ -453,12 +453,12 @@ describe('Remaining pattern snapshot tests', () => {
 
         assert.ok(!withoutSpec.patternsApplied.includes('P16'), 'P16 must NOT be applied when specFirst:false');
         const nodesWithout = parseDotNodes(withoutSpec.dot);
-        assert.ok(!nodesWithout.has('spec_tests'), 'spec_tests must NOT exist when specFirst:false');
+        assert.ok(!nodesWithout.has('spec_file_gated'), 'spec_file_gated must NOT exist when specFirst:false');
     });
 
     // P16b: BDD scenarios opt-in only when bddScenarios:true -------------------
-    test('P16b — bddScenarios:true emits bdd_scenarios node before spec_tests; absent by default', () => {
-        // With bddScenarios:true on a goalGate phase (spec_tests also emitted)
+    test('P16b — bddScenarios:true emits bdd_scenarios node before spec_file; absent by default', () => {
+        // With bddScenarios:true on a goalGate phase (spec_file also emitted)
         const withBDD = new DotBuilder(baseSpec({
             phases: [phase('gated', { goalGate: true, retryTarget: 'impl_gated', bddScenarios: true, allowedPaths: ['src/'] })],
             defaultMaxRetry: 3,
@@ -466,12 +466,12 @@ describe('Remaining pattern snapshot tests', () => {
 
         assert.ok(withBDD.patternsApplied.includes('P16b'), 'P16b must be applied');
         const nodesBDD = parseDotNodes(withBDD.dot);
-        assert.ok(nodesBDD.has('bdd_scenarios'), 'bdd_scenarios must exist');
-        assert.ok(nodesBDD.has('spec_tests'), 'spec_tests must also exist');
+        assert.ok(nodesBDD.has('bdd_scenarios_gated'), 'bdd_scenarios_gated must exist');
+        assert.ok(nodesBDD.has('spec_file_gated'), 'spec_file_gated must also exist');
 
         const edgesBDD = parseDotEdges(withBDD.dot);
-        assert.ok(edgesBDD.some(e => e.source === 'bdd_scenarios' && e.target === 'spec_tests'), 'bdd_scenarios → spec_tests');
-        assert.ok(edgesBDD.some(e => e.source === 'spec_tests' && e.target === 'impl_gated'), 'spec_tests → impl');
+        assert.ok(edgesBDD.some(e => e.source === 'bdd_scenarios_gated' && e.target === 'spec_file_gated'), 'bdd_scenarios → spec_file');
+        assert.ok(edgesBDD.some(e => e.source === 'spec_file_gated' && e.target === 'impl_gated'), 'spec_file → impl');
 
         // Without bddScenarios → no bdd_scenarios node
         const withoutBDD = new DotBuilder(baseSpec({
@@ -481,7 +481,7 @@ describe('Remaining pattern snapshot tests', () => {
 
         assert.ok(!withoutBDD.patternsApplied.includes('P16b'), 'P16b must NOT be applied without bddScenarios');
         const nodesNoBDD = parseDotNodes(withoutBDD.dot);
-        assert.ok(!nodesNoBDD.has('bdd_scenarios'), 'bdd_scenarios must NOT exist without opt-in');
+        assert.ok(!nodesNoBDD.has('bdd_scenarios_gated'), 'bdd_scenarios_gated must NOT exist without opt-in');
     });
 
     // P17: Red team after conformance ------------------------------------------
@@ -493,11 +493,11 @@ describe('Remaining pattern snapshot tests', () => {
         assert.ok(patternsApplied.includes('P17'), 'P17 must be applied');
 
         const nodes = parseDotNodes(dot);
-        assert.ok(nodes.has('red_team'), 'red_team must exist');
-        assert.equal(nodes.get('red_team').get('read_only'), 'true');
+        assert.ok(nodes.has('red_team_hardened'), 'red_team_hardened must exist');
+        assert.equal(nodes.get('red_team_hardened').get('read_only'), 'true');
 
         const edges = parseDotEdges(dot);
-        assert.ok(edges.some(e => e.source === 'test_hardened' && e.target === 'red_team' && e.attrs.get('label') === 'pass'),
+        assert.ok(edges.some(e => e.source === 'test_hardened' && e.target === 'red_team_hardened' && e.attrs.get('label') === 'pass'),
             'test → red_team on pass edge');
     });
 
@@ -600,7 +600,7 @@ describe('Remaining pattern snapshot tests', () => {
     });
 
     // specFirst:true on non-goal-gated phase -----------------------------------
-    test('specFirst:true on non-goal-gated phase enables spec_tests', () => {
+    test('specFirst:true on non-goal-gated phase enables spec_file', () => {
         const { dot, patternsApplied } = new DotBuilder(baseSpec({
             phases: [phase('plain', { specFirst: true, allowedPaths: ['src/'] })],
         })).build();
@@ -608,10 +608,10 @@ describe('Remaining pattern snapshot tests', () => {
         assert.ok(patternsApplied.includes('P16'), 'P16 must be applied for explicit specFirst:true');
 
         const nodes = parseDotNodes(dot);
-        assert.ok(nodes.has('spec_tests'), 'spec_tests must exist');
+        assert.ok(nodes.has('spec_file_plain'), 'spec_file_plain must exist');
 
         const edges = parseDotEdges(dot);
-        assert.ok(edges.some(e => e.source === 'spec_tests' && e.target === 'impl_plain'), 'spec_tests → impl_plain');
+        assert.ok(edges.some(e => e.source === 'spec_file_plain' && e.target === 'impl_plain'), 'spec_file → impl_plain');
     });
 
     // .modelStylesheet() generates valid stylesheet output ---------------------

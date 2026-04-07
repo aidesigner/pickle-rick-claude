@@ -622,7 +622,7 @@ export async function main(sessionDir: string): Promise<void> {
     if (currentMv.convergence_mode === 'worker') {
       const cfPath = path.join(sessionDir, currentMv.convergence_file!);
       try {
-        const raw = JSON.parse(fs.readFileSync(cfPath, 'utf-8'));
+        const raw = JSON.parse(await fs.promises.readFile(cfPath, 'utf-8'));
         if (raw.converged === true) {
           log(`Converged (worker-managed: ${raw.reason ?? 'no reason'})`);
           exitReason = 'converged';

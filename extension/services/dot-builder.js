@@ -1,11 +1,9 @@
 // DOT pipeline codegen builder — no process.exit() (eslint-plugin-pickle rule)
-import { BuildError, } from '../types/index.js';
+import { BuildError } from '../types/index.js';
 export { BuildError } from '../types/index.js';
 // ---------------------------------------------------------------------------
 // BUILD_ERROR_CODES — runtime constant, mirrors BuildErrorCode union
 // ---------------------------------------------------------------------------
-// Single source of truth: exported as both BUILD_ERROR_CODES and BuildErrorCode
-// so JS consumers can import either name.
 export const BUILD_ERROR_CODES = [
     'EMPTY_SLUG', 'EMPTY_GOAL', 'DUPLICATE_PHASE', 'INVALID_RATCHET',
     'NON_NUMERIC_TARGET', 'ALREADY_BUILT', 'INVALID_STRUCTURE', 'START_HAS_INCOMING',
@@ -15,6 +13,7 @@ export const BUILD_ERROR_CODES = [
     'WORKSPACE_NO_HTTPS', 'WORKSPACE_NO_PUSH', 'PLAN_MODE_DEADLOCK',
     'MISSING_ALLOWED_PATHS', 'INVALID_SPEC', 'INVALID_TIMEOUT', 'INVALID_ALLOWED_PATHS',
 ];
+// Alias for JS consumers
 export const BuildErrorCode = BUILD_ERROR_CODES;
 // ---------------------------------------------------------------------------
 // Helpers
@@ -30,18 +29,26 @@ function mkDiag(rule, severity, message, nodeId) {
 }
 function pass() { return { valid: true, diagnostics: [] }; }
 function fail(diagnostics) { return { valid: false, diagnostics }; }
+/** Escape a string for use inside DOT double-quoted attribute values. */
 function escapeAttr(value) {
     return value
         .replace(/\\/g, '\\\\')
         .replace(/"/g, '\\"')
-        .replace(/\n/g, '\\n');
+        .replace(/\n/g, '\\n')
+        .replace(/\t/g, '\\t');
 }
+/** Format a key-value map into DOT attribute syntax: key="val", key2="val2" */
 function fmtAttrs(map) {
     return Object.keys(map)
         .sort()
         .map(k => `${k}="${escapeAttr(map[k])}"`)
         .join(', ');
 }
+/** DOT reserved words that cannot be used as bare node identifiers. */
+const DOT_RESERVED = new Set([
+    'graph', 'digraph', 'subgraph', 'edge', 'node', 'strict',
+]);
+/** Sanitize a phase name into a valid DOT node identifier. */
 function sanitizeId(name) {
     let id = name
         .toLowerCase()
@@ -50,12 +57,21 @@ function sanitizeId(name) {
         .replace(/^_+|_+$/g, '');
     if (/^\d/.test(id))
         id = '_' + id;
+    // Prevent collision with DOT reserved words
+    if (DOT_RESERVED.has(id))
+        id = `phase_${id}`;
     return id;
 }
 // ---------------------------------------------------------------------------
 // Structural validation helpers
 // ---------------------------------------------------------------------------
-const RESERVED_IDS = new Set(['start', 'done', 'setup_deps', 'capture_baseline']);
+const RESERVED_IDS = new Set([
+    'start', 'exit', 'setup_deps', 'capture_baseline',
+    // Endgame structural nodes
+    'verify_typecheck', 'verify_lint', 'verify_tests',
+    'audit', 'regression_check', 'quality_review',
+    'fix_types', 'fix_lint', 'fix_tests', 'fix_quality', 'fix_all', 'fix_review',
+]);
 /** Extract path-like tokens (containing '/') from a prompt string. */
 function extractPromptPaths(prompt) {
     return (prompt.match(/\b[\w.-]+(?:\/[\w.-]+)+/g) ?? []);
@@ -63,7 +79,6 @@ function extractPromptPaths(prompt) {
 // ---------------------------------------------------------------------------
 // Pre-flight spec validation — runs before emission; throws on first error
 // ---------------------------------------------------------------------------
-/** Pre-flight: phase names must not sanitize to reserved graph node IDs. */
 function preflightReservedIds(phases) {
     const diags = [];
     for (const phase of phases) {
@@ -74,7 +89,6 @@ function preflightReservedIds(phases) {
     }
     return diags;
 }
-/** Pre-flight: dependsOn references must name valid phases (catches dangling edges). */
 function preflightDanglingDeps(phases) {
     const knownIds = new Set([
         ...phases.map(p => sanitizeId(p.name)),
@@ -93,7 +107,6 @@ function preflightDanglingDeps(phases) {
     }
     return diags;
 }
-/** Pre-flight: timeout must match /^\d+[mhd]$/ with a non-zero numeric part. */
 function preflightTimeoutFormat(phases) {
     const diags = [];
     for (const phase of phases) {
@@ -109,7 +122,6 @@ function preflightTimeoutFormat(phases) {
     }
     return diags;
 }
-/** Pre-flight: allowedPaths must be relative (no leading / or ..). */
 function preflightAllowedPaths(phases) {
     const diags = [];
     for (const phase of phases) {
@@ -124,7 +136,6 @@ function preflightAllowedPaths(phases) {
     }
     return diags;
 }
-/** Pre-flight: retryTarget must not point to the reserved start node. */
 function preflightStartIncoming(phases) {
     const diags = [];
     for (const phase of phases) {
@@ -134,8 +145,6 @@ function preflightStartIncoming(phases) {
     }
     return diags;
 }
-/** Pre-flight: goalGate phase (not specFirst) without retryTarget produces a gate diamond
- *  with only 1 outgoing edge (no retry path). */
 function preflightGoalGateEdges(phases) {
     const diags = [];
     for (const phase of phases) {
@@ -145,7 +154,6 @@ function preflightGoalGateEdges(phases) {
     }
     return diags;
 }
-/** Pre-flight: retryTarget must not escape its fan-out component scope. */
 function preflightFanOutScope(phases) {
     const independent = phases.filter(p => !p.dependsOn || p.dependsOn.length === 0);
     if (independent.length < 2)
@@ -165,7 +173,6 @@ function preflightFanOutScope(phases) {
     }
     return diags;
 }
-/** Pre-flight: workspace=isolated with repo_url requires HTTPS. */
 function preflightWorkspaceHttps(workspace, workspaceOpts) {
     if (workspace !== 'isolated')
         return [];
@@ -177,13 +184,11 @@ function preflightWorkspaceHttps(workspace, workspaceOpts) {
     }
     return [];
 }
-/** Pre-flight: specFirst+goalGate produces plan-mode permission prompts — deadlock in headless. */
 function preflightPlanDeadlock(phases) {
     return phases
         .filter(p => p.specFirst && p.goalGate)
         .map(p => mkDiag('PLAN_MODE_DEADLOCK', 'error', `phase "${p.name}" combines specFirst+goalGate, producing plan-mode deadlock in headless pipeline`, sanitizeId(p.name)));
 }
-/** Pre-flight: workspace=isolated requires a commit_and_push phase in the pipeline. */
 function preflightWorkspacePush(workspace, phases) {
     if (workspace !== 'isolated')
         return [];
@@ -196,7 +201,6 @@ function preflightWorkspacePush(workspace, phases) {
     }
     return [];
 }
-/** Pre-flight: path-like tokens in phase prompts must fall within allowedPaths. */
 function preflightPromptPaths(phases) {
     const diags = [];
     for (const phase of phases) {
@@ -212,7 +216,6 @@ function preflightPromptPaths(phases) {
     }
     return diags;
 }
-/** Pre-flight: non-review, non-security phases require non-empty allowedPaths. */
 function preflightMissingAllowedPaths(phases) {
     const diags = [];
     for (const phase of phases) {
@@ -224,7 +227,6 @@ function preflightMissingAllowedPaths(phases) {
     }
     return diags;
 }
-/** Pre-flight: dependsOn graph must be acyclic (Kahn's algorithm). */
 function preflightCircularDeps(phases) {
     const adj = new Map();
     const ids = new Set();
@@ -263,16 +265,14 @@ function preflightCircularDeps(phases) {
         }
     }
     if (visited < ids.size) {
-        const cycle = [...ids].filter(id => inDeg.get(id) > 0);
+        const cycle = [...ids].filter(id => (inDeg.get(id) ?? 0) > 0);
         return [mkDiag('INVALID_STRUCTURE', 'error', `circular dependency detected among phases: ${cycle.join(', ')}`)];
     }
     return [];
 }
 // ---------------------------------------------------------------------------
 // 15 structural validation rules — run sequentially on the complete graph.
-// Each rule examines all relevant nodes/edges and returns Diagnostic[].
 // ---------------------------------------------------------------------------
-/** Rule 1: exactly 1 start node (Mdiamond) and 1 exit node (Msquare). */
 function grRule1(nodeMap) {
     const diamonds = [...nodeMap.entries()].filter(([, a]) => a['shape'] === 'Mdiamond');
     const squares = [...nodeMap.entries()].filter(([, a]) => a['shape'] === 'Msquare');
@@ -285,11 +285,10 @@ function grRule1(nodeMap) {
     }
     return diags;
 }
-/** Rule 2: start node (Mdiamond) has 0 incoming edges. */
 function grRule2(nodeMap, edgeList) {
     const startEntry = [...nodeMap.entries()].find(([, a]) => a['shape'] === 'Mdiamond');
     if (!startEntry)
-        return []; // covered by rule 1
+        return [];
     const startId = startEntry[0];
     const incoming = edgeList.filter(e => e.to === startId);
     if (incoming.length > 0) {
@@ -297,11 +296,10 @@ function grRule2(nodeMap, edgeList) {
     }
     return [];
 }
-/** Rule 3: every non-standalone node is reachable from start via BFS. */
 function grRule3(nodeMap, edgeList, standaloneNodeIds) {
     const startEntry = [...nodeMap.entries()].find(([, a]) => a['shape'] === 'Mdiamond');
     if (!startEntry)
-        return []; // covered by rule 1
+        return [];
     const startId = startEntry[0];
     const adj = new Map();
     for (const id of nodeMap.keys())
@@ -325,7 +323,6 @@ function grRule3(nodeMap, edgeList, standaloneNodeIds) {
         .filter(id => !visited.has(id) && !standaloneNodeIds.has(id))
         .map(id => mkDiag('UNREACHABLE_NODE', 'error', `node "${id}" is not reachable from the start node`, id));
 }
-/** Rule 4: every diamond-shaped node has ≥2 outgoing edges. */
 function grRule4(nodeMap, edgeList) {
     const diags = [];
     for (const [id, attrs] of nodeMap.entries()) {
@@ -338,7 +335,6 @@ function grRule4(nodeMap, edgeList) {
     }
     return diags;
 }
-/** Rule 5: nodes with retry_target must have max_visits (unbounded-retry guard). */
 function grRule5(nodeMap) {
     const diags = [];
     for (const [id, attrs] of nodeMap.entries()) {
@@ -348,7 +344,6 @@ function grRule5(nodeMap) {
     }
     return diags;
 }
-/** Rule 6: every acceptanceCriteria key must be covered by a context_on_success node. */
 function grRule6(nodeMap, acceptanceCriteria) {
     const acKeys = Object.keys(acceptanceCriteria);
     if (acKeys.length === 0)
@@ -364,7 +359,6 @@ function grRule6(nodeMap, acceptanceCriteria) {
         .filter(k => !mapped.has(k))
         .map(k => mkDiag('MISSING_AC_MAPPING', 'error', `acceptanceCriteria key "${k}" has no node with context_on_success mapping it`));
 }
-/** Rule 7: every codergen-class node must declare a timeout attribute. */
 function grRule7(nodeMap) {
     const diags = [];
     for (const [id, attrs] of nodeMap.entries()) {
@@ -374,7 +368,6 @@ function grRule7(nodeMap) {
     }
     return diags;
 }
-/** Rule 8: path-like tokens in a node's label must fall within its allowed_paths. */
 function grRule8(nodeMap) {
     const diags = [];
     for (const [id, attrs] of nodeMap.entries()) {
@@ -395,7 +388,6 @@ function grRule8(nodeMap) {
     }
     return diags;
 }
-/** Rule 9: review-class nodes must have read_only=true and STATUS in their label. */
 function grRule9(nodeMap) {
     const diags = [];
     for (const [id, attrs] of nodeMap.entries()) {
@@ -407,7 +399,6 @@ function grRule9(nodeMap) {
     }
     return diags;
 }
-/** Rule 10: every component-shape node requires a tripleoctagon merge node (warning). */
 function grRule10(nodeMap, _edgeList) {
     const hasComponent = [...nodeMap.values()].some(a => a['shape'] === 'component');
     if (!hasComponent)
@@ -418,7 +409,6 @@ function grRule10(nodeMap, _edgeList) {
     }
     return [];
 }
-/** Rule 11: a node's retry_target must not reference nodes in a different component branch. */
 function grRule11(nodeMap) {
     const componentIds = new Set([...nodeMap.entries()]
         .filter(([, a]) => a['shape'] === 'component')
@@ -438,7 +428,6 @@ function grRule11(nodeMap) {
     }
     return diags;
 }
-/** Rule 12: workspace=isolated with repo_url present requires an HTTPS scheme. */
 function grRule12(nodeMap, graphAttrs) {
     if (graphAttrs['workspace'] !== 'isolated')
         return [];
@@ -451,7 +440,6 @@ function grRule12(nodeMap, graphAttrs) {
     }
     return diags;
 }
-/** Rule 13: workspace=isolated requires a commit_and_push node in the graph. */
 function grRule13(nodeMap, graphAttrs) {
     if (graphAttrs['workspace'] !== 'isolated')
         return [];
@@ -461,7 +449,6 @@ function grRule13(nodeMap, graphAttrs) {
     }
     return [];
 }
-/** Rule 14: permission_mode=plan causes deadlock in headless pipelines. */
 function grRule14(nodeMap) {
     const diags = [];
     for (const [id, attrs] of nodeMap.entries()) {
@@ -471,7 +458,6 @@ function grRule14(nodeMap) {
     }
     return diags;
 }
-/** Rule 15: codergen nodes must declare non-empty allowed_paths. */
 function grRule15(nodeMap) {
     const diags = [];
     for (const [id, attrs] of nodeMap.entries()) {
@@ -487,7 +473,7 @@ function grRule15(nodeMap) {
 // ---------------------------------------------------------------------------
 // Runtime validator namespace objects
 // ---------------------------------------------------------------------------
-export const Diagnostic = {
+export const DiagnosticNs = {
     create(data) {
         if (!isRecord(data))
             throw new Error('Diagnostic.create requires an object');
@@ -500,10 +486,7 @@ export const Diagnostic = {
         if (typeof message !== 'string')
             throw new Error('Diagnostic requires a message string');
         if (edge !== undefined) {
-            if (!Array.isArray(edge) ||
-                edge.length !== 2 ||
-                typeof edge[0] !== 'string' ||
-                typeof edge[1] !== 'string') {
+            if (!Array.isArray(edge) || edge.length !== 2 || typeof edge[0] !== 'string' || typeof edge[1] !== 'string') {
                 throw new Error('Diagnostic edge must be a tuple of exactly two strings');
             }
         }
@@ -517,7 +500,9 @@ export const Diagnostic = {
         return result;
     },
 };
-export const ValidationResult = {
+// Alias: compiled JS exports as both `Diagnostic` and `DiagnosticNs`
+export { DiagnosticNs as Diagnostic };
+export const ValidationResultNs = {
     validate(vr) {
         if (!isRecord(vr))
             return fail([mkDiag('INVALID_SPEC', 'error', 'ValidationResult must be an object')]);
@@ -531,11 +516,12 @@ export const ValidationResult = {
         return diagnostics.length === 0 ? pass() : fail(diagnostics);
     },
 };
+export { ValidationResultNs as ValidationResult };
 const VALID_SPEC_DRIVEN = [
     'NONE', 'conformance', 'BDD + conformance',
     'spec_file + conformance', 'spec_file + BDD + conformance',
 ];
-export const DefenseMatrix = {
+export const DefenseMatrixNs = {
     validate(dm) {
         if (!isRecord(dm))
             return fail([mkDiag('INVALID_SPEC', 'error', 'DefenseMatrix must be an object')]);
@@ -546,10 +532,10 @@ export const DefenseMatrix = {
         if (typeof dm['adversarial'] !== 'boolean') {
             diagnostics.push(mkDiag('INVALID_SPEC', 'error', 'adversarial must be a boolean'));
         }
-        if (!Array.isArray(dm['guardrails']) || !dm['guardrails'].every(g => typeof g === 'string')) {
+        if (!Array.isArray(dm['guardrails']) || !dm['guardrails'].every((g) => typeof g === 'string')) {
             diagnostics.push(mkDiag('INVALID_SPEC', 'error', 'guardrails must be a string array'));
         }
-        if (!Array.isArray(dm['permissions']) || !dm['permissions'].every(p => typeof p === 'string')) {
+        if (!Array.isArray(dm['permissions']) || !dm['permissions'].every((p) => typeof p === 'string')) {
             diagnostics.push(mkDiag('INVALID_SPEC', 'error', 'permissions must be a string array'));
         }
         if (!VALID_SPEC_DRIVEN.includes(dm['specDriven'])) {
@@ -558,7 +544,8 @@ export const DefenseMatrix = {
         return diagnostics.length === 0 ? pass() : fail(diagnostics);
     },
 };
-export const BuildResult = {
+export { DefenseMatrixNs as DefenseMatrix };
+export const BuildResultNs = {
     validate(result) {
         if (!isRecord(result))
             return fail([mkDiag('INVALID_SPEC', 'error', 'BuildResult must be an object')]);
@@ -569,17 +556,21 @@ export const BuildResult = {
         if (typeof result['slug'] !== 'string') {
             diagnostics.push(mkDiag('INVALID_SPEC', 'error', 'slug must be a string'));
         }
-        if (!Array.isArray(result['patternsApplied']) ||
-            !result['patternsApplied'].every(p => typeof p === 'string')) {
+        if (!Array.isArray(result['patternsApplied']) || !result['patternsApplied'].every((p) => typeof p === 'string')) {
             diagnostics.push(mkDiag('INVALID_SPEC', 'error', 'patternsApplied must be a string array'));
         }
         if (!Array.isArray(result['diagnostics'])) {
             diagnostics.push(mkDiag('INVALID_SPEC', 'error', 'diagnostics must be an array'));
         }
+        if (!result['defenseMatrix'] || typeof result['defenseMatrix'] !== 'object' || Array.isArray(result['defenseMatrix'])) {
+            diagnostics.push(mkDiag('INVALID_SPEC', 'error', 'defenseMatrix must be an object'));
+        }
         return diagnostics.length === 0 ? pass() : fail(diagnostics);
     },
 };
-export const MicroverseOpts = {
+// Alias for CLI test compatibility
+export { BuildResultNs as BuildResult };
+export const MicroverseOptsNs = {
     validate(opts) {
         if (!isRecord(opts))
             return fail([mkDiag('INVALID_SPEC', 'error', 'MicroverseOpts must be an object')]);
@@ -608,7 +599,8 @@ export const MicroverseOpts = {
         return diagnostics.length === 0 ? pass() : fail(diagnostics);
     },
 };
-export const WorkspaceOpts = {
+export { MicroverseOptsNs as MicroverseOpts };
+export const WorkspaceOptsNs = {
     validate(opts) {
         if (!isRecord(opts))
             return fail([mkDiag('INVALID_SPEC', 'error', 'WorkspaceOpts must be an object')]);
@@ -620,7 +612,8 @@ export const WorkspaceOpts = {
         return diagnostics.length === 0 ? pass() : fail(diagnostics);
     },
 };
-export const StylesheetConfig = {
+export { WorkspaceOptsNs as WorkspaceOpts };
+export const StylesheetConfigNs = {
     validate(config) {
         if (!isRecord(config))
             return fail([mkDiag('INVALID_SPEC', 'error', 'StylesheetConfig must be an object')]);
@@ -631,7 +624,8 @@ export const StylesheetConfig = {
         return diagnostics.length === 0 ? pass() : fail(diagnostics);
     },
 };
-export const PhaseSpec = {
+export { StylesheetConfigNs as StylesheetConfig };
+export const PhaseSpecNs = {
     validate(phase) {
         if (!isRecord(phase))
             return fail([mkDiag('INVALID_SPEC', 'error', 'PhaseSpec must be an object')]);
@@ -646,8 +640,7 @@ export const PhaseSpec = {
             diagnostics.push(mkDiag('MISSING_ALLOWED_PATHS', 'error', 'allowedPaths is required'));
         }
         if (phase['dependsOn'] !== undefined) {
-            if (!Array.isArray(phase['dependsOn']) ||
-                !phase['dependsOn'].every(d => typeof d === 'string')) {
+            if (!Array.isArray(phase['dependsOn']) || !phase['dependsOn'].every((d) => typeof d === 'string')) {
                 diagnostics.push(mkDiag('INVALID_SPEC', 'error', 'dependsOn must be an array of strings'));
             }
         }
@@ -658,7 +651,8 @@ export const PhaseSpec = {
         return result;
     },
 };
-export const BuilderSpec = {
+export { PhaseSpecNs as PhaseSpec };
+export const BuilderSpecNs = {
     validate(spec) {
         if (!isRecord(spec)) {
             return fail([
@@ -695,9 +689,7 @@ export const BuilderSpec = {
         return diagnostics.length === 0 ? pass() : fail(diagnostics);
     },
 };
-// ---------------------------------------------------------------------------
-// DotBuilder
-// ---------------------------------------------------------------------------
+export { BuilderSpecNs as BuilderSpec };
 export class DotBuilder {
     _slug;
     _goal;
@@ -713,7 +705,6 @@ export class DotBuilder {
         if (!Array.isArray(spec['phases'])) {
             throw new BuildError('INVALID_SPEC', 'spec.phases must be an array');
         }
-        // Build minimal base spec — constructor validates slug/goal and throws EMPTY_SLUG/EMPTY_GOAL
         const base = {
             slug: spec['slug'],
             goal: spec['goal'],
@@ -725,15 +716,12 @@ export class DotBuilder {
             specFile: typeof spec['specFile'] === 'string' ? spec['specFile'] : undefined,
         };
         const builder = new DotBuilder(base);
-        // Add phases via .phase() — validate each element is an object with a string name before
-        // calling phase(), so malformed JSON produces a BuildError rather than a TypeError.
         for (const p of spec['phases']) {
             if (!isRecord(p) || typeof p['name'] !== 'string') {
                 throw new BuildError('INVALID_SPEC', 'each phase must be an object with a string "name" field');
             }
             builder.phase(p);
         }
-        // Optional features via fluent methods
         if (spec['workspace'] === 'isolated') {
             builder.workspace(isRecord(spec['workspaceOpts']) ? spec['workspaceOpts'] : undefined);
         }
@@ -768,10 +756,11 @@ export class DotBuilder {
             this.phase(p);
         }
     }
-    phase(phaseSpec) {
+    phase(first, opts) {
         if (this._built) {
             throw new BuildError('ALREADY_BUILT', 'cannot add phases after build() has been called');
         }
+        const phaseSpec = typeof first === 'string' ? { name: first, ...opts } : first;
         const id = sanitizeId(phaseSpec.name);
         if (!id) {
             throw new BuildError('EMPTY_SLUG', `phase name "${phaseSpec.name}" sanitizes to empty string — must contain ASCII alphanumeric characters`);
@@ -821,8 +810,7 @@ export class DotBuilder {
         }
         this._built = true;
         const phases = this._phases;
-        // Pre-flight spec validation — runs before emission; catches spec-level invalidity
-        // that would produce malformed or unexecutable graphs.
+        // Pre-flight spec validation
         const preflightDiags = [
             ...preflightReservedIds(phases),
             ...preflightDanglingDeps(phases),
@@ -842,11 +830,9 @@ export class DotBuilder {
         if (preflightError) {
             throw new BuildError(preflightError.rule, preflightError.message, preflightDiags);
         }
-        // Emit the complete graph.
+        // Emit the complete graph
         const { dot, nodeMap, edgeList, graphAttrs, standaloneNodeIds, patternsApplied, defenseMatrix } = this._emitDot();
-        // Run all 15 structural validation rules sequentially on the complete graph.
-        // Each rule examines all relevant nodes/edges. Collect Diagnostic[] — if any
-        // have severity 'error', throw BuildError with the first error rule's code.
+        // Run all 15 structural validation rules
         const { acceptanceCriteria = {} } = this._spec;
         const diagnostics = [
             ...grRule1(nodeMap),
@@ -875,17 +861,18 @@ export class DotBuilder {
     // Pattern emission
     // ---------------------------------------------------------------------------
     _buildStylesheet(config) {
+        const sc = config;
         const parts = [];
         const universalProps = [];
-        if (config.defaultModel)
-            universalProps.push(`llm_model: ${config.defaultModel};`);
-        const effort = config.defaultEffort ?? config.reasoningEffort;
+        if (sc.defaultModel)
+            universalProps.push(`llm_model: ${sc.defaultModel};`);
+        const effort = sc.defaultEffort ?? sc.reasoningEffort;
         if (effort)
             universalProps.push(`reasoning_effort: ${effort};`);
         if (universalProps.length > 0)
             parts.push(`* { ${universalProps.join(' ')} }`);
-        if (config.overrides && config.overrides.length > 0) {
-            for (const ov of config.overrides) {
+        if (sc.overrides && sc.overrides.length > 0) {
+            for (const ov of sc.overrides) {
                 const sel = ov.selector.startsWith('.') || ov.selector === '*' ? ov.selector : `.${ov.selector}`;
                 const props = [`llm_model: ${ov.model};`];
                 if (ov.effort)
@@ -894,10 +881,10 @@ export class DotBuilder {
             }
         }
         else {
-            if (config.criticalModel)
-                parts.push(`.critical { llm_model: ${config.criticalModel}; }`);
-            if (config.reviewModel)
-                parts.push(`.review { llm_model: ${config.reviewModel}; }`);
+            if (sc.criticalModel)
+                parts.push(`.critical { llm_model: ${sc.criticalModel}; }`);
+            if (sc.reviewModel)
+                parts.push(`.review { llm_model: ${sc.reviewModel}; }`);
         }
         return parts.join(' ');
     }
@@ -906,12 +893,10 @@ export class DotBuilder {
         const phases = this._phases;
         const graphId = sanitizeId(this._slug) || 'pipeline';
         const applied = new Set();
-        // Structural flags
         const isCommitPushPhase = (p) => {
             const id = sanitizeId(p.name);
             return id === 'commit_and_push' || (id.includes('commit') && id.includes('push'));
         };
-        // securityScan, docOnly, and workspace-commit_and_push phases are always sequential — exclude from fan-out
         const independent = phases.filter(p => {
             if (p.securityScan)
                 return false;
@@ -927,7 +912,7 @@ export class DotBuilder {
         const hasBDD = phases.some(p => p.bddScenarios);
         const hasSpecFile = Boolean(spec.specFile);
         const hasSpecFirstAny = phases.some(p => p.specFirst === true || (p.goalGate && p.specFirst !== false));
-        // defenseMatrix
+        // Defense matrix
         let specDriven = 'NONE';
         if (hasBDD && hasSpecFile)
             specDriven = 'spec_file + BDD + conformance';
@@ -958,7 +943,6 @@ export class DotBuilder {
         }
         const nodes = [];
         const edges = [];
-        // Structured graph data — populated by emit/link/linkEdge, consumed by 15 grRules
         const nodeMap = new Map();
         const edgeList = [];
         const standaloneNodeIds = new Set();
@@ -966,17 +950,21 @@ export class DotBuilder {
             nodes.push(`  ${id} [${fmtAttrs(attrs)}]`);
             nodeMap.set(id, { ...attrs });
         };
-        const link = (from, to, lbl) => {
-            edges.push(lbl ? `  ${from} -> ${to} [label="${escapeAttr(lbl)}"]` : `  ${from} -> ${to}`);
-            edgeList.push(lbl !== undefined ? { from, to, label: lbl } : { from, to });
+        const link = (from, to, attrs) => {
+            if (attrs && Object.keys(attrs).length > 0) {
+                edges.push(`  ${from} -> ${to} [${fmtAttrs(attrs)}]`);
+                edgeList.push({ from, to, label: attrs['label'], attrs });
+            }
+            else {
+                edges.push(`  ${from} -> ${to}`);
+                edgeList.push({ from, to });
+            }
         };
         const linkEdge = (from, to, attrs) => {
             edges.push(`  ${from} -> ${to} [${fmtAttrs(attrs)}]`);
-            edgeList.push({ from, to });
+            edgeList.push({ from, to, attrs });
         };
-        // -------------------------------------------------------------------------
-        // P0a: setup_deps — always emitted with fallback install chain
-        // -------------------------------------------------------------------------
+        // P0a: setup_deps
         emit('start', { label: 'start', shape: 'Mdiamond' });
         emit('setup_deps', {
             label: 'setup_deps',
@@ -984,9 +972,7 @@ export class DotBuilder {
             tool_command: 'cd ${WORKING_DIR} && npm install 2>&1 || pnpm install 2>&1 || yarn install 2>&1',
         });
         applied.add('P0a');
-        // -------------------------------------------------------------------------
-        // P0c: capture_baseline — lint+typecheck error count snapshot
-        // -------------------------------------------------------------------------
+        // P0c: capture_baseline
         emit('capture_baseline', {
             label: 'capture_baseline',
             read_only: 'true',
@@ -996,18 +982,13 @@ export class DotBuilder {
         applied.add('P0c');
         link('start', 'setup_deps');
         link('setup_deps', 'capture_baseline');
-        // Union of all impl phase paths — used by P21 fix_all
-        // Include dependent phases (not just independent) so their paths are in union for cross-phase fixes
         const implPhases = phases.filter(p => !p.securityScan && !p.docOnly);
         const allDependentPhases = phases.filter(p => !p.securityScan);
         const unionPaths = [...new Set(allDependentPhases.flatMap(p => p.allowedPaths ?? []))].join(',');
         const unionEscalate = [...new Set(allDependentPhases.flatMap(p => p.escalateOn ?? []))].join(',');
-        // -------------------------------------------------------------------------
-        // Fan-out (Pattern 4) — 2+ independent non-competing phases
-        // -------------------------------------------------------------------------
+        // Fan-out (Pattern 4)
         if (isFanOut) {
             applied.add('P4');
-            // P0b: split_phases node with max_parallel=1 (parallel limit)
             emit('split_phases', { label: 'split_phases', max_parallel: '1', shape: 'component' });
             applied.add('P0b');
             link('capture_baseline', 'split_phases');
@@ -1016,7 +997,6 @@ export class DotBuilder {
                 emit(id, { label: p.name, shape: 'component' });
                 link('split_phases', id);
             }
-            // Dependent phases serialize after merge (if any)
             const dependent = phases.filter(p => p.dependsOn && p.dependsOn.length > 0);
             const mergeId = 'merge_phases';
             emit(mergeId, { label: 'merge_phases', shape: 'tripleoctagon' });
@@ -1029,7 +1009,7 @@ export class DotBuilder {
                 link(afterMerge, id);
                 afterMerge = id;
             }
-            // P21: fix_all + verify_final after fan-out converges
+            // P21: fix_all + verify_final
             applied.add('P21');
             const fixAllAttrs = {
                 allowed_paths: unionPaths,
@@ -1045,11 +1025,9 @@ export class DotBuilder {
             link(afterMerge, 'fix_all');
             link('fix_all', 'verify_final');
             link('verify_final', 'done');
-            // -------------------------------------------------------------------------
-            // Competing implementations (Pattern 18)
-            // -------------------------------------------------------------------------
         }
         else if (hasCompeting) {
+            // Competing implementations (Pattern 18)
             applied.add('P18');
             const cp = phases.find(p => p.competing);
             const baseId = sanitizeId(cp.name);
@@ -1061,25 +1039,20 @@ export class DotBuilder {
             link(`${baseId}_a`, 'competing_merge');
             link(`${baseId}_b`, 'competing_merge');
             link('competing_merge', 'done');
-            // -------------------------------------------------------------------------
-            // Sequential execution (single or dependent multi-phase)
-            // -------------------------------------------------------------------------
         }
         else {
+            // Sequential execution
             const hasAnyPhase = phases.length > 0;
-            // prevId/prevLabel track the last emitted node and what label to use when
-            // linking it to the next thing (needed because diamond pass-edges need a label).
             let prevId = 'capture_baseline';
-            let prevLabel = undefined;
+            let prevAttrs = undefined;
             for (let i = 0; i < phases.length; i++) {
                 const p = phases[i];
                 const id = sanitizeId(p.name);
-                // P16/P16b: spec-first pre-nodes (never for securityScan or docOnly phases)
                 const emitSpec = !p.securityScan && !p.docOnly && (p.specFirst === true || (p.goalGate && p.specFirst !== false));
                 const emitBDD = !p.securityScan && !p.docOnly && p.bddScenarios === true;
-                const specId = i === 0 ? 'spec_tests' : `spec_tests_${i}`;
-                const bddId = i === 0 ? 'bdd_scenarios' : `bdd_scenarios_${i}`;
-                // ---- securityScan: simple review pass-through, no quality gate ----
+                const specId = `spec_file_${id}`;
+                const bddId = `bdd_scenarios_${id}`;
+                // securityScan: simple review pass-through
                 if (p.securityScan) {
                     const phaseAttrs = {
                         class: 'review',
@@ -1089,30 +1062,26 @@ export class DotBuilder {
                     applied.add('P6b');
                     applied.add('P8');
                     emit(id, phaseAttrs);
-                    link(prevId, id, prevLabel);
+                    link(prevId, id, prevAttrs);
                     prevId = id;
-                    prevLabel = undefined;
+                    prevAttrs = undefined;
                     continue;
                 }
-                // ---- Full impl phase IDs (shared by docOnly and regular paths) ----
                 const implId = `impl_${id}`;
-                // Per-phase suffixed gate node IDs (i=0 → no suffix for readability)
-                const scopeCheckId = i === 0 ? 'scope_check' : `scope_check_${i}`;
-                const checkProgressId = i === 0 ? 'check_progress' : `check_progress_${i}`;
-                const conformanceId = i === 0 ? 'conformance' : `conformance_${i}`;
-                // ---- docOnly: impl → check_progress → scope_check → conformance ----
-                // Skips verify_lint, verify_types, test diamond, fix node (Patterns 0d, 1, 13, 14 suppressed).
-                // docOnly phases don't generate code, so they have no permission_mode and route to done on failure.
+                const scopeCheckId = `scope_check_${id}`;
+                const checkProgressId = `check_progress_${id}`;
+                const conformanceId = `conformance_${id}`;
+                // docOnly phase
                 if (p.docOnly) {
                     const implAttrs = {
                         allowed_paths: (p.allowedPaths ?? []).join(','),
-                        class: 'codergen',
+                        class: 'documentation',
                         label: p.prompt,
                         max_visits: '5',
                     };
                     if (p.timeout)
                         implAttrs['timeout'] = p.timeout;
-                    link(prevId, implId, prevLabel);
+                    link(prevId, implId, prevAttrs);
                     emit(implId, implAttrs);
                     applied.add('P22');
                     applied.add('P6');
@@ -1125,7 +1094,7 @@ export class DotBuilder {
                     });
                     applied.add('P0e');
                     link(implId, checkProgressId);
-                    link(checkProgressId, 'done', 'fail');
+                    link(checkProgressId, 'done', { condition: 'outcome=fail', label: 'fail' });
                     emit(scopeCheckId, {
                         class: 'review',
                         label: 'Compare git diff against phase prompt. Flag files modified outside allowed_paths. Output STATUS: SUCCESS | FAIL.',
@@ -1135,7 +1104,7 @@ export class DotBuilder {
                     applied.add('P10');
                     applied.add('P6b');
                     link(checkProgressId, scopeCheckId);
-                    link(scopeCheckId, 'done', 'fail');
+                    link(scopeCheckId, 'done', { condition: 'outcome=fail', label: 'fail' });
                     const conformanceDocAttrs = {
                         class: 'review',
                         label: 'Review the implementation against the phase spec and PRD requirements. Check: correct files modified, API contracts match, no regressions. Output STATUS: SUCCESS | FAIL.',
@@ -1146,39 +1115,39 @@ export class DotBuilder {
                     applied.add('P15');
                     link(scopeCheckId, conformanceId);
                     prevId = conformanceId;
-                    prevLabel = undefined;
+                    prevAttrs = undefined;
                     continue;
                 }
-                // ---- Regular (non-docOnly) impl phase IDs ----
+                // Regular impl phase
                 const testId = `test_${id}`;
                 const fixId = `fix_${id}`;
-                const verifyLintId = i === 0 ? 'verify_lint' : `verify_lint_${i}`;
-                const verifyTypesId = i === 0 ? 'verify_types' : `verify_types_${i}`;
+                const verifyLintId = `verify_lint_${id}`;
+                const verifyTypesId = `verify_types_${id}`;
                 // Spec-first gates (P16 / P16b)
                 if (emitBDD && emitSpec) {
                     emit(bddId, { label: 'bdd_scenarios' });
-                    emit(specId, { label: 'spec_tests' });
-                    link(prevId, bddId, prevLabel);
+                    emit(specId, { label: 'spec_file' });
+                    link(prevId, bddId, prevAttrs);
                     link(bddId, specId);
                     link(specId, implId);
                     applied.add('P16b');
                     applied.add('P16');
                 }
                 else if (emitSpec) {
-                    emit(specId, { label: 'spec_tests' });
-                    link(prevId, specId, prevLabel);
+                    emit(specId, { label: 'spec_file' });
+                    link(prevId, specId, prevAttrs);
                     link(specId, implId);
                     applied.add('P16');
                 }
                 else {
-                    link(prevId, implId, prevLabel);
+                    link(prevId, implId, prevAttrs);
                 }
-                // P22: impl node — codergen with allowed_paths, permission_mode, escalate_on
+                // P22: impl node
                 const implAttrs = {
                     allowed_paths: (p.allowedPaths ?? []).join(','),
                     class: 'codergen',
                     label: p.prompt,
-                    max_visits: '5', // P6: impl is the retry target
+                    max_visits: '5',
                     permission_mode: 'auto',
                 };
                 if (p.escalateOn && p.escalateOn.length > 0) {
@@ -1186,7 +1155,9 @@ export class DotBuilder {
                 }
                 if (p.timeout)
                     implAttrs['timeout'] = p.timeout;
-                // Workspace: commit_and_push node decoration
+                if (p.specFirst) {
+                    implAttrs['spec_first'] = 'true';
+                }
                 if (spec.workspace === 'isolated' && (id === 'commit_and_push' || (id.includes('commit') && id.includes('push')))) {
                     if (spec.workspaceOpts?.repoUrl)
                         implAttrs['repo_url'] = spec.workspaceOpts.repoUrl;
@@ -1199,7 +1170,7 @@ export class DotBuilder {
                 if (!defenseMatrix.permissions.includes('auto')) {
                     defenseMatrix.permissions.push('auto');
                 }
-                // P10: scope_check review node after impl
+                // P10: scope_check
                 emit(scopeCheckId, {
                     class: 'review',
                     label: 'Compare git diff against phase prompt. Flag files modified outside allowed_paths. Output STATUS: SUCCESS | FAIL.',
@@ -1209,7 +1180,7 @@ export class DotBuilder {
                 applied.add('P10');
                 applied.add('P6b');
                 link(implId, scopeCheckId);
-                // P0e: check_progress — detect stalled impl (read_only, max_visits=3)
+                // P0e: check_progress
                 emit(checkProgressId, {
                     label: 'check_progress',
                     max_visits: '3',
@@ -1219,9 +1190,7 @@ export class DotBuilder {
                 });
                 applied.add('P0e');
                 link(scopeCheckId, checkProgressId);
-                // P13: verify_lint — delta-aware lint regression check
-                // Label encodes BASELINE/CURRENT semantics for documentation; tool_command
-                // uses inline comparison to avoid VAR= shell assignments in DOT output.
+                // P13: verify_lint
                 emit(verifyLintId, {
                     label: 'verify_lint: BASELINE from cat baseline_lint_errors; CURRENT lint error count -le BASELINE',
                     shape: 'cds',
@@ -1230,30 +1199,30 @@ export class DotBuilder {
                 applied.add('P13');
                 applied.add('P0d');
                 link(checkProgressId, verifyLintId);
-                // P14: verify_types — delta-aware typecheck regression check
+                // P14: verify_types
                 emit(verifyTypesId, {
                     label: 'verify_types: BASELINE from cat baseline_ts_errors; CURRENT TS error count -le BASELINE',
                     tool_command: '[ $(npx tsc --noEmit 2>&1 | grep -c error || echo 0) -le $(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) ]',
                 });
                 applied.add('P14');
                 link(verifyLintId, verifyTypesId);
-                // P9: optional coverage gate between verify_types and conformance
+                // P9: optional coverage gate
                 const hasCoverage = typeof p.coverageTarget === 'number';
                 if (hasCoverage) {
-                    const testRunId = i === 0 ? 'test_run' : `test_run_${i}`;
-                    const covId = i === 0 ? 'coverage_gate' : `coverage_gate_${i}`;
+                    const testRunId = `test_run_${id}`;
+                    const covId = `coverage_gate_${id}`;
                     emit(testRunId, { label: 'test' });
                     emit(covId, { coverage_target: String(p.coverageTarget), label: 'coverage_gate', shape: 'diamond' });
                     applied.add('P9');
                     link(verifyTypesId, testRunId);
                     link(testRunId, covId);
-                    link(covId, conformanceId, 'pass');
-                    link(covId, implId, 'fail');
+                    link(covId, conformanceId, { condition: 'outcome=success', label: 'pass' });
+                    link(covId, implId, { condition: 'outcome=fail', label: 'fail' });
                 }
                 else {
                     link(verifyTypesId, conformanceId);
                 }
-                // P15: conformance — always emitted (review gate vs spec/PRD)
+                // P15: conformance
                 const conformanceAttrs = {
                     class: 'review',
                     label: 'Review the implementation against the phase spec and PRD requirements. Check: correct files modified, API contracts match, no regressions. Output STATUS: SUCCESS | FAIL.',
@@ -1266,22 +1235,19 @@ export class DotBuilder {
                 if (p.goalGate) {
                     conformanceAttrs['goal_gate'] = 'true';
                     applied.add('P2');
-                    if (spec.defaultMaxRetry) {
-                        conformanceAttrs['max_visits'] = String(spec.defaultMaxRetry);
-                    }
+                    conformanceAttrs['max_visits'] = String(spec.defaultMaxRetry ?? 3);
                     const acKeys = Object.keys(spec.acceptanceCriteria ?? {});
                     if (acKeys.length > 0)
                         conformanceAttrs['acceptance_criteria'] = acKeys.join(',');
                 }
                 emit(conformanceId, conformanceAttrs);
                 applied.add('P15');
-                // P1: test_${id} diamond — pass/fail routing (P3: 2 outgoing edges guaranteed)
+                // P1: test diamond
                 const testAttrs = {
                     label: `test ${id}`,
                     retry_target: implId,
                     shape: 'diamond',
                 };
-                // P6: max_visits on nodes with incoming retry edges (don't overwrite P0e's max_visits=3)
                 if (!p.goalGate) {
                     testAttrs['max_visits'] = '5';
                     applied.add('P6');
@@ -1290,62 +1256,65 @@ export class DotBuilder {
                     testAttrs['max_visits'] = String(spec.defaultMaxRetry);
                     applied.add('P6');
                 }
+                else {
+                    testAttrs['max_visits'] = '3';
+                    applied.add('P6');
+                }
                 emit(testId, testAttrs);
                 applied.add('P1');
                 applied.add('P3');
                 link(conformanceId, testId);
-                // P1: fix loop — fail edge → fix node → back to impl
+                // P1: fix loop
                 emit(fixId, { label: `fix ${id}` });
-                link(testId, fixId, 'fail');
+                link(testId, fixId, { condition: 'outcome=fail', label: 'fail' });
                 link(fixId, implId);
                 // P17: red_team after test pass
                 if (p.redTeam) {
-                    const rtId = i === 0 ? 'red_team' : `red_team_${i}`;
+                    const rtId = `red_team_${id}`;
                     emit(rtId, { label: 'red_team', read_only: 'true' });
                     applied.add('P17');
-                    link(testId, rtId, 'pass');
+                    link(testId, rtId, { condition: 'outcome=success', label: 'pass' });
                     prevId = rtId;
-                    prevLabel = undefined;
+                    prevAttrs = undefined;
                 }
                 else {
                     prevId = testId;
-                    prevLabel = 'pass'; // test diamond pass edge → next phase or fix_all
+                    prevAttrs = { condition: 'outcome=success', label: 'pass' };
                 }
             }
-            // P21: fix_all + verify_final — always emitted when any impl phase exists
+            // P21: fix_all + verify_final
             if (hasAnyPhase) {
-                applied.add('P21');
-                const fixAllAttrs = {
-                    allowed_paths: unionPaths,
-                    class: 'codergen',
-                    label: 'fix_all',
-                    permission_mode: 'auto',
-                    timeout: '30m',
-                };
-                if (unionEscalate)
-                    fixAllAttrs['escalate_on'] = unionEscalate;
-                emit('fix_all', fixAllAttrs);
+                if (unionPaths) {
+                    applied.add('P21');
+                    const fixAllAttrs = {
+                        allowed_paths: unionPaths,
+                        class: 'codergen',
+                        label: 'fix_all',
+                        permission_mode: 'auto',
+                        timeout: '30m',
+                    };
+                    if (unionEscalate)
+                        fixAllAttrs['escalate_on'] = unionEscalate;
+                    emit('fix_all', fixAllAttrs);
+                    link(prevId, 'fix_all', prevAttrs);
+                    link('fix_all', 'verify_final');
+                }
+                else {
+                    link(prevId, 'verify_final');
+                }
                 emit('verify_final', { label: 'verify_final' });
-                link(prevId, 'fix_all', prevLabel);
-                link('fix_all', 'verify_final');
                 link('verify_final', 'done');
             }
             else {
                 link('capture_baseline', 'done');
             }
         }
-        // -------------------------------------------------------------------------
-        // P25: Catastrophic recovery — verify_final → setup_deps loop_restart edge
-        // Only when pipeline has retry loops (sequential with ≥1 impl phase).
-        // Not on zero-phase, fan-out, or competing pipelines.
-        // -------------------------------------------------------------------------
+        // P25: Catastrophic recovery loop
         if (!isFanOut && !hasCompeting && implPhases.length > 0) {
             applied.add('P25');
             linkEdge('verify_final', 'setup_deps', { loop_restart: 'true' });
         }
-        // -------------------------------------------------------------------------
-        // Microverse loop (Pattern 20) — emitted after main pipeline
-        // -------------------------------------------------------------------------
+        // Microverse loop (Pattern 20)
         if (spec.microverse) {
             applied.add('P20');
             const mv = spec.microverse;
@@ -1355,7 +1324,7 @@ export class DotBuilder {
             emit('optimize', { label: `optimize ${mv.name}` });
             emit('measure', { label: `measure ${mv.name}` });
             emit('compare', {
-                direction: mvOpts.direction,
+                direction: mvOpts.direction ?? 'improve',
                 label: 'compare',
                 max_visits: String(mvOpts.maxVisits ?? 10),
                 shape: 'diamond',
@@ -1366,18 +1335,15 @@ export class DotBuilder {
             link('baseline', 'optimize');
             link('optimize', 'measure');
             link('measure', 'compare');
-            link('compare', 'optimize', 'miss');
-            link('compare', 'check', 'hit');
-            link('check', 'done', 'accept');
-            link('check', 'optimize', 'reject');
-            // Microverse is a standalone subgraph — not part of main reachability check (Rule 3)
+            link('compare', 'optimize', { condition: 'outcome=miss', label: 'miss' });
+            link('compare', 'check', { condition: 'outcome=hit', label: 'hit' });
+            link('check', 'done', { condition: 'outcome=accept', label: 'accept' });
+            link('check', 'optimize', { condition: 'outcome=reject', label: 'reject' });
             for (const mvId of ['commit_baseline', 'baseline', 'optimize', 'measure', 'compare', 'check']) {
                 standaloneNodeIds.add(mvId);
             }
         }
-        // -------------------------------------------------------------------------
         // Review ratchet (Pattern 19)
-        // -------------------------------------------------------------------------
         if (spec.reviewRatchet) {
             applied.add('P19');
             const n = spec.reviewRatchet;
@@ -1390,10 +1356,9 @@ export class DotBuilder {
                 link(`review_pass_${i}`, `review_pass_${i + 1}`);
             }
             link(`review_pass_${n}`, 'review_merge');
-            link('review_merge', 'done', 'pass');
-            link('review_merge', 'fix_review', 'fail');
+            link('review_merge', 'done', { condition: 'outcome=success', label: 'pass' });
+            link('review_merge', 'fix_review', { condition: 'outcome=fail', label: 'fail' });
             link('fix_review', 'review_pass_1');
-            // Review ratchet is a standalone cycle — not part of main reachability check (Rule 3)
             for (let ri = 1; ri <= n; ri++)
                 standaloneNodeIds.add(`review_pass_${ri}`);
             standaloneNodeIds.add('review_merge');
@@ -1401,14 +1366,12 @@ export class DotBuilder {
         }
         // Always emit done last
         emit('done', { label: 'done', shape: 'Msquare' });
-        // -------------------------------------------------------------------------
-        // P23: defense matrix comment block (always emitted)
-        // -------------------------------------------------------------------------
+        // P23: defense matrix comment block
         const guardPatterns = ['P0c', 'P6b', 'P10', 'P13', 'P14', 'P15', 'P17', 'P25'];
         defenseMatrix.guardrails = guardPatterns.filter(pg => applied.has(pg));
         applied.add('P23');
         const lines = [
-            `digraph ${graphId} {`,
+            `digraph "${graphId}" {`,
             `  graph [${fmtAttrs(graphAttrs)}]`,
             `  /* DEFENSE MATRIX`,
             `   * competitive: ${defenseMatrix.competitive}`,

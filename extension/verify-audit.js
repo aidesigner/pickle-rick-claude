@@ -42,9 +42,9 @@ const noSpecResult = new DotBuilder(baseSpec({
     phases: [phase('validate API', { goalGate: true, retryTarget: 'impl_validate_api', specFirst: false })],
 })).build();
 console.log('patternsApplied:', noSpecResult.patternsApplied);
-console.log('Has spec_tests?', noSpecResult.dot.includes('spec_tests'));
+console.log('Has spec_file?', noSpecResult.dot.includes('spec_file'));
 console.log('Has P16?', noSpecResult.patternsApplied.includes('P16'));
-console.log('PASS:', !noSpecResult.dot.includes('spec_tests') && !noSpecResult.patternsApplied.includes('P16'));
+console.log('PASS:', !noSpecResult.dot.includes('spec_file') && !noSpecResult.patternsApplied.includes('P16'));
 
 // Test 4: modelStylesheet generates valid CSS-like syntax
 console.log('\n=== Test 4: modelStylesheet generates valid CSS-like syntax ===');
@@ -74,7 +74,7 @@ console.log('\n=== AUDIT SUMMARY ===');
 const tests = [
     competingResult.patternsApplied.includes('P18') && !competingResult.patternsApplied.includes('P4'),
     !docOnlyResult.dot.includes('verify_lint') && !docOnlyResult.dot.includes('verify_types') && !docOnlyResult.dot.includes('check_progress'),
-    !noSpecResult.dot.includes('spec_tests') && !noSpecResult.patternsApplied.includes('P16'),
+    !noSpecResult.dot.includes('spec_file') && !noSpecResult.patternsApplied.includes('P16'),
     !!ssMatch
 ];
 const passed = tests.filter(t => t).length;

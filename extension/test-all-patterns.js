@@ -139,7 +139,7 @@ console.log(`P20 (microverse): ${r20.patternsApplied.includes('P20')}`);
 const r0 = new DotBuilder(baseSpec({ 
     workspace: 'isolated',
     workspaceOpts: { repoUrl: 'https://github.com/org/repo.git', cleanup: 'delete' },
-    phases: [phase('a'), phase('commit', { allowedPaths: ['src/'] })],
+    phases: [phase('a'), phase('commit_and_push', { allowedPaths: ['src/'] })],
 })).build();
 console.log(`P0 (workspace isolated): ${r0.patternsApplied.includes('P0')}`);
 
