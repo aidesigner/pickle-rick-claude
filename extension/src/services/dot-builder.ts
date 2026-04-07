@@ -1,28 +1,23 @@
 // DOT pipeline codegen builder — no process.exit() (eslint-plugin-pickle rule)
-
-import {
-  BuildError,
-  type BuildErrorCode as BuildErrorCodeType,
-  type BuilderSpec as BuilderSpecInterface,
-  type PhaseSpec as PhaseSpecInterface,
-  type Diagnostic as DiagnosticInterface,
-  type ValidationResult as ValidationResultInterface,
-  type BuildResult as BuildResultInterface,
-  type DefenseMatrix as DefenseMatrixInterface,
-  type StylesheetConfig as StylesheetConfigInterface,
-  type MicroverseOpts as MicroverseOptsInterface,
-  type WorkspaceOpts as WorkspaceOptsInterface,
-} from '../types/index.js';
-
+import { BuildError } from '../types/index.js';
 export { BuildError } from '../types/index.js';
+import type {
+  BuildResult,
+  DefenseMatrix,
+  Diagnostic,
+  PhaseSpec,
+  ValidationResult,
+  MicroverseOpts as MicroverseOptsType,
+  WorkspaceOpts as WorkspaceOptsType,
+  StylesheetConfig,
+  StylesheetOverride,
+  BuildErrorCode as BuildErrorCodeType,
+} from '../types/index.js';
 
 // ---------------------------------------------------------------------------
 // BUILD_ERROR_CODES — runtime constant, mirrors BuildErrorCode union
 // ---------------------------------------------------------------------------
-
-// Single source of truth: exported as both BUILD_ERROR_CODES and BuildErrorCode
-// so JS consumers can import either name.
-export const BUILD_ERROR_CODES: readonly BuildErrorCodeType[] = [
+export const BUILD_ERROR_CODES: BuildErrorCodeType[] = [
   'EMPTY_SLUG', 'EMPTY_GOAL', 'DUPLICATE_PHASE', 'INVALID_RATCHET',
   'NON_NUMERIC_TARGET', 'ALREADY_BUILT', 'INVALID_STRUCTURE', 'START_HAS_INCOMING',
   'UNREACHABLE_NODE', 'DIAMOND_MISSING_EDGES', 'GOAL_GATE_NO_MAX_VISITS',
@@ -30,9 +25,14 @@ export const BUILD_ERROR_CODES: readonly BuildErrorCodeType[] = [
   'REVIEW_MISSING_READONLY', 'COMPONENT_NO_MERGE', 'FAN_OUT_SCOPE_LEAK',
   'WORKSPACE_NO_HTTPS', 'WORKSPACE_NO_PUSH', 'PLAN_MODE_DEADLOCK',
   'MISSING_ALLOWED_PATHS', 'INVALID_SPEC', 'INVALID_TIMEOUT', 'INVALID_ALLOWED_PATHS',
-] as const;
-
+];
+// Alias for JS consumers
 export const BuildErrorCode = BUILD_ERROR_CODES;
+
+// ---------------------------------------------------------------------------
+// Internal types
+// ---------------------------------------------------------------------------
+interface EdgeEntry { from: string; to: string; label?: string; attrs?: Record<string, string> }
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -42,27 +42,25 @@ function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
 }
 
-function mkDiag(
-  rule: string,
-  severity: 'error' | 'warning' | 'info',
-  message: string,
-  nodeId?: string,
-): DiagnosticInterface {
-  const d: DiagnosticInterface = { rule, severity, message };
+function mkDiag(rule: string, severity: 'error' | 'warning' | 'info', message: string, nodeId?: string): Diagnostic {
+  const d: Diagnostic = { rule, severity, message };
   if (nodeId !== undefined) d.nodeId = nodeId;
   return d;
 }
 
-function pass(): ValidationResultInterface { return { valid: true, diagnostics: [] }; }
-function fail(diagnostics: DiagnosticInterface[]): ValidationResultInterface { return { valid: false, diagnostics }; }
+function pass(): ValidationResult { return { valid: true, diagnostics: [] }; }
+function fail(diagnostics: Diagnostic[]): ValidationResult { return { valid: false, diagnostics }; }
 
+/** Escape a string for use inside DOT double-quoted attribute values. */
 function escapeAttr(value: string): string {
   return value
     .replace(/\\/g, '\\\\')
     .replace(/"/g, '\\"')
-    .replace(/\n/g, '\\n');
+    .replace(/\n/g, '\\n')
+    .replace(/\t/g, '\\t');
 }
 
+/** Format a key-value map into DOT attribute syntax: key="val", key2="val2" */
 function fmtAttrs(map: Record<string, string>): string {
   return Object.keys(map)
     .sort()
@@ -70,6 +68,12 @@ function fmtAttrs(map: Record<string, string>): string {
     .join(', ');
 }
 
+/** DOT reserved words that cannot be used as bare node identifiers. */
+const DOT_RESERVED = new Set([
+  'graph', 'digraph', 'subgraph', 'edge', 'node', 'strict',
+]);
+
+/** Sanitize a phase name into a valid DOT node identifier. */
 function sanitizeId(name: string): string {
   let id = name
     .toLowerCase()
@@ -77,6 +81,8 @@ function sanitizeId(name: string): string {
     .replace(/_+/g, '_')
     .replace(/^_+|_+$/g, '');
   if (/^\d/.test(id)) id = '_' + id;
+  // Prevent collision with DOT reserved words
+  if (DOT_RESERVED.has(id)) id = `phase_${id}`;
   return id;
 }
 
@@ -91,38 +97,32 @@ function extractPromptPaths(prompt: string): string[] {
   return (prompt.match(/\b[\w.-]+(?:\/[\w.-]+)+/g) ?? []);
 }
 
-
 // ---------------------------------------------------------------------------
 // Pre-flight spec validation — runs before emission; throws on first error
 // ---------------------------------------------------------------------------
 
-/** Pre-flight: phase names must not sanitize to reserved graph node IDs. */
-function preflightReservedIds(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
-  const diags: DiagnosticInterface[] = [];
+function preflightReservedIds(phases: PhaseSpec[]): Diagnostic[] {
+  const diags: Diagnostic[] = [];
   for (const phase of phases) {
     const id = sanitizeId(phase.name);
     if (RESERVED_IDS.has(id)) {
-      diags.push(mkDiag('INVALID_STRUCTURE', 'error',
-        `phase "${phase.name}" sanitizes to reserved node id "${id}"`, id));
+      diags.push(mkDiag('INVALID_STRUCTURE', 'error', `phase "${phase.name}" sanitizes to reserved node id "${id}"`, id));
     }
   }
   return diags;
 }
 
-/** Pre-flight: dependsOn references must name valid phases (catches dangling edges). */
-function preflightDanglingDeps(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
+function preflightDanglingDeps(phases: PhaseSpec[]): Diagnostic[] {
   const knownIds = new Set([
     ...phases.map(p => sanitizeId(p.name)),
     ...phases.map(p => p.name),
   ]);
-  const diags: DiagnosticInterface[] = [];
+  const diags: Diagnostic[] = [];
   for (const phase of phases) {
     if (!phase.dependsOn || phase.dependsOn.length === 0) continue;
     for (const dep of phase.dependsOn) {
       if (!knownIds.has(dep) && !knownIds.has(sanitizeId(dep))) {
-        diags.push(mkDiag('UNREACHABLE_NODE', 'error',
-          `phase "${phase.name}" depends on "${dep}" which does not exist`,
-          sanitizeId(phase.name)));
+        diags.push(mkDiag('UNREACHABLE_NODE', 'error', `phase "${phase.name}" depends on "${dep}" which does not exist`, sanitizeId(phase.name)));
         break;
       }
     }
@@ -130,35 +130,27 @@ function preflightDanglingDeps(phases: PhaseSpecInterface[]): DiagnosticInterfac
   return diags;
 }
 
-/** Pre-flight: timeout must match /^\d+[mhd]$/ with a non-zero numeric part. */
-function preflightTimeoutFormat(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
-  const diags: DiagnosticInterface[] = [];
+function preflightTimeoutFormat(phases: PhaseSpec[]): Diagnostic[] {
+  const diags: Diagnostic[] = [];
   for (const phase of phases) {
     if (!phase.timeout) continue;
     const match = /^(\d+)([mhd])$/.exec(phase.timeout);
     if (!match) {
-      diags.push(mkDiag('INVALID_TIMEOUT', 'error',
-        `phase "${phase.name}" timeout "${phase.timeout}" must match <number><m|h|d> (e.g. "30m")`,
-        sanitizeId(phase.name)));
+      diags.push(mkDiag('INVALID_TIMEOUT', 'error', `phase "${phase.name}" timeout "${phase.timeout}" must match <number><m|h|d> (e.g. "30m")`, sanitizeId(phase.name)));
     } else if (parseInt(match[1], 10) === 0) {
-      diags.push(mkDiag('INVALID_TIMEOUT', 'error',
-        `phase "${phase.name}" timeout "${phase.timeout}" must be > 0`,
-        sanitizeId(phase.name)));
+      diags.push(mkDiag('INVALID_TIMEOUT', 'error', `phase "${phase.name}" timeout "${phase.timeout}" must be > 0`, sanitizeId(phase.name)));
     }
   }
   return diags;
 }
 
-/** Pre-flight: allowedPaths must be relative (no leading / or ..). */
-function preflightAllowedPaths(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
-  const diags: DiagnosticInterface[] = [];
+function preflightAllowedPaths(phases: PhaseSpec[]): Diagnostic[] {
+  const diags: Diagnostic[] = [];
   for (const phase of phases) {
     if (!phase.allowedPaths) continue;
     for (const ap of phase.allowedPaths) {
       if (ap.startsWith('/') || ap.startsWith('..')) {
-        diags.push(mkDiag('INVALID_ALLOWED_PATHS', 'error',
-          `phase "${phase.name}" allowedPaths contains "${ap}" — must be relative, no absolute or traversal paths`,
-          sanitizeId(phase.name)));
+        diags.push(mkDiag('INVALID_ALLOWED_PATHS', 'error', `phase "${phase.name}" allowedPaths contains "${ap}" — must be relative, no absolute or traversal paths`, sanitizeId(phase.name)));
         break;
       }
     }
@@ -166,47 +158,37 @@ function preflightAllowedPaths(phases: PhaseSpecInterface[]): DiagnosticInterfac
   return diags;
 }
 
-/** Pre-flight: retryTarget must not point to the reserved start node. */
-function preflightStartIncoming(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
-  const diags: DiagnosticInterface[] = [];
+function preflightStartIncoming(phases: PhaseSpec[]): Diagnostic[] {
+  const diags: Diagnostic[] = [];
   for (const phase of phases) {
     if (phase.retryTarget === 'start') {
-      diags.push(mkDiag('START_HAS_INCOMING', 'error',
-        `phase "${phase.name}" retryTarget "start" would create an incoming edge to the start node`,
-        sanitizeId(phase.name)));
+      diags.push(mkDiag('START_HAS_INCOMING', 'error', `phase "${phase.name}" retryTarget "start" would create an incoming edge to the start node`, sanitizeId(phase.name)));
     }
   }
   return diags;
 }
 
-/** Pre-flight: goalGate phase (not specFirst) without retryTarget produces a gate diamond
- *  with only 1 outgoing edge (no retry path). */
-function preflightGoalGateEdges(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
-  const diags: DiagnosticInterface[] = [];
+function preflightGoalGateEdges(phases: PhaseSpec[]): Diagnostic[] {
+  const diags: Diagnostic[] = [];
   for (const phase of phases) {
     if (phase.goalGate && !phase.specFirst && !phase.retryTarget) {
-      diags.push(mkDiag('DIAMOND_MISSING_EDGES', 'error',
-        `goalGate phase "${phase.name}" requires retryTarget to provide ≥2 outgoing edges`,
-        sanitizeId(phase.name)));
+      diags.push(mkDiag('DIAMOND_MISSING_EDGES', 'error', `goalGate phase "${phase.name}" requires retryTarget to provide ≥2 outgoing edges`, sanitizeId(phase.name)));
     }
   }
   return diags;
 }
 
-/** Pre-flight: retryTarget must not escape its fan-out component scope. */
-function preflightFanOutScope(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
+function preflightFanOutScope(phases: PhaseSpec[]): Diagnostic[] {
   const independent = phases.filter(p => !p.dependsOn || p.dependsOn.length === 0);
   if (independent.length < 2) return [];
   const indIds = new Set(independent.map(p => sanitizeId(p.name)));
-  const diags: DiagnosticInterface[] = [];
+  const diags: Diagnostic[] = [];
   for (const phase of independent) {
     if (!phase.retryTarget) continue;
     const thisId = sanitizeId(phase.name);
     for (const otherId of indIds) {
       if (otherId !== thisId && phase.retryTarget.includes(otherId)) {
-        diags.push(mkDiag('FAN_OUT_SCOPE_LEAK', 'error',
-          `phase "${phase.name}" retryTarget "${phase.retryTarget}" escapes fan-out scope into branch "${otherId}"`,
-          thisId));
+        diags.push(mkDiag('FAN_OUT_SCOPE_LEAK', 'error', `phase "${phase.name}" retryTarget "${phase.retryTarget}" escapes fan-out scope into branch "${otherId}"`, thisId));
         break;
       }
     }
@@ -214,58 +196,42 @@ function preflightFanOutScope(phases: PhaseSpecInterface[]): DiagnosticInterface
   return diags;
 }
 
-/** Pre-flight: workspace=isolated with repo_url requires HTTPS. */
-function preflightWorkspaceHttps(
-  workspace: 'isolated' | undefined,
-  workspaceOpts: BuilderSpecInterface['workspaceOpts'],
-): DiagnosticInterface[] {
+function preflightWorkspaceHttps(workspace: string | undefined, workspaceOpts: WorkspaceOptsType | undefined): Diagnostic[] {
   if (workspace !== 'isolated') return [];
   const repoUrl = workspaceOpts?.repoUrl;
   if (!repoUrl) return [];
   if (!repoUrl.startsWith('https://')) {
-    return [mkDiag('WORKSPACE_NO_HTTPS', 'error',
-      `workspace="isolated" requires HTTPS repo_url; got: "${repoUrl}"`)];
+    return [mkDiag('WORKSPACE_NO_HTTPS', 'error', `workspace="isolated" requires HTTPS repo_url; got: "${repoUrl}"`)];
   }
   return [];
 }
 
-/** Pre-flight: specFirst+goalGate produces plan-mode permission prompts — deadlock in headless. */
-function preflightPlanDeadlock(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
+function preflightPlanDeadlock(phases: PhaseSpec[]): Diagnostic[] {
   return phases
     .filter(p => p.specFirst && p.goalGate)
-    .map(p => mkDiag('PLAN_MODE_DEADLOCK', 'error',
-      `phase "${p.name}" combines specFirst+goalGate, producing plan-mode deadlock in headless pipeline`,
-      sanitizeId(p.name)));
+    .map(p => mkDiag('PLAN_MODE_DEADLOCK', 'error', `phase "${p.name}" combines specFirst+goalGate, producing plan-mode deadlock in headless pipeline`, sanitizeId(p.name)));
 }
 
-/** Pre-flight: workspace=isolated requires a commit_and_push phase in the pipeline. */
-function preflightWorkspacePush(
-  workspace: 'isolated' | undefined,
-  phases: PhaseSpecInterface[],
-): DiagnosticInterface[] {
+function preflightWorkspacePush(workspace: string | undefined, phases: PhaseSpec[]): Diagnostic[] {
   if (workspace !== 'isolated') return [];
   const hasCommitPush = phases.some(p => {
     const id = sanitizeId(p.name);
     return id === 'commit_and_push' || (id.includes('commit') && id.includes('push'));
   });
   if (!hasCommitPush) {
-    return [mkDiag('WORKSPACE_NO_PUSH', 'error',
-      'workspace="isolated" requires a commit_and_push phase in the pipeline')];
+    return [mkDiag('WORKSPACE_NO_PUSH', 'error', 'workspace="isolated" requires a commit_and_push phase in the pipeline')];
   }
   return [];
 }
 
-/** Pre-flight: path-like tokens in phase prompts must fall within allowedPaths. */
-function preflightPromptPaths(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
-  const diags: DiagnosticInterface[] = [];
+function preflightPromptPaths(phases: PhaseSpec[]): Diagnostic[] {
+  const diags: Diagnostic[] = [];
   for (const phase of phases) {
     if (!phase.allowedPaths || phase.allowedPaths.length === 0) continue;
     for (const p of extractPromptPaths(phase.prompt)) {
       const covered = phase.allowedPaths.some(ap => p.startsWith(ap) || ap.startsWith(p + '/'));
       if (!covered) {
-        diags.push(mkDiag('PROMPT_PATH_MISMATCH', 'error',
-          `phase "${phase.name}" prompt references path "${p}" outside allowedPaths`,
-          sanitizeId(phase.name)));
+        diags.push(mkDiag('PROMPT_PATH_MISMATCH', 'error', `phase "${phase.name}" prompt references path "${p}" outside allowedPaths`, sanitizeId(phase.name)));
         break;
       }
     }
@@ -273,22 +239,18 @@ function preflightPromptPaths(phases: PhaseSpecInterface[]): DiagnosticInterface
   return diags;
 }
 
-/** Pre-flight: non-review, non-security phases require non-empty allowedPaths. */
-function preflightMissingAllowedPaths(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
-  const diags: DiagnosticInterface[] = [];
+function preflightMissingAllowedPaths(phases: PhaseSpec[]): Diagnostic[] {
+  const diags: Diagnostic[] = [];
   for (const phase of phases) {
     if (phase.securityScan || phase.docOnly) continue;
     if (!phase.allowedPaths || phase.allowedPaths.length === 0) {
-      diags.push(mkDiag('MISSING_ALLOWED_PATHS', 'error',
-        `phase "${phase.name}" requires non-empty allowedPaths`,
-        sanitizeId(phase.name)));
+      diags.push(mkDiag('MISSING_ALLOWED_PATHS', 'error', `phase "${phase.name}" requires non-empty allowedPaths`, sanitizeId(phase.name)));
     }
   }
   return diags;
 }
 
-/** Pre-flight: dependsOn graph must be acyclic (Kahn's algorithm). */
-function preflightCircularDeps(phases: PhaseSpecInterface[]): DiagnosticInterface[] {
+function preflightCircularDeps(phases: PhaseSpec[]): Diagnostic[] {
   const adj = new Map<string, string[]>();
   const ids = new Set<string>();
   for (const p of phases) {
@@ -321,129 +283,86 @@ function preflightCircularDeps(phases: PhaseSpecInterface[]): DiagnosticInterfac
     }
   }
   if (visited < ids.size) {
-    const cycle = [...ids].filter(id => inDeg.get(id)! > 0);
-    return [mkDiag('INVALID_STRUCTURE', 'error',
-      `circular dependency detected among phases: ${cycle.join(', ')}`)];
+    const cycle = [...ids].filter(id => (inDeg.get(id) ?? 0) > 0);
+    return [mkDiag('INVALID_STRUCTURE', 'error', `circular dependency detected among phases: ${cycle.join(', ')}`)];
   }
   return [];
-}
-
-// ---------------------------------------------------------------------------
-// Graph-level edge type
-// ---------------------------------------------------------------------------
-
-interface GraphEdge {
-  from: string;
-  to: string;
-  label?: string;
 }
 
 // ---------------------------------------------------------------------------
 // 15 structural validation rules — run sequentially on the complete graph.
-// Each rule examines all relevant nodes/edges and returns Diagnostic[].
 // ---------------------------------------------------------------------------
 
-/** Rule 1: exactly 1 start node (Mdiamond) and 1 exit node (Msquare). */
-function grRule1(nodeMap: Map<string, Record<string, string>>): DiagnosticInterface[] {
+function grRule1(nodeMap: Map<string, Record<string, string>>): Diagnostic[] {
   const diamonds = [...nodeMap.entries()].filter(([, a]) => a['shape'] === 'Mdiamond');
-  const squares  = [...nodeMap.entries()].filter(([, a]) => a['shape'] === 'Msquare');
-  const diags: DiagnosticInterface[] = [];
+  const squares = [...nodeMap.entries()].filter(([, a]) => a['shape'] === 'Msquare');
+  const diags: Diagnostic[] = [];
   if (diamonds.length !== 1) {
-    diags.push(mkDiag('INVALID_STRUCTURE', 'error',
-      `graph must have exactly 1 Mdiamond (start) node; found ${diamonds.length}`));
+    diags.push(mkDiag('INVALID_STRUCTURE', 'error', `graph must have exactly 1 Mdiamond (start) node; found ${diamonds.length}`));
   }
   if (squares.length !== 1) {
-    diags.push(mkDiag('INVALID_STRUCTURE', 'error',
-      `graph must have exactly 1 Msquare (exit) node; found ${squares.length}`));
+    diags.push(mkDiag('INVALID_STRUCTURE', 'error', `graph must have exactly 1 Msquare (exit) node; found ${squares.length}`));
   }
   return diags;
 }
 
-/** Rule 2: start node (Mdiamond) has 0 incoming edges. */
-function grRule2(
-  nodeMap: Map<string, Record<string, string>>,
-  edgeList: GraphEdge[],
-): DiagnosticInterface[] {
+function grRule2(nodeMap: Map<string, Record<string, string>>, edgeList: EdgeEntry[]): Diagnostic[] {
   const startEntry = [...nodeMap.entries()].find(([, a]) => a['shape'] === 'Mdiamond');
-  if (!startEntry) return []; // covered by rule 1
+  if (!startEntry) return [];
   const startId = startEntry[0];
   const incoming = edgeList.filter(e => e.to === startId);
   if (incoming.length > 0) {
-    return [mkDiag('START_HAS_INCOMING', 'error',
-      `start node "${startId}" has ${incoming.length} incoming edge(s); must have 0`,
-      startId)];
+    return [mkDiag('START_HAS_INCOMING', 'error', `start node "${startId}" has ${incoming.length} incoming edge(s); must have 0`, startId)];
   }
   return [];
 }
 
-/** Rule 3: every non-standalone node is reachable from start via BFS. */
-function grRule3(
-  nodeMap: Map<string, Record<string, string>>,
-  edgeList: GraphEdge[],
-  standaloneNodeIds: Set<string>,
-): DiagnosticInterface[] {
+function grRule3(nodeMap: Map<string, Record<string, string>>, edgeList: EdgeEntry[], standaloneNodeIds: Set<string>): Diagnostic[] {
   const startEntry = [...nodeMap.entries()].find(([, a]) => a['shape'] === 'Mdiamond');
-  if (!startEntry) return []; // covered by rule 1
+  if (!startEntry) return [];
   const startId = startEntry[0];
-
   const adj = new Map<string, string[]>();
   for (const id of nodeMap.keys()) adj.set(id, []);
   for (const e of edgeList) {
     const neighbors = adj.get(e.from);
     if (neighbors) neighbors.push(e.to);
   }
-
   const visited = new Set<string>();
-  const queue: string[] = [startId];
+  const queue = [startId];
   while (queue.length > 0) {
     const node = queue.shift()!;
     if (visited.has(node)) continue;
     visited.add(node);
     for (const next of (adj.get(node) ?? [])) queue.push(next);
   }
-
   return [...nodeMap.keys()]
     .filter(id => !visited.has(id) && !standaloneNodeIds.has(id))
-    .map(id => mkDiag('UNREACHABLE_NODE', 'error',
-      `node "${id}" is not reachable from the start node`, id));
+    .map(id => mkDiag('UNREACHABLE_NODE', 'error', `node "${id}" is not reachable from the start node`, id));
 }
 
-/** Rule 4: every diamond-shaped node has ≥2 outgoing edges. */
-function grRule4(
-  nodeMap: Map<string, Record<string, string>>,
-  edgeList: GraphEdge[],
-): DiagnosticInterface[] {
-  const diags: DiagnosticInterface[] = [];
+function grRule4(nodeMap: Map<string, Record<string, string>>, edgeList: EdgeEntry[]): Diagnostic[] {
+  const diags: Diagnostic[] = [];
   for (const [id, attrs] of nodeMap.entries()) {
     if (attrs['shape'] !== 'diamond') continue;
     const outCount = edgeList.filter(e => e.from === id).length;
     if (outCount < 2) {
-      diags.push(mkDiag('DIAMOND_MISSING_EDGES', 'error',
-        `diamond node "${id}" has ${outCount} outgoing edge(s); must have ≥2`,
-        id));
+      diags.push(mkDiag('DIAMOND_MISSING_EDGES', 'error', `diamond node "${id}" has ${outCount} outgoing edge(s); must have ≥2`, id));
     }
   }
   return diags;
 }
 
-/** Rule 5: nodes with retry_target must have max_visits (unbounded-retry guard). */
-function grRule5(nodeMap: Map<string, Record<string, string>>): DiagnosticInterface[] {
-  const diags: DiagnosticInterface[] = [];
+function grRule5(nodeMap: Map<string, Record<string, string>>): Diagnostic[] {
+  const diags: Diagnostic[] = [];
   for (const [id, attrs] of nodeMap.entries()) {
     if (attrs['retry_target'] && !attrs['max_visits']) {
-      diags.push(mkDiag('GOAL_GATE_NO_MAX_VISITS', 'error',
-        `node "${id}" has retry_target but no max_visits — unbounded retry loop`,
-        id));
+      diags.push(mkDiag('GOAL_GATE_NO_MAX_VISITS', 'error', `node "${id}" has retry_target but no max_visits — unbounded retry loop`, id));
     }
   }
   return diags;
 }
 
-/** Rule 6: every acceptanceCriteria key must be covered by a context_on_success node. */
-function grRule6(
-  nodeMap: Map<string, Record<string, string>>,
-  acceptanceCriteria: Record<string, unknown>,
-): DiagnosticInterface[] {
+function grRule6(nodeMap: Map<string, Record<string, string>>, acceptanceCriteria: Record<string, unknown>): Diagnostic[] {
   const acKeys = Object.keys(acceptanceCriteria);
   if (acKeys.length === 0) return [];
   const mapped = new Set<string>();
@@ -454,26 +373,21 @@ function grRule6(
   }
   return acKeys
     .filter(k => !mapped.has(k))
-    .map(k => mkDiag('MISSING_AC_MAPPING', 'error',
-      `acceptanceCriteria key "${k}" has no node with context_on_success mapping it`));
+    .map(k => mkDiag('MISSING_AC_MAPPING', 'error', `acceptanceCriteria key "${k}" has no node with context_on_success mapping it`));
 }
 
-/** Rule 7: every codergen-class node must declare a timeout attribute. */
-function grRule7(nodeMap: Map<string, Record<string, string>>): DiagnosticInterface[] {
-  const diags: DiagnosticInterface[] = [];
+function grRule7(nodeMap: Map<string, Record<string, string>>): Diagnostic[] {
+  const diags: Diagnostic[] = [];
   for (const [id, attrs] of nodeMap.entries()) {
     if (attrs['class'] === 'codergen' && !attrs['timeout']) {
-      diags.push(mkDiag('MISSING_TIMEOUT', 'error',
-        `codergen node "${id}" is missing a timeout attribute`,
-        id));
+      diags.push(mkDiag('MISSING_TIMEOUT', 'error', `codergen node "${id}" is missing a timeout attribute`, id));
     }
   }
   return diags;
 }
 
-/** Rule 8: path-like tokens in a node's label must fall within its allowed_paths. */
-function grRule8(nodeMap: Map<string, Record<string, string>>): DiagnosticInterface[] {
-  const diags: DiagnosticInterface[] = [];
+function grRule8(nodeMap: Map<string, Record<string, string>>): Diagnostic[] {
+  const diags: Diagnostic[] = [];
   for (const [id, attrs] of nodeMap.entries()) {
     const label = attrs['label'];
     const apStr = attrs['allowed_paths'];
@@ -483,9 +397,7 @@ function grRule8(nodeMap: Map<string, Record<string, string>>): DiagnosticInterf
     for (const p of extractPromptPaths(label)) {
       const covered = allowedPaths.some(ap => p.startsWith(ap) || ap.startsWith(p + '/'));
       if (!covered) {
-        diags.push(mkDiag('PROMPT_PATH_MISMATCH', 'error',
-          `node "${id}" label references path "${p}" outside allowed_paths`,
-          id));
+        diags.push(mkDiag('PROMPT_PATH_MISMATCH', 'error', `node "${id}" label references path "${p}" outside allowed_paths`, id));
         break;
       }
     }
@@ -493,51 +405,39 @@ function grRule8(nodeMap: Map<string, Record<string, string>>): DiagnosticInterf
   return diags;
 }
 
-/** Rule 9: review-class nodes must have read_only=true and STATUS in their label. */
-function grRule9(nodeMap: Map<string, Record<string, string>>): DiagnosticInterface[] {
-  const diags: DiagnosticInterface[] = [];
+function grRule9(nodeMap: Map<string, Record<string, string>>): Diagnostic[] {
+  const diags: Diagnostic[] = [];
   for (const [id, attrs] of nodeMap.entries()) {
     if (attrs['class'] !== 'review') continue;
     if (attrs['read_only'] !== 'true' || !attrs['label']?.includes('STATUS')) {
-      diags.push(mkDiag('REVIEW_MISSING_READONLY', 'error',
-        `review node "${id}" must have read_only=true and STATUS in label`,
-        id));
+      diags.push(mkDiag('REVIEW_MISSING_READONLY', 'error', `review node "${id}" must have read_only=true and STATUS in label`, id));
     }
   }
   return diags;
 }
 
-/** Rule 10: every component-shape node requires a tripleoctagon merge node (warning). */
-function grRule10(
-  nodeMap: Map<string, Record<string, string>>,
-  _edgeList: GraphEdge[],
-): DiagnosticInterface[] {
+function grRule10(nodeMap: Map<string, Record<string, string>>, _edgeList: EdgeEntry[]): Diagnostic[] {
   const hasComponent = [...nodeMap.values()].some(a => a['shape'] === 'component');
   if (!hasComponent) return [];
   const hasTripleOctagon = [...nodeMap.values()].some(a => a['shape'] === 'tripleoctagon');
   if (!hasTripleOctagon) {
-    return [mkDiag('COMPONENT_NO_MERGE', 'warning',
-      'component nodes present but no tripleoctagon merge node found — builder will auto-emit one (Pattern 4)')];
+    return [mkDiag('COMPONENT_NO_MERGE', 'warning', 'component nodes present but no tripleoctagon merge node found — builder will auto-emit one (Pattern 4)')];
   }
   return [];
 }
 
-/** Rule 11: a node's retry_target must not reference nodes in a different component branch. */
-function grRule11(nodeMap: Map<string, Record<string, string>>): DiagnosticInterface[] {
+function grRule11(nodeMap: Map<string, Record<string, string>>): Diagnostic[] {
   const componentIds = new Set([...nodeMap.entries()]
     .filter(([, a]) => a['shape'] === 'component')
     .map(([id]) => id));
-  const diags: DiagnosticInterface[] = [];
+  const diags: Diagnostic[] = [];
   for (const [id, attrs] of nodeMap.entries()) {
     const retryTarget = attrs['retry_target'];
     if (!retryTarget || !componentIds.has(id)) continue;
-    const otherBranches = [...componentIds].filter(cid =>
-      cid !== id && !cid.includes('merge') && !cid.includes('split'));
+    const otherBranches = [...componentIds].filter(cid => cid !== id && !cid.includes('merge') && !cid.includes('split'));
     for (const otherId of otherBranches) {
       if (retryTarget.includes(otherId)) {
-        diags.push(mkDiag('FAN_OUT_SCOPE_LEAK', 'error',
-          `node "${id}" retry_target "${retryTarget}" escapes fan-out scope into branch "${otherId}"`,
-          id));
+        diags.push(mkDiag('FAN_OUT_SCOPE_LEAK', 'error', `node "${id}" retry_target "${retryTarget}" escapes fan-out scope into branch "${otherId}"`, id));
         break;
       }
     }
@@ -545,62 +445,44 @@ function grRule11(nodeMap: Map<string, Record<string, string>>): DiagnosticInter
   return diags;
 }
 
-/** Rule 12: workspace=isolated with repo_url present requires an HTTPS scheme. */
-function grRule12(
-  nodeMap: Map<string, Record<string, string>>,
-  graphAttrs: Record<string, string>,
-): DiagnosticInterface[] {
+function grRule12(nodeMap: Map<string, Record<string, string>>, graphAttrs: Record<string, string>): Diagnostic[] {
   if (graphAttrs['workspace'] !== 'isolated') return [];
-  const diags: DiagnosticInterface[] = [];
+  const diags: Diagnostic[] = [];
   for (const [id, attrs] of nodeMap.entries()) {
     const repoUrl = attrs['repo_url'];
     if (repoUrl && !repoUrl.startsWith('https://')) {
-      diags.push(mkDiag('WORKSPACE_NO_HTTPS', 'error',
-        `node "${id}" workspace=isolated requires HTTPS repo_url; got "${repoUrl}"`,
-        id));
+      diags.push(mkDiag('WORKSPACE_NO_HTTPS', 'error', `node "${id}" workspace=isolated requires HTTPS repo_url; got "${repoUrl}"`, id));
     }
   }
   return diags;
 }
 
-/** Rule 13: workspace=isolated requires a commit_and_push node in the graph. */
-function grRule13(
-  nodeMap: Map<string, Record<string, string>>,
-  graphAttrs: Record<string, string>,
-): DiagnosticInterface[] {
+function grRule13(nodeMap: Map<string, Record<string, string>>, graphAttrs: Record<string, string>): Diagnostic[] {
   if (graphAttrs['workspace'] !== 'isolated') return [];
-  const hasCommitPush = [...nodeMap.keys()].some(id =>
-    id === 'commit_and_push' || (id.includes('commit') && id.includes('push')));
+  const hasCommitPush = [...nodeMap.keys()].some(id => id === 'commit_and_push' || (id.includes('commit') && id.includes('push')));
   if (!hasCommitPush) {
-    return [mkDiag('WORKSPACE_NO_PUSH', 'error',
-      'workspace=isolated requires a commit_and_push node in the pipeline')];
+    return [mkDiag('WORKSPACE_NO_PUSH', 'error', 'workspace=isolated requires a commit_and_push node in the pipeline')];
   }
   return [];
 }
 
-/** Rule 14: permission_mode=plan causes deadlock in headless pipelines. */
-function grRule14(nodeMap: Map<string, Record<string, string>>): DiagnosticInterface[] {
-  const diags: DiagnosticInterface[] = [];
+function grRule14(nodeMap: Map<string, Record<string, string>>): Diagnostic[] {
+  const diags: Diagnostic[] = [];
   for (const [id, attrs] of nodeMap.entries()) {
     if (attrs['permission_mode'] === 'plan') {
-      diags.push(mkDiag('PLAN_MODE_DEADLOCK', 'error',
-        `node "${id}" uses permission_mode=plan — deadlock in headless pipeline`,
-        id));
+      diags.push(mkDiag('PLAN_MODE_DEADLOCK', 'error', `node "${id}" uses permission_mode=plan — deadlock in headless pipeline`, id));
     }
   }
   return diags;
 }
 
-/** Rule 15: codergen nodes must declare non-empty allowed_paths. */
-function grRule15(nodeMap: Map<string, Record<string, string>>): DiagnosticInterface[] {
-  const diags: DiagnosticInterface[] = [];
+function grRule15(nodeMap: Map<string, Record<string, string>>): Diagnostic[] {
+  const diags: Diagnostic[] = [];
   for (const [id, attrs] of nodeMap.entries()) {
     if (attrs['class'] === 'codergen') {
       const ap = attrs['allowed_paths'];
       if (!ap || ap.trim() === '') {
-        diags.push(mkDiag('MISSING_ALLOWED_PATHS', 'error',
-          `codergen node "${id}" requires non-empty allowed_paths`,
-          id));
+        diags.push(mkDiag('MISSING_ALLOWED_PATHS', 'error', `codergen node "${id}" requires non-empty allowed_paths`, id));
       }
     }
   }
@@ -611,8 +493,8 @@ function grRule15(nodeMap: Map<string, Record<string, string>>): DiagnosticInter
 // Runtime validator namespace objects
 // ---------------------------------------------------------------------------
 
-export const Diagnostic = {
-  create(data: unknown): DiagnosticInterface {
+export const DiagnosticNs = {
+  create(data: Record<string, unknown>): Diagnostic {
     if (!isRecord(data)) throw new Error('Diagnostic.create requires an object');
     const { rule, severity, message, nodeId, edge, fix } = data;
     if (typeof rule !== 'string' || !rule) throw new Error('Diagnostic requires a non-empty rule');
@@ -621,27 +503,24 @@ export const Diagnostic = {
     }
     if (typeof message !== 'string') throw new Error('Diagnostic requires a message string');
     if (edge !== undefined) {
-      if (
-        !Array.isArray(edge) ||
-        edge.length !== 2 ||
-        typeof edge[0] !== 'string' ||
-        typeof edge[1] !== 'string'
-      ) {
+      if (!Array.isArray(edge) || edge.length !== 2 || typeof edge[0] !== 'string' || typeof edge[1] !== 'string') {
         throw new Error('Diagnostic edge must be a tuple of exactly two strings');
       }
     }
-    const result: DiagnosticInterface = { rule, severity, message };
+    const result: Diagnostic = { rule, severity, message };
     if (typeof nodeId === 'string') result.nodeId = nodeId;
     if (Array.isArray(edge) && edge.length === 2) result.edge = edge as [string, string];
     if (typeof fix === 'string') result.fix = fix;
     return result;
   },
 };
+// Alias: compiled JS exports as both `Diagnostic` and `DiagnosticNs`
+export { DiagnosticNs as Diagnostic };
 
-export const ValidationResult = {
-  validate(vr: unknown): ValidationResultInterface {
+export const ValidationResultNs = {
+  validate(vr: unknown): ValidationResult {
     if (!isRecord(vr)) return fail([mkDiag('INVALID_SPEC', 'error', 'ValidationResult must be an object')]);
-    const diagnostics: DiagnosticInterface[] = [];
+    const diagnostics: Diagnostic[] = [];
     if (typeof vr['valid'] !== 'boolean') {
       diagnostics.push(mkDiag('INVALID_SPEC', 'error', 'valid must be a boolean'));
     }
@@ -651,62 +530,66 @@ export const ValidationResult = {
     return diagnostics.length === 0 ? pass() : fail(diagnostics);
   },
 };
+export { ValidationResultNs as ValidationResult };
 
-const VALID_SPEC_DRIVEN = [
+const VALID_SPEC_DRIVEN: DefenseMatrix['specDriven'][] = [
   'NONE', 'conformance', 'BDD + conformance',
   'spec_file + conformance', 'spec_file + BDD + conformance',
-] as const;
+];
 
-export const DefenseMatrix = {
-  validate(dm: unknown): ValidationResultInterface {
+export const DefenseMatrixNs = {
+  validate(dm: unknown): ValidationResult {
     if (!isRecord(dm)) return fail([mkDiag('INVALID_SPEC', 'error', 'DefenseMatrix must be an object')]);
-    const diagnostics: DiagnosticInterface[] = [];
+    const diagnostics: Diagnostic[] = [];
     if (typeof dm['competitive'] !== 'boolean') {
       diagnostics.push(mkDiag('INVALID_SPEC', 'error', 'competitive must be a boolean'));
     }
     if (typeof dm['adversarial'] !== 'boolean') {
       diagnostics.push(mkDiag('INVALID_SPEC', 'error', 'adversarial must be a boolean'));
     }
-    if (!Array.isArray(dm['guardrails']) || !(dm['guardrails'] as unknown[]).every(g => typeof g === 'string')) {
+    if (!Array.isArray(dm['guardrails']) || !(dm['guardrails'] as unknown[]).every((g: unknown) => typeof g === 'string')) {
       diagnostics.push(mkDiag('INVALID_SPEC', 'error', 'guardrails must be a string array'));
     }
-    if (!Array.isArray(dm['permissions']) || !(dm['permissions'] as unknown[]).every(p => typeof p === 'string')) {
+    if (!Array.isArray(dm['permissions']) || !(dm['permissions'] as unknown[]).every((p: unknown) => typeof p === 'string')) {
       diagnostics.push(mkDiag('INVALID_SPEC', 'error', 'permissions must be a string array'));
     }
-    if (!(VALID_SPEC_DRIVEN as readonly unknown[]).includes(dm['specDriven'])) {
+    if (!(VALID_SPEC_DRIVEN as string[]).includes(dm['specDriven'] as string)) {
       diagnostics.push(mkDiag('INVALID_SPEC', 'error', `specDriven must be one of: ${VALID_SPEC_DRIVEN.join(', ')}`));
     }
     return diagnostics.length === 0 ? pass() : fail(diagnostics);
   },
 };
+export { DefenseMatrixNs as DefenseMatrix };
 
-export const BuildResult = {
-  validate(result: unknown): ValidationResultInterface {
+export const BuildResultNs = {
+  validate(result: unknown): ValidationResult {
     if (!isRecord(result)) return fail([mkDiag('INVALID_SPEC', 'error', 'BuildResult must be an object')]);
-    const diagnostics: DiagnosticInterface[] = [];
+    const diagnostics: Diagnostic[] = [];
     if (typeof result['dot'] !== 'string' || !result['dot']) {
       diagnostics.push(mkDiag('INVALID_SPEC', 'error', 'dot must be a non-empty string'));
     }
     if (typeof result['slug'] !== 'string') {
       diagnostics.push(mkDiag('INVALID_SPEC', 'error', 'slug must be a string'));
     }
-    if (
-      !Array.isArray(result['patternsApplied']) ||
-      !(result['patternsApplied'] as unknown[]).every(p => typeof p === 'string')
-    ) {
+    if (!Array.isArray(result['patternsApplied']) || !(result['patternsApplied'] as unknown[]).every((p: unknown) => typeof p === 'string')) {
       diagnostics.push(mkDiag('INVALID_SPEC', 'error', 'patternsApplied must be a string array'));
     }
     if (!Array.isArray(result['diagnostics'])) {
       diagnostics.push(mkDiag('INVALID_SPEC', 'error', 'diagnostics must be an array'));
     }
+    if (!result['defenseMatrix'] || typeof result['defenseMatrix'] !== 'object' || Array.isArray(result['defenseMatrix'])) {
+      diagnostics.push(mkDiag('INVALID_SPEC', 'error', 'defenseMatrix must be an object'));
+    }
     return diagnostics.length === 0 ? pass() : fail(diagnostics);
   },
 };
+// Alias for CLI test compatibility
+export { BuildResultNs as BuildResult };
 
-export const MicroverseOpts = {
-  validate(opts: unknown): ValidationResultInterface {
+export const MicroverseOptsNs = {
+  validate(opts: unknown): ValidationResult {
     if (!isRecord(opts)) return fail([mkDiag('INVALID_SPEC', 'error', 'MicroverseOpts must be an object')]);
-    const diagnostics: DiagnosticInterface[] = [];
+    const diagnostics: Diagnostic[] = [];
     if (typeof opts['prompt'] !== 'string' || !opts['prompt']) {
       diagnostics.push(mkDiag('INVALID_SPEC', 'error', 'prompt is required'));
     }
@@ -731,11 +614,12 @@ export const MicroverseOpts = {
     return diagnostics.length === 0 ? pass() : fail(diagnostics);
   },
 };
+export { MicroverseOptsNs as MicroverseOpts };
 
-export const WorkspaceOpts = {
-  validate(opts: unknown): ValidationResultInterface {
+export const WorkspaceOptsNs = {
+  validate(opts: unknown): ValidationResult {
     if (!isRecord(opts)) return fail([mkDiag('INVALID_SPEC', 'error', 'WorkspaceOpts must be an object')]);
-    const diagnostics: DiagnosticInterface[] = [];
+    const diagnostics: Diagnostic[] = [];
     const cleanup = opts['cleanup'];
     if (cleanup !== undefined && cleanup !== 'delete' && cleanup !== 'preserve') {
       diagnostics.push(mkDiag('INVALID_SPEC', 'error', 'cleanup must be "delete" or "preserve"'));
@@ -743,22 +627,24 @@ export const WorkspaceOpts = {
     return diagnostics.length === 0 ? pass() : fail(diagnostics);
   },
 };
+export { WorkspaceOptsNs as WorkspaceOpts };
 
-export const StylesheetConfig = {
-  validate(config: unknown): ValidationResultInterface {
+export const StylesheetConfigNs = {
+  validate(config: unknown): ValidationResult {
     if (!isRecord(config)) return fail([mkDiag('INVALID_SPEC', 'error', 'StylesheetConfig must be an object')]);
-    const diagnostics: DiagnosticInterface[] = [];
+    const diagnostics: Diagnostic[] = [];
     if (typeof config['defaultModel'] !== 'string' || !config['defaultModel']) {
       diagnostics.push(mkDiag('INVALID_SPEC', 'error', 'defaultModel is required'));
     }
     return diagnostics.length === 0 ? pass() : fail(diagnostics);
   },
 };
+export { StylesheetConfigNs as StylesheetConfig };
 
-export const PhaseSpec = {
-  validate(phase: unknown): ValidationResultInterface & { docOnly?: boolean } {
+export const PhaseSpecNs = {
+  validate(phase: unknown): ValidationResult & { docOnly?: boolean } {
     if (!isRecord(phase)) return fail([mkDiag('INVALID_SPEC', 'error', 'PhaseSpec must be an object')]);
-    const diagnostics: DiagnosticInterface[] = [];
+    const diagnostics: Diagnostic[] = [];
     if (typeof phase['name'] !== 'string' || !phase['name']) {
       diagnostics.push(mkDiag('INVALID_SPEC', 'error', 'name is required'));
     }
@@ -769,22 +655,20 @@ export const PhaseSpec = {
       diagnostics.push(mkDiag('MISSING_ALLOWED_PATHS', 'error', 'allowedPaths is required'));
     }
     if (phase['dependsOn'] !== undefined) {
-      if (
-        !Array.isArray(phase['dependsOn']) ||
-        !(phase['dependsOn'] as unknown[]).every(d => typeof d === 'string')
-      ) {
+      if (!Array.isArray(phase['dependsOn']) || !(phase['dependsOn'] as unknown[]).every((d: unknown) => typeof d === 'string')) {
         diagnostics.push(mkDiag('INVALID_SPEC', 'error', 'dependsOn must be an array of strings'));
       }
     }
     const valid = diagnostics.length === 0;
-    const result: ValidationResultInterface & { docOnly?: boolean } = { valid, diagnostics };
+    const result: ValidationResult & { docOnly?: boolean } = { valid, diagnostics };
     if (phase['docOnly'] === true) result.docOnly = true;
     return result;
   },
 };
+export { PhaseSpecNs as PhaseSpec };
 
-export const BuilderSpec = {
-  validate(spec: unknown): ValidationResultInterface {
+export const BuilderSpecNs = {
+  validate(spec: unknown): ValidationResult {
     if (!isRecord(spec)) {
       return fail([
         mkDiag('EMPTY_SLUG', 'error', 'slug is required'),
@@ -792,7 +676,7 @@ export const BuilderSpec = {
         mkDiag('INVALID_SPEC', 'error', 'phases is required'),
       ]);
     }
-    const diagnostics: DiagnosticInterface[] = [];
+    const diagnostics: Diagnostic[] = [];
     if (typeof spec['slug'] !== 'string') {
       diagnostics.push(mkDiag('EMPTY_SLUG', 'error', 'slug is required'));
     } else if (!spec['slug'].trim()) {
@@ -818,71 +702,80 @@ export const BuilderSpec = {
     return diagnostics.length === 0 ? pass() : fail(diagnostics);
   },
 };
+export { BuilderSpecNs as BuilderSpec };
 
 // ---------------------------------------------------------------------------
 // DotBuilder
 // ---------------------------------------------------------------------------
 
+interface InternalSpec {
+  slug: string;
+  goal: string;
+  phases: PhaseSpec[];
+  acceptanceCriteria: Record<string, unknown>;
+  workingDir?: string;
+  label?: string;
+  defaultMaxRetry?: number;
+  specFile?: string;
+  workspace?: 'isolated';
+  workspaceOpts?: WorkspaceOptsType;
+  microverse?: { name: string; opts: Record<string, unknown> };
+  reviewRatchet?: number;
+  modelStylesheet?: Record<string, unknown>;
+}
+
 export class DotBuilder {
-  private readonly _slug: string;
-  private readonly _goal: string;
-  private readonly _phases: PhaseSpecInterface[] = [];
-  private readonly _seenIds = new Set<string>();
-  private _spec: BuilderSpecInterface;
+  private _slug: string;
+  private _goal: string;
+  private _phases: PhaseSpec[] = [];
+  private _seenIds = new Set<string>();
+  private _spec: InternalSpec;
   private _built = false;
 
   static fromSpec(raw: unknown): DotBuilder {
     if (!isRecord(raw)) {
       throw new BuildError('INVALID_SPEC', 'spec must be a non-null object');
     }
-    const spec = raw as Record<string, unknown>;
+    const spec = raw;
     if (!Array.isArray(spec['phases'])) {
       throw new BuildError('INVALID_SPEC', 'spec.phases must be an array');
     }
-
-    // Build minimal base spec — constructor validates slug/goal and throws EMPTY_SLUG/EMPTY_GOAL
-    const base: BuilderSpecInterface = {
+    const base: InternalSpec = {
       slug: spec['slug'] as string,
       goal: spec['goal'] as string,
       phases: [],
-      acceptanceCriteria: (isRecord(spec['acceptanceCriteria']) ? spec['acceptanceCriteria'] : {}) as Record<string, string>,
+      acceptanceCriteria: (isRecord(spec['acceptanceCriteria']) ? spec['acceptanceCriteria'] : {}) as Record<string, unknown>,
       workingDir: typeof spec['workingDir'] === 'string' ? spec['workingDir'] : undefined,
       label: typeof spec['label'] === 'string' ? spec['label'] : undefined,
-      defaultMaxRetry: typeof spec['defaultMaxRetry'] === 'number' ? (spec['defaultMaxRetry'] as number) : undefined,
+      defaultMaxRetry: typeof spec['defaultMaxRetry'] === 'number' ? spec['defaultMaxRetry'] : undefined,
       specFile: typeof spec['specFile'] === 'string' ? spec['specFile'] : undefined,
     };
     const builder = new DotBuilder(base);
-
-    // Add phases via .phase() — validate each element is an object with a string name before
-    // calling phase(), so malformed JSON produces a BuildError rather than a TypeError.
-    for (const p of spec['phases'] as PhaseSpecInterface[]) {
-      if (!isRecord(p) || typeof (p as Record<string, unknown>)['name'] !== 'string') {
+    for (const p of spec['phases'] as unknown[]) {
+      if (!isRecord(p) || typeof p['name'] !== 'string') {
         throw new BuildError('INVALID_SPEC', 'each phase must be an object with a string "name" field');
       }
-      builder.phase(p);
+      builder.phase(p as unknown as PhaseSpec);
     }
-
-    // Optional features via fluent methods
     if (spec['workspace'] === 'isolated') {
-      builder.workspace(isRecord(spec['workspaceOpts']) ? (spec['workspaceOpts'] as WorkspaceOptsInterface) : undefined);
+      builder.workspace(isRecord(spec['workspaceOpts']) ? spec['workspaceOpts'] as unknown as WorkspaceOptsType : undefined);
     }
     if (isRecord(spec['microverse'])) {
       const mv = spec['microverse'] as Record<string, unknown>;
       if (typeof mv['name'] === 'string' && isRecord(mv['opts'])) {
-        builder.microverse(mv['name'], mv['opts'] as unknown as MicroverseOptsInterface);
+        builder.microverse(mv['name'], mv['opts']);
       }
     }
     if (typeof spec['reviewRatchet'] === 'number') {
-      builder.reviewRatchet(spec['reviewRatchet'] as number);
+      builder.reviewRatchet(spec['reviewRatchet']);
     }
     if (isRecord(spec['modelStylesheet'])) {
-      builder.modelStylesheet(spec['modelStylesheet'] as unknown as StylesheetConfigInterface);
+      builder.modelStylesheet(spec['modelStylesheet']);
     }
-
     return builder;
   }
 
-  constructor(spec: BuilderSpecInterface) {
+  constructor(spec: InternalSpec) {
     if (typeof spec.slug !== 'string' || !spec.slug.trim()) {
       throw new BuildError('EMPTY_SLUG', 'slug cannot be empty');
     }
@@ -900,10 +793,11 @@ export class DotBuilder {
     }
   }
 
-  phase(phaseSpec: PhaseSpecInterface): this {
+  phase(first: string | PhaseSpec, opts?: Partial<PhaseSpec>): this {
     if (this._built) {
       throw new BuildError('ALREADY_BUILT', 'cannot add phases after build() has been called');
     }
+    const phaseSpec: PhaseSpec = typeof first === 'string' ? { name: first, ...opts } as PhaseSpec : first;
     const id = sanitizeId(phaseSpec.name);
     if (!id) {
       throw new BuildError('EMPTY_SLUG', `phase name "${phaseSpec.name}" sanitizes to empty string — must contain ASCII alphanumeric characters`);
@@ -916,7 +810,7 @@ export class DotBuilder {
     return this;
   }
 
-  microverse(name: string, opts: MicroverseOptsInterface): this {
+  microverse(name: string, opts: Record<string, unknown>): this {
     if (this._built) throw new BuildError('ALREADY_BUILT', 'cannot call microverse() after build()');
     this._spec = { ...this._spec, microverse: { name, opts } };
     return this;
@@ -929,35 +823,33 @@ export class DotBuilder {
     return this;
   }
 
-  acceptanceCriteria(criteria: Record<string, string>): this {
+  acceptanceCriteria(criteria: Record<string, unknown>): this {
     if (this._built) throw new BuildError('ALREADY_BUILT', 'cannot call acceptanceCriteria() after build()');
     this._spec = { ...this._spec, acceptanceCriteria: criteria };
     return this;
   }
 
-  workspace(opts?: WorkspaceOptsInterface): this {
+  workspace(opts?: WorkspaceOptsType): this {
     if (this._built) throw new BuildError('ALREADY_BUILT', 'cannot call workspace() after build()');
     this._spec = { ...this._spec, workspace: 'isolated', workspaceOpts: opts };
     return this;
   }
 
-  modelStylesheet(config: StylesheetConfigInterface): this {
+  modelStylesheet(config: Record<string, unknown>): this {
     if (this._built) throw new BuildError('ALREADY_BUILT', 'cannot call modelStylesheet() after build()');
     this._spec = { ...this._spec, modelStylesheet: config };
     return this;
   }
 
-  build(): BuildResultInterface {
+  build(): BuildResult {
     if (this._built) {
       throw new BuildError('ALREADY_BUILT', 'build() has already been called');
     }
     this._built = true;
-
     const phases = this._phases;
 
-    // Pre-flight spec validation — runs before emission; catches spec-level invalidity
-    // that would produce malformed or unexecutable graphs.
-    const preflightDiags: DiagnosticInterface[] = [
+    // Pre-flight spec validation
+    const preflightDiags: Diagnostic[] = [
       ...preflightReservedIds(phases),
       ...preflightDanglingDeps(phases),
       ...preflightTimeoutFormat(phases),
@@ -974,22 +866,15 @@ export class DotBuilder {
     ];
     const preflightError = preflightDiags.find(d => d.severity === 'error');
     if (preflightError) {
-      throw new BuildError(
-        preflightError.rule as BuildErrorCodeType,
-        preflightError.message,
-        preflightDiags,
-      );
+      throw new BuildError(preflightError.rule as BuildErrorCodeType, preflightError.message, preflightDiags);
     }
 
-    // Emit the complete graph.
-    const { dot, nodeMap, edgeList, graphAttrs, standaloneNodeIds, patternsApplied, defenseMatrix } =
-      this._emitDot();
+    // Emit the complete graph
+    const { dot, nodeMap, edgeList, graphAttrs, standaloneNodeIds, patternsApplied, defenseMatrix } = this._emitDot();
 
-    // Run all 15 structural validation rules sequentially on the complete graph.
-    // Each rule examines all relevant nodes/edges. Collect Diagnostic[] — if any
-    // have severity 'error', throw BuildError with the first error rule's code.
+    // Run all 15 structural validation rules
     const { acceptanceCriteria = {} } = this._spec;
-    const diagnostics: DiagnosticInterface[] = [
+    const diagnostics: Diagnostic[] = [
       ...grRule1(nodeMap),
       ...grRule2(nodeMap, edgeList),
       ...grRule3(nodeMap, edgeList, standaloneNodeIds),
@@ -1006,14 +891,9 @@ export class DotBuilder {
       ...grRule14(nodeMap),
       ...grRule15(nodeMap),
     ];
-
     const firstError = diagnostics.find(d => d.severity === 'error');
     if (firstError) {
-      throw new BuildError(
-        firstError.rule as BuildErrorCodeType,
-        firstError.message,
-        diagnostics,
-      );
+      throw new BuildError(firstError.rule as BuildErrorCodeType, firstError.message, diagnostics);
     }
 
     return { dot, slug: this._slug, patternsApplied, defenseMatrix, diagnostics };
@@ -1023,23 +903,24 @@ export class DotBuilder {
   // Pattern emission
   // ---------------------------------------------------------------------------
 
-  private _buildStylesheet(config: StylesheetConfigInterface): string {
+  private _buildStylesheet(config: Record<string, unknown>): string {
+    const sc = config as unknown as StylesheetConfig;
     const parts: string[] = [];
     const universalProps: string[] = [];
-    if (config.defaultModel) universalProps.push(`llm_model: ${config.defaultModel};`);
-    const effort = config.defaultEffort ?? config.reasoningEffort;
+    if (sc.defaultModel) universalProps.push(`llm_model: ${sc.defaultModel};`);
+    const effort = sc.defaultEffort ?? sc.reasoningEffort;
     if (effort) universalProps.push(`reasoning_effort: ${effort};`);
     if (universalProps.length > 0) parts.push(`* { ${universalProps.join(' ')} }`);
-    if (config.overrides && config.overrides.length > 0) {
-      for (const ov of config.overrides) {
+    if (sc.overrides && sc.overrides.length > 0) {
+      for (const ov of sc.overrides as StylesheetOverride[]) {
         const sel = ov.selector.startsWith('.') || ov.selector === '*' ? ov.selector : `.${ov.selector}`;
-        const props: string[] = [`llm_model: ${ov.model};`];
+        const props = [`llm_model: ${ov.model};`];
         if (ov.effort) props.push(`reasoning_effort: ${ov.effort};`);
         parts.push(`${sel} { ${props.join(' ')} }`);
       }
     } else {
-      if (config.criticalModel) parts.push(`.critical { llm_model: ${config.criticalModel}; }`);
-      if (config.reviewModel) parts.push(`.review { llm_model: ${config.reviewModel}; }`);
+      if (sc.criticalModel) parts.push(`.critical { llm_model: ${sc.criticalModel}; }`);
+      if (sc.reviewModel) parts.push(`.review { llm_model: ${sc.reviewModel}; }`);
     }
     return parts.join(' ');
   }
@@ -1047,24 +928,22 @@ export class DotBuilder {
   private _emitDot(): {
     dot: string;
     nodeMap: Map<string, Record<string, string>>;
-    edgeList: GraphEdge[];
+    edgeList: EdgeEntry[];
     graphAttrs: Record<string, string>;
     standaloneNodeIds: Set<string>;
     patternsApplied: string[];
-    defenseMatrix: DefenseMatrixInterface;
+    defenseMatrix: DefenseMatrix;
   } {
     const spec = this._spec;
     const phases = this._phases;
     const graphId = sanitizeId(this._slug) || 'pipeline';
-
     const applied = new Set<string>();
 
-    // Structural flags
-    const isCommitPushPhase = (p: PhaseSpecInterface): boolean => {
+    const isCommitPushPhase = (p: PhaseSpec): boolean => {
       const id = sanitizeId(p.name);
       return id === 'commit_and_push' || (id.includes('commit') && id.includes('push'));
     };
-    // securityScan, docOnly, and workspace-commit_and_push phases are always sequential — exclude from fan-out
+
     const independent = phases.filter(p => {
       if (p.securityScan) return false;
       if (p.docOnly) return false;
@@ -1078,14 +957,13 @@ export class DotBuilder {
     const hasSpecFile = Boolean(spec.specFile);
     const hasSpecFirstAny = phases.some(p => p.specFirst === true || (p.goalGate && p.specFirst !== false));
 
-    // defenseMatrix
-    let specDriven: DefenseMatrixInterface['specDriven'] = 'NONE';
+    // Defense matrix
+    let specDriven: DefenseMatrix['specDriven'] = 'NONE';
     if (hasBDD && hasSpecFile) specDriven = 'spec_file + BDD + conformance';
     else if (hasBDD) specDriven = 'BDD + conformance';
     else if (hasSpecFile) specDriven = 'spec_file + conformance';
     else if (hasSpecFirstAny) specDriven = 'conformance';
-
-    const defenseMatrix: DefenseMatrixInterface = {
+    const defenseMatrix: DefenseMatrix = {
       competitive: hasCompeting,
       guardrails: [],
       specDriven,
@@ -1108,10 +986,8 @@ export class DotBuilder {
 
     const nodes: string[] = [];
     const edges: string[] = [];
-
-    // Structured graph data — populated by emit/link/linkEdge, consumed by 15 grRules
     const nodeMap = new Map<string, Record<string, string>>();
-    const edgeList: GraphEdge[] = [];
+    const edgeList: EdgeEntry[] = [];
     const standaloneNodeIds = new Set<string>();
 
     const emit = (id: string, attrs: Record<string, string>): void => {
@@ -1127,9 +1003,7 @@ export class DotBuilder {
       edgeList.push({ from, to });
     };
 
-    // -------------------------------------------------------------------------
-    // P0a: setup_deps — always emitted with fallback install chain
-    // -------------------------------------------------------------------------
+    // P0a: setup_deps
     emit('start', { label: 'start', shape: 'Mdiamond' });
     emit('setup_deps', {
       label: 'setup_deps',
@@ -1138,9 +1012,7 @@ export class DotBuilder {
     });
     applied.add('P0a');
 
-    // -------------------------------------------------------------------------
-    // P0c: capture_baseline — lint+typecheck error count snapshot
-    // -------------------------------------------------------------------------
+    // P0c: capture_baseline
     emit('capture_baseline', {
       label: 'capture_baseline',
       read_only: 'true',
@@ -1148,40 +1020,29 @@ export class DotBuilder {
       tool_command: "cd ${WORKING_DIR} && (npx tsc --noEmit 2>&1 | grep -c 'error TS' > /tmp/baseline_ts_errors.txt || echo 0 > /tmp/baseline_ts_errors.txt) && (npx eslint src/ 2>&1 | grep -c 'error' > /tmp/baseline_lint_errors.txt || echo 0 > /tmp/baseline_lint_errors.txt)",
     });
     applied.add('P0c');
-
     link('start', 'setup_deps');
     link('setup_deps', 'capture_baseline');
 
-    // Union of all impl phase paths — used by P21 fix_all
-    // Include dependent phases (not just independent) so their paths are in union for cross-phase fixes
     const implPhases = phases.filter(p => !p.securityScan && !p.docOnly);
     const allDependentPhases = phases.filter(p => !p.securityScan);
     const unionPaths = [...new Set(allDependentPhases.flatMap(p => p.allowedPaths ?? []))].join(',');
     const unionEscalate = [...new Set(allDependentPhases.flatMap(p => p.escalateOn ?? []))].join(',');
 
-    // -------------------------------------------------------------------------
-    // Fan-out (Pattern 4) — 2+ independent non-competing phases
-    // -------------------------------------------------------------------------
+    // Fan-out (Pattern 4)
     if (isFanOut) {
       applied.add('P4');
-
-      // P0b: split_phases node with max_parallel=1 (parallel limit)
       emit('split_phases', { label: 'split_phases', max_parallel: '1', shape: 'component' });
       applied.add('P0b');
       link('capture_baseline', 'split_phases');
-
       for (const p of independent) {
         const id = sanitizeId(p.name);
         emit(id, { label: p.name, shape: 'component' });
         link('split_phases', id);
       }
-
-      // Dependent phases serialize after merge (if any)
       const dependent = phases.filter(p => p.dependsOn && p.dependsOn.length > 0);
       const mergeId = 'merge_phases';
       emit(mergeId, { label: 'merge_phases', shape: 'tripleoctagon' });
       for (const p of independent) link(sanitizeId(p.name), mergeId);
-
       let afterMerge = mergeId;
       for (const p of dependent) {
         const id = sanitizeId(p.name);
@@ -1189,8 +1050,7 @@ export class DotBuilder {
         link(afterMerge, id);
         afterMerge = id;
       }
-
-      // P21: fix_all + verify_final after fan-out converges
+      // P21: fix_all + verify_final
       applied.add('P21');
       const fixAllAttrs: Record<string, string> = {
         allowed_paths: unionPaths,
@@ -1206,10 +1066,8 @@ export class DotBuilder {
       link('fix_all', 'verify_final');
       link('verify_final', 'done');
 
-    // -------------------------------------------------------------------------
-    // Competing implementations (Pattern 18)
-    // -------------------------------------------------------------------------
     } else if (hasCompeting) {
+      // Competing implementations (Pattern 18)
       applied.add('P18');
       const cp = phases.find(p => p.competing)!;
       const baseId = sanitizeId(cp.name);
@@ -1222,13 +1080,9 @@ export class DotBuilder {
       link(`${baseId}_b`, 'competing_merge');
       link('competing_merge', 'done');
 
-    // -------------------------------------------------------------------------
-    // Sequential execution (single or dependent multi-phase)
-    // -------------------------------------------------------------------------
     } else {
+      // Sequential execution
       const hasAnyPhase = phases.length > 0;
-      // prevId/prevLabel track the last emitted node and what label to use when
-      // linking it to the next thing (needed because diamond pass-edges need a label).
       let prevId = 'capture_baseline';
       let prevLabel: string | undefined = undefined;
 
@@ -1236,13 +1090,12 @@ export class DotBuilder {
         const p = phases[i];
         const id = sanitizeId(p.name);
 
-        // P16/P16b: spec-first pre-nodes (never for securityScan or docOnly phases)
         const emitSpec = !p.securityScan && !p.docOnly && (p.specFirst === true || (p.goalGate && p.specFirst !== false));
         const emitBDD = !p.securityScan && !p.docOnly && p.bddScenarios === true;
         const specId = i === 0 ? 'spec_tests' : `spec_tests_${i}`;
         const bddId = i === 0 ? 'bdd_scenarios' : `bdd_scenarios_${i}`;
 
-        // ---- securityScan: simple review pass-through, no quality gate ----
+        // securityScan: simple review pass-through
         if (p.securityScan) {
           const phaseAttrs: Record<string, string> = {
             class: 'review',
@@ -1258,20 +1111,16 @@ export class DotBuilder {
           continue;
         }
 
-        // ---- Full impl phase IDs (shared by docOnly and regular paths) ----
         const implId = `impl_${id}`;
-        // Per-phase suffixed gate node IDs (i=0 → no suffix for readability)
-        const scopeCheckId    = i === 0 ? 'scope_check'    : `scope_check_${i}`;
+        const scopeCheckId = i === 0 ? 'scope_check' : `scope_check_${i}`;
         const checkProgressId = i === 0 ? 'check_progress' : `check_progress_${i}`;
-        const conformanceId   = i === 0 ? 'conformance'    : `conformance_${i}`;
+        const conformanceId = i === 0 ? 'conformance' : `conformance_${i}`;
 
-        // ---- docOnly: impl → check_progress → scope_check → conformance ----
-        // Skips verify_lint, verify_types, test diamond, fix node (Patterns 0d, 1, 13, 14 suppressed).
-        // docOnly phases don't generate code, so they have no permission_mode and route to done on failure.
+        // docOnly phase
         if (p.docOnly) {
           const implAttrs: Record<string, string> = {
             allowed_paths: (p.allowedPaths ?? []).join(','),
-            class: 'codergen',
+            class: 'documentation',
             label: p.prompt,
             max_visits: '5',
           };
@@ -1280,7 +1129,6 @@ export class DotBuilder {
           emit(implId, implAttrs);
           applied.add('P22');
           applied.add('P6');
-
           emit(checkProgressId, {
             label: 'check_progress',
             max_visits: '3',
@@ -1291,7 +1139,6 @@ export class DotBuilder {
           applied.add('P0e');
           link(implId, checkProgressId);
           link(checkProgressId, 'done', 'fail');
-
           emit(scopeCheckId, {
             class: 'review',
             label: 'Compare git diff against phase prompt. Flag files modified outside allowed_paths. Output STATUS: SUCCESS | FAIL.',
@@ -1302,7 +1149,6 @@ export class DotBuilder {
           applied.add('P6b');
           link(checkProgressId, scopeCheckId);
           link(scopeCheckId, 'done', 'fail');
-
           const conformanceDocAttrs: Record<string, string> = {
             class: 'review',
             label: 'Review the implementation against the phase spec and PRD requirements. Check: correct files modified, API contracts match, no regressions. Output STATUS: SUCCESS | FAIL.',
@@ -1312,17 +1158,16 @@ export class DotBuilder {
           emit(conformanceId, conformanceDocAttrs);
           applied.add('P15');
           link(scopeCheckId, conformanceId);
-
           prevId = conformanceId;
           prevLabel = undefined;
           continue;
         }
 
-        // ---- Regular (non-docOnly) impl phase IDs ----
+        // Regular impl phase
         const testId = `test_${id}`;
-        const fixId  = `fix_${id}`;
-        const verifyLintId    = i === 0 ? 'verify_lint'    : `verify_lint_${i}`;
-        const verifyTypesId   = i === 0 ? 'verify_types'   : `verify_types_${i}`;
+        const fixId = `fix_${id}`;
+        const verifyLintId = i === 0 ? 'verify_lint' : `verify_lint_${i}`;
+        const verifyTypesId = i === 0 ? 'verify_types' : `verify_types_${i}`;
 
         // Spec-first gates (P16 / P16b)
         if (emitBDD && emitSpec) {
@@ -1342,19 +1187,21 @@ export class DotBuilder {
           link(prevId, implId, prevLabel);
         }
 
-        // P22: impl node — codergen with allowed_paths, permission_mode, escalate_on
+        // P22: impl node
         const implAttrs: Record<string, string> = {
           allowed_paths: (p.allowedPaths ?? []).join(','),
           class: 'codergen',
           label: p.prompt,
-          max_visits: '5',   // P6: impl is the retry target
+          max_visits: '5',
           permission_mode: 'auto',
         };
         if (p.escalateOn && p.escalateOn.length > 0) {
           implAttrs['escalate_on'] = p.escalateOn.join(',');
         }
         if (p.timeout) implAttrs['timeout'] = p.timeout;
-        // Workspace: commit_and_push node decoration
+        if (p.specFirst) {
+          implAttrs['spec_first'] = 'true';
+        }
         if (spec.workspace === 'isolated' && (id === 'commit_and_push' || (id.includes('commit') && id.includes('push')))) {
           if (spec.workspaceOpts?.repoUrl) implAttrs['repo_url'] = spec.workspaceOpts.repoUrl;
           if (spec.workspaceOpts?.cleanup) implAttrs['cleanup'] = spec.workspaceOpts.cleanup;
@@ -1366,7 +1213,7 @@ export class DotBuilder {
           defenseMatrix.permissions.push('auto');
         }
 
-        // P10: scope_check review node after impl
+        // P10: scope_check
         emit(scopeCheckId, {
           class: 'review',
           label: 'Compare git diff against phase prompt. Flag files modified outside allowed_paths. Output STATUS: SUCCESS | FAIL.',
@@ -1377,7 +1224,7 @@ export class DotBuilder {
         applied.add('P6b');
         link(implId, scopeCheckId);
 
-        // P0e: check_progress — detect stalled impl (read_only, max_visits=3)
+        // P0e: check_progress
         emit(checkProgressId, {
           label: 'check_progress',
           max_visits: '3',
@@ -1388,9 +1235,7 @@ export class DotBuilder {
         applied.add('P0e');
         link(scopeCheckId, checkProgressId);
 
-        // P13: verify_lint — delta-aware lint regression check
-        // Label encodes BASELINE/CURRENT semantics for documentation; tool_command
-        // uses inline comparison to avoid VAR= shell assignments in DOT output.
+        // P13: verify_lint
         emit(verifyLintId, {
           label: 'verify_lint: BASELINE from cat baseline_lint_errors; CURRENT lint error count -le BASELINE',
           shape: 'cds',
@@ -1400,7 +1245,7 @@ export class DotBuilder {
         applied.add('P0d');
         link(checkProgressId, verifyLintId);
 
-        // P14: verify_types — delta-aware typecheck regression check
+        // P14: verify_types
         emit(verifyTypesId, {
           label: 'verify_types: BASELINE from cat baseline_ts_errors; CURRENT TS error count -le BASELINE',
           tool_command: '[ $(npx tsc --noEmit 2>&1 | grep -c error || echo 0) -le $(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) ]',
@@ -1408,11 +1253,11 @@ export class DotBuilder {
         applied.add('P14');
         link(verifyLintId, verifyTypesId);
 
-        // P9: optional coverage gate between verify_types and conformance
+        // P9: optional coverage gate
         const hasCoverage = typeof p.coverageTarget === 'number';
         if (hasCoverage) {
           const testRunId = i === 0 ? 'test_run' : `test_run_${i}`;
-          const covId     = i === 0 ? 'coverage_gate' : `coverage_gate_${i}`;
+          const covId = i === 0 ? 'coverage_gate' : `coverage_gate_${i}`;
           emit(testRunId, { label: 'test' });
           emit(covId, { coverage_target: String(p.coverageTarget), label: 'coverage_gate', shape: 'diamond' });
           applied.add('P9');
@@ -1424,7 +1269,7 @@ export class DotBuilder {
           link(verifyTypesId, conformanceId);
         }
 
-        // P15: conformance — always emitted (review gate vs spec/PRD)
+        // P15: conformance
         const conformanceAttrs: Record<string, string> = {
           class: 'review',
           label: 'Review the implementation against the phase spec and PRD requirements. Check: correct files modified, API contracts match, no regressions. Output STATUS: SUCCESS | FAIL.',
@@ -1437,36 +1282,35 @@ export class DotBuilder {
         if (p.goalGate) {
           conformanceAttrs['goal_gate'] = 'true';
           applied.add('P2');
-          if (spec.defaultMaxRetry) {
-            conformanceAttrs['max_visits'] = String(spec.defaultMaxRetry);
-          }
+          conformanceAttrs['max_visits'] = String(spec.defaultMaxRetry ?? 3);
           const acKeys = Object.keys(spec.acceptanceCriteria ?? {});
           if (acKeys.length > 0) conformanceAttrs['acceptance_criteria'] = acKeys.join(',');
         }
         emit(conformanceId, conformanceAttrs);
         applied.add('P15');
 
-        // P1: test_${id} diamond — pass/fail routing (P3: 2 outgoing edges guaranteed)
+        // P1: test diamond
         const testAttrs: Record<string, string> = {
           label: `test ${id}`,
           retry_target: implId,
           shape: 'diamond',
         };
-        // P6: max_visits on nodes with incoming retry edges (don't overwrite P0e's max_visits=3)
         if (!p.goalGate) {
           testAttrs['max_visits'] = '5';
           applied.add('P6');
         } else if (spec.defaultMaxRetry) {
           testAttrs['max_visits'] = String(spec.defaultMaxRetry);
           applied.add('P6');
+        } else {
+          testAttrs['max_visits'] = '3';
+          applied.add('P6');
         }
         emit(testId, testAttrs);
         applied.add('P1');
         applied.add('P3');
-
         link(conformanceId, testId);
 
-        // P1: fix loop — fail edge → fix node → back to impl
+        // P1: fix loop
         emit(fixId, { label: `fix ${id}` });
         link(testId, fixId, 'fail');
         link(fixId, implId);
@@ -1481,54 +1325,52 @@ export class DotBuilder {
           prevLabel = undefined;
         } else {
           prevId = testId;
-          prevLabel = 'pass'; // test diamond pass edge → next phase or fix_all
+          prevLabel = 'pass';
         }
       }
 
-      // P21: fix_all + verify_final — always emitted when any impl phase exists
+      // P21: fix_all + verify_final
       if (hasAnyPhase) {
-        applied.add('P21');
-        const fixAllAttrs: Record<string, string> = {
-          allowed_paths: unionPaths,
-          class: 'codergen',
-          label: 'fix_all',
-          permission_mode: 'auto',
-          timeout: '30m',
-        };
-        if (unionEscalate) fixAllAttrs['escalate_on'] = unionEscalate;
-        emit('fix_all', fixAllAttrs);
+        if (unionPaths) {
+          applied.add('P21');
+          const fixAllAttrs: Record<string, string> = {
+            allowed_paths: unionPaths,
+            class: 'codergen',
+            label: 'fix_all',
+            permission_mode: 'auto',
+            timeout: '30m',
+          };
+          if (unionEscalate) fixAllAttrs['escalate_on'] = unionEscalate;
+          emit('fix_all', fixAllAttrs);
+          link(prevId, 'fix_all', prevLabel);
+          link('fix_all', 'verify_final');
+        } else {
+          link(prevId, 'verify_final');
+        }
         emit('verify_final', { label: 'verify_final' });
-        link(prevId, 'fix_all', prevLabel);
-        link('fix_all', 'verify_final');
         link('verify_final', 'done');
       } else {
         link('capture_baseline', 'done');
       }
     }
 
-    // -------------------------------------------------------------------------
-    // P25: Catastrophic recovery — verify_final → setup_deps loop_restart edge
-    // Only when pipeline has retry loops (sequential with ≥1 impl phase).
-    // Not on zero-phase, fan-out, or competing pipelines.
-    // -------------------------------------------------------------------------
+    // P25: Catastrophic recovery loop
     if (!isFanOut && !hasCompeting && implPhases.length > 0) {
       applied.add('P25');
       linkEdge('verify_final', 'setup_deps', { loop_restart: 'true' });
     }
 
-    // -------------------------------------------------------------------------
-    // Microverse loop (Pattern 20) — emitted after main pipeline
-    // -------------------------------------------------------------------------
+    // Microverse loop (Pattern 20)
     if (spec.microverse) {
       applied.add('P20');
       const mv = spec.microverse;
-      const mvOpts = mv.opts;
+      const mvOpts = mv.opts as unknown as MicroverseOptsType;
       emit('commit_baseline', { label: 'commit_baseline', shape: 'cds' });
       emit('baseline', { label: `baseline ${mv.name}`, shape: 'cds' });
       emit('optimize', { label: `optimize ${mv.name}` });
       emit('measure', { label: `measure ${mv.name}` });
       emit('compare', {
-        direction: mvOpts.direction,
+        direction: mvOpts.direction ?? 'improve',
         label: 'compare',
         max_visits: String(mvOpts.maxVisits ?? 10),
         shape: 'diamond',
@@ -1543,15 +1385,12 @@ export class DotBuilder {
       link('compare', 'check', 'hit');
       link('check', 'done', 'accept');
       link('check', 'optimize', 'reject');
-      // Microverse is a standalone subgraph — not part of main reachability check (Rule 3)
       for (const mvId of ['commit_baseline', 'baseline', 'optimize', 'measure', 'compare', 'check']) {
         standaloneNodeIds.add(mvId);
       }
     }
 
-    // -------------------------------------------------------------------------
     // Review ratchet (Pattern 19)
-    // -------------------------------------------------------------------------
     if (spec.reviewRatchet) {
       applied.add('P19');
       const n = spec.reviewRatchet;
@@ -1567,7 +1406,6 @@ export class DotBuilder {
       link('review_merge', 'done', 'pass');
       link('review_merge', 'fix_review', 'fail');
       link('fix_review', 'review_pass_1');
-      // Review ratchet is a standalone cycle — not part of main reachability check (Rule 3)
       for (let ri = 1; ri <= n; ri++) standaloneNodeIds.add(`review_pass_${ri}`);
       standaloneNodeIds.add('review_merge');
       standaloneNodeIds.add('fix_review');
@@ -1576,15 +1414,13 @@ export class DotBuilder {
     // Always emit done last
     emit('done', { label: 'done', shape: 'Msquare' });
 
-    // -------------------------------------------------------------------------
-    // P23: defense matrix comment block (always emitted)
-    // -------------------------------------------------------------------------
+    // P23: defense matrix comment block
     const guardPatterns = ['P0c', 'P6b', 'P10', 'P13', 'P14', 'P15', 'P17', 'P25'];
     defenseMatrix.guardrails = guardPatterns.filter(pg => applied.has(pg));
     applied.add('P23');
 
-    const lines: string[] = [
-      `digraph ${graphId} {`,
+    const lines = [
+      `digraph "${graphId}" {`,
       `  graph [${fmtAttrs(graphAttrs)}]`,
       `  /* DEFENSE MATRIX`,
       `   * competitive: ${defenseMatrix.competitive}`,

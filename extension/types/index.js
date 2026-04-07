@@ -77,6 +77,10 @@ export const VALID_ACTIVITY_EVENTS = [
     'rate_limit_wait', 'rate_limit_resume', 'rate_limit_exhausted',
     'multi_repo_warning',
 ];
+// ---------------------------------------------------------------------------
+// DOT Builder Types
+// ---------------------------------------------------------------------------
+export { ATTRACTOR_SCHEMA_FALLBACK, ALL_ATTRS, lookupAttr, validateAttrType, validateAttrs, } from './attractor-schema.fallback.js';
 export class BuildError extends Error {
     code;
     diagnostics;

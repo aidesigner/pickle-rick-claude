@@ -290,6 +290,19 @@ export interface CreateMicroverseOpts {
 // DOT Builder Types
 // ---------------------------------------------------------------------------
 
+export {
+  AttrType,
+  AttrScope,
+  AttrDef,
+  ATTRACTOR_SCHEMA_FALLBACK,
+  FallbackSchema,
+  ALL_ATTRS,
+  AttrValidation,
+  lookupAttr,
+  validateAttrType,
+  validateAttrs,
+} from './attractor-schema.fallback.js';
+
 export type BuildErrorCode =
   | 'EMPTY_SLUG'
   | 'EMPTY_GOAL'
@@ -394,6 +407,9 @@ export interface PhaseSpec {
   redTeam?: boolean;
   bddScenarios?: boolean;
   docOnly?: boolean;
+  maxVisits?: number;
+  verifyCommand?: string;
+  permissionMode?: string;
 }
 
 export interface DefenseMatrix {
@@ -426,4 +442,5 @@ export interface BuilderSpec {
   reviewRatchet?: number;
   modelStylesheet?: StylesheetConfig;
   specFile?: string;
+  endgame?: { broadPass?: boolean };
 }
