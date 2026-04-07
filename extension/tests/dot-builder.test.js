@@ -620,11 +620,11 @@ describe('DOT emission: Mdiamond and Msquare shapes', () => {
         assert.match(dot, /start\s*\[.*shape\s*=\s*"?Mdiamond"?/, 'start node must use Mdiamond');
     });
 
-    test('done node has shape=Msquare', () => {
+    test('exit node has shape=Msquare', () => {
         const builder = new DotBuilder(validSpec());
         builder.phase(validPhase('impl'));
         const { dot } = builder.build();
-        assert.match(dot, /done\s*\[.*shape\s*=\s*"?Msquare"?/, 'done node must use Msquare');
+        assert.match(dot, /exit\s*\[.*shape\s*=\s*"?Msquare"?/, 'exit node must use Msquare');
     });
 
     test('output begins with "digraph"', () => {
@@ -755,7 +755,7 @@ describe('Attribute formatting', () => {
         const { dot } = builder.build();
         // All node declarations should follow pattern: id [key="val", key="val"]
         const nodeLines = dot.split('\n').filter(l => l.match(/^\s+\w+\s*\[/));
-        assert.ok(nodeLines.length >= 2, 'should have at least start and done nodes plus phases');
+        assert.ok(nodeLines.length >= 2, 'should have at least start and exit nodes plus phases');
         for (const line of nodeLines) {
             assert.match(line, /\[.*\]/, `node line should have bracket-delimited attrs: ${line}`);
         }

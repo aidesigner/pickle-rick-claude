@@ -1024,7 +1024,7 @@ export class DotBuilder {
             emit('verify_final', { label: 'verify_final' });
             link(afterMerge, 'fix_all');
             link('fix_all', 'verify_final');
-            link('verify_final', 'done');
+            link('verify_final', 'exit');
         }
         else if (hasCompeting) {
             // Competing implementations (Pattern 18)
@@ -1038,7 +1038,7 @@ export class DotBuilder {
             link('capture_baseline', `${baseId}_b`);
             link(`${baseId}_a`, 'competing_merge');
             link(`${baseId}_b`, 'competing_merge');
-            link('competing_merge', 'done');
+            link('competing_merge', 'exit');
         }
         else {
             // Sequential execution
@@ -1094,7 +1094,7 @@ export class DotBuilder {
                     });
                     applied.add('P0e');
                     link(implId, checkProgressId);
-                    link(checkProgressId, 'done', { condition: 'outcome=fail', label: 'fail' });
+                    link(checkProgressId, 'exit', { condition: 'outcome=fail', label: 'fail' });
                     emit(scopeCheckId, {
                         class: 'review',
                         label: 'Compare git diff against phase prompt. Flag files modified outside allowed_paths. Output STATUS: SUCCESS | FAIL.',
@@ -1104,7 +1104,7 @@ export class DotBuilder {
                     applied.add('P10');
                     applied.add('P6b');
                     link(checkProgressId, scopeCheckId);
-                    link(scopeCheckId, 'done', { condition: 'outcome=fail', label: 'fail' });
+                    link(scopeCheckId, 'exit', { condition: 'outcome=fail', label: 'fail' });
                     const conformanceDocAttrs = {
                         class: 'review',
                         label: 'Review the implementation against the phase spec and PRD requirements. Check: correct files modified, API contracts match, no regressions. Output STATUS: SUCCESS | FAIL.',
@@ -1303,10 +1303,10 @@ export class DotBuilder {
                     link(prevId, 'verify_final');
                 }
                 emit('verify_final', { label: 'verify_final' });
-                link('verify_final', 'done');
+                link('verify_final', 'exit');
             }
             else {
-                link('capture_baseline', 'done');
+                link('capture_baseline', 'exit');
             }
         }
         // P25: Catastrophic recovery loop
@@ -1337,7 +1337,7 @@ export class DotBuilder {
             link('measure', 'compare');
             link('compare', 'optimize', { condition: 'outcome=miss', label: 'miss' });
             link('compare', 'check', { condition: 'outcome=hit', label: 'hit' });
-            link('check', 'done', { condition: 'outcome=accept', label: 'accept' });
+            link('check', 'exit', { condition: 'outcome=accept', label: 'accept' });
             link('check', 'optimize', { condition: 'outcome=reject', label: 'reject' });
             for (const mvId of ['commit_baseline', 'baseline', 'optimize', 'measure', 'compare', 'check']) {
                 standaloneNodeIds.add(mvId);
@@ -1356,7 +1356,7 @@ export class DotBuilder {
                 link(`review_pass_${i}`, `review_pass_${i + 1}`);
             }
             link(`review_pass_${n}`, 'review_merge');
-            link('review_merge', 'done', { condition: 'outcome=success', label: 'pass' });
+            link('review_merge', 'exit', { condition: 'outcome=success', label: 'pass' });
             link('review_merge', 'fix_review', { condition: 'outcome=fail', label: 'fail' });
             link('fix_review', 'review_pass_1');
             for (let ri = 1; ri <= n; ri++)
@@ -1364,8 +1364,8 @@ export class DotBuilder {
             standaloneNodeIds.add('review_merge');
             standaloneNodeIds.add('fix_review');
         }
-        // Always emit done last
-        emit('done', { label: 'done', shape: 'Msquare' });
+        // Always emit exit last
+        emit('exit', { label: 'exit', shape: 'Msquare' });
         // P23: defense matrix comment block
         const guardPatterns = ['P0c', 'P6b', 'P10', 'P13', 'P14', 'P15', 'P17', 'P25'];
         defenseMatrix.guardrails = guardPatterns.filter(pg => applied.has(pg));

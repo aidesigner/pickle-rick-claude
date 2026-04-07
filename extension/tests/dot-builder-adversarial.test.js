@@ -341,7 +341,7 @@ describe('Adversarial audit', () => {
         assert.ok(dot.match(/start\s+\[[\s\S]*?shape\s*=\s*"Mdiamond"/), 'start node has Mdiamond shape');
 
         // Check for exit node with Msquare shape
-        // Exit node is named based on acceptance_criteria key, typically "done"
+        // Exit node uses ID "exit" with shape=Msquare
         assert.ok(dot.match(/shape="Msquare"/), 'exit node with Msquare shape exists');
 
         // Verify verify_final exists (connects to exit)

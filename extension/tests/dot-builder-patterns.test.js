@@ -522,7 +522,7 @@ describe('Remaining pattern snapshot tests', () => {
         assert.ok(edges.some(e => e.source === 'capture_baseline' && e.target === 'solver_b'), 'baseline → B');
         assert.ok(edges.some(e => e.source === 'solver_a' && e.target === 'competing_merge'), 'A → merge');
         assert.ok(edges.some(e => e.source === 'solver_b' && e.target === 'competing_merge'), 'B → merge');
-        assert.ok(edges.some(e => e.source === 'competing_merge' && e.target === 'done'), 'merge → done');
+        assert.ok(edges.some(e => e.source === 'competing_merge' && e.target === 'exit'), 'merge → exit');
     });
 
     // P19: Review ratchet N-pass topology --------------------------------------
@@ -552,7 +552,7 @@ describe('Remaining pattern snapshot tests', () => {
         assert.ok(edges.some(e => e.source === 'review_pass_1' && e.target === 'review_pass_2'), 'pass_1 → pass_2');
         assert.ok(edges.some(e => e.source === 'review_pass_2' && e.target === 'review_pass_3'), 'pass_2 → pass_3');
         assert.ok(edges.some(e => e.source === 'review_pass_3' && e.target === 'review_merge'), 'pass_3 → merge');
-        assert.ok(edges.some(e => e.source === 'review_merge' && e.target === 'done' && e.attrs.get('label') === 'pass'), 'merge → done on pass');
+        assert.ok(edges.some(e => e.source === 'review_merge' && e.target === 'exit' && e.attrs.get('label') === 'pass'), 'merge → exit on pass');
         assert.ok(edges.some(e => e.source === 'review_merge' && e.target === 'fix_review' && e.attrs.get('label') === 'fail'), 'merge → fix on fail');
         assert.ok(edges.some(e => e.source === 'fix_review' && e.target === 'review_pass_1'), 'fix → pass_1 loop');
     });
@@ -595,7 +595,7 @@ describe('Remaining pattern snapshot tests', () => {
         assert.ok(edges.some(e => e.source === 'measure' && e.target === 'compare'), 'measure → compare');
         assert.ok(edges.some(e => e.source === 'compare' && e.target === 'optimize' && e.attrs.get('label') === 'miss'), 'compare → optimize on miss');
         assert.ok(edges.some(e => e.source === 'compare' && e.target === 'check' && e.attrs.get('label') === 'hit'), 'compare → check on hit');
-        assert.ok(edges.some(e => e.source === 'check' && e.target === 'done' && e.attrs.get('label') === 'accept'), 'check → done on accept');
+        assert.ok(edges.some(e => e.source === 'check' && e.target === 'exit' && e.attrs.get('label') === 'accept'), 'check → exit on accept');
         assert.ok(edges.some(e => e.source === 'check' && e.target === 'optimize' && e.attrs.get('label') === 'reject'), 'check → optimize on reject');
     });
 
