@@ -54,6 +54,78 @@ export function stripSetupSection(prompt: string): string {
 }
 
 /**
+ * Truncate TASK_NOTES.md content with section-aware priority.
+ * Preserves ## Next and ## Dead Ends fully, trims ## Progress from oldest.
+ * Sections without recognized headers are treated as Progress.
+ */
+export function truncateTaskNotes(content: string, maxChars: number = 2000): string {
+  if (!content || !content.trim()) return '';
+  if (content.length <= maxChars) return content;
+
+  // Parse sections by ## headers
+  const sectionRegex = /^## .+$/gm;
+  const sections: { name: string; body: string }[] = [];
+  let lastIndex = 0;
+  let lastHeader = '';
+  let match: RegExpExecArray | null;
+  let preamble = '';
+
+  while ((match = sectionRegex.exec(content)) !== null) {
+    if (lastIndex === 0 && match.index > 0) {
+      preamble = content.slice(0, match.index);
+    } else if (lastHeader) {
+      sections.push({ name: lastHeader, body: content.slice(lastIndex, match.index) });
+    }
+    lastHeader = match[0].replace(/^## /, '').trim();
+    lastIndex = match.index;
+  }
+  if (lastHeader) {
+    sections.push({ name: lastHeader, body: content.slice(lastIndex) });
+  }
+
+  // No recognized sections — treat entire content as trimmable from top
+  if (sections.length === 0) {
+    const marker = '[truncated]\n';
+    const trimmed = content.slice(content.length - (maxChars - marker.length));
+    return marker + trimmed;
+  }
+
+  // Priority order: Next (0), Dead Ends (1), Key Discoveries (2), Progress (3), other (3)
+  const priorityMap: Record<string, number> = {
+    'Next': 0,
+    'Dead Ends': 1,
+    'Key Discoveries': 2,
+    'Progress': 3,
+  };
+  const getPriority = (name: string) => priorityMap[name] ?? 3;
+
+  // Phase 1: Remove Progress/unrecognized sections
+  const withoutProgress = sections.filter(s => getPriority(s.name) < 3);
+  let result = preamble + withoutProgress.map(s => s.body).join('');
+  if (result.length <= maxChars) {
+    // Add back as much Progress as fits (most recent = bottom)
+    const progressSections = sections.filter(s => getPriority(s.name) === 3);
+    const remaining = maxChars - result.length;
+    if (remaining > 20 && progressSections.length > 0) {
+      const ps = progressSections[progressSections.length - 1];
+      const trimmedBody = ps.body.slice(ps.body.length - remaining);
+      result += '\n[truncated]\n' + trimmedBody;
+    }
+    return result.length <= maxChars ? result : result.slice(0, maxChars);
+  }
+
+  // Phase 2: Remove Key Discoveries too
+  const highPriority = sections.filter(s => getPriority(s.name) <= 1);
+  result = preamble + highPriority.map(s => s.body).join('');
+  if (result.length <= maxChars) {
+    return result + '\n[truncated]';
+  }
+
+  // Phase 3: Hard truncate from end
+  return result.slice(0, maxChars - 12) + '\n[truncated]';
+}
+
+/**
  * Detects whether tickets in a session span multiple repositories.
  * Returns an array of distinct working_dir values if 2+, null otherwise.
  * Tickets with working_dir: null are excluded (they use session default).
@@ -392,6 +464,23 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
     }
   } else {
     managerPrompt += '\n\n' + buildHandoffSummary(state, sessionDir, iterationNum);
+  }
+
+  // Inject TASK_NOTES.md from session directory (persists across iterations)
+  const taskNotesPath = path.join(sessionDir, 'TASK_NOTES.md');
+  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+  if (fs.existsSync(taskNotesPath)) {
+    try {
+      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+      const raw = fs.readFileSync(taskNotesPath, 'utf-8');
+      const truncated = truncateTaskNotes(raw, 2000);
+      if (truncated.trim()) {
+        managerPrompt += '\n\n=== TASK NOTES (from previous iterations) ===\n' + truncated;
+      }
+    } catch (readErr) {
+      const msg = safeErrorMessage(readErr);
+      console.warn(`[mux-runner] WARNING: Cannot read TASK_NOTES.md: ${msg}`);
+    }
   }
 
   const settingsPath = path.join(extensionRoot, 'pickle_settings.json');
