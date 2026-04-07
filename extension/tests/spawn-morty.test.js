@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { tierToModel } from '../bin/spawn-morty.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SPAWN_MORTY_BIN = path.resolve(__dirname, '../bin/spawn-morty.js');
@@ -390,4 +391,33 @@ test('spawn-morty F15: negative remaining with short --timeout yields >=30s', ()
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+});
+
+// ---------------------------------------------------------------------------
+// tierToModel — tier-based model routing
+// ---------------------------------------------------------------------------
+
+test('tierToModel: trivial -> haiku', () => {
+    assert.equal(tierToModel('trivial'), 'haiku');
+});
+
+test('tierToModel: small -> sonnet', () => {
+    assert.equal(tierToModel('small'), 'sonnet');
+});
+
+test('tierToModel: medium -> sonnet', () => {
+    assert.equal(tierToModel('medium'), 'sonnet');
+});
+
+test('tierToModel: large -> opus', () => {
+    assert.equal(tierToModel('large'), 'opus');
+});
+
+test('tierToModel: undefined -> sonnet (missing tier fallback)', () => {
+    assert.equal(tierToModel(undefined), 'sonnet');
+});
+
+test('tierToModel: unrecognized tier -> sonnet (unknown fallback)', () => {
+    assert.equal(tierToModel('mega'), 'sonnet');
+    assert.equal(tierToModel(''), 'sonnet');
 });

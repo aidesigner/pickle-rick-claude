@@ -2,10 +2,21 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, safeErrorMessage, } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, safeErrorMessage, parseTicketFrontmatter, } from '../services/pickle-utils.js';
 import { spawn } from 'child_process';
 import { PromiseTokens, hasToken, Defaults } from '../types/index.js';
 import { updateTicketStatus } from '../services/git-utils.js';
+const TIER_MODEL_MAP = {
+    trivial: 'haiku',
+    small: 'sonnet',
+    medium: 'sonnet',
+    large: 'opus',
+};
+export function tierToModel(tier) {
+    if (!tier)
+        return 'sonnet';
+    return TIER_MODEL_MAP[tier] ?? 'sonnet';
+}
 async function main() {
     const args = process.argv.slice(2);
     if (args.length < 1) {
@@ -40,10 +51,12 @@ async function main() {
     const outputFormat = rawFormat && !rawFormat.startsWith('--') ? rawFormat : 'text';
     // Read ticket content if provided
     let ticketContent = '';
+    let ticketFilePath = null;
     if (ticketFileIndex !== -1) {
-        const ticketFilePath = args[ticketFileIndex + 1];
+        const rawTicketFile = args[ticketFileIndex + 1];
         // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-        if (ticketFilePath && !ticketFilePath.startsWith('--') && fs.existsSync(ticketFilePath)) {
+        if (rawTicketFile && !rawTicketFile.startsWith('--') && fs.existsSync(rawTicketFile)) {
+            ticketFilePath = rawTicketFile;
             // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
             ticketContent = fs.readFileSync(ticketFilePath, 'utf-8');
         }
@@ -119,6 +132,10 @@ async function main() {
     if (outputFormat !== 'text') {
         cmdArgs.push('--output-format', outputFormat);
     }
+    // Route to tier-appropriate model based on ticket complexity
+    const ticketInfo = ticketFilePath ? parseTicketFrontmatter(ticketFilePath) : null;
+    const model = tierToModel(ticketInfo?.complexity_tier);
+    cmdArgs.push('--model', model);
     // Prompt Construction — read the appropriate lifecycle template.
     // Review workers get send-to-morty-review.md (4-phase), implementation workers get send-to-morty.md (8-phase).
     const promptFilename = isReviewTicket ? 'send-to-morty-review.md' : 'send-to-morty.md';
