@@ -69,6 +69,7 @@ Extract: slug, goal, tasks, acceptance criteria.
 | High-complexity phase (>3 files, cross-cutting) | 18 (competing impls) — recommend in Step 2b |
 | Coverage requirements | 9 (coverage gate) |
 | Multiple independent workstreams | 4 (fan-out/fan-in) |
+| Phase prompt spans 2+ layers, test categories, or UI pages | 31 (node scope decomposition) — split per heuristic table. Skip if phase uses Pattern 18 |
 
 **Plan review teams** per phase:
 1. `correctness` + `patterns` (always)
@@ -132,6 +133,7 @@ Phase 1: ${PHASE_NAME}
   Review team: [roles] — ${N} consecutive passes
   Red team: [yes / no] — ${reason}
   Competing impls: [yes / no] — ${reason}
+  Decomposition: [N nodes — ${split_reason} / single node — ${reason}]
 
 [repeat per phase]
 
@@ -185,9 +187,6 @@ interface BuilderSpec {
   reviewRatchet?: number;         // Min 2 — N consecutive clean passes required
   modelStylesheet?: StylesheetConfig;
   specFile?: string;              // Path to PRD/spec; emitted as graph-level spec_file attribute
-  endgame?: {
-    broadPass?: boolean;          // Default false. When true, emit initial fix_all (max_visits=2) before disaggregated verify chain
-  };
 }
 
 interface PhaseSpec {
@@ -282,6 +281,28 @@ Each `PhaseSpec.prompt` must be complete — the executing agent has NO access t
 - **I/O resources**: "Ensure all streams, file handles, and spawned processes are closed on every exit path (success, error, timeout). Flush TextDecoder/streams before returning."
 - **Error handling**: "Never use empty catch blocks. Every catch must re-throw, return a typed error result, or log a warning with the original error."
 - **Shared state**: "For shared resources (files, databases, state), use run-scoped or caller-scoped identifiers. Emit events AFTER state transitions complete."
+
+### Endgame Gate Prerequisites (MANDATORY)
+
+Every endgame `tool_command` implicitly depends on config files that must exist before execution. Build-phase prompts that omit these configs cause endgame gates to fail on infrastructure, not code quality — wasting fix-loop iterations on rate-limited models.
+
+**Rule: trace every tool_command back to the scaffold prompt.** For each endgame gate `tool_command`, identify the config files it requires and ensure the scaffold/setup prompt explicitly creates them:
+
+| tool_command pattern | Required config | Scaffold must create |
+|---|---|---|
+| `npm test` / `jest` | Jest config with correct `roots`/`testMatch` | `jest.config.ts` — include `roots: ['<rootDir>/src', '<rootDir>/test']` if tests go in `test/`. CRITICAL: Framework scaffolders (NestJS, Next.js, Vite) generate their own config files (`jest.config.js`, `next.config.mjs`, etc.). If the scaffold prompt also creates a config file, the prompt MUST explicitly say "delete [framework default] if present" to avoid "Multiple configurations found" fatal errors that waste entire endgame fix loops. |
+| `npx vitest` | Vitest config | `vitest.config.ts` with correct `include` patterns |
+| `npx next build` | Next.js config | `next.config.js` (esp. rewrites/redirects if API proxy needed) |
+| `npm run build` / `tsc` | TypeScript config | `tsconfig.json` with correct `rootDir`, `outDir`, `include` |
+| `npx eslint` | ESLint config | `.eslintrc.*` or `eslint.config.*` |
+| `curl localhost:PORT` | Server bootstrap | `main.ts` with correct port, build script in `package.json` |
+
+**Additional rules:**
+- **Test-writing nodes must also ensure config**: If a codergen node writes test files, its prompt must include "verify/create the test runner config so the test runner can discover these files."
+- **Add a pre-gate sanity check**: Between test-writing codergen and endgame test gates, add a lightweight tool node (e.g., `npx jest --listTests`, `npx vitest --reporter=dot --run 2>&1 | head -1`) that fails fast if zero tests are discoverable. This catches config issues before burning endgame fix loops.
+- **Config in TWO places (belt + suspenders)**: Specify the config in BOTH the scaffold prompt AND the test-writing prompt. The scaffold creates it; the test-writer verifies it exists. Redundancy is cheap; rate-limited fix loops are expensive.
+- **No duplicate configs**: When a scaffold prompt uses a framework CLI (`nest new`, `create-next-app`, `npm init`) AND the prompt also specifies a custom config file (`jest.config.ts`, `next.config.js`, etc.), the prompt MUST include an explicit delete of the framework's default config. Example: scaffold creates `jest.config.ts` → prompt must say "delete `jest.config.js` if it exists". Common conflict pairs: `jest.config.ts` vs `jest.config.js`, `next.config.js` vs `next.config.mjs`, `vitest.config.ts` vs `vitest.config.js`. The `verify_test_setup` tool node should also `rm -f` known framework defaults as a safety net.
+- **Pre-gate cleanup**: Lightweight verify/sanity-check tool nodes between build phase and endgame gates should include cleanup of known conflict sources (duplicate configs, stale lock files, leftover build artifacts) before running their actual check. These nodes are cheap — a 2-second `rm -f` prevents a 10-minute rate-limited fix loop.
 
 ---
 
@@ -419,45 +440,18 @@ PRD: Reduce main bundle size from 2.1 MB to under 800 KB. No phase impl nodes �
 
 ---
 
-### MANDATORY: Endgame Convergence Pattern (P21)
+### Pre-Submission Self-Check
 
-The builder auto-generates a **disaggregated verify/fix endgame chain** after all per-phase nodes. This replaces the god-node `fix_all` anti-pattern (single fixer for all failure categories → cross-category regression → thrash loops).
+Before piping BuilderSpec to the builder, verify:
 
-**Two-phase pipeline structure** (generated by the builder):
+- [ ] Every key in `acceptanceCriteria` is EITHER a Tier 2 auto-key (`tests_pass`, `lint_clean`, `types_compile`, `cli_contract`, `determinism`, `validation_rules`) OR has a matching `contextOnSuccess` entry in exactly one phase. **Single-phase pipelines**: builder auto-maps all custom keys — you can skip manual mapping.
+- [ ] Every phase has `allowedPaths` (include test dirs). Builder defaults to `["src/**", "tests/**"]` if missing, but explicit is better.
+- [ ] Every `goalGate` phase has a `retryTarget`. Builder defaults to `"fix_<phaseName>"` if missing.
+- [ ] If `workspace: "isolated"`, `repoUrl` is HTTPS (not `git@`). Builder auto-converts SSH→HTTPS for GitHub/GitLab.
+- [ ] Phase names are unique, lowercase, contain only alphanumeric + underscores.
+- [ ] Phase prompts don't reference file paths outside their `allowedPaths`.
 
-1. **BUILD phase** — per-phase nodes: impl → check_progress → scope_check → verify_lint → verify_types → conformance → test diamond → fix loop. Linear or fan-out depending on `dependsOn`.
-2. **ENDGAME phase** — sequential goal-gated verify→fix loops with isolated scoping:
-
-```
-audit → [fix_all broad pass] → verify_typecheck ⇄ fix_types → verify_lint ⇄ fix_lint → verify_tests ⇄ fix_tests → regression_check → quality_review → exit
-```
-
-**Key properties:**
-- `audit` (parallelogram) — read-only diagnostic, all commands use `|| true`, never fails
-- Each verify node (`verify_typecheck`, `verify_lint`, `verify_tests`) is a **tool node** (`shape=parallelogram`) with `goal_gate=true`, `retry_target` pointing to its own fix node, `max_visits>=5`, and `context_on_success` mapping one AC key
-- Each fix node (`fix_types`, `fix_lint`, `fix_tests`) has `allowed_paths` scoped to relevant file types — `fix_types` cannot touch test files, `fix_lint` cannot change type signatures. Cross-category regression is structurally impossible
-- `regression_check` re-runs ALL checks after individual loops converge; failure re-enters from `fix_types`
-- `quality_review` (class="review") does a final diff review before exit
-- Optional `fix_all` broad pass (`endgame.broadPass: true`) runs first with `max_visits=2` for easy wins — NOT used as `retry_target` by any verify node
-
-**`goal_gate` requirements** (enforced by attractor validator rule `pipeline_convergence_gates`):
-- Pipelines with 3+ codergen nodes SHOULD have at least one `goal_gate=true` node
-- Pipelines with 3+ codergen nodes SHOULD have `acceptance_criteria` at graph level
-- Both checks are WARNING severity — the validator won't block submission, but missing gates indicate a non-convergent pipeline
-
-**`acceptance_criteria` format** (graph-level, NOT on nodes):
-```
-acceptance_criteria = "context.types_compile=true && context.lint_clean=true && context.tests_pass=true"
-```
-The builder formats this from `BuilderSpec.acceptanceCriteria` using `context.K=V` prefix, sorted alphabetically, joined with ` && `.
-
-**`max_visits` guidance:**
-- Verify tool nodes: `max_visits=5` (default)
-- Fix codergen nodes: `max_visits=5` (default), `max_visits=8` for complex projects
-- Goal-gated conformance: `max_visits=3` (from `defaultMaxRetry`)
-- Regression check: `max_visits=3`
-
-**`verify_spec` pattern** (project-specific verification): For PRDs with domain-specific acceptance criteria beyond types/lint/tests, add a `PhaseSpec` with `verifyCommand` containing the custom verification shell command. The builder will emit a project-specific verify tool node in the endgame chain.
+The builder auto-corrects several of these (emitting warnings), but getting them right upfront avoids warning noise and ensures the spec matches your intent.
 
 ---
 

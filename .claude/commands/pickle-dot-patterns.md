@@ -442,6 +442,50 @@ for (const file of changedFiles) {
 
 Detection heuristic: any `new` expression inside `for`/`while`/`.map()`/`.forEach()` where constructor arguments don't change per iteration.
 
+**31. Node Scope Decomposition** — free-tier and mid-range models fail on broad prompts. A node that says "write 17 tests covering CRUD, validation, status transitions, and edge cases" will produce 1-3 tests. A node that says "write 5 CRUD tests" will produce 5.
+
+**Rule: one deliverable per node.** Each codergen node should produce ONE of:
+- One layer (entity OR service OR controller — not all three)
+- One test category (CRUD tests OR validation tests — not both)
+- One UI page (dashboard OR form OR detail — not all)
+- One config file set (scaffold)
+
+**Decomposition heuristics:**
+
+| Signal | Split into |
+|---|---|
+| Prompt lists 2+ files in different layers (entity + service + controller) | One node per layer, sequential (`dependsOn` chain) |
+| Prompt asks for N tests across M categories (M > 1) | One node per category, each writes its own test file |
+| Prompt creates multiple UI pages/routes | One node per page (see UI rules below) |
+| Prompt does setup + implementation | Separate scaffold node from impl node |
+| Single file, single responsibility, or <100 lines expected output | Leave as one node — don't over-split |
+
+**Test decomposition rules:**
+- Each test node writes to its OWN file (e.g., `test/crud.e2e-spec.ts`, `test/validation.e2e-spec.ts`) — never multiple nodes writing to the same file
+- Each test node targets 3-5 tests in one category for non-Anthropic providers; up to 8-10 for Opus-tier models
+- The `verify_test_setup` tool node after all test nodes checks `npx jest --listTests` finds >= N files (where N = number of test nodes)
+- Update endgame `verify_spec` thresholds to match: if 4 test nodes × ~4 tests each = 16 total, gate on `>= 15`
+- Each test node must also follow the config belt-and-suspenders rule from Endgame Gate Prerequisites (Pattern 0a area in pickle-dot.md)
+
+**UI decomposition rules:**
+- Shared foundations first (layout, types, API client, components) in a `ui_scaffold` node
+- One node per page/route — each gets "Existing: [list shared files]. Create ONLY [this page]."
+- Pages depend on `ui_scaffold` but can fan-out parallel (Pattern 4) when `allowed_paths` don't overlap. `max_parallel=1` (Pattern 0b) serializes execution inside the Docker container regardless
+
+**Interaction with Pattern 18 (Competing Impls):** If a phase uses competing implementations, do NOT also decompose within each branch — competing impls already provide redundancy via alternative approaches. Pick one approach per branch and keep it as a single node.
+
+**Why this matters for convergence:**
+- Smaller nodes have higher first-pass success rate (especially on free/weak models)
+- When a node fails, the fix loop knows exactly what category broke
+- Endgame fix agents can focus: "fix CRUD tests" not "fix all 17 tests"
+- Total token cost increases linearly with node count, but fix-loop waste drops superlinearly. Net cost is lower for pipelines that would otherwise stall
+
+**When NOT to split:**
+- Single file changes (one component, one config update)
+- Tightly coupled code where splitting creates import dependency hell
+- Nodes already under 100 lines of expected output
+- Phases using Pattern 18 (competing impls) — redundancy is already handled
+
 ## Superseded (reference only)
 
 **5. Human Gates** — `hexagon` shape maps to `wait.human` which pauses the pipeline waiting for human input via the `/pipelines/:id/questions/:qid/answer` API. **Never emit for autonomous pipelines** — the pipeline will deadlock waiting for input that never arrives. Only relevant for interactive/supervised workflows (non-default).
@@ -505,6 +549,9 @@ Detection heuristic: any `new` expression inside `for`/`while`/`.map()`/`.forEac
 - Fan-out (`component`) without matching fan-in (`tripleoctagon`) (validator rule 20 — pipeline stalls)
 - Fan-out branch `retry_target` pointing outside its `component→tripleoctagon` scope (validator rule 17 — stripped at runtime, retry is silently ineffective)
 - >4 reviewers per team
+- Broad codergen prompt spanning 2+ layers or test categories on non-Opus models (use Pattern 31 decomposition)
+- Multiple test nodes writing to the same file (each test node gets its own file)
+- Node scope decomposition inside competing impl branches (Pattern 18 already provides redundancy)
 
 ## Model Routing
 

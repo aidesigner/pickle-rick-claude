@@ -218,7 +218,10 @@ function preflightGoalGateEdges(phases: PhaseSpec[]): Diagnostic[] {
   const diags: Diagnostic[] = [];
   for (const phase of phases) {
     if (phase.goalGate && !phase.specFirst && !phase.retryTarget) {
-      diags.push(mkDiag('DIAMOND_MISSING_EDGES', 'error', `goalGate phase "${phase.name}" requires retryTarget to provide ≥2 outgoing edges`, sanitizeId(phase.name)));
+      // Auto-correct: default retryTarget to fix_<phaseName>
+      const defaultTarget = `fix_${sanitizeId(phase.name)}`;
+      phase.retryTarget = defaultTarget;
+      diags.push(mkDiag('DIAMOND_MISSING_EDGES', 'warning', `goalGate phase "${phase.name}" missing retryTarget — defaulted to "${defaultTarget}"`, sanitizeId(phase.name)));
     }
   }
   return diags;
@@ -244,10 +247,17 @@ function preflightFanOutScope(phases: PhaseSpec[]): Diagnostic[] {
 
 function preflightWorkspaceHttps(workspace: string | undefined, workspaceOpts: WorkspaceOptsType | undefined): Diagnostic[] {
   if (workspace !== 'isolated') return [];
-  const repoUrl = workspaceOpts?.repoUrl;
-  if (!repoUrl) return [];
+  if (!workspaceOpts?.repoUrl) return [];
+  const repoUrl = workspaceOpts.repoUrl;
   if (!repoUrl.startsWith('https://')) {
-    return [mkDiag('WORKSPACE_NO_HTTPS', 'error', `workspace="isolated" requires HTTPS repo_url; got: "${repoUrl}"`)];
+    // Auto-correct: convert git@host:org/repo.git → https://host/org/repo.git
+    const sshMatch = repoUrl.match(/^git@([^:]+):(.+?)(?:\.git)?$/);
+    if (sshMatch) {
+      const converted = `https://${sshMatch[1]}/${sshMatch[2]}.git`;
+      workspaceOpts.repoUrl = converted;
+      return [mkDiag('WORKSPACE_NO_HTTPS', 'warning', `workspace="isolated" requires HTTPS repo_url — auto-converted "${repoUrl}" → "${converted}"`)];
+    }
+    return [mkDiag('WORKSPACE_NO_HTTPS', 'error', `workspace="isolated" requires HTTPS repo_url; got: "${repoUrl}" (unable to auto-convert)`)];
   }
   return [];
 }
@@ -265,7 +275,8 @@ function preflightWorkspacePush(workspace: string | undefined, phases: PhaseSpec
     return id === 'commit_and_push' || (id.includes('commit') && id.includes('push'));
   });
   if (!hasCommitPush) {
-    return [mkDiag('WORKSPACE_NO_PUSH', 'error', 'workspace="isolated" requires a commit_and_push phase in the pipeline')];
+    // Downgrade to warning — _emitDot will auto-inject commit_and_push tool node
+    return [mkDiag('WORKSPACE_NO_PUSH', 'warning', 'workspace="isolated" missing commit_and_push — will auto-inject push node after quality_review')];
   }
   return [];
 }
@@ -285,12 +296,60 @@ function preflightPromptPaths(phases: PhaseSpec[]): Diagnostic[] {
   return diags;
 }
 
+function preflightAutoMapAC(phases: PhaseSpec[], acceptanceCriteria: Record<string, unknown>): Diagnostic[] {
+  const acKeys = Object.keys(acceptanceCriteria);
+  if (acKeys.length === 0) return [];
+  const tier2 = new Set(Object.keys(TIER_2_AUTO_KEYS));
+  const customKeys = acKeys.filter(k => !tier2.has(k));
+  if (customKeys.length === 0) return [];
+
+  // Collect already-mapped keys
+  const alreadyMapped = new Set<string>();
+  for (const p of phases) {
+    if (p.contextOnSuccess) {
+      for (const k of Object.keys(p.contextOnSuccess)) alreadyMapped.add(k);
+    }
+  }
+  const unmapped = customKeys.filter(k => !alreadyMapped.has(k));
+  if (unmapped.length === 0) return [];
+
+  const implPhases = phases.filter(p => !p.securityScan && !p.docOnly);
+
+  // Single-phase shortcut: all unmapped custom keys → the only phase
+  if (implPhases.length === 1) {
+    const phase = implPhases[0];
+    if (!phase.contextOnSuccess) phase.contextOnSuccess = {};
+    for (const k of unmapped) {
+      phase.contextOnSuccess[k] = String(acceptanceCriteria[k] ?? 'true');
+    }
+    return [mkDiag('MISSING_AC_MAPPING', 'info', `single-phase pipeline — auto-mapped ${unmapped.length} AC key(s) to phase "${phase.name}": ${unmapped.join(', ')}`)];
+  }
+
+  // Multi-phase: try prefix/substring match
+  const diags: Diagnostic[] = [];
+  for (const k of unmapped) {
+    const match = implPhases.find(p => {
+      const id = sanitizeId(p.name);
+      return k.includes(id) || id.includes(k.replace(/_/g, ''));
+    });
+    if (match) {
+      if (!match.contextOnSuccess) match.contextOnSuccess = {};
+      match.contextOnSuccess[k] = String(acceptanceCriteria[k] ?? 'true');
+      diags.push(mkDiag('MISSING_AC_MAPPING', 'info', `auto-mapped AC key "${k}" to phase "${match.name}" (name match)`));
+    }
+    // If no match, let grRule6 handle it with better fix hints
+  }
+  return diags;
+}
+
 function preflightMissingAllowedPaths(phases: PhaseSpec[]): Diagnostic[] {
   const diags: Diagnostic[] = [];
   for (const phase of phases) {
     if (phase.securityScan || phase.docOnly) continue;
     if (!phase.allowedPaths || phase.allowedPaths.length === 0) {
-      diags.push(mkDiag('MISSING_ALLOWED_PATHS', 'error', `phase "${phase.name}" requires non-empty allowedPaths`, sanitizeId(phase.name)));
+      // Auto-correct: default to src/**/tests/** and warn
+      phase.allowedPaths = ['src/**', 'tests/**'];
+      diags.push(mkDiag('MISSING_ALLOWED_PATHS', 'warning', `phase "${phase.name}" missing allowedPaths — defaulted to ["src/**", "tests/**"]`, sanitizeId(phase.name)));
     }
   }
   return diags;
@@ -419,9 +478,28 @@ function grRule6(nodeMap: Map<string, Record<string, string>>, acceptanceCriteri
       }
     }
   }
-  return acKeys
-    .filter(k => !mapped.has(k))
-    .map(k => mkDiag('MISSING_AC_MAPPING', 'error', `acceptanceCriteria key "${k}" has no node with context_on_success mapping it`));
+  const unmapped = acKeys.filter(k => !mapped.has(k));
+  if (unmapped.length === 0) return [];
+
+  // Collect conformance node IDs for fix hints
+  const conformanceNodes = [...nodeMap.entries()]
+    .filter(([id]) => id.startsWith('conformance_'))
+    .map(([id]) => id.replace('conformance_', ''));
+
+  return unmapped.map(k => {
+    // Suggest a phase by prefix/substring match
+    const match = conformanceNodes.find(phaseName =>
+      k.includes(phaseName) || phaseName.includes(k.replace(/_/g, ''))
+    );
+    const fix = match
+      ? `Add contextOnSuccess: { "${k}": "true" } to phase "${match}"`
+      : conformanceNodes.length === 1
+        ? `Add contextOnSuccess: { "${k}": "true" } to phase "${conformanceNodes[0]}" (only phase)`
+        : `Add contextOnSuccess: { "${k}": "true" } to the phase that verifies this criterion. Phases: ${conformanceNodes.join(', ')}`;
+    const d = mkDiag('MISSING_AC_MAPPING', 'error', `acceptanceCriteria key "${k}" has no node with context_on_success mapping it`);
+    d.fix = fix;
+    return d;
+  });
 }
 
 function grRule7(nodeMap: Map<string, Record<string, string>>): Diagnostic[] {
@@ -509,7 +587,8 @@ function grRule13(nodeMap: Map<string, Record<string, string>>, graphAttrs: Reco
   if (graphAttrs['workspace'] !== 'isolated') return [];
   const hasCommitPush = [...nodeMap.keys()].some(id => id === 'commit_and_push' || (id.includes('commit') && id.includes('push')));
   if (!hasCommitPush) {
-    return [mkDiag('WORKSPACE_NO_PUSH', 'error', 'workspace=isolated requires a commit_and_push node in the pipeline')];
+    // Should not fire — preflight auto-injects commit_and_push. Warn as safety net.
+    return [mkDiag('WORKSPACE_NO_PUSH', 'warning', 'workspace=isolated but no commit_and_push node found after auto-injection — check pipeline structure')];
   }
   return [];
 }
@@ -715,8 +794,9 @@ export const PhaseSpecNs = {
     if (typeof phase['prompt'] !== 'string' || !phase['prompt']) {
       diagnostics.push(mkDiag('INVALID_SPEC', 'error', 'prompt is required'));
     }
-    if (!Array.isArray(phase['allowedPaths'])) {
-      diagnostics.push(mkDiag('MISSING_ALLOWED_PATHS', 'error', 'allowedPaths is required'));
+    // allowedPaths validated by preflight (auto-corrected if missing)
+    if (phase['allowedPaths'] !== undefined && !Array.isArray(phase['allowedPaths'])) {
+      diagnostics.push(mkDiag('INVALID_ALLOWED_PATHS', 'error', 'allowedPaths must be an array when provided'));
     }
     if (phase['dependsOn'] !== undefined) {
       if (!Array.isArray(phase['dependsOn']) || !(phase['dependsOn'] as unknown[]).every((d: unknown) => typeof d === 'string')) {
@@ -935,8 +1015,9 @@ export class DotBuilder {
       ...preflightWorkspaceHttps(this._spec.workspace, this._spec.workspaceOpts),
       ...preflightWorkspacePush(this._spec.workspace, phases),
       ...preflightPlanDeadlock(phases),
-      ...preflightPromptPaths(phases),
       ...preflightMissingAllowedPaths(phases),
+      ...preflightAutoMapAC(phases, this._spec.acceptanceCriteria ?? {}),
+      ...preflightPromptPaths(phases),  // must run after allowedPaths auto-correction
     ];
     const preflightError = preflightDiags.find(d => d.severity === 'error');
     if (preflightError) {
@@ -946,9 +1027,13 @@ export class DotBuilder {
     // Emit the complete graph
     const { dot, nodeMap, edgeList, graphAttrs, standaloneNodeIds, patternsApplied, defenseMatrix } = this._emitDot();
 
+    // Carry forward non-error preflight diagnostics (warnings/info from auto-corrections)
+    const preflightNonErrors = preflightDiags.filter(d => d.severity !== 'error');
+
     // Run all 15 structural validation rules
     const { acceptanceCriteria = {} } = this._spec;
     const diagnostics: Diagnostic[] = [
+      ...preflightNonErrors,
       ...grRule1(nodeMap),
       ...grRule2(nodeMap, edgeList),
       ...grRule3(nodeMap, edgeList, standaloneNodeIds),
@@ -1674,6 +1759,31 @@ export class DotBuilder {
       for (let ri = 1; ri <= n; ri++) standaloneNodeIds.add(`review_pass_${ri}`);
       standaloneNodeIds.add('review_merge');
       standaloneNodeIds.add('fix_review');
+    }
+
+    // P0: Auto-inject commit_and_push for isolated workspace if missing
+    if (spec.workspace === 'isolated') {
+      const hasExplicitPush = [...nodeMap.keys()].some(id => id === 'commit_and_push' || (id.includes('commit') && id.includes('push')));
+      if (!hasExplicitPush) {
+        const slug = this._slug;
+        emit('commit_and_push', {
+          label: 'commit_and_push',
+          shape: 'parallelogram',
+          timeout: '120s',
+          tool_command: `cd \${WORKING_DIR} && BRANCH="attractor/${slug}-$(echo $ATTRACTOR_RUN_ID | cut -c1-8)" && git checkout -B "$BRANCH" && git add -A && git -c user.name=attractor -c user.email=attractor@local commit -m "feat: ${slug} — attractor pipeline output" --allow-empty && git push origin "$BRANCH" --force 2>&1 && echo "Pushed branch: $BRANCH"`,
+        });
+        // Rewire: quality_review → commit_and_push → exit (instead of quality_review → exit)
+        const qrToExit = edges.findIndex(e => e.includes('quality_review -> exit'));
+        if (qrToExit !== -1) {
+          edges.splice(qrToExit, 1);
+          const removedEdge = edgeList.findIndex(e => e.from === 'quality_review' && e.to === 'exit');
+          if (removedEdge !== -1) edgeList.splice(removedEdge, 1);
+          seenEdges.delete(edges[qrToExit] ?? '');
+        }
+        link('quality_review', 'commit_and_push', { condition: 'outcome=success', label: 'pass' });
+        link('commit_and_push', 'exit');
+        applied.add('P0');
+      }
     }
 
     // Always emit exit last
