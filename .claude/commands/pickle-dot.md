@@ -334,6 +334,74 @@ This costs ~4 lines of prompt space and prevents an entire category of "all test
 
 ---
 
+### Shared Contract Pattern (MANDATORY for multi-track pipelines)
+
+When a pipeline has parallel or sequential tracks that produce code referencing the same data structures (e.g., API entity + UI types, backend DTO + frontend form), you MUST create a shared contract node BEFORE any implementation nodes. This applies to both the BuilderSpec path (Step 3) and prompt-only path (Step 3L).
+
+**Design principle:** Low-cost models invent field names, guess casing conventions, and hallucinate enum values. If a pipeline works correctly with a free-tier model, it will definitely work with a frontier model. Shared contracts eliminate an entire class of silent divergence bugs structurally — no model intelligence required to follow a spec that's already written.
+
+#### Rules
+
+1. **Create a contract file as a tool node** — write a `shared/FIELD_CONTRACT.md` (or similar) via heredoc in a `tool_command` node. No LLM needed; the pipeline author specifies exact field names, types, required/optional flags, enum values, endpoint paths, HTTP methods, status codes, and state transition rules.
+2. **Every implementation node prompt starts with**: `"FIRST: Read ../../shared/FIELD_CONTRACT.md and use ONLY the field names, types, and endpoints defined there."`
+3. **Every review node verifies contract alignment before anything else** — the review prompt must say: `"Before reviewing code quality, verify all field names and types match shared/FIELD_CONTRACT.md exactly. Any mismatch is a blocking issue."`
+4. **One casing convention** — if the API uses `snake_case`, the UI uses `snake_case`. No implicit transformation layers. The contract is the law. If a casing adapter is genuinely needed (e.g., legacy API), the contract must specify the mapping explicitly.
+
+#### Why
+
+Without a contract, parallel tracks diverge silently. The API track produces `first_name`, the UI track produces `applicantName`, and the UI renders `undefined` for every field. Low-cost models are especially prone to this, but even frontier models will invent plausible-but-wrong names when the prompt doesn't specify them. A shared contract makes correctness a mechanical property of the pipeline, not a function of model capability.
+
+#### Verification
+
+Add a `verify_field_alignment` tool node after both tracks complete:
+
+```
+tool_command="cd ${WORKING_DIR} && \
+  API_FIELDS=$(grep -rhE '(Column|Field|Prop)' src/entities/ src/dto/ | grep -oE '[a-z_]+' | sort -u) && \
+  UI_FIELDS=$(grep -rhE '(interface|type)\s' src/types/ src/components/ | grep -oE '[a-z_]+' | sort -u) && \
+  DIFF=$(comm -3 <(echo \"$API_FIELDS\") <(echo \"$UI_FIELDS\")) && \
+  if [ -n \"$DIFF\" ]; then echo \"FIELD MISMATCH:\n$DIFF\"; exit 1; fi && \
+  echo 'Field alignment verified'"
+```
+
+This is a `goal_gate`. Field alignment is not optional — a mismatch means the UI is broken regardless of whether tests pass.
+
+**Builder path note:** When constructing a BuilderSpec with ≥2 phases that share data structures and no `dependsOn` between them (fan-out), the builder should ideally warn if no contract node precedes the fan-out. Until the builder enforces this automatically, the pipeline author must add the contract node manually.
+
+---
+
+### Tool Command Shell Safety (MANDATORY)
+
+Shell scripts in `tool_command` attributes run inside `sh -c` — standard shell word-splitting rules apply. Verification and gate nodes are especially vulnerable because they capture command output into variables and compare against thresholds.
+
+**Design principle:** Low-cost models generate fragile shell scripts. Gate nodes that work in manual testing break when test output format varies slightly. Defensive shell patterns make gates robust regardless of which model generated the surrounding code or how the test runner formats its output.
+
+#### Variable Capture From Multi-Line Output
+
+**WRONG** — captures multiple lines, word-splitting shifts positional args:
+
+```sh
+TC=$(npm test 2>&1 | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+')
+# If grep matches "6 passed" AND "47 passed", TC="6\n47"
+# Unquoted $TC expands to TWO args, shifting all positional parameters
+```
+
+**RIGHT** — filter to exactly one line before capture:
+
+```sh
+TC=$(npm test 2>&1 | grep -E 'Tests:' | grep -oE '[0-9]+ passed' | tail -1 | grep -oE '[0-9]+' || echo 0)
+```
+
+#### Rules
+
+1. **Single-line guarantee**: When `grep` may match multiple lines, pipe through a unique-prefix filter (e.g., `grep -E 'Tests:'`) or `tail -1` to guarantee single-line capture. Every variable assignment from command output must produce exactly one line.
+2. **Single-word labels**: Use single-word labels in shell check/comparison functions — multi-word strings as positional args interact badly with word-splitting. Use `tests_passing` not `tests passing`.
+3. **Anchor grep to label lines**: Test runner summaries repeat patterns (`N passed` appears for both suites and individual tests). Always anchor `grep` to the specific summary label line (e.g., `grep -E '^Tests:'` or `grep -E '^Test Suites:'`).
+4. **Quote all variable expansions**: Use `"$VAR"` not `$VAR` in comparisons and function arguments. Unquoted variables with embedded newlines or spaces cause silent argument shifting.
+5. **Default on failure**: Always provide a fallback with `|| echo 0` (or appropriate default) when capturing numeric values. If the grep misses entirely, an empty variable causes syntax errors in arithmetic comparisons.
+
+---
+
 ### Few-Shot Examples
 
 #### Example 1: Single-Phase Pipeline
