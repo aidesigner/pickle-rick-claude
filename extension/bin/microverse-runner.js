@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { Defaults } from '../types/index.js';
-import { readMicroverseState, writeMicroverseState, recordIteration as stateRecordIteration, recordStall, recordFailedApproach, isConverged, compareMetric, } from '../services/microverse-state.js';
+import { readMicroverseState, writeMicroverseState, recordIteration as stateRecordIteration, recordStall, recordFailedApproach, isConverged, compareMetric, classifyFailure, } from '../services/microverse-state.js';
 import { getHeadSha, resetToSha, isWorkingTreeDirty } from '../services/git-utils.js';
 import { writeStateFile, getExtensionRoot, sleep, Style, formatTime, printMinimalPanel, safeErrorMessage, } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
@@ -39,6 +39,59 @@ export function measureMetric(validation, timeoutSeconds, cwd) {
 }
 /** @internal test seam — do not use outside tests */
 export const _deps = { execFileSync: execFileSync };
+const RECOVERY_TEMPLATES = {
+    tool_failure: 'Metric tool failed. Check tool prerequisites, env vars, and dependencies before retrying.',
+    approach_exhaustion: 'Multiple approaches failed. Reset strategy: re-read the PRD, identify untried angles, consider simplifying scope.',
+    regression: 'Last change caused regression. Review the diff, understand why score dropped, try a smaller/different change.',
+    metric_unstable: 'Metric is oscillating. Stabilize: check for race conditions, flaky tests, or environmental variance before optimizing.',
+    no_progress: 'No commits or score change. The current approach may be stuck. Try a fundamentally different strategy.',
+};
+/**
+ * Write recovery guidance to TASK_NOTES.md. Rotates previous recovery text
+ * into ## Dead Ends and inserts new guidance in ## Next with <!-- recovery --> delimiters.
+ */
+export function injectRecoveryGuidance(sessionDir, failureClass, _mvState) {
+    const notesPath = path.join(sessionDir, 'TASK_NOTES.md');
+    let content = '';
+    try {
+        content = fs.readFileSync(notesPath, 'utf-8');
+    }
+    catch {
+        // File doesn't exist yet — start fresh
+    }
+    const recoveryStart = '<!-- recovery -->';
+    const recoveryEnd = '<!-- /recovery -->';
+    const newRecoveryText = `${recoveryStart}\n**[${failureClass}]** ${RECOVERY_TEMPLATES[failureClass]}\n${recoveryEnd}`;
+    // Extract existing recovery block if present
+    const recoveryRegex = new RegExp(`${recoveryStart}[\\s\\S]*?${recoveryEnd}`);
+    const existingMatch = content.match(recoveryRegex);
+    if (existingMatch) {
+        // Move old recovery to ## Dead Ends
+        const oldRecovery = existingMatch[0]
+            .replace(recoveryStart, '')
+            .replace(recoveryEnd, '')
+            .trim();
+        // Remove old recovery block from content
+        content = content.replace(recoveryRegex, '').trim();
+        // Append to Dead Ends section
+        const deadEndsHeader = '## Dead Ends';
+        if (content.includes(deadEndsHeader)) {
+            content = content.replace(deadEndsHeader, `${deadEndsHeader}\n- ${oldRecovery}`);
+        }
+        else {
+            content += `\n\n${deadEndsHeader}\n- ${oldRecovery}`;
+        }
+    }
+    // Insert new recovery in ## Next section
+    const nextHeader = '## Next';
+    if (content.includes(nextHeader)) {
+        content = content.replace(nextHeader, `${nextHeader}\n${newRecoveryText}`);
+    }
+    else {
+        content = `${nextHeader}\n${newRecoveryText}\n\n${content}`.trim();
+    }
+    fs.writeFileSync(notesPath, content + '\n');
+}
 const DEFAULT_JUDGE_MODEL = 'claude-sonnet-4-6';
 const DEFAULT_JUDGE_TIMEOUT = 180;
 const JUDGE_SYSTEM_PROMPT = [
@@ -215,20 +268,23 @@ function writeFinalReport(sessionDir, mvState, exitReason, iterations, elapsedSe
         `- **Accepted**: ${accepted}`,
         `- **Reverted**: ${reverted}`,
         `- **Failed Approaches**: ${mvState.failed_approaches.length}`,
-        '',
-        '## Iteration History',
-        '| Iter | Score | Action | Description |',
-        '|------|-------|--------|-------------|',
-        ...history.map(h => `| ${h.iteration} | ${h.score} | ${h.action} | ${h.description} |`),
-        '',
-    ].join('\n');
+    ];
+    if (mvState.failure_history.length > 0) {
+        const dist = new Map();
+        for (const f of mvState.failure_history) {
+            dist.set(f.failure_class, (dist.get(f.failure_class) ?? 0) + 1);
+        }
+        report.push(`- **Failure Distribution**: ${[...dist.entries()].map(([k, v]) => `${k}=${v}`).join(', ')}`);
+    }
+    report.push('', '## Iteration History', '| Iter | Score | Action | Description |', '|------|-------|--------|-------------|', ...history.map(h => `| ${h.iteration} | ${h.score} | ${h.action} | ${h.description} |`), '');
+    const reportText = report.join('\n');
     const memoryDir = path.join(sessionDir, 'memory');
     try {
         fs.mkdirSync(memoryDir, { recursive: true });
     }
     catch { /* exists */ }
     const reportPath = path.join(memoryDir, `microverse_report_${new Date().toISOString().split('T')[0]}.md`);
-    fs.writeFileSync(reportPath, report);
+    fs.writeFileSync(reportPath, reportText);
 }
 function remainingSessionSeconds(state) {
     const startEpoch = Number(state.start_time_epoch);
@@ -250,6 +306,14 @@ export async function main(sessionDir) {
         process.stderr.write(line);
     };
     log('microverse-runner started');
+    // Feature flag: enable_failure_classification (default true)
+    let enableFailureClassification = true;
+    try {
+        const settings = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
+        if (settings.enable_failure_classification === false)
+            enableFailureClassification = false;
+    }
+    catch { /* default true */ }
     // Read initial state
     let state;
     try {
@@ -646,6 +710,44 @@ export async function main(sessionDir) {
         }
         currentMv = stateRecordIteration(currentMv, entry, classification);
         writeMicroverseState(sessionDir, currentMv);
+        // --- Failure classification and recovery guidance ---
+        if (enableFailureClassification) {
+            try {
+                const failureClass = classifyFailure(currentMv, metricResult, preIterSha, postIterSha);
+                if (failureClass) {
+                    currentMv.failure_history.push({
+                        iteration,
+                        failure_class: failureClass,
+                        description: entry.description,
+                        timestamp: new Date().toISOString(),
+                    });
+                    injectRecoveryGuidance(sessionDir, failureClass, currentMv);
+                    if (failureClass === 'approach_exhaustion') {
+                        if (currentMv.approach_exhaustion_fired) {
+                            log('approach_exhaustion fired twice — bailing');
+                            exitReason = 'approach_exhaustion';
+                            writeMicroverseState(sessionDir, currentMv);
+                            break;
+                        }
+                        currentMv.approach_exhaustion_fired = true;
+                    }
+                    if (failureClass === 'no_progress') {
+                        const recent = currentMv.failure_history.slice(-3);
+                        if (recent.length === 3 && recent.every(f => f.failure_class === 'no_progress')) {
+                            log('3 consecutive no_progress — bailing');
+                            exitReason = 'no_progress';
+                            writeMicroverseState(sessionDir, currentMv);
+                            break;
+                        }
+                    }
+                    writeMicroverseState(sessionDir, currentMv);
+                }
+            }
+            catch (classifyErr) {
+                const msg = safeErrorMessage(classifyErr);
+                log(`WARNING: Failure classification error (non-fatal): ${msg}`);
+            }
+        }
         if (isConverged(currentMv)) {
             const targetHit = currentMv.convergence_target != null && metricResult.score === currentMv.convergence_target;
             log(`Converged after ${iteration} iterations (${targetHit ? `target=${currentMv.convergence_target} reached` : `stall_counter=${currentMv.convergence.stall_counter}`})`);
@@ -682,7 +784,7 @@ export async function main(sessionDir) {
         BestScore: panelBestScore,
     }, 'GREEN', '🔬');
     log(`microverse-runner finished. ${iteration} iterations, ${formatTime(totalElapsed)}, exit: ${exitReason}`);
-    const exitCode = (exitReason === 'converged' || exitReason === 'stopped' || exitReason === 'limit_reached') ? 0 : 1;
+    const exitCode = (exitReason === 'converged' || exitReason === 'stopped' || exitReason === 'limit_reached' || exitReason === 'approach_exhaustion' || exitReason === 'no_progress') ? 0 : 1;
     process.exit(exitCode);
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'microverse-runner.js') {
