@@ -164,9 +164,25 @@ async function main() {
     cmdArgs.push('--output-format', outputFormat);
   }
 
+  // Feature flag: enable_complexity_tiers (default true — missing flag = enabled)
+  let enableComplexityTiers = true;
+  try {
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+    const flagSettings = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
+    if (flagSettings.enable_complexity_tiers === false) enableComplexityTiers = false;
+  } catch { /* default true */ }
+
   // Route to tier-appropriate model based on ticket complexity
-  const ticketInfo = ticketFilePath ? parseTicketFrontmatter(ticketFilePath) : null;
-  const model = tierToModel(ticketInfo?.complexity_tier);
+  let model = 'sonnet';
+  try {
+    if (enableComplexityTiers) {
+      const ticketInfo = ticketFilePath ? parseTicketFrontmatter(ticketFilePath) : null;
+      model = tierToModel(ticketInfo?.complexity_tier);
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[spawn-morty] WARNING: complexity tier subsystem failed: ${msg}`);
+  }
   cmdArgs.push('--model', model);
 
   // Prompt Construction — read the appropriate lifecycle template.

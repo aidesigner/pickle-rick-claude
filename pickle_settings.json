@@ -20,5 +20,10 @@
   "meeseeks_model_tiers": { "1": "haiku", "3": "sonnet", "5": "opus" },
   "max_opus_passes": 3,
   "auto_update_enabled": true,
-  "update_check_interval_hours": 24
+  "update_check_interval_hours": 24,
+  "enable_task_notes": true,
+  "enable_failure_classification": true,
+  "enable_complexity_tiers": true,
+  "enable_config_protection": true,
+  "enable_model_tiers": true
 }

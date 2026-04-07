@@ -65,8 +65,16 @@ describe('dot-builder-cli', () => {
     });
 
     test('(2) spec with missing AC mapping → exit 1, stderr has MISSING_AC_MAPPING', async () => {
-        const spec = validSpec();
-        spec.acceptanceCriteria = { unmapped_criterion: 'must pass' };
+        // Multi-phase with unmatchable key — single-phase auto-maps, so use 2 phases
+        const spec = {
+            slug: 'cli-test-ac',
+            goal: 'Validate AC mapping error',
+            phases: [
+                { name: 'auth', prompt: 'Do auth', allowedPaths: ['src/auth/'], timeout: '30m' },
+                { name: 'api', prompt: 'Do api', allowedPaths: ['src/api/'], timeout: '30m', dependsOn: ['auth'] },
+            ],
+            acceptanceCriteria: { totally_unrelated_key: 'must pass' },
+        };
 
         const result = await runCli(JSON.stringify(spec));
 

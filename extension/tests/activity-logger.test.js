@@ -32,7 +32,7 @@ async function getLogActivity() {
 
 // --- VALID_ACTIVITY_EVENTS ---
 
-test('VALID_ACTIVITY_EVENTS contains all 21 expected event types', () => {
+test('VALID_ACTIVITY_EVENTS contains all 22 expected event types', () => {
     const expected = [
         'session_start', 'session_end', 'ticket_completed', 'epic_completed',
         'meeseeks_pass', 'commit', 'research', 'bug_fix', 'feature',
@@ -40,9 +40,9 @@ test('VALID_ACTIVITY_EVENTS contains all 21 expected event types', () => {
         'circuit_open', 'circuit_recovery',
         'iteration_start', 'iteration_end',
         'rate_limit_wait', 'rate_limit_resume', 'rate_limit_exhausted',
-        'multi_repo_warning',
+        'multi_repo_warning', 'meeseeks_model_select',
     ];
-    assert.equal(VALID_ACTIVITY_EVENTS.length, 21);
+    assert.equal(VALID_ACTIVITY_EVENTS.length, 22);
     for (const e of expected) {
         assert.ok(VALID_ACTIVITY_EVENTS.includes(e), `Missing event type: ${e}`);
     }

@@ -125,7 +125,8 @@ describe('PhaseSpec interface', () => {
     test('rejects phase missing required fields', () => {
         const result = PhaseSpec.validate({});
         assert.equal(result.valid, false);
-        assert.ok(result.diagnostics.length >= 3);
+        // name + prompt required; allowedPaths now auto-corrected by preflight
+        assert.ok(result.diagnostics.length >= 2);
     });
 });
 

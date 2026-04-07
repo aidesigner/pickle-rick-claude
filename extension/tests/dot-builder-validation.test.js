@@ -91,21 +91,15 @@ describe('Structural validation — 15 rules', () => {
     });
 
     // Rule 4: diamond branching -----------------------------------------------
-    test('Rule 4 DIAMOND_MISSING_EDGES — goalGate diamond without retryTarget has <2 outgoing edges', () => {
+    test('Rule 4 DIAMOND_MISSING_EDGES — goalGate without retryTarget auto-corrected with warning', () => {
         const builder = new DotBuilder(baseSpec({
             phases: [phase('check', { goalGate: true })],
         }));
-        assert.throws(
-            () => builder.build(),
-            (err) => {
-                assert.ok(err instanceof BuildError);
-                assert.equal(err.code, 'DIAMOND_MISSING_EDGES');
-                assert.ok(err.diagnostics.some(
-                    d => d.rule === 'DIAMOND_MISSING_EDGES' && d.severity === 'error',
-                ));
-                return true;
-            },
-        );
+        const result = builder.build();
+        assert.ok(result.dot.length > 0, 'should produce valid DOT');
+        assert.ok(result.diagnostics.some(
+            d => d.rule === 'DIAMOND_MISSING_EDGES' && d.severity === 'warning',
+        ), 'should emit warning for auto-corrected retryTarget');
     });
 
     // Rule 5: goal_gate → max_visits ------------------------------------------
@@ -128,13 +122,28 @@ describe('Structural validation — 15 rules', () => {
     });
 
     // Rule 6: AC mapping ------------------------------------------------------
-    test('Rule 6 MISSING_AC_MAPPING — AC key with no contextOnSuccess source', () => {
-        const builder = new DotBuilder(baseSpec({
+    test('Rule 6 MISSING_AC_MAPPING — single-phase auto-maps, multi-phase with no match still errors', () => {
+        // Single-phase: auto-corrected (no error)
+        const builder1 = new DotBuilder(baseSpec({
             phases: [phase('impl')],
             acceptanceCriteria: { custom_metric: 'must reach 100%' },
         }));
+        const result1 = builder1.build();
+        assert.ok(result1.dot.length > 0, 'single-phase should auto-map and succeed');
+        assert.ok(result1.diagnostics.some(
+            d => d.rule === 'MISSING_AC_MAPPING' && d.severity === 'info',
+        ), 'should emit info for auto-mapping');
+
+        // Multi-phase with unmatchable key: still errors
+        const builder2 = new DotBuilder(baseSpec({
+            phases: [
+                phase('auth', { dependsOn: undefined }),
+                phase('api', { dependsOn: ['auth'] }),
+            ],
+            acceptanceCriteria: { totally_unrelated: 'true' },
+        }));
         assert.throws(
-            () => builder.build(),
+            () => builder2.build(),
             (err) => {
                 assert.ok(err instanceof BuildError);
                 assert.equal(err.code, 'MISSING_AC_MAPPING');
@@ -238,43 +247,32 @@ describe('Structural validation — 15 rules', () => {
     });
 
     // Rule 12: workspace_config — HTTPS required for isolated workspace -------
-    test('Rule 12 WORKSPACE_NO_HTTPS — isolated workspace with SSH repoUrl', () => {
+    test('Rule 12 WORKSPACE_NO_HTTPS — auto-converts SSH to HTTPS with warning', () => {
         const builder = new DotBuilder(baseSpec({
             phases: [phase('impl')],
             workspace: 'isolated',
             workspaceOpts: { repoUrl: 'git@github.com:org/repo.git' },
         }));
-        assert.throws(
-            () => builder.build(),
-            (err) => {
-                assert.ok(err instanceof BuildError);
-                assert.equal(err.code, 'WORKSPACE_NO_HTTPS');
-                assert.ok(err.diagnostics.some(
-                    d => d.rule === 'WORKSPACE_NO_HTTPS' && d.severity === 'error',
-                ));
-                return true;
-            },
-        );
+        const result = builder.build();
+        assert.ok(result.dot.length > 0, 'should produce valid DOT');
+        assert.ok(result.diagnostics.some(
+            d => d.rule === 'WORKSPACE_NO_HTTPS' && d.severity === 'warning',
+        ), 'should emit warning for auto-converted URL');
     });
 
-    // Rule 13: workspace_push — isolated workspace needs commit_and_push ------
-    test('Rule 13 WORKSPACE_NO_PUSH — isolated workspace without commit_and_push node', () => {
+    // Rule 13: workspace_push — auto-injects commit_and_push ------------------
+    test('Rule 13 WORKSPACE_NO_PUSH — auto-injects commit_and_push with warning', () => {
         const builder = new DotBuilder(baseSpec({
             phases: [phase('impl')],
             workspace: 'isolated',
             workspaceOpts: { repoUrl: 'https://github.com/org/repo.git' },
         }));
-        assert.throws(
-            () => builder.build(),
-            (err) => {
-                assert.ok(err instanceof BuildError);
-                assert.equal(err.code, 'WORKSPACE_NO_PUSH');
-                assert.ok(err.diagnostics.some(
-                    d => d.rule === 'WORKSPACE_NO_PUSH' && d.severity === 'error',
-                ));
-                return true;
-            },
-        );
+        const result = builder.build();
+        assert.ok(result.dot.length > 0, 'should produce valid DOT');
+        assert.ok(result.dot.includes('commit_and_push'), 'should have auto-injected commit_and_push');
+        assert.ok(result.diagnostics.some(
+            d => d.rule === 'WORKSPACE_NO_PUSH' && d.severity === 'warning',
+        ), 'should emit warning for auto-injected push');
     });
 
     // Rule 14: permission_mode_plan -------------------------------------------
@@ -295,19 +293,103 @@ describe('Structural validation — 15 rules', () => {
         );
     });
 
-    // Rule 15: allowed_paths_required -----------------------------------------
-    test('Rule 15 MISSING_ALLOWED_PATHS — per-phase impl node with empty allowed_paths', () => {
+    // Rule 15: allowed_paths auto-correction ------------------------------------
+    test('Rule 15 MISSING_ALLOWED_PATHS — auto-corrects empty allowed_paths with warning', () => {
         const builder = new DotBuilder(baseSpec({
             phases: [phase('impl', { allowedPaths: [] })],
         }));
+        const result = builder.build();
+        // Should succeed (warning, not error) and auto-fill paths
+        assert.ok(result.dot.length > 0);
+        assert.ok(result.diagnostics.some(
+            d => d.rule === 'MISSING_ALLOWED_PATHS' && d.severity === 'warning',
+        ));
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Auto-Correction Tests
+// ---------------------------------------------------------------------------
+
+describe('Auto-corrections (preflight)', () => {
+
+    test('auto-corrects goalGate without retryTarget (warning, not error)', () => {
+        const builder = new DotBuilder(baseSpec({
+            phases: [phase('critical', { goalGate: true })],
+        }));
+        const result = builder.build();
+        assert.ok(result.dot.length > 0, 'should produce valid DOT');
+        assert.ok(result.diagnostics.some(
+            d => d.rule === 'DIAMOND_MISSING_EDGES' && d.severity === 'warning',
+        ), 'should emit warning for auto-corrected retryTarget');
+    });
+
+    test('auto-converts SSH to HTTPS repoUrl (warning, not error)', () => {
+        const builder = new DotBuilder(baseSpec({
+            phases: [phase('impl')],
+        }));
+        builder.workspace({ repoUrl: 'git@github.com:org/repo.git', repoBranch: 'main', cleanup: 'preserve' });
+        const result = builder.build();
+        assert.ok(result.dot.length > 0, 'should produce valid DOT');
+        assert.ok(result.dot.includes('https://github.com/org/repo.git') || result.diagnostics.some(
+            d => d.rule === 'WORKSPACE_NO_HTTPS' && d.severity === 'warning',
+        ), 'should auto-convert SSH URL or emit warning');
+    });
+
+    test('auto-injects commit_and_push for isolated workspace (warning, not error)', () => {
+        const builder = new DotBuilder(baseSpec({
+            phases: [phase('impl')],
+        }));
+        builder.workspace({ repoUrl: 'https://github.com/org/repo.git', repoBranch: 'main', cleanup: 'preserve' });
+        const result = builder.build();
+        assert.ok(result.dot.length > 0, 'should produce valid DOT');
+        assert.ok(result.dot.includes('commit_and_push'), 'should auto-inject commit_and_push node');
+    });
+
+    test('single-phase pipeline auto-maps custom AC keys', () => {
+        const builder = new DotBuilder(baseSpec({
+            phases: [phase('search')],
+            acceptanceCriteria: { tests_pass: 'true', search_works: 'true' },
+        }));
+        const result = builder.build();
+        assert.ok(result.dot.length > 0, 'should produce valid DOT');
+        assert.ok(result.dot.includes('search_works'), 'should include auto-mapped AC key in context_on_success');
+        assert.ok(result.diagnostics.some(
+            d => d.rule === 'MISSING_AC_MAPPING' && d.severity === 'info',
+        ), 'should emit info diagnostic for auto-mapping');
+    });
+
+    test('multi-phase pipeline auto-maps AC keys by name match', () => {
+        const builder = new DotBuilder(baseSpec({
+            phases: [
+                phase('auth', { dependsOn: undefined }),
+                phase('api', { dependsOn: ['auth'] }),
+            ],
+            acceptanceCriteria: { tests_pass: 'true', auth_complete: 'true' },
+        }));
+        const result = builder.build();
+        assert.ok(result.dot.length > 0, 'should produce valid DOT');
+        assert.ok(result.diagnostics.some(
+            d => d.rule === 'MISSING_AC_MAPPING' && d.severity === 'info' && d.message.includes('auth'),
+        ), 'should auto-map auth_complete to auth phase');
+    });
+
+    test('AC mapping diagnostic includes fix hint with phase suggestion', () => {
+        const builder = new DotBuilder(baseSpec({
+            phases: [
+                phase('auth', { dependsOn: undefined }),
+                phase('api', { dependsOn: ['auth'] }),
+            ],
+            acceptanceCriteria: { tests_pass: 'true', something_custom: 'true' },
+        }));
+        // something_custom won't match any phase name — should get helpful fix hint
         assert.throws(
             () => builder.build(),
             (err) => {
                 assert.ok(err instanceof BuildError);
-                assert.equal(err.code, 'MISSING_ALLOWED_PATHS');
-                assert.ok(err.diagnostics.some(
-                    d => d.rule === 'MISSING_ALLOWED_PATHS' && d.severity === 'error',
-                ));
+                assert.ok(err.diagnostics.some(d =>
+                    d.rule === 'MISSING_AC_MAPPING' && d.fix && d.fix.includes('Phases:'),
+                ), 'should include phase list in fix hint');
                 return true;
             },
         );

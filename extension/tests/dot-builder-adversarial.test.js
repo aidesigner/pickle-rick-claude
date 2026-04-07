@@ -153,15 +153,18 @@ describe('Adversarial audit', () => {
         );
     });
 
-    // (10) contextOnSuccess key not in acceptanceCriteria
+    // (10) contextOnSuccess key not in acceptanceCriteria — multi-phase to avoid auto-map
     test('10: contextOnSuccess unmapped AC key', () => {
         assertBuildError(
             () => DotBuilder.fromSpec(spec({
-                phases: [phase('Mapped', {
-                    contextOnSuccess: { phantom_key: 'test' },
-                    timeout: '30m',
-                })],
-                acceptanceCriteria: { real_key: 'must pass' },
+                phases: [
+                    phase('Alpha', {
+                        contextOnSuccess: { phantom_key: 'test' },
+                        timeout: '30m',
+                    }),
+                    phase('Beta', { timeout: '30m', dependsOn: ['Alpha'] }),
+                ],
+                acceptanceCriteria: { unmatchable_xyz: 'must pass' },
             })).build(),
             'MISSING_AC_MAPPING',
             'unmapped AC key'

@@ -78,6 +78,15 @@ async function main() {
     return;
   }
 
+  // Feature flag: enable_config_protection (default true — missing flag = enabled)
+  try {
+    const flagSettings = JSON.parse(fs.readFileSync(path.join(extensionDir, 'pickle_settings.json'), 'utf-8'));
+    if (flagSettings.enable_config_protection === false) {
+      approve();
+      return;
+    }
+  } catch { /* default true — continue with protection enabled */ }
+
   // Activation guard: only active during automated sessions
   const stateFile = resolveStateFile(extensionDir);
   if (!stateFile) {

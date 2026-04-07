@@ -278,6 +278,7 @@ export function loadMeeseeksModel(extensionRoot: string, passCount: number = 1):
   let defaultModel = fallback;
   let tiers: Record<string, string> | null = null;
   let maxOpusPasses = 3;
+  let enableModelTiers = true;
 
   try {
     const raw = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
@@ -289,9 +290,11 @@ export function loadMeeseeksModel(extensionRoot: string, passCount: number = 1):
     }
     const rawCap = Number(raw.max_opus_passes);
     if (Number.isFinite(rawCap) && rawCap > 0) maxOpusPasses = rawCap;
+    // Feature flag: enable_model_tiers (default true — missing flag = enabled)
+    if (raw.enable_model_tiers === false) enableModelTiers = false;
   } catch { /* use defaults */ }
 
-  if (!tiers) return defaultModel;
+  if (!tiers || !enableModelTiers) return defaultModel;
 
   // Find the highest threshold that doesn't exceed passCount
   let resolvedModel = defaultModel;
@@ -496,20 +499,30 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
     managerPrompt += '\n\n' + buildHandoffSummary(state, sessionDir, iterationNum);
   }
 
+  // Feature flag: enable_task_notes (default true — missing flag = enabled)
+  let enableTaskNotes = true;
+  try {
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+    const flagSettings = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
+    if (flagSettings.enable_task_notes === false) enableTaskNotes = false;
+  } catch { /* default true */ }
+
   // Inject TASK_NOTES.md from session directory (persists across iterations)
-  const taskNotesPath = path.join(sessionDir, 'TASK_NOTES.md');
-  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-  if (fs.existsSync(taskNotesPath)) {
+  if (enableTaskNotes) {
+    const taskNotesPath = path.join(sessionDir, 'TASK_NOTES.md');
     try {
       // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-      const raw = fs.readFileSync(taskNotesPath, 'utf-8');
-      const truncated = truncateTaskNotes(raw, 2000);
-      if (truncated.trim()) {
-        managerPrompt += '\n\n=== TASK NOTES (from previous iterations) ===\n' + truncated;
+      if (fs.existsSync(taskNotesPath)) {
+        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+        const raw = fs.readFileSync(taskNotesPath, 'utf-8');
+        const truncated = truncateTaskNotes(raw, 2000);
+        if (truncated.trim()) {
+          managerPrompt += '\n\n=== TASK NOTES (from previous iterations) ===\n' + truncated;
+        }
       }
     } catch (readErr) {
-      const msg = safeErrorMessage(readErr);
-      console.warn(`[mux-runner] WARNING: Cannot read TASK_NOTES.md: ${msg}`);
+      const msg = readErr instanceof Error ? readErr.message : String(readErr);
+      console.warn(`[mux-runner] WARNING: task notes subsystem failed: ${msg}`);
     }
   }
 
