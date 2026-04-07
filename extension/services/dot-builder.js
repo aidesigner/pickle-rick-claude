@@ -933,13 +933,29 @@ export class DotBuilder {
         const graphAttrs = {
             label: escapeAttr(`${this._slug}: ${this._goal}`),
             rankdir: 'LR',
+            goal: escapeAttr(this._goal),
+            retry_target: 'fix_all',
         };
+        if (spec.workingDir) {
+            graphAttrs['working_dir'] = escapeAttr(spec.workingDir);
+        }
+        if (spec.specFile) {
+            graphAttrs['spec_file'] = escapeAttr(spec.specFile);
+        }
+        if (spec.defaultMaxRetry) {
+            graphAttrs['default_max_retry'] = String(spec.defaultMaxRetry);
+        }
         if (spec.workspace === 'isolated') {
             graphAttrs['workspace'] = 'isolated';
             applied.add('P0');
         }
         if (spec.modelStylesheet) {
-            graphAttrs['stylesheet'] = this._buildStylesheet(spec.modelStylesheet);
+            graphAttrs['model_stylesheet'] = this._buildStylesheet(spec.modelStylesheet);
+        }
+        // GL-6: acceptance_criteria as context.K=V && context.K2=V2 (sorted)
+        const acKeys = Object.keys(spec.acceptanceCriteria ?? {}).sort();
+        if (acKeys.length > 0) {
+            graphAttrs['acceptance_criteria'] = escapeAttr(acKeys.map(k => `context.${k}=${String((spec.acceptanceCriteria ?? {})[k])}`).join(' && '));
         }
         const nodes = [];
         const edges = [];

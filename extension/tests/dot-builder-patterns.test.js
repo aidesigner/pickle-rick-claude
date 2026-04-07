@@ -630,8 +630,8 @@ describe('Remaining pattern snapshot tests', () => {
         const { dot } = builder.build();
 
         // Extract stylesheet value from graph attrs
-        const ssMatch = /stylesheet="([^"]*)"/.exec(dot);
-        assert.ok(ssMatch, 'must have stylesheet graph attribute');
+        const ssMatch = /model_stylesheet="([^"]*)"/.exec(dot);
+        assert.ok(ssMatch, 'must have model_stylesheet graph attribute');
         const ss = ssMatch[1];
 
         // Validate universal selector

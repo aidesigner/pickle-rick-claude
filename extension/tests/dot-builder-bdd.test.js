@@ -1,0 +1,511 @@
+// BDD scenarios for DotBuilder core API — failing tests (RED phase)
+// These tests verify behavioral correctness of the builder, not just type shapes.
+// They SHOULD FAIL until production code is written.
+
+import { test, describe } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+    DotBuilder,
+    BuildError,
+} from '../services/dot-builder.js';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+function validSpec(overrides = {}) {
+    return {
+        slug: 'test-pipeline',
+        goal: 'Build something cool',
+        phases: [],
+        acceptanceCriteria: {},
+        ...overrides,
+    };
+}
+
+function validPhase(name = 'impl', prompt = 'implement the thing', overrides = {}) {
+    return { name, prompt, allowedPaths: ['src/'], timeout: '30m', ...overrides };
+}
+
+// Helper: create builder with phases and build it
+function buildWithPhases(specOverrides, phases) {
+    const spec = validSpec(specOverrides);
+    const builder = new DotBuilder(spec);
+    for (const p of phases) builder.phase(p);
+    return builder.build();
+}
+
+// Helper: extract attributes from a DOT node by ID
+function getNodeAttrs(dot, nodeId) {
+    const regex = new RegExp(`\\b${nodeId}\\s*\\[([^\\]]*)\\]`, 'm');
+    const match = dot.match(regex);
+    if (!match) return null;
+    const attrs = {};
+    const pairRegex = /(\w+)\s*=\s*(?:"([^"]*)"|([^"\s,]+))/g;
+    let m;
+    while ((m = pairRegex.exec(match[1])) !== null) {
+        attrs[m[1]] = m[2] !== undefined ? m[2] : m[3];
+    }
+    return attrs;
+}
+
+// ===========================================================================
+// BDD: fromSpec() roundtrip consistency
+// ===========================================================================
+describe('BDD: DotBuilder.fromSpec() produces identical output to manual construction', () => {
+    test('fromSpec with one phase produces same DOT as manual build().phase().build()', () => {
+        const spec = {
+            slug: 'roundtrip',
+            goal: 'Test fromSpec parity',
+            phases: [{ name: 'dev', prompt: 'write code', allowedPaths: ['src/**'], timeout: '30m' }],
+        };
+
+        // Manual construction
+        const manual = new DotBuilder({
+            slug: 'roundtrip',
+            goal: 'Test fromSpec parity',
+            phases: [],
+        });
+        manual.phase({ name: 'dev', prompt: 'write code', allowedPaths: ['src/**'], timeout: '30m' });
+        const manualResult = manual.build();
+
+        // fromSpec construction
+        const autoResult = DotBuilder.fromSpec(spec).build();
+
+        assert.equal(autoResult.dot, manualResult.dot,
+            'fromSpec should produce byte-identical DOT to manual construction');
+    });
+
+    test('fromSpec preserves all phase option flags in DOT output', () => {
+        const spec = {
+            slug: 'options-test',
+            goal: 'Verify all phase options survive fromSpec',
+            phases: [{
+                name: 'dev',
+                prompt: 'Write implementation',
+                allowedPaths: ['src/**'],
+                dependsOn: [],
+                contextOnSuccess: { coverage: '80%' },
+                specFirst: true,
+                timeout: '45m',
+                securityScan: false,
+                competing: false,
+                bddScenarios: true,
+                docOnly: false,
+            }],
+        };
+
+        const result = DotBuilder.fromSpec(spec).build();
+        const attrs = getNodeAttrs(result.dot, 'impl_dev');
+        assert.ok(attrs, 'impl_dev node should exist in DOT');
+        // contextOnSuccess should appear as serialized attribute
+        assert.ok(result.dot.includes('context_on_success') || result.dot.includes('coverage'),
+            'contextOnSuccess should appear in DOT output');
+        assert.equal(attrs['class'], 'codergen',
+            'codegen phase should have class=codergen');
+    });
+});
+
+// ===========================================================================
+// BDD: String escaping — edge cases
+// ===========================================================================
+describe('BDD: String escaping covers all DOT-sensitive characters', () => {
+    test('escapes tab characters in labels', () => {
+        const { dot } = buildWithPhases({}, [validPhase('impl', 'col1\tcol2')]);
+        // Node ID is impl_impl (prefix + sanitized name)
+        const implLine = dot.split('\n').find(l => l.includes('impl_impl'));
+        assert.ok(implLine, 'impl_impl node should exist');
+        // Raw tab should not appear — must be \t escape sequence
+        // Check the label= portion specifically
+        const labelMatch = implLine.match(/label="([^"]*)"/);
+        assert.ok(labelMatch, 'node should have a label attribute');
+        assert.ok(!labelMatch[1].includes('\t'), 'label value should not contain raw tab');
+    });
+
+    test('escapes combined backslash-quote sequences correctly', () => {
+        const input = 'say \\"hi\\"';
+        const { dot } = buildWithPhases({}, [validPhase('impl', input)]);
+        // The backslash before quote must be escaped, and the quote must be escaped
+        // So the sequence \" in source becomes \\\" in DOT
+        assert.ok(dot.includes('\\\\\\"') || dot.includes('\\\"hi\\\"'),
+            'backslash-quote combo must be properly escaped');
+    });
+
+    test('escapes angle brackets used in DOT HTML labels', () => {
+        const { dot } = buildWithPhases({}, [validPhase('impl', '<b>bold</b>')]);
+        const labelVal = dot.match(/label\s*=\s*("[^"]*"|<[^>]*>)/);
+        if (labelVal) {
+            assert.ok(labelVal[1].startsWith('"'),
+                'angle brackets in text should be inside quoted string, not HTML label');
+        }
+    });
+
+    test('handles Unicode characters safely without corruption', () => {
+        const { dot } = buildWithPhases({}, [validPhase('impl', 'café résumé naïve')]);
+        assert.ok(dot.includes('café'), 'Unicode should be preserved in DOT output');
+        assert.ok(dot.includes('résumé'), 'French accents should survive');
+    });
+
+    test('handles empty prompt label without crashing', () => {
+        const { dot } = buildWithPhases({}, [validPhase('impl', '')]);
+        assert.ok(dot.includes('impl'), 'phase with empty prompt should still appear in DOT');
+    });
+
+    test('handles prompt with only special characters', () => {
+        const { dot } = buildWithPhases({}, [validPhase('impl', '!!!$$$###')]);
+        assert.ok(dot.includes('impl'), 'phase with special-only prompt should appear in DOT');
+    });
+});
+
+// ===========================================================================
+// BDD: Edge label escaping
+// ===========================================================================
+describe('BDD: Edge labels are properly escaped', () => {
+    test('standard pipeline edges are properly quoted', () => {
+        // Simple pipeline - edges like fail/pass labels on retry edges should be quoted
+        const result = buildWithPhases({ acceptanceCriteria: {} }, [
+            { ...validPhase('dev'), goalGate: true, retryTarget: 'dev_dev' },
+        ]);
+        // The build succeeds because the default implementation provides max_visits
+        const edgeLines = result.dot.split('\n').filter(l => l.includes('->'));
+        for (const line of edgeLines) {
+            if (line.includes('label=')) {
+                // Any edge label should be properly quoted
+                assert.match(line, /label="[^"]*"/,
+                    `edge label should be double-quoted: ${line}`);
+            }
+        }
+    });
+});
+
+// ===========================================================================
+// BDD: Node class propagation from phase options
+// ===========================================================================
+describe('BDD: Phase flag options propagate to DOT node attributes', () => {
+    test('securityScan phase gets class=review', () => {
+        const result = buildWithPhases({}, [
+            { name: 'secscan', prompt: 'Run security audit. Output STATUS: findings.', allowedPaths: ['src/'], securityScan: true },
+        ]);
+        // securityScan phase gets class=review with read_only=true
+        const attrs = getNodeAttrs(result.dot, 'secscan');
+        assert.ok(attrs, 'secscan node should exist in DOT');
+        assert.equal(attrs['class'], 'review',
+            'securityScan phase should have class=review');
+        assert.equal(attrs['read_only'], 'true',
+            'securityScan phase should have read_only=true');
+    });
+
+    test('docOnly phase gets class=documentation', () => {
+        const result = buildWithPhases({}, [
+            { ...validPhase('docs'), docOnly: true },
+        ]);
+        // docOnly phase should get class=documentation
+        // Currently gets class=codergen and node named impl_docs
+        const implDocsAttrs = getNodeAttrs(result.dot, 'impl_docs');
+        assert.ok(implDocsAttrs, 'impl_docs node should exist for docOnly phase');
+        assert.equal(implDocsAttrs['class'], 'documentation',
+            'docOnly phase should have class=documentation, not codergen');
+    });
+
+    test('goalGate phase produces diamond decision node', () => {
+        // The sanitized node ID for phase 'dev' is 'test_dev' (graph prefix + sanitized name)
+        // But the builder sets retryTarget using the phase's own retryTarget field
+        const result = buildWithPhases({ acceptanceCriteria: {}, defaultMaxRetry: 3 }, [
+            { ...validPhase('dev'), goalGate: true, retryTarget: 'test_dev' },
+        ]);
+        assert.ok(result.dot.includes('shape="diamond"') || result.dot.includes('shape=diamond'),
+            'goalGate should produce a diamond decision node in DOT');
+    });
+
+    test('specFirst phase has spec_first attribute set to true', () => {
+        const result = buildWithPhases({}, [
+            { ...validPhase('design'), specFirst: true },
+        ]);
+        // spec_first should appear somewhere in DOT output
+        assert.ok(result.dot.includes('spec_first'),
+            'specFirst phase should have spec_first attribute in DOT');
+    });
+
+    test('competing phases produce component shape nodes', () => {
+        const result = buildWithPhases({}, [
+            { ...validPhase('sol_a'), competing: true },
+        ]);
+        // component shape should appear for competing
+        assert.ok(result.dot.includes('shape="component"') || result.dot.includes('shape=component'),
+            'competing phase should produce component shape nodes');
+    });
+});
+
+// ===========================================================================
+// BDD: Deterministic output
+// ===========================================================================
+describe('BDD: build() produces deterministic output for same input', () => {
+    test('same spec produces byte-identical DOT across 5 builds', () => {
+        const spec = {
+            slug: 'determinism',
+            goal: 'Test deterministic output',
+            phases: [
+                { name: 'alpha', prompt: 'do alpha', allowedPaths: ['src/'], timeout: '30m' },
+                { name: 'beta', prompt: 'do beta', allowedPaths: ['src/'], timeout: '45m' },
+                { name: 'gamma', prompt: 'do gamma', allowedPaths: ['lib/'], timeout: '60m' },
+            ],
+        };
+
+        const results = [];
+        for (let i = 0; i < 5; i++) {
+            results.push(DotBuilder.fromSpec(spec).build().dot);
+        }
+
+        for (let i = 1; i < results.length; i++) {
+            assert.equal(results[i], results[0],
+                `build ${i} should produce identical DOT to build 0`);
+        }
+    });
+
+    test('patternsApplied is identical across multiple builds', () => {
+        const spec = {
+            slug: 'patterns',
+            goal: 'Test patterns',
+            phases: [
+                { name: 'dev', prompt: 'code', allowedPaths: ['src/**'], timeout: '30m' },
+                { name: 'alt', prompt: 'alt', allowedPaths: ['src/**'], timeout: '30m', dependsOn: ['dev'] },
+            ],
+        };
+
+        const results = [];
+        for (let i = 0; i < 3; i++) {
+            results.push(DotBuilder.fromSpec(spec).build());
+        }
+
+        for (let i = 1; i < results.length; i++) {
+            assert.deepEqual(results[i].patternsApplied, results[0].patternsApplied,
+                'patternsApplied should be identical across builds');
+            assert.equal(results[i].slug, results[0].slug,
+                'slug should be identical across builds');
+            assert.deepEqual(results[i].defenseMatrix, results[0].defenseMatrix,
+                'defenseMatrix should be identical across builds');
+        }
+    });
+});
+
+// ===========================================================================
+// BDD: defenseMatrix computed values
+// ===========================================================================
+describe('BDD: defenseMatrix computed values match spec features', () => {
+    test('specDriven is NONE without spec file or BDD', () => {
+        const result = buildWithPhases({}, [validPhase('dev')]);
+        assert.equal(result.defenseMatrix.specDriven, 'NONE');
+    });
+
+    test('specDriven is "conformance" for specFirst pipeline', () => {
+        const result = buildWithPhases({}, [
+            { ...validPhase('dev'), specFirst: true },
+        ]);
+        assert.equal(result.defenseMatrix.specDriven, 'conformance');
+    });
+
+    test('specDriven is "BDD + conformance" when bddScenarios is true', () => {
+        const result = buildWithPhases({}, [
+            { ...validPhase('dev'), bddScenarios: true },
+        ]);
+        assert.equal(result.defenseMatrix.specDriven, 'BDD + conformance');
+    });
+
+    test('specDriven is "spec_file + conformance" when specFile is set', () => {
+        const result = buildWithPhases({ specFile: 'prd.md' }, [validPhase('dev')]);
+        assert.equal(result.defenseMatrix.specDriven, 'spec_file + conformance');
+    });
+
+    test('specDriven is "spec_file + BDD + conformance" when specFile + bddScenarios', () => {
+        const result = buildWithPhases({ specFile: 'spec.md' }, [
+            { ...validPhase('dev'), bddScenarios: true },
+        ]);
+        assert.equal(result.defenseMatrix.specDriven, 'spec_file + BDD + conformance');
+    });
+
+    test('competitive is true when a competing phase exists', () => {
+        const result = buildWithPhases({}, [
+            { ...validPhase('sol_a'), competing: true },
+        ]);
+        assert.equal(result.defenseMatrix.competitive, true);
+    });
+
+    test('adversarial is true when a redTeam phase exists', () => {
+        const result = buildWithPhases({}, [
+            { ...validPhase('red'), redTeam: true },
+        ]);
+        assert.equal(result.defenseMatrix.adversarial, true);
+    });
+});
+
+// ===========================================================================
+// BDD: Attribute formatting precision
+// ===========================================================================
+describe('BDD: Attribute values are consistently double-quoted', () => {
+    test('node attribute values use double-quote delimiters', () => {
+        const result = buildWithPhases({}, [validPhase('impl')]);
+        const nodeLines = result.dot.split('\n').filter(l => l.match(/^\s+\w+\s*\[/));
+        for (const line of nodeLines) {
+            const attrMatches = [...line.matchAll(/(\w+)\s*=\s*([^,\]]+)/g)];
+            for (const [, key, val] of attrMatches) {
+                const trimmed = val.trim();
+                if (key === 'rankdir') continue;
+                assert.ok(trimmed.startsWith('"'),
+                    `attribute ${key} value should be double-quoted: ${trimmed} in ${line}`);
+            }
+        }
+    });
+
+    test('attribute keys within each node are alphabetically sorted', () => {
+        const result = buildWithPhases({}, [
+            validPhase('impl'),
+        ]);
+        const nodeLines = result.dot.split('\n').filter(l => l.match(/^\s+\w+\s*\[/));
+        for (const line of nodeLines) {
+            const attrMatch = line.match(/\[(.*)\]/);
+            if (!attrMatch) continue;
+            const keys = [...attrMatch[1].matchAll(/(\w+)\s*=/g)].map(m => m[1]);
+            if (keys.length > 1) {
+                const sorted = [...keys].sort();
+                assert.deepEqual(keys, sorted,
+                    `attribute keys should be alphabetically sorted: got ${JSON.stringify(keys)}, expected ${JSON.stringify(sorted)} in ${line}`);
+            }
+        }
+    });
+});
+
+// ===========================================================================
+// BDD: build() result shape guarantees
+// ===========================================================================
+describe('BDD: build() returns correct result shape', () => {
+    test('result has exactly 5 keys: dot, slug, patternsApplied, defenseMatrix, diagnostics', () => {
+        const result = buildWithPhases({}, [validPhase('impl')]);
+        const keys = Object.keys(result).sort();
+        assert.deepEqual(keys, ['defenseMatrix', 'diagnostics', 'dot', 'patternsApplied', 'slug']);
+    });
+
+    test('patternsApplied contains P0a (setup_deps)', () => {
+        const result = buildWithPhases({}, [validPhase('impl')]);
+        assert.ok(result.patternsApplied.includes('P0a'),
+            'every pipeline should include P0a (setup_deps)');
+    });
+
+    test('patternsApplied contains P0c (capture_baseline)', () => {
+        const result = buildWithPhases({}, [validPhase('impl')]);
+        assert.ok(result.patternsApplied.includes('P0c'),
+            'every pipeline should include P0c (capture_baseline)');
+    });
+
+    test('DOT ends with closing brace', () => {
+        const { dot } = buildWithPhases({}, [validPhase('impl')]);
+        assert.match(dot.trim(), /\}\s*$/, 'DOT should end with closing brace');
+    });
+
+    test('DOT contains exactly one digraph declaration', () => {
+        const { dot } = buildWithPhases({}, [validPhase('impl')]);
+        const digraphs = dot.match(/^digraph\s/gm) || [];
+        assert.equal(digraphs.length, 1, 'should have exactly one digraph');
+    });
+
+    test('DOT contains both start (Mdiamond) and exit (Msquare) nodes', () => {
+        const result = buildWithPhases({}, [validPhase('impl')]);
+        const startAttrs = getNodeAttrs(result.dot, 'start');
+        const exitAttrs = getNodeAttrs(result.dot, 'exit');
+        assert.ok(startAttrs, 'start node should exist');
+        assert.ok(exitAttrs, 'exit node should exist');
+        assert.equal(startAttrs['shape'], 'Mdiamond', 'start should have shape=Mdiamond');
+        assert.equal(exitAttrs['shape'], 'Msquare', 'exit should have shape=Msquare');
+    });
+
+    test('DOT has edges start -> setup_deps -> capture_baseline', () => {
+        const { dot } = buildWithPhases({}, [validPhase('impl')]);
+        assert.ok(dot.includes('start -> setup_deps'), 'start->setup_deps edge');
+        assert.ok(dot.includes('setup_deps -> capture_baseline'),
+            'setup_deps->capture_baseline edge');
+    });
+});
+
+// ===========================================================================
+// BDD: Sanitization edge cases
+// ===========================================================================
+describe('BDD: Node ID sanitization handles extreme inputs', () => {
+    test('phase name with leading/trailing whitespace is trimmed', () => {
+        const { dot } = buildWithPhases({}, [
+            { ...validPhase('  test  '), timeout: '30m' },
+        ]);
+        assert.match(dot, /\btest\b/, 'leading/trailing whitespace should be trimmed from node ID');
+    });
+
+    test('numeric-only phase name gets underscore prefix', () => {
+        const { dot } = buildWithPhases({}, [
+            { ...validPhase('42'), timeout: '30m' },
+        ]);
+        assert.match(dot, /\b_42\b/, 'numeric-only name should get underscore prefix');
+    });
+
+    test('consecutive special chars collapse to single underscore', () => {
+        const { dot } = buildWithPhases({}, [
+            { ...validPhase('run---tests!!!'), timeout: '30m' },
+        ]);
+        assert.ok(!dot.includes('---'), 'consecutive dashes should not appear in node ID');
+        assert.match(dot, /\brun_tests\b/, 'should produce run_tests ID');
+    });
+});
+
+// ===========================================================================
+// BDD: Builder fluent methods
+// ===========================================================================
+describe('BDD: Builder .microverse() integration', () => {
+    test('builder with microverse() includes microverse in output', () => {
+        const builder = new DotBuilder(validSpec());
+        builder.phase(validPhase('dev'));
+        builder.microverse('speed', {
+            prompt: 'make it fast',
+            measureCommand: 'echo 1',
+            target: 100,
+            direction: 'reduce',
+            allowedPaths: ['src/**'],
+        });
+        const result = builder.build();
+        assert.ok(result.dot.includes('microverse') || result.dot.includes('measure'),
+            'microverse should add nodes or attributes to DOT graph');
+    });
+});
+
+describe('BDD: Builder .modelStylesheet() integration', () => {
+    test('builder with modelStylesheet includes stylesheet attribute', () => {
+        const builder = new DotBuilder(validSpec());
+        builder.phase(validPhase('dev'));
+        builder.modelStylesheet({ defaultModel: 'opus' });
+        const result = builder.build();
+        assert.ok(result.dot.includes('model_stylesheet'),
+            'modelStylesheet should add model_stylesheet to graph attributes');
+    });
+
+    test('modelStylesheet with criticalModel and reviewModel produces class overrides', () => {
+        const builder = new DotBuilder(validSpec());
+        builder.phase(validPhase('dev'));
+        builder.modelStylesheet({
+            defaultModel: 'sonnet',
+            criticalModel: 'opus',
+            reviewModel: 'haiku',
+        });
+        const result = builder.build();
+        assert.ok(result.dot.includes('model_stylesheet'),
+            'model_stylesheet should appear with class overrides');
+    });
+});
+
+describe('BDD: Builder .acceptanceCriteria() integration', () => {
+    test('acceptanceCriteria keys map to context_on_success in DOT', () => {
+        // Build a pipeline with a phase that maps the AC key via contextOnSuccess
+        const builder = new DotBuilder(validSpec({ acceptanceCriteria: { 'code coverage': '>80%' } }));
+        builder.phase({
+            ...validPhase('impl', 'write and test code'),
+            contextOnSuccess: { 'code coverage': '>80%' },
+        });
+        const result = builder.build();
+        // The acceptance criteria key should be mapped in DOT via context_on_success
+        assert.ok(result.dot.includes('context_on_success') || result.dot.includes('coverage'),
+            'acceptanceCriteria should appear as context_on_success or similar in DOT');
+    });
+});
