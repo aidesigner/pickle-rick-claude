@@ -216,13 +216,12 @@ describe('BDD: Phase flag options propagate to DOT node attributes', () => {
             'goalGate should produce a diamond decision node in DOT');
     });
 
-    test('specFirst phase has spec_first attribute set to true', () => {
+    test('specFirst phase does NOT emit spec_first attribute in DOT output', () => {
         const result = buildWithPhases({}, [
             { ...validPhase('design'), specFirst: true },
         ]);
-        // spec_first should appear somewhere in DOT output
-        assert.ok(result.dot.includes('spec_first'),
-            'specFirst phase should have spec_first attribute in DOT');
+        assert.ok(!result.dot.includes('spec_first'),
+            'spec_first attribute must not appear in DOT output (deprecated)');
     });
 
     test('competing phases produce component shape nodes', () => {

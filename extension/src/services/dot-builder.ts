@@ -41,6 +41,8 @@ const TIER_2_AUTO_KEYS: Record<string, string> = {
   validation_rules: 'true',
 };
 
+const DEFAULT_ESCALATE_ON = 'package.json,*.lock,*.config.*';
+
 // ---------------------------------------------------------------------------
 // Internal types
 // ---------------------------------------------------------------------------
@@ -1284,13 +1286,8 @@ export class DotBuilder {
           permission_mode: 'auto',
           thread_id: threadId,
         };
-        if (p.escalateOn && p.escalateOn.length > 0) {
-          implAttrs['escalate_on'] = p.escalateOn.join(',');
-        }
-        if (p.timeout) implAttrs['timeout'] = p.timeout;
-        if (p.specFirst) {
-          implAttrs['spec_first'] = 'true';
-        }
+        implAttrs['escalate_on'] = (p.escalateOn && p.escalateOn.length > 0) ? p.escalateOn.join(',') : DEFAULT_ESCALATE_ON;
+        implAttrs['timeout'] = p.timeout ?? '30m';
         if (spec.workspace === 'isolated' && (id === 'commit_and_push' || (id.includes('commit') && id.includes('push')))) {
           if (spec.workspaceOpts?.repoUrl) implAttrs['repo_url'] = spec.workspaceOpts.repoUrl;
           if (spec.workspaceOpts?.cleanup) implAttrs['cleanup'] = spec.workspaceOpts.cleanup;
@@ -1405,7 +1402,15 @@ export class DotBuilder {
         link(conformanceId, testId);
 
         // P1: fix loop
-        emit(fixId, { label: `fix ${id}`, thread_id: threadId });
+        emit(fixId, {
+          allowed_paths: (p.allowedPaths ?? []).join(','),
+          class: 'codergen',
+          escalate_on: (p.escalateOn && p.escalateOn.length > 0) ? p.escalateOn.join(',') : DEFAULT_ESCALATE_ON,
+          label: `fix ${id}`,
+          permission_mode: 'auto',
+          thread_id: threadId,
+          timeout: '30m',
+        });
         link(testId, fixId, { condition: 'outcome=fail', label: 'fail' });
         link(fixId, implId);
 

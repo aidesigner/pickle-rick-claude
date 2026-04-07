@@ -146,22 +146,14 @@ describe('Structural validation — 15 rules', () => {
         );
     });
 
-    // Rule 7: timeout presence ------------------------------------------------
-    test('Rule 7 MISSING_TIMEOUT — codergen impl node lacks timeout attribute', () => {
+    // Rule 7: timeout presence — impl nodes now default to 30m
+    test('Rule 7 MISSING_TIMEOUT — codergen impl node gets default timeout=30m', () => {
         const builder = new DotBuilder(baseSpec({
             phases: [phase('impl')],
         }));
-        assert.throws(
-            () => builder.build(),
-            (err) => {
-                assert.ok(err instanceof BuildError);
-                assert.equal(err.code, 'MISSING_TIMEOUT');
-                assert.ok(err.diagnostics.some(
-                    d => d.rule === 'MISSING_TIMEOUT' && d.severity === 'error',
-                ));
-                return true;
-            },
-        );
+        const result = builder.build();
+        assert.ok(result.dot.includes('timeout="30m"'),
+            'impl node without explicit timeout should get default timeout=30m');
     });
 
     // Rule 8: prompt ↔ allowed_paths ------------------------------------------
