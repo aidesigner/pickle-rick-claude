@@ -41,6 +41,8 @@ export function createMicroverseState(opts) {
         gap_analysis_path: '',
         failed_approaches: [],
         baseline_score: 0,
+        failure_history: [],
+        approach_exhaustion_fired: false,
     };
     if (convergenceTarget != null)
         state.convergence_target = convergenceTarget;
@@ -65,6 +67,7 @@ export function recordIteration(state, entry, classification) {
         const previousScore = lastAccepted ? lastAccepted.score : state.baseline_score;
         classification = compareMetric(entry.score, previousScore, state.key_metric.tolerance, state.key_metric.direction);
     }
+    entry.classification = classification;
     const stallCounter = entry.action === 'accept' && classification === 'improved'
         ? 0
         : state.convergence.stall_counter + 1;
@@ -100,6 +103,47 @@ export function recordFailedApproach(state, description) {
         failed_approaches: approaches,
     };
 }
+/**
+ * Classify the failure mode of an iteration. Returns null if the iteration
+ * succeeded (improved). Priority-ordered — first matching class wins.
+ */
+export function classifyFailure(mvState, metricResult, preIterSha, postIterSha) {
+    // 1. tool_failure — metric measurement itself failed
+    if (metricResult === null)
+        return 'tool_failure';
+    // Check if this iteration improved
+    const history = mvState.convergence.history;
+    const lastAccepted = [...history].reverse().find(h => h.action === 'accept');
+    const previousScore = lastAccepted ? lastAccepted.score : mvState.baseline_score;
+    const classification = compareMetric(metricResult.score, previousScore, mvState.key_metric.tolerance, mvState.key_metric.direction);
+    if (classification === 'improved')
+        return null;
+    // 2. metric_unstable — alternating improve/regress in last 3 entries
+    if (history.length >= 3) {
+        const last3 = history.slice(-3).map(h => h.classification);
+        const isOscillating = (last3[0] === 'improved' && last3[1] === 'regressed' && last3[2] === 'improved') ||
+            (last3[0] === 'regressed' && last3[1] === 'improved' && last3[2] === 'regressed');
+        if (isOscillating)
+            return 'metric_unstable';
+    }
+    // 3. regression — score went backwards
+    if (classification === 'regressed')
+        return 'regression';
+    // 4. approach_exhaustion — tried many things, none stick
+    if (mvState.failed_approaches.length >= 3 &&
+        mvState.convergence.stall_counter >= mvState.convergence.stall_limit / 2) {
+        return 'approach_exhaustion';
+    }
+    // 5. no_progress — no commits or 3+ consecutive 'held'
+    if (preIterSha === postIterSha)
+        return 'no_progress';
+    if (history.length >= 3) {
+        const last3 = history.slice(-3).map(h => h.classification);
+        if (last3.every(c => c === 'held'))
+            return 'no_progress';
+    }
+    return null;
+}
 export function isConverged(state) {
     if (state.convergence.stall_counter >= state.convergence.stall_limit)
         return true;
@@ -125,7 +169,10 @@ export function readMicroverseState(sessionDir) {
     const filePath = path.join(sessionDir, MICROVERSE_FILE);
     try {
         const raw = fs.readFileSync(filePath, 'utf-8');
-        return JSON.parse(raw);
+        const parsed = JSON.parse(raw);
+        parsed.failure_history ??= [];
+        parsed.approach_exhaustion_fired ??= false;
+        return parsed;
     }
     catch (err) {
         if (err.code === 'ENOENT')
