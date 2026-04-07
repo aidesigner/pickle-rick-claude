@@ -738,13 +738,29 @@ describe('Attribute formatting', () => {
         const builder = new DotBuilder(validSpec());
         builder.phase(validPhase('impl'));
         const { dot } = builder.build();
-        // Every attribute assignment should use double quotes around the value
-        const attrAssignments = [...dot.matchAll(/(\w+)\s*=\s*([^\s,\]]+)/g)];
-        assert.ok(attrAssignments.length > 0, 'should have attribute assignments');
-        for (const [full, key, val] of attrAssignments) {
-            // Graph-level attributes like rankdir=LR may be unquoted, but node attrs should be quoted
-            if (key === 'rankdir' || key === 'compound') continue;
-            assert.ok(val.startsWith('"'), `value for ${key} should start with quote: ${full}`);
+        // Every DOT node/edge attribute assignment should use double quotes around the value
+        // Extract bracket-delimited attr sections, then parse top-level key=value assignments
+        const bracketSections = [...dot.matchAll(/\[([^\]]+)\]/g)].map(m => m[1]);
+        assert.ok(bracketSections.length > 0, 'should have bracket-delimited attribute sections');
+        for (const section of bracketSections) {
+            // Split on commas that are outside quotes to get individual key=value pairs
+            const pairs = [];
+            let current = '';
+            let inQuote = false;
+            for (const ch of section) {
+                if (ch === '"') inQuote = !inQuote;
+                else if (ch === ',' && !inQuote) { pairs.push(current.trim()); current = ''; continue; }
+                current += ch;
+            }
+            if (current.trim()) pairs.push(current.trim());
+            for (const pair of pairs) {
+                const eqIdx = pair.indexOf('=');
+                if (eqIdx < 0) continue;
+                const key = pair.slice(0, eqIdx).trim();
+                const val = pair.slice(eqIdx + 1).trim();
+                if (key === 'rankdir' || key === 'compound') continue;
+                assert.ok(val.startsWith('"'), `value for ${key} should start with quote: ${key}=${val}`);
+            }
         }
     });
 

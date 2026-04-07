@@ -16,6 +16,17 @@ export const BUILD_ERROR_CODES = [
 // Alias for JS consumers
 export const BuildErrorCode = BUILD_ERROR_CODES;
 // ---------------------------------------------------------------------------
+// Tier 2 auto-keys — added to verify_final context_on_success
+// ---------------------------------------------------------------------------
+const TIER_2_AUTO_KEYS = {
+    cli_contract: 'true',
+    determinism: 'true',
+    lint_clean: 'true',
+    tests_pass: 'true',
+    types_compile: 'true',
+    validation_rules: 'true',
+};
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 function isRecord(v) {
@@ -29,6 +40,13 @@ function mkDiag(rule, severity, message, nodeId) {
 }
 function pass() { return { valid: true, diagnostics: [] }; }
 function fail(diagnostics) { return { valid: false, diagnostics }; }
+/** Serialize a Record<string, string> as sorted K=V comma-separated pairs. */
+function serializeKV(record) {
+    return Object.entries(record)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([k, v]) => `${k}=${v}`)
+        .join(',');
+}
 /** Escape a string for use inside DOT double-quoted attribute values. */
 function escapeAttr(value) {
     return value
@@ -351,8 +369,9 @@ function grRule6(nodeMap, acceptanceCriteria) {
     const mapped = new Set();
     for (const attrs of nodeMap.values()) {
         if (attrs['context_on_success']) {
-            for (const k of attrs['context_on_success'].split(','))
-                mapped.add(k.trim());
+            for (const pair of attrs['context_on_success'].split(',')) {
+                mapped.add(pair.split('=')[0].trim());
+            }
         }
     }
     return acKeys
@@ -465,6 +484,22 @@ function grRule15(nodeMap) {
             const ap = attrs['allowed_paths'];
             if (!ap || ap.trim() === '') {
                 diags.push(mkDiag('MISSING_ALLOWED_PATHS', 'error', `codergen node "${id}" requires non-empty allowed_paths`, id));
+            }
+        }
+    }
+    return diags;
+}
+function grRule16(nodeMap, acceptanceCriteria) {
+    const acKeys = new Set(Object.keys(acceptanceCriteria));
+    const tier2Keys = new Set(Object.keys(TIER_2_AUTO_KEYS));
+    const diags = [];
+    for (const [id, attrs] of nodeMap.entries()) {
+        if (!attrs['context_on_success'])
+            continue;
+        for (const pair of attrs['context_on_success'].split(',')) {
+            const key = pair.split('=')[0].trim();
+            if (!acKeys.has(key) && !tier2Keys.has(key)) {
+                diags.push(mkDiag('ORPHANED_CONTEXT_KEY', 'warning', `node "${id}" context_on_success key "${key}" is not in acceptanceCriteria`, id));
             }
         }
     }
@@ -850,6 +885,7 @@ export class DotBuilder {
             ...grRule13(nodeMap, graphAttrs),
             ...grRule14(nodeMap),
             ...grRule15(nodeMap),
+            ...grRule16(nodeMap, acceptanceCriteria),
         ];
         const firstError = diagnostics.find(d => d.severity === 'error');
         if (firstError) {
@@ -1002,6 +1038,17 @@ export class DotBuilder {
         const allDependentPhases = phases.filter(p => !p.securityScan);
         const unionPaths = [...new Set(allDependentPhases.flatMap(p => p.allowedPaths ?? []))].join(',');
         const unionEscalate = [...new Set(allDependentPhases.flatMap(p => p.escalateOn ?? []))].join(',');
+        // Tier 1 (explicit) + Tier 2 (auto) keys for verify_final context_on_success
+        const tier1Keys = {};
+        for (const p of phases) {
+            if (p.contextOnSuccess) {
+                for (const [k, v] of Object.entries(p.contextOnSuccess)) {
+                    tier1Keys[k] = v;
+                }
+            }
+        }
+        const verifyFinalKV = { ...TIER_2_AUTO_KEYS, ...tier1Keys };
+        const verifyFinalContextOnSuccess = serializeKV(verifyFinalKV);
         // Fan-out (Pattern 4)
         if (isFanOut) {
             applied.add('P4');
@@ -1039,7 +1086,7 @@ export class DotBuilder {
             if (unionEscalate)
                 fixAllAttrs['escalate_on'] = unionEscalate;
             emit('fix_all', fixAllAttrs);
-            emit('verify_final', { label: 'verify_final' });
+            emit('verify_final', { label: 'verify_final', context_on_success: verifyFinalContextOnSuccess });
             link(afterMerge, 'fix_all');
             link('fix_all', 'verify_final');
             link('verify_final', 'exit');
@@ -1260,7 +1307,7 @@ export class DotBuilder {
                     timeout: '15m',
                 };
                 if (p.contextOnSuccess) {
-                    conformanceAttrs['context_on_success'] = Object.keys(p.contextOnSuccess).join(',');
+                    conformanceAttrs['context_on_success'] = serializeKV(p.contextOnSuccess);
                 }
                 if (p.goalGate) {
                     conformanceAttrs['goal_gate'] = 'true';
@@ -1332,7 +1379,7 @@ export class DotBuilder {
                 else {
                     link(prevId, 'verify_final');
                 }
-                emit('verify_final', { label: 'verify_final' });
+                emit('verify_final', { label: 'verify_final', context_on_success: verifyFinalContextOnSuccess });
                 link('verify_final', 'exit');
             }
             else {
