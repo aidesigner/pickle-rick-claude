@@ -251,6 +251,37 @@ function getBestScore(mvState) {
         return mvState.baseline_score;
     return bestFn(...accepted, mvState.baseline_score);
 }
+export function buildFailureDistribution(failureHistory) {
+    if (failureHistory.length === 0) {
+        return '\n## Failure Distribution\n\nNo failures recorded.\n';
+    }
+    const dist = new Map();
+    for (const f of failureHistory) {
+        dist.set(f.failure_class, (dist.get(f.failure_class) ?? 0) + 1);
+    }
+    const rows = [...dist.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([cls, count]) => `| ${cls} | ${count} |`);
+    return [
+        '',
+        '## Failure Distribution',
+        '',
+        '| Class | Count |',
+        '|-------|-------|',
+        ...rows,
+        '',
+    ].join('\n');
+}
+export function buildEfficiencySection(history, totalIterations) {
+    if (totalIterations <= 0) {
+        return '\n## Efficiency\n\n- **Wasted iterations**: 0 / 0 (0%)\n';
+    }
+    const reverted = history.filter(h => h.action === 'revert').length;
+    const noCommitIterations = totalIterations - history.length;
+    const wasted = reverted + Math.max(0, noCommitIterations);
+    const pct = Math.round((wasted / totalIterations) * 100);
+    return `\n## Efficiency\n\n- **Wasted iterations**: ${wasted} / ${totalIterations} (${pct}%)\n`;
+}
 function writeFinalReport(sessionDir, mvState, exitReason, iterations, elapsedSeconds) {
     const history = mvState.convergence.history;
     const accepted = history.filter(h => h.action === 'accept').length;
@@ -269,14 +300,9 @@ function writeFinalReport(sessionDir, mvState, exitReason, iterations, elapsedSe
         `- **Reverted**: ${reverted}`,
         `- **Failed Approaches**: ${mvState.failed_approaches.length}`,
     ];
-    if (mvState.failure_history.length > 0) {
-        const dist = new Map();
-        for (const f of mvState.failure_history) {
-            dist.set(f.failure_class, (dist.get(f.failure_class) ?? 0) + 1);
-        }
-        report.push(`- **Failure Distribution**: ${[...dist.entries()].map(([k, v]) => `${k}=${v}`).join(', ')}`);
-    }
-    report.push('', '## Iteration History', '| Iter | Score | Action | Description |', '|------|-------|--------|-------------|', ...history.map(h => `| ${h.iteration} | ${h.score} | ${h.action} | ${h.description} |`), '');
+    report.push('', '## Iteration History', '| Iter | Score | Action | Description |', '|------|-------|--------|-------------|', ...history.map(h => `| ${h.iteration} | ${h.score} | ${h.action} | ${h.description} |`));
+    report.push(buildFailureDistribution(mvState.failure_history));
+    report.push(buildEfficiencySection(history, iterations));
     const reportText = report.join('\n');
     const memoryDir = path.join(sessionDir, 'memory');
     try {
