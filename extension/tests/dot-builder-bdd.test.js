@@ -527,7 +527,7 @@ describe('BDD: thread_id topology', () => {
         }
     });
 
-    test('spec_file and bdd_scenarios inherit parent phase thread_id', () => {
+    test('spec_file and bdd_scenarios have review attrs (class, read_only, timeout, STATUS prompt)', () => {
         const r = buildWithPhases({}, [
             validPhase('feat', 'build feat', { specFirst: true, bddScenarios: true, retryTarget: 'feat', dependsOn: [] }),
         ]);
@@ -537,15 +537,41 @@ describe('BDD: thread_id topology', () => {
         assert.ok(bddAttrs, 'bdd_scenarios_feat should exist');
         assert.equal(specAttrs.thread_id, 'phase_1');
         assert.equal(bddAttrs.thread_id, 'phase_1');
+        assert.equal(specAttrs.class, 'review', 'spec_file must have class=review');
+        assert.equal(specAttrs.read_only, 'true', 'spec_file must have read_only=true');
+        assert.equal(specAttrs.timeout, '15m', 'spec_file must have timeout=15m');
+        assert.ok(specAttrs.label.includes('STATUS'), 'spec_file label must contain STATUS');
+        assert.equal(bddAttrs.class, 'review', 'bdd_scenarios must have class=review');
+        assert.equal(bddAttrs.read_only, 'true', 'bdd_scenarios must have read_only=true');
+        assert.equal(bddAttrs.timeout, '15m', 'bdd_scenarios must have timeout=15m');
+        assert.ok(bddAttrs.label.includes('STATUS'), 'bdd_scenarios label must contain STATUS');
     });
 
-    test('red_team node inherits parent phase thread_id', () => {
+    test('spec_file-only (no BDD) also has review attrs', () => {
+        const r = buildWithPhases({}, [
+            validPhase('feat', 'build feat', { specFirst: true, dependsOn: [] }),
+        ]);
+        const specAttrs = getNodeAttrs(r.dot, 'spec_file_feat');
+        assert.ok(specAttrs, 'spec_file_feat should exist');
+        assert.equal(specAttrs.class, 'review');
+        assert.equal(specAttrs.read_only, 'true');
+        assert.equal(specAttrs.timeout, '15m');
+        assert.ok(specAttrs.label.includes('STATUS'));
+    });
+
+    test('red_team has review attrs + fail edge to fix + success condition', () => {
         const r = buildWithPhases({}, [
             validPhase('sec', 'security impl', { redTeam: true, dependsOn: [] }),
         ]);
         const rtAttrs = getNodeAttrs(r.dot, 'red_team_sec');
         assert.ok(rtAttrs, 'red_team_sec should exist');
         assert.equal(rtAttrs.thread_id, 'phase_1');
+        assert.equal(rtAttrs.class, 'review', 'red_team must have class=review');
+        assert.equal(rtAttrs.read_only, 'true', 'red_team must have read_only=true');
+        assert.equal(rtAttrs.timeout, '15m', 'red_team must have timeout=15m');
+        assert.ok(rtAttrs.label.includes('STATUS'), 'red_team label must contain STATUS');
+        // RT-5: fail edge to fix node
+        assert.ok(r.dot.includes('red_team_sec -> fix_sec'), 'red_team must have fail edge to fix node');
     });
 
     test('fix_all has NO thread_id', () => {
@@ -558,6 +584,55 @@ describe('BDD: thread_id topology', () => {
             assert.equal(fixAllAttrs.thread_id, undefined,
                 'fix_all should NOT have thread_id');
         }
+    });
+
+    test('test-dir heuristic: src/X/** auto-adds tests/X/** and __tests__/X/**', () => {
+        const r = buildWithPhases({}, [
+            validPhase('auth', 'auth impl', { allowedPaths: ['src/auth/**'], dependsOn: [] }),
+        ]);
+        const implAttrs = getNodeAttrs(r.dot, 'impl_auth');
+        assert.ok(implAttrs, 'impl_auth should exist');
+        assert.ok(implAttrs.allowed_paths.includes('tests/auth/**'),
+            'impl allowed_paths should include tests/auth/**');
+        assert.ok(implAttrs.allowed_paths.includes('__tests__/auth/**'),
+            'impl allowed_paths should include __tests__/auth/**');
+        // fix node too
+        const fixAttrs = getNodeAttrs(r.dot, 'fix_auth');
+        assert.ok(fixAttrs, 'fix_auth should exist');
+        assert.ok(fixAttrs.allowed_paths.includes('tests/auth/**'),
+            'fix allowed_paths should include tests/auth/**');
+    });
+
+    test('cross-phase nodes (fix_all, verify_final) get union of all phase allowedPaths + test dirs', () => {
+        const r = buildWithPhases({}, [
+            validPhase('core', 'core impl', { allowedPaths: ['src/core/**'], dependsOn: [] }),
+            validPhase('ui', 'ui impl', { allowedPaths: ['src/ui/**'], dependsOn: ['core'] }),
+        ]);
+        const fixAllAttrs = getNodeAttrs(r.dot, 'fix_all');
+        assert.ok(fixAllAttrs, 'fix_all should exist');
+        assert.ok(fixAllAttrs.allowed_paths.includes('src/core/**'), 'fix_all should include src/core/**');
+        assert.ok(fixAllAttrs.allowed_paths.includes('src/ui/**'), 'fix_all should include src/ui/**');
+        assert.ok(fixAllAttrs.allowed_paths.includes('tests/core/**'), 'fix_all should include tests/core/**');
+        assert.ok(fixAllAttrs.allowed_paths.includes('tests/ui/**'), 'fix_all should include tests/ui/**');
+        // verify_final is a tool node — no allowed_paths, has tool attrs
+        const vfAttrs = getNodeAttrs(r.dot, 'verify_final');
+        assert.ok(vfAttrs, 'verify_final should exist');
+        assert.strictEqual(vfAttrs.shape, 'parallelogram', 'verify_final shape');
+        assert.strictEqual(vfAttrs.retry_target, 'fix_all', 'verify_final retry_target');
+        assert.strictEqual(vfAttrs.max_visits, '3', 'verify_final max_visits');
+        assert.strictEqual(vfAttrs.timeout, '30m', 'verify_final timeout');
+        assert.ok(vfAttrs.tool_command, 'verify_final should have tool_command');
+        assert.ok(!vfAttrs.allowed_paths, 'verify_final should NOT have allowed_paths');
+    });
+
+    test('non-src paths pass through without test-dir expansion', () => {
+        const r = buildWithPhases({}, [
+            validPhase('docs', 'write docs', { allowedPaths: ['docs/**'], dependsOn: [] }),
+        ]);
+        const implAttrs = getNodeAttrs(r.dot, 'impl_docs');
+        assert.ok(implAttrs, 'impl_docs should exist');
+        assert.equal(implAttrs.allowed_paths, 'docs/**',
+            'non-src paths should not get test dirs appended');
     });
 
     test('securityScan phase node gets thread_id', () => {

@@ -44,6 +44,24 @@ const TIER_2_AUTO_KEYS: Record<string, string> = {
 const DEFAULT_ESCALATE_ON = 'package.json,*.lock,*.config.*';
 
 // ---------------------------------------------------------------------------
+// Test-dir heuristic: src/X/** → also tests/X/** and __tests__/X/**
+// ---------------------------------------------------------------------------
+function expandWithTestDirs(paths: string[]): string[] {
+  const result = [...paths];
+  for (const p of paths) {
+    const m = p.match(/^src\/(.+)/);
+    if (m) {
+      const suffix = m[1];
+      const testPath = `tests/${suffix}`;
+      const dunderPath = `__tests__/${suffix}`;
+      if (!result.includes(testPath)) result.push(testPath);
+      if (!result.includes(dunderPath)) result.push(dunderPath);
+    }
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Internal types
 // ---------------------------------------------------------------------------
 interface EdgeEntry { from: string; to: string; label?: string; attrs?: Record<string, string> }
@@ -1095,7 +1113,8 @@ export class DotBuilder {
 
     const implPhases = phases.filter(p => !p.securityScan && !p.docOnly);
     const allDependentPhases = phases.filter(p => !p.securityScan);
-    const unionPaths = [...new Set(allDependentPhases.flatMap(p => p.allowedPaths ?? []))].join(',');
+    const rawUnionPaths = [...new Set(allDependentPhases.flatMap(p => p.allowedPaths ?? []))];
+    const unionPaths = expandWithTestDirs(rawUnionPaths).join(',');
     const unionEscalate = [...new Set(allDependentPhases.flatMap(p => p.escalateOn ?? []))].join(',');
 
     // Tier 1 (explicit) + Tier 2 (auto) keys for verify_final context_on_success
@@ -1145,7 +1164,15 @@ export class DotBuilder {
       };
       if (unionEscalate) fixAllAttrs['escalate_on'] = unionEscalate;
       emit('fix_all', fixAllAttrs);
-      emit('verify_final', { label: 'verify_final', context_on_success: verifyFinalContextOnSuccess });
+      emit('verify_final', {
+        context_on_success: verifyFinalContextOnSuccess,
+        label: 'verify_final',
+        max_visits: '3',
+        retry_target: 'fix_all',
+        shape: 'parallelogram',
+        timeout: '30m',
+        tool_command: 'cd ${WORKING_DIR} && npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npm test',
+      });
       link(afterMerge, 'fix_all');
       link('fix_all', 'verify_final');
       link('verify_final', 'exit');
@@ -1205,7 +1232,7 @@ export class DotBuilder {
         // docOnly phase
         if (p.docOnly) {
           const implAttrs: Record<string, string> = {
-            allowed_paths: (p.allowedPaths ?? []).join(','),
+            allowed_paths: expandWithTestDirs(p.allowedPaths ?? []).join(','),
             class: 'documentation',
             label: p.prompt,
             max_visits: '5',
@@ -1261,15 +1288,33 @@ export class DotBuilder {
 
         // Spec-first gates (P16 / P16b)
         if (emitBDD && emitSpec) {
-          emit(bddId, { label: 'bdd_scenarios', thread_id: threadId });
-          emit(specId, { label: 'spec_file', thread_id: threadId });
+          emit(bddId, {
+            class: 'review',
+            label: 'Review BDD scenarios against phase prompt. Verify each scenario has Given/When/Then. Output STATUS: SUCCESS | FAIL.',
+            read_only: 'true',
+            thread_id: threadId,
+            timeout: '15m',
+          });
+          emit(specId, {
+            class: 'review',
+            label: 'Review spec file against phase prompt and BDD scenarios. Verify acceptance criteria are machine-checkable. Output STATUS: SUCCESS | FAIL.',
+            read_only: 'true',
+            thread_id: threadId,
+            timeout: '15m',
+          });
           link(prevId, bddId, prevAttrs);
           link(bddId, specId);
           link(specId, implId);
           applied.add('P16b');
           applied.add('P16');
         } else if (emitSpec) {
-          emit(specId, { label: 'spec_file', thread_id: threadId });
+          emit(specId, {
+            class: 'review',
+            label: 'Review spec file against phase prompt. Verify acceptance criteria are machine-checkable. Output STATUS: SUCCESS | FAIL.',
+            read_only: 'true',
+            thread_id: threadId,
+            timeout: '15m',
+          });
           link(prevId, specId, prevAttrs);
           link(specId, implId);
           applied.add('P16');
@@ -1279,7 +1324,7 @@ export class DotBuilder {
 
         // P22: impl node
         const implAttrs: Record<string, string> = {
-          allowed_paths: (p.allowedPaths ?? []).join(','),
+          allowed_paths: expandWithTestDirs(p.allowedPaths ?? []).join(','),
           class: 'codergen',
           label: p.prompt,
           max_visits: '5',
@@ -1403,7 +1448,7 @@ export class DotBuilder {
 
         // P1: fix loop
         emit(fixId, {
-          allowed_paths: (p.allowedPaths ?? []).join(','),
+          allowed_paths: expandWithTestDirs(p.allowedPaths ?? []).join(','),
           class: 'codergen',
           escalate_on: (p.escalateOn && p.escalateOn.length > 0) ? p.escalateOn.join(',') : DEFAULT_ESCALATE_ON,
           label: `fix ${id}`,
@@ -1414,14 +1459,15 @@ export class DotBuilder {
         link(testId, fixId, { condition: 'outcome=fail', label: 'fail' });
         link(fixId, implId);
 
-        // P17: red_team after test pass
+        // P17: red_team after test pass (RT-5: fail→fix, success→next)
         if (p.redTeam) {
           const rtId = `red_team_${id}`;
-          emit(rtId, { label: 'red_team', read_only: 'true', thread_id: threadId });
+          emit(rtId, { class: 'review', label: 'Red-team the implementation: attempt to break it via edge cases, malformed input, concurrency, and security probes. Output STATUS: SUCCESS | FAIL.', read_only: 'true', thread_id: threadId, timeout: '15m' });
           applied.add('P17');
           link(testId, rtId, { condition: 'outcome=success', label: 'pass' });
+          link(rtId, fixId, { condition: 'outcome=fail', label: 'fail' });
           prevId = rtId;
-          prevAttrs = undefined;
+          prevAttrs = { condition: 'outcome=success', label: 'pass' };
         } else {
           prevId = testId;
           prevAttrs = { condition: 'outcome=success', label: 'pass' };
@@ -1446,7 +1492,15 @@ export class DotBuilder {
         } else {
           link(prevId, 'verify_final');
         }
-        emit('verify_final', { label: 'verify_final', context_on_success: verifyFinalContextOnSuccess });
+        emit('verify_final', {
+          context_on_success: verifyFinalContextOnSuccess,
+          label: 'verify_final',
+          max_visits: '3',
+          retry_target: 'fix_all',
+          shape: 'parallelogram',
+          timeout: '30m',
+          tool_command: 'cd ${WORKING_DIR} && npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npm test',
+        });
         link('verify_final', 'exit');
       } else {
         link('capture_baseline', 'exit');
