@@ -93,6 +93,13 @@ function computeMaxVisits(count: number): number {
   return Math.max(3, Math.ceil(count / 3));
 }
 
+const UI_REQUIREMENTS: Record<string, string[]> = {
+  crud: ['pagination', 'edit form', 'delete action', 'empty state'],
+  dashboard: ['data loading', 'refresh', 'error state', 'responsive layout'],
+  form: ['field validation', 'error display', 'submit handling', 'success feedback'],
+  wizard: ['step navigation', 'step validation', 'progress indicator', 'completion state'],
+};
+
 /** Serialize a Record<string, string> as sorted K=V comma-separated pairs. */
 function serializeKV(record: Record<string, string>): string {
   return Object.entries(record)
@@ -1035,7 +1042,7 @@ export class DotBuilder {
     }
 
     // Emit the complete graph
-    const { dot, nodeMap, edgeList, graphAttrs, standaloneNodeIds, patternsApplied, defenseMatrix } = this._emitDot();
+    const { dot, nodeMap, edgeList, graphAttrs, standaloneNodeIds, patternsApplied, defenseMatrix, emittedDiagnostics } = this._emitDot();
 
     // Carry forward non-error preflight diagnostics (warnings/info from auto-corrections)
     const preflightNonErrors = preflightDiags.filter(d => d.severity !== 'error');
@@ -1044,6 +1051,7 @@ export class DotBuilder {
     const { acceptanceCriteria = {} } = this._spec;
     const diagnostics: Diagnostic[] = [
       ...preflightNonErrors,
+      ...emittedDiagnostics,
       ...grRule1(nodeMap),
       ...grRule2(nodeMap, edgeList),
       ...grRule3(nodeMap, edgeList, standaloneNodeIds),
@@ -1103,6 +1111,7 @@ export class DotBuilder {
     standaloneNodeIds: Set<string>;
     patternsApplied: string[];
     defenseMatrix: DefenseMatrix;
+    emittedDiagnostics: Diagnostic[];
   } {
     const spec = this._spec;
     const phases = this._phases;
@@ -1178,6 +1187,7 @@ export class DotBuilder {
     const nodeMap = new Map<string, Record<string, string>>();
     const edgeList: EdgeEntry[] = [];
     const standaloneNodeIds = new Set<string>();
+    const emittedDiagnostics: Diagnostic[] = [];
 
     const emit = (id: string, attrs: Record<string, string>): void => {
       nodes.push(`  ${id} [${fmtAttrs(attrs)}]`);
@@ -1506,6 +1516,18 @@ export class DotBuilder {
         }
 
         // Regular impl phase
+
+        // UI completeness injection: auto-append defaults for known uiType values
+        const reqs = [...(p.requirements ?? [])];
+        if (p.uiType) {
+          const uiDefaults = UI_REQUIREMENTS[p.uiType] ?? [];
+          for (const def of uiDefaults) {
+            if (!reqs.some(r => r.toLowerCase().includes(def.toLowerCase()))) {
+              reqs.push(def);
+            }
+          }
+        }
+
         const testId = `test_${id}`;
         const fixId = `fix_${id}`;
         const verifyLintId = `verify_lint_${id}`;
@@ -1513,8 +1535,8 @@ export class DotBuilder {
 
         // Spec-first gates (P16 / P16b)
         if (emitBDD && emitSpec) {
-          const bddLabel = p.requirements && p.requirements.length > 0
-            ? `Review BDD scenarios against phase prompt. Verify ${p.requirements.length} scenarios with Given/When/Then covering: ${formatRequirementsList(p.requirements)}. Output STATUS: SUCCESS | FAIL.`
+          const bddLabel = reqs.length > 0
+            ? `Review BDD scenarios against phase prompt. Verify ${reqs.length} scenarios with Given/When/Then covering: ${formatRequirementsList(reqs)}. Output STATUS: SUCCESS | FAIL.`
             : 'Review BDD scenarios against phase prompt. Verify each scenario has Given/When/Then. Output STATUS: SUCCESS | FAIL.';
           emit(bddId, {
             class: 'review',
@@ -1523,8 +1545,8 @@ export class DotBuilder {
             thread_id: threadId,
             timeout: '15m',
           });
-          const specLabelBDD = p.requirements && p.requirements.length > 0
-            ? `Review spec file. Verify ${p.requirements.length} machine-checkable acceptance criteria for: ${formatRequirementsList(p.requirements)}. Output STATUS: SUCCESS | FAIL.`
+          const specLabelBDD = reqs.length > 0
+            ? `Review spec file. Verify ${reqs.length} machine-checkable acceptance criteria for: ${formatRequirementsList(reqs)}. Output STATUS: SUCCESS | FAIL.`
             : 'Review spec file against phase prompt and BDD scenarios. Verify acceptance criteria are machine-checkable. Output STATUS: SUCCESS | FAIL.';
           emit(specId, {
             class: 'review',
@@ -1539,8 +1561,8 @@ export class DotBuilder {
           applied.add('P16b');
           applied.add('P16');
         } else if (emitSpec) {
-          const specLabel = p.requirements && p.requirements.length > 0
-            ? `Review spec file. Verify ${p.requirements.length} machine-checkable acceptance criteria for: ${formatRequirementsList(p.requirements)}. Output STATUS: SUCCESS | FAIL.`
+          const specLabel = reqs.length > 0
+            ? `Review spec file. Verify ${reqs.length} machine-checkable acceptance criteria for: ${formatRequirementsList(reqs)}. Output STATUS: SUCCESS | FAIL.`
             : 'Review spec file against phase prompt. Verify acceptance criteria are machine-checkable. Output STATUS: SUCCESS | FAIL.';
           emit(specId, {
             class: 'review',
@@ -1656,8 +1678,8 @@ export class DotBuilder {
         }
 
         // P15: conformance
-        const conformanceLabel = p.requirements && p.requirements.length > 0
-          ? `Verify these ${p.requirements.length} requirements in git diff: ${formatRequirementsList(p.requirements)}. Check: correct files modified, API contracts match. Output STATUS: SUCCESS | FAIL.`
+        const conformanceLabel = reqs.length > 0
+          ? `Verify these ${reqs.length} requirements in git diff: ${formatRequirementsList(reqs)}. Check: correct files modified, API contracts match. Output STATUS: SUCCESS | FAIL.`
           : 'Review the implementation against the phase spec and PRD requirements. Check: correct files modified, API contracts match, no regressions. Output STATUS: SUCCESS | FAIL.';
         const conformanceAttrs: Record<string, string> = {
           class: 'review',
@@ -1728,6 +1750,11 @@ export class DotBuilder {
         } else {
           prevId = testId;
           prevAttrs = { condition: 'outcome=success', label: 'pass' };
+        }
+
+        // Diagnostic: warn when a complex phase has no structured requirements
+        if ((!p.requirements || p.requirements.length === 0) && (p.allowedPaths ?? []).length >= 4) {
+          emittedDiagnostics.push(mkDiag('MISSING_REQUIREMENTS', 'warning', `Phase "${p.name}" has ${(p.allowedPaths ?? []).length} allowed paths but no structured requirements — gates cannot verify specific deliverables`, implId));
         }
       }
 
@@ -1852,6 +1879,6 @@ export class DotBuilder {
       '}',
     ];
 
-    return { dot: lines.join('\n'), nodeMap, edgeList, graphAttrs, standaloneNodeIds, patternsApplied: [...applied], defenseMatrix };
+    return { dot: lines.join('\n'), nodeMap, edgeList, graphAttrs, standaloneNodeIds, patternsApplied: [...applied], defenseMatrix, emittedDiagnostics };
   }
 }
