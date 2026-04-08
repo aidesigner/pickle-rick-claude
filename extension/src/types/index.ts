@@ -425,6 +425,9 @@ export interface PhaseSpec {
   maxVisits?: number;
   verifyCommand?: string;
   permissionMode?: string;
+  requirements?: string[];
+  testExpectations?: { count: number; isolation: boolean };
+  uiType?: 'crud' | 'dashboard' | 'form' | 'wizard';
 }
 
 export interface DefenseMatrix {
