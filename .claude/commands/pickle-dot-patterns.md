@@ -74,6 +74,11 @@ check -> impl [condition="outcome=fail"]
 
 **2. Goal Gates** — P0/critical nodes get `goal_gate=true`. PRD acceptance criteria → `acceptance_criteria` attr + `goal_gate=true`. Prefer per-node `retry_target`. Every `goal_gate=true` node with a `retry_target` MUST also have `max_visits` (validator rule 19 enforces this — without it, the gate can retry infinitely). Recommended: `max_visits=5` for impl, `max_visits=3` for verify/conformance. Context vars: `context.tests_pass`, `context.build_status`, `context.lint_status`, `context.typecheck_status`.
 
+**Gate Loop Invariant** — every `goal_gate=true` node MUST have a complete fail→fix→gate loop:
+1. The gate has a fail edge to a dedicated fix node
+2. The fix node has an unconditional edge back to the gate
+3. No `goal_gate=true` without this loop — failures with no fix edge fall through to graph-level `retry_target`, which is a last-resort recovery, not a substitute for a local fix loop
+
 **CRITICAL: `context_on_success` bridge** — every key in `acceptance_criteria` MUST be set by `context_on_success="key=value,key2=value2"` on the final verification tool node. Without this, criteria always fail → retry until engine safety limit (10 retries, then hard failure):
 ```
 verify_final [shape=parallelogram,
@@ -91,6 +96,8 @@ check -> b [condition="outcome=fail"]
 ```
 
 **6. Max Visits** — `max_visits` on looping nodes prevents infinite convergence. Required on all `goal_gate=true` nodes with `retry_target` (validator rule 19).
+
+**6a. Self-Retry on Critical Non-Gate Nodes** — tool nodes that aren't goal gates but whose failure would silently poison downstream nodes (e.g., `scaffold`, `verify_tracks`, `capture_baseline`) should set `retry_target="<self>"` to retry in-place before falling through to graph-level `retry_target`. Without this, a transient failure (network timeout, flaky install) skips straight to `fix_all`, which can't fix infrastructure issues:
 
 **6b. No-Op Detection Warning** — the claude-code backend returns `RETRY` when a codergen node produces zero edits (`editWriteCount === 0`) and no explicit `STATUS:` marker. This means **read-only nodes** (analysis, conformance, scope check) that only read code without writing files will RETRY forever unless their prompt instructs the LLM to output `STATUS: SUCCESS` (or `FAIL`/`PARTIAL_SUCCESS`) on its own line. All review/conformance/red_team/scope_check nodes MUST include explicit STATUS output instructions in their prompts:
 ```
