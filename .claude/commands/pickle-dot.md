@@ -357,8 +357,8 @@ Add a `verify_field_alignment` tool node after both tracks complete:
 
 ```
 tool_command="cd ${WORKING_DIR} && \
-  API_FIELDS=$(grep -rhE '(Column|Field|Prop)' src/entities/ src/dto/ | grep -oE '[a-z_]+' | sort -u) && \
-  UI_FIELDS=$(grep -rhE '(interface|type)\s' src/types/ src/components/ | grep -oE '[a-z_]+' | sort -u) && \
+  API_FIELDS=$(grep -rhE '^\s+\w+\??\s*:\s*(string|number|boolean|Date)' src/entities/ src/dto/ | grep -oE '^\s+\w+' | sed 's/^\s*//' | sort -u) && \
+  UI_FIELDS=$(grep -rhE '^\s+\w+\??\s*:\s*(string|number|boolean|Date)' src/types/ src/components/ | grep -oE '^\s+\w+' | sed 's/^\s*//' | sort -u) && \
   DIFF=$(comm -3 <(echo \"$API_FIELDS\") <(echo \"$UI_FIELDS\")) && \
   if [ -n \"$DIFF\" ]; then echo \"FIELD MISMATCH:\n$DIFF\"; exit 1; fi && \
   echo 'Field alignment verified'"
@@ -399,6 +399,7 @@ TC=$(npm test 2>&1 | grep -E 'Tests:' | grep -oE '[0-9]+ passed' | tail -1 | gre
 3. **Anchor grep to label lines**: Test runner summaries repeat patterns (`N passed` appears for both suites and individual tests). Always anchor `grep` to the specific summary label line (e.g., `grep -E '^Tests:'` or `grep -E '^Test Suites:'`).
 4. **Quote all variable expansions**: Use `"$VAR"` not `$VAR` in comparisons and function arguments. Unquoted variables with embedded newlines or spaces cause silent argument shifting.
 5. **Default on failure**: Always provide a fallback with `|| echo 0` (or appropriate default) when capturing numeric values. If the grep misses entirely, an empty variable causes syntax errors in arithmetic comparisons.
+6. **Anchor `grep -v` on source code**: When filtering source code lines (not test output), never use bare keyword patterns — `grep -v 'type:'` kills `property_type:`, `created_at` kills lines containing `at`. Always anchor: `grep -v '^\s*type:'`. For field extraction from TypeScript, match the type annotation pattern (`grep -E '^\s+\w+\??\s*:\s*(string|number|boolean|Date)'`) which naturally excludes decorator metadata lines.
 
 ---
 
