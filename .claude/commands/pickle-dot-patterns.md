@@ -618,6 +618,40 @@ Permission modes: `bypassPermissions` (default), `plan`, `acceptEdits`, `auto`, 
 
 **Edge attributes**: `condition`, `label`, `weight`, `fidelity`, `loop_restart`
 
+## Convergence Fields
+
+PhaseSpec supports structured fields that parameterize gates for tighter convergence:
+
+### requirements: string[]
+Explicit list of verifiable requirements. When provided:
+- Conformance gate enumerates all requirements in its label
+- BDD gate verifies N scenarios (one per requirement)
+- Spec gate verifies N acceptance criteria
+
+Example:
+```
+{
+  name: 'auth_service',
+  prompt: 'Build JWT auth with refresh, revocation, and scope validation',
+  requirements: ['JWT refresh endpoint', 'token revocation', 'scope validation'],
+  allowedPaths: ['src/auth/'],
+}
+```
+
+### testExpectations: { count: number; isolation: boolean }
+- count: expected number of tests — drives max_visits computation (Math.max(3, Math.ceil(count/3)))
+- isolation: when true, emits a gate that greps for beforeEach/afterEach in test files
+
+### uiType: 'crud' | 'dashboard' | 'form' | 'wizard'
+Auto-injects UI-specific requirements unless already present:
+- crud: pagination, edit form, delete action, empty state
+- dashboard: data loading, refresh, error state, responsive layout
+- form: field validation, error display, submit handling, success feedback
+- wizard: step navigation, step validation, progress indicator, completion state
+
+### Diagnostic: MISSING_REQUIREMENTS
+Warning emitted when a phase has 4+ allowed paths but no requirements array.
+
 ## DOT Schema
 
 Full schema: `attractor/DOT_SCHEMA.md`. Key tool attribute: `context_on_success` (sets RunContext keys on exit 0).
