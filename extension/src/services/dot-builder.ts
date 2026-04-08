@@ -83,6 +83,16 @@ function mkDiag(rule: string, severity: 'error' | 'warning' | 'info', message: s
 function pass(): ValidationResult { return { valid: true, diagnostics: [] }; }
 function fail(diagnostics: Diagnostic[]): ValidationResult { return { valid: false, diagnostics }; }
 
+/** Format a requirements array as '1. X, 2. Y, 3. Z'. */
+function formatRequirementsList(reqs: string[]): string {
+  return reqs.map((r, i) => `${i + 1}. ${r}`).join(', ');
+}
+
+/** Compute max_visits for a test diamond from expected test count. */
+function computeMaxVisits(count: number): number {
+  return Math.max(3, Math.ceil(count / 3));
+}
+
 /** Serialize a Record<string, string> as sorted K=V comma-separated pairs. */
 function serializeKV(record: Record<string, string>): string {
   return Object.entries(record)
@@ -1503,16 +1513,22 @@ export class DotBuilder {
 
         // Spec-first gates (P16 / P16b)
         if (emitBDD && emitSpec) {
+          const bddLabel = p.requirements && p.requirements.length > 0
+            ? `Review BDD scenarios against phase prompt. Verify ${p.requirements.length} scenarios with Given/When/Then covering: ${formatRequirementsList(p.requirements)}. Output STATUS: SUCCESS | FAIL.`
+            : 'Review BDD scenarios against phase prompt. Verify each scenario has Given/When/Then. Output STATUS: SUCCESS | FAIL.';
           emit(bddId, {
             class: 'review',
-            label: 'Review BDD scenarios against phase prompt. Verify each scenario has Given/When/Then. Output STATUS: SUCCESS | FAIL.',
+            label: bddLabel,
             read_only: 'true',
             thread_id: threadId,
             timeout: '15m',
           });
+          const specLabelBDD = p.requirements && p.requirements.length > 0
+            ? `Review spec file. Verify ${p.requirements.length} machine-checkable acceptance criteria for: ${formatRequirementsList(p.requirements)}. Output STATUS: SUCCESS | FAIL.`
+            : 'Review spec file against phase prompt and BDD scenarios. Verify acceptance criteria are machine-checkable. Output STATUS: SUCCESS | FAIL.';
           emit(specId, {
             class: 'review',
-            label: 'Review spec file against phase prompt and BDD scenarios. Verify acceptance criteria are machine-checkable. Output STATUS: SUCCESS | FAIL.',
+            label: specLabelBDD,
             read_only: 'true',
             thread_id: threadId,
             timeout: '15m',
@@ -1523,9 +1539,12 @@ export class DotBuilder {
           applied.add('P16b');
           applied.add('P16');
         } else if (emitSpec) {
+          const specLabel = p.requirements && p.requirements.length > 0
+            ? `Review spec file. Verify ${p.requirements.length} machine-checkable acceptance criteria for: ${formatRequirementsList(p.requirements)}. Output STATUS: SUCCESS | FAIL.`
+            : 'Review spec file against phase prompt. Verify acceptance criteria are machine-checkable. Output STATUS: SUCCESS | FAIL.';
           emit(specId, {
             class: 'review',
-            label: 'Review spec file against phase prompt. Verify acceptance criteria are machine-checkable. Output STATUS: SUCCESS | FAIL.',
+            label: specLabel,
             read_only: 'true',
             thread_id: threadId,
             timeout: '15m',
@@ -1581,7 +1600,24 @@ export class DotBuilder {
           tool_command: "cd ${WORKING_DIR} && [ $(git status --porcelain | wc -l) -gt 0 ] && echo 'STATUS: SUCCESS' || echo 'STATUS: FAIL'",
         });
         applied.add('P0e');
-        link(scopeCheckId, checkProgressId);
+
+        // Test isolation gate: when testExpectations.isolation === true, insert between scope_check and check_progress
+        if (p.testExpectations?.isolation === true) {
+          const testIsolationId = `test_isolation_${id}`;
+          const testPaths = expandWithTestDirs(p.allowedPaths ?? [])
+            .filter(tp => tp.startsWith('tests/') || tp.startsWith('__tests__/'))
+            .join(' ');
+          emit(testIsolationId, {
+            label: 'Verify test isolation: beforeEach/afterEach present in test files',
+            shape: 'parallelogram',
+            thread_id: threadId,
+            tool_command: `grep -rl 'beforeEach\\|afterEach' ${testPaths || '.'} && echo 'STATUS: SUCCESS' || echo 'STATUS: FAIL'`,
+          });
+          link(scopeCheckId, testIsolationId);
+          link(testIsolationId, checkProgressId);
+        } else {
+          link(scopeCheckId, checkProgressId);
+        }
 
         // P13: verify_lint
         emit(verifyLintId, {
@@ -1620,9 +1656,12 @@ export class DotBuilder {
         }
 
         // P15: conformance
+        const conformanceLabel = p.requirements && p.requirements.length > 0
+          ? `Verify these ${p.requirements.length} requirements in git diff: ${formatRequirementsList(p.requirements)}. Check: correct files modified, API contracts match. Output STATUS: SUCCESS | FAIL.`
+          : 'Review the implementation against the phase spec and PRD requirements. Check: correct files modified, API contracts match, no regressions. Output STATUS: SUCCESS | FAIL.';
         const conformanceAttrs: Record<string, string> = {
           class: 'review',
-          label: 'Review the implementation against the phase spec and PRD requirements. Check: correct files modified, API contracts match, no regressions. Output STATUS: SUCCESS | FAIL.',
+          label: conformanceLabel,
           read_only: 'true',
           thread_id: threadId,
           timeout: '15m',
@@ -1645,13 +1684,17 @@ export class DotBuilder {
           shape: 'diamond',
         };
         if (!p.goalGate) {
-          testAttrs['max_visits'] = '5';
+          testAttrs['max_visits'] = p.testExpectations?.count !== undefined
+            ? String(computeMaxVisits(p.testExpectations.count))
+            : '5';
           applied.add('P6');
         } else if (spec.defaultMaxRetry) {
           testAttrs['max_visits'] = String(spec.defaultMaxRetry);
           applied.add('P6');
         } else {
-          testAttrs['max_visits'] = '3';
+          testAttrs['max_visits'] = p.testExpectations?.count !== undefined
+            ? String(computeMaxVisits(p.testExpectations.count))
+            : '3';
           applied.add('P6');
         }
         emit(testId, testAttrs);
