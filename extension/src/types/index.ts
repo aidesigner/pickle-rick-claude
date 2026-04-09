@@ -421,6 +421,7 @@ export interface PhaseSpec {
   competing?: boolean;
   redTeam?: boolean;
   bddScenarios?: boolean;
+  deliverables?: string[];
   docOnly?: boolean;
   maxVisits?: number;
   verifyCommand?: string;

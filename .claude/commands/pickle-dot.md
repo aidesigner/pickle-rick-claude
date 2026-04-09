@@ -85,6 +85,8 @@ Extract: slug, goal, tasks, acceptance criteria.
 
 **Count requirements per phase**: For phases with 3+ requirements, flag for BDD scenario generation (`bddScenarios: true`). Phases with 1-2 requirements use spec_tests alone.
 
+**Extract deliverables per phase**: For each phase, identify the concrete outputs from the PRD requirements — these become the phase's `deliverables` list. Use short category labels, not file paths. Common labels: `entity`, `dto`, `service`, `controller`, `component`, `page`, `test_suite`, `crud_operations`, `auth_middleware`, `validation`, `decorators`, `strict_types`, `test_isolation`, `field_alignment`, `pagination`, `inline_edit`, `form_validation_ux`. Each deliverable MUST map to at least one downstream `goal_gate` node's `verifies` list — if a deliverable cannot be mechanically verified by a gate, flag it in the Step 2b checklist for user review.
+
 **Microverse detection** (Pattern 20): A phase qualifies for microverse when ALL of:
 1. **Numeric target** — PRD states a quantitative goal: "reduce to N", "improve to Z%", "keep under N ms", "achieve N% coverage", "at least/at most N", or any number + comparison.
 2. **Measurable** — you can construct a shell command that runs in <60s and prints a number on its last line. If the answer requires human judgment or visual inspection → NOT measurable (use standard impl with LLM judge).
@@ -133,6 +135,7 @@ Phase 1: ${PHASE_NAME}
   Review team: [roles] — ${N} consecutive passes
   Red team: [yes / no] — ${reason}
   Competing impls: [yes / no] — ${reason}
+  Deliverables: ${deliverables_list} → verified by: ${goal_gate_names_with_verifies}
   Decomposition: [N nodes — ${split_reason} / single node — ${reason}]
 
 [repeat per phase]
@@ -163,6 +166,8 @@ Wait for user response. Apply corrections to your analysis, then proceed to **St
 ## Step 3L: Prompt-Only Path (default or `--legacy`)
 
 If `--builder` is **not** set (or `--legacy` is explicitly set), generate DOT directly from your Step 2 analysis without invoking the builder CLI. Read `.claude/commands/pickle-dot-patterns.md` for the complete pattern reference. Apply every pattern detected in Step 2, emit a `digraph ${SLUG} { ... }` using standard attractor DOT syntax, validate structurally (single start/exit, reachability, AC mapping completeness), then save to `./${SLUG}.dot`. Print a brief summary and offer `/attract ${SLUG}.dot` as the next step.
+
+**Deliverables and verifies (MANDATORY for Step 3L):** When emitting raw DOT, add `deliverables="..."` (comma-separated) to every `codergen` node and `verifies="..."` (comma-separated) to every `goal_gate` tool node. The `verifies` list on each gate must reference deliverables from upstream `codergen` nodes that the gate actually checks. **Self-check before saving:** count total unique deliverables across all `codergen` nodes vs total unique `verifies` entries across all `goal_gate` nodes — warn if coverage < 100% (i.e., any deliverable lacks a corresponding `verifies` entry).
 
 ---
 
@@ -207,6 +212,7 @@ interface PhaseSpec {
   competing?: boolean;            // Pattern 18: fan-out to two competing implementations
   redTeam?: boolean;              // Pattern 17: adversarial review after conformance
   bddScenarios?: boolean;         // Pattern 16b: explicit opt-in for Given/When/Then scenarios
+  deliverables?: string[];         // Short category labels of what this phase produces (e.g., ["entity","dto","service"]). Builder emits as deliverables attr on codergen nodes. Builder auto-populates verifies on generated goal_gate nodes from the union of deliverables in upstream phases.
   docOnly?: boolean;              // Suppress verify chain; use for doc-only phases
 }
 
@@ -256,6 +262,7 @@ interface StylesheetConfig {
 | Working dir from Step 1 | `workingDir` |
 | Spec file path from Step 1 | `specFile` |
 | Workspace mode from Step 1 | `workspace`, `workspaceOpts` |
+| Per-phase deliverables from PRD | `phases[].deliverables` — builder emits as `deliverables` attr on codergen, auto-populates `verifies` on goal_gate |
 | Review ratchet pass count | `reviewRatchet` |
 | Microverse detection | `microverse.opts.measureCommand`, `.target`, `.direction` |
 | Provider/model flags | `modelStylesheet` fields |
@@ -422,6 +429,7 @@ PRD: Add full-text search to an articles API (TypeScript/Node, PostgreSQL).
       "allowedPaths": ["src/articles/**", "src/db/**", "tests/articles/**"],
       "escalateOn": ["package.json", "*.lock", "*.config.*", "prisma/schema.prisma"],
       "specFirst": true,
+      "deliverables": ["search_endpoint", "gin_index", "ranked_results", "search_tests"],
       "contextOnSuccess": { "search_returns_ranked_results": "true" }
     }
   ],
@@ -440,7 +448,7 @@ PRD: Add full-text search to an articles API (TypeScript/Node, PostgreSQL).
 }
 ```
 
-Builder applies (auto): 0a `setup_deps`, 0c `capture_baseline`, 0d delta-aware verify, 0e progress gate, 1 test-fix loop, 3 conditional routing, 6 `max_visits`, 6b `read_only`+STATUS, 10 scope creep, 13 lint gate, 14 typecheck gate, 15 conformance, 16 spec-first TDD, 21 `fix_all`, 22 permission scoping, 23 defense matrix. `search_returns_ranked_results` maps to `conformance_search` via `contextOnSuccess`.
+Builder applies (auto): 0a `setup_deps`, 0c `capture_baseline`, 0d delta-aware verify, 0e progress gate, 1 test-fix loop, 3 conditional routing, 6 `max_visits`, 6b `read_only`+STATUS, 10 scope creep, 13 lint gate, 14 typecheck gate, 15 conformance, 16 spec-first TDD, 21 `fix_all`, 22 permission scoping, 23 defense matrix. `search_returns_ranked_results` maps to `conformance_search` via `contextOnSuccess`. Builder emits `deliverables="search_endpoint,gin_index,ranked_results,search_tests"` on codergen nodes and auto-populates `verifies` on goal_gate nodes from the deliverables list.
 
 ---
 
@@ -463,6 +471,7 @@ PRD: JWT auth module + protected REST endpoints (TypeScript/Express). Phases are
       "specFirst": true,
       "bddScenarios": true,
       "securityScan": true,
+      "deliverables": ["jwt_middleware", "refresh_rotation", "timing_safe_compare", "auth_tests"],
       "contextOnSuccess": { "auth_middleware_complete": "true" }
     },
     {
@@ -472,6 +481,7 @@ PRD: JWT auth module + protected REST endpoints (TypeScript/Express). Phases are
       "escalateOn": ["package.json", "*.lock", "*.config.*"],
       "goalGate": true,
       "specFirst": true,
+      "deliverables": ["protected_endpoints", "input_validation", "error_responses", "api_tests"],
       "contextOnSuccess": { "api_endpoints_protected": "true" }
     }
   ],
@@ -547,6 +557,7 @@ Before piping BuilderSpec to the builder, verify:
 - [ ] If `workspace: "isolated"`, `repoUrl` is HTTPS (not `git@`). Builder auto-converts SSH→HTTPS for GitHub/GitLab.
 - [ ] Phase names are unique, lowercase, contain only alphanumeric + underscores.
 - [ ] Phase prompts don't reference file paths outside their `allowedPaths`.
+- [ ] Every phase has `deliverables` and the union of all `verifies` across `goal_gate` nodes covers every deliverable. No orphaned deliverables, no orphaned verifies.
 
 The builder auto-corrects several of these (emitting warnings), but getting them right upfront avoids warning noise and ensures the spec matches your intent.
 

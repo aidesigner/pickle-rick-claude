@@ -1589,6 +1589,9 @@ export class DotBuilder {
         };
         implAttrs['escalate_on'] = (p.escalateOn && p.escalateOn.length > 0) ? p.escalateOn.join(',') : DEFAULT_ESCALATE_ON;
         implAttrs['timeout'] = p.timeout ?? '30m';
+        if (p.deliverables && p.deliverables.length > 0) {
+          implAttrs['deliverables'] = p.deliverables.join(',');
+        }
         if (spec.workspace === 'isolated' && (id === 'commit_and_push' || (id.includes('commit') && id.includes('push')))) {
           if (spec.workspaceOpts?.repoUrl) implAttrs['repo_url'] = spec.workspaceOpts.repoUrl;
           if (spec.workspaceOpts?.cleanup) implAttrs['cleanup'] = spec.workspaceOpts.cleanup;
@@ -1695,6 +1698,18 @@ export class DotBuilder {
           conformanceAttrs['goal_gate'] = 'true';
           applied.add('P2');
           conformanceAttrs['max_visits'] = String(spec.defaultMaxRetry ?? 3);
+          // Auto-populate verifies from upstream deliverables
+          const upstreamDeliverables = new Set<string>();
+          if (p.deliverables) p.deliverables.forEach(d => upstreamDeliverables.add(d));
+          if (p.dependsOn) {
+            for (const depName of p.dependsOn) {
+              const dep = phases.find(pp => pp.name === depName);
+              if (dep?.deliverables) dep.deliverables.forEach(d => upstreamDeliverables.add(d));
+            }
+          }
+          if (upstreamDeliverables.size > 0) {
+            conformanceAttrs['verifies'] = [...upstreamDeliverables].sort().join(',');
+          }
         }
         emit(conformanceId, conformanceAttrs);
         applied.add('P15');
@@ -1755,6 +1770,29 @@ export class DotBuilder {
         // Diagnostic: warn when a complex phase has no structured requirements
         if ((!p.requirements || p.requirements.length === 0) && (p.allowedPaths ?? []).length >= 4) {
           emittedDiagnostics.push(mkDiag('MISSING_REQUIREMENTS', 'warning', `Phase "${p.name}" has ${(p.allowedPaths ?? []).length} allowed paths but no structured requirements — gates cannot verify specific deliverables`, implId));
+        }
+      }
+
+      // Deliverables coverage diagnostic: warn when deliverables lack matching verifies
+      const allDeliverables = new Set<string>();
+      const allVerifies = new Set<string>();
+      for (const p of implPhases) {
+        if (p.deliverables) p.deliverables.forEach(d => allDeliverables.add(d));
+      }
+      // Collect verifies from emitted goal_gate nodes
+      for (const [, attrs] of nodeMap) {
+        if (attrs['goal_gate'] === 'true' && attrs['verifies']) {
+          attrs['verifies'].split(',').forEach(v => allVerifies.add(v.trim()));
+        }
+      }
+      for (const d of allDeliverables) {
+        if (!allVerifies.has(d)) {
+          emittedDiagnostics.push(mkDiag('DELIVERABLES_COVERAGE', 'warning', `Deliverable "${d}" has no matching verifies in any goal_gate node`, undefined));
+        }
+      }
+      for (const v of allVerifies) {
+        if (!allDeliverables.has(v)) {
+          emittedDiagnostics.push(mkDiag('DELIVERABLES_COVERAGE', 'warning', `Verifies entry "${v}" on goal_gate does not match any phase deliverable`, undefined));
         }
       }
 

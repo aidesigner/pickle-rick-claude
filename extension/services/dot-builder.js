@@ -60,6 +60,20 @@ function mkDiag(rule, severity, message, nodeId) {
 }
 function pass() { return { valid: true, diagnostics: [] }; }
 function fail(diagnostics) { return { valid: false, diagnostics }; }
+/** Format a requirements array as '1. X, 2. Y, 3. Z'. */
+function formatRequirementsList(reqs) {
+    return reqs.map((r, i) => `${i + 1}. ${r}`).join(', ');
+}
+/** Compute max_visits for a test diamond from expected test count. */
+function computeMaxVisits(count) {
+    return Math.max(3, Math.ceil(count / 3));
+}
+const UI_REQUIREMENTS = {
+    crud: ['pagination', 'edit form', 'delete action', 'empty state'],
+    dashboard: ['data loading', 'refresh', 'error state', 'responsive layout'],
+    form: ['field validation', 'error display', 'submit handling', 'success feedback'],
+    wizard: ['step navigation', 'step validation', 'progress indicator', 'completion state'],
+};
 /** Serialize a Record<string, string> as sorted K=V comma-separated pairs. */
 function serializeKV(record) {
     return Object.entries(record)
@@ -974,13 +988,14 @@ export class DotBuilder {
             throw new BuildError(preflightError.rule, preflightError.message, preflightDiags);
         }
         // Emit the complete graph
-        const { dot, nodeMap, edgeList, graphAttrs, standaloneNodeIds, patternsApplied, defenseMatrix } = this._emitDot();
+        const { dot, nodeMap, edgeList, graphAttrs, standaloneNodeIds, patternsApplied, defenseMatrix, emittedDiagnostics } = this._emitDot();
         // Carry forward non-error preflight diagnostics (warnings/info from auto-corrections)
         const preflightNonErrors = preflightDiags.filter(d => d.severity !== 'error');
         // Run all 15 structural validation rules
         const { acceptanceCriteria = {} } = this._spec;
         const diagnostics = [
             ...preflightNonErrors,
+            ...emittedDiagnostics,
             ...grRule1(nodeMap),
             ...grRule2(nodeMap, edgeList),
             ...grRule3(nodeMap, edgeList, standaloneNodeIds),
@@ -1110,6 +1125,7 @@ export class DotBuilder {
         const nodeMap = new Map();
         const edgeList = [];
         const standaloneNodeIds = new Set();
+        const emittedDiagnostics = [];
         const emit = (id, attrs) => {
             nodes.push(`  ${id} [${fmtAttrs(attrs)}]`);
             nodeMap.set(id, { ...attrs });
@@ -1423,22 +1439,38 @@ export class DotBuilder {
                     continue;
                 }
                 // Regular impl phase
+                // UI completeness injection: auto-append defaults for known uiType values
+                const reqs = [...(p.requirements ?? [])];
+                if (p.uiType) {
+                    const uiDefaults = UI_REQUIREMENTS[p.uiType] ?? [];
+                    for (const def of uiDefaults) {
+                        if (!reqs.some(r => r.toLowerCase().includes(def.toLowerCase()))) {
+                            reqs.push(def);
+                        }
+                    }
+                }
                 const testId = `test_${id}`;
                 const fixId = `fix_${id}`;
                 const verifyLintId = `verify_lint_${id}`;
                 const verifyTypesId = `verify_types_${id}`;
                 // Spec-first gates (P16 / P16b)
                 if (emitBDD && emitSpec) {
+                    const bddLabel = reqs.length > 0
+                        ? `Review BDD scenarios against phase prompt. Verify ${reqs.length} scenarios with Given/When/Then covering: ${formatRequirementsList(reqs)}. Output STATUS: SUCCESS | FAIL.`
+                        : 'Review BDD scenarios against phase prompt. Verify each scenario has Given/When/Then. Output STATUS: SUCCESS | FAIL.';
                     emit(bddId, {
                         class: 'review',
-                        label: 'Review BDD scenarios against phase prompt. Verify each scenario has Given/When/Then. Output STATUS: SUCCESS | FAIL.',
+                        label: bddLabel,
                         read_only: 'true',
                         thread_id: threadId,
                         timeout: '15m',
                     });
+                    const specLabelBDD = reqs.length > 0
+                        ? `Review spec file. Verify ${reqs.length} machine-checkable acceptance criteria for: ${formatRequirementsList(reqs)}. Output STATUS: SUCCESS | FAIL.`
+                        : 'Review spec file against phase prompt and BDD scenarios. Verify acceptance criteria are machine-checkable. Output STATUS: SUCCESS | FAIL.';
                     emit(specId, {
                         class: 'review',
-                        label: 'Review spec file against phase prompt and BDD scenarios. Verify acceptance criteria are machine-checkable. Output STATUS: SUCCESS | FAIL.',
+                        label: specLabelBDD,
                         read_only: 'true',
                         thread_id: threadId,
                         timeout: '15m',
@@ -1450,9 +1482,12 @@ export class DotBuilder {
                     applied.add('P16');
                 }
                 else if (emitSpec) {
+                    const specLabel = reqs.length > 0
+                        ? `Review spec file. Verify ${reqs.length} machine-checkable acceptance criteria for: ${formatRequirementsList(reqs)}. Output STATUS: SUCCESS | FAIL.`
+                        : 'Review spec file against phase prompt. Verify acceptance criteria are machine-checkable. Output STATUS: SUCCESS | FAIL.';
                     emit(specId, {
                         class: 'review',
-                        label: 'Review spec file against phase prompt. Verify acceptance criteria are machine-checkable. Output STATUS: SUCCESS | FAIL.',
+                        label: specLabel,
                         read_only: 'true',
                         thread_id: threadId,
                         timeout: '15m',
@@ -1475,6 +1510,9 @@ export class DotBuilder {
                 };
                 implAttrs['escalate_on'] = (p.escalateOn && p.escalateOn.length > 0) ? p.escalateOn.join(',') : DEFAULT_ESCALATE_ON;
                 implAttrs['timeout'] = p.timeout ?? '30m';
+                if (p.deliverables && p.deliverables.length > 0) {
+                    implAttrs['deliverables'] = p.deliverables.join(',');
+                }
                 if (spec.workspace === 'isolated' && (id === 'commit_and_push' || (id.includes('commit') && id.includes('push')))) {
                     if (spec.workspaceOpts?.repoUrl)
                         implAttrs['repo_url'] = spec.workspaceOpts.repoUrl;
@@ -1508,7 +1546,24 @@ export class DotBuilder {
                     tool_command: "cd ${WORKING_DIR} && [ $(git status --porcelain | wc -l) -gt 0 ] && echo 'STATUS: SUCCESS' || echo 'STATUS: FAIL'",
                 });
                 applied.add('P0e');
-                link(scopeCheckId, checkProgressId);
+                // Test isolation gate: when testExpectations.isolation === true, insert between scope_check and check_progress
+                if (p.testExpectations?.isolation === true) {
+                    const testIsolationId = `test_isolation_${id}`;
+                    const testPaths = expandWithTestDirs(p.allowedPaths ?? [])
+                        .filter(tp => tp.startsWith('tests/') || tp.startsWith('__tests__/'))
+                        .join(' ');
+                    emit(testIsolationId, {
+                        label: 'Verify test isolation: beforeEach/afterEach present in test files',
+                        shape: 'parallelogram',
+                        thread_id: threadId,
+                        tool_command: `grep -rl 'beforeEach\\|afterEach' ${testPaths || '.'} && echo 'STATUS: SUCCESS' || echo 'STATUS: FAIL'`,
+                    });
+                    link(scopeCheckId, testIsolationId);
+                    link(testIsolationId, checkProgressId);
+                }
+                else {
+                    link(scopeCheckId, checkProgressId);
+                }
                 // P13: verify_lint
                 emit(verifyLintId, {
                     label: 'verify_lint: BASELINE from cat baseline_lint_errors; CURRENT lint error count -le BASELINE',
@@ -1544,9 +1599,12 @@ export class DotBuilder {
                     link(verifyTypesId, conformanceId);
                 }
                 // P15: conformance
+                const conformanceLabel = reqs.length > 0
+                    ? `Verify these ${reqs.length} requirements in git diff: ${formatRequirementsList(reqs)}. Check: correct files modified, API contracts match. Output STATUS: SUCCESS | FAIL.`
+                    : 'Review the implementation against the phase spec and PRD requirements. Check: correct files modified, API contracts match, no regressions. Output STATUS: SUCCESS | FAIL.';
                 const conformanceAttrs = {
                     class: 'review',
-                    label: 'Review the implementation against the phase spec and PRD requirements. Check: correct files modified, API contracts match, no regressions. Output STATUS: SUCCESS | FAIL.',
+                    label: conformanceLabel,
                     read_only: 'true',
                     thread_id: threadId,
                     timeout: '15m',
@@ -1558,6 +1616,20 @@ export class DotBuilder {
                     conformanceAttrs['goal_gate'] = 'true';
                     applied.add('P2');
                     conformanceAttrs['max_visits'] = String(spec.defaultMaxRetry ?? 3);
+                    // Auto-populate verifies from upstream deliverables
+                    const upstreamDeliverables = new Set();
+                    if (p.deliverables)
+                        p.deliverables.forEach(d => upstreamDeliverables.add(d));
+                    if (p.dependsOn) {
+                        for (const depName of p.dependsOn) {
+                            const dep = phases.find(pp => pp.name === depName);
+                            if (dep?.deliverables)
+                                dep.deliverables.forEach(d => upstreamDeliverables.add(d));
+                        }
+                    }
+                    if (upstreamDeliverables.size > 0) {
+                        conformanceAttrs['verifies'] = [...upstreamDeliverables].sort().join(',');
+                    }
                 }
                 emit(conformanceId, conformanceAttrs);
                 applied.add('P15');
@@ -1568,7 +1640,9 @@ export class DotBuilder {
                     shape: 'diamond',
                 };
                 if (!p.goalGate) {
-                    testAttrs['max_visits'] = '5';
+                    testAttrs['max_visits'] = p.testExpectations?.count !== undefined
+                        ? String(computeMaxVisits(p.testExpectations.count))
+                        : '5';
                     applied.add('P6');
                 }
                 else if (spec.defaultMaxRetry) {
@@ -1576,7 +1650,9 @@ export class DotBuilder {
                     applied.add('P6');
                 }
                 else {
-                    testAttrs['max_visits'] = '3';
+                    testAttrs['max_visits'] = p.testExpectations?.count !== undefined
+                        ? String(computeMaxVisits(p.testExpectations.count))
+                        : '3';
                     applied.add('P6');
                 }
                 emit(testId, testAttrs);
@@ -1609,6 +1685,33 @@ export class DotBuilder {
                 else {
                     prevId = testId;
                     prevAttrs = { condition: 'outcome=success', label: 'pass' };
+                }
+                // Diagnostic: warn when a complex phase has no structured requirements
+                if ((!p.requirements || p.requirements.length === 0) && (p.allowedPaths ?? []).length >= 4) {
+                    emittedDiagnostics.push(mkDiag('MISSING_REQUIREMENTS', 'warning', `Phase "${p.name}" has ${(p.allowedPaths ?? []).length} allowed paths but no structured requirements — gates cannot verify specific deliverables`, implId));
+                }
+            }
+            // Deliverables coverage diagnostic: warn when deliverables lack matching verifies
+            const allDeliverables = new Set();
+            const allVerifies = new Set();
+            for (const p of implPhases) {
+                if (p.deliverables)
+                    p.deliverables.forEach(d => allDeliverables.add(d));
+            }
+            // Collect verifies from emitted goal_gate nodes
+            for (const [, attrs] of nodeMap) {
+                if (attrs['goal_gate'] === 'true' && attrs['verifies']) {
+                    attrs['verifies'].split(',').forEach(v => allVerifies.add(v.trim()));
+                }
+            }
+            for (const d of allDeliverables) {
+                if (!allVerifies.has(d)) {
+                    emittedDiagnostics.push(mkDiag('DELIVERABLES_COVERAGE', 'warning', `Deliverable "${d}" has no matching verifies in any goal_gate node`, undefined));
+                }
+            }
+            for (const v of allVerifies) {
+                if (!allDeliverables.has(v)) {
+                    emittedDiagnostics.push(mkDiag('DELIVERABLES_COVERAGE', 'warning', `Verifies entry "${v}" on goal_gate does not match any phase deliverable`, undefined));
                 }
             }
             // P21: disaggregated verify/fix endgame chain
@@ -1728,6 +1831,6 @@ export class DotBuilder {
             ...edges,
             '}',
         ];
-        return { dot: lines.join('\n'), nodeMap, edgeList, graphAttrs, standaloneNodeIds, patternsApplied: [...applied], defenseMatrix };
+        return { dot: lines.join('\n'), nodeMap, edgeList, graphAttrs, standaloneNodeIds, patternsApplied: [...applied], defenseMatrix, emittedDiagnostics };
     }
 }
