@@ -170,7 +170,7 @@ After all implementation tickets exist, create one final integration ticket. Iso
 - **Application** (has entry point: `main.ts`, `index.ts`, `app.ts`, `server.ts`, Next.js/NestJS/Express scaffold, UI framework): use the **Application** template variant below
 - **Library/CLI/Infrastructure** (exports modules, no launch entry point, internal tooling, SDK, CLI tool): use the **Library** template variant below
 
-**Derive verify commands** from Step 2 tech stack: use `${TEST_CMD}`, `${BUILD_CMD}`, `${LINT_CMD}` detected during PRD analysis. Never leave `[project-specific run command]` placeholders — the worker runs headless.
+**Derive verify commands** from Step 2 tech stack: use `${TC_CMD}`, `${TEST_CMD}`, `${BUILD_CMD}`, `${LINT_CMD}` detected during PRD analysis. Never leave `[project-specific run command]` placeholders — the worker runs headless.
 
 Hash: `openssl rand -hex 4`. Dir: `${SESSION_ROOT}/[hash]/`. File: `linear_ticket_[hash].md`:
 
@@ -248,14 +248,214 @@ All prior tickets (depends_on) are complete and individually verified.
 Implementing new features. Fixing bugs in individual modules (those belong in the relevant ticket). Performance optimization.
 ```
 
-### 7e: Append Breakdown
-Add `## Implementation Task Breakdown` table to `${SESSION_ROOT}/prd_refined.md`: Order | ID | Title | Priority | Entry | Exit | Files. Include the wiring ticket as the final row.
+### 7e: Create Hardening Tickets
 
-### 7f: Advance State
+After all implementation and wiring tickets, create **two** hardening tickets. These run as normal Morty workers with full implementation context. They depend on ALL prior tickets (including wiring if present).
+
+**Skip gate:** Skip this step if total implementation tickets = 1 AND that ticket's `complexity_tier` is `trivial` or `small`.
+
+Collect the union of all `Files to modify/create` from every implementation + wiring ticket → `MODIFIED_FILES`. Collect unique parent directories of MODIFIED_FILES → `AFFECTED_SUBSYSTEMS`.
+
+**Derive verify commands**: Use the same `${TC_CMD}`, `${TEST_CMD}`, `${BUILD_CMD}` detected in Step 2 tech stack analysis. Replace ALL bracketed placeholders (`[MODIFIED_FILES...]`, `[AFFECTED_SUBSYSTEMS...]`, `[feature area]`) and `${...}` template variables with concrete values before writing the ticket file. No unresolved placeholders may survive into the written ticket.
+
+**Ticket 1: Code Quality Hardening**
+
+Hash: `openssl rand -hex 4`. Dir: `${SESSION_ROOT}/[hash]/`. File: `linear_ticket_[hash].md`:
+
+```markdown
+---
+id: [hash]
+title: "Harden: code quality review of [feature area]"
+status: Todo
+priority: High
+complexity_tier: large
+order: [last order + 10]
+working_dir: [project root]
+created: [Date]
+updated: [Date]
+depends_on: [ALL prior ticket IDs, comma-separated]
+links:
+  - url: ../linear_ticket_parent.md
+    title: Parent
+---
+# Description
+## Problem
+Implementation tickets were built by isolated workers with fresh context. Each ticket passes its own acceptance criteria, but cross-cutting quality issues — DRY violations across tickets, inconsistent error handling, dead code from iteration, premature abstractions, missing edge cases — only become visible when reviewing the complete diff.
+
+## Solution
+Review ALL files modified by implementation tickets against the principle checklist below. Fix violations P0-P2 one at a time, write regression tests, commit atomically.
+
+## Entry Conditions
+All prior tickets (depends_on) are complete and individually verified. Test suite passes.
+
+## Research Seeds
+- **Files**: [MODIFIED_FILES — full list from all prior tickets]
+- **Patterns**: KISS, YAGNI, DRY (Rule of Three), Small Functions, Guard Clauses, Cognitive Load, Self-Documenting Code, Fail-Fast, Encapsulation, Separation of Concerns
+- **APIs/types**: Public interfaces from prior tickets' Interface Contracts sections
+- **Test patterns**: Run existing test suite, add missing edge case tests
+
+## Implementation Details
+**Review scope**: ONLY files listed in MODIFIED_FILES. Do not touch files outside the implementation diff.
+
+**Lifecycle mapping**: During Research phase, read all MODIFIED_FILES and catalog violations. During Plan phase, prioritize violations by severity and plan fix order. During Implement phase, execute the review-fix loop below. Standard lifecycle artifacts (research, plan, conformance, review) are required.
+
+**Review-fix loop (Implement phase)** — repeat for each file until zero P0-P1 violations remain, then move to next file:
+1. Read the file. Check against each principle below.
+2. Rate each violation: P0 (security/data loss), P1 (bugs waiting), P2 (maintainability), P3 (polish).
+3. Fix highest-priority violation. One fix per commit.
+4. Write regression test if the fix changes behavior.
+5. Run full test suite. If regression → revert, move to next violation.
+6. Re-check the file. If P0-P1 violations remain, repeat from step 3.
+
+**Principle checklist (check ALL modified files)**:
+- Functions > 50 lines → extract named helpers
+- Nesting 3+ levels → guard clauses / early return
+- Copy-pasted code 3+ times across tickets → extract shared function
+- Magic numbers/strings → named constants
+- Dead code from iteration (unused exports, stale imports) → delete
+- Silent error swallowing → fail-fast or log
+- Missing input validation at system boundaries → add guards
+- Tautological test assertions → assert on real behavior
+- Only happy path tested → add error/boundary tests
+- Speculative features/abstractions not used → delete (YAGNI)
+
+## Interface Contracts
+**Inputs**: MODIFIED_FILES list (file paths from prior tickets) | **Outputs**: Cleaned files, regression tests, atomic commits | **Errors**: Test regressions trigger revert of the specific fix | **Invariants**: No behavioral change without a regression test
+
+## Acceptance Criteria
+- [ ] Zero P0 violations in MODIFIED_FILES — Verify: manual review complete, no security/data-loss issues — Type: llm-conformance
+- [ ] Zero P1 violations in MODIFIED_FILES — Verify: manual review complete, no bugs-waiting-to-happen — Type: llm-conformance
+- [ ] All functions ≤ 50 lines in MODIFIED_FILES — Verify: grep for function bodies — Type: lint
+- [ ] No dead imports/exports in MODIFIED_FILES — Verify: `${TC_CMD}` + grep unused — Type: lint
+- [ ] Test suite passes — Verify: `${TEST_CMD}` — Type: test
+- [ ] Type checker passes — Verify: `${TC_CMD}` — Type: typecheck
+
+## Test Expectations
+| Criterion | Test File | Description | Assertion |
+|:---|:---|:---|:---|
+| P1 violation fixes | Alongside each fix | Regression test per behavioral fix | Exercises the specific failure mode |
+| Edge cases | In existing test files | Error/boundary tests for modified code | Covers empty, null, max, error states |
+
+## Conformance Check
+- [ ] Type checker passes — no new errors
+- [ ] Test runner passes — all acceptance tests
+- [ ] Contracts match impl signatures (resolve aliases, compare fields)
+- [ ] No new dead code introduced by fixes
+
+## Exit State
+All MODIFIED_FILES have zero P0-P1 violations. P2 fixes applied where time permits. Each fix is an atomic commit with format: `harden: [principle] — [description]`.
+
+## NOT in Scope
+Reviewing files outside MODIFIED_FILES. Adding new features. Refactoring code not touched by implementation tickets. P3-P4 violations unless trivially fixable.
+```
+
+**Ticket 2: Data Flow Audit**
+
+Hash: `openssl rand -hex 4`. Dir: `${SESSION_ROOT}/[hash]/`. File: `linear_ticket_[hash].md`:
+
+```markdown
+---
+id: [hash]
+title: "Audit: data flow integrity for [feature area]"
+status: Todo
+priority: High
+complexity_tier: large
+order: [last order + 10]
+working_dir: [project root]
+created: [Date]
+updated: [Date]
+depends_on: [ALL prior ticket IDs, comma-separated]
+links:
+  - url: ../linear_ticket_parent.md
+    title: Parent
+---
+# Description
+## Problem
+Isolated workers build modules with fresh context. Cross-module data flow bugs — mismatched IDs, stale schema imports, timezone-unsafe date parsing, inconsistent rounding, DTO fields that are stored but never returned — only surface when tracing the full path from input to output across the implementation.
+
+## Solution
+Three-phase data flow trace through AFFECTED_SUBSYSTEMS: read-only review, targeted fix, read-only self-verify. One finding per commit. Maximum 3 phase cycles.
+
+## Entry Conditions
+All prior tickets including code quality hardening are complete. Test suite passes.
+
+## Research Seeds
+- **Files**: [MODIFIED_FILES — full list from all prior tickets]
+- **Subsystems**: [AFFECTED_SUBSYSTEMS — parent directories]
+- **APIs/types**: Public interfaces from prior tickets' Interface Contracts sections
+- **Patterns**: Data flow tracing — follow values from construction to every consumption site
+- **Test patterns**: Integration-style tests exercising actual data flow, not mocked internals
+
+## Implementation Details
+**Scope**: Trace data flows ONLY through AFFECTED_SUBSYSTEMS. You may READ unmodified files to understand context, but only MODIFY files listed in MODIFIED_FILES.
+
+**Lifecycle mapping**: During Research phase, read all MODIFIED_FILES and trace data flows across them. During Plan phase, catalog findings with severity ratings. During Implement phase, execute the three-phase protocol below. Standard lifecycle artifacts (research, plan, conformance, review) are required.
+
+**Three-phase protocol (Implement phase)** — maximum 3 cycles. If findings persist after 3 cycles, document remaining issues as trap doors and exit:
+
+**Phase 1 — READ-ONLY review (do NOT edit files)**:
+For each modified file, trace data flows across ticket boundaries. For each finding:
+1. **Trace data path**: input → processing → output. Show: "value X constructed at file.ts:123, passed to file2.ts:456, consumed at file3.ts:789 where..."
+2. **Check fix history**: `git log --oneline -- <file>` for files with findings
+3. **Rate severity**: CRITICAL (data corruption, security bypass, wrong calculations) or HIGH (defense-in-depth gap, incorrect but non-corrupting)
+4. **Propose fix** with exact code — but DO NOT apply yet
+
+**Review checklist — check ALL**:
+- Every index/ID: construction site matches consumption site
+- Every schema/type export: grep all imports, verify current version
+- Every `new Date(string)`: UTC-safe parsing — no `getMonth()` on non-UTC dates
+- Every financial calculation: same rounding at both pipeline ends
+- Every new DTO field: stored, read, AND returned
+- Every `.refine()`/`.min()`/`.max()`: `.parse()` called at runtime
+- Cross-ticket interfaces: types match across ticket boundaries
+
+**Phase 2 — FIX** (only if Phase 1 found issues):
+Pick single highest-severity finding. Minimal fix. Write regression test exercising actual data flow. Run test suite. If regression → revert, defer to next finding.
+
+**Phase 3 — READ-ONLY self-verify**:
+After each fix: verify callers, consumers, dead code, boolean logic branches. If verification fails → revert.
+
+**Convergence**: Two consecutive Phase 1 passes where zero CRITICAL+HIGH findings are discovered means convergence — exit the loop. If not converged after 3 full cycles, document remaining findings as trap doors in subsystem CLAUDE.md and exit.
+
+## Interface Contracts
+**Inputs**: MODIFIED_FILES list, AFFECTED_SUBSYSTEMS list | **Outputs**: Verified data flows, regression tests, atomic commits, trap door documentation | **Errors**: Verification failures trigger revert of the specific fix | **Invariants**: No data flow crosses a ticket boundary without type alignment at both ends
+
+## Acceptance Criteria
+- [ ] Zero CRITICAL findings in data flows through AFFECTED_SUBSYSTEMS — Verify: Phase 1 review complete — Type: llm-conformance
+- [ ] Zero HIGH findings in data flows through AFFECTED_SUBSYSTEMS — Verify: Phase 1 review complete — Type: llm-conformance
+- [ ] All cross-ticket interfaces type-match — Verify: `${TC_CMD}` — Type: typecheck
+- [ ] Test suite passes — Verify: `${TEST_CMD}` — Type: test
+- [ ] Each fix has a regression test — Verify: `git log --oneline` shows test alongside each fix — Type: test
+
+## Test Expectations
+| Criterion | Test File | Description | Assertion |
+|:---|:---|:---|:---|
+| Data flow integrity | Integration test file | Trace value from entry to exit | Output matches expected transformation |
+| Cross-ticket handoff | Integration test file | Value crosses module boundary | Types align, no silent coercion |
+
+## Conformance Check
+- [ ] Type checker passes — no new errors
+- [ ] Test runner passes — all acceptance tests
+- [ ] Contracts match impl signatures (resolve aliases, compare fields)
+- [ ] All CRITICAL/HIGH findings resolved or documented as trap doors
+
+## Exit State
+Zero CRITICAL+HIGH findings across two consecutive Phase 1 reviews, OR all remaining findings documented as trap doors after 3 cycles. Each fix is an atomic commit with format: `audit: [CRITICAL/HIGH] [description]`. Trap doors documented in subsystem CLAUDE.md.
+
+## NOT in Scope
+Reviewing subsystems not in AFFECTED_SUBSYSTEMS. Modifying files not in MODIFIED_FILES. Adding features. P2+ findings. Performance optimization.
+```
+
+### 7f: Append Breakdown
+Add `## Implementation Task Breakdown` table to `${SESSION_ROOT}/prd_refined.md`: Order | ID | Title | Priority | Entry | Exit | Files. Include wiring and hardening tickets as final rows.
+
+### 7g: Advance State
 ```bash
 node "${EXTENSION_ROOT}/extension/bin/update-state.js" step research "${SESSION_ROOT}"
 node "${EXTENSION_ROOT}/extension/bin/update-state.js" current_ticket ${FIRST_ID} "${SESSION_ROOT}"
 ```
+
+Note: `${FIRST_ID}` is the first **implementation** ticket, not a hardening ticket. Hardening tickets run last.
 
 ## Step 8: Update Original PRD
 Write `${SESSION_ROOT}/prd_refined.md` back to `<PRD_PATH>`. Pre-refinement preserved at `${SESSION_ROOT}/prd.md`.

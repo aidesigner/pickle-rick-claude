@@ -44,6 +44,12 @@ Three AI analysts run in parallel and tear your PRD apart from different angles 
 What you get back:
 - `prd_refined.md` — your PRD with concrete file paths, interface contracts, and gap fills
 - Atomic tickets — each < 30 min of work, < 5 files, < 4 acceptance criteria, self-contained
+- Wiring ticket (3+ tickets) — integrates isolated modules into a working whole
+- **Hardening tickets** — auto-appended code quality review + data flow audit scoped to modified files
+
+The hardening tickets (skipped for trivial/small single-ticket PRDs) run as normal Morty workers after all implementation work:
+1. **Code Quality Hardening** — szechuan-sauce principles review (KISS, DRY, dead code, edge cases) on all modified files
+2. **Data Flow Audit** — anatomy-park-style trace through affected subsystems (ID mismatches, stale schemas, cross-ticket interface alignment)
 
 **Review the tickets before proceeding.** Check ordering, scope, and acceptance criteria. You can edit them directly — they're markdown files.
 
@@ -105,17 +111,20 @@ You describe a feature
        │
        ▼
   /pickle-refine-prd       ← 3 parallel analysts refine + decompose into tickets
-       │
+       │                      Includes auto-generated hardening tickets:
+       │                      • Code quality review (szechuan-sauce principles)
+       │                      • Data flow audit (anatomy-park trace)
        ▼
   /pickle-tmux --resume    ← Autonomous implementation (Ralph loop)
        │                      Research → Plan → Implement → Verify → Review → Simplify
        │                      Context clears every iteration. Circuit breaker auto-stops runaways.
+       │                      Hardening tickets run automatically after implementation.
        ▼
   /pickle-microverse       ← (Optional) Metric-driven optimization loop
        │
        ▼
-  /szechuan-sauce          ← (Optional) Code quality cleanup
-  /anatomy-park            ← (Optional) Data flow correctness review
+  /szechuan-sauce          ← (Optional) Additional code quality cleanup
+  /anatomy-park            ← (Optional) Additional data flow correctness review
        │
        ▼
   Ship it 🥒
