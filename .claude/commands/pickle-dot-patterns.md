@@ -555,10 +555,109 @@ Detection heuristic: any `new` expression inside `for`/`while`/`.map()`/`.forEac
 - `goal_gate=true` with `retry_target` but no `max_visits` (validator rule 19 — infinite retry loop)
 - Fan-out (`component`) without matching fan-in (`tripleoctagon`) (validator rule 20 — pipeline stalls)
 - Fan-out branch `retry_target` pointing outside its `component→tripleoctagon` scope (validator rule 17 — stripped at runtime, retry is silently ineffective)
+- `goal_gate=true` tool node with `verifies="a,b,c"` whose `tool_command` neither references any of the labels textually nor uses a blanket runner (validator rule `verifies_tool_command_references` — declaration drift, gate claims to check labels it doesn't actually check)
+- Codergen `prompt` or `label` containing template placeholders like `errors.field_name`, `input.foo`, `{{field}}`, or `${template.var}` (validator rule `codergen_prompt_placeholder_smell` — unresolved template syntax the agent has no way to interpret)
 - >4 reviewers per team
 - Broad codergen prompt spanning 2+ layers or test categories on non-Opus models (use Pattern 31 decomposition)
 - Multiple test nodes writing to the same file (each test node gets its own file)
 - Node scope decomposition inside competing impl branches (Pattern 18 already provides redundancy)
+
+## Deliverables & Verifies Rules
+
+Full reference for the compact block in `pickle-dot.md` Step 3L. Three related validator rules are enforced at validate time: `deliverables_coverage`, `verifies_tool_command_references`, and `codergen_prompt_placeholder_smell`. Together they require that every declared deliverable is checked by a gate whose `tool_command` actually references it (or implicitly covers it via a blanket runner), and that codegen prompts don't leak unresolved template syntax.
+
+### Blanket runner allowlist
+
+If a `goal_gate` tool node's `tool_command` contains any of these substrings (case-insensitive), `verifies_tool_command_references` treats it as implicit coverage for all labels in its `verifies=` attribute — no further label matching needed.
+
+- **Test runners**: `npm test`, `npm run test`, `yarn test`, `pnpm test`, `bun test`, `jest`, `vitest`, `mocha`, `ava`, `tap ` (trailing space), `cargo test`, `go test`, `pytest`, `rspec`
+- **Typecheckers**: `npx tsc`, `tsc --`, `tsc -p`, `bun tsc`, `bun run tsc`
+- **Builders**: `next build`, `nest build`, `npm run build`, `yarn build`, `pnpm build`, `npx next build`, `npx nest build`
+- **Integration runners**: `curl ` (with trailing space / tab / quote)
+
+Runtime behaviors are verified by running tests, not by grepping source. Put test-verified deliverables on test-runner gates.
+
+### Label matching (for non-blanket commands)
+
+For each label in `verifies=`, the rule passes if ANY of:
+
+1. **Substring**: the label appears verbatim (case-insensitive) in `tool_command`. Example: `verifies="inline_edit"` with `tool_command="... check $X 2 'inline_edit'"` → pass.
+2. **Token match**: split the label on underscore, keep tokens of length ≥ 2, and require ALL of them to appear somewhere in the command. Example: `verifies="ui_types"` with `tool_command="... ls packages/ui/lib/types.ts"` → pass (both `ui` and `types` are present).
+
+If neither holds, the gate fails with `verifies_tool_command_references`.
+
+### The `check $X N 'label'` pattern (MANDATORY for multi-label check gates)
+
+When a single gate verifies multiple deliverables via explicit shell checks (not a blanket runner), use a `check` function with the label verbatim as the third positional arg. Each label appears as a literal string, satisfying rule (1) above.
+
+```
+verify_spec [
+  shape=parallelogram,
+  verifies="pagination,form_field_highlighting,inline_edit",
+  tool_command="cd ${WORKING_DIR} && check() { if [ \"$1\" -lt \"$2\" ]; then echo \"FAIL: $3 (got $1, need $2)\"; exit 1; fi; echo \"OK: $3\"; } && PAGIN=$(grep -c 'page' app/page.tsx) && check $PAGIN 1 'pagination' && ARIA=$(grep -c 'aria-invalid' app/apply/page.tsx) && check $ARIA 3 'form_field_highlighting' && INLINE=$(grep -c 'isEditing' app/detail.tsx) && check $INLINE 2 'inline_edit'",
+  goal_gate=true
+]
+```
+
+### GOOD / BAD examples
+
+```
+// GOOD — blanket runner implicitly verifies every label
+run_api_tests [
+  shape=parallelogram,
+  verifies="crud_tests,validation_tests,status_tests,crud_operations,status_transitions",
+  tool_command="cd ${WORKING_DIR} && npm test 2>&1",
+  goal_gate=true
+]
+
+// GOOD — labels appear as check identifiers
+verify_spec [
+  shape=parallelogram,
+  verifies="pagination,form_field_highlighting,inline_edit",
+  tool_command="cd ${WORKING_DIR} && check() { ... } && ... && check $ARIA 3 'form_field_highlighting' && ...",
+  goal_gate=true
+]
+
+// BAD — verifies claims crud_operations but command has no reference and no blanket runner
+verify_type_safety [
+  shape=parallelogram,
+  verifies="crud_operations",
+  tool_command="grep -rn 'as any' src/",
+  goal_gate=true
+]
+// → rejected by verifies_tool_command_references
+// Fix: move crud_operations to a gate running `npm test`, replace the command with an explicit check, or drop the label.
+```
+
+### Placement table
+
+| Deliverable kind | Example labels | Gate type |
+|---|---|---|
+| Runtime behaviors | `crud_operations`, `status_transitions`, `auth_flow`, `error_recovery` | Test-runner gate (`npm test`, `pytest`, `go test`) |
+| Type / lint / build invariants | `strict_types`, `no_any`, `no_console_errors` | Typechecker / linter / builder gate (`npx tsc`, `npx eslint`, `next build`) |
+| File structure artifacts | `entity`, `dto`, `service_class`, `migration_file` | Grep / check-based gate that references files or class names by path/name |
+| UI presence | `pagination`, `form_field_highlighting`, `inline_edit` | Grep-based gate using the `check $X N 'label'` pattern on component files |
+| Integration endpoints | `health_endpoint`, `crud_endpoint` | `curl` gate hitting the endpoint, or test-runner gate |
+
+### Prompt placeholder smells (`codergen_prompt_placeholder_smell`)
+
+Never emit a `codergen` node's `prompt` or `label` containing unresolved template placeholders — dotted paths like `errors.field_name`, `input.foo`, moustache `{{field}}`, or `${template.var}` substitutions that weren't expanded at DOT-build time. The validator flags these as leftover template syntax the agent has no way to interpret.
+
+```
+// BAD — template placeholder
+label="Display errors.field_name next to each invalid input"
+
+// GOOD — concrete description
+label="Display the validation message from the zod error schema next to each invalid input field"
+
+// BAD — unresolved moustache
+label="Fetch {{entity}} from the API and render"
+
+// GOOD — names the actual entity
+label="Fetch the loan application record from GET /applications/:id and render its fields"
+```
+
+The distinction: template placeholders reference variables the agent can't resolve at execution time. Concrete descriptions name the actual files, fields, and entities the agent can locate by reading the code.
 
 ## Model Routing
 

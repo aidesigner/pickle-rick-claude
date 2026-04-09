@@ -499,6 +499,8 @@ When the builder exits 1, `/pickle-dot` enters an automatic fix loop. It reads t
 
 Re-run after fixing: `/pickle-dot <prd>`. The `.dot.draft` file is not a valid pipeline — do not submit it to `/attract` until errors are resolved.
 
+**Legacy (prompt-only) path:** `/pickle-dot --legacy` also runs a post-save validate-fix loop with the same convergence guard, invoking the attractor validator CLI (`bun packages/attractor/src/cli.ts validate`) on the emitted raw DOT. On exhaustion it saves the best attempt as `./<slug>.dot.draft`. If the validator CLI is unavailable (attractor root not detected), the loop is skipped and the initial DOT is saved as-is with a warning.
+
 **Validation error codes:** `EMPTY_SLUG`, `EMPTY_GOAL`, `DUPLICATE_PHASE`, `INVALID_SPEC`, `MISSING_AC_MAPPING`, `MISSING_TIMEOUT`, `INVALID_TIMEOUT`, `MISSING_ALLOWED_PATHS`, `INVALID_ALLOWED_PATHS`, `PROMPT_PATH_MISMATCH`, `INVALID_STRUCTURE`, `START_HAS_INCOMING`, `UNREACHABLE_NODE`, `DIAMOND_MISSING_EDGES`, `FAN_OUT_SCOPE_LEAK`, `GOAL_GATE_NO_MAX_VISITS`, `REVIEW_MISSING_READONLY`, `WORKSPACE_NO_HTTPS`, `WORKSPACE_NO_PUSH`, `PLAN_MODE_DEADLOCK`, `COMPONENT_NO_MERGE`, `INVALID_RATCHET`, `NON_NUMERIC_TARGET`, `ALREADY_BUILT`
 
 ### 🏛️ Council of Ricks — Details

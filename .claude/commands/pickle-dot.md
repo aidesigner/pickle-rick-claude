@@ -85,7 +85,7 @@ Extract: slug, goal, tasks, acceptance criteria.
 
 **Count requirements per phase**: For phases with 3+ requirements, flag for BDD scenario generation (`bddScenarios: true`). Phases with 1-2 requirements use spec_tests alone.
 
-**Extract deliverables per phase**: For each phase, identify the concrete outputs from the PRD requirements — these become the phase's `deliverables` list. Use short category labels, not file paths. Common labels: `entity`, `dto`, `service`, `controller`, `component`, `page`, `test_suite`, `crud_operations`, `auth_middleware`, `validation`, `decorators`, `strict_types`, `test_isolation`, `field_alignment`, `pagination`, `inline_edit`, `form_validation_ux`. Each deliverable MUST map to at least one downstream `goal_gate` node's `verifies` list — if a deliverable cannot be mechanically verified by a gate, flag it in the Step 2b checklist for user review.
+**Extract deliverables per phase**: For each phase, identify the concrete outputs from the PRD requirements — these become the phase's `deliverables` list. Use short category labels, not file paths. Common labels: `entity`, `dto`, `service`, `controller`, `component`, `page`, `test_suite`, `crud_operations`, `auth_middleware`, `validation`, `decorators`, `strict_types`, `test_isolation`, `field_alignment`, `pagination`, `inline_edit`, `form_validation_ux`. Each deliverable MUST map to at least one downstream `goal_gate` node's `verifies` list — if a deliverable cannot be mechanically verified by a gate, flag it in the Step 2b checklist for user review. **Placement heuristic** (so gates can pass `verifies_tool_command_references`): map each deliverable to a gate whose `tool_command` either references the label by name or runs a blanket runner that implicitly covers it. See `pickle-dot-patterns.md` §Deliverables & Verifies Rules for the category-to-gate mapping and full placement table.
 
 **Microverse detection** (Pattern 20): A phase qualifies for microverse when ALL of:
 1. **Numeric target** — PRD states a quantitative goal: "reduce to N", "improve to Z%", "keep under N ms", "achieve N% coverage", "at least/at most N", or any number + comparison.
@@ -165,9 +165,82 @@ Wait for user response. Apply corrections to your analysis, then proceed to **St
 
 ## Step 3L: Prompt-Only Path (default or `--legacy`)
 
-If `--builder` is **not** set (or `--legacy` is explicitly set), generate DOT directly from your Step 2 analysis without invoking the builder CLI. Read `.claude/commands/pickle-dot-patterns.md` for the complete pattern reference. Apply every pattern detected in Step 2, emit a `digraph ${SLUG} { ... }` using standard attractor DOT syntax, validate structurally (single start/exit, reachability, AC mapping completeness), then save to `./${SLUG}.dot`. Print a brief summary and offer `/attract ${SLUG}.dot` as the next step.
+If `--builder` is **not** set (or `--legacy` is explicitly set), generate DOT directly from your Step 2 analysis without invoking the builder CLI. Read `.claude/commands/pickle-dot-patterns.md` for the complete pattern reference, then emit a `digraph ${SLUG} { ... }` that applies every detected pattern. Before saving, apply the rules below, then run the validate-fix loop.
 
-**Deliverables and verifies (MANDATORY for Step 3L):** When emitting raw DOT, add `deliverables="..."` (comma-separated) to every `codergen` node and `verifies="..."` (comma-separated) to every `goal_gate` tool node. The `verifies` list on each gate must reference deliverables from upstream `codergen` nodes that the gate actually checks. **Self-check before saving:** count total unique deliverables across all `codergen` nodes vs total unique `verifies` entries across all `goal_gate` nodes — warn if coverage < 100% (i.e., any deliverable lacks a corresponding `verifies` entry).
+**Deliverables, verifies, and prompt hygiene (MANDATORY — see `pickle-dot-patterns.md` §Deliverables & Verifies Rules for the full reference, allowlist, and examples):**
+
+1. Every `codergen` node gets `deliverables="..."` (comma-separated short labels).
+2. Every `goal_gate` tool node gets `verifies="..."`. Every deliverable from upstream `codergen` nodes must appear in some gate's `verifies` list (`deliverables_coverage` rule).
+3. For each `goal_gate` tool node with `verifies`, its `tool_command` must satisfy ONE of:
+   - **Blanket runner**: the command contains a test runner / typechecker / builder / integration runner substring. See `pickle-dot-patterns.md` §Deliverables & Verifies Rules for the full allowlist. Blanket runners implicitly verify all their labels.
+   - **Label substring**: each label appears verbatim (case-insensitive) in the command.
+   - **Token match**: each label's underscore-separated tokens of length ≥ 2 all appear somewhere in the command.
+   Prefer the `check $X N 'label_name'` shell pattern — label verbatim as the third positional arg — when one gate checks multiple labels. Otherwise the `verifies_tool_command_references` rule rejects the gate.
+4. **Placement**: test-verified behaviors belong on test-runner gates, not grep gates. See Step 2 heuristic and the sidecar placement table.
+5. **No template placeholders**: no `codergen` node's `prompt` or `label` may contain dotted-path or moustache placeholders (`errors.field_name`, `input.foo`, `{{field}}`, `${template.var}`). The validator's `codergen_prompt_placeholder_smell` rule flags these. Write concrete descriptions of actual fields and entities instead.
+
+**Post-save validate-fix loop:** Save the DOT to `./${SLUG}.dot`, then run the attractor validator and iterate on diagnostics. Shares the same convergence guard as Step 4's builder loop (revert to best after 2 consecutive non-improvements); termination is a fixed 3-iteration cap since raw DOT patching is more fragile than BuilderSpec JSON patching.
+
+```
+# Pre-loop: resolve validator CLI. Reuse the ATTRACTOR_ROOT detection
+# script from .claude/commands/attract.md Step 2.
+if ATTRACTOR_ROOT cannot be resolved OR `bun packages/attractor/src/cli.ts` is missing:
+  save initial DOT to ./${SLUG}.dot
+  print warning: "Attractor validator CLI unavailable — skipping post-save validation. Run /attract ${SLUG}.dot to validate and submit."
+  → proceed to Step 5
+
+# Validator is available — run the fix loop:
+best_dot, best_error_count = initial DOT, ∞
+prev_error_count           = ∞
+consecutive_no_progress    = 0
+iteration                  = 1
+max_iterations             = 3
+
+loop:
+  save current DOT to ./${SLUG}.dot
+  run: cd "$ATTRACTOR_ROOT" && bun packages/attractor/src/cli.ts validate ./${SLUG}.dot
+  parse stdout/stderr → error_count, diagnostics[] (rule, node id, fix hint)
+
+  if error_count == 0:
+    → proceed to Step 5 (Success)
+
+  if error_count < best_error_count:
+    best_dot         = current DOT
+    best_error_count = error_count
+
+  if error_count >= prev_error_count:
+    consecutive_no_progress += 1
+    if consecutive_no_progress >= 2:
+      revert current DOT to best_dot
+      consecutive_no_progress = 0
+  else:
+    consecutive_no_progress = 0
+
+  if iteration >= max_iterations:
+    save best_dot to ./${SLUG}.dot.draft
+    delete ./${SLUG}.dot   # don't leave a stale, invalid .dot file beside the draft
+    list remaining diagnostics with rule / node / fix hint
+    print: "Validate-fix loop exhausted after ${iteration} iterations. Best result (${best_error_count} errors) saved to ${SLUG}.dot.draft — resolve manually and re-run /pickle-dot."
+    → STOP
+
+  for each diagnostic:
+    read rule name, node id, fix hint
+    apply minimum-scope edit to the DOT string (add attr, move label, replace placeholder, etc.)
+
+  prev_error_count = error_count
+  iteration += 1
+  continue
+```
+
+**Rule-to-fix quick reference** (focus on the three rules most likely to fire on first-pass DOT — full detail in `pickle-dot-patterns.md` §Deliverables & Verifies Rules):
+
+| Rule | Fix |
+|---|---|
+| `deliverables_coverage` | Missing deliverable: add it to some gate's `verifies=`. Orphan verifies entry: remove it, or add it to an upstream `codergen` node's `deliverables=`. |
+| `verifies_tool_command_references` | Move the unreferenced label to a different gate whose command does reference it, add an explicit `check $X N 'label'` to the current gate's command, replace the command with a blanket runner, or remove the label from `verifies=` if nothing actually checks it. |
+| `codergen_prompt_placeholder_smell` | Replace the dotted-path or moustache placeholder with a concrete description of the intended field, entity, or condition. |
+
+On zero errors, print a brief summary and offer `/attract ${SLUG}.dot` as the next step.
 
 ---
 
@@ -284,6 +357,7 @@ Example: PRD acceptance criterion "auth must be secure" → add `"auth_secure": 
 Each `PhaseSpec.prompt` must be complete — the executing agent has NO access to the PRD:
 - Include: goal, specific files to create/modify, API contracts, test requirements, edge cases.
 - **Never hardcode line numbers** — use searchable landmarks instead ("find the existing `.replaceAll('$goal', ...)` call").
+- **No template placeholders**: Never leave unresolved template syntax in the prompt — no `errors.field_name`, `input.foo`, `{{field}}`, or `${template.var}` that the agent has no way to resolve. The validator's `codergen_prompt_placeholder_smell` rule flags these as leftover template syntax. Write concrete descriptions that name the actual files, fields, and entities the agent can locate by reading the code.
 - **Strict TypeScript**: If `${STRICT_FLAGS}` non-empty from Step 2, append: `"STRICT TSCONFIG: ${STRICT_FLAGS} enabled. Use optional property markers (prop?: T), never union types (prop: T | undefined). Run npx tsc --noEmit before finishing."`
 - **I/O resources**: "Ensure all streams, file handles, and spawned processes are closed on every exit path (success, error, timeout). Flush TextDecoder/streams before returning."
 - **Error handling**: "Never use empty catch blocks. Every catch must re-throw, return a typed error result, or log a warning with the original error."
@@ -429,6 +503,7 @@ PRD: Add full-text search to an articles API (TypeScript/Node, PostgreSQL).
       "allowedPaths": ["src/articles/**", "src/db/**", "tests/articles/**"],
       "escalateOn": ["package.json", "*.lock", "*.config.*", "prisma/schema.prisma"],
       "specFirst": true,
+      "goalGate": true,
       "deliverables": ["search_endpoint", "gin_index", "ranked_results", "search_tests"],
       "contextOnSuccess": { "search_returns_ranked_results": "true" }
     }
@@ -469,6 +544,7 @@ PRD: JWT auth module + protected REST endpoints (TypeScript/Express). Phases are
       "allowedPaths": ["src/auth/**", "tests/auth/**"],
       "escalateOn": ["package.json", "*.lock", "*.config.*", ".env*"],
       "specFirst": true,
+      "goalGate": true,
       "bddScenarios": true,
       "securityScan": true,
       "deliverables": ["jwt_middleware", "refresh_rotation", "timing_safe_compare", "auth_tests"],
@@ -558,6 +634,8 @@ Before piping BuilderSpec to the builder, verify:
 - [ ] Phase names are unique, lowercase, contain only alphanumeric + underscores.
 - [ ] Phase prompts don't reference file paths outside their `allowedPaths`.
 - [ ] Every phase has `deliverables` and the union of all `verifies` across `goal_gate` nodes covers every deliverable. No orphaned deliverables, no orphaned verifies.
+- [ ] Every `verifies` label on a `goal_gate` tool node either appears textually in the gate's `tool_command` (as a check name, grep pattern, or file path) OR the gate uses a blanket runner. See `pickle-dot-patterns.md` §Deliverables & Verifies Rules for the full allowlist.
+- [ ] No phase `prompt` contains template placeholders like `errors.field_name`, `{{field}}`, or `${template.var}`.
 
 The builder auto-corrects several of these (emitting warnings), but getting them right upfront avoids warning noise and ensures the spec matches your intent.
 
