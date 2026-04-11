@@ -493,6 +493,29 @@ Detection heuristic: any `new` expression inside `for`/`while`/`.map()`/`.forEac
 - Nodes already under 100 lines of expected output
 - Phases using Pattern 18 (competing impls) — redundancy is already handled
 
+**32. Convergence Loop via iterate** — iterative refinement with rollback detection and fixed-point convergence. Use when a PRD mentions "converge until", "iterate until", "monotonic improvement", or "fixed point".
+
+**Detection signals:** "converge until", "iterate until clean", "review until zero findings", "monotonic improvement", "rollback on regression", "Lyapunov"
+
+**NOT triggered by:** "iterate" alone, "quality gate" alone, or "adversarial" alone.
+
+**Emits:** Manager node spawning multiple review passes with rollback-on-regression logic. Model diversity via `model_stylesheet` with `.impl`, `.honest_review`, `.adversary` class selectors mapping to distinct models.
+
+**Constraints:**
+- Model diversity via model_stylesheet — .impl, .honest_review, .adversary class selectors must map to distinct models
+- Reviewers cover all three lenses: backend, frontend, integration
+- Adversary has sealed_from_source
+- until predicate from canonical set: "V_total == 0", "V_total == 0 && fixed_point", "V_total == 0 && fixed_point && reproducibility"
+- harness: "hermes" or "claude-code"
+- Replaces endgame chain — do NOT emit both iterate body and emitEndgameChain()
+- P25 (Catastrophic Recovery) suppressed when P32 active
+
+**Composition:**
+- Pattern 0: commit_and_push after convergence
+- Pattern 1: setup_deps before converge node
+- Pattern 6: fan-out before converge node
+- Pattern 17 (red team): suppressed — iterate adversary subsumes it
+
 ## Superseded (reference only)
 
 **5. Human Gates** — `hexagon` shape maps to `wait.human` which pauses the pipeline waiting for human input via the `/pipelines/:id/questions/:qid/answer` API. **Never emit for autonomous pipelines** — the pipeline will deadlock waiting for input that never arrives. Only relevant for interactive/supervised workflows (non-default).
