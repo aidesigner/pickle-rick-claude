@@ -513,7 +513,7 @@ Detection heuristic: any `new` expression inside `for`/`while`/`.map()`/`.forEac
 **Composition:**
 - Pattern 0: commit_and_push after convergence
 - Pattern 1: setup_deps before converge node
-- Pattern 6: fan-out before converge node
+- Pattern 4: fan-out before converge node
 - Pattern 17 (red team): suppressed — iterate adversary subsumes it
 
 ## Superseded (reference only)

@@ -1963,7 +1963,7 @@ export class DotBuilder {
       } else if (spec.microverse) {
         // Zero-phase + microverse: route into the microverse loop, not directly to exit
         link('capture_baseline', 'commit_baseline');
-      } else {
+      } else if (!hasConvergence) {
         link('capture_baseline', 'exit');
       }
     }
