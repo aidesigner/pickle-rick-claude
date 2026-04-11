@@ -135,4 +135,62 @@ describe('iterate convergence', () => {
     assert.ok(dot.includes('max_visits="20"'), 'default max_visits must be 20 on converge node');
     assert.ok(dot.includes('timeout="60m"'), 'default timeout must be 60m on converge node');
   });
+
+  it('P1-1 regression: isolated workspace edge rewiring preserves dedup set', () => {
+    const spec = { ...makeConvergenceSpec(), workspace: 'isolated' };
+    const { dot } = DotBuilder.fromSpec(spec).build();
+    // After rewiring quality_review -> exit to quality_review -> commit_and_push,
+    // the original quality_review -> exit edge must be fully removed (no duplicates)
+    const qrToExitCount = (dot.match(/quality_review -> exit/g) || []).length;
+    assert.equal(qrToExitCount, 0, 'quality_review -> exit must be fully removed after rewiring');
+    // commit_and_push -> exit must appear exactly once
+    const cpToExitCount = (dot.match(/commit_and_push -> exit/g) || []).length;
+    assert.equal(cpToExitCount, 1, 'commit_and_push -> exit must appear exactly once');
+  });
+
+  it('explicit maxVisits override on convergence node', () => {
+    const spec = makeConvergenceSpec({ maxVisits: 10 });
+    const { dot } = DotBuilder.fromSpec(spec).build();
+    // The converge node should have the overridden max_visits
+    const convergeMatch = dot.match(/converge \[([^\]]+)\]/);
+    assert.ok(convergeMatch, 'converge node must be present');
+    assert.ok(convergeMatch[1].includes('max_visits="10"'), 'max_visits must be 10 when explicitly set');
+  });
+
+  it('explicit timeout override on convergence node', () => {
+    const spec = makeConvergenceSpec({ timeout: '120m' });
+    const { dot } = DotBuilder.fromSpec(spec).build();
+    const convergeMatch = dot.match(/converge \[([^\]]+)\]/);
+    assert.ok(convergeMatch, 'converge node must be present');
+    assert.ok(convergeMatch[1].includes('timeout="120m"'), 'timeout must be 120m when explicitly set');
+  });
+
+  it('minimal until predicate V_total == 0 accepted', () => {
+    const spec = makeConvergenceSpec({ until: 'V_total == 0' });
+    const { dot } = DotBuilder.fromSpec(spec).build();
+    assert.ok(dot.includes('until="V_total == 0"'), 'minimal until predicate must be accepted');
+  });
+
+  it('three distinct convergence models accepted', () => {
+    const spec = {
+      ...makeConvergenceSpec(),
+      modelStylesheet: {
+        defaultModel: 'sonnet',
+        overrides: [
+          { selector: '.impl', model: 'opus' },
+          { selector: '.honest_review', model: 'haiku' },
+          { selector: '.adversary', model: 'sonnet' },
+        ],
+      },
+    };
+    // Should not throw — all three models are distinct
+    const { dot } = DotBuilder.fromSpec(spec).build();
+    assert.ok(dot.includes('model_stylesheet='), 'model_stylesheet must be present');
+  });
+
+  it('middle until predicate V_total == 0 && fixed_point accepted', () => {
+    const spec = makeConvergenceSpec({ until: 'V_total == 0 && fixed_point' });
+    const { dot } = DotBuilder.fromSpec(spec).build();
+    assert.ok(dot.includes('V_total == 0'), 'middle until predicate must be accepted');
+  });
 });

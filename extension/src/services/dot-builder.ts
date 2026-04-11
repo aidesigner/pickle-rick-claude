@@ -2043,10 +2043,11 @@ export class DotBuilder {
         // Rewire: quality_review → commit_and_push → exit (instead of quality_review → exit)
         const qrToExit = edges.findIndex(e => e.includes('quality_review -> exit'));
         if (qrToExit !== -1) {
+          const removedEdgeStr = edges[qrToExit];
           edges.splice(qrToExit, 1);
           const removedEdge = edgeList.findIndex(e => e.from === 'quality_review' && e.to === 'exit');
           if (removedEdge !== -1) edgeList.splice(removedEdge, 1);
-          seenEdges.delete(edges[qrToExit] ?? '');
+          seenEdges.delete(removedEdgeStr);
         }
         link('quality_review', 'commit_and_push', { condition: 'outcome=success', label: 'pass' });
         link('commit_and_push', 'exit');
