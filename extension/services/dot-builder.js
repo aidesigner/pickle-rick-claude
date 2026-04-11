@@ -1022,6 +1022,29 @@ export class DotBuilder {
             if (!validPredicates.includes(this._spec.convergence.until)) {
                 throw new BuildError('INVALID_CONVERGENCE_SPEC', `invalid until predicate: "${this._spec.convergence.until}" — must be one of: ${validPredicates.join(', ')}`);
             }
+            // Validate model diversity: .impl, .honest_review, .adversary must not share a model ID
+            if (this._spec.modelStylesheet) {
+                const sc = this._spec.modelStylesheet;
+                if (sc.overrides && sc.overrides.length > 0) {
+                    const convergenceClasses = ['.impl', '.honest_review', '.adversary'];
+                    const modelMap = new Map();
+                    for (const o of sc.overrides) {
+                        if (convergenceClasses.includes(o.selector)) {
+                            modelMap.set(o.selector, o.model);
+                        }
+                    }
+                    if (modelMap.size >= 2) {
+                        const seen = new Map(); // model -> first selector that used it
+                        for (const [selector, model] of modelMap) {
+                            const prior = seen.get(model);
+                            if (prior) {
+                                throw new BuildError('DUPLICATE_MODEL', `model diversity violation: selectors "${prior}" and "${selector}" both use model "${model}"`);
+                            }
+                            seen.set(model, selector);
+                        }
+                    }
+                }
+            }
         }
         // Emit the complete graph
         const { dot, nodeMap, edgeList, graphAttrs, standaloneNodeIds, patternsApplied, defenseMatrix, emittedDiagnostics } = this._emitDot();
