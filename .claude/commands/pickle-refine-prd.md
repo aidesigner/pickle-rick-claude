@@ -250,7 +250,7 @@ Implementing new features. Fixing bugs in individual modules (those belong in th
 
 ### 7e: Create Hardening Tickets
 
-After all implementation and wiring tickets, create **two** hardening tickets. These run as normal Morty workers with full implementation context. They depend on ALL prior tickets (including wiring if present).
+After all implementation and wiring tickets, create **four** hardening tickets. These run as normal Morty workers with full implementation context. They depend on ALL prior tickets (including wiring if present).
 
 **Skip gate:** Skip this step if total implementation tickets = 1 AND that ticket's `complexity_tier` is `trivial` or `small`.
 
@@ -444,6 +444,212 @@ Zero CRITICAL+HIGH findings across two consecutive Phase 1 reviews, OR all remai
 
 ## NOT in Scope
 Reviewing subsystems not in AFFECTED_SUBSYSTEMS. Modifying files not in MODIFIED_FILES. Adding features. P2+ findings. Performance optimization.
+```
+
+**Ticket 3: Test Quality Hardening**
+
+Hash: `openssl rand -hex 4`. Dir: `${SESSION_ROOT}/[hash]/`. File: `linear_ticket_[hash].md`:
+
+```markdown
+---
+id: [hash]
+title: "Harden: test quality review of [feature area]"
+status: Todo
+priority: High
+complexity_tier: large
+order: [last order + 10]
+working_dir: [project root]
+created: [Date]
+updated: [Date]
+depends_on: [ALL prior ticket IDs, comma-separated]
+links:
+  - url: ../linear_ticket_parent.md
+    title: Parent
+---
+# Description
+## Problem
+Implementation and wiring tickets produce tests that verify their own acceptance criteria, but cross-cutting test quality issues — weak assertions that pass on substrings instead of structure, missing edge case coverage, untested field transformations, incomplete AC mapping — only become visible when reviewing the complete test suite against the full implementation.
+
+## Solution
+Review ALL test files created or modified by implementation tickets. Strengthen assertions, add missing coverage, verify AC mapping is complete. Fix one issue at a time, run full suite after each fix.
+
+## Entry Conditions
+All prior tickets (depends_on) are complete and individually verified. Test suite passes.
+
+## Research Seeds
+- **Files**: [TEST_FILES — all test files created or modified by prior tickets]
+- **Implementation files**: [MODIFIED_FILES — to verify tests exercise actual behavior]
+- **Patterns**: Assertion strength hierarchy: structural validation > line-based matching > regex with boundaries > `.includes()` substring. Prefer highest feasible level.
+- **ACs**: [List all acceptance criteria from refined PRD — each must map to at least one test]
+
+## Implementation Details
+**Review scope**: ONLY test files from prior tickets. Implementation files are read-only reference.
+
+**Lifecycle mapping**: During Research phase, read all test files and the refined PRD's acceptance criteria table. During Plan phase, catalog gaps by severity. During Implement phase, execute the review-fix loop below.
+
+**Review-fix loop** — repeat for each test file until zero P0-P1 gaps remain:
+
+1. **AC Coverage Audit**: Map every acceptance criterion from the refined PRD to a test case. Flag unmapped ACs as P0.
+
+2. **Assertion Strength Review**: For each assertion, rate:
+   - P0: Tautological (always passes, e.g. `assert(true)`, `assert(typeof x === 'object')` on known object)
+   - P1: Substring match that could false-positive (`.includes('foo')` where `foobar` also matches)
+   - P1: Happy path only — no error/boundary/edge case test for a modified code path
+   - P2: Correct but could be structural (e.g. `.includes()` where line-based or regex would be more precise)
+
+3. **Field Transformation Coverage**: For every field that changes name or shape across a boundary (e.g. camelCase→snake_case, string→number, DTO→entity), verify a test exercises the transformation end-to-end. Flag missing transformation tests as P1.
+
+4. **Test Isolation Check**: Verify no shared mutable state between tests. Each test constructs its own fixtures. Flag shared state as P1.
+
+5. **patternsApplied / metadata checks**: For builder/codegen tests, verify result metadata (patterns applied, diagnostics, defense matrix) is asserted — not just output strings.
+
+**Fixes**: One fix per commit. Strengthen weakest assertion first. Run full test suite after each fix. If a strengthened assertion fails, investigate whether the assertion or the implementation is wrong — do NOT weaken back to pass.
+
+**Principle checklist**:
+- Every AC has a dedicated test
+- No `.includes()` where line-based or regex matching is feasible
+- Node/element IDs use word-boundary regex (`\b`) to prevent substring false positives
+- Error paths tested (invalid input → expected error type/code)
+- Field name conversions tested end-to-end (input shape → output shape)
+- Composition/integration tests verify metadata (patternsApplied, error codes) not just output strings
+- Test helper functions create fresh fixtures per call (no shared mutable state)
+
+## Interface Contracts
+**Inputs**: Test files list, acceptance criteria from refined PRD
+**Outputs**: Strengthened test files, new edge case tests, atomic commits
+**Errors**: Test failures after strengthening indicate implementation bugs — escalate, do not weaken assertions
+**Invariants**: Test count can only increase. No test deletions unless replacing with strictly stronger version.
+
+## Acceptance Criteria
+- [ ] Every AC from refined PRD maps to at least one test — Verify: manual mapping review — Type: llm-conformance
+- [ ] Zero P0 assertion gaps (tautological or unmapped ACs) — Verify: review complete — Type: llm-conformance
+- [ ] Zero P1 assertion gaps (weak substring, missing edge cases, missing transformations) — Verify: review complete — Type: llm-conformance
+- [ ] Test suite passes — Verify: `${TEST_CMD}` — Type: test
+- [ ] Type checker passes — Verify: `${TC_CMD}` — Type: typecheck
+
+## Test Expectations
+| Criterion | Test File | Description | Assertion |
+|:---|:---|:---|:---|
+| Strengthened assertions | Modified test files | Assertions upgraded to structural/line-based | No weak .includes() remaining for node IDs or attributes |
+| Edge case coverage | Modified test files | Error paths, boundary conditions | Invalid inputs produce expected errors |
+| Transformation coverage | Modified test files | Field name/shape conversions | Input camelCase produces output snake_case |
+
+## Conformance Check
+- [ ] Type checker passes — no new errors
+- [ ] Test runner passes — all tests
+- [ ] Every refined PRD AC has a test
+- [ ] No shared mutable state between tests
+
+## Exit State
+All test files have zero P0-P1 assertion gaps. Every AC is mapped to a test. Each fix is an atomic commit with format: `harden: [test-quality] — [description]`.
+
+## NOT in Scope
+Writing new features. Modifying implementation code (only test files). Performance testing. P2 assertion improvements unless trivially fixable alongside P1 fixes.
+```
+
+**Ticket 4: Cross-Reference Consistency Audit**
+
+Hash: `openssl rand -hex 4`. Dir: `${SESSION_ROOT}/[hash]/`. File: `linear_ticket_[hash].md`:
+
+```markdown
+---
+id: [hash]
+title: "Audit: cross-reference consistency for [feature area]"
+status: Todo
+priority: High
+complexity_tier: medium
+order: [last order + 10]
+working_dir: [project root]
+created: [Date]
+updated: [Date]
+depends_on: [ALL prior ticket IDs, comma-separated]
+links:
+  - url: ../linear_ticket_parent.md
+    title: Parent
+---
+# Description
+## Problem
+Isolated workers produce documentation, prompts, and implementation code independently. Cross-file consistency errors — pattern numbers in docs that don't match code constants, API examples in prompts that reference non-existent functions, enum values in types that don't appear in handlers, config keys in docs that don't match implementation — only surface when cross-referencing all artifacts together. These errors are particularly dangerous because they silently mislead future users and AI agents who read the docs.
+
+## Solution
+Three-pass cross-reference audit: (1) collect all named references from documentation/prompt files, (2) verify each reference exists in implementation, (3) collect all named exports/constants from implementation and verify docs mention them where relevant.
+
+## Entry Conditions
+All prior tickets (depends_on) are complete and individually verified. Test suite passes.
+
+## Research Seeds
+- **Doc/Prompt files**: [DOC_FILES — all .md command files, README sections, prompt templates modified by prior tickets]
+- **Implementation files**: [MODIFIED_FILES — source code files modified by prior tickets]
+- **Reference types to check**: Pattern numbers, function/method names, type/interface names, enum values, CLI commands, config keys, error codes, node IDs, class names
+
+## Implementation Details
+**Scope**: Cross-reference between DOC_FILES and MODIFIED_FILES only. Do not audit unmodified documentation.
+
+**Lifecycle mapping**: During Research phase, read all doc and implementation files. During Plan phase, build reference maps and identify mismatches. During Implement phase, fix mismatches one at a time.
+
+**Three-pass protocol**:
+
+**Pass 1 — Doc→Code (do docs reference real things?)**:
+For each documentation/prompt file in DOC_FILES:
+1. Extract all named references: pattern numbers (P1, P25, Pattern 32), function names (`buildPipeline()`, `fromSpec()`), type names (`ConvergenceSpec`), enum values (`'hermes'`, `'claude-code'`), error codes (`DUPLICATE_MODEL`), node IDs (`iter_impl`), class selectors (`.honest_review`), CLI commands, config keys
+2. For each reference, grep MODIFIED_FILES to verify it exists
+3. Rate mismatches:
+   - **CRITICAL**: API example references non-existent function (misleads users into writing broken code)
+   - **CRITICAL**: Pattern number collision (two different patterns share a number)
+   - **HIGH**: Enum/constant value in docs doesn't match implementation
+   - **HIGH**: Error code in docs doesn't match BuildErrorCode type
+   - **MEDIUM**: Stale count ("30 patterns" when actual is 32)
+
+**Pass 2 — Code→Doc (do new exports have documentation?)**:
+For each implementation file in MODIFIED_FILES:
+1. Extract new public exports: interfaces, types, methods, error codes, constants
+2. For each export, check if DOC_FILES mention it where a user would need to know
+3. Rate gaps:
+   - **HIGH**: New public API method undocumented
+   - **MEDIUM**: New error code undocumented
+   - **LOW**: Internal helper undocumented (expected)
+
+**Pass 3 — Cross-Doc (do docs agree with each other?)**:
+For each pair of documentation files in DOC_FILES:
+1. Extract shared references (pattern numbers, node IDs, detection signals)
+2. Verify they agree — same number means same thing, same signal routes to same pattern
+3. Rate conflicts:
+   - **CRITICAL**: Same pattern number means different things in different files
+   - **HIGH**: Detection signal routes to different patterns in different files
+   - **MEDIUM**: Inconsistent terminology (same concept, different names)
+
+**Fixes**: One fix per commit. Fix CRITICAL first, then HIGH. Run `${TEST_CMD}` after each fix (doc changes can affect prompt-driven behavior). Format: `audit: [CRITICAL/HIGH] cross-ref — [description]`.
+
+## Interface Contracts
+**Inputs**: DOC_FILES list, MODIFIED_FILES list
+**Outputs**: Corrected documentation, atomic commits
+**Errors**: Implementation bugs discovered via doc audit are escalated (create new ticket), not fixed here
+**Invariants**: Doc references match implementation. No phantom API examples. No pattern number collisions.
+
+## Acceptance Criteria
+- [ ] Zero CRITICAL cross-reference mismatches — Verify: Pass 1+3 review complete — Type: llm-conformance
+- [ ] Zero HIGH cross-reference mismatches — Verify: Pass 1+2+3 review complete — Type: llm-conformance
+- [ ] All new public APIs documented — Verify: Pass 2 review complete — Type: llm-conformance
+- [ ] Test suite passes — Verify: `${TEST_CMD}` — Type: test
+- [ ] Commands deployed — Verify: `bash install.sh` — Type: integration
+
+## Test Expectations
+| Criterion | Test File | Description | Assertion |
+|:---|:---|:---|:---|
+| Doc accuracy | N/A | Manual cross-reference | All doc references resolve to real implementation |
+| Pattern consistency | N/A | Cross-doc check | No pattern number collisions |
+
+## Conformance Check
+- [ ] Type checker passes — no new errors
+- [ ] Test runner passes — all tests
+- [ ] All CRITICAL/HIGH mismatches resolved
+- [ ] `bash install.sh` deploys clean
+
+## Exit State
+Zero CRITICAL+HIGH cross-reference mismatches. All new public APIs documented. Doc references verified against implementation. Each fix is an atomic commit with format: `audit: [CRITICAL/HIGH] cross-ref — [description]`.
+
+## NOT in Scope
+Reviewing unmodified documentation. Writing new feature documentation from scratch. Fixing implementation bugs (escalate as new tickets). MEDIUM/LOW mismatches unless trivially fixable.
 ```
 
 ### 7f: Append Breakdown
