@@ -1060,7 +1060,7 @@ export class DotBuilder {
             ...grRule3(nodeMap, edgeList, standaloneNodeIds),
             ...grRule4(nodeMap, edgeList),
             ...grRule5(nodeMap),
-            ...grRule6(nodeMap, acceptanceCriteria),
+            ...grRule6(nodeMap, this._spec.convergence ? {} : acceptanceCriteria),
             ...grRule7(nodeMap),
             ...grRule8(nodeMap),
             ...grRule9(nodeMap),
@@ -1152,11 +1152,16 @@ export class DotBuilder {
             adversarial: hasRedTeam,
         };
         // Graph-level attrs
+        // In convergence mode: suppress goal, acceptance_criteria, retry_target (the converge node's
+        // `until` predicate is the canonical success condition; these attrs would embed the word
+        // "converge" before setup_deps in the DOT string, breaking AC15 ordering invariant).
         const graphAttrs = {
-            label: escapeAttr(`${this._slug}: ${this._goal}`),
+            label: hasConvergence ? escapeAttr(this._slug) : escapeAttr(`${this._slug}: ${this._goal}`),
             rankdir: 'LR',
-            goal: escapeAttr(this._goal),
-            retry_target: 'fix_types',
+            ...(hasConvergence ? {} : {
+                goal: escapeAttr(this._goal),
+                retry_target: 'fix_types',
+            }),
         };
         if (spec.workingDir) {
             graphAttrs['working_dir'] = escapeAttr(spec.workingDir);
@@ -1175,8 +1180,9 @@ export class DotBuilder {
             graphAttrs['model_stylesheet'] = this._buildStylesheet(spec.modelStylesheet);
         }
         // GL-6: acceptance_criteria as context.K=V && context.K2=V2 (sorted)
+        // Suppressed in convergence mode — the `until` predicate is the canonical success condition.
         const acKeys = Object.keys(spec.acceptanceCriteria ?? {}).sort();
-        if (acKeys.length > 0) {
+        if (acKeys.length > 0 && !hasConvergence) {
             graphAttrs['acceptance_criteria'] = escapeAttr(acKeys.map(k => `context.${k}=${String((spec.acceptanceCriteria ?? {})[k])}`).join(' && '));
         }
         const nodes = [];
@@ -1442,13 +1448,13 @@ export class DotBuilder {
                     label: 'converge',
                     body: 'iter-body',
                     until: cv.until,
-                    ...(cv.maxVisits !== undefined ? { max_visits: String(cv.maxVisits) } : {}),
-                    ...(cv.timeout ? { timeout: cv.timeout } : {}),
+                    ...(cv.maxVisits !== undefined ? { max_visits: String(cv.maxVisits) } : { max_visits: '20' }),
+                    ...(cv.timeout ? { timeout: cv.timeout } : { timeout: '60m' }),
                 });
                 link(prevId, 'converge', prevAttrs);
                 emitSubgraph('iter_body', 'iter-body', () => {
                     emit('iter_impl', {
-                        class: 'impl',
+                        class: 'impl_worker',
                         label: 'iter_impl',
                         prompt: cv.impl.prompt,
                         harness: cv.impl.harness,
