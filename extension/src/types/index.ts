@@ -310,7 +310,6 @@ export {
   AttrScope,
   AttrDef,
   ATTRACTOR_SCHEMA_FALLBACK,
-  FallbackSchema,
   ALL_ATTRS,
   AttrValidation,
   lookupAttr,

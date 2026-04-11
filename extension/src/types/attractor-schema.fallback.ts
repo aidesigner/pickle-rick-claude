@@ -12,7 +12,7 @@ export interface AttrDef {
   scope: AttrScope;
 }
 
-export interface AttrSchema {
+interface AttrSchema {
   [key: string]: AttrDef;
 }
 
