@@ -23,7 +23,7 @@ export interface FallbackSchema {
 }
 
 export const ATTRACTOR_SCHEMA_FALLBACK: FallbackSchema = {
-  /* 24 node attributes — builder-emitted only */
+  /* 31 node attributes — builder-emitted only */
   node: {
     class: { name: "class", type: "string", scope: "node" },
     shape: { name: "shape", type: "string", scope: "node" },
@@ -49,6 +49,13 @@ export const ATTRACTOR_SCHEMA_FALLBACK: FallbackSchema = {
     direction: { name: "direction", type: "string", scope: "node" },
     target: { name: "target", type: "number", scope: "node" },
     ratchet_count: { name: "ratchet_count", type: "number", scope: "node" },
+    body: { name: "body", type: "string", scope: "node" },
+    until: { name: "until", type: "string", scope: "node" },
+    model: { name: "model", type: "string", scope: "node" },
+    reviewer_lens: { name: "reviewer_lens", type: "string", scope: "node" },
+    sealed_from_source: { name: "sealed_from_source", type: "string", scope: "node" },
+    harness: { name: "harness", type: "string", scope: "node" },
+    max_iterations: { name: "max_iterations", type: "number", scope: "node" },
   },
   graph: {
     label: { name: "label", type: "string", scope: "graph" },
@@ -88,7 +95,7 @@ export const ATTRACTOR_SCHEMA_FALLBACK: FallbackSchema = {
   },
 };
 
-/** Flat list of all 40 attribute definitions across all scopes (24 node + 13 graph + 3 edge). */
+/** Flat list of all 47 attribute definitions across all scopes (31 node + 13 graph + 3 edge). */
 export const ALL_ATTRS: AttrDef[] = [
   ...Object.values(ATTRACTOR_SCHEMA_FALLBACK.node),
   ...Object.values(ATTRACTOR_SCHEMA_FALLBACK.graph),
