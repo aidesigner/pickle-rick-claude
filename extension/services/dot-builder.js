@@ -12,6 +12,7 @@ export const BUILD_ERROR_CODES = [
     'REVIEW_MISSING_READONLY', 'COMPONENT_NO_MERGE', 'FAN_OUT_SCOPE_LEAK',
     'WORKSPACE_NO_HTTPS', 'WORKSPACE_NO_PUSH', 'PLAN_MODE_DEADLOCK',
     'MISSING_ALLOWED_PATHS', 'INVALID_SPEC', 'INVALID_TIMEOUT', 'INVALID_ALLOWED_PATHS',
+    'DUPLICATE_MODEL', 'INVALID_CONVERGENCE_SPEC',
 ];
 // Alias for JS consumers
 export const BuildErrorCode = BUILD_ERROR_CODES;
@@ -123,6 +124,8 @@ const RESERVED_IDS = new Set([
     'verify_typecheck', 'verify_lint', 'verify_tests',
     'audit', 'regression_check', 'quality_review',
     'fix_types', 'fix_lint', 'fix_tests', 'fix_quality', 'fix_all', 'fix_review',
+    // Iterate convergence nodes
+    'converge', 'iter_impl', 'iter_review_be', 'iter_review_fe', 'iter_review_int', 'iter_adversary',
 ]);
 /** Extract path-like tokens (containing '/') from a prompt string. */
 function extractPromptPaths(prompt) {
@@ -1121,6 +1124,7 @@ export class DotBuilder {
         }
         const nodes = [];
         const edges = [];
+        const subgraphBlocks = [];
         const seenEdges = new Set();
         const nodeMap = new Map();
         const edgeList = [];
@@ -1152,6 +1156,20 @@ export class DotBuilder {
             seenEdges.add(edgeLine);
             edges.push(edgeLine);
             edgeList.push({ from, to, attrs });
+        };
+        const emitSubgraph = (clusterId, label, bodyEmitter) => {
+            const prevNodesLen = nodes.length;
+            const prevEdgesLen = edges.length;
+            bodyEmitter();
+            const bodyNodes = nodes.splice(prevNodesLen);
+            const bodyEdges = edges.splice(prevEdgesLen);
+            subgraphBlocks.push(`  subgraph cluster_${clusterId} {`);
+            subgraphBlocks.push(`    label="${escapeAttr(label)}"`);
+            for (const n of bodyNodes)
+                subgraphBlocks.push(`  ${n}`);
+            for (const e of bodyEdges)
+                subgraphBlocks.push(`  ${e}`);
+            subgraphBlocks.push('  }');
         };
         // P0a: setup_deps
         emit('start', { shape: 'Mdiamond' });
@@ -1820,6 +1838,7 @@ export class DotBuilder {
         const lines = [
             `digraph "${graphId}" {`,
             `  graph [${fmtAttrs(graphAttrs)}]`,
+            ...subgraphBlocks,
             `  /* DEFENSE MATRIX`,
             `   * competitive: ${defenseMatrix.competitive}`,
             `   * adversarial: ${defenseMatrix.adversarial}`,

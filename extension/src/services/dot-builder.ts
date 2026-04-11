@@ -154,6 +154,8 @@ const RESERVED_IDS = new Set([
   'verify_typecheck', 'verify_lint', 'verify_tests',
   'audit', 'regression_check', 'quality_review',
   'fix_types', 'fix_lint', 'fix_tests', 'fix_quality', 'fix_all', 'fix_review',
+  // Iterate convergence nodes
+  'converge', 'iter_impl', 'iter_review_be', 'iter_review_fe', 'iter_review_int', 'iter_adversary',
 ]);
 
 /** Extract path-like tokens (containing '/') from a prompt string. */
@@ -1185,6 +1187,7 @@ export class DotBuilder {
 
     const nodes: string[] = [];
     const edges: string[] = [];
+    const subgraphBlocks: string[] = [];
     const seenEdges = new Set<string>();
     const nodeMap = new Map<string, Record<string, string>>();
     const edgeList: EdgeEntry[] = [];
@@ -1214,6 +1217,18 @@ export class DotBuilder {
       seenEdges.add(edgeLine);
       edges.push(edgeLine);
       edgeList.push({ from, to, attrs });
+    };
+    const emitSubgraph = (clusterId: string, label: string, bodyEmitter: () => void): void => {
+      const prevNodesLen = nodes.length;
+      const prevEdgesLen = edges.length;
+      bodyEmitter();
+      const bodyNodes = nodes.splice(prevNodesLen);
+      const bodyEdges = edges.splice(prevEdgesLen);
+      subgraphBlocks.push(`  subgraph cluster_${clusterId} {`);
+      subgraphBlocks.push(`    label="${escapeAttr(label)}"`);
+      for (const n of bodyNodes) subgraphBlocks.push(`  ${n}`);
+      for (const e of bodyEdges) subgraphBlocks.push(`  ${e}`);
+      subgraphBlocks.push('  }');
     };
 
     // P0a: setup_deps
@@ -1907,6 +1922,7 @@ export class DotBuilder {
     const lines = [
       `digraph "${graphId}" {`,
       `  graph [${fmtAttrs(graphAttrs)}]`,
+      ...subgraphBlocks,
       `  /* DEFENSE MATRIX`,
       `   * competitive: ${defenseMatrix.competitive}`,
       `   * adversarial: ${defenseMatrix.adversarial}`,

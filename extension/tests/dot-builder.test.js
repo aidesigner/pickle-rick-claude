@@ -311,14 +311,15 @@ describe('BuildErrorCode union', () => {
         'REVIEW_MISSING_READONLY', 'COMPONENT_NO_MERGE', 'FAN_OUT_SCOPE_LEAK',
         'WORKSPACE_NO_HTTPS', 'WORKSPACE_NO_PUSH', 'PLAN_MODE_DEADLOCK',
         'MISSING_ALLOWED_PATHS', 'INVALID_SPEC', 'INVALID_TIMEOUT', 'INVALID_ALLOWED_PATHS',
+        'DUPLICATE_MODEL', 'INVALID_CONVERGENCE_SPEC',
     ];
 
-    test('BUILD_ERROR_CODES contains all 24 codes', () => {
+    test('BUILD_ERROR_CODES contains all 26 codes', () => {
         assert.ok(BUILD_ERROR_CODES, 'BUILD_ERROR_CODES should be exported');
         assert.ok(Array.isArray(BUILD_ERROR_CODES) || BUILD_ERROR_CODES instanceof Set,
             'BUILD_ERROR_CODES should be iterable');
         const codes = [...BUILD_ERROR_CODES];
-        assert.equal(codes.length, 24, `expected 24 codes, got ${codes.length}`);
+        assert.equal(codes.length, 26, `expected 26 codes, got ${codes.length}`);
     });
 
     test('every expected code is present', () => {
