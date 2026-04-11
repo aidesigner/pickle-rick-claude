@@ -241,6 +241,13 @@ describe('sync-schema', () => {
                     direction:          { name: 'direction',          type: 'string',  scope: 'node' },
                     target:             { name: 'target',             type: 'string',  scope: 'node' },
                     ratchet_count:      { name: 'ratchet_count',      type: 'number',  scope: 'node' },
+                    body:               { name: 'body',               type: 'string',  scope: 'node' },
+                    until:              { name: 'until',              type: 'string',  scope: 'node' },
+                    model:              { name: 'model',              type: 'string',  scope: 'node' },
+                    reviewer_lens:      { name: 'reviewer_lens',      type: 'string',  scope: 'node' },
+                    sealed_from_source: { name: 'sealed_from_source', type: 'string',  scope: 'node' },
+                    harness:            { name: 'harness',            type: 'string',  scope: 'node' },
+                    max_iterations:     { name: 'max_iterations',     type: 'number',  scope: 'node' },
                 },
                 graph: {
                     goal:               { name: 'goal',               type: 'string',  scope: 'graph' },

@@ -3,6 +3,7 @@ import { BuildError } from '../types/index.js';
 export { BuildError } from '../types/index.js';
 import type {
   BuildResult,
+  ConvergenceSpec as ConvergenceSpecType,
   DefenseMatrix,
   Diagnostic,
   PhaseSpec,
@@ -941,6 +942,20 @@ export class DotBuilder {
     if (isRecord(spec['endgame'])) {
       builder.endgame(spec['endgame'] as { broadPass?: boolean });
     }
+    if (isRecord(spec['convergence'])) {
+      const cv = spec['convergence'] as Record<string, unknown>;
+      const impl = isRecord(cv['impl']) ? cv['impl'] as Record<string, unknown> : {};
+      builder.convergence({
+        until: cv['until'] as ConvergenceSpecType['until'],
+        maxVisits: typeof cv['maxVisits'] === 'number' ? cv['maxVisits'] : undefined,
+        timeout: typeof cv['timeout'] === 'string' ? cv['timeout'] : undefined,
+        impl: {
+          harness: (impl['harness'] as ConvergenceSpecType['impl']['harness']) || 'claude-code',
+          prompt: (impl['prompt'] as string) || '',
+        },
+        sealedFromSource: typeof cv['sealedFromSource'] === 'string' ? cv['sealedFromSource'] : undefined,
+      });
+    }
     return builder;
   }
 
@@ -1016,6 +1031,18 @@ export class DotBuilder {
     return this;
   }
 
+  convergence(spec: ConvergenceSpecType): this {
+    if (this._built) throw new BuildError('ALREADY_BUILT', 'cannot modify after build()');
+    this._spec.convergence = {
+      until: spec.until,
+      maxVisits: spec.maxVisits,
+      timeout: spec.timeout,
+      impl: { harness: spec.impl.harness, prompt: spec.impl.prompt },
+      sealedFromSource: spec.sealedFromSource,
+    };
+    return this;
+  }
+
   build(): BuildResult {
     if (this._built) {
       throw new BuildError('ALREADY_BUILT', 'build() has already been called');
@@ -1043,6 +1070,14 @@ export class DotBuilder {
     const preflightError = preflightDiags.find(d => d.severity === 'error');
     if (preflightError) {
       throw new BuildError(preflightError.rule as BuildErrorCodeType, preflightError.message, preflightDiags);
+    }
+
+    // Validate convergence spec
+    if (this._spec.convergence) {
+      const validPredicates = ['V_total == 0', 'V_total == 0 && fixed_point', 'V_total == 0 && fixed_point && reproducibility'];
+      if (!validPredicates.includes(this._spec.convergence.until)) {
+        throw new BuildError('INVALID_CONVERGENCE_SPEC', `invalid until predicate: "${this._spec.convergence.until}" — must be one of: ${validPredicates.join(', ')}`);
+      }
     }
 
     // Emit the complete graph
@@ -1137,6 +1172,7 @@ export class DotBuilder {
     const hasCompeting = phases.some(p => p.competing);
     const hasRedTeam = phases.some(p => p.redTeam);
     const hasBDD = phases.some(p => p.bddScenarios);
+    const hasConvergence = !!spec.convergence;
     const hasSpecFile = Boolean(spec.specFile);
     const hasSpecFirstAny = phases.some(p => p.specFirst === true || (p.goalGate && p.specFirst !== false));
 
@@ -1447,7 +1483,81 @@ export class DotBuilder {
       let prevId = 'capture_baseline';
       let prevAttrs: Record<string, string> | undefined = undefined;
 
-      for (let i = 0; i < phases.length; i++) {
+      if (hasConvergence) {
+        // Convergence mode: emit iterate node + body subgraph instead of per-phase nodes
+        const cv = spec.convergence!;
+        emit('converge', {
+          shape: 'house',
+          class: 'iterate',
+          label: 'converge',
+          body: 'iter-body',
+          until: cv.until,
+          ...(cv.maxVisits !== undefined ? { max_visits: String(cv.maxVisits) } : {}),
+          ...(cv.timeout ? { timeout: cv.timeout } : {}),
+        });
+        link(prevId, 'converge', prevAttrs);
+
+        emitSubgraph('iter_body', 'iter-body', () => {
+          emit('iter_impl', {
+            class: 'impl',
+            label: 'iter_impl',
+            prompt: cv.impl.prompt,
+            harness: cv.impl.harness,
+            timeout: '600s',
+            max_visits: '10',
+          });
+          emit('iter_review_be', {
+            class: 'honest_review',
+            label: 'iter_review_be',
+            reviewer_lens: 'backend',
+            read_only: 'true',
+            timeout: '300s',
+          });
+          emit('iter_review_fe', {
+            class: 'honest_review',
+            label: 'iter_review_fe',
+            reviewer_lens: 'frontend',
+            read_only: 'true',
+            timeout: '300s',
+          });
+          emit('iter_review_int', {
+            class: 'honest_review',
+            label: 'iter_review_int',
+            reviewer_lens: 'integration',
+            read_only: 'true',
+            timeout: '300s',
+          });
+          const adversaryAttrs: Record<string, string> = {
+            class: 'adversary',
+            label: 'iter_adversary',
+            read_only: 'true',
+            timeout: '300s',
+          };
+          if (cv.sealedFromSource) adversaryAttrs['sealed_from_source'] = cv.sealedFromSource;
+          emit('iter_adversary', adversaryAttrs);
+          link('iter_impl', 'iter_review_be');
+          link('iter_review_be', 'iter_review_fe');
+          link('iter_review_fe', 'iter_review_int');
+          link('iter_review_int', 'iter_adversary');
+        });
+
+        // Reachability edge: converge -> iter_impl
+        link('converge', 'iter_impl');
+        applied.add('P32');
+
+        // Post-convergence routing: quality_review → exit
+        emit('quality_review', {
+          class: 'review',
+          label: 'Final quality review: verify all acceptance criteria met, no regressions, code is clean. Output STATUS: SUCCESS | FAIL.',
+          read_only: 'true',
+          timeout: '15m',
+        });
+        link('converge', 'quality_review', { condition: 'outcome=success', label: 'converged' });
+        link('quality_review', 'exit', { condition: 'outcome=success', label: 'pass' });
+
+      } // end hasConvergence
+
+      for (let i = 0; i < phases.length && !hasConvergence; i++) {
         const p = phases[i];
         const id = sanitizeId(p.name);
         const threadId = p.threadId ?? `phase_${i + 1}`;
@@ -1813,8 +1923,8 @@ export class DotBuilder {
         }
       }
 
-      // P21: disaggregated verify/fix endgame chain
-      if (hasAnyPhase) {
+      // P21: disaggregated verify/fix endgame chain (suppressed by convergence — iterate handles its own exit)
+      if (hasAnyPhase && !hasConvergence) {
         applied.add('P21');
         emitEndgameChain(prevId, prevAttrs);
       } else if (spec.microverse) {
@@ -1825,8 +1935,8 @@ export class DotBuilder {
       }
     }
 
-    // P25: Catastrophic recovery loop
-    if (!isFanOut && !hasCompeting && implPhases.length > 0) {
+    // P25: Catastrophic recovery loop (suppressed by convergence — iterate has its own retry)
+    if (!isFanOut && !hasCompeting && implPhases.length > 0 && !hasConvergence) {
       applied.add('P25');
       linkEdge('regression_check', 'setup_deps', { loop_restart: 'true' });
     }
