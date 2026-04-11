@@ -28,18 +28,28 @@ describe('iterate convergence', () => {
     assert.ok(dot.includes('iter_adversary'), 'iter_adversary node must be present');
   });
 
-  it('AC6: all three reviewer lenses', () => {
+  it('AC6: all three reviewer lenses on correct nodes', () => {
     const { dot } = DotBuilder.fromSpec(makeConvergenceSpec()).build();
-    assert.ok(dot.includes('reviewer_lens="backend"'), 'backend reviewer lens must be present');
-    assert.ok(dot.includes('reviewer_lens="frontend"'), 'frontend reviewer lens must be present');
-    assert.ok(dot.includes('reviewer_lens="integration"'), 'integration reviewer lens must be present');
+    const lines = dot.split('\n');
+    const beLine = lines.find(l => l.includes('iter_review_be'));
+    assert.ok(beLine, 'iter_review_be node should exist');
+    assert.ok(beLine.includes('reviewer_lens="backend"'), 'iter_review_be should have backend lens');
+    const feLine = lines.find(l => l.includes('iter_review_fe'));
+    assert.ok(feLine, 'iter_review_fe node should exist');
+    assert.ok(feLine.includes('reviewer_lens="frontend"'), 'iter_review_fe should have frontend lens');
+    const intLine = lines.find(l => l.includes('iter_review_int'));
+    assert.ok(intLine, 'iter_review_int node should exist');
+    assert.ok(intLine.includes('reviewer_lens="integration"'), 'iter_review_int should have integration lens');
   });
 
-  it('AC7: adversary sealed_from_source', () => {
+  it('AC7: adversary sealed_from_source camelCase→snake_case', () => {
     const spec = makeConvergenceSpec({ sealedFromSource: '/tmp/spec.md' });
     const { dot } = DotBuilder.fromSpec(spec).build();
-    assert.ok(dot.includes('sealed_from_source='), 'sealed_from_source attr must appear on adversary');
-    assert.ok(dot.includes('/tmp/spec.md'), 'sealed_from_source value must be present');
+    assert.ok(dot.includes('sealed_from_source="/tmp/spec.md"'), 'sealedFromSource must convert to sealed_from_source in DOT output');
+    // Verify with a different value to confirm camelCase→snake_case conversion
+    const spec2 = makeConvergenceSpec({ sealedFromSource: 'app/**,lib/**' });
+    const { dot: dot2 } = DotBuilder.fromSpec(spec2).build();
+    assert.ok(dot2.includes('sealed_from_source="app/**,lib/**"'), 'sealedFromSource should be converted to snake_case in DOT');
   });
 
   it('AC5/AC11: duplicate model rejected', () => {
@@ -97,7 +107,8 @@ describe('iterate convergence', () => {
 
   it('AC8: P0 composition — commit_and_push injected for isolated workspace', () => {
     const spec = { ...makeConvergenceSpec(), workspace: 'isolated' };
-    const { dot } = DotBuilder.fromSpec(spec).build();
+    const result = DotBuilder.fromSpec(spec).build();
+    const { dot, patternsApplied } = result;
     assert.ok(dot.includes('commit_and_push'), 'commit_and_push must be injected for workspace=isolated');
     // quality_review -> commit_and_push -> exit rewiring
     assert.ok(
@@ -105,6 +116,7 @@ describe('iterate convergence', () => {
       'quality_review must route to commit_and_push',
     );
     assert.ok(dot.includes('commit_and_push -> exit'), 'commit_and_push must route to exit');
+    assert.ok(patternsApplied.includes('P0'), 'patternsApplied must include P0 for workspace=isolated composition');
   });
 
   it('AC15: P1 composition — setup_deps emitted before converge', () => {
@@ -119,7 +131,7 @@ describe('iterate convergence', () => {
     const { dot } = DotBuilder.fromSpec(makeConvergenceSpec()).build();
     const expectedIds = ['iter_impl', 'iter_review_be', 'iter_review_fe', 'iter_review_int', 'iter_adversary'];
     for (const id of expectedIds) {
-      assert.ok(dot.includes(id), `node ${id} must be present`);
+      assert.ok(new RegExp(`\\b${id}\\b`).test(dot), `node ${id} must be present (word boundary match)`);
     }
     // Verify they are NOT the old non-prefixed names
     assert.ok(!dot.includes('"impl"'), 'no bare "impl" node in convergence mode');

@@ -1508,6 +1508,9 @@ export class DotBuilder {
                 });
                 link('converge', 'quality_review', { condition: 'outcome=success', label: 'converged' });
                 link('quality_review', 'exit', { condition: 'outcome=success', label: 'pass' });
+                // Convergence handles its own exit routing; update prevId for clarity
+                prevId = 'quality_review';
+                prevAttrs = {};
             } // end hasConvergence
             for (let i = 0; i < phases.length && !hasConvergence; i++) {
                 const p = phases[i];
