@@ -70,6 +70,7 @@ Extract: slug, goal, tasks, acceptance criteria.
 | Coverage requirements | 9 (coverage gate) |
 | Multiple independent workstreams | 4 (fan-out/fan-in) |
 | Phase prompt spans 2+ layers, test categories, or UI pages | 31 (node scope decomposition) — split per heuristic table. Skip if phase uses Pattern 18 |
+| Convergence language ("converge until", "iterate until clean", "review until zero findings", "monotonic improvement", "rollback on regression", "Lyapunov") | 32 (iterate convergence) — replaces standard endgame for that phase. NOT triggered by "iterate" alone, "quality gate" alone, or "adversarial" alone. |
 
 **Plan review teams** per phase:
 1. `correctness` + `patterns` (always)
@@ -103,6 +104,12 @@ Derive the measurement command from PRD context:
 | Custom metric | Extract script/command from PRD; wrap so last stdout line is a number |
 
 The command MUST output a single number on its last line. Use the same command for both `baseline` and `measure` nodes.
+
+**P32 Conflict Resolution:**
+- "quality gate" + numeric metric target → P20 (microverse), NOT P32
+- "adversarial testing" alone → P17 (red team), NOT P32
+- Both convergence + adversarial signals → P32 (iterate body contains adversary; P17 suppressed)
+- Both convergence + numeric metric → split: metric phase uses P20, quality phase uses P32
 
 **TypeScript strictness detection**: If the target project uses TypeScript, check `tsconfig.json` for strict flags: `exactOptionalPropertyTypes`, `strict`, `strictNullChecks`, `noUncheckedIndexedAccess`, `strictPropertyInitialization`. Record active flags as `${STRICT_FLAGS}`. If any are enabled, these MUST be embedded in every phase's `prompt` in Step 3 — agents default to `prop: T | undefined` instead of `prop?: T` under strict configs, causing type regressions that exhaust verify retries.
 
