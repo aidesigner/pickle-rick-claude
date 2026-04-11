@@ -342,7 +342,9 @@ export type BuildErrorCode =
   | 'MISSING_ALLOWED_PATHS'
   | 'INVALID_SPEC'
   | 'INVALID_TIMEOUT'
-  | 'INVALID_ALLOWED_PATHS';
+  | 'INVALID_ALLOWED_PATHS'
+  | 'DUPLICATE_MODEL'
+  | 'INVALID_CONVERGENCE_SPEC';
 
 export interface Diagnostic {
   rule: string;
@@ -401,6 +403,17 @@ export interface StylesheetConfig {
   reviewModel?: string;
   reviewProvider?: string;
   reasoningEffort?: string;
+}
+
+export interface ConvergenceSpec {
+  until: 'V_total == 0' | 'V_total == 0 && fixed_point' | 'V_total == 0 && fixed_point && reproducibility';
+  maxVisits?: number;
+  timeout?: string;
+  impl: {
+    harness: 'hermes' | 'claude-code';
+    prompt: string;
+  };
+  sealedFromSource?: string;
 }
 
 export interface PhaseSpec {
@@ -462,4 +475,5 @@ export interface BuilderSpec {
   modelStylesheet?: StylesheetConfig;
   specFile?: string;
   endgame?: { broadPass?: boolean };
+  convergence?: ConvergenceSpec;
 }

@@ -25,6 +25,7 @@ export const BUILD_ERROR_CODES: BuildErrorCodeType[] = [
   'REVIEW_MISSING_READONLY', 'COMPONENT_NO_MERGE', 'FAN_OUT_SCOPE_LEAK',
   'WORKSPACE_NO_HTTPS', 'WORKSPACE_NO_PUSH', 'PLAN_MODE_DEADLOCK',
   'MISSING_ALLOWED_PATHS', 'INVALID_SPEC', 'INVALID_TIMEOUT', 'INVALID_ALLOWED_PATHS',
+  'DUPLICATE_MODEL', 'INVALID_CONVERGENCE_SPEC',
 ];
 // Alias for JS consumers
 export const BuildErrorCode = BUILD_ERROR_CODES;
@@ -884,6 +885,7 @@ interface InternalSpec {
   reviewRatchet?: number;
   modelStylesheet?: Record<string, unknown>;
   endgame?: { broadPass?: boolean };
+  convergence?: { until: string; maxVisits?: number; timeout?: string; impl: { harness: string; prompt: string }; sealedFromSource?: string };
 }
 
 export class DotBuilder {
