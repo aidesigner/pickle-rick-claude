@@ -493,7 +493,7 @@ Detection heuristic: any `new` expression inside `for`/`while`/`.map()`/`.forEac
 - Nodes already under 100 lines of expected output
 - Phases using Pattern 18 (competing impls) — redundancy is already handled
 
-**32. Convergence Loop via iterate** — iterative refinement with rollback detection and fixed-point convergence. Use when a PRD mentions "converge until", "iterate until", "monotonic improvement", or "fixed point".
+**32. Convergence Loop via iterate (Pattern 32)** — iterative refinement with rollback detection and fixed-point convergence. Use when a PRD mentions "converge until", "iterate until", "monotonic improvement", or "fixed point".
 
 **Detection signals:** "converge until", "iterate until clean", "review until zero findings", "monotonic improvement", "rollback on regression", "Lyapunov"
 
