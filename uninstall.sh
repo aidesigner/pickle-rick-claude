@@ -34,11 +34,24 @@ else
   echo "    Remove hooks manually from ~/.claude/settings.json"
 fi
 
-# --- REMOVE EXTENSION SCRIPTS ---
-# Guard: $HOME is validated above. rm -rf only inside ~/.claude/pickle-rick.
+# --- REMOVE EXTENSION SCRIPTS (preserving user data) ---
+# Guard: $HOME is validated above. We remove only install artifacts —
+# sessions/, activity/, and metrics-cache are runtime-created user data
+# and stay untouched unless the user deletes them manually.
 if [ -d "$EXTENSION_ROOT" ]; then
-  rm -rf "$EXTENSION_ROOT"
-  echo "✅ Removed extension scripts at $EXTENSION_ROOT"
+  # Install artifacts (everything install.sh creates)
+  rm -rf "$EXTENSION_ROOT/extension"
+  rm -rf "$EXTENSION_ROOT/templates"
+  rm -f  "$EXTENSION_ROOT/persona.md"
+  rm -f  "$EXTENSION_ROOT/pickle_settings.json"
+  rm -f  "$EXTENSION_ROOT"/szechuan-sauce-*.md
+  echo "✅ Removed install artifacts at $EXTENSION_ROOT (sessions/activity preserved)"
+
+  # If the directory is now empty (no sessions, no activity, nothing), clean it up
+  if [ -d "$EXTENSION_ROOT" ] && [ -z "$(ls -A "$EXTENSION_ROOT" 2>/dev/null)" ]; then
+    rmdir "$EXTENSION_ROOT"
+    echo "✅ Removed empty $EXTENSION_ROOT"
+  fi
 else
   echo "ℹ️  No extension scripts at $EXTENSION_ROOT — skipping"
 fi
@@ -102,6 +115,7 @@ fi
 
 echo ""
 echo "✅ Pickle Rick uninstalled."
-echo "📝 Project-local CLAUDE.md files were NOT removed — delete them manually if desired."
-echo "📝 Settings backups at ~/.claude/backups/ — safe to delete manually."
-echo "📝 Session history (if any) was removed with $EXTENSION_ROOT/sessions/"
+echo "📝 Session history preserved at $EXTENSION_ROOT/sessions/ (if any) — delete manually if desired."
+echo "📝 Activity logs preserved at $EXTENSION_ROOT/activity/ (if any) — delete manually if desired."
+echo "📝 Settings backups preserved at ~/.claude/backups/ — safe to delete manually."
+echo "📝 Project-local CLAUDE.md files NOT removed — remove the persona block manually if desired."

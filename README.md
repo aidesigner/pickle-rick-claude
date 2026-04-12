@@ -177,7 +177,7 @@ Two uninstall paths depending on how much you want to remove.
 bash uninstall-hooks.sh
 ```
 
-Settings are backed up to `~/.claude/backups/settings.json.pickle-uninstall-hooks.<timestamp>` before modification. Run `bash install.sh` to re-enable hooks later.
+Settings are backed up to `~/.claude/backups/settings.json.pickle-uninstall-hooks.<timestamp>` before modification. Run `bash install.sh` to re-enable hooks later — `install.sh` is idempotent, safe to re-run any time. Third-party hooks in `settings.json` (GitNexus, RTK, etc.) are never touched.
 
 **Full uninstall** — removes hooks, extension scripts at `~/.claude/pickle-rick/`, and all pickle-rick slash commands at `~/.claude/commands/`:
 
@@ -185,7 +185,13 @@ Settings are backed up to `~/.claude/backups/settings.json.pickle-uninstall-hook
 bash uninstall.sh
 ```
 
-Preserved after full uninstall: settings backups in `~/.claude/backups/`, project-local `CLAUDE.md` files (delete the persona block manually if desired). Third-party hooks in `settings.json` (GitNexus, RTK, etc.) are never touched.
+**Preserved after full uninstall** (delete manually if desired):
+- Session history at `~/.claude/pickle-rick/sessions/`
+- Activity logs at `~/.claude/pickle-rick/activity/`
+- Settings backups at `~/.claude/backups/`
+- Project-local `CLAUDE.md` files — remove the appended persona block manually
+
+Third-party hooks in `settings.json` (GitNexus, RTK, etc.) are never touched.
 
 ---
 
