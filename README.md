@@ -182,9 +182,9 @@ Settings are backed up to `~/.claude/backups/settings.json.pickle-uninstall-hook
 **What still works without hooks:**
 
 - **One-shot utilities and reporters** (never needed hooks) — `/pickle-prd`, `/pickle-refine-prd`, `/pickle-dot`, `/pickle-dot-patterns`, `/pickle-metrics`, `/pickle-status`, `/pickle-standup`, `/help-pickle`, `/attract`.
-- **Detached-runner commands** (bootstrap a separate process that runs independently) — `/pickle-tmux`, `/pickle-zellij`, `/meeseeks-zellij`, `/pickle-jar-open`. These launch `mux-runner.js` / `jar-runner.js` inside tmux or zellij; the runner spawns its own `claude -p` subprocesses and drives iteration via Node.js, not via the Stop hook. In tmux mode the Stop hook is a pass-through anyway.
+- **Detached-runner commands** (bootstrap a separate process that runs independently inside tmux/zellij) — `/pickle-tmux`, `/pickle-zellij`, `/pickle-jar-open`, `/pickle-microverse`, `/szechuan-sauce`, `/anatomy-park`, `/meeseeks-zellij`. These launch `mux-runner.js` / `jar-runner.js` / `microverse-runner.js` inside the multiplexer; the runner spawns its own `claude -p` subprocesses and drives iteration via Node.js, not via the Stop hook. In tmux mode the Stop hook is a pass-through anyway.
 
-**What needs hooks** — in-session loops where the Stop hook is the iteration driver for the same Claude session: `/pickle` (interactive mode), `/meeseeks`, `/szechuan-sauce`, `/anatomy-park`, `/council-of-ricks`, `/portal-gun`, `/project-mayhem`, `/pickle-microverse`, `/pickle-retry`. Without hooks these run the first step and stop.
+**What needs hooks** — in-session loops where the Stop hook is the iteration driver for the same Claude session: `/pickle` (interactive mode), `/meeseeks` (inline, non-zellij), `/council-of-ricks`, `/portal-gun`, `/project-mayhem`, `/pickle-retry`. Without hooks these run the first step and stop.
 
 **Full uninstall** — removes hooks, extension scripts at `~/.claude/pickle-rick/`, and all pickle-rick slash commands at `~/.claude/commands/`:
 
