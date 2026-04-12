@@ -24,6 +24,10 @@ export function getWidth(maxW = 90) {
     const cols = process.stdout.columns || 80;
     return Math.min(cols - 4, maxW);
 }
+export function getHeight(fallback = 24) {
+    const rows = process.stdout.rows;
+    return rows && rows > 0 ? rows : fallback;
+}
 export function wrapText(text, width) {
     if (!Number.isFinite(width) || width <= 0)
         return [text];

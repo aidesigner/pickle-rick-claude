@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { collectTickets, statusSymbol, formatTime, getWidth, Style, sleep, MatrixStyle, matrixSeparator, latestIterationLog, safeErrorMessage } from '../services/pickle-utils.js';
+import { collectTickets, statusSymbol, formatTime, getWidth, getHeight, Style, sleep, MatrixStyle, matrixSeparator, latestIterationLog, safeErrorMessage } from '../services/pickle-utils.js';
 /**
  * Extracts a short readable summary from a stream-json log line.
  * Returns the original line (sans ANSI) if it's not valid JSON.
@@ -104,6 +104,104 @@ export function renderMicroverseTrend(mv, width) {
     }
     return out;
 }
+/**
+ * Format the `Current` header field as `<id>: <title>` when a matching ticket
+ * exists, truncated to pane width. Falls back to bare id or "none".
+ */
+export function formatCurrentField(currentTicketId, tickets, width) {
+    if (!currentTicketId)
+        return `${MX.DIM}none${MX.R}`;
+    const match = tickets.find((t) => t.id === currentTicketId);
+    const title = match?.title?.trim();
+    const raw = title ? `${currentTicketId}: ${title}` : String(currentTicketId);
+    // Reserve ~16 cols for the "  Current: " label + padding
+    const maxLen = Math.max(8, width - 16);
+    const display = raw.length > maxLen ? raw.slice(0, maxLen - 1) + '…' : raw;
+    return `${MX.BRIGHT}${display}${MX.R}`;
+}
+/**
+ * Build the ticket list section as an array of pre-formatted lines (each
+ * ending in `\n`). When `tickets.length` fits within `budget`, renders the
+ * full list. Otherwise, windows the slice around the current (or last-done)
+ * ticket, keeping the current ticket visible with a trailing buffer of
+ * upcoming tickets, and emits `... N more above/below ...` indicators.
+ *
+ * Exported for unit testing. `budget` is the max number of ticket body lines
+ * available (including any indicator lines). Caller accounts for the
+ * "Tickets:" section header separately.
+ */
+export function buildTicketLines(tickets, currentTicketId, budget) {
+    if (tickets.length === 0)
+        return [];
+    const renderOne = (ticket) => {
+        const status = (ticket.status || '').toLowerCase();
+        const sym = statusSymbol(ticket.status);
+        const coloredSym = status === 'done'
+            ? `${MX.GREEN}${sym}${MX.R}`
+            : status === 'in progress'
+                ? `${MX.WARN}${sym}${MX.R}`
+                : `${MX.DIM}${sym}${MX.R}`;
+        const isCurrent = ticket.id === currentTicketId;
+        const prefix = isCurrent ? `${MX.BRIGHT}▸${MX.R}` : ' ';
+        const titleStr = isCurrent
+            ? `${MX.BRIGHT}${ticket.title || ''}${MX.R}`
+            : `${MX.GREEN}${ticket.title || ''}${MX.R}`;
+        return `${prefix} ${coloredSym} ${MX.DIM}${ticket.id}:${MX.R} ${titleStr}\n`;
+    };
+    if (budget <= 0 || tickets.length <= budget) {
+        return tickets.map(renderOne);
+    }
+    const currentIdx = currentTicketId
+        ? tickets.findIndex((t) => t.id === currentTicketId)
+        : -1;
+    let anchorIdx;
+    if (currentIdx >= 0) {
+        anchorIdx = currentIdx;
+    }
+    else {
+        let lastDone = -1;
+        for (let i = 0; i < tickets.length; i++) {
+            if ((tickets[i].status || '').toLowerCase() === 'done')
+                lastDone = i;
+        }
+        anchorIdx = lastDone >= 0 ? lastDone : 0;
+    }
+    // Reserve up to 2 lines for the above/below indicators.
+    const bodyBudget = Math.max(1, budget - 2);
+    const trailingBuffer = 3;
+    let end = Math.min(tickets.length, anchorIdx + trailingBuffer + 1);
+    let start = Math.max(0, end - bodyBudget);
+    if (anchorIdx < start || anchorIdx >= end) {
+        start = Math.max(0, anchorIdx - Math.floor(bodyBudget / 2));
+        end = Math.min(tickets.length, start + bodyBudget);
+    }
+    if (end === tickets.length) {
+        start = Math.max(0, tickets.length - bodyBudget);
+    }
+    if (start === 0) {
+        end = Math.min(tickets.length, bodyBudget);
+    }
+    const out = [];
+    if (start > 0) {
+        out.push(`  ${MX.DIM}... ${start} more above ...${MX.R}\n`);
+    }
+    for (let i = start; i < end; i++) {
+        out.push(renderOne(tickets[i]));
+    }
+    if (end < tickets.length) {
+        out.push(`  ${MX.DIM}... ${tickets.length - end} more below ...${MX.R}\n`);
+    }
+    return out;
+}
+function countRows(segments) {
+    let n = 0;
+    for (const s of segments) {
+        for (let i = 0; i < s.length; i++)
+            if (s.charCodeAt(i) === 10)
+                n++;
+    }
+    return n;
+}
 function render(sessionDir) {
     // If the session directory itself is gone, signal exit (not just "waiting")
     if (!fs.existsSync(sessionDir))
@@ -140,7 +238,7 @@ function render(sessionDir) {
         ['Phase', `${MX.CYAN}${state.step || 'unknown'}${MX.R}`],
         ['Iteration', `${MX.GREEN}${iterStr}${MX.R}`],
         ['Elapsed', `${MX.GREEN}${timeStr}${MX.R}`],
-        ['Current', state.current_ticket ? `${MX.BRIGHT}${state.current_ticket}${MX.R}` : `${MX.DIM}none${MX.R}`],
+        ['Current', formatCurrentField(state.current_ticket, tickets, width)],
         ['Active', state.active === true ? `${MX.BRIGHT}▣ ONLINE${MX.R}` : `${MX.ERR}▢ OFFLINE${MX.R}`],
     ];
     try {
@@ -195,22 +293,9 @@ function render(sessionDir) {
     catch {
         // No microverse session — skip
     }
-    if (tickets.length > 0) {
-        out.push(`\n${sep}\n${MX.BRIGHT}Tickets:${MX.R}\n`);
-        for (const ticket of tickets) {
-            const status = (ticket.status || '').toLowerCase();
-            const sym = statusSymbol(ticket.status);
-            const coloredSym = status === 'done'
-                ? `${MX.GREEN}${sym}${MX.R}`
-                : status === 'in progress'
-                    ? `${MX.WARN}${sym}${MX.R}`
-                    : `${MX.DIM}${sym}${MX.R}`;
-            const isCurrent = ticket.id === state.current_ticket;
-            const prefix = isCurrent ? `${MX.BRIGHT}▸${MX.R}` : ' ';
-            const titleStr = isCurrent ? `${MX.BRIGHT}${ticket.title}${MX.R}` : `${MX.GREEN}${ticket.title || ''}${MX.R}`;
-            out.push(`${prefix} ${coloredSym} ${MX.DIM}${ticket.id}:${MX.R} ${titleStr}\n`);
-        }
-    }
+    // Build the "Recent output" section first so we can reserve its rows
+    // before sizing the ticket window.
+    const recentOut = [];
     try {
         const logPath = latestIterationLog(sessionDir);
         if (logPath) {
@@ -246,10 +331,10 @@ function render(sessionDir) {
                 .filter((l) => l.length > 0)
                 .slice(-5);
             if (summaryLines.length > 0) {
-                out.push(`\n${sep}\n${MX.DIM}Recent output:${MX.R}\n`);
+                recentOut.push(`\n${sep}\n${MX.DIM}Recent output:${MX.R}\n`);
                 for (const logLine of summaryLines) {
                     const truncated = logLine.length > width - 2 ? logLine.slice(0, width - 5) + '…' : logLine;
-                    out.push(`${MX.GREEN}  ${truncated}${MX.R}\n`);
+                    recentOut.push(`${MX.GREEN}  ${truncated}${MX.R}\n`);
                 }
             }
         }
@@ -257,7 +342,27 @@ function render(sessionDir) {
     catch {
         /* ignore */
     }
-    out.push(`\n${MX.DIM}Refreshing every 2s  •  Ctrl+C to detach${MX.R}\n`);
+    const footer = `\n${MX.DIM}Refreshing every 2s  •  Ctrl+C to detach${MX.R}\n`;
+    if (tickets.length > 0) {
+        const ticketHeader = `\n${sep}\n${MX.BRIGHT}Tickets:${MX.R}\n`;
+        // The ticket section header consumes 3 rows (leading blank, separator,
+        // "Tickets:" label). Size the body budget from the actual rendered
+        // header/footer/recent row counts so dynamic sections (microverse,
+        // circuit breaker, rate limit) shrink the window correctly.
+        const headerRows = countRows(out);
+        const recentRows = countRows(recentOut);
+        const footerRows = countRows([footer]);
+        const ticketHeaderRows = 3;
+        const height = getHeight();
+        const budget = Math.max(1, height - headerRows - recentRows - footerRows - ticketHeaderRows - 1);
+        const ticketLines = buildTicketLines(tickets, state.current_ticket, budget);
+        if (ticketLines.length > 0) {
+            out.push(ticketHeader);
+            out.push(...ticketLines);
+        }
+    }
+    out.push(...recentOut);
+    out.push(footer);
     process.stdout.write(out.join(''));
     return state.active === true;
 }

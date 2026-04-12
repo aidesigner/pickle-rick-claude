@@ -30,6 +30,11 @@ export function getWidth(maxW: number = 90): number {
   return Math.min(cols - 4, maxW);
 }
 
+export function getHeight(fallback: number = 24): number {
+  const rows = process.stdout.rows;
+  return rows && rows > 0 ? rows : fallback;
+}
+
 export function wrapText(text: string, width: number): string[] {
   if (!Number.isFinite(width) || width <= 0) return [text];
   const lines: string[] = [];

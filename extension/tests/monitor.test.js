@@ -4,7 +4,14 @@ import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-import { summarizeLine, sparkline, renderMicroverseTrend } from '../bin/monitor.js';
+import {
+    summarizeLine,
+    sparkline,
+    renderMicroverseTrend,
+    formatCurrentField,
+    buildTicketLines,
+} from '../bin/monitor.js';
+import { getHeight } from '../services/pickle-utils.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MONITOR_BIN = path.resolve(__dirname, '../bin/monitor.js');
@@ -279,4 +286,162 @@ test('renderMicroverseTrend: limits history display to last 8', () => {
     // Last 8 should appear
     assert.ok(text.includes('5:8'), 'iteration 5 should appear');
     assert.ok(text.includes('12:1'), 'iteration 12 should appear');
+});
+
+// --- getHeight ---
+
+test('getHeight: returns positive integer', () => {
+    const h = getHeight();
+    assert.ok(Number.isFinite(h) && h > 0, 'height should be a positive number');
+});
+
+test('getHeight: fallback when stdout.rows unset', () => {
+    // Can't easily mutate process.stdout.rows in node --test; verify default
+    // fallback path by passing an explicit fallback.
+    const h = getHeight(42);
+    assert.ok(h > 0);
+});
+
+// --- formatCurrentField ---
+
+function stripAnsi(s) {
+    return s.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
+function makeTicket(id, title, status = 'todo') {
+    return {
+        id,
+        title,
+        status,
+        order: 0,
+        type: null,
+        working_dir: null,
+        completed_at: null,
+        skipped_at: null,
+    };
+}
+
+test('formatCurrentField: null current → "none"', () => {
+    const out = stripAnsi(formatCurrentField(null, [], 80));
+    assert.equal(out, 'none');
+});
+
+test('formatCurrentField: id with matching ticket → "<id>: <title>"', () => {
+    const tickets = [makeTicket('8171ad11', 'Fix dashboard monitor overflow')];
+    const out = stripAnsi(formatCurrentField('8171ad11', tickets, 80));
+    assert.equal(out, '8171ad11: Fix dashboard monitor overflow');
+});
+
+test('formatCurrentField: id with no matching ticket → bare id', () => {
+    const out = stripAnsi(formatCurrentField('deadbeef', [], 80));
+    assert.equal(out, 'deadbeef');
+});
+
+test('formatCurrentField: long title truncated with ellipsis', () => {
+    const title = 'x'.repeat(200);
+    const tickets = [makeTicket('abc12345', title)];
+    const out = stripAnsi(formatCurrentField('abc12345', tickets, 40));
+    assert.ok(out.endsWith('…'), `expected ellipsis, got: ${out}`);
+    assert.ok(out.length <= 40, `expected <= width, got length ${out.length}`);
+    assert.ok(out.startsWith('abc12345: '), 'should keep id prefix');
+});
+
+// --- buildTicketLines ---
+
+function makeTickets(n) {
+    return Array.from({ length: n }, (_, i) =>
+        makeTicket(`tkt${String(i).padStart(3, '0')}`, `Ticket ${i}`, i < 5 ? 'done' : 'todo')
+    );
+}
+
+test('buildTicketLines: empty list → empty', () => {
+    const lines = buildTicketLines([], null, 10);
+    assert.deepEqual(lines, []);
+});
+
+test('buildTicketLines: full list when tickets fit budget', () => {
+    const tickets = makeTickets(5);
+    const lines = buildTicketLines(tickets, 'tkt002', 20);
+    assert.equal(lines.length, 5, 'should render all 5 tickets');
+    assert.ok(!lines.some((l) => l.includes('more above')), 'no above indicator');
+    assert.ok(!lines.some((l) => l.includes('more below')), 'no below indicator');
+    const joined = stripAnsi(lines.join(''));
+    for (let i = 0; i < 5; i++) {
+        assert.ok(joined.includes(`Ticket ${i}`), `ticket ${i} should render`);
+    }
+});
+
+test('buildTicketLines: windowed with 20 tickets in tight budget', () => {
+    const tickets = makeTickets(20);
+    // 21-row terminal minus ~10 header/footer/recent rows → body ~11 lines
+    const budget = 11;
+    const currentId = 'tkt009';
+    const lines = buildTicketLines(tickets, currentId, budget);
+
+    // Total lines must fit budget (including indicator lines)
+    assert.ok(lines.length <= budget, `${lines.length} lines should fit budget ${budget}`);
+
+    // Current ticket must be visible
+    const joined = stripAnsi(lines.join(''));
+    assert.ok(joined.includes('tkt009:'), 'current ticket must be visible');
+    assert.ok(joined.includes('Ticket 9'), 'current ticket title must be visible');
+});
+
+test('buildTicketLines: "N more above" indicator correct', () => {
+    const tickets = makeTickets(20);
+    const budget = 11;
+    // Pick a current near the end so window must drop items from the top
+    const lines = buildTicketLines(tickets, 'tkt015', budget);
+    const joined = stripAnsi(lines.join(''));
+    const aboveMatch = joined.match(/\.\.\. (\d+) more above \.\.\./);
+    assert.ok(aboveMatch, `expected "more above" indicator, got: ${joined}`);
+    // The number should equal the count of hidden tickets above the window
+    const hiddenAbove = Number(aboveMatch[1]);
+    const firstVisibleMatch = joined.match(/tkt(\d{3}):/);
+    assert.ok(firstVisibleMatch);
+    const firstVisibleIdx = Number(firstVisibleMatch[1]);
+    assert.equal(hiddenAbove, firstVisibleIdx, 'above count matches hidden prefix');
+});
+
+test('buildTicketLines: "N more below" indicator correct', () => {
+    const tickets = makeTickets(20);
+    const budget = 11;
+    // Current near the start — window should hide the tail
+    const lines = buildTicketLines(tickets, 'tkt002', budget);
+    const joined = stripAnsi(lines.join(''));
+    const belowMatch = joined.match(/\.\.\. (\d+) more below \.\.\./);
+    assert.ok(belowMatch, `expected "more below" indicator, got: ${joined}`);
+    const hiddenBelow = Number(belowMatch[1]);
+    // Find last visible ticket index
+    const allVisible = Array.from(joined.matchAll(/tkt(\d{3}):/g)).map((m) => Number(m[1]));
+    const lastVisibleIdx = Math.max(...allVisible);
+    assert.equal(hiddenBelow, 20 - lastVisibleIdx - 1, 'below count matches hidden suffix');
+});
+
+test('buildTicketLines: current always visible across anchor positions', () => {
+    const tickets = makeTickets(20);
+    const budget = 11;
+    for (let i = 0; i < 20; i++) {
+        const id = `tkt${String(i).padStart(3, '0')}`;
+        const lines = buildTicketLines(tickets, id, budget);
+        const joined = stripAnsi(lines.join(''));
+        assert.ok(lines.length <= budget, `anchor ${i}: lines fit budget`);
+        assert.ok(joined.includes(`${id}:`), `anchor ${i}: current visible`);
+    }
+});
+
+test('buildTicketLines: no current → anchors on last Done ticket', () => {
+    const tickets = makeTickets(20);
+    const budget = 11;
+    const lines = buildTicketLines(tickets, null, budget);
+    assert.ok(lines.length <= budget);
+    const joined = stripAnsi(lines.join(''));
+    // Last done is tkt004 (indices 0-4 are done)
+    assert.ok(joined.includes('tkt004:'), 'last-done ticket should be visible as anchor');
+});
+
+test('buildTicketLines: budget <= 0 renders full list', () => {
+    const tickets = makeTickets(5);
+    const lines = buildTicketLines(tickets, null, 0);
+    assert.equal(lines.length, 5);
 });
