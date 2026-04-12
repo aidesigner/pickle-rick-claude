@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { getExtensionRoot, printMinimalPanel, collectTickets, statusSymbol, resolveSessionPath } from '../services/pickle-utils.js';
+import { getDataRoot, printMinimalPanel, collectTickets, statusSymbol, resolveSessionPath } from '../services/pickle-utils.js';
 export function showStatus(cwd) {
-    const SESSIONS_MAP = path.join(getExtensionRoot(), 'current_sessions.json');
+    const SESSIONS_MAP = path.join(getDataRoot(), 'current_sessions.json');
     if (!fs.existsSync(SESSIONS_MAP)) {
         console.log('🥒 No active Pickle Rick session for this directory.');
         return;

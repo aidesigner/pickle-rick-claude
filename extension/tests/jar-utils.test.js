@@ -174,7 +174,7 @@ test('addToJar: result path is nested under jar/<date>/<sessionId>', () => {
         const resultPath = addToJar(dir);
         const today = new Date().toISOString().split('T')[0];
         const sessionId = path.basename(dir);
-        const jarRoot = path.join(os.homedir(), '.claude/pickle-rick/jar');
+        const jarRoot = path.join(os.homedir(), '.local/share/pickle-rick/jar');
 
         assert.equal(resultPath, path.join(jarRoot, today, sessionId));
 

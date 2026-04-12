@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { resolveStateFile, loadActiveState, approve } from '../resolve-state.js';
-import { getExtensionRoot, extractFrontmatter } from '../../services/pickle-utils.js';
+import { getExtensionRoot, getDataRoot, extractFrontmatter } from '../../services/pickle-utils.js';
 const PROTECTED_PATTERNS = [
     /^\.eslintrc(\..*)?$/,
     /^\.prettierrc(\..*)?$/,
@@ -75,7 +75,7 @@ async function main() {
     }
     catch { /* default true — continue with protection enabled */ }
     // Activation guard: only active during automated sessions
-    const stateFile = resolveStateFile(extensionDir);
+    const stateFile = resolveStateFile(getDataRoot());
     if (!stateFile) {
         approve();
         return;

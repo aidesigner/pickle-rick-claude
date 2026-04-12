@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
-import { printMinimalPanel, Style, getExtensionRoot, withSessionMapLock, pruneOldSessions, safeErrorMessage, resolveSessionPath } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, withSessionMapLock, pruneOldSessions, safeErrorMessage, resolveSessionPath } from '../services/pickle-utils.js';
 import { State, Defaults, LockError, SessionMapEntry } from '../types/index.js';
 import { StateManager } from '../services/state-manager.js';
 import { logActivity, pruneActivity } from '../services/activity-logger.js';
@@ -17,10 +17,11 @@ function die(message: string): never {
 
 async function main() {
   const ROOT_DIR = getExtensionRoot();
-  const SESSIONS_ROOT = path.join(ROOT_DIR, 'sessions');
-  const JAR_ROOT = path.join(ROOT_DIR, 'jar');
-  const WORKTREES_ROOT = path.join(ROOT_DIR, 'worktrees');
-  const SESSIONS_MAP = path.join(ROOT_DIR, 'current_sessions.json');
+  const DATA_DIR = getDataRoot();
+  const SESSIONS_ROOT = path.join(DATA_DIR, 'sessions');
+  const JAR_ROOT = path.join(DATA_DIR, 'jar');
+  const WORKTREES_ROOT = path.join(DATA_DIR, 'worktrees');
+  const SESSIONS_MAP = path.join(DATA_DIR, 'current_sessions.json');
 
   const updateSessionMap = (cwd: string, sessionPath: string) => {
     withSessionMapLock(SESSIONS_MAP + '.lock', () => {
@@ -283,6 +284,7 @@ async function main() {
       ...(commandTemplate ? { Template: commandTemplate } : {}),
       ...(chainMeeseeks ? { 'Chain Meeseeks': 'Yes' } : {}),
       Extension: ROOT_DIR,
+      Data: DATA_DIR,
       Path: fullSessionPath,
     },
     'GREEN',

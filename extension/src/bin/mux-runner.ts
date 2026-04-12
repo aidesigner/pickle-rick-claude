@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, runCmd, safeErrorMessage } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, runCmd, safeErrorMessage } from '../services/pickle-utils.js';
 import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, type RateLimitInfo, type IterationExitResult, type RateLimitAction } from '../types/index.js';
 import { StateManager } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -541,6 +541,7 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
   const cmdArgs = [
     '--dangerously-skip-permissions',
     '--add-dir', extensionRoot,
+    '--add-dir', getDataRoot(),
     '--add-dir', sessionDir,
     '--no-session-persistence',
     '--output-format', 'stream-json', '--verbose',

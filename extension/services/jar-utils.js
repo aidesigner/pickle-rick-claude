@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { runCmd, Style, getExtensionRoot, safeErrorMessage } from './pickle-utils.js';
+import { runCmd, Style, getDataRoot, safeErrorMessage } from './pickle-utils.js';
 import { StateManager } from './state-manager.js';
 const sm = new StateManager();
 function getBranch(repoPath) {
@@ -38,7 +38,7 @@ export function addToJar(sessionDir) {
     // 3. Setup Jar storage
     const today = new Date().toISOString().split('T')[0];
     const sessionId = path.basename(sessionDir);
-    const jarRoot = path.join(getExtensionRoot(), 'jar');
+    const jarRoot = path.join(getDataRoot(), 'jar');
     const taskDir = path.join(jarRoot, today, sessionId);
     fs.mkdirSync(taskDir, { recursive: true });
     // 4. Copy PRD and compute integrity hash (atomic write)

@@ -259,7 +259,7 @@ test('setup: --resume syncs chain_meeseeks from state for display', () => {
 // ---------------------------------------------------------------------------
 
 function getActivityEvents(sessionId) {
-    const activityDir = path.join(os.homedir(), '.claude/pickle-rick/activity');
+    const activityDir = path.join(os.homedir(), '.local/share/pickle-rick/activity');
     const date = new Date().toLocaleDateString('en-CA');
     const filepath = path.join(activityDir, `${date}.jsonl`);
     if (!fs.existsSync(filepath)) return [];

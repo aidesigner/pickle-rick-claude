@@ -3,7 +3,7 @@ import * as path from 'path';
 import { spawn } from 'child_process';
 import { PromiseTokens, hasToken } from '../../types/index.js';
 import { resolveStateFile, approve } from '../resolve-state.js';
-import { getExtensionRoot, safeErrorMessage } from '../../services/pickle-utils.js';
+import { getExtensionRoot, getDataRoot, safeErrorMessage } from '../../services/pickle-utils.js';
 import { StateManager } from '../../services/state-manager.js';
 import { logActivity } from '../../services/activity-logger.js';
 const sm = new StateManager();
@@ -85,7 +85,7 @@ async function main() {
     }
     log(`Processing Stop hook. Input size: ${inputData.length}`);
     // 2. Determine State File
-    const stateFile = resolveStateFile(extensionDir);
+    const stateFile = resolveStateFile(getDataRoot());
     if (!stateFile) {
         log(`No state file found.`);
         approve();

@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import { spawn, spawnSync } from 'child_process';
-import { printMinimalPanel, Style, getExtensionRoot, writeStateFile, safeErrorMessage } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, writeStateFile, safeErrorMessage } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { Defaults } from '../types/index.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -72,6 +72,7 @@ async function runTask(sessionDir, repoCwd, extensionRoot) {
     const cmdArgs = [
         '--dangerously-skip-permissions',
         '--add-dir', extensionRoot,
+        '--add-dir', getDataRoot(),
         '--add-dir', sessionDir,
         '--no-session-persistence',
         '--max-turns', String(managerMaxTurns),
@@ -139,8 +140,9 @@ async function runTask(sessionDir, repoCwd, extensionRoot) {
 }
 async function main() {
     const ROOT_DIR = getExtensionRoot();
-    const JAR_ROOT = path.join(ROOT_DIR, 'jar');
-    const SESSIONS_ROOT = path.join(ROOT_DIR, 'sessions');
+    const DATA_DIR = getDataRoot();
+    const JAR_ROOT = path.join(DATA_DIR, 'jar');
+    const SESSIONS_ROOT = path.join(DATA_DIR, 'sessions');
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     if (!fs.existsSync(JAR_ROOT)) {
         console.log('🥒 Pickle Jar is empty. No tasks to run.');

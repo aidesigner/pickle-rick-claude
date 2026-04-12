@@ -1,8 +1,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { getExtensionRoot, safeErrorMessage } from './pickle-utils.js';
+import { getDataRoot, safeErrorMessage } from './pickle-utils.js';
 export function getActivityDir() {
-    return path.join(getExtensionRoot(), 'activity');
+    return path.join(getDataRoot(), 'activity');
 }
 const MAX_BUFFER = 100;
 const pendingBuffer = [];

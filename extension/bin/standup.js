@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
-import { getExtensionRoot } from '../services/pickle-utils.js';
+import { getDataRoot } from '../services/pickle-utils.js';
 function consumeArg(argv, i, flagName, hint) {
     const val = argv[i + 1];
     if (val === undefined || val.startsWith('--')) {
@@ -58,7 +58,7 @@ export function parseArgs(argv) {
 }
 /** Read working_dir from a session's state.json and extract the project name. */
 function getSessionProject(sessionId) {
-    const sessionsDir = path.join(getExtensionRoot(), 'sessions');
+    const sessionsDir = path.join(getDataRoot(), 'sessions');
     const stateFile = path.join(sessionsDir, sessionId, 'state.json');
     try {
         const data = JSON.parse(fs.readFileSync(stateFile, 'utf-8'));
@@ -299,7 +299,7 @@ export function formatOutput(events, hookCommits, gitOnlyCommits, since, until) 
 }
 function main() {
     const { range } = parseArgs(process.argv.slice(2));
-    const activityDir = path.join(getExtensionRoot(), 'activity');
+    const activityDir = path.join(getDataRoot(), 'activity');
     const events = readActivityFiles(activityDir, range.since, range.until);
     const gitCommits = getGitCommits(range.since);
     const { hookCommits, gitOnlyCommits } = deduplicateCommits(events, gitCommits);

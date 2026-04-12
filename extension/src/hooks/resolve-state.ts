@@ -7,12 +7,13 @@ const ALLOW = JSON.stringify({ decision: 'approve' });
 
 /**
  * Resolves the state file path from env or the sessions map.
- * Returns null if no active state file is found.
+ * `dataDir` is where current_sessions.json lives (pickle data root, not the
+ * extension install dir). Returns null if no active state file is found.
  */
-export function resolveStateFile(extensionDir: string): string | null {
+export function resolveStateFile(dataDir: string): string | null {
   let stateFile = process.env.PICKLE_STATE_FILE;
   if (!stateFile) {
-    const sessionsMapPath = path.join(extensionDir, 'current_sessions.json');
+    const sessionsMapPath = path.join(dataDir, 'current_sessions.json');
     if (fs.existsSync(sessionsMapPath)) {
       try {
         const map = JSON.parse(fs.readFileSync(sessionsMapPath, 'utf8'));

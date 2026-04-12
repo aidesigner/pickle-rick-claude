@@ -154,6 +154,24 @@ export function getExtensionRoot(): string {
   return process.env.EXTENSION_DIR || path.join(os.homedir(), '.claude/pickle-rick');
 }
 
+/**
+ * Root directory for pickle data that must NOT live under ~/.claude (Claude Code
+ * gates ~/.claude writes with permission prompts). Session dirs, the jar queue,
+ * worktrees, activity logs, metrics cache, and the session map all live here.
+ *
+ * Resolution order:
+ *   1. PICKLE_DATA_DIR (explicit override — production or test)
+ *   2. EXTENSION_DIR (test-harness convenience: when tests pin the extension
+ *      root to a tmp dir, mirror data there so a single env var still isolates
+ *      a test run. Never set in production — production hits case 3.)
+ *   3. ~/.local/share/pickle-rick (production default)
+ */
+export function getDataRoot(): string {
+  if (process.env.PICKLE_DATA_DIR) return process.env.PICKLE_DATA_DIR;
+  if (process.env.EXTENSION_DIR) return process.env.EXTENSION_DIR;
+  return path.join(os.homedir(), '.local/share/pickle-rick');
+}
+
 export function statusSymbol(status: string | null): string {
   const s = (status || '').toLowerCase().replace(/^["']|["']$/g, '');
   if (s === 'done') return '[x]';

@@ -7,6 +7,7 @@ import {
   Style,
   formatTime,
   getExtensionRoot,
+  getDataRoot,
   safeErrorMessage,
   parseTicketFrontmatter,
 } from '../services/pickle-utils.js';
@@ -151,7 +152,8 @@ async function main() {
   );
 
   const extensionRoot = getExtensionRoot();
-  const includes = [extensionRoot, ticketPath];
+  const dataRoot = getDataRoot();
+  const includes = [extensionRoot, dataRoot, ticketPath];
 
   const cmdArgs = ['--dangerously-skip-permissions'];
   for (const p of includes) {

@@ -7,6 +7,7 @@ import {
   Style,
   formatTime,
   getExtensionRoot,
+  getDataRoot,
   safeErrorMessage,
 } from '../services/pickle-utils.js';
 import { PromiseTokens, hasToken, Defaults } from '../types/index.js';
@@ -214,8 +215,8 @@ function spawnWorker(
     console.error(`${Style.RED}❌ Log stream error (${roleId}): ${msg}${Style.RESET}`);
   });
 
-  // Mirror spawn-morty.ts: include extensionRoot and workingDir
-  const includes = [extensionRoot, workingDir];
+  // Mirror spawn-morty.ts: include extensionRoot, data root, and workingDir
+  const includes = [extensionRoot, getDataRoot(), workingDir];
   if (sessionDir) includes.push(sessionDir);
   const cmdArgs = ['--dangerously-skip-permissions'];
   for (const p of includes) {

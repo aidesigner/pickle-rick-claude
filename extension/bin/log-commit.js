@@ -1,12 +1,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { logActivity } from '../services/activity-logger.js';
-import { getExtensionRoot } from '../services/pickle-utils.js';
+import { getDataRoot } from '../services/pickle-utils.js';
 const COMMIT_CMD_RE = /\bgit\s+(commit|cherry-pick|merge|rebase)\b/;
 const COMMIT_HASH_RE = /\[[^\]]*\s+([a-f0-9]{7,})\]\s+(.+)/;
 function findActiveSession() {
     try {
-        const sessionsDir = path.join(getExtensionRoot(), 'sessions');
+        const sessionsDir = path.join(getDataRoot(), 'sessions');
         const entries = fs.readdirSync(sessionsDir);
         for (const entry of entries) {
             const statePath = path.join(sessionsDir, entry, 'state.json');

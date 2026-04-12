@@ -2,7 +2,7 @@
 import * as path from 'path';
 import * as os from 'os';
 import { scanSessionFiles, scanGitRepos, buildReport, formatNumber, shortenSlug, } from '../services/metrics-utils.js';
-import { printMinimalPanel, Style, getExtensionRoot, } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, getDataRoot, } from '../services/pickle-utils.js';
 function consumeArg(argv, i, flag, hint) {
     const val = argv[i + 1];
     if (val === undefined || val.startsWith('--')) {
@@ -269,7 +269,7 @@ function main() {
     const { since, until } = computeDateRange(args);
     const projectsDir = process.env.CLAUDE_PROJECTS_DIR || path.join(os.homedir(), '.claude', 'projects');
     const repoRoot = process.env.METRICS_REPO_ROOT || path.join(os.homedir(), 'loanlight');
-    const cachePath = path.join(getExtensionRoot(), 'metrics-cache.json');
+    const cachePath = path.join(getDataRoot(), 'metrics-cache.json');
     const tokens = scanSessionFiles(projectsDir, since, until, cachePath);
     const loc = scanGitRepos(repoRoot, since);
     const grouping = args.weekly ? 'weekly' : 'daily';

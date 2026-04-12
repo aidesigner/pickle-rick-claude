@@ -1,10 +1,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { ActivityEvent, ActivityEventType } from '../types/index.js';
-import { getExtensionRoot, safeErrorMessage } from './pickle-utils.js';
+import { getDataRoot, safeErrorMessage } from './pickle-utils.js';
 
 export function getActivityDir(): string {
-  return path.join(getExtensionRoot(), 'activity');
+  return path.join(getDataRoot(), 'activity');
 }
 
 const MAX_BUFFER = 100;

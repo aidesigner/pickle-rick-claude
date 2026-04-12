@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawn } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, safeErrorMessage, } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, safeErrorMessage, } from '../services/pickle-utils.js';
 import { PromiseTokens, hasToken, Defaults } from '../types/index.js';
 // Tracks all active worker subprocesses so the signal handler can kill them.
 const activeWorkerProcs = new Set();
@@ -159,8 +159,8 @@ function spawnWorker(roleId, prompt, refinementDir, extensionRoot, timeout, work
         const msg = safeErrorMessage(err);
         console.error(`${Style.RED}❌ Log stream error (${roleId}): ${msg}${Style.RESET}`);
     });
-    // Mirror spawn-morty.ts: include extensionRoot and workingDir
-    const includes = [extensionRoot, workingDir];
+    // Mirror spawn-morty.ts: include extensionRoot, data root, and workingDir
+    const includes = [extensionRoot, getDataRoot(), workingDir];
     if (sessionDir)
         includes.push(sessionDir);
     const cmdArgs = ['--dangerously-skip-permissions'];

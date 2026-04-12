@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, safeErrorMessage, parseTicketFrontmatter, } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, safeErrorMessage, parseTicketFrontmatter, } from '../services/pickle-utils.js';
 import { spawn } from 'child_process';
 import { PromiseTokens, hasToken, Defaults } from '../types/index.js';
 import { updateTicketStatus } from '../services/git-utils.js';
@@ -121,7 +121,8 @@ async function main() {
         PID: process.pid,
     }, isReviewTicket ? 'MAGENTA' : 'CYAN', '🥒');
     const extensionRoot = getExtensionRoot();
-    const includes = [extensionRoot, ticketPath];
+    const dataRoot = getDataRoot();
+    const includes = [extensionRoot, dataRoot, ticketPath];
     const cmdArgs = ['--dangerously-skip-permissions'];
     for (const p of includes) {
         // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call

@@ -1,14 +1,14 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { printMinimalPanel, getExtensionRoot, withSessionMapLock, resolveSessionPath, safeErrorMessage } from '../services/pickle-utils.js';
+import { printMinimalPanel, getDataRoot, withSessionMapLock, resolveSessionPath, safeErrorMessage } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { LockError } from '../types/index.js';
 
 const sm = new StateManager();
 
 export function cancelSession(cwd: string) {
-  const SESSIONS_MAP = path.join(getExtensionRoot(), 'current_sessions.json');
+  const SESSIONS_MAP = path.join(getDataRoot(), 'current_sessions.json');
 
   if (!fs.existsSync(SESSIONS_MAP)) {
     console.log('No active sessions map found.');

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { getExtensionRoot, extractFrontmatter, updateState, safeErrorMessage, resolveSessionPath } from '../services/pickle-utils.js';
+import { getExtensionRoot, getDataRoot, extractFrontmatter, updateState, safeErrorMessage, resolveSessionPath } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { Defaults } from '../types/index.js';
 const sm = new StateManager();
@@ -10,7 +10,7 @@ export function retryTicket(ticketId, cwd) {
     if (!/^[a-zA-Z0-9_-]+$/.test(ticketId)) {
         throw new Error(`Invalid ticket ID: ${ticketId}`);
     }
-    const sessionsMap = path.join(getExtensionRoot(), 'current_sessions.json');
+    const sessionsMap = path.join(getDataRoot(), 'current_sessions.json');
     if (!fs.existsSync(sessionsMap)) {
         throw new Error('No active Pickle Rick session found.');
     }
