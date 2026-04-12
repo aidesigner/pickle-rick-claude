@@ -167,6 +167,26 @@ claude --dangerously-skip-permissions
 # then follow the workflow above — start with a PRD
 ```
 
+### 4. Uninstall
+
+Two uninstall paths depending on how much you want to remove.
+
+**Remove hooks only** — disables automatic behavior (Stop loop enforcement, commit logging, config protection) but keeps extension files and slash commands available for manual use:
+
+```bash
+bash uninstall-hooks.sh
+```
+
+Settings are backed up to `~/.claude/backups/settings.json.pickle-uninstall-hooks.<timestamp>` before modification. Run `bash install.sh` to re-enable hooks later.
+
+**Full uninstall** — removes hooks, extension scripts at `~/.claude/pickle-rick/`, and all pickle-rick slash commands at `~/.claude/commands/`:
+
+```bash
+bash uninstall.sh
+```
+
+Preserved after full uninstall: settings backups in `~/.claude/backups/`, project-local `CLAUDE.md` files (delete the persona block manually if desired). Third-party hooks in `settings.json` (GitNexus, RTK, etc.) are never touched.
+
 ---
 
 ## Advanced Workflows
@@ -599,7 +619,7 @@ All modes support both tmux and Zellij monitor layouts.
 
 - **Node.js** 18+
 - **Claude Code** CLI (`claude`) — v2.1.49+
-- **jq** (for `install.sh`)
+- **jq** (for `install.sh`, `uninstall.sh`, `uninstall-hooks.sh`)
 - **rsync** (for `install.sh`)
 - **tmux** *(optional — for `/pickle-tmux`, `/szechuan-sauce`, `/anatomy-park`)*
 - **Zellij** >= 0.40.0 *(optional — for `/pickle-zellij`)*

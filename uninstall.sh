@@ -1,63 +1,107 @@
 #!/bin/bash
 set -e
 
-SETTINGS_FILE="$HOME/.claude/settings.json"
+# uninstall.sh — Full Pickle Rick removal.
+#
+# Removes:
+#   1. All hooks from ~/.claude/settings.json (via uninstall-hooks.sh)
+#   2. Extension scripts at ~/.claude/pickle-rick/
+#   3. Slash commands at ~/.claude/commands/pickle*.md and related
+#
+# Preserves:
+#   - Session history at ~/.claude/pickle-rick/sessions/  (delete manually if desired)
+#   - Activity logs at ~/.claude/pickle-rick/activity/
+#   - Settings backups at ~/.claude/backups/
+#   - Project-local CLAUDE.md files
+#
+# If you only want to disable automatic behavior (hooks) while keeping
+# slash commands available for manual use, run uninstall-hooks.sh instead.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+EXTENSION_ROOT="$HOME/.claude/pickle-rick"
+COMMANDS_DIR="$HOME/.claude/commands"
 
 echo "🥒 Uninstalling Pickle Rick for Claude Code..."
 
-# Remove extension scripts (guard: ensure $HOME is set to prevent catastrophic rm -rf)
+# --- VALIDATION ---
 if [ -z "$HOME" ]; then echo "❌ \$HOME is not set — aborting to prevent data loss."; exit 1; fi
-rm -rf "$HOME/.claude/pickle-rick/"
 
-# Remove commands (by exact name — does NOT touch user's other commands)
-rm -f "$HOME/.claude/commands/pickle.md"
-rm -f "$HOME/.claude/commands/pickle-prd.md"
-rm -f "$HOME/.claude/commands/eat-pickle.md"
-rm -f "$HOME/.claude/commands/help-pickle.md"
-rm -f "$HOME/.claude/commands/send-to-morty.md"
-rm -f "$HOME/.claude/commands/add-to-pickle-jar.md"
-rm -f "$HOME/.claude/commands/pickle-jar-open.md"
-rm -f "$HOME/.claude/commands/disable-pickle.md"
-rm -f "$HOME/.claude/commands/enable-pickle.md"
-rm -f "$HOME/.claude/commands/pickle-status.md"
-rm -f "$HOME/.claude/commands/pickle-retry.md"
-rm -f "$HOME/.claude/commands/pickle-tmux.md"
-rm -f "$HOME/.claude/commands/pickle-refine-prd.md"
-rm -f "$HOME/.claude/commands/meeseeks.md"
-rm -f "$HOME/.claude/commands/pickle-standup.md"
-rm -f "$HOME/.claude/commands/pickle-dot.md"
-rm -f "$HOME/.claude/commands/project-mayhem.md"
-rm -f "$HOME/.claude/commands/send-to-morty-review.md"
+# --- REMOVE HOOKS (delegate to uninstall-hooks.sh) ---
+if [ -f "$SCRIPT_DIR/uninstall-hooks.sh" ]; then
+  bash "$SCRIPT_DIR/uninstall-hooks.sh"
+else
+  echo "⚠️  uninstall-hooks.sh not found alongside uninstall.sh — skipping hook removal"
+  echo "    Remove hooks manually from ~/.claude/settings.json"
+fi
 
-# Remove Stop hook from settings.json (clean up empty Stop/hooks keys)
-if [ -f "$SETTINGS_FILE" ]; then
-  TMPFILE="$(mktemp)"
-  jq '
-    "node $HOME/.claude/pickle-rick/extension/hooks/dispatch.js stop-hook" as $cmd |
-    if .hooks.Stop then
-      .hooks.Stop = [.hooks.Stop[] | select(.hooks | map(.command) | any(. == $cmd) | not)] |
-      if (.hooks.Stop | length) == 0 then del(.hooks.Stop) else . end |
-      if (.hooks | keys | length) == 0 then del(.hooks) else . end
-    else . end
-  ' "$SETTINGS_FILE" > "$TMPFILE" \
-    && mv "$TMPFILE" "$SETTINGS_FILE"
-  echo "✅ Removed Stop hook from settings.json"
+# --- REMOVE EXTENSION SCRIPTS ---
+# Guard: $HOME is validated above. rm -rf only inside ~/.claude/pickle-rick.
+if [ -d "$EXTENSION_ROOT" ]; then
+  rm -rf "$EXTENSION_ROOT"
+  echo "✅ Removed extension scripts at $EXTENSION_ROOT"
+else
+  echo "ℹ️  No extension scripts at $EXTENSION_ROOT — skipping"
+fi
 
-  # Remove PostToolUse hook (git commit activity logger)
-  TMPFILE="$(mktemp)"
-  jq '
-    "node $HOME/.claude/pickle-rick/extension/bin/log-commit.js" as $cmd |
-    if .hooks.PostToolUse then
-      .hooks.PostToolUse = [.hooks.PostToolUse[] | select(.hooks | map(.command) | any(. == $cmd) | not)] |
-      if (.hooks.PostToolUse | length) == 0 then del(.hooks.PostToolUse) else . end |
-      if (.hooks | keys | length) == 0 then del(.hooks) else . end
-    else . end
-  ' "$SETTINGS_FILE" > "$TMPFILE" \
-    && mv "$TMPFILE" "$SETTINGS_FILE"
-  echo "✅ Removed PostToolUse hook from settings.json"
+# --- REMOVE SLASH COMMANDS ---
+# Derived from .claude/commands/ in the source repo. Explicit list so the
+# script works from a tarball (no repo) and never touches user commands
+# that happen to start with "pickle" but aren't ours.
+PICKLE_COMMANDS=(
+  add-to-pickle-jar
+  anatomy-park
+  attract
+  council-of-ricks
+  disable-pickle
+  eat-pickle
+  enable-pickle
+  help-pickle
+  meeseeks
+  meeseeks-zellij
+  pickle
+  pickle-dot
+  pickle-dot-patterns
+  pickle-jar-open
+  pickle-metrics
+  pickle-microverse
+  pickle-prd
+  pickle-refine-prd
+  pickle-retry
+  pickle-standup
+  pickle-status
+  pickle-tmux
+  pickle-zellij
+  portal-gun
+  project-mayhem
+  send-to-morty
+  send-to-morty-review
+  szechuan-sauce
+)
+
+# Legacy commands from older versions — clean up if present
+LEGACY_COMMANDS=(
+  microverse
+  pickle-microverse-tmux
+  pickle-portal
+)
+
+REMOVED_COUNT=0
+for cmd in "${PICKLE_COMMANDS[@]}" "${LEGACY_COMMANDS[@]}"; do
+  if [ -f "$COMMANDS_DIR/$cmd.md" ]; then
+    rm -f "$COMMANDS_DIR/$cmd.md"
+    REMOVED_COUNT=$((REMOVED_COUNT + 1))
+  fi
+done
+echo "✅ Removed $REMOVED_COUNT slash command file(s) from $COMMANDS_DIR"
+
+# --- REMOVE REPO-LOCAL tsc SYMLINK (created by install.sh in git mode) ---
+if [ -L "$SCRIPT_DIR/node_modules/.bin/tsc" ]; then
+  rm -f "$SCRIPT_DIR/node_modules/.bin/tsc"
+  echo "✅ Removed repo-local tsc symlink"
 fi
 
 echo ""
 echo "✅ Pickle Rick uninstalled."
 echo "📝 Project-local CLAUDE.md files were NOT removed — delete them manually if desired."
-echo "📝 Backup: ~/.claude/backups/ (if you ran install.sh) — safe to delete manually."
+echo "📝 Settings backups at ~/.claude/backups/ — safe to delete manually."
+echo "📝 Session history (if any) was removed with $EXTENSION_ROOT/sessions/"
