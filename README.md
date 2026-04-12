@@ -179,7 +179,12 @@ bash uninstall-hooks.sh
 
 Settings are backed up to `~/.claude/backups/settings.json.pickle-uninstall-hooks.<timestamp>` before modification. Run `bash install.sh` to re-enable hooks later — `install.sh` is idempotent, safe to re-run any time. Third-party hooks in `settings.json` (GitNexus, RTK, etc.) are never touched.
 
-**What still works without hooks:** one-shot utilities and reporters keep working because they don't rely on the Stop hook's iteration loop — `/pickle-prd`, `/pickle-refine-prd`, `/pickle-dot`, `/pickle-dot-patterns`, `/pickle-metrics`, `/pickle-status`, `/pickle-standup`, `/help-pickle`, `/attract`. Loop-based commands need hooks to advance iterations — `/pickle`, `/pickle-tmux`, `/pickle-zellij`, `/pickle-jar-open`, `/pickle-microverse`, `/meeseeks`, `/szechuan-sauce`, `/anatomy-park`, `/council-of-ricks`, `/portal-gun`, `/project-mayhem`, `/pickle-retry` will run the first step and then stop without hooks to drive them forward.
+**What still works without hooks:**
+
+- **One-shot utilities and reporters** (never needed hooks) — `/pickle-prd`, `/pickle-refine-prd`, `/pickle-dot`, `/pickle-dot-patterns`, `/pickle-metrics`, `/pickle-status`, `/pickle-standup`, `/help-pickle`, `/attract`.
+- **Detached-runner commands** (bootstrap a separate process that runs independently) — `/pickle-tmux`, `/pickle-zellij`, `/meeseeks-zellij`, `/pickle-jar-open`. These launch `mux-runner.js` / `jar-runner.js` inside tmux or zellij; the runner spawns its own `claude -p` subprocesses and drives iteration via Node.js, not via the Stop hook. In tmux mode the Stop hook is a pass-through anyway.
+
+**What needs hooks** — in-session loops where the Stop hook is the iteration driver for the same Claude session: `/pickle` (interactive mode), `/meeseeks`, `/szechuan-sauce`, `/anatomy-park`, `/council-of-ricks`, `/portal-gun`, `/project-mayhem`, `/pickle-microverse`, `/pickle-retry`. Without hooks these run the first step and stop.
 
 **Full uninstall** — removes hooks, extension scripts at `~/.claude/pickle-rick/`, and all pickle-rick slash commands at `~/.claude/commands/`:
 
