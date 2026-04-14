@@ -222,7 +222,7 @@ For complex epics with parallel workstreams, conditional logic, and multiple qua
 /attract pipeline.dot              # Submit to attractor server for execution
 ```
 
-The builder enforces 28 active patterns and 15 structural validation rules — test-fix loops, goal gates, conditional routing, parallel fan-out/in, human gates, security scanning, coverage qualification, scope creep detection, drift detection, and more. See [DotBuilder details](#-dotbuilder--programmatic-dot-codegen) below.
+The builder enforces 32+ active patterns and 15 structural validation rules — test-fix loops, goal gates, conditional routing, parallel fan-out/in, human gates, security scanning, coverage qualification, scope creep detection, drift detection, and more. See [DotBuilder details](#-dotbuilder--programmatic-dot-codegen) below.
 
 ### Council of Ricks: Graphite Stack Review
 
@@ -439,7 +439,7 @@ Auto-discovers subsystems, rotates through them round-robin, three-phase protoco
 
 ### 🏗️ DotBuilder — Programmatic DOT Codegen
 
-`/pickle-dot` builds DOT pipelines by default via the `DotBuilder` TypeScript class — a schema-validated codegen path that enforces 28 active patterns and 15 structural validation rules and produces deterministic output. Use `--builder` to explicitly opt into the builder (e.g., when a global config overrides it), or `--legacy` to fall back to prompt-only generation for a specific run.
+`/pickle-dot` builds DOT pipelines by default via the `DotBuilder` TypeScript class — a schema-validated codegen path that enforces 32 active patterns and 15 structural validation rules and produces deterministic output. Use `--builder` to explicitly opt into the builder (e.g., when a global config overrides it), or `--legacy` to fall back to prompt-only generation for a specific run.
 
 ```bash
 /pickle-dot my-prd.md              # Builder codegen path (default)
