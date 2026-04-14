@@ -1178,8 +1178,7 @@ export class DotBuilder {
     // Carry forward non-error preflight diagnostics (warnings/info from auto-corrections)
     const preflightNonErrors = preflightDiags.filter(d => d.severity !== 'error');
 
-    // Run all 15 structural validation rules
-    const { acceptanceCriteria = {} } = this._spec;
+    // Run all 16 structural validation rules
     const mergedAc = this._mergedAcceptanceCriteria();
     const diagnostics: Diagnostic[] = [
       ...preflightNonErrors,
@@ -1199,7 +1198,7 @@ export class DotBuilder {
       ...grRule13(nodeMap, graphAttrs),
       ...grRule14(nodeMap),
       ...grRule15(nodeMap),
-      ...grRule16(nodeMap, acceptanceCriteria),
+      ...grRule16(nodeMap, mergedAc),
     ];
     const firstError = diagnostics.find(d => d.severity === 'error');
     if (firstError) {

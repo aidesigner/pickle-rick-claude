@@ -1214,6 +1214,20 @@ describe('Convergence v8 topology — refined PRD §5 ACs', () => {
         assert.doesNotThrow(() => DotBuilder.fromSpec(nonConv).build(), 'non-convergence spec must build');
     });
 
+    // AC-VALIDATOR-PARITY-1 — grRule6 and grRule16 see the same acceptance map
+    // in convergence mode. Regression for bug where grRule16 received the raw
+    // user ac while grRule6 received the merged map, causing every convergence
+    // build to emit spurious ORPHANED_CONTEXT_KEY warnings for the built-in
+    // fp_pass/repro_pass keys that convergence itself injects.
+    test('AC-VALIDATOR-PARITY-1 — grRule16 sees merged ac in convergence mode', () => {
+        const { diagnostics } = DotBuilder.fromSpec(convSpec()).build();
+        const orphaned = diagnostics.filter(d =>
+            d.rule === 'ORPHANED_CONTEXT_KEY' &&
+            (d.nodeId === 'fp_verify' || d.nodeId === 'repro_verify')
+        );
+        assert.deepEqual(orphaned, [], `no ORPHANED_CONTEXT_KEY warnings expected for fp_verify/repro_verify, got: ${JSON.stringify(orphaned)}`);
+    });
+
     // AC-COMPOUND-1
     test('AC-COMPOUND-1 — isolated workspace + stylesheet + convergence compose', () => {
         const spec = {
