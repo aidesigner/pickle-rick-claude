@@ -1288,4 +1288,11 @@ describe('Convergence v8 topology — refined PRD §5 ACs', () => {
         }
         assert.ok(checked > 0, 'at least one reports_to_v node must be present in convergence mode');
     });
+
+    test('AC-STRUCT-8 (graph retry_target) — convergence mode sets graph-level retry_target="converge"', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const { graphAttrs } = parseDot(dot);
+        assert.equal(graphAttrs.retry_target, 'converge',
+            'graph-level retry_target must be "converge" in convergence mode');
+    });
 });
