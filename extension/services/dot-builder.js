@@ -1006,7 +1006,7 @@ export class DotBuilder {
     convergence(spec) {
         if (this._built)
             throw new BuildError('ALREADY_BUILT', 'cannot modify after build()');
-        this._spec.convergence = { ...spec };
+        this._spec = { ...this._spec, convergence: { ...spec } };
         return this;
     }
     /**
@@ -1195,9 +1195,8 @@ export class DotBuilder {
         const graphAttrs = {
             label: hasConvergence ? escapeAttr(this._slug) : escapeAttr(`${this._slug}: ${this._goal}`),
             rankdir: 'LR',
-            ...(hasConvergence
-                ? { goal: escapeAttr(this._goal), retry_target: 'converge' }
-                : { goal: escapeAttr(this._goal), retry_target: 'fix_types' }),
+            goal: escapeAttr(this._goal),
+            retry_target: hasConvergence ? 'converge' : 'fix_types',
         };
         if (spec.workingDir) {
             graphAttrs['working_dir'] = escapeAttr(spec.workingDir);
