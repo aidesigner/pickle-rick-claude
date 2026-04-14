@@ -76,3 +76,35 @@ export const DEFAULT_MAX_ITERATIONS = 6;
 export const DEFAULT_CONVERGE_MAX_VISITS = 5;
 
 export const DEFAULT_CONVERGE_TIMEOUT = '21600s';
+
+// ─── Per-node timeouts / visit caps for the v8 body pipeline ─────────────────
+// These values previously lived as inline literals inside _emitDot's
+// convergence branch. Lifted here so test harnesses and downstream
+// inspectors share a single source of truth.
+
+/** fix_backend / fix_frontend agent timeout (large LLM operation). */
+export const DEFAULT_FIX_TIMEOUT = '3600s';
+
+/** run_build_api / run_build_ui / run_lint mechanical gate timeout. */
+export const DEFAULT_MECHANICAL_BUILD_TIMEOUT = '180s';
+
+/** run_tests_api mechanical gate timeout (tests take longer than builds). */
+export const DEFAULT_MECHANICAL_TESTS_TIMEOUT = '300s';
+
+/** reviewer_backend / reviewer_frontend / reviewer_integration / adversary timeout. */
+export const DEFAULT_REVIEW_TIMEOUT = '2400s';
+
+/** fp_verify / repro_verify goal-gate timeout. */
+export const DEFAULT_GOAL_GATE_TIMEOUT = '900s';
+
+/** commit_and_push terminal-chain timeout. */
+export const DEFAULT_COMMIT_PUSH_TIMEOUT = '120s';
+
+/** Fallback visit budget for body-pipeline nodes (fix_*, reviewer_*, adversary). */
+export const DEFAULT_BODY_MAX_VISITS = 10;
+
+/** Fallback visit budget for fp_verify / repro_verify goal gates. */
+export const DEFAULT_GOAL_GATE_MAX_VISITS = 5;
+
+/** Visit budget for mechanical-gate nodes (run_build_api, run_tests_api, run_build_ui, run_lint). */
+export const DEFAULT_MECHANICAL_MAX_VISITS = 5;

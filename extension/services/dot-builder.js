@@ -1,7 +1,7 @@
 // DOT pipeline codegen builder — no process.exit() (eslint-plugin-pickle rule)
 import { BuildError } from '../types/index.js';
 export { BuildError } from '../types/index.js';
-import { DEFAULT_FIX_BACKEND_PROMPT, DEFAULT_FIX_FRONTEND_PROMPT, DEFAULT_REVIEW_BE_PROMPT, DEFAULT_REVIEW_FE_PROMPT, DEFAULT_REVIEW_INT_PROMPT, DEFAULT_ADVERSARY_PROMPT, DEFAULT_BUILD_API_CMD, DEFAULT_TESTS_API_CMD, DEFAULT_BUILD_UI_CMD, DEFAULT_LINT_CMD, DEFAULT_FP_VERIFY_CMD, DEFAULT_REPRO_VERIFY_CMD, DEFAULT_FIX_BACKEND_MODEL, DEFAULT_FIX_FRONTEND_MODEL, DEFAULT_REVIEW_BE_MODEL, DEFAULT_REVIEW_FE_MODEL, DEFAULT_REVIEW_INT_MODEL, DEFAULT_ADVERSARY_MODEL, DEFAULT_FIX_BACKEND_HARNESS, DEFAULT_FIX_FRONTEND_HARNESS, DEFAULT_ADVERSARY_SEALED_FROM_SOURCE, DEFAULT_CONVERGENCE_EPSILON, DEFAULT_MAX_ITERATIONS, DEFAULT_CONVERGE_MAX_VISITS, DEFAULT_CONVERGE_TIMEOUT, } from './convergence-defaults.js';
+import { DEFAULT_FIX_BACKEND_PROMPT, DEFAULT_FIX_FRONTEND_PROMPT, DEFAULT_REVIEW_BE_PROMPT, DEFAULT_REVIEW_FE_PROMPT, DEFAULT_REVIEW_INT_PROMPT, DEFAULT_ADVERSARY_PROMPT, DEFAULT_BUILD_API_CMD, DEFAULT_TESTS_API_CMD, DEFAULT_BUILD_UI_CMD, DEFAULT_LINT_CMD, DEFAULT_FP_VERIFY_CMD, DEFAULT_REPRO_VERIFY_CMD, DEFAULT_FIX_BACKEND_MODEL, DEFAULT_FIX_FRONTEND_MODEL, DEFAULT_REVIEW_BE_MODEL, DEFAULT_REVIEW_FE_MODEL, DEFAULT_REVIEW_INT_MODEL, DEFAULT_ADVERSARY_MODEL, DEFAULT_FIX_BACKEND_HARNESS, DEFAULT_FIX_FRONTEND_HARNESS, DEFAULT_ADVERSARY_SEALED_FROM_SOURCE, DEFAULT_CONVERGENCE_EPSILON, DEFAULT_MAX_ITERATIONS, DEFAULT_CONVERGE_MAX_VISITS, DEFAULT_CONVERGE_TIMEOUT, DEFAULT_FIX_TIMEOUT, DEFAULT_MECHANICAL_BUILD_TIMEOUT, DEFAULT_MECHANICAL_TESTS_TIMEOUT, DEFAULT_REVIEW_TIMEOUT, DEFAULT_GOAL_GATE_TIMEOUT, DEFAULT_COMMIT_PUSH_TIMEOUT, DEFAULT_BODY_MAX_VISITS, DEFAULT_GOAL_GATE_MAX_VISITS, DEFAULT_MECHANICAL_MAX_VISITS, } from './convergence-defaults.js';
 // ---------------------------------------------------------------------------
 // BUILD_ERROR_CODES — runtime constant, mirrors BuildErrorCode union
 // ---------------------------------------------------------------------------
@@ -1510,96 +1510,96 @@ export class DotBuilder {
                         class: 'impl',
                         context_keys: '__pool_findings__,__last_failure_output,__fix_attempt_history',
                         harness: fbHarness,
-                        max_visits: String(fb?.maxVisits ?? 10),
+                        max_visits: String(fb?.maxVisits ?? DEFAULT_BODY_MAX_VISITS),
                         model: fb?.model ?? DEFAULT_FIX_BACKEND_MODEL,
                         prompt: fb?.prompt ?? DEFAULT_FIX_BACKEND_PROMPT,
                         retry_target: 'fix_backend',
-                        timeout: fb?.timeout ?? '3600s',
+                        timeout: fb?.timeout ?? DEFAULT_FIX_TIMEOUT,
                     });
                     emit('fix_frontend', {
                         class: 'impl',
                         context_keys: '__pool_findings__,__last_failure_output,__fix_attempt_history',
                         harness: ffHarness,
-                        max_visits: String(ff?.maxVisits ?? 10),
+                        max_visits: String(ff?.maxVisits ?? DEFAULT_BODY_MAX_VISITS),
                         model: ff?.model ?? DEFAULT_FIX_FRONTEND_MODEL,
                         prompt: ff?.prompt ?? DEFAULT_FIX_FRONTEND_PROMPT,
                         retry_target: 'fix_frontend',
-                        timeout: ff?.timeout ?? '3600s',
+                        timeout: ff?.timeout ?? DEFAULT_FIX_TIMEOUT,
                     });
                     emit('run_build_api', {
-                        max_visits: '5',
+                        max_visits: String(DEFAULT_MECHANICAL_MAX_VISITS),
                         reports_to_v: 'mechanical.typecheck',
                         retry_target: 'fix_backend',
                         shape: 'parallelogram',
-                        timeout: '180s',
+                        timeout: DEFAULT_MECHANICAL_BUILD_TIMEOUT,
                         tool_command: mg?.buildApi ?? sub(DEFAULT_BUILD_API_CMD),
                     });
                     emit('run_tests_api', {
-                        max_visits: '5',
+                        max_visits: String(DEFAULT_MECHANICAL_MAX_VISITS),
                         reports_to_v: 'mechanical.boot',
                         retry_target: 'fix_backend',
                         shape: 'parallelogram',
-                        timeout: '300s',
+                        timeout: DEFAULT_MECHANICAL_TESTS_TIMEOUT,
                         tool_command: mg?.testsApi ?? sub(DEFAULT_TESTS_API_CMD),
                     });
                     emit('run_build_ui', {
-                        max_visits: '5',
+                        max_visits: String(DEFAULT_MECHANICAL_MAX_VISITS),
                         reports_to_v: 'mechanical.build',
                         retry_target: 'fix_frontend',
                         shape: 'parallelogram',
-                        timeout: '180s',
+                        timeout: DEFAULT_MECHANICAL_BUILD_TIMEOUT,
                         tool_command: mg?.buildUi ?? sub(DEFAULT_BUILD_UI_CMD),
                     });
                     emit('run_lint', {
-                        max_visits: '5',
+                        max_visits: String(DEFAULT_MECHANICAL_MAX_VISITS),
                         reports_to_v: 'mechanical.lint',
                         retry_target: 'fix_backend',
                         shape: 'parallelogram',
-                        timeout: '180s',
+                        timeout: DEFAULT_MECHANICAL_BUILD_TIMEOUT,
                         tool_command: mg?.lint ?? sub(DEFAULT_LINT_CMD),
                     });
                     emit('review_be', {
                         class: 'honest_review',
                         harness: rv?.be?.harness ?? 'hermes',
-                        max_visits: String(rv?.be?.maxVisits ?? 10),
+                        max_visits: String(rv?.be?.maxVisits ?? DEFAULT_BODY_MAX_VISITS),
                         model: rv?.be?.model ?? DEFAULT_REVIEW_BE_MODEL,
                         prompt: rv?.be?.prompt ?? DEFAULT_REVIEW_BE_PROMPT,
                         read_only: 'true',
                         retry_target: 'review_be',
                         reviewer_lens: 'backend',
-                        timeout: rv?.be?.timeout ?? '2400s',
+                        timeout: rv?.be?.timeout ?? DEFAULT_REVIEW_TIMEOUT,
                     });
                     emit('review_fe', {
                         class: 'honest_review',
                         harness: rv?.fe?.harness ?? 'hermes',
-                        max_visits: String(rv?.fe?.maxVisits ?? 10),
+                        max_visits: String(rv?.fe?.maxVisits ?? DEFAULT_BODY_MAX_VISITS),
                         model: rv?.fe?.model ?? DEFAULT_REVIEW_FE_MODEL,
                         prompt: rv?.fe?.prompt ?? DEFAULT_REVIEW_FE_PROMPT,
                         read_only: 'true',
                         retry_target: 'review_fe',
                         reviewer_lens: 'frontend',
-                        timeout: rv?.fe?.timeout ?? '2400s',
+                        timeout: rv?.fe?.timeout ?? DEFAULT_REVIEW_TIMEOUT,
                     });
                     emit('review_int', {
                         class: 'honest_review',
                         harness: rv?.int?.harness ?? 'hermes',
-                        max_visits: String(rv?.int?.maxVisits ?? 10),
+                        max_visits: String(rv?.int?.maxVisits ?? DEFAULT_BODY_MAX_VISITS),
                         model: rv?.int?.model ?? DEFAULT_REVIEW_INT_MODEL,
                         prompt: rv?.int?.prompt ?? DEFAULT_REVIEW_INT_PROMPT,
                         read_only: 'true',
                         retry_target: 'review_int',
                         reviewer_lens: 'integration',
-                        timeout: rv?.int?.timeout ?? '2400s',
+                        timeout: rv?.int?.timeout ?? DEFAULT_REVIEW_TIMEOUT,
                     });
                     emit('adversary_node', {
                         class: 'adversary',
                         harness: adv?.harness ?? 'hermes',
-                        max_visits: String(adv?.maxVisits ?? 10),
+                        max_visits: String(adv?.maxVisits ?? DEFAULT_BODY_MAX_VISITS),
                         model: adv?.model ?? DEFAULT_ADVERSARY_MODEL,
                         prompt: adv?.prompt ?? DEFAULT_ADVERSARY_PROMPT,
                         read_only: 'true',
                         sealed_from_source: advSealed,
-                        timeout: adv?.timeout ?? '2400s',
+                        timeout: adv?.timeout ?? DEFAULT_REVIEW_TIMEOUT,
                     });
                     const bodyChain = [
                         'fix_backend', 'fix_frontend',
@@ -1615,18 +1615,18 @@ export class DotBuilder {
                     context_on_failure: 'fp_pass=false',
                     context_on_success: 'fp_pass=true',
                     goal_gate: 'true',
-                    max_visits: String(fp?.maxVisits ?? 5),
+                    max_visits: String(fp?.maxVisits ?? DEFAULT_GOAL_GATE_MAX_VISITS),
                     shape: 'parallelogram',
-                    timeout: fp?.timeout ?? '900s',
+                    timeout: fp?.timeout ?? DEFAULT_GOAL_GATE_TIMEOUT,
                     tool_command: fp?.command ?? sub(DEFAULT_FP_VERIFY_CMD),
                 });
                 emit('repro_verify', {
                     context_on_failure: 'repro_pass=false',
                     context_on_success: 'repro_pass=true',
                     goal_gate: 'true',
-                    max_visits: String(rp?.maxVisits ?? 5),
+                    max_visits: String(rp?.maxVisits ?? DEFAULT_GOAL_GATE_MAX_VISITS),
                     shape: 'parallelogram',
-                    timeout: rp?.timeout ?? '900s',
+                    timeout: rp?.timeout ?? DEFAULT_GOAL_GATE_TIMEOUT,
                     tool_command: rp?.command ?? sub(DEFAULT_REPRO_VERIFY_CMD),
                 });
                 emit('done', { label: 'done', shape: 'Msquare' });
@@ -2079,7 +2079,7 @@ export class DotBuilder {
                 emit('commit_and_push', {
                     label: 'commit_and_push',
                     shape: 'parallelogram',
-                    timeout: '120s',
+                    timeout: DEFAULT_COMMIT_PUSH_TIMEOUT,
                     tool_command: `cd \${WORKING_DIR} && BRANCH="attractor/${slug}-$(echo $ATTRACTOR_RUN_ID | cut -c1-8)" && git checkout -B "$BRANCH" && git add -A && git -c user.name=attractor -c user.email=attractor@local commit -m "feat: ${slug} — attractor pipeline output" --allow-empty && git push origin "$BRANCH" --force 2>&1 && echo "Pushed branch: $BRANCH"`,
                 });
                 // Rewire: inject commit_and_push into the terminal chain
