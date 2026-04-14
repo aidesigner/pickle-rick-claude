@@ -1273,4 +1273,19 @@ describe('Convergence v8 topology — refined PRD §5 ACs', () => {
         assert.equal(nodes.get('fix_frontend').allow_multi_retry_target, undefined,
             'fix_frontend must not set allow_multi_retry_target');
     });
+
+    test('AC-STRUCT-4 (gate self-retry invariant) — every reports_to_v node retries to something other than itself', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const { nodes } = parseDot(dot);
+        let checked = 0;
+        for (const [id, attrs] of nodes) {
+            if (!attrs.reports_to_v) continue;
+            checked++;
+            assert.ok(attrs.retry_target,
+                `node ${id} with reports_to_v must declare a retry_target`);
+            assert.notEqual(attrs.retry_target, id,
+                `node ${id} must not retry to itself (got retry_target=${attrs.retry_target})`);
+        }
+        assert.ok(checked > 0, 'at least one reports_to_v node must be present in convergence mode');
+    });
 });
