@@ -99,7 +99,16 @@ Two cleanup tools for polishing the result:
 /anatomy-park --dry-run                    # Review only, no fixes
 ```
 
-**When to use which:** Szechuan Sauce asks *"is this code well-designed?"* — Anatomy Park asks *"is this code correct?"* Use both when you want clean AND correct.
+**Plumbus** — the same convergence loop applied to a single attractor `.dot` pipeline. Runs the attractor validator as a hard gate, walks every edge, and converges against the `pickle-dot-patterns` rubric (DAG validity, Tier 1 mandatory patterns, anti-patterns). Everybody needs a plumbus — use it after `/pickle-dot` generates a graph you want hardened before `/attract`.
+
+```bash
+/plumbus pipeline.dot                         # Shape a DAG into a proper plumbus
+/plumbus --dry-run pipeline.dot               # Catalog violations only
+/plumbus --focus "fan-out safety" pipeline.dot
+/plumbus --no-validator pipeline.dot          # Pattern-only (no attractor repo)
+```
+
+**When to use which:** Szechuan Sauce asks *"is this code well-designed?"* — Anatomy Park asks *"is this code correct?"* — Plumbus asks *"will this DAG actually run without deadlocking?"*
 
 ### The Full Flow at a Glance
 
@@ -269,6 +278,7 @@ Queue tasks for unattended batch execution overnight.
 | `/pickle-microverse` | Metric convergence loop. `--metric` for numeric, `--goal` for LLM judge |
 | `/szechuan-sauce [target]` | Principle-driven deslopping. `--dry-run`, `--focus`, `--domain` |
 | `/anatomy-park` | Three-phase deep subsystem review with trap door cataloging |
+| `/plumbus <file.dot>` | Iterative DAG shaping on a single `.dot` file. `--dry-run`, `--focus`, `--no-validator` |
 | `/council-of-ricks` | Graphite PR stack review — generates directives, never fixes code |
 | `/portal-gun <source>` | Gene transfusion from another codebase |
 | `/pickle-dot [path]` | Convert PRD → attractor-compatible DOT digraph |
@@ -313,9 +323,10 @@ Queue tasks for unattended batch execution overnight.
 --no-refine                (/portal-gun) Skip automatic refinement
 --max-passes <N>           (/portal-gun) Max convergence passes (default: 3)
 --save-pattern <NAME>      (/portal-gun) Persist pattern to library
---dry-run                  (/szechuan-sauce) Catalog violations without fixing
+--dry-run                  (/szechuan-sauce, /plumbus) Catalog violations without fixing
 --domain <name>            (/szechuan-sauce) Domain-specific principles (e.g., financial)
---focus "<text>"           (/szechuan-sauce) Direct review toward specific concern
+--focus "<text>"           (/szechuan-sauce, /plumbus) Direct review toward specific concern
+--no-validator             (/plumbus) Disable attractor validator gate (pattern-only review)
 --repo <PATH>              (/council-of-ricks) Target repo (default: cwd)
 ```
 

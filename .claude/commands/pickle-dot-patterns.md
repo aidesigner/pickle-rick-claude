@@ -1,5 +1,93 @@
 Pickle-dot pattern reference. Read by `/pickle-dot` on demand — do NOT load this file unless `/pickle-dot` instructs you to.
 
+## Recent Validator Changes (2026-04-14)
+
+Three validator rules changed and one is new — read these BEFORE applying the pattern catalog. Skipping this section will cost you a validate-fix loop iteration on the very first run.
+
+**1. NEW rule: `gate_self_retry_loop`** (ERROR severity)
+
+Tool nodes with `reports_to_v=...` (i.e. a convergence gate inside an iterate body) MUST NOT have `retry_target=<self>`. Convergence gates measure the workspace state against a predicate (typecheck/tests/lint pass). On deterministic failure, re-running the same tool_command against unchanged code is a no-op until the FailureSignatureTracker aborts the pipeline at the transient limit (default 5).
+
+```
+// BAD — gate self-loop on deterministic failure
+run_tests_api [
+  shape=parallelogram,
+  tool_command="cd ${WORKING_DIR}/packages/api && npm test",
+  reports_to_v="mechanical.boot",
+  retry_target="run_tests_api"   // ← gate_self_retry_loop ERROR
+]
+
+// GOOD — gate routes back to the fix node that produces the code it measures
+run_tests_api [
+  shape=parallelogram,
+  tool_command="cd ${WORKING_DIR}/packages/api && npm test",
+  reports_to_v="mechanical.boot",
+  retry_target="fix_backend"     // ← in-body fix node
+]
+
+// ALSO GOOD — omit retry_target so iterate handler restarts the iteration
+//   (only valid for body nodes when graph-level retry_target is the iterate parent —
+//    see Pattern 32a, success_only_edge_without_retry exemption)
+```
+
+This rule does NOT apply to tool nodes WITHOUT `reports_to_v` (e.g. `setup_deps`, `install`, `capture_baseline`, `scaffold`). Those are legitimately transient-retry candidates and Pattern 6a still recommends `retry_target=<self>` for them.
+
+**2. UPDATED rule: `god_node_retry_target`** (ERROR severity)
+
+Two changes:
+- **Self-references no longer count** toward the 3-referrer budget. The doc said "3+ *other* nodes" but the impl was counting self. A codergen fix node can have `retry_target=<self>` AND be the retry target for 2 other nodes without tripping.
+- **Opt-in via `allow_multi_retry_target=true`** on the target node. When a fix node legitimately serves multiple gates within ONE code domain (e.g. one backend fixer with build, test, AND lint gates all measuring the same `packages/api/src/`), set this attribute on the fix node to suppress the rule. The original anti-pattern (one fixer crossing frontend AND backend AND infra) is still caught — those targets won't have the opt-in.
+
+```
+// GOOD — three backend gates routing to one backend fix node, opt-in declared
+fix_backend [
+  class="impl",
+  allow_multi_retry_target=true,   // ← opt out of god_node rule for this domain
+  retry_target="fix_backend",       // self-retry; no longer counted
+  prompt="...",
+  ...
+]
+run_build_api [retry_target="fix_backend", reports_to_v="mechanical.typecheck", ...]
+run_tests_api [retry_target="fix_backend", reports_to_v="mechanical.boot", ...]
+run_lint      [retry_target="fix_backend", reports_to_v="mechanical.lint", ...]
+// fix_backend referrers: run_build_api + run_tests_api + run_lint = 3 — would normally fire,
+// suppressed by allow_multi_retry_target=true.
+```
+
+Use sparingly. Reach for the opt-in only when the gates all measure the same code domain. If you're tempted to set it because gates span multiple categories (frontend + backend, src + infra), DON'T — split the fix node instead.
+
+**3. UPDATED rule: `success_only_edge_without_retry`** (ERROR severity)
+
+Now exempts nodes inside an `iterate` body cluster when graph-level `retry_target` points at the iterate parent. Reason: the engine's body-runner returns failure on dead-end nodes, the iterate handler returns FAIL, and the engine's outer-graph retry routes back to the iterate node which starts a fresh iteration. The fall-through is correct for iterate-body nodes — not "misrouted" the way the rule was previously claiming.
+
+```
+// Now valid (was previously rejected):
+//   - run_lint is inside cluster_iter_body
+//   - graph retry_target = "converge" (the iterate parent)
+//   - run_lint has only outcome=success outgoing edges, no node-level retry_target
+//   - on failure: body fails → iterate FAIL → graph retry_target → fresh iteration
+```
+
+Outside iterate bodies, the rule still fires as before.
+
+**4. Engine semantics: iterate body fall-through (NEW knowledge)**
+
+The iterate handler runs body nodes via a SUB-graph that contains ONLY body nodes and body-internal edges. Graph-level attributes (including `retry_target`) ARE inherited, but graph-level NODES are not. So if a body node falls through to graph-level `retry_target="converge"`, the body subgraph's `nodes.get("converge")` returns undefined, the engine throws "Stage X failed with no outgoing edge", body returns failure, iterate handler returns FAIL. The OUTER engine then catches the iterate FAIL and routes via graph-level retry_target back to converge — which starts a fresh iterate call.
+
+So body fall-through DOES recover, but at the cost of one full iterate restart per failure. Prefer in-body retry routing (`retry_target=<fix_node_in_body>`) for tighter loops; reserve fall-through for nodes where the per-iteration fix loop isn't meaningful (e.g. a final lint gate after impl + reviewers).
+
+The iterate handler's failure message used to say "could not be resolved or executed" for both "cluster missing" and "body run threw" — now it distinguishes them via `bodyResult.reason`. If you see "executed but a node failed without a valid in-body retry path", a body node has no fail edge and no node-level retry_target.
+
+**5. Prompt verb pollution: `prompt_single_concern` triggers on stray verbs**
+
+The rule scans codergen prompts for action-verb clusters (implement, test, document, deploy, analyze) and ERRORs at 3+ matches. Words you might write incidentally that count:
+- `benchmark` → analyze cluster
+- `deploy(ment)` → deploy cluster
+- `documented`, `comment`, `docstring` → document cluster
+- `analyze`, `investigate`, `profile` → analyze cluster
+
+If your prompt is fundamentally "implement + test" (2 clusters, fine) and you toss in a phrase like "out of scope for this benchmark" or "we'll deploy separately", you've now matched 3 clusters and the rule fires. Rephrase with neutral words ("out of scope here", "shipped via a separate pipeline") or split the node.
+
 ## Tier 1: Always Emit
 
 **0. Isolated Workspace Commit & Push** — **MANDATORY** when `workspace="isolated"`. Without this, all code is lost on cleanup. Place AFTER `verify_final` succeeds — `commit_and_push` runs exactly once on the success path, pushing only verified working code:
@@ -97,7 +185,16 @@ check -> b [condition="outcome=fail"]
 
 **6. Max Visits** — `max_visits` on looping nodes prevents infinite convergence. Required on all `goal_gate=true` nodes with `retry_target` (validator rule 19).
 
-**6a. Self-Retry on Critical Non-Gate Nodes** — tool nodes that aren't goal gates but whose failure would silently poison downstream nodes (e.g., `scaffold`, `verify_tracks`, `capture_baseline`) should set `retry_target="<self>"` to retry in-place before falling through to graph-level `retry_target`. Without this, a transient failure (network timeout, flaky install) skips straight to `fix_all`, which can't fix infrastructure issues:
+**6a. Self-Retry on Critical Non-Gate Nodes** — tool nodes that aren't goal gates but whose failure would silently poison downstream nodes (e.g., `scaffold`, `verify_tracks`, `capture_baseline`) should set `retry_target="<self>"` to retry in-place before falling through to graph-level `retry_target`. Without this, a transient failure (network timeout, flaky install) skips straight to `fix_all`, which can't fix infrastructure issues.
+
+**Critical exception (validator rule `gate_self_retry_loop`)**: tool nodes with `reports_to_v=...` (convergence gates inside an iterate body) MUST NOT have `retry_target=<self>`. These are deterministic measurement nodes — re-running them against unchanged code is a no-op until the FailureSignatureTracker structurally aborts the pipeline. Convergence gates retry through their fix node, never through themselves:
+```
+// BAD
+run_tests_api [tool_command="npm test", reports_to_v="mechanical.boot", retry_target="run_tests_api"]
+// GOOD
+run_tests_api [tool_command="npm test", reports_to_v="mechanical.boot", retry_target="fix_backend"]
+```
+See "Recent Validator Changes (2026-04-14)" at the top of this file for the full reasoning.
 
 **6b. No-Op Detection Warning** — the claude-code backend returns `RETRY` when a codergen node produces zero edits (`editWriteCount === 0`) and no explicit `STATUS:` marker. This means **read-only nodes** (analysis, conformance, scope check) that only read code without writing files will RETRY forever unless their prompt instructs the LLM to output `STATUS: SUCCESS` (or `FAIL`/`PARTIAL_SUCCESS`) on its own line. All review/conformance/red_team/scope_check nodes MUST include explicit STATUS output instructions in their prompts:
 ```
@@ -516,6 +613,69 @@ Detection heuristic: any `new` expression inside `for`/`while`/`.map()`/`.forEac
 - Pattern 4: fan-out before converge node
 - Pattern 17 (red team): suppressed — iterate adversary subsumes it
 
+**32a. Iterate Body Retry Topology** — every node inside `cluster_iter_body` MUST have a clean retry path that stays within the body, OR be a node whose fall-through to graph-level retry_target is intentional. The body subgraph filters edges to body-internal-only at execution time, so graph-level edges from body nodes to outside nodes (e.g. `adversary_node -> fp_verify`) are silently dropped during body execution. Graph-level NODES (e.g. `converge`) are also not present in the body subgraph — fall-through via graph-level `retry_target` triggers an "engine throws inside body → body returns failure → iterate restarts" cascade that costs one full iterate iteration per failure.
+
+**Mechanical-gate retry routing inside the body** — every gate (`reports_to_v=mechanical.*`) routes back to the fix node that produces the code it measures:
+```
+// Backend gates fix through fix_backend, frontend gate through fix_frontend.
+fix_backend  [class="impl", retry_target="fix_backend",  allow_multi_retry_target=true, ...]
+fix_frontend [class="impl", retry_target="fix_frontend", ...]
+run_build_api [retry_target="fix_backend", reports_to_v="mechanical.typecheck", ...]
+run_tests_api [retry_target="fix_backend", reports_to_v="mechanical.boot",      ...]
+run_lint      [retry_target="fix_backend", reports_to_v="mechanical.lint",      ...]   // 3rd ref — needs allow_multi_retry_target on fix_backend
+run_build_ui  [retry_target="fix_frontend", reports_to_v="mechanical.build",    ...]
+```
+
+When you have ≥3 backend gates routing to a single backend fix node, set `allow_multi_retry_target=true` on the fix node (see "Recent Validator Changes" at the top of this file). When the gates legitimately span multiple code domains, split the fixer instead — the opt-in is for one-domain god nodes, NOT for cross-domain god nodes.
+
+**Reachability edge from converge into the body** — the validator's reachability check needs an edge from outer-graph into the body cluster, otherwise body nodes look "unreachable from start". Use a conditional reachability edge from converge to the body's first node:
+```
+converge -> fix_backend [weight=1, condition="outcome=success"]   // reachability-only
+converge -> fp_verify   [weight=2, condition="outcome=success"]   // real forward edge — higher weight wins on success
+```
+The condition on the reachability edge is **deliberate**: on a converge SUCCESS the higher-weight `fp_verify` edge wins; on a converge FAIL there's no matching edge and the engine falls through to graph-level `retry_target`. Without the condition, an unconditional reachability edge would route a failed iterate straight back into the body OUTSIDE the iterate-handler context, causing duplicate execution. The validator rule `iterate_edge_needs_outcome_condition` enforces the condition.
+
+**Install-safety on bounce-target gates** — when a downstream gate (`repro_verify`) does `rm -rf node_modules` AND its fail edge routes back to an upstream gate (`fp_verify`), the upstream gate must run `npm install` first or the bounce will fail on missing dependencies and infinite-loop with the rule `goal_gate_needs_fix_loop` requiring the back-edge:
+```
+// fp_verify must be install-safe because repro_verify rm -rf's node_modules
+// and the goal_gate_needs_fix_loop rule requires repro_verify -> fp_verify [fail]
+fp_verify [
+  shape=parallelogram,
+  tool_command="set -o pipefail; cd ${WORKING_DIR} && npm install 2>&1 | tail -3 && cd packages/api && npx tsc --noEmit && npm test && cd ../ui && npx tsc --noEmit && echo 'fixed-point verified'",
+  goal_gate=true,
+  ...
+]
+```
+The `npm install` is idempotent (no-op when deps are already hydrated) and cheap relative to the rest of the gate.
+
+**32b. Iterate Body Prompt Discipline — Bootstrap Preservation** — when a fix node rewrites a NestJS `main.ts` (or any entry file with a top-level promise call), it must preserve the `.catch(...)` wrapper from the scaffold. Bare `bootstrap();` triggers `@typescript-eslint/no-floating-promises` and the lint gate fails deterministically.
+
+```
+// Scaffold writes:
+bootstrap().catch((err) => { console.error('bootstrap failed', err); process.exit(1); });
+// Fix node prompt MUST contain an explicit instruction to preserve this:
+"main.ts bootstrap call MUST end with .catch — write it exactly as bootstrap().catch((err) => { ... });
+ — never as a bare bootstrap(); call. The lint gate enforces @typescript-eslint/no-floating-promises
+ and a bare bootstrap() will hard-fail it. If you rewrite main.ts to add a global exception filter,
+ preserve the .catch wrapper."
+```
+
+Generalizes: any pattern the scaffold establishes that the fix node could plausibly erase needs an explicit preservation instruction in the fix node's prompt. The fix node has no memory of what scaffold did beyond what's in the workspace files.
+
+**32c. Schema Auto-Sync vs Migration Gates** — TypeORM/Prisma/Drizzle ORMs have a `synchronize` (or equivalent) flag that auto-creates tables from entity definitions. This is unsafe in production but mandatory for benchmarks/dev/test if the pipeline has no migration node:
+
+```
+// Scaffold creates packages/api/src/app.module.ts with:
+TypeOrmModule.forRoot({ type: 'sqlite', database: 'data/dev.db', autoLoadEntities: true, synchronize: true })
+
+// Fix node prompt MUST allow synchronize:true OR you must add a migration node before the test gate:
+"TypeOrmModule.forRoot: keep synchronize:true for the SQLite dev/test DB. The scaffold node configures
+ it that way and the e2e suite relies on auto-schema. Do NOT change it to false — there is no migration
+ node in this pipeline, so the tables would never exist at test boot time
+ (SQLITE_ERROR: no such table: applications)."
+```
+The failure mode is dramatic: tests cannot boot because tables don't exist, the test gate fails deterministically, the iterate handler iterates without convergence, and the FailureSignatureTracker eventually aborts. If you DO want production-grade migrations in the pipeline, add an explicit `run_migrations` tool node between scaffold and the first test gate — don't let the fix node "fix" synchronize without that node existing.
+
 ## Superseded (reference only)
 
 **5. Human Gates** — `hexagon` shape maps to `wait.human` which pauses the pipeline waiting for human input via the `/pipelines/:id/questions/:qid/answer` API. **Never emit for autonomous pipelines** — the pipeline will deadlock waiting for input that never arrives. Only relevant for interactive/supervised workflows (non-default).
@@ -584,6 +744,14 @@ Detection heuristic: any `new` expression inside `for`/`while`/`.map()`/`.forEac
 - Broad codergen prompt spanning 2+ layers or test categories on non-Opus models (use Pattern 31 decomposition)
 - Multiple test nodes writing to the same file (each test node gets its own file)
 - Node scope decomposition inside competing impl branches (Pattern 18 already provides redundancy)
+- Tool node with `reports_to_v=...` and `retry_target=<self>` (validator rule `gate_self_retry_loop` ERROR — convergence gates cannot self-retry; deterministic failures loop until the FailureSignatureTracker aborts. Point at the fix node upstream, or omit retry_target so the iterate handler restarts the iteration.)
+- Iterate body node with success-only outgoing edges, no node-level `retry_target`, AND graph-level `retry_target` not pointing at the iterate parent (validator rule `success_only_edge_without_retry` — body nodes are exempt ONLY when graph retry_target is the iterate parent, because the engine's body-runner cannot resolve nodes outside the body subgraph)
+- Three-or-more gate nodes with node-level `retry_target` pointing at one codergen fix node WITHOUT `allow_multi_retry_target=true` on the target (validator rule `god_node_retry_target` ERROR — opt in via the attribute when the gates all measure ONE code domain; split the fixer when they don't)
+- Fix node prompt that rewrites a NestJS `main.ts` (or any entry file with a top-level promise) WITHOUT explicit instruction to preserve the `.catch(...)` wrapper (lint gate `@typescript-eslint/no-floating-promises` hard-fails on bare `bootstrap();` — see Pattern 32b)
+- TypeORM/Prisma `synchronize:false` (or equivalent auto-schema disable) WITHOUT a `run_migrations` tool node before the first test gate (tests boot against a database with no tables — `SQLITE_ERROR: no such table` — see Pattern 32c)
+- Goal gate that downstream rm -rf's `node_modules` (e.g. `repro_verify`) with a fail edge routing back to a gate that doesn't run `npm install` first (the bounce target fails on missing dependencies and the `goal_gate_needs_fix_loop` rule still requires the back-edge — see Pattern 32a "install-safety on bounce-target gates")
+- Codergen `prompt` containing words from 3+ verb clusters of `prompt_single_concern` (implement/test/document/deploy/analyze) — incidental words like "benchmark", "documented", "deploy(ment)" count even when the prompt's actual concern is just impl+test. Rephrase with neutral words.
+- Iterate body with no in-body retry path on a deterministic failure node — the engine throws "Stage X failed with no outgoing edge" inside the body subgraph, body returns failure, and the iterate handler's failureReason now reads "executed but a node failed without a valid in-body retry path" (post-2026-04-14 message). Add either a node-level `retry_target` to a body node or a `condition="outcome=fail"` edge to a body node.
 
 ## Deliverables & Verifies Rules
 

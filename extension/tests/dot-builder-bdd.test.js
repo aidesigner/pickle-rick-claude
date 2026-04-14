@@ -34,18 +34,91 @@ function buildWithPhases(specOverrides, phases) {
     return builder.build();
 }
 
-// Helper: extract attributes from a DOT node by ID
-function getNodeAttrs(dot, nodeId) {
-    const regex = new RegExp(`\\b${nodeId}\\s*\\[([^\\]]*)\\]`, 'm');
-    const match = dot.match(regex);
-    if (!match) return null;
+// Helper: extract the attribute-list body `[...]` from a node definition line.
+// Finds the LINE that defines `nodeId` at the start (ignoring indentation),
+// then returns the text between the outer `[` and the FINAL `]` on that line.
+// This respects quoted string boundaries because DOT node definitions always
+// live on a single line and close with `]` at line end.
+function extractNodeBody(dot, nodeId) {
+    const lineRegex = new RegExp(`^\\s*${nodeId}\\s*\\[(.+)\\]\\s*$`, 'm');
+    const lineMatch = dot.match(lineRegex);
+    return lineMatch ? lineMatch[1] : null;
+}
+
+// Helper: parse a DOT attribute-list body into a plain {key: value} object,
+// consuming one `key="value"` pair at a time. Respects backslash-escaped
+// double quotes inside values so that substrings like `key=val` nested in a
+// quoted string are NOT picked up as separate attributes.
+function parseAttrListToObject(body) {
     const attrs = {};
-    const pairRegex = /(\w+)\s*=\s*(?:"([^"]*)"|([^"\s,]+))/g;
-    let m;
-    while ((m = pairRegex.exec(match[1])) !== null) {
-        attrs[m[1]] = m[2] !== undefined ? m[2] : m[3];
+    let i = 0;
+    while (i < body.length) {
+        while (i < body.length && (body[i] === ' ' || body[i] === '\t' || body[i] === ',')) i++;
+        if (i >= body.length) break;
+        const keyMatch = /^([a-zA-Z_][a-zA-Z0-9_.]*)\s*=\s*/.exec(body.slice(i));
+        if (!keyMatch) break;
+        i += keyMatch[0].length;
+        const key = keyMatch[1];
+        if (body[i] === '"') {
+            i++;
+            let value = '';
+            while (i < body.length && body[i] !== '"') {
+                if (body[i] === '\\' && i + 1 < body.length) {
+                    value += body[i] + body[i + 1];
+                    i += 2;
+                } else {
+                    value += body[i++];
+                }
+            }
+            if (body[i] === '"') i++;
+            attrs[key] = value;
+        } else {
+            const bw = /^[^\s,\]]+/.exec(body.slice(i));
+            if (!bw) break;
+            attrs[key] = bw[0];
+            i += bw[0].length;
+        }
     }
     return attrs;
+}
+
+// Helper: parse a DOT attribute-list body into a sequence of {key, rawValue}
+// entries in source order. `rawValue` is the verbatim text (including
+// surrounding quotes for quoted values) so tests can assert on quoting.
+function parseAttrListToEntries(body) {
+    const entries = [];
+    let i = 0;
+    while (i < body.length) {
+        while (i < body.length && (body[i] === ' ' || body[i] === '\t' || body[i] === ',')) i++;
+        if (i >= body.length) break;
+        const keyMatch = /^([a-zA-Z_][a-zA-Z0-9_.]*)\s*=\s*/.exec(body.slice(i));
+        if (!keyMatch) break;
+        i += keyMatch[0].length;
+        const key = keyMatch[1];
+        if (body[i] === '"') {
+            const start = i;
+            i++;
+            while (i < body.length && body[i] !== '"') {
+                if (body[i] === '\\' && i + 1 < body.length) i += 2;
+                else i++;
+            }
+            if (body[i] === '"') i++;
+            entries.push({ key, rawValue: body.slice(start, i) });
+        } else {
+            const bw = /^[^\s,\]]+/.exec(body.slice(i));
+            if (!bw) break;
+            entries.push({ key, rawValue: bw[0] });
+            i += bw[0].length;
+        }
+    }
+    return entries;
+}
+
+// Helper: extract attributes from a DOT node by ID as a plain object.
+function getNodeAttrs(dot, nodeId) {
+    const body = extractNodeBody(dot, nodeId);
+    if (body === null) return null;
+    return parseAttrListToObject(body);
 }
 
 // ===========================================================================
@@ -344,12 +417,13 @@ describe('BDD: Attribute values are consistently double-quoted', () => {
         const result = buildWithPhases({}, [validPhase('impl')]);
         const nodeLines = result.dot.split('\n').filter(l => l.match(/^\s+\w+\s*\[/));
         for (const line of nodeLines) {
-            const attrMatches = [...line.matchAll(/(\w+)\s*=\s*([^,\]]+)/g)];
-            for (const [, key, val] of attrMatches) {
-                const trimmed = val.trim();
+            const bodyMatch = /\[(.+)\]\s*$/.exec(line);
+            if (!bodyMatch) continue;
+            const entries = parseAttrListToEntries(bodyMatch[1]);
+            for (const { key, rawValue } of entries) {
                 if (key === 'rankdir') continue;
-                assert.ok(trimmed.startsWith('"'),
-                    `attribute ${key} value should be double-quoted: ${trimmed} in ${line}`);
+                assert.ok(rawValue.startsWith('"'),
+                    `attribute ${key} value should be double-quoted: ${rawValue} in ${line}`);
             }
         }
     });
@@ -360,9 +434,9 @@ describe('BDD: Attribute values are consistently double-quoted', () => {
         ]);
         const nodeLines = result.dot.split('\n').filter(l => l.match(/^\s+\w+\s*\[/));
         for (const line of nodeLines) {
-            const attrMatch = line.match(/\[(.*)\]/);
-            if (!attrMatch) continue;
-            const keys = [...attrMatch[1].matchAll(/(\w+)\s*=/g)].map(m => m[1]);
+            const bodyMatch = /\[(.+)\]\s*$/.exec(line);
+            if (!bodyMatch) continue;
+            const keys = parseAttrListToEntries(bodyMatch[1]).map(e => e.key);
             if (keys.length > 1) {
                 const sorted = [...keys].sort();
                 assert.deepEqual(keys, sorted,

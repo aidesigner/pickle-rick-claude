@@ -6,17 +6,57 @@ import { DotBuilder } from '../services/dot-builder.js';
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Parse a DOT attribute list body (the text between `[` and `]`) into a
+ * Map<string, string>, consuming one `key="value"` pair at a time and
+ * respecting backslash-escaped double quotes inside values.
+ *
+ * Bare-word values (e.g. `rankdir=LR`) are also supported for completeness.
+ */
+function parseAttrList(body) {
+    const attrs = new Map();
+    let i = 0;
+    while (i < body.length) {
+        // Skip whitespace and commas separating attributes.
+        while (i < body.length && (body[i] === ' ' || body[i] === '\t' || body[i] === ',')) i++;
+        if (i >= body.length) break;
+        // Match a key followed by `=`.
+        const keyMatch = /^([a-zA-Z_][a-zA-Z0-9_.]*)\s*=\s*/.exec(body.slice(i));
+        if (!keyMatch) break;
+        i += keyMatch[0].length;
+        const key = keyMatch[1];
+        if (body[i] === '"') {
+            // Quoted value: consume until the matching unescaped close quote.
+            i++;
+            let value = '';
+            while (i < body.length && body[i] !== '"') {
+                if (body[i] === '\\' && i + 1 < body.length) {
+                    value += body[i] + body[i + 1];
+                    i += 2;
+                } else {
+                    value += body[i++];
+                }
+            }
+            if (body[i] === '"') i++;
+            attrs.set(key, value);
+        } else {
+            // Bare-word value: up to the next whitespace, comma, or close bracket.
+            const bw = /^[^\s,\]]+/.exec(body.slice(i));
+            if (!bw) break;
+            attrs.set(key, bw[0]);
+            i += bw[0].length;
+        }
+    }
+    return attrs;
+}
+
 /** Parse DOT node definitions into Map<nodeId, Map<attrKey, attrValue>>. */
 function parseDotNodes(dot) {
     const nodes = new Map();
     for (const line of dot.split('\n')) {
         const m = /^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\[(.+)\]\s*$/.exec(line);
         if (!m || m[1] === 'graph') continue;
-        const attrs = new Map();
-        const re = /([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\]|\\.)*)"/g;
-        let am;
-        while ((am = re.exec(m[2])) !== null) attrs.set(am[1], am[2]);
-        nodes.set(m[1], attrs);
+        nodes.set(m[1], parseAttrList(m[2]));
     }
     return nodes;
 }
@@ -24,14 +64,14 @@ function parseDotNodes(dot) {
 /** Parse DOT edges into array of {source, target, attrs}. */
 function parseDotEdges(dot) {
     const edges = [];
+    // Match `source -> target` followed by an optional attribute list.
+    // We keep the `[([^\]]*)]` bracket pattern since edge attribute values in
+    // this test harness do not contain `]`, and the inner list is parsed with
+    // the quote-aware state machine below.
     const re = /^ *([a-zA-Z_][a-zA-Z0-9_]*) *-> *([a-zA-Z_][a-zA-Z0-9_]*) *(?:\[([^\]]*)\])?/gm;
     let m;
     while ((m = re.exec(dot)) !== null) {
-        const attrs = new Map();
-        const ar = /([a-zA-Z_][a-zA-Z0-9_]*)="([^"]*)"/g;
-        let am;
-        while ((am = ar.exec(m[3] ?? '')) !== null) attrs.set(am[1], am[2]);
-        edges.push({ source: m[1], target: m[2], attrs });
+        edges.push({ source: m[1], target: m[2], attrs: parseAttrList(m[3] ?? '') });
     }
     return edges;
 }

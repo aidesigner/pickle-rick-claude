@@ -1,6 +1,7 @@
 // DOT pipeline codegen builder — no process.exit() (eslint-plugin-pickle rule)
 import { BuildError } from '../types/index.js';
 export { BuildError } from '../types/index.js';
+import { DEFAULT_FIX_BACKEND_PROMPT, DEFAULT_FIX_FRONTEND_PROMPT, DEFAULT_REVIEW_BE_PROMPT, DEFAULT_REVIEW_FE_PROMPT, DEFAULT_REVIEW_INT_PROMPT, DEFAULT_ADVERSARY_PROMPT, DEFAULT_BUILD_API_CMD, DEFAULT_TESTS_API_CMD, DEFAULT_BUILD_UI_CMD, DEFAULT_LINT_CMD, DEFAULT_FP_VERIFY_CMD, DEFAULT_REPRO_VERIFY_CMD, DEFAULT_FIX_BACKEND_MODEL, DEFAULT_FIX_FRONTEND_MODEL, DEFAULT_REVIEW_BE_MODEL, DEFAULT_REVIEW_FE_MODEL, DEFAULT_REVIEW_INT_MODEL, DEFAULT_ADVERSARY_MODEL, DEFAULT_FIX_BACKEND_HARNESS, DEFAULT_FIX_FRONTEND_HARNESS, DEFAULT_ADVERSARY_SEALED_FROM_SOURCE, DEFAULT_CONVERGENCE_EPSILON, DEFAULT_MAX_ITERATIONS, DEFAULT_CONVERGE_MAX_VISITS, DEFAULT_CONVERGE_TIMEOUT, } from './convergence-defaults.js';
 // ---------------------------------------------------------------------------
 // BUILD_ERROR_CODES — runtime constant, mirrors BuildErrorCode union
 // ---------------------------------------------------------------------------
@@ -893,16 +894,38 @@ export class DotBuilder {
         if (isRecord(spec['convergence'])) {
             const cv = spec['convergence'];
             const impl = isRecord(cv['impl']) ? cv['impl'] : {};
-            builder.convergence({
+            const out = {
                 until: cv['until'],
-                maxVisits: typeof cv['maxVisits'] === 'number' ? cv['maxVisits'] : undefined,
-                timeout: typeof cv['timeout'] === 'string' ? cv['timeout'] : undefined,
                 impl: {
                     harness: impl['harness'] || 'claude-code',
                     prompt: impl['prompt'] || '',
                 },
-                sealedFromSource: typeof cv['sealedFromSource'] === 'string' ? cv['sealedFromSource'] : undefined,
-            });
+            };
+            if (typeof cv['maxVisits'] === 'number')
+                out.maxVisits = cv['maxVisits'];
+            if (typeof cv['timeout'] === 'string')
+                out.timeout = cv['timeout'];
+            if (typeof cv['sealedFromSource'] === 'string')
+                out.sealedFromSource = cv['sealedFromSource'];
+            if (isRecord(cv['fixBackend']))
+                out.fixBackend = cv['fixBackend'];
+            if (isRecord(cv['fixFrontend']))
+                out.fixFrontend = cv['fixFrontend'];
+            if (isRecord(cv['mechanicalGates']))
+                out.mechanicalGates = cv['mechanicalGates'];
+            if (isRecord(cv['reviewers']))
+                out.reviewers = cv['reviewers'];
+            if (isRecord(cv['adversary']))
+                out.adversary = cv['adversary'];
+            if (isRecord(cv['fpVerify']))
+                out.fpVerify = cv['fpVerify'];
+            if (isRecord(cv['reproVerify']))
+                out.reproVerify = cv['reproVerify'];
+            if (typeof cv['convergenceEpsilon'] === 'number')
+                out.convergenceEpsilon = cv['convergenceEpsilon'];
+            if (typeof cv['maxIterations'] === 'number')
+                out.maxIterations = cv['maxIterations'];
+            builder.convergence(out);
         }
         return builder;
     }
@@ -980,13 +1003,7 @@ export class DotBuilder {
     convergence(spec) {
         if (this._built)
             throw new BuildError('ALREADY_BUILT', 'cannot modify after build()');
-        this._spec.convergence = {
-            until: spec.until,
-            maxVisits: spec.maxVisits,
-            timeout: spec.timeout,
-            impl: { harness: spec.impl.harness, prompt: spec.impl.prompt },
-            sealedFromSource: spec.sealedFromSource,
-        };
+        this._spec.convergence = { ...spec };
         return this;
     }
     build() {
@@ -1022,27 +1039,39 @@ export class DotBuilder {
             if (!validPredicates.includes(this._spec.convergence.until)) {
                 throw new BuildError('INVALID_CONVERGENCE_SPEC', `invalid until predicate: "${this._spec.convergence.until}" — must be one of: ${validPredicates.join(', ')}`);
             }
-            // Validate model diversity: .impl, .honest_review, .adversary must not share a model ID
+            // Validate model diversity: .impl, .honest_review, .adversary must not share a model ID.
+            // Collect effective model per class: direct-attr fields (fixBackend.model, reviewers.*.model,
+            // adversary.model) win over modelStylesheet.overrides (§3.1 precedence rule).
+            const modelMap = new Map();
             if (this._spec.modelStylesheet) {
                 const sc = this._spec.modelStylesheet;
                 if (sc.overrides && sc.overrides.length > 0) {
                     const convergenceClasses = ['.impl', '.honest_review', '.adversary'];
-                    const modelMap = new Map();
                     for (const o of sc.overrides) {
                         if (convergenceClasses.includes(o.selector)) {
                             modelMap.set(o.selector, o.model);
                         }
                     }
-                    if (modelMap.size >= 2) {
-                        const seen = new Map(); // model -> first selector that used it
-                        for (const [selector, model] of modelMap) {
-                            const prior = seen.get(model);
-                            if (prior) {
-                                throw new BuildError('DUPLICATE_MODEL', `model diversity violation: selectors "${prior}" and "${selector}" both use model "${model}"`);
-                            }
-                            seen.set(model, selector);
-                        }
+                }
+            }
+            const cv = this._spec.convergence;
+            const implDirect = cv.fixBackend?.model ?? cv.fixFrontend?.model;
+            if (implDirect)
+                modelMap.set('.impl', implDirect);
+            const reviewerDirect = cv.reviewers?.be?.model ?? cv.reviewers?.fe?.model ?? cv.reviewers?.int?.model;
+            if (reviewerDirect)
+                modelMap.set('.honest_review', reviewerDirect);
+            const adversaryDirect = cv.adversary?.model;
+            if (adversaryDirect)
+                modelMap.set('.adversary', adversaryDirect);
+            if (modelMap.size >= 2) {
+                const seen = new Map(); // model -> first selector that used it
+                for (const [selector, model] of modelMap) {
+                    const prior = seen.get(model);
+                    if (prior) {
+                        throw new BuildError('DUPLICATE_MODEL', `model diversity violation: selectors "${prior}" and "${selector}" both use model "${model}"`);
                     }
+                    seen.set(model, selector);
                 }
             }
         }
@@ -1060,7 +1089,7 @@ export class DotBuilder {
             ...grRule3(nodeMap, edgeList, standaloneNodeIds),
             ...grRule4(nodeMap, edgeList),
             ...grRule5(nodeMap),
-            ...grRule6(nodeMap, this._spec.convergence ? {} : acceptanceCriteria),
+            ...grRule6(nodeMap, this._spec.convergence ? { ...acceptanceCriteria, fp_pass: 'true', repro_pass: 'true' } : acceptanceCriteria),
             ...grRule7(nodeMap),
             ...grRule8(nodeMap),
             ...grRule9(nodeMap),
@@ -1152,16 +1181,17 @@ export class DotBuilder {
             adversarial: hasRedTeam,
         };
         // Graph-level attrs
-        // In convergence mode: suppress goal, acceptance_criteria, retry_target (the converge node's
-        // `until` predicate is the canonical success condition; these attrs would embed the word
-        // "converge" before setup_deps in the DOT string, breaking AC15 ordering invariant).
+        if (hasConvergence) {
+            if (!spec.goal || spec.goal.trim().length === 0) {
+                throw new BuildError('EMPTY_GOAL', 'goal is required in convergence mode — reviewers use it as the honest-review lens anchor');
+            }
+        }
         const graphAttrs = {
             label: hasConvergence ? escapeAttr(this._slug) : escapeAttr(`${this._slug}: ${this._goal}`),
             rankdir: 'LR',
-            ...(hasConvergence ? {} : {
-                goal: escapeAttr(this._goal),
-                retry_target: 'fix_types',
-            }),
+            ...(hasConvergence
+                ? { goal: escapeAttr(this._goal), retry_target: 'converge' }
+                : { goal: escapeAttr(this._goal), retry_target: 'fix_types' }),
         };
         if (spec.workingDir) {
             graphAttrs['working_dir'] = escapeAttr(spec.workingDir);
@@ -1179,11 +1209,14 @@ export class DotBuilder {
         if (spec.modelStylesheet) {
             graphAttrs['model_stylesheet'] = this._buildStylesheet(spec.modelStylesheet);
         }
-        // GL-6: acceptance_criteria as context.K=V && context.K2=V2 (sorted)
-        // Suppressed in convergence mode — the `until` predicate is the canonical success condition.
-        const acKeys = Object.keys(spec.acceptanceCriteria ?? {}).sort();
-        if (acKeys.length > 0 && !hasConvergence) {
-            graphAttrs['acceptance_criteria'] = escapeAttr(acKeys.map(k => `context.${k}=${String((spec.acceptanceCriteria ?? {})[k])}`).join(' && '));
+        // GL-6: acceptance_criteria as context.K=V && context.K2=V2 (sorted).
+        // Convergence mode merges built-in {fp_pass, repro_pass} — built-ins win on collision.
+        const mergedAc = hasConvergence
+            ? { ...(spec.acceptanceCriteria ?? {}), fp_pass: 'true', repro_pass: 'true' }
+            : { ...(spec.acceptanceCriteria ?? {}) };
+        const acKeys = Object.keys(mergedAc).sort();
+        if (acKeys.length > 0) {
+            graphAttrs['acceptance_criteria'] = escapeAttr(acKeys.map(k => `context.${k}=${String(mergedAc[k])}`).join(' && '));
         }
         const nodes = [];
         const edges = [];
@@ -1440,76 +1473,170 @@ export class DotBuilder {
             let prevId = 'capture_baseline';
             let prevAttrs = undefined;
             if (hasConvergence) {
-                // Convergence mode: emit iterate node + body subgraph instead of per-phase nodes
+                // Convergence mode: v8 topology — 10-node body + fp/repro post-chain + done terminal.
                 const cv = spec.convergence;
+                const fb = cv.fixBackend;
+                const ff = cv.fixFrontend;
+                const mg = cv.mechanicalGates;
+                const rv = cv.reviewers;
+                const adv = cv.adversary;
+                const fp = cv.fpVerify;
+                const rp = cv.reproVerify;
+                const wd = spec.workingDir ?? '${WORKING_DIR}';
+                const sub = (cmd) => cmd.split('/repos/benchmark').join(wd);
+                const fbHarness = fb?.harness ?? cv.impl.harness ?? DEFAULT_FIX_BACKEND_HARNESS;
+                const ffHarness = ff?.harness ?? cv.impl.harness ?? DEFAULT_FIX_FRONTEND_HARNESS;
+                const advSealed = adv?.sealedFromSource ?? cv.sealedFromSource ?? DEFAULT_ADVERSARY_SEALED_FROM_SOURCE;
                 emit('converge', {
-                    shape: 'house',
-                    class: 'iterate',
-                    label: 'converge',
                     body: 'iter-body',
+                    class: 'iterate',
+                    convergence_epsilon: String(cv.convergenceEpsilon ?? DEFAULT_CONVERGENCE_EPSILON),
+                    label: 'converge',
+                    max_iterations: String(cv.maxIterations ?? DEFAULT_MAX_ITERATIONS),
+                    max_visits: String(cv.maxVisits ?? DEFAULT_CONVERGE_MAX_VISITS),
+                    retry_target: 'converge',
+                    shape: 'house',
+                    timeout: cv.timeout ?? DEFAULT_CONVERGE_TIMEOUT,
                     until: cv.until,
-                    ...(cv.maxVisits !== undefined ? { max_visits: String(cv.maxVisits) } : { max_visits: '20' }),
-                    ...(cv.timeout ? { timeout: cv.timeout } : { timeout: '60m' }),
                 });
                 link(prevId, 'converge', prevAttrs);
                 emitSubgraph('iter_body', 'iter-body', () => {
-                    emit('iter_impl', {
-                        class: 'impl_worker',
-                        label: 'iter_impl',
-                        prompt: cv.impl.prompt,
-                        harness: cv.impl.harness,
-                        timeout: '600s',
-                        max_visits: '10',
+                    emit('fix_backend', {
+                        allow_multi_retry_target: 'true',
+                        class: 'impl',
+                        context_keys: '__pool_findings__,__last_failure_output,__fix_attempt_history',
+                        harness: fbHarness,
+                        max_visits: String(fb?.maxVisits ?? 10),
+                        model: fb?.model ?? DEFAULT_FIX_BACKEND_MODEL,
+                        prompt: fb?.prompt ?? DEFAULT_FIX_BACKEND_PROMPT,
+                        retry_target: 'fix_backend',
+                        timeout: fb?.timeout ?? '3600s',
                     });
-                    emit('iter_review_be', {
+                    emit('fix_frontend', {
+                        class: 'impl',
+                        context_keys: '__pool_findings__,__last_failure_output,__fix_attempt_history',
+                        harness: ffHarness,
+                        max_visits: String(ff?.maxVisits ?? 10),
+                        model: ff?.model ?? DEFAULT_FIX_FRONTEND_MODEL,
+                        prompt: ff?.prompt ?? DEFAULT_FIX_FRONTEND_PROMPT,
+                        retry_target: 'fix_frontend',
+                        timeout: ff?.timeout ?? '3600s',
+                    });
+                    emit('run_build_api', {
+                        max_visits: '5',
+                        reports_to_v: 'mechanical.typecheck',
+                        retry_target: 'fix_backend',
+                        shape: 'parallelogram',
+                        timeout: '180s',
+                        tool_command: mg?.buildApi ?? sub(DEFAULT_BUILD_API_CMD),
+                    });
+                    emit('run_tests_api', {
+                        max_visits: '5',
+                        reports_to_v: 'mechanical.boot',
+                        retry_target: 'fix_backend',
+                        shape: 'parallelogram',
+                        timeout: '300s',
+                        tool_command: mg?.testsApi ?? sub(DEFAULT_TESTS_API_CMD),
+                    });
+                    emit('run_build_ui', {
+                        max_visits: '5',
+                        reports_to_v: 'mechanical.build',
+                        retry_target: 'fix_frontend',
+                        shape: 'parallelogram',
+                        timeout: '180s',
+                        tool_command: mg?.buildUi ?? sub(DEFAULT_BUILD_UI_CMD),
+                    });
+                    emit('run_lint', {
+                        max_visits: '5',
+                        reports_to_v: 'mechanical.lint',
+                        retry_target: 'fix_backend',
+                        shape: 'parallelogram',
+                        timeout: '180s',
+                        tool_command: mg?.lint ?? sub(DEFAULT_LINT_CMD),
+                    });
+                    emit('review_be', {
                         class: 'honest_review',
-                        label: 'iter_review_be',
+                        harness: rv?.be?.harness ?? 'hermes',
+                        max_visits: String(rv?.be?.maxVisits ?? 10),
+                        model: rv?.be?.model ?? DEFAULT_REVIEW_BE_MODEL,
+                        prompt: rv?.be?.prompt ?? DEFAULT_REVIEW_BE_PROMPT,
+                        read_only: 'true',
+                        retry_target: 'review_be',
                         reviewer_lens: 'backend',
-                        read_only: 'true',
-                        timeout: '300s',
+                        timeout: rv?.be?.timeout ?? '2400s',
                     });
-                    emit('iter_review_fe', {
+                    emit('review_fe', {
                         class: 'honest_review',
-                        label: 'iter_review_fe',
+                        harness: rv?.fe?.harness ?? 'hermes',
+                        max_visits: String(rv?.fe?.maxVisits ?? 10),
+                        model: rv?.fe?.model ?? DEFAULT_REVIEW_FE_MODEL,
+                        prompt: rv?.fe?.prompt ?? DEFAULT_REVIEW_FE_PROMPT,
+                        read_only: 'true',
+                        retry_target: 'review_fe',
                         reviewer_lens: 'frontend',
-                        read_only: 'true',
-                        timeout: '300s',
+                        timeout: rv?.fe?.timeout ?? '2400s',
                     });
-                    emit('iter_review_int', {
+                    emit('review_int', {
                         class: 'honest_review',
-                        label: 'iter_review_int',
+                        harness: rv?.int?.harness ?? 'hermes',
+                        max_visits: String(rv?.int?.maxVisits ?? 10),
+                        model: rv?.int?.model ?? DEFAULT_REVIEW_INT_MODEL,
+                        prompt: rv?.int?.prompt ?? DEFAULT_REVIEW_INT_PROMPT,
+                        read_only: 'true',
+                        retry_target: 'review_int',
                         reviewer_lens: 'integration',
-                        read_only: 'true',
-                        timeout: '300s',
+                        timeout: rv?.int?.timeout ?? '2400s',
                     });
-                    const adversaryAttrs = {
+                    emit('adversary_node', {
                         class: 'adversary',
-                        label: 'iter_adversary',
+                        harness: adv?.harness ?? 'hermes',
+                        max_visits: String(adv?.maxVisits ?? 10),
+                        model: adv?.model ?? DEFAULT_ADVERSARY_MODEL,
+                        prompt: adv?.prompt ?? DEFAULT_ADVERSARY_PROMPT,
                         read_only: 'true',
-                        timeout: '300s',
-                    };
-                    if (cv.sealedFromSource)
-                        adversaryAttrs['sealed_from_source'] = cv.sealedFromSource;
-                    emit('iter_adversary', adversaryAttrs);
-                    link('iter_impl', 'iter_review_be');
-                    link('iter_review_be', 'iter_review_fe');
-                    link('iter_review_fe', 'iter_review_int');
-                    link('iter_review_int', 'iter_adversary');
+                        sealed_from_source: advSealed,
+                        timeout: adv?.timeout ?? '2400s',
+                    });
+                    const bodyChain = [
+                        'fix_backend', 'fix_frontend',
+                        'run_build_api', 'run_tests_api', 'run_build_ui', 'run_lint',
+                        'review_be', 'review_fe', 'review_int', 'adversary_node',
+                    ];
+                    for (let bi = 0; bi < bodyChain.length - 1; bi++) {
+                        link(bodyChain[bi], bodyChain[bi + 1], { condition: 'outcome=success', label: 'pass' });
+                    }
                 });
-                // Reachability edge: converge -> iter_impl
-                link('converge', 'iter_impl');
+                // Goal-gate nodes live OUTSIDE cluster_iter_body.
+                emit('fp_verify', {
+                    context_on_failure: 'fp_pass=false',
+                    context_on_success: 'fp_pass=true',
+                    goal_gate: 'true',
+                    max_visits: String(fp?.maxVisits ?? 5),
+                    shape: 'parallelogram',
+                    timeout: fp?.timeout ?? '900s',
+                    tool_command: fp?.command ?? sub(DEFAULT_FP_VERIFY_CMD),
+                });
+                emit('repro_verify', {
+                    context_on_failure: 'repro_pass=false',
+                    context_on_success: 'repro_pass=true',
+                    goal_gate: 'true',
+                    max_visits: String(rp?.maxVisits ?? 5),
+                    shape: 'parallelogram',
+                    timeout: rp?.timeout ?? '900s',
+                    tool_command: rp?.command ?? sub(DEFAULT_REPRO_VERIFY_CMD),
+                });
+                emit('done', { label: 'done', shape: 'Msquare' });
+                // Post-chain: body exit → fp → repro → done, with fail bounces.
+                link('adversary_node', 'fp_verify');
+                link('fp_verify', 'repro_verify', { condition: 'outcome=success', label: 'pass' });
+                link('repro_verify', 'done', { condition: 'outcome=success', label: 'pass' });
+                link('fp_verify', 'converge', { condition: 'outcome=fail', label: 'fail' });
+                link('repro_verify', 'fp_verify', { condition: 'outcome=fail', label: 'fail' });
+                // Reachability edges from the iterate header.
+                link('converge', 'fix_backend', { condition: 'outcome=success', weight: '1' });
+                link('converge', 'fp_verify', { condition: 'outcome=success', weight: '2' });
                 applied.add('P32');
-                // Post-convergence routing: quality_review → exit
-                emit('quality_review', {
-                    class: 'review',
-                    label: 'Final quality review: verify all acceptance criteria met, no regressions, code is clean. Output STATUS: SUCCESS | FAIL.',
-                    read_only: 'true',
-                    timeout: '15m',
-                });
-                link('converge', 'quality_review', { condition: 'outcome=success', label: 'converged' });
-                link('quality_review', 'exit', { condition: 'outcome=success', label: 'pass' });
-                // Convergence handles its own exit routing; update prevId for clarity
-                prevId = 'quality_review';
+                prevId = 'done';
                 prevAttrs = {};
             } // end hasConvergence
             for (let i = 0; i < phases.length && !hasConvergence; i++) {
