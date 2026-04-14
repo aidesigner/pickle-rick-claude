@@ -4,10 +4,17 @@
 
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
     DotBuilder,
     BuildError,
 } from '../services/dot-builder.js';
+import { parseDot } from './__helpers__/dot-parse.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -722,4 +729,108 @@ describe('BDD: thread_id topology', () => {
         assert.ok(attrs, 'vuln_scan should exist');
         assert.equal(attrs.thread_id, 'phase_1');
     });
+});
+
+// ===========================================================================
+// BDD: Convergence v8 full topology from minimal spec
+// ===========================================================================
+describe('BDD: Convergence v8 full topology from minimal spec', () => {
+    const minimalConvSpec = () => ({
+        slug: 'v8-bdd',
+        goal: 'bdd v8 topology',
+        phases: [],
+        acceptanceCriteria: {},
+        convergence: {
+            until: 'V_total == 0 && fixed_point && reproducibility',
+            impl: { harness: 'claude-code', prompt: 'seed impl' },
+        },
+    });
+
+    test('Given a minimal convergence spec, when built, then the v8 body chain is emitted', () => {
+        const { dot, patternsApplied } = DotBuilder.fromSpec(minimalConvSpec()).build();
+        const { nodes, edges } = parseDot(dot);
+        const bodyChain = [
+            'fix_backend', 'fix_frontend',
+            'run_build_api', 'run_tests_api', 'run_build_ui', 'run_lint',
+            'review_be', 'review_fe', 'review_int', 'adversary_node',
+        ];
+        for (const id of bodyChain) assert.ok(nodes.has(id), `${id} must be emitted`);
+        for (let i = 0; i < bodyChain.length - 1; i++) {
+            const e = edges.find(e => e.from === bodyChain[i] && e.to === bodyChain[i + 1]);
+            assert.ok(e, `edge ${bodyChain[i]} -> ${bodyChain[i + 1]} must exist`);
+        }
+        assert.ok(patternsApplied.includes('P32'), 'P32 must be applied');
+    });
+
+    test('Given the same spec, then fp_verify/repro_verify/done form the goal-gate tail', () => {
+        const { dot } = DotBuilder.fromSpec(minimalConvSpec()).build();
+        const { nodes, edges } = parseDot(dot);
+        assert.ok(nodes.has('fp_verify'));
+        assert.ok(nodes.has('repro_verify'));
+        assert.ok(nodes.has('done'));
+        assert.equal(nodes.get('done').shape, 'Msquare', 'done must be the Msquare terminal');
+        // All 5 post-chain edges in one sweep
+        const expected = [
+            ['adversary_node', 'fp_verify'],
+            ['fp_verify', 'repro_verify'],
+            ['repro_verify', 'done'],
+            ['fp_verify', 'converge'],
+            ['repro_verify', 'fp_verify'],
+        ];
+        for (const [from, to] of expected) {
+            assert.ok(edges.find(e => e.from === from && e.to === to), `${from} -> ${to} must exist`);
+        }
+    });
+
+    test('Given the same spec, then converge reachability edges go to fix_backend and fp_verify', () => {
+        const { dot } = DotBuilder.fromSpec(minimalConvSpec()).build();
+        const { edges } = parseDot(dot);
+        const toFb = edges.find(e => e.from === 'converge' && e.to === 'fix_backend');
+        const toFp = edges.find(e => e.from === 'converge' && e.to === 'fp_verify');
+        assert.ok(toFb, 'converge -> fix_backend must exist');
+        assert.ok(toFp, 'converge -> fp_verify must exist');
+        assert.equal(toFb.attrs.weight, '1');
+        assert.equal(toFp.attrs.weight, '2');
+    });
+});
+
+// ===========================================================================
+// BDD: AC-SNAP-1 — non-convergence snapshot fixtures byte-equal
+// ===========================================================================
+describe('BDD: AC-SNAP-1 — non-convergence snapshot fixtures byte-equal', () => {
+    const fixturesDir = path.join(__dirname, '__fixtures__');
+
+    const snapshotSpecs = {
+        minimal: {
+            slug: 'snap-minimal',
+            goal: 'minimal snapshot baseline',
+            phases: [{ name: 'core', prompt: 'implement core', allowedPaths: ['src/'] }],
+            acceptanceCriteria: { done: 'true' },
+        },
+        phases: {
+            slug: 'snap-phases',
+            goal: 'two-phase snapshot baseline',
+            phases: [
+                { name: 'auth', prompt: 'implement auth', allowedPaths: ['src/auth/'], dependsOn: [] },
+                { name: 'api', prompt: 'implement api', allowedPaths: ['src/api/'], dependsOn: [] },
+            ],
+            acceptanceCriteria: { auth_done: 'true', api_done: 'true' },
+        },
+        isolated: {
+            slug: 'snap-isolated',
+            goal: 'isolated workspace snapshot baseline',
+            phases: [{ name: 'core', prompt: 'implement core', allowedPaths: ['src/'] }],
+            acceptanceCriteria: { done: 'true' },
+            workspace: 'isolated',
+        },
+    };
+
+    for (const [variant, spec] of Object.entries(snapshotSpecs)) {
+        test(`AC-SNAP-1 — non-convergence "${variant}" matches frozen fixture byte-equal`, () => {
+            const { dot } = DotBuilder.fromSpec(spec).build();
+            const fixturePath = path.join(fixturesDir, `non-convergence-baseline-${variant}.dot`);
+            const fixture = fs.readFileSync(fixturePath, 'utf8');
+            assert.strictEqual(dot, fixture, `non-convergence ${variant} must not regress`);
+        });
+    }
 });

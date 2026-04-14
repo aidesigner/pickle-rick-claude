@@ -1,13 +1,14 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { DotBuilder, BuildError } from '../services/dot-builder.js';
+import { parseDot } from './__helpers__/dot-parse.js';
 
 function makeConvergenceSpec(overrides = {}) {
   return {
     slug: 'iter-test',
     goal: 'test convergence',
     phases: [{ name: 'core', prompt: 'implement', allowedPaths: ['src/'] }],
-    acceptanceCriteria: { done: 'converged' },
+    acceptanceCriteria: {},
     convergence: {
       until: 'V_total == 0 && fixed_point && reproducibility',
       impl: { harness: 'claude-code', prompt: 'Implement the feature' },
@@ -19,27 +20,31 @@ function makeConvergenceSpec(overrides = {}) {
 describe('iterate convergence', () => {
   it('AC3: basic convergence emission', () => {
     const { dot } = DotBuilder.fromSpec(makeConvergenceSpec()).build();
+    const { nodes } = parseDot(dot);
     assert.ok(dot.includes('class="iterate"'), 'converge node must have class="iterate"');
     assert.ok(dot.includes('subgraph cluster_iter_body'), 'iter body subgraph must be emitted');
-    assert.ok(dot.includes('iter_impl'), 'iter_impl node must be present');
-    assert.ok(dot.includes('iter_review_be'), 'iter_review_be node must be present');
-    assert.ok(dot.includes('iter_review_fe'), 'iter_review_fe node must be present');
-    assert.ok(dot.includes('iter_review_int'), 'iter_review_int node must be present');
-    assert.ok(dot.includes('iter_adversary'), 'iter_adversary node must be present');
+    const expected = new Set([
+      'fix_backend', 'fix_frontend',
+      'run_build_api', 'run_tests_api', 'run_build_ui', 'run_lint',
+      'review_be', 'review_fe', 'review_int', 'adversary_node',
+    ]);
+    for (const id of expected) {
+      assert.ok(nodes.has(id), `v8 body node "${id}" must be present`);
+    }
   });
 
   it('AC6: all three reviewer lenses on correct nodes', () => {
     const { dot } = DotBuilder.fromSpec(makeConvergenceSpec()).build();
-    const lines = dot.split('\n');
-    const beLine = lines.find(l => l.includes('iter_review_be'));
-    assert.ok(beLine, 'iter_review_be node should exist');
-    assert.ok(beLine.includes('reviewer_lens="backend"'), 'iter_review_be should have backend lens');
-    const feLine = lines.find(l => l.includes('iter_review_fe'));
-    assert.ok(feLine, 'iter_review_fe node should exist');
-    assert.ok(feLine.includes('reviewer_lens="frontend"'), 'iter_review_fe should have frontend lens');
-    const intLine = lines.find(l => l.includes('iter_review_int'));
-    assert.ok(intLine, 'iter_review_int node should exist');
-    assert.ok(intLine.includes('reviewer_lens="integration"'), 'iter_review_int should have integration lens');
+    const { nodes } = parseDot(dot);
+    const be = nodes.get('review_be');
+    assert.ok(be, 'review_be node should exist');
+    assert.equal(be.reviewer_lens, 'backend', 'review_be should have backend lens');
+    const fe = nodes.get('review_fe');
+    assert.ok(fe, 'review_fe node should exist');
+    assert.equal(fe.reviewer_lens, 'frontend', 'review_fe should have frontend lens');
+    const int = nodes.get('review_int');
+    assert.ok(int, 'review_int node should exist');
+    assert.equal(int.reviewer_lens, 'integration', 'review_int should have integration lens');
   });
 
   it('AC7: adversary sealed_from_source camelCase→snake_case', () => {
@@ -107,34 +112,41 @@ describe('iterate convergence', () => {
 
   it('AC8: P0 composition — commit_and_push injected for isolated workspace', () => {
     const spec = { ...makeConvergenceSpec(), workspace: 'isolated' };
-    const result = DotBuilder.fromSpec(spec).build();
-    const { dot, patternsApplied } = result;
-    assert.ok(dot.includes('commit_and_push'), 'commit_and_push must be injected for workspace=isolated');
-    // quality_review -> commit_and_push -> exit rewiring
-    assert.ok(
-      dot.includes('quality_review -> commit_and_push'),
-      'quality_review must route to commit_and_push',
-    );
-    assert.ok(dot.includes('commit_and_push -> exit'), 'commit_and_push must route to exit');
+    const { dot, patternsApplied } = DotBuilder.fromSpec(spec).build();
+    const { nodes, edges } = parseDot(dot);
+    assert.ok(nodes.has('commit_and_push'), 'commit_and_push must be injected for workspace=isolated');
+    // v8 terminal chain: repro_verify -> commit_and_push -> done
+    const rpToCp = edges.find(e => e.from === 'repro_verify' && e.to === 'commit_and_push');
+    assert.ok(rpToCp, 'repro_verify must route to commit_and_push');
+    const cpToDone = edges.find(e => e.from === 'commit_and_push' && e.to === 'done');
+    assert.ok(cpToDone, 'commit_and_push must route to done');
     assert.ok(patternsApplied.includes('P0'), 'patternsApplied must include P0 for workspace=isolated composition');
   });
 
   it('AC15: P1 composition — setup_deps emitted before converge', () => {
     const { dot } = DotBuilder.fromSpec(makeConvergenceSpec()).build();
-    assert.ok(dot.includes('setup_deps'), 'setup_deps must be present');
-    const setupIdx = dot.indexOf('setup_deps');
-    const convergeIdx = dot.indexOf('converge');
+    const setupIdx = dot.search(/^  setup_deps \[/m);
+    const convergeIdx = dot.search(/^  converge \[/m);
+    assert.ok(setupIdx >= 0, 'setup_deps node must be present');
+    assert.ok(convergeIdx >= 0, 'converge node must be present');
     assert.ok(setupIdx < convergeIdx, 'setup_deps must appear before converge in DOT output');
   });
 
-  it('node ID stability — all body nodes use iter_ prefix', () => {
+  it('node ID stability — all body nodes match v8 topology', () => {
     const { dot } = DotBuilder.fromSpec(makeConvergenceSpec()).build();
-    const expectedIds = ['iter_impl', 'iter_review_be', 'iter_review_fe', 'iter_review_int', 'iter_adversary'];
+    const { nodes } = parseDot(dot);
+    const expectedIds = [
+      'fix_backend', 'fix_frontend',
+      'run_build_api', 'run_tests_api', 'run_build_ui', 'run_lint',
+      'review_be', 'review_fe', 'review_int', 'adversary_node',
+    ];
     for (const id of expectedIds) {
-      assert.ok(new RegExp(`\\b${id}\\b`).test(dot), `node ${id} must be present (word boundary match)`);
+      assert.ok(nodes.has(id), `v8 body node "${id}" must be present`);
     }
-    // Verify they are NOT the old non-prefixed names
-    assert.ok(!dot.includes('"impl"'), 'no bare "impl" node in convergence mode');
+    // Verify old pre-v8 iter_* IDs are NOT present
+    assert.ok(!nodes.has('iter_impl'), 'no legacy iter_impl node in v8');
+    assert.ok(!nodes.has('iter_review_be'), 'no legacy iter_review_be node in v8');
+    assert.ok(!nodes.has('iter_adversary'), 'no legacy iter_adversary node in v8');
   });
 
   it('P32 in patternsApplied', () => {
@@ -144,20 +156,24 @@ describe('iterate convergence', () => {
 
   it('default maxVisits and timeout applied when not specified', () => {
     const { dot } = DotBuilder.fromSpec(makeConvergenceSpec()).build();
-    assert.ok(dot.includes('max_visits="20"'), 'default max_visits must be 20 on converge node');
-    assert.ok(dot.includes('timeout="60m"'), 'default timeout must be 60m on converge node');
+    const { nodes } = parseDot(dot);
+    const conv = nodes.get('converge');
+    assert.ok(conv, 'converge node must be present');
+    assert.equal(conv.max_visits, '5', 'default max_visits must be 5 on converge node (v8)');
+    assert.equal(conv.timeout, '21600s', 'default timeout must be 21600s on converge node (v8)');
   });
 
   it('P1-1 regression: isolated workspace edge rewiring preserves dedup set', () => {
     const spec = { ...makeConvergenceSpec(), workspace: 'isolated' };
     const { dot } = DotBuilder.fromSpec(spec).build();
-    // After rewiring quality_review -> exit to quality_review -> commit_and_push,
-    // the original quality_review -> exit edge must be fully removed (no duplicates)
-    const qrToExitCount = (dot.match(/quality_review -> exit/g) || []).length;
-    assert.equal(qrToExitCount, 0, 'quality_review -> exit must be fully removed after rewiring');
-    // commit_and_push -> exit must appear exactly once
-    const cpToExitCount = (dot.match(/commit_and_push -> exit/g) || []).length;
-    assert.equal(cpToExitCount, 1, 'commit_and_push -> exit must appear exactly once');
+    const { edges } = parseDot(dot);
+    // After rewiring repro_verify -> done to repro_verify -> commit_and_push -> done,
+    // the original repro_verify -> done direct edge must be fully removed.
+    const rpToDoneDirect = edges.filter(e => e.from === 'repro_verify' && e.to === 'done');
+    assert.equal(rpToDoneDirect.length, 0, 'repro_verify -> done direct edge must be removed by rewire');
+    // commit_and_push -> done must appear exactly once
+    const cpToDone = edges.filter(e => e.from === 'commit_and_push' && e.to === 'done');
+    assert.equal(cpToDone.length, 1, 'commit_and_push -> done must appear exactly once');
   });
 
   it('explicit maxVisits override on convergence node', () => {

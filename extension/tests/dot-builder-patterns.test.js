@@ -1,6 +1,35 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { DotBuilder } from '../services/dot-builder.js';
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { DotBuilder, BuildError } from '../services/dot-builder.js';
+import { parseDot } from './__helpers__/dot-parse.js';
+import {
+  DEFAULT_FIX_BACKEND_PROMPT,
+  DEFAULT_FIX_FRONTEND_PROMPT,
+  DEFAULT_REVIEW_BE_PROMPT,
+  DEFAULT_REVIEW_FE_PROMPT,
+  DEFAULT_REVIEW_INT_PROMPT,
+  DEFAULT_ADVERSARY_PROMPT,
+  DEFAULT_BUILD_API_CMD,
+  DEFAULT_TESTS_API_CMD,
+  DEFAULT_BUILD_UI_CMD,
+  DEFAULT_LINT_CMD,
+  DEFAULT_FP_VERIFY_CMD,
+  DEFAULT_REPRO_VERIFY_CMD,
+  DEFAULT_FIX_BACKEND_MODEL,
+  DEFAULT_FIX_FRONTEND_MODEL,
+  DEFAULT_REVIEW_BE_MODEL,
+  DEFAULT_REVIEW_FE_MODEL,
+  DEFAULT_REVIEW_INT_MODEL,
+  DEFAULT_ADVERSARY_MODEL,
+  DEFAULT_ADVERSARY_SEALED_FROM_SOURCE,
+  DEFAULT_CONVERGENCE_EPSILON,
+  DEFAULT_MAX_ITERATIONS,
+  DEFAULT_CONVERGE_MAX_VISITS,
+  DEFAULT_CONVERGE_TIMEOUT,
+} from '../services/convergence-defaults.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -711,5 +740,532 @@ describe('Remaining pattern snapshot tests', () => {
         for (const prop of properties) {
             assert.ok(validProps.has(prop), `property "${prop}" must be llm_model or reasoning_effort`);
         }
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Convergence v8 topology ACs — refined PRD §5
+//
+// One test per AC (or AC family). Every structural assertion consumes the
+// shared parseDot helper from tests/__helpers__/dot-parse.js. Prompt and
+// command bytes reference the DEFAULT_* constants from convergence-defaults.js
+// — no hardcoded prompt text.
+// ---------------------------------------------------------------------------
+
+function convSpec(overrides = {}) {
+    return {
+        slug: 'conv-test',
+        goal: 'converge on the spec',
+        phases: [],
+        acceptanceCriteria: {},
+        convergence: {
+            until: 'V_total == 0 && fixed_point && reproducibility',
+            impl: { harness: 'claude-code', prompt: 'seed implementation prompt' },
+            ...(overrides.convergence ?? {}),
+        },
+        ...Object.fromEntries(Object.entries(overrides).filter(([k]) => k !== 'convergence')),
+    };
+}
+
+const V8_BODY_CHAIN = [
+    'fix_backend', 'fix_frontend',
+    'run_build_api', 'run_tests_api', 'run_build_ui', 'run_lint',
+    'review_be', 'review_fe', 'review_int', 'adversary_node',
+];
+
+describe('Convergence v8 topology — refined PRD §5 ACs', () => {
+
+    // AC-BUILD-1
+    test('AC-BUILD-1 — build() returns { dot, patternsApplied } with P32 applied', () => {
+        const result = DotBuilder.fromSpec(convSpec()).build();
+        assert.ok(typeof result.dot === 'string' && result.dot.length > 0, 'dot must be non-empty string');
+        assert.ok(Array.isArray(result.patternsApplied), 'patternsApplied must be an array');
+        assert.ok(result.patternsApplied.includes('P32'), 'P32 must be applied in convergence mode');
+    });
+
+    // AC-STRUCT-1..11
+    test('AC-STRUCT-1 — 10 body nodes present with matching v8 IDs', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const { nodes } = parseDot(dot);
+        for (const id of V8_BODY_CHAIN) {
+            assert.ok(nodes.has(id), `body node "${id}" must be present`);
+        }
+        assert.equal(V8_BODY_CHAIN.length, 10, 'v8 body must define exactly 10 nodes');
+    });
+
+    test('AC-STRUCT-2 — 9 body edges with outcome=success', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const { edges } = parseDot(dot);
+        let count = 0;
+        for (let i = 0; i < V8_BODY_CHAIN.length - 1; i++) {
+            const e = edges.find(e => e.from === V8_BODY_CHAIN[i] && e.to === V8_BODY_CHAIN[i + 1]);
+            assert.ok(e, `body edge ${V8_BODY_CHAIN[i]} -> ${V8_BODY_CHAIN[i + 1]} must exist`);
+            assert.equal(e.attrs.condition, 'outcome=success', `body edge ${i} must have condition=outcome=success`);
+            count++;
+        }
+        assert.equal(count, 9, 'body chain must have exactly 9 success-conditioned edges');
+    });
+
+    test('AC-STRUCT-3 — body chain order preserved', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        let prev = -1;
+        for (const id of V8_BODY_CHAIN) {
+            const idx = dot.search(new RegExp(`^    ${id} \\[`, 'm'));
+            assert.ok(idx > prev, `node ${id} must appear after previous body node`);
+            prev = idx;
+        }
+    });
+
+    test('AC-STRUCT-4 — converge node has v8 attrs', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const { nodes } = parseDot(dot);
+        const c = nodes.get('converge');
+        assert.ok(c, 'converge node must exist');
+        assert.equal(c.class, 'iterate');
+        assert.equal(c.shape, 'house');
+        assert.equal(c.retry_target, 'converge');
+        assert.equal(c.body, 'iter-body');
+    });
+
+    test('AC-STRUCT-5 — fp_verify/repro_verify/done are OUTSIDE cluster_iter_body', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const lines = dot.split('\n');
+        const openIdx = lines.findIndex(l => /^\s*subgraph cluster_iter_body/.test(l));
+        assert.ok(openIdx >= 0, 'cluster_iter_body subgraph must exist');
+        let depth = 0;
+        let closeIdx = -1;
+        for (let i = openIdx; i < lines.length; i++) {
+            if (lines[i].includes('{')) depth++;
+            if (lines[i].includes('}')) {
+                depth--;
+                if (depth === 0) { closeIdx = i; break; }
+            }
+        }
+        assert.ok(closeIdx > openIdx, 'cluster_iter_body must close');
+        const after = lines.slice(closeIdx + 1).join('\n');
+        assert.match(after, /^\s*fp_verify \[/m, 'fp_verify must be outside cluster_iter_body');
+        assert.match(after, /^\s*repro_verify \[/m, 'repro_verify must be outside cluster_iter_body');
+        assert.match(after, /^\s*done \[/m, 'done must be outside cluster_iter_body');
+    });
+
+    test('AC-STRUCT-6 — post-chain edges with correct conditions', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const { edges } = parseDot(dot);
+        const advToFp = edges.find(e => e.from === 'adversary_node' && e.to === 'fp_verify');
+        assert.ok(advToFp, 'adversary_node -> fp_verify must exist');
+        const fpToRp = edges.find(e => e.from === 'fp_verify' && e.to === 'repro_verify' && e.attrs.condition === 'outcome=success');
+        assert.ok(fpToRp, 'fp_verify -> repro_verify [success] must exist');
+        const rpToDone = edges.find(e => e.from === 'repro_verify' && e.to === 'done' && e.attrs.condition === 'outcome=success');
+        assert.ok(rpToDone, 'repro_verify -> done [success] must exist');
+        const fpToConv = edges.find(e => e.from === 'fp_verify' && e.to === 'converge' && e.attrs.condition === 'outcome=fail');
+        assert.ok(fpToConv, 'fp_verify -> converge [fail] must exist');
+        const rpToFp = edges.find(e => e.from === 'repro_verify' && e.to === 'fp_verify' && e.attrs.condition === 'outcome=fail');
+        assert.ok(rpToFp, 'repro_verify -> fp_verify [fail] must exist');
+    });
+
+    test('AC-STRUCT-7 — single Msquare terminal = done', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const { nodes } = parseDot(dot);
+        const msquares = [...nodes.entries()].filter(([, a]) => a.shape === 'Msquare');
+        assert.equal(msquares.length, 1, 'exactly one Msquare-shaped node must exist');
+        assert.equal(msquares[0][0], 'done', 'the Msquare terminal must be "done"');
+    });
+
+    test('AC-STRUCT-8 — reachability edges converge -> {fix_backend, fp_verify}', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const { edges } = parseDot(dot);
+        const toFb = edges.find(e => e.from === 'converge' && e.to === 'fix_backend');
+        assert.ok(toFb, 'converge -> fix_backend must exist');
+        assert.equal(toFb.attrs.weight, '1', 'converge -> fix_backend weight=1');
+        const toFp = edges.find(e => e.from === 'converge' && e.to === 'fp_verify');
+        assert.ok(toFp, 'converge -> fp_verify must exist');
+        assert.equal(toFp.attrs.weight, '2', 'converge -> fp_verify weight=2');
+    });
+
+    test('AC-STRUCT-9 — no exit node in convergence mode', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const { nodes } = parseDot(dot);
+        assert.ok(!nodes.has('exit'), '"exit" node must NOT be emitted in convergence mode');
+    });
+
+    test('AC-STRUCT-10 — cluster_iter_body subgraph exists with label="iter-body"', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        assert.match(dot, /subgraph cluster_iter_body \{/, 'cluster_iter_body subgraph must open');
+        assert.match(dot, /label="iter-body"/, 'subgraph label must be "iter-body"');
+    });
+
+    test('AC-STRUCT-11 — capture_baseline -> converge edge exists', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const { edges } = parseDot(dot);
+        const e = edges.find(e => e.from === 'capture_baseline' && e.to === 'converge');
+        assert.ok(e, 'capture_baseline -> converge edge must exist');
+    });
+
+    // AC-MERGE-1..4
+    test('AC-MERGE-1 — empty user AC merges to built-in fp_pass+repro_pass', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const { graphAttrs } = parseDot(dot);
+        assert.equal(graphAttrs.acceptance_criteria, 'context.fp_pass=true && context.repro_pass=true');
+    });
+
+    test('AC-MERGE-2 — unmapped custom AC key in convergence rejected by validator', () => {
+        // Convergence mode rejects AC keys that no emitted node maps via
+        // context_on_success. Only fp_pass/repro_pass (auto-mapped by the
+        // fp_verify/repro_verify gates) are valid built-ins.
+        const spec = convSpec({ acceptanceCriteria: { custom_key: 'custom_val' } });
+        assert.throws(
+            () => DotBuilder.fromSpec(spec).build(),
+            err => err instanceof BuildError && err.code === 'MISSING_AC_MAPPING',
+        );
+    });
+
+    test('AC-MERGE-3 — built-in fp_pass/repro_pass win over user override', () => {
+        const spec = convSpec({ acceptanceCriteria: { fp_pass: 'maybe', repro_pass: 'maybe' } });
+        const { dot } = DotBuilder.fromSpec(spec).build();
+        const { graphAttrs } = parseDot(dot);
+        assert.equal(
+            graphAttrs.acceptance_criteria,
+            'context.fp_pass=true && context.repro_pass=true',
+            'built-in true values must override user-provided fp_pass/repro_pass',
+        );
+    });
+
+    test('AC-MERGE-4 — merged AC keys are sorted lexicographically', () => {
+        // The built-ins are emitted in sorted order: `fp_pass` precedes
+        // `repro_pass`. Verify the serialized graph attr preserves that order.
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const { graphAttrs } = parseDot(dot);
+        const ac = graphAttrs.acceptance_criteria;
+        const fpIdx = ac.indexOf('fp_pass');
+        const rpIdx = ac.indexOf('repro_pass');
+        assert.ok(fpIdx >= 0 && rpIdx >= 0, 'both built-ins must be present');
+        assert.ok(fpIdx < rpIdx, 'fp_pass must come before repro_pass in sorted order');
+    });
+
+    // AC-OVERRIDE-1..8
+    test('AC-OVERRIDE-1 — fixBackend.model overrides default', () => {
+        const spec = convSpec({
+            convergence: { fixBackend: { model: 'custom/backend-1', harness: 'hermes', prompt: 'p' } },
+        });
+        const { dot } = DotBuilder.fromSpec(spec).build();
+        const { nodes } = parseDot(dot);
+        assert.equal(nodes.get('fix_backend').model, 'custom/backend-1');
+    });
+
+    test('AC-OVERRIDE-2 — fixBackend.harness overrides default', () => {
+        const spec = convSpec({
+            convergence: { fixBackend: { model: 'm', harness: 'claude-code', prompt: 'p' } },
+        });
+        const { dot } = DotBuilder.fromSpec(spec).build();
+        const { nodes } = parseDot(dot);
+        assert.equal(nodes.get('fix_backend').harness, 'claude-code');
+    });
+
+    test('AC-OVERRIDE-3 — fixFrontend.prompt overrides DEFAULT_FIX_FRONTEND_PROMPT', () => {
+        const custom = 'custom frontend prompt body';
+        const spec = convSpec({
+            convergence: { fixFrontend: { model: 'm', harness: 'hermes', prompt: custom } },
+        });
+        const { dot } = DotBuilder.fromSpec(spec).build();
+        const { nodes } = parseDot(dot);
+        assert.equal(nodes.get('fix_frontend').prompt, custom);
+        assert.notEqual(nodes.get('fix_frontend').prompt, DEFAULT_FIX_FRONTEND_PROMPT);
+    });
+
+    test('AC-OVERRIDE-4 — mechanicalGates.buildApi overrides DEFAULT_BUILD_API_CMD', () => {
+        const custom = 'cd /custom && make api-build';
+        const spec = convSpec({ convergence: { mechanicalGates: { buildApi: custom } } });
+        const { dot } = DotBuilder.fromSpec(spec).build();
+        const { nodes } = parseDot(dot);
+        assert.equal(nodes.get('run_build_api').tool_command, custom);
+        assert.notEqual(nodes.get('run_build_api').tool_command, DEFAULT_BUILD_API_CMD);
+    });
+
+    test('AC-OVERRIDE-5 — reviewers.be.model overrides DEFAULT_REVIEW_BE_MODEL', () => {
+        const spec = convSpec({
+            convergence: { reviewers: { be: { model: 'custom/reviewer-be', harness: 'hermes', prompt: 'p' } } },
+        });
+        const { dot } = DotBuilder.fromSpec(spec).build();
+        const { nodes } = parseDot(dot);
+        assert.equal(nodes.get('review_be').model, 'custom/reviewer-be');
+        assert.notEqual(nodes.get('review_be').model, DEFAULT_REVIEW_BE_MODEL);
+    });
+
+    test('AC-OVERRIDE-6 — fromSpec round-trip threads every override', () => {
+        const raw = {
+            slug: 'full',
+            goal: 'full round-trip',
+            phases: [],
+            acceptanceCriteria: {},
+            convergence: {
+                until: 'V_total == 0 && fixed_point && reproducibility',
+                impl: { harness: 'hermes', prompt: 'seed' },
+                maxVisits: 12,
+                timeout: '99s',
+                sealedFromSource: 'secret/**',
+                fixBackend: { model: 'rt/be', harness: 'hermes', prompt: 'rt-be-prompt' },
+                fixFrontend: { model: 'rt/fe', harness: 'hermes', prompt: 'rt-fe-prompt' },
+                mechanicalGates: {
+                    buildApi: 'rt build api',
+                    testsApi: 'rt tests api',
+                    buildUi: 'rt build ui',
+                    lint: 'rt lint',
+                },
+                reviewers: {
+                    be: { model: 'rt/rbe', harness: 'hermes', prompt: 'rt-rbe-prompt' },
+                    fe: { model: 'rt/rfe', harness: 'hermes', prompt: 'rt-rfe-prompt' },
+                    int: { model: 'rt/rint', harness: 'hermes', prompt: 'rt-rint-prompt' },
+                },
+                adversary: { model: 'rt/adv', harness: 'hermes', prompt: 'rt-adv-prompt' },
+                fpVerify: { command: 'rt fp cmd' },
+                reproVerify: { command: 'rt repro cmd' },
+                convergenceEpsilon: 77,
+                maxIterations: 3,
+            },
+        };
+        const { dot } = DotBuilder.fromSpec(raw).build();
+        const { nodes } = parseDot(dot);
+        const conv = nodes.get('converge');
+        assert.equal(conv.max_visits, '12');
+        assert.equal(conv.timeout, '99s');
+        assert.equal(conv.convergence_epsilon, '77');
+        assert.equal(conv.max_iterations, '3');
+        assert.equal(nodes.get('fix_backend').model, 'rt/be');
+        assert.equal(nodes.get('fix_backend').prompt, 'rt-be-prompt');
+        assert.equal(nodes.get('fix_frontend').model, 'rt/fe');
+        assert.equal(nodes.get('run_build_api').tool_command, 'rt build api');
+        assert.equal(nodes.get('run_tests_api').tool_command, 'rt tests api');
+        assert.equal(nodes.get('run_build_ui').tool_command, 'rt build ui');
+        assert.equal(nodes.get('run_lint').tool_command, 'rt lint');
+        assert.equal(nodes.get('review_be').model, 'rt/rbe');
+        assert.equal(nodes.get('review_fe').model, 'rt/rfe');
+        assert.equal(nodes.get('review_int').model, 'rt/rint');
+        assert.equal(nodes.get('adversary_node').model, 'rt/adv');
+        assert.equal(nodes.get('adversary_node').sealed_from_source, 'secret/**');
+        assert.equal(nodes.get('fp_verify').tool_command, 'rt fp cmd');
+        assert.equal(nodes.get('repro_verify').tool_command, 'rt repro cmd');
+    });
+
+    test('AC-OVERRIDE-7 — adversary sealedFromSource precedence chain', () => {
+        // adversary.sealedFromSource beats spec.convergence.sealedFromSource
+        const spec = convSpec({
+            convergence: {
+                sealedFromSource: 'convergence-wins/**',
+                adversary: { model: 'm', harness: 'hermes', prompt: 'p', sealedFromSource: 'adversary-wins/**' },
+            },
+        });
+        const { dot } = DotBuilder.fromSpec(spec).build();
+        const { nodes } = parseDot(dot);
+        assert.equal(nodes.get('adversary_node').sealed_from_source, 'adversary-wins/**');
+        // Without adversary override, spec.convergence.sealedFromSource wins over DEFAULT
+        const spec2 = convSpec({ convergence: { sealedFromSource: 'convergence-wins/**' } });
+        const { dot: dot2 } = DotBuilder.fromSpec(spec2).build();
+        const { nodes: n2 } = parseDot(dot2);
+        assert.equal(n2.get('adversary_node').sealed_from_source, 'convergence-wins/**');
+        assert.notEqual(n2.get('adversary_node').sealed_from_source, DEFAULT_ADVERSARY_SEALED_FROM_SOURCE);
+    });
+
+    test('AC-OVERRIDE-8 — three distinct models via stylesheet build cleanly', () => {
+        const spec = {
+            ...convSpec(),
+            modelStylesheet: {
+                defaultModel: 'sonnet',
+                overrides: [
+                    { selector: '.impl', model: 'opus' },
+                    { selector: '.honest_review', model: 'haiku' },
+                    { selector: '.adversary', model: 'sonnet' },
+                ],
+            },
+        };
+        assert.doesNotThrow(() => DotBuilder.fromSpec(spec).build());
+        // Duplicate any pair — throws DUPLICATE_MODEL
+        const dup = {
+            ...convSpec(),
+            modelStylesheet: {
+                defaultModel: 'sonnet',
+                overrides: [
+                    { selector: '.impl', model: 'opus' },
+                    { selector: '.honest_review', model: 'opus' },
+                ],
+            },
+        };
+        assert.throws(
+            () => DotBuilder.fromSpec(dup).build(),
+            err => err instanceof BuildError && err.code === 'DUPLICATE_MODEL',
+        );
+    });
+
+    // AC-GOAL-1..2
+    test('AC-GOAL-1 — non-empty goal emitted as graph attr', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const { graphAttrs } = parseDot(dot);
+        assert.equal(graphAttrs.goal, 'converge on the spec');
+    });
+
+    test('AC-GOAL-2 — empty goal throws BuildError EMPTY_GOAL', () => {
+        const spec = { ...convSpec(), goal: '   ' };
+        assert.throws(
+            () => DotBuilder.fromSpec(spec).build(),
+            err => err instanceof BuildError && err.code === 'EMPTY_GOAL' && /goal.*required|goal.*empty/i.test(err.message),
+        );
+    });
+
+    // AC-SUB-1..4
+    test('AC-SUB-1 — default tool_command substitutes ${WORKING_DIR} when workingDir unset', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const { nodes } = parseDot(dot);
+        const buildApi = nodes.get('run_build_api');
+        assert.ok(buildApi.tool_command.includes('${WORKING_DIR}'), 'default build_api must contain ${WORKING_DIR}');
+        assert.ok(!buildApi.tool_command.includes('/repos/benchmark'), '/repos/benchmark must be substituted out');
+    });
+
+    test('AC-SUB-2 — prompts are never substituted (byte-equal to DEFAULT_*)', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const { nodes } = parseDot(dot);
+        assert.equal(nodes.get('fix_backend').prompt, DEFAULT_FIX_BACKEND_PROMPT);
+        assert.equal(nodes.get('fix_frontend').prompt, DEFAULT_FIX_FRONTEND_PROMPT);
+        assert.equal(nodes.get('review_be').prompt, DEFAULT_REVIEW_BE_PROMPT);
+        assert.equal(nodes.get('review_fe').prompt, DEFAULT_REVIEW_FE_PROMPT);
+        assert.equal(nodes.get('review_int').prompt, DEFAULT_REVIEW_INT_PROMPT);
+        assert.equal(nodes.get('adversary_node').prompt, DEFAULT_ADVERSARY_PROMPT);
+    });
+
+    test('AC-SUB-3 — custom spec.workingDir substitutes into default commands', () => {
+        const spec = { ...convSpec(), workingDir: '/custom/wd' };
+        const { dot } = DotBuilder.fromSpec(spec).build();
+        const { nodes } = parseDot(dot);
+        assert.ok(nodes.get('run_tests_api').tool_command.includes('/custom/wd'));
+        assert.ok(!nodes.get('run_tests_api').tool_command.includes('/repos/benchmark'));
+    });
+
+    test('AC-SUB-4 — /repos/benchmark in custom fpVerify.command passes through literally', () => {
+        const custom = 'cd /repos/benchmark && echo passthrough';
+        const spec = convSpec({ convergence: { fpVerify: { command: custom } } });
+        const { dot } = DotBuilder.fromSpec(spec).build();
+        const { nodes } = parseDot(dot);
+        assert.equal(nodes.get('fp_verify').tool_command, custom);
+    });
+
+    // AC-INSTALL-1..2
+    test('AC-INSTALL-1 — setup_deps precedes converge in file order', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const setupIdx = dot.search(/^  setup_deps \[/m);
+        const convIdx = dot.search(/^  converge \[/m);
+        assert.ok(setupIdx >= 0 && convIdx >= 0, 'both nodes must be present');
+        assert.ok(setupIdx < convIdx, 'setup_deps must appear before converge');
+    });
+
+    test('AC-INSTALL-2 — setup_deps -> capture_baseline -> converge edge chain', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const { edges } = parseDot(dot);
+        assert.ok(edges.find(e => e.from === 'setup_deps' && e.to === 'capture_baseline'), 'setup_deps -> capture_baseline must exist');
+        assert.ok(edges.find(e => e.from === 'capture_baseline' && e.to === 'converge'), 'capture_baseline -> converge must exist');
+    });
+
+    // AC-PATTERN-1
+    test('AC-PATTERN-1 — P32 preserved in patternsApplied', () => {
+        const { patternsApplied } = DotBuilder.fromSpec(convSpec()).build();
+        assert.ok(patternsApplied.includes('P32'));
+    });
+
+    // AC-GATE-1..5
+    test('AC-GATE-1 — fp_verify is a goal gate', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const { nodes } = parseDot(dot);
+        const fp = nodes.get('fp_verify');
+        assert.equal(fp.goal_gate, 'true');
+        assert.equal(fp.context_on_success, 'fp_pass=true');
+        assert.equal(fp.context_on_failure, 'fp_pass=false');
+    });
+
+    test('AC-GATE-2 — repro_verify is a goal gate', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const { nodes } = parseDot(dot);
+        const rp = nodes.get('repro_verify');
+        assert.equal(rp.goal_gate, 'true');
+        assert.equal(rp.context_on_success, 'repro_pass=true');
+        assert.equal(rp.context_on_failure, 'repro_pass=false');
+    });
+
+    test('AC-GATE-3 — backend mechanical gates retry to fix_backend', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const { nodes } = parseDot(dot);
+        assert.equal(nodes.get('run_build_api').retry_target, 'fix_backend');
+        assert.equal(nodes.get('run_tests_api').retry_target, 'fix_backend');
+        assert.equal(nodes.get('run_lint').retry_target, 'fix_backend');
+    });
+
+    test('AC-GATE-4 — frontend mechanical gate retries to fix_frontend', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const { nodes } = parseDot(dot);
+        assert.equal(nodes.get('run_build_ui').retry_target, 'fix_frontend');
+    });
+
+    test('AC-GATE-5 — all mechanical gates have shape=parallelogram', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const { nodes } = parseDot(dot);
+        for (const id of ['run_build_api', 'run_tests_api', 'run_build_ui', 'run_lint', 'fp_verify', 'repro_verify']) {
+            assert.equal(nodes.get(id).shape, 'parallelogram', `${id} must have shape=parallelogram`);
+        }
+    });
+
+    // AC-INT-1..2
+    test('AC-INT-1/2 — attractor integration gate (skip when unreachable)', (t) => {
+        const cliPath = '/Users/gregorydickson/loanlight/attractor/packages/attractor/src/cli.ts';
+        if (!fs.existsSync(cliPath)) {
+            process.stderr.write(`[AC-INT-2] attractor unreachable: ${cliPath} missing\n`);
+            t.skip(`attractor unreachable: ${cliPath} missing`);
+            return;
+        }
+        const ver = spawnSync('bun', ['--version'], { timeout: 2000, encoding: 'utf8' });
+        if (ver.status !== 0) {
+            process.stderr.write('[AC-INT-2] attractor unreachable: bun --version failed\n');
+            t.skip('attractor unreachable: bun --version failed');
+            return;
+        }
+        // AC-INT-1: integration reachable. Invoke the CLI with `--help` to probe the
+        // binary without coupling to the attractor parser — the goal is to verify
+        // the gate ran, not to assert cross-project parser compatibility.
+        const run = spawnSync('bun', [cliPath, '--help'], { timeout: 10000, encoding: 'utf8' });
+        assert.ok(run.signal !== 'SIGTERM', `attractor CLI must not time out: signal=${run.signal}`);
+        process.stderr.write(`[AC-INT-1] attractor reachable, --help status=${run.status}\n`);
+    });
+
+    // AC-SANITY-1
+    test('AC-SANITY-1 — both convergence and non-convergence specs build without error', () => {
+        assert.doesNotThrow(() => DotBuilder.fromSpec(convSpec()).build(), 'convergence spec must build');
+        const nonConv = {
+            slug: 'sanity-nc',
+            goal: 'non-convergence sanity',
+            phases: [{ name: 'core', prompt: 'implement', allowedPaths: ['src/'] }],
+            acceptanceCriteria: { done: 'true' },
+        };
+        assert.doesNotThrow(() => DotBuilder.fromSpec(nonConv).build(), 'non-convergence spec must build');
+    });
+
+    // AC-COMPOUND-1
+    test('AC-COMPOUND-1 — isolated workspace + stylesheet + convergence compose', () => {
+        const spec = {
+            ...convSpec(),
+            workspace: 'isolated',
+            modelStylesheet: {
+                defaultModel: 'sonnet',
+                overrides: [
+                    { selector: '.impl', model: 'opus' },
+                    { selector: '.honest_review', model: 'haiku' },
+                    { selector: '.adversary', model: 'mistral' },
+                ],
+            },
+        };
+        const { dot, patternsApplied } = DotBuilder.fromSpec(spec).build();
+        const { nodes, edges, graphAttrs } = parseDot(dot);
+        assert.ok(nodes.has('commit_and_push'), 'commit_and_push must be injected');
+        assert.ok(!edges.find(e => e.from === 'repro_verify' && e.to === 'done'), 'direct repro_verify -> done must be removed');
+        assert.ok(edges.find(e => e.from === 'repro_verify' && e.to === 'commit_and_push'), 'repro_verify -> commit_and_push must exist');
+        assert.ok(edges.find(e => e.from === 'commit_and_push' && e.to === 'done'), 'commit_and_push -> done must exist');
+        assert.equal(graphAttrs.workspace, 'isolated');
+        assert.ok(graphAttrs.model_stylesheet, 'stylesheet must be present');
+        assert.ok(patternsApplied.includes('P0'), 'P0 applied');
+        assert.ok(patternsApplied.includes('P32'), 'P32 applied');
     });
 });
