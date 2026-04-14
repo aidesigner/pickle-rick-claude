@@ -1402,4 +1402,26 @@ describe('Convergence v8 topology — refined PRD §5 ACs', () => {
         assert.equal(converge.max_iterations, '10', 'maxIterations must flow through to converge.max_iterations');
         assert.equal(converge.max_visits, '3', 'maxVisits must flow through to converge.max_visits');
     });
+
+    test('AC-OVERRIDE-7 (direct-attr > stylesheet) — fixBackend.model wins over modelStylesheet override', () => {
+        const spec = convSpec({
+            modelStylesheet: {
+                overrides: [
+                    { selector: '.impl', model: 'stylesheet-impl-model' },
+                    { selector: '.honest_review', model: 'stylesheet-review-model' },
+                    { selector: '.adversary', model: 'stylesheet-adversary-model' },
+                ],
+            },
+            convergence: {
+                fixBackend: { model: 'direct-impl-model' },
+                reviewers: { be: { model: 'direct-review-model', harness: 'hermes', prompt: 'p' } },
+                adversary: { model: 'direct-adversary-model' },
+            },
+        });
+        const { dot } = DotBuilder.fromSpec(spec).build();
+        const fb = parseDot(dot).nodes.get('fix_backend');
+        assert.ok(fb, 'fix_backend node must be present');
+        assert.equal(fb.model, 'direct-impl-model',
+            'fix_backend.model must come from fixBackend.model direct attr, not the .impl stylesheet override');
+    });
 });
