@@ -29,6 +29,7 @@ import {
   DEFAULT_MAX_ITERATIONS,
   DEFAULT_CONVERGE_MAX_VISITS,
   DEFAULT_CONVERGE_TIMEOUT,
+  DEFAULT_FIX_BACKEND_HARNESS,
 } from '../services/convergence-defaults.js';
 
 // ---------------------------------------------------------------------------
@@ -1348,5 +1349,40 @@ describe('Convergence v8 topology — refined PRD §5 ACs', () => {
             assert.ok(iInstall < iTsc, `${id}: npm install must precede npx tsc`);
             assert.ok(iInstall < iTest, `${id}: npm install must precede npm test`);
         }
+    });
+
+    test('AC-OVERRIDE-2 (harness cascade) — impl.harness falls through when fixBackend.harness is unset', () => {
+        // (a) direct override wins over impl.harness
+        const direct = convSpec({
+            convergence: { fixBackend: { harness: 'claude-code' }, impl: { harness: 'hermes', prompt: 'p' } },
+        });
+        const { dot: dotA } = DotBuilder.fromSpec(direct).build();
+        assert.equal(parseDot(dotA).nodes.get('fix_backend').harness, 'claude-code',
+            'fixBackend.harness must win over impl.harness');
+
+        // (b) no fixBackend.harness → impl.harness flows through
+        const cascade = convSpec({
+            convergence: { impl: { harness: 'claude-code', prompt: 'p' } },
+        });
+        const { dot: dotB } = DotBuilder.fromSpec(cascade).build();
+        assert.equal(parseDot(dotB).nodes.get('fix_backend').harness, 'claude-code',
+            'impl.harness must cascade into fix_backend when fixBackend.harness is unset');
+
+        // (c) both fixBackend.harness and impl.harness unset → DEFAULT_FIX_BACKEND_HARNESS ('hermes').
+        //     fromSpec() coerces impl.harness to 'claude-code' on missing input, so we
+        //     construct the builder directly to exercise the line 1589 fallback.
+        const builder = new DotBuilder({
+            slug: 'conv-test',
+            goal: 'converge on the spec',
+            phases: [],
+            acceptanceCriteria: {},
+        });
+        builder.convergence({
+            until: 'V_total == 0 && fixed_point && reproducibility',
+            impl: { harness: undefined, prompt: 'p' },
+        });
+        const { dot: dotC } = builder.build();
+        assert.equal(parseDot(dotC).nodes.get('fix_backend').harness, DEFAULT_FIX_BACKEND_HARNESS,
+            'fix_backend.harness must fall through to DEFAULT_FIX_BACKEND_HARNESS when neither direct nor impl.harness is set');
     });
 });
