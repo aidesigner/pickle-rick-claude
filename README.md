@@ -525,6 +525,53 @@ const result = builder.build();
     "defaultModel": "claude-sonnet-4-6",
     "criticalModel": "claude-opus-4-6",
     "reviewModel": "claude-opus-4-6"
+  },
+  "convergence": {                      // optional — Pattern 32 iterative convergence loop (replaces phases)
+    "until": "V_total == 0 && fixed_point && reproducibility",  // predicate from canonical set
+    "impl": { "harness": "hermes" },    // required — default harness for fix nodes
+    "maxIterations": 6,                 // default: 6 — max body executions before non-convergence declared
+    "maxVisits": 5,                     // default: 5 — per-converge-node visit budget
+    "timeout": "21600s",                // default: 21600s — overall converge node timeout
+    "convergenceEpsilon": 100,          // default: 100 — V_total threshold for convergence declaration
+    "fixBackend": {                     // optional — override fix_backend node
+      "model": "provider/model-id",
+      "harness": "hermes",
+      "prompt": "...",
+      "timeout": "3600s",
+      "maxVisits": 10
+    },
+    "fixFrontend": {                    // optional — override fix_frontend node (same shape as fixBackend)
+      "model": "provider/model-id",
+      "harness": "hermes",
+      "prompt": "..."
+    },
+    "mechanicalGates": {                // optional — override mechanical gate tool_commands
+      "buildApi": "cd /repos/app/packages/api && npx tsc --noEmit 2>&1 && echo 'api typecheck pass'",
+      "testsApi": "cd /repos/app/packages/api && npm test --silent 2>&1 && echo 'api tests pass'",
+      "buildUi": "cd /repos/app/packages/ui && npx tsc --noEmit 2>&1 && echo 'ui typecheck pass'",
+      "lint": "cd /repos/app && npx eslint packages/api/src --max-warnings=0 2>&1 && echo 'lint pass'"
+    },
+    "reviewers": {                      // optional — override reviewer node attrs
+      "be": { "model": "provider/model-id", "harness": "hermes", "prompt": "..." },
+      "fe": { "model": "provider/model-id", "harness": "hermes", "prompt": "..." },
+      "int": { "model": "provider/model-id", "harness": "hermes", "prompt": "..." }
+    },
+    "adversary": {                      // optional — override adversary node
+      "model": "provider/model-id",
+      "harness": "hermes",
+      "prompt": "...",
+      "sealedFromSource": "packages/api/src/**,packages/ui/app/**"
+    },
+    "fpVerify": {                       // optional — override fp_verify goal gate
+      "command": "set -o pipefail; cd /repos/app && npm install 2>&1 | tail -3 && cd packages/api && npx tsc --noEmit && npm test && cd ../ui && npx tsc --noEmit && echo 'fixed-point verified'",
+      "timeout": "900s",
+      "maxVisits": 5
+    },
+    "reproVerify": {                    // optional — override repro_verify goal gate
+      "command": "set -o pipefail; cd /repos/app && rm -rf packages/api/node_modules packages/ui/node_modules && npm install 2>&1 | tail -3 && cd packages/api && npx tsc --noEmit && npm test && cd ../ui && npx tsc --noEmit && echo 'reproducibility verified'",
+      "timeout": "900s",
+      "maxVisits": 5
+    }
   }
 }
 ```
