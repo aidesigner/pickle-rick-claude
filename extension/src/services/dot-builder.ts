@@ -1078,6 +1078,18 @@ export class DotBuilder {
     return this;
   }
 
+  /**
+   * Single source of truth for merging user-supplied acceptanceCriteria with
+   * the convergence-mode built-ins (`fp_pass`, `repro_pass`). Built-ins win
+   * on collision. Returns the plain user criteria when convergence is off.
+   */
+  private _mergedAcceptanceCriteria(): Record<string, unknown> {
+    const ac = this._spec.acceptanceCriteria ?? {};
+    return this._spec.convergence
+      ? { ...ac, fp_pass: 'true', repro_pass: 'true' }
+      : { ...ac };
+  }
+
   build(): BuildResult {
     if (this._built) {
       throw new BuildError('ALREADY_BUILT', 'build() has already been called');
@@ -1159,6 +1171,7 @@ export class DotBuilder {
 
     // Run all 15 structural validation rules
     const { acceptanceCriteria = {} } = this._spec;
+    const mergedAc = this._mergedAcceptanceCriteria();
     const diagnostics: Diagnostic[] = [
       ...preflightNonErrors,
       ...emittedDiagnostics,
@@ -1167,7 +1180,7 @@ export class DotBuilder {
       ...grRule3(nodeMap, edgeList, standaloneNodeIds),
       ...grRule4(nodeMap, edgeList),
       ...grRule5(nodeMap),
-      ...grRule6(nodeMap, this._spec.convergence ? { ...acceptanceCriteria, fp_pass: 'true', repro_pass: 'true' } : acceptanceCriteria),
+      ...grRule6(nodeMap, mergedAc),
       ...grRule7(nodeMap),
       ...grRule8(nodeMap),
       ...grRule9(nodeMap),
@@ -1281,10 +1294,9 @@ export class DotBuilder {
       graphAttrs['model_stylesheet'] = this._buildStylesheet(spec.modelStylesheet);
     }
     // GL-6: acceptance_criteria as context.K=V && context.K2=V2 (sorted).
-    // Convergence mode merges built-in {fp_pass, repro_pass} — built-ins win on collision.
-    const mergedAc: Record<string, unknown> = hasConvergence
-      ? { ...(spec.acceptanceCriteria ?? {}), fp_pass: 'true', repro_pass: 'true' }
-      : { ...(spec.acceptanceCriteria ?? {}) };
+    // Convergence mode merges built-in {fp_pass, repro_pass} — built-ins win
+    // on collision. Shared helper guarantees parity with the grRule6 call.
+    const mergedAc = this._mergedAcceptanceCriteria();
     const acKeys = Object.keys(mergedAc).sort();
     if (acKeys.length > 0) {
       graphAttrs['acceptance_criteria'] = escapeAttr(
