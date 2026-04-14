@@ -2189,23 +2189,42 @@ export class DotBuilder {
           timeout: '120s',
           tool_command: `cd \${WORKING_DIR} && BRANCH="attractor/${slug}-$(echo $ATTRACTOR_RUN_ID | cut -c1-8)" && git checkout -B "$BRANCH" && git add -A && git -c user.name=attractor -c user.email=attractor@local commit -m "feat: ${slug} — attractor pipeline output" --allow-empty && git push origin "$BRANCH" --force 2>&1 && echo "Pushed branch: $BRANCH"`,
         });
-        // Rewire: quality_review → commit_and_push → exit (instead of quality_review → exit)
-        const qrToExit = edges.findIndex(e => e.includes('quality_review -> exit'));
-        if (qrToExit !== -1) {
-          const removedEdgeStr = edges[qrToExit];
-          edges.splice(qrToExit, 1);
-          const removedEdge = edgeList.findIndex(e => e.from === 'quality_review' && e.to === 'exit');
-          if (removedEdge !== -1) edgeList.splice(removedEdge, 1);
-          seenEdges.delete(removedEdgeStr);
+        // Rewire: inject commit_and_push into the terminal chain
+        if (hasConvergence) {
+          // v8: anchor on repro_verify -> done [condition="outcome=success"]
+          const rpToDone = edges.findIndex(e =>
+            e.includes('repro_verify -> done') && e.includes('outcome=success')
+          );
+          if (rpToDone !== -1) {
+            const removedEdgeStr = edges[rpToDone];
+            edges.splice(rpToDone, 1);
+            const removedEdge = edgeList.findIndex(e => e.from === 'repro_verify' && e.to === 'done');
+            if (removedEdge !== -1) edgeList.splice(removedEdge, 1);
+            seenEdges.delete(removedEdgeStr);
+          }
+          link('repro_verify', 'commit_and_push', { condition: 'outcome=success' });
+          link('commit_and_push', 'done', { condition: 'outcome=success' });
+        } else {
+          // non-convergence: anchor on quality_review -> exit
+          const qrToExit = edges.findIndex(e => e.includes('quality_review -> exit'));
+          if (qrToExit !== -1) {
+            const removedEdgeStr = edges[qrToExit];
+            edges.splice(qrToExit, 1);
+            const removedEdge = edgeList.findIndex(e => e.from === 'quality_review' && e.to === 'exit');
+            if (removedEdge !== -1) edgeList.splice(removedEdge, 1);
+            seenEdges.delete(removedEdgeStr);
+          }
+          link('quality_review', 'commit_and_push', { condition: 'outcome=success', label: 'pass' });
+          link('commit_and_push', 'exit');
         }
-        link('quality_review', 'commit_and_push', { condition: 'outcome=success', label: 'pass' });
-        link('commit_and_push', 'exit');
         applied.add('P0');
       }
     }
 
-    // Always emit exit last
-    emit('exit', { label: 'exit', shape: 'Msquare' });
+    // Emit exit terminal (suppressed in convergence mode — done is the sole Msquare terminal)
+    if (!hasConvergence) {
+      emit('exit', { label: 'exit', shape: 'Msquare' });
+    }
 
     // P23: defense matrix comment block
     const guardPatterns = ['P0c', 'P6b', 'P10', 'P13', 'P14', 'P15', 'P17', 'P25'];
