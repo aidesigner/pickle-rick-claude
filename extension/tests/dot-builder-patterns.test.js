@@ -1295,4 +1295,17 @@ describe('Convergence v8 topology — refined PRD §5 ACs', () => {
         assert.equal(graphAttrs.retry_target, 'converge',
             'graph-level retry_target must be "converge" in convergence mode');
     });
+
+    test('AC-STRUCT-9 (converge defaults) — default converge node carries v8 default attrs', () => {
+        const spec = convSpec();
+        const { dot } = DotBuilder.fromSpec(spec).build();
+        const { nodes } = parseDot(dot);
+        const c = nodes.get('converge');
+        assert.ok(c, 'converge node must exist');
+        assert.equal(c.max_iterations, String(DEFAULT_MAX_ITERATIONS));
+        assert.equal(c.convergence_epsilon, String(DEFAULT_CONVERGENCE_EPSILON));
+        assert.equal(c.until, spec.convergence.until);
+        assert.equal(c.max_visits, String(DEFAULT_CONVERGE_MAX_VISITS));
+        assert.equal(c.timeout, DEFAULT_CONVERGE_TIMEOUT);
+    });
 });
