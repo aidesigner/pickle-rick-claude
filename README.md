@@ -99,21 +99,6 @@ Two cleanup tools for polishing the result:
 /anatomy-park --dry-run                    # Review only, no fixes
 ```
 
-<p align="center">
-  <img src="images/plumbus.jpg" alt="Plumbus — iterative DAG shaping loop" width="100%" />
-</p>
-
-**Plumbus** — the same convergence loop applied to a single attractor `.dot` pipeline. Runs the attractor validator as a hard gate, walks every edge, and converges against the `pickle-dot-patterns` rubric (DAG validity, Tier 1 mandatory patterns, anti-patterns). Everybody needs a plumbus — use it after `/pickle-dot` generates a graph you want hardened before `/attract`.
-
-```bash
-/plumbus pipeline.dot                         # Shape a DAG into a proper plumbus
-/plumbus --dry-run pipeline.dot               # Catalog violations only
-/plumbus --focus "fan-out safety" pipeline.dot
-/plumbus --no-validator pipeline.dot          # Pattern-only (no attractor repo)
-```
-
-**When to use which:** Szechuan Sauce asks *"is this code well-designed?"* — Anatomy Park asks *"is this code correct?"* — Plumbus asks *"will this DAG actually run without deadlocking?"*
-
 ### The Full Flow at a Glance
 
 ```
@@ -615,6 +600,25 @@ Re-run after fixing: `/pickle-dot <prd>`. The `.dot.draft` file is not a valid p
 Requires a Graphite stack with at least one non-trunk branch, a `CLAUDE.md` with project rules, passing lint, and architectural lint rules in ESLint. Escalates through focus areas: stack structure (pass 1) → CLAUDE.md compliance (2–3) → per-branch correctness (4–5) → cross-branch contracts (6–7) → test coverage (8–9) → security (10–11) → polish (12+). Issues triaged: **P0** (must-fix), **P1** (should-fix), **P2** (nice-to-fix).
 
 <br clear="right" />
+
+### 🪠 Plumbus — DAG Shaping Loop
+
+<p align="center">
+  <img src="images/plumbus.jpg" alt="Plumbus — iterative DAG shaping loop" width="100%" />
+</p>
+
+> *"Everybody has a plumbus in their home, Morty. First they take the dinglebop, smooth it out with a bunch of schleem..."*
+
+The same convergence loop applied to a single attractor `.dot` pipeline. Runs the attractor validator as a hard gate, walks every edge, and converges against the `pickle-dot-patterns` rubric (DAG validity, Tier 1 mandatory patterns, anti-patterns). Use it after `/pickle-dot` generates a graph you want hardened before `/attract`.
+
+```bash
+/plumbus pipeline.dot                         # Shape a DAG into a proper plumbus
+/plumbus --dry-run pipeline.dot               # Catalog violations only
+/plumbus --focus "fan-out safety" pipeline.dot
+/plumbus --no-validator pipeline.dot          # Pattern-only (no attractor repo)
+```
+
+**When to use which:** Szechuan Sauce asks *"is this code well-designed?"* — Anatomy Park asks *"is this code correct?"* — Plumbus asks *"will this DAG actually run without deadlocking?"*
 
 ---
 
