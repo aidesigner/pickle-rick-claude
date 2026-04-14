@@ -1316,4 +1316,20 @@ describe('Convergence v8 topology — refined PRD §5 ACs', () => {
         assert.equal(nodes.get('fix_backend').context_keys, expected);
         assert.equal(nodes.get('fix_frontend').context_keys, expected);
     });
+
+    test('AC-STRUCT-11 (legacy absence) — legacy v7 node ids do not appear in convergence DOT', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const { nodes } = parseDot(dot);
+        const legacy = [
+            'iter_impl', 'iter_review_be', 'iter_review_fe',
+            'iter_review_int', 'iter_adversary', 'quality_review',
+        ];
+        for (const id of legacy) {
+            assert.ok(!nodes.has(id),
+                `legacy node "${id}" must NOT be present in v8 convergence DOT`);
+            const re = new RegExp(String.raw`^\s*${id}\s*\[`, 'm');
+            assert.ok(!re.test(dot),
+                `legacy node "${id}" must not appear line-anchored in the DOT source`);
+        }
+    });
 });
