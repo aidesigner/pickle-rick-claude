@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
-import { spawn, spawnSync } from 'child_process';
+import { spawn } from 'child_process';
 import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, writeStateFile, safeErrorMessage } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { State, Defaults } from '../types/index.js';
@@ -292,7 +292,6 @@ async function main() {
 
   console.log(`\n🥒 Jar complete. ${succeeded} succeeded, ${failed} failed.`);
   logActivity({ event: 'jar_end', source: 'pickle' });
-  sendJarNotification(succeeded, failed);
   console.log('Signal: Jar Complete');
 }
 
@@ -306,21 +305,10 @@ export function buildJarNotification(succeeded: number, failed: number) {
   return { title, subtitle, body };
 }
 
-function sendJarNotification(succeeded: number, failed: number) {
-  if (process.platform !== 'darwin') return;
-  const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  const { title, subtitle, body } = buildJarNotification(succeeded, failed);
-  spawnSync('osascript', ['-e', `display notification "${esc(body)}" with title "${esc(title)}" subtitle "${esc(subtitle)}"`]);
-}
-
 if (process.argv[1] && path.basename(process.argv[1]) === 'jar-runner.js') {
   main().catch((err) => {
     const msg = safeErrorMessage(err);
     console.error(`${Style.RED}Error: ${msg}${Style.RESET}`);
-    if (process.platform === 'darwin') {
-      const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-      spawnSync('osascript', ['-e', `display notification "${esc(msg.slice(0, 100))}" with title "🥒 Pickle Jar Failed" subtitle "Crash"`]);
-    }
     process.exit(1);
   });
 }
