@@ -11,7 +11,7 @@ import {
     DotBuilder,
     BuildError,
 } from '../services/dot-builder.js';
-import { parseDot } from './__helpers__/dot-parse.js';
+import { parseDot, parseAttrs } from './__helpers__/dot-parse.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -44,49 +44,16 @@ function buildWithPhases(specOverrides, phases) {
 // Helper: extract the attribute-list body `[...]` from a node definition line.
 // Finds the LINE that defines `nodeId` at the start (ignoring indentation),
 // then returns the text between the outer `[` and the FINAL `]` on that line.
-// This respects quoted string boundaries because DOT node definitions always
-// live on a single line and close with `]` at line end.
 function extractNodeBody(dot, nodeId) {
     const lineRegex = new RegExp(`^\\s*${nodeId}\\s*\\[(.+)\\]\\s*$`, 'm');
     const lineMatch = dot.match(lineRegex);
     return lineMatch ? lineMatch[1] : null;
 }
 
-// Helper: parse a DOT attribute-list body into a plain {key: value} object,
-// consuming one `key="value"` pair at a time. Respects backslash-escaped
-// double quotes inside values so that substrings like `key=val` nested in a
-// quoted string are NOT picked up as separate attributes.
+// Thin wrapper over the shared DOT attr parser so this file's call sites
+// keep their object-return shape without re-implementing the state machine.
 function parseAttrListToObject(body) {
-    const attrs = {};
-    let i = 0;
-    while (i < body.length) {
-        while (i < body.length && (body[i] === ' ' || body[i] === '\t' || body[i] === ',')) i++;
-        if (i >= body.length) break;
-        const keyMatch = /^([a-zA-Z_][a-zA-Z0-9_.]*)\s*=\s*/.exec(body.slice(i));
-        if (!keyMatch) break;
-        i += keyMatch[0].length;
-        const key = keyMatch[1];
-        if (body[i] === '"') {
-            i++;
-            let value = '';
-            while (i < body.length && body[i] !== '"') {
-                if (body[i] === '\\' && i + 1 < body.length) {
-                    value += body[i] + body[i + 1];
-                    i += 2;
-                } else {
-                    value += body[i++];
-                }
-            }
-            if (body[i] === '"') i++;
-            attrs[key] = value;
-        } else {
-            const bw = /^[^\s,\]]+/.exec(body.slice(i));
-            if (!bw) break;
-            attrs[key] = bw[0];
-            i += bw[0].length;
-        }
-    }
-    return attrs;
+    return parseAttrs(body);
 }
 
 // Helper: parse a DOT attribute-list body into a sequence of {key, rawValue}

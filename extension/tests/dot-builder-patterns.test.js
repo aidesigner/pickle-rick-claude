@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { DotBuilder, BuildError } from '../services/dot-builder.js';
-import { parseDot } from './__helpers__/dot-parse.js';
+import { parseDot, parseAttrs } from './__helpers__/dot-parse.js';
 import {
   DEFAULT_FIX_BACKEND_PROMPT,
   DEFAULT_FIX_FRONTEND_PROMPT,
@@ -35,74 +35,28 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-/**
- * Parse a DOT attribute list body (the text between `[` and `]`) into a
- * Map<string, string>, consuming one `key="value"` pair at a time and
- * respecting backslash-escaped double quotes inside values.
- *
- * Bare-word values (e.g. `rankdir=LR`) are also supported for completeness.
- */
+// Thin Map-returning wrappers over the shared parseDot helper. This file's
+// call sites use .get()/.set() and {source,target} edge shapes; centralize
+// the state-machine parser in __helpers__/dot-parse.js instead of carrying
+// a second copy here.
 function parseAttrList(body) {
-    const attrs = new Map();
-    let i = 0;
-    while (i < body.length) {
-        // Skip whitespace and commas separating attributes.
-        while (i < body.length && (body[i] === ' ' || body[i] === '\t' || body[i] === ',')) i++;
-        if (i >= body.length) break;
-        // Match a key followed by `=`.
-        const keyMatch = /^([a-zA-Z_][a-zA-Z0-9_.]*)\s*=\s*/.exec(body.slice(i));
-        if (!keyMatch) break;
-        i += keyMatch[0].length;
-        const key = keyMatch[1];
-        if (body[i] === '"') {
-            // Quoted value: consume until the matching unescaped close quote.
-            i++;
-            let value = '';
-            while (i < body.length && body[i] !== '"') {
-                if (body[i] === '\\' && i + 1 < body.length) {
-                    value += body[i] + body[i + 1];
-                    i += 2;
-                } else {
-                    value += body[i++];
-                }
-            }
-            if (body[i] === '"') i++;
-            attrs.set(key, value);
-        } else {
-            // Bare-word value: up to the next whitespace, comma, or close bracket.
-            const bw = /^[^\s,\]]+/.exec(body.slice(i));
-            if (!bw) break;
-            attrs.set(key, bw[0]);
-            i += bw[0].length;
-        }
-    }
-    return attrs;
+    return new Map(Object.entries(parseAttrs(body)));
 }
 
-/** Parse DOT node definitions into Map<nodeId, Map<attrKey, attrValue>>. */
 function parseDotNodes(dot) {
-    const nodes = new Map();
-    for (const line of dot.split('\n')) {
-        const m = /^\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\[(.+)\]\s*$/.exec(line);
-        if (!m || m[1] === 'graph') continue;
-        nodes.set(m[1], parseAttrList(m[2]));
+    const out = new Map();
+    for (const [id, attrs] of parseDot(dot).nodes) {
+        out.set(id, new Map(Object.entries(attrs)));
     }
-    return nodes;
+    return out;
 }
 
-/** Parse DOT edges into array of {source, target, attrs}. */
 function parseDotEdges(dot) {
-    const edges = [];
-    // Match `source -> target` followed by an optional attribute list.
-    // We keep the `[([^\]]*)]` bracket pattern since edge attribute values in
-    // this test harness do not contain `]`, and the inner list is parsed with
-    // the quote-aware state machine below.
-    const re = /^ *([a-zA-Z_][a-zA-Z0-9_]*) *-> *([a-zA-Z_][a-zA-Z0-9_]*) *(?:\[([^\]]*)\])?/gm;
-    let m;
-    while ((m = re.exec(dot)) !== null) {
-        edges.push({ source: m[1], target: m[2], attrs: parseAttrList(m[3] ?? '') });
-    }
-    return edges;
+    return parseDot(dot).edges.map(e => ({
+        source: e.from,
+        target: e.to,
+        attrs: new Map(Object.entries(e.attrs)),
+    }));
 }
 
 /** Minimal valid spec. */
