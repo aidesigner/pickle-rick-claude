@@ -1095,6 +1095,23 @@ describe('Convergence v8 topology — refined PRD §5 ACs', () => {
         );
     });
 
+    test('AC-OVERRIDE-8b — DUPLICATE_MODEL via direct-attr fields (no stylesheet)', () => {
+        // Pins the §3.1 precedence rule: direct-attr fields feed the same
+        // modelMap the stylesheet-override path does. Here .impl comes from
+        // fixBackend.model and .honest_review from reviewers.be.model — both
+        // 'shared/dup-model' — and the builder must throw.
+        const spec = convSpec({
+            convergence: {
+                fixBackend: { model: 'shared/dup-model', harness: 'hermes', prompt: 'p' },
+                reviewers: { be: { model: 'shared/dup-model', harness: 'hermes', prompt: 'p' } },
+            },
+        });
+        assert.throws(
+            () => DotBuilder.fromSpec(spec).build(),
+            err => err instanceof BuildError && err.code === 'DUPLICATE_MODEL',
+        );
+    });
+
     // AC-GOAL-1..2
     test('AC-GOAL-1 — non-empty goal emitted as graph attr', () => {
         const { dot } = DotBuilder.fromSpec(convSpec()).build();
