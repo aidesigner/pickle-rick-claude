@@ -221,6 +221,9 @@ describe('iterate convergence', () => {
   it('middle until predicate V_total == 0 && fixed_point accepted', () => {
     const spec = makeConvergenceSpec({ until: 'V_total == 0 && fixed_point' });
     const { dot } = DotBuilder.fromSpec(spec).build();
-    assert.ok(dot.includes('V_total == 0'), 'middle until predicate must be accepted');
+    const converge = parseDot(dot).nodes.get('converge');
+    assert.ok(converge, 'converge node must be present');
+    assert.equal(converge.until, 'V_total == 0 && fixed_point',
+      'middle until predicate must be emitted verbatim on the converge node');
   });
 });
