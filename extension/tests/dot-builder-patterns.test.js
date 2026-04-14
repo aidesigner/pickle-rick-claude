@@ -1308,4 +1308,12 @@ describe('Convergence v8 topology — refined PRD §5 ACs', () => {
         assert.equal(c.max_visits, String(DEFAULT_CONVERGE_MAX_VISITS));
         assert.equal(c.timeout, DEFAULT_CONVERGE_TIMEOUT);
     });
+
+    test('AC-STRUCT-10 (context_keys) — fix_backend and fix_frontend expose the v8 context_keys bundle', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const { nodes } = parseDot(dot);
+        const expected = '__pool_findings__,__last_failure_output,__fix_attempt_history';
+        assert.equal(nodes.get('fix_backend').context_keys, expected);
+        assert.equal(nodes.get('fix_frontend').context_keys, expected);
+    });
 });
