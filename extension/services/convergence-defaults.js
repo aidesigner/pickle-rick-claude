@@ -48,7 +48,7 @@ export const DEFAULT_FIX_TIMEOUT = '3600s';
 export const DEFAULT_MECHANICAL_BUILD_TIMEOUT = '180s';
 /** run_tests_api mechanical gate timeout (tests take longer than builds). */
 export const DEFAULT_MECHANICAL_TESTS_TIMEOUT = '300s';
-/** reviewer_backend / reviewer_frontend / reviewer_integration / adversary timeout. */
+/** review_be / review_fe / review_int / adversary_node timeout. */
 export const DEFAULT_REVIEW_TIMEOUT = '2400s';
 /** fp_verify / repro_verify goal-gate timeout. */
 export const DEFAULT_GOAL_GATE_TIMEOUT = '900s';
