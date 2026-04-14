@@ -1253,4 +1253,24 @@ describe('Convergence v8 topology — refined PRD §5 ACs', () => {
         assert.ok(patternsApplied.includes('P0'), 'P0 applied');
         assert.ok(patternsApplied.includes('P32'), 'P32 applied');
     });
+
+    // -----------------------------------------------------------------------
+    // §5 hardening — additive structural coverage for ACs whose primary test
+    // above drifted into a different assertion. Each test below consumes
+    // parseDot() and asserts the PRD's literal field-level requirement.
+    // -----------------------------------------------------------------------
+
+    test('AC-STRUCT-3 (retry targets) — mechanical gates retry to fix_backend/fix_frontend; adversary has none', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const { nodes } = parseDot(dot);
+        assert.equal(nodes.get('run_build_api').retry_target, 'fix_backend');
+        assert.equal(nodes.get('run_tests_api').retry_target, 'fix_backend');
+        assert.equal(nodes.get('run_lint').retry_target, 'fix_backend');
+        assert.equal(nodes.get('run_build_ui').retry_target, 'fix_frontend');
+        assert.equal(nodes.get('adversary_node').retry_target, undefined,
+            'adversary_node must NOT emit a retry_target attribute');
+        assert.equal(nodes.get('fix_backend').allow_multi_retry_target, 'true');
+        assert.equal(nodes.get('fix_frontend').allow_multi_retry_target, undefined,
+            'fix_frontend must not set allow_multi_retry_target');
+    });
 });
