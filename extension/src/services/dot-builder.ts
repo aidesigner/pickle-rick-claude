@@ -1258,14 +1258,6 @@ export class DotBuilder {
     };
 
     // Graph-level attrs
-    if (hasConvergence) {
-      if (!spec.goal || spec.goal.trim().length === 0) {
-        throw new BuildError(
-          'EMPTY_GOAL',
-          'goal is required in convergence mode — reviewers use it as the honest-review lens anchor'
-        );
-      }
-    }
     const graphAttrs: Record<string, string> = {
       label: hasConvergence ? escapeAttr(this._slug) : escapeAttr(`${this._slug}: ${this._goal}`),
       rankdir: 'LR',
