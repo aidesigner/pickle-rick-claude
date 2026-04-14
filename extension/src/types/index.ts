@@ -413,6 +413,51 @@ export interface ConvergenceSpec {
     prompt: string;
   };
   sealedFromSource?: string;
+  fixBackend?: {
+    model: string;
+    harness: 'hermes' | 'claude-code';
+    prompt: string;
+    timeout?: string;
+    maxVisits?: number;
+  };
+  fixFrontend?: {
+    model: string;
+    harness: 'hermes' | 'claude-code';
+    prompt: string;
+    timeout?: string;
+    maxVisits?: number;
+  };
+  mechanicalGates?: {
+    buildApi?: string;
+    testsApi?: string;
+    buildUi?: string;
+    lint?: string;
+  };
+  reviewers?: {
+    be?: { model: string; harness: 'hermes' | 'claude-code'; prompt: string; timeout?: string; maxVisits?: number };
+    fe?: { model: string; harness: 'hermes' | 'claude-code'; prompt: string; timeout?: string; maxVisits?: number };
+    int?: { model: string; harness: 'hermes' | 'claude-code'; prompt: string; timeout?: string; maxVisits?: number };
+  };
+  adversary?: {
+    model: string;
+    harness: 'hermes' | 'claude-code';
+    prompt: string;
+    sealedFromSource?: string;
+    timeout?: string;
+    maxVisits?: number;
+  };
+  fpVerify?: {
+    command: string;
+    timeout?: string;
+    maxVisits?: number;
+  };
+  reproVerify?: {
+    command: string;
+    timeout?: string;
+    maxVisits?: number;
+  };
+  convergenceEpsilon?: number;
+  maxIterations?: number;
 }
 
 export interface PhaseSpec {

@@ -248,6 +248,11 @@ describe('sync-schema', () => {
                     sealed_from_source: { name: 'sealed_from_source', type: 'string',  scope: 'node' },
                     harness:            { name: 'harness',            type: 'string',  scope: 'node' },
                     max_iterations:     { name: 'max_iterations',     type: 'number',  scope: 'node' },
+                    reports_to_v:       { name: 'reports_to_v',       type: 'string',  scope: 'node' },
+                    allow_multi_retry_target: { name: 'allow_multi_retry_target', type: 'boolean', scope: 'node' },
+                    convergence_epsilon:      { name: 'convergence_epsilon',      type: 'number',  scope: 'node' },
+                    context_on_failure:       { name: 'context_on_failure',       type: 'string',  scope: 'node' },
+                    context_keys:             { name: 'context_keys',             type: 'string',  scope: 'node' },
                 },
                 graph: {
                     goal:               { name: 'goal',               type: 'string',  scope: 'graph' },
@@ -268,6 +273,8 @@ describe('sync-schema', () => {
                     condition:    { name: 'condition',    type: 'string',  scope: 'edge' },
                     outcome:      { name: 'outcome',      type: 'string',  scope: 'edge' },
                     loop_restart: { name: 'loop_restart', type: 'boolean', scope: 'edge' },
+                    weight:       { name: 'weight',       type: 'number',  scope: 'edge' },
+                    label:        { name: 'label',        type: 'string',  scope: 'edge' },
                 },
             },
         };

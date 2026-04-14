@@ -23,7 +23,7 @@ export interface FallbackSchema {
 }
 
 export const ATTRACTOR_SCHEMA_FALLBACK: FallbackSchema = {
-  /* 31 node attributes — builder-emitted only */
+  /* 36 node attributes — builder-emitted only */
   node: {
     class: { name: "class", type: "string", scope: "node" },
     shape: { name: "shape", type: "string", scope: "node" },
@@ -56,6 +56,19 @@ export const ATTRACTOR_SCHEMA_FALLBACK: FallbackSchema = {
     sealed_from_source: { name: "sealed_from_source", type: "string", scope: "node" },
     harness: { name: "harness", type: "string", scope: "node" },
     max_iterations: { name: "max_iterations", type: "number", scope: "node" },
+    /* v8 iterate-body convergence gate metric — string, dotted (e.g. "mechanical.boot"). Routes the
+     * gate's outcome into the iterate handler's V_total accumulator. Tool nodes carrying this attr
+     * are convergence gates and are subject to validator rule `gate_self_retry_loop` (cannot self-retry). */
+    reports_to_v: { name: "reports_to_v", type: "string", scope: "node" },
+    /* Opt-in for `god_node_retry_target` rule. Set on a codergen fix node when multiple gates
+     * legitimately route to it within ONE code domain (e.g. backend build + tests + lint all
+     * targeting one fix_backend). The rule's 3-referrer ERROR is suppressed for the target. Use
+     * sparingly — for cross-domain god nodes, split the fixer instead. */
+    allow_multi_retry_target: { name: "allow_multi_retry_target", type: "boolean", scope: "node" },
+    /* v8 convergence topology attrs */
+    convergence_epsilon: { name: "convergence_epsilon", type: "number", scope: "node" },
+    context_on_failure: { name: "context_on_failure", type: "string", scope: "node" },
+    context_keys: { name: "context_keys", type: "string", scope: "node" },
   },
   graph: {
     label: { name: "label", type: "string", scope: "graph" },
@@ -92,10 +105,12 @@ export const ATTRACTOR_SCHEMA_FALLBACK: FallbackSchema = {
     condition: { name: "condition", type: "string", scope: "edge" },
     outcome: { name: "outcome", type: "string", scope: "edge" },
     loop_restart: { name: "loop_restart", type: "boolean", scope: "edge" },
+    weight: { name: "weight", type: "number", scope: "edge" },
+    label: { name: "label", type: "string", scope: "edge" },
   },
 };
 
-/** Flat list of all 47 attribute definitions across all scopes (31 node + 13 graph + 3 edge). */
+/** Flat list of all 54 attribute definitions across all scopes (36 node + 13 graph + 5 edge). */
 export const ALL_ATTRS: AttrDef[] = [
   ...Object.values(ATTRACTOR_SCHEMA_FALLBACK.node),
   ...Object.values(ATTRACTOR_SCHEMA_FALLBACK.graph),
