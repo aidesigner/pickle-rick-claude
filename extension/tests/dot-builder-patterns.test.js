@@ -1403,6 +1403,16 @@ describe('Convergence v8 topology — refined PRD §5 ACs', () => {
         assert.equal(converge.max_visits, '3', 'maxVisits must flow through to converge.max_visits');
     });
 
+    test('AC-GOAL-2 (goal edge cases) — empty, whitespace-only, and undefined goals throw EMPTY_GOAL', () => {
+        for (const badGoal of ['', '   ', '\t\n', undefined]) {
+            assert.throws(
+                () => DotBuilder.fromSpec(convSpec({ goal: badGoal })).build(),
+                (err) => err instanceof BuildError && err.code === 'EMPTY_GOAL',
+                `goal=${JSON.stringify(badGoal)} must throw EMPTY_GOAL`,
+            );
+        }
+    });
+
     test('AC-OVERRIDE-7 (direct-attr > stylesheet) — fixBackend.model wins over modelStylesheet override', () => {
         const spec = convSpec({
             modelStylesheet: {
