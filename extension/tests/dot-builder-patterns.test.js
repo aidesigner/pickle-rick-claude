@@ -1385,4 +1385,12 @@ describe('Convergence v8 topology — refined PRD §5 ACs', () => {
         assert.equal(parseDot(dotC).nodes.get('fix_backend').harness, DEFAULT_FIX_BACKEND_HARNESS,
             'fix_backend.harness must fall through to DEFAULT_FIX_BACKEND_HARNESS when neither direct nor impl.harness is set');
     });
+
+    test('AC-OVERRIDE-3 (sealedFromSource default) — adversary_node.sealed_from_source defaults when neither direct nor convergence override is set', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const adv = parseDot(dot).nodes.get('adversary_node');
+        assert.ok(adv, 'adversary_node must be present in convergence mode');
+        assert.equal(adv.sealed_from_source, DEFAULT_ADVERSARY_SEALED_FROM_SOURCE,
+            'adversary_node.sealed_from_source must equal DEFAULT_ADVERSARY_SEALED_FROM_SOURCE when unset');
+    });
 });
