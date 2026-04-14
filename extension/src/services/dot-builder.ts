@@ -2205,8 +2205,8 @@ export class DotBuilder {
             if (removedEdge !== -1) edgeList.splice(removedEdge, 1);
             seenEdges.delete(removedEdgeStr);
           }
-          link('repro_verify', 'commit_and_push', { condition: 'outcome=success' });
-          link('commit_and_push', 'done', { condition: 'outcome=success' });
+          link('repro_verify', 'commit_and_push', { condition: 'outcome=success', label: 'pass' });
+          link('commit_and_push', 'done', { condition: 'outcome=success', label: 'pass' });
         } else {
           // non-convergence: anchor on quality_review -> exit
           const qrToExit = edges.findIndex(e => e.includes('quality_review -> exit'));

@@ -118,8 +118,10 @@ describe('iterate convergence', () => {
     // v8 terminal chain: repro_verify -> commit_and_push -> done
     const rpToCp = edges.find(e => e.from === 'repro_verify' && e.to === 'commit_and_push');
     assert.ok(rpToCp, 'repro_verify must route to commit_and_push');
+    assert.equal(rpToCp.attrs.label, 'pass', 'rewired repro->cp edge must carry label="pass" for consistency with sibling success edges');
     const cpToDone = edges.find(e => e.from === 'commit_and_push' && e.to === 'done');
     assert.ok(cpToDone, 'commit_and_push must route to done');
+    assert.equal(cpToDone.attrs.label, 'pass', 'rewired cp->done edge must carry label="pass" for consistency with sibling success edges');
     assert.ok(patternsApplied.includes('P0'), 'patternsApplied must include P0 for workspace=isolated composition');
   });
 
