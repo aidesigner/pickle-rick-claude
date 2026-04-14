@@ -1332,4 +1332,21 @@ describe('Convergence v8 topology — refined PRD §5 ACs', () => {
                 `legacy node "${id}" must not appear line-anchored in the DOT source`);
         }
     });
+
+    test('AC-INSTALL-1 — default fp_verify/repro_verify run npm install before npx tsc and npm test', () => {
+        const { dot } = DotBuilder.fromSpec(convSpec()).build();
+        const { nodes } = parseDot(dot);
+        for (const id of ['fp_verify', 'repro_verify']) {
+            const cmd = nodes.get(id).tool_command;
+            assert.ok(cmd, `${id} must declare a tool_command`);
+            const iInstall = cmd.search(/\bnpm install\b/);
+            const iTsc = cmd.search(/\bnpx tsc\b/);
+            const iTest = cmd.search(/\bnpm test\b/);
+            assert.ok(iInstall >= 0, `${id} must include "npm install"`);
+            assert.ok(iTsc >= 0, `${id} must include "npx tsc"`);
+            assert.ok(iTest >= 0, `${id} must include "npm test"`);
+            assert.ok(iInstall < iTsc, `${id}: npm install must precede npx tsc`);
+            assert.ok(iInstall < iTest, `${id}: npm install must precede npm test`);
+        }
+    });
 });
