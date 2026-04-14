@@ -1393,4 +1393,13 @@ describe('Convergence v8 topology — refined PRD §5 ACs', () => {
         assert.equal(adv.sealed_from_source, DEFAULT_ADVERSARY_SEALED_FROM_SOURCE,
             'adversary_node.sealed_from_source must equal DEFAULT_ADVERSARY_SEALED_FROM_SOURCE when unset');
     });
+
+    test('AC-OVERRIDE-4 (max_iterations/max_visits independence) — converge node emits each independently', () => {
+        const spec = convSpec({ convergence: { maxIterations: 10, maxVisits: 3 } });
+        const { dot } = DotBuilder.fromSpec(spec).build();
+        const converge = parseDot(dot).nodes.get('converge');
+        assert.ok(converge, 'converge node must be present');
+        assert.equal(converge.max_iterations, '10', 'maxIterations must flow through to converge.max_iterations');
+        assert.equal(converge.max_visits, '3', 'maxVisits must flow through to converge.max_visits');
+    });
 });
