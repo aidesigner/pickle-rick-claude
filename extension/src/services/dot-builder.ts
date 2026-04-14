@@ -172,6 +172,10 @@ function sanitizeId(name: string): string {
   return id;
 }
 
+function isCommitPushPhaseId(id: string): boolean {
+  return id === 'commit_and_push' || (id.includes('commit') && id.includes('push'));
+}
+
 // ---------------------------------------------------------------------------
 // Structural validation helpers
 // ---------------------------------------------------------------------------
@@ -1224,15 +1228,10 @@ export class DotBuilder {
     const graphId = sanitizeId(this._slug) || 'pipeline';
     const applied = new Set<string>();
 
-    const isCommitPushPhase = (p: PhaseSpec): boolean => {
-      const id = sanitizeId(p.name);
-      return id === 'commit_and_push' || (id.includes('commit') && id.includes('push'));
-    };
-
     const independent = phases.filter(p => {
       if (p.securityScan) return false;
       if (p.docOnly) return false;
-      if (spec.workspace === 'isolated' && isCommitPushPhase(p)) return false;
+      if (spec.workspace === 'isolated' && isCommitPushPhaseId(sanitizeId(p.name))) return false;
       return !p.dependsOn || p.dependsOn.length === 0;
     });
     const isFanOut = independent.length >= 2 && !phases.some(p => p.competing);
@@ -1893,7 +1892,7 @@ export class DotBuilder {
         if (p.deliverables && p.deliverables.length > 0) {
           implAttrs['deliverables'] = p.deliverables.join(',');
         }
-        if (spec.workspace === 'isolated' && (id === 'commit_and_push' || (id.includes('commit') && id.includes('push')))) {
+        if (spec.workspace === 'isolated' && isCommitPushPhaseId(id)) {
           if (spec.workspaceOpts?.repoUrl) implAttrs['repo_url'] = spec.workspaceOpts.repoUrl;
           if (spec.workspaceOpts?.cleanup) implAttrs['cleanup'] = spec.workspaceOpts.cleanup;
         }
@@ -2172,7 +2171,7 @@ export class DotBuilder {
 
     // P0: Auto-inject commit_and_push for isolated workspace if missing
     if (spec.workspace === 'isolated') {
-      const hasExplicitPush = [...nodeMap.keys()].some(id => id === 'commit_and_push' || (id.includes('commit') && id.includes('push')));
+      const hasExplicitPush = [...nodeMap.keys()].some(isCommitPushPhaseId);
       if (!hasExplicitPush) {
         const slug = this._slug;
         emit('commit_and_push', {
