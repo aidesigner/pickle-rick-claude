@@ -99,6 +99,10 @@ Two cleanup tools for polishing the result:
 /anatomy-park --dry-run                    # Review only, no fixes
 ```
 
+<p align="center">
+  <img src="images/plumbus.jpg" alt="Plumbus — iterative DAG shaping loop" width="100%" />
+</p>
+
 **Plumbus** — the same convergence loop applied to a single attractor `.dot` pipeline. Runs the attractor validator as a hard gate, walks every edge, and converges against the `pickle-dot-patterns` rubric (DAG validity, Tier 1 mandatory patterns, anti-patterns). Everybody needs a plumbus — use it after `/pickle-dot` generates a graph you want hardened before `/attract`.
 
 ```bash
