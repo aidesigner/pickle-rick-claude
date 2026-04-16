@@ -46,12 +46,13 @@ Before creating a release, run the full lint and test gate from `extension/`: `n
 | setup.js | Session init (state.json, ticket dirs), first prompt |
 | spawn-morty.js | Per-ticket `claude -p` subprocess |
 | spawn-refinement-team.js | 3 parallel analysts/cycle, writes refinement_manifest.json |
-| tmux-runner.js | Context-clearing outer loop via tmux |
+| mux-runner.js | Context-clearing outer loop via tmux |
 | jar-runner.js | Batch runner for jar queue |
 | metrics.js + metrics-utils.js | Token/commit/LOC reporter, cache at `~/.claude/pickle-rick/metrics-cache.json` |
 | monitor.js / log-watcher.js / morty-watcher.js / raw-morty.js | tmux TUI panes (Matrix-styled) |
 | refinement-watcher.js | PRD refinement team monitor pane |
 | microverse-runner.js + microverse-state.js | Metric convergence loop: measure, compare, rollback, stall detection |
+| pipeline-runner.js | Sequential phase orchestrator: pickle → anatomy-park → szechuan-sauce |
 | state-manager.js | Atomic file locks, crash recovery, schema migration, multi-file transactions |
 | types/index.js | Shared types: State, errors (StateError/LockError/TransactionError), PromiseTokens, activity events |
 | meeseeks.md | Setup + per-pass review template |

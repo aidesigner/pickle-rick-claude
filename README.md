@@ -82,7 +82,15 @@ If you can define a measurable goal — test coverage, response time, bundle siz
 
 ### Step 5 (Optional): Cleanup
 
-Two cleanup tools for polishing the result:
+Three options for polishing the result:
+
+**Full Pipeline** — chains all three phases in a single tmux session: build, deep review, then deslop. No manual intervention between phases.
+
+```bash
+/pickle-pipeline "build the caching layer"                     # Full pipeline
+/pickle-pipeline --skip-anatomy "refactor auth"                # Skip deep review
+/pickle-pipeline --target src/services "add retry logic"       # Scope review phases
+```
 
 **Szechuan Sauce** — hunts coding principle violations (KISS, DRY, SOLID, security, style) and fixes them one at a time until zero remain. Great for post-feature polish before merging.
 
@@ -121,8 +129,10 @@ You describe a feature
   /pickle-microverse       ← (Optional) Metric-driven optimization loop
        │
        ▼
-  /szechuan-sauce          ← (Optional) Additional code quality cleanup
-  /anatomy-park            ← (Optional) Additional data flow correctness review
+  /pickle-pipeline         ← (Optional) Full lifecycle: build → deep review → deslop
+  ─ or run phases individually ─
+  /szechuan-sauce          ← (Optional) Code quality cleanup
+  /anatomy-park            ← (Optional) Data flow correctness review
        │
        ▼
   Ship it 🥒
@@ -180,7 +190,7 @@ Settings are backed up to `~/.claude/backups/settings.json.pickle-uninstall-hook
 **What still works without hooks:**
 
 - **One-shot utilities and reporters** (never needed hooks) — `/pickle-prd`, `/pickle-refine-prd`, `/pickle-dot`, `/pickle-dot-patterns`, `/pickle-metrics`, `/pickle-status`, `/pickle-standup`, `/help-pickle`, `/attract`.
-- **Detached-runner commands** (bootstrap a separate process that runs independently inside tmux/zellij) — `/pickle-tmux`, `/pickle-zellij`, `/pickle-jar-open`, `/pickle-microverse`, `/szechuan-sauce`, `/anatomy-park`. These launch `mux-runner.js` / `jar-runner.js` / `microverse-runner.js` inside the multiplexer; the runner spawns its own `claude -p` subprocesses and drives iteration via Node.js, not via the Stop hook. In tmux mode the Stop hook is a pass-through anyway.
+- **Detached-runner commands** (bootstrap a separate process that runs independently inside tmux/zellij) — `/pickle-tmux`, `/pickle-zellij`, `/pickle-jar-open`, `/pickle-microverse`, `/szechuan-sauce`, `/anatomy-park`, `/pickle-pipeline`. These launch `mux-runner.js` / `jar-runner.js` / `microverse-runner.js` / `pipeline-runner.js` inside the multiplexer; the runner spawns its own `claude -p` subprocesses and drives iteration via Node.js, not via the Stop hook. In tmux mode the Stop hook is a pass-through anyway.
 
 **What needs hooks** — in-session loops where the Stop hook is the iteration driver for the same Claude session: `/pickle` (interactive mode), `/council-of-ricks`, `/portal-gun`, `/project-mayhem`, `/pickle-retry`. Without hooks these run the first step and stop.
 
@@ -267,6 +277,7 @@ Queue tasks for unattended batch execution overnight.
 | `/pickle-microverse` | Metric convergence loop. `--metric` for numeric, `--goal` for LLM judge |
 | `/szechuan-sauce [target]` | Principle-driven deslopping. `--dry-run`, `--focus`, `--domain` |
 | `/anatomy-park` | Three-phase deep subsystem review with trap door cataloging |
+| `/pickle-pipeline "task"` | Full lifecycle: pickle-tmux → anatomy-park → szechuan-sauce in one tmux session |
 | `/plumbus <file.dot>` | Iterative DAG shaping on a single `.dot` file. `--dry-run`, `--focus`, `--no-validator` |
 | `/council-of-ricks` | Graphite PR stack review — generates directives, never fixes code |
 | `/portal-gun <source>` | Gene transfusion from another codebase |
@@ -312,6 +323,15 @@ Queue tasks for unattended batch execution overnight.
 --no-refine                (/portal-gun) Skip automatic refinement
 --max-passes <N>           (/portal-gun) Max convergence passes (default: 3)
 --save-pattern <NAME>      (/portal-gun) Persist pattern to library
+--target <PATH>            (/pickle-pipeline) Target directory for review phases (default: cwd)
+--skip-anatomy             (/pickle-pipeline) Skip anatomy-park phase
+--skip-szechuan            (/pickle-pipeline) Skip szechuan-sauce phase
+--anatomy-max-iterations N (/pickle-pipeline) Anatomy Park iteration limit (default: 100)
+--anatomy-stall-limit N    (/pickle-pipeline) Anatomy Park stall limit (default: 3)
+--szechuan-max-iterations N (/pickle-pipeline) Szechuan Sauce iteration limit (default: 50)
+--szechuan-stall-limit N   (/pickle-pipeline) Szechuan Sauce stall limit (default: 5)
+--szechuan-domain <name>   (/pickle-pipeline) Domain-specific principles for Szechuan phase
+--szechuan-focus "<text>"  (/pickle-pipeline) Focus directive for Szechuan phase
 --dry-run                  (/szechuan-sauce, /plumbus) Catalog violations without fixing
 --domain <name>            (/szechuan-sauce) Domain-specific principles (e.g., financial)
 --focus "<text>"           (/szechuan-sauce, /plumbus) Direct review toward specific concern

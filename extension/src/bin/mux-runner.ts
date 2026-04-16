@@ -1189,6 +1189,11 @@ async function main() {
     const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     spawnSync('osascript', ['-e', `display notification "${esc(notif.body)}" with title "${esc(notif.title)}" subtitle "${esc(notif.subtitle)}"`]);
   }
+
+  // Explicit exit code so parent processes (pipeline-runner) can detect failure.
+  // Matches microverse-runner.ts pattern.
+  const exitCode = isFailedExit ? 1 : 0;
+  process.exit(exitCode);
 }
 
 export function buildTmuxNotification(exitReason: string, finalStep: string, iteration: number, totalElapsed: number) {
