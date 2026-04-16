@@ -88,6 +88,58 @@ The rule scans codergen prompts for action-verb clusters (implement, test, docum
 
 If your prompt is fundamentally "implement + test" (2 clusters, fine) and you toss in a phrase like "out of scope for this benchmark" or "we'll deploy separately", you've now matched 3 clusters and the rule fires. Rephrase with neutral words ("out of scope here", "shipped via a separate pipeline") or split the node.
 
+## Recent Validator Changes (2026-04-16)
+
+Nine validator rules added and iterate body patterns overhauled — read these BEFORE the pattern catalog. The v9 benchmark pipeline debugging session exposed 4 structural anti-patterns that burn entire retry budgets.
+
+**1. NEW rule: `model_allowlist`** (ERROR severity)
+
+Every `model` attr and `model_ladder` rung must be in the approved set:
+- `minimax/minimax-m2.7` (impl — cheap, fast)
+- `z-ai/glm-5.1` (backend review)
+- `qwen/qwen3.6-plus` (frontend review)
+- `xiaomi/mimo-v2-pro` (integration review)
+- `x-ai/grok-4.20` (adversary)
+- `google/gemini-3.1-pro-preview` (ladder fallback)
+
+Dead models like `qwen/qwen3.6-plus:free` trip circuit breakers at runtime.
+
+**2. NEW rule: `per_artifact_tsc_retry_loop`** (ERROR severity)
+
+A tool node running `tsc --noEmit` with `retry_target` pointing to a diamond creates an unfixable loop. TypeScript reports errors at USE sites (e.g. service.ts), but the root cause may be at a DEFINITION site (e.g. dto.ts). The per-artifact patcher can only modify its own file.
+
+NEVER create per-artifact tsc gates inside iterate bodies. Use:
+- Semantic gates (field count, subset check, route check) for per-artifact validation
+- Full-package tsc gates (`run_build_api`, `run_build_ui`) retrying to full-package fixers
+
+**3. NEW rule: `iterate_body_context_survives_rollback`** (ERROR severity)
+
+Context keys set by `context_on_success` inside iterate bodies survive workspace rollback. Keys used for diamond routing MUST use the `artifact_*` prefix (engine clears these on rollback). Custom keys like `status_done=true` persist after rollback, causing stale diamond routing.
+
+**4. NEW rule: `iterate_body_gate_needs_reports_to_v`** (WARNING)
+
+ALL tool gates inside iterate bodies MUST have `reports_to_v="mechanical.<component>"`. Without it, gate failures don't feed V_total, making the convergence function blind to regressions.
+
+**5. NEW rule: `iterate_body_outer_edge`** (WARNING)
+
+Edges from body nodes to nodes outside the body cluster are dead code. The iterate handler manages body→exit via the converge node.
+
+**6. NEW rule: `iterate_body_impl_needs_model_ladder`** (WARNING)
+
+All codergen impl nodes inside iterate bodies MUST have `model_ladder` + `ladder_advance_on="rollback"`. Without escalation, the same cheap model retries on every iteration.
+
+Standard impl ladder (collision-free with reviewer ladders at every rung):
+```
+model_ladder="minimax/minimax-m2.7,minimax/minimax-m2.7,xiaomi/mimo-v2-pro,x-ai/grok-4.20,google/gemini-3.1-pro-preview"
+ladder_advance_on="rollback"
+```
+
+**7. Additional rules:** `context_key_starts_with_non_identifier`, `max_visits_times_max_retries_budget`, `gate_hardcoded_path_predecessor_contract`, `codergen_unbounded_fidelity_non_iterate`, `missing_retry_path_implicit_fallback`, `tool_context_key_reference_mismatch`. Key implications:
+- Context keys must start with letter or underscore (not digits/dashes)
+- `max_visits × max_retries` product should stay under 15
+- Gate tool_commands that check specific file paths should match the impl prompt's file contract
+- Non-iterate codergen with unbounded fidelity need `context_keys` if they have retry_target
+
 ## Tier 1: Always Emit
 
 **0. Isolated Workspace Commit & Push** — **MANDATORY** when `workspace="isolated"`. Without this, all code is lost on cleanup. Place AFTER `verify_final` succeeds — `commit_and_push` runs exactly once on the success path, pushing only verified working code:
