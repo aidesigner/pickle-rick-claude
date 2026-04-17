@@ -347,6 +347,13 @@ Exit 0 = full analysis; exit 2 = degraded mode (partial results still written �
 
 Apply all six frames in sequence as specified in `pickle-dot-patterns.md § Generative Audit Frames`. Each frame produces findings keyed by `nodeId` and `key`.
 
+1. **Frame 1: Context Key Lifecycle Trace** — orphan readers/writers, asymmetric writers, multi-writer conflicts.
+2. **Frame 2: Success/Failure Symmetry** — state-mutating nodes missing the opposite-outcome unwind.
+3. **Frame 3: Edge Condition Exhaustiveness** — cartesian-product stuck states and non-deterministic routing.
+4. **Frame 4: Tool Exit Code Semantics Audit** — routing-signal vs. build/check tool wiring mismatches.
+5. **Frame 5: Loop Convergence Proof Obligation** — SCCs without a reachable finite-exit convergence key.
+6. **Frame 6: Counterfactual Outcome Test** — state-mutating tool nodes lacking a direct or transitive guard.
+
 #### Write Discipline
 
 Write findings to `${SESSION_ROOT}/gap_analysis.md` under a `## Generative Findings` H2 section. Merge contract follows the Override 2 step 4 precedent (`plumbus.md:263`): "create if missing; prepend if existing — do NOT overwrite."

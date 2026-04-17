@@ -16,6 +16,7 @@ NEVER edit deployed files. Edit source, run `bash install.sh`.
 ## Generated Artifacts
 
 DOT pipeline files (`*.dot`) and PRD files (`*.md` in `extension/`) are generated artifacts — do NOT commit them to this repo. They are consumed by the attractor server, not by this project. Add `*.dot` to `.gitignore`.
+`extension/data/` — static JSON consumed by the plumbus-frame-analyzer (e.g., `engine-injected-keys.json`). Committed, not generated — edit source, not the deployed copy.
 
 ## Build & Test
 

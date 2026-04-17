@@ -640,6 +640,21 @@ The same convergence loop applied to a single attractor `.dot` pipeline. Runs th
 
 **When to use which:** Szechuan Sauce asks *"is this code well-designed?"* — Anatomy Park asks *"is this code correct?"* — Plumbus asks *"will this DAG actually run without deadlocking?"*
 
+#### Generative Audit Frames
+
+Plumbus runs six analysis frames during the first iteration Edge Walk (Override 6). Each frame produces findings in `gap_analysis.md` under `## Generative Findings`, using a three-severity model (`pre_verification_severity` / `post_verification_severity` / `rendered_severity`).
+
+| Frame | What it checks |
+|-------|----------------|
+| **Frame 1: Context Key Lifecycle Trace** | Orphan readers/writers, asymmetric writers, multi-writer conflicts |
+| **Frame 2: Success/Failure Symmetry** | State-mutating nodes missing the opposite-outcome unwind |
+| **Frame 3: Edge Condition Exhaustiveness** | Cartesian-product stuck states and non-deterministic routing |
+| **Frame 4: Tool Exit Code Semantics Audit** | Routing-signal vs. build/check tool wiring mismatches |
+| **Frame 5: Loop Convergence Proof Obligation** | SCCs without a reachable finite-exit convergence key |
+| **Frame 6: Counterfactual Outcome Test** | State-mutating tool nodes lacking a direct or transitive guard |
+
+**Kill-switch**: set `PLUMBUS_GENERATIVE_AUDIT=off` to skip Override 6 entirely (no analyzer invocation, no `## Generative Findings` written). Any other value (including absent) runs the audit normally.
+
 ---
 
 ## 🧬 The Pickle Rick Lifecycle — Under the Hood

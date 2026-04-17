@@ -32,6 +32,7 @@ const TEST_FILES = [
   'data-flow-trace-a.test.js',
   'data-flow-trace-b.test.js',
   'data-flow-trace-c.test.js',
+  'doc-cross-reference.test.js',
 ];
 
 const SKIP_ONLY_RE = /\.(skip|only)\(/;
