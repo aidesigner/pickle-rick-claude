@@ -19,6 +19,8 @@ export interface State {
   chain_meeseeks?: boolean;
   schema_version?: number;
   pid?: number;
+  /** Count of consecutive short manager responses (≤ DEGENERATE_MAX_LENGTH). Reset on substantive response. */
+  consecutive_short_responses?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -38,7 +40,7 @@ export const STATE_MANAGER_DEFAULTS: StateManagerOptions = {
   baseLockDelayMs: 100,
   lockJitter: true,
   staleLockTimeoutMs: 30_000,
-  schemaVersion: 1,
+  schemaVersion: 2,
 };
 
 export type StateErrorCode = 'MISSING' | 'CORRUPT' | 'SCHEMA_MISMATCH' | 'LOCK_FAILED' | 'WRITE_FAILED';

@@ -554,7 +554,7 @@ test('STATE_MANAGER_DEFAULTS: has expected values', () => {
   assert.equal(STATE_MANAGER_DEFAULTS.baseLockDelayMs, 100);
   assert.equal(STATE_MANAGER_DEFAULTS.lockJitter, true);
   assert.equal(STATE_MANAGER_DEFAULTS.staleLockTimeoutMs, 30_000);
-  assert.equal(STATE_MANAGER_DEFAULTS.schemaVersion, 1);
+  assert.equal(STATE_MANAGER_DEFAULTS.schemaVersion, 2);
 });
 
 // ---------------------------------------------------------------------------

@@ -910,8 +910,8 @@ test('stop-hook: "Acknowledged." response → approve (no-op detection)', () => 
   assert.equal(decision.decision, 'approve');
 });
 
-test('stop-hook: "ok" short response → approve (caught by degenerate, not no-op)', () => {
-  // "OK" is 2 chars — caught by degenerate short check (≤10), not no-op patterns
+test('stop-hook: "OK" short response → approve (matches no-op pattern)', () => {
+  // "OK" matches /^ok\.?$/i → no-op pattern → immediate approve regardless of counter.
   const { decision } = runHook({
     state: baseState({ iteration: 5, max_iterations: 50 }),
     response: 'OK',
@@ -919,9 +919,8 @@ test('stop-hook: "ok" short response → approve (caught by degenerate, not no-o
   assert.equal(decision.decision, 'approve');
 });
 
-test('stop-hook: "  Understood  " padded response → approve (no-op pattern, trimmed to 10 chars)', () => {
-  // After trim: "Understood" = 10 chars, caught by degenerate (≤10).
-  // Use a padded version to verify the trim + degenerate path.
+test('stop-hook: "  Understood  " padded response → approve (no-op pattern after trim)', () => {
+  // After trim: "Understood" (10 chars) matches /^understood\.?$/i → no-op → immediate approve.
   const { decision } = runHook({
     state: baseState({ iteration: 1, max_iterations: 10 }),
     response: '  Understood  ',
@@ -938,8 +937,8 @@ test('stop-hook: "Continuing." (12 chars) → approve (genuine no-op pattern mat
   assert.equal(decision.decision, 'approve');
 });
 
-test('stop-hook: "Got it." response → approve (caught by degenerate, not no-op)', () => {
-  // "Got it." is 6 chars — caught by degenerate short check (≤10)
+test('stop-hook: "Got it." response → approve (matches no-op pattern)', () => {
+  // "Got it." matches /^got it\.?$/i → no-op pattern → immediate approve regardless of counter.
   const { decision } = runHook({
     state: baseState({ iteration: 2, max_iterations: 10 }),
     response: 'Got it.',
@@ -977,21 +976,23 @@ test('stop-hook: whitespace-only response → approve + deactivate (inline mode)
   assert.equal(state.active, false, 'inline mode must deactivate on degenerate to prevent stale state');
 });
 
-test('stop-hook: 2-char non-matching response → approve + deactivate (inline mode)', () => {
+test('stop-hook: 2-char non-matching response (counter=0) → block + counter=1 (polling tolerated)', () => {
   const { decision, state } = runHook({
     state: baseState({ iteration: 6, max_iterations: 50 }),
     response: 'no',
   });
-  assert.equal(decision.decision, 'approve');
-  assert.equal(state.active, false, 'inline mode must deactivate on degenerate to prevent stale state');
+  assert.equal(decision.decision, 'block', 'first short response is legitimate polling — must not exit');
+  assert.equal(state.active, true, 'single short response must not deactivate session');
+  assert.equal(state.consecutive_short_responses, 1);
 });
 
-test('stop-hook: 10-char response → approve (degenerate boundary)', () => {
-  const { decision } = runHook({
+test('stop-hook: 10-char response (counter=0) → block + counter=1 (degenerate boundary)', () => {
+  const { decision, state } = runHook({
     state: baseState({ iteration: 3, max_iterations: 50 }),
     response: '0123456789',
   });
-  assert.equal(decision.decision, 'approve');
+  assert.equal(decision.decision, 'block');
+  assert.equal(state.consecutive_short_responses, 1);
 });
 
 test('stop-hook: 11-char non-matching response → block (above degenerate threshold)', () => {
@@ -1002,12 +1003,13 @@ test('stop-hook: 11-char non-matching response → block (above degenerate thres
   assert.equal(decision.decision, 'block');
 });
 
-test('stop-hook: 1-char response → approve (degenerate short)', () => {
-  const { decision } = runHook({
+test('stop-hook: 1-char response (counter=0) → block + counter=1', () => {
+  const { decision, state } = runHook({
     state: baseState({ iteration: 2, max_iterations: 50 }),
     response: 'x',
   });
-  assert.equal(decision.decision, 'approve');
+  assert.equal(decision.decision, 'block');
+  assert.equal(state.consecutive_short_responses, 1);
 });
 
 test('stop-hook: tab-only response → approve (whitespace-only detection)', () => {
@@ -1034,13 +1036,14 @@ test('stop-hook: single newline response → approve (whitespace-only detection)
   assert.equal(decision.decision, 'approve');
 });
 
-test('stop-hook: degenerate short response in tmux mode → approve', () => {
+test('stop-hook: single short response in tmux mode → block + counter=1 (not yet degenerate)', () => {
   const { decision, state } = runHook({
     state: baseState({ tmux_mode: true, iteration: 3, max_iterations: 50 }),
     response: 'no',
   });
-  assert.equal(decision.decision, 'approve');
-  assert.equal(state.active, true, 'degenerate approve must not deactivate — runner handles lifecycle');
+  assert.equal(decision.decision, 'block', 'first short response is not yet degenerate — must not exit');
+  assert.equal(state.active, true, 'single short response must not deactivate — runner handles lifecycle');
+  assert.equal(state.consecutive_short_responses, 1);
 });
 
 test('stop-hook: no-op "Acknowledged." in inline mode → approve + deactivate', () => {
@@ -1059,6 +1062,100 @@ test('stop-hook: whitespace-only response in tmux mode → approve', () => {
   });
   assert.equal(decision.decision, 'approve');
   assert.equal(state.active, true, 'whitespace approve must not deactivate');
+});
+
+// ---------------------------------------------------------------------------
+// Consecutive-short-response counter — tolerate polling messages, exit on looping
+// ---------------------------------------------------------------------------
+
+test('stop-hook: short response at counter=1 → block + counter=2 (below threshold)', () => {
+  const { decision, state } = runHook({
+    state: baseState({ iteration: 6, max_iterations: 50, consecutive_short_responses: 1 }),
+    response: 'Waiting.',
+  });
+  assert.equal(decision.decision, 'block');
+  assert.equal(state.active, true);
+  assert.equal(state.consecutive_short_responses, 2);
+});
+
+test('stop-hook: short response at counter=2 → approve (hits threshold of 3) + counter reset', () => {
+  const { decision, state } = runHook({
+    state: baseState({ iteration: 6, max_iterations: 50, consecutive_short_responses: 2 }),
+    response: 'Waiting.',
+  });
+  assert.equal(decision.decision, 'approve', 'third consecutive short response should exit');
+  assert.equal(state.active, false, 'inline mode at threshold must deactivate');
+  assert.equal(state.consecutive_short_responses, 0, 'counter must reset on exit');
+});
+
+test('stop-hook: short response at counter=2 + tmux_mode → approve, active unchanged', () => {
+  const { decision, state } = runHook({
+    state: baseState({ tmux_mode: true, iteration: 6, max_iterations: 50, consecutive_short_responses: 2 }),
+    response: 'Waiting.',
+  });
+  assert.equal(decision.decision, 'approve');
+  assert.equal(state.active, true, 'tmux mode at threshold must not deactivate — runner owns lifecycle');
+  assert.equal(state.consecutive_short_responses, 0, 'counter must reset on exit');
+});
+
+test('stop-hook: substantive response at counter=2 → block + counter reset to 0', () => {
+  const longResponse = 'I finished editing utils.ts and the tests are passing. Here is a detailed summary of the work.';
+  assert.ok(longResponse.length > 10);
+  const { decision, state } = runHook({
+    state: baseState({ iteration: 4, max_iterations: 50, consecutive_short_responses: 2 }),
+    response: longResponse,
+  });
+  assert.equal(decision.decision, 'block', 'substantive response continues loop');
+  assert.equal(state.consecutive_short_responses, 0, 'counter must reset on substantive response');
+});
+
+test('stop-hook: worker + short response → approve immediately (counter not applied)', () => {
+  const { decision } = runHook({
+    state: baseState({ iteration: 2, max_iterations: 50 }),
+    response: 'wait',
+    role: 'worker',
+  });
+  assert.equal(decision.decision, 'approve', 'worker short response exits immediately (own lifecycle)');
+});
+
+test('stop-hook: refinement-worker + short response → approve immediately (counter not applied)', () => {
+  const { decision } = runHook({
+    state: baseState({ iteration: 2, max_iterations: 50 }),
+    response: 'wait',
+    role: 'refinement-worker',
+  });
+  assert.equal(decision.decision, 'approve');
+});
+
+test('stop-hook: whitespace-only at counter=2 → approve immediately + counter reset', () => {
+  // Whitespace is never legitimate — must exit immediately regardless of counter state.
+  const { decision, state } = runHook({
+    state: baseState({ iteration: 5, max_iterations: 50, consecutive_short_responses: 2 }),
+    response: '\n\t',
+  });
+  assert.equal(decision.decision, 'approve');
+  assert.equal(state.active, false, 'whitespace-only deactivates inline session');
+  assert.equal(state.consecutive_short_responses, 0);
+});
+
+test('stop-hook: no-op pattern at counter=2 → approve immediately + counter reset', () => {
+  // No-op patterns are the explicit ack class — always exit immediately, no counting.
+  const { decision, state } = runHook({
+    state: baseState({ iteration: 5, max_iterations: 50, consecutive_short_responses: 2 }),
+    response: 'Acknowledged.',
+  });
+  assert.equal(decision.decision, 'approve');
+  assert.equal(state.active, false);
+  assert.equal(state.consecutive_short_responses, 0);
+});
+
+test('stop-hook: counter reset feedback mentions N/threshold', () => {
+  const { decision } = runHook({
+    state: baseState({ iteration: 2, max_iterations: 50 }),
+    response: 'Waiting.',
+  });
+  assert.equal(decision.decision, 'block');
+  assert.ok(decision.reason.includes('1/3'), `expected progress indicator, got: ${decision.reason}`);
 });
 
 // ---------------------------------------------------------------------------

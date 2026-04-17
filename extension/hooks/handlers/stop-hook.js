@@ -7,6 +7,13 @@ import { getExtensionRoot, getDataRoot, safeErrorMessage } from '../../services/
 import { StateManager } from '../../services/state-manager.js';
 import { logActivity } from '../../services/activity-logger.js';
 const sm = new StateManager();
+/**
+ * Number of consecutive short manager responses tolerated before the degenerate-response
+ * detector forces an exit. Long-running ticket work produces legitimate short poll messages
+ * ("Waiting.", "Still running.") while a worker churns; a single one is benign, three in a
+ * row means the manager is genuinely stuck in an ack loop.
+ */
+export const DEGENERATE_CONSECUTIVE_THRESHOLD = 3;
 function maybeSpawnUpdateCheck(extensionDir, log) {
     const checkUpdatePath = path.join(extensionDir, 'extension', 'bin', 'check-update.js');
     if (!fs.existsSync(checkUpdatePath)) {
@@ -266,11 +273,12 @@ async function main() {
         return;
     }
     // 7a. No-op / degenerate response detection.
-    // If the agent tries to exit with an empty, whitespace-only, or very short
-    // response it's stuck in a degenerate loop. Approve exit so mux-runner can
-    // respawn a fresh iteration with full context (tmux) or the session ends
-    // cleanly (inline). Without this, the default BLOCK traps the inner Claude
-    // in an infinite 2-char-response loop that never advances.
+    // Whitespace-only and NO_OP_PATTERNS (ack-class) responses exit immediately — never
+    // legitimate. Generic short responses (≤ DEGENERATE_MAX_LENGTH, e.g. "Waiting.") only
+    // exit after DEGENERATE_CONSECUTIVE_THRESHOLD consecutive occurrences: a single one can
+    // be a legitimate poll message from a manager waiting on a slow worker, but three in a
+    // row is a genuine ack loop. Counter applies to manager only — worker and refinement-worker
+    // have their own lifecycles and exit on first short response.
     const trimmed = responseText.trim();
     const DEGENERATE_MAX_LENGTH = 10;
     const NO_OP_MAX_LENGTH = 100;
@@ -286,24 +294,64 @@ async function main() {
         /^will do\.?$/i,
         /^roger\.?$/i,
     ];
-    const isDegenerateResponse = ((responseText.length > 0 && trimmed.length === 0) ||
-        (trimmed.length > 0 && trimmed.length <= DEGENERATE_MAX_LENGTH) ||
-        (trimmed.length > 0 && trimmed.length <= NO_OP_MAX_LENGTH && NO_OP_PATTERNS.some(p => p.test(trimmed))));
-    if (isDegenerateResponse) {
-        const reason = trimmed.length === 0
+    const isWhitespaceOnly = responseText.length > 0 && trimmed.length === 0;
+    const isNoOpPattern = trimmed.length > 0 && trimmed.length <= NO_OP_MAX_LENGTH &&
+        NO_OP_PATTERNS.some(p => p.test(trimmed));
+    const isShortResponse = trimmed.length > 0 && trimmed.length <= DEGENERATE_MAX_LENGTH;
+    // Immediate-exit class: whitespace or ack pattern. Never legitimate, no counting.
+    if (isWhitespaceOnly || isNoOpPattern) {
+        const reason = isWhitespaceOnly
             ? `Whitespace-only response — ${responseText.length} raw chars`
-            : trimmed.length <= DEGENERATE_MAX_LENGTH
-                ? `Degenerate short response: "${trimmed}" — ${trimmed.length} chars`
-                : `No-op response detected: "${trimmed}" — breaking ack loop`;
+            : `No-op response detected: "${trimmed}" — breaking ack loop`;
         log(`Decision: APPROVE (${reason})`);
         if (!isWorker && !isRefinementWorker && state.tmux_mode !== true) {
             try {
-                sm.update(stateFile, s => { s.active = false; });
+                sm.update(stateFile, s => { s.active = false; s.consecutive_short_responses = 0; });
             }
             catch { /* fail-open */ }
         }
         approve();
         return;
+    }
+    // Generic short response: workers exit immediately; manager counts consecutive hits.
+    if (isShortResponse) {
+        if (isWorker || isRefinementWorker) {
+            log(`Decision: APPROVE (Degenerate short response in ${role} role: "${trimmed}" — ${trimmed.length} chars)`);
+            approve();
+            return;
+        }
+        const prevCount = Number(state.consecutive_short_responses) || 0;
+        const newCount = prevCount + 1;
+        if (newCount >= DEGENERATE_CONSECUTIVE_THRESHOLD) {
+            log(`Decision: APPROVE (Degenerate short response: "${trimmed}" — ${trimmed.length} chars, ${newCount} consecutive)`);
+            try {
+                sm.update(stateFile, s => {
+                    if (state.tmux_mode !== true)
+                        s.active = false;
+                    s.consecutive_short_responses = 0;
+                });
+            }
+            catch { /* fail-open */ }
+            approve();
+            return;
+        }
+        log(`Decision: BLOCK (Short response: "${trimmed}" — ${trimmed.length} chars, ${newCount}/${DEGENERATE_CONSECUTIVE_THRESHOLD} consecutive)`);
+        try {
+            sm.update(stateFile, s => { s.consecutive_short_responses = newCount; });
+        }
+        catch { /* fail-open */ }
+        console.log(JSON.stringify({
+            decision: 'block',
+            reason: `🥒 Short response (${newCount}/${DEGENERATE_CONSECUTIVE_THRESHOLD}) — continuing`,
+        }));
+        return;
+    }
+    // Substantive response — reset the short-response counter if it was non-zero.
+    if (!isWorker && !isRefinementWorker && (Number(state.consecutive_short_responses) || 0) > 0) {
+        try {
+            sm.update(stateFile, s => { s.consecutive_short_responses = 0; });
+        }
+        catch { /* fail-open */ }
     }
     // 8. Default: Continue Loop (Prevent Exit)
     log('Decision: BLOCK (Default continuation)');
