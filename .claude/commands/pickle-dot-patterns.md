@@ -393,6 +393,47 @@ The `(unset, non-empty)` and `(seed_failed, non-empty)` stuck-state cells were l
 
 **Severity:** Routing-signal tool with conflicting wiring → **P0** at Mode A/B confidence; **P0 flagged manual-investigation** at Mode C. Build/check tool wired as routing-signal → **P0**. Suspect scaffolding `reports_to_v` → **P2**. Severity is independent of `confidence:` — low confidence means "verify before acting," not "downgrade the bug."
 
+
+### Frame 5: Loop Convergence Proof Obligation
+
+**Procedure:** For every SCC (strongly connected component) detected via Tarjan’s algorithm on the pipeline graph:
+1. Identify all context keys written within the SCC body. Cross-reference against the recognized convergence signals: `iterate`, `model_ladder`, `__pool_findings__`, `__fix_attempt_history`, `__last_failure_output`. At least one of these keys must be consumed by a routing diamond that has a finite-exit branch (an edge leading out of the SCC) and whose condition evaluates to that key.
+2. Verify the finite-exit branch is reachable: the condition must evaluate to a concrete terminal value (e.g., `context.iterate=done`, `context.model_ladder=exhausted`) that the SCC body actually writes on at least one code path.
+3. Verify there is no unbounded accumulation: if `__pool_findings__` or `__fix_attempt_history` is written on every iteration, confirm a guard node or diamond bounds the loop by size or count before re-entry.
+4. For each `iterate` body (any subgraph dominated by an `iterate`-keyed node), apply steps 1-3 recursively.
+5. Classify outcome:
+   - **PROVEN**: finite-exit branch reachable, convergence key written, no unbounded accumulation.
+   - **UNPROVEN**: finite-exit branch exists but convergence key is never written by SCC body — the loop may spin forever.
+   - **ABSENT**: no finite-exit branch on any diamond within the SCC — infinite loop structural guarantee.
+
+**Frame 5 severity cap:** Frame 5 severity is capped at P1 until the calibration baseline reaches ≥90% precision (PRD risk-scope R7). Do not promote Frame 5 findings above P1 before that baseline is established.
+
+**Severity pre-cap mapping** (apply cap above):
+- ABSENT → **P0** (capped P1 pre-baseline)
+- UNPROVEN → **P1** (no cap change)
+- PROVEN with unbounded accumulation → **P2**
+
+**Note on iterate bodies:** Nested `iterate` bodies must each satisfy convergence independently. A parent SCC being PROVEN does not exempt a nested iterate body from its own proof obligation.
+
+### Frame 6: Counterfactual Outcome Test
+
+**Procedure:** For each tool node whose `tool_command` performs a state-mutating operation (file write, API call, database insert, external service invocation):
+1. Construct the counterfactual: if this tool node were removed from the pipeline, what is the observable downstream difference?
+2. Identify all downstream guard nodes — diamonds or verify tools that would catch a silent failure (a missing write, a dropped API response, an absent side-effect).
+3. Classify the guard coverage:
+   - **Direct guard**: a verify tool or diamond immediately downstream reads the artifact or response produced by the tool node and branches on its presence or correctness.
+   - **Transitive guard**: a later pipeline stage would eventually surface the failure, but not immediately (e.g., a final integration test that runs after N other nodes).
+   - **No guard**: the pipeline proceeds identically whether the tool node ran correctly or silently failed — the silent-failure-trap class.
+4. Emit a finding for every tool node in the no-guard class, and a lower-severity note for transitive-only coverage.
+
+**Severity:**
+- No direct guard (silent-failure trap) → **P1**
+- Transitive guard only (failure surfaces late) → **P2**
+
+**Example (impl_api_controller_seed):** If `impl_api_controller_seed` writes controller stubs and the next node is `verify_contract` (which reads those stubs), `verify_contract` is a direct guard — COVERED. If instead the next node is `run_full_e2e` (which may pass even with missing stubs if defaults exist), that is transitive-only → P2 finding.
+
+Validator rule promotion: When a Generative Audit Frame produces the same finding pattern across ≥3 distinct `.dot` files, that pattern is a candidate for promotion to a named validator rule. File an issue suggesting a new validator rule with the documented finding template. Auto-promotion is out of scope.
+
 ## Tier 1: Always Emit
 
 **0. Isolated Workspace Commit & Push** — **MANDATORY** when `workspace="isolated"`. Without this, all code is lost on cleanup. Place AFTER `verify_final` succeeds — `commit_and_push` runs exactly once on the success path, pushing only verified working code:
