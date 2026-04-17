@@ -83,7 +83,7 @@ const SKIP_REASON = !BUN_AVAILABLE
 test('every attractor context_on_*= / ATTRACTOR_CTX: key matches a registry entry', (t) => {
   if (SKIP_REASON) {
     console.log(`engine-keys-registry-coverage: ${SKIP_REASON}`);
-    t.skip(SKIP_REASON);
+    t.skip(SKIP_REASON); // SKIP: conditional — env prerequisite unavailable
     return;
   }
 

@@ -73,7 +73,7 @@ function frame5P0Findings(analyzerOutput, dotPath) {
 test('Frame 5 produces zero false-positive P0s on shipped attractor pipelines', (t) => {
   if (SKIP_REASON) {
     console.log(`plumbus-ci-pipeline-baseline: ${SKIP_REASON}`);
-    t.skip(SKIP_REASON);
+    t.skip(SKIP_REASON); // SKIP: conditional — env prerequisite unavailable
     return;
   }
 
