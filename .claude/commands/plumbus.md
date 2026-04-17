@@ -317,6 +317,67 @@ Examples:
 - `plumbus: tier1 — add commit_and_push to isolated workspace success path (Pattern 0)`
 - `plumbus: anti-pattern — remove reports_to_v self-retry on conformance_check`
 
+### Override 6: Generative Audit Pass (iteration 1, after Edge Walk)
+
+Run ONCE per plumbus session (iteration 1 only) — after Edge Walk (Override 2) completes and BEFORE the pattern catalog scan. Skip on subsequent iterations unless the graph fingerprint has changed (see Merge Discipline below).
+
+#### Invocation
+
+```bash
+node "$HOME/.claude/pickle-rick/extension/bin/plumbus-frame-analyzer.js" "${TARGET}" > "${SESSION_ROOT}/frame-analysis.json"
+```
+
+Exit 0 = full analysis; exit 2 = degraded mode (partial results still written — continue). Any other exit code = abort and record in TASK_NOTES `## Dead Ends`.
+
+#### Six-Frame Application Order
+
+Apply all six frames in sequence as specified in `pickle-dot-patterns.md § Generative Audit Frames`. Each frame produces findings keyed by `nodeId` and `key`.
+
+#### Write Discipline
+
+Write findings to `${SESSION_ROOT}/gap_analysis.md` under a `## Generative Findings` H2 section. Merge contract follows the Override 2 step 4 precedent (`plumbus.md:263`): "create if missing; prepend if existing — do NOT overwrite."
+
+**First run** (no `## Generative Findings` section exists):
+
+1. Run the analyzer.
+2. Create the `## Generative Findings` section.
+3. Write `<!-- graph-fingerprint: <sha256> -->` as the first line of the section body.
+4. Write `<!-- generative-audit-complete: false -->` as the second line.
+5. Append all frame findings beneath.
+
+On clean exit (all six frames applied without error): update the completion marker to `<!-- generative-audit-complete: true -->`.
+
+**Subsequent runs** — before invoking the analyzer, compute the current graph fingerprint (see algorithm below) and parse the stored fingerprint from `gap_analysis.md`:
+
+- Parser regex (exact): `^<!-- graph-fingerprint: ([a-f0-9]{64}) -->$`
+- Fingerprint match + `<!-- generative-audit-complete: true -->` → **SKIP** — do not re-run the analyzer.
+- Fingerprint match + `<!-- generative-audit-complete: false -->` → re-run (previous run was partial) — **MERGE** new results.
+- Fingerprint mismatch → re-run — **MERGE**: preserve findings whose `nodeId`/`key` still exists in the new frame-analysis output; drop stale findings; append new.
+
+NEVER overwrite the entire `## Generative Findings` section. Surgical merge only.
+
+#### Iteration-N Ordering Invariant
+
+When subsequent iterations DO run Override 6 (fingerprint mismatch or partial-run re-trigger), it runs in the SAME position as iteration 1: after Edge Walk (Override 2), before the pattern catalog scan. Do not defer it to the end of the loop.
+
+#### Graph Fingerprint Algorithm
+
+```
+sha256(JSON.stringify({
+  nodes: sortedNodeIds,
+  edges: sortedEdgeTripleList,
+  edgeAttrs: sortedEdgeAttributeMap
+}))
+```
+
+Where:
+- `sortedNodeIds` — all node IDs, sorted lexicographically.
+- `sortedEdgeTripleList` — all `[from, to, condition]` triples, sorted lexicographically (condition is `""` when absent).
+- `sortedEdgeAttributeMap` — map of `"from→to"` → sorted attribute key-value pairs.
+
+**Storage exclusivity**: the fingerprint is persisted ONLY in `gap_analysis.md`. Never write or cache it in the deployed extension tree (`~/.claude/pickle-rick/extension/**`).
+
+
 ### Standard Protocol
 
 For everything not covered by the overrides above — loading context, reading the handoff, making one change per iteration, and exiting cleanly — follow the Microverse Worker protocol (this template is invoked with the microverse.md base; the handoff is appended below).
