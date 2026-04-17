@@ -21,6 +21,40 @@ function discoverAttractor() {
     }
     return null;
 }
+function parseDotViaBun(targetDotAbsPath, attractorRoot) {
+    const bunCheck = spawnSync('bun', ['--version'], { encoding: 'utf-8' });
+    if (bunCheck.error || bunCheck.status !== 0) {
+        process.stderr.write(`${DIAG_PREFIX} bun not on PATH\n`);
+        process.exit(2);
+    }
+    const dumpGraphPath = path.join(attractorRoot, 'packages', 'attractor', 'scripts', 'dump-graph.ts');
+    if (!fs.existsSync(dumpGraphPath)) {
+        process.stderr.write(`${DIAG_PREFIX} dump-graph.ts not found at ${dumpGraphPath}\n`);
+        process.exit(2);
+    }
+    const result = spawnSync('bun', [dumpGraphPath, targetDotAbsPath], { encoding: 'utf-8' });
+    if (result.status !== 0) {
+        const firstLine = (result.stderr ?? '').split('\n')[0] ?? '';
+        process.stderr.write(`${DIAG_PREFIX} dump-graph.ts exited non-zero: ${firstLine}\n`);
+        process.exit(2);
+    }
+    let parsed;
+    try {
+        parsed = JSON.parse(result.stdout);
+    }
+    catch {
+        process.stderr.write(`${DIAG_PREFIX} dump-graph.ts stdout is not valid JSON\n`);
+        process.exit(2);
+    }
+    if (typeof parsed !== 'object' ||
+        parsed === null ||
+        !('nodes' in parsed) ||
+        !('edges' in parsed)) {
+        process.stderr.write(`${DIAG_PREFIX} dump-graph.ts output missing required top-level keys (nodes, edges)\n`);
+        process.exit(2);
+    }
+    return parsed;
+}
 function main() {
     const dotPath = process.argv[2];
     if (!dotPath) {
@@ -32,6 +66,7 @@ function main() {
         process.stderr.write(`${DIAG_PREFIX} attractor repo not found — set $ATTRACTOR_ROOT or re-run with --no-validator\n`);
         process.exit(2);
     }
+    parseDotViaBun(dotPath, attractor);
     const output = {
         context_keys: [],
         diamond_routing: [],

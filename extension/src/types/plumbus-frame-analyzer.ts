@@ -20,3 +20,11 @@ export interface AnalyzerOutput {
   diamond_routing: DiamondRoutingRow[];
   cycles: CycleRow[];
 }
+
+export type Node = Record<string, unknown>;
+export type Edge = Record<string, unknown>;
+
+export interface Graph {
+  nodes: Node[];
+  edges: Edge[];
+}

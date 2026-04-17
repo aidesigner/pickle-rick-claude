@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawnSync } from 'child_process';
-import type { AnalyzerOutput } from '../types/plumbus-frame-analyzer.js';
+import type { AnalyzerOutput, Graph } from '../types/plumbus-frame-analyzer.js';
 
 const PROBE = 'packages/attractor/src/cli.ts';
 const DIAG_PREFIX = 'plumbus-frame-analyzer:';
@@ -32,6 +32,47 @@ function discoverAttractor(): string | null {
   return null;
 }
 
+function parseDotViaBun(targetDotAbsPath: string, attractorRoot: string): Graph {
+  const bunCheck = spawnSync('bun', ['--version'], { encoding: 'utf-8' });
+  if (bunCheck.error || bunCheck.status !== 0) {
+    process.stderr.write(`${DIAG_PREFIX} bun not on PATH\n`);
+    process.exit(2);
+  }
+
+  const dumpGraphPath = path.join(attractorRoot, 'packages', 'attractor', 'scripts', 'dump-graph.ts');
+  if (!fs.existsSync(dumpGraphPath)) {
+    process.stderr.write(`${DIAG_PREFIX} dump-graph.ts not found at ${dumpGraphPath}\n`);
+    process.exit(2);
+  }
+
+  const result = spawnSync('bun', [dumpGraphPath, targetDotAbsPath], { encoding: 'utf-8' });
+  if (result.status !== 0) {
+    const firstLine = (result.stderr ?? '').split('\n')[0] ?? '';
+    process.stderr.write(`${DIAG_PREFIX} dump-graph.ts exited non-zero: ${firstLine}\n`);
+    process.exit(2);
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch {
+    process.stderr.write(`${DIAG_PREFIX} dump-graph.ts stdout is not valid JSON\n`);
+    process.exit(2);
+  }
+
+  if (
+    typeof parsed !== 'object' ||
+    parsed === null ||
+    !('nodes' in parsed) ||
+    !('edges' in parsed)
+  ) {
+    process.stderr.write(`${DIAG_PREFIX} dump-graph.ts output missing required top-level keys (nodes, edges)\n`);
+    process.exit(2);
+  }
+
+  return parsed as Graph;
+}
+
 function main(): void {
   const dotPath = process.argv[2];
   if (!dotPath) {
@@ -46,6 +87,8 @@ function main(): void {
     );
     process.exit(2);
   }
+
+  parseDotViaBun(dotPath, attractor);
 
   const output: AnalyzerOutput = {
     context_keys: [],
