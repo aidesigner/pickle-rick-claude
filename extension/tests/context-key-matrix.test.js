@@ -121,4 +121,40 @@ describe('buildContextKeyMatrix', () => {
     const matrix = buildContextKeyMatrix({ nodes: [], edges: [] }, BASE_REGISTRY);
     assert.deepStrictEqual(matrix, []);
   });
+
+  test('tool_command ATTRACTOR_CTX: write is discovered', () => {
+    const graph = {
+      nodes: [{ id: 'N1', tool_command: 'bun verify.ts && echo ATTRACTOR_CTX:category=foo' }],
+      edges: [],
+    };
+    const matrix = buildContextKeyMatrix(graph, BASE_REGISTRY);
+    assert.ok(matrix.find(r => r.key === 'category' && r.writers.includes('N1')));
+  });
+
+  test('prompt ${ATTRACTOR_CTX_*} read is discovered', () => {
+    const graph = {
+      nodes: [{ id: 'N1', prompt: 'use ${ATTRACTOR_CTX_PAYLOAD} for this step' }],
+      edges: [],
+    };
+    const matrix = buildContextKeyMatrix(graph, BASE_REGISTRY);
+    assert.ok(matrix.find(r => r.key === 'PAYLOAD' && r.readers.includes('N1')));
+  });
+
+  test('whitespace-tolerant write pattern matches ATTRACTOR_CTX: key = val', () => {
+    const graph = {
+      nodes: [{ id: 'N1', tool_command: 'echo ATTRACTOR_CTX: foo =bar' }],
+      edges: [],
+    };
+    const matrix = buildContextKeyMatrix(graph, BASE_REGISTRY);
+    assert.ok(matrix.find(r => r.key === 'foo'));
+  });
+
+  test('engine-key filter applies to regex-discovered tool_command write', () => {
+    const graph = {
+      nodes: [{ id: 'N1', tool_command: 'echo ATTRACTOR_CTX:outcome=ok' }],
+      edges: [],
+    };
+    const matrix = buildContextKeyMatrix(graph, BASE_REGISTRY);
+    assert.strictEqual(matrix.find(r => r.key === 'outcome'), undefined);
+  });
 });

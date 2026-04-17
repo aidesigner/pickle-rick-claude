@@ -1,5 +1,7 @@
 import { isEngineWritten } from './engine-keys-registry.js';
 const CONDITION_RE = /context\.(\w+)/;
+const TOOL_CMD_WRITE_RE = /ATTRACTOR_CTX:\s*(\w+)\s*=/g;
+const ATTRACTOR_CTX_READ_RE = /\$\{ATTRACTOR_CTX_(\w+)\}/g;
 function parseKeys(raw) {
     return raw
         .split(',')
@@ -35,6 +37,15 @@ export function buildContextKeyMatrix(graph, registry) {
             for (const key of ctxKeys.split(',').map(k => k.trim()).filter(Boolean)) {
                 addReader(key, id);
             }
+        }
+        for (const field of ['tool_command', 'prompt']) {
+            const val = node[field];
+            if (typeof val !== 'string')
+                continue;
+            for (const m of val.matchAll(TOOL_CMD_WRITE_RE))
+                addWriter(m[1], id);
+            for (const m of val.matchAll(ATTRACTOR_CTX_READ_RE))
+                addReader(m[1], id);
         }
     }
     for (const edge of graph.edges) {
