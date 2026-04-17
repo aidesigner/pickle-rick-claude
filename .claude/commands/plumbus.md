@@ -392,6 +392,76 @@ Where:
 **Storage exclusivity**: the fingerprint is persisted ONLY in `gap_analysis.md`. Never write or cache it in the deployed extension tree (`~/.claude/pickle-rick/extension/**`).
 
 
+### Override 7: A7 Worker Verification Protocol
+
+Run for every finding in `gap_analysis.md` that carries `analysis_mode: llm-only`. Skip for `analysis_mode: llm-assisted` (accepted tradeoff — llm-assisted findings are not re-verified by A7). Skip Frames 4 and 6 entirely — their verification is the built-in guardrails (Mode A/B/C gate for Frame 4, direct-vs-transitive-guard heuristic for Frame 6), not an extra A7 pass.
+
+#### Trigger
+
+A finding triggers A7 when its markdown block contains the literal line:
+
+```
+analysis_mode: llm-only
+```
+
+#### Per-Frame Re-Derivation Procedure
+
+For each triggered finding, re-derive the relevant set from the DOT file directly:
+
+**Frames 1 and 2 (context key matrix — writer/reader sets)**:
+1. Grep all nodes for `context_keys`, `context_on_success`, `context_on_failure`, and edge `condition` attributes that reference the key under analysis.
+2. Classify each node as writer (produces the key) or reader (consumes the key) using the same logic as the frame analyzer.
+3. Result: `verification_result = Set<nodeId>` of writers (Frame 1) or readers (Frame 2).
+
+**Frame 3 (diamond routing — cartesian cells)**:
+1. Identify the diamond node referenced by the finding.
+2. Re-enumerate all outgoing fork-labels (condition strings on fork edges) and all incoming join-labels (condition strings on join edges).
+3. Form the cartesian product: every `(fork-label, join-label)` pair.
+4. Result: `verification_result = Set<cellSignature>`.
+
+**Frame 5 (Tarjan SCC — cycle membership)**:
+1. Re-walk the full adjacency list for the graph.
+2. Run Tarjan's algorithm (or equivalent iterative DFS) to find the SCC containing the referenced node.
+3. Result: `verification_result = Set<nodeId>` (all nodes in that SCC).
+
+#### Structural Comparison (REQUIRED — string-literal comparison FORBIDDEN)
+
+Compare `verification_result` against `original.members` from the finding:
+
+```js
+const confirmed =
+  JSON.stringify([...verification_result].sort()) ===
+  JSON.stringify([...original.members].sort());
+```
+
+Order-sensitive comparison is FORBIDDEN. Case-sensitive matching is REQUIRED.
+
+#### Verdict and Output
+
+**Confirm** (sets match):
+- Set `post_verification_severity = pre_verification_severity` in the finding block.
+- No additional output required.
+
+**Disagree** (sets differ):
+- Set `post_verification_severity = P3` in the finding block.
+- Append a `### Verification disagreement` block immediately after the finding:
+
+```markdown
+### Verification disagreement
+
+- **Original members**: [N1, N3, N5]
+- **Verification result**: [N1, N3]
+- **Verdict**: disagree — post_verification_severity downgraded to P3
+```
+
+#### Determinism Invariant
+
+Two runs of A7 against the same DOT file against the same llm-only finding MUST produce identical verdicts. Re-derivation is a pure function of the DOT graph structure — no randomness, no LLM call, no file-system side effects beyond reading the DOT.
+
+#### A7 as Degraded-Mode Fallback (CUJ-6)
+
+When the companion analyzer exits with code 2 (partial results — degraded mode), all Frame 1/2/3/5 findings it could not score are tagged `analysis_mode: llm-only` and queued for A7. The worker MUST run the full A7 verification pass before emitting findings to `gap_analysis.md` in this case.
+
 ### Standard Protocol
 
 For everything not covered by the overrides above — loading context, reading the handoff, making one change per iteration, and exiting cleanly — follow the Microverse Worker protocol (this template is invoked with the microverse.md base; the handoff is appended below).
