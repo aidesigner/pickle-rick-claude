@@ -306,6 +306,93 @@ Apply these six frames in order during iteration-1 Edge Walk, before pattern cat
 
 **Example:** the `verify_gate_needs_both_context_paths` validator rule (added 2026-04-16) is one mechanical instance of this frame. The frame generalizes beyond gates to any node-pair coupling.
 
+### Frame 3: Edge Condition Exhaustiveness
+
+**Procedure:** For every diamond and every fan-out from a tool/codergen node with multiple outgoing `condition=` edges:
+1. Identify the set of context keys referenced in any outgoing edge condition.
+2. Enumerate the cartesian product of values each key has been observed taking (from `context_on_success`/`_on_failure` attrs anywhere in the graph, plus `outcome ∈ {success, fail}`, plus the implicit "unset" value).
+3. For each cell of the product, count matching edges:
+   - **0 matches** → stuck state. Pipeline halts at the diamond with "no outgoing edge."
+   - **1 match** → fine.
+   - **≥2 matches with same weight** → non-deterministic routing (engine picks first by insertion order, but author probably didn't realize).
+   - **≥2 matches with different weights** → fine, but worth annotating with intent in a comment.
+4. Emit a finding per stuck-state cell and per nondeterministic cell.
+
+**Severity:** Stuck states are **P0**. Nondeterministic routing is **P1**. Multi-match deterministic routing without comment is **P3**.
+
+**Cell signature deterministic hash** *(refined: requirements P0 A7 determinism)*: `cell_signature` in the cluster_key is a SHA-256 of the cartesian-cell's key-value pairs serialized as a sorted JSON array (sorted by key name, stable across runs).
+
+**Example (v9 trap):** `diamond_api_controller_mode` had edges:
+```
+-> impl_api_controller_patch [condition="context.artifact_api_controller=seeded", weight=2]
+-> impl_api_controller_seed  [condition="context.pool_count_reviewer_controller=empty"]
+```
+Cartesian product: `(artifact ∈ {unset, seeded, seed_failed}) × (pool_count ∈ {empty, non-empty})` = 6 cells.
+- `(unset, empty)` → 1 match (seed). OK.
+- `(unset, non-empty)` → 0 matches. STUCK.
+- `(seeded, empty)` → 2 matches with weight 2 vs default 1 → patch wins. The trap state.
+- `(seeded, non-empty)` → 2 matches → patch wins. Probably intended.
+- `(seed_failed, empty)` → 1 match (seed). OK.
+- `(seed_failed, non-empty)` → 0 matches. STUCK.
+
+The `(unset, non-empty)` and `(seed_failed, non-empty)` stuck-state cells were latent bugs the catalog wouldn't have flagged.
+
+### Frame 4: Tool Exit Code Semantics Audit
+
+**Procedure:** For every tool node:
+1. Classify the tool's intended purpose by inspecting `tool_command`, `reports_to_v`, downstream edges, and (where the script is in the local repo) the script's source:
+   - **Build/check tool**: exit 0 = pass, exit non-zero = real failure. Examples: `tsc --noEmit`, `npm test`, `eslint`.
+   - **Routing-signal tool**: writes `ATTRACTOR_CTX:<key>=...` to stdout; the downstream diamond consumes the key; exit code should be 0 unless the script itself crashed. Examples: `verify-contract.ts` (98 LOC), `verify-patches-landed.ts` (88 LOC), `verify-e2e-passes.ts` (62 LOC) — the real current cohort.
+   - **Scaffolding tool**: side-effect-only (creates files, runs migrations, installs deps). Exit code matters; output usually doesn't.
+2. Cross-reference the classification against the DOT's interpretation:
+   - Build/check tool with `retry_target` to a fix node → consistent.
+   - Routing-signal tool with `retry_target` to a fix node AND downstream `condition="context.<routing_key>=..."` edges → **inconsistent** (the routing path is unreachable when the script exits non-zero, which is exactly when the routing matters). The verify-contract.ts trap.
+   - Scaffolding tool with `reports_to_v` → suspect (scaffolding doesn't produce a convergence signal).
+3. For routing-signal tools, attempt to verify the script's actual exit-code semantics. Three modes, tried in order; the first one whose gates all pass wins. Every Frame 4 finding records which mode fired as its `confidence:` tag.
+   - **Mode A (`confidence: HIGH`)**: read the script and report actual semantics. Gates — ALL must hold:
+     - a. Script path resolves within the current working repo (not a remote URL, not a tool binary on PATH).
+     - b. File ≤ 200 LOC.
+     - c. ≤ 5 call sites to `process.exit()` / `exit()` / equivalent in the detected language.
+     - d. Exit codes are literal integers (no computed / variable exit codes).
+     - e. Language is one of: TypeScript, JavaScript, Python, Bash. (Extendable — pick languages the LLM can reliably trace.)
+   - **Mode B (`confidence: MEDIUM`)**: source unreachable or fails a Mode A gate, but `tool_command` contains heuristic hints. Recognized hints: chained `&& echo` / `|| echo` sentinels, `ATTRACTOR_CTX:<key>=` substrings embedded in `tool_command`, inline comments in the DOT adjacent to the tool node stating exit-code intent. LLM classifies heuristically using only these hints.
+   - **Mode C (`confidence: LOW`)**: neither source nor hints available. The LLM emits a finding of the form "script semantics unverified; reasoning from downstream wiring only" and reports whether the routing diamond has what it needs under *both* exit-0 and exit-nonzero cases. A Mode C finding is **not auto-actionable**; the worker flags it for manual investigation in `gap_analysis.md`.
+
+   **Gate-threshold grounding** *(refined: risk-scope R14)*: the current production cohort (98/88/62 LOC, all ≤ 5 exit calls) passes Mode A trivially. The 200-LOC gate was sized generously rather than tuned to the corpus; it remains authoritative until a real routing-signal script crosses 100 LOC, at which point the gate should be re-examined. Mode B / Mode C pedagogical examples require synthesized fixtures (A11) because no production script currently falls into them.
+
+   **Mode C finding body template** *(refined: requirements P1)*:
+
+   ```markdown
+   ### Frame 4: Tool Exit Code Semantics Audit
+   - **[P0 flagged manual-investigation]** `<tool_node>` — script semantics unverified; reasoning from downstream wiring only.
+     - **Analysis mode**: llm-only
+     - **Confidence**: LOW
+     - **Cluster key**: `(<tool_node>)`
+     - **pre_verification_severity**: P0 (manual investigation required)
+     - **post_verification_severity**: P0 (manual investigation required)
+     - Trace: script_path=<path>, reason=<mode-A gate that failed OR "path unreachable" OR "no source nor hints">, downstream_diamond=<diamond_node> reads keys=<[...]>, exit-0 behavior=<description>, exit-nonzero behavior=<description>.
+     - **Risk**: routing may be unreachable under exit-nonzero; manual script inspection required.
+     - **Suggested fix**: MANUAL — inspect `<script_path>` and confirm/correct DOT wiring.
+   ```
+
+   Log the gate outcome explicitly in `gap_analysis.md` so the rubric never looks authoritative when it's guessing:
+
+   ```markdown
+   #### Frame 4 attempt for verify-controller-routes.ts (illustrative)
+   - Script path resolved: ✓ (packages/attractor/scripts/verify-controller-routes.ts)
+   - Size: 204 LOC (limit 200) — ✗
+   - Exit call sites: 4 (limit 5) — ✓
+   - Mode A SKIPPED (size gate). Falling back to Mode B (heuristic).
+   - tool_command hints: none found in any current pipeline wiring this script.
+   - Falling back to Mode C.
+   - Confidence: LOW.
+   - Finding: routing unverified; flag for manual investigation.
+
+   *Note: this is the real state of this script (build/check tool, not routing-signal). For a Mode-B pedagogical example of a routing-signal tool with heuristic hints, see the fixture `extension/tests/__fixtures__/plumbus-frames/frame4-mode-b.dot` which wires a synthetic tool with `tool_command="bun verify-x.ts && echo ATTRACTOR_CTX:category=..."` to demonstrate the hint-based path.*
+   ```
+
+**Severity:** Routing-signal tool with conflicting wiring → **P0** at Mode A/B confidence; **P0 flagged manual-investigation** at Mode C. Build/check tool wired as routing-signal → **P0**. Suspect scaffolding `reports_to_v` → **P2**. Severity is independent of `confidence:` — low confidence means "verify before acting," not "downgrade the bug."
+
 ## Tier 1: Always Emit
 
 **0. Isolated Workspace Commit & Push** — **MANDATORY** when `workspace="isolated"`. Without this, all code is lost on cleanup. Place AFTER `verify_final` succeeds — `commit_and_push` runs exactly once on the success path, pushing only verified working code:
