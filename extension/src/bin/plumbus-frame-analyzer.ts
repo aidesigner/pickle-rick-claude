@@ -1,0 +1,67 @@
+#!/usr/bin/env node
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
+import { spawnSync } from 'child_process';
+import type { AnalyzerOutput } from '../types/plumbus-frame-analyzer.js';
+
+const PROBE = 'packages/attractor/src/cli.ts';
+const DIAG_PREFIX = 'plumbus-frame-analyzer:';
+
+function discoverAttractor(): string | null {
+  const envRoot = process.env.ATTRACTOR_ROOT;
+  if (envRoot && fs.existsSync(path.join(envRoot, PROBE))) {
+    return envRoot;
+  }
+
+  const relRoot = path.resolve(process.cwd(), '..', 'attractor');
+  if (fs.existsSync(path.join(relRoot, PROBE))) {
+    return relRoot;
+  }
+
+  const result = spawnSync(
+    'find',
+    [path.join(os.homedir(), 'loanlight'), '-maxdepth', '2', '-type', 'f', '-name', 'cli.ts', '-path', `*/${PROBE}`],
+    { encoding: 'utf8', timeout: 5000 },
+  );
+  const found = result.status === 0 ? result.stdout.split('\n').find(l => l.trim()) : undefined;
+  if (found) {
+    return path.dirname(path.dirname(path.dirname(path.dirname(found.trim()))));
+  }
+
+  return null;
+}
+
+function main(): void {
+  const dotPath = process.argv[2];
+  if (!dotPath) {
+    process.stderr.write(`${DIAG_PREFIX} missing required argument <target.dot>\n`);
+    process.exit(2);
+  }
+
+  const attractor = discoverAttractor();
+  if (!attractor) {
+    process.stderr.write(
+      `${DIAG_PREFIX} attractor repo not found — set $ATTRACTOR_ROOT or re-run with --no-validator\n`,
+    );
+    process.exit(2);
+  }
+
+  const output: AnalyzerOutput = {
+    context_keys: [],
+    diamond_routing: [],
+    cycles: [],
+  };
+
+  try {
+    process.stdout.write(JSON.stringify(output) + '\n');
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`${DIAG_PREFIX} failed to write output: ${msg}\n`);
+    process.exit(2);
+  }
+}
+
+if (process.argv[1] && path.basename(process.argv[1]) === 'plumbus-frame-analyzer.js') {
+  main();
+}
