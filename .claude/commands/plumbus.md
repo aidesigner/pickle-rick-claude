@@ -391,6 +391,56 @@ Where:
 
 **Storage exclusivity**: the fingerprint is persisted ONLY in `gap_analysis.md`. Never write or cache it in the deployed extension tree (`~/.claude/pickle-rick/extension/**`).
 
+### Finding Format
+
+Every raw finding written to `gap_analysis.md` MUST conform to this template (PRD A4):
+
+```markdown
+### Frame N: Frame Name
+- **[pre_verification_severity]** `nodeId(s)` — frame-specific finding statement.
+  - **Analysis mode**: mechanical | llm-assisted | llm-only
+  - **Confidence**: HIGH | MEDIUM | LOW  *(Frame 4 only)*
+  - **Finding subclass**: orphan_reader | orphan_writer | asymmetric_writer | multi_writer_conflict  *(Frame 1 only)*
+  - **Cluster key**: `<frame-declared tuple>`
+  - **pre_verification_severity**: Pn
+  - **post_verification_severity**: Pn  *(equals pre_ unless A7 disagreed)*
+  - **Trace**: <which keys/edges/states triggered this>
+  - **Risk**: <what could go wrong if unfixed>
+  - **Suggested fix**: <surgical proposed edit>
+```
+
+#### Per-element `analysis_mode` computation
+
+`analysis_mode` is computed **per finding, keyed off the specific graph element** — not per frame globally:
+
+- **Frame 1/2** findings about key K:
+  - `mechanical` — companion-script `context_keys` array contains a row for K with non-empty writers/readers AND the LLM applied no severity judgment beyond the frame's Severity Mapping.
+  - `llm-assisted` — row exists and the LLM applied judgment.
+  - `llm-only` — row is absent or empty (script did not cover this key).
+- **Frame 3** findings about diamond D: same rule, keyed on `diamond_routing[D]` row presence.
+- **Frame 5** findings about SCC S: same rule, keyed on `cycles[S]` row presence.
+- **Frames 4 and 6**: always `llm-only` by design.
+
+The enum is **closed**: `mechanical | llm-assisted | llm-only`. A finding tagged with a fourth value fails parse.
+
+#### Three-severity model
+
+Each finding carries three severity fields:
+
+| Field | Meaning |
+|---|---|
+| `pre_verification_severity` | Frame's raw verdict from its Severity Mapping. Recorded once per finding; **never modified after emission**. Independent of `analysis_mode`. |
+| `post_verification_severity` | Post-A7 severity. Equals `pre_verification_severity` unless A7 verification disagreed — in which case equals **P3**. The worker's priority queue consumes this field. |
+| `rendered_severity` | Severity displayed in emitted markdown: equals `pre_verification_severity` at the raw-finding bullet (`- **[Pn]**`); equals `max-by-impact(post_verification_severity)` across all cluster members in the cluster header's `**Cluster severity:**` line. |
+
+Max-by-impact ordering: **P0 > P1 > P2 > P3 > P4** (lower integer = higher severity). `max(P0, P1) = P0`.
+
+Helper: `maxSeverity(severities)` is exported from `extension/src/lib/severity.ts` — returns the highest-impact (lowest-integer) severity from an array; throws `TypeError` on unknown literals, throws `Error` on empty input.
+
+#### `## Generative Findings` heading level
+
+The section written to `gap_analysis.md` MUST be declared as H2 (`## Generative Findings`). H3 (`###`) or H4 (`####`) are invalid — the fingerprint parser and merge logic key on the exact H2 heading.
+
 
 ### Override 7: A7 Worker Verification Protocol
 

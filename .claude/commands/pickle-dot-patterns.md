@@ -272,6 +272,8 @@ Use this pattern when you have ≥4 distinct artifact files in the same package 
 
 Apply these six frames in order during iteration-1 Edge Walk, before pattern catalog scan. Each frame has Procedure, Output, Severity Mapping, Examples (one positive, one negative).
 
+> **Finding format canonical reference**: The raw-finding body template, per-element `analysis_mode` computation, and three-severity model (`pre_verification_severity` / `post_verification_severity` / `rendered_severity`) are specified in `plumbus.md § Finding Format` (inside Override 6). That section is the single source of truth for finding structure; the frames below specify only what to look for and how to score it.
+
 ### Frame 1: Context Key Lifecycle Trace
 
 **Procedure:**
