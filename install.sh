@@ -16,6 +16,7 @@ node --version >/dev/null 2>&1    || { echo "❌ node not found on PATH"; exit 1
 jq --version >/dev/null 2>&1     || { echo "❌ jq not found on PATH"; exit 1; }
 rsync --version >/dev/null 2>&1  || { echo "❌ rsync not found on PATH"; exit 1; }
 claude --version >/dev/null 2>&1 || echo "⚠️  claude CLI not on PATH (needed at runtime for worker spawning)"
+bun --version >/dev/null 2>&1    || echo "WARNING: bun not found. Plumbus generative audit is running in degraded mode. Install bun for full analysis."
 [ -f "$SETTINGS_FILE" ]          || { echo "❌ ~/.claude/settings.json not found. Run 'claude' at least once first."; exit 1; }
 jq . "$SETTINGS_FILE" >/dev/null 2>&1 || { echo "❌ settings.json is not valid JSON"; exit 1; }
 [ -d "$SCRIPT_DIR/extension" ]   || { echo "❌ extension/ not found. Are you running from the repo root?"; exit 1; }
@@ -105,6 +106,7 @@ mkdir -p "$SCRIPT_DIR/node_modules/.bin"
 ln -sf "$SCRIPT_DIR/extension/node_modules/.bin/tsc" "$SCRIPT_DIR/node_modules/.bin/tsc"
 chmod +x "$EXTENSION_ROOT/extension/bin/dot-builder-cli.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/dot-builder.js"
+chmod +x "$EXTENSION_ROOT/extension/bin/plumbus-frame-analyzer.js"
 chmod +x "$EXTENSION_ROOT/extension/scripts/tmux-monitor.sh"
 
 # --- INTERNAL TEMPLATES (hidden from slash command list) ---
