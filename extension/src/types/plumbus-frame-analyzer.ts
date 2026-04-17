@@ -6,8 +6,8 @@ export interface ContextKeyRow {
 
 export interface DiamondRoutingRow {
   diamond: string;
-  covered_states: Array<Record<string, string>>;
-  stuck_states: Array<Record<string, string>>;
+  covered_states: Array<{ cell: Record<string, string>; matchingEdges: string[] }>;
+  stuck_states: Array<{ cell: Record<string, string>; matchingEdges: string[]; note?: string }>;
 }
 
 export interface CycleRow {
