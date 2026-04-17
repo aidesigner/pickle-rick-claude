@@ -63,6 +63,17 @@ test('getExtensionRoot: defaults to ~/.claude/pickle-rick', () => {
     }
 });
 
+test('pipeline-runner: spawn targets are under extension/bin/, never directly under extensionRoot/bin/', () => {
+    // Regression guard for the /pickle-pipeline MODULE_NOT_FOUND crash: the runner
+    // must build node-spawn paths as `extensionRoot/extension/bin/<script>` to match
+    // the install layout (install.sh:61 rsyncs src into $EXTENSION_ROOT/extension/).
+    const pipelineJsPath = path.join(import.meta.dirname, '..', 'bin', 'pipeline-runner.js');
+    const src = fs.readFileSync(pipelineJsPath, 'utf-8');
+    const stale = src.match(/path\.join\(\s*extensionRoot\s*,\s*['"]bin['"]/g);
+    assert.equal(stale, null,
+        `pipeline-runner.js has ${stale?.length} callsite(s) joining extensionRoot with 'bin' directly — must go through 'extension/bin/'`);
+});
+
 // --- extractFrontmatter ---
 
 test('extractFrontmatter: extracts valid frontmatter', () => {

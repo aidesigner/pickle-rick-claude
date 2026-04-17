@@ -150,6 +150,15 @@ export function runCmd(
   }
 }
 
+/**
+ * Returns the pickle-rick **package root** — `~/.claude/pickle-rick` — which
+ * holds `pickle_settings.json`, `persona.md`, `szechuan-sauce-*-principles.md`,
+ * `debug.log`, `templates/`, and the `extension/` code tree as a subdirectory.
+ *
+ * To reach the compiled JS (hooks/, services/, bin/), callers must join
+ * `'extension'` themselves: `path.join(getExtensionRoot(), 'extension', 'bin', 'xxx.js')`.
+ * The name is historical — it predates the `extension/` subdirectory layout.
+ */
 export function getExtensionRoot(): string {
   return process.env.EXTENSION_DIR || path.join(os.homedir(), '.claude/pickle-rick');
 }

@@ -210,7 +210,7 @@ function setupAnatomyPark(sessionDir, target, stallLimit, extensionRoot, log) {
     });
     try {
         execFileSync('node', [
-            path.join(extensionRoot, 'bin', 'init-microverse.js'),
+            path.join(extensionRoot, 'extension', 'bin', 'init-microverse.js'),
             sessionDir, target,
             '--stall-limit', String(runnerStallLimit),
             '--convergence-mode', 'worker',
@@ -294,7 +294,7 @@ function setupSzechuanSauce(sessionDir, target, stallLimit, extensionRoot, domai
     // microverse.json — LLM-judged convergence to 0 (archive from previous phase)
     archiveFile(sessionDir, 'microverse.json', 'pre-szechuan');
     const initArgs = [
-        path.join(extensionRoot, 'bin', 'init-microverse.js'),
+        path.join(extensionRoot, 'extension', 'bin', 'init-microverse.js'),
         sessionDir, target,
         '--stall-limit', String(stallLimit),
         '--convergence-target', '0',
@@ -404,7 +404,7 @@ export async function main(sessionDir) {
             // instead of transitioning to the deprecated meeseeks review loop.
             sm.update(statePath, s => { s.chain_meeseeks = false; });
             exitCode = await spawnRunner('node', [
-                path.join(extensionRoot, 'bin', 'mux-runner.js'), sessionDir,
+                path.join(extensionRoot, 'extension', 'bin', 'mux-runner.js'), sessionDir,
             ]);
         }
         else if (phase === 'anatomy-park') {
@@ -417,7 +417,7 @@ export async function main(sessionDir) {
                 continue;
             }
             exitCode = await spawnRunner('node', [
-                path.join(extensionRoot, 'bin', 'microverse-runner.js'), sessionDir,
+                path.join(extensionRoot, 'extension', 'bin', 'microverse-runner.js'), sessionDir,
             ]);
         }
         else if (phase === 'szechuan-sauce') {
@@ -430,7 +430,7 @@ export async function main(sessionDir) {
                 continue;
             }
             exitCode = await spawnRunner('node', [
-                path.join(extensionRoot, 'bin', 'microverse-runner.js'), sessionDir,
+                path.join(extensionRoot, 'extension', 'bin', 'microverse-runner.js'), sessionDir,
             ]);
         }
         else {
