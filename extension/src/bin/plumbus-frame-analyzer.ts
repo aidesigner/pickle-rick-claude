@@ -4,6 +4,8 @@ import * as path from 'path';
 import * as os from 'os';
 import { spawnSync } from 'child_process';
 import type { AnalyzerOutput, Graph } from '../types/plumbus-frame-analyzer.js';
+import { loadEngineKeysRegistry } from '../lib/engine-keys-registry.js';
+import { buildContextKeyMatrix } from '../lib/context-key-matrix.js';
 
 const PROBE = 'packages/attractor/src/cli.ts';
 const DIAG_PREFIX = 'plumbus-frame-analyzer:';
@@ -88,10 +90,11 @@ function main(): void {
     process.exit(2);
   }
 
-  parseDotViaBun(dotPath, attractor);
+  const graph = parseDotViaBun(dotPath, attractor);
+  const registry = loadEngineKeysRegistry();
 
   const output: AnalyzerOutput = {
-    context_keys: [],
+    context_keys: buildContextKeyMatrix(graph, registry),
     diamond_routing: [],
     cycles: [],
   };
