@@ -47,6 +47,7 @@ async function main() {
     const extensionDir = getExtensionRoot();
     let inputData;
     try {
+        // eslint-disable-next-line pickle/no-sync-in-async -- stdin read (fd 0) has no async alternative
         inputData = fs.readFileSync(0, 'utf8');
     }
     catch {
@@ -67,6 +68,7 @@ async function main() {
     }
     // Feature flag: enable_config_protection (default true — missing flag = enabled)
     try {
+        // eslint-disable-next-line pickle/no-sync-in-async -- feature-flag read before async work begins
         const flagSettings = JSON.parse(fs.readFileSync(path.join(extensionDir, 'pickle_settings.json'), 'utf-8'));
         if (flagSettings.enable_config_protection === false) {
             approve();

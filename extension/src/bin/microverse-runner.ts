@@ -442,6 +442,7 @@ export async function main(sessionDir: string): Promise<void> {
   // Feature flag: enable_failure_classification (default true)
   let enableFailureClassification = true;
   try {
+    // eslint-disable-next-line pickle/no-sync-in-async -- settings read before async work begins
     const settings = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
     if (settings.enable_failure_classification === false) enableFailureClassification = false;
   } catch { /* default true */ }
