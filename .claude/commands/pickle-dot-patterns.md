@@ -268,6 +268,44 @@ Why it works:
 
 Use this pattern when you have ≥4 distinct artifact files in the same package whose contracts can be checked mechanically. For ≤3 files, the god-node pattern is fine (with `allow_multi_retry_target=true`).
 
+## Generative Audit Frames
+
+Apply these six frames in order during iteration-1 Edge Walk, before pattern catalog scan. Each frame has Procedure, Output, Severity Mapping, Examples (one positive, one negative).
+
+### Frame 1: Context Key Lifecycle Trace
+
+**Procedure:**
+1. Load the engine-injected key registry (`extension/data/engine-injected-keys.json`, A6). Every key that matches `engine_keys` literally or `engine_key_patterns` as a glob is classified as **engine-written** and skipped by the orphan-writer / asymmetry checks — the engine handler is its writer. Keys matching `user_written_patterns` (e.g. `artifact_*`) are **explicitly included** in the symmetry check: they're author-convention writes, not engine writes, and the whole point of the frame is to catch the asymmetric ones.
+2. Build a writer/reader matrix for every remaining context key referenced in the graph. Sources of writes: `context_on_success` attrs, `context_on_failure` attrs, `ATTRACTOR_CTX:<key>=...` lines in `tool_command` text (supplemental regex pass — the attractor parser treats tool_command as opaque text; see §Companion script architecture). Sources of reads: edge `condition="context.<key>=<value>"` clauses, `context_keys=` attrs on codergen nodes, `ATTRACTOR_CTX_<key>` references inside `tool_command` strings, prompt body text mentioning `${ATTRACTOR_CTX_*}`.
+3. For every key in the matrix, classify:
+   - **Orphan reader** (read by ≥1 edge or attr, never written): the key will always be undefined → that edge never fires → silent dead routing.
+   - **Orphan writer** (written by ≥1 attr, never read): wasted state, OR the author intended a reader and forgot it → the routing they wanted doesn't exist.
+   - **Asymmetric writer** (written on success path but never written on the failure path the diamond can reach): the silent-success-trap class.
+   - **Multi-writer with conflicting values** (two `context_on_success` attrs on different nodes write the same key with different values): non-deterministic routing depending on which node ran last.
+4. Emit findings per orphan/asymmetric/multi-writer key.
+
+**Severity:**
+- Orphan reader on a `condition=` edge → **P1** (anti-pattern: dead routing edge).
+- Asymmetric writer where the un-written branch is reachable from a `retry_target` loop → **P0** (silent-success trap class).
+- Orphan writer → **P3** (cleanup opportunity, may indicate missing reader).
+- Multi-writer conflict → **P1**.
+
+**Example (v9 trap):**
+- `artifact_api_controller` had writers: `impl_api_controller_seed.context_on_success`, `impl_api_controller_patch.context_on_success`. Reader: `diamond_api_controller_mode → impl_api_controller_patch [condition="context.artifact_api_controller=seeded"]`. Asymmetric — no writer on the failure path of `gate_controller_routes` (gate's `retry_target` returned to the diamond, which still saw `seeded` → looped on patch). The fix added `gate_controller_routes.context_on_failure="artifact_api_controller=seed_failed"`.
+
+### Frame 2: Success/Failure Symmetry
+
+**Procedure:** For every node `N`:
+1. Enumerate the state-mutating attrs `N` carries: `context_on_success`, `context_on_failure`, `commit_and_push`, `escalate_on`, `reports_to_v` writes, plus `ATTRACTOR_CTX:` writes from its tool output.
+2. For each attr, ask: "If `N` reaches the **opposite** outcome (success→fail or fail→success), and the next graph traversal depends on the state this attr writes, what unwinds it?"
+3. If nothing unwinds it AND a downstream routing edge depends on the state, file a finding.
+
+**Heuristic shortcut:** any node with `context_on_success` whose key matches a downstream `condition="context.<key>=<value>"` MUST also have either `context_on_failure` writing a non-matching value OR a downstream node whose `context_on_failure` writes a non-matching value.
+
+**Severity:** **P0** when the asymmetric state participates in a `retry_target` loop or `iterate` body routing. **P2** otherwise.
+
+**Example:** the `verify_gate_needs_both_context_paths` validator rule (added 2026-04-16) is one mechanical instance of this frame. The frame generalizes beyond gates to any node-pair coupling.
+
 ## Tier 1: Always Emit
 
 **0. Isolated Workspace Commit & Push** — **MANDATORY** when `workspace="isolated"`. Without this, all code is lost on cleanup. Place AFTER `verify_final` succeeds — `commit_and_push` runs exactly once on the success path, pushing only verified working code:
