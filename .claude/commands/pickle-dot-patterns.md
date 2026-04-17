@@ -140,6 +140,134 @@ ladder_advance_on="rollback"
 - Gate tool_commands that check specific file paths should match the impl prompt's file contract
 - Non-iterate codergen with unbounded fidelity need `context_keys` if they have retry_target
 
+## Recent Validator Changes (2026-04-17)
+
+Live debugging of `benchmark-backends-v9.dot` exposed three more structural traps and one missing routing pattern. Each cost a multi-hour pipeline run before the fix landed. Read this section before authoring any per-artifact iterate body.
+
+**1. NEW rule: `reviewer_lens_valid`** (ERROR severity)
+
+`reviewer_lens` attr on review/honest_review nodes must be one of `backend | frontend | integration`. Older rubric drafts referred to `backend_tests` and similar — those are dead. The validator rejects them now. Lens drives prompt template selection in the harness; an unrecognized value silently falls back to a generic reviewer prompt and the lens-specific findings disappear from the pool.
+
+**2. NEW anti-pattern: silent-success trap on per-artifact gates** (no rule yet — author defensively)
+
+Per-artifact gates that route via diamond MUST set `context_on_failure` to undo the diamond's `seeded` flag. Otherwise a silently-successful seed (hermes/claude-code returns exit 0 with no file written — known failure mode) flips `artifact_X=seeded`, the diamond locks onto the patch edge forever, the patch correctly no-ops on empty pool, the gate fails on missing file, and the loop burns the entire retry budget without ever re-running the seed.
+
+```
+// BAD — gate has no failure path; silent-success seed → unrecoverable loop
+gate_controller_routes [
+  shape=parallelogram,
+  tool_command="bun verify-controller-routes.ts /repos/<wp>/...",
+  retry_target="diamond_api_controller_mode"
+  // missing both context_on_success AND context_on_failure
+]
+
+// GOOD — gate undoes the seeded flag on failure so diamond falls back to seed
+gate_controller_routes [
+  shape=parallelogram,
+  tool_command="bun verify-controller-routes.ts /repos/<wp>/...",
+  retry_target="diamond_api_controller_mode",
+  context_on_success="artifact_api_controller=seeded",
+  context_on_failure="artifact_api_controller=seed_failed"
+]
+```
+
+The `verify_gate_needs_both_context_paths` validator rule will ERROR if you set one and not the other — both paths must be wired or neither. The diamond's patch edge is gated on `context.artifact_X=seeded`, so any value other than `seeded` (e.g. `seed_failed`) routes back to the seed branch.
+
+**3. Contract-verify scripts must `exit 0` on a clean run**
+
+When a verify script's exit code is consumed by the engine for routing (success → `verify_patches_landed → route_contract_violation`), the script must NOT exit 1 on the thing it's measuring. Instead, write `ATTRACTOR_CTX:<key>=<value>` to stdout and exit 0; the downstream diamond reads the key and routes by category. Reserve exit 1 for actual script crashes (bad args, parse failure, filesystem error).
+
+Concrete case: `verify-contract.ts` originally exited 1 when violations were found, defeating the entire `route_contract_violation` design (which routes per-category to the correct fix diamond). Treat verify scripts that drive `route_*` diamonds as "always-exit-0" by default.
+
+**4. Anti-pattern: `outcome=fail` edge on a diamond node** (no rule yet — author defensively)
+
+Diamonds ALWAYS return SUCCESS — the conditional handler exists to select an outgoing edge based on context, not to short-circuit failures. Edges with `condition="outcome=fail"` from a diamond are dead code; they will never fire. For outcome-based routing, route directly from the upstream tool/codergen with `condition="outcome=success|fail"` edges and skip the diamond.
+
+```
+// BAD — outcome=fail edge on a diamond is unreachable
+some_tool -> some_diamond [condition="outcome=success"]
+some_diamond -> recover_node [condition="outcome=fail"]   // dead
+
+// GOOD — outcome routing belongs on the tool's outgoing edges
+some_tool -> next_node    [condition="outcome=success"]
+some_tool -> recover_node [condition="outcome=fail"]
+```
+
+**5. NEW rule: `codergen_prompt_requires_workspace_anchor`** (WARNING severity)
+
+Codergen prompts that reference relative project paths (`packages/`, `src/`, `lib/`) without an anchor phrase ("working directory", "relative to", "workspace", "cwd", "/repos/") trip this rule. Without an anchor, the model's cwd assumption can drift to `~/.claude/<project>/` (host bleed), `/tmp/`, or any prior session's path. Prepend "All paths below are relative to the working directory." to long codergen prompts that name relative paths.
+
+**6. UPDATED rule: `hermes_prompt_absolute_paths`** (ERROR severity)
+
+The original "hermes writes to $HOME on absolute paths" hypothesis was wrong — the real failure mode was hermes session memory poisoning. The rule now exempts prompts that include workspace anchor phrases, since an anchored prompt is unambiguous. If your prompt says "All paths below are relative to the working directory" near the top, absolute path mentions in the body are fine.
+
+**7. Schema additions** — these landed for v9 and should be in your toolbox:
+
+| Attribute | On node type | Purpose |
+|:--|:--|:--|
+| `max_drift_iterations` (int, default 0 = disabled) | iterate | Halt the iterate handler when the last N iterations all have `V_total > minV + drift_tolerance`. Catches plateau-and-drift cases the fresh-regression gate ignores. Validator rule `iterate_body_with_pool_needs_drift_detection` requires this on iterate bodies that have honest_review or adversary nodes. |
+| `drift_tolerance` (int, default 0) | iterate | Slack above minV before a row counts as drifting. v9 uses `max_drift_iterations=2, drift_tolerance=15`. Validator rule `max_drift_less_than_max_iterations` enforces `max_drift_iterations < max_iterations`. |
+| `context_on_failure` (string `key=value`) | tool, codergen | Mirror of `context_on_success` for the failure path. Critical for per-artifact gates (see #2). `ATTRACTOR_CTX:` lines from stdout still take precedence. |
+| `reviewer_lens` (enum: `backend\|frontend\|integration`) | review, honest_review | Drives prompt template selection in the reviewer harness. See #1. |
+| `ladder_advance_on` (csv subset of `rollback,drift,stall`) | impl codergen with `model_ladder` | Currently only `rollback` is dispatched; `drift` and `stall` are accepted for forward compatibility. |
+| `allow_in_run_prompt_patch` (bool, default false) | iterate / retry_target gate | Reserved for the diagnose-and-route meta-agent (`docs/prd/self-healing-diagnose-route.md`) — not yet wired. Author NEVER sets to true today. |
+
+**8. NEW Pattern: Per-Artifact Decomposition for Iterate Bodies**
+
+The v9 architecture replaces a god-node `fix_backend` (which can't hold the full scope of all error categories simultaneously) with one diamond → seed/patch → gate chain per file. Each artifact (entity, dtos, service, controller, module, tests, ui_types, ui_lib, ...) has the same structure:
+
+```
+diamond_api_<X>_mode [shape=diamond]
+
+impl_api_<X>_seed [
+  class="impl",
+  harness="hermes",
+  model="minimax/minimax-m2.7",
+  model_ladder="minimax/minimax-m2.7,minimax/minimax-m2.7,xiaomi/mimo-v2-pro,x-ai/grok-4.20,google/gemini-3.1-pro-preview",
+  ladder_advance_on="rollback",
+  retry_target="diamond_api_<X>_mode",
+  context_on_success="artifact_api_<X>=seeded",
+  context_on_failure="artifact_api_<X>=seed_failed",
+  prompt="All paths below are relative to the working directory. Create packages/api/src/...; specify exact STRICT MODE idioms (! on non-nullable, ?: on nullable); reference TS error codes if applicable."
+]
+
+impl_api_<X>_patch [
+  class="impl",
+  harness="hermes",
+  model="minimax/minimax-m2.7",
+  model_ladder="...",
+  retry_target="diamond_api_<X>_mode",
+  context_keys="__pool_findings__,__last_failure_output,__fix_attempt_history",
+  prompt="Update packages/api/src/...; read pool_findings filtered to source='reviewer_<X>'; HARD RULE: empty pool → return immediately with NO changes; emit PATCHES: [...] as last line."
+]
+
+gate_<artifact_check> [
+  shape=parallelogram,
+  tool_command="bun /app/packages/attractor/scripts/verify-<X>.ts /repos/<wp>/...",
+  reports_to_v="mechanical.typecheck",
+  max_retries=0,
+  retry_target="diamond_api_<X>_mode",
+  context_on_success="artifact_api_<X>=seeded",
+  context_on_failure="artifact_api_<X>=seed_failed"
+]
+
+// Edges
+diamond_api_<X>_mode -> impl_api_<X>_patch [condition="context.artifact_api_<X>=seeded", weight=2]
+diamond_api_<X>_mode -> impl_api_<X>_seed [condition="context.pool_count_reviewer_<X>=empty"]
+impl_api_<X>_seed  -> gate_<artifact_check> [condition="outcome=success"]
+impl_api_<X>_patch -> gate_<artifact_check> [condition="outcome=success"]
+gate_<artifact_check> -> diamond_api_<next>_mode [condition="outcome=success"]
+```
+
+Why it works:
+- Each impl is small enough that one model can hold the full scope (no cross-category regression like the god-node fix_backend pattern).
+- The diamond routes to `_patch` once `artifact_X=seeded` (handles iterations 2+); routes to `_seed` first time (or after `seed_failed` flip from a gate failure — see #2).
+- The gate is a **semantic** check (field count, route count, subset, eq), NOT a per-file `tsc --noEmit` (which trips `per_artifact_tsc_retry_loop` because tsc errors have non-local root causes).
+- Each phase's gate must pass before moving to the next artifact's diamond — prevents downstream artifacts being built on a broken upstream.
+- The whole chain is wrapped by `route_contract_violation` later in the iterate body, which can re-enter any per-artifact diamond on a contract category match (cross-file constraint failures).
+
+Use this pattern when you have ≥4 distinct artifact files in the same package whose contracts can be checked mechanically. For ≤3 files, the god-node pattern is fine (with `allow_multi_retry_target=true`).
+
 ## Tier 1: Always Emit
 
 **0. Isolated Workspace Commit & Push** — **MANDATORY** when `workspace="isolated"`. Without this, all code is lost on cleanup. Place AFTER `verify_final` succeeds — `commit_and_push` runs exactly once on the success path, pushing only verified working code:
