@@ -10,7 +10,9 @@
       "mcp__gitnexus__list_repos",
       "mcp__gitnexus__query",
       "Bash(node:*)",
-      "Bash(tmux:*)"
+      "Bash(tmux:*)",
+      "Edit(.claude/commands/**)",
+      "Write(.claude/commands/**)"
     ]
   }
 }

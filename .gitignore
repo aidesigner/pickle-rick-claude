@@ -2,6 +2,7 @@ node_modules/
 *.log
 *.dot
 !extension/tests/__fixtures__/*.dot
+!extension/tests/__fixtures__/**/*.dot
 extension/src/types/attractor-schema.ts
 extension/types/attractor-schema.ts
 .DS_Store
