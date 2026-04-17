@@ -230,6 +230,7 @@ describe('BDD: Edge labels are properly escaped', () => {
 describe('BDD: Phase flag options propagate to DOT node attributes', () => {
     test('securityScan phase gets class=review', () => {
         const result = buildWithPhases({}, [
+            validPhase('impl'),
             { name: 'secscan', prompt: 'Run security audit. Output STATUS: findings.', allowedPaths: ['src/'], securityScan: true },
         ]);
         // securityScan phase gets class=review with read_only=true
@@ -690,11 +691,12 @@ describe('BDD: thread_id topology', () => {
 
     test('securityScan phase node gets thread_id', () => {
         const r = buildWithPhases({}, [
+            validPhase('impl'),
             validPhase('vuln_scan', 'Scan for vulnerabilities. Output STATUS: SUCCESS | FAIL.', { securityScan: true, dependsOn: [] }),
         ]);
         const attrs = getNodeAttrs(r.dot, 'vuln_scan');
         assert.ok(attrs, 'vuln_scan should exist');
-        assert.equal(attrs.thread_id, 'phase_1');
+        assert.equal(attrs.thread_id, 'phase_2');
     });
 });
 

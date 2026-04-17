@@ -169,11 +169,14 @@ describe('PhaseSpec type contract', () => {
     assert.ok(result.diagnostics.some(d => d.message === 'prompt is required'));
   });
 
-  it('rejects missing allowedPaths', () => {
+  it('accepts missing allowedPaths — preflight enforces this at build() time', () => {
+    // PhaseSpec.validate deliberately does not flag missing allowedPaths —
+    // the MISSING_ALLOWED_PATHS check is owned by DotBuilder.build() preflight
+    // (services/dot-builder.js: "allowedPaths validated by preflight"),
+    // so a fix/impl/refactor node without allowedPaths fails at build time, not validate time.
     const phase = { name: 'impl', prompt: 'do it' };
     const result = PhaseSpec.validate(phase);
-    assert.equal(result.valid, false);
-    assert.ok(result.diagnostics.some(d => d.rule === 'MISSING_ALLOWED_PATHS'));
+    assert.equal(result.valid, true);
   });
 
   it('accepts dependsOn as string array', () => {
@@ -602,7 +605,7 @@ describe('ValidationResult type contract', () => {
 });
 
 // ---------------------------------------------------------------------------
-// (8) BuildErrorCode is a union of 22 string literals
+// (8) BuildErrorCode is a union of string literals
 // ---------------------------------------------------------------------------
 describe('BuildErrorCode type contract', () => {
   const expectedCodes = [
@@ -614,14 +617,15 @@ describe('BuildErrorCode type contract', () => {
     'WORKSPACE_NO_HTTPS', 'WORKSPACE_NO_PUSH', 'PLAN_MODE_DEADLOCK',
     'MISSING_ALLOWED_PATHS', 'INVALID_SPEC',
     'INVALID_TIMEOUT', 'INVALID_ALLOWED_PATHS',
+    'DUPLICATE_MODEL', 'INVALID_CONVERGENCE_SPEC',
   ];
 
   it('BuildErrorCode export exists and is an array', () => {
     assert.ok(Array.isArray(BuildErrorCode), 'BuildErrorCode should be an array');
   });
 
-  it('contains exactly 24 error codes', () => {
-    assert.equal(BuildErrorCode.length, 24, `expected 24 codes, got ${BuildErrorCode.length}`);
+  it('contains exactly 26 error codes', () => {
+    assert.equal(BuildErrorCode.length, 26, `expected 26 codes, got ${BuildErrorCode.length}`);
   });
 
   it('contains all expected codes', () => {
