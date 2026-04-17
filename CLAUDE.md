@@ -57,6 +57,12 @@ Before creating a release, run the full lint and test gate from `extension/`: `n
 | types/index.js | Shared types: State, errors (StateError/LockError/TransactionError), PromiseTokens, activity events |
 | meeseeks.md | Setup + per-pass review template |
 
+## Environment Variables
+
+| Variable | Values | Effect |
+|---|---|---|
+| `PLUMBUS_GENERATIVE_AUDIT` | `"off"` | Kill-switch: bypasses Override 6 entirely — no analyzer invocation, no `## Generative Findings` written, logs `"generative_audit: skipped (kill-switch)"` to `state.json.activity` |
+
 <!-- gitnexus:start -->
 # GitNexus MCP
 

@@ -321,6 +321,20 @@ Examples:
 
 Run ONCE per plumbus session (iteration 1 only) — after Edge Walk (Override 2) completes and BEFORE the pattern catalog scan. Skip on subsequent iterations unless the graph fingerprint has changed (see Merge Discipline below).
 
+#### Kill-Switch
+
+Before invoking the analyzer, check the kill-switch. If **either** condition is true:
+- Environment variable `PLUMBUS_GENERATIVE_AUDIT` equals `"off"` (case-sensitive, exact match), OR
+- The worker was invoked with the `--no-generative` flag:
+
+Then:
+1. **Skip** the analyzer invocation entirely.
+2. **Do NOT** write the `## Generative Findings` section.
+3. Append one entry to `state.json.activity`: `"generative_audit: skipped (kill-switch)"`.
+4. Proceed directly from Edge Walk to the pattern catalog scan (Override 3).
+
+Any value other than `"off"` (including `"false"`, `"0"`, absent) means the kill-switch is **off** — Override 6 runs normally.
+
 #### Invocation
 
 ```bash
