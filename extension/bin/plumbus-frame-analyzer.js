@@ -6,6 +6,7 @@ import { spawnSync } from 'child_process';
 import { loadEngineKeysRegistry } from '../lib/engine-keys-registry.js';
 import { buildContextKeyMatrix } from '../lib/context-key-matrix.js';
 import { buildDiamondRouting } from '../lib/diamond-routing.js';
+import { buildCycles } from '../lib/tarjan-scc.js';
 const PROBE = 'packages/attractor/src/cli.ts';
 const DIAG_PREFIX = 'plumbus-frame-analyzer:';
 function discoverAttractor() {
@@ -74,7 +75,7 @@ function main() {
     const output = {
         context_keys: buildContextKeyMatrix(graph, registry),
         diamond_routing: buildDiamondRouting(graph),
-        cycles: [],
+        cycles: buildCycles(graph),
     };
     try {
         process.stdout.write(JSON.stringify(output) + '\n');
