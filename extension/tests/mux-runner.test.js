@@ -1620,44 +1620,163 @@ test('classifyTicketCompletion: returns skipped on log read failure (nonexistent
     assert.equal(classifyTicketCompletion('/nonexistent/log/file.log', '/nonexistent/dir'), 'skipped');
 });
 
-test('classifyTicketCompletion: returns completed when uncommitted git changes detected', () => {
+// Helper: initialize a git repo in `dir` with one commit so later diffs are meaningful.
+function initGitRepo(dir) {
+    spawnSync('git', ['init'], { cwd: dir });
+    spawnSync('git', ['config', 'user.email', 'test@test.com'], { cwd: dir });
+    spawnSync('git', ['config', 'user.name', 'Test'], { cwd: dir });
+    fs.writeFileSync(path.join(dir, 'initial.txt'), 'initial');
+    spawnSync('git', ['add', '.'], { cwd: dir });
+    spawnSync('git', ['commit', '-m', 'init', '--no-gpg-sign'], { cwd: dir });
+}
+
+test('classifyTicketCompletion: uncommitted git changes + lifecycle artifact → completed', () => {
     const tmpDir = makeTmpRoot();
     try {
-        // Create a real git repo with uncommitted changes
-        spawnSync('git', ['init'], { cwd: tmpDir });
-        spawnSync('git', ['config', 'user.email', 'test@test.com'], { cwd: tmpDir });
-        spawnSync('git', ['config', 'user.name', 'Test'], { cwd: tmpDir });
-        fs.writeFileSync(path.join(tmpDir, 'initial.txt'), 'initial');
-        spawnSync('git', ['add', '.'], { cwd: tmpDir });
-        spawnSync('git', ['commit', '-m', 'init', '--no-gpg-sign'], { cwd: tmpDir });
-        // Create uncommitted change
+        initGitRepo(tmpDir);
         fs.writeFileSync(path.join(tmpDir, 'initial.txt'), 'modified');
+
+        const ticketDir = path.join(tmpDir, 'ticket-a');
+        fs.mkdirSync(ticketDir);
+        fs.writeFileSync(path.join(ticketDir, 'research_2026-04-18.md'), 'research output');
 
         const logFile = path.join(tmpDir, 'test_iter.log');
         fs.writeFileSync(logFile, 'no tokens here\n');
-        assert.equal(classifyTicketCompletion(logFile, tmpDir), 'completed');
+        assert.equal(
+            classifyTicketCompletion(logFile, tmpDir, ticketDir, 'implementation'),
+            'completed'
+        );
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
 
-test('classifyTicketCompletion: returns completed when staged git changes detected', () => {
+test('classifyTicketCompletion: staged git changes + lifecycle artifact → completed', () => {
     const tmpDir = makeTmpRoot();
     try {
-        // Create a real git repo with staged changes
-        spawnSync('git', ['init'], { cwd: tmpDir });
-        spawnSync('git', ['config', 'user.email', 'test@test.com'], { cwd: tmpDir });
-        spawnSync('git', ['config', 'user.name', 'Test'], { cwd: tmpDir });
-        fs.writeFileSync(path.join(tmpDir, 'initial.txt'), 'initial');
-        spawnSync('git', ['add', '.'], { cwd: tmpDir });
-        spawnSync('git', ['commit', '-m', 'init', '--no-gpg-sign'], { cwd: tmpDir });
-        // Create staged change
+        initGitRepo(tmpDir);
         fs.writeFileSync(path.join(tmpDir, 'initial.txt'), 'staged change');
         spawnSync('git', ['add', '.'], { cwd: tmpDir });
 
+        const ticketDir = path.join(tmpDir, 'ticket-b');
+        fs.mkdirSync(ticketDir);
+        fs.writeFileSync(path.join(ticketDir, 'plan_2026-04-18.md'), 'plan output');
+
         const logFile = path.join(tmpDir, 'test_iter.log');
         fs.writeFileSync(logFile, 'no tokens here\n');
-        assert.equal(classifyTicketCompletion(logFile, tmpDir), 'completed');
+        assert.equal(
+            classifyTicketCompletion(logFile, tmpDir, ticketDir, 'implementation'),
+            'completed'
+        );
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+// --- Ghost-ticket prevention (issue #3) ---
+
+test('classifyTicketCompletion: dirty tree but no ticketDir → skipped (ghost guard)', () => {
+    const tmpDir = makeTmpRoot();
+    try {
+        initGitRepo(tmpDir);
+        fs.writeFileSync(path.join(tmpDir, 'initial.txt'), 'stray change from another ticket');
+
+        const logFile = path.join(tmpDir, 'test_iter.log');
+        fs.writeFileSync(logFile, 'no tokens, no artifacts\n');
+        // Before the fix: unscoped git diff alone → completed (ghost).
+        // After the fix: no ticketDir → skipped.
+        assert.equal(classifyTicketCompletion(logFile, tmpDir), 'skipped');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('classifyTicketCompletion: dirty tree + empty ticketDir → skipped (ghost guard)', () => {
+    const tmpDir = makeTmpRoot();
+    try {
+        initGitRepo(tmpDir);
+        fs.writeFileSync(path.join(tmpDir, 'initial.txt'), 'stray change');
+
+        const ticketDir = path.join(tmpDir, 'ticket-empty');
+        fs.mkdirSync(ticketDir);
+
+        const logFile = path.join(tmpDir, 'test_iter.log');
+        fs.writeFileSync(logFile, 'no tokens here\n');
+        assert.equal(
+            classifyTicketCompletion(logFile, tmpDir, ticketDir, 'implementation'),
+            'skipped'
+        );
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('classifyTicketCompletion: artifact present, clean tree → completed (non-git corroboration)', () => {
+    const tmpDir = makeTmpRoot();
+    try {
+        const ticketDir = path.join(tmpDir, 'ticket-c');
+        fs.mkdirSync(ticketDir, { recursive: true });
+        fs.writeFileSync(path.join(ticketDir, 'research_2026-04-18.md'), 'research output');
+
+        const logFile = path.join(tmpDir, 'test_iter.log');
+        fs.writeFileSync(logFile, 'no tokens here\n');
+        // No git repo at workingDir — runCmd throws, caught, falls through
+        // to the default 'completed' since artifact exists.
+        assert.equal(
+            classifyTicketCompletion(logFile, '/nonexistent/not-a-repo', ticketDir, 'implementation'),
+            'completed'
+        );
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('classifyTicketCompletion: review artifact with implementation role → skipped', () => {
+    const tmpDir = makeTmpRoot();
+    try {
+        const ticketDir = path.join(tmpDir, 'ticket-mismatch');
+        fs.mkdirSync(ticketDir, { recursive: true });
+        fs.writeFileSync(path.join(ticketDir, 'review_scope.md'), 'review scope');
+
+        const logFile = path.join(tmpDir, 'test_iter.log');
+        fs.writeFileSync(logFile, 'no tokens here\n');
+        assert.equal(
+            classifyTicketCompletion(logFile, '/nonexistent/dir', ticketDir, 'implementation'),
+            'skipped'
+        );
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('classifyTicketCompletion: review artifact with review role → completed', () => {
+    const tmpDir = makeTmpRoot();
+    try {
+        const ticketDir = path.join(tmpDir, 'ticket-review');
+        fs.mkdirSync(ticketDir, { recursive: true });
+        fs.writeFileSync(path.join(ticketDir, 'review_findings.md'), 'findings');
+
+        const logFile = path.join(tmpDir, 'test_iter.log');
+        fs.writeFileSync(logFile, 'no tokens here\n');
+        assert.equal(
+            classifyTicketCompletion(logFile, '/nonexistent/dir', ticketDir, 'review'),
+            'completed'
+        );
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('classifyTicketCompletion: token present overrides missing artifact', () => {
+    const tmpDir = makeTmpRoot();
+    try {
+        const logFile = path.join(tmpDir, 'test_iter.log');
+        fs.writeFileSync(logFile, 'output <promise>TASK_COMPLETED</promise>\n');
+        // No ticketDir, no artifacts, but token is strong evidence — still completed.
+        assert.equal(
+            classifyTicketCompletion(logFile, '/nonexistent/dir'),
+            'completed'
+        );
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

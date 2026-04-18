@@ -12,7 +12,7 @@ import {
   parseTicketFrontmatter,
 } from '../services/pickle-utils.js';
 import { spawn } from 'child_process';
-import { PromiseTokens, hasToken, Defaults } from '../types/index.js';
+import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact } from '../types/index.js';
 import { updateTicketStatus } from '../services/git-utils.js';
 
 const TIER_MODEL_MAP: Record<string, string> = {
@@ -358,7 +358,30 @@ For simple file/string lookups, Grep/Glob are still fine.`;
           const msg = safeErrorMessage(err);
           console.error(`${Style.YELLOW}⚠️  Could not read worker log: ${msg}${Style.RESET}`);
         }
-        const isSuccess = !timedOut && hasToken(logContent, PromiseTokens.WORKER_DONE);
+        // Ghost-ticket prevention: Morty can exit 0 with empty log when the
+        // subprocess fails silently (auth/network/rate-limit before first token).
+        // Require three orthogonal signals: WORKER_DONE token, non-trivial log
+        // output, AND at least one lifecycle artifact in the ticket dir.
+        // Fail-closed on readdir error.
+        const role = isReviewTicket ? 'review' : 'implementation';
+        let ticketFiles: string[] = [];
+        try {
+          ticketFiles = fs.readdirSync(ticketPath);
+        } catch { /* fail-closed → hasLifecycleArtifact returns false on [] */ }
+        const tokenPresent = hasToken(logContent, PromiseTokens.WORKER_DONE);
+        const logNonTrivial = logContent.length > 200;
+        const hasArtifact = hasLifecycleArtifact(ticketFiles, role);
+        const isSuccess = !timedOut && tokenPresent && logNonTrivial && hasArtifact;
+
+        if (!isSuccess) {
+          const reasons = [
+            timedOut ? 'timeout' : null,
+            !tokenPresent ? 'no WORKER_DONE token' : null,
+            !logNonTrivial ? `log ${logContent.length}B < 200B` : null,
+            !hasArtifact ? `no ${role} lifecycle artifact` : null,
+          ].filter(Boolean).join(', ');
+          console.error(`${Style.RED}Worker validation failed: ${reasons}${Style.RESET}`);
+        }
 
         // Update ticket frontmatter so monitor/status reflect the outcome
         if (isSuccess) {

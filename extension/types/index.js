@@ -65,6 +65,22 @@ export function hasToken(text, token) {
 export function wrapToken(token) {
     return `<promise>${token}</promise>`;
 }
+// Prefixes written by the Morty worker prompts (send-to-morty.md and
+// send-to-morty-review.md). A ticket with at least one matching `.md` file in
+// its directory is evidence the lifecycle actually ran.
+export const ARTIFACT_PREFIXES = {
+    implementation: ['research', 'plan', 'conformance', 'code_review'],
+    review: ['review_scope', 'review_findings', 'spec_conformance'],
+};
+/**
+ * True when `files` contains at least one lifecycle artifact for `role`.
+ * Matches exact `${prefix}.md` (e.g. `review_scope.md`) or `${prefix}_*.md`
+ * (e.g. `research_2026-04-18.md`, `plan_review.md`). Pure — caller does readdir.
+ */
+export function hasLifecycleArtifact(files, role) {
+    const prefixes = ARTIFACT_PREFIXES[role];
+    return files.some(f => prefixes.some(p => f === `${p}.md` || f.startsWith(`${p}_`)));
+}
 // ---------------------------------------------------------------------------
 // Activity Events
 // ---------------------------------------------------------------------------

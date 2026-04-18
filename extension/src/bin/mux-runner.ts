@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, runCmd, safeErrorMessage } from '../services/pickle-utils.js';
-import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, type RateLimitInfo, type IterationExitResult, type RateLimitAction } from '../types/index.js';
+import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, hasLifecycleArtifact, type RateLimitInfo, type IterationExitResult, type RateLimitAction, type WorkerRole } from '../types/index.js';
 import { StateManager } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, type CircuitBreakerState } from '../services/circuit-breaker.js';
@@ -218,30 +218,38 @@ export function classifyCompletion(output: string): 'task_completed' | 'review_c
 
 /**
  * Post-hoc safety net: validates whether a ticket was actually completed
- * before marking it Done. Checks for TASK_COMPLETED promise token in the
- * iteration log, then falls back to git diff checks for evidence of work.
- * Never throws — fails safe to 'skipped'.
+ * before marking it Done. TASK_COMPLETED token is strong evidence. Otherwise
+ * require a ticket-scoped lifecycle artifact — unscoped git diff alone is a
+ * ghost source (changes from any other ticket in the tree pass). Never throws.
  */
 export function classifyTicketCompletion(
   iterLogFile: string,
-  workingDir: string
+  workingDir: string,
+  ticketDir?: string,
+  role: WorkerRole = 'implementation'
 ): 'completed' | 'skipped' {
-  // 1. Check iteration log for TASK_COMPLETED promise token
   try {
     const logContent = fs.readFileSync(iterLogFile, 'utf-8');
     const assistantContent = extractAssistantContent(logContent);
     if (hasToken(assistantContent, PromiseTokens.TASK_COMPLETED)) return 'completed';
-  } catch { /* log file unreadable — fall through to git check */ }
+  } catch { /* log file unreadable — fall through */ }
 
-  // 2. Three-signal git check (mirrors circuit-breaker.ts:227-236)
+  if (!ticketDir) return 'skipped';
+  let files: string[];
+  try { files = fs.readdirSync(ticketDir); } catch { return 'skipped'; }
+  if (!hasLifecycleArtifact(files, role)) return 'skipped';
+
+  // Artifact exists — corroborate with git diff. Artifacts alone are
+  // sufficient because the worker wrote them during its lifecycle, but a
+  // dirty tree is a stronger signal that code actually changed.
   try {
     const uncommitted = runCmd(['git', 'diff', '--stat'], { cwd: workingDir, check: false });
     if (uncommitted.length > 0) return 'completed';
     const staged = runCmd(['git', 'diff', '--stat', '--cached'], { cwd: workingDir, check: false });
     if (staged.length > 0) return 'completed';
-  } catch { /* not a git repo or git unavailable — rely on token only */ }
+  } catch { /* not a git repo — artifact alone suffices */ }
 
-  return 'skipped';
+  return 'completed';
 }
 
 /**
@@ -913,7 +921,9 @@ async function main() {
         } else {
           // Drift scenario: model changed current_ticket without following protocol
           const ticketWorkingDir = prevTicketInfo?.working_dir || state.working_dir || process.cwd();
-          const verdict = classifyTicketCompletion(iterLogFile, ticketWorkingDir);
+          const prevTicketDir = path.join(sessionDir, previousTicket);
+          const role: WorkerRole = prevTicketInfo?.type === 'review' ? 'review' : 'implementation';
+          const verdict = classifyTicketCompletion(iterLogFile, ticketWorkingDir, prevTicketDir, role);
           if (verdict === 'completed') {
             if (markTicketDone(sessionDir, previousTicket)) {
               log(`Marked ticket ${previousTicket} as Done (validated: evidence found)`);
