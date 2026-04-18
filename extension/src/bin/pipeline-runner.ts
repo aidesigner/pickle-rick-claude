@@ -27,6 +27,7 @@ import {
   printMinimalPanel,
   safeErrorMessage,
 } from '../services/pickle-utils.js';
+import { isWorkingTreeDirty } from '../services/git-utils.js';
 import { logActivity } from '../services/activity-logger.js';
 
 const sm = new StateManager();
@@ -125,6 +126,23 @@ export function discoverSubsystems(target: string): { name: string; fileCount: n
   }
 
   return subsystems.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// ---------------------------------------------------------------------------
+// Pre-flight: Clean Working Tree
+// ---------------------------------------------------------------------------
+
+/**
+ * Pipelines run long and span multiple phases. Starting with a dirty tree
+ * masks which phase introduced which change — downstream microverse phases
+ * would otherwise auto-commit the user's pre-existing work under a generic
+ * message. Fail fast so the user makes that call deliberately.
+ */
+export function assertCleanWorkingTree(workingDir: string): void {
+  if (!isWorkingTreeDirty(workingDir)) return;
+  throw new Error(
+    `Working tree at ${workingDir} is dirty. Commit, stash, or discard changes before starting the pipeline (git status).`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -420,6 +438,11 @@ export async function main(sessionDir: string): Promise<void> {
     throw new Error(`Cannot read state.json: ${safeErrorMessage(err)}`);
   }
   const workingDir = state.working_dir || process.cwd();
+
+  // Pre-flight: refuse to start on a dirty tree. Downstream phases auto-commit
+  // on their own, which would roll the user's unrelated WIP into a pipeline
+  // commit and obscure which phase changed what.
+  assertCleanWorkingTree(workingDir);
 
   const startTime = Date.now();
   let completedPhases = 0;

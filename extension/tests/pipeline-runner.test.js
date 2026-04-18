@@ -1,5 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -9,6 +10,7 @@ import {
   cleanPhaseArtifacts,
   resetStateForPhase,
   parsePipelineConfig,
+  assertCleanWorkingTree,
 } from '../bin/pipeline-runner.js';
 
 function tmpDir() {
@@ -545,5 +547,44 @@ describe('parsePipelineConfig', () => {
   test('passes through unvalidated phase names (current behavior)', () => {
     const config = parsePipelineConfig({ phases: ['pickle', 'bogus', 42], target: '/tmp' });
     assert.deepEqual(config.phases, ['pickle', 'bogus', 42]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// assertCleanWorkingTree
+// ---------------------------------------------------------------------------
+
+function initRepo(dir) {
+  execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: dir });
+  execFileSync('git', ['config', 'user.email', 'test@test.local'], { cwd: dir });
+  execFileSync('git', ['config', 'user.name', 'Test'], { cwd: dir });
+  execFileSync('git', ['config', 'commit.gpgsign', 'false'], { cwd: dir });
+  fs.writeFileSync(path.join(dir, 'README.md'), 'seed');
+  execFileSync('git', ['add', 'README.md'], { cwd: dir });
+  execFileSync('git', ['commit', '-q', '-m', 'seed'], { cwd: dir });
+}
+
+describe('assertCleanWorkingTree', () => {
+  test('passes on a clean repo', () => {
+    const dir = tmpDir();
+    initRepo(dir);
+    assert.doesNotThrow(() => assertCleanWorkingTree(dir));
+    fs.rmSync(dir, { recursive: true });
+  });
+
+  test('throws on untracked files', () => {
+    const dir = tmpDir();
+    initRepo(dir);
+    fs.writeFileSync(path.join(dir, 'scratch.txt'), 'wip');
+    assert.throws(() => assertCleanWorkingTree(dir), /dirty/);
+    fs.rmSync(dir, { recursive: true });
+  });
+
+  test('throws on unstaged modifications', () => {
+    const dir = tmpDir();
+    initRepo(dir);
+    fs.writeFileSync(path.join(dir, 'README.md'), 'changed');
+    assert.throws(() => assertCleanWorkingTree(dir), /dirty/);
+    fs.rmSync(dir, { recursive: true });
   });
 });
