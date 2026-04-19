@@ -193,6 +193,63 @@ export function buildTicketLines(tickets, currentTicketId, budget) {
     }
     return out;
 }
+function readTailUtf8(filePath, maxBytes) {
+    const { size } = fs.statSync(filePath);
+    const readStart = Math.max(0, size - maxBytes);
+    if (readStart === 0)
+        return fs.readFileSync(filePath, 'utf-8');
+    const buf = Buffer.allocUnsafe(size - readStart);
+    const fd = fs.openSync(filePath, 'r');
+    try {
+        fs.readSync(fd, buf, 0, buf.length, readStart);
+    }
+    finally {
+        fs.closeSync(fd);
+    }
+    const raw = buf.toString('utf-8');
+    const firstNewline = raw.indexOf('\n');
+    return firstNewline !== -1 ? raw.slice(firstNewline + 1) : raw;
+}
+export function readPipelineLifecycle(sessionDir) {
+    const pipelinePath = path.join(sessionDir, 'pipeline.json');
+    if (!fs.existsSync(pipelinePath))
+        return 'none';
+    const statusPath = path.join(sessionDir, 'pipeline-status.json');
+    try {
+        const raw = JSON.parse(fs.readFileSync(statusPath, 'utf-8'));
+        if (raw.status === 'running' ||
+            raw.status === 'completed' ||
+            raw.status === 'failed' ||
+            raw.status === 'cancelled') {
+            return raw.status;
+        }
+    }
+    catch {
+        // Fall back to the runner log for older sessions without pipeline-status.json.
+    }
+    const runnerLogPath = path.join(sessionDir, 'pipeline-runner.log');
+    try {
+        const tail = readTailUtf8(runnerLogPath, 8192);
+        if (tail.includes('Pipeline finished:'))
+            return 'completed';
+        if (tail.includes('shutting down pipeline'))
+            return 'cancelled';
+        if (tail.includes('pipeline-runner started'))
+            return 'running';
+    }
+    catch {
+        // No runner log yet — treat as in-progress until proven terminal.
+    }
+    return 'unknown';
+}
+export function shouldMonitorExit(sessionDir, active) {
+    if (active)
+        return false;
+    const lifecycle = readPipelineLifecycle(sessionDir);
+    if (lifecycle === 'none')
+        return true;
+    return lifecycle === 'completed' || lifecycle === 'failed' || lifecycle === 'cancelled';
+}
 function countRows(segments) {
     let n = 0;
     for (const s of segments) {
@@ -303,26 +360,7 @@ function render(sessionDir) {
             // which can grow to multi-MB during long sessions. 64KB is more than
             // enough to capture the last 10 NDJSON lines.
             const TAIL_BYTES = 65536;
-            const { size } = fs.statSync(logPath);
-            const readStart = Math.max(0, size - TAIL_BYTES);
-            let tail;
-            if (readStart === 0) {
-                tail = fs.readFileSync(logPath, 'utf-8');
-            }
-            else {
-                const buf = Buffer.allocUnsafe(size - readStart);
-                const fd = fs.openSync(logPath, 'r');
-                try {
-                    fs.readSync(fd, buf, 0, buf.length, readStart);
-                }
-                finally {
-                    fs.closeSync(fd);
-                }
-                // Drop first partial line from mid-file read
-                const raw = buf.toString('utf-8');
-                const firstNewline = raw.indexOf('\n');
-                tail = firstNewline !== -1 ? raw.slice(firstNewline + 1) : raw;
-            }
+            const tail = readTailUtf8(logPath, TAIL_BYTES);
             const summaryLines = tail
                 .split('\n')
                 .filter((l) => l.trim())
@@ -382,7 +420,7 @@ async function main() {
         if (!active) {
             await sleep(3000);
             const stillInactive = !render(sessionDir);
-            if (stillInactive) {
+            if (stillInactive && shouldMonitorExit(sessionDir, false)) {
                 process.stdout.write(`\n${MX.BRIGHT}◤ SESSION COMPLETE ◢${MX.R}\n`);
                 break;
             }

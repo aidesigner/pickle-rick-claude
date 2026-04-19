@@ -49,6 +49,17 @@ interface PipelineConfig {
   szechuan_max_iterations: number;
 }
 
+type PipelineStatusKind = 'running' | 'completed' | 'failed' | 'cancelled';
+
+interface PipelineStatus {
+  status: PipelineStatusKind;
+  current_phase: PipelinePhase | null;
+  completed_phases: number;
+  skipped_phases: number;
+  total_phases: number;
+  updated_at: string;
+}
+
 // ---------------------------------------------------------------------------
 // Config Parsing
 // ---------------------------------------------------------------------------
@@ -159,6 +170,22 @@ function spawnRunner(cmd: string, args: string[]): Promise<number> {
     child.on('exit', (code) => { if (!settled) { settled = true; activeChild = null; resolve(code ?? 1); } });
     child.on('error', (err) => { if (!settled) { settled = true; activeChild = null; reject(err); } });
   });
+}
+
+export function writePipelineStatus(
+  sessionDir: string,
+  status: PipelineStatusKind,
+  details: Partial<Omit<PipelineStatus, 'status' | 'updated_at'>> = {},
+): void {
+  const payload: PipelineStatus = {
+    status,
+    current_phase: details.current_phase ?? null,
+    completed_phases: details.completed_phases ?? 0,
+    skipped_phases: details.skipped_phases ?? 0,
+    total_phases: details.total_phases ?? 0,
+    updated_at: new Date().toISOString(),
+  };
+  fs.writeFileSync(path.join(sessionDir, 'pipeline-status.json'), JSON.stringify(payload, null, 2));
 }
 
 // ---------------------------------------------------------------------------
@@ -456,6 +483,14 @@ export async function main(sessionDir: string): Promise<void> {
   const handleShutdown = (signal: string) => {
     log(`Received ${signal} — shutting down pipeline`);
     try { fs.writeFileSync(cancelMarker, signal); } catch { /* best effort */ }
+    try {
+      writePipelineStatus(sessionDir, 'cancelled', {
+        current_phase: null,
+        completed_phases: completedPhases,
+        skipped_phases: skippedPhases,
+        total_phases: config.phases.length,
+      });
+    } catch { /* best effort */ }
     if (activeChild && !activeChild.killed) activeChild.kill('SIGTERM');
     logActivity({ event: 'session_end', source: 'pickle', session: path.basename(sessionDir), mode: 'tmux' });
     process.exit(1);
@@ -463,6 +498,13 @@ export async function main(sessionDir: string): Promise<void> {
   process.on('SIGTERM', () => handleShutdown('SIGTERM'));
   process.on('SIGINT', () => handleShutdown('SIGINT'));
   process.on('SIGHUP', () => handleShutdown('SIGHUP'));
+
+  writePipelineStatus(sessionDir, 'running', {
+    current_phase: null,
+    completed_phases: 0,
+    skipped_phases: 0,
+    total_phases: config.phases.length,
+  });
 
   for (let i = 0; i < config.phases.length; i++) {
     const phase = config.phases[i];
@@ -476,6 +518,13 @@ export async function main(sessionDir: string): Promise<void> {
       Phase: phaseLabel,
       Target: config.target || workingDir,
     }, 'CYAN', '🧪');
+
+    writePipelineStatus(sessionDir, 'running', {
+      current_phase: phase,
+      completed_phases: completedPhases,
+      skipped_phases: skippedPhases,
+      total_phases: config.phases.length,
+    });
 
     let exitCode: number;
 
@@ -494,7 +543,17 @@ export async function main(sessionDir: string): Promise<void> {
         sessionDir, config.target || workingDir,
         config.anatomy_stall_limit, extensionRoot, log,
       );
-      if (!setupOk) { skippedPhases++; log(`Phase ${phase} skipped (setup returned false)`); continue; }
+      if (!setupOk) {
+        skippedPhases++;
+        writePipelineStatus(sessionDir, 'running', {
+          current_phase: null,
+          completed_phases: completedPhases,
+          skipped_phases: skippedPhases,
+          total_phases: config.phases.length,
+        });
+        log(`Phase ${phase} skipped (setup returned false)`);
+        continue;
+      }
 
       exitCode = await spawnRunner('node', [
         path.join(extensionRoot, 'extension', 'bin', 'microverse-runner.js'), sessionDir,
@@ -508,7 +567,17 @@ export async function main(sessionDir: string): Promise<void> {
         config.szechuan_stall_limit, extensionRoot,
         config.szechuan_domain, config.szechuan_focus, log,
       );
-      if (!setupOk) { skippedPhases++; log(`Phase ${phase} skipped (setup returned false)`); continue; }
+      if (!setupOk) {
+        skippedPhases++;
+        writePipelineStatus(sessionDir, 'running', {
+          current_phase: null,
+          completed_phases: completedPhases,
+          skipped_phases: skippedPhases,
+          total_phases: config.phases.length,
+        });
+        log(`Phase ${phase} skipped (setup returned false)`);
+        continue;
+      }
 
       exitCode = await spawnRunner('node', [
         path.join(extensionRoot, 'extension', 'bin', 'microverse-runner.js'), sessionDir,
@@ -530,6 +599,12 @@ export async function main(sessionDir: string): Promise<void> {
     }
 
     completedPhases++;
+    writePipelineStatus(sessionDir, 'running', {
+      current_phase: null,
+      completed_phases: completedPhases,
+      skipped_phases: skippedPhases,
+      total_phases: config.phases.length,
+    });
 
     // Check for cancellation (signal handler writes this marker)
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
@@ -581,6 +656,12 @@ export async function main(sessionDir: string): Promise<void> {
   // Explicit exit code so callers can detect pipeline failure.
   // Skipped phases (e.g. no subsystems for anatomy-park) are not failures.
   const pipelineFailed = (completedPhases + skippedPhases) < config.phases.length;
+  writePipelineStatus(sessionDir, pipelineFailed ? 'failed' : 'completed', {
+    current_phase: null,
+    completed_phases: completedPhases,
+    skipped_phases: skippedPhases,
+    total_phases: config.phases.length,
+  });
   process.exit(pipelineFailed ? 1 : 0);
 }
 
@@ -591,6 +672,9 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'pipeline-runner.js') 
     process.exit(1);
   }
   main(sessionDir).catch((err) => {
+    try {
+      writePipelineStatus(sessionDir, 'failed');
+    } catch { /* best effort */ }
     const msg = safeErrorMessage(err);
     console.error(`${Style.RED}[FATAL] ${msg}${Style.RESET}`);
     process.exit(1);

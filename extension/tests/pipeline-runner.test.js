@@ -11,6 +11,7 @@ import {
   resetStateForPhase,
   parsePipelineConfig,
   assertCleanWorkingTree,
+  writePipelineStatus,
 } from '../bin/pipeline-runner.js';
 
 function tmpDir() {
@@ -585,6 +586,27 @@ describe('assertCleanWorkingTree', () => {
     initRepo(dir);
     fs.writeFileSync(path.join(dir, 'README.md'), 'changed');
     assert.throws(() => assertCleanWorkingTree(dir), /dirty/);
+    fs.rmSync(dir, { recursive: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// writePipelineStatus
+// ---------------------------------------------------------------------------
+
+describe('writePipelineStatus', () => {
+  test('writes pipeline-status.json with defaults and metadata', () => {
+    const dir = tmpDir();
+    writePipelineStatus(dir, 'running', { current_phase: 'pickle', total_phases: 3 });
+
+    const status = JSON.parse(fs.readFileSync(path.join(dir, 'pipeline-status.json'), 'utf-8'));
+    assert.equal(status.status, 'running');
+    assert.equal(status.current_phase, 'pickle');
+    assert.equal(status.completed_phases, 0);
+    assert.equal(status.skipped_phases, 0);
+    assert.equal(status.total_phases, 3);
+    assert.ok(typeof status.updated_at === 'string' && status.updated_at.length > 0);
+
     fs.rmSync(dir, { recursive: true });
   });
 });

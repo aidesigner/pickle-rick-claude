@@ -139,6 +139,17 @@ function spawnRunner(cmd, args) {
         } });
     });
 }
+export function writePipelineStatus(sessionDir, status, details = {}) {
+    const payload = {
+        status,
+        current_phase: details.current_phase ?? null,
+        completed_phases: details.completed_phases ?? 0,
+        skipped_phases: details.skipped_phases ?? 0,
+        total_phases: details.total_phases ?? 0,
+        updated_at: new Date().toISOString(),
+    };
+    fs.writeFileSync(path.join(sessionDir, 'pipeline-status.json'), JSON.stringify(payload, null, 2));
+}
 // ---------------------------------------------------------------------------
 // State Transitions
 // ---------------------------------------------------------------------------
@@ -399,6 +410,15 @@ export async function main(sessionDir) {
             fs.writeFileSync(cancelMarker, signal);
         }
         catch { /* best effort */ }
+        try {
+            writePipelineStatus(sessionDir, 'cancelled', {
+                current_phase: null,
+                completed_phases: completedPhases,
+                skipped_phases: skippedPhases,
+                total_phases: config.phases.length,
+            });
+        }
+        catch { /* best effort */ }
         if (activeChild && !activeChild.killed)
             activeChild.kill('SIGTERM');
         logActivity({ event: 'session_end', source: 'pickle', session: path.basename(sessionDir), mode: 'tmux' });
@@ -407,6 +427,12 @@ export async function main(sessionDir) {
     process.on('SIGTERM', () => handleShutdown('SIGTERM'));
     process.on('SIGINT', () => handleShutdown('SIGINT'));
     process.on('SIGHUP', () => handleShutdown('SIGHUP'));
+    writePipelineStatus(sessionDir, 'running', {
+        current_phase: null,
+        completed_phases: 0,
+        skipped_phases: 0,
+        total_phases: config.phases.length,
+    });
     for (let i = 0; i < config.phases.length; i++) {
         const phase = config.phases[i];
         const phaseLabel = `${i + 1}/${config.phases.length}`;
@@ -417,6 +443,12 @@ export async function main(sessionDir) {
             Phase: phaseLabel,
             Target: config.target || workingDir,
         }, 'CYAN', '🧪');
+        writePipelineStatus(sessionDir, 'running', {
+            current_phase: phase,
+            completed_phases: completedPhases,
+            skipped_phases: skippedPhases,
+            total_phases: config.phases.length,
+        });
         let exitCode;
         if (phase === 'pickle') {
             // Ensure chain_meeseeks is off so mux-runner exits cleanly back to us
@@ -432,6 +464,12 @@ export async function main(sessionDir) {
             const setupOk = setupAnatomyPark(sessionDir, config.target || workingDir, config.anatomy_stall_limit, extensionRoot, log);
             if (!setupOk) {
                 skippedPhases++;
+                writePipelineStatus(sessionDir, 'running', {
+                    current_phase: null,
+                    completed_phases: completedPhases,
+                    skipped_phases: skippedPhases,
+                    total_phases: config.phases.length,
+                });
                 log(`Phase ${phase} skipped (setup returned false)`);
                 continue;
             }
@@ -445,6 +483,12 @@ export async function main(sessionDir) {
             const setupOk = setupSzechuanSauce(sessionDir, config.target || workingDir, config.szechuan_stall_limit, extensionRoot, config.szechuan_domain, config.szechuan_focus, log);
             if (!setupOk) {
                 skippedPhases++;
+                writePipelineStatus(sessionDir, 'running', {
+                    current_phase: null,
+                    completed_phases: completedPhases,
+                    skipped_phases: skippedPhases,
+                    total_phases: config.phases.length,
+                });
                 log(`Phase ${phase} skipped (setup returned false)`);
                 continue;
             }
@@ -466,6 +510,12 @@ export async function main(sessionDir) {
             break;
         }
         completedPhases++;
+        writePipelineStatus(sessionDir, 'running', {
+            current_phase: null,
+            completed_phases: completedPhases,
+            skipped_phases: skippedPhases,
+            total_phases: config.phases.length,
+        });
         // Check for cancellation (signal handler writes this marker)
         // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         if (fs.existsSync(cancelMarker)) {
@@ -514,6 +564,12 @@ export async function main(sessionDir) {
     // Explicit exit code so callers can detect pipeline failure.
     // Skipped phases (e.g. no subsystems for anatomy-park) are not failures.
     const pipelineFailed = (completedPhases + skippedPhases) < config.phases.length;
+    writePipelineStatus(sessionDir, pipelineFailed ? 'failed' : 'completed', {
+        current_phase: null,
+        completed_phases: completedPhases,
+        skipped_phases: skippedPhases,
+        total_phases: config.phases.length,
+    });
     process.exit(pipelineFailed ? 1 : 0);
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'pipeline-runner.js') {
@@ -523,6 +579,10 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'pipeline-runner.js') 
         process.exit(1);
     }
     main(sessionDir).catch((err) => {
+        try {
+            writePipelineStatus(sessionDir, 'failed');
+        }
+        catch { /* best effort */ }
         const msg = safeErrorMessage(err);
         console.error(`${Style.RED}[FATAL] ${msg}${Style.RESET}`);
         process.exit(1);

@@ -10,8 +10,12 @@ import {
     renderMicroverseTrend,
     formatCurrentField,
     buildTicketLines,
+    readPipelineLifecycle,
+    shouldMonitorExit,
 } from '../bin/monitor.js';
 import { getHeight } from '../services/pickle-utils.js';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MONITOR_BIN = path.resolve(__dirname, '../bin/monitor.js');
@@ -26,6 +30,10 @@ function run(args) {
         encoding: 'utf-8',
         timeout: 10000,
     });
+}
+
+function tmpDir() {
+    return fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-monitor-'));
 }
 
 // --- Startup validation ---
@@ -444,4 +452,50 @@ test('buildTicketLines: budget <= 0 renders full list', () => {
     const tickets = makeTickets(5);
     const lines = buildTicketLines(tickets, null, 0);
     assert.equal(lines.length, 5);
+});
+
+// --- pipeline lifecycle ---
+
+test('readPipelineLifecycle: non-pipeline session → none', () => {
+    const dir = tmpDir();
+    assert.equal(readPipelineLifecycle(dir), 'none');
+    fs.rmSync(dir, { recursive: true });
+});
+
+test('readPipelineLifecycle: pipeline-status running wins', () => {
+    const dir = tmpDir();
+    fs.writeFileSync(path.join(dir, 'pipeline.json'), JSON.stringify({ phases: ['pickle'] }));
+    fs.writeFileSync(path.join(dir, 'pipeline-status.json'), JSON.stringify({ status: 'running' }));
+    assert.equal(readPipelineLifecycle(dir), 'running');
+    fs.rmSync(dir, { recursive: true });
+});
+
+test('readPipelineLifecycle: falls back to runner log when status file missing', () => {
+    const dir = tmpDir();
+    fs.writeFileSync(path.join(dir, 'pipeline.json'), JSON.stringify({ phases: ['pickle'] }));
+    fs.writeFileSync(path.join(dir, 'pipeline-runner.log'), '[2026-04-19T00:00:00.000Z] Pipeline finished: 1/1 phases, 00:05\n');
+    assert.equal(readPipelineLifecycle(dir), 'completed');
+    fs.rmSync(dir, { recursive: true });
+});
+
+test('shouldMonitorExit: inactive single session exits', () => {
+    const dir = tmpDir();
+    assert.equal(shouldMonitorExit(dir, false), true);
+    fs.rmSync(dir, { recursive: true });
+});
+
+test('shouldMonitorExit: inactive pipeline session stays open while running', () => {
+    const dir = tmpDir();
+    fs.writeFileSync(path.join(dir, 'pipeline.json'), JSON.stringify({ phases: ['pickle', 'anatomy-park'] }));
+    fs.writeFileSync(path.join(dir, 'pipeline-status.json'), JSON.stringify({ status: 'running' }));
+    assert.equal(shouldMonitorExit(dir, false), false);
+    fs.rmSync(dir, { recursive: true });
+});
+
+test('shouldMonitorExit: inactive pipeline session exits once terminal', () => {
+    const dir = tmpDir();
+    fs.writeFileSync(path.join(dir, 'pipeline.json'), JSON.stringify({ phases: ['pickle', 'anatomy-park'] }));
+    fs.writeFileSync(path.join(dir, 'pipeline-status.json'), JSON.stringify({ status: 'completed' }));
+    assert.equal(shouldMonitorExit(dir, false), true);
+    fs.rmSync(dir, { recursive: true });
 });
