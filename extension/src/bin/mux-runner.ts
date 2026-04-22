@@ -5,23 +5,11 @@ import * as os from 'os';
 import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, runCmd, safeErrorMessage, ensureMonitorWindow } from '../services/pickle-utils.js';
 import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, hasLifecycleArtifact, type RateLimitInfo, type IterationExitResult, type RateLimitAction, type WorkerRole } from '../types/index.js';
-import { StateManager } from '../services/state-manager.js';
+import { StateManager, safeDeactivate } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, type CircuitBreakerState } from '../services/circuit-breaker.js';
 
 const sm = new StateManager();
-
-/** Deactivate with retry-then-deactivate: try sm.update, fall back to read-then-forceWrite. */
-function safeDeactivate(statePath: string): void {
-  try {
-    sm.update(statePath, s => { s.active = false; });
-  } catch {
-    // eslint-disable-next-line pickle/no-raw-state-write -- crash-path bypass: lock unavailable, preserve full state
-    sm.forceWrite(statePath, (() => {
-      try { const s = JSON.parse(fs.readFileSync(statePath, 'utf-8')); s.active = false; return s; } catch { return { active: false }; }
-    })());
-  }
-}
 
 let currentChildProc: import('child_process').ChildProcess | null = null;
 
