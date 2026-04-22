@@ -30,6 +30,13 @@ import {
 } from '../services/pickle-utils.js';
 import { isWorkingTreeDirty } from '../services/git-utils.js';
 import { logActivity } from '../services/activity-logger.js';
+import {
+  resolveScope,
+  refreshScope,
+  filterBySubsystem,
+  ScopeError,
+  type ScopeJson,
+} from '../services/scope-resolver.js';
 
 const sm = new StateManager();
 
@@ -236,6 +243,99 @@ export function cleanPhaseArtifacts(sessionDir: string, phase: string): void {
 }
 
 // ---------------------------------------------------------------------------
+// Scope Lifecycle
+// ---------------------------------------------------------------------------
+
+export interface SetupScopeArgs {
+  sessionDir: string;
+  workingDir: string;
+  target: string;
+  scopeFlag: string;
+  scopeBase?: string;
+  log: (msg: string) => void;
+}
+
+/**
+ * Setup-time scope resolution. Writes `scope.json` and initializes
+ * `state.phases_entered = []`. SCOPE_EMPTY_DIFF is demoted to a WARN (CUJ-6a):
+ * a scope-configured session with no diff at setup should not kill the
+ * pipeline — the build phase may still produce one. Returns the resolved
+ * scope, or `null` when the scope is empty at setup (warning path).
+ */
+export function setupScope(args: SetupScopeArgs): ScopeJson | null {
+  const { sessionDir, workingDir, target, scopeFlag, scopeBase, log } = args;
+  const statePath = path.join(sessionDir, 'state.json');
+
+  try {
+    const scope = resolveScope({
+      scopeFlag,
+      scopeBase,
+      target,
+      sessionRoot: sessionDir,
+      repoRoot: workingDir,
+    });
+    sm.update(statePath, (s) => { s.phases_entered = []; });
+    log(`scope-setup: mode=${scope.mode} strategy=${scope.strategy} base=${scope.base_ref ?? '-'} allowed=${scope.allowed_paths.length}`);
+    return scope;
+  } catch (err) {
+    if (err instanceof Error && err instanceof ScopeError && err.code === 'SCOPE_EMPTY_DIFF') {
+      log(`scope-setup WARN: SCOPE_EMPTY_DIFF — ${err.message} (continuing; build phase may produce diff)`);
+      sm.update(statePath, (s) => { s.phases_entered = []; });
+      return null;
+    }
+    throw err;
+  }
+}
+
+/**
+ * Write `archive/skipped_by_scope.<phase>.json` — an observability record of
+ * what scope filtered out for `phase`. Pure audit file; worker-side filters
+ * (A6/A7) are out of scope for this ticket.
+ */
+export function writeSkippedByScope(
+  sessionDir: string,
+  phase: string,
+  scope: ScopeJson,
+  target: string,
+  workingDir: string,
+): void {
+  const archiveDir = path.join(sessionDir, 'archive');
+  fs.mkdirSync(archiveDir, { recursive: true });
+  const outPath = path.join(archiveDir, `skipped_by_scope.${phase}.json`);
+
+  let payload: Record<string, unknown>;
+  if (phase === 'anatomy-park') {
+    const discovered = discoverSubsystems(target).map((s) => s.name);
+    const kept = filterBySubsystem(discovered, scope.allowed_paths, target, workingDir);
+    const keptSet = new Set(kept);
+    const skipped = discovered.filter((n) => !keptSet.has(n));
+    payload = {
+      phase,
+      head_sha: scope.head_sha,
+      allowed_paths: scope.allowed_paths,
+      subsystems_discovered: discovered,
+      subsystems_kept: kept,
+      subsystems_skipped: skipped,
+    };
+  } else {
+    payload = {
+      phase,
+      head_sha: scope.head_sha,
+      allowed_paths: scope.allowed_paths,
+    };
+  }
+
+  const tmp = `${outPath}.tmp.${process.pid}`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(payload, null, 2));
+    fs.renameSync(tmp, outPath);
+  } catch (err) {
+    try { fs.unlinkSync(tmp); } catch { /* ignore */ }
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Phase Setup: Anatomy Park
 // ---------------------------------------------------------------------------
 
@@ -430,7 +530,12 @@ function setupSzechuanSauce(
 // Main
 // ---------------------------------------------------------------------------
 
-export async function main(sessionDir: string): Promise<void> {
+export interface MainOpts {
+  scopeFlag?: string;
+  scopeBase?: string;
+}
+
+export async function main(sessionDir: string, opts: MainOpts = {}): Promise<void> {
   const extensionRoot = getExtensionRoot();
   const statePath = path.join(sessionDir, 'state.json');
   const pipelinePath = path.join(sessionDir, 'pipeline.json');
@@ -454,10 +559,11 @@ export async function main(sessionDir: string): Promise<void> {
   }
 
   let config: PipelineConfig;
+  let pipelineRaw: Record<string, unknown>;
   try {
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    const raw = JSON.parse(fs.readFileSync(pipelinePath, 'utf-8'));
-    config = parsePipelineConfig(raw);
+    pipelineRaw = JSON.parse(fs.readFileSync(pipelinePath, 'utf-8'));
+    config = parsePipelineConfig(pipelineRaw);
   } catch (err) {
     throw new Error(`Cannot read pipeline.json: ${safeErrorMessage(err)}`);
   }
@@ -480,6 +586,21 @@ export async function main(sessionDir: string): Promise<void> {
   // on their own, which would roll the user's unrelated WIP into a pipeline
   // commit and obscure which phase changed what.
   assertCleanWorkingTree(workingDir);
+
+  // Scope resolution (optional). argv > pipeline.json. Omitted → no scope.json,
+  // no phases_entered — pipeline-runner behaves as it did pre-change.
+  const scopeFlag = opts.scopeFlag ?? (typeof pipelineRaw.scope === 'string' ? pipelineRaw.scope : undefined);
+  const scopeBase = opts.scopeBase ?? (typeof pipelineRaw.scope_base === 'string' ? pipelineRaw.scope_base : undefined);
+  if (scopeFlag) {
+    setupScope({
+      sessionDir,
+      workingDir,
+      target: config.target || workingDir,
+      scopeFlag,
+      scopeBase,
+      log,
+    });
+  }
 
   const startTime = Date.now();
   let completedPhases = 0;
@@ -549,6 +670,25 @@ export async function main(sessionDir: string): Promise<void> {
       cleanPhaseArtifacts(sessionDir, 'pickle');
       resetStateForPhase(statePath, 'anatomy-park.md', config.anatomy_max_iterations);
 
+      try {
+        const refreshed = refreshScope(sessionDir, 'anatomy-park', { repoRoot: workingDir, log });
+        if (refreshed) {
+          writeSkippedByScope(sessionDir, 'anatomy-park', refreshed, config.target || workingDir, workingDir);
+        }
+      } catch (err) {
+        if (err instanceof Error && err instanceof ScopeError && err.code === 'SCOPE_EMPTY_POST_BUILD') {
+          log(`SCOPE_EMPTY_POST_BUILD at anatomy-park — ${err.message}`);
+          writePipelineStatus(sessionDir, 'failed', {
+            current_phase: 'anatomy-park',
+            completed_phases: completedPhases,
+            skipped_phases: skippedPhases,
+            total_phases: config.phases.length,
+          });
+          throw err;
+        }
+        throw err;
+      }
+
       const setupOk = setupAnatomyPark(
         sessionDir, config.target || workingDir,
         config.anatomy_stall_limit, extensionRoot, log,
@@ -571,6 +711,11 @@ export async function main(sessionDir: string): Promise<void> {
     } else if (phase === 'szechuan-sauce') {
       cleanPhaseArtifacts(sessionDir, 'anatomy-park');
       resetStateForPhase(statePath, 'szechuan-sauce.md', config.szechuan_max_iterations);
+
+      const refreshedSz = refreshScope(sessionDir, 'szechuan-sauce', { repoRoot: workingDir, log });
+      if (refreshedSz) {
+        writeSkippedByScope(sessionDir, 'szechuan-sauce', refreshedSz, config.target || workingDir, workingDir);
+      }
 
       const setupOk = setupSzechuanSauce(
         sessionDir, config.target || workingDir,
@@ -675,13 +820,35 @@ export async function main(sessionDir: string): Promise<void> {
   process.exit(pipelineFailed ? 1 : 0);
 }
 
+/** Extract the value following `flag` in argv, or `undefined` if absent. */
+function parseArgvFlag(argv: string[], flag: string): string | undefined {
+  const idx = argv.indexOf(flag);
+  if (idx === -1 || idx + 1 >= argv.length) return undefined;
+  return argv[idx + 1];
+}
+
+/** First argv token that's not a flag and not the value of a preceding flag. */
+function findPositional(argv: string[], valuedFlags: Set<string>): string | undefined {
+  for (let i = 0; i < argv.length; i++) {
+    const prev = i > 0 ? argv[i - 1] : '';
+    if (argv[i].startsWith('--')) continue;
+    if (valuedFlags.has(prev)) continue;
+    return argv[i];
+  }
+  return undefined;
+}
+
 if (process.argv[1] && path.basename(process.argv[1]) === 'pipeline-runner.js') {
-  const sessionDir = process.argv[2];
+  const argv = process.argv.slice(2);
+  const valuedFlags = new Set(['--scope', '--scope-base']);
+  const sessionDir = findPositional(argv, valuedFlags);
   if (!sessionDir || !fs.existsSync(path.join(sessionDir, 'state.json'))) {
-    console.error('Usage: node pipeline-runner.js <session-dir>');
+    console.error('Usage: node pipeline-runner.js <session-dir> [--scope <flag>] [--scope-base <ref>]');
     process.exit(1);
   }
-  main(sessionDir).catch((err) => {
+  const scopeFlag = parseArgvFlag(argv, '--scope');
+  const scopeBase = parseArgvFlag(argv, '--scope-base');
+  main(sessionDir, { scopeFlag, scopeBase }).catch((err) => {
     try {
       writePipelineStatus(sessionDir, 'failed');
     } catch { /* best effort */ }

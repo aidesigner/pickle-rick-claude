@@ -31,6 +31,12 @@ From `$ARGUMENTS`:
 - `--skip-szechuan` → remove szechuan-sauce from pipeline
 - `--target <path>` → TARGET for review phases (default: current working directory)
 
+**Scope flags (optional):**
+- `--scope <flag>` → SCOPE_FLAG (values: `branch`, `branch:one-hop`, `diff:<ref>`, `diff:<ref>:one-hop`, `paths:<glob,...>`)
+- `--scope-base <ref>` → SCOPE_BASE (base ref override for `branch` mode)
+
+When set, pipeline-runner resolves scope at setup (writes `${SESSION_ROOT}/scope.json`) and refreshes per non-pickle phase (archives to `${SESSION_ROOT}/archive/scope.<phase>.json`). Empty diff at setup → WARN; empty diff at anatomy-park refresh → `SCOPE_EMPTY_POST_BUILD` error.
+
 **Remainder** = TASK (the epic description for the pickle phase)
 
 If no TASK provided, print error and stop.
@@ -60,11 +66,13 @@ Write `${SESSION_ROOT}/pipeline.json`:
   "anatomy_max_iterations": <AP_MAX_ITER>,
   "szechuan_max_iterations": <SZ_MAX_ITER>,
   "szechuan_domain": "<SZ_DOMAIN or omit>",
-  "szechuan_focus": "<SZ_FOCUS or omit>"
+  "szechuan_focus": "<SZ_FOCUS or omit>",
+  "scope": "<SCOPE_FLAG or omit>",
+  "scope_base": "<SCOPE_BASE or omit>"
 }
 ```
 
-Omit `szechuan_domain` and `szechuan_focus` keys entirely if not set.
+Omit `szechuan_domain`, `szechuan_focus`, `scope`, and `scope_base` keys entirely if not set.
 
 ## Step 5: tmux Session
 

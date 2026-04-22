@@ -14,6 +14,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { runGit, getHeadSha, getDiffFiles, getMergeBase, DiffEntry } from './git-utils.js';
+import { StateManager } from './state-manager.js';
+import type { State } from '../types/index.js';
 
 export type ScopeMode = 'branch' | 'diff' | 'paths';
 export type ScopeStrategy = 'strict' | 'one-hop';
@@ -24,7 +26,9 @@ export type ScopeErrorCode =
   | 'SCOPE_NOT_A_REPO'
   | 'SCOPE_BASE_MISSING'
   | 'SCOPE_BAD_FLAG'
-  | 'SCOPE_ONE_HOP_TOO_LARGE';
+  | 'SCOPE_ONE_HOP_TOO_LARGE'
+  | 'SCOPE_EMPTY_POST_BUILD'
+  | 'SCOPE_ARCHIVE_EXISTS';
 
 export interface ScopeArgs {
   scopeFlag: string;
@@ -189,6 +193,126 @@ export function resolveScope(args: ScopeArgs): ScopeJson {
 
   writeScopeJson(path.join(sessionRoot, 'scope.json'), scope);
   return scope;
+}
+
+export interface RefreshScopeOpts {
+  repoRoot?: string;
+  log?: (msg: string) => void;
+}
+
+/**
+ * Per-phase scope refresh. Idempotent: if `phase` is already recorded in
+ * `state.phases_entered`, returns the existing scope.json unchanged.
+ *
+ * Invariants:
+ * - `base_sha` and `base_ref` are frozen from the setup-time scope.json.
+ * - `head_sha` is recomputed via `getHeadSha(repoRoot)`.
+ * - `allowed_paths` is recomputed against the new HEAD for diff modes; for
+ *   `paths` mode the list is preserved (no HEAD dependency).
+ * - A `RefreshEntry` is appended to `scope.json.refresh_history`.
+ * - `archive/scope.<phase>.json` is written atomically and REFUSES to
+ *   overwrite — a collision throws `SCOPE_ARCHIVE_EXISTS` since that indicates
+ *   a bug (the idempotency gate should have caught it).
+ * - `state.phases_entered` is extended with `phase` under state-manager lock.
+ *
+ * Emits `scope-refresh: phase=<p> head=<sha> allowed=<N>` via `opts.log`
+ * (default: stderr).
+ *
+ * Returns `null` if the session is not scope-configured (no scope.json) or if
+ * the phase has already been entered.
+ *
+ * Throws `SCOPE_EMPTY_POST_BUILD` when the diff collapses to zero files and
+ * `phase === 'anatomy-park'` — the build phase produced no review surface.
+ */
+export function refreshScope(
+  sessionRoot: string,
+  phase: string,
+  opts: RefreshScopeOpts = {},
+): ScopeJson | null {
+  const scopePath = path.join(sessionRoot, 'scope.json');
+  if (!fs.existsSync(scopePath)) return null;
+
+  const statePath = path.join(sessionRoot, 'state.json');
+  const sm = new StateManager();
+
+  let existingPhases: string[] = [];
+  if (fs.existsSync(statePath)) {
+    try {
+      const state = sm.read(statePath);
+      existingPhases = state.phases_entered ?? [];
+    } catch {
+      existingPhases = [];
+    }
+  }
+  if (existingPhases.includes(phase)) return null;
+
+  const scope = JSON.parse(fs.readFileSync(scopePath, 'utf-8')) as ScopeJson;
+  const repoRoot = opts.repoRoot ?? (() => {
+    if (!fs.existsSync(statePath)) {
+      throw new ScopeError('SCOPE_NOT_A_REPO', `refreshScope: no repoRoot given and no state.json at ${statePath}`);
+    }
+    const state = sm.read(statePath);
+    return state.working_dir;
+  })();
+
+  const log = opts.log ?? ((msg: string) => { process.stderr.write(`${msg}\n`); });
+  const newHead = getHeadSha(repoRoot);
+
+  let newAllowed: string[];
+  if (scope.mode === 'paths') {
+    newAllowed = scope.allowed_paths.slice();
+  } else {
+    if (!scope.base_sha) {
+      throw new ScopeError('SCOPE_BASE_MISSING', `refreshScope: scope.json has no base_sha for mode=${scope.mode}`);
+    }
+    let diff: DiffEntry[];
+    try {
+      diff = getDiffFiles(scope.base_sha, newHead, repoRoot);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new ScopeError('SCOPE_BASE_MISSING', `refreshScope: diff ${scope.base_sha}...${newHead} failed: ${msg}`);
+    }
+    const binaries = getBinaryPathSet(scope.base_sha, newHead, repoRoot);
+    const base = diff
+      .filter((d) => d.status === 'A' || d.status === 'M' || d.status === 'R')
+      .map((d) => d.path)
+      .filter((p) => !binaries.has(toPosix(p)));
+    const expanded = scope.strategy === 'one-hop' ? computeOneHop(base, repoRoot) : base;
+    newAllowed = Array.from(new Set(expanded.map(toPosix))).sort(byteOrder);
+  }
+
+  if (newAllowed.length === 0 && phase === 'anatomy-park') {
+    throw new ScopeError(
+      'SCOPE_EMPTY_POST_BUILD',
+      `refreshScope: diff ${scope.base_sha}...${newHead} is empty at phase=${phase}; the build phase produced no review surface`,
+    );
+  }
+
+  const resolvedAt = new Date().toISOString();
+  const refreshEntry: RefreshEntry = { phase, head_sha: newHead, resolved_at: resolvedAt };
+  const refreshed: ScopeJson = {
+    ...scope,
+    head_sha: newHead,
+    allowed_paths: newAllowed,
+    resolved_at: resolvedAt,
+    refresh_history: [...scope.refresh_history, refreshEntry],
+  };
+
+  const archiveDir = path.join(sessionRoot, 'archive');
+  fs.mkdirSync(archiveDir, { recursive: true });
+  const archivePath = path.join(archiveDir, `scope.${phase}.json`);
+  writeScopeArchive(archivePath, refreshed);
+
+  writeScopeJson(scopePath, refreshed);
+
+  if (fs.existsSync(statePath)) {
+    sm.update(statePath, (s: State) => {
+      s.phases_entered = [...(s.phases_entered ?? []), phase];
+    });
+  }
+
+  log(`scope-refresh: phase=${phase} head=${newHead} allowed=${newAllowed.length}`);
+  return refreshed;
 }
 
 /**
@@ -417,6 +541,18 @@ function writeScopeJson(filePath: string, scope: ScopeJson): void {
     try { fs.unlinkSync(tmp); } catch { /* ignore cleanup failure */ }
     throw err;
   }
+}
+
+/**
+ * Atomic archive writer that refuses to overwrite. If `filePath` already
+ * exists, throws `SCOPE_ARCHIVE_EXISTS` — the `phases_entered` idempotency
+ * gate should have prevented this; collision signals a bug.
+ */
+function writeScopeArchive(filePath: string, scope: ScopeJson): void {
+  if (fs.existsSync(filePath)) {
+    throw new ScopeError('SCOPE_ARCHIVE_EXISTS', `refreshScope: archive already exists (refusing overwrite): ${filePath}`);
+  }
+  writeScopeJson(filePath, scope);
 }
 
 function extractExportNames(diffFiles: string[], repoRoot: string): Set<string> {

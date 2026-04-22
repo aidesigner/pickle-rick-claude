@@ -21,6 +21,8 @@ export interface State {
   pid?: number;
   /** Count of consecutive short manager responses (≤ DEGENERATE_MAX_LENGTH). Reset on substantive response. */
   consecutive_short_responses?: number;
+  /** Pipeline phases that have invoked refreshScope. Monotonically extends; guards against duplicate refresh. */
+  phases_entered?: string[];
 }
 
 // ---------------------------------------------------------------------------
