@@ -31,6 +31,9 @@ Scan the **immediate subdirectories** of TARGET for subsystems. A subsystem is a
 
 Exclude: `node_modules`, `dist`, `build`, `.next`, `coverage`, `__pycache__`, `.git`, test-only directories (dirs where >80% of files match `*.test.*` or `*.spec.*`).
 
+<!-- scope-hook: discovery-filter -->
+If `${SESSION_ROOT}/scope.json` exists AND the `mode` field is NOT `'full'`, read `allowed_paths` from `scope.json` and call `filterBySubsystem(subsystemNames, allowed_paths, TARGET, repoRoot)` to reduce the discovered list to only subsystems that overlap with the scope diff. If the filtered list is empty, print an error ("Scope excludes all subsystems — stopping") and stop.
+
 Sort subsystems alphabetically. Print discovered list:
 ```
 Anatomy Park — Subsystems Discovered:
@@ -194,6 +197,7 @@ Each iteration consists of three phases. Do NOT skip or combine phases.
 
 #### PHASE 1: REVIEW (read-only — do NOT edit any files)
 
+<!-- scope-invariant: phase-1-reads-all-subsystem-files -->
 For the current subsystem, trace the COMPLETE data flow. Read every file. For each finding:
 
 1. **Trace data path**: input → bug → wrong output. Show exact path: "value X constructed at file.ts:123, passed to file2.ts:456, consumed at file3.ts:789 where it means something different because..."

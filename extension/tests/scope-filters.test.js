@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { filterBySubsystem, filterByPaths, resolveScope } from '../services/scope-resolver.js';
+import { discoverSubsystems } from '../bin/pipeline-runner.js';
 
 function git(args, cwd) {
     const res = spawnSync('git', args, {
@@ -95,4 +96,32 @@ test('filterBySubsystem: allowedPaths outside target subtree → returns []', ()
     ];
     const result = filterBySubsystem(subsystems, allowedPaths, target, repoRoot);
     assert.deepStrictEqual(result, []);
+});
+
+test('pipeline-mode integration: discoverSubsystems names feed filterBySubsystem correctly', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'scope-pipeline-int-'));
+    try {
+        // 4 subsystems — only alpha and gamma are in the scope diff
+        for (const name of ['alpha', 'beta', 'gamma', 'delta']) {
+            const sub = path.join(root, name);
+            fs.mkdirSync(sub);
+            for (let i = 0; i < 3; i++) fs.writeFileSync(path.join(sub, `f${i}.ts`), '');
+        }
+
+        const discovered = discoverSubsystems(root);
+        const names = discovered.map(s => s.name);
+        assert.deepStrictEqual(names, ['alpha', 'beta', 'delta', 'gamma']); // sorted
+
+        const allowedPaths = ['alpha/f0.ts', 'gamma/f1.ts'];
+        const kept = filterBySubsystem(names, allowedPaths, root, root);
+        assert.deepStrictEqual(kept, ['alpha', 'gamma']);
+
+        // Simulate the pipeline-runner filter: kept set narrows the discovered list
+        const keptSet = new Set(kept);
+        const filtered = discovered.filter(s => keptSet.has(s.name));
+        assert.equal(filtered.length, 2);
+        assert.deepStrictEqual(filtered.map(s => s.name), ['alpha', 'gamma']);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
 });

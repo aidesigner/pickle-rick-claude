@@ -339,19 +339,32 @@ export function writeSkippedByScope(
 // Phase Setup: Anatomy Park
 // ---------------------------------------------------------------------------
 
-function setupAnatomyPark(
+export function setupAnatomyPark(
   sessionDir: string,
   target: string,
   stallLimit: number,
   extensionRoot: string,
   log: (msg: string) => void,
+  scope?: { allowedPaths: string[]; repoRoot: string },
 ): boolean {
-  const subsystems = discoverSubsystems(target);
-  if (subsystems.length === 0) {
+  const discovered = discoverSubsystems(target);
+  if (discovered.length === 0) {
     log('No subsystems discovered — skipping anatomy-park phase');
     return false;
   }
-  log(`Discovered ${subsystems.length} subsystems: ${subsystems.map(s => s.name).join(', ')}`);
+
+  let subsystems = discovered;
+  if (scope && scope.allowedPaths.length > 0) {
+    const kept = new Set(filterBySubsystem(discovered.map(s => s.name), scope.allowedPaths, target, scope.repoRoot));
+    if (kept.size === 0) {
+      log('anatomy-park: scope filter excluded all subsystems — skipping phase');
+      return false;
+    }
+    subsystems = discovered.filter(s => kept.has(s.name));
+    log(`anatomy-park: scope filtered ${discovered.length} → ${subsystems.length} subsystems: ${subsystems.map(s => s.name).join(', ')}`);
+  } else {
+    log(`Discovered ${subsystems.length} subsystems: ${subsystems.map(s => s.name).join(', ')}`);
+  }
 
   // anatomy-park.json — subsystem rotation state
   const apState = {
@@ -670,8 +683,9 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
       cleanPhaseArtifacts(sessionDir, 'pickle');
       resetStateForPhase(statePath, 'anatomy-park.md', config.anatomy_max_iterations);
 
+      let refreshed: ScopeJson | null = null;
       try {
-        const refreshed = refreshScope(sessionDir, 'anatomy-park', { repoRoot: workingDir, log });
+        refreshed = refreshScope(sessionDir, 'anatomy-park', { repoRoot: workingDir, log });
         if (refreshed) {
           writeSkippedByScope(sessionDir, 'anatomy-park', refreshed, config.target || workingDir, workingDir);
         }
@@ -692,6 +706,7 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
       const setupOk = setupAnatomyPark(
         sessionDir, config.target || workingDir,
         config.anatomy_stall_limit, extensionRoot, log,
+        refreshed ? { allowedPaths: refreshed.allowed_paths, repoRoot: workingDir } : undefined,
       );
       if (!setupOk) {
         skippedPhases++;
