@@ -36,7 +36,11 @@ From `$ARGUMENTS`:
 - `--dry-run` → DRY_RUN mode (gap analysis only — catalog violations without fixing)
 - `--domain <name>` → DOMAIN (loads `szechuan-sauce-<name>-principles.md` as supplemental principles)
 - `--focus "<text>"` → FOCUS (natural language review directive — narrows what to hunt for, elevates matching violations by one priority level)
+- `--scope <flag>` → SCOPE_FLAG (e.g. `branch`, `branch:one-hop`, `diff:<ref>`, `paths:<globs>`)
+- `--scope-base <ref>` → SCOPE_BASE (e.g. `main`, `origin/main`; optional — defaults to upstream or `main`)
 - Remainder = TARGET (file or directory to deslop; default: current directory)
+
+If `--scope` and `--dry-run` are BOTH set: print `SCOPE_DRYRUN_CONFLICT: --scope cannot be combined with --dry-run` and stop.
 
 Resolve TARGET to an absolute path. Verify it exists (file or directory). If not found, print error and stop.
 
@@ -100,6 +104,14 @@ Detect and run the project's test suite (check `package.json` scripts, `Makefile
 node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --max-iterations <MAX_ITER> --command-template szechuan-sauce.md --task "Szechuan Sauce: deslop TARGET"
 ```
 Extract `SESSION_ROOT=<path>` from output.
+
+### Step 6.5: Resolve Scope (if `--scope`)
+
+If SCOPE_FLAG is set:
+```bash
+node "$HOME/.claude/pickle-rick/extension/bin/resolve-scope.js" --scope "<SCOPE_FLAG>" --scope-base "<SCOPE_BASE>" --session-root "${SESSION_ROOT}" --target "${TARGET_ABSOLUTE_PATH}"
+```
+Omit `--scope-base` when SCOPE_BASE was not provided. If the command exits non-zero, print the stderr and stop.
 
 ### Step 7: Create microverse.json
 

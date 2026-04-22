@@ -4,7 +4,12 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { resolveScope, ScopeError } from '../services/scope-resolver.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ANATOMY_PARK_MD = path.resolve(__dirname, '../../.claude/commands/anatomy-park.md');
+const SZECHUAN_MD = path.resolve(__dirname, '../../.claude/commands/szechuan-sauce.md');
 
 function git(args, cwd) {
     const res = spawnSync('git', args, {
@@ -118,6 +123,54 @@ test('SCOPE_EMPTY_PATHS: glob matches zero files', () => {
                 repoRoot: repo,
             }),
             (err) => err instanceof ScopeError && err.code === 'SCOPE_EMPTY_PATHS',
+        );
+    } finally {
+        cleanup(repo);
+        cleanup(session);
+    }
+});
+
+// ---------------------------------------------------------------------------
+// SCOPE_DRYRUN_CONFLICT: both .md files document the error
+// ---------------------------------------------------------------------------
+
+test('SCOPE_DRYRUN_CONFLICT: anatomy-park.md documents --scope + --dry-run error', () => {
+    const content = fs.readFileSync(ANATOMY_PARK_MD, 'utf-8');
+    assert.ok(
+        content.includes('SCOPE_DRYRUN_CONFLICT'),
+        'anatomy-park.md must contain SCOPE_DRYRUN_CONFLICT',
+    );
+});
+
+test('SCOPE_DRYRUN_CONFLICT: szechuan-sauce.md documents --scope + --dry-run error', () => {
+    const content = fs.readFileSync(SZECHUAN_MD, 'utf-8');
+    assert.ok(
+        content.includes('SCOPE_DRYRUN_CONFLICT'),
+        'szechuan-sauce.md must contain SCOPE_DRYRUN_CONFLICT',
+    );
+});
+
+// ---------------------------------------------------------------------------
+// standalone-empty: standalone resolve (CUJ-6b) → SCOPE_EMPTY_DIFF, no scope.json
+// ---------------------------------------------------------------------------
+
+test('standalone-empty: resolveScope on branch at base SHA → SCOPE_EMPTY_DIFF, scope.json not written', () => {
+    const repo = initRepo();
+    const session = fs.mkdtempSync(path.join(os.tmpdir(), 'scope-standalone-empty-'));
+    try {
+        // HEAD == main, no commits beyond initial → empty diff
+        assert.throws(
+            () => resolveScope({
+                scopeFlag: 'branch',
+                scopeBase: 'main',
+                sessionRoot: session,
+                repoRoot: repo,
+            }),
+            (err) => err instanceof ScopeError && err.code === 'SCOPE_EMPTY_DIFF',
+        );
+        assert.ok(
+            !fs.existsSync(path.join(session, 'scope.json')),
+            'scope.json must NOT be written when standalone call throws SCOPE_EMPTY_DIFF (CUJ-6b)',
         );
     } finally {
         cleanup(repo);

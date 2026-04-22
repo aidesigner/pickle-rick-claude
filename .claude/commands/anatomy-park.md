@@ -21,7 +21,11 @@ From `$ARGUMENTS`:
 - `--max-iterations <N>` → MAX_ITER (default: 100)
 - `--stall-limit <N>` → STALL_LIMIT (default: 3)
 - `--dry-run` → DRY_RUN mode (review only — catalog findings and trap doors without fixing)
+- `--scope <flag>` → SCOPE_FLAG (e.g. `branch`, `branch:one-hop`, `diff:<ref>`, `paths:<globs>`)
+- `--scope-base <ref>` → SCOPE_BASE (e.g. `main`, `origin/main`; optional — defaults to upstream or `main`)
 - Remainder = TARGET (directory to review; default: current directory)
+
+If `--scope` and `--dry-run` are BOTH set: print `SCOPE_DRYRUN_CONFLICT: --scope cannot be combined with --dry-run` and stop.
 
 Resolve TARGET to an absolute path. Verify it exists as a directory. If not found, print error and stop.
 
@@ -67,6 +71,14 @@ Detect and run the project's test suite. If tests fail, fix them first and commi
 node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --max-iterations <MAX_ITER> --command-template anatomy-park.md --task "Anatomy Park: deep review TARGET"
 ```
 Extract `SESSION_ROOT=<path>` from output.
+
+### Step 6.5: Resolve Scope (if `--scope`)
+
+If SCOPE_FLAG is set:
+```bash
+node "$HOME/.claude/pickle-rick/extension/bin/resolve-scope.js" --scope "<SCOPE_FLAG>" --scope-base "<SCOPE_BASE>" --session-root "${SESSION_ROOT}" --target "${TARGET_ABSOLUTE_PATH}"
+```
+Omit `--scope-base` when SCOPE_BASE was not provided. If the command exits non-zero, print the stderr and stop.
 
 ### Step 7: Create anatomy-park.json and microverse.json
 
