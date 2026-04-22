@@ -12,6 +12,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 import { runGit, getHeadSha, getDiffFiles, getMergeBase, DiffEntry } from './git-utils.js';
 
 export type ScopeMode = 'branch' | 'diff' | 'paths';
@@ -22,7 +23,8 @@ export type ScopeErrorCode =
   | 'SCOPE_EMPTY_PATHS'
   | 'SCOPE_NOT_A_REPO'
   | 'SCOPE_BASE_MISSING'
-  | 'SCOPE_BAD_FLAG';
+  | 'SCOPE_BAD_FLAG'
+  | 'SCOPE_ONE_HOP_TOO_LARGE';
 
 export interface ScopeArgs {
   scopeFlag: string;
@@ -112,9 +114,8 @@ export function parseScope(flag: string): ParsedScope {
  * - Base default for branch: `--scope-base` > upstream > `main`.
  * - `allowed_paths` sorted byte-order (FR-27, locale-independent).
  *
- * `strategy:'one-hop'` is parsed but treated as strict here; A2 wires the
- * expansion. Callers can rely on the parsed strategy round-tripping into
- * `scope.json` so downstream passes see the intended mode.
+ * `strategy:'one-hop'` expands `allowed_paths` to include one-hop importers
+ * via `computeOneHop`. See that function for grep-based limitations.
  */
 export function resolveScope(args: ScopeArgs): ScopeJson {
   const { repoRoot, sessionRoot } = args;
@@ -168,7 +169,9 @@ export function resolveScope(args: ScopeArgs): ScopeJson {
     }
   }
 
-  const normalized = Array.from(new Set(allowed.map(toPosix))).sort(byteOrder);
+  const base = Array.from(new Set(allowed.map(toPosix)));
+  const expanded = parsed.strategy === 'one-hop' ? computeOneHop(base, repoRoot) : base;
+  const normalized = expanded.sort(byteOrder);
 
   const scope: ScopeJson = {
     version: 1,
@@ -283,6 +286,41 @@ export function buildScopeV1Schema(): Record<string, unknown> {
   };
 }
 
+/**
+ * Expand `diffFiles` to include files that import any export from the diffed
+ * set — a single-level blast-radius walk using rg/grep over raw import
+ * strings (language-agnostic, no AST).
+ *
+ * Limitation (SCOPE_LIMITATION: aliased-imports-not-detected): the grep
+ * pattern requires the export name to be followed by `,` or `}` within the
+ * import brace list. aliased imports (`import { foo as bar }`) are therefore
+ * not detected — `foo` is followed by ` as`, which fails the `\s*[,}]` check.
+ * Operators relying on aliased re-exports must widen scope manually with
+ * `--scope paths:<glob>`.
+ *
+ * Throws `SCOPE_ONE_HOP_TOO_LARGE` if `diffFiles.length > 100`.
+ */
+export function computeOneHop(diffFiles: string[], repoRoot: string): string[] {
+  if (diffFiles.length > 100) {
+    throw new ScopeError(
+      'SCOPE_ONE_HOP_TOO_LARGE',
+      `--scope branch:one-hop diff has ${diffFiles.length} files (max 100). ` +
+        `Use --scope paths:<glob> to narrow scope or omit :one-hop for strict mode.`,
+    );
+  }
+
+  const exportNames = extractExportNames(diffFiles, repoRoot);
+  const importerSet = new Set<string>(diffFiles.map(toPosix));
+
+  for (const name of exportNames) {
+    for (const f of findImporters(name, repoRoot)) {
+      importerSet.add(f);
+    }
+  }
+
+  return Array.from(importerSet).sort(byteOrder);
+}
+
 // ---------------------------------------------------------------------------
 // Internals
 // ---------------------------------------------------------------------------
@@ -366,4 +404,61 @@ function writeScopeJson(filePath: string, scope: ScopeJson): void {
     try { fs.unlinkSync(tmp); } catch { /* ignore cleanup failure */ }
     throw err;
   }
+}
+
+function extractExportNames(diffFiles: string[], repoRoot: string): Set<string> {
+  const names = new Set<string>();
+  for (const relPath of diffFiles) {
+    let content: string;
+    try {
+      content = fs.readFileSync(path.resolve(repoRoot, relPath), 'utf-8');
+    } catch {
+      continue;
+    }
+    for (const m of content.matchAll(
+      /^export\s+(?:declare\s+)?(?:default\s+)?(?:async\s+)?(?:abstract\s+)?(?:function\*?|class|const|let|var|type|interface|enum)\s+(\w+)/gm,
+    )) {
+      names.add(m[1]);
+    }
+    for (const m of content.matchAll(/^export\s+(?:type\s+)?\{([^}]+)\}/gm)) {
+      for (const part of m[1].split(',')) {
+        const name = part.trim().split(/\s+as\s+/)[0].trim();
+        if (/^\w+$/.test(name)) names.add(name);
+      }
+    }
+    for (const m of content.matchAll(/^export\s+default\s+(\w+)/gm)) {
+      names.add(m[1]);
+    }
+  }
+  return names;
+}
+
+function findImporters(name: string, repoRoot: string): string[] {
+  // Matches default imports and named imports.
+  // aliased imports (`{ foo as bar }`) are NOT matched: `\bfoo\b\s*[,}]`
+  // requires , or } after foo — ` as` does not satisfy this (documented miss).
+  const pattern = `import\\s+${name}\\b|import[^{;]*\\{[^}]*\\b${name}\\b\\s*[,}]`;
+  const rg = spawnSync('rg', ['-l', '--glob', '*.{ts,tsx,js,jsx,mjs,cjs}', '-e', pattern, '.'], {
+    cwd: repoRoot,
+    encoding: 'utf-8',
+  });
+  if (!rg.error && (rg.status === 0 || rg.status === 1)) {
+    return (rg.stdout || '')
+      .split('\n')
+      .filter((f) => f.length > 0)
+      .map((f) => toPosix(f.replace(/^\.\//, '')));
+  }
+  const grep = spawnSync(
+    'grep',
+    ['-rl', '-E', '--include=*.ts', '--include=*.tsx', '--include=*.js', '--include=*.jsx',
+      pattern, '.'],
+    { cwd: repoRoot, encoding: 'utf-8' },
+  );
+  if (grep.status === 0 || grep.status === 1) {
+    return (grep.stdout || '')
+      .split('\n')
+      .filter((f) => f.length > 0)
+      .map((f) => toPosix(f.replace(/^\.\//, '')));
+  }
+  return [];
 }
