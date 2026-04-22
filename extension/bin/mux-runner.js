@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, runCmd, safeErrorMessage } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, runCmd, safeErrorMessage, ensureMonitorWindow } from '../services/pickle-utils.js';
 import { PromiseTokens, hasToken, VALID_STEPS, Defaults, hasLifecycleArtifact } from '../types/index.js';
 import { StateManager } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -784,6 +784,17 @@ async function main() {
         process.stderr.write(line);
     };
     log('mux-runner started');
+    // Auto-spawn the 4-pane monitor window. Previously each pickle skill prompt
+    // (pickle-tmux, pickle-pipeline, pickle-refine-prd, …) ended with a manual
+    // `bash tmux-monitor.sh …` step that the agent sometimes dropped silently.
+    // Owning it here makes it unskippable. No-op when not inside tmux.
+    try {
+        const result = ensureMonitorWindow({ sessionDir, extensionRoot, log });
+        log(`ensureMonitorWindow: ${result.status}${result.reason ? ` (${result.reason})` : ''}`);
+    }
+    catch (err) {
+        log(`ensureMonitorWindow: threw (ignored): ${safeErrorMessage(err)}`);
+    }
     // Graceful shutdown: deactivate session on SIGTERM/SIGINT so it doesn't
     // remain orphaned with active: true when the tmux pane is closed.
     const handleShutdownSignal = (signal) => {

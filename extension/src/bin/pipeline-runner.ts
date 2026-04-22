@@ -26,6 +26,7 @@ import {
   formatTime,
   printMinimalPanel,
   safeErrorMessage,
+  ensureMonitorWindow,
 } from '../services/pickle-utils.js';
 import { isWorkingTreeDirty } from '../services/git-utils.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -442,6 +443,15 @@ export async function main(sessionDir: string): Promise<void> {
   };
 
   log('pipeline-runner started');
+
+  // Auto-spawn the 4-pane monitor window. Matches mux-runner behaviour —
+  // skill prompts no longer need a manual tmux-monitor.sh step.
+  try {
+    const result = ensureMonitorWindow({ sessionDir, extensionRoot, log });
+    log(`ensureMonitorWindow: ${result.status}${result.reason ? ` (${result.reason})` : ''}`);
+  } catch (err) {
+    log(`ensureMonitorWindow: threw (ignored): ${safeErrorMessage(err)}`);
+  }
 
   let config: PipelineConfig;
   try {

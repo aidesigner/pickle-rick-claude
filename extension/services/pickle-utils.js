@@ -648,6 +648,92 @@ export function updateState(key, value, sessionDir) {
     });
     console.log(`Successfully updated ${key} to ${value} in ${statePath}`);
 }
+/** Infers monitor mode from state.json's command_template. Defaults to 'pickle'. */
+export function inferMonitorMode(sessionDir) {
+    try {
+        const raw = fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8');
+        const state = JSON.parse(raw);
+        const tpl = (state.command_template || '').toLowerCase();
+        if (tpl === 'meeseeks.md')
+            return 'meeseeks';
+        if (tpl === 'council-of-ricks.md')
+            return 'council';
+        return 'pickle';
+    }
+    catch {
+        return 'pickle';
+    }
+}
+/**
+ * Idempotently creates the 4-pane monitor window in the current tmux session.
+ *
+ * Called at the start of every long-running pickle tmux runner (mux-runner,
+ * pipeline-runner) so agents never have to invoke tmux-monitor.sh explicitly —
+ * previously Step 11e of several skill prompts, silently dropped when the
+ * agent's context was tight.
+ *
+ * Never throws. Returns a status so callers can log the outcome:
+ *   - `skipped`  → not inside tmux (headless or direct invocation)
+ *   - `exists`   → monitor window already present, no-op
+ *   - `created`  → monitor window spawned
+ *   - `error`    → tmux/bash call failed; check `reason`
+ */
+export function ensureMonitorWindow(opts) {
+    const log = opts.log || (() => { });
+    const tmuxBin = opts.tmuxBin || 'tmux';
+    const bashBin = opts.bashBin || 'bash';
+    const inTmux = opts.inTmux !== undefined ? opts.inTmux : !!process.env.TMUX;
+    if (!inTmux) {
+        log('ensureMonitorWindow: not inside tmux, skipping');
+        return { status: 'skipped', reason: 'not in tmux' };
+    }
+    // Resolve session name via tmux itself — the TMUX env var alone only proves
+    // we're inside *some* tmux, not which session owns this pane.
+    const displayName = spawnSync(tmuxBin, ['display-message', '-p', '#S'], {
+        encoding: 'utf-8',
+        timeout: 5_000,
+    });
+    if (displayName.status !== 0) {
+        const err = (displayName.stderr || '').toString().trim();
+        log(`ensureMonitorWindow: tmux display-message failed: ${err}`);
+        return { status: 'error', reason: `display-message: ${err || 'non-zero exit'}` };
+    }
+    const sessionName = (displayName.stdout || '').trim();
+    if (!sessionName) {
+        log('ensureMonitorWindow: empty tmux session name');
+        return { status: 'error', reason: 'empty session name' };
+    }
+    // Idempotency guard — bail if a "monitor" window is already on the session.
+    const listWindows = spawnSync(tmuxBin, ['list-windows', '-t', sessionName, '-F', '#W'], {
+        encoding: 'utf-8',
+        timeout: 5_000,
+    });
+    if (listWindows.status === 0) {
+        const names = (listWindows.stdout || '').split('\n').map(s => s.trim());
+        if (names.includes('monitor')) {
+            log(`ensureMonitorWindow: monitor window already exists on ${sessionName}`);
+            return { status: 'exists' };
+        }
+    }
+    const extensionRoot = opts.extensionRoot || getExtensionRoot();
+    const script = path.join(extensionRoot, 'extension', 'scripts', 'tmux-monitor.sh');
+    if (!fs.existsSync(script)) {
+        log(`ensureMonitorWindow: tmux-monitor.sh missing at ${script}`);
+        return { status: 'error', reason: `script missing: ${script}` };
+    }
+    const mode = opts.mode || inferMonitorMode(opts.sessionDir);
+    const result = spawnSync(bashBin, [script, sessionName, opts.sessionDir, mode], {
+        encoding: 'utf-8',
+        timeout: 10_000,
+    });
+    if (result.status !== 0) {
+        const err = (result.stderr || result.stdout || '').toString().trim();
+        log(`ensureMonitorWindow: tmux-monitor.sh failed (exit ${result.status}): ${err}`);
+        return { status: 'error', reason: `script exit ${result.status}: ${err || 'no stderr'}` };
+    }
+    log(`ensureMonitorWindow: created 4-pane monitor (mode=${mode}) on ${sessionName}`);
+    return { status: 'created' };
+}
 /** Removes inactive session directories older than maxAgeDays from sessionsRoot. */
 export function pruneOldSessions(sessionsRoot, maxAgeDays = 7) {
     if (!fs.existsSync(sessionsRoot))

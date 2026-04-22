@@ -23,6 +23,7 @@ import {
   formatTime,
   printMinimalPanel,
   safeErrorMessage,
+  ensureMonitorWindow,
 } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 
@@ -438,6 +439,16 @@ export async function main(sessionDir: string): Promise<void> {
   };
 
   log('microverse-runner started');
+
+  // Auto-spawn the 4-pane monitor window. Matches mux-runner/pipeline-runner —
+  // anatomy-park / szechuan-sauce / plumbus / pickle-microverse skill prompts
+  // no longer need a manual tmux-monitor.sh step.
+  try {
+    const result = ensureMonitorWindow({ sessionDir, extensionRoot, log });
+    log(`ensureMonitorWindow: ${result.status}${result.reason ? ` (${result.reason})` : ''}`);
+  } catch (err) {
+    log(`ensureMonitorWindow: threw (ignored): ${safeErrorMessage(err)}`);
+  }
 
   // Feature flag: enable_failure_classification (default true)
   let enableFailureClassification = true;

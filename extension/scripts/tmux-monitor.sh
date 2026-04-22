@@ -13,6 +13,14 @@ if [ -z "$NAME" ] || [ -z "$SESSION_ROOT" ]; then
   exit 1
 fi
 
+# Idempotency guard — bail if the monitor window already exists on this
+# session. mux-runner/pipeline-runner call us at start of every run; we
+# must not double-spawn the window on resume or re-invocation.
+if tmux list-windows -t "$NAME" -F '#W' 2>/dev/null | grep -qx 'monitor'; then
+  echo "tmux-monitor: window 'monitor' already exists on session '$NAME', skipping" >&2
+  exit 0
+fi
+
 # Create window and build 2x2 grid:
 #   ┌──────────────┬──────────────┐
 #   │ 0: monitor   │ 1: log-watch │  60%

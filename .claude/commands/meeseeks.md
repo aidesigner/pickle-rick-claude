@@ -59,9 +59,7 @@ tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/mux-run
 ```
 
 ### Step 7: Monitor (3-pane)
-```bash
-bash "$HOME/.claude/pickle-rick/extension/scripts/tmux-monitor.sh" <name> <SESSION_ROOT> meeseeks
-```
+mux-runner auto-creates the monitor window on startup (meeseeks layout — dashboard / log-stream / mux-runner tail / raw-morty), no manual invocation needed.
 
 ### Step 8: Report
 Print: session name, `tmux attach -t <name>`, window layout (monitor: dashboard/log-stream/runner-log, runner: background), min/max passes, cancel: `cd <working_dir> && /eat-pickle`, emergency: `tmux kill-session -t <name>` then `node ~/.claude/pickle-rick/extension/bin/cancel.js`, state path: `<SESSION_ROOT>/state.json`.

@@ -17,7 +17,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync, spawn } from 'child_process';
 import { StateManager } from '../services/state-manager.js';
-import { getExtensionRoot, Style, formatTime, printMinimalPanel, safeErrorMessage, } from '../services/pickle-utils.js';
+import { getExtensionRoot, Style, formatTime, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, } from '../services/pickle-utils.js';
 import { isWorkingTreeDirty } from '../services/git-utils.js';
 import { logActivity } from '../services/activity-logger.js';
 const sm = new StateManager();
@@ -371,6 +371,15 @@ export async function main(sessionDir) {
         process.stderr.write(line);
     };
     log('pipeline-runner started');
+    // Auto-spawn the 4-pane monitor window. Matches mux-runner behaviour —
+    // skill prompts no longer need a manual tmux-monitor.sh step.
+    try {
+        const result = ensureMonitorWindow({ sessionDir, extensionRoot, log });
+        log(`ensureMonitorWindow: ${result.status}${result.reason ? ` (${result.reason})` : ''}`);
+    }
+    catch (err) {
+        log(`ensureMonitorWindow: threw (ignored): ${safeErrorMessage(err)}`);
+    }
     let config;
     try {
         // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call

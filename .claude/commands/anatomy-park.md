@@ -148,8 +148,9 @@ Session name: `anatomy-park-<hash>` from SESSION_ROOT basename.
 tmux new-session -d -s <name> -c <working_dir>
 sleep 1
 tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/microverse-runner.js ${SESSION_ROOT}; echo ''; echo 'Anatomy Park is closed. All organs accounted for.'; read" Enter
-bash "$HOME/.claude/pickle-rick/extension/scripts/tmux-monitor.sh" <name> ${SESSION_ROOT} pickle
 ```
+
+microverse-runner auto-creates the 4-pane monitor window on startup — no manual invocation needed.
 
 ### Step 10: Report
 

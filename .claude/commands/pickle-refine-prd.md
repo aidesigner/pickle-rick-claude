@@ -705,9 +705,7 @@ tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/mux-run
 ```
 
 ### 11e: Monitor
-```bash
-bash "$HOME/.claude/pickle-rick/extension/scripts/tmux-monitor.sh" <name> ${SESSION_ROOT} pickle
-```
+mux-runner auto-creates the 4-pane monitor window on startup — no manual invocation needed.
 
 ### 11g: Report
 Print: session, attach command, layout, cancel/kill commands. CHAIN_MEESEEKS → note auto-transition.

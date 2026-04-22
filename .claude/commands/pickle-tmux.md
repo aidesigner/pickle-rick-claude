@@ -31,9 +31,7 @@ tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/mux-run
 ```
 
 ## Step 5: Monitor (4-pane)
-```bash
-bash "$HOME/.claude/pickle-rick/extension/scripts/tmux-monitor.sh" <name> <SESSION_ROOT> pickle
-```
+mux-runner auto-creates the 4-pane monitor window on startup — no manual invocation needed.
 
 ## Step 6: Report
 Print: session name, `tmux attach -t <name>`, window layout (monitor: dashboard top-left / log-stream top-right / morty-logs bottom-left / raw-morty bottom-right; runner: Ctrl+B 0), cancel: `cd <working_dir> && /eat-pickle`, emergency: `tmux kill-session -t <name>` then `node ~/.claude/pickle-rick/extension/bin/cancel.js`, state path: `<SESSION_ROOT>/state.json`.

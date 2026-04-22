@@ -43,8 +43,9 @@ Extract `SESSION_ROOT=<path>`. Session name: `council-<hash>` from basename.
 ```bash
 tmux new-session -d -s <name> -c <working_dir> && sleep 1
 tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/mux-runner.js <SESSION_ROOT>; echo ''; echo 'The Council has adjourned.'; read" Enter
-bash "$HOME/.claude/pickle-rick/extension/scripts/tmux-monitor.sh" <name> <SESSION_ROOT> council
 ```
+
+mux-runner auto-creates the monitor window on startup (council layout — dashboard / log-stream / mux-runner tail / raw-morty), no manual invocation needed.
 
 ### Step 9: Report
 Print: session name, attach command, branches, gates, GitNexus status, min/max passes, cancel (`/eat-pickle`), emergency (`tmux kill-session`), state path.

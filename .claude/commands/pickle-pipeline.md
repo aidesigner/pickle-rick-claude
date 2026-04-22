@@ -84,9 +84,7 @@ tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/pipelin
 
 ## Step 7: Monitor (4-pane)
 
-```bash
-bash "$HOME/.claude/pickle-rick/extension/scripts/tmux-monitor.sh" <name> <SESSION_ROOT> pickle
-```
+pipeline-runner auto-creates the 4-pane monitor window on startup — no manual invocation needed.
 
 ## Step 8: Report
 

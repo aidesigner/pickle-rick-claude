@@ -116,10 +116,7 @@ Print attach command: `tmux attach -t <name>`
 tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/microverse-runner.js ${SESSION_ROOT}; echo ''; echo 'Microverse runner finished.  Ctrl+B 1 → monitor  |  Ctrl+B D → detach'; read" Enter
 ```
 
-6. Launch monitor:
-```bash
-bash "$HOME/.claude/pickle-rick/extension/scripts/tmux-monitor.sh" <name> ${SESSION_ROOT} pickle
-```
+6. Launch monitor: microverse-runner auto-creates the 4-pane monitor window on startup — no manual invocation needed.
 
 7. Report: session name, `tmux attach -t <name>`, window layout (monitor: Ctrl+B 1; runner: Ctrl+B 0), cancel: `cd <working_dir> && /eat-pickle`, emergency: `tmux kill-session -t <name>`, state path.
 
