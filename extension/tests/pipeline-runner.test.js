@@ -264,6 +264,26 @@ describe('discoverSubsystems', () => {
     fs.rmSync(root, { recursive: true });
   });
 
+  test('subsystem names are single-segment basenames (no path separators)', () => {
+    const root = tmpDir();
+    const src = path.join(root, 'src');
+    for (const name of ['services', 'processors']) {
+      const sub = path.join(src, name);
+      fs.mkdirSync(sub, { recursive: true });
+      for (let i = 0; i < 3; i++) fs.writeFileSync(path.join(sub, `f${i}.ts`), '');
+    }
+
+    const result = discoverSubsystems(src);
+    assert.equal(result.length, 2);
+    const names = result.map(s => s.name);
+    assert.ok(names.includes('services'), `expected 'services' in ${JSON.stringify(names)}`);
+    assert.ok(names.includes('processors'), `expected 'processors' in ${JSON.stringify(names)}`);
+    for (const { name } of result) {
+      assert.ok(!name.includes('/') && !name.includes('\\'), `name must be a basename, got: ${name}`);
+    }
+    fs.rmSync(root, { recursive: true });
+  });
+
   test('returns sorted results', () => {
     const root = tmpDir();
     for (const name of ['zebra', 'alpha', 'middle']) {

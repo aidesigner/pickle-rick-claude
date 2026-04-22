@@ -70,7 +70,7 @@ Extract `SESSION_ROOT=<path>` from output.
 Write subsystem rotation state to `${SESSION_ROOT}/anatomy-park.json`:
 ```json
 {
-  "subsystems": ["src/services", "src/processors", "src/utils"],
+  "subsystems": ["services", "processors", "utils"],
   "current_index": 0,
   "pass_counts": {},
   "consecutive_clean": {},
