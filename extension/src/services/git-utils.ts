@@ -124,3 +124,56 @@ export function resetToSha(sha: string, cwd: string): void {
 export function isWorkingTreeDirty(cwd: string): boolean {
   return runGit(['status', '--porcelain'], cwd).trim().length > 0;
 }
+
+export type DiffStatus = 'A' | 'M' | 'D' | 'R' | 'B';
+export interface DiffEntry {
+  path: string;
+  status: DiffStatus;
+}
+
+/**
+ * Returns file-level diff between `base` and `head` for `repoRoot`.
+ *
+ * Uses `git diff <base>...<head> --name-status -M100 -z` so renames are
+ * detected only when similarity is exactly 100% (no heuristic flake), and
+ * paths containing whitespace/unicode/newlines survive the NUL-delimited
+ * parse intact. Deleted files (`D`) are included — the caller decides
+ * whether to exclude them from any "allowed paths" set.
+ *
+ * Rename entries report the **new** path with status `'R'`; the old path
+ * is discarded (scope-resolver does not need it).
+ */
+export function getDiffFiles(base: string, head: string, repoRoot: string): DiffEntry[] {
+  const out = runGit(
+    ['diff', `${base}...${head}`, '--name-status', '-M100', '-z'],
+    repoRoot,
+  );
+  if (!out) return [];
+  const tokens = out.split('\0').filter((t) => t.length > 0);
+  const entries: DiffEntry[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const code = tokens[i];
+    if (code.startsWith('R') || code.startsWith('C')) {
+      const newPath = tokens[i + 2];
+      if (newPath) entries.push({ path: newPath, status: 'R' });
+      i += 2;
+    } else if (code === 'A' || code === 'M' || code === 'D') {
+      const p = tokens[i + 1];
+      if (p) entries.push({ path: p, status: code });
+      i += 1;
+    } else {
+      const p = tokens[i + 1];
+      if (p) entries.push({ path: p, status: 'B' });
+      i += 1;
+    }
+  }
+  return entries;
+}
+
+/**
+ * Returns the merge-base SHA between `ref1` and `ref2` for `repoRoot`.
+ * Throws via `runGit` if either ref is unknown to the repository.
+ */
+export function getMergeBase(ref1: string, ref2: string, repoRoot: string): string {
+  return runGit(['merge-base', ref1, ref2], repoRoot).trim();
+}
