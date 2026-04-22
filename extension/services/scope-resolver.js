@@ -107,9 +107,11 @@ export function resolveScope(args) {
             const msg = err instanceof Error ? err.message : String(err);
             throw new ScopeError('SCOPE_BASE_MISSING', `Diff ${baseSha}...HEAD failed: ${msg}`);
         }
+        const binaries = getBinaryPathSet(baseSha, headSha, repoRoot);
         const paths = diff
             .filter((d) => d.status === 'A' || d.status === 'M' || d.status === 'R')
-            .map((d) => d.path);
+            .map((d) => d.path)
+            .filter((p) => !binaries.has(toPosix(p)));
         allowed = filterByTarget(paths, args.target, repoRoot);
         if (allowed.length === 0) {
             throw new ScopeError('SCOPE_EMPTY_DIFF', `No files changed between ${baseRef} and HEAD for mode=${parsed.mode}`);
@@ -266,6 +268,18 @@ function listTrackedAndUntracked(repoRoot) {
     if (!out)
         return [];
     return out.split('\0').filter((p) => p.length > 0);
+}
+function getBinaryPathSet(baseSha, headSha, repoRoot) {
+    const out = runGit(['diff', '--numstat', `${baseSha}...${headSha}`], repoRoot, false);
+    const binaries = new Set();
+    if (!out)
+        return binaries;
+    for (const line of out.split('\n')) {
+        const m = /^-\t-\t(.+)/.exec(line);
+        if (m)
+            binaries.add(toPosix(m[1]));
+    }
+    return binaries;
 }
 function filterByTarget(paths, target, repoRoot) {
     if (!target)
