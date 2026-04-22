@@ -228,6 +228,7 @@ Before assessing the codebase, check the handoff's `microverse.json` for a `judg
 Before the first scoring pass (iteration 1 only — skip on subsequent iterations if `${SESSION_ROOT}/gap_analysis.md` already contains a `## Contract Map` section):
 
 1. **Identify exports**: For each target file, extract all exported functions, types, enums, interfaces, classes, and Zod schemas.
+<!-- scope-invariant: override-2-grep-spans-full-repo -->
 2. **Grep the entire codebase** for importers of each export — not just the target directory. Use `Grep` with the export name across all source files.
 3. **Build a contract map**: write a `## Contract Map` section at the top of `${SESSION_ROOT}/gap_analysis.md` (create the file if it doesn't exist; if it already exists, prepend — do NOT overwrite existing content) in this format:
    ```
@@ -252,7 +253,8 @@ Before the first scoring pass (iteration 1 only — skip on subsequent iteration
 ### Override 3: Violation-Oriented Scoring
 
 The metric is **violation count** (lower is better). Each iteration:
-1. **Always read the target code** (Glob + Read) — the code is the source of truth, never skip this
+<!-- scope-hook: override-3-allowed-paths -->
+1. **Always read the target code** — Check `microverse.json` for an `allowed_paths` field. If present, read only files within those paths (Glob + Read restricted to `allowed_paths`). If absent, Glob + Read the full target directory. The code is the source of truth; never skip this step.
 2. Consult `${SESSION_ROOT}/gap_analysis.md` if it exists as a **checklist hint** to speed up scanning, but do NOT trust it over what the code actually says — fixes may have introduced new violations or resolved ones the gap analysis still lists. Also consult the `## Contract Mismatches` section — contract violations are scored as P1.
 3. Find the **single highest-priority** remaining violation (P0 > P1 > P2 > P3 > P4) that is NOT in the failed approaches list from the handoff
 4. If no violations found: print "The sauce is obtained." and exit cleanly

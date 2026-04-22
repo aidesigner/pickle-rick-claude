@@ -1,3 +1,4 @@
+import * as fs from 'fs';
 import * as path from 'path';
 import { createMicroverseState, writeMicroverseState } from '../services/microverse-state.js';
 import { safeErrorMessage } from '../services/pickle-utils.js';
@@ -22,7 +23,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'init-microverse.js') 
     const sessionDir = positional[0];
     const targetPath = positional[1];
     if (!sessionDir || !targetPath) {
-        console.error('Usage: init-microverse <session-dir> <target-path> [--stall-limit N] [--convergence-target N] [--convergence-mode metric|worker] [--convergence-file <filename>] [--metric-json \'...\']');
+        console.error('Usage: init-microverse <session-dir> <target-path> [--stall-limit N] [--convergence-target N] [--convergence-mode metric|worker] [--convergence-file <filename>] [--metric-json \'...\'] [--allowed-paths-file <path>]');
         process.exit(1);
     }
     const stallLimit = Number(parseFlag(args, '--stall-limit') ?? '5');
@@ -31,6 +32,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'init-microverse.js') 
     const judgeContextPath = parseFlag(args, '--judge-context');
     const rawConvergenceMode = parseFlag(args, '--convergence-mode');
     const convergenceFile = parseFlag(args, '--convergence-file');
+    const allowedPathsFile = parseFlag(args, '--allowed-paths-file');
     if (convergenceFile && (/[/\\]/.test(convergenceFile) || convergenceFile.includes('..'))) {
         console.error('convergence_file must be a bare filename');
         process.exit(1);
@@ -58,9 +60,23 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'init-microverse.js') 
         console.error('type: none requires convergence_mode: worker');
         process.exit(1);
     }
+    let allowedPaths;
+    if (allowedPathsFile) {
+        try {
+            const raw = JSON.parse(fs.readFileSync(allowedPathsFile, 'utf-8'));
+            if (raw && typeof raw === 'object' && !Array.isArray(raw) && Array.isArray(raw.allowed_paths)) {
+                allowedPaths = raw.allowed_paths;
+            }
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error(`Failed to read --allowed-paths-file ${allowedPathsFile}: ${msg}`);
+            process.exit(1);
+        }
+    }
     try {
         const convergenceTarget = rawConvergence != null ? Number(rawConvergence) : undefined;
-        const state = createMicroverseState({ prdPath: targetPath, metric, stallLimit, convergenceTarget, convergenceMode, convergenceFile });
+        const state = createMicroverseState({ prdPath: targetPath, metric, stallLimit, convergenceTarget, convergenceMode, convergenceFile, allowedPaths });
         state.gap_analysis_path = path.join(sessionDir, 'gap_analysis.md');
         if (judgeContextPath)
             state.judge_context_path = judgeContextPath;

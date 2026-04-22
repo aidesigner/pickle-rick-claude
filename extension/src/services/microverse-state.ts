@@ -28,7 +28,7 @@ export function compareMetric(
 }
 
 export function createMicroverseState(opts: CreateMicroverseOpts): MicroverseSessionState {
-  const { prdPath, metric, stallLimit, convergenceTarget, convergenceMode, convergenceFile } = opts;
+  const { prdPath, metric, stallLimit, convergenceTarget, convergenceMode, convergenceFile, allowedPaths } = opts;
   if (!Number.isInteger(stallLimit) || stallLimit < 1) {
     throw new Error(`stall_limit must be a positive integer, got ${stallLimit}`);
   }
@@ -53,6 +53,7 @@ export function createMicroverseState(opts: CreateMicroverseOpts): MicroverseSes
   if (convergenceTarget != null) state.convergence_target = convergenceTarget;
   if (convergenceMode != null) state.convergence_mode = convergenceMode;
   if (convergenceFile != null) state.convergence_file = convergenceFile;
+  if (allowedPaths != null && allowedPaths.length > 0) state.allowed_paths = allowedPaths;
   return state;
 }
 

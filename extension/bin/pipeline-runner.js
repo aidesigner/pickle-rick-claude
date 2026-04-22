@@ -376,7 +376,7 @@ export function setupAnatomyPark(sessionDir, target, stallLimit, extensionRoot, 
 // ---------------------------------------------------------------------------
 // Phase Setup: Szechuan Sauce
 // ---------------------------------------------------------------------------
-function setupSzechuanSauce(sessionDir, target, stallLimit, extensionRoot, domain, focus, log) {
+function setupSzechuanSauce(sessionDir, target, stallLimit, extensionRoot, domain, focus, log, scope) {
     const principlesPath = path.join(extensionRoot, 'szechuan-sauce-principles.md');
     let judgeContextArg;
     // Build judge context if domain or focus specified, or if base principles exist
@@ -415,6 +415,10 @@ function setupSzechuanSauce(sessionDir, target, stallLimit, extensionRoot, domai
     ];
     if (judgeContextArg)
         initArgs.push('--judge-context', judgeContextArg);
+    const scopePath = path.join(sessionDir, 'scope.json');
+    if (scope && scope.allowedPaths.length > 0 && fs.existsSync(scopePath)) {
+        initArgs.push('--allowed-paths-file', scopePath);
+    }
     try {
         execFileSync('node', initArgs, { timeout: 30_000, encoding: 'utf-8' });
     }
@@ -613,7 +617,7 @@ export async function main(sessionDir, opts = {}) {
             if (refreshedSz) {
                 writeSkippedByScope(sessionDir, 'szechuan-sauce', refreshedSz, config.target || workingDir, workingDir);
             }
-            const setupOk = setupSzechuanSauce(sessionDir, config.target || workingDir, config.szechuan_stall_limit, extensionRoot, config.szechuan_domain, config.szechuan_focus, log);
+            const setupOk = setupSzechuanSauce(sessionDir, config.target || workingDir, config.szechuan_stall_limit, extensionRoot, config.szechuan_domain, config.szechuan_focus, log, refreshedSz ? { allowedPaths: refreshedSz.allowed_paths } : undefined);
             if (!setupOk) {
                 skippedPhases++;
                 writePipelineStatus(sessionDir, 'running', {

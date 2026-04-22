@@ -451,6 +451,7 @@ function setupSzechuanSauce(
   domain: string | undefined,
   focus: string | undefined,
   log: (msg: string) => void,
+  scope?: { allowedPaths: string[] },
 ): boolean {
   const principlesPath = path.join(extensionRoot, 'szechuan-sauce-principles.md');
   let judgeContextArg: string | undefined;
@@ -484,6 +485,10 @@ function setupSzechuanSauce(
     '--convergence-target', '0',
   ];
   if (judgeContextArg) initArgs.push('--judge-context', judgeContextArg);
+  const scopePath = path.join(sessionDir, 'scope.json');
+  if (scope && scope.allowedPaths.length > 0 && fs.existsSync(scopePath)) {
+    initArgs.push('--allowed-paths-file', scopePath);
+  }
   try {
     execFileSync('node', initArgs, { timeout: 30_000, encoding: 'utf-8' });
   } catch (err) {
@@ -736,6 +741,7 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
         sessionDir, config.target || workingDir,
         config.szechuan_stall_limit, extensionRoot,
         config.szechuan_domain, config.szechuan_focus, log,
+        refreshedSz ? { allowedPaths: refreshedSz.allowed_paths } : undefined,
       );
       if (!setupOk) {
         skippedPhases++;

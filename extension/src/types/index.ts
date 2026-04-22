@@ -316,6 +316,7 @@ export interface MicroverseSessionState {
   convergence_target?: number;
   convergence_mode?: 'metric' | 'worker';
   convergence_file?: string;
+  allowed_paths?: string[];
   exit_reason?: string;
   stash_ref?: string;
   failure_history: ClassifiedFailure[];
@@ -329,6 +330,7 @@ export interface CreateMicroverseOpts {
   convergenceTarget?: number;
   convergenceMode?: 'metric' | 'worker';
   convergenceFile?: string;
+  allowedPaths?: string[];
 }
 
 // ---------------------------------------------------------------------------
