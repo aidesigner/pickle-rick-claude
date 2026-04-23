@@ -79,6 +79,7 @@ test('mux-runner: exits when max_iterations already reached', () => {
             step: 'implement',
             iteration: 5,
             max_iterations: 5,
+            worker_timeout_seconds: 1200,
             original_prompt: 'test task',
             working_dir: tmpRoot,
         }, null, 2));
@@ -125,6 +126,7 @@ test('mux-runner: takes ownership of inactive session then respects max_iteratio
             step: 'plan',
             iteration: 10,
             max_iterations: 10,
+            worker_timeout_seconds: 1200,
             original_prompt: 'test ownership',
             working_dir: tmpRoot,
         }, null, 2));
@@ -171,6 +173,7 @@ test('mux-runner: ignores non-number default_tmux_max_turns in settings', () => 
             step: 'implement',
             iteration: 3,
             max_iterations: 3,
+            worker_timeout_seconds: 1200,
             original_prompt: 'test settings guard',
             working_dir: tmpRoot,
         }, null, 2));
@@ -266,6 +269,7 @@ test('mux-runner: string max_iterations and iteration still trigger max iteratio
             step: 'implement',
             iteration: '1',
             max_iterations: '1',
+            worker_timeout_seconds: 1200,
             original_prompt: 'test string coercion',
             working_dir: tmpRoot,
         }, null, 2));
@@ -304,6 +308,7 @@ test('mux-runner: NaN max_time_minutes and start_time_epoch do not crash', () =>
             step: 'implement',
             iteration: 5,
             max_iterations: 5,
+            worker_timeout_seconds: 1200,
             max_time_minutes: 'abc',
             start_time_epoch: 'xyz',
             original_prompt: 'test NaN safety',
@@ -348,6 +353,7 @@ test('mux-runner: stall detection works with string state.iteration', () => {
             step: 'implement',
             iteration: '5',
             max_iterations: 100,
+            worker_timeout_seconds: 1200,
             original_prompt: 'test stall with string',
             working_dir: tmpRoot,
         }, null, 2));
@@ -398,6 +404,7 @@ test('mux-runner: rejects command_template with path traversal (../)', () => {
             step: 'prd',
             iteration: 0,
             max_iterations: 5,
+            worker_timeout_seconds: 1200,
             original_prompt: 'test traversal',
             working_dir: tmpRoot,
             command_template: '../../../etc/passwd',
@@ -431,6 +438,7 @@ test('mux-runner: rejects command_template with forward slash', () => {
             step: 'prd',
             iteration: 0,
             max_iterations: 5,
+            worker_timeout_seconds: 1200,
             original_prompt: 'test slash',
             working_dir: tmpRoot,
             command_template: 'subdir/evil.md',
@@ -466,6 +474,7 @@ test('mux-runner: rejects command_template not found in any directory', () => {
             step: 'prd',
             iteration: 0,
             max_iterations: 5,
+            worker_timeout_seconds: 1200,
             original_prompt: 'test unknown template',
             working_dir: tmpRoot,
             command_template: 'definitely-nonexistent-template-xyz123abc.md',
@@ -545,6 +554,7 @@ test('mux-runner: creates mux-runner.log in session directory', () => {
             step: 'refactor',
             iteration: 3,
             max_iterations: 3,
+            worker_timeout_seconds: 1200,
             original_prompt: 'test log creation',
             working_dir: tmpRoot,
         }, null, 2));
@@ -1358,6 +1368,7 @@ test('mux-runner: cleans up stale rate_limit_wait.json on startup', () => {
             step: 'implement',
             iteration: 5,
             max_iterations: 5,
+            worker_timeout_seconds: 1200,
             original_prompt: 'test stale cleanup',
             working_dir: tmpRoot,
         }, null, 2));
@@ -1443,6 +1454,7 @@ function runAndCollectActivity(stateOverrides = {}) {
         iteration: 0,
         max_iterations: 100,
         max_time_minutes: 720,
+        worker_timeout_seconds: 1200,
         original_prompt: 'test iteration events',
         working_dir: tmpRoot,
         ...stateOverrides,
