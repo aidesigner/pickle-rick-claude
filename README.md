@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="images/pickle-rick.png" alt="Pickle Rick for Claude Code" width="100%" />
-</p>
+<img src="images/pickle-rick.png" alt="Pickle Rick for Claude Code" width="100%" />
 
 # 🥒 Pickle Rick for Claude Code
 
@@ -298,58 +296,60 @@ Queue tasks for unattended batch execution overnight.
 
 ### Flags
 
-```
---max-iterations <N>       Stop after N iterations (default: 500; 0 = unlimited)
---max-time <M>             Stop after M minutes (default: 720 / 12 hours; 0 = unlimited)
---worker-timeout <S>       Timeout for individual workers in seconds (default: 1200)
---completion-promise "TXT" Only stop when the agent outputs <promise>TXT</promise>
---resume [PATH]            Resume from an existing session
---reset                    Reset iteration counter and start time (use with --resume)
---paused                   Start in paused mode (PRD only)
---run                      (/pickle-refine-prd, /portal-gun) Auto-launch tmux
---interactive              (/pickle-microverse) Run inline instead of tmux
---legacy                   (/pickle-dot) Prompt-only fallback — skips builder codegen for this run
---provider <name>          (/pickle-dot) LLM provider: anthropic, openai, qwen, gemini, deepseek, ollama, vllm
---review-provider <name>   (/pickle-dot) Separate provider for review/critical nodes
---isolated                 (/pickle-dot) Isolated workspace mode
---metric "<CMD>"           (/pickle-microverse) Shell command outputting a numeric score
---goal "<TEXT>"            (/pickle-microverse) Natural language goal for LLM judge
---direction <higher|lower> (/pickle-microverse) Optimization direction (default: higher)
---judge-model <MODEL>      (/pickle-microverse) Judge model for LLM scoring
---tolerance <N>            (/pickle-microverse) Score delta for "held" status (default: 0)
---stall-limit <N>          (/pickle-microverse) Non-improving iterations before convergence (default: 5)
---target <PATH>            (/portal-gun) Target repo (default: cwd)
---depth <shallow|deep>     (/portal-gun) Extraction depth (default: deep)
---no-refine                (/portal-gun) Skip automatic refinement
---max-passes <N>           (/portal-gun) Max convergence passes (default: 3)
---save-pattern <NAME>      (/portal-gun) Persist pattern to library
---target <PATH>            (/pickle-pipeline) Target directory for review phases (default: cwd)
---skip-anatomy             (/pickle-pipeline) Skip anatomy-park phase
---skip-szechuan            (/pickle-pipeline) Skip szechuan-sauce phase
---anatomy-max-iterations N (/pickle-pipeline) Anatomy Park iteration limit (default: 100)
---anatomy-stall-limit N    (/pickle-pipeline) Anatomy Park stall limit (default: 3)
---szechuan-max-iterations N (/pickle-pipeline) Szechuan Sauce iteration limit (default: 50)
---szechuan-stall-limit N   (/pickle-pipeline) Szechuan Sauce stall limit (default: 5)
---szechuan-domain <name>   (/pickle-pipeline) Domain-specific principles for Szechuan phase
---szechuan-focus "<text>"  (/pickle-pipeline) Focus directive for Szechuan phase
---dry-run                  (/szechuan-sauce, /plumbus) Catalog violations without fixing
---domain <name>            (/szechuan-sauce) Domain-specific principles (e.g., financial)
---focus "<text>"           (/szechuan-sauce, /plumbus) Direct review toward specific concern
---no-validator             (/plumbus) Disable attractor validator gate (pattern-only review)
---repo <PATH>              (/council-of-ricks) Target repo (default: cwd)
-```
+Most flags are command-scoped. The table groups them by command family — flags with no command prefix apply across `/pickle`, `/pickle-tmux`, `/pickle-zellij`, `/pickle-jar-open`, and `/pickle-pipeline` unless noted.
+
+| Flag | Command | Description |
+|---|---|---|
+| `--max-iterations <N>` | General | Stop after N iterations (default: 500; 0 = unlimited) |
+| `--max-time <M>` | General | Stop after M minutes (default: 720 / 12 hours; 0 = unlimited) |
+| `--worker-timeout <S>` | General | Timeout for individual workers in seconds (default: 1200) |
+| `--completion-promise "TXT"` | General | Only stop when the agent outputs `<promise>TXT</promise>` |
+| `--resume [PATH]` | General | Resume from an existing session |
+| `--reset` | General | Reset iteration counter and start time (use with `--resume`) |
+| `--paused` | General | Start in paused mode (PRD only) |
+| `--run` | `/pickle-refine-prd`, `/portal-gun` | Auto-launch tmux |
+| `--interactive` | `/pickle-microverse` | Run inline instead of tmux |
+| `--metric "<CMD>"` | `/pickle-microverse` | Shell command outputting a numeric score |
+| `--goal "<TEXT>"` | `/pickle-microverse` | Natural language goal for LLM judge |
+| `--direction <higher\|lower>` | `/pickle-microverse` | Optimization direction (default: higher) |
+| `--judge-model <MODEL>` | `/pickle-microverse` | Judge model for LLM scoring |
+| `--tolerance <N>` | `/pickle-microverse` | Score delta for "held" status (default: 0) |
+| `--stall-limit <N>` | `/pickle-microverse` | Non-improving iterations before convergence (default: 5) |
+| `--legacy` | `/pickle-dot` | Prompt-only fallback — skips builder codegen for this run |
+| `--provider <name>` | `/pickle-dot` | LLM provider: anthropic, openai, qwen, gemini, deepseek, ollama, vllm |
+| `--review-provider <name>` | `/pickle-dot` | Separate provider for review/critical nodes |
+| `--isolated` | `/pickle-dot` | Isolated workspace mode |
+| `--target <PATH>` | `/portal-gun` | Target repo (default: cwd) |
+| `--depth <shallow\|deep>` | `/portal-gun` | Extraction depth (default: deep) |
+| `--no-refine` | `/portal-gun` | Skip automatic refinement |
+| `--max-passes <N>` | `/portal-gun` | Max convergence passes (default: 3) |
+| `--save-pattern <NAME>` | `/portal-gun` | Persist pattern to library |
+| `--target <PATH>` | `/pickle-pipeline` | Target directory for review phases (default: cwd) |
+| `--skip-anatomy` | `/pickle-pipeline` | Skip anatomy-park phase |
+| `--skip-szechuan` | `/pickle-pipeline` | Skip szechuan-sauce phase |
+| `--anatomy-max-iterations <N>` | `/pickle-pipeline` | Anatomy Park iteration limit (default: 100) |
+| `--anatomy-stall-limit <N>` | `/pickle-pipeline` | Anatomy Park stall limit (default: 3) |
+| `--szechuan-max-iterations <N>` | `/pickle-pipeline` | Szechuan Sauce iteration limit (default: 50) |
+| `--szechuan-stall-limit <N>` | `/pickle-pipeline` | Szechuan Sauce stall limit (default: 5) |
+| `--szechuan-domain <name>` | `/pickle-pipeline` | Domain-specific principles for Szechuan phase |
+| `--szechuan-focus "<text>"` | `/pickle-pipeline` | Focus directive for Szechuan phase |
+| `--dry-run` | `/szechuan-sauce`, `/plumbus` | Catalog violations without fixing |
+| `--focus "<text>"` | `/szechuan-sauce`, `/plumbus` | Direct review toward specific concern |
+| `--domain <name>` | `/szechuan-sauce` | Domain-specific principles (e.g., financial) |
+| `--no-validator` | `/plumbus` | Disable attractor validator gate (pattern-only review) |
+| `--repo <PATH>` | `/council-of-ricks` | Target repo (default: cwd) |
+| `--min-iterations <N>` | `/council-of-ricks` | Minimum review passes before convergence |
+| `--max-iterations <N>` | `/council-of-ricks` | Maximum review passes before forced stop |
+| `--gitnexus` | `/council-of-ricks` | Enable GitNexus-backed code intelligence during review |
+| `--no-codex` | `/council-of-ricks` | Disable the Codex adversarial reviewer |
+| `--codex-timeout <S>` | `/council-of-ricks` | Timeout for Codex adversarial reviewer (seconds) |
+| `--no-publish` | `/council-of-ricks` | Skip auto-publishing PR comments at session end |
 
 ### Tips
 
-**`/pickle` vs `/pickle-tmux`** — Use `/pickle` for short epics (1–7 iterations) with full keyboard access. Use `/pickle-tmux` for long epics (8+) where context drift matters — each iteration spawns a fresh Claude subprocess with a clean context window.
-
-**Phase-resume** — When resuming after `/pickle-refine-prd`, the resume flow auto-detects the session's current phase and skips completed phases.
-
-**Notifications (macOS)** — `/pickle-tmux` and `/pickle-jar-open` send macOS notifications on completion or failure.
-
-**Recovering from a failed Morty** — Use `/pickle-retry <ticket-id>` instead of restarting the whole epic.
-
-**"Stop hook error" is normal** — Claude Code labels every `decision: block` from the stop hook as "Stop hook error" in the UI. This is not an error — it means the loop is working.
+- **`/pickle` vs `/pickle-tmux`** — `/pickle` for short epics (1–7 iterations, full keyboard access); `/pickle-tmux` for long epics (8+) where each iteration spawns a fresh Claude subprocess with a clean context window.
+- **"Stop hook error" is normal** — Claude Code labels every `decision: block` from the stop hook as "Stop hook error" in the UI. Not an error — the loop is working.
+- **Recovering from a failed Morty** — `/pickle-retry <ticket-id>` instead of restarting the whole epic.
 
 ### Settings (`pickle_settings.json`)
 
@@ -463,176 +463,40 @@ Auto-discovers subsystems, rotates through them round-robin, three-phase protoco
 
 ### 🏗️ DotBuilder — Programmatic DOT Codegen
 
-`/pickle-dot` builds DOT pipelines by default via the `DotBuilder` TypeScript class — a schema-validated codegen path that enforces 32 active patterns and 15 structural validation rules and produces deterministic output. Use `--builder` to explicitly opt into the builder (e.g., when a global config overrides it), or `--legacy` to fall back to prompt-only generation for a specific run.
+`/pickle-dot` generates attractor pipelines by default via the `DotBuilder` TypeScript class — schema-validated codegen with 32 active patterns and 15 structural validation rules. Use `--builder` to opt in explicitly or `--legacy` to fall back to prompt-only generation.
 
-```bash
-/pickle-dot my-prd.md              # Builder codegen path (default)
-/pickle-dot --builder my-prd.md    # Explicit opt-in to builder (same as default)
-/pickle-dot --legacy my-prd.md     # Prompt-only fallback — rollback for a single run
-```
-
-#### Builder API
-
-```typescript
-import { DotBuilder } from '~/.claude/pickle-rick/extension/services/dot-builder.js';
-
-// Static factory — validates and parses the spec, then returns a builder instance
-const builder = DotBuilder.fromSpec(spec);  // throws BuildError on invalid spec
-
-// Fluent chain — call build() once; calling it again throws ALREADY_BUILT
-const result = builder.build();
-// result: BuildResult {
-//   dot: string,              — the complete DOT digraph string
-//   slug: string,             — URL-safe pipeline identifier
-//   patternsApplied: string[] — Tier 1/2 patterns auto-applied (e.g. ["test_fix_loop","fan_out"])
-//   defenseMatrix: {          — Layer coverage summary
-//     competitive: boolean,   — Pattern 18 (competing impls) applied
-//     specDriven: string,     — "ALL" | "PARTIAL" | "NONE" (conformance nodes present)
-//     adversarial: boolean,   — Pattern 17 (red team) applied
-//   },
-//   diagnostics: Diagnostic[] — warnings/infos from validation (non-blocking)
-// }
-```
-
-#### BuilderSpec JSON
-
-```jsonc
-{
-  "slug": "auth_refactor",              // required — URL-safe, lowercase underscores
-  "goal": "Refactor auth module",       // required — single-sentence goal
-  "phases": [                           // required — list of implementation phases (may be [] for microverse-only)
-    {
-      "name": "implement",              // required — lowercase underscores; must be unique
-      "prompt": "...",                  // required — full impl instruction; agent has NO access to the PRD
-      "allowedPaths": ["src/auth/"],    // required — glob patterns for permission scoping
-      "dependsOn": ["research"],        // optional — phase names this phase depends on; omit for parallel fan-out
-      "goalGate": true,                 // optional — Pattern 2: verify progress before continuing
-      "timeout": "30m",                 // optional — per-phase duration string (default: "30m")
-      "securityScan": true,             // optional — Pattern 8: npm audit node after progress gate
-      "coverageTarget": 80,             // optional — Pattern 9: numeric coverage % gate
-      "competing": true,                // optional — Pattern 18: fan-out to two competing impls
-      "redTeam": true,                  // optional — Pattern 17: adversarial review after conformance
-      "bddScenarios": true,             // optional — Pattern 16b: Given/When/Then scenario generation
-      "specFirst": true,                // optional — Pattern 16: write tests before impl (default: true when goalGate)
-      "docOnly": false,                 // optional — suppress verify chain for doc-only phases
-      "escalateOn": ["package.json"],   // optional — files that trigger escalation (default: ["package.json","*.lock","*.config.*"])
-      "contextOnSuccess": {             // optional — custom AC keys emitted by this phase's conformance node
-        "auth_secure": "true"
-      }
-    }
-  ],
-  "acceptanceCriteria": {               // required — exit gate conditions
-    "tests_pass": "true",               //   Tier 2 keys (auto-sourced): tests_pass, lint_clean, types_compile,
-    "lint_clean": "true",               //     cli_contract, determinism, validation_rules
-    "auth_secure": "true"               //   Tier 1 keys (custom): must appear in a phase's contextOnSuccess
-  },
-  "workingDir": "${WORKING_DIR}",       // optional — attractor resolves at runtime
-  "specFile": "/repos/myapp/prd.md",    // optional — path to PRD; interpolated as $spec_file in node prompts
-  "reviewRatchet": 2,                   // optional — min consecutive clean review passes (must be ≥ 2)
-  "workspace": "isolated",             // optional — omit for shared (default)
-  "workspaceOpts": {                    // required when workspace: "isolated"
-    "repoUrl": "https://github.com/org/repo.git",  // HTTPS required (not SSH)
-    "repoBranch": "main",
-    "cleanup": "preserve"              // "preserve" (default) | "delete"
-  },
-  "microverse": {                       // optional — numeric optimization loop (replaces impl/verify chain)
-    "name": "bundle_opt",
-    "opts": {
-      "prompt": "...",
-      "measureCommand": "npm run build 2>/dev/null && wc -c < dist/bundle.js",
-      "target": 819200,
-      "direction": "reduce",            // "reduce" | "improve"
-      "allowedPaths": ["src/**"]
-    }
-  },
-  "modelStylesheet": {                  // optional — model tier overrides
-    "defaultModel": "claude-sonnet-4-6",
-    "criticalModel": "claude-opus-4-6",
-    "reviewModel": "claude-opus-4-6"
-  },
-  "convergence": {                      // optional — Pattern 32 iterative convergence loop (replaces phases)
-    "until": "V_total == 0 && fixed_point && reproducibility",  // predicate from canonical set
-    "impl": { "harness": "hermes" },    // required — default harness for fix nodes
-    "maxIterations": 6,                 // default: 6 — max body executions before non-convergence declared
-    "maxVisits": 5,                     // default: 5 — per-converge-node visit budget
-    "timeout": "21600s",                // default: 21600s — overall converge node timeout
-    "convergenceEpsilon": 100,          // default: 100 — V_total threshold for convergence declaration
-    "fixBackend": {                     // optional — override fix_backend node
-      "model": "provider/model-id",
-      "harness": "hermes",
-      "prompt": "...",
-      "timeout": "3600s",
-      "maxVisits": 10
-    },
-    "fixFrontend": {                    // optional — override fix_frontend node (same shape as fixBackend)
-      "model": "provider/model-id",
-      "harness": "hermes",
-      "prompt": "..."
-    },
-    "mechanicalGates": {                // optional — override mechanical gate tool_commands
-      "buildApi": "cd /repos/app/packages/api && npx tsc --noEmit 2>&1 && echo 'api typecheck pass'",
-      "testsApi": "cd /repos/app/packages/api && npm test --silent 2>&1 && echo 'api tests pass'",
-      "buildUi": "cd /repos/app/packages/ui && npx tsc --noEmit 2>&1 && echo 'ui typecheck pass'",
-      "lint": "cd /repos/app && npx eslint packages/api/src --max-warnings=0 2>&1 && echo 'lint pass'"
-    },
-    "reviewers": {                      // optional — override reviewer node attrs
-      "be": { "model": "provider/model-id", "harness": "hermes", "prompt": "..." },
-      "fe": { "model": "provider/model-id", "harness": "hermes", "prompt": "..." },
-      "int": { "model": "provider/model-id", "harness": "hermes", "prompt": "..." }
-    },
-    "adversary": {                      // optional — override adversary node
-      "model": "provider/model-id",
-      "harness": "hermes",
-      "prompt": "...",
-      "sealedFromSource": "packages/api/src/**,packages/ui/app/**"
-    },
-    "fpVerify": {                       // optional — override fp_verify goal gate
-      "command": "set -o pipefail; cd /repos/app && npm install 2>&1 | tail -3 && cd packages/api && npx tsc --noEmit && npm test && cd ../ui && npx tsc --noEmit && echo 'fixed-point verified'",
-      "timeout": "900s",
-      "maxVisits": 5
-    },
-    "reproVerify": {                    // optional — override repro_verify goal gate
-      "command": "set -o pipefail; cd /repos/app && rm -rf packages/api/node_modules packages/ui/node_modules && npm install 2>&1 | tail -3 && cd packages/api && npx tsc --noEmit && npm test && cd ../ui && npx tsc --noEmit && echo 'reproducibility verified'",
-      "timeout": "900s",
-      "maxVisits": 5
-    }
-  }
-}
-```
-
-#### CLI Contract
-
-The builder binary reads `BuilderSpec` JSON from stdin and writes to stdout/stderr:
-
-```bash
-echo '<BuilderSpec JSON>' | node ~/.claude/pickle-rick/extension/bin/dot-builder.js
-```
-
-| Exit | Stream | Payload |
-|---|---|---|
-| `0` | stdout | `BuildResult` JSON — `{ dot, slug, patternsApplied, defenseMatrix, diagnostics }` |
-| `1` | stderr | `BuildError` JSON — `{ error: BuildErrorCode, message, diagnostics }` — validation failure, recoverable |
-| `2` | stderr | `{ error: "UNEXPECTED_ERROR", message }` — I/O or parse failure, not recoverable |
-
-#### Fix-Loop and `.dot.draft` Files
-
-When the builder exits 1, `/pickle-dot` enters an automatic fix loop. It reads the `diagnostics` array from stderr, applies minimum-scope fixes to the `BuilderSpec`, and re-invokes the CLI. The loop tracks the best attempt (fewest errors) and reverts to it after 2 consecutive non-improvements. After 3 total failed iterations without improvement:
-
-1. The best `BuilderSpec` output is saved as `./<slug>.dot.draft`
-2. All remaining diagnostics with their `.fix` hints are listed
-3. The loop stops — manual intervention required
-
-Re-run after fixing: `/pickle-dot <prd>`. The `.dot.draft` file is not a valid pipeline — do not submit it to `/attract` until errors are resolved.
-
-**Legacy (prompt-only) path:** `/pickle-dot --legacy` also runs a post-save validate-fix loop with the same convergence guard, invoking the attractor validator CLI (`bun packages/attractor/src/cli.ts validate`) on the emitted raw DOT. On exhaustion it saves the best attempt as `./<slug>.dot.draft`. If the validator CLI is unavailable (attractor root not detected), the loop is skipped and the initial DOT is saved as-is with a warning.
-
-**Validation error codes:** `EMPTY_SLUG`, `EMPTY_GOAL`, `DUPLICATE_PHASE`, `INVALID_SPEC`, `MISSING_AC_MAPPING`, `MISSING_TIMEOUT`, `INVALID_TIMEOUT`, `MISSING_ALLOWED_PATHS`, `INVALID_ALLOWED_PATHS`, `PROMPT_PATH_MISMATCH`, `INVALID_STRUCTURE`, `START_HAS_INCOMING`, `UNREACHABLE_NODE`, `DIAMOND_MISSING_EDGES`, `FAN_OUT_SCOPE_LEAK`, `GOAL_GATE_NO_MAX_VISITS`, `REVIEW_MISSING_READONLY`, `WORKSPACE_NO_HTTPS`, `WORKSPACE_NO_PUSH`, `PLAN_MODE_DEADLOCK`, `COMPONENT_NO_MERGE`, `INVALID_RATCHET`, `NON_NUMERIC_TARGET`, `ALREADY_BUILT`, `DUPLICATE_MODEL`, `INVALID_CONVERGENCE_SPEC`
+**Full reference:** [DOT_BUILDER.md](DOT_BUILDER.md) — Builder API, BuilderSpec JSON schema, CLI contract, fix-loop behavior, and error codes.
 
 ### 🏛️ Council of Ricks — Details
 
 <img src="images/council-of-ricks.png" alt="Council of Ricks — Graphite PR Stack Reviewer" width="400" align="right" />
 
-Requires a Graphite stack with at least one non-trunk branch, a `CLAUDE.md` with project rules, passing lint, and architectural lint rules in ESLint. Escalates through focus areas: stack structure (1) → historical context + prior PR comments (2) → CLAUDE.md compliance (3) → contract discovery (4) → per-branch correctness + data flow (5) → cross-branch contracts + combinatorial verification (6) → Codex adversarial challenge (7) → test coverage + production migration safety (8) → security (9) → migration hygiene (10, conditional on Drizzle journal) → Szechuan principles sweep (11) → polish + CLAUDE.md re-check + trap-door consolidation (12+). Every finding is scored **[P0–P4, conf=0–100]** — confidence `< 80` drops before reporting (rubric + false-positives filter adapted from Anthropic's official code-review plugin). At session end, one comment per branch is auto-posted to the GitHub-backed PR that Graphite manages via `gh pr comment` (idempotent, opt out with `--no-publish`).
+Iterative Graphite stack reviewer that generates agent-executable directives and auto-publishes review comments to each branch's PR at session end.
+
+**Requirements:** Graphite stack with ≥1 non-trunk branch, a `CLAUDE.md` with project rules, passing lint, architectural lint rules in ESLint, and GitHub CLI (`gh`) authed if you want auto-publish.
+
+**11-pass rotation** — every dedicated category runs at least once before approval can fire:
+
+1. Stack Structure — PR sizing, commit hygiene, branch naming, stack ordering
+2. Historical Context — `git log` + prior PR comments (`gh pr list/view`) + in-file guidance comments
+3. CLAUDE.md Compliance — project rule verification per branch diff
+4. Contract Discovery — producer→consumer map across the stack, Zod/enum/union coverage
+5. Per-Branch Correctness + Data Flow — trace input → bug → wrong output
+6. Cross-Branch Contracts + Combinatorial — 2^N boolean/nullable guard verification
+7. Codex Adversarial Challenge — external adversarial review via `codex-companion.mjs` (`--no-codex` to skip)
+8. Test Coverage + Production Migration Safety — persisted-field change detection
+9. Security — input validation, auth gaps, injection, tenant isolation
+10. Migration Hygiene — CHECK drift, idempotency, schema drift (conditional on Drizzle journal)
+11. Szechuan Principles Sweep — P0–P4 scan against the principles reference
+12+. Polish + Trap Door Consolidation + CLAUDE.md re-check
+
+**Severity × Confidence scoring** — every finding scored `[P0–P4, conf=0–100]`. Confidence `< 80` drops before reporting. **P0 severity escape hatch**: P0 findings at conf ≥ 50 still surface tagged `[NEEDS-VERIFICATION]` (a maybe-real SQL injection is worth an eyeball). Composes with an explicit **false-positives filter** — pre-existing issues, linter/typechecker-catchable errors, author-silenced issues, uncodified style nits, and speculative future-risk are excluded before scoring. Rubric adapted from Anthropic's official `code-review` plugin.
+
+**Approval gate** — `THE_CITADEL_APPROVES` fires only when all four conditions hold: (1) current pass ≥ `max(min_iterations, default_council_min_passes)`, (2) last two `## Pass <N>:` headers in the summary both end with `clean pass.`, (3) every unconditional category (1–6, 8, 9, 11) has at least one clean-pass row, (4) those two consecutive clean passes produced zero P0/P1. Skipped passes (Codex disabled, Migration no-journal, Historical Context no-gh) break the streak and don't substitute for unconditional categories.
+
+**Auto-publish at session end** — when the gate fires OR max_iterations is hit, one PR comment per non-trunk branch is posted via `gh pr comment` to the GitHub-backed PR that Graphite manages. Idempotent via `.published/<branch-slug>` markers. Fails open at every level — `gh` unavailable / no PR / per-branch post failure never blocks the terminal promise. Fallback body files written to `council-comments/<branch-slug>.md` on every skip class. Opt out with `--no-publish` or `default_council_publish: false`.
+
+**Trap Doors** — structural weaknesses (design constraints that will re-break if forgotten) go in the directive's Trap Door section. The Council never writes to repo files; the fixing agent decides whether to add them to `CLAUDE.md`.
 
 <br clear="right" />
 

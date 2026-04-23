@@ -15,9 +15,6 @@ Dependency graph visualizer. Shows how packages flow between repos like portal f
 ### /vindicators
 Spin up N parallel Claude agents that each solve the same problem differently, then a judge agent votes on the best solution. Each Vindicator takes a different approach — the mission succeeds when the strongest solution is chosen.
 
-### /szechuan-sauce
-A "time machine" for config files. Tracks every change to `.env`, `tsconfig`, `package.json` etc. across branches and lets you restore any historical combo.
-
 ### /butter-robot
 Single-purpose bot generator. Give it one task ("run lint on save" / "ping me when tests fail") and it creates a minimal daemon that does exactly that.
 
@@ -26,9 +23,6 @@ Mutation testing on steroids. Intentionally corrupts the codebase in horrifying 
 
 ### /tiny-rick
 Minification and bundle analysis. Shrinks code down to its smallest, most energetic form.
-
-### /plumbus
-Auto-generates boilerplate that everyone needs but nobody wants to explain. Scaffolds services, endpoints, test files.
 
 ### /squanch
 Universal search-and-replace across the entire monorepo with preview, rollback, and regex support.
@@ -62,12 +56,6 @@ Adversarial code reviewer. Deliberately tries to find exploits, injection vector
 
 ### /blips-and-chitz
 Gamified test coverage. Assigns points for covering edge cases, achievement badges for hitting coverage thresholds. Roy: A Life Well Tested.
-
-### /anatomy-park
-Code health dashboard. Zooms into a module like a human body — shows infection points (tech debt), organ failure (deprecated deps), and vital signs (test health, build time).
-
-### /meseeks-box
-Spawns disposable agents for one-shot tasks: "generate fixtures," "write migration," "stub this API." They exist to serve a single purpose, then poof.
 
 ### /galactic-federation
 Centralized audit log across all repos. Every deploy, PR merge, config change — tracked with federation-level bureaucracy.
@@ -143,9 +131,6 @@ Type-safe mock data generator. Reads your schemas (Drizzle, Prisma, Zod, JSON Sc
 
 ### /ghost-in-a-jar
 Wraps any long-running process in a persistent container that survives terminal disconnects. Ghost in a jar can't die — reconnect anytime and pick up where you left off.
-
-### /pickle-pipeline
-DAG-based task orchestrator for multi-step data pipelines. Define steps as nodes, dependencies as edges. Retry failed nodes without re-running the whole pipeline. It's a pickle pipeline, Morty.
 
 ### /wubba-lubba-dub-dub
 Burndown and velocity tracker. Reads ticket history, commit velocity, and PR merge rate to generate a "pain index." High score means the team is crying for help.
