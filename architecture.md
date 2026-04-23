@@ -8,6 +8,70 @@ Deep-dive internals for the Pickle Rick engineering lifecycle. For usage, comman
 
 ---
 
+## 🧬 The Pickle Rick Lifecycle
+
+Each ticket goes through 8 phases in the autonomous loop: PRD → Breakdown → per-ticket (Research → Research-Review → Plan → Plan-Review → Implement → Verify → Code-Review → Simplify).
+
+```
+  ┌─────────────┐
+  │  📋 PRD     │  ← Requirements + verification strategy + interface contracts
+  └──────┬──────┘
+         │
+         ▼
+  ┌─────────────┐
+  │ 📦 Breakdown│  ← Atomize into tickets, each self-contained with spec
+  └──────┬──────┘
+         │
+    ┌────┴────┐  per ticket (Morty workers 👶)
+    ▼         ▼
+  ┌──────┐  ┌──────┐
+  │🔬 Re-│  │🔬 Re-│  1. Research the codebase
+  │search│  │search│
+  └──┬───┘  └──┬───┘
+     ▼         ▼
+  ┌──────┐  ┌──────┐
+  │📝 Re-│  │📝 Re-│  2. Review the research
+  │view  │  │view  │
+  └──┬───┘  └──┬───┘
+     ▼         ▼
+  ┌──────┐  ┌──────┐
+  │📐Plan│  │📐Plan│  3. Architect the solution
+  └──┬───┘  └──┬───┘
+     ▼         ▼
+  ┌──────┐  ┌──────┐
+  │📝 Re-│  │📝 Re-│  4. Review the plan
+  │view  │  │view  │
+  └──┬───┘  └──┬───┘
+     ▼         ▼
+  ┌──────┐  ┌──────┐
+  │⚡ Im-│  │⚡ Im-│  5. Implement
+  │plem  │  │plem  │
+  └──┬───┘  └──┬───┘
+     ▼         ▼
+  ┌──────┐  ┌──────┐
+  │✅ Ve-│  │✅ Ve-│  6. Spec conformance
+  │rify  │  │rify  │
+  └──┬───┘  └──┬───┘
+     ▼         ▼
+  ┌──────┐  ┌──────┐
+  │🔍 Re-│  │🔍 Re-│  7. Code review
+  │view  │  │view  │
+  └──┬───┘  └──┬───┘
+     ▼         ▼
+  ┌──────┐  ┌──────┐
+  │🧹Sim-│  │🧹Sim-│  8. Simplify
+  │plify │  │plify │
+  └──────┘  └──────┘
+```
+
+The **Stop hook** prevents Claude from exiting until the task is genuinely complete. Between each iteration, the hook injects a fresh session summary — current phase, ticket list, active task — so Rick always wakes up knowing exactly where he is, even after full context compression.
+
+All modes support both tmux and Zellij monitor layouts.
+
+See the **Manager / Worker Model** and **The Stop Hook Loop** sections below for the mechanical details of how this lifecycle runs.
+
+---
+
 ## Circuit Breaker — Runaway Session Protection
 
 > *"You know what's worse than a bug, Morty? An infinite loop that keeps making the same bug. Over and over. Burning tokens like Jerry burns goodwill."*
@@ -133,7 +197,7 @@ When the runner is in a rate limit wait, the tmux monitor shows a countdown time
 
 | Setting | Default | Description |
 |---|---|---|
-| `default_rate_limit_wait_minutes` | 60 | Fallback wait duration when no API reset time is available. Also used as the base for the 3× cap on API-derived waits |
+| `default_rate_limit_wait_minutes` | 5 | Fallback wait duration when no API reset time is available. Also used as the base for the 3× cap on API-derived waits |
 | `default_max_rate_limit_retries` | 3 | Consecutive rate limits before giving up |
 
 ---
@@ -277,7 +341,8 @@ The "previous" score is always the last **accepted** entry's score (not the last
     "validation": "npm test 2>&1 | tail -1",
     "type": "command",
     "timeout_seconds": 60,
-    "tolerance": 0
+    "tolerance": 0,
+    "direction": "higher"
   },
   "convergence": {
     "stall_limit": 5,
@@ -290,18 +355,29 @@ The "previous" score is always the last **accepted** entry's score (not the last
         "action": "accept",
         "description": "improved: 78.4 vs 72.0",
         "pre_iteration_sha": "abc1234",
-        "timestamp": "2026-03-10T05:00:00Z"
+        "timestamp": "2026-03-10T05:00:00Z",
+        "classification": "improved"
       }
     ]
   },
   "gap_analysis_path": "/path/to/session/gap_analysis.md",
+  "judge_context_path": "/path/to/session/judge_context.md",
   "failed_approaches": [
     "Iteration 3: score dropped from 78.4 to 71.2"
   ],
   "baseline_score": 72.0,
-  "exit_reason": null
+  "convergence_target": 90.0,
+  "convergence_mode": "metric",
+  "convergence_file": null,
+  "allowed_paths": ["src/**", "tests/**"],
+  "exit_reason": null,
+  "stash_ref": null,
+  "failure_history": [],
+  "approach_exhaustion_fired": false
 }
 ```
+
+Defined in `extension/src/types/index.ts` (`MicroverseSessionState`) and managed by `extension/src/services/microverse-state.ts`. `direction` (`"higher" | "lower"`) controls which direction counts as improvement. `failure_history` records classified failures (`tool_failure | approach_exhaustion | regression | metric_unstable | no_progress`) produced by `classifyFailure()`.
 
 ### Runner Architecture
 
@@ -344,6 +420,98 @@ On exit, the runner writes `microverse_report_<date>.md` to the session's `memor
 
 ---
 
+## Council of Ricks Internals
+
+`/council-of-ricks` is an iterative Graphite-stack reviewer. It never fixes code — it generates agent-executable directives. The Council convenes in passes; each pass owns a category and carries its own rigor. Everything below lives in `.claude/commands/council-of-ricks.md`, `extension/szechuan-sauce-principles.md`, and `extension/src/bin/council-publish.ts`.
+
+### Severity × Confidence Scoring
+
+Every finding carries two independent axes, reported as `[P<N>, conf=<score>]`:
+
+- **Severity** (`extension/szechuan-sauce-principles.md`) — `P0` critical (security, data loss, auth bypass, corruption, migration hazards, injection) · `P1` high (correctness bugs, contract mismatches, silent failures, unhandled branches, schema drift) · `P2` medium (DRY 3+, god classes, deep nesting, tight coupling) · `P3` low (naming, magic numbers, minor dup) · `P4` optional (formatting, style drift).
+- **Confidence** — rubric `0 / 25 / 50 / 75 / 100`. Any finding with `conf < 80` is **dropped** before the directive is written — severity and confidence are independent, so a `P0` at `conf 50` is still cut. **P0 escape hatch**: genuine security / data-loss / auth-bypass findings survive the confidence filter after explicit grep + surrounding-code + `git log` confirmation. Dropped findings are listed in a `## Dropped Candidates (conf < 80 and false-positive pre-filter)` section in `council-of-ricks-summary.md` — auditable but non-actionable.
+- **False-Positives filter** — applied BEFORE scoring: pre-existing issues, tooling-caught errors, stylistic preferences, speculative future-risk, and resolved prior-pass findings are excluded wholesale, not down-scored.
+
+### Pass Rotation
+
+| Pass | Category | Mandatory? |
+|------|----------|------------|
+| 1 | Stack Structure | ✓ |
+| 2 | **Historical Context** (`git log`, `gh pr list/view`, in-file guidance comments) | ✓ |
+| 3 | CLAUDE.md Compliance | ✓ |
+| 4 | Contract Discovery | ✓ |
+| 5 | Per-Branch Correctness + Data Flow (file:line chain) | ✓ |
+| 6 | Cross-Branch Contracts + Combinatorial Verification (2^N guards) | ✓ |
+| 7 | **Codex Adversarial Challenge** (`codex-companion.mjs`, fails open) | conditional |
+| 8 | Test Coverage + Production Migration Safety | ✓ |
+| 9 | Security | ✓ |
+| 10 | Migration Hygiene (Drizzle journal) | conditional |
+| 11 | Szechuan Principles Sweep | ✓ |
+| 12+ | Polish + Trap Door Consolidation + CLAUDE.md Re-check | — |
+
+Pass 2 runs `git log --oneline -10 -- <file>` + `gh pr list --state merged --search …` / `gh pr view --comments` + in-file `NOTE:/IMPORTANT:` banners to reframe later passes. Fails open: if `gh` auth or GitHub remote is missing, the pass runs in git-only mode; if all three signals fail, the pass is recorded as `skipped` (not clean).
+
+Pass 7 shells out to the Codex companion script (resolved from `~/.claude/plugins/cache/openai-codex/codex/*/codex-companion.mjs`). Each non-trunk branch is checked out via `gt branch checkout`, Codex runs with `--wait --base <parent> --scope branch`, output is captured to `<SESSION_ROOT>/codex/<slug>-pass<N>.md`, and findings tagged `[CODEX]` (or `[COUNCIL+CODEX]`) are merged into the directive. Timeout / empty output / non-zero exit for one branch records a per-branch failure and continues — Codex is never load-bearing.
+
+### Approval Gate
+
+`<promise>THE_CITADEL_APPROVES</promise>` fires only when **all four** conditions hold:
+
+1. `current_pass >= max(min_iterations, default_council_min_passes)` — full dedicated-category rotation has run
+2. The last two `## Pass <N>:` headers in `council-of-ricks-summary.md` both end with the exact terminal suffix `— clean pass.`
+3. Every **unconditional** category (Passes 1, 2, 3, 4, 5, 6, 8, 9, 11) has appeared in at least one clean pass across the session — closes the dual-skip loophole where no Codex + no Drizzle journal could approve without exercising all 9 mandatory categories
+4. Those two consecutive clean passes produced zero P0/P1 findings across both Council and Codex sources
+
+Every `## Pass <N>:` header must end with exactly one of three terminal suffixes (enforced by the parser):
+- `— clean pass.`
+- `— skipped (<reason>).`
+- `— <count> issues (<P0>/<P1>/<P2>/<P3>/<P4>)`
+
+Skipped passes break the consecutive-clean streak — they are not substitutes for a mandatory clean run.
+
+### Auto-Publish at Session End
+
+Implemented in `extension/src/bin/council-publish.ts` → `extension/bin/council-publish.js`. Invoked from Step 17.7 of the skill, exactly once per session, on either the approval path or the max-iterations exhaustion path — **before** the terminal `<promise>` tag. Skipped entirely when `publish_enabled === false` (CLI `--no-publish` or `default_council_publish: false`).
+
+For each non-trunk branch in `council-stack.json`:
+
+1. Compose a comment body from `council-of-ricks-summary.md` (pass outcomes), the latest directive's per-branch findings table, and the `## Trap Doors` section. Write to `<SESSION_ROOT>/council-comments/<branch-slug>.md`.
+2. `gh auth status` probe — if unavailable, record `skipped_no_gh`, keep the body file as a fallback artifact, continue.
+3. Idempotency marker: if `<SESSION_ROOT>/.published/<branch-slug>` exists, record `skipped_already_published`, continue.
+4. Resolve PR # via `gh pr list --head <branch> --json number --jq '.[0].number'`; no PR → `skipped_no_pr`.
+5. Post via `gh pr comment <N> --body-file <path>`. Success writes the idempotency marker. Per-branch failures append to `publish.log` and the sweep continues — publish never blocks the terminal promise.
+
+Outcomes (`PublishResult.outcome`): `posted | skipped_already_published | skipped_no_pr | skipped_no_gh | failed`. The JSON report (`PublishReport`) is appended to the summary and rendered in the closing message.
+
+### Settings Touchpoints
+
+From `pickle_settings.json`:
+
+- `default_council_min_passes` — default `11` (covers all unconditional categories plus headroom)
+- `default_council_max_passes` — default `25` (exhaustion ceiling)
+- `default_council_publish` — default `true`
+
+CLI flags `--min-iterations <N>`, `--max-iterations <N>`, `--no-publish`, `--no-codex`, `--codex-timeout <sec>`, `--gitnexus`, `--repo <path>` override.
+
+### Session Artifacts
+
+```
+~/.claude/pickle-rick/sessions/<date-hash>/
+├── council-stack.json             # { branches, trunk, repo_path, codex_enabled }
+├── council-directive.md           # Agent-executable directive (overwritten each pass)
+├── council-of-ricks-summary.md    # Append-only pass log + dropped candidates
+├── codex/                         # Per-branch Codex adversarial transcripts
+│   └── <branch-slug>-pass<N>.md
+├── council-comments/              # Composed comment bodies (posted or fallback)
+│   └── <branch-slug>.md
+├── .published/                    # Idempotency markers (one per posted branch)
+│   └── <branch-slug>
+├── publish.log                    # NDJSON publish attempts
+└── state.json
+```
+
+---
+
 ## GitNexus Integration
 
 Pickle Rick integrates with [GitNexus](https://gitnexus.dev), an MCP-powered code knowledge graph that indexes your codebase into symbols, relationships, and execution flows. Once indexed, every Morty worker automatically inherits GitNexus awareness — no manual setup per ticket.
@@ -374,78 +542,126 @@ GitNexus runs as an MCP server. Once indexed, Pickle Rick's slash commands (`/gi
 pickle-rick-claude/
 ├── .claude/
 │   ├── commands/           # Slash commands (the magic words)
-│   │   ├── pickle.md           # Main loop command (PRD + Breakdown inlined)
-│   │   ├── pickle-tmux.md      # True context clearing via tmux
-│   │   ├── pickle-zellij.md    # True context clearing via Zellij
-│   │   ├── meeseeks-zellij.md  # Zellij mode for Mr. Meeseeks
-│   │   ├── pickle-prd.md       # Interactive PRD drafter (used internally by /pickle)
-│   │   ├── pickle-refine-prd.md # Refine PRD + decompose into executable tasks
-│   │   ├── pickle-dot.md         # PRD → attractor DOT digraph converter
-│   │   ├── portal-gun.md         # Gene transfusion — pattern transplant PRD generator
-│   │   ├── meeseeks.md            # Autonomous code review loop (setup + per-pass template)
-│   │   ├── project-mayhem.md      # Chaos engineering — mutation, deps, config corruption
-│   │   ├── send-to-morty.md    # Worker prompt (internal — 6 phases + scope boundary)
-│   │   ├── send-to-morty-review.md # Review worker prompt (3-phase: scope → review → simplify)
-│   │   ├── pickle-status.md    # Show session status
-│   │   ├── pickle-retry.md     # Retry a failed ticket
-│   │   ├── eat-pickle.md       # Loop canceller
-│   │   ├── help-pickle.md      # Help text
-│   │   ├── add-to-pickle-jar.md # Save session to Jar queue
-│   │   ├── pickle-jar-open.md  # Run all Jar tasks (Night Shift)
-│   │   ├── disable-pickle.md   # Disable stop hook globally
-│   │   └── enable-pickle.md    # Re-enable stop hook
+│   │   ├── pickle.md               # Main loop (PRD + Breakdown inlined)
+│   │   ├── pickle-tmux.md          # True context clearing via tmux
+│   │   ├── pickle-zellij.md        # True context clearing via Zellij
+│   │   ├── pickle-pipeline.md      # Sequential phase orchestrator
+│   │   ├── pickle-microverse.md    # Metric convergence loop
+│   │   ├── pickle-prd.md           # Interactive PRD drafter
+│   │   ├── pickle-refine-prd.md    # PRD refinement team
+│   │   ├── pickle-dot.md           # PRD → attractor DOT digraph
+│   │   ├── pickle-dot-patterns.md  # Pattern reference (loaded on demand)
+│   │   ├── attract.md              # Submit a .dot pipeline to attractor
+│   │   ├── plumbus.md              # Iterative .dot pipeline shaper
+│   │   ├── portal-gun.md           # Gene transfusion — pattern transplant PRD
+│   │   ├── meeseeks.md             # Autonomous code review loop
+│   │   ├── meeseeks-zellij.md      # Zellij mode for Mr. Meeseeks
+│   │   ├── council-of-ricks.md     # Graphite stack adversarial review
+│   │   ├── szechuan-sauce.md       # Principle-driven deslopping loop
+│   │   ├── anatomy-park.md         # Subsystem deep review (data flow + trap doors)
+│   │   ├── project-mayhem.md       # Chaos engineering (mutation/deps/config)
+│   │   ├── send-to-morty.md        # Worker prompt (internal)
+│   │   ├── send-to-morty-review.md # Review worker prompt (internal)
+│   │   ├── pickle-status.md        # Show session status
+│   │   ├── pickle-standup.md       # Formatted standup from activity JSONL
+│   │   ├── pickle-metrics.md       # Token/LOC metrics reporter
+│   │   ├── pickle-retry.md         # Retry a failed ticket
+│   │   ├── eat-pickle.md           # Loop canceller
+│   │   ├── help-pickle.md          # Help text
+│   │   ├── add-to-pickle-jar.md    # Queue into Jar
+│   │   ├── pickle-jar-open.md      # Run all Jar tasks (Night Shift)
+│   │   ├── disable-pickle.md       # Disable stop hook globally
+│   │   └── enable-pickle.md        # Re-enable stop hook
 │   └── settings.json       # Stop hook registration (created by install.sh in ~/.claude/)
 ├── extension/
 │   ├── src/                 # TypeScript sources (canonical — never edit .js directly)
 │   │   ├── bin/             # → compiles to extension/bin/
 │   │   ├── hooks/           # → compiles to extension/hooks/
 │   │   ├── services/        # → compiles to extension/services/
+│   │   ├── lib/             # → compiles to extension/lib/
+│   │   ├── scripts/         # Build-time scripts (schema parity, audits)
 │   │   └── types/           # → compiles to extension/types/
 │   ├── bin/                 # Compiled JS (build artifacts)
-│   │   ├── setup.js         # Session initializer
-│   │   ├── cancel.js        # Loop canceller
-│   │   ├── spawn-morty.js   # Worker subprocess spawner
-│   │   ├── spawn-refinement-team.js # Parallel PRD analyst spawner
-│   │   ├── jar-runner.js    # Jar Night Shift runner
-│   │   ├── mux-runner.js    # Outer loop for /pickle-tmux and /pickle-zellij mode
-│   │   ├── monitor.js       # Live tmux dashboard (window 1)
-│   │   ├── log-watcher.js   # Live tmux log stream (window 1, top-right pane)
-│   │   ├── morty-watcher.js # Live worker log stream (window 1, bottom pane)
-│   │   ├── worker-setup.js  # Worker session initializer
-│   │   ├── get-session.js   # Session path resolver
-│   │   ├── update-state.js  # State mutation helper
-│   │   ├── status.js        # Session status display
-│   │   ├── retry-ticket.js  # Reset + re-spawn a failed ticket
-│   │   ├── log-activity.js  # CLI: log activity events (used by personas)
-│   │   ├── log-commit.js    # PostToolUse hook: detects git commits → activity log
-│   │   ├── standup.js       # CLI: formatted standup from activity JSONL
-│   │   ├── prune-activity.js # Prune old activity JSONL files (called by setup.js)
-│   │   ├── circuit-reset.js  # Manual circuit breaker reset CLI
-│   │   ├── metrics.js        # Token/LOC metrics reporter (daily/weekly)
-│   │   └── microverse-runner.js # Microverse convergence loop runner
+│   │   ├── setup.js                  # Session initializer
+│   │   ├── cancel.js                 # Loop canceller
+│   │   ├── spawn-morty.js            # Worker subprocess spawner
+│   │   ├── spawn-refinement-team.js  # Parallel PRD analyst spawner
+│   │   ├── jar-runner.js             # Jar Night Shift runner
+│   │   ├── mux-runner.js             # Outer loop for /pickle-tmux & /pickle-zellij
+│   │   ├── pipeline-runner.js        # Sequential phase orchestrator (pickle → anatomy → szechuan)
+│   │   ├── microverse-runner.js      # Microverse convergence loop runner
+│   │   ├── init-microverse.js        # Microverse session initializer
+│   │   ├── monitor.js                # Live tmux dashboard (Matrix-styled)
+│   │   ├── log-watcher.js            # Live tmux log stream
+│   │   ├── morty-watcher.js          # Live worker log stream
+│   │   ├── raw-morty.js              # Raw worker output pane
+│   │   ├── refinement-watcher.js     # PRD refinement monitor pane
+│   │   ├── worker-setup.js           # Worker session initializer
+│   │   ├── get-session.js            # Session path resolver
+│   │   ├── update-state.js           # State mutation helper
+│   │   ├── status.js                 # Session status display
+│   │   ├── retry-ticket.js           # Reset + re-spawn a failed ticket
+│   │   ├── resolve-scope.js          # Scope filter CLI
+│   │   ├── log-activity.js           # CLI: log activity events (used by personas)
+│   │   ├── log-commit.js             # PostToolUse hook: git commits → activity log
+│   │   ├── standup.js                # CLI: formatted standup from activity JSONL
+│   │   ├── prune-activity.js         # Prune old activity JSONL (called by setup.js)
+│   │   ├── circuit-reset.js          # Manual circuit breaker reset CLI
+│   │   ├── metrics.js                # Token/LOC metrics reporter (daily/weekly)
+│   │   ├── check-update.js           # Auto-update check against GitHub Releases
+│   │   ├── dot-builder.js            # DotBuilder programmatic entry
+│   │   ├── dot-builder-cli.js        # DotBuilder CLI
+│   │   ├── plumbus-frame-analyzer.js # .dot frame analyzer (Override 6)
+│   │   ├── sync-schema.js            # Attractor schema sync
+│   │   └── council-publish.js        # Council-of-Ricks end-of-session PR publisher
 │   ├── layouts/
 │   │   ├── monitor-pickle.kdl   # Zellij layout for /pickle-zellij
 │   │   └── monitor-meeseeks.kdl # Zellij layout for /meeseeks-zellij
 │   ├── hooks/
-│   │   ├── dispatch.js      # Hook router
+│   │   ├── dispatch.js      # Hook router (fail-open, spawns handlers)
 │   │   ├── resolve-state.js # State file resolution + atomic writes
 │   │   └── handlers/
 │   │       └── stop-hook.js # The loop engine
 │   ├── services/
-│   │   ├── pickle-utils.js  # Shared utilities
-│   │   ├── git-utils.js     # Git helpers
-│   │   ├── pr-factory.js    # PR creation
-│   │   ├── jar-utils.js     # Jar queue helper
-│   │   ├── activity-logger.js # JSONL activity log writer (date-keyed, 0o600)
-│   │   ├── circuit-breaker.js # Three-state circuit breaker (CLOSED/HALF_OPEN/OPEN)
-│   │   ├── metrics-utils.js   # Metrics aggregation engine (session scanner + git log parser)
-│   │   └── microverse-state.js # Microverse state management (convergence detection, metric comparison)
+│   │   ├── pickle-utils.js       # Shared utilities
+│   │   ├── git-utils.js          # Git helpers
+│   │   ├── pr-factory.js         # PR creation
+│   │   ├── jar-utils.js          # Jar queue helper
+│   │   ├── activity-logger.js    # JSONL activity log writer (date-keyed, 0o600)
+│   │   ├── circuit-breaker.js    # Three-state circuit breaker (CLOSED/HALF_OPEN/OPEN)
+│   │   ├── metrics-utils.js      # Metrics aggregation (session scanner + git log parser)
+│   │   ├── microverse-state.js   # Microverse state mgmt (convergence detection, compareMetric, classifyFailure)
+│   │   ├── state-manager.js      # Atomic file locks, crash recovery, schema migration
+│   │   ├── scope-resolver.js     # Scope filter (anatomy-park, szechuan-sauce)
+│   │   ├── convergence-defaults.js # DotBuilder convergence preset defaults
+│   │   └── dot-builder.js        # DotBuilder core (attractor .dot codegen)
+│   ├── lib/
+│   │   ├── cluster-fix-selector.js  # .dot cluster fix selector
+│   │   ├── context-key-matrix.js    # .dot context-key propagation matrix
+│   │   ├── diamond-routing.js       # .dot diamond routing algorithm
+│   │   ├── engine-keys-registry.js  # Engine-injected attractor keys
+│   │   ├── plumbus-kill-switch.js   # PLUMBUS_GENERATIVE_AUDIT kill switch
+│   │   ├── severity.js              # Shared severity enum
+│   │   ├── tarjan-scc.js            # Tarjan SCC for cycle detection
+│   │   └── verification-comparator.js # Verification diff comparator
 │   ├── types/
-│   │   └── index.js         # Promise tokens, State type, HookInput type
-│   ├── tests/               # Test suite (node --test)
-│   ├── package.json         # "type": "module" — CRITICAL
-│   └── tsconfig.json        # TypeScript config (strict, ESNext)
+│   │   ├── index.js               # State, PromiseTokens, HookInput, Microverse types, BuilderSpec, errors
+│   │   ├── attractor-schema.js    # Attractor DOT schema entry
+│   │   ├── attractor-schema.fallback.js # Bundled attractor schema fallback
+│   │   ├── engine-keys-registry.js
+│   │   └── plumbus-frame-analyzer.js
+│   ├── data/                      # Static JSON consumed by plumbus-frame-analyzer
+│   │   ├── engine-injected-keys.json
+│   │   └── scope-v1.json
+│   ├── eslint-plugin-pickle/      # Local ESLint rules (pickle/no-unsafe-error-cast, etc.)
+│   ├── schemas/                   # JSON schemas
+│   ├── szechuan-sauce-principles.md          # P0–P4 rubric + confidence scoring + false-positives filter
+│   ├── szechuan-sauce-financial-principles.md
+│   ├── tests/                     # Test suite (node --test)
+│   ├── package.json               # "type": "module" — CRITICAL
+│   └── tsconfig.json              # TypeScript config (strict, ESNext)
 ├── images/
+│   ├── architecture.png     # Architecture hero
 │   ├── tmux-monitor.png     # tmux monitor screenshot
 │   ├── portal-gun.png       # Portal Gun — gene transfusion
 │   ├── microverse.png       # Microverse hero image
@@ -497,14 +713,27 @@ Every Pickle Rick session creates a directory under `~/.claude/pickle-rick/sessi
   "max_time_minutes": 720,
   "worker_timeout_seconds": 1200,
   "start_time_epoch": 1772287760,
+  "completion_promise": null,
+  "original_prompt": "Build the thing",
   "current_ticket": "feat-03",
+  "history": [],
+  "started_at": "2026-04-23T10:00:00.000Z",
+  "session_dir": "/Users/.../sessions/2026-04-23-a1b2c3d4",
   "tmux_mode": true,
+  "min_iterations": 0,
+  "command_template": "/pickle-tmux",
   "chain_meeseeks": false,
-  "history": []
+  "schema_version": 2,
+  "pid": 12345,
+  "consecutive_short_responses": 0,
+  "phases_entered": ["prd", "breakdown"],
+  "activity": []
 }
 ```
 
-The stop hook reads `state.json` on every turn to decide whether to block or approve exit. The mux-runner reads it between iterations to build the handoff summary. `/pickle-status` reads it to display the dashboard.
+Defined in `extension/src/types/index.ts` (the `State` interface). Valid `step` values (`VALID_STEPS`): `prd | breakdown | research | plan | implement | refactor | review`. The stop hook reads `state.json` on every turn to decide whether to block or approve exit. The mux-runner reads it between iterations to build the handoff summary. `/pickle-status` reads it to display the dashboard.
+
+**StateManager** (`extension/src/services/state-manager.ts`) mediates all writes: atomic rename, per-file advisory locks with exponential backoff + jitter, stale-lock recovery at `30s`, and automatic schema migration. The current schema version is `2` (see `STATE_MANAGER_DEFAULTS`).
 
 ### Session Logs & Artifacts
 

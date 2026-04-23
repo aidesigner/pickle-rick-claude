@@ -439,12 +439,6 @@ Auto-discovers subsystems, rotates through them round-robin, three-phase protoco
 - `bank-statement.service.ts` — borrowerFileId MUST equal S3 batch UUID; tenant isolation depends on effectiveLenderId threading
 ```
 
-### 🏗️ DotBuilder — Programmatic DOT Codegen
-
-`/pickle-dot` generates attractor pipelines by default via the `DotBuilder` TypeScript class — schema-validated codegen with 32 active patterns and 15 structural validation rules. Use `--builder` to opt in explicitly or `--legacy` to fall back to prompt-only generation.
-
-**Full reference:** [DOT_BUILDER.md](DOT_BUILDER.md) — Builder API, BuilderSpec JSON schema, CLI contract, fix-loop behavior, and error codes.
-
 ### 🏛️ Council of Ricks — Details
 
 <p align="center">
@@ -541,67 +535,15 @@ The `--run` flag goes further: after generating the transplant PRD, it launches 
 /portal-gun --depth shallow https://github.com/org/repo           # Summary + structural pattern only
 ```
 
+### 🏗️ DotBuilder — Programmatic DOT Codegen
+
+`/pickle-dot` generates attractor pipelines by default via the `DotBuilder` TypeScript class — schema-validated codegen with 32 active patterns and 15 structural validation rules. Use `--builder` to opt in explicitly or `--legacy` to fall back to prompt-only generation.
+
+**Full reference:** [DOT_BUILDER.md](DOT_BUILDER.md) — Builder API, BuilderSpec JSON schema, CLI contract, fix-loop behavior, and error codes.
+
 ---
 
-## 🧬 The Pickle Rick Lifecycle — Under the Hood
-
-Each ticket goes through 8 phases in the autonomous loop:
-
-```
-  ┌─────────────┐
-  │  📋 PRD     │  ← Requirements + verification strategy + interface contracts
-  └──────┬──────┘
-         │
-         ▼
-  ┌─────────────┐
-  │ 📦 Breakdown│  ← Atomize into tickets, each self-contained with spec
-  └──────┬──────┘
-         │
-    ┌────┴────┐  per ticket (Morty workers 👶)
-    ▼         ▼
-  ┌──────┐  ┌──────┐
-  │🔬 Re-│  │🔬 Re-│  1. Research the codebase
-  │search│  │search│
-  └──┬───┘  └──┬───┘
-     ▼         ▼
-  ┌──────┐  ┌──────┐
-  │📝 Re-│  │📝 Re-│  2. Review the research
-  │view  │  │view  │
-  └──┬───┘  └──┬───┘
-     ▼         ▼
-  ┌──────┐  ┌──────┐
-  │📐Plan│  │📐Plan│  3. Architect the solution
-  └──┬───┘  └──┬───┘
-     ▼         ▼
-  ┌──────┐  ┌──────┐
-  │📝 Re-│  │📝 Re-│  4. Review the plan
-  │view  │  │view  │
-  └──┬───┘  └──┬───┘
-     ▼         ▼
-  ┌──────┐  ┌──────┐
-  │⚡ Im-│  │⚡ Im-│  5. Implement
-  │plem  │  │plem  │
-  └──┬───┘  └──┬───┘
-     ▼         ▼
-  ┌──────┐  ┌──────┐
-  │✅ Ve-│  │✅ Ve-│  6. Spec conformance
-  │rify  │  │rify  │
-  └──┬───┘  └──┬───┘
-     ▼         ▼
-  ┌──────┐  ┌──────┐
-  │🔍 Re-│  │🔍 Re-│  7. Code review
-  │view  │  │view  │
-  └──┬───┘  └──┬───┘
-     ▼         ▼
-  ┌──────┐  ┌──────┐
-  │🧹Sim-│  │🧹Sim-│  8. Simplify
-  │plify │  │plify │
-  └──────┘  └──────┘
-```
-
-The **Stop hook** prevents Claude from exiting until the task is genuinely complete. Between each iteration, the hook injects a fresh session summary — current phase, ticket list, active task — so Rick always wakes up knowing exactly where he is, even after full context compression.
-
-All modes support both tmux and Zellij monitor layouts.
+> **Under the hood:** See [architecture.md](architecture.md) for the 8-phase ticket lifecycle, manager/worker model, stop-hook loop, context clearing, state schema, and every internal system that makes this thing run.
 
 ---
 
