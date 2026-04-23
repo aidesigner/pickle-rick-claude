@@ -11,6 +11,12 @@ import { buildCycles } from '../lib/tarjan-scc.js';
 
 const PROBE = 'packages/attractor/src/cli.ts';
 const DIAG_PREFIX = 'plumbus-frame-analyzer:';
+// Guards against a wedged bun subprocess (stuck registry import, infinite loop
+// inside dump-graph.ts, catastrophic regex on attractor graph traversal, stuck
+// FUSE mount for the .dot target) that would otherwise hang the plumbus
+// generative-audit pipeline indefinitely with no log signal — same silent-hang
+// class as the council-publish `gh` and scope-resolver `rg`/`grep` gaps.
+const BUN_TIMEOUT_MS = 30_000;
 
 function discoverAttractor(): string | null {
   const envRoot = process.env.ATTRACTOR_ROOT;
@@ -37,9 +43,12 @@ function discoverAttractor(): string | null {
 }
 
 function parseDotViaBun(targetDotAbsPath: string, attractorRoot: string): Graph {
-  const bunCheck = spawnSync('bun', ['--version'], { encoding: 'utf-8' });
+  const bunCheck = spawnSync('bun', ['--version'], { encoding: 'utf-8', timeout: BUN_TIMEOUT_MS });
   if (bunCheck.error || bunCheck.status !== 0) {
-    process.stderr.write(`${DIAG_PREFIX} bun not on PATH\n`);
+    const reason = bunCheck.signal === 'SIGTERM'
+      ? `bun --version exceeded ${BUN_TIMEOUT_MS}ms timeout`
+      : 'bun not on PATH';
+    process.stderr.write(`${DIAG_PREFIX} ${reason}\n`);
     process.exit(2);
   }
 
@@ -49,8 +58,12 @@ function parseDotViaBun(targetDotAbsPath: string, attractorRoot: string): Graph 
     process.exit(2);
   }
 
-  const result = spawnSync('bun', [dumpGraphPath, targetDotAbsPath], { encoding: 'utf-8' });
+  const result = spawnSync('bun', [dumpGraphPath, targetDotAbsPath], { encoding: 'utf-8', timeout: BUN_TIMEOUT_MS });
   if (result.status !== 0) {
+    if (result.signal === 'SIGTERM') {
+      process.stderr.write(`${DIAG_PREFIX} dump-graph.ts exceeded ${BUN_TIMEOUT_MS}ms timeout\n`);
+      process.exit(2);
+    }
     const firstLine = (result.stderr ?? '').split('\n')[0] ?? '';
     process.stderr.write(`${DIAG_PREFIX} dump-graph.ts exited non-zero: ${firstLine}\n`);
     process.exit(2);
