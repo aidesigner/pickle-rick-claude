@@ -133,10 +133,10 @@ Violations matching this focus are elevated by one priority level (e.g. P2 → P
 If neither DOMAIN nor FOCUS is set, use `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md` as JUDGE_CONTEXT_PATH.
 
 ```bash
-node "$HOME/.claude/pickle-rick/extension/bin/init-microverse.js" "${SESSION_ROOT}" "${TARGET_ABSOLUTE_PATH}" --stall-limit ${STALL_LIMIT} --convergence-target 0 --judge-context "${JUDGE_CONTEXT_PATH}"
+node "$HOME/.claude/pickle-rick/extension/bin/init-microverse.js" "${SESSION_ROOT}" "${TARGET_ABSOLUTE_PATH}" --stall-limit ${STALL_LIMIT} --convergence-target 0 --judge-context "${JUDGE_CONTEXT_PATH}" [if SCOPE_FLAG set: --allowed-paths-file "${SESSION_ROOT}/scope.json"]
 ```
 
-Replace shell variables with actual values. The `--convergence-target 0` tells the runner to stop immediately when the violation count reaches zero (instead of waiting for stall_limit iterations of finding nothing).
+Replace shell variables with actual values. The `--convergence-target 0` tells the runner to stop immediately when the violation count reaches zero (instead of waiting for stall_limit iterations of finding nothing). When SCOPE_FLAG was set (Step 7 wrote `scope.json`), append `--allowed-paths-file "${SESSION_ROOT}/scope.json"` — this injects `allowed_paths` into `microverse.json` so Worker Mode Override 3 clamps its per-iteration glob to the scoped file set.
 
 ### Step 9: Write prd.md
 

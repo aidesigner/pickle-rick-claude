@@ -111,4 +111,21 @@ describe('szechuan scope injection', () => {
       'szechuan-sauce.md must contain Override 2 scope-invariant marker',
     );
   });
+
+  // ---------------------------------------------------------------------------
+  // Step 8 wiring: --allowed-paths-file referenced after Step 7 in szechuan-sauce.md
+  // ---------------------------------------------------------------------------
+
+  test('Step 8 references --allowed-paths-file after Step 7 (scope wiring for standalone mode)', () => {
+    const content = fs.readFileSync(SZECHUAN_MD, 'utf-8');
+    const step7Idx = content.indexOf('### Step 7: Resolve Scope');
+    const step8Idx = content.indexOf('### Step 8: Create microverse.json');
+    const flagIdx = content.indexOf('--allowed-paths-file');
+    assert.ok(step7Idx > 0, 'Step 7 heading must exist in szechuan-sauce.md');
+    assert.ok(step8Idx > step7Idx, 'Step 8 must come after Step 7');
+    assert.ok(
+      flagIdx > step7Idx,
+      '--allowed-paths-file must appear after Step 7 so scope.json has been written before init-microverse is invoked',
+    );
+  });
 });
