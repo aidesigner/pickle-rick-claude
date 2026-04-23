@@ -365,6 +365,30 @@ test('StateManager.forceWrite: never throws even on bad path', () => {
   sm.forceWrite('/nonexistent/path/state.json', makeState());
 });
 
+test('StateManager.forceWrite: emits stderr breadcrumb on write failure', () => {
+  const sm = new StateManager();
+  const originalWrite = process.stderr.write.bind(process.stderr);
+  const captured = [];
+  process.stderr.write = (chunk, ...rest) => {
+    captured.push(typeof chunk === 'string' ? chunk : chunk.toString('utf-8'));
+    return originalWrite(chunk, ...rest);
+  };
+  try {
+    sm.forceWrite('/nonexistent/path/state.json', makeState());
+  } finally {
+    process.stderr.write = originalWrite;
+  }
+  const joined = captured.join('');
+  assert.ok(
+    joined.includes('[state-manager] forceWrite failed'),
+    `expected forceWrite failure breadcrumb in stderr, got: ${joined}`,
+  );
+  assert.ok(
+    joined.includes('/nonexistent/path/state.json'),
+    `expected target path in stderr breadcrumb, got: ${joined}`,
+  );
+});
+
 // ---------------------------------------------------------------------------
 // transaction — success
 // ---------------------------------------------------------------------------

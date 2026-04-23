@@ -186,8 +186,16 @@ export class StateManager {
   forceWrite(statePath: string, state: State | object): void {
     try {
       writeStateFile(statePath, state);
-    } catch {
-      // Best-effort — swallow all errors
+    } catch (err) {
+      // Never throw — halt paths and signal handlers depend on this. But the
+      // operator needs a breadcrumb when persistence silently drops (orphaned
+      // active flags, lost microverse iterations). Stderr emission is guarded
+      // so a closed pipe can't break the contract.
+      try {
+        process.stderr.write(
+          `[state-manager] forceWrite failed for ${statePath}: ${safeErrorMessage(err)}\n`,
+        );
+      } catch { /* stderr closed/unavailable — truly nothing to do */ }
     }
   }
 
