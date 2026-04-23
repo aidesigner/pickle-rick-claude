@@ -1302,7 +1302,7 @@ async function main() {
     process.exit(exitCode);
 }
 export function buildTmuxNotification(exitReason, finalStep, iteration, totalElapsed) {
-    const isFailure = exitReason === 'error' || exitReason === 'stall' || exitReason === 'circuit_open' || exitReason === 'rate_limit_exhausted' || exitReason === 'timeout_repeat';
+    const isFailure = isFailureExit(exitReason);
     const title = isFailure
         ? '🥒 Pickle Run Failed'
         : '🥒 Pickle Run Complete';
