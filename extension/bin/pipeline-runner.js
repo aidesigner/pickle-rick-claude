@@ -233,7 +233,7 @@ export function setupScope(args) {
         return scope;
     }
     catch (err) {
-        if (err instanceof ScopeError && err.code === 'SCOPE_EMPTY_DIFF') {
+        if (err instanceof Error && err instanceof ScopeError && err.code === 'SCOPE_EMPTY_DIFF') {
             log(`scope-setup WARN: SCOPE_EMPTY_DIFF — ${err.message} (continuing; build phase may produce diff)`);
             sm.update(statePath, (s) => { s.phases_entered = []; });
             return null;
@@ -593,7 +593,7 @@ export async function main(sessionDir, opts = {}) {
                 }
             }
             catch (err) {
-                if (err instanceof ScopeError && err.code === 'SCOPE_EMPTY_POST_BUILD') {
+                if (err instanceof Error && err instanceof ScopeError && err.code === 'SCOPE_EMPTY_POST_BUILD') {
                     log(`SCOPE_EMPTY_POST_BUILD at anatomy-park — ${err.message}`);
                     writePipelineStatus(sessionDir, 'failed', {
                         current_phase: 'anatomy-park',

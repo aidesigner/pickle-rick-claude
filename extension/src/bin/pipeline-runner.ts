@@ -282,7 +282,7 @@ export function setupScope(args: SetupScopeArgs): ScopeJson | null {
     log(`scope-setup: mode=${scope.mode} strategy=${scope.strategy} base=${scope.base_ref ?? '-'} allowed=${scope.allowed_paths.length}`);
     return scope;
   } catch (err) {
-    if (err instanceof ScopeError && err.code === 'SCOPE_EMPTY_DIFF') {
+    if (err instanceof Error && err instanceof ScopeError && err.code === 'SCOPE_EMPTY_DIFF') {
       log(`scope-setup WARN: SCOPE_EMPTY_DIFF — ${err.message} (continuing; build phase may produce diff)`);
       sm.update(statePath, (s) => { s.phases_entered = []; });
       return null;
@@ -742,7 +742,7 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
           writeSkippedByScope(sessionDir, 'anatomy-park', refreshed, config.target || workingDir, workingDir);
         }
       } catch (err) {
-        if (err instanceof ScopeError && err.code === 'SCOPE_EMPTY_POST_BUILD') {
+        if (err instanceof Error && err instanceof ScopeError && err.code === 'SCOPE_EMPTY_POST_BUILD') {
           log(`SCOPE_EMPTY_POST_BUILD at anatomy-park — ${err.message}`);
           writePipelineStatus(sessionDir, 'failed', {
             current_phase: 'anatomy-park',
