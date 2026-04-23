@@ -279,7 +279,7 @@ Queue tasks for unattended batch execution overnight.
 | `/anatomy-park` | Three-phase deep subsystem review with trap door cataloging |
 | `/pickle-pipeline "task"` | Full lifecycle: pickle-tmux → anatomy-park → szechuan-sauce in one tmux session |
 | `/plumbus <file.dot>` | Iterative DAG shaping on a single `.dot` file. `--dry-run`, `--focus`, `--no-validator` |
-| `/council-of-ricks` | Graphite PR stack review — generates directives, never fixes code |
+| `/council-of-ricks` | Graphite PR stack review — szechuan principles + anatomy data-flow tracing + Codex adversarial challenge. Directives only, never fixes code. `--no-codex` to disable, `--gitnexus` for graph queries |
 | `/portal-gun <source>` | Gene transfusion from another codebase |
 | `/pickle-dot [path]` | Convert PRD → attractor-compatible DOT digraph |
 | `/attract [file.dot]` | Submit pipeline to attractor server |
