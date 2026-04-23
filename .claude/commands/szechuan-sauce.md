@@ -92,7 +92,7 @@ Estimated iterations: N
 
 5. Do NOT modify any code. Output `<promise>TASK_COMPLETED</promise>` and stop.
 
-Skip Steps 5–10 entirely.
+Skip Steps 5–11 entirely.
 
 ### Step 5: Run Tests Baseline
 
@@ -105,7 +105,7 @@ node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --max-iterations 
 ```
 Extract `SESSION_ROOT=<path>` from output.
 
-### Step 6.5: Resolve Scope (if `--scope`)
+### Step 7: Resolve Scope (if `--scope`)
 
 If SCOPE_FLAG is set:
 ```bash
@@ -113,7 +113,7 @@ node "$HOME/.claude/pickle-rick/extension/bin/resolve-scope.js" --scope "<SCOPE_
 ```
 Omit `--scope-base` when SCOPE_BASE was not provided. If the command exits non-zero, print the stderr and stop.
 
-### Step 7: Create microverse.json
+### Step 8: Create microverse.json
 
 If DOMAIN is set or FOCUS is set, create a combined judge context file:
 1. Read `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md`
@@ -138,7 +138,7 @@ node "$HOME/.claude/pickle-rick/extension/bin/init-microverse.js" "${SESSION_ROO
 
 Replace shell variables with actual values. The `--convergence-target 0` tells the runner to stop immediately when the violation count reaches zero (instead of waiting for stall_limit iterations of finding nothing).
 
-### Step 8: Write prd.md
+### Step 9: Write prd.md
 
 Write `${SESSION_ROOT}/prd.md`:
 
@@ -193,7 +193,7 @@ Violations matching this focus are elevated by one priority level. When tied, fi
 - Test code follows DAMP (Descriptive And Meaningful Phrases), not DRY
 ```
 
-### Step 9: Launch
+### Step 10: Launch
 
 Session name: `szechuan-<hash>` from SESSION_ROOT basename.
 ```bash
@@ -204,7 +204,7 @@ tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/microve
 
 microverse-runner auto-creates the 4-pane monitor window on startup — no manual invocation needed.
 
-### Step 10: Report
+### Step 11: Report
 
 Print:
 ```

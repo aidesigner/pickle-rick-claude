@@ -346,7 +346,6 @@ export function safeDeactivate(statePath) {
         _sm.update(statePath, s => { s.active = false; });
     }
     catch {
-        // eslint-disable-next-line pickle/no-raw-state-write -- crash-path bypass: lock unavailable, preserve full state
         _sm.forceWrite(statePath, (() => {
             try {
                 const s = JSON.parse(fs.readFileSync(statePath, 'utf-8'));

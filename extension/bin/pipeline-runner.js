@@ -578,7 +578,7 @@ export async function main(sessionDir, opts = {}) {
         else if (phase === 'anatomy-park') {
             cleanPhaseArtifacts(sessionDir, 'pickle');
             resetStateForPhase(statePath, 'anatomy-park.md', config.anatomy_max_iterations);
-            let refreshed = null;
+            let refreshed;
             try {
                 refreshed = refreshScope(sessionDir, 'anatomy-park', { repoRoot: workingDir, log });
                 if (refreshed) {

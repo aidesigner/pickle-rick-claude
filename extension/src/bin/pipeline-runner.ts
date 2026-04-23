@@ -692,7 +692,7 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
       cleanPhaseArtifacts(sessionDir, 'pickle');
       resetStateForPhase(statePath, 'anatomy-park.md', config.anatomy_max_iterations);
 
-      let refreshed: ScopeJson | null = null;
+      let refreshed: ScopeJson | null;
       try {
         refreshed = refreshScope(sessionDir, 'anatomy-park', { repoRoot: workingDir, log });
         if (refreshed) {
