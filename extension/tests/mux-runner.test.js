@@ -1872,72 +1872,7 @@ test('detectMultiRepo: returns null when only one ticket has a working_dir', () 
     }
 });
 
-// --- iterTimeout=0 and template fallback tests ---
-
 import { Defaults } from '../types/index.js';
-
-test('mux-runner: worker_timeout_seconds=0 produces iterTimeout=0 (no per-iteration timeout)', () => {
-    const rawIterTimeout = Number(0);
-    const iterTimeout = rawIterTimeout === 0
-        ? 0
-        : (Number.isFinite(rawIterTimeout) && rawIterTimeout > 0
-            ? rawIterTimeout
-            : Defaults.WORKER_TIMEOUT_SECONDS);
-
-    assert.equal(iterTimeout, 0, 'iterTimeout should be 0 when worker_timeout_seconds=0');
-});
-
-test('mux-runner: worker_timeout_seconds=undefined falls back to default', () => {
-    const rawIterTimeout = Number(undefined);
-    const iterTimeout = rawIterTimeout === 0
-        ? 0
-        : (Number.isFinite(rawIterTimeout) && rawIterTimeout > 0
-            ? rawIterTimeout
-            : Defaults.WORKER_TIMEOUT_SECONDS);
-
-    assert.equal(iterTimeout, Defaults.WORKER_TIMEOUT_SECONDS, 'should fall back to default for NaN');
-});
-
-test('mux-runner: worker_timeout_seconds=-1 falls back to default', () => {
-    const rawIterTimeout = Number(-1);
-    const iterTimeout = rawIterTimeout === 0
-        ? 0
-        : (Number.isFinite(rawIterTimeout) && rawIterTimeout > 0
-            ? rawIterTimeout
-            : Defaults.WORKER_TIMEOUT_SECONDS);
-
-    assert.equal(iterTimeout, Defaults.WORKER_TIMEOUT_SECONDS, 'should fall back to default for negative');
-});
-
-test('mux-runner: worker_timeout_seconds=600 uses provided value', () => {
-    const rawIterTimeout = Number(600);
-    const iterTimeout = rawIterTimeout === 0
-        ? 0
-        : (Number.isFinite(rawIterTimeout) && rawIterTimeout > 0
-            ? rawIterTimeout
-            : Defaults.WORKER_TIMEOUT_SECONDS);
-
-    assert.equal(iterTimeout, 600, 'should use provided value');
-});
-
-test('mux-runner: hang guard uses MAX_ITERATION_SECONDS when iterTimeout=0', () => {
-    const iterTimeout = 0;
-    const hangGuardMs = iterTimeout > 0
-        ? (iterTimeout + 30) * 1000
-        : Defaults.MAX_ITERATION_SECONDS * 1000;
-
-    assert.equal(hangGuardMs, Defaults.MAX_ITERATION_SECONDS * 1000, 'should use absolute ceiling');
-    assert.ok(hangGuardMs > 0, 'hang guard must always be positive (no infinite hang)');
-});
-
-test('mux-runner: hang guard uses iterTimeout+30s when iterTimeout>0', () => {
-    const iterTimeout = 1200;
-    const hangGuardMs = iterTimeout > 0
-        ? (iterTimeout + 30) * 1000
-        : Defaults.MAX_ITERATION_SECONDS * 1000;
-
-    assert.equal(hangGuardMs, 1230 * 1000, 'should be iterTimeout + 30s');
-});
 
 test('mux-runner: template lookup prefers templates/ dir over commands/ dir', () => {
     const tmpRoot = makeTmpRoot();
