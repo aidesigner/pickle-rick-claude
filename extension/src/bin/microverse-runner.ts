@@ -565,7 +565,7 @@ export async function main(sessionDir: string): Promise<void> {
       writeMicroverseState(sessionDir, currentMv);
       exitReason = 'error';
       // eslint-disable-next-line pickle/no-raw-state-write -- fallback after lock acquisition failure
-      try { sm.update(statePath, s => { s.active = false; }); } catch { sm.forceWrite(statePath, { active: false }); }
+      try { sm.update(statePath, s => { s.active = false; }); } catch (err) { log(`sm.update failed at gap-analysis-error path, falling back to forceWrite: ${safeErrorMessage(err)}`); sm.forceWrite(statePath, { active: false }); }
       writeFinalReport(sessionDir, currentMv, exitReason, iteration, Math.floor((Date.now() - startTime) / 1000));
       process.exit(1);
     }
@@ -942,7 +942,7 @@ export async function main(sessionDir: string): Promise<void> {
   writeMicroverseState(sessionDir, currentMv);
 
   // eslint-disable-next-line pickle/no-raw-state-write -- fallback after lock acquisition failure
-  try { sm.update(statePath, s => { s.active = false; }); } catch { sm.forceWrite(statePath, { active: false }); }
+  try { sm.update(statePath, s => { s.active = false; }); } catch (err) { log(`sm.update failed at finalize path, falling back to forceWrite: ${safeErrorMessage(err)}`); sm.forceWrite(statePath, { active: false }); }
 
   writeFinalReport(sessionDir, currentMv, exitReason, iteration, totalElapsed);
 

@@ -462,7 +462,8 @@ export async function main(sessionDir) {
             try {
                 sm.update(statePath, s => { s.active = false; });
             }
-            catch {
+            catch (err) {
+                log(`sm.update failed at gap-analysis-error path, falling back to forceWrite: ${safeErrorMessage(err)}`);
                 sm.forceWrite(statePath, { active: false });
             }
             writeFinalReport(sessionDir, currentMv, exitReason, iteration, Math.floor((Date.now() - startTime) / 1000));
@@ -808,7 +809,8 @@ export async function main(sessionDir) {
     try {
         sm.update(statePath, s => { s.active = false; });
     }
-    catch {
+    catch (err) {
+        log(`sm.update failed at finalize path, falling back to forceWrite: ${safeErrorMessage(err)}`);
         sm.forceWrite(statePath, { active: false });
     }
     writeFinalReport(sessionDir, currentMv, exitReason, iteration, totalElapsed);
