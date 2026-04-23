@@ -5,7 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ensureMonitorWindow, inferMonitorMode } from '../services/pickle-utils.js';
+import { ensureMonitorWindow, inferMonitorMode, monitorModesCompatible } from '../services/pickle-utils.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -38,9 +38,14 @@ function makeFakes(opts) {
 
     // Fake tmux: dispatches on subcommand. `display-message` echoes the
     // session name; `list-windows` echoes either "monitor" or "runner"
-    // depending on whether $TMP/.monitor-exists marker is present.
+    // depending on whether $TMP/.monitor-exists marker is present;
+    // `show-option @pickle_monitor_mode` echoes whatever is in
+    // $TMP/.monitor-mode (empty = unset); `kill-window` and `set-option`
+    // drop a marker so assertions can observe them.
     const fakeTmux = path.join(tmpRoot, 'fake-tmux.sh');
     const markerPath = path.join(tmpRoot, '.monitor-exists');
+    const modeMarkerPath = path.join(tmpRoot, '.monitor-mode');
+    const killMarkerPath = path.join(tmpRoot, '.monitor-killed');
     fs.writeFileSync(
         fakeTmux,
         `#!/bin/sh
@@ -55,6 +60,21 @@ case "$1" in
     else
       echo runner
     fi
+    ;;
+  show-option)
+    if [ -f "${modeMarkerPath}" ]; then
+      cat "${modeMarkerPath}"
+    fi
+    ;;
+  kill-window)
+    touch "${killMarkerPath}"
+    rm -f "${markerPath}"
+    rm -f "${modeMarkerPath}"
+    ;;
+  set-option)
+    # Last arg is the mode value; stamp it so subsequent show-option sees it.
+    eval "mode=\\\${$#}"
+    printf "%s" "$mode" > "${modeMarkerPath}"
     ;;
 esac
 exit 0
@@ -79,6 +99,8 @@ exit 0
         extRoot,
         callsLog,
         markerPath,
+        modeMarkerPath,
+        killMarkerPath,
         tmuxBin: fakeTmux,
         bashBin: fakeBash,
         cleanup() {
@@ -130,8 +152,9 @@ test('ensureMonitorWindow: creates monitor when window does not exist', () => {
 
 test('ensureMonitorWindow: no-op when monitor window already exists', () => {
     const f = makeFakes({ sessionName: 'pickle-abc12345' });
-    // Simulate existing monitor window.
+    // Simulate existing monitor window stamped with the same mode we'll infer.
     fs.writeFileSync(f.markerPath, '1');
+    fs.writeFileSync(f.modeMarkerPath, 'pickle');
     try {
         const result = ensureMonitorWindow({
             sessionDir: f.sessionDir,
@@ -143,10 +166,47 @@ test('ensureMonitorWindow: no-op when monitor window already exists', () => {
         assert.equal(result.status, 'exists');
         const calls = f.readCalls();
         assert.match(calls, /tmux list-windows/);
+        assert.match(calls, /tmux show-option/, 'should read stamped mode');
+        assert.doesNotMatch(calls, /tmux kill-window/, 'should not kill a compatible window');
         assert.doesNotMatch(calls, /bash .+tmux-monitor\.sh/, 'should not spawn script when monitor exists');
     } finally {
         f.cleanup();
     }
+});
+
+test('ensureMonitorWindow: kills and recreates when existing window has different @mode', () => {
+    const f = makeFakes({ sessionName: 'pickle-abc12345', commandTemplate: 'council-of-ricks.md' });
+    // Simulate an existing monitor window stamped for a different mode
+    // (e.g. a previous anatomy-park / pickle pipeline phase).
+    fs.writeFileSync(f.markerPath, '1');
+    fs.writeFileSync(f.modeMarkerPath, 'pickle');
+    try {
+        const result = ensureMonitorWindow({
+            sessionDir: f.sessionDir,
+            extensionRoot: f.extRoot,
+            inTmux: true,
+            tmuxBin: f.tmuxBin,
+            bashBin: f.bashBin,
+        });
+        assert.equal(result.status, 'recreated');
+        const calls = f.readCalls();
+        assert.match(calls, /tmux list-windows/);
+        assert.match(calls, /tmux show-option -w -qv -t pickle-abc12345:monitor @pickle_monitor_mode/);
+        assert.match(calls, /tmux kill-window -t pickle-abc12345:monitor/, 'should kill stale window');
+        assert.match(calls, /bash .+tmux-monitor\.sh pickle-abc12345 .+session council/, 'should respawn in council mode');
+        assert.match(calls, /tmux set-option -w -t pickle-abc12345:monitor @pickle_monitor_mode council/, 'should stamp new mode');
+        assert.ok(fs.existsSync(f.killMarkerPath), 'kill-window must have fired');
+    } finally {
+        f.cleanup();
+    }
+});
+
+test('monitorModesCompatible: unset existing => incompatible; matching => compatible', () => {
+    assert.equal(monitorModesCompatible(null, 'council'), false);
+    assert.equal(monitorModesCompatible('', 'council'), false);
+    assert.equal(monitorModesCompatible('pickle', 'council'), false);
+    assert.equal(monitorModesCompatible('council', 'council'), true);
+    assert.equal(monitorModesCompatible('meeseeks', 'meeseeks'), true);
 });
 
 test('ensureMonitorWindow: infers meeseeks mode from state.command_template', () => {

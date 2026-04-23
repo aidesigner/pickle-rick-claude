@@ -280,3 +280,173 @@ test('publishCouncilStack: one pr comment failure does not abort sweep', async (
         cleanupGhMock(mock);
     }
 });
+
+// --- 9. Hardening: trunk must be in branches list ---
+
+test('publishCouncilStack: throws when trunk is not in branches list', async () => {
+    await withSession((sessionDir) => {
+        assert.throws(
+            () => publishCouncilStack(sessionDir),
+            (err) => err instanceof CouncilPublishError && /trunk.*not in branches/.test(err.message),
+        );
+    }, {
+        stack: {
+            branches: ['feat/a', 'feat/b'], // no `main`
+            trunk: 'main',
+            repo_path: os.tmpdir(),
+            codex_enabled: false,
+        },
+    });
+});
+
+// --- 10. Hardening: Branch-cell match normalizes backticks + padding ---
+
+test('publishCouncilStack: Branch cell with backticks and padding still matches', async () => {
+    const mock = makeGhMock({
+        auth: 'ok',
+        prList: { 'feat/one': 42, 'feat/two': 99 },
+        prComment: {},
+    });
+    try {
+        await withSession(async (sessionDir) => {
+            await publishCouncilStack(sessionDir, { ghCommand: mock.ghPath });
+            const oneBody = fs.readFileSync(
+                path.join(sessionDir, 'council-comments', 'feat__one.md'),
+                'utf-8',
+            );
+            // The directive's row (padded + backticked Branch cell) must land
+            // in the feat/one body, NOT be treated as "no findings".
+            assert.ok(
+                /HIGH.*a\.ts:10/.test(oneBody),
+                'padded/backticked Branch cell must match',
+            );
+            assert.ok(
+                !/No findings for this branch/.test(oneBody),
+                'should not fall through to empty-findings placeholder',
+            );
+        }, {
+            directive: '# Council Directive\n\n### Findings\n\n| Severity | Branch | File:Line |\n| --- | --- | --- |\n| HIGH | ` feat/one ` | a.ts:10 |\n',
+        });
+    } finally {
+        cleanupGhMock(mock);
+    }
+});
+
+// --- 11. Hardening: zero-byte marker file is rejected as "not published" ---
+
+test('publishCouncilStack: zero-byte .published marker is NOT treated as published', async () => {
+    const mock = makeGhMock({
+        auth: 'ok',
+        prList: { 'feat/one': 42, 'feat/two': 99 },
+        prComment: {},
+    });
+    try {
+        await withSession(async (sessionDir) => {
+            // Pre-create a zero-byte marker for feat/one.
+            const pubDir = path.join(sessionDir, '.published');
+            fs.mkdirSync(pubDir, { recursive: true });
+            const fd = fs.openSync(path.join(pubDir, 'feat__one'), 'w');
+            fs.closeSync(fd); // zero bytes
+            assert.equal(fs.statSync(path.join(pubDir, 'feat__one')).size, 0);
+
+            const report = await publishCouncilStack(sessionDir, { ghCommand: mock.ghPath });
+            const one = report.results.find(r => r.branch === 'feat/one');
+            assert.equal(one.outcome, 'posted', 'zero-byte marker must not skip');
+            // After posting, marker should be a real timestamp (non-zero size).
+            assert.ok(fs.statSync(path.join(pubDir, 'feat__one')).size > 0);
+        });
+    } finally {
+        cleanupGhMock(mock);
+    }
+});
+
+// --- 12. Hardening: parsePrList strips non-JSON warning prefix lines ---
+
+test('publishCouncilStack: warning line before JSON array is tolerated', async () => {
+    const mock = makeGhMock({
+        auth: 'ok',
+        prList: {
+            'feat/one': 'warning: something happened\n[{"number":42,"state":"OPEN","updatedAt":"2026-04-23T00:00:00Z"}]',
+            'feat/two': 99,
+        },
+        prComment: {},
+    });
+    try {
+        await withSession(async (sessionDir) => {
+            const report = await publishCouncilStack(sessionDir, { ghCommand: mock.ghPath });
+            const one = report.results.find(r => r.branch === 'feat/one');
+            assert.equal(one.outcome, 'posted');
+            assert.equal(one.pr_number, 42, 'prefix-stripped JSON parsed correctly');
+        });
+    } finally {
+        cleanupGhMock(mock);
+    }
+});
+
+// --- 13. Hardening: empty findings across all branches emits a warning ---
+
+test('publishCouncilStack: directive with no Findings table emits empty-findings warning', async () => {
+    const mock = makeGhMock({
+        auth: 'ok',
+        prList: { 'feat/one': 42, 'feat/two': 99 },
+        prComment: {},
+    });
+    try {
+        await withSession(async (sessionDir) => {
+            const report = await publishCouncilStack(sessionDir, { ghCommand: mock.ghPath });
+            assert.ok(Array.isArray(report.warnings), 'warnings field populated');
+            assert.ok(
+                report.warnings.some(w => /zero per-branch findings/.test(w)),
+                'warning about zero per-branch findings present',
+            );
+            // Also present in publish.log as a warn-level line.
+            const logLines = fs.readFileSync(path.join(sessionDir, 'publish.log'), 'utf-8')
+                .trim().split('\n').map(JSON.parse);
+            assert.ok(
+                logLines.some(e => e.level === 'warn' && /zero per-branch findings/.test(e.message)),
+                'warn line written to publish.log',
+            );
+        }, {
+            directive: '# Council Directive — Round 1\n\nStack Overview text but no Findings table.\n',
+        });
+    } finally {
+        cleanupGhMock(mock);
+    }
+});
+
+// --- 14. Hardening: real Step 17 terminal suffixes produce Round bullets ---
+
+test('publishCouncilStack: extractRoundOutcomes handles real terminal-suffix formats', async () => {
+    const mock = makeGhMock({
+        auth: 'ok',
+        prList: { 'feat/one': 42, 'feat/two': 99 },
+        prComment: {},
+    });
+    const summary = [
+        '## Round 1: — clean round.',
+        '',
+        '## Round 2: — partial round (skipped: B2 CLAUDE.md Compliance, C_correctness:feat/bar).',
+        '',
+        '## Round 3: — 4 issues (1/2/1/0/0)',
+        '',
+    ].join('\n');
+    try {
+        await withSession(async (sessionDir) => {
+            await publishCouncilStack(sessionDir, { ghCommand: mock.ghPath });
+            const body = fs.readFileSync(
+                path.join(sessionDir, 'council-comments', 'feat__one.md'),
+                'utf-8',
+            );
+            // Three round bullets rendered, in order, from the three real suffixes.
+            const r1 = body.indexOf('- Round 1:');
+            const r2 = body.indexOf('- Round 2:');
+            const r3 = body.indexOf('- Round 3:');
+            assert.ok(r1 >= 0 && r2 > r1 && r3 > r2, 'three round bullets in order');
+            assert.ok(/clean round/.test(body));
+            assert.ok(/partial round \(skipped/.test(body));
+            assert.ok(/4 issues \(1\/2\/1\/0\/0\)/.test(body));
+        }, { summary });
+    } finally {
+        cleanupGhMock(mock);
+    }
+});

@@ -337,7 +337,7 @@ Structure the directive as an agent-executable prompt with these sections in thi
 1. **Project Rules** — inline key rules from `council-claude-rules.json` so the fixing agent knows project conventions
 2. **Stack Overview** — repo, trunk, branches, current round number, issue counts by severity (P0/P1/P2/P3/P4), Codex verdict per branch (approve / needs-attention / skipped / failed / timeout)
 3. **Instructions** — for each branch: `gt branch checkout <branch> --no-interactive`, fix, stage files (NEW files by name, modified files either by name or via `git add -u` — never `git add -A` / `git add .`), commit `"address council round <N>: <summary>"`
-4. **Findings** — one consolidated markdown table with these columns exactly, in this order: `Severity | Conf | Source | Branch | File | Issue | Rule/Principle | Recommendation`. The `Branch` column is load-bearing: `council-publish.js` scrapes this table to build per-branch PR comments (`findingsForBranch` in `extension/src/bin/council-publish.ts`). Rows ordered P0-first, then by branch.
+4. **Findings** — one consolidated markdown table with these columns exactly, in this order: `Severity | Conf | Source | Branch | File | Issue | Rule/Principle | Recommendation`. The `Branch` column is load-bearing: `council-publish.js` scrapes this table to build per-branch PR comments (`findingsForBranch` in `extension/src/bin/council-publish.ts`). Rows ordered P0-first, then by branch. The `Branch` cell MUST contain the branch name as plain text — NO backticks, NO links, NO bold/italic formatting. Example: `feat/foo` as literal text, not `` `feat/foo` `` or `[feat/foo](url)`. Formatting causes silent row drop in the publisher.
 5. **Per-branch sections** — one `### <branch>` heading per non-trunk branch, each issue ordered P0-first with:
    - `file:line`
    - Rule/principle violated (CLAUDE.md rule, szechuan principle name, or `N/A`)
@@ -351,6 +351,7 @@ Structure the directive as an agent-executable prompt with these sections in thi
    - `[P<N>, conf=<score>]` — already pre-filtered to `conf >= 80`
 6. **Trap Doors** — consolidated per Step 15.5
 7. **Completion** — `gt restack --no-interactive`, then run lint/test/build commands from `council-claude-rules.json`. If restack has conflicts, resolve before continuing
+8. **Heading-level contract.** Sections 1, 2, 3, 6, and 7 MUST be H2 (`## <name>`). Section 4 (Findings) MUST be H3 (`### Findings`). Section 5 (Per-branch sections) uses one H3 per branch (`### <branch-name>`). The H2 boundary between sections is load-bearing for `council-publish`'s section extraction — deviating breaks auto-publish silently.
 
 Print directive path. "The Council has spoken. Feed this to your agent, Rick." Append round record to summary (Step 17). Do NOT output `<promise>THE_CITADEL_APPROVES</promise>` — emit `<promise>TASK_COMPLETED</promise>` only after Step 17.7.
 

@@ -29,6 +29,7 @@ export interface PublishReport {
   posted: number;
   skipped: number;
   failed: number;
+  warnings?: string[];
 }
 
 interface CouncilStack {
@@ -57,22 +58,41 @@ interface PrListRow {
 function parsePrList(stdout: string): PrListRow[] {
   const trimmed = stdout.trim();
   if (!trimmed) return [];
-  try {
-    const parsed = JSON.parse(trimmed);
-    if (Array.isArray(parsed)) {
-      return parsed
-        .filter((p): p is Record<string, unknown> => !!p && typeof p === 'object')
-        .map(p => ({
-          number: Number(p.number),
-          state: typeof p.state === 'string' ? p.state : undefined,
-          updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : undefined,
-        }))
-        .filter(r => Number.isFinite(r.number) && r.number > 0);
+  const tryParseArray = (text: string): PrListRow[] | null => {
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .filter((p): p is Record<string, unknown> => !!p && typeof p === 'object')
+          .map(p => ({
+            number: Number(p.number),
+            state: typeof p.state === 'string' ? p.state : undefined,
+            updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : undefined,
+          }))
+          .filter(r => Number.isFinite(r.number) && r.number > 0);
+      }
+      // JSON.parse succeeds on bare integers / "null" too — caller falls through.
+    } catch {
+      // not JSON
     }
-    // JSON.parse succeeds on bare integers / "null" too — fall through to the
-    // legacy-shape handler below so a `--jq .[0].number` stdout still parses.
-  } catch {
-    // Not JSON at all — also fall through.
+    return null;
+  };
+  const direct = tryParseArray(trimmed);
+  if (direct !== null) return direct;
+  // Some `gh` invocations emit a warning line (or several) before the JSON.
+  // Walk from the top, skip lines until one begins with `[` or `{`, rejoin
+  // and retry. If that still fails we fall through to the bare-integer path.
+  const lines = trimmed.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const head = lines[i].trimStart();
+    if (head.startsWith('[') || head.startsWith('{')) {
+      const rest = lines.slice(i).join('\n').trim();
+      if (rest && rest !== trimmed) {
+        const retried = tryParseArray(rest);
+        if (retried !== null) return retried;
+      }
+      break;
+    }
   }
   const n = Number(trimmed.split('\n')[0]);
   return Number.isFinite(n) && n > 0 ? [{ number: n, state: 'OPEN' }] : [];
@@ -138,6 +158,9 @@ function findingsForBranch(directive: string, branch: string): string[] {
   let header: string[] | null = null;
   let usedHeader: string[] | null = null;
   let branchCol = -1;
+  // Strip surrounding backticks and whitespace so `` `feat/one` `` matches `feat/one`.
+  const normalize = (s: string): string => s.trim().replace(/^`+|`+$/g, '').trim();
+  const target = normalize(branch);
   for (const raw of lines) {
     const line = raw.trim();
     if (!line.startsWith('|')) {
@@ -157,7 +180,7 @@ function findingsForBranch(directive: string, branch: string): string[] {
     }
     // Skip separator row like |---|---|
     if (cells.every(c => /^:?-+:?$/.test(c))) continue;
-    if (branchCol >= 0 && branchCol < cells.length && cells[branchCol] === branch) {
+    if (branchCol >= 0 && branchCol < cells.length && normalize(cells[branchCol]) === target) {
       rows.push(line);
     }
   }
@@ -233,6 +256,26 @@ function appendPublishLog(fd: number, result: PublishResult): void {
   fs.writeSync(fd, Buffer.from(line));
 }
 
+function appendPublishLogRaw(fd: number, entry: Record<string, unknown>): void {
+  const line = JSON.stringify({ ts: new Date().toISOString(), ...entry }) + '\n';
+  fs.writeSync(fd, Buffer.from(line));
+}
+
+/**
+ * A marker is only "published" if it exists AND has non-zero size. A prior
+ * run can leave a zero-byte file behind (interrupted write, tmpfs eviction,
+ * bad umask) — treating those as "already published" silently swallows the
+ * outstanding comment for that branch forever. Size > 0 means a real ISO
+ * timestamp was written.
+ */
+function isMarkerPublished(p: string): boolean {
+  try {
+    return fs.existsSync(p) && fs.statSync(p).size > 0;
+  } catch {
+    return false;
+  }
+}
+
 export default function publishCouncilStack(
   sessionRoot: string,
   opts: PublishOptions = {},
@@ -258,6 +301,9 @@ export default function publishCouncilStack(
   if (!Array.isArray(branches) || typeof trunk !== 'string' || typeof repo_path !== 'string') {
     throw new CouncilPublishError('council-stack.json missing required fields (branches, trunk, repo_path)');
   }
+  if (!branches.includes(trunk)) {
+    throw new CouncilPublishError(`council-stack.json: trunk "${trunk}" not in branches list`);
+  }
 
   const commentsDir = path.join(sessionRoot, 'council-comments');
   fs.mkdirSync(commentsDir, { recursive: true });
@@ -281,6 +327,7 @@ export default function publishCouncilStack(
   let posted = 0;
   let skipped = 0;
   let failed = 0;
+  const branchFindingsCounts: number[] = [];
 
   const logFd = fs.openSync(logPath, 'a');
   try {
@@ -290,12 +337,14 @@ export default function publishCouncilStack(
       const bodyPath = path.join(commentsDir, `${slug}.md`);
       const markerPath = path.join(publishedDir, slug);
 
+      const findings = findingsForBranch(directive, branch);
+      branchFindingsCounts.push(findings.length);
       const body = composeBody({
         sessionRoot,
         branch,
         finalRound,
         codexEnabled: !!codex_enabled,
-        findings: findingsForBranch(directive, branch),
+        findings,
         trapDoors: trapDoorsForBranch(directive, branch),
         roundOutcomes,
       });
@@ -309,7 +358,7 @@ export default function publishCouncilStack(
         continue;
       }
 
-      if (fs.existsSync(markerPath)) {
+      if (isMarkerPublished(markerPath)) {
         const r: PublishResult = { branch, outcome: 'skipped_already_published', body_path: bodyPath };
         results.push(r);
         skipped++;
@@ -395,11 +444,29 @@ export default function publishCouncilStack(
         appendPublishLog(logFd, r);
       }
     }
+
+    // Empty-findings-across-all-branches warning: if every non-trunk branch
+    // either posted or was already-published yet produced ZERO findings while
+    // the directive itself had content, the Findings table is almost certainly
+    // missing or malformed — operators want to know.
+    const warnings: string[] = [];
+    const nonTrunkResults = results;
+    const allPostedOrSkipped = nonTrunkResults.length > 0 && nonTrunkResults.every(
+      r => r.outcome === 'posted' || r.outcome === 'skipped_already_published',
+    );
+    const allEmpty = branchFindingsCounts.length > 0 && branchFindingsCounts.every(c => c === 0);
+    if (allPostedOrSkipped && allEmpty && directive.trim().length > 0) {
+      const msg = 'directive had content but produced zero per-branch findings — check for missing ### Findings table with Branch column';
+      warnings.push(msg);
+      appendPublishLogRaw(logFd, { level: 'warn', message: msg });
+    }
+
+    const report: PublishReport = { session_root: sessionRoot, results, posted, skipped, failed };
+    if (warnings.length > 0) report.warnings = warnings;
+    return report;
   } finally {
     fs.closeSync(logFd);
   }
-
-  return { session_root: sessionRoot, results, posted, skipped, failed };
 }
 
 if (process.argv[1] && path.basename(process.argv[1]) === 'council-publish.js') {

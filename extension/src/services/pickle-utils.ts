@@ -700,7 +700,7 @@ export function updateState(key: string, value: string, sessionDir: string): voi
 export type MonitorMode = 'pickle' | 'meeseeks' | 'council' | 'refinement';
 
 export interface EnsureMonitorWindowResult {
-  status: 'skipped' | 'created' | 'exists' | 'error';
+  status: 'skipped' | 'created' | 'exists' | 'recreated' | 'error';
   reason?: string;
 }
 
@@ -742,10 +742,17 @@ export function inferMonitorMode(sessionDir: string): MonitorMode {
  * agent's context was tight.
  *
  * Never throws. Returns a status so callers can log the outcome:
- *   - `skipped`  → not inside tmux (headless or direct invocation)
- *   - `exists`   → monitor window already present, no-op
- *   - `created`  → monitor window spawned
- *   - `error`    → tmux/bash call failed; check `reason`
+ *   - `skipped`    → not inside tmux (headless or direct invocation)
+ *   - `exists`     → monitor window already present for this mode, no-op
+ *   - `created`    → monitor window spawned
+ *   - `recreated`  → stale monitor (different mode) killed and respawned
+ *   - `error`      → tmux/bash call failed; check `reason`
+ *
+ * Mode compatibility: the monitor window's layout is mode-specific
+ * (pickle/meeseeks/council/refinement). We persist the mode it was built for
+ * via a tmux user-option (`@pickle_monitor_mode`) on the window itself, then
+ * on re-entry compare against the mode this invocation wants. Mismatch =>
+ * kill + recreate. Silent reuse would leave the wrong layout in place.
  */
 export function ensureMonitorWindow(opts: EnsureMonitorWindowOptions): EnsureMonitorWindowResult {
   const log = opts.log || (() => { /* no-op */ });
@@ -775,7 +782,13 @@ export function ensureMonitorWindow(opts: EnsureMonitorWindowOptions): EnsureMon
     return { status: 'error', reason: 'empty session name' };
   }
 
-  // Idempotency guard — bail if a "monitor" window is already on the session.
+  const mode: MonitorMode = opts.mode || inferMonitorMode(opts.sessionDir);
+  const target = `${sessionName}:monitor`;
+  let recreated = false;
+
+  // Compatibility guard — a "monitor" window from a previous command (e.g.
+  // anatomy-park then council) has the wrong layout. Check the window's
+  // `@pickle_monitor_mode` user-option and recreate on mismatch.
   const listWindows = spawnSync(tmuxBin, ['list-windows', '-t', sessionName, '-F', '#W'], {
     encoding: 'utf-8',
     timeout: 5_000,
@@ -783,8 +796,25 @@ export function ensureMonitorWindow(opts: EnsureMonitorWindowOptions): EnsureMon
   if (listWindows.status === 0) {
     const names = (listWindows.stdout || '').split('\n').map(s => s.trim());
     if (names.includes('monitor')) {
-      log(`ensureMonitorWindow: monitor window already exists on ${sessionName}`);
-      return { status: 'exists' };
+      const existingMode = readWindowMode(tmuxBin, target);
+      if (monitorModesCompatible(existingMode, mode)) {
+        log(`ensureMonitorWindow: monitor window already exists on ${sessionName} (mode=${mode})`);
+        return { status: 'exists' };
+      }
+      log(
+        `ensureMonitorWindow: mode mismatch on ${sessionName} ` +
+        `(existing=${existingMode || 'unset'}, want=${mode}) — killing stale window`,
+      );
+      const kill = spawnSync(tmuxBin, ['kill-window', '-t', target], {
+        encoding: 'utf-8',
+        timeout: 5_000,
+      });
+      if (kill.status !== 0) {
+        const err = (kill.stderr || '').toString().trim();
+        log(`ensureMonitorWindow: kill-window failed: ${err}`);
+        return { status: 'error', reason: `kill-window: ${err || 'non-zero exit'}` };
+      }
+      recreated = true;
     }
   }
 
@@ -794,8 +824,6 @@ export function ensureMonitorWindow(opts: EnsureMonitorWindowOptions): EnsureMon
     log(`ensureMonitorWindow: tmux-monitor.sh missing at ${script}`);
     return { status: 'error', reason: `script missing: ${script}` };
   }
-
-  const mode: MonitorMode = opts.mode || inferMonitorMode(opts.sessionDir);
 
   const result = spawnSync(bashBin, [script, sessionName, opts.sessionDir, mode], {
     encoding: 'utf-8',
@@ -807,8 +835,46 @@ export function ensureMonitorWindow(opts: EnsureMonitorWindowOptions): EnsureMon
     return { status: 'error', reason: `script exit ${result.status}: ${err || 'no stderr'}` };
   }
 
+  // Stamp the mode on the freshly-created window so the next invocation can
+  // detect compatibility. Non-fatal if it fails — we log and move on.
+  const setOpt = spawnSync(
+    tmuxBin,
+    ['set-option', '-w', '-t', target, '@pickle_monitor_mode', mode],
+    { encoding: 'utf-8', timeout: 5_000 },
+  );
+  if (setOpt.status !== 0) {
+    const err = (setOpt.stderr || '').toString().trim();
+    log(`ensureMonitorWindow: set-option @pickle_monitor_mode failed (non-fatal): ${err}`);
+  }
+
+  if (recreated) {
+    log(`ensureMonitorWindow: recreated 4-pane monitor (mode=${mode}) on ${sessionName}`);
+    return { status: 'recreated' };
+  }
   log(`ensureMonitorWindow: created 4-pane monitor (mode=${mode}) on ${sessionName}`);
   return { status: 'created' };
+}
+
+/** Reads the monitor window's stamped mode via tmux user-option, or null. */
+function readWindowMode(tmuxBin: string, target: string): string | null {
+  const show = spawnSync(
+    tmuxBin,
+    ['show-option', '-w', '-qv', '-t', target, '@pickle_monitor_mode'],
+    { encoding: 'utf-8', timeout: 5_000 },
+  );
+  if (show.status !== 0) return null;
+  const val = (show.stdout || '').trim();
+  return val || null;
+}
+
+/**
+ * Returns true iff we can reuse an existing monitor window without recreating.
+ * Unset existing mode counts as incompatible — we can't prove the layout matches
+ * what this mode needs, so play it safe and rebuild.
+ */
+export function monitorModesCompatible(existing: string | null, want: MonitorMode): boolean {
+  if (!existing) return false;
+  return existing === want;
 }
 
 /** Removes inactive session directories older than maxAgeDays from sessionsRoot. */
