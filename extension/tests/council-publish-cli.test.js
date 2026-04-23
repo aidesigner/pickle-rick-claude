@@ -106,6 +106,16 @@ test('council-publish CLI: --dry-run happy path → exit 0, prints JSON report',
                 codex_enabled: false,
             }, null, 2),
         );
+        fs.writeFileSync(
+            path.join(tmpDir, 'council-directive.json'),
+            JSON.stringify({
+                schema_version: 1,
+                round: 1,
+                codex_enabled: false,
+                branches: [{ name: 'feat/cli-test', findings: [] }],
+                trap_doors: [],
+            }, null, 2),
+        );
 
         // Inject mock's dir at front of PATH so `gh` resolves to the mock.
         const mockDir = path.dirname(mock.ghPath);

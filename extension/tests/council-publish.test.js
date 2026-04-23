@@ -3,7 +3,37 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import publishCouncilStack, { CouncilPublishError } from '../bin/council-publish.js';
+import publishCouncilStack, { CouncilPublishError, composeBody } from '../bin/council-publish.js';
+
+function minimalFinding(overrides = {}) {
+    return {
+        severity: 'P0',
+        confidence: 90,
+        source: 'COUNCIL',
+        file: 'src/foo.ts',
+        line: 42,
+        line_range: null,
+        rule: 'no-bare-throw',
+        description: 'bare throw detected',
+        recommendation: 'wrap in Error',
+        data_flow: null,
+        scenario: null,
+        snippet_before: null,
+        snippet_after: null,
+        ...overrides,
+    };
+}
+
+function minimalDirective(branchNames = ['feat/one', 'feat/two'], overrides = {}) {
+    return {
+        schema_version: 1,
+        round: 1,
+        codex_enabled: false,
+        branches: branchNames.map(name => ({ name, findings: [] })),
+        trap_doors: [],
+        ...overrides,
+    };
+}
 
 /**
  * withSession(fn) — mirrors withExtensionDir from get-session.test.js.
@@ -11,7 +41,7 @@ import publishCouncilStack, { CouncilPublishError } from '../bin/council-publish
  * trunk, repo_path pointing at the tmp dir itself), invokes fn(sessionDir),
  * then cleans up.
  */
-async function withSession(fn, { stack, summary, directive, skipStack } = {}) {
+async function withSession(fn, { stack, summary, directiveJson, skipStack } = {}) {
     const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-cp-')));
     try {
         if (!skipStack) {
@@ -29,8 +59,11 @@ async function withSession(fn, { stack, summary, directive, skipStack } = {}) {
         if (summary !== undefined) {
             fs.writeFileSync(path.join(tmpDir, 'council-of-ricks-summary.md'), summary);
         }
-        if (directive !== undefined) {
-            fs.writeFileSync(path.join(tmpDir, 'council-directive.md'), directive);
+        if (directiveJson !== undefined) {
+            fs.writeFileSync(
+                path.join(tmpDir, 'council-directive.json'),
+                JSON.stringify(directiveJson, null, 2),
+            );
         }
         return await fn(tmpDir);
     } finally {
@@ -129,7 +162,7 @@ test('publishCouncilStack: gh auth fails → all branches skipped_no_gh, bodies 
                 assert.ok(r.body_path && fs.existsSync(r.body_path), 'body file written');
             }
             assert.equal(report.skipped, 2);
-        });
+        }, { directiveJson: minimalDirective() });
     } finally {
         cleanupGhMock(mock);
     }
@@ -161,7 +194,7 @@ test('publishCouncilStack: happy path posts each branch exactly once', async () 
             }
         }, {
             summary: '## Round 1: ISSUES\n| Branch |\n| --- |\n| feat/one |\n\n## Round 2: CLEAN\n',
-            directive: '# Council Directive\n\n### Findings\n\n| Severity | Branch | File:Line |\n| --- | --- | --- |\n| HIGH | feat/one | a.ts:10 |\n',
+            directiveJson: minimalDirective(),
         });
     } finally {
         cleanupGhMock(mock);
@@ -186,7 +219,7 @@ test('publishCouncilStack: second run skips already-published branches', async (
                 assert.equal(r.outcome, 'skipped_already_published');
                 assert.ok(r.body_path && fs.existsSync(r.body_path));
             }
-        });
+        }, { directiveJson: minimalDirective() });
     } finally {
         cleanupGhMock(mock);
     }
@@ -212,7 +245,7 @@ test('publishCouncilStack: empty pr list → skipped_no_pr, no marker touched', 
             const pubDir = path.join(sessionDir, '.published');
             const markers = fs.existsSync(pubDir) ? fs.readdirSync(pubDir) : [];
             assert.equal(markers.length, 0, 'no markers should be created');
-        });
+        }, { directiveJson: minimalDirective() });
     } finally {
         cleanupGhMock(mock);
     }
@@ -246,7 +279,7 @@ test('publishCouncilStack: picks OPEN PR over MERGED when both exist for same he
             const two = report.results.find(r => r.branch === 'feat/two');
             assert.equal(one.pr_number, 202, 'OPEN beats MERGED on same head');
             assert.equal(two.pr_number, 303, 'MERGED-only still posts (no --state=open filter)');
-        });
+        }, { directiveJson: minimalDirective() });
     } finally {
         cleanupGhMock(mock);
     }
@@ -275,7 +308,7 @@ test('publishCouncilStack: one pr comment failure does not abort sweep', async (
             const pubDir = path.join(sessionDir, '.published');
             const markers = fs.readdirSync(pubDir);
             assert.equal(markers.length, 1);
-        });
+        }, { directiveJson: minimalDirective() });
     } finally {
         cleanupGhMock(mock);
     }
@@ -299,40 +332,7 @@ test('publishCouncilStack: throws when trunk is not in branches list', async () 
     });
 });
 
-// --- 10. Hardening: Branch-cell match normalizes backticks + padding ---
-
-test('publishCouncilStack: Branch cell with backticks and padding still matches', async () => {
-    const mock = makeGhMock({
-        auth: 'ok',
-        prList: { 'feat/one': 42, 'feat/two': 99 },
-        prComment: {},
-    });
-    try {
-        await withSession(async (sessionDir) => {
-            await publishCouncilStack(sessionDir, { ghCommand: mock.ghPath });
-            const oneBody = fs.readFileSync(
-                path.join(sessionDir, 'council-comments', 'feat__one.md'),
-                'utf-8',
-            );
-            // The directive's row (padded + backticked Branch cell) must land
-            // in the feat/one body, NOT be treated as "no findings".
-            assert.ok(
-                /HIGH.*a\.ts:10/.test(oneBody),
-                'padded/backticked Branch cell must match',
-            );
-            assert.ok(
-                !/No findings for this branch/.test(oneBody),
-                'should not fall through to empty-findings placeholder',
-            );
-        }, {
-            directive: '# Council Directive\n\n### Findings\n\n| Severity | Branch | File:Line |\n| --- | --- | --- |\n| HIGH | ` feat/one ` | a.ts:10 |\n',
-        });
-    } finally {
-        cleanupGhMock(mock);
-    }
-});
-
-// --- 11. Hardening: zero-byte marker file is rejected as "not published" ---
+// --- 10. Hardening: zero-byte marker file is rejected as "not published" ---
 
 test('publishCouncilStack: zero-byte .published marker is NOT treated as published', async () => {
     const mock = makeGhMock({
@@ -354,13 +354,13 @@ test('publishCouncilStack: zero-byte .published marker is NOT treated as publish
             assert.equal(one.outcome, 'posted', 'zero-byte marker must not skip');
             // After posting, marker should be a real timestamp (non-zero size).
             assert.ok(fs.statSync(path.join(pubDir, 'feat__one')).size > 0);
-        });
+        }, { directiveJson: minimalDirective() });
     } finally {
         cleanupGhMock(mock);
     }
 });
 
-// --- 12. Hardening: parsePrList strips non-JSON warning prefix lines ---
+// --- 11. Hardening: parsePrList strips non-JSON warning prefix lines ---
 
 test('publishCouncilStack: warning line before JSON array is tolerated', async () => {
     const mock = makeGhMock({
@@ -377,101 +377,13 @@ test('publishCouncilStack: warning line before JSON array is tolerated', async (
             const one = report.results.find(r => r.branch === 'feat/one');
             assert.equal(one.outcome, 'posted');
             assert.equal(one.pr_number, 42, 'prefix-stripped JSON parsed correctly');
-        });
+        }, { directiveJson: minimalDirective() });
     } finally {
         cleanupGhMock(mock);
     }
 });
 
-// --- 13. Hardening: empty findings across all branches emits a warning ---
-
-test('publishCouncilStack: directive with no Findings table emits empty-findings warning', async () => {
-    const mock = makeGhMock({
-        auth: 'ok',
-        prList: { 'feat/one': 42, 'feat/two': 99 },
-        prComment: {},
-    });
-    try {
-        await withSession(async (sessionDir) => {
-            const report = await publishCouncilStack(sessionDir, { ghCommand: mock.ghPath });
-            assert.ok(Array.isArray(report.warnings), 'warnings field populated');
-            assert.ok(
-                report.warnings.some(w => /zero per-branch findings/.test(w)),
-                'warning about zero per-branch findings present',
-            );
-            // Also present in publish.log as a warn-level line.
-            const logLines = fs.readFileSync(path.join(sessionDir, 'publish.log'), 'utf-8')
-                .trim().split('\n').map(JSON.parse);
-            assert.ok(
-                logLines.some(e => e.level === 'warn' && /zero per-branch findings/.test(e.message)),
-                'warn line written to publish.log',
-            );
-        }, {
-            directive: '# Council Directive — Round 1\n\nStack Overview text but no Findings table.\n',
-        });
-    } finally {
-        cleanupGhMock(mock);
-    }
-});
-
-// --- 13b. Hardening: Branch column in per-branch H3 table must NOT leak into Findings ---
-
-test('publishCouncilStack: per-branch H3 tables do not contaminate Findings rows', async () => {
-    const mock = makeGhMock({
-        auth: 'ok',
-        prList: { 'feat/one': 42, 'feat/two': 99 },
-        prComment: {},
-    });
-    // Directive contains TWO tables with a Branch column:
-    //   1. ### Findings — the legitimate one the publisher should scrape
-    //   2. ### feat/one per-branch section — has its own detail table with
-    //      "Branch" somewhere. A whole-document scan would merge these.
-    // Expected: only the Findings rows appear in each branch comment.
-    const directive = [
-        '# Council Directive — Round 1',
-        '',
-        '## Findings',
-        '',
-        '| Severity | Branch | File | Issue |',
-        '|---|---|---|---|',
-        '| P0 | feat/one | a.ts:1 | real-finding-1 |',
-        '| P1 | feat/two | b.ts:2 | real-finding-2 |',
-        '',
-        '## Per-branch sections',
-        '',
-        '### feat/one',
-        '',
-        '| Branch | Extra | Detail |',
-        '|---|---|---|',
-        '| feat/one | leaked | SHOULD-NOT-APPEAR |',
-        '',
-        '### feat/two',
-        '',
-        '| Branch | Extra | Detail |',
-        '|---|---|---|',
-        '| feat/two | leaked | SHOULD-NOT-APPEAR |',
-        '',
-    ].join('\n');
-    try {
-        await withSession(async (sessionDir) => {
-            await publishCouncilStack(sessionDir, { ghCommand: mock.ghPath });
-            const oneBody = fs.readFileSync(
-                path.join(sessionDir, 'council-comments', 'feat__one.md'), 'utf-8',
-            );
-            const twoBody = fs.readFileSync(
-                path.join(sessionDir, 'council-comments', 'feat__two.md'), 'utf-8',
-            );
-            assert.ok(/real-finding-1/.test(oneBody), 'legit Findings row present');
-            assert.ok(!/SHOULD-NOT-APPEAR/.test(oneBody), 'per-branch H3 table row must not leak');
-            assert.ok(/real-finding-2/.test(twoBody));
-            assert.ok(!/SHOULD-NOT-APPEAR/.test(twoBody));
-        }, { directive });
-    } finally {
-        cleanupGhMock(mock);
-    }
-});
-
-// --- 13c. Hardening: extractRoundOutcomes ignores `## Round N:` inside code fences ---
+// --- 12. Hardening: extractRoundOutcomes ignores `## Round N:` inside code fences ---
 
 test('publishCouncilStack: Round headers inside fenced code blocks are not counted', async () => {
     const mock = makeGhMock({
@@ -500,13 +412,13 @@ test('publishCouncilStack: Round headers inside fenced code blocks are not count
             assert.ok(!/Round 99/.test(body), 'fenced Round 99 must not leak into outcomes');
             // Final round = 2, not 3.
             assert.ok(/\*\*Final round:\*\* 2/.test(body));
-        }, { summary });
+        }, { summary, directiveJson: minimalDirective() });
     } finally {
         cleanupGhMock(mock);
     }
 });
 
-// --- 13d. Hardening: unparseable gh pr list output → `failed`, not `skipped_no_pr` ---
+// --- 13. Hardening: unparseable gh pr list output → `failed`, not `skipped_no_pr` ---
 
 test('publishCouncilStack: garbage gh pr list output classifies as failed, not skipped_no_pr', async () => {
     const mock = makeGhMock({
@@ -526,13 +438,13 @@ test('publishCouncilStack: garbage gh pr list output classifies as failed, not s
             // feat/two unaffected — single-branch garbage does not kill the sweep.
             const two = report.results.find(r => r.branch === 'feat/two');
             assert.equal(two.outcome, 'posted');
-        });
+        }, { directiveJson: minimalDirective() });
     } finally {
         cleanupGhMock(mock);
     }
 });
 
-// --- 13e. Hardening: invalid repo_path throws a clear CouncilPublishError ---
+// --- 14. Hardening: invalid repo_path throws a clear CouncilPublishError ---
 
 test('publishCouncilStack: throws when repo_path does not exist', async () => {
     await withSession((sessionDir) => {
@@ -550,7 +462,7 @@ test('publishCouncilStack: throws when repo_path does not exist', async () => {
     });
 });
 
-// --- 13f. Hardening: trunk-only stack surfaces a warning instead of silent zero ---
+// --- 15. Hardening: trunk-only stack surfaces a warning instead of silent zero ---
 
 test('publishCouncilStack: trunk-only stack warns that there is nothing to publish', async () => {
     await withSession(async (sessionDir) => {
@@ -564,10 +476,11 @@ test('publishCouncilStack: trunk-only stack warns that there is nothing to publi
         );
     }, {
         stack: { branches: ['main'], trunk: 'main', repo_path: os.tmpdir(), codex_enabled: false },
+        directiveJson: minimalDirective(['main']),
     });
 });
 
-// --- 14. Hardening: real Step 17 terminal suffixes produce Round bullets ---
+// --- 16. Hardening: real Step 17 terminal suffixes produce Round bullets ---
 
 test('publishCouncilStack: extractRoundOutcomes handles real terminal-suffix formats', async () => {
     const mock = makeGhMock({
@@ -598,8 +511,183 @@ test('publishCouncilStack: extractRoundOutcomes handles real terminal-suffix for
             assert.ok(/clean round/.test(body));
             assert.ok(/partial round \(skipped/.test(body));
             assert.ok(/4 issues \(1\/2\/1\/0\/0\)/.test(body));
-        }, { summary });
+        }, { summary, directiveJson: minimalDirective() });
     } finally {
         cleanupGhMock(mock);
     }
+});
+
+// === NEW TESTS: JSON directive contract ===
+
+// --- 17. Missing council-directive.json throws ---
+
+test('publishCouncilStack: throws CouncilPublishError when council-directive.json is missing', async () => {
+    const mock = makeGhMock({ auth: 'ok', prList: {}, prComment: {} });
+    try {
+        await withSession(async (sessionDir) => {
+            // No directiveJson provided — file absent
+            assert.throws(
+                () => publishCouncilStack(sessionDir, { ghCommand: mock.ghPath }),
+                (err) => err instanceof CouncilPublishError && /council-directive\.json missing/.test(err.message),
+            );
+        });
+    } finally {
+        cleanupGhMock(mock);
+    }
+});
+
+// --- 18. Invalid JSON in council-directive.json throws ---
+
+test('publishCouncilStack: throws when council-directive.json contains invalid JSON', async () => {
+    const mock = makeGhMock({ auth: 'ok', prList: {}, prComment: {} });
+    try {
+        await withSession(async (sessionDir) => {
+            fs.writeFileSync(path.join(sessionDir, 'council-directive.json'), '{ not valid json }');
+            assert.throws(
+                () => publishCouncilStack(sessionDir, { ghCommand: mock.ghPath }),
+                (err) => err instanceof CouncilPublishError && /invalid JSON/.test(err.message),
+            );
+        });
+    } finally {
+        cleanupGhMock(mock);
+    }
+});
+
+// --- 19. Wrong schema_version throws with schema_version in message ---
+
+test('publishCouncilStack: throws when schema_version !== 1, message contains schema_version', async () => {
+    const mock = makeGhMock({ auth: 'ok', prList: {}, prComment: {} });
+    try {
+        await withSession(async (sessionDir) => {
+            const bad = { ...minimalDirective(), schema_version: 99 };
+            fs.writeFileSync(path.join(sessionDir, 'council-directive.json'), JSON.stringify(bad));
+            assert.throws(
+                () => publishCouncilStack(sessionDir, { ghCommand: mock.ghPath }),
+                (err) => err instanceof CouncilPublishError && /schema_version/.test(err.message),
+            );
+        });
+    } finally {
+        cleanupGhMock(mock);
+    }
+});
+
+// --- 20. Missing required top-level field (branches) throws with jsonPath in message ---
+
+test('publishCouncilStack: throws when required top-level field is missing, message contains jsonPath', async () => {
+    const mock = makeGhMock({ auth: 'ok', prList: {}, prComment: {} });
+    try {
+        await withSession(async (sessionDir) => {
+            const { branches: _unused, ...bad } = minimalDirective();
+            fs.writeFileSync(path.join(sessionDir, 'council-directive.json'), JSON.stringify(bad));
+            assert.throws(
+                () => publishCouncilStack(sessionDir, { ghCommand: mock.ghPath }),
+                (err) => err instanceof CouncilPublishError && /branches/.test(err.message),
+            );
+        });
+    } finally {
+        cleanupGhMock(mock);
+    }
+});
+
+// --- 21. Missing required finding field throws ---
+
+test('publishCouncilStack: throws when a required finding field is missing', async () => {
+    const mock = makeGhMock({ auth: 'ok', prList: {}, prComment: {} });
+    try {
+        await withSession(async (sessionDir) => {
+            const finding = minimalFinding();
+            delete finding.severity; // drop required field
+            const directive = {
+                ...minimalDirective(),
+                branches: [
+                    { name: 'feat/one', findings: [finding] },
+                    { name: 'feat/two', findings: [] },
+                ],
+            };
+            fs.writeFileSync(path.join(sessionDir, 'council-directive.json'), JSON.stringify(directive));
+            assert.throws(
+                () => publishCouncilStack(sessionDir, { ghCommand: mock.ghPath }),
+                (err) => err instanceof CouncilPublishError && /severity/.test(err.message),
+            );
+        });
+    } finally {
+        cleanupGhMock(mock);
+    }
+});
+
+// === NEW TESTS: composeBody rendering ===
+
+// --- 22. composeBody with one finding renders expected fields ---
+
+test('composeBody: one finding renders severity, rule, recommendation, and Trap Doors block', () => {
+    const finding = minimalFinding({ severity: 'P0', rule: 'MY_RULE', recommendation: 'do the thing' });
+    const body = composeBody({
+        sessionRoot: '/tmp/council-abc123',
+        branch: 'feat/one',
+        finalRound: 3,
+        codexEnabled: false,
+        findings: [finding],
+        trapDoors: [],
+        roundOutcomes: [],
+    });
+    assert.ok(/P0/.test(body), 'severity P0 present');
+    assert.ok(/MY_RULE/.test(body), 'rule name present');
+    assert.ok(/do the thing/.test(body), 'recommendation present');
+    assert.ok(/### Trap Doors/.test(body), 'Trap Doors section present');
+    assert.ok(/_None catalogued\._/.test(body), 'empty trap doors placeholder present');
+});
+
+// --- 23. composeBody with empty findings renders placeholder ---
+
+test('composeBody: empty findings renders _No findings for this branch at session close._', () => {
+    const body = composeBody({
+        sessionRoot: '/tmp/council-abc123',
+        branch: 'feat/one',
+        finalRound: 1,
+        codexEnabled: false,
+        findings: [],
+        trapDoors: [],
+        roundOutcomes: [],
+    });
+    assert.ok(/_No findings for this branch at session close\._/.test(body));
+});
+
+// --- 24. composeBody with empty trapDoors renders placeholder ---
+
+test('composeBody: empty trapDoors renders _None catalogued._', () => {
+    const body = composeBody({
+        sessionRoot: '/tmp/council-abc123',
+        branch: 'feat/one',
+        finalRound: 1,
+        codexEnabled: false,
+        findings: [],
+        trapDoors: [],
+        roundOutcomes: [],
+    });
+    assert.ok(/_None catalogued\._/.test(body));
+});
+
+// --- 25. composeBody with non-empty trapDoors renders - bullets with path + constraint ---
+
+test('composeBody: non-empty trapDoors renders dash bullets with path and constraint', () => {
+    const trapDoors = [
+        {
+            path: 'src/auth/session.ts',
+            constraint: 'token must be rotated on login',
+            why_it_breaks: 'stale token allows replay',
+            what_must_hold: 'rotation must be atomic',
+        },
+    ];
+    const body = composeBody({
+        sessionRoot: '/tmp/council-abc123',
+        branch: 'feat/one',
+        finalRound: 1,
+        codexEnabled: false,
+        findings: [],
+        trapDoors,
+        roundOutcomes: [],
+    });
+    assert.ok(/- `src\/auth\/session\.ts`/.test(body), 'bullet with path present');
+    assert.ok(/token must be rotated on login/.test(body), 'constraint present');
+    assert.ok(!/None catalogued/.test(body), 'placeholder must not appear when trapDoors non-empty');
 });

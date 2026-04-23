@@ -53,6 +53,67 @@ Read project `CLAUDE.md`, extract rules/required patterns/forbidden patterns/arc
 
 **Szechuan principles (always):** Read `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md`. Copy it to `<SESSION_ROOT>/council-principles.md`. This is the canonical principle/severity reference for the Council — every round has access to the P0–P4 priority matrix, the diagnostic guide, and the principle tensions table.
 
+**Council schemas artifact:** Write the following JSON literal verbatim to `<SESSION_ROOT>/council-schemas.json` alongside `council-principles.md`. This file is the canonical shape reference for all subagent payload validation in this session.
+
+```json
+{
+  "Directive": {
+    "_description": "Shape of council-directive.json written atomically by the main agent each round",
+    "schema_version": 1,
+    "round": "<integer>",
+    "codex_enabled": "<boolean>",
+    "project_rules_ref": "<string — optional, path to council-claude-rules.json>",
+    "stack_overview": {
+      "trunk": "<string>",
+      "branches": ["<string>"],
+      "issue_counts": { "P0": 0, "P1": 0, "P2": 0, "P3": 0, "P4": 0 },
+      "codex_verdicts": { "<branch>": "approve|needs-attention|failed|timeout|skipped" }
+    },
+    "branches": [
+      {
+        "name": "<string>",
+        "pr_purpose": "<string|null>",
+        "findings": [
+          {
+            "severity": "P0|P1|P2|P3|P4",
+            "confidence": "<integer 0-100>",
+            "source": "COUNCIL|CODEX|COUNCIL+CODEX",
+            "file": "<string>",
+            "line": "<integer >=1>",
+            "line_range": "<string|null>",
+            "rule": "<string>",
+            "description": "<string>",
+            "recommendation": "<string>",
+            "data_flow": "<string|null>",
+            "scenario": "<string|null>",
+            "snippet_before": "<string|null>",
+            "snippet_after": "<string|null>"
+          }
+        ]
+      }
+    ],
+    "trap_doors": [
+      {
+        "path": "<string>",
+        "constraint": "<string>",
+        "why_it_breaks": "<string>",
+        "what_must_hold": "<string>"
+      }
+    ]
+  },
+  "SubagentPayload": {
+    "_description": "Shape returned by every Phase B / Phase C subagent",
+    "category": "B1_stack_structure|B2_claude_md|B3_contract_discovery|B4_cross_branch|B5_test_coverage|B6_security|B7_migration_hygiene|B8_szechuan|B9_polish|C_correctness|C_codex",
+    "branch": "<string|null — null for stack-wide xs/s/m B-categories; branch name for tier >=l sharded B-categories and all C_correctness>",
+    "status": "ok|skipped",
+    "skip_reason": "<string|null — non-empty string when status=skipped, null when status=ok>",
+    "findings": "<array — each item matches Directive.branches[].findings[] shape above>",
+    "trap_door_candidates": "<array — each item matches Directive.trap_doors[] shape above>",
+    "codex_per_branch": "<object|null — populated only by C_codex; keyed by branch name, each value { verdict: approve|needs-attention|failed|timeout, reason: string }>"
+  }
+}
+```
+
 **Codex detection:**
 ```bash
 CODEX_COMPANION="$(ls -td "$HOME/.claude/plugins/cache/openai-codex/codex"/*/scripts/codex-companion.mjs 2>/dev/null | head -1)"
@@ -218,6 +279,10 @@ Spawn in a SINGLE message (one `Agent` tool call each, all concurrent). Each sub
 | B8 | Szechuan Principles Sweep | Scan every branch diff against `council-principles.md`. Score every violation P0–P4. Respect the principle tensions table — don't flag incidental similarity as DRY, don't demand abstraction under Rule of Three, don't flag three obvious lines as KISS loss |
 | B9 | Polish + Trap Doors | PR descriptions, naming, dead code, style drift. Identify trap door candidates per Step 15.5 (structural invariants, cross-branch conventions, 2+ fix-history signals surfaced by Phase A or Phase C) |
 
+**Per-branch sharding (tier ≥ l):** The fan-out planner (`planFanOut` from `council-fanout.ts`) determines the full spec list for a round. When `stack_tier ∈ {l, xl, xxl}`, spawn one B-subagent per (branch × unconditional_category) pair — each subagent is scoped to that branch's diff only. Each such subagent's `branch` field in the returned payload equals the branch name. For tier ∈ `{xs, s, m}`, B-subagents run stack-wide with `branch: null`. Read `stack_tier` from `council-stack.json` to decide which mode applies — no node invocation needed; reason about the planner matrix directly.
+
+Each subagent's final message MUST contain exactly ONE fenced ```json block conforming to the `SubagentPayload` shape in `<SESSION_ROOT>/council-schemas.json`. No prose that interrupts the JSON block. The `category` and `branch` fields in the payload MUST match the spec that was dispatched.
+
 **Unconditional categories**: B1, B2, B3, B4, B5, B6, B8, B9. These must return `status: "ok"` for a round to count as clean — any unconditional skip makes the round **partial** (Step 17).
 **Conditional categories**: B7 (Migration Hygiene). May `skip` without breaking clean-round classification.
 
@@ -240,7 +305,7 @@ Once every Phase B and Phase C subagent has returned its JSON payload, the main 
 3. **Dedupe** — if COUNCIL (any B#/C_correctness) and CODEX surfaced the same `file:line` with compatible descriptions, merge into one row tagged `[COUNCIL+CODEX]`.
 4. **Severity sort** — per branch, P0 first.
 5. **Trap door consolidation** — merge trap-door candidates from B9 and C_correctness by `(path, constraint)` dedupe key; write to the directive's `## Trap Doors` section per Step 15.5. Never write trap doors to repo files.
-6. **Directive** — overwrite `<SESSION_ROOT>/council-directive.md` per Step 16.
+6. **Directive** — write `<SESSION_ROOT>/council-directive.json` atomically (tmp + rename) and `<SESSION_ROOT>/council-directive.md` per Step 16.
 7. **Summary append** — append this round's record to `council-of-ricks-summary.md` per Step 17.
 
 ### Step 14.5: Codex Subagent Protocol
@@ -272,7 +337,7 @@ The main agent (you) executes one round like this:
 
 1. **Phase A** — compute the historical brief yourself, write to `<SESSION_ROOT>/round-<N>/historical-brief.md`. No subagent.
 2. **Phases B + C** — in ONE `Agent` tool-call message, spawn all subagents concurrently:
-   - 8 unconditional category subagents (B1, B2, B3, B4, B5, B6, B8, B9)
+   - 8 unconditional category subagents (B1, B2, B3, B4, B5, B6, B8, B9) — stack-wide for tier ∈ `{xs, s, m}`; one per branch for tier ∈ `{l, xl, xxl}` per the `planFanOut` sharding matrix
    - 1 conditional B7 subagent (only spawned if `db/migrations/meta/_journal.json` exists — otherwise main agent records `skipped` directly)
    - N per-branch C_correctness subagents (one per non-trunk branch)
    - 1 C_codex subagent (only spawned if `codex_enabled === true` — otherwise main agent records `skipped` directly)
@@ -281,37 +346,10 @@ The main agent (you) executes one round like this:
    - File paths: `<SESSION_ROOT>/council-claude-rules.json`, `<SESSION_ROOT>/council-principles.md`, `<SESSION_ROOT>/council-stack.json`, `<SESSION_ROOT>/round-<N>/historical-brief.md`
    - `repo_path` as working directory
    - For the Codex subagent: `CODEX_COMPANION` path, `CODEX_TIMEOUT`, `<SESSION_ROOT>/codex/` as output dir, current round number
-   - **Required output schema** (the subagent's final message must contain a fenced ```json block):
-     ```json
-     {
-       "category": "B1_stack_structure" | "B2_claudemd" | ... | "C_correctness:<branch>" | "C_codex",
-       "status": "ok" | "skipped",
-       "skip_reason": "<string, present iff status=skipped>",
-       "findings": [
-         {
-           "branch": "<branch name>",
-           "file": "<path>",
-           "line": <integer>,
-           "line_range": "<OPTIONAL — string of form \"start-end\" when the finding spans multiple lines; omit for single-line findings>",
-           "severity": "P0" | "P1" | "P2" | "P3" | "P4",
-           "confidence": <integer 0-100>,
-           "source": "COUNCIL" | "CODEX",
-           "rule": "<rule/principle name or N/A>",
-           "description": "<one-liner>",
-           "recommendation": "<fix instruction, Codex quoted verbatim>",
-           "data_flow": "<OPTIONAL — file:line chain for C_correctness findings; omit for B-category findings that don't trace data>",
-           "scenario": "<OPTIONAL — concrete input that triggers the bug; omit when not applicable (e.g., B1 Stack Structure findings)>",
-           "snippet_before": "<OPTIONAL — 3–5 lines; omit when the finding is not tied to a specific code block>",
-           "snippet_after": "<OPTIONAL — 3–5 lines; omit when no concrete fix snippet is available>",
-           "trap_door_candidate": "<OPTIONAL — object with { path, constraint, why_it_breaks, what_must_hold }; omit when the finding is not a structural trap door>"
-         }
-       ],
-       "codex_per_branch": "<OPTIONAL — object keyed by branch with { verdict: 'approve' | 'needs-attention' | 'failed' | 'timeout', reason }; only present for C_codex>"
-     }
-     ```
-     All fields marked OPTIONAL may be omitted. Required on every finding: `branch`, `file`, `line`, `severity`, `confidence`, `source`, `rule`, `description`, `recommendation`. The shape of the optional `trap_door_candidate` object when present: `{ path, constraint, why_it_breaks, what_must_hold }` (all strings). The shape of `codex_per_branch` when present (C_codex only): an object keyed by branch name, each value `{ verdict: "approve" | "needs-attention" | "failed" | "timeout", reason: "<string>" }`.
-4. Wait for all subagent results.
-5. Run Phase D synthesis.
+   - **Required output format**: the subagent's final message MUST contain exactly ONE fenced ```json block conforming to the `SubagentPayload` shape in `<SESSION_ROOT>/council-schemas.json`. No prose that interrupts the JSON block. The `category` field must match the category that was dispatched; the `branch` field must match the branch that was dispatched (or `null` for stack-wide B-subagents on tier ∈ `{xs, s, m}`).
+4. **Validate each payload on return.** For each subagent result: extract the fenced ```json block, parse it as JSON, and check it against the `SubagentPayload` shape in `council-schemas.json` (conceptual `validateSubagentPayload` check — verify required fields `category`, `branch`, `status`, `skip_reason`, `findings`, `trap_door_candidates`, `codex_per_branch` are present and well-typed; `category` is a known value; `status` is `"ok"` or `"skipped"`; `skip_reason` is a non-empty string when `status === "skipped"` and `null` when `status === "ok"`; each finding has required fields of the correct types). On schema failure: record the category as `skipped` with `skip_reason: "schema validation failed: <jsonpath>"`, log the raw payload to `<SESSION_ROOT>/round-<N>/schema-failures.log`, and the round demotes to partial per Step 17 rules.
+5. Wait for all subagent results.
+6. Run Phase D synthesis.
 
 ### Step 15.5: Trap Door Identification
 
@@ -331,20 +369,14 @@ The Council **never writes trap doors to repo files directly** — they live in 
 
 ### Step 16: Generate Directive or Exit
 
-**Issues found** → write `<SESSION_ROOT>/council-directive.md` (overwritten each round).
+**Issues found** → write `<SESSION_ROOT>/council-directive.json` atomically (write to `<path>.tmp` then `fs.rename` to the final path) conforming to the Directive shape in `council-schemas.json`. Also write `<SESSION_ROOT>/council-directive.md` as a free-form human summary (format however you like for readability — the publisher does not read it).
 
-The FIRST line of the directive file MUST be exactly `# Council Directive — Round <N>` (this H1 anchors `council-publish.js`'s latest-directive parser; any other first line breaks auto-publish).
-
-Structure the directive as an agent-executable prompt with these sections in this order:
+Structure the `council-directive.md` as a human-readable prompt with these sections in this order:
 
 1. **Project Rules** — inline key rules from `council-claude-rules.json` so the fixing agent knows project conventions
 2. **Stack Overview** — repo, trunk, branches, current round number, issue counts by severity (P0/P1/P2/P3/P4), Codex verdict per branch (approve / needs-attention / skipped / failed / timeout)
 3. **Instructions** — for each branch: `gt branch checkout <branch> --no-interactive`, fix, stage files (NEW files by name, modified files either by name or via `git add -u` — never `git add -A` / `git add .`), commit `"address council round <N>: <summary>"`
-4. **Findings** — one consolidated markdown table with these columns: `Severity | Conf | Source | Branch | File | Issue | Rule/Principle | Recommendation`. Use this order for human readability, but the publisher (`findingsForBranch` in `extension/src/bin/council-publish.ts`) looks up the `Branch` column by header name (case-insensitive) — drifting the order does not break publishing, only reader ergonomics. What IS load-bearing:
-   - A column literally named `Branch` (publisher: `c.toLowerCase() === 'branch'`)
-   - The Branch cell contains the branch name as plain text — no links, no bold/italic. Surrounding backticks are tolerated (publisher: `normalize()` strips them), but skip them for consistency. Rendered links, bold, or other markdown AROUND the branch name will not match and the row will silently drop.
-   - The table lives under the first `### Findings` (or `## Findings`) heading — the publisher scopes row collection to that one section. Tables with a Branch column elsewhere in the directive (per-branch sections, trap doors) are ignored by design.
-   - Rows ordered P0-first, then by branch.
+4. **Findings** — a human-readable summary table. Suggested columns: `Severity | Conf | Source | Branch | File | Issue | Rule/Principle | Recommendation`. Order P0-first, then by branch. This is for human readability only; the publisher reads `council-directive.json`, not this table.
 5. **Per-branch sections** — one `### <branch>` heading per non-trunk branch, each issue ordered P0-first with:
    - `file:line`
    - Rule/principle violated (CLAUDE.md rule, szechuan principle name, or `N/A`)
@@ -358,15 +390,10 @@ Structure the directive as an agent-executable prompt with these sections in thi
    - `[P<N>, conf=<score>]` — already pre-filtered to `conf >= 80`
 6. **Trap Doors** — consolidated per Step 15.5
 7. **Completion** — `gt restack --no-interactive`, then run lint/test/build commands from `council-claude-rules.json`. If restack has conflicts, resolve before continuing
-8. **Publisher-scanned anchors.** The auto-publisher looks at exactly three anchors and ignores everything else:
-   - **H1 first line** `# Council Directive` (optionally `— Round <N>`) — anchors the latest-directive split when multiple directives exist in one file
-   - **`### Findings`** (or `## Findings`) — the Findings-scoped row scan starts here and stops at the next H1/H2/H3. Rows outside this section are not scraped; an extra table with a `Branch` column inside a per-branch `### <branch>` section will NOT leak into the published comment.
-   - **`## Trap Doors`** — the whole section body (until the next H2) is published verbatim.
-   Other heading levels in sections 1/2/3/5/7 are not parsed — use them for human readability as you see fit. Keeping §5 per-branch sections at H3 (`### <branch-name>`) is a readability convention, not a publisher contract.
 
 Print directive path. "The Council has spoken. Feed this to your agent, Rick." Append round record to summary (Step 17). Do NOT output `<promise>THE_CITADEL_APPROVES</promise>` — emit `<promise>TASK_COMPLETED</promise>` only after Step 17.7.
 
-**No issues** → write clean directive: first line `# Council Directive — Round <N>`, then "No findings this round — the Council defers to the next round." Append clean-round record to summary.
+**No issues** → write a clean `council-directive.json` (empty `branches[].findings` and `trap_doors`) and a minimal `council-directive.md` noting no findings. Append clean-round record to summary.
 
 **Approval gate** — output `<promise>THE_CITADEL_APPROVES</promise>` **only when all four conditions hold**:
 1. `current_round >= min_iterations` (where `min_iterations` is the tier-resolved `effective_min_rounds` from Step 8, already accounting for stack size, CLI override, and the settings floor) AND
@@ -415,7 +442,7 @@ historical: ok
 ### Totals
 - P0: 0, P1: 0, P2: 0, P3: 0, P4: 0
 
-Directive: council-directive.md updated (clean).
+Directive: council-directive.json updated (clean).
 ```
 
 Plus "The Citadel approves." when Step 16's four conditions fire.
@@ -439,7 +466,7 @@ historical: skipped (gh unavailable, no git log signal, no in-file comments)
 ### Totals
 - P0: 0, P1: 0, P2: 0, P3: 0, P4: 0
 
-Directive: council-directive.md updated (partial — no actionable findings).
+Directive: council-directive.json updated (partial — no actionable findings).
 ```
 
 **Issues round:**
@@ -466,7 +493,7 @@ historical: ok
 | P1 | 85 | [CODEX] | feat/foo | src/auth/session.ts:51 | Refresh token reuse not detected | N/A | Persist a nonce per refresh and reject reuse |
 | ...
 
-Directive: council-directive.md updated
+Directive: council-directive.json updated
 Codex status: <N branches reviewed, M approved, K needs-attention, J skipped, F failed>
 ```
 
@@ -508,7 +535,7 @@ node "$HOME/.claude/pickle-rick/extension/bin/council-publish.js" "<SESSION_ROOT
 
 Append `--dry-run` to skip the `gh pr comment` POST while still writing body files and publish.log — useful when debugging the publisher without spamming PRs.
 
-The script reads `council-stack.json`, `council-of-ricks-summary.md`, and the latest `council-directive.md`. For each non-trunk branch it composes a comment body, resolves PR # via `gh pr list --head <branch>`, and posts via `gh pr comment <N> --body-file <path>`. Idempotent per branch via `<SESSION_ROOT>/.published/<branch-slug>` markers. If `gh` is unavailable or unauthed, it writes body files to `<SESSION_ROOT>/council-comments/<branch-slug>.md` as fallback artifacts and skips posting. Per-branch failures log to `publish.log` and the sweep continues.
+The script reads `council-stack.json`, `council-of-ricks-summary.md`, and `council-directive.json`. For each non-trunk branch it composes a comment body, resolves PR # via `gh pr list --head <branch>`, and posts via `gh pr comment <N> --body-file <path>`. Idempotent per branch via `<SESSION_ROOT>/.published/<branch-slug>` markers. If `gh` is unavailable or unauthed, it writes body files to `<SESSION_ROOT>/council-comments/<branch-slug>.md` as fallback artifacts and skips posting. Per-branch failures log to `publish.log` and the sweep continues.
 
 After the script returns (JSON report on stdout), parse it and append to `council-of-ricks-summary.md`:
 
@@ -527,7 +554,7 @@ If any branches had outcome `failed`, mention it in the final human-facing annou
 ## Persona
 - Open: "The Council convenes!" Issues: "The Council has spoken." Clean: "adequate."
 - Parallel dispatch: "Twelve Ricks, one round. Dimensions collapse fast when you don't take turns."
-- CLAUDE.md violations = "Citadel law." Cross-branch = "dimensions out of phase." Trap doors = "load-bearing spaghetti — document it or it'll collapse."
+- CLAUDE.md violations = "Citadel law." Cross-branch = "dimensions out of phase." Trap doors = "structural spaghetti — document it or it'll collapse."
 - Codex findings: "Rick C-137 ran the adversarial challenge. He says this won't ship."
 - Data flow traces: "Follow the wire, Morty — from input to the hole it falls into."
 - Combinatorial gaps: "You handled the clean inputs. In the edge combinations, everything dies."

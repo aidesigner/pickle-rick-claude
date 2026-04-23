@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { safeErrorMessage } from '../services/pickle-utils.js';
+import { validateDirective, CouncilSchemaError } from '../services/council-schema.js';
 export class CouncilPublishError extends Error {
     constructor(message) {
         super(message);
@@ -107,128 +108,49 @@ function extractRoundOutcomes(summaryPath) {
         return [];
     }
 }
-/**
- * Reads council-directive.md if present and returns the full text of the
- * LATEST directive. Directives are typically overwritten each round, but we
- * support append-mode too — the H1 `# Council Directive` (optionally followed
- * by `— Round N`) anchors the split. Word boundary prevents false positives
- * inside fenced code blocks or quoted examples.
- */
-function readLatestDirective(directivePath) {
-    if (!fs.existsSync(directivePath))
-        return '';
+// council-directive.json is the machine-written directive consumed by this publisher (humans: see council-directive.md for the human-readable equivalent)
+function readDirectiveJson(sessionRoot) {
+    const jsonPath = path.join(sessionRoot, 'council-directive.json');
+    if (!fs.existsSync(jsonPath)) {
+        throw new CouncilPublishError('council-directive.json missing');
+    }
+    let parsed;
     try {
-        const content = fs.readFileSync(directivePath, 'utf-8');
-        const markers = [];
-        const rx = /^# Council Directive(?:\s|$)/gm;
-        let m;
-        while ((m = rx.exec(content)) !== null)
-            markers.push(m.index);
-        if (markers.length === 0)
-            return content;
-        return content.slice(markers[markers.length - 1]);
+        parsed = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
     }
-    catch {
-        return '';
+    catch (err) {
+        throw new CouncilPublishError(`council-directive.json invalid JSON: ${safeErrorMessage(err)}`);
+    }
+    try {
+        return validateDirective(parsed);
+    }
+    catch (err) {
+        const jsonPath = err instanceof CouncilSchemaError ? err.jsonPath : '$';
+        throw new CouncilPublishError(`council-directive.json failed validation: ${jsonPath}: ${safeErrorMessage(err)}`);
     }
 }
-/**
- * Extracts per-branch findings rows from the latest directive.
- *
- * Scoped to the FIRST `### Findings` / `## Findings` section. A directive
- * also contains per-branch H3 sections (Step 16.5) and a `## Trap Doors`
- * block, either of which may contain tables with a `Branch` column — a
- * whole-document scan would cross-contaminate those rows into the per-branch
- * comment under the wrong column schema. The section ends at the next
- * heading of level 1–3. Inside the section we take the first table with a
- * Branch column and emit rows whose Branch cell matches (backticks and
- * surrounding whitespace normalized; column order does not matter —
- * lookup is by header name, case-insensitive).
- */
-function findingsForBranch(directive, branch) {
-    if (!directive)
-        return [];
-    const lines = directive.split('\n');
-    const normalize = (s) => s.trim().replace(/^`+|`+$/g, '').trim();
-    const target = normalize(branch);
-    let sectionStart = -1;
-    for (let i = 0; i < lines.length; i++) {
-        if (/^#{2,3}\s+Findings\b/i.test(lines[i].trim())) {
-            sectionStart = i + 1;
-            break;
-        }
-    }
-    if (sectionStart < 0)
-        return [];
-    let sectionEnd = lines.length;
-    for (let i = sectionStart; i < lines.length; i++) {
-        if (/^#{1,3}\s+\S/.test(lines[i].trim())) {
-            sectionEnd = i;
-            break;
-        }
-    }
-    const rows = [];
-    let header = null;
-    let branchCol = -1;
-    for (let i = sectionStart; i < sectionEnd; i++) {
-        const raw = lines[i];
-        const line = raw.trim();
-        if (!line.startsWith('|')) {
-            if (header)
-                break; // table ended; a second table in Findings is ignored
-            continue;
-        }
-        const cells = line.split('|').slice(1, -1).map(s => s.trim());
-        if (!header) {
-            const idx = cells.findIndex(c => c.toLowerCase() === 'branch');
-            if (idx >= 0) {
-                header = cells;
-                branchCol = idx;
-            }
-            continue;
-        }
-        if (cells.every(c => /^:?-+:?$/.test(c)))
-            continue;
-        if (branchCol >= 0 && branchCol < cells.length && normalize(cells[branchCol]) === target) {
-            rows.push(line);
-        }
-    }
-    if (rows.length === 0 || !header)
-        return [];
-    const sep = '| ' + header.map(() => '---').join(' | ') + ' |';
-    return ['| ' + header.join(' | ') + ' |', sep, ...rows];
-}
-/**
- * Extracts the `## Trap Doors` section; trap doors are structural and shared
- * across the stack by design, so the full section body is returned for every
- * branch.
- */
-function trapDoorsForBranch(directive, _branch) {
-    if (!directive)
-        return '';
-    const lines = directive.split('\n');
-    let inSection = false;
-    const collected = [];
-    for (const line of lines) {
-        if (/^##\s+Trap Doors/i.test(line)) {
-            inSection = true;
-            continue;
-        }
-        if (inSection && /^##\s+/.test(line))
-            break;
-        if (inSection)
-            collected.push(line);
-    }
-    return collected.join('\n').trim();
-}
-function composeBody(params) {
+export function composeBody(params) {
     const { sessionRoot, branch: _branch, finalRound, codexEnabled, findings, trapDoors, roundOutcomes } = params;
     const sessionName = path.basename(sessionRoot);
     const codexLine = codexEnabled ? 'enabled: ran on this branch' : 'disabled: not available';
-    const findingsBlock = findings.length > 0
-        ? findings.join('\n')
-        : 'No findings for this branch at session close.';
-    const trapBlock = trapDoors.length > 0 ? trapDoors : 'None catalogued.';
+    let findingsBlock;
+    if (findings.length === 0) {
+        findingsBlock = '_No findings for this branch at session close._';
+    }
+    else {
+        const header = '| Severity | Conf | Source | File | Issue | Rule | Recommendation |';
+        const sep = '| --- | --- | --- | --- | --- | --- | --- |';
+        const rows = findings.map(f => {
+            const file = f.line_range != null
+                ? `${f.file}:${f.line_range.replace(/-/g, '–')}`
+                : `${f.file}:${f.line}`;
+            return `| ${f.severity} | ${f.confidence} | [${f.source}] | ${file} | ${f.description} | ${f.rule} | ${f.recommendation} |`;
+        });
+        findingsBlock = [header, sep, ...rows].join('\n');
+    }
+    const trapBlock = trapDoors.length === 0
+        ? '_None catalogued._'
+        : trapDoors.map(td => `- \`${td.path}\` — ${td.constraint}; ${td.why_it_breaks}; ${td.what_must_hold}`).join('\n');
     const roundBlock = roundOutcomes.length > 0 ? roundOutcomes.join('\n') : '- (no rounds recorded)';
     return [
         '## Council of Ricks — Stack Review',
@@ -293,7 +215,7 @@ export default function publishCouncilStack(sessionRoot, opts = {}) {
     catch (err) {
         throw new CouncilPublishError(`failed to parse council-stack.json: ${safeErrorMessage(err)}`);
     }
-    const { branches, trunk, repo_path, codex_enabled } = stack;
+    const { branches, trunk, repo_path } = stack;
     if (!Array.isArray(branches) || typeof trunk !== 'string' || typeof repo_path !== 'string') {
         throw new CouncilPublishError('council-stack.json missing required fields (branches, trunk, repo_path)');
     }
@@ -325,12 +247,11 @@ export default function publishCouncilStack(sessionRoot, opts = {}) {
     }
     const roundOutcomes = extractRoundOutcomes(path.join(sessionRoot, 'council-of-ricks-summary.md'));
     const finalRound = roundOutcomes.length;
-    const directive = readLatestDirective(path.join(sessionRoot, 'council-directive.md'));
+    const directive = readDirectiveJson(sessionRoot);
     const results = [];
     let posted = 0;
     let skipped = 0;
     let failed = 0;
-    const branchFindingsCounts = [];
     const logFd = fs.openSync(logPath, 'a');
     try {
         for (const branch of branches) {
@@ -339,15 +260,15 @@ export default function publishCouncilStack(sessionRoot, opts = {}) {
             const slug = slugify(branch);
             const bodyPath = path.join(commentsDir, `${slug}.md`);
             const markerPath = path.join(publishedDir, slug);
-            const findings = findingsForBranch(directive, branch);
-            branchFindingsCounts.push(findings.length);
+            const branchEntry = directive.branches.find(b => b.name === branch);
+            const findings = branchEntry ? branchEntry.findings : [];
             const body = composeBody({
                 sessionRoot,
                 branch,
                 finalRound,
-                codexEnabled: !!codex_enabled,
+                codexEnabled: directive.codex_enabled,
                 findings,
-                trapDoors: trapDoorsForBranch(directive, branch),
+                trapDoors: directive.trap_doors,
                 roundOutcomes,
             });
             fs.writeFileSync(bodyPath, body);
@@ -452,22 +373,10 @@ export default function publishCouncilStack(sessionRoot, opts = {}) {
                 appendPublishLog(logFd, r);
             }
         }
-        // Empty-findings-across-all-branches warning: if every non-trunk branch
-        // either posted or was already-published yet produced ZERO findings while
-        // the directive itself had content, the Findings table is almost certainly
-        // missing or malformed — operators want to know.
         const warnings = [];
-        const nonTrunkResults = results;
-        const allPostedOrSkipped = nonTrunkResults.length > 0 && nonTrunkResults.every(r => r.outcome === 'posted' || r.outcome === 'skipped_already_published');
-        const allEmpty = branchFindingsCounts.length > 0 && branchFindingsCounts.every(c => c === 0);
-        if (allPostedOrSkipped && allEmpty && directive.trim().length > 0) {
-            const msg = 'directive had content but produced zero per-branch findings — check for missing ### Findings table with Branch column';
-            warnings.push(msg);
-            appendPublishLogRaw(logFd, { level: 'warn', message: msg });
-        }
         // Trunk-only stack: no non-trunk branches to publish to. Surface as a
         // warning so `posted=0/skipped=0/failed=0` doesn't look like success.
-        if (nonTrunkResults.length === 0) {
+        if (results.length === 0) {
             const msg = 'council-stack.json has no non-trunk branches; nothing to publish';
             warnings.push(msg);
             appendPublishLogRaw(logFd, { level: 'warn', message: msg });
