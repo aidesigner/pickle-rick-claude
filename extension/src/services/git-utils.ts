@@ -25,52 +25,42 @@ export function getBranchName(taskId: string): string {
   return `${user}/${type}/${taskId}`;
 }
 
-export function updateTicketStatus(
-  ticketId: string,
-  newStatus: string,
-  sessionDir: string
-): void {
-  if (/["\n\r]/.test(newStatus)) {
-    throw new Error('Invalid status value: must not contain quotes or newlines');
-  }
-  // 1. Find the ticket file
-  // Search recursively in the session directory
-  const findTicket = (dir: string, depth: number = 0): string | null => {
-    if (depth > 10) return null; // prevent runaway recursion from symlink cycles
-    let files: string[];
-    try { files = fs.readdirSync(dir); } catch { return null; }
-    for (const file of files) {
-      const fullPath = path.join(dir, file);
+const MAX_TICKET_SEARCH_DEPTH = 10;
+
+function findTicketFile(sessionDir: string, ticketId: string): string | null {
+  const fileName = `linear_ticket_${ticketId}.md`;
+  const walk = (dir: string, depth: number): string | null => {
+    if (depth > MAX_TICKET_SEARCH_DEPTH) return null; // symlink-cycle guard
+    let entries: string[];
+    try { entries = fs.readdirSync(dir); } catch { return null; }
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry);
       let stat: fs.Stats;
-      try {
-        stat = fs.lstatSync(fullPath); // lstat: don't follow symlinks into directories
-      } catch {
-        continue;
-      }
+      try { stat = fs.lstatSync(fullPath); } catch { continue; } // lstat: don't follow symlinks
       if (stat.isDirectory()) {
-        const res = findTicket(fullPath, depth + 1);
-        if (res) return res;
-      } else if (file === `linear_ticket_${ticketId}.md`) {
+        const hit = walk(fullPath, depth + 1);
+        if (hit) return hit;
+      } else if (entry === fileName) {
         return fullPath;
       }
     }
     return null;
   };
+  return walk(sessionDir, 0);
+}
 
-  const ticketPath = findTicket(sessionDir);
-  if (!ticketPath) {
-    throw new Error(`Ticket linear_ticket_${ticketId}.md not found in ${sessionDir}`);
-  }
-
-  // 2. Read and update the frontmatter
-  let content = fs.readFileSync(ticketPath, 'utf-8');
-  const today = new Date().toISOString().split('T')[0];
-
-  // Track whether the status: line was actually found and replaced
+/**
+ * Rewrite `status:` / `updated:` inside the YAML frontmatter (or, if the file
+ * has no frontmatter, in the whole body). Returns the new content and a flag
+ * for whether a `status:` line was found.
+ */
+function rewriteTicketFrontmatter(
+  content: string,
+  ticketId: string,
+  newStatus: string,
+  today: string,
+): { content: string; statusReplaced: boolean } {
   let statusReplaced = false;
-
-  // Replace only within the YAML frontmatter block (between the first pair of --- delimiters).
-  // Using a global replace here would corrupt any "status:" lines in the ticket body.
   const fm = extractFrontmatter(content);
   if (fm) {
     let fmSection = content.slice(0, fm.end);
@@ -81,19 +71,37 @@ export function updateTicketStatus(
     if (/^updated:.*$/m.test(fmSection)) {
       fmSection = fmSection.replace(/^updated:.*$/m, `updated: "${today}"`);
     } else {
-      // Insert updated field before closing --- if missing
       fmSection = fmSection.replace(/\n---(\r?\n?)$/, `\nupdated: "${today}"\n---$1`);
     }
-    content = fmSection + content.slice(fm.end);
-  } else {
-    // No frontmatter delimiters found — warn and fall back to full-file replace
-    console.warn(`Warning: ticket ${ticketId} has no valid YAML frontmatter — status replacement may be imprecise`);
-    if (/^status:.*$/m.test(content)) {
-      content = content.replace(/^status:.*$/m, `status: "${newStatus}"`);
-      statusReplaced = true;
-    }
-    content = content.replace(/^updated:.*$/m, `updated: "${today}"`);
+    return { content: fmSection + content.slice(fm.end), statusReplaced };
   }
+  console.warn(`Warning: ticket ${ticketId} has no valid YAML frontmatter — status replacement may be imprecise`);
+  let out = content;
+  if (/^status:.*$/m.test(out)) {
+    out = out.replace(/^status:.*$/m, `status: "${newStatus}"`);
+    statusReplaced = true;
+  }
+  out = out.replace(/^updated:.*$/m, `updated: "${today}"`);
+  return { content: out, statusReplaced };
+}
+
+export function updateTicketStatus(
+  ticketId: string,
+  newStatus: string,
+  sessionDir: string
+): void {
+  if (/["\n\r]/.test(newStatus)) {
+    throw new Error('Invalid status value: must not contain quotes or newlines');
+  }
+
+  const ticketPath = findTicketFile(sessionDir, ticketId);
+  if (!ticketPath) {
+    throw new Error(`Ticket linear_ticket_${ticketId}.md not found in ${sessionDir}`);
+  }
+
+  const original = fs.readFileSync(ticketPath, 'utf-8');
+  const today = new Date().toISOString().split('T')[0];
+  const { content, statusReplaced } = rewriteTicketFrontmatter(original, ticketId, newStatus, today);
 
   if (!statusReplaced) {
     console.warn(`Warning: no "status:" field found in ticket ${ticketId} — status not updated`);
