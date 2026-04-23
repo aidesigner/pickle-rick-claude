@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { StateManager } from '../services/state-manager.js';
+import { StateManager, writeActivityEntry, safeDeactivate } from '../services/state-manager.js';
 import {
   StateError,
   LockError,
@@ -588,5 +588,39 @@ test('StateManager.transaction: returns states in caller path order (not sorted)
     const results = sm.transaction([spZ, spA], () => { /* no-op */ });
     assert.equal(results[0].iteration, 100, 'first result should be Z');
     assert.equal(results[1].iteration, 200, 'second result should be A');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// forceWriteMutate fallback path (via exported helpers)
+// ---------------------------------------------------------------------------
+
+test('writeActivityEntry: appends entry via locked update path', () => {
+  withDir((dir) => {
+    const sp = path.join(dir, 'state.json');
+    writeStateFile(sp, makeState());
+    writeActivityEntry(sp, { ts: '2026-04-23T00:00:00Z', event: 'test', detail: 'one' });
+    const read = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+    assert.equal(read.activity.length, 1);
+    assert.equal(read.activity[0].detail, 'one');
+  });
+});
+
+test('writeActivityEntry: swallows silently when file missing and no fallback', () => {
+  withDir((dir) => {
+    const sp = path.join(dir, 'state.json');
+    // No file, no lock — update throws StateError, read throws ENOENT, no fallback factory → no write
+    assert.doesNotThrow(() => writeActivityEntry(sp, { ts: 't', event: 'e', detail: 'd' }));
+    assert.equal(fs.existsSync(sp), false, 'no file should be created');
+  });
+});
+
+test('safeDeactivate: falls back to {active:false} seed when file unreadable', () => {
+  withDir((dir) => {
+    const sp = path.join(dir, 'state.json');
+    // No file exists — update throws, read fails → fallbackFactory seeds minimal state
+    safeDeactivate(sp);
+    const read = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+    assert.equal(read.active, false);
   });
 });

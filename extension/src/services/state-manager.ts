@@ -129,76 +129,53 @@ export class StateManager {
   // -----------------------------------------------------------------------
 
   transaction(paths: string[], mutator: (states: State[]) => void): State[] {
-    // Sort paths to prevent deadlock (consistent ordering)
-    const sorted = [...paths].sort();
+    const sorted = [...paths].sort(); // consistent order prevents cross-tx deadlock
+    const lockedPaths = this.acquireAllLocks(sorted);
 
-    // Acquire all locks
-    const lockedPaths: string[] = [];
+    try {
+      const states = sorted.map(p => this.read(p));
+      mutator(states);
+      this.writeAllWithRollback(sorted, states);
+      return paths.map(p => states[sorted.indexOf(p)]);
+    } finally {
+      for (const p of lockedPaths) this.releaseLock(p);
+    }
+  }
+
+  private acquireAllLocks(sorted: string[]): string[] {
+    const locked: string[] = [];
     try {
       for (const p of sorted) {
         this.acquireLock(p);
-        lockedPaths.push(p);
+        locked.push(p);
       }
+      return locked;
     } catch (err) {
-      // Release any locks we already acquired
-      for (const p of lockedPaths) {
-        this.releaseLock(p);
-      }
+      for (const p of locked) this.releaseLock(p);
       throw err;
     }
+  }
 
+  private writeAllWithRollback(sorted: string[], states: State[]): void {
+    const originals = sorted.map(p => ({ path: p, backup: fs.readFileSync(p, 'utf-8') }));
+    const written: string[] = [];
     try {
-      // Read all states
-      const states = sorted.map(p => this.read(p));
-
-      // Apply mutator
-      mutator(states);
-
-      // Write all — track originals for rollback
-      const originals: Array<{ path: string; backup: string }> = [];
-      const written: string[] = [];
-
-      // Backup originals
-      for (const p of sorted) {
-        const backup = fs.readFileSync(p, 'utf-8');
-        originals.push({ path: p, backup });
+      for (let i = 0; i < sorted.length; i++) {
+        writeStateFile(sorted[i], states[i]);
+        written.push(sorted[i]);
       }
-
-      try {
-        for (let i = 0; i < sorted.length; i++) {
-          writeStateFile(sorted[i], states[i]);
-          written.push(sorted[i]);
+    } catch (writeErr) {
+      const rollbackErrors: Error[] = [];
+      for (const wp of written) {
+        const orig = originals.find(o => o.path === wp);
+        if (!orig) continue;
+        try {
+          writeStateFile(wp, JSON.parse(orig.backup));
+        } catch (rbErr) {
+          rollbackErrors.push(rbErr instanceof Error ? rbErr : new Error(String(rbErr)));
         }
-      } catch (writeErr) {
-        // Rollback previously written files
-        const rollbackErrors: Error[] = [];
-        for (const wp of written) {
-          const orig = originals.find(o => o.path === wp);
-          if (orig) {
-            try {
-              const parsed = JSON.parse(orig.backup);
-              writeStateFile(wp, parsed);
-            } catch (rbErr) {
-              rollbackErrors.push(rbErr instanceof Error ? rbErr : new Error(String(rbErr)));
-            }
-          }
-        }
-        const msg = safeErrorMessage(writeErr);
-        throw new TransactionError(
-          `Transaction write failed: ${msg}`,
-          rollbackErrors,
-        );
       }
-
-      // Re-map to original path order for return
-      return paths.map(p => {
-        const idx = sorted.indexOf(p);
-        return states[idx];
-      });
-    } finally {
-      for (const p of lockedPaths) {
-        this.releaseLock(p);
-      }
+      throw new TransactionError(`Transaction write failed: ${safeErrorMessage(writeErr)}`, rollbackErrors);
     }
   }
 
@@ -373,15 +350,39 @@ export class StateManager {
 
 const _sm = new StateManager();
 
+/**
+ * Try `_sm.update` (locked); on failure, fall back to read-then-forceWrite. If the
+ * read/parse also fails and `fallbackFactory` is provided, forceWrite that seed;
+ * otherwise no write occurs. Never throws.
+ */
+function forceWriteMutate(
+  statePath: string,
+  mutator: (state: State) => void,
+  fallbackFactory: (() => State | object) | null,
+): void {
+  try {
+    _sm.update(statePath, mutator);
+    return;
+  } catch { /* fall through to best-effort path */ }
+
+  let seed: State | object | null = null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(statePath, 'utf-8')) as State;
+    mutator(parsed);
+    seed = parsed;
+  } catch {
+    if (fallbackFactory) seed = fallbackFactory();
+  }
+  if (seed !== null) _sm.forceWrite(statePath, seed);
+}
+
 /** Deactivate with retry-then-forceWrite: try update, fall back to read-then-forceWrite. Never throws. */
 export function safeDeactivate(statePath: string): void {
-  try {
-    _sm.update(statePath, s => { s.active = false; });
-  } catch {
-    _sm.forceWrite(statePath, (() => {
-      try { const s = JSON.parse(fs.readFileSync(statePath, 'utf-8')); s.active = false; return s; } catch { return { active: false }; }
-    })());
-  }
+  forceWriteMutate(
+    statePath,
+    s => { s.active = false; },
+    () => ({ active: false }),
+  );
 }
 
 /**
@@ -390,19 +391,14 @@ export function safeDeactivate(statePath: string): void {
  * read-modify-forceWrite. Never throws — halt paths must not fail on logging.
  */
 export function writeActivityEntry(statePath: string, entry: ActivityLogEntry): void {
-  try {
-    _sm.update(statePath, s => {
+  forceWriteMutate(
+    statePath,
+    s => {
       const existing = Array.isArray(s.activity) ? s.activity : [];
       s.activity = [...existing, entry];
-    });
-  } catch {
-    try {
-      const s = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-      const existing = Array.isArray(s.activity) ? s.activity : [];
-      s.activity = [...existing, entry];
-      _sm.forceWrite(statePath, s);
-    } catch { /* swallow — halt logging must never break caller */ }
-  }
+    },
+    null,
+  );
 }
 
 // ---------------------------------------------------------------------------
