@@ -296,6 +296,24 @@ export function normalizeErrorSignature(errorLine: string): string {
   return s;
 }
 
+function updateErrorTracking(
+  newState: CircuitBreakerState,
+  priorSignature: string | null,
+  currentSignature: string | null,
+): void {
+  if (currentSignature === null) {
+    newState.consecutive_same_error = 0;
+    newState.last_error_signature = null;
+    return;
+  }
+  if (currentSignature === priorSignature) {
+    newState.consecutive_same_error++;
+  } else {
+    newState.consecutive_same_error = 1;
+    newState.last_error_signature = currentSignature;
+  }
+}
+
 export function recordIterationResult(
   state: CircuitBreakerState,
   result: IterationResult,
@@ -307,20 +325,9 @@ export function recordIterationResult(
     history: [...state.history],
   };
 
-  // 1. Error tracking (independent of progress)
-  if (result.errorSignature !== null) {
-    if (result.errorSignature === state.last_error_signature) {
-      newState.consecutive_same_error++;
-    } else {
-      newState.consecutive_same_error = 1;
-      newState.last_error_signature = result.errorSignature;
-    }
-  } else {
-    newState.consecutive_same_error = 0;
-    newState.last_error_signature = null;
-  }
+  updateErrorTracking(newState, state.last_error_signature, result.errorSignature);
 
-  // 2. Progress tracking
+  // Progress tracking
   if (result.hasProgress) {
     newState.consecutive_no_progress = 0;
     newState.last_progress_iteration = iteration;
@@ -332,7 +339,7 @@ export function recordIterationResult(
     newState.consecutive_no_progress++;
   }
 
-  // 3. State transitions (error check first — errors are unambiguous)
+  // State transitions (error check first — errors are unambiguous)
   if (newState.consecutive_same_error >= settings.sameErrorThreshold) {
     transition(newState, 'OPEN',
       `Same error repeated ${newState.consecutive_same_error} times`, iteration);
