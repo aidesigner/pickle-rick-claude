@@ -23,6 +23,13 @@ export interface State {
   consecutive_short_responses?: number;
   /** Pipeline phases that have invoked refreshScope. Monotonically extends; guards against duplicate refresh. */
   phases_entered?: string[];
+  /** Per-session activity log entries (e.g. halt records). Append-only. */
+  activity?: ActivityLogEntry[];
+}
+
+export interface ActivityLogEntry {
+  event: string;
+  [key: string]: unknown;
 }
 
 // ---------------------------------------------------------------------------

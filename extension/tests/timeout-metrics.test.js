@@ -39,3 +39,17 @@ test('all-sites: every failure-bucket exitReason === site handles timeout_repeat
   });
   assert.deepEqual(unhandled, [], `Unhandled exitReason === sites:\n${JSON.stringify(unhandled, null, 2)}`);
 });
+
+test('remediation-code: source emits structured stderr with remediation_code=RAISE_TIMEOUT', () => {
+  const src = fs.readFileSync(MUX_SRC, 'utf-8');
+  assert.ok(src.includes("'remediation_code'") || src.includes('"remediation_code"') || src.includes('remediation_code:'),
+    'source must reference remediation_code key in halt stderr payload');
+  assert.ok(src.includes("'RAISE_TIMEOUT'") || src.includes('"RAISE_TIMEOUT"'),
+    "source must include literal 'RAISE_TIMEOUT' for operator remediation");
+});
+
+test('remediation-code: exit_reason payload marker present', () => {
+  const src = fs.readFileSync(MUX_SRC, 'utf-8');
+  assert.ok(src.includes("exit_reason:") || src.includes("'exit_reason'") || src.includes('"exit_reason"'),
+    'halt stderr JSON must include exit_reason field');
+});

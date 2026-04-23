@@ -5,9 +5,9 @@ import * as os from 'os';
 import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, runCmd, safeErrorMessage, ensureMonitorWindow } from '../services/pickle-utils.js';
 import { PromiseTokens, hasToken, VALID_STEPS, Defaults, hasLifecycleArtifact } from '../types/index.js';
-import { StateManager, safeDeactivate } from '../services/state-manager.js';
+import { StateManager, safeDeactivate, writeActivityEntry } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
-import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult } from '../services/circuit-breaker.js';
+import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, resetCircuitBreaker } from '../services/circuit-breaker.js';
 const sm = new StateManager();
 let currentChildProc = null;
 export function killCurrentChild() {
@@ -713,6 +713,52 @@ export function writeHandoffAtomic(sessionDir, content, pid, log, fsOps = fs) {
 }
 const isHaltExit = (r) => r === 'cancelled' || r === 'limit' || r === 'timeout_repeat';
 const isFailureExit = (r) => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat';
+/**
+ * Pure counter update: increment on same-ticket timeout, reset to 1 on
+ * different-ticket timeout, zero on clean completion, pass-through otherwise.
+ * `halt: true` when count reaches 2 on the same ticket.
+ */
+export function applyTimeoutCounter(input) {
+    const { prev, ticketNow, timedOut, completedClean } = input;
+    if (timedOut) {
+        if (ticketNow !== null && ticketNow === prev.ticket) {
+            const count = prev.count + 1;
+            return { count, ticket: ticketNow, halt: count >= 2 };
+        }
+        return { count: 1, ticket: ticketNow, halt: false };
+    }
+    if (completedClean) {
+        return { count: 0, ticket: null, halt: false };
+    }
+    return { count: prev.count, ticket: prev.ticket, halt: false };
+}
+/**
+ * Halt side-effects for FR-B12/B14: reset CB (prevent orphan streak),
+ * write state.json.activity entry, emit structured stderr JSON with
+ * remediation_code=RAISE_TIMEOUT, safeDeactivate. Caller sets exitReason
+ * and breaks the loop.
+ */
+export function executeTimeoutHalt(ctx) {
+    const { statePath, sessionDir, ticketNow, timeoutCount } = ctx;
+    resetCircuitBreaker(sessionDir, 'timeout_repeat halt');
+    writeActivityEntry(statePath, {
+        event: 'halt',
+        halt_reason: 'timeout_repeat',
+        halted_ticket: ticketNow,
+        halted_at: new Date().toISOString(),
+        timeout_count: timeoutCount,
+        remediation: `Re-run via /pickle-pipeline --worker-timeout <N> for fresh session, or edit worker_timeout_seconds in ${statePath} and run /pickle-retry for this session.`,
+    });
+    console.error(JSON.stringify({
+        exit_reason: 'timeout_repeat',
+        remediation_code: 'RAISE_TIMEOUT',
+        ticket_id: ticketNow,
+        timeout_count: timeoutCount,
+        message: 'Ticket timed out on 2 consecutive attempts.',
+        state_path: statePath,
+    }));
+    safeDeactivate(statePath);
+}
 async function main() {
     const sessionDir = process.argv[2];
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
@@ -829,6 +875,9 @@ async function main() {
     let consecutiveRateLimits = 0;
     let previousTicket = null;
     let exitReason = 'error';
+    // Non-persisted per-ticket timeout counter (FR-B3/B4) — resets on runner restart.
+    let timeoutCount = 0;
+    let lastTimeoutTicket = null;
     while (true) {
         let state;
         try {
@@ -878,8 +927,8 @@ async function main() {
         if (!cbEnabled) {
             if (curIter === lastStateIteration) {
                 stallCount++;
-                if (stallCount >= 3) {
-                    log(`WARNING: state.iteration has not advanced in 3 outer-loop iterations (stuck at ${state.iteration}). Exiting to avoid wasted API calls.`);
+                if (stallCount >= 2) { // Stall threshold only consulted when !cbEnabled; CB-enabled sessions use CB's own progress threshold
+                    log(`WARNING: state.iteration has not advanced in 2 outer-loop iterations (stuck at ${state.iteration}). Exiting to avoid wasted API calls.`);
                     safeDeactivate(statePath);
                     exitReason = 'stall';
                     break;
@@ -1049,6 +1098,28 @@ async function main() {
         }
         if (exitType === 'success')
             consecutiveRateLimits = 0;
+        // --- Per-ticket timeout halt (FR-B3/B4/B12/B14) — MUST run BEFORE CB recording ---
+        let ticketForTimeout = state.current_ticket || null;
+        try {
+            // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+            const postState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+            ticketForTimeout = postState.current_ticket || null;
+        }
+        catch { /* keep pre-iteration ticket as fallback */ }
+        const counterNext = applyTimeoutCounter({
+            prev: { count: timeoutCount, ticket: lastTimeoutTicket },
+            ticketNow: ticketForTimeout,
+            timedOut: outcome.timedOut === true,
+            completedClean: result === 'task_completed',
+        });
+        timeoutCount = counterNext.count;
+        lastTimeoutTicket = counterNext.ticket;
+        if (counterNext.halt) {
+            log(`Timeout halt: ticket ${ticketForTimeout} timed out ${timeoutCount} consecutive iterations`);
+            executeTimeoutHalt({ statePath, sessionDir, ticketNow: ticketForTimeout, timeoutCount });
+            exitReason = 'timeout_repeat';
+            break;
+        }
         // === Existing CB recording — only reached for non-rate-limit ===
         // Circuit breaker: record iteration outcome (skip for subprocess failures)
         if (cbEnabled && cbState && result !== 'error' && result !== 'inactive') {

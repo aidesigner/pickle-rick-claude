@@ -359,3 +359,25 @@ export function safeDeactivate(statePath) {
         })());
     }
 }
+/**
+ * Append a single activity entry to `state.json.activity` (creating the array if missing).
+ * Best-effort: primary path uses locked sm.update; on lock failure falls back to
+ * read-modify-forceWrite. Never throws — halt paths must not fail on logging.
+ */
+export function writeActivityEntry(statePath, entry) {
+    try {
+        _sm.update(statePath, s => {
+            const existing = Array.isArray(s.activity) ? s.activity : [];
+            s.activity = [...existing, entry];
+        });
+    }
+    catch {
+        try {
+            const s = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+            const existing = Array.isArray(s.activity) ? s.activity : [];
+            s.activity = [...existing, entry];
+            _sm.forceWrite(statePath, s);
+        }
+        catch { /* swallow — halt logging must never break caller */ }
+    }
+}
