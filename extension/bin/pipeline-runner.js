@@ -178,6 +178,10 @@ function archiveFile(sessionDir, filename, phase) {
     catch { /* best effort */ }
 }
 /** Archive and remove inter-phase artifacts that could confuse the next phase. */
+// TASK_NOTES.md lifecycle: intra-phase only by design. Pipeline-mode timeout stubs from one phase
+// are archived (to TASK_NOTES-<phase>.md) and removed from canonical path before the next phase's
+// setup. This prevents stale notes from contaminating downstream phases. See PRD FR-B16.
+// Do NOT add cross-phase propagation without updating the PRD.
 export function cleanPhaseArtifacts(sessionDir, phase) {
     // TASK_NOTES.md — stale notes from previous phase
     const notesPath = path.join(sessionDir, 'TASK_NOTES.md');
