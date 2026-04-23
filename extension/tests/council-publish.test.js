@@ -93,7 +93,11 @@ const state = JSON.parse(fs.readFileSync(${JSON.stringify(stateFile)}, 'utf-8'))
 
 function writeState() { fs.writeFileSync(${JSON.stringify(stateFile)}, JSON.stringify(state)); }
 
+// __hang__ sentinel: keep the event loop alive long enough that execFileSync's
+// timeout fires first. The parent sends SIGTERM; Node's default handler exits.
+function hang() { setTimeout(() => process.exit(0), 60_000); }
 if (args[0] === 'auth' && args[1] === 'status') {
+  if (scenario.auth === 'hang') return hang();
   process.exit(scenario.auth === 'fail' ? 1 : 0);
 }
 if (args[0] === 'pr' && args[1] === 'list') {
@@ -102,6 +106,7 @@ if (args[0] === 'pr' && args[1] === 'list') {
   const mapping = scenario.prList || {};
   if (mapping[branch] === undefined) { process.stdout.write(''); process.exit(0); }
   if (mapping[branch] === '__error__') { process.stderr.write('simulated list error'); process.exit(1); }
+  if (mapping[branch] === '__hang__') return hang();
   process.stdout.write(String(mapping[branch]) + '\\n');
   process.exit(0);
 }
@@ -109,6 +114,7 @@ if (args[0] === 'pr' && args[1] === 'comment') {
   state.prCommentCalls = (state.prCommentCalls || 0) + 1;
   writeState();
   const rule = scenario.prComment || {};
+  if (rule.hangOnCall && rule.hangOnCall.includes(state.prCommentCalls)) return hang();
   if (rule.failOnCall && rule.failOnCall.includes(state.prCommentCalls)) {
     process.stderr.write('simulated comment error');
     process.exit(1);
@@ -665,6 +671,107 @@ test('composeBody: empty trapDoors renders _None catalogued._', () => {
         roundOutcomes: [],
     });
     assert.ok(/_None catalogued\._/.test(body));
+});
+
+// --- Hardening: every `gh` subprocess call is timeout-bounded ---
+//
+// Regression guard for a silent-failure class that survived four "silent-
+// failure hardening" passes (v1.49.1/.2/.3, v1.50.0): `execFileSync` with no
+// `timeout` option blocks forever when `gh` hangs (network partition, hung
+// TLS handshake, stuck corp-proxy). Publisher runs at session end — a hang
+// there deadlocks the entire Council run with no log signal.
+//
+// The test injects `ghTimeoutMs: 500` and a mock that holds the event loop
+// open for 60s. Node must SIGTERM the child on timeout and surface the error
+// through the existing failure classification path.
+
+test('publishCouncilStack: hung `gh pr list` is aborted by timeout, classified as failed', async () => {
+    const mock = makeGhMock({
+        auth: 'ok',
+        // feat/one hangs; feat/two returns normally — one hang must not kill the sweep
+        prList: { 'feat/one': '__hang__', 'feat/two': 99 },
+        prComment: {},
+    });
+    try {
+        await withSession(async (sessionDir) => {
+            const startedAt = Date.now();
+            const report = await publishCouncilStack(sessionDir, {
+                ghCommand: mock.ghPath,
+                ghTimeoutMs: 500,
+            });
+            const elapsedMs = Date.now() - startedAt;
+            // Publisher must return promptly after timeout fires — well under
+            // the 60s mock hang window. Generous ceiling covers CI jitter.
+            assert.ok(elapsedMs < 10_000, `elapsed ${elapsedMs}ms should be < 10s; timeout did not fire`);
+
+            const one = report.results.find(r => r.branch === 'feat/one');
+            assert.equal(one.outcome, 'failed', 'hung pr list must classify as failed, not skipped_no_pr');
+            assert.ok(/pr list/.test(one.error || ''), `error should mention pr list, got: ${one.error}`);
+
+            // Sweep continues: feat/two still posts.
+            const two = report.results.find(r => r.branch === 'feat/two');
+            assert.equal(two.outcome, 'posted');
+        }, { directiveJson: minimalDirective() });
+    } finally {
+        cleanupGhMock(mock);
+    }
+});
+
+test('publishCouncilStack: hung `gh pr comment` is aborted by timeout, classified as failed', async () => {
+    const mock = makeGhMock({
+        auth: 'ok',
+        prList: { 'feat/one': 42, 'feat/two': 99 },
+        // First comment invocation hangs; second returns normally.
+        prComment: { hangOnCall: [1] },
+    });
+    try {
+        await withSession(async (sessionDir) => {
+            const startedAt = Date.now();
+            const report = await publishCouncilStack(sessionDir, {
+                ghCommand: mock.ghPath,
+                ghTimeoutMs: 500,
+            });
+            const elapsedMs = Date.now() - startedAt;
+            assert.ok(elapsedMs < 10_000, `elapsed ${elapsedMs}ms should be < 10s; timeout did not fire`);
+
+            // Exactly one failed, exactly one posted — timeout does not abort the sweep.
+            assert.equal(report.failed, 1);
+            assert.equal(report.posted, 1);
+            const failed = report.results.find(r => r.outcome === 'failed');
+            assert.ok(/pr comment/.test(failed.error || ''), `error should mention pr comment, got: ${failed.error}`);
+
+            // No .published marker for the failed branch.
+            const pubDir = path.join(sessionDir, '.published');
+            const markers = fs.existsSync(pubDir) ? fs.readdirSync(pubDir) : [];
+            assert.equal(markers.length, 1, 'only the posted branch gets a marker');
+        }, { directiveJson: minimalDirective() });
+    } finally {
+        cleanupGhMock(mock);
+    }
+});
+
+test('publishCouncilStack: hung `gh auth status` is aborted, falls back to skipped_no_gh', async () => {
+    const mock = makeGhMock({ auth: 'hang' });
+    try {
+        await withSession(async (sessionDir) => {
+            const startedAt = Date.now();
+            const report = await publishCouncilStack(sessionDir, {
+                ghCommand: mock.ghPath,
+                ghTimeoutMs: 500,
+            });
+            const elapsedMs = Date.now() - startedAt;
+            assert.ok(elapsedMs < 10_000, `elapsed ${elapsedMs}ms should be < 10s; auth timeout did not fire`);
+
+            // Hung auth is indistinguishable from failed auth: both routes produce
+            // skipped_no_gh for every branch (no pr list/comment is ever issued).
+            assert.equal(report.posted, 0);
+            for (const r of report.results) {
+                assert.equal(r.outcome, 'skipped_no_gh');
+            }
+        }, { directiveJson: minimalDirective() });
+    } finally {
+        cleanupGhMock(mock);
+    }
 });
 
 // --- 25. composeBody with non-empty trapDoors renders - bullets with path + constraint ---

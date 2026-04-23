@@ -201,6 +201,10 @@ function isMarkerPublished(p) {
 export default function publishCouncilStack(sessionRoot, opts = {}) {
     const ghCommand = opts.ghCommand || 'gh';
     const dryRun = !!opts.dryRun;
+    const ghTimeoutOverride = opts.ghTimeoutMs;
+    const authTimeoutMs = ghTimeoutOverride ?? 15_000;
+    const prListTimeoutMs = ghTimeoutOverride ?? 30_000;
+    const prCommentTimeoutMs = ghTimeoutOverride ?? 30_000;
     if (!fs.existsSync(sessionRoot)) {
         throw new CouncilPublishError(`session_root does not exist: ${sessionRoot}`);
     }
@@ -237,10 +241,13 @@ export default function publishCouncilStack(sessionRoot, opts = {}) {
     const publishedDir = path.join(sessionRoot, '.published');
     fs.mkdirSync(publishedDir, { recursive: true });
     const logPath = path.join(sessionRoot, 'publish.log');
-    // gh availability check
+    // gh availability check. `timeout` guards against a hang on a machine where
+    // `gh` is installed but wedged (stuck keyring prompt, dead network on first
+    // auth-refresh attempt) — without it, the entire publisher blocks at session
+    // end with no log output. Treated the same as any other auth failure.
     let ghAvailable = true;
     try {
-        execFileSync(ghCommand, ['auth', 'status'], { stdio: 'pipe' });
+        execFileSync(ghCommand, ['auth', 'status'], { stdio: 'pipe', timeout: authTimeoutMs });
     }
     catch {
         ghAvailable = false;
@@ -291,7 +298,10 @@ export default function publishCouncilStack(sessionRoot, opts = {}) {
             // prefer OPEN, then most-recently-updated — deterministic tie-break.
             let prNumber;
             try {
-                const out = execFileSync(ghCommand, ['pr', 'list', '--head', branch, '--state', 'all', '--json', 'number,state,updatedAt'], { cwd: repo_path, stdio: 'pipe', encoding: 'utf8' }).trim();
+                // `timeout` is required: without it, a stalled TLS handshake, DNS hang,
+                // or hung GitHub API request blocks the publisher indefinitely — there
+                // is no other signal surface (no parent watchdog calls into this loop).
+                const out = execFileSync(ghCommand, ['pr', 'list', '--head', branch, '--state', 'all', '--json', 'number,state,updatedAt'], { cwd: repo_path, stdio: 'pipe', encoding: 'utf8', timeout: prListTimeoutMs }).trim();
                 const parsed = parsePrList(out);
                 if (!parsed.ok) {
                     // Unparseable `gh` output must NOT masquerade as "no PR found".
@@ -351,9 +361,11 @@ export default function publishCouncilStack(sessionRoot, opts = {}) {
                 appendPublishLog(logFd, r);
                 continue;
             }
-            // Post the comment
+            // Post the comment. `timeout` matches pr-list: a stalled write must not
+            // deadlock the session. Node raises on timeout; the catch below classifies
+            // the outcome as `failed` with the underlying error message intact.
             try {
-                execFileSync(ghCommand, ['pr', 'comment', String(prNumber), '--body-file', bodyPath], { cwd: repo_path, stdio: 'pipe' });
+                execFileSync(ghCommand, ['pr', 'comment', String(prNumber), '--body-file', bodyPath], { cwd: repo_path, stdio: 'pipe', timeout: prCommentTimeoutMs });
                 fs.writeFileSync(markerPath, new Date().toISOString());
                 const r = { branch, outcome: 'posted', pr_number: prNumber, body_path: bodyPath };
                 results.push(r);
