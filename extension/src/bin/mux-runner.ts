@@ -5,7 +5,7 @@ import * as os from 'os';
 import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, runCmd, safeErrorMessage, ensureMonitorWindow } from '../services/pickle-utils.js';
 import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, hasLifecycleArtifact, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole } from '../types/index.js';
-import { StateManager, safeDeactivate, writeActivityEntry } from '../services/state-manager.js';
+import { StateManager, safeDeactivate, writeActivityEntry, writeTimeoutStub } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, resetCircuitBreaker, type CircuitBreakerState } from '../services/circuit-breaker.js';
 
@@ -1132,6 +1132,17 @@ async function main() {
     });
     timeoutCount = counterNext.count;
     lastTimeoutTicket = counterNext.ticket;
+
+    if (outcome.timedOut) {
+      writeTimeoutStub(sessionDir, {
+        ticketId: ticketForTimeout,
+        iteration,
+        wallSeconds: outcome.wallSeconds,
+        workerTimeoutSeconds: Number(state.worker_timeout_seconds) || 0,
+        timeoutCount,
+        logFile: iterLogFile,
+      });
+    }
 
     if (counterNext.halt) {
       log(`Timeout halt: ticket ${ticketForTimeout} timed out ${timeoutCount} consecutive iterations`);

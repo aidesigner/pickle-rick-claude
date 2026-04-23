@@ -405,3 +405,67 @@ export function writeActivityEntry(statePath: string, entry: ActivityLogEntry): 
     } catch { /* swallow — halt logging must never break caller */ }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Timeout stub writer (FR-B8/B9)
+// ---------------------------------------------------------------------------
+
+export interface TimeoutStubMeta {
+  ticketId: string | null;
+  iteration: number;
+  wallSeconds: number;
+  workerTimeoutSeconds: number;
+  timeoutCount: number;
+  logFile: string;
+}
+
+/**
+ * Write a TASK_NOTES.md stub at sessionDir/TASK_NOTES.md when the file is absent
+ * or empty (FR-B8). Non-empty content — whether Morty-written or a prior stub — is
+ * never overwritten (FR-B9). Writes atomically via tmp+rename. Never throws.
+ */
+export function writeTimeoutStub(sessionDir: string, meta: TimeoutStubMeta): void {
+  const stubPath = path.join(sessionDir, 'TASK_NOTES.md');
+
+  if (fs.existsSync(stubPath)) {
+    try {
+      const existing = fs.readFileSync(stubPath, 'utf-8');
+      if (existing.trim().length > 0) return;
+    } catch { return; }
+  }
+
+  let lastLogLine = '(no log output)';
+  try {
+    const logContent = fs.readFileSync(meta.logFile, 'utf-8');
+    const lines = logContent.split('\n').filter(l => l.trim().length > 0);
+    if (lines.length > 0) lastLogLine = lines[lines.length - 1];
+  } catch { /* log missing — use placeholder */ }
+
+  const stub = [
+    '<!-- pickle-rick: timeout-stub v1 -->',
+    '# TASK_NOTES.md (synthesized stub)',
+    '',
+    '## Progress',
+    `Iteration ${meta.iteration} SIGTERM'd at ${Math.round(meta.wallSeconds)}s of ${meta.workerTimeoutSeconds}s budget.`,
+    `Ticket: ${meta.ticketId ?? '(unknown)'}`,
+    `Attempt: ${meta.timeoutCount}`,
+    '',
+    '## Dead Ends',
+    `Previous iteration did not complete within ${meta.workerTimeoutSeconds}s. Do not repeat the same approach without optimization.`,
+    '',
+    '## Key Discoveries',
+    `Last log line: ${lastLogLine}`,
+    '',
+    '## Next',
+    `Next iteration must finish within ${meta.workerTimeoutSeconds}s or the runner will halt after 2 consecutive timeouts.`,
+  ].join('\n');
+
+  const tmpPath = `${stubPath}.tmp.${process.pid}`;
+  try {
+    fs.writeFileSync(tmpPath, stub);
+    fs.renameSync(tmpPath, stubPath);
+  } catch {
+    try { fs.writeFileSync(stubPath, stub); } catch { /* best-effort */ }
+    try { fs.unlinkSync(tmpPath); } catch { /* cleanup */ }
+  }
+}
