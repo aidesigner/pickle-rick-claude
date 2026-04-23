@@ -212,7 +212,9 @@ export function classifyTicketCompletion(iterLogFile, workingDir, ticketDir, rol
         if (hasToken(assistantContent, PromiseTokens.TASK_COMPLETED))
             return 'completed';
     }
-    catch { /* log file unreadable — fall through */ }
+    catch (err) {
+        process.stderr.write(`[mux-runner:classify-ticket:log-read] ${safeErrorMessage(err)}\n`); /* fall through to artifact check */
+    }
     if (!ticketDir)
         return 'skipped';
     let files;
@@ -235,7 +237,9 @@ export function classifyTicketCompletion(iterLogFile, workingDir, ticketDir, rol
         if (staged.length > 0)
             return 'completed';
     }
-    catch { /* not a git repo — artifact alone suffices */ }
+    catch (err) {
+        process.stderr.write(`[mux-runner:classify-ticket:git-probe] ${safeErrorMessage(err)}\n`); /* artifact alone suffices */
+    }
     return 'completed';
 }
 /**
@@ -255,7 +259,9 @@ export function transitionToMeeseeks(state, extensionRoot) {
         if (Number.isFinite(rawMax) && rawMax > 0)
             maxPasses = rawMax;
     }
-    catch { /* use defaults */ }
+    catch (err) {
+        process.stderr.write(`[mux-runner:transition-meeseeks:settings] ${safeErrorMessage(err)}\n`); /* use defaults */
+    }
     return {
         ...state,
         chain_meeseeks: false,
@@ -288,7 +294,9 @@ export function loadMeeseeksModel(extensionRoot, passCount = 1) {
         if (raw.enable_model_tiers === false)
             enableModelTiers = false;
     }
-    catch { /* use defaults */ }
+    catch (err) {
+        process.stderr.write(`[mux-runner:load-meeseeks-model:settings] ${safeErrorMessage(err)}\n`); /* use defaults */
+    }
     if (!tiers || !enableModelTiers)
         return defaultModel;
     // Find the highest threshold that doesn't exceed passCount

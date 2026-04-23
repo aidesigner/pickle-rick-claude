@@ -226,7 +226,7 @@ export function classifyTicketCompletion(
     const logContent = fs.readFileSync(iterLogFile, 'utf-8');
     const assistantContent = extractAssistantContent(logContent);
     if (hasToken(assistantContent, PromiseTokens.TASK_COMPLETED)) return 'completed';
-  } catch { /* log file unreadable — fall through */ }
+  } catch (err) { process.stderr.write(`[mux-runner:classify-ticket:log-read] ${safeErrorMessage(err)}\n`); /* fall through to artifact check */ }
 
   if (!ticketDir) return 'skipped';
   let files: string[];
@@ -241,7 +241,7 @@ export function classifyTicketCompletion(
     if (uncommitted.length > 0) return 'completed';
     const staged = runCmd(['git', 'diff', '--stat', '--cached'], { cwd: workingDir, check: false });
     if (staged.length > 0) return 'completed';
-  } catch { /* not a git repo — artifact alone suffices */ }
+  } catch (err) { process.stderr.write(`[mux-runner:classify-ticket:git-probe] ${safeErrorMessage(err)}\n`); /* artifact alone suffices */ }
 
   return 'completed';
 }
@@ -261,7 +261,7 @@ export function transitionToMeeseeks(state: State, extensionRoot: string): State
     if (Number.isFinite(rawMin) && rawMin > 0) minPasses = rawMin;
     const rawMax = Number(settings.default_meeseeks_max_passes);
     if (Number.isFinite(rawMax) && rawMax > 0) maxPasses = rawMax;
-  } catch { /* use defaults */ }
+  } catch (err) { process.stderr.write(`[mux-runner:transition-meeseeks:settings] ${safeErrorMessage(err)}\n`); /* use defaults */ }
 
   return {
     ...state,
@@ -294,7 +294,7 @@ export function loadMeeseeksModel(extensionRoot: string, passCount: number = 1):
     if (Number.isFinite(rawCap) && rawCap > 0) maxOpusPasses = rawCap;
     // Feature flag: enable_model_tiers (default true — missing flag = enabled)
     if (raw.enable_model_tiers === false) enableModelTiers = false;
-  } catch { /* use defaults */ }
+  } catch (err) { process.stderr.write(`[mux-runner:load-meeseeks-model:settings] ${safeErrorMessage(err)}\n`); /* use defaults */ }
 
   if (!tiers || !enableModelTiers) return defaultModel;
 
