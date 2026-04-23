@@ -701,6 +701,11 @@ export function writeHandoffAtomic(
   }
 }
 
+export type ExitReason = 'success' | 'cancelled' | 'error' | 'limit' | 'stall' | 'circuit_open' | 'rate_limit_exhausted' | 'timeout_repeat';
+
+const isHaltExit = (r: ExitReason): boolean => r === 'cancelled' || r === 'limit' || r === 'timeout_repeat';
+const isFailureExit = (r: ExitReason): boolean => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat';
+
 async function main() {
   const sessionDir = process.argv[2];
   // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
@@ -818,7 +823,7 @@ async function main() {
   let stallCount = 0;
   let consecutiveRateLimits = 0;
   let previousTicket: string | null = null;
-  let exitReason: 'success' | 'cancelled' | 'error' | 'limit' | 'stall' | 'circuit_open' | 'rate_limit_exhausted' = 'error';
+  let exitReason: ExitReason = 'error';
 
   while (true) {
     let state: State;
@@ -1017,7 +1022,7 @@ async function main() {
           if (elapsed >= maxMins * 60) { exitReason = 'limit'; break; }
         }
       }
-      if (exitReason === 'cancelled' || exitReason === 'limit') {
+      if (isHaltExit(exitReason)) {
         safeDeactivate(statePath); break;
       }
 
@@ -1181,7 +1186,7 @@ async function main() {
   }
 
   const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
-  const isFailedExit = exitReason === 'error' || exitReason === 'stall' || exitReason === 'circuit_open' || exitReason === 'rate_limit_exhausted';
+  const isFailedExit = isFailureExit(exitReason);
   logActivity({ event: 'session_end', source: 'pickle', session: path.basename(sessionDir), duration_min: Math.round(totalElapsed / 60), mode: 'tmux', ...(isFailedExit ? { error: exitReason } : {}) });
   let finalStep = 'unknown';
   let finalActive = 'unknown';
@@ -1219,7 +1224,7 @@ async function main() {
 }
 
 export function buildTmuxNotification(exitReason: string, finalStep: string, iteration: number, totalElapsed: number) {
-  const isFailure = exitReason === 'error' || exitReason === 'stall' || exitReason === 'circuit_open' || exitReason === 'rate_limit_exhausted';
+  const isFailure = exitReason === 'error' || exitReason === 'stall' || exitReason === 'circuit_open' || exitReason === 'rate_limit_exhausted' || exitReason === 'timeout_repeat';
   const title = isFailure
     ? '🥒 Pickle Run Failed'
     : '🥒 Pickle Run Complete';
