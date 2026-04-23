@@ -66,19 +66,21 @@ If DRY_RUN mode: perform gap analysis without creating a session or modifying co
 ## Violations
 
 ### P0: Critical
-- **[Principle]** `file:line` — description. Fix: suggested fix.
+- **[P<N>, conf=<score>]** `file:line` — description (principle: <Principle>)
 
 ### P1: High
-...
+- **[P<N>, conf=<score>]** `file:line` — description (principle: <Principle>)
 
 ### P2: Medium
-...
+- **[P<N>, conf=<score>]** `file:line` — description (principle: <Principle>)
 
 ### P3: Low
-...
+- **[P<N>, conf=<score>]** `file:line` — description (principle: <Principle>)
 
 ### P4: Optional
-...
+- **[P<N>, conf=<score>]** `file:line` — description (principle: <Principle>)
+
+Every violation emits with `[P<N>, conf=<score>]` per the `## Confidence Scoring` rubric in `szechuan-sauce-principles.md`. The principle name moves into a parenthetical to keep the severity + confidence tag primary.
 
 ## Summary
 | Priority | Count |
@@ -268,7 +270,7 @@ The metric is **violation count** (lower is better). Each iteration:
 <!-- scope-hook: override-3-allowed-paths -->
 1. **Always read the target code** — Check `microverse.json` for an `allowed_paths` field. If present, read only files within those paths (Glob + Read restricted to `allowed_paths`). If absent, Glob + Read the full target directory. The code is the source of truth; never skip this step.
 2. Consult `${SESSION_ROOT}/gap_analysis.md` if it exists as a **checklist hint** to speed up scanning, but do NOT trust it over what the code actually says — fixes may have introduced new violations or resolved ones the gap analysis still lists. Also consult the `## Contract Mismatches` section — contract violations are scored as P1.
-2.5. **Apply the false-positives filter, then score confidence.** First, walk the candidate violations and discard any that match the `## False Positives — Do NOT Flag` bullets in `szechuan-sauce-principles.md` — pre-existing issues on unmodified lines, CI-surfaceable linter/typechecker/compiler noise, generic coverage hand-wringing, author-silenced issues (`// eslint-disable`, `// @ts-expect-error`, etc.), uncodified style nits, speculative future-risk, and findings already raised and resolved in a prior iteration. Drop them before scoring. Then score each surviving candidate for confidence per the `## Confidence Scoring` rubric (0/25/50/75/100); any candidate with `conf < 80` is dropped and must NOT be selected as the iteration's violation even if its P-level is P0. Severity composes with confidence independently — P0 at conf=50 is dropped; P2 at conf=100 is kept if nothing higher survives. Record the dropped candidates (one line each: title + score + reason) in `gap_analysis.md` under a `## Dropped Candidates (conf < 80)` section. **Append, never overwrite** — subsequent iterations need the audit trail.
+2.5. **Apply the false-positives filter, then score confidence.** First, walk the candidate violations and discard any that match the `## False Positives — Do NOT Flag` bullets in `szechuan-sauce-principles.md` — pre-existing issues on unmodified lines, CI-surfaceable linter/typechecker/compiler noise, generic coverage hand-wringing, author-silenced issues (`// eslint-disable`, `// @ts-expect-error`, etc.), uncodified style nits, speculative future-risk, and findings already raised and resolved in a prior iteration. Drop them before scoring. Then score each surviving candidate for confidence per the `## Confidence Scoring` rubric (0/25/50/75/100); any candidate with `conf < 80` is dropped and must NOT be selected as the iteration's violation even if its P-level is P0. Severity composes with confidence independently — P0 at conf=50 is dropped; P2 at conf=100 is kept if nothing higher survives. Record the dropped candidates (one line each: title + score + reason) in `gap_analysis.md` under a `## Dropped Candidates (conf < 80)` section. **Append, never overwrite** — subsequent iterations need the audit trail. Cap the `## Dropped Candidates (conf < 80)` section at the 50 most recent entries. When appending would push past 50, drop the oldest entry (FIFO) — `gap_analysis.md` is a working document, not an archive. Historical drops pre-dating the current 50 are not load-bearing for the iteration loop; the principle is the filter, not the history.
 3. Find the **single highest-priority** remaining violation (P0 > P1 > P2 > P3 > P4) among the surviving, confidence≥80 candidates that is NOT in the failed approaches list from the handoff
 4. If no violations found: print "The sauce is obtained." and exit cleanly
 5. After fixing and committing, **update** `gap_analysis.md`: remove the fixed violation, add any new violations introduced by the fix, update the summary counts, and re-check the contract map for new mismatches (Override 2 step 6). Preserve the `## Contract Map` and `## Contract Mismatches` sections — never overwrite them. This is mandatory — stale gap analysis misleads future iterations.

@@ -209,6 +209,8 @@ Before Phase 1 of each iteration, read `$HOME/.claude/pickle-rick/szechuan-sauce
 
 Every finding emitted from Phase 1 must carry both a severity label (CRITICAL or HIGH — anatomy-park's native taxonomy) AND a confidence score from the rubric, formatted `[<SEVERITY>, conf=<score>]`. Drop any finding with `conf < 80` BEFORE Phase 2.
 
+Severity and confidence compose independently — a CRITICAL at conf=50 drops by the default rule; a HIGH at conf=100 stays. But note the **severity escape hatch** in `## Confidence Scoring`: anatomy's CRITICAL tier (equivalent to the principles doc's P0) with confidence ≥ 50 ALWAYS surfaces tagged `[NEEDS-VERIFICATION]` — a maybe-real data-corruption finding is worth the reviewer's eye. A surfaced `[NEEDS-VERIFICATION]` counts as a finding (breaks streaks, is not a clean pass), not an audit-trail drop.
+
 Apply the `## False Positives — Do NOT Flag` exclusion list before assigning confidence — if a candidate finding matches any exclusion bullet, discard it outright. No brain-in-a-jar squishing around hypotheticals; the rubric lives in the principles doc, not here.
 
 ### Override 2: Three-Phase Protocol
@@ -252,7 +254,7 @@ For the current subsystem, trace the COMPLETE data flow. Read every file. For ea
 **Proposed fix:** [exact code change]
 ```
 
-If zero findings: update `consecutive_clean` for this subsystem, rotate to next. No Phase 2 or 3. Zero findings means **zero confident findings after the <80 drop and false-positives filter** — a subsystem with candidate findings that all scored <80 still rotates, but the dropped candidates are logged to `${SESSION_ROOT}/<subsystem>/dropped_findings.md` (append, one line per drop: `<date> — <title> — conf=<score> — <one-line reason>`) so the reviewer's reasoning is auditable and future iterations can re-examine if threshold changes.
+If zero findings: update `consecutive_clean` for this subsystem, rotate to next. No Phase 2 or 3. Zero findings means **zero confident findings after the <80 drop and false-positives filter** — a subsystem with candidate findings that all scored <80 still rotates, but the dropped candidates are logged to `${SESSION_ROOT}/<subsystem>/dropped_findings.md` (append, one line per drop: `<date> — <title> — conf=<score> — <one-line reason>`) so the reviewer's reasoning is auditable and future iterations can re-examine if threshold changes. When this file exceeds 200 lines, rotate — rename to `dropped_findings.md.<timestamp>` and start a new empty `dropped_findings.md`. Rotation is cheap, an unbounded audit file is not. Never delete rotated archives automatically; the user or a cleanup script handles them.
 
 #### PHASE 2: FIX
 

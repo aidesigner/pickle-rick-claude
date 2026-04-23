@@ -126,6 +126,8 @@ Before scoring, apply the `## False Positives — Do NOT Flag` exclusion list fr
 | 11 | Szechuan Principles Sweep | Scan every branch diff against `council-principles.md`. Score every violation P0–P4. Respect the principle tensions table — don't flag incidental similarity as DRY, don't demand abstraction under Rule of Three, don't flag three obvious lines as KISS loss |
 | 12+ | Polish + Trap Door Consolidation + CLAUDE.md Re-check | PR descriptions, naming, dead code, style drift. Final CLAUDE.md re-check. Consolidate any structural weaknesses surfaced in late passes into the directive's Trap Door section (per Step 15.5) — de-duplicate, sharpen the constraint description, and never write trap doors to repo files |
 
+**Pass 2 fail-open spec.** Before any `gh` invocation, probe with `gh auth status` AND `git remote -v | grep -iE 'github\.com'`. If EITHER fails, Pass 2 runs in **git-only mode** — `git log --oneline -10 -- <file>` and in-file guidance comments still execute; the `gh` portion is skipped. If `gh` is authed and a GitHub remote exists but a specific `gh pr list` or `gh pr view` call returns non-zero or empty, that specific query is skipped silently and the pass continues with the other signals. If ALL three signals (git log, gh, in-file comments) are unavailable, record the pass as `skipped (Historical Context: <reason>)` in the summary — this counts as skipped, NOT clean, and does NOT count toward the approval-gate clean streak (same semantics as Pass 7 Codex skip and Pass 10 Migration skip).
+
 ### Step 14.5: Codex Adversarial Execution Protocol
 
 Runs during Pass 7 only. If `codex_enabled` is false, skip — append "Pass 7 skipped: Codex not available (<reason>)" to the summary as a **skipped** pass (not a clean pass); the skip does not satisfy the approval gate's consecutive-clean-passes requirement and MUST NOT output `<promise>THE_CITADEL_APPROVES</promise>`.
@@ -201,12 +203,13 @@ Structure the directive as an agent-executable prompt with these sections:
 Print directive path. "The Council has spoken. Feed this to your agent, Rick."
 Append findings to summary (Step 17). Do NOT output `<promise>THE_CITADEL_APPROVES</promise>`.
 
-**No issues** → write clean directive (header + "No findings this pass — the Council defers to the next pass's focus area"), append clean-pass to summary. Output: `<promise>THE_CITADEL_APPROVES</promise>` **only** when all three conditions hold:
+**No issues** → write clean directive (header + "No findings this pass — the Council defers to the next pass's focus area"), append clean-pass to summary. Output: `<promise>THE_CITADEL_APPROVES</promise>` **only** when all four conditions hold:
 1. Current pass is >= `max(min_iterations, default_council_min_passes)` — the full dedicated-category rotation has run AND
 2. Detect consecutive clean passes by parsing the last two `## Pass <N>:` headers in `council-of-ricks-summary.md`; both must end with `clean pass.` (not `skipped (...)` and not an issues table) AND
-3. Those two passes produced zero P0/P1 findings across Council + Codex sources
+3. Every **unconditional** category — Passes 1, 2, 3, 4, 5, 6, 8, 9, 11 — has appeared in at least one `clean pass.` row in the full summary history (not necessarily consecutive). Pass 7 (Codex) and Pass 10 (Migration) are conditional — they may skip without blocking approval, but they also do not substitute for an unconditional pass. This condition closes the dual-skip loophole where a repo with no Codex and no Drizzle journal could otherwise earn approval without exercising all 9 mandatory categories AND
+4. Those two consecutive clean passes produced zero P0/P1 findings across Council + Codex sources
 
-Skipped passes (Codex disabled, Migration with no Drizzle journal) break the streak — they are not clean — so approval requires another clean pass on a runnable category before it can fire.
+Skipped passes (Codex disabled, Migration with no Drizzle journal, Historical Context git-only-and-dry) break the streak — they are not clean — so approval requires another clean pass on a runnable category before it can fire.
 
 ### Step 17: Findings Summary
 
@@ -228,6 +231,15 @@ Codex status: <N branches reviewed, M approved, K needs-attention, J skipped>
 **Clean:** `## Pass <N>: <CATEGORY> — clean pass.` (plus "The Citadel approves." if the approval criteria in Step 16 are met)
 
 **Skipped:** `## Pass <N>: <CATEGORY> — skipped (<reason>).` Skipped passes do NOT count as clean toward the approval gate's consecutive-clean-passes requirement (Step 16).
+
+**Dropped Candidates:** maintain a `## Dropped Candidates (conf < 80 and false-positive pre-filter)` subsection at the top of `council-of-ricks-summary.md` (append-only, one line per drop) with format `<pass> <branch> <file:line> <title> — conf=<score> — reason=<false-positive-bullet or confidence-drop>`. Do NOT list dropped findings inside the per-pass sections — keep the rotation summary clean. Dropped candidates are auditable but not actionable for the fixing agent.
+
+**Header terminal-suffix contract.** Every `## Pass <N>:` header MUST end with exactly one of three terminal suffixes. The Step 16 approval-gate parser treats any other suffix as a parse error (= not clean, does not break the skip streak either, logged as `parse_error` and requires human attention before the next pass fires):
+1. `— clean pass.` (with the em-dash and trailing period exactly)
+2. `— skipped (<reason>).`
+3. `— <count> issues (<P0>/<P1>/<P2>/<P3>/<P4>)` (no trailing period — the issues block is the terminal)
+
+This Step 17 template is the ONLY authority on header format; any drift elsewhere in the doc is a bug.
 
 ## Persona
 - Open: "The Council convenes!" Issues: "The Council has spoken." Clean: "adequate."

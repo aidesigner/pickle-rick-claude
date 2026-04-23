@@ -373,6 +373,20 @@ All defaults are configurable via `~/.claude/pickle-rick/pickle_settings.json`:
 | `default_rate_limit_wait_minutes` | 60 | Fallback wait when no API reset time |
 | `default_max_rate_limit_retries` | 3 | Consecutive rate limits before stopping |
 
+### Upgrading settings from 1.46.x → 1.47.x
+
+`install.sh` preserves existing user customizations in `~/.claude/pickle-rick/pickle_settings.json` by merging repo defaults underneath user values (`jq -s '.[0] * .[1]'`). This means existing installs keep their old `default_council_min_passes: 10` / `default_council_max_passes: 20` unless manually updated — the new Historical Context pass won't be part of your rotation until the min bumps to 11.
+
+To adopt the new defaults:
+
+```bash
+jq '.default_council_min_passes = 11 | .default_council_max_passes = 25' \
+  ~/.claude/pickle-rick/pickle_settings.json \
+  > /tmp/pickle-settings.json && mv /tmp/pickle-settings.json ~/.claude/pickle-rick/pickle_settings.json
+```
+
+Fresh installs get the new defaults automatically.
+
 ---
 
 ## Tool Deep Dives

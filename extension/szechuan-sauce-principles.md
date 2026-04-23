@@ -69,6 +69,8 @@ Every finding carries a confidence score alongside its severity — severity say
 
 **Decision rule**: any finding with confidence < 80 is dropped from the final output. The threshold is 80, not 75 — in iterative-review loops a single false positive can derail a whole iteration, so a "real but not important" 75 stays in your head, not in the report. Severity composes with confidence independently: a P0 security finding at confidence 50 is dropped; a P2 maintainability finding at confidence 100 is kept. Report both axes per finding as `[P<N>, conf=<score>]`.
 
+**Severity escape hatch (P0 only)**: A finding classified **P0** (the security / data-loss / auth-bypass / data-corruption / migration-hazard / injection tier) with confidence ≥ 50 ALWAYS surfaces, even though 50 is below the 80 drop line. When it surfaces under this exception, tag the finding `[NEEDS-VERIFICATION]` in the emitted output so the fixing agent knows confidence is soft. A surfaced `[NEEDS-VERIFICATION]` finding breaks the clean streak for approval-gate purposes exactly like any other non-clean finding. This escape hatch applies to P0 only — P1–P4 obey the `< 80` drop unconditionally. For review loops that use a non-P severity taxonomy (e.g. anatomy-park's CRITICAL/HIGH), the escape hatch applies to the equivalent top tier (CRITICAL). Rationale: a maybe-real SQL injection is worth an eyeball; a maybe-real naming nit is not.
+
 **Assigning confidence**: grep the symbol, read the surrounding code, check `git log` on the line, run the typechecker against your assumption. If you still can't confirm after that, it's 25 or 50 — and 25 or 50 means it stays out of the report. Do not round up to 75 to make a finding survive; that's how reviewers become noise.
 
 ## False Positives — Do NOT Flag
