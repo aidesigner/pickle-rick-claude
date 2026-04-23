@@ -14,13 +14,14 @@ function slugify(branch) {
 /**
  * Parse `gh pr list --json number,state,updatedAt` output tolerantly.
  * Accepts a JSON array (current shape) OR a bare integer on the first line
- * (legacy `--jq .[0].number` shape) — the fallback keeps older mocks and
- * possible `gh` variants working without a code change.
+ * (legacy `--jq .[0].number` shape). Returns a discriminated result so the
+ * caller can distinguish "well-formed but empty" from "unparseable" — the
+ * latter must NOT masquerade as `skipped_no_pr`.
  */
-function parsePrList(stdout) {
+export function parsePrList(stdout) {
     const trimmed = stdout.trim();
     if (!trimmed)
-        return [];
+        return { ok: true, rows: [] };
     const tryParseArray = (text) => {
         try {
             const parsed = JSON.parse(text);
@@ -34,7 +35,6 @@ function parsePrList(stdout) {
                 }))
                     .filter(r => Number.isFinite(r.number) && r.number > 0);
             }
-            // JSON.parse succeeds on bare integers / "null" too — caller falls through.
         }
         catch {
             // not JSON
@@ -43,10 +43,10 @@ function parsePrList(stdout) {
     };
     const direct = tryParseArray(trimmed);
     if (direct !== null)
-        return direct;
+        return { ok: true, rows: direct };
     // Some `gh` invocations emit a warning line (or several) before the JSON.
     // Walk from the top, skip lines until one begins with `[` or `{`, rejoin
-    // and retry. If that still fails we fall through to the bare-integer path.
+    // and retry. If that fails, fall through to the bare-integer path.
     const lines = trimmed.split('\n');
     for (let i = 0; i < lines.length; i++) {
         const head = lines[i].trimStart();
@@ -55,18 +55,28 @@ function parsePrList(stdout) {
             if (rest && rest !== trimmed) {
                 const retried = tryParseArray(rest);
                 if (retried !== null)
-                    return retried;
+                    return { ok: true, rows: retried };
             }
             break;
         }
     }
-    const n = Number(trimmed.split('\n')[0]);
-    return Number.isFinite(n) && n > 0 ? [{ number: n, state: 'OPEN' }] : [];
+    // Bare-integer legacy fallback: first non-empty line.
+    const firstLine = (lines.find(l => l.trim().length > 0) || '').trim();
+    const n = Number(firstLine);
+    if (Number.isFinite(n) && n > 0) {
+        return { ok: true, rows: [{ number: n, state: 'OPEN' }] };
+    }
+    const preview = trimmed.length > 120 ? trimmed.slice(0, 120) + '…' : trimmed;
+    return { ok: false, reason: `unparseable gh pr list output: ${preview}` };
 }
 /**
  * Scans the council-of-ricks-summary.md for `## Round N:` headers and returns
  * a clean bullet list reflecting every round outcome this session — so reviewers
  * see the full rotation (clean / partial / issues), not just the final state.
+ *
+ * Ignores `## Round N:` lines that appear inside fenced code blocks or
+ * block-quotes — the summary template itself shows literal `## Round ...`
+ * examples, so a line-oriented scan without fence tracking would double-count.
  */
 function extractRoundOutcomes(summaryPath) {
     if (!fs.existsSync(summaryPath))
@@ -75,7 +85,17 @@ function extractRoundOutcomes(summaryPath) {
         const content = fs.readFileSync(summaryPath, 'utf-8');
         const lines = content.split('\n');
         const rounds = [];
+        let inFence = false;
         for (const line of lines) {
+            const trimmed = line.trim();
+            if (/^(?:```|~~~)/.test(trimmed)) {
+                inFence = !inFence;
+                continue;
+            }
+            if (inFence)
+                continue;
+            if (trimmed.startsWith('>'))
+                continue;
             const m = line.match(/^##\s+Round\s+(\d+)\s*:\s*(.+?)\s*$/i);
             if (m) {
                 rounds.push(`- Round ${m[1]}: ${m[2].trim()}`);
@@ -113,29 +133,49 @@ function readLatestDirective(directivePath) {
     }
 }
 /**
- * Extracts per-branch findings rows from the latest directive. Findings tables
- * follow `### Findings` (or `## Findings`) and have a `Branch` column. We scan
- * every markdown-table-looking line and keep rows whose `Branch` cell matches.
+ * Extracts per-branch findings rows from the latest directive.
+ *
+ * Scoped to the FIRST `### Findings` / `## Findings` section. A directive
+ * also contains per-branch H3 sections (Step 16.5) and a `## Trap Doors`
+ * block, either of which may contain tables with a `Branch` column — a
+ * whole-document scan would cross-contaminate those rows into the per-branch
+ * comment under the wrong column schema. The section ends at the next
+ * heading of level 1–3. Inside the section we take the first table with a
+ * Branch column and emit rows whose Branch cell matches (backticks and
+ * surrounding whitespace normalized; column order does not matter —
+ * lookup is by header name, case-insensitive).
  */
 function findingsForBranch(directive, branch) {
     if (!directive)
         return [];
     const lines = directive.split('\n');
-    // Find any table with a Branch column. A table ends at a non-pipe line; when
-    // a new table starts we reset the header but keep the last one we used to
-    // emit rows, so we can reconstruct output even if row collection spans blocks.
-    const rows = [];
-    let header = null;
-    let usedHeader = null;
-    let branchCol = -1;
-    // Strip surrounding backticks and whitespace so `` `feat/one` `` matches `feat/one`.
     const normalize = (s) => s.trim().replace(/^`+|`+$/g, '').trim();
     const target = normalize(branch);
-    for (const raw of lines) {
+    let sectionStart = -1;
+    for (let i = 0; i < lines.length; i++) {
+        if (/^#{2,3}\s+Findings\b/i.test(lines[i].trim())) {
+            sectionStart = i + 1;
+            break;
+        }
+    }
+    if (sectionStart < 0)
+        return [];
+    let sectionEnd = lines.length;
+    for (let i = sectionStart; i < lines.length; i++) {
+        if (/^#{1,3}\s+\S/.test(lines[i].trim())) {
+            sectionEnd = i;
+            break;
+        }
+    }
+    const rows = [];
+    let header = null;
+    let branchCol = -1;
+    for (let i = sectionStart; i < sectionEnd; i++) {
+        const raw = lines[i];
         const line = raw.trim();
         if (!line.startsWith('|')) {
-            header = null;
-            branchCol = -1;
+            if (header)
+                break; // table ended; a second table in Findings is ignored
             continue;
         }
         const cells = line.split('|').slice(1, -1).map(s => s.trim());
@@ -143,22 +183,20 @@ function findingsForBranch(directive, branch) {
             const idx = cells.findIndex(c => c.toLowerCase() === 'branch');
             if (idx >= 0) {
                 header = cells;
-                usedHeader = cells;
                 branchCol = idx;
             }
             continue;
         }
-        // Skip separator row like |---|---|
         if (cells.every(c => /^:?-+:?$/.test(c)))
             continue;
         if (branchCol >= 0 && branchCol < cells.length && normalize(cells[branchCol]) === target) {
             rows.push(line);
         }
     }
-    if (rows.length === 0 || !usedHeader)
+    if (rows.length === 0 || !header)
         return [];
-    const sep = '| ' + usedHeader.map(() => '---').join(' | ') + ' |';
-    return ['| ' + usedHeader.join(' | ') + ' |', sep, ...rows];
+    const sep = '| ' + header.map(() => '---').join(' | ') + ' |';
+    return ['| ' + header.join(' | ') + ' |', sep, ...rows];
 }
 /**
  * Extracts the `## Trap Doors` section; trap doors are structural and shared
@@ -262,6 +300,16 @@ export default function publishCouncilStack(sessionRoot, opts = {}) {
     if (!branches.includes(trunk)) {
         throw new CouncilPublishError(`council-stack.json: trunk "${trunk}" not in branches list`);
     }
+    let repoStat;
+    try {
+        repoStat = fs.statSync(repo_path);
+    }
+    catch {
+        throw new CouncilPublishError(`council-stack.json: repo_path does not exist: ${repo_path}`);
+    }
+    if (!repoStat.isDirectory()) {
+        throw new CouncilPublishError(`council-stack.json: repo_path is not a directory: ${repo_path}`);
+    }
     const commentsDir = path.join(sessionRoot, 'council-comments');
     fs.mkdirSync(commentsDir, { recursive: true });
     const publishedDir = path.join(sessionRoot, '.published');
@@ -323,7 +371,22 @@ export default function publishCouncilStack(sessionRoot, opts = {}) {
             let prNumber;
             try {
                 const out = execFileSync(ghCommand, ['pr', 'list', '--head', branch, '--state', 'all', '--json', 'number,state,updatedAt'], { cwd: repo_path, stdio: 'pipe', encoding: 'utf8' }).trim();
-                const prs = parsePrList(out);
+                const parsed = parsePrList(out);
+                if (!parsed.ok) {
+                    // Unparseable `gh` output must NOT masquerade as "no PR found".
+                    // Classify as failure so the operator sees a real signal.
+                    const r = {
+                        branch,
+                        outcome: 'failed',
+                        error: `pr list parse: ${parsed.reason}`,
+                        body_path: bodyPath,
+                    };
+                    results.push(r);
+                    failed++;
+                    appendPublishLog(logFd, r);
+                    continue;
+                }
+                const prs = parsed.rows;
                 if (prs.length === 0) {
                     const r = { branch, outcome: 'skipped_no_pr', body_path: bodyPath };
                     results.push(r);
@@ -402,6 +465,13 @@ export default function publishCouncilStack(sessionRoot, opts = {}) {
             warnings.push(msg);
             appendPublishLogRaw(logFd, { level: 'warn', message: msg });
         }
+        // Trunk-only stack: no non-trunk branches to publish to. Surface as a
+        // warning so `posted=0/skipped=0/failed=0` doesn't look like success.
+        if (nonTrunkResults.length === 0) {
+            const msg = 'council-stack.json has no non-trunk branches; nothing to publish';
+            warnings.push(msg);
+            appendPublishLogRaw(logFd, { level: 'warn', message: msg });
+        }
         const report = { session_root: sessionRoot, results, posted, skipped, failed };
         if (warnings.length > 0)
             report.warnings = warnings;
@@ -414,10 +484,20 @@ export default function publishCouncilStack(sessionRoot, opts = {}) {
 if (process.argv[1] && path.basename(process.argv[1]) === 'council-publish.js') {
     const sessionRoot = process.argv[2];
     if (!sessionRoot) {
-        console.error('Usage: council-publish <SESSION_ROOT>');
+        console.error('Usage: council-publish <SESSION_ROOT> [--dry-run]');
         process.exit(1);
     }
-    const dryRun = process.argv.includes('--dry-run');
+    let dryRun = false;
+    for (const arg of process.argv.slice(3)) {
+        if (arg === '--dry-run') {
+            dryRun = true;
+        }
+        else {
+            console.error(`council-publish: unknown argument: ${arg}`);
+            console.error('Usage: council-publish <SESSION_ROOT> [--dry-run]');
+            process.exit(2);
+        }
+    }
     try {
         const report = publishCouncilStack(sessionRoot, { dryRun });
         console.log(JSON.stringify(report, null, 2));

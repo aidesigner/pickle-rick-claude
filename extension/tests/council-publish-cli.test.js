@@ -137,3 +137,28 @@ test('council-publish CLI: --dry-run happy path → exit 0, prints JSON report',
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
 });
+
+// --- 4. Unknown flag → exit 2 (no silent ignore of typo'd --dry-run) ---
+
+test('council-publish CLI: unknown flag → exit 2 with clear message', () => {
+    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-cp-cli-unknown-')));
+    try {
+        fs.writeFileSync(
+            path.join(tmpDir, 'council-stack.json'),
+            JSON.stringify({
+                branches: ['feat/cli-test', 'main'],
+                trunk: 'main',
+                repo_path: tmpDir,
+                codex_enabled: false,
+            }, null, 2),
+        );
+        const res = spawnSync(process.execPath, [CLI_PATH, tmpDir, '--dryrun'], {
+            encoding: 'utf-8',
+            timeout: SPAWN_TIMEOUT_MS,
+        });
+        assert.equal(res.status, 2, `expected exit 2, got ${res.status}; stderr=${res.stderr}`);
+        assert.match(res.stderr, /unknown argument: --dryrun/);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});

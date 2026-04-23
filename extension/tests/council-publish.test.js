@@ -414,6 +414,159 @@ test('publishCouncilStack: directive with no Findings table emits empty-findings
     }
 });
 
+// --- 13b. Hardening: Branch column in per-branch H3 table must NOT leak into Findings ---
+
+test('publishCouncilStack: per-branch H3 tables do not contaminate Findings rows', async () => {
+    const mock = makeGhMock({
+        auth: 'ok',
+        prList: { 'feat/one': 42, 'feat/two': 99 },
+        prComment: {},
+    });
+    // Directive contains TWO tables with a Branch column:
+    //   1. ### Findings — the legitimate one the publisher should scrape
+    //   2. ### feat/one per-branch section — has its own detail table with
+    //      "Branch" somewhere. A whole-document scan would merge these.
+    // Expected: only the Findings rows appear in each branch comment.
+    const directive = [
+        '# Council Directive — Round 1',
+        '',
+        '## Findings',
+        '',
+        '| Severity | Branch | File | Issue |',
+        '|---|---|---|---|',
+        '| P0 | feat/one | a.ts:1 | real-finding-1 |',
+        '| P1 | feat/two | b.ts:2 | real-finding-2 |',
+        '',
+        '## Per-branch sections',
+        '',
+        '### feat/one',
+        '',
+        '| Branch | Extra | Detail |',
+        '|---|---|---|',
+        '| feat/one | leaked | SHOULD-NOT-APPEAR |',
+        '',
+        '### feat/two',
+        '',
+        '| Branch | Extra | Detail |',
+        '|---|---|---|',
+        '| feat/two | leaked | SHOULD-NOT-APPEAR |',
+        '',
+    ].join('\n');
+    try {
+        await withSession(async (sessionDir) => {
+            await publishCouncilStack(sessionDir, { ghCommand: mock.ghPath });
+            const oneBody = fs.readFileSync(
+                path.join(sessionDir, 'council-comments', 'feat__one.md'), 'utf-8',
+            );
+            const twoBody = fs.readFileSync(
+                path.join(sessionDir, 'council-comments', 'feat__two.md'), 'utf-8',
+            );
+            assert.ok(/real-finding-1/.test(oneBody), 'legit Findings row present');
+            assert.ok(!/SHOULD-NOT-APPEAR/.test(oneBody), 'per-branch H3 table row must not leak');
+            assert.ok(/real-finding-2/.test(twoBody));
+            assert.ok(!/SHOULD-NOT-APPEAR/.test(twoBody));
+        }, { directive });
+    } finally {
+        cleanupGhMock(mock);
+    }
+});
+
+// --- 13c. Hardening: extractRoundOutcomes ignores `## Round N:` inside code fences ---
+
+test('publishCouncilStack: Round headers inside fenced code blocks are not counted', async () => {
+    const mock = makeGhMock({
+        auth: 'ok',
+        prList: { 'feat/one': 42, 'feat/two': 99 },
+        prComment: {},
+    });
+    const summary = [
+        '## Round 1: — clean round.',
+        '',
+        '```md',
+        '## Round 99: — clean round.  <!-- example inside a fence; must be ignored -->',
+        '```',
+        '',
+        '## Round 2: — clean round.',
+        '',
+    ].join('\n');
+    try {
+        await withSession(async (sessionDir) => {
+            await publishCouncilStack(sessionDir, { ghCommand: mock.ghPath });
+            const body = fs.readFileSync(
+                path.join(sessionDir, 'council-comments', 'feat__one.md'), 'utf-8',
+            );
+            assert.ok(/- Round 1:/.test(body));
+            assert.ok(/- Round 2:/.test(body));
+            assert.ok(!/Round 99/.test(body), 'fenced Round 99 must not leak into outcomes');
+            // Final round = 2, not 3.
+            assert.ok(/\*\*Final round:\*\* 2/.test(body));
+        }, { summary });
+    } finally {
+        cleanupGhMock(mock);
+    }
+});
+
+// --- 13d. Hardening: unparseable gh pr list output → `failed`, not `skipped_no_pr` ---
+
+test('publishCouncilStack: garbage gh pr list output classifies as failed, not skipped_no_pr', async () => {
+    const mock = makeGhMock({
+        auth: 'ok',
+        prList: {
+            'feat/one': 'HTTP/2 401\nauthentication required — token expired',
+            'feat/two': 99,
+        },
+        prComment: {},
+    });
+    try {
+        await withSession(async (sessionDir) => {
+            const report = await publishCouncilStack(sessionDir, { ghCommand: mock.ghPath });
+            const one = report.results.find(r => r.branch === 'feat/one');
+            assert.equal(one.outcome, 'failed', 'garbage stdout must not become skipped_no_pr');
+            assert.ok(/pr list parse/.test(one.error), 'error mentions pr list parse');
+            // feat/two unaffected — single-branch garbage does not kill the sweep.
+            const two = report.results.find(r => r.branch === 'feat/two');
+            assert.equal(two.outcome, 'posted');
+        });
+    } finally {
+        cleanupGhMock(mock);
+    }
+});
+
+// --- 13e. Hardening: invalid repo_path throws a clear CouncilPublishError ---
+
+test('publishCouncilStack: throws when repo_path does not exist', async () => {
+    await withSession((sessionDir) => {
+        assert.throws(
+            () => publishCouncilStack(sessionDir),
+            (err) => err instanceof CouncilPublishError && /repo_path does not exist/.test(err.message),
+        );
+    }, {
+        stack: {
+            branches: ['feat/one', 'main'],
+            trunk: 'main',
+            repo_path: path.join(os.tmpdir(), 'definitely-not-a-real-repo-xyz-' + Date.now()),
+            codex_enabled: false,
+        },
+    });
+});
+
+// --- 13f. Hardening: trunk-only stack surfaces a warning instead of silent zero ---
+
+test('publishCouncilStack: trunk-only stack warns that there is nothing to publish', async () => {
+    await withSession(async (sessionDir) => {
+        const report = await publishCouncilStack(sessionDir, { dryRun: true });
+        assert.equal(report.posted, 0);
+        assert.equal(report.results.length, 0);
+        assert.ok(Array.isArray(report.warnings));
+        assert.ok(
+            report.warnings.some(w => /no non-trunk branches/.test(w)),
+            'warns operator that there is nothing to publish',
+        );
+    }, {
+        stack: { branches: ['main'], trunk: 'main', repo_path: os.tmpdir(), codex_enabled: false },
+    });
+});
+
 // --- 14. Hardening: real Step 17 terminal suffixes produce Round bullets ---
 
 test('publishCouncilStack: extractRoundOutcomes handles real terminal-suffix formats', async () => {

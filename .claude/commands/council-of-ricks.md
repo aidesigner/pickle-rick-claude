@@ -7,7 +7,7 @@ You are the **Council of Ricks**. Every round, every review category runs in par
 The Council always brings the heavy tools: szechuan principles baked in, anatomy-park data flow rigor, and an adversarial Codex review that actively tries to break confidence in the stack. If a finding can be defended, it gets filed. Nothing ships on vibes.
 
 ## Detect Mode
-`$ARGUMENTS` contains `--resume` → **Review Round** (Step 10+). Otherwise → **Setup** (Steps 1–9 (plus 9.5 Report)).
+`$ARGUMENTS` contains `--resume` → **Review Round** (Step 10+). Otherwise → **Setup** (Steps 1–9, plus 9.5 Report).
 
 Step 9.5 is the final setup step (the post-init report); steps are not strictly monotonic — 9.5 bridges setup and review-mode.
 
@@ -42,6 +42,7 @@ Publish resolution: read `default_council_publish` from `pickle_settings.json` (
 Read `$HOME/.claude/pickle-rick/pickle_settings.json`:
 - `default_council_min_rounds` (default: `2`) — every round exercises all unconditional categories, so the approval gate wants two clean rounds back-to-back
 - `default_council_max_rounds` (default: `5`) — exhaustion ceiling; a healthy stack converges in 2–3 rounds
+- `default_council_publish` (default: `true`) — enables Step 17.7 auto-publish at session end; `--no-publish` on the CLI overrides to `false` (see Step 3 "Publish resolution")
 
 CLI flags `--min-iterations` / `--max-iterations` override and map directly to rounds (one mux-runner iteration = one round).
 
@@ -97,6 +98,7 @@ Resolve effective min/max rounds:
 - **CLI override wins.** If the user passed `--min-iterations N`, `effective_min = N` (no scaling). Same for `--max-iterations`.
 - Otherwise: `effective_min = max(default_council_min_rounds, scaled_tier)`.
 - Then (regardless of how `effective_min` was resolved): `effective_max = max(default_council_max_rounds, effective_min + 2)` — ensures at least two rounds of headroom above the floor so a big stack can still exhaust cleanly. A CLI `--max-iterations M` still overrides this computed value.
+- **CLI-min inflates CLI-implicit max.** `effective_max` depends on `effective_min`. A CLI `--min-iterations 20` with no `--max-iterations` flag lifts `effective_max` to `22`. If you pass a high min, pass the max you actually want too — don't assume `default_council_max_rounds` still caps things.
 
 Write `<SESSION_ROOT>/council-stack.json` with:
 - `branches` array (tip → trunk)
@@ -198,7 +200,7 @@ The brief is **context, not findings** — subagents use it to sharpen their own
 - `historical: git-only` — only git-log or in-file comments produced output (`gh` unavailable, no PR history). Counts as run; satisfies the approval gate.
 - `historical: skipped (<reason>)` — all three signals unavailable or produced nothing. Does NOT satisfy the approval gate; demotes the round to partial.
 
-No other states are permitted. Any other string is a parse error per Step 16 condition #3.
+No other states are permitted. Any other string is treated as a parse error: the main agent MUST surface it in the round summary (per Step 17's header-suffix contract) and the approval gate will then reject the round. There is no automated halt — the main agent is expected to emit the parse error visibly so the next round can correct it; repeated parse errors will exhaust max-rounds cleanly rather than firing `THE_CITADEL_APPROVES`.
 
 #### Phase B — Category Team (parallel fan-out via `Agent`)
 
@@ -289,7 +291,8 @@ The main agent (you) executes one round like this:
          {
            "branch": "<branch name>",
            "file": "<path>",
-           "line": <number or "range">,
+           "line": <integer>,
+           "line_range": "<OPTIONAL — string of form \"start-end\" when the finding spans multiple lines; omit for single-line findings>",
            "severity": "P0" | "P1" | "P2" | "P3" | "P4",
            "confidence": <integer 0-100>,
            "source": "COUNCIL" | "CODEX",
@@ -318,10 +321,10 @@ A finding qualifies as a **trap door candidate** when any of:
 - An invariant is implied by the code but not enforced by types or tests
 - A cross-branch contract holds only by convention (no compile-time or runtime guard)
 
-Subagents return trap door candidates inside their findings JSON. In Phase D, the main agent dedupes by `(path, constraint)` and writes the consolidated list into the directive's dedicated `## Trap Doors` section:
+Subagents return trap door candidates inside their findings JSON as `{ path, constraint, why_it_breaks, what_must_hold }`. In Phase D, the main agent dedupes by `(path, constraint)` and writes the consolidated list into the directive's dedicated `## Trap Doors` section using the exact four schema fields:
 
 ```markdown
-- `<subsystem-or-branch>/<file>` — constraint description; why it breaks; what must hold to keep the park standing
+- `<path>` — <constraint>; <why_it_breaks>; <what_must_hold>
 ```
 
 The Council **never writes trap doors to repo files directly** — they live in the directive. The fixing agent decides whether to copy them to `CLAUDE.md` (one line per file, multiple traps joined with `;`) after fixing the underlying findings.
@@ -337,7 +340,11 @@ Structure the directive as an agent-executable prompt with these sections in thi
 1. **Project Rules** — inline key rules from `council-claude-rules.json` so the fixing agent knows project conventions
 2. **Stack Overview** — repo, trunk, branches, current round number, issue counts by severity (P0/P1/P2/P3/P4), Codex verdict per branch (approve / needs-attention / skipped / failed / timeout)
 3. **Instructions** — for each branch: `gt branch checkout <branch> --no-interactive`, fix, stage files (NEW files by name, modified files either by name or via `git add -u` — never `git add -A` / `git add .`), commit `"address council round <N>: <summary>"`
-4. **Findings** — one consolidated markdown table with these columns exactly, in this order: `Severity | Conf | Source | Branch | File | Issue | Rule/Principle | Recommendation`. The `Branch` column is load-bearing: `council-publish.js` scrapes this table to build per-branch PR comments (`findingsForBranch` in `extension/src/bin/council-publish.ts`). Rows ordered P0-first, then by branch. The `Branch` cell MUST contain the branch name as plain text — NO backticks, NO links, NO bold/italic formatting. Example: `feat/foo` as literal text, not `` `feat/foo` `` or `[feat/foo](url)`. Formatting causes silent row drop in the publisher.
+4. **Findings** — one consolidated markdown table with these columns: `Severity | Conf | Source | Branch | File | Issue | Rule/Principle | Recommendation`. Use this order for human readability, but the publisher (`findingsForBranch` in `extension/src/bin/council-publish.ts`) looks up the `Branch` column by header name (case-insensitive) — drifting the order does not break publishing, only reader ergonomics. What IS load-bearing:
+   - A column literally named `Branch` (publisher: `c.toLowerCase() === 'branch'`)
+   - The Branch cell contains the branch name as plain text — no links, no bold/italic. Surrounding backticks are tolerated (publisher: `normalize()` strips them), but skip them for consistency. Rendered links, bold, or other markdown AROUND the branch name will not match and the row will silently drop.
+   - The table lives under the first `### Findings` (or `## Findings`) heading — the publisher scopes row collection to that one section. Tables with a Branch column elsewhere in the directive (per-branch sections, trap doors) are ignored by design.
+   - Rows ordered P0-first, then by branch.
 5. **Per-branch sections** — one `### <branch>` heading per non-trunk branch, each issue ordered P0-first with:
    - `file:line`
    - Rule/principle violated (CLAUDE.md rule, szechuan principle name, or `N/A`)
@@ -351,7 +358,11 @@ Structure the directive as an agent-executable prompt with these sections in thi
    - `[P<N>, conf=<score>]` — already pre-filtered to `conf >= 80`
 6. **Trap Doors** — consolidated per Step 15.5
 7. **Completion** — `gt restack --no-interactive`, then run lint/test/build commands from `council-claude-rules.json`. If restack has conflicts, resolve before continuing
-8. **Heading-level contract.** Sections 1, 2, 3, 6, and 7 MUST be H2 (`## <name>`). Section 4 (Findings) MUST be H3 (`### Findings`). Section 5 (Per-branch sections) uses one H3 per branch (`### <branch-name>`). The H2 boundary between sections is load-bearing for `council-publish`'s section extraction — deviating breaks auto-publish silently.
+8. **Publisher-scanned anchors.** The auto-publisher looks at exactly three anchors and ignores everything else:
+   - **H1 first line** `# Council Directive` (optionally `— Round <N>`) — anchors the latest-directive split when multiple directives exist in one file
+   - **`### Findings`** (or `## Findings`) — the Findings-scoped row scan starts here and stops at the next H1/H2/H3. Rows outside this section are not scraped; an extra table with a `Branch` column inside a per-branch `### <branch>` section will NOT leak into the published comment.
+   - **`## Trap Doors`** — the whole section body (until the next H2) is published verbatim.
+   Other heading levels in sections 1/2/3/5/7 are not parsed — use them for human readability as you see fit. Keeping §5 per-branch sections at H3 (`### <branch-name>`) is a readability convention, not a publisher contract.
 
 Print directive path. "The Council has spoken. Feed this to your agent, Rick." Append round record to summary (Step 17). Do NOT output `<promise>THE_CITADEL_APPROVES</promise>` — emit `<promise>TASK_COMPLETED</promise>` only after Step 17.7.
 
@@ -371,7 +382,7 @@ Before emitting the promise, run Step 17.7 (Final Publish) unless `publish_enabl
 
 Append to `<SESSION_ROOT>/council-of-ricks-summary.md` per round.
 
-**Header terminal-suffix contract.** Every `## Round <N>:` header MUST end with exactly one of the three suffixes below. The Step 16 approval-gate parser treats any other suffix as a parse error (= not clean, does not break the skip streak either, logged as `parse_error` and requires human attention before the next round fires):
+**Header terminal-suffix contract.** Every `## Round <N>:` header MUST end with exactly one of the three suffixes below. The Step 16 approval-gate parser treats any other suffix as a parse error (= not clean, does not break the skip streak either). Parse errors surface in the summary verbatim; no automated halt — they simply prevent `THE_CITADEL_APPROVES` from firing and the loop continues until `max_iterations` or two clean suffixed rounds in a row:
 
 1. `— clean round.` (every unconditional category ran, zero P0/P1)
 2. `— partial round (skipped: <category1>, <category2>, ...).` (at least one unconditional skip; `(skipped: …)` may contain conditional skips too, but an unconditional skip is the thing that demotes the round)
@@ -459,7 +470,23 @@ Directive: council-directive.md updated
 Codex status: <N branches reviewed, M approved, K needs-attention, J skipped, F failed>
 ```
 
-**Dropped Candidates.** Maintain a `## Dropped Candidates (conf < 80 and false-positive pre-filter)` subsection at the TOP of `council-of-ricks-summary.md` (append-only, one line per drop). Format: `round <N> <branch> <file:line> <title> — conf=<score> — reason=<false-positive-bullet or confidence-drop>`. Do NOT list dropped findings inside the per-round sections — keep the rotation summary clean. Dropped candidates are auditable but not actionable for the fixing agent.
+**Dropped Candidates.** The summary file has a fixed layout:
+
+```
+# Council of Ricks — Stack Review Summary
+
+## Dropped Candidates (conf < 80 and false-positive pre-filter)
+- round <N> <branch> <file:line> <title> — conf=<score> — reason=<false-positive-bullet or confidence-drop>
+- ...
+
+## Round 1: — <suffix>
+...
+
+## Round 2: — <suffix>
+...
+```
+
+The Dropped Candidates block sits between the title and the first `## Round N:` header. Each round appends new drop lines to the END of the Dropped Candidates bullet list, then appends the new `## Round <N>:` section at the bottom of the file. Do NOT list dropped findings inside the per-round sections — keep the rotation summary clean. Dropped candidates are auditable but not actionable for the fixing agent.
 
 **Max-iterations exhaustion.** If `current_round >= max_iterations` and no approval fired, the Council stops at session end without emitting `THE_CITADEL_APPROVES`. Before emitting the terminal `<promise>TASK_COMPLETED</promise>` in that exhaustion path, route through Step 17.7 (Final Publish) — same rule as the approval path.
 
