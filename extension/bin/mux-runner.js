@@ -36,23 +36,20 @@ export function stripSetupSection(prompt) {
     const endIndex = setupMatch.index + setupMatch[0].length + nextMatch.index;
     return prompt.slice(0, setupMatch.index) + prompt.slice(endIndex);
 }
-/**
- * Truncate TASK_NOTES.md content with section-aware priority.
- * Preserves ## Next and ## Dead Ends fully, trims ## Progress from oldest.
- * Sections without recognized headers are treated as Progress.
- */
-export function truncateTaskNotes(content, maxChars = 2000) {
-    if (!content || !content.trim())
-        return '';
-    if (content.length <= maxChars)
-        return content;
-    // Parse sections by ## headers
+const TASK_NOTE_PRIORITY = {
+    'Next': 0,
+    'Dead Ends': 1,
+    'Key Discoveries': 2,
+    'Progress': 3,
+};
+const TASK_NOTE_TRUNC_MARKER = '[truncated]';
+function parseTaskNoteSections(content) {
     const sectionRegex = /^## .+$/gm;
     const sections = [];
+    let preamble = '';
     let lastIndex = 0;
     let lastHeader = '';
     let match;
-    let preamble = '';
     while ((match = sectionRegex.exec(content)) !== null) {
         if (lastIndex === 0 && match.index > 0) {
             preamble = content.slice(0, match.index);
@@ -66,42 +63,47 @@ export function truncateTaskNotes(content, maxChars = 2000) {
     if (lastHeader) {
         sections.push({ name: lastHeader, body: content.slice(lastIndex) });
     }
+    return { preamble, sections };
+}
+function priorityFor(name) {
+    return TASK_NOTE_PRIORITY[name] ?? 3;
+}
+/**
+ * Truncate TASK_NOTES.md content with section-aware priority.
+ * Preserves ## Next and ## Dead Ends fully, trims ## Progress from oldest.
+ * Sections without recognized headers are treated as Progress.
+ */
+export function truncateTaskNotes(content, maxChars = 2000) {
+    if (!content || !content.trim())
+        return '';
+    if (content.length <= maxChars)
+        return content;
+    const { preamble, sections } = parseTaskNoteSections(content);
     // No recognized sections — treat entire content as trimmable from top
     if (sections.length === 0) {
-        const marker = '[truncated]\n';
-        const trimmed = content.slice(content.length - (maxChars - marker.length));
-        return marker + trimmed;
+        const marker = `${TASK_NOTE_TRUNC_MARKER}\n`;
+        return marker + content.slice(content.length - (maxChars - marker.length));
     }
-    // Priority order: Next (0), Dead Ends (1), Key Discoveries (2), Progress (3), other (3)
-    const priorityMap = {
-        'Next': 0,
-        'Dead Ends': 1,
-        'Key Discoveries': 2,
-        'Progress': 3,
-    };
-    const getPriority = (name) => priorityMap[name] ?? 3;
-    // Phase 1: Remove Progress/unrecognized sections
-    const withoutProgress = sections.filter(s => getPriority(s.name) < 3);
+    // Phase 1: Drop Progress/unrecognized sections; add back the tail of the
+    // most recent Progress section if any budget remains.
+    const withoutProgress = sections.filter(s => priorityFor(s.name) < 3);
     let result = preamble + withoutProgress.map(s => s.body).join('');
     if (result.length <= maxChars) {
-        // Add back as much Progress as fits (most recent = bottom)
-        const progressSections = sections.filter(s => getPriority(s.name) === 3);
+        const progress = sections.filter(s => priorityFor(s.name) === 3);
         const remaining = maxChars - result.length;
-        if (remaining > 20 && progressSections.length > 0) {
-            const ps = progressSections[progressSections.length - 1];
-            const trimmedBody = ps.body.slice(ps.body.length - remaining);
-            result += '\n[truncated]\n' + trimmedBody;
+        if (remaining > 20 && progress.length > 0) {
+            const tail = progress[progress.length - 1].body;
+            result += `\n${TASK_NOTE_TRUNC_MARKER}\n` + tail.slice(tail.length - remaining);
         }
         return result.length <= maxChars ? result : result.slice(0, maxChars);
     }
-    // Phase 2: Remove Key Discoveries too
-    const highPriority = sections.filter(s => getPriority(s.name) <= 1);
+    // Phase 2: Drop Key Discoveries too.
+    const highPriority = sections.filter(s => priorityFor(s.name) <= 1);
     result = preamble + highPriority.map(s => s.body).join('');
-    if (result.length <= maxChars) {
-        return result + '\n[truncated]';
-    }
-    // Phase 3: Hard truncate from end
-    return result.slice(0, maxChars - 12) + '\n[truncated]';
+    if (result.length <= maxChars)
+        return `${result}\n${TASK_NOTE_TRUNC_MARKER}`;
+    // Phase 3: Hard truncate from end.
+    return result.slice(0, maxChars - (TASK_NOTE_TRUNC_MARKER.length + 2)) + `\n${TASK_NOTE_TRUNC_MARKER}`;
 }
 /**
  * Detects whether tickets in a session span multiple repositories.
