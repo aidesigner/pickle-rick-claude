@@ -75,58 +75,19 @@ export function resolveScope(args) {
     const { repoRoot, sessionRoot } = args;
     assertIsRepo(repoRoot);
     const parsed = parseScope(args.scopeFlag);
-    let baseRef = null;
-    let baseSha = null;
-    let allowed;
     const headSha = getHeadSha(repoRoot);
-    if (parsed.mode === 'paths') {
-        const globs = (parsed.base ?? '').split(',').map((s) => s.trim()).filter((s) => s.length > 0);
-        if (globs.length === 0) {
-            throw new ScopeError('SCOPE_BAD_FLAG', `--scope paths: requires at least one non-empty glob`);
-        }
-        const tree = listTrackedAndUntracked(repoRoot);
-        const matched = tree.filter((p) => globs.some((g) => globMatch(g, p)));
-        allowed = filterByTarget(matched, args.target, repoRoot);
-        if (allowed.length === 0) {
-            throw new ScopeError('SCOPE_EMPTY_PATHS', `--scope paths:${parsed.base} matched zero files under ${repoRoot}`);
-        }
-    }
-    else {
-        baseRef = args.scopeBase ?? resolveDefaultBase(repoRoot);
-        try {
-            baseSha = getMergeBase(baseRef, 'HEAD', repoRoot);
-        }
-        catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            throw new ScopeError('SCOPE_BASE_MISSING', `Base ref "${baseRef}" not resolvable: ${msg}`);
-        }
-        let diff;
-        try {
-            diff = getDiffFiles(baseSha, headSha, repoRoot);
-        }
-        catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            throw new ScopeError('SCOPE_BASE_MISSING', `Diff ${baseSha}...HEAD failed: ${msg}`);
-        }
-        const binaries = getBinaryPathSet(baseSha, headSha, repoRoot);
-        const paths = diff
-            .filter((d) => d.status === 'A' || d.status === 'M' || d.status === 'R')
-            .map((d) => d.path)
-            .filter((p) => !binaries.has(toPosix(p)));
-        allowed = filterByTarget(paths, args.target, repoRoot);
-        if (allowed.length === 0) {
-            throw new ScopeError('SCOPE_EMPTY_DIFF', `No files changed between ${baseRef} and HEAD for mode=${parsed.mode}`);
-        }
-    }
-    const base = Array.from(new Set(allowed.map(toPosix)));
+    const resolved = parsed.mode === 'paths'
+        ? { allowed: resolveAllowedFromPaths(parsed.base, args.target, repoRoot), baseRef: null, baseSha: null }
+        : resolveAllowedFromDiffMode(parsed, args, headSha, repoRoot);
+    const base = Array.from(new Set(resolved.allowed.map(toPosix)));
     const expanded = parsed.strategy === 'one-hop' ? computeOneHop(base, repoRoot) : base;
     const normalized = expanded.sort(byteOrder);
     const scope = {
         version: 1,
         mode: parsed.mode,
         strategy: parsed.strategy,
-        base_ref: baseRef,
-        base_sha: baseSha,
+        base_ref: resolved.baseRef,
+        base_sha: resolved.baseSha,
         head_sha: headSha,
         allowed_paths: normalized,
         resolved_at: new Date().toISOString(),
@@ -134,6 +95,57 @@ export function resolveScope(args) {
     };
     writeScopeJson(path.join(sessionRoot, 'scope.json'), scope);
     return scope;
+}
+function resolveAllowedFromPaths(globSpec, target, repoRoot) {
+    const globs = (globSpec ?? '').split(',').map((s) => s.trim()).filter((s) => s.length > 0);
+    if (globs.length === 0) {
+        throw new ScopeError('SCOPE_BAD_FLAG', `--scope paths: requires at least one non-empty glob`);
+    }
+    const tree = listTrackedAndUntracked(repoRoot);
+    const matched = tree.filter((p) => globs.some((g) => globMatch(g, p)));
+    const allowed = filterByTarget(matched, target, repoRoot);
+    if (allowed.length === 0) {
+        throw new ScopeError('SCOPE_EMPTY_PATHS', `--scope paths:${globSpec} matched zero files under ${repoRoot}`);
+    }
+    return allowed;
+}
+function resolveAllowedFromDiffMode(parsed, args, headSha, repoRoot) {
+    const baseRef = args.scopeBase ?? resolveDefaultBase(repoRoot);
+    let baseSha;
+    try {
+        baseSha = getMergeBase(baseRef, 'HEAD', repoRoot);
+    }
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new ScopeError('SCOPE_BASE_MISSING', `Base ref "${baseRef}" not resolvable: ${msg}`);
+    }
+    let paths;
+    try {
+        paths = computeAllowedFromDiff(baseSha, headSha, repoRoot);
+    }
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new ScopeError('SCOPE_BASE_MISSING', `Diff ${baseSha}...HEAD failed: ${msg}`);
+    }
+    const allowed = filterByTarget(paths, args.target, repoRoot);
+    if (allowed.length === 0) {
+        throw new ScopeError('SCOPE_EMPTY_DIFF', `No files changed between ${baseRef} and HEAD for mode=${parsed.mode}`);
+    }
+    return { allowed, baseRef, baseSha };
+}
+/**
+ * Shared filter for the `base…head` diff: emit repo-relative POSIX paths for
+ * A/M/R-new entries, with binary files removed. Used by both `resolveScope`
+ * and `refreshScope` so future changes to the inclusion rules live in one
+ * place. Throws the raw `getDiffFiles` error — callers add context.
+ */
+function computeAllowedFromDiff(baseSha, headSha, repoRoot) {
+    const diff = getDiffFiles(baseSha, headSha, repoRoot);
+    const binaries = getBinaryPathSet(baseSha, headSha, repoRoot);
+    return diff
+        .filter((d) => d.status === 'A' || d.status === 'M' || d.status === 'R')
+        .map((d) => d.path)
+        .filter((p) => !binaries.has(toPosix(p)));
 }
 /**
  * Per-phase scope refresh. Idempotent: if `phase` is already recorded in
@@ -195,19 +207,14 @@ export function refreshScope(sessionRoot, phase, opts = {}) {
         if (!scope.base_sha) {
             throw new ScopeError('SCOPE_BASE_MISSING', `refreshScope: scope.json has no base_sha for mode=${scope.mode}`);
         }
-        let diff;
+        let base;
         try {
-            diff = getDiffFiles(scope.base_sha, newHead, repoRoot);
+            base = computeAllowedFromDiff(scope.base_sha, newHead, repoRoot);
         }
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             throw new ScopeError('SCOPE_BASE_MISSING', `refreshScope: diff ${scope.base_sha}...${newHead} failed: ${msg}`);
         }
-        const binaries = getBinaryPathSet(scope.base_sha, newHead, repoRoot);
-        const base = diff
-            .filter((d) => d.status === 'A' || d.status === 'M' || d.status === 'R')
-            .map((d) => d.path)
-            .filter((p) => !binaries.has(toPosix(p)));
         const expanded = scope.strategy === 'one-hop' ? computeOneHop(base, repoRoot) : base;
         newAllowed = Array.from(new Set(expanded.map(toPosix))).sort(byteOrder);
     }
