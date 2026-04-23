@@ -94,6 +94,30 @@ test('phase-1 invariant marker present in anatomy-park.md', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Standalone-mode ordering: scope-hook fires AFTER Step 6.5 creates scope.json
+// ---------------------------------------------------------------------------
+
+test('standalone scope-hook is placed after Step 6.5 (Resolve Scope) in anatomy-park.md', () => {
+  const content = fs.readFileSync(ANATOMY_PARK_MD, 'utf-8');
+  const hookIdx = content.indexOf('<!-- scope-hook: discovery-filter -->');
+  const resolveStepIdx = content.indexOf('### Step 6.5: Resolve Scope');
+  assert.ok(hookIdx > 0, 'scope-hook: discovery-filter marker missing from anatomy-park.md');
+  assert.ok(resolveStepIdx > 0, 'Step 6.5 heading missing from anatomy-park.md');
+  assert.ok(
+    hookIdx > resolveStepIdx,
+    'scope-hook must appear after Step 6.5 so scope.json exists when the filter fires',
+  );
+});
+
+test('standalone scope-hook does not reference a nonexistent "full" mode', () => {
+  const content = fs.readFileSync(ANATOMY_PARK_MD, 'utf-8');
+  assert.ok(
+    !/\bfull\b/.test(content.match(/<!-- scope-hook: discovery-filter -->[\s\S]*?\n\n/)?.[0] ?? ''),
+    'scope-hook block must not reference a "full" mode (ScopeMode = branch|diff|paths only)',
+  );
+});
+
+// ---------------------------------------------------------------------------
 // Backcompat: omitted scope → all subsystems pass through unfiltered
 // ---------------------------------------------------------------------------
 

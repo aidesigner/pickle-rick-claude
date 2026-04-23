@@ -35,9 +35,6 @@ Scan the **immediate subdirectories** of TARGET for subsystems. A subsystem is a
 
 Exclude: `node_modules`, `dist`, `build`, `.next`, `coverage`, `__pycache__`, `.git`, test-only directories (dirs where >80% of files match `*.test.*` or `*.spec.*`).
 
-<!-- scope-hook: discovery-filter -->
-If `${SESSION_ROOT}/scope.json` exists AND the `mode` field is NOT `'full'`, read `allowed_paths` from `scope.json` and call `filterBySubsystem(subsystemNames, allowed_paths, TARGET, repoRoot)` to reduce the discovered list to only subsystems that overlap with the scope diff. If the filtered list is empty, print an error ("Scope excludes all subsystems — stopping") and stop.
-
 Sort subsystems alphabetically. Print discovered list:
 ```
 Anatomy Park — Subsystems Discovered:
@@ -81,6 +78,9 @@ node "$HOME/.claude/pickle-rick/extension/bin/resolve-scope.js" --scope "<SCOPE_
 Omit `--scope-base` when SCOPE_BASE was not provided. If the command exits non-zero, print the stderr and stop.
 
 ### Step 7: Create anatomy-park.json and microverse.json
+
+<!-- scope-hook: discovery-filter -->
+If `${SESSION_ROOT}/scope.json` exists (created by Step 6.5 when `--scope` was passed), read `allowed_paths` from it and reduce the discovered subsystems list to those that overlap — this is the same filter `filterBySubsystem(subsystemNames, allowed_paths, TARGET, repoRoot)` that pipeline-runner applies in `setupAnatomyPark`. A subsystem is kept iff at least one entry in `allowed_paths` lies under its directory (relative to `repoRoot`). If the filtered list is empty, print "Scope excludes all subsystems — stopping" and exit. Use the filtered list in the `subsystems` field below.
 
 Write subsystem rotation state to `${SESSION_ROOT}/anatomy-park.json`:
 ```json
