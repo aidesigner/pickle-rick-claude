@@ -267,8 +267,28 @@ export default function publishCouncilStack(sessionRoot, opts = {}) {
             const slug = slugify(branch);
             const bodyPath = path.join(commentsDir, `${slug}.md`);
             const markerPath = path.join(publishedDir, slug);
+            // Fail-fast on directive/stack parity drift. A branch present in
+            // council-stack.json but absent from directive.branches means the
+            // council agent's fan-out dropped it (shard timeout, write error,
+            // sharded run skipped a branch). Silently defaulting to empty findings
+            // would post a misleading "No findings for this branch at session
+            // close." comment AND stamp the .published marker, permanently hiding
+            // the drift — same silent-failure class as the spawnSync-no-timeout
+            // trap doors (see extension/CLAUDE.md). Classify as failed so the
+            // operator sees a real signal and a fixed-directive re-run can post.
             const branchEntry = directive.branches.find(b => b.name === branch);
-            const findings = branchEntry ? branchEntry.findings : [];
+            if (!branchEntry) {
+                const r = {
+                    branch,
+                    outcome: 'failed',
+                    error: 'council-directive.json has no entry for this branch — directive/stack mismatch',
+                };
+                results.push(r);
+                failed++;
+                appendPublishLog(logFd, r);
+                continue;
+            }
+            const findings = branchEntry.findings;
             const body = composeBody({
                 sessionRoot,
                 branch,

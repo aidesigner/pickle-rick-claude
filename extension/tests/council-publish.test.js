@@ -621,6 +621,51 @@ test('publishCouncilStack: throws when a required finding field is missing', asy
     }
 });
 
+// --- 22. Branch in stack but missing from directive.branches → failed, no misleading comment, no marker ---
+
+test('publishCouncilStack: stack branch absent from directive → outcome=failed, no body, no marker', async () => {
+    const mock = makeGhMock({
+        auth: 'ok',
+        prList: { 'feat/one': 42, 'feat/two': 99 },
+        prComment: {},
+    });
+    try {
+        await withSession(async (sessionDir) => {
+            const report = await publishCouncilStack(sessionDir, { ghCommand: mock.ghPath });
+
+            const two = report.results.find(r => r.branch === 'feat/two');
+            assert.ok(two, 'result for dropped branch feat/two is present');
+            assert.equal(two.outcome, 'failed', 'dropped branch must not post "No findings" silently');
+            assert.match(two.error, /directive\/stack mismatch/);
+            assert.equal(two.body_path, undefined, 'no body_path when the branch never had an entry');
+
+            // The misleading "No findings" comment body must NOT be written.
+            const bodyFile = path.join(sessionDir, 'council-comments', 'feat__two.md');
+            assert.equal(fs.existsSync(bodyFile), false, 'dropped branch body file must not be written');
+
+            // The .published marker must NOT be stamped — a corrected-directive re-run must succeed.
+            const markerFile = path.join(sessionDir, '.published', 'feat__two');
+            assert.equal(fs.existsSync(markerFile), false, 'dropped branch marker must not be stamped');
+
+            // `gh pr comment` must not have fired for the dropped branch.
+            const calls = fs.readFileSync(mock.callLog, 'utf-8').trim().split('\n').map(l => JSON.parse(l));
+            const commentCalls = calls.filter(a => a[0] === 'pr' && a[1] === 'comment');
+            assert.equal(commentCalls.length, 1, 'only the branch with a directive entry should post');
+
+            // The intact branch still publishes normally.
+            const one = report.results.find(r => r.branch === 'feat/one');
+            assert.equal(one.outcome, 'posted');
+            assert.equal(report.posted, 1);
+            assert.equal(report.failed, 1);
+        }, {
+            // Directive is missing feat/two — the fan-out dropped that shard.
+            directiveJson: minimalDirective(['feat/one']),
+        });
+    } finally {
+        cleanupGhMock(mock);
+    }
+});
+
 // === NEW TESTS: composeBody rendering ===
 
 // --- 22. composeBody with one finding renders expected fields ---
