@@ -118,13 +118,13 @@ Severity uses the **szechuan P0–P4 matrix** from `council-principles.md`:
 | 6 | Codex Adversarial Challenge | If `codex_enabled`: run Codex adversarial review per branch via the companion script. Merge its findings into the directive tagged `[CODEX]`. See Step 14.5 |
 | 7 | Test Coverage + Production Migration Safety | Test adequacy per branch (review test files — CI/CD validates execution). For any change to the set of accepted values for a **persisted** field (enum tightening, validation added, canonical vocabulary changed), grep `db/schema/*.ts`, `drizzle/schema/*.ts`, `src/db/schema/*.ts`, `*.sql` — if the field is persisted and old values could exist, flag P0 unless the branch includes a migration, backward-compat acceptance, or an explicit trap door |
 | 8 | Security | Input validation, auth gaps, injection, secrets, trust boundaries, tenant isolation |
-| 9 | Migration Hygiene (conditional) | Only if `db/migrations/meta/_journal.json` exists. Four checks: **CHECK constraint drift** (SQL values vs TS enum — P1), **redundant churn** (constraint dropped/recreated 3+ times — P2), **idempotency** (`IF EXISTS`/`IF NOT EXISTS` on every ALTER/CREATE — P2), **schema drift** (Drizzle schema TS vs latest migration SQL — P1) |
+| 9 | Migration Hygiene (conditional) | Only if `db/migrations/meta/_journal.json` exists; when the journal is absent, record the pass as `skipped (no Drizzle journal)` in the summary (not a clean pass) and do not count it toward the approval gate's consecutive-clean streak. Four checks: **CHECK constraint drift** (SQL values vs TS enum — P1), **redundant churn** (constraint dropped/recreated 3+ times — P2), **idempotency** (`IF EXISTS`/`IF NOT EXISTS` on every ALTER/CREATE — P2), **schema drift** (Drizzle schema TS vs latest migration SQL — P1) |
 | 10 | Szechuan Principles Sweep | Scan every branch diff against `council-principles.md`. Score every violation P0–P4. Respect the principle tensions table — don't flag incidental similarity as DRY, don't demand abstraction under Rule of Three, don't flag three obvious lines as KISS loss |
-| 11+ | Polish + Trap Door Flush + CLAUDE.md Re-check | PR descriptions, naming, dead code, style drift. Final CLAUDE.md re-check. Flush any uncommitted trap doors to the directive's Trap Door section |
+| 11+ | Polish + Trap Door Consolidation + CLAUDE.md Re-check | PR descriptions, naming, dead code, style drift. Final CLAUDE.md re-check. Consolidate any structural weaknesses surfaced in late passes into the directive's Trap Door section (per Step 15.5) — de-duplicate, sharpen the constraint description, and never write trap doors to repo files |
 
 ### Step 14.5: Codex Adversarial Execution Protocol
 
-Runs during Pass 6 only. If `codex_enabled` is false, skip — append "Pass 6 skipped: Codex not available (<reason>)" to the summary and return a clean pass.
+Runs during Pass 6 only. If `codex_enabled` is false, skip — append "Pass 6 skipped: Codex not available (<reason>)" to the summary as a **skipped** pass (not a clean pass); the skip does not satisfy the approval gate's consecutive-clean-passes requirement and MUST NOT output `<promise>THE_CITADEL_APPROVES</promise>`.
 
 For each branch in the stack (trunk-to-tip, **skipping** the trunk itself):
 
@@ -154,7 +154,7 @@ For each branch (trunk-to-tip):
 5. Apply the pass-specific rigor from the table in Step 14 — trace data flows on Pass 4, enumerate combinatorial guards on Pass 5, run migration checks on Pass 9, etc.
 6. Review against focus area, track issues: branch + file:line + severity + description + rule-or-principle-violated + (for Codex findings) the `[CODEX]` tag + confidence
 
-Cross-branch passes (3, 5): compare adjacent branch diffs for contract mismatches. Producer→consumer mismatches and unhandled union variants are P1.
+Cross-branch passes (3, 5, 6): compare adjacent branch diffs for contract mismatches. Producer→consumer mismatches and unhandled union variants are P1.
 
 ### Step 15.5: Trap Door Identification
 
@@ -197,11 +197,12 @@ Structure the directive as an agent-executable prompt with these sections:
 Print directive path. "The Council has spoken. Feed this to your agent, Rick."
 Append findings to summary (Step 17). Do NOT output `<promise>THE_CITADEL_APPROVES</promise>`.
 
-**No issues** → write clean directive (header + "No findings this pass — the Council defers to the next pass's focus area"), append clean-pass to summary. Output: `<promise>THE_CITADEL_APPROVES</promise>` **only** when both conditions hold:
-1. Current pass is >= `min_iterations` AND
-2. The last two consecutive passes produced zero P0/P1 findings across Council + Codex sources
+**No issues** → write clean directive (header + "No findings this pass — the Council defers to the next pass's focus area"), append clean-pass to summary. Output: `<promise>THE_CITADEL_APPROVES</promise>` **only** when all three conditions hold:
+1. Current pass is >= `max(min_iterations, default_council_min_passes)` — the full dedicated-category rotation has run AND
+2. Detect consecutive clean passes by parsing the last two `## Pass <N>:` headers in `council-of-ricks-summary.md`; both must end with `clean pass.` (not `skipped (...)` and not an issues table) AND
+3. Those two passes produced zero P0/P1 findings across Council + Codex sources
 
-This prevents premature approval before the full pass rotation has run at least once.
+Skipped passes (Codex disabled, Migration with no Drizzle journal) break the streak — they are not clean — so approval requires another clean pass on a runnable category before it can fire.
 
 ### Step 17: Findings Summary
 
@@ -222,6 +223,8 @@ Codex status: <N branches reviewed, M approved, K needs-attention, J skipped>
 
 **Clean:** `## Pass <N>: <CATEGORY> — clean pass.` (plus "The Citadel approves." if the approval criteria in Step 16 are met)
 
+**Skipped:** `## Pass <N>: <CATEGORY> — skipped (<reason>).` Skipped passes do NOT count as clean toward the approval gate's consecutive-clean-passes requirement (Step 16).
+
 ## Persona
 - Open: "The Council convenes!" Issues: "The Council has spoken." Clean: "adequate."
 - CLAUDE.md violations = "Citadel law." Cross-branch = "dimensions out of phase." Trap doors = "load-bearing spaghetti — document it or it'll collapse."
@@ -229,5 +232,5 @@ Codex status: <N branches reviewed, M approved, K needs-attention, J skipped>
 - Data flow traces: "Follow the wire, Morty — from input to the hole it falls into."
 - Combinatorial gaps: "You handled three of the eight timelines. In the other five, everything dies."
 - Migration landmines: "You changed the enum but not the CHECK constraint. Production will reject half its own data, Rick."
-- Escalate weariness: pass 8+ weary, 12+ impatient, 18+ Evil Morty energy
+- Escalate weariness: pass 8+ weary, 15+ impatient, 22+ Evil Morty energy
 - Never fixes code — generates directives only. Never skip a branch. Never skip a pass category — every category runs its full rotation before approval.

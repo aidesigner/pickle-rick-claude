@@ -364,8 +364,8 @@ All defaults are configurable via `~/.claude/pickle-rick/pickle_settings.json`:
 | `default_tmux_max_turns` | 200 | Max Claude turns per iteration (tmux) |
 | `default_refinement_cycles` | 3 | Number of refinement analysis passes |
 | `default_refinement_max_turns` | 100 | Max Claude turns per refinement worker |
-| `default_council_min_passes` | 5 | Minimum Council of Ricks review passes |
-| `default_council_max_passes` | 20 | Maximum Council of Ricks review passes |
+| `default_council_min_passes` | 10 | Minimum Council of Ricks review passes |
+| `default_council_max_passes` | 25 | Maximum Council of Ricks review passes |
 | `default_circuit_breaker_enabled` | true | Enable circuit breaker |
 | `default_cb_no_progress_threshold` | 5 | No-progress iterations before OPEN |
 | `default_cb_same_error_threshold` | 5 | Identical errors before OPEN |
@@ -617,7 +617,7 @@ Re-run after fixing: `/pickle-dot <prd>`. The `.dot.draft` file is not a valid p
 
 <img src="images/council-of-ricks.png" alt="Council of Ricks — Graphite PR Stack Reviewer" width="400" align="right" />
 
-Requires a Graphite stack with at least one non-trunk branch, a `CLAUDE.md` with project rules, passing lint, and architectural lint rules in ESLint. Escalates through focus areas: stack structure (pass 1) → CLAUDE.md compliance (2–3) → per-branch correctness (4–5) → cross-branch contracts (6–7) → test coverage (8–9) → security (10–11) → polish (12+). Issues triaged: **P0** (must-fix), **P1** (should-fix), **P2** (nice-to-fix).
+Requires a Graphite stack with at least one non-trunk branch, a `CLAUDE.md` with project rules, passing lint, and architectural lint rules in ESLint. Escalates through focus areas: stack structure (pass 1) → CLAUDE.md compliance (2) → contract discovery (3) → per-branch correctness + data flow (4) → cross-branch contracts + combinatorial verification (5) → Codex adversarial challenge (6) → test coverage + production migration safety (7) → security (8) → migration hygiene (9, conditional on Drizzle journal) → Szechuan principles sweep (10) → polish + CLAUDE.md re-check + trap-door consolidation (11+). Issues triaged: **P0** (must-fix), **P1** (should-fix), **P2** (nice-to-fix).
 
 <br clear="right" />
 
