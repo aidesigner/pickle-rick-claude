@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, runCmd, safeErrorMessage, ensureMonitorWindow } from '../services/pickle-utils.js';
-import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, hasLifecycleArtifact, type RateLimitInfo, type IterationExitResult, type RateLimitAction, type WorkerRole } from '../types/index.js';
+import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, hasLifecycleArtifact, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole } from '../types/index.js';
 import { StateManager, safeDeactivate } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, type CircuitBreakerState } from '../services/circuit-breaker.js';
@@ -385,6 +385,7 @@ export function detectRateLimitInText(logFile: string): boolean {
 export function classifyIterationExit(
   completionResult: string,
   logFile: string,
+  timing?: { didTimeout: boolean; exitCode: number | null; wallSeconds: number },
 ): IterationExitResult {
   if (completionResult === 'inactive') return { type: 'inactive' };
   if (completionResult === 'error') return { type: 'error' };
@@ -395,6 +396,9 @@ export function classifyIterationExit(
   // entries at all. If structured events exist but none say 'rejected', trust
   // that — don't let fuzzy text matching override structured signals.
   if (!rlInfo.sawEvents && detectRateLimitInText(logFile)) return { type: 'api_limit' };
+  if (timing?.didTimeout) {
+    return { type: 'timeout', exitCode: timing.exitCode, wallSeconds: timing.wallSeconds };
+  }
   return { type: 'success' };
 }
 
@@ -416,7 +420,7 @@ export function computeRateLimitAction(
   const maxApiWaitMs = configWaitMs * 3;
   let waitMs = configWaitMs;
   let waitSource: 'api' | 'config' = 'config';
-  const rlResetsAt = exitResult.rateLimitInfo?.resetsAt;
+  const rlResetsAt = exitResult.type === 'api_limit' ? exitResult.rateLimitInfo?.resetsAt : undefined;
   const hasResetsAt = typeof rlResetsAt === 'number' && rlResetsAt > 0;
 
   if (hasResetsAt) {
@@ -443,7 +447,7 @@ export function computeRateLimitAction(
   };
 }
 
-export async function runIteration(sessionDir: string, iterationNum: number, extensionRoot: string, meeseeksModel: string): Promise<string> {
+export async function runIteration(sessionDir: string, iterationNum: number, extensionRoot: string, meeseeksModel: string): Promise<IterationOutcome> {
   const statePath = path.join(sessionDir, 'state.json');
   let state: State;
   try {
@@ -454,7 +458,7 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
     throw new Error(`Failed to read state.json for iteration ${iterationNum}: ${msg}`);
   }
 
-  if (state.active !== true) return 'inactive';
+  if (state.active !== true) return { completion: 'inactive', timedOut: false, exitCode: null, wallSeconds: 0 };
 
   const templateName = state.command_template || 'pickle.md';
   // Validate at read time (not just at setup.ts CLI parse time) — state.json could be tampered with
@@ -583,6 +587,8 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
 
   return new Promise((resolve) => {
     let settled = false;
+    const start = Date.now();
+    let didTimeout = false;
 
     const proc = spawn('claude', cmdArgs, {
       cwd: state.working_dir || process.cwd(),
@@ -598,6 +604,7 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
     // Session-level max_time_minutes is the only time gate.
     const timeoutHandle = iterTimeout > 0 ? setTimeout(() => {
       if (settled) return;
+      didTimeout = true;
       console.error(`\n${Style.YELLOW}⚠️  Iteration ${iterationNum} timed out after ${iterTimeout}s — killing${Style.RESET}`);
       try { proc.kill('SIGTERM'); } catch { /* already dead */ }
       killEscalation = setTimeout(() => {
@@ -615,6 +622,7 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
     const hangGuard = setTimeout(() => {
       if (settled) return;
       settled = true;
+      didTimeout = true;
       currentChildProc = null;
       if (timeoutHandle) clearTimeout(timeoutHandle);
       if (killEscalation) clearTimeout(killEscalation);
@@ -622,7 +630,7 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
       try { fs.fsyncSync(logFd); } catch { /* already closed or error */ }
       try { fs.closeSync(logFd); } catch { /* already closed */ }
       console.error(`${Style.RED}❌ Iteration ${iterationNum} hang detected — forcing failure${Style.RESET}`);
-      resolve('error');
+      resolve({ completion: 'error', timedOut: true, exitCode: null, wallSeconds: (Date.now() - start) / 1000 });
     }, hangGuardMs);
     hangGuard.unref();
 
@@ -650,7 +658,12 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
       try { fs.writeFileSync(exitCodeFile, String(code ?? -1)); } catch { /* best effort */ }
       let output = '';
       try { output = fs.readFileSync(logFile, 'utf-8'); } catch { /* missing/unreadable log */ }
-      resolve(classifyCompletion(output));
+      resolve({
+        completion: classifyCompletion(output),
+        timedOut: didTimeout,
+        exitCode: code ?? null,
+        wallSeconds: (Date.now() - start) / 1000,
+      });
     });
 
     proc.on('error', (err) => {
@@ -664,7 +677,7 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
       console.error(`${Style.RED}Failed to spawn claude: ${msg}${Style.RESET}`);
       try { fs.fsyncSync(logFd); } catch { /* already closed or error */ }
       try { fs.closeSync(logFd); } catch { /* already closed */ }
-      resolve('error');
+      resolve({ completion: 'error', timedOut: false, exitCode: null, wallSeconds: (Date.now() - start) / 1000 });
     });
   });
 }
@@ -901,7 +914,8 @@ async function main() {
       logActivity({ event: 'meeseeks_model_select', source: 'pickle', session: path.basename(sessionDir), iteration, model: meeseeksModel, pass: meeseeksPassCount });
     }
 
-    const result = await runIteration(sessionDir, iteration, extensionRoot, meeseeksModel);
+    const outcome = await runIteration(sessionDir, iteration, extensionRoot, meeseeksModel);
+    const result = outcome.completion;
 
     // Move iterLogFile computation BEFORE transition block (needed by classifyTicketCompletion)
     const iterLogFile = path.join(sessionDir, `tmux_iteration_${iteration}.log`);
@@ -938,7 +952,11 @@ async function main() {
     } catch { /* state read failed — skip transition check */ }
 
     // --- Rate limit classification (MUST run before CB to prevent CB poisoning) ---
-    const exitResult = classifyIterationExit(result, iterLogFile);
+    const exitResult = classifyIterationExit(outcome.completion, iterLogFile, {
+      didTimeout: outcome.timedOut,
+      exitCode: outcome.exitCode,
+      wallSeconds: outcome.wallSeconds,
+    });
     const exitType = exitResult.type;
     logActivity({ event: 'iteration_end', source: 'pickle', session: path.basename(sessionDir), iteration, exit_type: exitType });
 

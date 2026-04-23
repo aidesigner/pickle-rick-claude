@@ -555,7 +555,8 @@ export async function main(sessionDir: string): Promise<void> {
 
     sm.update(statePath, s => { s.iteration = iteration; });
 
-    const result = await runIteration(sessionDir, iteration, extensionRoot, '');
+    const outcome = await runIteration(sessionDir, iteration, extensionRoot, '');
+    const result = outcome.completion;
 
     if (result === 'error' || result === 'inactive') {
       log(`Gap analysis failed: ${result}`);
@@ -668,11 +669,16 @@ export async function main(sessionDir: string): Promise<void> {
     sm.update(statePath, s => { s.iteration = iteration; });
 
     // Run iteration
-    const result = await runIteration(sessionDir, iteration, extensionRoot, '');
+    const outcome = await runIteration(sessionDir, iteration, extensionRoot, '');
+    const result = outcome.completion;
     const iterLogFile = path.join(sessionDir, `tmux_iteration_${iteration}.log`);
 
     // Rate limit check
-    const exitResult = classifyIterationExit(result, iterLogFile);
+    const exitResult = classifyIterationExit(outcome.completion, iterLogFile, {
+      didTimeout: outcome.timedOut,
+      exitCode: outcome.exitCode,
+      wallSeconds: outcome.wallSeconds,
+    });
     logActivity({ event: 'iteration_end', source: 'pickle', session: path.basename(sessionDir), iteration, exit_type: exitResult.type });
 
     if (exitResult.type === 'api_limit') {

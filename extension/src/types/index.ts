@@ -173,7 +173,7 @@ export const VALID_ACTIVITY_EVENTS = [
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];
 
-export type IterationExitType = 'success' | 'error' | 'api_limit' | 'inactive';
+export type IterationExitType = 'success' | 'error' | 'api_limit' | 'inactive' | 'timeout';
 
 export interface RateLimitInfo {
   limited: boolean;
@@ -182,9 +182,18 @@ export interface RateLimitInfo {
   rateLimitType?: string;  // 'five_hour' | 'seven_day' etc.
 }
 
-export interface IterationExitResult {
-  type: IterationExitType;
-  rateLimitInfo?: RateLimitInfo;
+export type IterationExitResult =
+  | { type: 'inactive' }
+  | { type: 'error' }
+  | { type: 'success' }
+  | { type: 'api_limit'; rateLimitInfo?: RateLimitInfo }
+  | { type: 'timeout'; exitCode: number | null; wallSeconds: number };
+
+export interface IterationOutcome {
+  completion: 'task_completed' | 'review_clean' | 'continue' | 'error' | 'inactive';
+  timedOut: boolean;
+  exitCode: number | null;
+  wallSeconds: number;
 }
 
 export interface RateLimitAction {

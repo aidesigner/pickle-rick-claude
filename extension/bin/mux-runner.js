@@ -381,7 +381,7 @@ export function detectRateLimitInText(logFile) {
     catch { /* file missing */ }
     return false;
 }
-export function classifyIterationExit(completionResult, logFile) {
+export function classifyIterationExit(completionResult, logFile, timing) {
     if (completionResult === 'inactive')
         return { type: 'inactive' };
     if (completionResult === 'error')
@@ -396,6 +396,9 @@ export function classifyIterationExit(completionResult, logFile) {
     // that — don't let fuzzy text matching override structured signals.
     if (!rlInfo.sawEvents && detectRateLimitInText(logFile))
         return { type: 'api_limit' };
+    if (timing?.didTimeout) {
+        return { type: 'timeout', exitCode: timing.exitCode, wallSeconds: timing.wallSeconds };
+    }
     return { type: 'success' };
 }
 /**
@@ -411,7 +414,7 @@ export function computeRateLimitAction(exitResult, consecutiveRateLimits, maxRet
     const maxApiWaitMs = configWaitMs * 3;
     let waitMs = configWaitMs;
     let waitSource = 'config';
-    const rlResetsAt = exitResult.rateLimitInfo?.resetsAt;
+    const rlResetsAt = exitResult.type === 'api_limit' ? exitResult.rateLimitInfo?.resetsAt : undefined;
     const hasResetsAt = typeof rlResetsAt === 'number' && rlResetsAt > 0;
     if (hasResetsAt) {
         const apiWaitMs = (rlResetsAt * 1000) - Date.now();
@@ -446,7 +449,7 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, mees
         throw new Error(`Failed to read state.json for iteration ${iterationNum}: ${msg}`);
     }
     if (state.active !== true)
-        return 'inactive';
+        return { completion: 'inactive', timedOut: false, exitCode: null, wallSeconds: 0 };
     const templateName = state.command_template || 'pickle.md';
     // Validate at read time (not just at setup.ts CLI parse time) — state.json could be tampered with
     if (templateName.includes('/') || templateName.includes('\\') || templateName.includes('..')) {
@@ -574,6 +577,8 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, mees
             : Defaults.WORKER_TIMEOUT_SECONDS);
     return new Promise((resolve) => {
         let settled = false;
+        const start = Date.now();
+        let didTimeout = false;
         const proc = spawn('claude', cmdArgs, {
             cwd: state.working_dir || process.cwd(),
             env,
@@ -588,6 +593,7 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, mees
         const timeoutHandle = iterTimeout > 0 ? setTimeout(() => {
             if (settled)
                 return;
+            didTimeout = true;
             console.error(`\n${Style.YELLOW}⚠️  Iteration ${iterationNum} timed out after ${iterTimeout}s — killing${Style.RESET}`);
             try {
                 proc.kill('SIGTERM');
@@ -611,6 +617,7 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, mees
             if (settled)
                 return;
             settled = true;
+            didTimeout = true;
             currentChildProc = null;
             if (timeoutHandle)
                 clearTimeout(timeoutHandle);
@@ -629,7 +636,7 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, mees
             }
             catch { /* already closed */ }
             console.error(`${Style.RED}❌ Iteration ${iterationNum} hang detected — forcing failure${Style.RESET}`);
-            resolve('error');
+            resolve({ completion: 'error', timedOut: true, exitCode: null, wallSeconds: (Date.now() - start) / 1000 });
         }, hangGuardMs);
         hangGuard.unref();
         // Direct data handlers: write each chunk to both the log file (sync,
@@ -671,7 +678,12 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, mees
                 output = fs.readFileSync(logFile, 'utf-8');
             }
             catch { /* missing/unreadable log */ }
-            resolve(classifyCompletion(output));
+            resolve({
+                completion: classifyCompletion(output),
+                timedOut: didTimeout,
+                exitCode: code ?? null,
+                wallSeconds: (Date.now() - start) / 1000,
+            });
         });
         proc.on('error', (err) => {
             if (settled)
@@ -694,7 +706,7 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, mees
                 fs.closeSync(logFd);
             }
             catch { /* already closed */ }
-            resolve('error');
+            resolve({ completion: 'error', timedOut: false, exitCode: null, wallSeconds: (Date.now() - start) / 1000 });
         });
     });
 }
@@ -919,7 +931,8 @@ async function main() {
             log(`Meeseeks pass ${meeseeksPassCount} → model: ${meeseeksModel}`);
             logActivity({ event: 'meeseeks_model_select', source: 'pickle', session: path.basename(sessionDir), iteration, model: meeseeksModel, pass: meeseeksPassCount });
         }
-        const result = await runIteration(sessionDir, iteration, extensionRoot, meeseeksModel);
+        const outcome = await runIteration(sessionDir, iteration, extensionRoot, meeseeksModel);
+        const result = outcome.completion;
         // Move iterLogFile computation BEFORE transition block (needed by classifyTicketCompletion)
         const iterLogFile = path.join(sessionDir, `tmux_iteration_${iteration}.log`);
         // Detect ticket transitions: validate completion before marking Done
@@ -956,7 +969,11 @@ async function main() {
         }
         catch { /* state read failed — skip transition check */ }
         // --- Rate limit classification (MUST run before CB to prevent CB poisoning) ---
-        const exitResult = classifyIterationExit(result, iterLogFile);
+        const exitResult = classifyIterationExit(outcome.completion, iterLogFile, {
+            didTimeout: outcome.timedOut,
+            exitCode: outcome.exitCode,
+            wallSeconds: outcome.wallSeconds,
+        });
         const exitType = exitResult.type;
         logActivity({ event: 'iteration_end', source: 'pickle', session: path.basename(sessionDir), iteration, exit_type: exitType });
         if (exitType === 'api_limit') {
