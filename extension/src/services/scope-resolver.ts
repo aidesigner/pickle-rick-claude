@@ -23,6 +23,15 @@ export type ScopeStrategy = 'strict' | 'one-hop';
 /** Max number of seed files permitted for one-hop expansion. Above this, throw SCOPE_ONE_HOP_TOO_LARGE. */
 const ONE_HOP_FILE_CAP = 100;
 
+/**
+ * Per-subprocess timeout for the rg/grep importer-walk in {@link findImporters}.
+ * Without this, a wedged ripgrep/grep (FIFO under repoRoot, stuck FUSE mount,
+ * catastrophic regex backtracking) blocks scope resolution indefinitely with
+ * no log output — the same silent-hang class as the council-publish `gh`
+ * timeout gap. See `extension/CLAUDE.md` trap doors.
+ */
+const FIND_IMPORTERS_TIMEOUT_MS = 30_000;
+
 export type ScopeErrorCode =
   | 'SCOPE_EMPTY_DIFF'
   | 'SCOPE_EMPTY_PATHS'
@@ -452,8 +461,16 @@ export function buildScopeV1Schema(): Record<string, unknown> {
  * `--scope paths:<glob>`.
  *
  * Throws `SCOPE_ONE_HOP_TOO_LARGE` if `diffFiles.length > ONE_HOP_FILE_CAP`.
+ *
+ * `options.findImportersTimeoutMs` caps the rg/grep subprocess wall-time used
+ * by the importer walk. Defaults to {@link FIND_IMPORTERS_TIMEOUT_MS} (30s).
+ * Tests inject small values to assert the hang-guard fires.
  */
-export function computeOneHop(diffFiles: string[], repoRoot: string): string[] {
+export function computeOneHop(
+  diffFiles: string[],
+  repoRoot: string,
+  options: { findImportersTimeoutMs?: number } = {},
+): string[] {
   if (diffFiles.length > ONE_HOP_FILE_CAP) {
     throw new ScopeError(
       'SCOPE_ONE_HOP_TOO_LARGE',
@@ -462,11 +479,12 @@ export function computeOneHop(diffFiles: string[], repoRoot: string): string[] {
     );
   }
 
+  const timeoutMs = options.findImportersTimeoutMs ?? FIND_IMPORTERS_TIMEOUT_MS;
   const exportNames = extractExportNames(diffFiles, repoRoot);
   const importerSet = new Set<string>(diffFiles.map(toPosix));
 
   for (const name of exportNames) {
-    for (const f of findImporters(name, repoRoot)) {
+    for (const f of findImporters(name, repoRoot, timeoutMs)) {
       importerSet.add(f);
     }
   }
@@ -609,14 +627,18 @@ function extractExportNames(diffFiles: string[], repoRoot: string): Set<string> 
   return names;
 }
 
-function findImporters(name: string, repoRoot: string): string[] {
+function findImporters(name: string, repoRoot: string, timeoutMs: number): string[] {
   // Matches default imports and named imports.
   // aliased imports (`{ foo as bar }`) are NOT matched: `\bfoo\b\s*[,}]`
   // requires , or } after foo — ` as` does not satisfy this (documented miss).
   const pattern = `import\\s+${name}\\b|import[^{;]*\\{[^}]*\\b${name}\\b\\s*[,}]`;
+  // `timeout` guards against a wedged rg/grep (FIFO under repoRoot, stuck
+  // FUSE mount, catastrophic backtracking) that would otherwise block the
+  // entire scope-resolution phase indefinitely with no log output.
   const rg = spawnSync('rg', ['-l', '--glob', '*.{ts,tsx,js,jsx,mjs,cjs}', '-e', pattern, '.'], {
     cwd: repoRoot,
     encoding: 'utf-8',
+    timeout: timeoutMs,
   });
   if (!rg.error && (rg.status === 0 || rg.status === 1)) {
     return (rg.stdout || '')
@@ -628,7 +650,7 @@ function findImporters(name: string, repoRoot: string): string[] {
     'grep',
     ['-rl', '-E', '--include=*.ts', '--include=*.tsx', '--include=*.js', '--include=*.jsx',
       pattern, '.'],
-    { cwd: repoRoot, encoding: 'utf-8' },
+    { cwd: repoRoot, encoding: 'utf-8', timeout: timeoutMs },
   );
   if (grep.status === 0 || grep.status === 1) {
     return (grep.stdout || '')
