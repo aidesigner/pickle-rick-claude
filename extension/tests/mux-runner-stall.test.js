@@ -79,8 +79,8 @@ test('mux-runner-stall: CB-disabled fixture loads and respects CB disable settin
                 default_meeseeks_model: 'sonnet',
                 default_meeseeks_min_passes: 10,
                 default_meeseeks_max_passes: 50,
-                default_council_min_passes: 11,
-                default_council_max_passes: 25,
+                default_council_min_rounds: 2,
+                default_council_max_rounds: 5,
                 // Key setting: disable circuit breaker for this test
                 default_circuit_breaker_enabled: false,
                 default_cb_no_progress_threshold: 5,

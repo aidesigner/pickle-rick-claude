@@ -422,7 +422,7 @@ On exit, the runner writes `microverse_report_<date>.md` to the session's `memor
 
 ## Council of Ricks Internals
 
-`/council-of-ricks` is an iterative Graphite-stack reviewer. It never fixes code — it generates agent-executable directives. The Council convenes in passes; each pass owns a category and carries its own rigor. Everything below lives in `.claude/commands/council-of-ricks.md`, `extension/szechuan-sauce-principles.md`, and `extension/src/bin/council-publish.ts`.
+`/council-of-ricks` is an iterative Graphite-stack reviewer. It never fixes code — it generates agent-executable directives. The Council convenes in **rounds**; each round fans out every review category in parallel via the `Agent` tool. Everything below lives in `.claude/commands/council-of-ricks.md`, `extension/szechuan-sauce-principles.md`, and `extension/src/bin/council-publish.ts`.
 
 ### Severity × Confidence Scoring
 
@@ -430,44 +430,73 @@ Every finding carries two independent axes, reported as `[P<N>, conf=<score>]`:
 
 - **Severity** (`extension/szechuan-sauce-principles.md`) — `P0` critical (security, data loss, auth bypass, corruption, migration hazards, injection) · `P1` high (correctness bugs, contract mismatches, silent failures, unhandled branches, schema drift) · `P2` medium (DRY 3+, god classes, deep nesting, tight coupling) · `P3` low (naming, magic numbers, minor dup) · `P4` optional (formatting, style drift).
 - **Confidence** — rubric `0 / 25 / 50 / 75 / 100`. Any finding with `conf < 80` is **dropped** before the directive is written — severity and confidence are independent, so a `P0` at `conf 50` is still cut. **P0 escape hatch**: genuine security / data-loss / auth-bypass findings survive the confidence filter after explicit grep + surrounding-code + `git log` confirmation. Dropped findings are listed in a `## Dropped Candidates (conf < 80 and false-positive pre-filter)` section in `council-of-ricks-summary.md` — auditable but non-actionable.
-- **False-Positives filter** — applied BEFORE scoring: pre-existing issues, tooling-caught errors, stylistic preferences, speculative future-risk, and resolved prior-pass findings are excluded wholesale, not down-scored.
+- **False-Positives filter** — applied BEFORE scoring: pre-existing issues, tooling-caught errors, stylistic preferences, speculative future-risk, and resolved prior-round findings are excluded wholesale, not down-scored.
 
-### Pass Rotation
+### Size-Tier Scaling
 
-| Pass | Category | Mandatory? |
-|------|----------|------------|
-| 1 | Stack Structure | ✓ |
-| 2 | **Historical Context** (`git log`, `gh pr list/view`, in-file guidance comments) | ✓ |
-| 3 | CLAUDE.md Compliance | ✓ |
-| 4 | Contract Discovery | ✓ |
-| 5 | Per-Branch Correctness + Data Flow (file:line chain) | ✓ |
-| 6 | Cross-Branch Contracts + Combinatorial Verification (2^N guards) | ✓ |
-| 7 | **Codex Adversarial Challenge** (`codex-companion.mjs`, fails open) | conditional |
-| 8 | Test Coverage + Production Migration Safety | ✓ |
-| 9 | Security | ✓ |
-| 10 | Migration Hygiene (Drizzle journal) | conditional |
-| 11 | Szechuan Principles Sweep | ✓ |
-| 12+ | Polish + Trap Door Consolidation + CLAUDE.md Re-check | — |
+At stack discovery (Step 8) the Council computes total diff size across the stack via `git diff --numstat <trunk>...<tip>` and scales `min_rounds` to the surface area. Each round surfaces findings that reframe code earlier rounds walked past, so large PRs need more rounds to converge — this was observed empirically on 5k / 10k / 20k-line PR stacks.
 
-Pass 2 runs `git log --oneline -10 -- <file>` + `gh pr list --state merged --search …` / `gh pr view --comments` + in-file `NOTE:/IMPORTANT:` banners to reframe later passes. Fails open: if `gh` auth or GitHub remote is missing, the pass runs in git-only mode; if all three signals fail, the pass is recorded as `skipped` (not clean).
+| Stack diff LOC | OR | Files touched | Scaled min rounds | Tier label |
+|---|---|---|---|---|
+| < 300 | or | < 10 | 2 | `xs` |
+| 300 – 1,499 | or | 10 – 29 | 3 | `s` |
+| 1,500 – 4,999 | or | 30 – 79 | 4 | `m` |
+| 5,000 – 9,999 | or | 80 – 149 | 5 | `l` |
+| 10,000 – 19,999 | or | 150 – 299 | 6 | `xl` |
+| ≥ 20,000 | or | ≥ 300 | 7 | `xxl` |
 
-Pass 7 shells out to the Codex companion script (resolved from `~/.claude/plugins/cache/openai-codex/codex/*/codex-companion.mjs`). Each non-trunk branch is checked out via `gt branch checkout`, Codex runs with `--wait --base <parent> --scope branch`, output is captured to `<SESSION_ROOT>/codex/<slug>-pass<N>.md`, and findings tagged `[CODEX]` (or `[COUNCIL+CODEX]`) are merged into the directive. Timeout / empty output / non-zero exit for one branch records a per-branch failure and continues — Codex is never load-bearing.
+Resolution (in council-of-ricks.md Step 8):
+- Take `max(LOC tier, files tier)` — either axis can flag "big enough."
+- If `--min-iterations N` was passed on the CLI, `effective_min_rounds = N` (explicit override wins, no scaling applied).
+- Otherwise, `effective_min_rounds = max(default_council_min_rounds, scaled_tier)`.
+- `effective_max_rounds` follows the same rule, with headroom: `max(default_council_max_rounds, effective_min_rounds + 2)` — guarantees at least two rounds above the floor so a big stack can exhaust cleanly.
+- `council-stack.json` records `stack_loc`, `stack_files`, `stack_tier`, `scaled_min_rounds`, `effective_min_rounds`, `effective_max_rounds`, `min_rounds_source`, `max_rounds_source`.
+- If `git diff --numstat` fails (missing merge base, detached HEAD, etc.), LOC and files default to `0` and scaling falls through to `default_council_min_rounds` — the Council runs at its settings floor rather than blocking.
+
+Step 9.5's startup report announces the tier: `stack tier: l (3,247 LOC / 47 files) → min 4 rounds, max 6 (scaled)`.
+
+### Round Structure
+
+Each round runs four phases. Phases B and C fan out concurrently — one `Agent` tool call batch, every subagent runs in parallel from the main agent's perspective. A round that used to take 11+ sequential passes now completes in one fan-out cycle.
+
+**Phase A — Historical Context** (serial, main agent). Computes a per-round brief at `<SESSION_ROOT>/round-<N>/historical-brief.md` from `git log --oneline -10 -- <file>` + `gh pr list --state merged --search …` / `gh pr view --comments` + in-file `NOTE:/IMPORTANT:` banners. Brief feeds Phase B/C subagents. Fails open: `gh` absence → git-only mode; all signals absent → `skipped` (breaks clean-round classification).
+
+**Phase B — Category Team** (parallel fan-out):
+
+| # | Category | Mandatory? |
+|---|----------|------------|
+| B1 | Stack Structure | ✓ |
+| B2 | CLAUDE.md Compliance | ✓ |
+| B3 | Contract Discovery | ✓ |
+| B4 | Cross-Branch Contracts + Combinatorial (2^N guards) | ✓ |
+| B5 | Test Coverage + Production Migration Safety | ✓ |
+| B6 | Security | ✓ |
+| B7 | Migration Hygiene (Drizzle journal) | conditional |
+| B8 | Szechuan Principles Sweep | ✓ |
+| B9 | Polish + Trap Door Candidates | ✓ |
+
+**Phase C — Branch Team** (parallel fan-out, same message as Phase B):
+
+- **C_correctness** (one `Agent` per non-trunk branch, mandatory): Per-Branch Correctness + Data Flow (input → bug → wrong output file:line chain). Pure diff review via `gt branch info --diff --branch <b>` — no checkout, safe in parallel.
+- **C_codex** (one `Agent`, conditional): Adversarial sweep. Internally sequential because shared working tree requires serial `gt branch checkout` per branch. Shells out to `~/.claude/plugins/cache/openai-codex/codex/*/codex-companion.mjs` with `--wait --base <parent> --scope branch`, captures to `<SESSION_ROOT>/codex/<slug>-round<N>.md`. Findings tagged `[CODEX]` (or `[COUNCIL+CODEX]`) in Phase D synthesis. Per-branch timeout / non-zero exit / empty output → per-branch failure recorded, sweep continues — Codex is never load-bearing.
+
+**Phase D — Synthesis** (serial, main agent). Receives every subagent's JSON payload, applies in order: false-positive pre-filter → confidence filter (`conf < 80` dropped) → COUNCIL/CODEX dedupe on `file:line` → severity sort → trap-door consolidation → directive write + summary append.
 
 ### Approval Gate
 
 `<promise>THE_CITADEL_APPROVES</promise>` fires only when **all four** conditions hold:
 
-1. `current_pass >= max(min_iterations, default_council_min_passes)` — full dedicated-category rotation has run
-2. The last two `## Pass <N>:` headers in `council-of-ricks-summary.md` both end with the exact terminal suffix `— clean pass.`
-3. Every **unconditional** category (Passes 1, 2, 3, 4, 5, 6, 8, 9, 11) has appeared in at least one clean pass across the session — closes the dual-skip loophole where no Codex + no Drizzle journal could approve without exercising all 9 mandatory categories
-4. Those two consecutive clean passes produced zero P0/P1 findings across both Council and Codex sources
+1. `current_round >= min_iterations` (the tier-resolved `effective_min_rounds` from Step 8 — see Size-Tier Scaling)
+2. The last two `## Round <N>:` headers in `council-of-ricks-summary.md` both end with the exact terminal suffix `— clean round.`
+3. Across those two consecutive clean rounds no **unconditional** category (Phase A Historical Context, B1, B2, B3, B4, B5, B6, B8, B9, Phase C per-branch Correctness for every non-trunk branch) was `skipped`. B7 Migration and C_codex are conditional — they may skip without demoting the round, but they also don't substitute for an unconditional category
+4. Those two consecutive clean rounds produced zero P0/P1 findings across both Council and Codex sources
 
-Every `## Pass <N>:` header must end with exactly one of three terminal suffixes (enforced by the parser):
-- `— clean pass.`
-- `— skipped (<reason>).`
+Every `## Round <N>:` header must end with exactly one of three terminal suffixes (enforced by the parser):
+- `— clean round.`
+- `— partial round (skipped: <categories>).`
 - `— <count> issues (<P0>/<P1>/<P2>/<P3>/<P4>)`
 
-Skipped passes break the consecutive-clean streak — they are not substitutes for a mandatory clean run.
+Partial rounds (any unconditional skip) break the consecutive-clean streak — they are not substitutes for a clean round.
 
 ### Auto-Publish at Session End
 
@@ -475,7 +504,7 @@ Implemented in `extension/src/bin/council-publish.ts` → `extension/bin/council
 
 For each non-trunk branch in `council-stack.json`:
 
-1. Compose a comment body from `council-of-ricks-summary.md` (pass outcomes), the latest directive's per-branch findings table, and the `## Trap Doors` section. Write to `<SESSION_ROOT>/council-comments/<branch-slug>.md`.
+1. Compose a comment body from `council-of-ricks-summary.md` (round outcomes), the latest directive's per-branch findings table, and the `## Trap Doors` section. Write to `<SESSION_ROOT>/council-comments/<branch-slug>.md`.
 2. `gh auth status` probe — if unavailable, record `skipped_no_gh`, keep the body file as a fallback artifact, continue.
 3. Idempotency marker: if `<SESSION_ROOT>/.published/<branch-slug>` exists, record `skipped_already_published`, continue.
 4. Resolve PR # via `gh pr list --head <branch> --json number --jq '.[0].number'`; no PR → `skipped_no_pr`.
@@ -487,8 +516,8 @@ Outcomes (`PublishResult.outcome`): `posted | skipped_already_published | skippe
 
 From `pickle_settings.json`:
 
-- `default_council_min_passes` — default `11` (covers all unconditional categories plus headroom)
-- `default_council_max_passes` — default `25` (exhaustion ceiling)
+- `default_council_min_rounds` — default `2` (two clean rounds gate approval)
+- `default_council_max_rounds` — default `5` (exhaustion ceiling; healthy stacks converge in 2–3)
 - `default_council_publish` — default `true`
 
 CLI flags `--min-iterations <N>`, `--max-iterations <N>`, `--no-publish`, `--no-codex`, `--codex-timeout <sec>`, `--gitnexus`, `--repo <path>` override.
@@ -498,10 +527,12 @@ CLI flags `--min-iterations <N>`, `--max-iterations <N>`, `--no-publish`, `--no-
 ```
 ~/.claude/pickle-rick/sessions/<date-hash>/
 ├── council-stack.json             # { branches, trunk, repo_path, codex_enabled }
-├── council-directive.md           # Agent-executable directive (overwritten each pass)
-├── council-of-ricks-summary.md    # Append-only pass log + dropped candidates
+├── council-directive.md           # Agent-executable directive (overwritten each round)
+├── council-of-ricks-summary.md    # Append-only round log + dropped candidates
+├── round-<N>/                     # Per-round scratch (historical brief, subagent payloads)
+│   └── historical-brief.md
 ├── codex/                         # Per-branch Codex adversarial transcripts
-│   └── <branch-slug>-pass<N>.md
+│   └── <branch-slug>-round<N>.md
 ├── council-comments/              # Composed comment bodies (posted or fallback)
 │   └── <branch-slug>.md
 ├── .published/                    # Idempotency markers (one per posted branch)

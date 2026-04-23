@@ -316,8 +316,8 @@ Most flags are command-scoped. The table groups them by command family — flags
 | `--domain <name>` | `/szechuan-sauce` | Domain-specific principles (e.g., financial) |
 | `--no-validator` | `/plumbus` | Disable attractor validator gate (pattern-only review) |
 | `--repo <PATH>` | `/council-of-ricks` | Target repo (default: cwd) |
-| `--min-iterations <N>` | `/council-of-ricks` | Minimum review passes before convergence |
-| `--max-iterations <N>` | `/council-of-ricks` | Maximum review passes before forced stop |
+| `--min-iterations <N>` | `/council-of-ricks` | Minimum review rounds before convergence (overrides size-tier scaling) |
+| `--max-iterations <N>` | `/council-of-ricks` | Maximum review rounds before forced stop (overrides scaled headroom) |
 | `--gitnexus` | `/council-of-ricks` | Enable GitNexus-backed code intelligence during review |
 | `--no-codex` | `/council-of-ricks` | Disable the Codex adversarial reviewer |
 | `--codex-timeout <S>` | `/council-of-ricks` | Timeout for Codex adversarial reviewer (seconds) |
@@ -342,8 +342,8 @@ All defaults are configurable via `~/.claude/pickle-rick/pickle_settings.json`:
 | `default_tmux_max_turns` | 200 | Max Claude turns per iteration (tmux) |
 | `default_refinement_cycles` | 3 | Number of refinement analysis passes |
 | `default_refinement_max_turns` | 100 | Max Claude turns per refinement worker |
-| `default_council_min_passes` | 11 | Minimum Council of Ricks review passes |
-| `default_council_max_passes` | 25 | Maximum Council of Ricks review passes |
+| `default_council_min_rounds` | 2 | Minimum Council of Ricks parallel review rounds |
+| `default_council_max_rounds` | 5 | Maximum Council of Ricks parallel review rounds |
 | `default_council_publish` | true | Auto-publish PR comments at session end (disable with `--no-publish`) |
 | `default_circuit_breaker_enabled` | true | Enable circuit breaker |
 | `default_cb_no_progress_threshold` | 5 | No-progress iterations before OPEN |
@@ -352,19 +352,22 @@ All defaults are configurable via `~/.claude/pickle-rick/pickle_settings.json`:
 | `default_rate_limit_wait_minutes` | 60 | Fallback wait when no API reset time |
 | `default_max_rate_limit_retries` | 3 | Consecutive rate limits before stopping |
 
-### Upgrading settings from 1.46.x → 1.47.x
+### Upgrading settings from 1.48.x → 1.49.x
 
-`install.sh` preserves existing user customizations in `~/.claude/pickle-rick/pickle_settings.json` by merging repo defaults underneath user values (`jq -s '.[0] * .[1]'`). This means existing installs keep their old `default_council_min_passes: 10` / `default_council_max_passes: 20` unless manually updated — the new Historical Context pass won't be part of your rotation until the min bumps to 11.
+1.49 replaces the Council's sequential pass rotation with parallel rounds (every category runs every round via `Agent` fan-out). The settings keys change accordingly:
 
-To adopt the new defaults:
+- `default_council_min_passes` → `default_council_min_rounds` (default: `2`)
+- `default_council_max_passes` → `default_council_max_rounds` (default: `5`)
+
+`install.sh` preserves user customizations by merging repo defaults underneath user values (`jq -s '.[0] * .[1]'`). Existing installs keep the now-dead `default_council_min_passes` / `default_council_max_passes` keys (harmless — the skill ignores them). Fresh installs get the new round-based defaults automatically.
+
+To migrate an existing install and drop the dead keys:
 
 ```bash
-jq '.default_council_min_passes = 11 | .default_council_max_passes = 25' \
+jq 'del(.default_council_min_passes, .default_council_max_passes) | .default_council_min_rounds = 2 | .default_council_max_rounds = 5' \
   ~/.claude/pickle-rick/pickle_settings.json \
   > /tmp/pickle-settings.json && mv /tmp/pickle-settings.json ~/.claude/pickle-rick/pickle_settings.json
 ```
-
-Fresh installs get the new defaults automatically.
 
 ---
 
@@ -445,33 +448,49 @@ Auto-discovers subsystems, rotates through them round-robin, three-phase protoco
   <img src="images/council-of-ricks.png" alt="Council of Ricks — Graphite PR Stack Reviewer" width="100%" />
 </p>
 
-Iterative Graphite stack reviewer that generates agent-executable directives and auto-publishes review comments to each branch's PR at session end.
+Iterative Graphite stack reviewer that generates agent-executable directives and auto-publishes review comments to each branch's PR at session end. Every round fans out category- and branch-scoped subagents in parallel via the `Agent` tool — a round review that used to take 30–60 min of serial passes now finishes in one fan-out cycle.
 
 **Requirements:**
 
 - Graphite stack with ≥1 non-trunk branch (`gt log short`)
 - A `CLAUDE.md` with project rules, passing lint, and architectural lint rules in ESLint
 - **GitHub CLI (`gh`)** authed, if you want auto-publish (see note below on why `gh` and not `gt`)
-- **Codex plugin** installed and authed, for the adversarial-review pass to be effective. Install: `/plugin install openai-codex` (or `npm i -g @openai/codex-cli` + `codex setup`). Without it, Pass 7 runs as a skipped pass — the rest of the rotation still works, but you lose the adversarial-reviewer perspective.
+- **Codex plugin** installed and authed, for the adversarial-review pass to be effective. Install: `/plugin install openai-codex` (or `npm i -g @openai/codex-cli` + `codex setup`). Without it, the Phase C Codex subagent is skipped — the rest of the round still runs, but you lose the adversarial-reviewer perspective.
 
-**11-pass rotation** — every dedicated category runs at least once before approval can fire:
+**Round structure** — each round runs four phases; within a round every category runs concurrently:
 
-1. Stack Structure — PR sizing, commit hygiene, branch naming, stack ordering
-2. Historical Context — `git log` + prior PR comments (`gh pr list/view`) + in-file guidance comments
-3. CLAUDE.md Compliance — project rule verification per branch diff
-4. Contract Discovery — producer→consumer map across the stack, Zod/enum/union coverage
-5. Per-Branch Correctness + Data Flow — trace input → bug → wrong output
-6. Cross-Branch Contracts + Combinatorial — 2^N boolean/nullable guard verification
-7. Codex Adversarial Challenge — external adversarial review via `codex-companion.mjs` (`--no-codex` to skip)
-8. Test Coverage + Production Migration Safety — persisted-field change detection
-9. Security — input validation, auth gaps, injection, tenant isolation
-10. Migration Hygiene — CHECK drift, idempotency, schema drift (conditional on Drizzle journal)
-11. Szechuan Principles Sweep — P0–P4 scan against the principles reference
-12+. Polish + Trap Door Consolidation + CLAUDE.md re-check
+- **Phase A — Historical Context** (serial, main agent): `git log` + prior PR comments (`gh pr list/view`) + in-file guidance comments → `historical-brief.md` consumed by Phase B/C subagents
+- **Phase B — Category Team** (parallel fan-out, one `Agent` per category):
+  1. Stack Structure — PR sizing, commit hygiene, branch naming, stack ordering
+  2. CLAUDE.md Compliance — project rule verification per branch diff
+  3. Contract Discovery — producer→consumer map, Zod/enum/union coverage
+  4. Cross-Branch Contracts + Combinatorial — 2^N boolean/nullable guard verification
+  5. Test Coverage + Production Migration Safety — persisted-field change detection
+  6. Security — input validation, auth gaps, injection, tenant isolation
+  7. Migration Hygiene (conditional) — CHECK drift, idempotency, schema drift (skipped when no Drizzle journal)
+  8. Szechuan Principles Sweep — P0–P4 scan against the principles reference
+  9. Polish + Trap Door Candidates
+- **Phase C — Branch Team** (parallel fan-out, same message as Phase B):
+  - One `Agent` per non-trunk branch for per-branch Correctness + Data Flow (no checkout needed — pure diff review)
+  - One `Agent` for the Codex sweep (internally sequential because checkout needed; conditional on Codex availability)
+- **Phase D — Synthesis** (serial, main agent): false-positive pre-filter → confidence filter → dedupe (COUNCIL/CODEX merge) → directive + summary append
 
 **Severity × Confidence scoring** — every finding scored `[P0–P4, conf=0–100]`. Confidence `< 80` drops before reporting. **P0 severity escape hatch**: P0 findings at conf ≥ 50 still surface tagged `[NEEDS-VERIFICATION]` (a maybe-real SQL injection is worth an eyeball). Composes with an explicit **false-positives filter** — pre-existing issues, linter/typechecker-catchable errors, author-silenced issues, uncodified style nits, and speculative future-risk are excluded before scoring. Rubric adapted from Anthropic's official `code-review` plugin.
 
-**Approval gate** — `THE_CITADEL_APPROVES` fires only when all four conditions hold: (1) current pass ≥ `max(min_iterations, default_council_min_passes)`, (2) last two `## Pass <N>:` headers in the summary both end with `clean pass.`, (3) every unconditional category (1–6, 8, 9, 11) has at least one clean-pass row, (4) those two consecutive clean passes produced zero P0/P1. Skipped passes (Codex disabled, Migration no-journal, Historical Context no-gh) break the streak and don't substitute for unconditional categories.
+**Approval gate** — `THE_CITADEL_APPROVES` fires only when all four conditions hold: (1) current round ≥ `min_iterations` (the tier-resolved value from Step 8 — see size-tier scaling below), (2) last two `## Round <N>:` headers in the summary both end with `— clean round.`, (3) across those two consecutive clean rounds no unconditional category (Phase A, B1–B6, B8, B9, Phase C per-branch Correctness) was `skipped`, (4) zero P0/P1 findings across COUNCIL + CODEX in those two rounds. Partial rounds (any unconditional skip) break the streak — Phase B7 Migration and Phase C Codex are conditional and may skip without demoting the round.
+
+**Size-tier scaling** — at stack discovery the Council computes `git diff --numstat <trunk>...<tip>` and scales `min_rounds` to the stack's surface area, because each round surfaces findings that reframe code earlier rounds walked past. Large PRs need more rounds to converge:
+
+| Stack diff LOC | OR | Files touched | Scaled min rounds |
+|---|---|---|---|
+| < 300 | or | < 10 | 2 |
+| 300 – 1,499 | or | 10 – 29 | 3 |
+| 1,500 – 4,999 | or | 30 – 79 | 4 |
+| 5,000 – 9,999 | or | 80 – 149 | 5 |
+| 10,000 – 19,999 | or | 150 – 299 | 6 |
+| ≥ 20,000 | or | ≥ 300 | 7 |
+
+Takes the max of the LOC tier and the files tier — either axis can flag "big enough." `effective_min = max(default_council_min_rounds, scaled_tier)`. `effective_max = max(default_council_max_rounds, effective_min + 2)` to guarantee two rounds of headroom above the floor. CLI flags `--min-iterations` / `--max-iterations` override the scaled values entirely — pass them when you want a quick sanity-check sweep on a big stack, or to force more rounds on a small one.
 
 **Auto-publish at session end** — when the gate fires OR max_iterations is hit, one PR comment per non-trunk branch is posted via `gh pr comment` to the GitHub-backed PR that Graphite manages. Idempotent via `.published/<branch-slug>` markers. Fails open at every level — `gh` unavailable / no PR / per-branch post failure never blocks the terminal promise. Fallback body files written to `council-comments/<branch-slug>.md` on every skip class. Opt out with `--no-publish` or `default_council_publish: false`.
 
@@ -568,7 +587,7 @@ The `--run` flag goes further: after generating the transplant PRD, it launches 
 - **Zellij** >= 0.40.0 *(optional — for `/pickle-zellij`)*
 - **Graphite CLI** (`gt`) *(optional — for `/council-of-ricks`)*
 - **GitHub CLI** (`gh`) authed *(optional — required only for `/council-of-ricks` auto-publish; the review itself works without it)*
-- **Codex plugin** *(optional — for `/council-of-ricks` Pass 7 adversarial review; Council runs without it but loses the adversarial perspective)*
+- **Codex plugin** *(optional — for `/council-of-ricks` Phase C adversarial review; Council runs without it but loses the adversarial perspective)*
 - macOS or Linux (Windows not supported)
 
 ---

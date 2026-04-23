@@ -160,7 +160,7 @@ test('publishCouncilStack: happy path posts each branch exactly once', async () 
                 assert.ok(entry.ts);
             }
         }, {
-            summary: '## Pass 1: ISSUES\n| Branch |\n| --- |\n| feat/one |\n\n## Pass 2: CLEAN\n',
+            summary: '## Round 1: ISSUES\n| Branch |\n| --- |\n| feat/one |\n\n## Round 2: CLEAN\n',
             directive: '# Council Directive\n\n### Findings\n\n| Severity | Branch | File:Line |\n| --- | --- | --- |\n| HIGH | feat/one | a.ts:10 |\n',
         });
     } finally {

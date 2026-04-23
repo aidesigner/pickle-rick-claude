@@ -13,24 +13,24 @@ function slugify(branch) {
     return branch.replace(/\//g, '__');
 }
 /**
- * Scans the council-of-ricks-summary.md for `## Pass N:` headers and returns
- * a clean bullet list reflecting every pass outcome this session — so reviewers
- * see the full rotation (clean / skipped / issues), not just the final state.
+ * Scans the council-of-ricks-summary.md for `## Round N:` headers and returns
+ * a clean bullet list reflecting every round outcome this session — so reviewers
+ * see the full rotation (clean / partial / issues), not just the final state.
  */
-function extractPassOutcomes(summaryPath) {
+function extractRoundOutcomes(summaryPath) {
     if (!fs.existsSync(summaryPath))
         return [];
     try {
         const content = fs.readFileSync(summaryPath, 'utf-8');
         const lines = content.split('\n');
-        const passes = [];
+        const rounds = [];
         for (const line of lines) {
-            const m = line.match(/^##\s+Pass\s+(\d+)\s*:\s*(.+?)\s*$/i);
+            const m = line.match(/^##\s+Round\s+(\d+)\s*:\s*(.+?)\s*$/i);
             if (m) {
-                passes.push(`- Pass ${m[1]}: ${m[2].trim()}`);
+                rounds.push(`- Round ${m[1]}: ${m[2].trim()}`);
             }
         }
-        return passes;
+        return rounds;
     }
     catch {
         return [];
@@ -134,21 +134,21 @@ function trapDoorsForBranch(directive, branch) {
     return kept.join('\n').trim();
 }
 function composeBody(params) {
-    const { sessionRoot, branch: _branch, finalPass, codexEnabled, findings, trapDoors, passOutcomes } = params;
+    const { sessionRoot, branch: _branch, finalRound, codexEnabled, findings, trapDoors, roundOutcomes } = params;
     const sessionName = path.basename(sessionRoot);
     const codexLine = codexEnabled ? 'enabled: ran on this branch' : 'disabled: not available';
     const findingsBlock = findings.length > 0
         ? findings.join('\n')
         : 'No findings for this branch at session close.';
     const trapBlock = trapDoors.length > 0 ? trapDoors : 'None catalogued.';
-    const passBlock = passOutcomes.length > 0 ? passOutcomes.join('\n') : '- (no passes recorded)';
+    const roundBlock = roundOutcomes.length > 0 ? roundOutcomes.join('\n') : '- (no rounds recorded)';
     return [
         '## Council of Ricks — Stack Review',
         '',
-        '_Posted at session end. See the [Council skill](https://github.com/gregorydickson/pickle-rick-claude) for the multi-pass review protocol._',
+        '_Posted at session end. See the [Council skill](https://github.com/gregorydickson/pickle-rick-claude) for the parallel-round review protocol._',
         '',
         `**Session:** \`${sessionName}\``,
-        `**Final pass:** ${finalPass}`,
+        `**Final round:** ${finalRound}`,
         `**Codex adversarial:** ${codexLine}`,
         '',
         '### Findings for this branch',
@@ -159,9 +159,9 @@ function composeBody(params) {
         '',
         trapBlock,
         '',
-        '### Pass outcomes (this session)',
+        '### Round outcomes (this session)',
         '',
-        passBlock,
+        roundBlock,
         '',
     ].join('\n');
 }
@@ -203,8 +203,8 @@ export default function publishCouncilStack(sessionRoot, opts = {}) {
     catch {
         ghAvailable = false;
     }
-    const passOutcomes = extractPassOutcomes(path.join(sessionRoot, 'council-of-ricks-summary.md'));
-    const finalPass = passOutcomes.length;
+    const roundOutcomes = extractRoundOutcomes(path.join(sessionRoot, 'council-of-ricks-summary.md'));
+    const finalRound = roundOutcomes.length;
     const directive = readLatestDirective(path.join(sessionRoot, 'council-directive.md'));
     const results = [];
     let posted = 0;
@@ -219,11 +219,11 @@ export default function publishCouncilStack(sessionRoot, opts = {}) {
         const body = composeBody({
             sessionRoot,
             branch,
-            finalPass,
+            finalRound,
             codexEnabled: !!codex_enabled,
             findings: findingsForBranch(directive, branch),
             trapDoors: trapDoorsForBranch(directive, branch),
-            passOutcomes,
+            roundOutcomes,
         });
         fs.writeFileSync(bodyPath, body);
         if (!ghAvailable) {
