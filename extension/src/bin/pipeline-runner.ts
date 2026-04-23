@@ -343,70 +343,13 @@ export function writeSkippedByScope(
 // Phase Setup: Anatomy Park
 // ---------------------------------------------------------------------------
 
-export function setupAnatomyPark(
-  sessionDir: string,
+function buildAnatomyPrd(
   target: string,
+  subsystems: Array<{ name: string; fileCount: number }>,
   stallLimit: number,
-  extensionRoot: string,
-  log: (msg: string) => void,
-  scope?: { allowedPaths: string[]; repoRoot: string },
-): boolean {
-  const discovered = discoverSubsystems(target);
-  if (discovered.length === 0) {
-    log('No subsystems discovered — skipping anatomy-park phase');
-    return false;
-  }
-
-  let subsystems = discovered;
-  if (scope && scope.allowedPaths.length > 0) {
-    const kept = new Set(filterBySubsystem(discovered.map(s => s.name), scope.allowedPaths, target, scope.repoRoot));
-    if (kept.size === 0) {
-      log('anatomy-park: scope filter excluded all subsystems — skipping phase');
-      return false;
-    }
-    subsystems = discovered.filter(s => kept.has(s.name));
-    log(`anatomy-park: scope filtered ${discovered.length} → ${subsystems.length} subsystems: ${subsystems.map(s => s.name).join(', ')}`);
-  } else {
-    log(`Discovered ${subsystems.length} subsystems: ${subsystems.map(s => s.name).join(', ')}`);
-  }
-
-  // anatomy-park.json — subsystem rotation state
-  const apState = {
-    subsystems: subsystems.map(s => s.name),
-    current_index: 0,
-    pass_counts: {} as Record<string, number>,
-    consecutive_clean: {} as Record<string, number>,
-    stall_counts: {} as Record<string, number>,
-    stall_limit: stallLimit,
-    findings_history: {} as Record<string, unknown[]>,
-    trap_doors_added: [] as unknown[],
-    trap_doors_committed: [] as unknown[],
-  };
-  fs.writeFileSync(path.join(sessionDir, 'anatomy-park.json'), JSON.stringify(apState, null, 2));
-
-  // microverse.json — worker-managed convergence
-  const runnerStallLimit = subsystems.length * 10;
-  const metricJson = JSON.stringify({
-    description: 'none', validation: 'none', type: 'none',
-    timeout_seconds: 0, tolerance: 0, direction: 'lower',
-  });
-  try {
-    execFileSync('node', [
-      path.join(extensionRoot, 'extension', 'bin', 'init-microverse.js'),
-      sessionDir, target,
-      '--stall-limit', String(runnerStallLimit),
-      '--convergence-mode', 'worker',
-      '--convergence-file', 'anatomy-park.json',
-      '--metric-json', metricJson,
-    ], { timeout: 30_000, encoding: 'utf-8' });
-  } catch (err) {
-    log(`init-microverse.js failed: ${safeErrorMessage(err)}`);
-    return false;
-  }
-
-  // prd.md
-  archiveFile(sessionDir, 'prd.md', 'pickle');
-  fs.writeFileSync(path.join(sessionDir, 'prd.md'), [
+  runnerStallLimit: number,
+): string {
+  return [
     '# Anatomy Park: Deep Subsystem Review',
     '',
     '## Objective',
@@ -437,8 +380,89 @@ export function setupAnatomyPark(
     '- Phase 1 and Phase 3 are READ-ONLY',
     '- Revert on regression, defer to next iteration',
     `- Skip subsystem after ${stallLimit} consecutive failed fixes`,
-  ].join('\n'));
+  ].join('\n');
+}
 
+function resolveAnatomySubsystems(
+  target: string,
+  scope: { allowedPaths: string[]; repoRoot: string } | undefined,
+  log: (msg: string) => void,
+): Array<{ name: string; fileCount: number }> | null {
+  const discovered = discoverSubsystems(target);
+  if (discovered.length === 0) {
+    log('No subsystems discovered — skipping anatomy-park phase');
+    return null;
+  }
+  if (!scope || scope.allowedPaths.length === 0) {
+    log(`Discovered ${discovered.length} subsystems: ${discovered.map(s => s.name).join(', ')}`);
+    return discovered;
+  }
+  const kept = new Set(filterBySubsystem(discovered.map(s => s.name), scope.allowedPaths, target, scope.repoRoot));
+  if (kept.size === 0) {
+    log('anatomy-park: scope filter excluded all subsystems — skipping phase');
+    return null;
+  }
+  const filtered = discovered.filter(s => kept.has(s.name));
+  log(`anatomy-park: scope filtered ${discovered.length} → ${filtered.length} subsystems: ${filtered.map(s => s.name).join(', ')}`);
+  return filtered;
+}
+
+function writeAnatomyConfig(
+  sessionDir: string,
+  subsystems: Array<{ name: string; fileCount: number }>,
+  stallLimit: number,
+): void {
+  const apState = {
+    subsystems: subsystems.map(s => s.name),
+    current_index: 0,
+    pass_counts: {} as Record<string, number>,
+    consecutive_clean: {} as Record<string, number>,
+    stall_counts: {} as Record<string, number>,
+    stall_limit: stallLimit,
+    findings_history: {} as Record<string, unknown[]>,
+    trap_doors_added: [] as unknown[],
+    trap_doors_committed: [] as unknown[],
+  };
+  fs.writeFileSync(path.join(sessionDir, 'anatomy-park.json'), JSON.stringify(apState, null, 2));
+}
+
+export function setupAnatomyPark(
+  sessionDir: string,
+  target: string,
+  stallLimit: number,
+  extensionRoot: string,
+  log: (msg: string) => void,
+  scope?: { allowedPaths: string[]; repoRoot: string },
+): boolean {
+  const subsystems = resolveAnatomySubsystems(target, scope, log);
+  if (!subsystems) return false;
+
+  writeAnatomyConfig(sessionDir, subsystems, stallLimit);
+
+  const runnerStallLimit = subsystems.length * 10;
+  const metricJson = JSON.stringify({
+    description: 'none', validation: 'none', type: 'none',
+    timeout_seconds: 0, tolerance: 0, direction: 'lower',
+  });
+  try {
+    execFileSync('node', [
+      path.join(extensionRoot, 'extension', 'bin', 'init-microverse.js'),
+      sessionDir, target,
+      '--stall-limit', String(runnerStallLimit),
+      '--convergence-mode', 'worker',
+      '--convergence-file', 'anatomy-park.json',
+      '--metric-json', metricJson,
+    ], { timeout: 30_000, encoding: 'utf-8' });
+  } catch (err) {
+    log(`init-microverse.js failed: ${safeErrorMessage(err)}`);
+    return false;
+  }
+
+  archiveFile(sessionDir, 'prd.md', 'pickle');
+  fs.writeFileSync(
+    path.join(sessionDir, 'prd.md'),
+    buildAnatomyPrd(target, subsystems, stallLimit, runnerStallLimit),
+  );
   log('Anatomy Park setup complete');
   return true;
 }
@@ -447,61 +471,41 @@ export function setupAnatomyPark(
 // Phase Setup: Szechuan Sauce
 // ---------------------------------------------------------------------------
 
-function setupSzechuanSauce(
+function buildSzechuanJudgeContext(
   sessionDir: string,
-  target: string,
-  stallLimit: number,
+  principlesPath: string,
   extensionRoot: string,
   domain: string | undefined,
   focus: string | undefined,
   log: (msg: string) => void,
-  scope?: { allowedPaths: string[] },
-): boolean {
-  const principlesPath = path.join(extensionRoot, 'szechuan-sauce-principles.md');
-  let judgeContextArg: string | undefined;
-
-  // Build judge context if domain or focus specified, or if base principles exist
-  if (domain || focus) {
-    const parts: string[] = [];
-    try { parts.push(fs.readFileSync(principlesPath, 'utf-8')); } catch { /* base missing */ }
-    if (domain) {
-      const domainPath = path.join(extensionRoot, `szechuan-sauce-${domain}-principles.md`);
-      try { parts.push(fs.readFileSync(domainPath, 'utf-8')); } catch {
-        log(`Domain principles not found: ${domainPath}`);
-      }
+): string | undefined {
+  if (!domain && !focus) {
+    return fs.existsSync(principlesPath) ? principlesPath : undefined;
+  }
+  const parts: string[] = [];
+  try { parts.push(fs.readFileSync(principlesPath, 'utf-8')); } catch { /* base missing */ }
+  if (domain) {
+    const domainPath = path.join(extensionRoot, `szechuan-sauce-${domain}-principles.md`);
+    try { parts.push(fs.readFileSync(domainPath, 'utf-8')); } catch {
+      log(`Domain principles not found: ${domainPath}`);
     }
-    if (focus) {
-      parts.push(`\n## Focus Directive\n\n${focus}\n\nViolations matching this focus are elevated by one priority level.`);
-    }
-    const contextPath = path.join(sessionDir, 'judge-context.md');
-    fs.writeFileSync(contextPath, parts.join('\n\n'));
-    judgeContextArg = contextPath;
-  } else if (fs.existsSync(principlesPath)) {
-    judgeContextArg = principlesPath;
   }
+  if (focus) {
+    parts.push(`\n## Focus Directive\n\n${focus}\n\nViolations matching this focus are elevated by one priority level.`);
+  }
+  const contextPath = path.join(sessionDir, 'judge-context.md');
+  fs.writeFileSync(contextPath, parts.join('\n\n'));
+  return contextPath;
+}
 
-  // microverse.json — LLM-judged convergence to 0 (archive from previous phase)
-  archiveFile(sessionDir, 'microverse.json', 'pre-szechuan');
-  const initArgs = [
-    path.join(extensionRoot, 'extension', 'bin', 'init-microverse.js'),
-    sessionDir, target,
-    '--stall-limit', String(stallLimit),
-    '--convergence-target', '0',
-  ];
-  if (judgeContextArg) initArgs.push('--judge-context', judgeContextArg);
-  const scopePath = path.join(sessionDir, 'scope.json');
-  if (scope && scope.allowedPaths.length > 0 && fs.existsSync(scopePath)) {
-    initArgs.push('--allowed-paths-file', scopePath);
-  }
-  try {
-    execFileSync('node', initArgs, { timeout: 30_000, encoding: 'utf-8' });
-  } catch (err) {
-    log(`init-microverse.js failed: ${safeErrorMessage(err)}`);
-    return false;
-  }
-
-  // prd.md
-  archiveFile(sessionDir, 'prd.md', 'anatomy-park');
+function buildSzechuanPrd(
+  target: string,
+  stallLimit: number,
+  principlesPath: string,
+  extensionRoot: string,
+  domain: string | undefined,
+  focus: string | undefined,
+): string {
   const prdParts = [
     '# Szechuan Sauce: Iterative Deslopping',
     '',
@@ -543,7 +547,46 @@ function setupSzechuanSauce(
     '- Never repeat a failed approach',
     '- P0 before P1 before P2 before P3 before P4',
   );
-  fs.writeFileSync(path.join(sessionDir, 'prd.md'), prdParts.join('\n'));
+  return prdParts.join('\n');
+}
+
+function setupSzechuanSauce(
+  sessionDir: string,
+  target: string,
+  stallLimit: number,
+  extensionRoot: string,
+  domain: string | undefined,
+  focus: string | undefined,
+  log: (msg: string) => void,
+  scope?: { allowedPaths: string[] },
+): boolean {
+  const principlesPath = path.join(extensionRoot, 'szechuan-sauce-principles.md');
+  const judgeContextArg = buildSzechuanJudgeContext(sessionDir, principlesPath, extensionRoot, domain, focus, log);
+
+  archiveFile(sessionDir, 'microverse.json', 'pre-szechuan');
+  const initArgs = [
+    path.join(extensionRoot, 'extension', 'bin', 'init-microverse.js'),
+    sessionDir, target,
+    '--stall-limit', String(stallLimit),
+    '--convergence-target', '0',
+  ];
+  if (judgeContextArg) initArgs.push('--judge-context', judgeContextArg);
+  const scopePath = path.join(sessionDir, 'scope.json');
+  if (scope && scope.allowedPaths.length > 0 && fs.existsSync(scopePath)) {
+    initArgs.push('--allowed-paths-file', scopePath);
+  }
+  try {
+    execFileSync('node', initArgs, { timeout: 30_000, encoding: 'utf-8' });
+  } catch (err) {
+    log(`init-microverse.js failed: ${safeErrorMessage(err)}`);
+    return false;
+  }
+
+  archiveFile(sessionDir, 'prd.md', 'anatomy-park');
+  fs.writeFileSync(
+    path.join(sessionDir, 'prd.md'),
+    buildSzechuanPrd(target, stallLimit, principlesPath, extensionRoot, domain, focus),
+  );
   log('Szechuan Sauce setup complete');
   return true;
 }
