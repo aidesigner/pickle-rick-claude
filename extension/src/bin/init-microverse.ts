@@ -72,16 +72,29 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'init-microverse.js') 
 
   let allowedPaths: string[] | undefined;
   if (allowedPathsFile) {
+    let raw: unknown;
     try {
-      const raw = JSON.parse(fs.readFileSync(allowedPathsFile, 'utf-8')) as unknown;
-      if (raw && typeof raw === 'object' && !Array.isArray(raw) && Array.isArray((raw as Record<string, unknown>).allowed_paths)) {
-        allowedPaths = (raw as Record<string, string[]>).allowed_paths;
-      }
+      raw = JSON.parse(fs.readFileSync(allowedPathsFile, 'utf-8'));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Failed to read --allowed-paths-file ${allowedPathsFile}: ${msg}`);
       process.exit(1);
     }
+    // Fail-fast: silently dropping scope filtering would defeat the purpose of the flag.
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      console.error(`--allowed-paths-file ${allowedPathsFile}: expected a JSON object with an 'allowed_paths' array`);
+      process.exit(1);
+    }
+    const field = (raw as Record<string, unknown>).allowed_paths;
+    if (!Array.isArray(field)) {
+      console.error(`--allowed-paths-file ${allowedPathsFile}: 'allowed_paths' is missing or not an array`);
+      process.exit(1);
+    }
+    if (!field.every((p) => typeof p === 'string')) {
+      console.error(`--allowed-paths-file ${allowedPathsFile}: 'allowed_paths' must contain only strings`);
+      process.exit(1);
+    }
+    allowedPaths = field as string[];
   }
 
   try {

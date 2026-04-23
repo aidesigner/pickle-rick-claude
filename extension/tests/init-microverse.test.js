@@ -131,4 +131,76 @@ describe('init-microverse convergence flags', () => {
     assert.ok(result.stderr.includes('--convergence-mode'));
     assert.ok(result.stderr.includes('--convergence-file'));
   });
+
+  // ---------------------------------------------------------------------------
+  // --allowed-paths-file validation (P1 regression)
+  // ---------------------------------------------------------------------------
+
+  test('--allowed-paths-file without allowed_paths field fails loudly', () => {
+    const dir = makeTempDir();
+    try {
+      const badScope = path.join(dir, 'scope.json');
+      fs.writeFileSync(badScope, JSON.stringify({ version: 1, mode: 'branch' }));
+      const result = run([dir, '/some/target', '--allowed-paths-file', badScope], true);
+      assert.equal(result.code, 1);
+      assert.ok(
+        result.stderr.includes("'allowed_paths' is missing or not an array"),
+        `expected missing-array error, got: ${result.stderr}`,
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
+  test('--allowed-paths-file with non-array allowed_paths fails loudly', () => {
+    const dir = makeTempDir();
+    try {
+      const badScope = path.join(dir, 'scope.json');
+      fs.writeFileSync(badScope, JSON.stringify({ allowed_paths: 'not-an-array' }));
+      const result = run([dir, '/some/target', '--allowed-paths-file', badScope], true);
+      assert.equal(result.code, 1);
+      assert.ok(result.stderr.includes("'allowed_paths' is missing or not an array"));
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
+  test('--allowed-paths-file with non-object top-level fails loudly', () => {
+    const dir = makeTempDir();
+    try {
+      const badScope = path.join(dir, 'scope.json');
+      fs.writeFileSync(badScope, JSON.stringify(['oops']));
+      const result = run([dir, '/some/target', '--allowed-paths-file', badScope], true);
+      assert.equal(result.code, 1);
+      assert.ok(result.stderr.includes("expected a JSON object"));
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
+  test('--allowed-paths-file with non-string elements fails loudly', () => {
+    const dir = makeTempDir();
+    try {
+      const badScope = path.join(dir, 'scope.json');
+      fs.writeFileSync(badScope, JSON.stringify({ allowed_paths: ['a.ts', 42, 'b.ts'] }));
+      const result = run([dir, '/some/target', '--allowed-paths-file', badScope], true);
+      assert.equal(result.code, 1);
+      assert.ok(result.stderr.includes('must contain only strings'));
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
+  test('--allowed-paths-file with valid scope.json still succeeds', () => {
+    const dir = makeTempDir();
+    try {
+      const goodScope = path.join(dir, 'scope.json');
+      fs.writeFileSync(goodScope, JSON.stringify({ version: 1, allowed_paths: ['a.ts', 'b.ts'] }));
+      run([dir, '/some/target', '--allowed-paths-file', goodScope]);
+      const state = readMicroverse(dir);
+      assert.deepEqual(state.allowed_paths, ['a.ts', 'b.ts']);
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
 });

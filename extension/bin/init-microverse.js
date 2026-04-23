@@ -62,17 +62,30 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'init-microverse.js') 
     }
     let allowedPaths;
     if (allowedPathsFile) {
+        let raw;
         try {
-            const raw = JSON.parse(fs.readFileSync(allowedPathsFile, 'utf-8'));
-            if (raw && typeof raw === 'object' && !Array.isArray(raw) && Array.isArray(raw.allowed_paths)) {
-                allowedPaths = raw.allowed_paths;
-            }
+            raw = JSON.parse(fs.readFileSync(allowedPathsFile, 'utf-8'));
         }
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
             console.error(`Failed to read --allowed-paths-file ${allowedPathsFile}: ${msg}`);
             process.exit(1);
         }
+        // Fail-fast: silently dropping scope filtering would defeat the purpose of the flag.
+        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+            console.error(`--allowed-paths-file ${allowedPathsFile}: expected a JSON object with an 'allowed_paths' array`);
+            process.exit(1);
+        }
+        const field = raw.allowed_paths;
+        if (!Array.isArray(field)) {
+            console.error(`--allowed-paths-file ${allowedPathsFile}: 'allowed_paths' is missing or not an array`);
+            process.exit(1);
+        }
+        if (!field.every((p) => typeof p === 'string')) {
+            console.error(`--allowed-paths-file ${allowedPathsFile}: 'allowed_paths' must contain only strings`);
+            process.exit(1);
+        }
+        allowedPaths = field;
     }
     try {
         const convergenceTarget = rawConvergence != null ? Number(rawConvergence) : undefined;
