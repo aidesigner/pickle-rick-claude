@@ -258,48 +258,14 @@ export function refreshScope(
 
   const statePath = path.join(sessionRoot, 'state.json');
   const sm = new StateManager();
-
-  let existingPhases: string[] = [];
-  if (fs.existsSync(statePath)) {
-    try {
-      const state = sm.read(statePath);
-      existingPhases = state.phases_entered ?? [];
-    } catch {
-      existingPhases = [];
-    }
-  }
-  if (existingPhases.includes(phase)) return null;
+  if (isPhaseAlreadyEntered(sm, statePath, phase)) return null;
 
   const scope = JSON.parse(fs.readFileSync(scopePath, 'utf-8')) as ScopeJson;
-  const repoRoot = opts.repoRoot ?? (() => {
-    if (!fs.existsSync(statePath)) {
-      throw new ScopeError('SCOPE_NOT_A_REPO', `refreshScope: no repoRoot given and no state.json at ${statePath}`);
-    }
-    const state = sm.read(statePath);
-    return state.working_dir;
-  })();
-
+  const repoRoot = opts.repoRoot ?? resolveRepoRootFromState(sm, statePath);
   const log = opts.log ?? ((msg: string) => { process.stderr.write(`${msg}\n`); });
   const newHead = getHeadSha(repoRoot);
 
-  let newAllowed: string[];
-  if (scope.mode === 'paths') {
-    newAllowed = scope.allowed_paths.slice();
-  } else {
-    if (!scope.base_sha) {
-      throw new ScopeError('SCOPE_BASE_MISSING', `refreshScope: scope.json has no base_sha for mode=${scope.mode}`);
-    }
-    let base: string[];
-    try {
-      base = computeAllowedFromDiff(scope.base_sha, newHead, repoRoot);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      throw new ScopeError('SCOPE_BASE_MISSING', `refreshScope: diff ${scope.base_sha}...${newHead} failed: ${msg}`);
-    }
-    const expanded = scope.strategy === 'one-hop' ? computeOneHop(base, repoRoot) : base;
-    newAllowed = Array.from(new Set(expanded.map(toPosix))).sort(byteOrder);
-  }
-
+  const newAllowed = computeRefreshedAllowed(scope, newHead, repoRoot);
   if (newAllowed.length === 0 && phase === 'anatomy-park') {
     throw new ScopeError(
       'SCOPE_EMPTY_POST_BUILD',
@@ -308,30 +274,69 @@ export function refreshScope(
   }
 
   const resolvedAt = new Date().toISOString();
-  const refreshEntry: RefreshEntry = { phase, head_sha: newHead, resolved_at: resolvedAt };
   const refreshed: ScopeJson = {
     ...scope,
     head_sha: newHead,
     allowed_paths: newAllowed,
     resolved_at: resolvedAt,
-    refresh_history: [...scope.refresh_history, refreshEntry],
+    refresh_history: [...scope.refresh_history, { phase, head_sha: newHead, resolved_at: resolvedAt }],
   };
 
+  persistRefreshedScope(sessionRoot, scopePath, refreshed, sm, statePath, phase);
+  log(`scope-refresh: phase=${phase} head=${newHead} allowed=${newAllowed.length}`);
+  return refreshed;
+}
+
+function isPhaseAlreadyEntered(sm: StateManager, statePath: string, phase: string): boolean {
+  if (!fs.existsSync(statePath)) return false;
+  try {
+    const state = sm.read(statePath);
+    return (state.phases_entered ?? []).includes(phase);
+  } catch {
+    return false;
+  }
+}
+
+function resolveRepoRootFromState(sm: StateManager, statePath: string): string {
+  if (!fs.existsSync(statePath)) {
+    throw new ScopeError('SCOPE_NOT_A_REPO', `refreshScope: no repoRoot given and no state.json at ${statePath}`);
+  }
+  return sm.read(statePath).working_dir;
+}
+
+function computeRefreshedAllowed(scope: ScopeJson, newHead: string, repoRoot: string): string[] {
+  if (scope.mode === 'paths') return scope.allowed_paths.slice();
+  if (!scope.base_sha) {
+    throw new ScopeError('SCOPE_BASE_MISSING', `refreshScope: scope.json has no base_sha for mode=${scope.mode}`);
+  }
+  let base: string[];
+  try {
+    base = computeAllowedFromDiff(scope.base_sha, newHead, repoRoot);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new ScopeError('SCOPE_BASE_MISSING', `refreshScope: diff ${scope.base_sha}...${newHead} failed: ${msg}`);
+  }
+  const expanded = scope.strategy === 'one-hop' ? computeOneHop(base, repoRoot) : base;
+  return Array.from(new Set(expanded.map(toPosix))).sort(byteOrder);
+}
+
+function persistRefreshedScope(
+  sessionRoot: string,
+  scopePath: string,
+  refreshed: ScopeJson,
+  sm: StateManager,
+  statePath: string,
+  phase: string,
+): void {
   const archiveDir = path.join(sessionRoot, 'archive');
   fs.mkdirSync(archiveDir, { recursive: true });
-  const archivePath = path.join(archiveDir, `scope.${phase}.json`);
-  writeScopeArchive(archivePath, refreshed);
-
+  writeScopeArchive(path.join(archiveDir, `scope.${phase}.json`), refreshed);
   writeScopeJson(scopePath, refreshed);
-
   if (fs.existsSync(statePath)) {
     sm.update(statePath, (s: State) => {
       s.phases_entered = [...(s.phases_entered ?? []), phase];
     });
   }
-
-  log(`scope-refresh: phase=${phase} head=${newHead} allowed=${newAllowed.length}`);
-  return refreshed;
 }
 
 /**
