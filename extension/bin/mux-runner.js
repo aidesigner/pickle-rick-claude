@@ -2,8 +2,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { spawn, spawnSync } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, runCmd, safeErrorMessage, ensureMonitorWindow } from '../services/pickle-utils.js';
+import { spawn } from 'child_process';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification } from '../services/pickle-utils.js';
 import { PromiseTokens, hasToken, VALID_STEPS, Defaults, hasLifecycleArtifact } from '../types/index.js';
 import { StateManager, safeDeactivate, writeActivityEntry, writeTimeoutStub } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -1287,10 +1287,7 @@ async function main() {
     }, 'GREEN', '🥒');
     log(`mux-runner finished. ${iteration} iterations, ${formatTime(totalElapsed)}`);
     const notif = buildTmuxNotification(exitReason, finalStep, iteration, totalElapsed);
-    if (process.platform === 'darwin') {
-        const esc = (s) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        spawnSync('osascript', ['-e', `display notification "${esc(notif.body)}" with title "${esc(notif.title)}" subtitle "${esc(notif.subtitle)}"`]);
-    }
+    displayMacNotification(notif.title, notif.body, notif.subtitle);
     // Explicit exit code so parent processes (pipeline-runner) can detect failure.
     // Matches microverse-runner.ts pattern.
     const exitCode = isFailedExit ? 1 : 0;

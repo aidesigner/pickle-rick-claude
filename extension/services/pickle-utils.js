@@ -789,6 +789,32 @@ export function monitorModesCompatible(existing, want) {
         return false;
     return existing === want;
 }
+/** Default timeout for macOS notification shell-outs (`osascript`). Kept short
+ *  because notifications run on the exit path — a wedged Notification Center /
+ *  AppleEvent daemon must NOT block `process.exit` on the runner. Four prior
+ *  "improve notification" passes (8db2771, 2f19356, f9f37ef, 2da7fe5, 8cc31a6)
+ *  added features and fixed content but none passed a `timeout`; see trap door
+ *  in extension/CLAUDE.md and anatomy-park iteration 4 commit. */
+export const NOTIFICATION_TIMEOUT_MS = 5_000;
+/** Display a macOS notification via `osascript`. No-op on non-darwin platforms.
+ *  Every invocation passes an explicit `timeout` so a wedged UI server cannot
+ *  block the caller indefinitely. Any error (ENOENT, SIGTERM on timeout,
+ *  non-zero exit) is swallowed — notifications are best-effort at program exit. */
+export function displayMacNotification(title, body, subtitle, opts = {}) {
+    const isDarwin = opts.forceDarwin ?? process.platform === 'darwin';
+    if (!isDarwin)
+        return;
+    const timeoutMs = opts.timeoutMs ?? NOTIFICATION_TIMEOUT_MS;
+    const spawnSyncFn = opts.spawnSyncFn ?? spawnSync;
+    const esc = (s) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const script = subtitle
+        ? `display notification "${esc(body)}" with title "${esc(title)}" subtitle "${esc(subtitle)}"`
+        : `display notification "${esc(body)}" with title "${esc(title)}"`;
+    try {
+        spawnSyncFn('osascript', ['-e', script], { timeout: timeoutMs, encoding: 'utf-8' });
+    }
+    catch { /* best-effort: ENOENT / timeout / non-zero exit are all non-fatal */ }
+}
 /** Removes inactive session directories older than maxAgeDays from sessionsRoot. */
 export function pruneOldSessions(sessionsRoot, maxAgeDays = 7) {
     if (!fs.existsSync(sessionsRoot))

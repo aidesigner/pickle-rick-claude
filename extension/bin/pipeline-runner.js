@@ -17,7 +17,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync, spawn } from 'child_process';
 import { StateManager } from '../services/state-manager.js';
-import { getExtensionRoot, Style, formatTime, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, } from '../services/pickle-utils.js';
+import { getExtensionRoot, Style, formatTime, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, displayMacNotification, } from '../services/pickle-utils.js';
 import { isWorkingTreeDirty } from '../services/git-utils.js';
 import { logActivity } from '../services/activity-logger.js';
 import { resolveScope, refreshScope, filterBySubsystem, ScopeError, } from '../services/scope-resolver.js';
@@ -692,17 +692,10 @@ export async function main(sessionDir, opts = {}) {
         duration_min: Math.round(totalElapsed / 60),
         mode: 'tmux',
     });
-    // macOS notification
-    if (process.platform === 'darwin') {
-        const esc = (s) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-        const allDone = (completedPhases + skippedPhases) === config.phases.length;
-        const title = allDone ? '🧪 Pipeline Complete' : '🧪 Pipeline Stopped';
-        const body = `${phasesSummary} phases, ${formatTime(totalElapsed)}`;
-        try {
-            execFileSync('osascript', ['-e', `display notification "${esc(body)}" with title "${esc(title)}"`]);
-        }
-        catch { /* best effort */ }
-    }
+    // macOS notification — helper applies NOTIFICATION_TIMEOUT_MS and swallows
+    // errors so a wedged UI server cannot block the exit path.
+    const allDone = (completedPhases + skippedPhases) === config.phases.length;
+    displayMacNotification(allDone ? '🧪 Pipeline Complete' : '🧪 Pipeline Stopped', `${phasesSummary} phases, ${formatTime(totalElapsed)}`);
     // Clean up cancel marker
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     try {

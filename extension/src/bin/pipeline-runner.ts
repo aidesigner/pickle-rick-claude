@@ -27,6 +27,7 @@ import {
   printMinimalPanel,
   safeErrorMessage,
   ensureMonitorWindow,
+  displayMacNotification,
 } from '../services/pickle-utils.js';
 import { isWorkingTreeDirty } from '../services/git-utils.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -861,16 +862,13 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
     mode: 'tmux',
   });
 
-  // macOS notification
-  if (process.platform === 'darwin') {
-    const esc = (s: string) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-    const allDone = (completedPhases + skippedPhases) === config.phases.length;
-    const title = allDone ? '🧪 Pipeline Complete' : '🧪 Pipeline Stopped';
-    const body = `${phasesSummary} phases, ${formatTime(totalElapsed)}`;
-    try {
-      execFileSync('osascript', ['-e', `display notification "${esc(body)}" with title "${esc(title)}"`]);
-    } catch { /* best effort */ }
-  }
+  // macOS notification — helper applies NOTIFICATION_TIMEOUT_MS and swallows
+  // errors so a wedged UI server cannot block the exit path.
+  const allDone = (completedPhases + skippedPhases) === config.phases.length;
+  displayMacNotification(
+    allDone ? '🧪 Pipeline Complete' : '🧪 Pipeline Stopped',
+    `${phasesSummary} phases, ${formatTime(totalElapsed)}`,
+  );
 
   // Clean up cancel marker
   // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
