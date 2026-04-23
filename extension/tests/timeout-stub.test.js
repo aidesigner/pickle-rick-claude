@@ -113,9 +113,11 @@ test('fields: stub contains ticket_id, wallSeconds, iteration', () => {
     writeTimeoutStub(dir, meta);
     const content = fs.readFileSync(path.join(dir, 'TASK_NOTES.md'), 'utf-8');
     assert.ok(content.includes('ticket-xyz'), 'must include ticketId');
-    assert.ok(content.includes('543'), 'must include wallSeconds');
+    assert.match(content, /SIGTERM'd at 543s of 900s budget/,
+      'wallSeconds must appear inside "SIGTERM\'d at …s of …s budget" phrase');
     assert.ok(content.includes('Iteration 7'), 'must include iteration');
-    assert.ok(content.includes('900'), 'must include workerTimeoutSeconds');
+    assert.match(content, /within 900s\./,
+      'workerTimeoutSeconds must appear inside a "within …s." phrase');
     assert.ok(content.includes('Attempt: 2'), 'must include timeoutCount');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
