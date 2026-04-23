@@ -218,7 +218,41 @@ test('publishCouncilStack: empty pr list → skipped_no_pr, no marker touched', 
     }
 });
 
-// --- 7. One branch fails, others succeed ---
+// --- 7. Prefer OPEN PR over MERGED when multiple share a head branch ---
+
+test('publishCouncilStack: picks OPEN PR over MERGED when both exist for same head', async () => {
+    const mock = makeGhMock({
+        auth: 'ok',
+        prList: {
+            // JSON array response — MERGED first, OPEN second. Publisher must
+            // prefer OPEN regardless of ordering. Also covers a closed PR
+            // re-run scenario where the merged one would be silently skipped
+            // under the old --state=open default.
+            'feat/one': JSON.stringify([
+                { number: 101, state: 'MERGED', updatedAt: '2026-04-23T10:00:00Z' },
+                { number: 202, state: 'OPEN', updatedAt: '2026-04-20T10:00:00Z' },
+            ]),
+            'feat/two': JSON.stringify([
+                { number: 303, state: 'MERGED', updatedAt: '2026-04-23T10:00:00Z' },
+            ]),
+        },
+        prComment: {},
+    });
+    try {
+        await withSession(async (sessionDir) => {
+            const report = await publishCouncilStack(sessionDir, { ghCommand: mock.ghPath });
+            assert.equal(report.posted, 2);
+            const one = report.results.find(r => r.branch === 'feat/one');
+            const two = report.results.find(r => r.branch === 'feat/two');
+            assert.equal(one.pr_number, 202, 'OPEN beats MERGED on same head');
+            assert.equal(two.pr_number, 303, 'MERGED-only still posts (no --state=open filter)');
+        });
+    } finally {
+        cleanupGhMock(mock);
+    }
+});
+
+// --- 8. One branch fails, others succeed ---
 
 test('publishCouncilStack: one pr comment failure does not abort sweep', async () => {
     const mock = makeGhMock({

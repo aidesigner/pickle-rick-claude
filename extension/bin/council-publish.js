@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
@@ -11,6 +10,37 @@ export class CouncilPublishError extends Error {
 }
 function slugify(branch) {
     return branch.replace(/\//g, '__');
+}
+/**
+ * Parse `gh pr list --json number,state,updatedAt` output tolerantly.
+ * Accepts a JSON array (current shape) OR a bare integer on the first line
+ * (legacy `--jq .[0].number` shape) — the fallback keeps older mocks and
+ * possible `gh` variants working without a code change.
+ */
+function parsePrList(stdout) {
+    const trimmed = stdout.trim();
+    if (!trimmed)
+        return [];
+    try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+            return parsed
+                .filter((p) => !!p && typeof p === 'object')
+                .map(p => ({
+                number: Number(p.number),
+                state: typeof p.state === 'string' ? p.state : undefined,
+                updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : undefined,
+            }))
+                .filter(r => Number.isFinite(r.number) && r.number > 0);
+        }
+        // JSON.parse succeeds on bare integers / "null" too — fall through to the
+        // legacy-shape handler below so a `--jq .[0].number` stdout still parses.
+    }
+    catch {
+        // Not JSON at all — also fall through.
+    }
+    const n = Number(trimmed.split('\n')[0]);
+    return Number.isFinite(n) && n > 0 ? [{ number: n, state: 'OPEN' }] : [];
 }
 /**
  * Scans the council-of-ricks-summary.md for `## Round N:` headers and returns
@@ -38,8 +68,10 @@ function extractRoundOutcomes(summaryPath) {
 }
 /**
  * Reads council-directive.md if present and returns the full text of the
- * LATEST directive. Directives are append-only; each block starts with
- * `# Council Directive` — we take the last one.
+ * LATEST directive. Directives are typically overwritten each round, but we
+ * support append-mode too — the H1 `# Council Directive` (optionally followed
+ * by `— Round N`) anchors the split. Word boundary prevents false positives
+ * inside fenced code blocks or quoted examples.
  */
 function readLatestDirective(directivePath) {
     if (!fs.existsSync(directivePath))
@@ -47,7 +79,7 @@ function readLatestDirective(directivePath) {
     try {
         const content = fs.readFileSync(directivePath, 'utf-8');
         const markers = [];
-        const rx = /^# Council Directive/gm;
+        const rx = /^# Council Directive(?:\s|$)/gm;
         let m;
         while ((m = rx.exec(content)) !== null)
             markers.push(m.index);
@@ -105,10 +137,11 @@ function findingsForBranch(directive, branch) {
     return ['| ' + usedHeader.join(' | ') + ' |', sep, ...rows];
 }
 /**
- * Extracts the "## Trap Doors" section text from the directive, filtering
- * lines that mention the branch (best-effort). Returns empty string if none.
+ * Extracts the `## Trap Doors` section; trap doors are structural and shared
+ * across the stack by design, so the full section body is returned for every
+ * branch.
  */
-function trapDoorsForBranch(directive, branch) {
+function trapDoorsForBranch(directive, _branch) {
     if (!directive)
         return '';
     const lines = directive.split('\n');
@@ -124,14 +157,7 @@ function trapDoorsForBranch(directive, branch) {
         if (inSection)
             collected.push(line);
     }
-    const body = collected.join('\n').trim();
-    if (!body)
-        return '';
-    // Filter to lines that mention the branch, keep list items without a branch ref too? Conservative: keep all.
-    const kept = body
-        .split('\n')
-        .filter(l => l.trim().length > 0 && (l.includes(branch) || !/\bfeat\/|\bfix\/|\bchore\//.test(l)));
-    return kept.join('\n').trim();
+    return collected.join('\n').trim();
 }
 function composeBody(params) {
     const { sessionRoot, branch: _branch, finalRound, codexEnabled, findings, trapDoors, roundOutcomes } = params;
@@ -165,9 +191,9 @@ function composeBody(params) {
         '',
     ].join('\n');
 }
-function appendPublishLog(logPath, result) {
+function appendPublishLog(fd, result) {
     const line = JSON.stringify({ ts: new Date().toISOString(), ...result }) + '\n';
-    fs.appendFileSync(logPath, line);
+    fs.writeSync(fd, Buffer.from(line));
 }
 export default function publishCouncilStack(sessionRoot, opts = {}) {
     const ghCommand = opts.ghCommand || 'gh';
@@ -210,97 +236,113 @@ export default function publishCouncilStack(sessionRoot, opts = {}) {
     let posted = 0;
     let skipped = 0;
     let failed = 0;
-    for (const branch of branches) {
-        if (branch === trunk)
-            continue;
-        const slug = slugify(branch);
-        const bodyPath = path.join(commentsDir, `${slug}.md`);
-        const markerPath = path.join(publishedDir, slug);
-        const body = composeBody({
-            sessionRoot,
-            branch,
-            finalRound,
-            codexEnabled: !!codex_enabled,
-            findings: findingsForBranch(directive, branch),
-            trapDoors: trapDoorsForBranch(directive, branch),
-            roundOutcomes,
-        });
-        fs.writeFileSync(bodyPath, body);
-        if (!ghAvailable) {
-            const r = { branch, outcome: 'skipped_no_gh', body_path: bodyPath };
-            results.push(r);
-            skipped++;
-            appendPublishLog(logPath, r);
-            continue;
-        }
-        if (fs.existsSync(markerPath)) {
-            const r = { branch, outcome: 'skipped_already_published', body_path: bodyPath };
-            results.push(r);
-            skipped++;
-            appendPublishLog(logPath, r);
-            continue;
-        }
-        // Resolve PR number
-        let prNumber;
-        try {
-            const out = execFileSync(ghCommand, ['pr', 'list', '--head', branch, '--json', 'number', '--jq', '.[0].number'], { cwd: repo_path, stdio: 'pipe', encoding: 'utf8' }).trim();
-            if (!out) {
-                const r = { branch, outcome: 'skipped_no_pr', body_path: bodyPath };
+    const logFd = fs.openSync(logPath, 'a');
+    try {
+        for (const branch of branches) {
+            if (branch === trunk)
+                continue;
+            const slug = slugify(branch);
+            const bodyPath = path.join(commentsDir, `${slug}.md`);
+            const markerPath = path.join(publishedDir, slug);
+            const body = composeBody({
+                sessionRoot,
+                branch,
+                finalRound,
+                codexEnabled: !!codex_enabled,
+                findings: findingsForBranch(directive, branch),
+                trapDoors: trapDoorsForBranch(directive, branch),
+                roundOutcomes,
+            });
+            fs.writeFileSync(bodyPath, body);
+            if (!ghAvailable) {
+                const r = { branch, outcome: 'skipped_no_gh', body_path: bodyPath };
                 results.push(r);
                 skipped++;
-                appendPublishLog(logPath, r);
+                appendPublishLog(logFd, r);
                 continue;
             }
-            const n = Number(out);
-            if (!Number.isFinite(n) || n <= 0) {
-                const r = { branch, outcome: 'skipped_no_pr', body_path: bodyPath };
+            if (fs.existsSync(markerPath)) {
+                const r = { branch, outcome: 'skipped_already_published', body_path: bodyPath };
                 results.push(r);
                 skipped++;
-                appendPublishLog(logPath, r);
+                appendPublishLog(logFd, r);
                 continue;
             }
-            prNumber = n;
+            // Resolve PR number. Query all states (OPEN + MERGED + CLOSED) so re-runs
+            // on a merged stack still post. When multiple PRs share a head branch,
+            // prefer OPEN, then most-recently-updated — deterministic tie-break.
+            let prNumber;
+            try {
+                const out = execFileSync(ghCommand, ['pr', 'list', '--head', branch, '--state', 'all', '--json', 'number,state,updatedAt'], { cwd: repo_path, stdio: 'pipe', encoding: 'utf8' }).trim();
+                const prs = parsePrList(out);
+                if (prs.length === 0) {
+                    const r = { branch, outcome: 'skipped_no_pr', body_path: bodyPath };
+                    results.push(r);
+                    skipped++;
+                    appendPublishLog(logFd, r);
+                    continue;
+                }
+                prs.sort((a, b) => {
+                    if (a.state === 'OPEN' && b.state !== 'OPEN')
+                        return -1;
+                    if (b.state === 'OPEN' && a.state !== 'OPEN')
+                        return 1;
+                    return (b.updatedAt || '').localeCompare(a.updatedAt || '');
+                });
+                const picked = prs[0].number;
+                if (!Number.isFinite(picked) || picked <= 0) {
+                    const r = { branch, outcome: 'skipped_no_pr', body_path: bodyPath };
+                    results.push(r);
+                    skipped++;
+                    appendPublishLog(logFd, r);
+                    continue;
+                }
+                prNumber = picked;
+            }
+            catch (err) {
+                const r = {
+                    branch,
+                    outcome: 'failed',
+                    error: `pr list: ${safeErrorMessage(err)}`,
+                    body_path: bodyPath,
+                };
+                results.push(r);
+                failed++;
+                appendPublishLog(logFd, r);
+                continue;
+            }
+            if (dryRun) {
+                const r = { branch, outcome: 'posted', pr_number: prNumber, body_path: bodyPath };
+                results.push(r);
+                posted++;
+                appendPublishLog(logFd, r);
+                continue;
+            }
+            // Post the comment
+            try {
+                execFileSync(ghCommand, ['pr', 'comment', String(prNumber), '--body-file', bodyPath], { cwd: repo_path, stdio: 'pipe' });
+                fs.writeFileSync(markerPath, new Date().toISOString());
+                const r = { branch, outcome: 'posted', pr_number: prNumber, body_path: bodyPath };
+                results.push(r);
+                posted++;
+                appendPublishLog(logFd, r);
+            }
+            catch (err) {
+                const r = {
+                    branch,
+                    outcome: 'failed',
+                    pr_number: prNumber,
+                    error: `pr comment: ${safeErrorMessage(err)}`,
+                    body_path: bodyPath,
+                };
+                results.push(r);
+                failed++;
+                appendPublishLog(logFd, r);
+            }
         }
-        catch (err) {
-            const r = {
-                branch,
-                outcome: 'failed',
-                error: `pr list: ${safeErrorMessage(err)}`,
-                body_path: bodyPath,
-            };
-            results.push(r);
-            failed++;
-            appendPublishLog(logPath, r);
-            continue;
-        }
-        if (dryRun) {
-            const r = { branch, outcome: 'posted', pr_number: prNumber, body_path: bodyPath };
-            results.push(r);
-            posted++;
-            appendPublishLog(logPath, r);
-            continue;
-        }
-        // Post the comment
-        try {
-            execFileSync(ghCommand, ['pr', 'comment', String(prNumber), '--body-file', bodyPath], { cwd: repo_path, stdio: 'pipe' });
-            fs.writeFileSync(markerPath, new Date().toISOString());
-            const r = { branch, outcome: 'posted', pr_number: prNumber, body_path: bodyPath };
-            results.push(r);
-            posted++;
-            appendPublishLog(logPath, r);
-        }
-        catch (err) {
-            const r = {
-                branch,
-                outcome: 'failed',
-                pr_number: prNumber,
-                error: `pr comment: ${safeErrorMessage(err)}`,
-                body_path: bodyPath,
-            };
-            results.push(r);
-            failed++;
-            appendPublishLog(logPath, r);
-        }
+    }
+    finally {
+        fs.closeSync(logFd);
     }
     return { session_root: sessionRoot, results, posted, skipped, failed };
 }
