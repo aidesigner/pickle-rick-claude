@@ -20,6 +20,9 @@ import type { State } from '../types/index.js';
 export type ScopeMode = 'branch' | 'diff' | 'paths';
 export type ScopeStrategy = 'strict' | 'one-hop';
 
+/** Max number of seed files permitted for one-hop expansion. Above this, throw SCOPE_ONE_HOP_TOO_LARGE. */
+const ONE_HOP_FILE_CAP = 100;
+
 export type ScopeErrorCode =
   | 'SCOPE_EMPTY_DIFF'
   | 'SCOPE_EMPTY_PATHS'
@@ -448,13 +451,13 @@ export function buildScopeV1Schema(): Record<string, unknown> {
  * Operators relying on aliased re-exports must widen scope manually with
  * `--scope paths:<glob>`.
  *
- * Throws `SCOPE_ONE_HOP_TOO_LARGE` if `diffFiles.length > 100`.
+ * Throws `SCOPE_ONE_HOP_TOO_LARGE` if `diffFiles.length > ONE_HOP_FILE_CAP`.
  */
 export function computeOneHop(diffFiles: string[], repoRoot: string): string[] {
-  if (diffFiles.length > 100) {
+  if (diffFiles.length > ONE_HOP_FILE_CAP) {
     throw new ScopeError(
       'SCOPE_ONE_HOP_TOO_LARGE',
-      `--scope branch:one-hop diff has ${diffFiles.length} files (max 100). ` +
+      `--scope branch:one-hop diff has ${diffFiles.length} files (max ${ONE_HOP_FILE_CAP}). ` +
         `Use --scope paths:<glob> to narrow scope or omit :one-hop for strict mode.`,
     );
   }

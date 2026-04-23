@@ -37,7 +37,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'resolve-scope.js') {
       repoRoot: process.cwd(),
     });
   } catch (err) {
-    if (err instanceof Error && err instanceof ScopeError) {
+    if (err instanceof ScopeError) {
       process.stderr.write(JSON.stringify({ code: err.code, message: err.message }) + '\n');
     } else {
       const message = err instanceof Error ? err.message : String(err);

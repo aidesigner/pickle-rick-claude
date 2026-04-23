@@ -14,6 +14,8 @@ import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { runGit, getHeadSha, getDiffFiles, getMergeBase } from './git-utils.js';
 import { StateManager } from './state-manager.js';
+/** Max number of seed files permitted for one-hop expansion. Above this, throw SCOPE_ONE_HOP_TOO_LARGE. */
+const ONE_HOP_FILE_CAP = 100;
 export class ScopeError extends Error {
     code;
     constructor(code, message) {
@@ -342,11 +344,11 @@ export function buildScopeV1Schema() {
  * Operators relying on aliased re-exports must widen scope manually with
  * `--scope paths:<glob>`.
  *
- * Throws `SCOPE_ONE_HOP_TOO_LARGE` if `diffFiles.length > 100`.
+ * Throws `SCOPE_ONE_HOP_TOO_LARGE` if `diffFiles.length > ONE_HOP_FILE_CAP`.
  */
 export function computeOneHop(diffFiles, repoRoot) {
-    if (diffFiles.length > 100) {
-        throw new ScopeError('SCOPE_ONE_HOP_TOO_LARGE', `--scope branch:one-hop diff has ${diffFiles.length} files (max 100). ` +
+    if (diffFiles.length > ONE_HOP_FILE_CAP) {
+        throw new ScopeError('SCOPE_ONE_HOP_TOO_LARGE', `--scope branch:one-hop diff has ${diffFiles.length} files (max ${ONE_HOP_FILE_CAP}). ` +
             `Use --scope paths:<glob> to narrow scope or omit :one-hop for strict mode.`);
     }
     const exportNames = extractExportNames(diffFiles, repoRoot);
