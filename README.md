@@ -229,28 +229,6 @@ Reviews your [Graphite](https://graphite.dev) PR stack iteratively — but never
 /council-of-ricks                  # Review the current Graphite stack
 ```
 
-### Portal Gun: Gene Transfusion
-
-<img src="images/portal-gun.png" alt="Portal Gun — gene transfusion for codebases" width="400" align="right" />
-
-> *"You see that code over there, Morty? In that other repo? I'm gonna open a portal, reach in, and yank its DNA into OUR dimension."*
-
-`/portal-gun` implements [gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) — transferring proven coding patterns between codebases using AI agents. Point it at a GitHub URL, local file, npm package, or just describe a pattern, and it extracts the structural DNA, analyzes your target codebase, then generates a transplant PRD with behavioral validation tests and automatic refinement.
-
-The `--run` flag goes further: after generating the transplant PRD, it launches a convergence loop that executes the migration, scans coverage against the original inventory, generates a delta PRD for any missing items, and re-executes until 100% of the donor pattern has been transplanted.
-
-**v2** added a persistent **pattern library** (cached patterns reused across sessions), **complete file manifests** with anti-truncation enforcement, **multi-language import graph tracing** (TypeScript/JavaScript, Python, Go, Rust), **6-category transplant classification** (direct transplant, type-only, behavioral reference, replace with equivalent, environment prerequisite, not needed), a **PRD validation pass** that verifies every file path against the filesystem with 6 error classes, **post-edit consistency checking** that catches contradictions after scope changes, and **deep target diffs** with line-level modification specs.
-
-<br clear="right" />
-
-```bash
-/portal-gun https://github.com/org/repo/blob/main/src/auth.ts   # Transplant from GitHub
-/portal-gun ../other-project/src/cache.ts                        # Transplant from local file
-/portal-gun --run https://github.com/org/repo/tree/main/src/lib  # Transplant + auto-execute convergence loop
-/portal-gun --save-pattern retry ../donor/retry-logic.ts         # Save pattern to library for reuse
-/portal-gun --depth shallow https://github.com/org/repo           # Summary + structural pattern only
-```
-
 ### Pickle Jar: Night Shift Batch Mode
 
 Queue tasks for unattended batch execution overnight.
@@ -469,11 +447,18 @@ Auto-discovers subsystems, rotates through them round-robin, three-phase protoco
 
 ### 🏛️ Council of Ricks — Details
 
-<img src="images/council-of-ricks.png" alt="Council of Ricks — Graphite PR Stack Reviewer" width="400" align="right" />
+<p align="center">
+  <img src="images/council-of-ricks.png" alt="Council of Ricks — Graphite PR Stack Reviewer" width="100%" />
+</p>
 
 Iterative Graphite stack reviewer that generates agent-executable directives and auto-publishes review comments to each branch's PR at session end.
 
-**Requirements:** Graphite stack with ≥1 non-trunk branch, a `CLAUDE.md` with project rules, passing lint, architectural lint rules in ESLint, and GitHub CLI (`gh`) authed if you want auto-publish.
+**Requirements:**
+
+- Graphite stack with ≥1 non-trunk branch (`gt log short`)
+- A `CLAUDE.md` with project rules, passing lint, and architectural lint rules in ESLint
+- **GitHub CLI (`gh`)** authed, if you want auto-publish (see note below on why `gh` and not `gt`)
+- **Codex plugin** installed and authed, for the adversarial-review pass to be effective. Install: `/plugin install openai-codex` (or `npm i -g @openai/codex-cli` + `codex setup`). Without it, Pass 7 runs as a skipped pass — the rest of the rotation still works, but you lose the adversarial-reviewer perspective.
 
 **11-pass rotation** — every dedicated category runs at least once before approval can fire:
 
@@ -496,9 +481,9 @@ Iterative Graphite stack reviewer that generates agent-executable directives and
 
 **Auto-publish at session end** — when the gate fires OR max_iterations is hit, one PR comment per non-trunk branch is posted via `gh pr comment` to the GitHub-backed PR that Graphite manages. Idempotent via `.published/<branch-slug>` markers. Fails open at every level — `gh` unavailable / no PR / per-branch post failure never blocks the terminal promise. Fallback body files written to `council-comments/<branch-slug>.md` on every skip class. Opt out with `--no-publish` or `default_council_publish: false`.
 
-**Trap Doors** — structural weaknesses (design constraints that will re-break if forgotten) go in the directive's Trap Door section. The Council never writes to repo files; the fixing agent decides whether to add them to `CLAUDE.md`.
+**Why `gh` and not `gt` for publishing** — Graphite's CLI has no `comment` subcommand and doesn't expose a comment-posting primitive. `gt` manages stacks (submit, restack, sync, create, branch); review comments are handled by Graphite's web dashboard, which syncs from GitHub. So the only mechanical path to post an actual comment is `gh pr comment` — the comment still shows up on the Graphite stack view because Graphite renders GitHub comments. If Graphite ever ships a `gt comment` or exposes an API token surface, the Council will switch to it.
 
-<br clear="right" />
+**Trap Doors** — structural weaknesses (design constraints that will re-break if forgotten) go in the directive's Trap Door section. The Council never writes to repo files; the fixing agent decides whether to add them to `CLAUDE.md`.
 
 ### 🪠 Plumbus — DAG Shaping Loop
 
@@ -533,6 +518,28 @@ Plumbus runs six analysis frames during the first iteration Edge Walk (Override 
 | **Frame 6: Counterfactual Outcome Test** | State-mutating tool nodes lacking a direct or transitive guard |
 
 **Kill-switch**: set `PLUMBUS_GENERATIVE_AUDIT=off` to skip Override 6 entirely (no analyzer invocation, no `## Generative Findings` written). Any other value (including absent) runs the audit normally.
+
+### 🌀 Portal Gun — Gene Transfusion
+
+<p align="center">
+  <img src="images/portal-gun.png" alt="Portal Gun — gene transfusion for codebases" width="100%" />
+</p>
+
+> *"You see that code over there, Morty? In that other repo? I'm gonna open a portal, reach in, and yank its DNA into OUR dimension."*
+
+`/portal-gun` implements [gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) — transferring proven coding patterns between codebases using AI agents. Point it at a GitHub URL, local file, npm package, or just describe a pattern, and it extracts the structural DNA, analyzes your target codebase, then generates a transplant PRD with behavioral validation tests and automatic refinement.
+
+The `--run` flag goes further: after generating the transplant PRD, it launches a convergence loop that executes the migration, scans coverage against the original inventory, generates a delta PRD for any missing items, and re-executes until 100% of the donor pattern has been transplanted.
+
+**v2** added a persistent **pattern library** (cached patterns reused across sessions), **complete file manifests** with anti-truncation enforcement, **multi-language import graph tracing** (TypeScript/JavaScript, Python, Go, Rust), **6-category transplant classification** (direct transplant, type-only, behavioral reference, replace with equivalent, environment prerequisite, not needed), a **PRD validation pass** that verifies every file path against the filesystem with 6 error classes, **post-edit consistency checking** that catches contradictions after scope changes, and **deep target diffs** with line-level modification specs.
+
+```bash
+/portal-gun https://github.com/org/repo/blob/main/src/auth.ts   # Transplant from GitHub
+/portal-gun ../other-project/src/cache.ts                        # Transplant from local file
+/portal-gun --run https://github.com/org/repo/tree/main/src/lib  # Transplant + auto-execute convergence loop
+/portal-gun --save-pattern retry ../donor/retry-logic.ts         # Save pattern to library for reuse
+/portal-gun --depth shallow https://github.com/org/repo           # Summary + structural pattern only
+```
 
 ---
 
@@ -618,6 +625,8 @@ All modes support both tmux and Zellij monitor layouts.
 - **tmux** *(optional — for `/pickle-tmux`, `/szechuan-sauce`, `/anatomy-park`)*
 - **Zellij** >= 0.40.0 *(optional — for `/pickle-zellij`)*
 - **Graphite CLI** (`gt`) *(optional — for `/council-of-ricks`)*
+- **GitHub CLI** (`gh`) authed *(optional — required only for `/council-of-ricks` auto-publish; the review itself works without it)*
+- **Codex plugin** *(optional — for `/council-of-ricks` Pass 7 adversarial review; Council runs without it but loses the adversarial perspective)*
 - macOS or Linux (Windows not supported)
 
 ---
