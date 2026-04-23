@@ -55,6 +55,38 @@ Based on [Theta-Tech-AI/deslop](https://github.com/Theta-Tech-AI/llm-public-util
 | **P3: Low** | Polish | Magic numbers, naming, minor duplication | If time permits |
 | **P4: Optional** | Style | Formatting, comment cleanup, minor refactors | Boy Scout Rule |
 
+## Confidence Scoring
+
+Every finding carries a confidence score alongside its severity — severity says "how bad," confidence says "how sure." Both ship together or the finding doesn't ship.
+
+| Score | Meaning                          | When to use                                                                                                   |
+|-------|----------------------------------|---------------------------------------------------------------------------------------------------------------|
+| 0     | False positive or pre-existing   | Doesn't survive a second look, or the "bug" predates the code under review. Drop on sight.                    |
+| 25    | Plausible but unverified         | Could be real, couldn't confirm. If it's stylistic, CLAUDE.md and the principles here don't call it out.      |
+| 50    | Verified real but minor          | Confirmed, but a nit or a rare edge case. Small fish in a diff full of bigger ones.                           |
+| 75    | Verified real and important      | Double-checked; impacts functionality, OR directly mandated by CLAUDE.md or a principle in this document.     |
+| 100   | Certain                          | Evidence directly confirms it; will occur in practice; zero judgment call.                                    |
+
+**Decision rule**: any finding with confidence < 80 is dropped from the final output. The threshold is 80, not 75 — in iterative-review loops a single false positive can derail a whole iteration, so a "real but not important" 75 stays in your head, not in the report. Severity composes with confidence independently: a P0 security finding at confidence 50 is dropped; a P2 maintainability finding at confidence 100 is kept. Report both axes per finding as `[P<N>, conf=<score>]`.
+
+**Assigning confidence**: grep the symbol, read the surrounding code, check `git log` on the line, run the typechecker against your assumption. If you still can't confirm after that, it's 25 or 50 — and 25 or 50 means it stays out of the report. Do not round up to 75 to make a finding survive; that's how reviewers become noise.
+
+## False Positives — Do NOT Flag
+
+The following categories are noise. Exclude them regardless of severity or how confident the finding feels.
+
+- Pre-existing issues on lines the current change did not touch — unless this change caused a regression, not the reviewer's problem this pass
+- Anything a linter, typechecker, or compiler surfaces on the next build — CI is the filter for that class of error, not a Rick
+- Missing imports, type errors, broken tests, formatting drift, trailing newlines — tooling catches these in milliseconds, don't waste a finding slot
+- Generic "needs more test coverage" hand-wringing, unless CLAUDE.md or a principle in this doc names a specific coverage target
+- Changes that look bug-like but are obviously the stated intent of the change (removing a feature flag the PRD said to remove, deleting a deprecated path)
+- Issues the author explicitly silenced via `// eslint-disable`, `// @ts-expect-error`, `// type: ignore`, or equivalent — flag only if the silencer itself is the wrong call
+- Stylistic preferences not codified in CLAUDE.md or this principles document — naming taste, comment wording, spacing, bracket religion, all out
+- Speculative future-risk findings — "what if someone later adds Y" is not a finding; review the diff in front of you, not the hypothetical one
+- Findings already raised in a previous pass that the fixing agent resolved — diff against the last iteration's findings list before opening your mouth
+
+If in doubt, drop the finding. A Council that cries wolf gets ignored.
+
 ## Part I: Clean Code
 
 ### KISS (Keep It Simple, Stupid)

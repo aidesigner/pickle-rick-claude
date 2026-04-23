@@ -233,7 +233,7 @@ Follow the **Microverse Worker protocol** (the standard microverse iteration loo
 
 ### Override 1: Principles Reference
 
-Before assessing the codebase, check the handoff's `microverse.json` for a `judge_context_path`. If set, read that file — it contains the combined base + domain principles and any focus directive. If not set, read `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md`. If the PRD's Principles Reference section lists additional domain-specific principles files, also read those. Domain principles take precedence over base principles where they overlap. If a Focus Directive section is present, apply it: violations matching the focus are elevated by one priority level and take precedence over same-priority non-focus violations. Cross-reference each finding against the priority matrix (P0–P4) and the diagnostic guide.
+Before assessing the codebase, check the handoff's `microverse.json` for a `judge_context_path`. If set, read that file — it contains the combined base + domain principles and any focus directive. If not set, read `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md`. If the PRD's Principles Reference section lists additional domain-specific principles files, also read those. Domain principles take precedence over base principles where they overlap. If a Focus Directive section is present, apply it: violations matching the focus are elevated by one priority level and take precedence over same-priority non-focus violations. Cross-reference each finding against the priority matrix (P0–P4) and the diagnostic guide. Then cross-reference each finding against `## Confidence Scoring` (score 0/25/50/75/100 — anything under 80 is dropped) and the `## False Positives — Do NOT Flag` list (exclude those categories before you even score).
 
 ### Override 2: Phase 0 — Contract Discovery (first iteration only)
 
@@ -258,7 +258,7 @@ Before the first scoring pass (iteration 1 only — skip on subsequent iteration
    ```
    ## Contract Mismatches
 
-   - **P1** `consumer.ts:45` — Zod schema `fooSchema` missing variant `bar` that `FooType` (producer.ts:12) can emit. safeParse will null the data.
+   - **[P1, conf=<score>]** `consumer.ts:45` — Zod schema `fooSchema` missing variant `bar` that `FooType` (producer.ts:12) can emit. safeParse will null the data.
    ```
 6. On every subsequent iteration, after fixing a violation and updating `gap_analysis.md`, **re-check the contract map**: verify the fix did not introduce a new contract mismatch (e.g. adding a variant to a type without updating all Zod schemas that consume it). If a new mismatch is found, add it to `## Contract Mismatches`.
 
@@ -268,7 +268,8 @@ The metric is **violation count** (lower is better). Each iteration:
 <!-- scope-hook: override-3-allowed-paths -->
 1. **Always read the target code** — Check `microverse.json` for an `allowed_paths` field. If present, read only files within those paths (Glob + Read restricted to `allowed_paths`). If absent, Glob + Read the full target directory. The code is the source of truth; never skip this step.
 2. Consult `${SESSION_ROOT}/gap_analysis.md` if it exists as a **checklist hint** to speed up scanning, but do NOT trust it over what the code actually says — fixes may have introduced new violations or resolved ones the gap analysis still lists. Also consult the `## Contract Mismatches` section — contract violations are scored as P1.
-3. Find the **single highest-priority** remaining violation (P0 > P1 > P2 > P3 > P4) that is NOT in the failed approaches list from the handoff
+2.5. **Apply the false-positives filter, then score confidence.** First, walk the candidate violations and discard any that match the `## False Positives — Do NOT Flag` bullets in `szechuan-sauce-principles.md` — pre-existing issues on unmodified lines, CI-surfaceable linter/typechecker/compiler noise, generic coverage hand-wringing, author-silenced issues (`// eslint-disable`, `// @ts-expect-error`, etc.), uncodified style nits, speculative future-risk, and findings already raised and resolved in a prior iteration. Drop them before scoring. Then score each surviving candidate for confidence per the `## Confidence Scoring` rubric (0/25/50/75/100); any candidate with `conf < 80` is dropped and must NOT be selected as the iteration's violation even if its P-level is P0. Severity composes with confidence independently — P0 at conf=50 is dropped; P2 at conf=100 is kept if nothing higher survives. Record the dropped candidates (one line each: title + score + reason) in `gap_analysis.md` under a `## Dropped Candidates (conf < 80)` section. **Append, never overwrite** — subsequent iterations need the audit trail.
+3. Find the **single highest-priority** remaining violation (P0 > P1 > P2 > P3 > P4) among the surviving, confidence≥80 candidates that is NOT in the failed approaches list from the handoff
 4. If no violations found: print "The sauce is obtained." and exit cleanly
 5. After fixing and committing, **update** `gap_analysis.md`: remove the fixed violation, add any new violations introduced by the fix, update the summary counts, and re-check the contract map for new mismatches (Override 2 step 6). Preserve the `## Contract Map` and `## Contract Mismatches` sections — never overwrite them. This is mandatory — stale gap analysis misleads future iterations.
 
@@ -276,7 +277,7 @@ The metric is **violation count** (lower is better). Each iteration:
 
 Before the first scoring pass, check if the target directory contains a Drizzle migration journal at `db/migrations/meta/_journal.json` (relative to target root). If it does NOT exist, skip this override entirely.
 
-If the journal exists, include these four checks in every review pass alongside the standard principles scan. Score findings as HIGH (P1) or MEDIUM (P2) as noted. Do NOT duplicate mechanical checks (timestamp ordering, file↔journal parity) — those are handled by the CI lint script at `scripts/validate-migrations.ts`.
+If the journal exists, include these four checks in every review pass alongside the standard principles scan. Score findings as HIGH (P1) or MEDIUM (P2) as noted. All Override 4 findings must carry a confidence score per the rubric in `szechuan-sauce-principles.md` and drop below 80 before being scored. Do NOT duplicate mechanical checks (timestamp ordering, file↔journal parity) — those are handled by the CI lint script at `scripts/validate-migrations.ts`.
 
 1. **CHECK Constraint Drift** (HIGH — P1): For each CHECK constraint in migration SQL files under `db/migrations/`, find the corresponding TypeScript enum, union, or type in the codebase. Flag any value present in code but missing from the constraint (INSERT will fail at runtime), or present in the constraint but absent from code (dead value).
 

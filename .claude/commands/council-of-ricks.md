@@ -34,7 +34,7 @@ From `$ARGUMENTS`:
 Remainder = task text.
 
 ### Step 4: Read Settings
-Read `$HOME/.claude/pickle-rick/pickle_settings.json`: `default_council_min_passes` (default: 10 — the Council runs enough passes to cover all dedicated review categories), `default_council_max_passes` (default: 25). CLI flags override.
+Read `$HOME/.claude/pickle-rick/pickle_settings.json`: `default_council_min_passes` (default: 11 — the Council runs enough passes to cover all dedicated review categories), `default_council_max_passes` (default: 25). CLI flags override.
 
 ### Step 5: Parse CLAUDE.md
 Read project `CLAUDE.md`, extract rules/required patterns/forbidden patterns/architecture constraints/build commands. Write to `<SESSION_ROOT>/council-claude-rules.json` with keys: `rules`, `required_patterns`, `forbidden_patterns`, `architecture`, `build_commands`.
@@ -54,7 +54,7 @@ node "$CODEX_COMPANION" setup --json
 ```
 Parse JSON. `codex_enabled` = `ready === true && auth.loggedIn === true`. Capture `CODEX_COMPANION` path.
 
-If Codex is not ready, record `codex_enabled=false` with a reason (not installed, not logged in, etc). The Council still runs; Pass 6 becomes a no-op with a warning.
+If Codex is not ready, record `codex_enabled=false` with a reason (not installed, not logged in, etc). The Council still runs; Pass 7 becomes a no-op with a warning.
 
 ### Step 7: GitNexus (if --gitnexus)
 Run `npx gitnexus analyze`. Warn on failure (non-fatal).
@@ -108,23 +108,27 @@ Severity uses the **szechuan P0–P4 matrix** from `council-principles.md`:
 - **P3 Low** — naming, magic numbers, minor duplication
 - **P4 Optional** — formatting, comment polish, style drift
 
+Every finding also gets a **confidence score** per the `## Confidence Scoring` section of `council-principles.md` (rubric: 0 / 25 / 50 / 75 / 100). Any finding with `conf < 80` is dropped before it reaches the directive — severity and confidence are independent axes, a P0 at conf 50 still gets cut. Report format per finding: `[P<N>, conf=<score>]`.
+Before scoring, apply the `## False Positives — Do NOT Flag` exclusion list from the same file — pre-existing issues, tooling-caught errors, stylistic preferences, speculative future-risk, and resolved prior-pass findings are excluded wholesale, not merely down-scored.
+
 | Pass | Category | Criteria |
 |------|----------|----------|
 | 1 | Stack Structure | PR sizing, split candidates, commit hygiene, branch naming, stack ordering |
-| 2 | CLAUDE.md Compliance | Verify rules from `council-claude-rules.json` per branch diff. If `--gitnexus`: query graph for layer violations |
-| 3 | Contract Discovery | Producer→consumer map across the stack. Grep the full repo for importers of each new/changed export. Flag Zod/enum/union coverage gaps, regex divergence, type-union variants not handled in every switch (P1) |
-| 4 | Per-Branch Correctness + Data Flow | `gt branch info --diff` per branch: logic bugs, types, error handling, null safety. For each finding, trace the **complete data path**: input → bug → wrong output with `file:line` chain. Run `git log --oneline -- <file>` for any file with a finding to detect recurring fix history (2+ fixes in the same area = structural) |
-| 5 | Cross-Branch Contracts + Combinatorial Verification | Compare adjacent branch diffs for contract mismatches (shared types, API contracts, state assumptions). For each guard/validator/state machine touched in the stack, enumerate 2^N boolean/nullable input combinations and flag any unhandled combination as P1 |
-| 6 | Codex Adversarial Challenge | If `codex_enabled`: run Codex adversarial review per branch via the companion script. Merge its findings into the directive tagged `[CODEX]`. See Step 14.5 |
-| 7 | Test Coverage + Production Migration Safety | Test adequacy per branch (review test files — CI/CD validates execution). For any change to the set of accepted values for a **persisted** field (enum tightening, validation added, canonical vocabulary changed), grep `db/schema/*.ts`, `drizzle/schema/*.ts`, `src/db/schema/*.ts`, `*.sql` — if the field is persisted and old values could exist, flag P0 unless the branch includes a migration, backward-compat acceptance, or an explicit trap door |
-| 8 | Security | Input validation, auth gaps, injection, secrets, trust boundaries, tenant isolation |
-| 9 | Migration Hygiene (conditional) | Only if `db/migrations/meta/_journal.json` exists; when the journal is absent, record the pass as `skipped (no Drizzle journal)` in the summary (not a clean pass) and do not count it toward the approval gate's consecutive-clean streak. Four checks: **CHECK constraint drift** (SQL values vs TS enum — P1), **redundant churn** (constraint dropped/recreated 3+ times — P2), **idempotency** (`IF EXISTS`/`IF NOT EXISTS` on every ALTER/CREATE — P2), **schema drift** (Drizzle schema TS vs latest migration SQL — P1) |
-| 10 | Szechuan Principles Sweep | Scan every branch diff against `council-principles.md`. Score every violation P0–P4. Respect the principle tensions table — don't flag incidental similarity as DRY, don't demand abstraction under Rule of Three, don't flag three obvious lines as KISS loss |
-| 11+ | Polish + Trap Door Consolidation + CLAUDE.md Re-check | PR descriptions, naming, dead code, style drift. Final CLAUDE.md re-check. Consolidate any structural weaknesses surfaced in late passes into the directive's Trap Door section (per Step 15.5) — de-duplicate, sharpen the constraint description, and never write trap doors to repo files |
+| 2 | Historical Context | For each touched file in the stack diff, read `git log --oneline -10 -- <file>` and `gt branch info --diff --branch <branch>`. Pull prior PR discussions with `gh pr list --state merged --search "<file path>"` then `gh pr view <N> --comments` for the top 3 most recent. Skim any in-file guidance comments (top-of-file banners, `// NOTE:`, `// IMPORTANT:`). Flag P1 if a prior PR surfaced a recurring concern (2+ PRs called out the same issue) that the current stack repeats. Flag P1 if the author violated an in-file guidance comment. Use this pass to *inform* later passes — a finding here often reframes findings on passes 5, 6 |
+| 3 | CLAUDE.md Compliance | Verify rules from `council-claude-rules.json` per branch diff. If `--gitnexus`: query graph for layer violations |
+| 4 | Contract Discovery | Producer→consumer map across the stack. Grep the full repo for importers of each new/changed export. Flag Zod/enum/union coverage gaps, regex divergence, type-union variants not handled in every switch (P1) |
+| 5 | Per-Branch Correctness + Data Flow | `gt branch info --diff` per branch: logic bugs, types, error handling, null safety. For each finding, trace the **complete data path**: input → bug → wrong output with `file:line` chain. Run `git log --oneline -- <file>` for any file with a finding to detect recurring fix history (2+ fixes in the same area = structural) |
+| 6 | Cross-Branch Contracts + Combinatorial Verification | Compare adjacent branch diffs for contract mismatches (shared types, API contracts, state assumptions). For each guard/validator/state machine touched in the stack, enumerate 2^N boolean/nullable input combinations and flag any unhandled combination as P1 |
+| 7 | Codex Adversarial Challenge | If `codex_enabled`: run Codex adversarial review per branch via the companion script. Merge its findings into the directive tagged `[CODEX]`. See Step 14.5 |
+| 8 | Test Coverage + Production Migration Safety | Test adequacy per branch (review test files — CI/CD validates execution). For any change to the set of accepted values for a **persisted** field (enum tightening, validation added, canonical vocabulary changed), grep `db/schema/*.ts`, `drizzle/schema/*.ts`, `src/db/schema/*.ts`, `*.sql` — if the field is persisted and old values could exist, flag P0 unless the branch includes a migration, backward-compat acceptance, or an explicit trap door |
+| 9 | Security | Input validation, auth gaps, injection, secrets, trust boundaries, tenant isolation |
+| 10 | Migration Hygiene (conditional) | Only if `db/migrations/meta/_journal.json` exists; when the journal is absent, record the pass as `skipped (no Drizzle journal)` in the summary (not a clean pass) and do not count it toward the approval gate's consecutive-clean streak. Four checks: **CHECK constraint drift** (SQL values vs TS enum — P1), **redundant churn** (constraint dropped/recreated 3+ times — P2), **idempotency** (`IF EXISTS`/`IF NOT EXISTS` on every ALTER/CREATE — P2), **schema drift** (Drizzle schema TS vs latest migration SQL — P1) |
+| 11 | Szechuan Principles Sweep | Scan every branch diff against `council-principles.md`. Score every violation P0–P4. Respect the principle tensions table — don't flag incidental similarity as DRY, don't demand abstraction under Rule of Three, don't flag three obvious lines as KISS loss |
+| 12+ | Polish + Trap Door Consolidation + CLAUDE.md Re-check | PR descriptions, naming, dead code, style drift. Final CLAUDE.md re-check. Consolidate any structural weaknesses surfaced in late passes into the directive's Trap Door section (per Step 15.5) — de-duplicate, sharpen the constraint description, and never write trap doors to repo files |
 
 ### Step 14.5: Codex Adversarial Execution Protocol
 
-Runs during Pass 6 only. If `codex_enabled` is false, skip — append "Pass 6 skipped: Codex not available (<reason>)" to the summary as a **skipped** pass (not a clean pass); the skip does not satisfy the approval gate's consecutive-clean-passes requirement and MUST NOT output `<promise>THE_CITADEL_APPROVES</promise>`.
+Runs during Pass 7 only. If `codex_enabled` is false, skip — append "Pass 7 skipped: Codex not available (<reason>)" to the summary as a **skipped** pass (not a clean pass); the skip does not satisfy the approval gate's consecutive-clean-passes requirement and MUST NOT output `<promise>THE_CITADEL_APPROVES</promise>`.
 
 For each branch in the stack (trunk-to-tip, **skipping** the trunk itself):
 
@@ -150,11 +154,11 @@ For each branch (trunk-to-tip):
 1. `gt branch info --diff --branch <branch> --no-interactive` — get diff
 2. `gt branch info --body --branch <branch> --no-interactive` — get PR description
 3. Cross-reference diff against `council-claude-rules.json` and `council-principles.md`
-4. If GitNexus enabled (passes 2, 5): query graph for violations/impact
-5. Apply the pass-specific rigor from the table in Step 14 — trace data flows on Pass 4, enumerate combinatorial guards on Pass 5, run migration checks on Pass 9, etc.
+4. If GitNexus enabled (passes 3, 6): query graph for violations/impact
+5. Apply the pass-specific rigor from the table in Step 14 — trace data flows on Pass 5, enumerate combinatorial guards on Pass 6, run migration checks on Pass 10, etc.
 6. Review against focus area, track issues: branch + file:line + severity + description + rule-or-principle-violated + (for Codex findings) the `[CODEX]` tag + confidence
 
-Cross-branch passes (3, 5, 6): compare adjacent branch diffs for contract mismatches. Producer→consumer mismatches and unhandled union variants are P1.
+Cross-branch passes (4, 6, 7): compare adjacent branch diffs for contract mismatches. Producer→consumer mismatches and unhandled union variants are P1.
 
 ### Step 15.5: Trap Door Identification
 
@@ -185,12 +189,12 @@ Structure the directive as an agent-executable prompt with these sections:
    - Rule/principle violated (CLAUDE.md rule, szechuan principle name, or `N/A`)
    - Source tag: `[COUNCIL]`, `[CODEX]`, or `[COUNCIL+CODEX]` when both surfaced it
    - PR purpose (1 line from PR body)
-   - **Data flow** (for Pass 4+ findings): the file:line chain showing how the bug propagates
+   - **Data flow** (for Pass 5+ findings): the file:line chain showing how the bug propagates
    - **Scenario**: concrete input that triggers the bug
    - Problem description
    - Fix instruction (for Codex findings, quote Codex's recommendation verbatim)
    - Before/after code snippet (3–5 relevant lines only)
-   - Confidence (for Codex findings)
+   - Confidence score per the rubric in `council-principles.md`, formatted as `[P<N>, conf=<score>]`. Drop any finding where `conf < 80` before writing the directive. Apply the `## False Positives — Do NOT Flag` exclusion list first so excluded categories never get scored
 5. **Trap Doors** — structural weaknesses the fixing agent should catalog after the fix lands (see Step 15.5)
 6. **Completion** — `gt restack --no-interactive`, then run lint/test/build commands from `council-claude-rules.json`. If restack has conflicts, resolve before continuing
 
@@ -212,9 +216,9 @@ Append to `<SESSION_ROOT>/council-of-ricks-summary.md`:
 ```
 ## Pass <N>: <CATEGORY> — <count> issues (<P0>/<P1>/<P2>/<P3>/<P4>)
 
-| Severity | Source | Branch | File | Issue | Rule/Principle | Recommendation |
-|----------|--------|--------|------|-------|----------------|----------------|
-| P1 | [CODEX] | feat/auth | src/auth/session.ts:42 | Missing rotation on refresh | N/A | Force-rotate session id on refresh |
+| Severity | Conf | Source | Branch | File | Issue | Rule/Principle | Recommendation |
+|----------|------|--------|--------|------|-------|----------------|----------------|
+| P1 | 85 | [CODEX] | feat/auth | src/auth/session.ts:42 | Missing rotation on refresh | N/A | Force-rotate session id on refresh |
 ...
 
 Directive: council-directive.md updated

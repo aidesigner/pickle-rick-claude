@@ -203,11 +203,21 @@ Before each iteration:
 4. If that subsystem has `stall_counts >= stall_limit` (from anatomy-park.json), skip to next
 5. If ALL subsystems are either clean (2 consecutive) or stalled → **flush pending trap doors**: check `trap_doors_added` for entries not in `trap_doors_committed`. Write them all to their subsystem CLAUDE.md files now, commit as `anatomy-park: catalog [N] trap doors from clean passes`. Then print convergence summary and exit.
 
+### Override 1.5: Principles Reference
+
+Before Phase 1 of each iteration, read `$HOME/.claude/pickle-rick/szechuan-sauce-principles.md`. The `## Priority Matrix` is the severity source; the `## Confidence Scoring` section is the confidence rubric; the `## False Positives — Do NOT Flag` section is the exclusion list.
+
+Every finding emitted from Phase 1 must carry both a severity label (CRITICAL or HIGH — anatomy-park's native taxonomy) AND a confidence score from the rubric, formatted `[<SEVERITY>, conf=<score>]`. Drop any finding with `conf < 80` BEFORE Phase 2.
+
+Apply the `## False Positives — Do NOT Flag` exclusion list before assigning confidence — if a candidate finding matches any exclusion bullet, discard it outright. No brain-in-a-jar squishing around hypotheticals; the rubric lives in the principles doc, not here.
+
 ### Override 2: Three-Phase Protocol
 
 Each iteration consists of three phases. Do NOT skip or combine phases.
 
 #### PHASE 1: REVIEW (read-only — do NOT edit any files)
+
+Severity and confidence come from `szechuan-sauce-principles.md` (loaded in Override 1.5). Every finding is `[SEVERITY, conf=<score>]`. Drop `conf < 80` before Phase 2.
 
 <!-- scope-invariant: phase-1-reads-all-subsystem-files -->
 For the current subsystem, trace the COMPLETE data flow. Read every file. For each finding:
@@ -233,15 +243,16 @@ For the current subsystem, trace the COMPLETE data flow. Read every file. For ea
 ## Subsystem: [name]
 ## Files reviewed: [list]
 
-### Finding 1 — [CRITICAL/HIGH]: [title]
+### Finding 1 — [CRITICAL/HIGH, conf=<score>]: [title]
 **Data flow:** [file:line] → [file:line] → [file:line]
 **Bug:** [what goes wrong]
 **Scenario:** [concrete input that triggers it]
+**Confidence:** <score> — <one-line justification pointing at the evidence (grep/git-log/type-check) that convinced the reviewer>
 **Previous fix history:** [any prior round that touched this, and whether it worked]
 **Proposed fix:** [exact code change]
 ```
 
-If zero findings: update `consecutive_clean` for this subsystem, rotate to next. No Phase 2 or 3.
+If zero findings: update `consecutive_clean` for this subsystem, rotate to next. No Phase 2 or 3. Zero findings means **zero confident findings after the <80 drop and false-positives filter** — a subsystem with candidate findings that all scored <80 still rotates, but the dropped candidates are logged to `${SESSION_ROOT}/<subsystem>/dropped_findings.md` (append, one line per drop: `<date> — <title> — conf=<score> — <one-line reason>`) so the reviewer's reasoning is auditable and future iterations can re-examine if threshold changes.
 
 #### PHASE 2: FIX
 
