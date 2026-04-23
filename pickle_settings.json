@@ -11,6 +11,7 @@
   "default_meeseeks_max_passes": 50,
   "default_council_min_passes": 11,
   "default_council_max_passes": 25,
+  "default_council_publish": true,
   "default_circuit_breaker_enabled": true,
   "default_cb_no_progress_threshold": 5,
   "default_cb_same_error_threshold": 5,

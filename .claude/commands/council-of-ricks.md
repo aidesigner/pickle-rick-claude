@@ -30,8 +30,11 @@ From `$ARGUMENTS`:
 - `--gitnexus` — enable GitNexus graph queries for impact/layer analysis
 - `--no-codex` — disable the Codex adversarial pass (default: enabled)
 - `--codex-timeout <seconds>` — per-branch Codex timeout (default: 600)
+- `--no-publish` — skip the end-of-session PR comment publish (default: enabled)
 
 Remainder = task text.
+
+Publish resolution: read `default_council_publish` from `pickle_settings.json` (default: `true`) in Step 4; `--no-publish` CLI overrides to `false`. Thread the resolved boolean into Step 8's `council-stack.json` as `publish_enabled`.
 
 ### Step 4: Read Settings
 Read `$HOME/.claude/pickle-rick/pickle_settings.json`: `default_council_min_passes` (default: 11 — the Council runs enough passes to cover all dedicated review categories), `default_council_max_passes` (default: 25). CLI flags override.
@@ -60,7 +63,7 @@ If Codex is not ready, record `codex_enabled=false` with a reason (not installed
 Run `npx gitnexus analyze`. Warn on failure (non-fatal).
 
 ### Step 8: Discover Stack
-`gt log short --no-interactive` → write `<SESSION_ROOT>/council-stack.json` with: `branches` array (tip → trunk order preserved from gt), `trunk`, `discovered_at` (ISO), `repo_path`, `gitnexus_enabled`, `codex_enabled`, `codex_companion_path`, `codex_timeout_seconds`.
+`gt log short --no-interactive` → write `<SESSION_ROOT>/council-stack.json` with: `branches` array (tip → trunk order preserved from gt), `trunk`, `discovered_at` (ISO), `repo_path`, `gitnexus_enabled`, `codex_enabled`, `codex_companion_path`, `codex_timeout_seconds`, `publish_enabled`.
 
 ### Step 9: Initialize
 ```bash
@@ -75,7 +78,7 @@ tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/mux-run
 mux-runner auto-creates the monitor window on startup (council layout — dashboard / log-stream / mux-runner tail / raw-morty), no manual invocation needed.
 
 ### Step 9.5: Report
-Print: session name, attach command, branches, gate results, GitNexus status, **Codex adversarial status** (enabled/disabled + reason if disabled), min/max passes, cancel (`/eat-pickle`), emergency (`tmux kill-session`), state path.
+Print: session name, attach command, branches, gate results, GitNexus status, **Codex adversarial status** (enabled/disabled + reason if disabled), min/max passes, cancel (`/eat-pickle`), emergency (`tmux kill-session`), state path, **Publish at session end**: enabled/disabled (respects `--no-publish` and `default_council_publish` setting).
 
 Output: `<promise>TASK_COMPLETED</promise>`
 
@@ -84,7 +87,7 @@ Output: `<promise>TASK_COMPLETED</promise>`
 When `$ARGUMENTS` contains `--resume <SESSION_ROOT>`:
 
 ### Step 10: Load State
-Read `state.json` (iteration, min_iterations, working_dir), `council-stack.json` (branches, trunk, repo_path, gitnexus_enabled, codex_enabled, codex_companion_path, codex_timeout_seconds), `council-claude-rules.json`, `council-principles.md`. `cd` to `repo_path`.
+Read `state.json` (iteration, min_iterations, working_dir), `council-stack.json` (branches, trunk, repo_path, gitnexus_enabled, codex_enabled, codex_companion_path, codex_timeout_seconds, publish_enabled), `council-claude-rules.json`, `council-principles.md`. `cd` to `repo_path`.
 
 ### Step 11: Update State
 ```bash
@@ -211,6 +214,8 @@ Append findings to summary (Step 17). Do NOT output `<promise>THE_CITADEL_APPROV
 
 Skipped passes (Codex disabled, Migration with no Drizzle journal, Historical Context git-only-and-dry) break the streak — they are not clean — so approval requires another clean pass on a runnable category before it can fire.
 
+Before emitting the promise, run Step 17.7 (Final Publish) unless `--no-publish`.
+
 ### Step 17: Findings Summary
 
 Append to `<SESSION_ROOT>/council-of-ricks-summary.md`:
@@ -240,6 +245,40 @@ Codex status: <N branches reviewed, M approved, K needs-attention, J skipped>
 3. `— <count> issues (<P0>/<P1>/<P2>/<P3>/<P4>)` (no trailing period — the issues block is the terminal)
 
 This Step 17 template is the ONLY authority on header format; any drift elsewhere in the doc is a bug.
+
+**Max-iterations exhaustion.** If `current_pass >= max_iterations` and no approval fired, the Council stops at session end without emitting `THE_CITADEL_APPROVES`. Before emitting the terminal `<promise>TASK_COMPLETED</promise>` in that exhaustion path, route through Step 17.7 (Final Publish) — same rule as the approval path.
+
+### Step 17.7: Final Publish (session end only)
+
+Publish runs **exactly once per session** at session end. Session end is:
+- `THE_CITADEL_APPROVES` is about to be emitted (approval gate just fired), OR
+- `current_pass >= max_iterations` and no approval fired (exhaustion)
+
+Both conditions run Step 17.7 BEFORE emitting the terminal `<promise>` tag.
+
+**Skip Step 17.7 entirely if `publish_enabled === false`** — print one line "Publish skipped (--no-publish)" to the summary and proceed to the promise.
+
+Otherwise:
+
+```bash
+node "$HOME/.claude/pickle-rick/extension/bin/council-publish.js" "<SESSION_ROOT>"
+```
+
+The script reads `council-stack.json`, `council-of-ricks-summary.md`, and the latest `council-directive.md`. For each non-trunk branch it composes a comment body, resolves PR # via `gh pr list --head <branch>`, and posts via `gh pr comment <N> --body-file <path>`. Idempotent per branch via `<SESSION_ROOT>/.published/<branch-slug>` markers. If `gh` is unavailable or unauthed, it writes body files to `<SESSION_ROOT>/council-comments/<branch-slug>.md` as fallback artifacts and skips posting. Per-branch failures log to `publish.log` and the sweep continues.
+
+After the script returns (JSON report on stdout), parse it and append to `council-of-ricks-summary.md`:
+
+```markdown
+## Final Publish
+
+- Posted: <count>
+- Skipped (no PR): <count>
+- Skipped (gh unavailable): <count>
+- Failed: <count>
+- Details: `publish.log`
+```
+
+If any branches had outcome `failed`, mention it in the final human-facing announcement after "The Council has adjourned" — do NOT block the terminal promise. Append a one-line Rick-voice note to the closing line: e.g. "Council out. Comments posted: <N>. *burp*"
 
 ## Persona
 - Open: "The Council convenes!" Issues: "The Council has spoken." Clean: "adequate."

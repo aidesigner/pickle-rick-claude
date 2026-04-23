@@ -366,6 +366,7 @@ All defaults are configurable via `~/.claude/pickle-rick/pickle_settings.json`:
 | `default_refinement_max_turns` | 100 | Max Claude turns per refinement worker |
 | `default_council_min_passes` | 11 | Minimum Council of Ricks review passes |
 | `default_council_max_passes` | 25 | Maximum Council of Ricks review passes |
+| `default_council_publish` | true | Auto-publish PR comments at session end (disable with `--no-publish`) |
 | `default_circuit_breaker_enabled` | true | Enable circuit breaker |
 | `default_cb_no_progress_threshold` | 5 | No-progress iterations before OPEN |
 | `default_cb_same_error_threshold` | 5 | Identical errors before OPEN |
@@ -631,7 +632,7 @@ Re-run after fixing: `/pickle-dot <prd>`. The `.dot.draft` file is not a valid p
 
 <img src="images/council-of-ricks.png" alt="Council of Ricks — Graphite PR Stack Reviewer" width="400" align="right" />
 
-Requires a Graphite stack with at least one non-trunk branch, a `CLAUDE.md` with project rules, passing lint, and architectural lint rules in ESLint. Escalates through focus areas: stack structure (1) → historical context + prior PR comments (2) → CLAUDE.md compliance (3) → contract discovery (4) → per-branch correctness + data flow (5) → cross-branch contracts + combinatorial verification (6) → Codex adversarial challenge (7) → test coverage + production migration safety (8) → security (9) → migration hygiene (10, conditional on Drizzle journal) → Szechuan principles sweep (11) → polish + CLAUDE.md re-check + trap-door consolidation (12+). Every finding is scored **[P0–P4, conf=0–100]** — confidence `< 80` drops before reporting (rubric + false-positives filter adapted from Anthropic's official code-review plugin).
+Requires a Graphite stack with at least one non-trunk branch, a `CLAUDE.md` with project rules, passing lint, and architectural lint rules in ESLint. Escalates through focus areas: stack structure (1) → historical context + prior PR comments (2) → CLAUDE.md compliance (3) → contract discovery (4) → per-branch correctness + data flow (5) → cross-branch contracts + combinatorial verification (6) → Codex adversarial challenge (7) → test coverage + production migration safety (8) → security (9) → migration hygiene (10, conditional on Drizzle journal) → Szechuan principles sweep (11) → polish + CLAUDE.md re-check + trap-door consolidation (12+). Every finding is scored **[P0–P4, conf=0–100]** — confidence `< 80` drops before reporting (rubric + false-positives filter adapted from Anthropic's official code-review plugin). At session end, one comment per branch is auto-posted to the GitHub-backed PR that Graphite manages via `gh pr comment` (idempotent, opt out with `--no-publish`).
 
 <br clear="right" />
 
