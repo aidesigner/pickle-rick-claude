@@ -36,6 +36,8 @@ Gregory Dickson [8:14 AM] *<date or date range>*
 4. Multi-day standups get combined into one post with a date range
 5. **Y:** = what was accomplished, **T:** = what's planned next (infer from trajectory of recent work)
 6. If the user asks for the full/raw output, print the complete standup verbatim instead
+7. `## Teammate PRs merged` from the helper is informational only — NEVER attribute those commits to the user in **Y:** bullets. If worth mentioning, append a single footer line after **T:** like `Team shipped: <brief one-liner each, with author name>`. Default is to omit unless the user asks.
+8. **Translate jargon before writing Y:**. For each of the user's own commits with a PR ref (`(#\d+)` suffix), if the subject matches the jargon heuristic, run `gh pr view <N> --json title,body` and rewrite in user-impact language (what changed for a user / admin / operator — not what code or internal component was touched). One line per PR. Jargon heuristic (any of): title matches `/szechuan|anatomy-park|anatomy park|csplit|SSE|DB-backed|dry-run|trap door|microverse|plumbus|meeseeks|pickle|morty|council of ricks|szechuan-sauce/i`; title shorter than 25 chars; title is a bare kebab-case branch slug with no prose.
 
 **Example:**
 

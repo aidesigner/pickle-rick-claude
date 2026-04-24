@@ -10,6 +10,7 @@ import {
     deduplicateCommits,
     formatOutput,
     getGitCommits,
+    getCurrentUserEmail,
 } from '../bin/standup.js';
 
 const CLI_PATH = path.join(import.meta.dirname, '..', 'bin', 'standup.js');
@@ -372,15 +373,16 @@ test('deduplicateCommits: hook commits win over git-log', () => {
         { ts: '2026-02-26T11:00:00Z', event: 'session_start', source: 'pickle' },
     ];
     const gitCommits = new Map([
-        ['abc1234', 'fix: thing'],
-        ['def5678', 'feat: other'],
+        ['abc1234', { authorEmail: 'me@example.com', subject: 'fix: thing' }],
+        ['def5678', { authorEmail: 'me@example.com', subject: 'feat: other' }],
     ]);
 
-    const { hookCommits, gitOnlyCommits } = deduplicateCommits(events, gitCommits);
+    const { hookCommits, mineGitOnlyCommits, teammateCommits } = deduplicateCommits(events, gitCommits, 'me@example.com');
     assert.equal(hookCommits.length, 1);
     assert.equal(hookCommits[0].commit_hash, 'abc1234');
-    assert.equal(gitOnlyCommits.length, 1);
-    assert.equal(gitOnlyCommits[0][0], 'def5678');
+    assert.equal(mineGitOnlyCommits.length, 1);
+    assert.equal(mineGitOnlyCommits[0].hash, 'def5678');
+    assert.equal(teammateCommits.length, 0);
 });
 
 test('deduplicateCommits: short hash prefix matching', () => {
@@ -388,12 +390,13 @@ test('deduplicateCommits: short hash prefix matching', () => {
         { ts: '2026-02-26T10:00:00Z', event: 'commit', source: 'hook', commit_hash: 'abc1234567890' },
     ];
     const gitCommits = new Map([
-        ['abc1234', 'fix: thing'], // short hash from --oneline
+        ['abc1234', { authorEmail: 'me@example.com', subject: 'fix: thing' }], // short hash from --oneline
     ]);
 
-    const { hookCommits, gitOnlyCommits } = deduplicateCommits(events, gitCommits);
+    const { hookCommits, mineGitOnlyCommits, teammateCommits } = deduplicateCommits(events, gitCommits, 'me@example.com');
     assert.equal(hookCommits.length, 1);
-    assert.equal(gitOnlyCommits.length, 0, 'Short hash should match long hash prefix');
+    assert.equal(mineGitOnlyCommits.length, 0, 'Short hash should match long hash prefix');
+    assert.equal(teammateCommits.length, 0);
 });
 
 test('deduplicateCommits: empty git commits', () => {
@@ -402,20 +405,62 @@ test('deduplicateCommits: empty git commits', () => {
     ];
     const gitCommits = new Map();
 
-    const { hookCommits, gitOnlyCommits } = deduplicateCommits(events, gitCommits);
+    const { hookCommits, mineGitOnlyCommits, teammateCommits } = deduplicateCommits(events, gitCommits, 'me@example.com');
     assert.equal(hookCommits.length, 1);
-    assert.equal(gitOnlyCommits.length, 0);
+    assert.equal(mineGitOnlyCommits.length, 0);
+    assert.equal(teammateCommits.length, 0);
 });
 
 test('deduplicateCommits: no commit events', () => {
     const events = [
         { ts: '2026-02-26T10:00:00Z', event: 'session_start', source: 'pickle' },
     ];
-    const gitCommits = new Map([['def5678', 'feat: something']]);
+    const gitCommits = new Map([['def5678', { authorEmail: 'me@example.com', subject: 'feat: something' }]]);
 
-    const { hookCommits, gitOnlyCommits } = deduplicateCommits(events, gitCommits);
+    const { hookCommits, mineGitOnlyCommits, teammateCommits } = deduplicateCommits(events, gitCommits, 'me@example.com');
     assert.equal(hookCommits.length, 0);
-    assert.equal(gitOnlyCommits.length, 1);
+    assert.equal(mineGitOnlyCommits.length, 1);
+    assert.equal(teammateCommits.length, 0);
+});
+
+test('deduplicateCommits: splits git-only commits by author — mine vs teammate', () => {
+    const events = [];
+    const gitCommits = new Map([
+        ['aaa1111', { authorEmail: 'me@example.com', subject: 'feat: mine' }],
+        ['bbb2222', { authorEmail: 'ari@example.com', subject: 'feat: teammate PR' }],
+        ['ccc3333', { authorEmail: 'nirmal@example.com', subject: 'fix: other teammate' }],
+        ['ddd4444', { authorEmail: 'ME@Example.COM', subject: 'feat: case insensitive' }],
+    ]);
+
+    const { mineGitOnlyCommits, teammateCommits } = deduplicateCommits(events, gitCommits, 'me@example.com');
+    assert.equal(mineGitOnlyCommits.length, 2);
+    assert.deepEqual(mineGitOnlyCommits.map((c) => c.hash).sort(), ['aaa1111', 'ddd4444']);
+    assert.equal(teammateCommits.length, 2);
+    assert.deepEqual(teammateCommits.map((c) => c.hash).sort(), ['bbb2222', 'ccc3333']);
+});
+
+test('deduplicateCommits: null currentUserEmail → everything goes to mine (backward compat)', () => {
+    const events = [];
+    const gitCommits = new Map([
+        ['aaa1111', { authorEmail: 'me@example.com', subject: 'feat: mine' }],
+        ['bbb2222', { authorEmail: 'ari@example.com', subject: 'feat: teammate PR' }],
+    ]);
+
+    const { mineGitOnlyCommits, teammateCommits } = deduplicateCommits(events, gitCommits, null);
+    assert.equal(mineGitOnlyCommits.length, 2);
+    assert.equal(teammateCommits.length, 0);
+});
+
+test('deduplicateCommits: omitted currentUserEmail defaults to null (backward compat)', () => {
+    const events = [];
+    const gitCommits = new Map([
+        ['aaa1111', { authorEmail: 'me@example.com', subject: 'feat: mine' }],
+        ['bbb2222', { authorEmail: 'ari@example.com', subject: 'feat: teammate' }],
+    ]);
+
+    const { mineGitOnlyCommits, teammateCommits } = deduplicateCommits(events, gitCommits);
+    assert.equal(mineGitOnlyCommits.length, 2);
+    assert.equal(teammateCommits.length, 0);
 });
 
 // --- formatOutput ---
@@ -423,7 +468,7 @@ test('deduplicateCommits: no commit events', () => {
 test('formatOutput: empty range shows no activity message', () => {
     const since = new Date('2026-02-26');
     const until = new Date('2026-02-27');
-    const output = formatOutput([], [], [], since, until);
+    const output = formatOutput([], [], [], [], since, until);
     assert.match(output, /No activity found/);
     assert.match(output, /2026-02-26/);
 });
@@ -441,7 +486,7 @@ test('formatOutput: session with iterations and commits', () => {
     const hookCommits = [
         { ts: '2026-02-26T10:25:00Z', event: 'commit', source: 'hook', commit_hash: 'abc1234567', commit_message: 'feat: circuit breaker', session: 'sess-1' },
     ];
-    const output = formatOutput(events, hookCommits, [], new Date('2026-02-26'), new Date('2026-02-27'));
+    const output = formatOutput(events, hookCommits, [], [], new Date('2026-02-26'), new Date('2026-02-27'));
     assert.match(output, /# Standup/);
     assert.match(output, /## Implement circuit breaker \(sess-1\)/);
     assert.match(output, /\*\*Duration\*\*: 1h 30m \(3 iterations\)/);
@@ -459,7 +504,7 @@ test('formatOutput: commit attribution by session field', () => {
         { ts: '2026-02-26T10:30:00Z', event: 'commit', source: 'hook', commit_hash: 'aaa1111111', commit_message: 'fix: attributed', session: 'sess-1' },
         { ts: '2026-02-26T12:00:00Z', event: 'commit', source: 'hook', commit_hash: 'bbb2222222', commit_message: 'fix: unattributed' },
     ];
-    const output = formatOutput(events, hookCommits, [], new Date('2026-02-26'), new Date('2026-02-27'));
+    const output = formatOutput(events, hookCommits, [], [], new Date('2026-02-26'), new Date('2026-02-27'));
     // Attributed commit under session block
     assert.match(output, /## sess-1 \(sess-1\)/);
     assert.match(output, /`aaa1111` fix: attributed/);
@@ -477,22 +522,61 @@ test('formatOutput: timestamp fallback attribution', () => {
     const hookCommits = [
         { ts: '2026-02-26T10:30:00Z', event: 'commit', source: 'hook', commit_hash: 'ccc3333333', commit_message: 'fix: fallback' },
     ];
-    const output = formatOutput(events, hookCommits, [], new Date('2026-02-26'), new Date('2026-02-27'));
+    const output = formatOutput(events, hookCommits, [], [], new Date('2026-02-26'), new Date('2026-02-27'));
     // Should be attributed to sess-1 via timestamp fallback, not ad-hoc
     assert.match(output, /## sess-1 \(sess-1\)/);
     assert.match(output, /`ccc3333` fix: fallback/);
     assert.ok(!output.includes('Ad-hoc Commits'), 'No ad-hoc section expected');
 });
 
-test('formatOutput: ad-hoc commits from hook and git-only', () => {
+test('formatOutput: ad-hoc commits from hook and git-only (mine only)', () => {
     const hookCommits = [
         { ts: '2026-02-26T10:00:00Z', event: 'commit', source: 'hook', commit_hash: 'abc1234567', commit_message: 'fix: standalone' },
     ];
-    const gitOnly = [['def5678901', 'feat: git only']];
-    const output = formatOutput([], hookCommits, gitOnly, new Date('2026-02-26'), new Date('2026-02-27'));
+    const mine = [{ hash: 'def5678901', authorEmail: 'me@example.com', subject: 'feat: git only' }];
+    const output = formatOutput([], hookCommits, mine, [], new Date('2026-02-26'), new Date('2026-02-27'));
     assert.match(output, /## Ad-hoc Commits/);
     assert.match(output, /`abc1234` fix: standalone/);
     assert.match(output, /`def5678` feat: git only/);
+    assert.ok(!output.includes('Teammate PRs merged'), 'No teammate section when teammateCommits is empty');
+});
+
+test('formatOutput: teammate PRs rendered in separate section after Ad-hoc Commits', () => {
+    const mine = [{ hash: 'aaa1111', authorEmail: 'me@example.com', subject: 'feat: my commit' }];
+    const teammate = [
+        { hash: 'bbb2222', authorEmail: 'ari@example.com', subject: 'Squash merge PR #42' },
+        { hash: 'ccc3333', authorEmail: 'nirmal@loanlight.com', subject: 'feat: other PR' },
+    ];
+    const output = formatOutput([], [], mine, teammate, new Date('2026-02-26'), new Date('2026-02-27'));
+    assert.match(output, /## Ad-hoc Commits/);
+    assert.match(output, /`aaa1111` feat: my commit/);
+    assert.match(output, /## Teammate PRs merged/);
+    assert.match(output, /`bbb2222` \(ari\) Squash merge PR #42/);
+    assert.match(output, /`ccc3333` \(nirmal\) feat: other PR/);
+
+    // Order check: Ad-hoc Commits before Teammate PRs merged
+    const adhocIdx = output.indexOf('## Ad-hoc Commits');
+    const teammateIdx = output.indexOf('## Teammate PRs merged');
+    assert.ok(adhocIdx >= 0 && teammateIdx > adhocIdx, 'Teammate section should appear after Ad-hoc Commits');
+});
+
+test('formatOutput: teammate section rendered before Ad-hoc Activity', () => {
+    const teammate = [{ hash: 'bbb2222', authorEmail: 'ari@example.com', subject: 'teammate PR' }];
+    const adhocActivity = [
+        { ts: '2026-02-26T14:00:00Z', event: 'feature', source: 'persona', title: 'Did a thing' },
+    ];
+    const output = formatOutput(adhocActivity, [], [], teammate, new Date('2026-02-26'), new Date('2026-02-27'));
+    const teammateIdx = output.indexOf('## Teammate PRs merged');
+    const activityIdx = output.indexOf('## Ad-hoc Activity');
+    assert.ok(teammateIdx >= 0, 'Should contain teammate section');
+    assert.ok(activityIdx >= 0, 'Should contain ad-hoc activity section');
+    assert.ok(teammateIdx < activityIdx, 'Teammate section should appear before Ad-hoc Activity');
+});
+
+test('formatOutput: teammate section omitted when empty', () => {
+    const mine = [{ hash: 'aaa1111', authorEmail: 'me@example.com', subject: 'feat: mine' }];
+    const output = formatOutput([], [], mine, [], new Date('2026-02-26'), new Date('2026-02-27'));
+    assert.ok(!output.includes('Teammate PRs merged'), 'Section should not render when teammateCommits is empty');
 });
 
 test('formatOutput: old session without iteration events (graceful degradation)', () => {
@@ -500,7 +584,7 @@ test('formatOutput: old session without iteration events (graceful degradation)'
         { ts: '2026-02-26T10:00:00Z', event: 'session_start', source: 'pickle', session: 'old-sess' },
         { ts: '2026-02-26T10:45:00Z', event: 'ticket_completed', source: 'pickle', session: 'old-sess', ticket: 'abc' },
     ];
-    const output = formatOutput(events, [], [], new Date('2026-02-26'), new Date('2026-02-27'));
+    const output = formatOutput(events, [], [], [], new Date('2026-02-26'), new Date('2026-02-27'));
     assert.match(output, /## old-sess \(old-sess\)/);
     assert.match(output, /\*\*Duration\*\*: 45m \(\? iterations\)/);
     assert.match(output, /\*\*Mode\*\*: inline/);
@@ -515,7 +599,7 @@ test('formatOutput: multiple sessions sorted newest first', () => {
         { ts: '2026-02-26T14:30:00Z', event: 'iteration_start', source: 'pickle', session: 'newer-sess', iteration: 1 },
         { ts: '2026-02-26T15:30:00Z', event: 'session_end', source: 'pickle', session: 'newer-sess' },
     ];
-    const output = formatOutput(events, [], [], new Date('2026-02-26'), new Date('2026-02-27'));
+    const output = formatOutput(events, [], [], [], new Date('2026-02-26'), new Date('2026-02-27'));
     const newerIdx = output.indexOf('## Newer task');
     const olderIdx = output.indexOf('## Older task');
     assert.ok(newerIdx >= 0, 'Should contain newer session');
@@ -527,7 +611,7 @@ test('formatOutput: ad-hoc non-commit events in separate section', () => {
     const events = [
         { ts: '2026-02-26T14:00:00Z', event: 'feature', source: 'persona', title: 'Did a thing' },
     ];
-    const output = formatOutput(events, [], [], new Date('2026-02-26'), new Date('2026-02-27'));
+    const output = formatOutput(events, [], [], [], new Date('2026-02-26'), new Date('2026-02-27'));
     assert.match(output, /## Ad-hoc Activity/);
     assert.match(output, /Did a thing/);
 });
@@ -536,7 +620,7 @@ test('formatOutput: commit with no message shows fallback', () => {
     const hookCommits = [
         { ts: '2026-02-26T10:00:00Z', event: 'commit', source: 'hook', commit_hash: 'abc1234567' },
     ];
-    const output = formatOutput([], hookCommits, [], new Date('2026-02-26'), new Date('2026-02-27'));
+    const output = formatOutput([], hookCommits, [], [], new Date('2026-02-26'), new Date('2026-02-27'));
     assert.match(output, /\(no message\)/);
 });
 
@@ -547,7 +631,7 @@ test('formatOutput: original_prompt truncated to 60 chars', () => {
         { ts: '2026-02-26T10:30:00Z', event: 'iteration_start', source: 'pickle', session: 'sess-trunc', iteration: 1 },
         { ts: '2026-02-26T11:00:00Z', event: 'session_end', source: 'pickle', session: 'sess-trunc' },
     ];
-    const output = formatOutput(events, [], [], new Date('2026-02-26'), new Date('2026-02-27'));
+    const output = formatOutput(events, [], [], [], new Date('2026-02-26'), new Date('2026-02-27'));
     assert.match(output, /## This is a very long original prompt that exceeds sixty ch/);
     assert.match(output, /\.\.\./);
     assert.ok(!output.includes(longPrompt), 'Full prompt should not appear');
@@ -555,15 +639,18 @@ test('formatOutput: original_prompt truncated to 60 chars', () => {
 
 // --- getGitCommits ---
 
-test('getGitCommits: returns Map with short-hash keys from real git repo', () => {
+test('getGitCommits: returns Map with author-bearing entries from real git repo', () => {
     // We're running inside the pickle-rick-claude repo — should have real commits
     const commits = getGitCommits(new Date('2020-01-01'));
     assert.ok(commits instanceof Map);
     if (commits.size > 0) {
-        // Verify entries have expected structure: short hash -> message
-        const [hash, msg] = commits.entries().next().value;
+        // Verify entries have expected structure: full hash -> { authorEmail, subject }
+        const [hash, entry] = commits.entries().next().value;
         assert.ok(typeof hash === 'string' && hash.length >= 7, 'hash should be 7+ chars');
-        assert.ok(typeof msg === 'string' && msg.length > 0, 'message should be non-empty');
+        assert.ok(entry && typeof entry === 'object', 'value should be an object');
+        assert.ok(typeof entry.authorEmail === 'string', 'authorEmail should be a string');
+        assert.ok(entry.authorEmail === entry.authorEmail.toLowerCase(), 'authorEmail should be lowercased');
+        assert.ok(typeof entry.subject === 'string' && entry.subject.length > 0, 'subject should be non-empty');
     }
 });
 
@@ -575,6 +662,66 @@ test('getGitCommits: returns empty Map when not in a git repo', () => {
         const commits = getGitCommits(new Date('2020-01-01'));
         assert.ok(commits instanceof Map);
         assert.equal(commits.size, 0);
+    } finally {
+        process.chdir(origDir);
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('getGitCommits: captures author email from temp git repo', () => {
+    const origDir = process.cwd();
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-standup-git-'));
+    try {
+        process.chdir(tmpDir);
+        const run = (cmd, args) => {
+            const r = spawnSync(cmd, args, { cwd: tmpDir, encoding: 'utf-8', timeout: 10000 });
+            assert.equal(r.status, 0, `${cmd} ${args.join(' ')} failed: ${r.stderr}`);
+            return r;
+        };
+        run('git', ['init', '-q', '-b', 'main']);
+        run('git', ['config', 'user.email', 'alice@example.com']);
+        run('git', ['config', 'user.name', 'Alice']);
+        run('git', ['config', 'commit.gpgsign', 'false']);
+        fs.writeFileSync(path.join(tmpDir, 'a.txt'), 'hello');
+        run('git', ['add', 'a.txt']);
+        run('git', ['commit', '-q', '-m', 'feat: initial | with pipe and tab\there']);
+
+        const commits = getGitCommits(new Date('2020-01-01'));
+        assert.equal(commits.size, 1);
+        const [hash, entry] = commits.entries().next().value;
+        assert.ok(hash.length >= 7);
+        assert.equal(entry.authorEmail, 'alice@example.com');
+        // Subject should preserve the pipe (tab-separated parsing is robust against pipes in subjects)
+        assert.ok(entry.subject.includes('feat: initial | with pipe'), `unexpected subject: ${entry.subject}`);
+    } finally {
+        process.chdir(origDir);
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+// --- getCurrentUserEmail ---
+
+test('getCurrentUserEmail: returns lowercased email from real git repo', () => {
+    const email = getCurrentUserEmail();
+    // This repo has user.email configured; whatever it is, should be a lowercased non-empty string or null.
+    if (email !== null) {
+        assert.ok(typeof email === 'string' && email.length > 0);
+        assert.equal(email, email.toLowerCase());
+    }
+});
+
+test('getCurrentUserEmail: returns null when not in a git repo and no global config', () => {
+    const origDir = process.cwd();
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-standup-noemail-'));
+    try {
+        process.chdir(tmpDir);
+        // In a non-git dir with no global user.email, getCurrentUserEmail may still return a value
+        // if the user has a global git config. Test contract: return null OR a lowercased non-empty string.
+        const email = getCurrentUserEmail();
+        if (email !== null) {
+            assert.ok(typeof email === 'string' && email.length > 0);
+            assert.equal(email, email.toLowerCase());
+        }
     } finally {
         process.chdir(origDir);
         fs.rmSync(tmpDir, { recursive: true, force: true });

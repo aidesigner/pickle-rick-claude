@@ -154,21 +154,31 @@ export function readActivityFiles(activityDir: string, since: Date, until: Date)
   return events;
 }
 
-export function getGitCommits(since: Date): Map<string, string> {
-  const commits = new Map<string, string>();
+export interface GitCommitEntry {
+  authorEmail: string;
+  subject: string;
+}
+
+export function getGitCommits(since: Date): Map<string, GitCommitEntry> {
+  const commits = new Map<string, GitCommitEntry>();
   try {
-    const output = execSync(`git log --after="${since.toISOString()}" --oneline`, {
+    const output = execSync(`git log --after="${since.toISOString()}" --pretty=format:"%H%x09%ae%x09%s"`, {
       encoding: 'utf-8',
       timeout: 10000,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     for (const line of output.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed) continue;
-      const spaceIdx = trimmed.indexOf(' ');
-      if (spaceIdx > 0) {
-        commits.set(trimmed.slice(0, spaceIdx), trimmed.slice(spaceIdx + 1));
-      }
+      if (!line) continue;
+      // Tab-separated: hash \t author-email \t subject. Subject may contain tabs in theory; join the remainder.
+      const firstTab = line.indexOf('\t');
+      if (firstTab <= 0) continue;
+      const secondTab = line.indexOf('\t', firstTab + 1);
+      if (secondTab <= firstTab) continue;
+      const hash = line.slice(0, firstTab);
+      const authorEmail = line.slice(firstTab + 1, secondTab).toLowerCase();
+      const subject = line.slice(secondTab + 1);
+      if (!hash) continue;
+      commits.set(hash, { authorEmail, subject });
     }
   } catch {
     // Not in a git repo or git not available — that's fine
@@ -176,39 +186,72 @@ export function getGitCommits(since: Date): Map<string, string> {
   return commits;
 }
 
+export function getCurrentUserEmail(): string | null {
+  try {
+    const out = execSync('git config user.email', {
+      encoding: 'utf-8',
+      timeout: 5000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim().toLowerCase();
+    return out || null;
+  } catch {
+    return null;
+  }
+}
+
+export interface GitOnlyCommit {
+  hash: string;
+  authorEmail: string;
+  subject: string;
+}
+
 interface DeduplicatedCommits {
   hookCommits: ActivityEvent[];
-  gitOnlyCommits: Array<[string, string]>;
+  mineGitOnlyCommits: GitOnlyCommit[];
+  teammateCommits: GitOnlyCommit[];
 }
 
 export function deduplicateCommits(
   events: ActivityEvent[],
-  gitCommits: Map<string, string>,
+  gitCommits: Map<string, GitCommitEntry>,
+  currentUserEmail: string | null = null,
 ): DeduplicatedCommits {
   const hookCommits = events.filter((e) => e.event === 'commit' && e.commit_hash);
   const seenHashes = hookCommits.map((e) => e.commit_hash!);
   const seenSet = new Set(seenHashes);
 
-  const gitOnlyCommits: Array<[string, string]> = [];
-  for (const [hash, msg] of gitCommits) {
+  const mineGitOnlyCommits: GitOnlyCommit[] = [];
+  const teammateCommits: GitOnlyCommit[] = [];
+  const me = currentUserEmail ? currentUserEmail.toLowerCase() : null;
+
+  for (const [hash, entry] of gitCommits) {
     if (seenSet.has(hash) || seenHashes.some((h) => h.startsWith(hash) || hash.startsWith(h))) continue;
-    gitOnlyCommits.push([hash, msg]);
+    const authorEmailLower = (entry.authorEmail || '').toLowerCase();
+    const out: GitOnlyCommit = { hash, authorEmail: authorEmailLower, subject: entry.subject };
+    // If we don't know who "me" is, preserve old behavior: everyone bucketed as mine (no teammate section emitted).
+    if (me === null || authorEmailLower === me) {
+      mineGitOnlyCommits.push(out);
+    } else {
+      teammateCommits.push(out);
+    }
   }
 
-  return { hookCommits, gitOnlyCommits };
+  return { hookCommits, mineGitOnlyCommits, teammateCommits };
 }
 
 export function formatOutput(
   events: ActivityEvent[],
   hookCommits: ActivityEvent[],
-  gitOnlyCommits: Array<[string, string]>,
+  mineGitOnlyCommits: GitOnlyCommit[],
+  teammateCommits: GitOnlyCommit[],
   since: Date,
   until: Date,
 ): string {
   const sinceStr = dateToFilename(since);
   const untilStr = dateToFilename(until);
   const nonCommitEvents = events.filter((e) => e.event !== 'commit');
-  const hasContent = nonCommitEvents.length > 0 || hookCommits.length > 0 || gitOnlyCommits.length > 0;
+  const hasContent = nonCommitEvents.length > 0 || hookCommits.length > 0
+    || mineGitOnlyCommits.length > 0 || teammateCommits.length > 0;
 
   if (!hasContent) {
     return `No activity found for ${sinceStr} to ${untilStr}.`;
@@ -317,16 +360,27 @@ export function formatOutput(
     lines.push('');
   }
 
-  // 5. Ad-hoc section
-  const hasAdhocCommits = adhocHookCommits.length > 0 || gitOnlyCommits.length > 0;
+  // 5. Ad-hoc section (my commits only)
+  const hasAdhocCommits = adhocHookCommits.length > 0 || mineGitOnlyCommits.length > 0;
   if (hasAdhocCommits) {
     lines.push('## Ad-hoc Commits');
     for (const c of adhocHookCommits) {
       const msg = c.commit_message || '(no message)';
       lines.push(`- \`${c.commit_hash?.slice(0, 7)}\` ${msg}`);
     }
-    for (const [hash, msg] of gitOnlyCommits) {
-      lines.push(`- \`${hash.slice(0, 7)}\` ${msg}`);
+    for (const { hash, subject } of mineGitOnlyCommits) {
+      lines.push(`- \`${hash.slice(0, 7)}\` ${subject}`);
+    }
+    lines.push('');
+  }
+
+  // 5b. Teammate PRs merged (git-only commits authored by someone other than the current user)
+  if (teammateCommits.length > 0) {
+    lines.push('## Teammate PRs merged');
+    for (const { hash, authorEmail, subject } of teammateCommits) {
+      const atIdx = authorEmail.indexOf('@');
+      const localPart = atIdx > 0 ? authorEmail.slice(0, atIdx) : authorEmail;
+      lines.push(`- \`${hash.slice(0, 7)}\` (${localPart}) ${subject}`);
     }
     lines.push('');
   }
@@ -349,8 +403,9 @@ function main(): void {
   const activityDir = path.join(getDataRoot(), 'activity');
   const events = readActivityFiles(activityDir, range.since, range.until);
   const gitCommits = getGitCommits(range.since);
-  const { hookCommits, gitOnlyCommits } = deduplicateCommits(events, gitCommits);
-  const output = formatOutput(events, hookCommits, gitOnlyCommits, range.since, range.until);
+  const currentUserEmail = getCurrentUserEmail();
+  const { hookCommits, mineGitOnlyCommits, teammateCommits } = deduplicateCommits(events, gitCommits, currentUserEmail);
+  const output = formatOutput(events, hookCommits, mineGitOnlyCommits, teammateCommits, range.since, range.until);
   console.log(output);
 }
 
