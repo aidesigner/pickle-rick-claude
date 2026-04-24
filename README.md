@@ -8,6 +8,8 @@ Pickle Rick is a complete agentic engineering toolbelt built on the [Ralph Wiggu
 
 New to PRDs? See the **[PRD Writing Guide](PRD_GUIDE.md)** for developers or the **[Product Manager's Guide](PM_GUIDE.md)** for PMs defining and refining requirements. For internals, see [Architecture](architecture.md). For what's coming next, see the [Feature Roadmap](roadmap.md).
 
+> **New in v1.51+: Codex backend.** `/pickle`, `/pickle-tmux`, `/pickle-microverse`, `/anatomy-park`, and `/szechuan-sauce` now accept `--backend codex` (or `PICKLE_BACKEND=codex`) to route worker and manager spawns through `codex exec` (GPT-5.4) instead of `claude`. Useful for a second-opinion implementation pass or benchmarking backends. `/council-of-ricks` has a separate Codex integration — its Phase C adversarial reviewer runs by default (`--no-codex` to disable).
+
 ---
 
 ## How to Build Things with Pickle Rick
@@ -68,6 +70,8 @@ Rick prints a `tmux attach` command — open a second terminal to watch the live
 
 Sit back. Rick handles the rest.
 
+> **Backend choice** — append `--backend codex` (or export `PICKLE_BACKEND=codex`) to route worker/manager spawns through `codex exec` instead of `claude`. See [Codex backend](#codex-backend) below for precedence and examples.
+
 ### Step 4 (Optional): Metric-Driven Refinement
 
 If you can define a measurable goal — test coverage, response time, bundle size, extraction accuracy — the Microverse grinds toward it. Each cycle: make one change, measure, keep or revert. Failed approaches are tracked so it never repeats a dead end.
@@ -78,14 +82,18 @@ If you can define a measurable goal — test coverage, response time, bundle siz
 /pickle-microverse --goal "error messages are user-friendly and actionable" --task "improve UX"
 ```
 
-**Codex backend** — `/pickle-tmux`, `/szechuan-sauce`, `/anatomy-park`, and `/pickle-microverse` accept `--backend codex` to route the implementation spawn through `codex exec` (via the installed Codex CLI plugin) instead of `claude`. The choice is persisted in `state.json` and survives resume; omit the flag to keep the default `claude` backend.
+<a id="codex-backend"></a>**Codex backend** — `/pickle`, `/pickle-tmux`, `/szechuan-sauce`, `/anatomy-park`, and `/pickle-microverse` accept `--backend codex` to route the implementation spawn through `codex exec` (via the installed Codex CLI plugin) instead of `claude`. The choice is persisted in `state.json` and survives resume; omit the flag to keep the default `claude` backend. Set `PICKLE_BACKEND=codex` for a session-independent alternative that persists across commands. Precedence: CLI flag > env var > session state > default `claude`.
 
 ```bash
+/pickle --backend codex "refactor the auth middleware"
 /pickle-tmux --backend codex "refactor the auth middleware"
 /szechuan-sauce --backend codex src/services/
 /anatomy-park --backend codex src/
 /pickle-microverse --backend codex --metric "npm run coverage:score" --task "hit 90%"
+PICKLE_BACKEND=codex /pickle-tmux "refactor the auth middleware"
 ```
+
+`/council-of-ricks` integrates Codex differently — its Phase C runs an adversarial Codex subagent by default (`--no-codex` to disable, `--codex-timeout <sec>` to tune). See the Council of Ricks section below.
 
 ### Step 5 (Optional): Cleanup
 
@@ -253,15 +261,15 @@ Queue tasks for unattended batch execution overnight.
 
 | Command | Description |
 |---|---|
-| `/pickle "task"` | Start the full autonomous loop — PRD → breakdown → 8-phase execution |
-| `/pickle prd.md` | Pick up an existing PRD, skip drafting |
-| `/pickle-tmux "task"` | Same loop with context clearing via tmux. Best for long epics (8+ iterations) |
+| `/pickle "task"` † | Start the full autonomous loop — PRD → breakdown → 8-phase execution |
+| `/pickle prd.md` † | Pick up an existing PRD, skip drafting |
+| `/pickle-tmux "task"` † | Same loop with context clearing via tmux. Best for long epics (8+ iterations) |
 | `/pickle-zellij "task"` | Same loop in Zellij with KDL layouts. Requires Zellij >= 0.40.0 |
 | `/pickle-refine-prd [path]` | Refine PRD with 3 parallel analysts → decompose into tickets |
 | `/pickle-refine-prd --run [path]` | Refine + decompose + auto-launch unlimited tmux session |
-| `/pickle-microverse` | Metric convergence loop. `--metric` for numeric, `--goal` for LLM judge |
-| `/szechuan-sauce [target]` | Principle-driven deslopping. `--dry-run`, `--focus`, `--domain` |
-| `/anatomy-park` | Three-phase deep subsystem review with trap door cataloging |
+| `/pickle-microverse` † | Metric convergence loop. `--metric` for numeric, `--goal` for LLM judge |
+| `/szechuan-sauce [target]` † | Principle-driven deslopping. `--dry-run`, `--focus`, `--domain` |
+| `/anatomy-park` † | Three-phase deep subsystem review with trap door cataloging |
 | `/pickle-pipeline "task"` | Full lifecycle: pickle-tmux → anatomy-park → szechuan-sauce in one tmux session |
 | `/plumbus <file.dot>` | Iterative DAG shaping on a single `.dot` file. `--dry-run`, `--focus`, `--no-validator` |
 | `/council-of-ricks` | Graphite PR stack review — szechuan principles + anatomy data-flow tracing + Codex adversarial challenge. Directives only, never fixes code. `--no-codex` to disable, `--gitnexus` for graph queries |
@@ -281,6 +289,8 @@ Queue tasks for unattended batch execution overnight.
 | `/help-pickle` | Show all commands and flags |
 | `/meeseeks` | **Deprecated** — superseded by `/anatomy-park` and `/szechuan-sauce` |
 
+† accepts `--backend <claude\|codex>` to swap the worker/manager spawn backend (or set `PICKLE_BACKEND=codex`). `/council-of-ricks` has a separate Codex integration (Phase C adversarial reviewer, `--no-codex` / `--codex-timeout`).
+
 ### Flags
 
 Most flags are command-scoped. The table groups them by command family — flags with no command prefix apply across `/pickle`, `/pickle-tmux`, `/pickle-zellij`, `/pickle-jar-open`, and `/pickle-pipeline` unless noted.
@@ -294,6 +304,7 @@ Most flags are command-scoped. The table groups them by command family — flags
 | `--resume [PATH]` | General | Resume from an existing session |
 | `--reset` | General | Reset iteration counter and start time (use with `--resume`) |
 | `--paused` | General | Start in paused mode (PRD only) |
+| `--backend <claude\|codex>` | `/pickle`, `/pickle-tmux`, `/pickle-microverse`, `/anatomy-park`, `/szechuan-sauce` | Route worker/manager spawns through `codex exec` instead of `claude`. Persisted in `state.json`. Env var alternative: `PICKLE_BACKEND=codex`. Precedence: CLI flag > env var > session state > default `claude` |
 | `--run` | `/pickle-refine-prd`, `/portal-gun` | Auto-launch tmux |
 | `--interactive` | `/pickle-microverse` | Run inline instead of tmux |
 | `--metric "<CMD>"` | `/pickle-microverse` | Shell command outputting a numeric score |
@@ -417,6 +428,8 @@ Gap Analysis (iteration 0)
 | **Progress signal** | Metric score | Ticket completion |
 | **Defines "done"** | Convergence (score stops improving) | All tickets complete |
 
+**Backend** — add `--backend codex` (or set `PICKLE_BACKEND=codex`) to run the per-iteration implementation via `codex exec` instead of `claude`. The measurement/judge step is unaffected.
+
 ### 🍗 Szechuan Sauce — Iterative Code Deslopping
 
 <p align="center">
@@ -430,6 +443,8 @@ Reads 30+ coding principles (KISS, YAGNI, DRY, SOLID, Guard Clauses, Fail-Fast, 
 **Phase 0: Contract Discovery** — greps the codebase for importers of every export in target files, builds a contract map, flags cross-module mismatches. Re-checked after every fix.
 
 Supports `--domain <name>` for domain-specific principles (e.g., `financial` adds monetary precision, rounding, regulatory compliance) and `--focus "<text>"` to elevate specific concerns.
+
+**Backend** — add `--backend codex` (or set `PICKLE_BACKEND=codex`) to swap the per-iteration fix spawn from `claude` to `codex exec`. Useful when Codex catches violations a Claude pass missed.
 
 ### 🏥 Anatomy Park — Deep Subsystem Review
 
@@ -450,6 +465,8 @@ Auto-discovers subsystems, rotates through them round-robin, three-phase protoco
 ## Trap Doors
 - `bank-statement.service.ts` — borrowerFileId MUST equal S3 batch UUID; tenant isolation depends on effectiveLenderId threading
 ```
+
+**Backend** — add `--backend codex` (or set `PICKLE_BACKEND=codex`) to run the Review/Fix/Verify phases through `codex exec` instead of `claude`. The subsystem rotation and trap-door cataloging behave identically regardless of backend.
 
 ### 🏛️ Council of Ricks — Details
 
@@ -598,7 +615,7 @@ The `--run` flag goes further: after generating the transplant PRD, it launches 
 - **Zellij** >= 0.40.0 *(optional — for `/pickle-zellij`)*
 - **Graphite CLI** (`gt`) *(optional — for `/council-of-ricks`)*
 - **GitHub CLI** (`gh`) authed *(optional — required only for `/council-of-ricks` auto-publish; the review itself works without it)*
-- **Codex plugin** *(optional — for `/council-of-ricks` Phase C adversarial review; Council runs without it but loses the adversarial perspective)*
+- **Codex plugin** *(optional — required for `--backend codex` on `/pickle`, `/pickle-tmux`, `/pickle-microverse`, `/anatomy-park`, `/szechuan-sauce`, and for `/council-of-ricks` Phase C adversarial review. Without it, `--backend codex` spawns fail and Council's Phase C is skipped — Claude-backed runs and non-Codex Council rounds are unaffected. Install: `/plugin install openai-codex` or `npm i -g @openai/codex-cli` + `codex setup`)*
 - macOS or Linux (Windows not supported)
 
 ---
