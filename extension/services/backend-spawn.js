@@ -4,13 +4,32 @@ import { BACKENDS } from '../types/index.js';
 export function isBackend(value) {
     return typeof value === 'string' && BACKENDS.includes(value);
 }
+// Dedupe by (source, value) so a bad state.json or typo'd env var warns once
+// per process rather than N times per call site. Same silent-fallback trap-door
+// class as the spawnSync-no-timeout cluster: a downgrade to 'claude' that should
+// have been 'codex' wastes a whole Morty spawn with no signal.
+const _warnedBackends = new Set();
+export function __resetBackendWarnings() {
+    _warnedBackends.clear();
+}
+function warnBadBackend(sourceLabel, value) {
+    const key = `${sourceLabel}:${value}`;
+    if (_warnedBackends.has(key))
+        return;
+    _warnedBackends.add(key);
+    process.stderr.write(`[pickle-rick] unrecognized backend ${JSON.stringify(value)} from ${sourceLabel} — falling back to 'claude' (valid: ${BACKENDS.join(', ')})\n`);
+}
 export function resolveBackend(source) {
-    if (source && isBackend(source.backend)) {
-        return source.backend;
-    }
+    const raw = source ? source.backend : undefined;
+    if (isBackend(raw))
+        return raw;
+    if (typeof raw === 'string' && raw.length > 0)
+        warnBadBackend('state', raw);
     const env = process.env.PICKLE_BACKEND;
     if (isBackend(env))
         return env;
+    if (typeof env === 'string' && env.length > 0)
+        warnBadBackend('PICKLE_BACKEND env', env);
     return 'claude';
 }
 export function resolveBackendFromStateFile(statePath) {
