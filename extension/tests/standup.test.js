@@ -710,21 +710,31 @@ test('getCurrentUserEmail: returns lowercased email from real git repo', () => {
     }
 });
 
-test('getCurrentUserEmail: returns null when not in a git repo and no global config', () => {
+test('getCurrentUserEmail: returns null when git has no user.email anywhere', () => {
+    // Force git to see no user.email by isolating every config layer it consults:
+    // repo (via tmp cwd outside any .git), global (GIT_CONFIG_GLOBAL=/dev/null +
+    // empty HOME + empty XDG), and system (GIT_CONFIG_NOSYSTEM=1). Without this,
+    // the test is a tautology on any dev machine with ~/.gitconfig set.
     const origDir = process.cwd();
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-standup-noemail-'));
+    const emptyHome = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-standup-home-'));
+    const envKeys = ['HOME', 'GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM', 'XDG_CONFIG_HOME'];
+    const prev = Object.fromEntries(envKeys.map((k) => [k, process.env[k]]));
     try {
         process.chdir(tmpDir);
-        // In a non-git dir with no global user.email, getCurrentUserEmail may still return a value
-        // if the user has a global git config. Test contract: return null OR a lowercased non-empty string.
-        const email = getCurrentUserEmail();
-        if (email !== null) {
-            assert.ok(typeof email === 'string' && email.length > 0);
-            assert.equal(email, email.toLowerCase());
-        }
+        process.env.HOME = emptyHome;
+        process.env.GIT_CONFIG_GLOBAL = '/dev/null';
+        process.env.GIT_CONFIG_NOSYSTEM = '1';
+        process.env.XDG_CONFIG_HOME = emptyHome;
+        assert.equal(getCurrentUserEmail(), null);
     } finally {
         process.chdir(origDir);
+        for (const k of envKeys) {
+            if (prev[k] === undefined) delete process.env[k];
+            else process.env[k] = prev[k];
+        }
         fs.rmSync(tmpDir, { recursive: true, force: true });
+        fs.rmSync(emptyHome, { recursive: true, force: true });
     }
 });
 

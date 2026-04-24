@@ -117,6 +117,17 @@ test('buildWorkerInvocation(claude): includes --output-format when non-text', ()
     assert.equal(inv.args[fmtIdx + 1], 'stream-json');
 });
 
+test('buildWorkerInvocation(claude): omits --output-format when text (the default)', () => {
+    // Guard against a regression that always emits `--output-format text` — an
+    // invalid value for the Claude CLI that would fail every worker spawn.
+    const inv = buildWorkerInvocation('claude', {
+        prompt: 'x',
+        addDirs: [],
+        outputFormat: 'text',
+    });
+    assert.equal(inv.args.includes('--output-format'), false);
+});
+
 test('buildWorkerInvocation(claude): drops missing add-dir entries', () => {
     const inv = buildWorkerInvocation('claude', {
         prompt: 'x',
@@ -155,6 +166,21 @@ test('buildWorkerInvocation(codex): passes model via -m', () => {
     const mIdx = inv.args.indexOf('-m');
     assert.ok(mIdx >= 0);
     assert.equal(inv.args[mIdx + 1], 'gpt-5.4');
+});
+
+test('buildWorkerInvocation(codex): drops missing add-dir entries (mirrors claude-worker)', () => {
+    // Both backends filter non-existent add-dir paths via existsSilently; the
+    // claude test already covers this. Mirror it for codex so a regression that
+    // removes the filter on one path but not the other is caught.
+    const validDir = mkTmpDir('bs-codex-');
+    const inv = buildWorkerInvocation('codex', {
+        prompt: 'x',
+        addDirs: [validDir, '/definitely/does/not/exist/xyz456', ''],
+    });
+    const addDirCount = inv.args.filter((a) => a === '--add-dir').length;
+    assert.equal(addDirCount, 1);
+    assert.ok(inv.args.includes(validDir));
+    assert.equal(inv.args.includes('/definitely/does/not/exist/xyz456'), false);
 });
 
 // --- buildManagerInvocation ---
