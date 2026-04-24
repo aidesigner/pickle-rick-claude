@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { Defaults } from '../types/index.js';
+import { resolveBackend, buildJudgeInvocation, backendEnvOverrides, } from '../services/backend-spawn.js';
 import { readMicroverseState, writeMicroverseState, recordIteration as stateRecordIteration, recordStall, recordFailedApproach, isConverged, compareMetric, classifyFailure, } from '../services/microverse-state.js';
 import { getHeadSha, resetToSha, isWorkingTreeDirty } from '../services/git-utils.js';
 import { writeStateFile, getExtensionRoot, sleep, Style, formatTime, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, } from '../services/pickle-utils.js';
@@ -142,22 +143,36 @@ export function extractScore(output) {
     }
     return null;
 }
-export function measureLlmMetric(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath) {
-    const model = judgeModel || DEFAULT_JUDGE_MODEL;
+export function measureLlmMetric(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend = 'claude') {
+    // Codex uses a different model vocabulary than claude. The default
+    // DEFAULT_JUDGE_MODEL ('claude-sonnet-4-6') is meaningless to `codex exec`,
+    // so when routing through codex we omit the -m flag and let codex pick.
+    const usingClaudeDefault = backend === 'claude';
+    const model = judgeModel || (usingClaudeDefault ? DEFAULT_JUDGE_MODEL : undefined);
     const timeout = Math.max(timeoutSeconds, DEFAULT_JUDGE_TIMEOUT);
-    const prompt = buildJudgePrompt(goal, cwd, history, prdPath, judgeContextPath);
+    const userPrompt = buildJudgePrompt(goal, cwd, history, prdPath, judgeContextPath);
+    // buildJudgeInvocation enforces read-only sandboxing for BOTH backends:
+    // claude gets --allowedTools Read,Glob,Grep + --no-session-persistence and
+    // threads --system-prompt; codex gets `-s read-only --ignore-rules
+    // --ignore-user-config --ephemeral` with the system prompt inlined as a
+    // prefix (codex exec has no --system-prompt flag). The codex path
+    // explicitly DROPS --dangerously-bypass-approvals-and-sandbox — the judge
+    // MUST NOT have write/shell access. Do NOT reintroduce buildWorkerInvocation
+    // here; that path grants full FS write on codex.
+    const invocation = buildJudgeInvocation(backend, {
+        prompt: userPrompt,
+        addDirs: [cwd],
+        model,
+        systemPrompt: JUDGE_SYSTEM_PROMPT,
+    });
+    const { cmd, args } = invocation;
     try {
-        const output = _deps.execFileSync('claude', [
-            '-p', prompt,
-            '--model', model,
-            '--system-prompt', JUDGE_SYSTEM_PROMPT,
-            '--allowedTools', 'Read,Glob,Grep',
-            '--no-session-persistence',
-        ], {
+        const output = _deps.execFileSync(cmd, args, {
             cwd,
             timeout: timeout * 1000,
             encoding: 'utf-8',
             stdio: ['pipe', 'pipe', 'pipe'],
+            env: { ...process.env, ...backendEnvOverrides(backend) },
         }).trim();
         const score = extractScore(output);
         if (score === null)
@@ -166,7 +181,7 @@ export function measureLlmMetric(goal, timeoutSeconds, cwd, judgeModel, history,
     }
     catch (err) {
         const msg = safeErrorMessage(err);
-        process.stderr.write(`[microverse] measureLlmMetric failed (model=${model}): ${msg}\n`);
+        process.stderr.write(`[microverse] measureLlmMetric failed (backend=${backend}, model=${model ?? 'default'}): ${msg}\n`);
         return null;
     }
 }
@@ -481,7 +496,24 @@ export async function main(sessionDir) {
             }
         }
         else if (currentMv.key_metric.type === 'llm') {
-            const baseline = measureLlmMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir, currentMv.key_metric.judge_model, undefined, currentMv.prd_path, currentMv.judge_context_path);
+            // Re-read state from disk before resolving the baseline backend.
+            // The `state` in scope was loaded at main()'s top (pre-flight); if the
+            // user flipped state.backend between session start and gap-analysis,
+            // a stale in-memory copy would measure the baseline on the OLD backend
+            // while the iteration loop (which re-reads state every tick) uses the
+            // NEW one — causing compareMetric() to compare apples to oranges and
+            // corrupting stall/rollback logic. Mirror the iteration-loop idiom.
+            let freshState;
+            try {
+                // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+                freshState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+            }
+            catch (err) {
+                log(`WARNING: Could not re-read state.json before baseline (${safeErrorMessage(err)}) — using in-memory state`);
+                freshState = state;
+            }
+            const baselineBackend = resolveBackend(freshState);
+            const baseline = measureLlmMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir, currentMv.key_metric.judge_model, undefined, currentMv.prd_path, currentMv.judge_context_path, baselineBackend);
             if (baseline) {
                 currentMv.baseline_score = baseline.score;
                 log(`LLM baseline metric: ${baseline.score}`);
@@ -698,13 +730,17 @@ export async function main(sessionDir) {
                 continue;
             }
         }
+        // Re-resolve backend per iteration — mux-runner does the same so that
+        // users editing state.json mid-session (or flipping PICKLE_BACKEND on
+        // resume) take effect without a full restart.
+        const iterationBackend = resolveBackend(state);
         // Measure metric (with one retry on failure)
         const measureFn = () => {
             if (currentMv.key_metric.type === 'command') {
                 return measureMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir);
             }
             else if (currentMv.key_metric.type === 'llm') {
-                return measureLlmMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir, currentMv.key_metric.judge_model, currentMv.convergence.history, currentMv.prd_path, currentMv.judge_context_path);
+                return measureLlmMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir, currentMv.key_metric.judge_model, currentMv.convergence.history, currentMv.prd_path, currentMv.judge_context_path, iterationBackend);
             }
             return null;
         };

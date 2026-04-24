@@ -8,6 +8,7 @@ import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, writeStateFile
 import { StateManager } from '../services/state-manager.js';
 import { Defaults } from '../types/index.js';
 import { logActivity } from '../services/activity-logger.js';
+import { buildManagerInvocation, resolveBackend, backendEnvOverrides } from '../services/backend-spawn.js';
 const sm = new StateManager();
 // Tracks the currently-running task's session dir and subprocess so signal
 // handlers can deactivate it and kill the child on shutdown.
@@ -26,6 +27,20 @@ export function loadJarTaskTimeout(extensionRoot, state) {
     }
     catch { /* use default */ }
     return Defaults.WORKER_TIMEOUT_SECONDS;
+}
+/**
+ * Best-effort synchronous load of a task's state.json for peek-ahead lookups
+ * (e.g. "what backend would the next queued task use?"). Returns null if the
+ * file is missing or unreadable; callers fall through to resolveBackend's
+ * standard fallback chain.
+ */
+function readTaskState(sessionDir) {
+    try {
+        return JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+    }
+    catch {
+        return null;
+    }
 }
 async function runTask(sessionDir, repoCwd, extensionRoot) {
     const statePath = path.join(sessionDir, 'state.json');
@@ -63,27 +78,37 @@ async function runTask(sessionDir, repoCwd, extensionRoot) {
             managerMaxTurns = settings.default_manager_max_turns;
     }
     catch { /* ignore */ }
+    // Resolve the backend from THIS task's session state — jar batches are
+    // heterogeneous: each task carries its own backend (claude or codex) stored
+    // at jar-time. Resolving from the already-parsed state object avoids a second
+    // disk read + JSON.parse of the same file (the separate read could race a
+    // concurrent rewrite and silently default to 'claude' on parse failure, even
+    // when the first parse above succeeded).
+    const backend = resolveBackend(state);
     printMinimalPanel(`Running Jarred Task`, {
         Session: path.basename(sessionDir),
         Repo: repoCwd,
+        Backend: backend,
         MaxTurns: managerMaxTurns,
         Timeout: `${taskTimeout}s`,
     }, 'MAGENTA', '🥒');
-    const cmdArgs = [
-        '--dangerously-skip-permissions',
-        '--add-dir', extensionRoot,
-        '--add-dir', getDataRoot(),
-        '--add-dir', sessionDir,
-        '--no-session-persistence',
-        '--max-turns', String(managerMaxTurns),
-        '-p', prompt,
-    ];
-    const env = { ...process.env, PICKLE_STATE_FILE: statePath, PYTHONUNBUFFERED: '1' };
+    const invocation = buildManagerInvocation(backend, {
+        prompt,
+        addDirs: [extensionRoot, getDataRoot(), sessionDir],
+        maxTurns: managerMaxTurns,
+        noSessionPersistence: true,
+    });
+    const env = {
+        ...process.env,
+        ...backendEnvOverrides(backend),
+        PICKLE_STATE_FILE: statePath,
+        PYTHONUNBUFFERED: '1',
+    };
     delete env['CLAUDECODE'];
     delete env['PICKLE_ROLE'];
     return new Promise((resolve) => {
         let settled = false;
-        const proc = spawn('claude', cmdArgs, { cwd: repoCwd, env, stdio: 'inherit' });
+        const proc = spawn(invocation.cmd, invocation.args, { cwd: repoCwd, env, stdio: 'inherit' });
         activeTaskProc = proc;
         // Per-task timeout: SIGTERM first, escalate to SIGKILL after 2s
         let killEscalation = null;
@@ -108,7 +133,7 @@ async function runTask(sessionDir, repoCwd, extensionRoot) {
             activeTaskSessionDir = null;
             activeTaskProc = null;
             console.error(`${Style.RED}❌ Jar task hang detected — forcing failure${Style.RESET}`);
-            resolve(false);
+            resolve({ ok: false, backend });
         }, (taskTimeout + 30) * 1000);
         hangGuard.unref();
         proc.on('close', (code) => {
@@ -121,7 +146,7 @@ async function runTask(sessionDir, repoCwd, extensionRoot) {
             clearTimeout(hangGuard);
             activeTaskSessionDir = null;
             activeTaskProc = null;
-            resolve(code === 0);
+            resolve({ ok: code === 0, backend });
         });
         proc.on('error', (err) => {
             if (settled)
@@ -133,8 +158,21 @@ async function runTask(sessionDir, repoCwd, extensionRoot) {
             clearTimeout(hangGuard);
             activeTaskSessionDir = null;
             activeTaskProc = null;
-            console.error(`${Style.RED}Failed to spawn claude: ${safeErrorMessage(err)}${Style.RESET}`);
-            resolve(false);
+            const errCode = err?.code;
+            if (errCode === 'ENOENT') {
+                // Infrastructure error — the backend CLI is not installed. Do NOT
+                // permanently fail the task: leave its status untouched so a future
+                // jar-open run succeeds once the CLI is installed. Print a clear
+                // install hint routed to the backend that was attempted.
+                const hint = backend === 'codex'
+                    ? `codex CLI not found on PATH — install codex and re-run /pickle-jar-open, or re-jar these tasks with --backend claude`
+                    : `claude CLI not found on PATH — install claude and re-run /pickle-jar-open`;
+                console.error(`${Style.RED}${hint}${Style.RESET}`);
+                resolve({ ok: false, enoent: true, backend });
+                return;
+            }
+            console.error(`${Style.RED}Failed to spawn '${invocation.cmd}' (backend=${backend}): ${safeErrorMessage(err)}${Style.RESET}`);
+            resolve({ ok: false, backend });
         });
     });
 }
@@ -266,24 +304,49 @@ async function main() {
                 continue;
             }
         }
-        let ok;
+        let result;
         try {
-            ok = await runTask(sessionDir, repoPath, ROOT_DIR);
+            result = await runTask(sessionDir, repoPath, ROOT_DIR);
         }
         catch (err) {
             const msg = safeErrorMessage(err);
             console.error(`${Style.RED}⚠️  runTask error for ${taskId}: ${msg}${Style.RESET}`);
-            ok = false;
+            result = { ok: false, backend: 'claude' };
         }
-        meta.status = ok ? 'consumed' : 'failed';
-        writeStateFile(metaPath, meta);
-        // Deactivate session after task completes (runTask sets active=true on start)
+        // Deactivate session after task completes (runTask sets active=true on start).
+        // Runs regardless of outcome so an ENOENT-skipped task doesn't leave
+        // state.active=true orphaning future resumes.
         try {
             const taskStatePath = path.join(sessionDir, 'state.json');
             sm.update(taskStatePath, s => { s.active = false; });
         }
         catch { /* best-effort */ }
-        if (ok) {
+        if (result.enoent) {
+            // Infrastructure error (CLI not installed). Leave meta.status as-is so
+            // the task stays queued for a future jar-open run. Don't count it as
+            // succeeded or failed — it never ran.
+            console.log(`\n${Style.YELLOW}⏸️  Task ${taskId} skipped (backend ${result.backend} CLI missing) — status left as '${meta.status}' for future retry${Style.RESET}`);
+            if (result.backend === 'codex') {
+                // Every remaining task that declares codex will ENOENT identically.
+                // Count them as skipped and short-circuit.
+                const remaining = tasks.slice(tasks.findIndex(t => t.taskId === taskId) + 1);
+                let skipped = 0;
+                for (const { taskId: rid, meta: rmeta } of remaining) {
+                    const rstate = readTaskState(path.join(SESSIONS_ROOT, rid));
+                    const rbackend = resolveBackend(rstate);
+                    if (rbackend === 'codex' && rmeta.status === 'marinating')
+                        skipped++;
+                }
+                if (skipped > 0) {
+                    console.log(`${Style.YELLOW}⏸️  ${skipped} additional codex task(s) remain queued — install codex CLI and re-run /pickle-jar-open${Style.RESET}`);
+                    break;
+                }
+            }
+            continue;
+        }
+        meta.status = result.ok ? 'consumed' : 'failed';
+        writeStateFile(metaPath, meta);
+        if (result.ok) {
             succeeded++;
             console.log(`\n${Style.GREEN}✅ Task ${taskId} complete${Style.RESET}`);
         }

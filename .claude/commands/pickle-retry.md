@@ -1,5 +1,7 @@
 You are retrying a failed or timed-out Pickle Rick ticket.
 
+> **Backend:** Inherited from the original session's `state.json` (`claude` or `codex`). The retry runs on the same backend the ticket originally used — there is no `--backend` override on retry.
+
 Run the retry script with the ticket ID:
 ```bash
 node "$HOME/.claude/pickle-rick/extension/bin/retry-ticket.js" $ARGUMENTS

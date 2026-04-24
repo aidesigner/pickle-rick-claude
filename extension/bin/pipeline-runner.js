@@ -16,7 +16,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync, spawn } from 'child_process';
+import { BACKENDS } from '../types/index.js';
 import { StateManager } from '../services/state-manager.js';
+import { backendEnvOverrides, isBackend } from '../services/backend-spawn.js';
 import { getExtensionRoot, Style, formatTime, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, displayMacNotification, } from '../services/pickle-utils.js';
 import { isWorkingTreeDirty } from '../services/git-utils.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -27,6 +29,10 @@ const sm = new StateManager();
 // ---------------------------------------------------------------------------
 /** Parse and validate pipeline.json with safe defaults for all numeric fields. */
 export function parsePipelineConfig(raw) {
+    const rawBackend = raw.backend;
+    const backend = typeof rawBackend === 'string' && BACKENDS.includes(rawBackend)
+        ? rawBackend
+        : undefined;
     return {
         phases: Array.isArray(raw.phases) ? raw.phases : [],
         target: raw.target || '',
@@ -36,7 +42,31 @@ export function parsePipelineConfig(raw) {
         szechuan_stall_limit: Number.isFinite(Number(raw.szechuan_stall_limit)) ? Number(raw.szechuan_stall_limit) : 5,
         anatomy_max_iterations: Number.isFinite(Number(raw.anatomy_max_iterations)) ? Number(raw.anatomy_max_iterations) : 100,
         szechuan_max_iterations: Number.isFinite(Number(raw.szechuan_max_iterations)) ? Number(raw.szechuan_max_iterations) : 50,
+        backend,
     };
+}
+/**
+ * Resolve the effective backend and the source of that value.
+ *
+ * Precedence (resume must honor user's new --backend):
+ *   state.backend (setup.js --backend, authoritative on resume)
+ *     → pipeline.json.backend (original launch flag)
+ *       → PICKLE_BACKEND env
+ *         → 'claude'
+ *
+ * setup.js writes state.backend whenever --backend is passed, including on
+ * resume. pipeline.json is frozen at first launch, so letting it win would
+ * pin the old backend forever even after the user explicitly switched.
+ */
+export function resolveBackendWithSource(state, pipelineBackend, envBackend) {
+    const stateBackend = state ? state.backend : undefined;
+    if (isBackend(stateBackend))
+        return { backend: stateBackend, source: 'state.json' };
+    if (pipelineBackend)
+        return { backend: pipelineBackend, source: 'pipeline.json' };
+    if (isBackend(envBackend))
+        return { backend: envBackend, source: 'env' };
+    return { backend: 'claude', source: 'default' };
 }
 // ---------------------------------------------------------------------------
 // Subsystem Discovery (mirrors anatomy-park.md Step 3)
@@ -123,10 +153,10 @@ export function assertCleanWorkingTree(workingDir) {
 // Child Process Management
 // ---------------------------------------------------------------------------
 let activeChild = null;
-function spawnRunner(cmd, args) {
+function spawnRunner(cmd, args, env) {
     return new Promise((resolve, reject) => {
         let settled = false;
-        const child = spawn(cmd, args, { stdio: 'inherit' });
+        const child = spawn(cmd, args, { stdio: 'inherit', env: env ?? process.env });
         activeChild = child;
         child.on('exit', (code) => { if (!settled) {
             settled = true;
@@ -503,6 +533,19 @@ export async function main(sessionDir, opts = {}) {
         throw new Error(`Cannot read state.json: ${safeErrorMessage(err)}`);
     }
     const workingDir = state.working_dir || process.cwd();
+    // Backend resolution — see resolveBackendWithSource. Capture source BEFORE
+    // any state write so the log reflects the actual resolution path.
+    const { backend, source } = resolveBackendWithSource(state, config.backend, process.env.PICKLE_BACKEND);
+    // Only write when the value actually changes — avoids a lock round-trip on
+    // every phase when state already matches (fresh-run and steady-state case).
+    if (state.backend !== backend) {
+        sm.update(statePath, s => { s.backend = backend; });
+    }
+    const phaseEnv = {
+        ...process.env,
+        ...backendEnvOverrides(backend),
+    };
+    log(`backend resolved: ${backend} (source: ${source})`);
     // Pre-flight: refuse to start on a dirty tree. Downstream phases auto-commit
     // on their own, which would roll the user's unrelated WIP into a pipeline
     // commit and obscure which phase changed what.
@@ -561,7 +604,7 @@ export async function main(sessionDir, opts = {}) {
         const phase = config.phases[i];
         const phaseLabel = `${i + 1}/${config.phases.length}`;
         log(`\n${'═'.repeat(60)}`);
-        log(`PHASE ${phaseLabel}: ${phase.toUpperCase()}`);
+        log(`PHASE ${phaseLabel}: ${phase.toUpperCase()} (backend=${backend})`);
         log(`${'═'.repeat(60)}`);
         printMinimalPanel(`Pipeline Phase: ${phase}`, {
             Phase: phaseLabel,
@@ -577,14 +620,26 @@ export async function main(sessionDir, opts = {}) {
         if (phase === 'pickle') {
             // Ensure chain_meeseeks is off so mux-runner exits cleanly back to us
             // instead of transitioning to the deprecated meeseeks review loop.
-            sm.update(statePath, s => { s.chain_meeseeks = false; });
+            // Re-stamp backend only when it drifted: resetStateForPhase on later
+            // phases preserves it, but a pre-existing state.json could differ.
+            sm.update(statePath, s => {
+                s.chain_meeseeks = false;
+                if (s.backend !== backend)
+                    s.backend = backend;
+            });
             exitCode = await spawnRunner('node', [
                 path.join(extensionRoot, 'extension', 'bin', 'mux-runner.js'), sessionDir,
-            ]);
+            ], phaseEnv);
         }
         else if (phase === 'anatomy-park') {
             cleanPhaseArtifacts(sessionDir, 'pickle');
             resetStateForPhase(statePath, 'anatomy-park.md', config.anatomy_max_iterations);
+            // resetStateForPhase preserves state.backend — only write when it drifted.
+            {
+                const cur = sm.read(statePath);
+                if (cur.backend !== backend)
+                    sm.update(statePath, s => { s.backend = backend; });
+            }
             let refreshed;
             try {
                 refreshed = refreshScope(sessionDir, 'anatomy-park', { repoRoot: workingDir, log });
@@ -619,11 +674,17 @@ export async function main(sessionDir, opts = {}) {
             }
             exitCode = await spawnRunner('node', [
                 path.join(extensionRoot, 'extension', 'bin', 'microverse-runner.js'), sessionDir,
-            ]);
+            ], phaseEnv);
         }
         else if (phase === 'szechuan-sauce') {
             cleanPhaseArtifacts(sessionDir, 'anatomy-park');
             resetStateForPhase(statePath, 'szechuan-sauce.md', config.szechuan_max_iterations);
+            // resetStateForPhase preserves state.backend — only write when it drifted.
+            {
+                const cur = sm.read(statePath);
+                if (cur.backend !== backend)
+                    sm.update(statePath, s => { s.backend = backend; });
+            }
             const refreshedSz = refreshScope(sessionDir, 'szechuan-sauce', { repoRoot: workingDir, log });
             if (refreshedSz) {
                 writeSkippedByScope(sessionDir, 'szechuan-sauce', refreshedSz, config.target || workingDir, workingDir);
@@ -642,7 +703,7 @@ export async function main(sessionDir, opts = {}) {
             }
             exitCode = await spawnRunner('node', [
                 path.join(extensionRoot, 'extension', 'bin', 'microverse-runner.js'), sessionDir,
-            ]);
+            ], phaseEnv);
         }
         else {
             log(`Unknown phase: ${phase} — skipping`);

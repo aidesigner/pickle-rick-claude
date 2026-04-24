@@ -20,6 +20,14 @@ function warnBadBackend(sourceLabel, value) {
     process.stderr.write(`[pickle-rick] unrecognized backend ${JSON.stringify(value)} from ${sourceLabel} — falling back to 'claude' (valid: ${BACKENDS.join(', ')})\n`);
 }
 export function resolveBackend(source) {
+    // Refinement lock sentinel: PRD refinement is planning, not implementation.
+    // Codex is reserved for implementation. This sentinel is set by
+    // spawn-refinement-team and propagates to every grandchild via env
+    // inheritance, so any downstream caller that reads state.json (e.g.
+    // loadBackendFromSession) cannot leak codex back into the refinement phase.
+    // Silent force — no warning, no log.
+    if (process.env.PICKLE_REFINEMENT_LOCK === '1')
+        return 'claude';
     const raw = source ? source.backend : undefined;
     if (isBackend(raw))
         return raw;
@@ -33,6 +41,11 @@ export function resolveBackend(source) {
     return 'claude';
 }
 export function resolveBackendFromStateFile(statePath) {
+    // Refinement lock sentinel: short-circuit before any disk I/O so a stale or
+    // codex-stamped state.json cannot override the parent's locked-in claude.
+    // Mirrors resolveBackend — see comment above for the full rationale.
+    if (process.env.PICKLE_REFINEMENT_LOCK === '1')
+        return 'claude';
     try {
         const raw = fs.readFileSync(statePath, 'utf-8');
         const parsed = JSON.parse(raw);
@@ -98,6 +111,75 @@ function buildCodexInvocation(prompt, addDirs, model) {
     if (model)
         args.push('-m', model);
     args.push('--', prompt);
+    return { cmd: 'codex', args, backend: 'codex' };
+}
+/**
+ * Build a read-only judge invocation.
+ *
+ * The LLM judge scores candidate diffs — it MUST NOT write files, commit, or
+ * shell out. Both backend paths are explicitly locked down:
+ *
+ * - claude: `--allowedTools Read,Glob,Grep` + `--no-session-persistence`,
+ *   threads `--system-prompt` and `-p <prompt>`. No Bash/Edit/Write tools.
+ * - codex: `codex exec -s read-only` (codex's built-in read-only sandbox;
+ *   see `codex exec --help`). Also passes `--ignore-rules` and
+ *   `--ignore-user-config` so the judge cannot be biased by user- or
+ *   project-level execpolicy / config TOML. `--ephemeral` keeps the session
+ *   off disk. Crucially the bypass flag is DROPPED — the judge never gets
+ *   full FS access.
+ *
+ * codex exec does NOT expose `--system-prompt` / `--allowedTools` /
+ * `--no-session-persistence`. The system prompt is inlined as a prefix to the
+ * user prompt; the read-only sandbox replaces the tool allowlist.
+ */
+export function buildJudgeInvocation(backend, opts) {
+    if (backend === 'codex')
+        return buildCodexJudgeInvocation(opts);
+    return buildClaudeJudgeInvocation(opts);
+}
+function buildClaudeJudgeInvocation(opts) {
+    const args = ['--dangerously-skip-permissions'];
+    for (const dir of opts.addDirs) {
+        if (dir && existsSilently(dir))
+            args.push('--add-dir', dir);
+    }
+    if (opts.model)
+        args.push('--model', opts.model);
+    if (opts.systemPrompt)
+        args.push('--system-prompt', opts.systemPrompt);
+    // Read-only tool allowlist — judge MUST NOT write, edit, or execute.
+    args.push('--allowedTools', 'Read,Glob,Grep');
+    args.push('--no-session-persistence');
+    args.push('-p', opts.prompt);
+    return { cmd: 'claude', args, backend: 'claude' };
+}
+function buildCodexJudgeInvocation(opts) {
+    // Inline the system prompt as a prefix since `codex exec` has no
+    // --system-prompt flag. The read-only sandbox enforces the actual safety
+    // guarantee; the system prompt only shapes the scoring contract.
+    const composedPrompt = opts.systemPrompt
+        ? `${opts.systemPrompt}\n\n${opts.prompt}`
+        : opts.prompt;
+    const args = [
+        'exec',
+        // Read-only sandbox — no file writes, no shell exec, no network.
+        // Replaces --dangerously-bypass-approvals-and-sandbox; DO NOT add that
+        // flag back into the judge path.
+        '-s', 'read-only',
+        // Ignore user CLAUDE.md / AGENTS.md / .rules files so project-specific
+        // rules cannot bias the judge's scoring contract.
+        '--ignore-rules',
+        '--ignore-user-config',
+        '--skip-git-repo-check',
+        '--ephemeral',
+    ];
+    for (const dir of opts.addDirs) {
+        if (dir && existsSilently(dir))
+            args.push('--add-dir', dir);
+    }
+    if (opts.model)
+        args.push('-m', opts.model);
+    args.push('--', composedPrompt);
     return { cmd: 'codex', args, backend: 'codex' };
 }
 function existsSilently(p) {

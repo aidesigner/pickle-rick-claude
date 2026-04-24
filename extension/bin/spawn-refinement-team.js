@@ -3,7 +3,76 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, safeErrorMessage, } from '../services/pickle-utils.js';
+import { buildWorkerInvocation } from '../services/backend-spawn.js';
 import { PromiseTokens, hasToken, Defaults } from '../types/index.js';
+// PRD refinement is planning, not implementation. Codex is reserved for
+// implementation loops only — if the parent session opted into codex, we
+// still force claude here so analysis stays on the Claude model family.
+const REFINEMENT_BACKEND = 'claude';
+// Emit the codex-override warning at most once per process.
+let _codexOverrideWarned = false;
+export function __resetRefinementBackendWarning() {
+    _codexOverrideWarned = false;
+}
+/**
+ * Log a one-shot stderr warning if the parent session or env opted into codex.
+ * Refinement always downgrades to claude regardless.
+ *
+ * Exported for tests; callers pass an explicit stateBackend (e.g. read from
+ * state.json) so the check is deterministic and doesn't depend on test-run env.
+ */
+export function warnIfCodexRequested(stateBackend, envBackend) {
+    if (_codexOverrideWarned)
+        return;
+    if (stateBackend === 'codex' || envBackend === 'codex') {
+        _codexOverrideWarned = true;
+        process.stderr.write('[pickle-rick] PRD refinement forces backend=claude (ignoring session/env preference "codex"). Refinement is planning, not implementation.\n');
+    }
+}
+/**
+ * Build the spawn invocation for a single refinement worker. Hardcoded to
+ * claude — NEVER resolveBackend — because refinement is planning, not
+ * implementation.
+ *
+ * Exported for tests.
+ */
+export function buildRefinementWorkerInvocation(opts) {
+    const invocation = buildWorkerInvocation(REFINEMENT_BACKEND, {
+        prompt: opts.prompt,
+        addDirs: opts.addDirs,
+    });
+    // buildWorkerInvocation doesn't take max-turns for workers; splice it in
+    // before the `-p <prompt>` trailer so the flag applies to the claude CLI.
+    if (opts.maxTurns > 0) {
+        const promptIdx = invocation.args.lastIndexOf('-p');
+        const insertAt = promptIdx === -1 ? invocation.args.length : promptIdx;
+        invocation.args.splice(insertAt, 0, '--max-turns', String(opts.maxTurns));
+    }
+    return invocation;
+}
+/**
+ * Build the child-process env for a refinement worker. Explicitly sets
+ * PICKLE_BACKEND=claude so any grandchild spawn also stays on claude even if
+ * the parent session opted into codex. Do NOT spread backendEnvOverrides —
+ * this helper is the single source of truth for the refinement env.
+ *
+ * Exported for tests.
+ */
+export function buildRefinementEnv(base = process.env) {
+    const env = {
+        ...base,
+        PICKLE_BACKEND: REFINEMENT_BACKEND,
+        // Sentinel lock: short-circuits resolveBackend / resolveBackendFromStateFile
+        // in every grandchild to 'claude', even if state.json says codex. Prevents
+        // a downstream loadBackendFromSession(sessionDir) read from bypassing the
+        // env lock. See services/backend-spawn.ts resolveBackend() for details.
+        PICKLE_REFINEMENT_LOCK: '1',
+        PICKLE_ROLE: 'refinement-worker',
+        PYTHONUNBUFFERED: '1',
+    };
+    delete env['CLAUDECODE'];
+    return env;
+}
 // Tracks all active worker subprocesses so the signal handler can kill them.
 const activeWorkerProcs = new Set();
 const WORKER_ROLES = [
@@ -159,23 +228,18 @@ function spawnWorker(roleId, prompt, refinementDir, extensionRoot, timeout, work
         const msg = safeErrorMessage(err);
         console.error(`${Style.RED}❌ Log stream error (${roleId}): ${msg}${Style.RESET}`);
     });
-    // Mirror spawn-morty.ts: include extensionRoot, data root, and workingDir
+    // Mirror spawn-morty.ts: include extensionRoot, data root, and workingDir.
+    // buildRefinementWorkerInvocation filters out non-existent dirs internally.
     const includes = [extensionRoot, getDataRoot(), workingDir];
     if (sessionDir)
         includes.push(sessionDir);
-    const cmdArgs = ['--dangerously-skip-permissions'];
-    for (const p of includes) {
-        if (fs.existsSync(p)) {
-            cmdArgs.push('--add-dir', p);
-        }
-    }
-    if (maxTurns > 0) {
-        cmdArgs.push('--max-turns', String(maxTurns));
-    }
-    cmdArgs.push('-p', prompt);
-    const env = { ...process.env, PICKLE_ROLE: 'refinement-worker', PYTHONUNBUFFERED: '1' };
-    delete env['CLAUDECODE'];
-    const proc = spawn('claude', cmdArgs, {
+    const invocation = buildRefinementWorkerInvocation({
+        prompt,
+        addDirs: includes,
+        maxTurns,
+    });
+    const env = buildRefinementEnv(process.env);
+    const proc = spawn(invocation.cmd, invocation.args, {
         cwd: workingDir,
         env,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -224,7 +288,7 @@ function spawnWorker(roleId, prompt, refinementDir, extensionRoot, timeout, work
         hangGuard.unref();
         proc.on('error', (err) => {
             const msg = safeErrorMessage(err);
-            console.error(`${Style.RED}Failed to spawn claude (${roleId}): ${msg}${Style.RESET}`);
+            console.error(`${Style.RED}Failed to spawn ${invocation.cmd} (${roleId}): ${msg}${Style.RESET}`);
             logStream.end();
             settleWith({ roleId, success: false, logPath, cycle, exitCode: null });
         });
@@ -319,11 +383,13 @@ async function main() {
     const rawTimeout = timeoutIndex !== -1 ? parseInt(args[timeoutIndex + 1], 10) : NaN;
     let timeout = !isNaN(rawTimeout) && rawTimeout > 0 ? rawTimeout : defaultWorkerTimeout;
     const statePath = path.join(sessionDir, 'state.json');
+    let stateBackend = undefined;
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     if (fs.existsSync(statePath)) {
         try {
             // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
             const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+            stateBackend = state.backend;
             if (timeoutIndex === -1) {
                 const stateTimeout = Number(state.worker_timeout_seconds);
                 if (Number.isFinite(stateTimeout) && stateTimeout > 0)
@@ -347,6 +413,9 @@ async function main() {
             // Ignore — use parsed/default timeout
         }
     }
+    // One-shot stderr warning if state or env opted into codex — refinement
+    // downgrades to claude regardless (planning, not implementation).
+    warnIfCodexRequested(stateBackend, process.env.PICKLE_BACKEND);
     const workingDir = process.cwd();
     const refinementDir = path.join(sessionDir, 'refinement');
     try {

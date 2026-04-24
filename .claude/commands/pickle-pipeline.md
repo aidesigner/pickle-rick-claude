@@ -15,6 +15,7 @@ From `$ARGUMENTS`:
 - `--max-iterations <N>` → PICKLE_MAX_ITER (default: 500)
 - `--max-time <M>` → MAX_TIME in minutes (default: 720)
 - `--worker-timeout <S>` → WORKER_TIMEOUT in seconds (default: 1200)
+- `--backend <claude|codex>` → BACKEND (default `claude`; `codex` routes every phase's worker/manager spawn through `codex exec` and propagates via `PICKLE_BACKEND` to sub-runners)
 
 **Anatomy Park flags:**
 - `--anatomy-max-iterations <N>` → AP_MAX_ITER (default: 100)
@@ -47,8 +48,9 @@ Resolve TARGET to an absolute path. Verify it exists. If not found, print error 
 
 Build the setup.js flags from pickle phase settings:
 ```bash
-node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --max-iterations <PICKLE_MAX_ITER> --max-time <MAX_TIME> --worker-timeout <WORKER_TIMEOUT> --task "<TASK>"
+node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --max-iterations <PICKLE_MAX_ITER> --max-time <MAX_TIME> --worker-timeout <WORKER_TIMEOUT> [--backend <BACKEND>] --task "<TASK>"
 ```
+Append `--backend <BACKEND>` only when the flag was passed.
 
 Extract `SESSION_ROOT=<path>` from output.
 
@@ -56,7 +58,9 @@ Extract `SESSION_ROOT=<path>` from output.
 
 Build the phases array. Default: `["pickle", "anatomy-park", "szechuan-sauce"]`. Remove entries if `--skip-anatomy` or `--skip-szechuan` were passed.
 
-Write `${SESSION_ROOT}/pipeline.json`:
+Write `${SESSION_ROOT}/pipeline.json` with the required keys below. Append the optional keys ONLY when the corresponding flag was passed — do NOT emit placeholders or empty strings for unset values.
+
+Required shape (example shown with `--backend codex`):
 ```json
 {
   "phases": ["pickle", "anatomy-park", "szechuan-sauce"],
@@ -65,14 +69,16 @@ Write `${SESSION_ROOT}/pipeline.json`:
   "szechuan_stall_limit": <SZ_STALL>,
   "anatomy_max_iterations": <AP_MAX_ITER>,
   "szechuan_max_iterations": <SZ_MAX_ITER>,
-  "szechuan_domain": "<SZ_DOMAIN or omit>",
-  "szechuan_focus": "<SZ_FOCUS or omit>",
-  "scope": "<SCOPE_FLAG or omit>",
-  "scope_base": "<SCOPE_BASE or omit>"
+  "backend": "codex"
 }
 ```
 
-Omit `szechuan_domain`, `szechuan_focus`, `scope`, and `scope_base` keys entirely if not set.
+Optional keys — include each ONLY when the corresponding flag was set, and use the literal user-supplied value:
+- `szechuan_domain` (string) — add when `--szechuan-domain` was passed
+- `szechuan_focus` (string) — add when `--szechuan-focus` was passed
+- `scope` (string) — add when `--scope` was passed
+- `scope_base` (string) — add when `--scope-base` was passed
+- `backend` (string: `"claude"` or `"codex"`) — add when `--backend` was passed; omit the key entirely otherwise
 
 ## Step 5: tmux Session
 

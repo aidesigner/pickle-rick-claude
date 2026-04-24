@@ -1,5 +1,7 @@
 Refine and decompose PRD into atomic tickets using parallel Morty analysis team.
 
+> **Backend:** Always claude. Refinement is planning, not implementation; codex is never used here even if the parent session has `--backend codex`.
+
 Persona via CLAUDE.md. Proceed to Step 0.
 
 ## Step 0: Parse Flags

@@ -18,8 +18,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync, spawn, type ChildProcess } from 'child_process';
-import type { State } from '../types/index.js';
+import type { Backend, State } from '../types/index.js';
+import { BACKENDS } from '../types/index.js';
 import { StateManager } from '../services/state-manager.js';
+import { backendEnvOverrides, isBackend } from '../services/backend-spawn.js';
 import {
   getExtensionRoot,
   Style,
@@ -56,6 +58,7 @@ interface PipelineConfig {
   szechuan_stall_limit: number;
   anatomy_max_iterations: number;
   szechuan_max_iterations: number;
+  backend?: Backend;
 }
 
 type PipelineStatusKind = 'running' | 'completed' | 'failed' | 'cancelled';
@@ -75,6 +78,11 @@ interface PipelineStatus {
 
 /** Parse and validate pipeline.json with safe defaults for all numeric fields. */
 export function parsePipelineConfig(raw: Record<string, unknown>): PipelineConfig {
+  const rawBackend = raw.backend;
+  const backend: Backend | undefined =
+    typeof rawBackend === 'string' && (BACKENDS as readonly string[]).includes(rawBackend)
+      ? (rawBackend as Backend)
+      : undefined;
   return {
     phases: Array.isArray(raw.phases) ? raw.phases as PipelinePhase[] : [],
     target: (raw.target as string) || '',
@@ -84,7 +92,39 @@ export function parsePipelineConfig(raw: Record<string, unknown>): PipelineConfi
     szechuan_stall_limit: Number.isFinite(Number(raw.szechuan_stall_limit)) ? Number(raw.szechuan_stall_limit) : 5,
     anatomy_max_iterations: Number.isFinite(Number(raw.anatomy_max_iterations)) ? Number(raw.anatomy_max_iterations) : 100,
     szechuan_max_iterations: Number.isFinite(Number(raw.szechuan_max_iterations)) ? Number(raw.szechuan_max_iterations) : 50,
+    backend,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Backend Resolution
+// ---------------------------------------------------------------------------
+
+export type BackendSource = 'state.json' | 'pipeline.json' | 'env' | 'default';
+
+/**
+ * Resolve the effective backend and the source of that value.
+ *
+ * Precedence (resume must honor user's new --backend):
+ *   state.backend (setup.js --backend, authoritative on resume)
+ *     → pipeline.json.backend (original launch flag)
+ *       → PICKLE_BACKEND env
+ *         → 'claude'
+ *
+ * setup.js writes state.backend whenever --backend is passed, including on
+ * resume. pipeline.json is frozen at first launch, so letting it win would
+ * pin the old backend forever even after the user explicitly switched.
+ */
+export function resolveBackendWithSource(
+  state: { backend?: unknown } | null | undefined,
+  pipelineBackend: Backend | undefined,
+  envBackend: string | undefined,
+): { backend: Backend; source: BackendSource } {
+  const stateBackend = state ? (state as { backend?: unknown }).backend : undefined;
+  if (isBackend(stateBackend)) return { backend: stateBackend, source: 'state.json' };
+  if (pipelineBackend) return { backend: pipelineBackend, source: 'pipeline.json' };
+  if (isBackend(envBackend)) return { backend: envBackend, source: 'env' };
+  return { backend: 'claude', source: 'default' };
 }
 
 // ---------------------------------------------------------------------------
@@ -171,10 +211,10 @@ export function assertCleanWorkingTree(workingDir: string): void {
 
 let activeChild: ChildProcess | null = null;
 
-function spawnRunner(cmd: string, args: string[]): Promise<number> {
+function spawnRunner(cmd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<number> {
   return new Promise((resolve, reject) => {
     let settled = false;
-    const child = spawn(cmd, args, { stdio: 'inherit' });
+    const child = spawn(cmd, args, { stdio: 'inherit', env: env ?? process.env });
     activeChild = child;
     child.on('exit', (code) => { if (!settled) { settled = true; activeChild = null; resolve(code ?? 1); } });
     child.on('error', (err) => { if (!settled) { settled = true; activeChild = null; reject(err); } });
@@ -648,6 +688,20 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
   }
   const workingDir = state.working_dir || process.cwd();
 
+  // Backend resolution — see resolveBackendWithSource. Capture source BEFORE
+  // any state write so the log reflects the actual resolution path.
+  const { backend, source } = resolveBackendWithSource(state, config.backend, process.env.PICKLE_BACKEND);
+  // Only write when the value actually changes — avoids a lock round-trip on
+  // every phase when state already matches (fresh-run and steady-state case).
+  if (state.backend !== backend) {
+    sm.update(statePath, s => { s.backend = backend; });
+  }
+  const phaseEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...backendEnvOverrides(backend),
+  };
+  log(`backend resolved: ${backend} (source: ${source})`);
+
   // Pre-flight: refuse to start on a dirty tree. Downstream phases auto-commit
   // on their own, which would roll the user's unrelated WIP into a pipeline
   // commit and obscure which phase changed what.
@@ -708,7 +762,7 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
     const phaseLabel = `${i + 1}/${config.phases.length}`;
 
     log(`\n${'═'.repeat(60)}`);
-    log(`PHASE ${phaseLabel}: ${phase.toUpperCase()}`);
+    log(`PHASE ${phaseLabel}: ${phase.toUpperCase()} (backend=${backend})`);
     log(`${'═'.repeat(60)}`);
 
     printMinimalPanel(`Pipeline Phase: ${phase}`, {
@@ -728,13 +782,23 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
     if (phase === 'pickle') {
       // Ensure chain_meeseeks is off so mux-runner exits cleanly back to us
       // instead of transitioning to the deprecated meeseeks review loop.
-      sm.update(statePath, s => { s.chain_meeseeks = false; });
+      // Re-stamp backend only when it drifted: resetStateForPhase on later
+      // phases preserves it, but a pre-existing state.json could differ.
+      sm.update(statePath, s => {
+        s.chain_meeseeks = false;
+        if (s.backend !== backend) s.backend = backend;
+      });
       exitCode = await spawnRunner('node', [
         path.join(extensionRoot, 'extension', 'bin', 'mux-runner.js'), sessionDir,
-      ]);
+      ], phaseEnv);
     } else if (phase === 'anatomy-park') {
       cleanPhaseArtifacts(sessionDir, 'pickle');
       resetStateForPhase(statePath, 'anatomy-park.md', config.anatomy_max_iterations);
+      // resetStateForPhase preserves state.backend — only write when it drifted.
+      {
+        const cur = sm.read(statePath);
+        if (cur.backend !== backend) sm.update(statePath, s => { s.backend = backend; });
+      }
 
       let refreshed: ScopeJson | null;
       try {
@@ -775,10 +839,15 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
 
       exitCode = await spawnRunner('node', [
         path.join(extensionRoot, 'extension', 'bin', 'microverse-runner.js'), sessionDir,
-      ]);
+      ], phaseEnv);
     } else if (phase === 'szechuan-sauce') {
       cleanPhaseArtifacts(sessionDir, 'anatomy-park');
       resetStateForPhase(statePath, 'szechuan-sauce.md', config.szechuan_max_iterations);
+      // resetStateForPhase preserves state.backend — only write when it drifted.
+      {
+        const cur = sm.read(statePath);
+        if (cur.backend !== backend) sm.update(statePath, s => { s.backend = backend; });
+      }
 
       const refreshedSz = refreshScope(sessionDir, 'szechuan-sauce', { repoRoot: workingDir, log });
       if (refreshedSz) {
@@ -805,7 +874,7 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
 
       exitCode = await spawnRunner('node', [
         path.join(extensionRoot, 'extension', 'bin', 'microverse-runner.js'), sessionDir,
-      ]);
+      ], phaseEnv);
     } else {
       log(`Unknown phase: ${phase} — skipping`);
       continue;
