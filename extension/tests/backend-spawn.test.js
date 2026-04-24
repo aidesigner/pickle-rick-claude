@@ -168,6 +168,15 @@ test('buildWorkerInvocation(codex): passes model via -m', () => {
     assert.equal(inv.args[mIdx + 1], 'gpt-5.4');
 });
 
+test('buildWorkerInvocation(codex): omits -m when no model given', () => {
+    // Guards the trap-door: a future default to a tier-shaped name ('sonnet') would silently break every codex worker spawn.
+    const inv = buildWorkerInvocation('codex', {
+        prompt: 'x',
+        addDirs: [],
+    });
+    assert.equal(inv.args.includes('-m'), false);
+});
+
 test('buildWorkerInvocation(codex): drops missing add-dir entries (mirrors claude-worker)', () => {
     // Both backends filter non-existent add-dir paths via existsSilently; the
     // claude test already covers this. Mirror it for codex so a regression that
@@ -224,6 +233,18 @@ test('buildManagerInvocation(codex): same shape as worker invocation', () => {
     assert.equal(inv.args.includes('--output-format'), false);
     assert.equal(inv.args.includes('--no-session-persistence'), false);
     assert.equal(inv.args[inv.args.length - 1], 'manage');
+});
+
+test('buildManagerInvocation(codex): omits -m when no model given', () => {
+    // Guards the trap-door: a future default to a tier-shaped name ('sonnet') would silently break every codex manager spawn.
+    const inv = buildManagerInvocation('codex', {
+        prompt: 'manage',
+        addDirs: [],
+        maxTurns: 10,
+        streamJson: true,
+        noSessionPersistence: true,
+    });
+    assert.equal(inv.args.includes('-m'), false);
 });
 
 // --- backendEnvOverrides ---

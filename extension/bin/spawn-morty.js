@@ -289,7 +289,7 @@ For simple file/string lookups, Grep/Glob are still fine.`;
                 process.stdout.write('\r\x1b[K');
             logStream.end();
             const msg = safeErrorMessage(err);
-            console.error(`${Style.RED}Failed to spawn ${invocation.cmd}: ${msg}${Style.RESET}`);
+            console.error(`${Style.RED}[pickle-rick] Failed to spawn '${invocation.cmd}' (backend=${backend}): ${msg}${Style.RESET}`);
             try {
                 updateTicketStatus(ticketId, 'Failed', sessionRoot);
             }
