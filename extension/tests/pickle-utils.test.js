@@ -10,7 +10,6 @@ import {
     wrapText,
     formatTime,
     buildHandoffSummary,
-    withSessionMapLock,
     withRetryLock,
     resolveSessionPath,
     pruneOldSessions,
@@ -543,56 +542,6 @@ test('buildHandoffSummary: omits parenthetical when working_dir matches session 
 
         const summary = buildHandoffSummary({ step: 'implement', iteration: 1, working_dir: '/project' }, dir);
         assert.ok(!summary.match(/Same dir task\s*\(/), 'should NOT show parenthetical when working_dir matches session');
-    } finally {
-        fs.rmSync(dir, { recursive: true });
-    }
-});
-
-// --- withSessionMapLock ---
-
-test('withSessionMapLock: executes fn and returns result', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-lock-'));
-    try {
-        const lockPath = path.join(dir, 'test.lock');
-        const result = withSessionMapLock(lockPath, () => 42);
-        assert.equal(result, 42);
-    } finally {
-        fs.rmSync(dir, { recursive: true });
-    }
-});
-
-test('withSessionMapLock: lock file is cleaned up after fn', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-lock-'));
-    try {
-        const lockPath = path.join(dir, 'test.lock');
-        withSessionMapLock(lockPath, () => {});
-        assert.equal(fs.existsSync(lockPath), false);
-    } finally {
-        fs.rmSync(dir, { recursive: true });
-    }
-});
-
-test('withSessionMapLock: lock file is cleaned up even when fn throws', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-lock-'));
-    try {
-        const lockPath = path.join(dir, 'test.lock');
-        assert.throws(() => withSessionMapLock(lockPath, () => { throw new Error('boom'); }), /boom/);
-        assert.equal(fs.existsSync(lockPath), false);
-    } finally {
-        fs.rmSync(dir, { recursive: true });
-    }
-});
-
-test('withSessionMapLock: steals stale lock and executes fn', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-lock-'));
-    try {
-        const lockPath = path.join(dir, 'test.lock');
-        // Create a stale lock (old mtime)
-        fs.writeFileSync(lockPath, 'stale');
-        const staleTime = new Date(Date.now() - 10000); // 10s ago
-        fs.utimesSync(lockPath, staleTime, staleTime);
-        const result = withSessionMapLock(lockPath, () => 'stolen');
-        assert.equal(result, 'stolen');
     } finally {
         fs.rmSync(dir, { recursive: true });
     }

@@ -430,13 +430,6 @@ export function withRetryLock(lockPath, fn, opts = {}) {
     }
 }
 /**
- * @deprecated Use withRetryLock instead. This wrapper exists for call-sites that
- * have not yet been migrated and callers that intentionally tolerate LockError.
- */
-export function withSessionMapLock(lockPath, fn) {
-    return withRetryLock(lockPath, fn);
-}
-/**
  * Extracts the session path from a session map entry.
  * Handles both the legacy string format and the current object format ({ sessionPath, pid })
  * for backward compatibility with existing current_sessions.json files.

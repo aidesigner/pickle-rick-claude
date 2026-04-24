@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
-import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, withSessionMapLock, pruneOldSessions, safeErrorMessage, resolveSessionPath } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, resolveSessionPath } from '../services/pickle-utils.js';
 import { Defaults, LockError } from '../types/index.js';
 import { StateManager } from '../services/state-manager.js';
 import { logActivity, pruneActivity } from '../services/activity-logger.js';
@@ -20,7 +20,7 @@ async function main() {
     const WORKTREES_ROOT = path.join(DATA_DIR, 'worktrees');
     const SESSIONS_MAP = path.join(DATA_DIR, 'current_sessions.json');
     const updateSessionMap = (cwd, sessionPath) => {
-        withSessionMapLock(SESSIONS_MAP + '.lock', () => {
+        withRetryLock(SESSIONS_MAP + '.lock', () => {
             let map = {};
             if (fs.existsSync(SESSIONS_MAP)) {
                 try {

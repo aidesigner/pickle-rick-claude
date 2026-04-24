@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { printMinimalPanel, getDataRoot, withSessionMapLock, resolveSessionPath, safeErrorMessage } from '../services/pickle-utils.js';
+import { printMinimalPanel, getDataRoot, withRetryLock, resolveSessionPath, safeErrorMessage } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { LockError } from '../types/index.js';
 const sm = new StateManager();
@@ -33,7 +33,7 @@ export function cancelSession(cwd) {
     // if the process crashes between the two operations.
     let cancelled = false;
     try {
-        withSessionMapLock(SESSIONS_MAP + '.lock', () => {
+        withRetryLock(SESSIONS_MAP + '.lock', () => {
             // Deactivate state.json
             try {
                 sm.update(statePath, s => { s.active = false; });
