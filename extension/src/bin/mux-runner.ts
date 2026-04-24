@@ -247,6 +247,22 @@ export function classifyTicketCompletion(
 }
 
 /**
+ * Reads `pickle_settings.json` as an untyped bag, returning `{}` on any
+ * read/parse failure. Emits a labeled stderr breadcrumb keyed by the caller
+ * site so a missing/corrupt settings file never silently yields defaults.
+ * Every call site in this module consumes its own subset of keys with its
+ * own defaults; this helper owns only the file I/O + JSON decode step.
+ */
+function loadSettingsBag(extensionRoot: string, site: string): Record<string, unknown> {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8')) as Record<string, unknown>;
+  } catch (err) {
+    process.stderr.write(`[${site}] ${safeErrorMessage(err)}\n`);
+    return {};
+  }
+}
+
+/**
  * Transitions a session from ticket-execution mode to Meeseeks review mode.
  * Pure function — returns a new state object without side effects.
  */
@@ -254,14 +270,11 @@ export function transitionToMeeseeks(state: State, extensionRoot: string): State
   let minPasses = 10;
   let maxPasses = 50;
 
-  const settingsPath = path.join(extensionRoot, 'pickle_settings.json');
-  try {
-    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-    const rawMin = Number(settings.default_meeseeks_min_passes);
-    if (Number.isFinite(rawMin) && rawMin > 0) minPasses = rawMin;
-    const rawMax = Number(settings.default_meeseeks_max_passes);
-    if (Number.isFinite(rawMax) && rawMax > 0) maxPasses = rawMax;
-  } catch (err) { process.stderr.write(`[mux-runner:transition-meeseeks:settings] ${safeErrorMessage(err)}\n`); /* use defaults */ }
+  const settings = loadSettingsBag(extensionRoot, 'mux-runner:transition-meeseeks:settings');
+  const rawMin = Number(settings.default_meeseeks_min_passes);
+  if (Number.isFinite(rawMin) && rawMin > 0) minPasses = rawMin;
+  const rawMax = Number(settings.default_meeseeks_max_passes);
+  if (Number.isFinite(rawMax) && rawMax > 0) maxPasses = rawMax;
 
   return {
     ...state,
@@ -282,19 +295,17 @@ export function loadMeeseeksModel(extensionRoot: string, passCount: number = 1):
   let maxOpusPasses = 3;
   let enableModelTiers = true;
 
-  try {
-    const raw = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
-    if (typeof raw.default_meeseeks_model === 'string' && raw.default_meeseeks_model.length > 0) {
-      defaultModel = raw.default_meeseeks_model;
-    }
-    if (raw.meeseeks_model_tiers && typeof raw.meeseeks_model_tiers === 'object') {
-      tiers = raw.meeseeks_model_tiers as Record<string, string>;
-    }
-    const rawCap = Number(raw.max_opus_passes);
-    if (Number.isFinite(rawCap) && rawCap > 0) maxOpusPasses = rawCap;
-    // Feature flag: enable_model_tiers (default true — missing flag = enabled)
-    if (raw.enable_model_tiers === false) enableModelTiers = false;
-  } catch (err) { process.stderr.write(`[mux-runner:load-meeseeks-model:settings] ${safeErrorMessage(err)}\n`); /* use defaults */ }
+  const raw = loadSettingsBag(extensionRoot, 'mux-runner:load-meeseeks-model:settings');
+  if (typeof raw.default_meeseeks_model === 'string' && raw.default_meeseeks_model.length > 0) {
+    defaultModel = raw.default_meeseeks_model;
+  }
+  if (raw.meeseeks_model_tiers && typeof raw.meeseeks_model_tiers === 'object') {
+    tiers = raw.meeseeks_model_tiers as Record<string, string>;
+  }
+  const rawCap = Number(raw.max_opus_passes);
+  if (Number.isFinite(rawCap) && rawCap > 0) maxOpusPasses = rawCap;
+  // Feature flag: enable_model_tiers (default true — missing flag = enabled)
+  if (raw.enable_model_tiers === false) enableModelTiers = false;
 
   if (!tiers || !enableModelTiers) return defaultModel;
 
@@ -321,13 +332,11 @@ export function loadMeeseeksModel(extensionRoot: string, passCount: number = 1):
 export function loadRateLimitSettings(extensionRoot: string): { waitMinutes: number; maxRetries: number } {
   let waitMinutes = 5;
   let maxRetries = 3;
-  try {
-    const raw = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
-    const rawWait = raw.default_rate_limit_wait_minutes;
-    if (typeof rawWait === 'number' && rawWait >= 1) waitMinutes = rawWait;
-    const rawRetries = raw.default_max_rate_limit_retries;
-    if (typeof rawRetries === 'number' && rawRetries >= 1) maxRetries = rawRetries;
-  } catch { /* use defaults */ }
+  const raw = loadSettingsBag(extensionRoot, 'mux-runner:load-rate-limit-settings');
+  const rawWait = raw.default_rate_limit_wait_minutes;
+  if (typeof rawWait === 'number' && rawWait >= 1) waitMinutes = rawWait;
+  const rawRetries = raw.default_max_rate_limit_retries;
+  if (typeof rawRetries === 'number' && rawRetries >= 1) maxRetries = rawRetries;
   return { waitMinutes, maxRetries };
 }
 
@@ -505,13 +514,7 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
     managerPrompt += '\n\n' + buildHandoffSummary(state, sessionDir, iterationNum);
   }
 
-  // Parse pickle_settings.json once and consume both the task-notes flag and
-  // the max-turns knobs from the same read (was two separate parses / try-catches).
-  let settings: Record<string, unknown> = {};
-  try {
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    settings = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
-  } catch { /* settings stays {}; per-field defaults below apply */ }
+  const settings = loadSettingsBag(extensionRoot, 'mux-runner:run-iteration:settings');
 
   // Feature flag: enable_task_notes (default true — missing flag = enabled)
   const enableTaskNotes = settings.enable_task_notes !== false;

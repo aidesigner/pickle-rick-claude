@@ -243,25 +243,35 @@ export function classifyTicketCompletion(iterLogFile, workingDir, ticketDir, rol
     return 'completed';
 }
 /**
+ * Reads `pickle_settings.json` as an untyped bag, returning `{}` on any
+ * read/parse failure. Emits a labeled stderr breadcrumb keyed by the caller
+ * site so a missing/corrupt settings file never silently yields defaults.
+ * Every call site in this module consumes its own subset of keys with its
+ * own defaults; this helper owns only the file I/O + JSON decode step.
+ */
+function loadSettingsBag(extensionRoot, site) {
+    try {
+        return JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
+    }
+    catch (err) {
+        process.stderr.write(`[${site}] ${safeErrorMessage(err)}\n`);
+        return {};
+    }
+}
+/**
  * Transitions a session from ticket-execution mode to Meeseeks review mode.
  * Pure function — returns a new state object without side effects.
  */
 export function transitionToMeeseeks(state, extensionRoot) {
     let minPasses = 10;
     let maxPasses = 50;
-    const settingsPath = path.join(extensionRoot, 'pickle_settings.json');
-    try {
-        const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-        const rawMin = Number(settings.default_meeseeks_min_passes);
-        if (Number.isFinite(rawMin) && rawMin > 0)
-            minPasses = rawMin;
-        const rawMax = Number(settings.default_meeseeks_max_passes);
-        if (Number.isFinite(rawMax) && rawMax > 0)
-            maxPasses = rawMax;
-    }
-    catch (err) {
-        process.stderr.write(`[mux-runner:transition-meeseeks:settings] ${safeErrorMessage(err)}\n`); /* use defaults */
-    }
+    const settings = loadSettingsBag(extensionRoot, 'mux-runner:transition-meeseeks:settings');
+    const rawMin = Number(settings.default_meeseeks_min_passes);
+    if (Number.isFinite(rawMin) && rawMin > 0)
+        minPasses = rawMin;
+    const rawMax = Number(settings.default_meeseeks_max_passes);
+    if (Number.isFinite(rawMax) && rawMax > 0)
+        maxPasses = rawMax;
     return {
         ...state,
         chain_meeseeks: false,
@@ -279,24 +289,19 @@ export function loadMeeseeksModel(extensionRoot, passCount = 1) {
     let tiers = null;
     let maxOpusPasses = 3;
     let enableModelTiers = true;
-    try {
-        const raw = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
-        if (typeof raw.default_meeseeks_model === 'string' && raw.default_meeseeks_model.length > 0) {
-            defaultModel = raw.default_meeseeks_model;
-        }
-        if (raw.meeseeks_model_tiers && typeof raw.meeseeks_model_tiers === 'object') {
-            tiers = raw.meeseeks_model_tiers;
-        }
-        const rawCap = Number(raw.max_opus_passes);
-        if (Number.isFinite(rawCap) && rawCap > 0)
-            maxOpusPasses = rawCap;
-        // Feature flag: enable_model_tiers (default true — missing flag = enabled)
-        if (raw.enable_model_tiers === false)
-            enableModelTiers = false;
+    const raw = loadSettingsBag(extensionRoot, 'mux-runner:load-meeseeks-model:settings');
+    if (typeof raw.default_meeseeks_model === 'string' && raw.default_meeseeks_model.length > 0) {
+        defaultModel = raw.default_meeseeks_model;
     }
-    catch (err) {
-        process.stderr.write(`[mux-runner:load-meeseeks-model:settings] ${safeErrorMessage(err)}\n`); /* use defaults */
+    if (raw.meeseeks_model_tiers && typeof raw.meeseeks_model_tiers === 'object') {
+        tiers = raw.meeseeks_model_tiers;
     }
+    const rawCap = Number(raw.max_opus_passes);
+    if (Number.isFinite(rawCap) && rawCap > 0)
+        maxOpusPasses = rawCap;
+    // Feature flag: enable_model_tiers (default true — missing flag = enabled)
+    if (raw.enable_model_tiers === false)
+        enableModelTiers = false;
     if (!tiers || !enableModelTiers)
         return defaultModel;
     // Find the highest threshold that doesn't exceed passCount
@@ -320,16 +325,13 @@ export function loadMeeseeksModel(extensionRoot, passCount = 1) {
 export function loadRateLimitSettings(extensionRoot) {
     let waitMinutes = 5;
     let maxRetries = 3;
-    try {
-        const raw = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
-        const rawWait = raw.default_rate_limit_wait_minutes;
-        if (typeof rawWait === 'number' && rawWait >= 1)
-            waitMinutes = rawWait;
-        const rawRetries = raw.default_max_rate_limit_retries;
-        if (typeof rawRetries === 'number' && rawRetries >= 1)
-            maxRetries = rawRetries;
-    }
-    catch { /* use defaults */ }
+    const raw = loadSettingsBag(extensionRoot, 'mux-runner:load-rate-limit-settings');
+    const rawWait = raw.default_rate_limit_wait_minutes;
+    if (typeof rawWait === 'number' && rawWait >= 1)
+        waitMinutes = rawWait;
+    const rawRetries = raw.default_max_rate_limit_retries;
+    if (typeof rawRetries === 'number' && rawRetries >= 1)
+        maxRetries = rawRetries;
     return { waitMinutes, maxRetries };
 }
 export function detectRateLimitInLog(logFile) {
@@ -500,14 +502,7 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, mees
     else {
         managerPrompt += '\n\n' + buildHandoffSummary(state, sessionDir, iterationNum);
     }
-    // Parse pickle_settings.json once and consume both the task-notes flag and
-    // the max-turns knobs from the same read (was two separate parses / try-catches).
-    let settings = {};
-    try {
-        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-        settings = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
-    }
-    catch { /* settings stays {}; per-field defaults below apply */ }
+    const settings = loadSettingsBag(extensionRoot, 'mux-runner:run-iteration:settings');
     // Feature flag: enable_task_notes (default true — missing flag = enabled)
     const enableTaskNotes = settings.enable_task_notes !== false;
     // Inject TASK_NOTES.md from session directory (persists across iterations)
