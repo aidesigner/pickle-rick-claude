@@ -138,7 +138,7 @@ async function main() {
     }
   }
 
-  const backendForPanel = loadBackendFromSession(sessionRoot);
+  const backend = loadBackendFromSession(sessionRoot);
   printMinimalPanel(
     isReviewTicket ? 'Spawning Review Worker' : 'Spawning Morty Worker',
     {
@@ -146,7 +146,7 @@ async function main() {
       Ticket: ticketId,
       Type: isReviewTicket ? 'review' : 'implementation',
       Format: outputFormat,
-      Backend: backendForPanel,
+      Backend: backend,
       Timeout: `${effectiveTimeout}s (Req: ${timeout}s)`,
       PID: process.pid,
     },
@@ -157,21 +157,19 @@ async function main() {
   const extensionRoot = getExtensionRoot();
   const dataRoot = getDataRoot();
   const includes = [extensionRoot, dataRoot, ticketPath];
-  const backend = loadBackendFromSession(sessionRoot);
-
-  // Feature flag: enable_complexity_tiers (default true — missing flag = enabled)
-  let enableComplexityTiers = true;
-  try {
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    const flagSettings = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
-    if (flagSettings.enable_complexity_tiers === false) enableComplexityTiers = false;
-  } catch { /* default true */ }
 
   // Route to tier-appropriate model based on ticket complexity. Codex ignores
-  // claude's tier-shaped names, so only pass --model when on the claude backend.
+  // claude's tier-shaped names, so the settings read + tier resolution only
+  // runs on the claude backend.
   let model: string | undefined;
   if (backend === 'claude') {
     model = 'sonnet';
+    let enableComplexityTiers = true;
+    try {
+      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+      const flagSettings = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
+      if (flagSettings.enable_complexity_tiers === false) enableComplexityTiers = false;
+    } catch { /* default true */ }
     try {
       if (enableComplexityTiers) {
         const ticketInfo = ticketFilePath ? parseTicketFrontmatter(ticketFilePath) : null;
