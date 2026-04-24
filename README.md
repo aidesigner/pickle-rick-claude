@@ -460,7 +460,7 @@ Iterative Graphite stack reviewer that generates agent-executable directives and
 **Round structure** — each round runs four phases; within a round every category runs concurrently:
 
 - **Phase A — Historical Context** (serial, main agent): `git log` + prior PR comments (`gh pr list/view`) + in-file guidance comments → `historical-brief.md` consumed by Phase B/C subagents
-- **Phase B — Category Team** (parallel fan-out, one `Agent` per category):
+- **Phase B — Category Team** (parallel fan-out, one `Agent` per category — at stack tier ≥ `l` each category shards per-branch, so `N_branches × N_categories` concurrent subagents):
   1. Stack Structure — PR sizing, commit hygiene, branch naming, stack ordering
   2. CLAUDE.md Compliance — project rule verification per branch diff
   3. Contract Discovery — producer→consumer map, Zod/enum/union coverage
@@ -497,6 +497,8 @@ Takes the max of the LOC tier and the files tier — either axis can flag "big e
 **Why `gh` and not `gt` for publishing** — Graphite's CLI has no `comment` subcommand and doesn't expose a comment-posting primitive. `gt` manages stacks (submit, restack, sync, create, branch); review comments are handled by Graphite's web dashboard, which syncs from GitHub. So the only mechanical path to post an actual comment is `gh pr comment` — the comment still shows up on the Graphite stack view because Graphite renders GitHub comments. If Graphite ever ships a `gt comment` or exposes an API token surface, the Council will switch to it.
 
 **Trap Doors** — structural weaknesses (design constraints that will re-break if forgotten) go in the directive's Trap Door section. The Council never writes to repo files; the fixing agent decides whether to add them to `CLAUDE.md`.
+
+**Directive contract (v1.50.0)** — every round writes `council-directive.json` atomically (tmp + rename) as the typed source of truth; `council-directive.md` is free-form human-readable output only, never scraped. Every subagent returns a shape-validated JSON payload (validator at `extension/src/services/council-schema.ts`); schema drift fails loud — the offending category is recorded as `skipped` with the jsonpath of the violation and the round demotes to partial. No more silent parser drift.
 
 ### 🪠 Plumbus — DAG Shaping Loop
 
