@@ -30,3 +30,10 @@ Summarize the available commands for the user:
 **Internal:** `/send-to-morty` — auto-sent to worker subprocesses, not for direct use
 
 **Flags for /pickle:** `--resume [PATH]` | `--max-iterations <N>` (default:500) | `--max-time <M>` (default:720min) | `--worker-timeout <S>` (default:1200) | `--completion-promise "TEXT"`
+
+**Backends:**
+- `--backend <claude|codex>` accepted by `/pickle`, `/pickle-tmux`, `/pickle-microverse`, `/anatomy-park`, `/szechuan-sauce`
+- `/council-of-ricks` integrates codex differently: Phase C adversarial subagent runs by default; `--no-codex` disables, `--codex-timeout <sec>` tunes (default 600)
+- `PICKLE_BACKEND=codex` env var — session-independent alternative, persists across commands
+- Precedence: CLI flag > env var > session state > default `claude`
+- Use codex when: user explicitly prefers codex/GPT-5.4, wants a second opinion on implementation, or benchmarking backends

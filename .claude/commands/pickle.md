@@ -13,10 +13,11 @@ Extract flags from `$ARGUMENTS` (`--max-iterations <N>`, `--resume <path>`, etc.
 node "$HOME/.claude/pickle-rick/extension/bin/setup.js" <FLAGS> --task "<TASK_TEXT>"
 ```
 No flags: `setup.js --task "$ARGUMENTS"`. Extension root: `$HOME/.claude/pickle-rick` (`${EXTENSION_ROOT}`).
+Backend example: `setup.js --backend codex --task "refactor auth"` — routes worker spawns through `codex exec` instead of `claude`. Backend persists in `state.json` and survives resume.
 
 Extract `SESSION_ROOT=<path>` from output.
 
-**Flags**: `--task "TEXT"` | `--max-iterations <N>` | `--max-time <MIN>` | `--worker-timeout <SEC>` | `--completion-promise <TEXT>` | `--resume [PATH]` | `--reset`
+**Flags**: `--task "TEXT"` | `--max-iterations <N>` | `--max-time <MIN>` | `--worker-timeout <SEC>` | `--completion-promise <TEXT>` | `--resume [PATH]` | `--reset` | `--backend <claude|codex>`
 
 # Step 2: Execution (Management)
 

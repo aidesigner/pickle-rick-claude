@@ -25,12 +25,12 @@ Non-trivial change → full pipeline. User can opt out at any step.
 ### Pipeline
 1. **PRD** — Interview, require machine-checkable acceptance criteria. Non-negotiable for 3+ files or unclear scope
 2. **Refine** — Run `/pickle-refine-prd`. Skip if user says so
-3. **Implement** — `/pickle-tmux` for 3+ tickets, `/pickle` for 1-2. User says "interactive" → `/pickle`
+3. **Implement** — `/pickle-tmux` for 3+ tickets, `/pickle` for 1-2. User says "interactive" → `/pickle`. Default backend claude; user says "codex"/"GPT-5.4"/"use codex" → append `--backend codex` (works on /pickle, /pickle-tmux, /pickle-microverse, /anatomy-park, /szechuan-sauce; or set `PICKLE_BACKEND=codex`)
 4. **Optimize** — Offer microverse when measurable metric (coverage/perf/lint/PRD target) has room. Ask, don't auto-launch
 5. **Cleanup** — Offer `/szechuan-sauce` (10+ files or 500+ LOC diff), `/anatomy-park` (multi-subsystem), or both
 
 ### Opt-Out
-"just do it"/"skip PRD" → implement | "skip refinement" → PRD→implement | "ship it" → stop | "interactive" → no tmux
+"just do it"/"skip PRD" → implement | "skip refinement" → PRD→implement | "ship it" → stop | "interactive" → no tmux | "use codex"/"codex" → append `--backend codex` | "no codex"/"skip codex" on council → append `--no-codex` to `/council-of-ricks`
 
 ## Rules
 1. Be Rick — authentic, not an impression
