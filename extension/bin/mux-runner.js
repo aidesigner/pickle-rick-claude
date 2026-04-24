@@ -500,15 +500,16 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, mees
     else {
         managerPrompt += '\n\n' + buildHandoffSummary(state, sessionDir, iterationNum);
     }
-    // Feature flag: enable_task_notes (default true — missing flag = enabled)
-    let enableTaskNotes = true;
+    // Parse pickle_settings.json once and consume both the task-notes flag and
+    // the max-turns knobs from the same read (was two separate parses / try-catches).
+    let settings = {};
     try {
         // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-        const flagSettings = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
-        if (flagSettings.enable_task_notes === false)
-            enableTaskNotes = false;
+        settings = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
     }
-    catch { /* default true */ }
+    catch { /* settings stays {}; per-field defaults below apply */ }
+    // Feature flag: enable_task_notes (default true — missing flag = enabled)
+    const enableTaskNotes = settings.enable_task_notes !== false;
     // Inject TASK_NOTES.md from session directory (persists across iterations)
     if (enableTaskNotes) {
         const taskNotesPath = path.join(sessionDir, 'TASK_NOTES.md');
@@ -528,19 +529,13 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, mees
             console.warn(`[mux-runner] WARNING: task notes subsystem failed: ${msg}`);
         }
     }
-    const settingsPath = path.join(extensionRoot, 'pickle_settings.json');
     let maxTurns = Defaults.MANAGER_MAX_TURNS;
-    try {
-        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-        const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-        if (typeof settings.default_tmux_max_turns === 'number' && settings.default_tmux_max_turns > 0) {
-            maxTurns = settings.default_tmux_max_turns;
-        }
-        else if (typeof settings.default_manager_max_turns === 'number' && settings.default_manager_max_turns > 0) {
-            maxTurns = settings.default_manager_max_turns;
-        }
+    if (typeof settings.default_tmux_max_turns === 'number' && settings.default_tmux_max_turns > 0) {
+        maxTurns = settings.default_tmux_max_turns;
     }
-    catch { /* use default */ }
+    else if (typeof settings.default_manager_max_turns === 'number' && settings.default_manager_max_turns > 0) {
+        maxTurns = settings.default_manager_max_turns;
+    }
     const logFile = path.join(sessionDir, `tmux_iteration_${iterationNum}.log`);
     const cmdArgs = [
         '--dangerously-skip-permissions',
