@@ -726,9 +726,13 @@ test('composeBody: empty trapDoors renders _None catalogued._', () => {
 // TLS handshake, stuck corp-proxy). Publisher runs at session end — a hang
 // there deadlocks the entire Council run with no log signal.
 //
-// The test injects `ghTimeoutMs: 500` and a mock that holds the event loop
+// The test injects `ghTimeoutMs: 2000` and a mock that holds the event loop
 // open for 60s. Node must SIGTERM the child on timeout and surface the error
 // through the existing failure classification path.
+// NOTE: 2000ms > subprocess-spawn latency under parallel-test load (was 500ms,
+// which auth-preflight with `auth: 'ok'` could miss under heavy concurrency →
+// false classification as skipped_no_gh instead of failed). Still << the 60s
+// mock hang, so the hang-detection path fires as intended.
 
 test('publishCouncilStack: hung `gh pr list` is aborted by timeout, classified as failed', async () => {
     const mock = makeGhMock({
@@ -742,7 +746,7 @@ test('publishCouncilStack: hung `gh pr list` is aborted by timeout, classified a
             const startedAt = Date.now();
             const report = await publishCouncilStack(sessionDir, {
                 ghCommand: mock.ghPath,
-                ghTimeoutMs: 500,
+                ghTimeoutMs: 2000,
             });
             const elapsedMs = Date.now() - startedAt;
             // Publisher must return promptly after timeout fires — well under
@@ -774,7 +778,7 @@ test('publishCouncilStack: hung `gh pr comment` is aborted by timeout, classifie
             const startedAt = Date.now();
             const report = await publishCouncilStack(sessionDir, {
                 ghCommand: mock.ghPath,
-                ghTimeoutMs: 500,
+                ghTimeoutMs: 2000,
             });
             const elapsedMs = Date.now() - startedAt;
             assert.ok(elapsedMs < 10_000, `elapsed ${elapsedMs}ms should be < 10s; timeout did not fire`);
@@ -802,7 +806,7 @@ test('publishCouncilStack: hung `gh auth status` is aborted, falls back to skipp
             const startedAt = Date.now();
             const report = await publishCouncilStack(sessionDir, {
                 ghCommand: mock.ghPath,
-                ghTimeoutMs: 500,
+                ghTimeoutMs: 2000,
             });
             const elapsedMs = Date.now() - startedAt;
             assert.ok(elapsedMs < 10_000, `elapsed ${elapsedMs}ms should be < 10s; auth timeout did not fire`);
