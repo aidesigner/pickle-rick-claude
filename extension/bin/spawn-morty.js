@@ -6,6 +6,7 @@ import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, sa
 import { spawn } from 'child_process';
 import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact } from '../types/index.js';
 import { updateTicketStatus } from '../services/git-utils.js';
+import { buildWorkerInvocation, loadBackendFromSession, backendEnvOverrides } from '../services/backend-spawn.js';
 const TIER_MODEL_MAP = {
     trivial: 'haiku',
     small: 'sonnet',
@@ -112,27 +113,20 @@ async function main() {
             // Ignore
         }
     }
+    const backendForPanel = loadBackendFromSession(sessionRoot);
     printMinimalPanel(isReviewTicket ? 'Spawning Review Worker' : 'Spawning Morty Worker', {
         Request: task,
         Ticket: ticketId,
         Type: isReviewTicket ? 'review' : 'implementation',
         Format: outputFormat,
+        Backend: backendForPanel,
         Timeout: `${effectiveTimeout}s (Req: ${timeout}s)`,
         PID: process.pid,
     }, isReviewTicket ? 'MAGENTA' : 'CYAN', '🥒');
     const extensionRoot = getExtensionRoot();
     const dataRoot = getDataRoot();
     const includes = [extensionRoot, dataRoot, ticketPath];
-    const cmdArgs = ['--dangerously-skip-permissions'];
-    for (const p of includes) {
-        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-        if (fs.existsSync(p)) {
-            cmdArgs.push('--add-dir', p);
-        }
-    }
-    if (outputFormat !== 'text') {
-        cmdArgs.push('--output-format', outputFormat);
-    }
+    const backend = loadBackendFromSession(sessionRoot);
     // Feature flag: enable_complexity_tiers (default true — missing flag = enabled)
     let enableComplexityTiers = true;
     try {
@@ -142,19 +136,22 @@ async function main() {
             enableComplexityTiers = false;
     }
     catch { /* default true */ }
-    // Route to tier-appropriate model based on ticket complexity
-    let model = 'sonnet';
-    try {
-        if (enableComplexityTiers) {
-            const ticketInfo = ticketFilePath ? parseTicketFrontmatter(ticketFilePath) : null;
-            model = tierToModel(ticketInfo?.complexity_tier);
+    // Route to tier-appropriate model based on ticket complexity. Codex ignores
+    // claude's tier-shaped names, so only pass --model when on the claude backend.
+    let model;
+    if (backend === 'claude') {
+        model = 'sonnet';
+        try {
+            if (enableComplexityTiers) {
+                const ticketInfo = ticketFilePath ? parseTicketFrontmatter(ticketFilePath) : null;
+                model = tierToModel(ticketInfo?.complexity_tier);
+            }
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.warn(`[spawn-morty] WARNING: complexity tier subsystem failed: ${msg}`);
         }
     }
-    catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.warn(`[spawn-morty] WARNING: complexity tier subsystem failed: ${msg}`);
-    }
-    cmdArgs.push('--model', model);
     // Prompt Construction — read the appropriate lifecycle template.
     // Review workers get send-to-morty-review.md (4-phase), implementation workers get send-to-morty.md (8-phase).
     const promptFilename = isReviewTicket ? 'send-to-morty-review.md' : 'send-to-morty.md';
@@ -196,7 +193,12 @@ This repo has a GitNexus knowledge graph index. Use these MCP tools during Resea
 Prefer GitNexus tools over raw Grep/Glob for understanding call chains, dependencies, and execution flows.
 For simple file/string lookups, Grep/Glob are still fine.`;
     }
-    cmdArgs.push('-p', workerPrompt);
+    const invocation = buildWorkerInvocation(backend, {
+        prompt: workerPrompt,
+        addDirs: includes,
+        model,
+        outputFormat,
+    });
     // Mark ticket as In Progress so the monitor shows [~]
     try {
         updateTicketStatus(ticketId, 'In Progress', sessionRoot);
@@ -209,12 +211,13 @@ For simple file/string lookups, Grep/Glob are still fine.`;
     });
     const env = {
         ...process.env,
+        ...backendEnvOverrides(backend),
         PICKLE_STATE_FILE: timeoutStatePath || workerState,
         PICKLE_ROLE: 'worker',
         PYTHONUNBUFFERED: '1',
     };
     delete env['CLAUDECODE'];
-    const proc = spawn('claude', cmdArgs, {
+    const proc = spawn(invocation.cmd, invocation.args, {
         cwd: process.cwd(),
         env,
         stdio: ['inherit', 'pipe', 'pipe'],
@@ -287,7 +290,7 @@ For simple file/string lookups, Grep/Glob are still fine.`;
                 process.stdout.write('\r\x1b[K');
             logStream.end();
             const msg = safeErrorMessage(err);
-            console.error(`${Style.RED}Failed to spawn claude: ${msg}${Style.RESET}`);
+            console.error(`${Style.RED}Failed to spawn ${invocation.cmd}: ${msg}${Style.RESET}`);
             try {
                 updateTicketStatus(ticketId, 'Failed', sessionRoot);
             }

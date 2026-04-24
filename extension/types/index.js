@@ -1,3 +1,4 @@
+export const BACKENDS = ['claude', 'codex'];
 export const STATE_MANAGER_DEFAULTS = {
     maxLockRetries: 10,
     baseLockDelayMs: 100,

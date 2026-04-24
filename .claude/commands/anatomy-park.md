@@ -23,6 +23,7 @@ From `$ARGUMENTS`:
 - `--dry-run` → DRY_RUN mode (review only — catalog findings and trap doors without fixing)
 - `--scope <flag>` → SCOPE_FLAG (e.g. `branch`, `branch:one-hop`, `diff:<ref>`, `paths:<globs>`)
 - `--scope-base <ref>` → SCOPE_BASE (e.g. `main`, `origin/main`; optional — defaults to upstream or `main`)
+- `--backend <claude|codex>` → BACKEND (default `claude`; `codex` routes the worker iteration spawn through `codex exec`)
 - Remainder = TARGET (directory to review; default: current directory)
 
 If `--scope` and `--dry-run` are BOTH set: print `SCOPE_DRYRUN_CONFLICT: --scope cannot be combined with --dry-run` and stop.
@@ -65,9 +66,9 @@ Detect and run the project's test suite. If tests fail, fix them first and commi
 ### Step 6: Initialize Session
 
 ```bash
-node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --max-iterations <MAX_ITER> --command-template anatomy-park.md --task "Anatomy Park: deep review TARGET"
+node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --max-iterations <MAX_ITER> --command-template anatomy-park.md [--backend <BACKEND>] --task "Anatomy Park: deep review TARGET"
 ```
-Extract `SESSION_ROOT=<path>` from output.
+Append `--backend <BACKEND>` only when the flag was passed. Extract `SESSION_ROOT=<path>` from output.
 
 ### Step 6.5: Resolve Scope (if `--scope`)
 

@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, resolveSessionPath } from '../services/pickle-utils.js';
-import { Defaults, LockError } from '../types/index.js';
+import { Defaults, LockError, BACKENDS } from '../types/index.js';
 import { StateManager } from '../services/state-manager.js';
 import { logActivity, pruneActivity } from '../services/activity-logger.js';
 const sm = new StateManager();
@@ -65,6 +65,7 @@ async function main() {
     let minIterations = 0;
     let commandTemplate = undefined;
     let chainMeeseeks = false;
+    let backend = undefined;
     const taskArgs = [];
     const explicitFlags = new Set();
     const startEpoch = Math.floor(Date.now() / 1000);
@@ -156,6 +157,16 @@ async function main() {
         else if (arg === '--chain-meeseeks') {
             chainMeeseeks = true;
         }
+        else if (arg === '--backend') {
+            const v = args[++i];
+            if (!v || v.startsWith('--'))
+                die('--backend requires a value (claude|codex)');
+            if (!BACKENDS.includes(v)) {
+                die(`--backend must be one of: ${BACKENDS.join(', ')}`);
+            }
+            backend = v;
+            explicitFlags.add('backend');
+        }
         else if (arg === '-s' || arg === '--session-id') {
             // Ignore legacy session-id flag; consume the next arg if it's not a flag
             if (args[i + 1] && !args[i + 1].startsWith('--')) {
@@ -217,6 +228,8 @@ async function main() {
                     s.tmux_mode = true;
                 if (chainMeeseeks)
                     s.chain_meeseeks = true;
+                if (explicitFlags.has('backend') && backend)
+                    s.backend = backend;
             });
         }
         catch {
@@ -236,6 +249,8 @@ async function main() {
         minIterations = Number.isFinite(rawMinIter) ? rawMinIter : 0;
         commandTemplate = state.command_template;
         chainMeeseeks = state.chain_meeseeks === true;
+        if (state.backend && BACKENDS.includes(state.backend))
+            backend = state.backend;
         currentIteration = (Number(state.iteration) || 0) + 1;
         promiseToken = state.completion_promise;
         // Only overwrite the validated fullSessionPath if the stored path exists on disk
@@ -277,6 +292,7 @@ async function main() {
             min_iterations: minIterations,
             command_template: commandTemplate,
             chain_meeseeks: chainMeeseeks,
+            backend,
         };
         // eslint-disable-next-line pickle/no-raw-state-write -- initial creation: no existing state to lock against
         sm.forceWrite(path.join(fullSessionPath, 'state.json'), state);
@@ -306,6 +322,7 @@ async function main() {
         ...(minIterations > 0 ? { 'Min Passes': minIterations } : {}),
         ...(commandTemplate ? { Template: commandTemplate } : {}),
         ...(chainMeeseeks ? { 'Chain Meeseeks': 'Yes' } : {}),
+        Backend: backend || 'claude',
         Extension: ROOT_DIR,
         Data: DATA_DIR,
         Path: fullSessionPath,

@@ -25,7 +25,13 @@ export interface State {
   phases_entered?: string[];
   /** Per-session activity log entries (e.g. halt records). Append-only. */
   activity?: ActivityLogEntry[];
+  /** Implementation backend for worker/manager spawns. Defaults to 'claude' when absent. */
+  backend?: Backend;
 }
+
+export type Backend = 'claude' | 'codex';
+
+export const BACKENDS: readonly Backend[] = ['claude', 'codex'] as const;
 
 export interface ActivityLogEntry {
   event: string;

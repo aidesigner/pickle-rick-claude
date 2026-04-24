@@ -38,6 +38,7 @@ From `$ARGUMENTS`:
 - `--focus "<text>"` → FOCUS (natural language review directive — narrows what to hunt for, elevates matching violations by one priority level)
 - `--scope <flag>` → SCOPE_FLAG (e.g. `branch`, `branch:one-hop`, `diff:<ref>`, `paths:<globs>`)
 - `--scope-base <ref>` → SCOPE_BASE (e.g. `main`, `origin/main`; optional — defaults to upstream or `main`)
+- `--backend <claude|codex>` → BACKEND (default `claude`; `codex` routes the worker iteration spawn through `codex exec`)
 - Remainder = TARGET (file or directory to deslop; default: current directory)
 
 If `--scope` and `--dry-run` are BOTH set: print `SCOPE_DRYRUN_CONFLICT: --scope cannot be combined with --dry-run` and stop.
@@ -103,9 +104,9 @@ Detect and run the project's test suite (check `package.json` scripts, `Makefile
 ### Step 6: Initialize Session
 
 ```bash
-node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --max-iterations <MAX_ITER> --command-template szechuan-sauce.md --task "Szechuan Sauce: deslop TARGET"
+node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --max-iterations <MAX_ITER> --command-template szechuan-sauce.md [--backend <BACKEND>] --task "Szechuan Sauce: deslop TARGET"
 ```
-Extract `SESSION_ROOT=<path>` from output.
+Append `--backend <BACKEND>` only when the flag was passed. Extract `SESSION_ROOT=<path>` from output.
 
 ### Step 7: Resolve Scope (if `--scope`)
 

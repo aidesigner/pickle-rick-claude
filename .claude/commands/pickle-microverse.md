@@ -22,6 +22,7 @@ Extract from `$ARGUMENTS`:
 | `--max-iterations <N>` | `500` | No | Hard cap on total iterations |
 | `--resume [path]` | — | No | Resume existing session (skips --metric/--task/--goal) |
 | `--interactive` | — | No | Run inline instead of tmux (default is tmux mode) |
+| `--backend <claude\|codex>` | `claude` | No | Implementation backend — `codex` routes the iteration spawn through `codex exec` |
 
 If `--resume`: `--metric`/`--goal` and `--task` are NOT required.
 Otherwise:
@@ -33,15 +34,15 @@ Otherwise:
 
 ### New Session
 ```bash
-node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --command-template microverse.md --tmux [--max-iterations <N>] --task "<TASK_TEXT>"
+node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --command-template microverse.md --tmux [--max-iterations <N>] [--backend <BACKEND>] --task "<TASK_TEXT>"
 ```
-If `--interactive` flag was passed, omit `--tmux` from the setup.js call.
+If `--interactive` flag was passed, omit `--tmux` from the setup.js call. Append `--backend <BACKEND>` only when the flag was passed.
 
 ### Resume
 ```bash
-node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --command-template microverse.md --resume [<PATH>] --tmux [--max-iterations <N>]
+node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --command-template microverse.md --resume [<PATH>] --tmux [--max-iterations <N>] [--backend <BACKEND>]
 ```
-If `--interactive` flag was passed, omit `--tmux` from the setup.js call.
+If `--interactive` flag was passed, omit `--tmux` from the setup.js call. Append `--backend <BACKEND>` only when the flag was passed — omitting it preserves the stored backend on resume.
 
 Extract `SESSION_ROOT=<path>` from output. If `--resume`, skip Steps 3 and 4.
 

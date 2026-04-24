@@ -8,6 +8,7 @@ import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, hasLifecycleArti
 import { StateManager, safeDeactivate, writeActivityEntry, writeTimeoutStub } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, resetCircuitBreaker, type CircuitBreakerState } from '../services/circuit-breaker.js';
+import { buildManagerInvocation, resolveBackend, backendEnvOverrides } from '../services/backend-spawn.js';
 
 const sm = new StateManager();
 
@@ -545,24 +546,27 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
     maxTurns = settings.default_manager_max_turns;
   }
   const logFile = path.join(sessionDir, `tmux_iteration_${iterationNum}.log`);
-  const cmdArgs = [
-    '--dangerously-skip-permissions',
-    '--add-dir', extensionRoot,
-    '--add-dir', getDataRoot(),
-    '--add-dir', sessionDir,
-    '--no-session-persistence',
-    '--output-format', 'stream-json', '--verbose',
-    '--max-turns', String(maxTurns),
-  ];
+  const backend = resolveBackend(state);
+  // meeseeks review passes run on a cheaper model (default: sonnet on claude).
+  // Codex exposes a different model vocabulary, so only apply the override for claude.
+  const iterationModel = templateName === 'meeseeks.md' && meeseeksModel && backend === 'claude'
+    ? meeseeksModel
+    : undefined;
+  const invocation = buildManagerInvocation(backend, {
+    prompt: managerPrompt,
+    addDirs: [extensionRoot, getDataRoot(), sessionDir],
+    model: iterationModel,
+    maxTurns,
+    streamJson: true,
+    noSessionPersistence: true,
+  });
 
-  // Route meeseeks review passes through a cheaper model (default: sonnet)
-  if (templateName === 'meeseeks.md' && meeseeksModel) {
-    cmdArgs.push('--model', meeseeksModel);
-  }
-
-  cmdArgs.push('-p', managerPrompt);
-
-  const env: NodeJS.ProcessEnv = { ...process.env, PICKLE_STATE_FILE: statePath, PYTHONUNBUFFERED: '1' };
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    ...backendEnvOverrides(backend),
+    PICKLE_STATE_FILE: statePath,
+    PYTHONUNBUFFERED: '1',
+  };
   // Remove CLAUDECODE so the spawned claude process doesn't think it's nested
   // inside another Claude Code session (which would alter its behavior).
   delete env['CLAUDECODE'];
@@ -585,7 +589,7 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
     const start = Date.now();
     let didTimeout = false;
 
-    const proc = spawn('claude', cmdArgs, {
+    const proc = spawn(invocation.cmd, invocation.args, {
       cwd: state.working_dir || process.cwd(),
       env,
       stdio: ['inherit', 'pipe', 'pipe'],
@@ -642,7 +646,7 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
       currentChildProc = null;
       if (hangGuard) clearTimeout(hangGuard);
       const msg = safeErrorMessage(err);
-      console.error(`${Style.RED}Failed to spawn claude: ${msg}${Style.RESET}`);
+      console.error(`${Style.RED}Failed to spawn ${invocation.cmd}: ${msg}${Style.RESET}`);
       try { fs.fsyncSync(logFd); } catch { /* already closed or error */ }
       try { fs.closeSync(logFd); } catch { /* already closed */ }
       resolve({ completion: 'error', timedOut: false, exitCode: null, wallSeconds: (Date.now() - start) / 1000 });

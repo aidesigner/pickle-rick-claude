@@ -78,6 +78,15 @@ If you can define a measurable goal — test coverage, response time, bundle siz
 /pickle-microverse --goal "error messages are user-friendly and actionable" --task "improve UX"
 ```
 
+**Codex backend** — `/pickle-tmux`, `/szechuan-sauce`, `/anatomy-park`, and `/pickle-microverse` accept `--backend codex` to route the implementation spawn through `codex exec` (via the installed Codex CLI plugin) instead of `claude`. The choice is persisted in `state.json` and survives resume; omit the flag to keep the default `claude` backend.
+
+```bash
+/pickle-tmux --backend codex "refactor the auth middleware"
+/szechuan-sauce --backend codex src/services/
+/anatomy-park --backend codex src/
+/pickle-microverse --backend codex --metric "npm run coverage:score" --task "hit 90%"
+```
+
 ### Step 5 (Optional): Cleanup
 
 Three options for polishing the result:

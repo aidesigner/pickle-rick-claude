@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, resolveSessionPath } from '../services/pickle-utils.js';
-import { State, Defaults, LockError, SessionMapEntry } from '../types/index.js';
+import { State, Defaults, LockError, SessionMapEntry, Backend, BACKENDS } from '../types/index.js';
 import { StateManager } from '../services/state-manager.js';
 import { logActivity, pruneActivity } from '../services/activity-logger.js';
 
@@ -66,6 +66,7 @@ async function main() {
   let minIterations = 0;
   let commandTemplate: string | undefined = undefined;
   let chainMeeseeks = false;
+  let backend: Backend | undefined = undefined;
   const taskArgs: string[] = [];
   const explicitFlags = new Set<string>();
 
@@ -139,6 +140,14 @@ async function main() {
       explicitFlags.add('command-template');
     } else if (arg === '--chain-meeseeks') {
       chainMeeseeks = true;
+    } else if (arg === '--backend') {
+      const v = args[++i];
+      if (!v || v.startsWith('--')) die('--backend requires a value (claude|codex)');
+      if (!(BACKENDS as readonly string[]).includes(v)) {
+        die(`--backend must be one of: ${BACKENDS.join(', ')}`);
+      }
+      backend = v as Backend;
+      explicitFlags.add('backend');
     } else if (arg === '-s' || arg === '--session-id') {
       // Ignore legacy session-id flag; consume the next arg if it's not a flag
       if (args[i + 1] && !args[i + 1].startsWith('--')) {
@@ -193,6 +202,7 @@ async function main() {
         // session into tmux mode (e.g. /pickle-refine-prd --run).
         if (tmuxMode) s.tmux_mode = true;
         if (chainMeeseeks) s.chain_meeseeks = true;
+        if (explicitFlags.has('backend') && backend) s.backend = backend;
       });
     } catch {
       die(`state.json is missing or corrupt in ${fullSessionPath}`);
@@ -213,6 +223,7 @@ async function main() {
     minIterations = Number.isFinite(rawMinIter) ? rawMinIter : 0;
     commandTemplate = state.command_template;
     chainMeeseeks = state.chain_meeseeks === true;
+    if (state.backend && (BACKENDS as readonly string[]).includes(state.backend)) backend = state.backend;
 
     currentIteration = (Number(state.iteration) || 0) + 1;
     promiseToken = state.completion_promise;
@@ -254,6 +265,7 @@ async function main() {
       min_iterations: minIterations,
       command_template: commandTemplate,
       chain_meeseeks: chainMeeseeks,
+      backend,
     };
 
     // eslint-disable-next-line pickle/no-raw-state-write -- initial creation: no existing state to lock against
@@ -283,6 +295,7 @@ async function main() {
       ...(minIterations > 0 ? { 'Min Passes': minIterations } : {}),
       ...(commandTemplate ? { Template: commandTemplate } : {}),
       ...(chainMeeseeks ? { 'Chain Meeseeks': 'Yes' } : {}),
+      Backend: backend || 'claude',
       Extension: ROOT_DIR,
       Data: DATA_DIR,
       Path: fullSessionPath,
