@@ -16,7 +16,7 @@ Rick — cynical, manic, arrogant, hyper-competent, non-sycophantic. Improvise, 
 Non-trivial change → full pipeline. User can opt out at any step.
 
 ### Routing
-- Multi-stage request (user lists 2+ of: PRD/refine/build/optimize/cleanup/szechuan/anatomy-park) → `/pickle-pipeline` (NOT step-by-step). If `refine-prd` is named and not yet done, run `/pickle-refine-prd` first, then `/pickle-pipeline`.
+- Multi-stage request (user lists 2+ of: PRD/refine/build/optimize/cleanup/szechuan/anatomy-park) → `/pickle-pipeline` (NOT step-by-step). The skill auto-runs `/pickle-refine-prd` internally when refinement is mentioned — do NOT pre-invoke it.
 - Triggers like "full pipeline", "run the whole thing", "X then Y then Z" → `/pickle-pipeline`
 - "use codex" / "--backend codex" with a multi-stage request → still `/pickle-pipeline`, append `--backend codex`
 - Multi-file/unclear scope build → PRD interview

@@ -99,13 +99,17 @@ PICKLE_BACKEND=codex /pickle-tmux "refactor the auth middleware"
 
 Three options for polishing the result:
 
-**Full Pipeline** — chains all three phases in a single tmux session: build, deep review, then deslop. No manual intervention between phases.
+**Full Pipeline** — chains all three phases in a single tmux session: build, deep review, then deslop. No manual intervention between phases. When refinement is mentioned in the request (or `--refine` is passed), the skill auto-runs `/pickle-refine-prd` first — no need to call it separately.
 
 ```bash
 /pickle-pipeline "build the caching layer"                     # Full pipeline
+/pickle-pipeline --refine "refine then build the caching layer" # Refine PRD first, then pipeline
+/pickle-pipeline --no-refine "build X" --backend codex          # Suppress auto-refine
 /pickle-pipeline --skip-anatomy "refactor auth"                # Skip deep review
 /pickle-pipeline --target src/services "add retry logic"       # Scope review phases
 ```
+
+The auto-refine trigger fires when the request matches `/refine|refinement|prd[\s-]?refinement|refine[\s-]?prd/i`. Refinement always uses the `claude` backend regardless of `--backend` (refinement is planning, not implementation). Fails fast if no `prd.md` exists in cwd or session — run `/pickle-prd` first.
 
 **Szechuan Sauce** — hunts coding principle violations (KISS, DRY, SOLID, security, style) and fixes them one at a time until zero remain. Great for post-feature polish before merging.
 
@@ -323,6 +327,8 @@ Most flags are command-scoped. The table groups them by command family — flags
 | `--max-passes <N>` | `/portal-gun` | Max convergence passes (default: 3) |
 | `--save-pattern <NAME>` | `/portal-gun` | Persist pattern to library |
 | `--target <PATH>` | `/pickle-pipeline` | Target directory for review phases (default: cwd) |
+| `--refine` | `/pickle-pipeline` | Force `/pickle-refine-prd` before pipeline (auto-inferred if request mentions refinement) |
+| `--no-refine` | `/pickle-pipeline` | Suppress auto-inferred refinement |
 | `--skip-anatomy` | `/pickle-pipeline` | Skip anatomy-park phase |
 | `--skip-szechuan` | `/pickle-pipeline` | Skip szechuan-sauce phase |
 | `--anatomy-max-iterations <N>` | `/pickle-pipeline` | Anatomy Park iteration limit (default: 100) |
