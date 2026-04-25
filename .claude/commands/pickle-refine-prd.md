@@ -110,7 +110,7 @@ Write `${SESSION_ROOT}/prd_refined.md`. Rules:
 ### 7a: Decompose
 Atomic tasks from refined PRD + codebase analysis:
 - Produces code/config/test changes (no research-only tickets)
-- Sequential order (10, 20, 30...), `depends_on` informational
+- Sequential `order` field (10, 20, 30...) drives execution order — no separate dependency graph
 - Self-contained: worker executes without reading PRD
 - Embed research seeds (file paths, patterns, APIs, test patterns)
 - Machine-checkable acceptance criteria with verify commands
@@ -136,7 +136,6 @@ order: [N]
 working_dir: [path or omit]
 created: [Date]
 updated: [Date]
-depends_on: [IDs or "none"]
 links:
   - url: ../linear_ticket_parent.md
     title: Parent
@@ -186,7 +185,6 @@ order: [last order + 10]
 working_dir: [project root]
 created: [Date]
 updated: [Date]
-depends_on: [ALL prior ticket IDs, comma-separated]
 links:
   - url: ../linear_ticket_parent.md
     title: Parent
@@ -204,7 +202,7 @@ Connect every module, component, and service into the running application. Wire 
 Wire all modules into the public API surface. Ensure exports are connected, CLI commands are registered, internal modules are properly imported, and the integration test exercises the full public interface.
 
 ## Entry Conditions
-All prior tickets (depends_on) are complete and individually verified.
+All prior tickets are complete and individually verified.
 
 ## Research Seeds
 - **Files**: Review all files modified/created across prior tickets — each ticket's "Exit State" section names them
@@ -275,7 +273,6 @@ order: [last order + 10]
 working_dir: [project root]
 created: [Date]
 updated: [Date]
-depends_on: [ALL prior ticket IDs, comma-separated]
 links:
   - url: ../linear_ticket_parent.md
     title: Parent
@@ -288,7 +285,7 @@ Implementation tickets were built by isolated workers with fresh context. Each t
 Review ALL files modified by implementation tickets against the principle checklist below. Fix violations P0-P2 one at a time, write regression tests, commit atomically.
 
 ## Entry Conditions
-All prior tickets (depends_on) are complete and individually verified. Test suite passes.
+All prior tickets are complete and individually verified. Test suite passes.
 
 ## Research Seeds
 - **Files**: [MODIFIED_FILES — full list from all prior tickets]
@@ -366,7 +363,6 @@ order: [last order + 10]
 working_dir: [project root]
 created: [Date]
 updated: [Date]
-depends_on: [ALL prior ticket IDs, comma-separated]
 links:
   - url: ../linear_ticket_parent.md
     title: Parent
@@ -463,7 +459,6 @@ order: [last order + 10]
 working_dir: [project root]
 created: [Date]
 updated: [Date]
-depends_on: [ALL prior ticket IDs, comma-separated]
 links:
   - url: ../linear_ticket_parent.md
     title: Parent
@@ -476,7 +471,7 @@ Implementation and wiring tickets produce tests that verify their own acceptance
 Review ALL test files created or modified by implementation tickets. Strengthen assertions, add missing coverage, verify AC mapping is complete. Fix one issue at a time, run full suite after each fix.
 
 ## Entry Conditions
-All prior tickets (depends_on) are complete and individually verified. Test suite passes.
+All prior tickets are complete and individually verified. Test suite passes.
 
 ## Research Seeds
 - **Files**: [TEST_FILES — all test files created or modified by prior tickets]
@@ -564,7 +559,6 @@ order: [last order + 10]
 working_dir: [project root]
 created: [Date]
 updated: [Date]
-depends_on: [ALL prior ticket IDs, comma-separated]
 links:
   - url: ../linear_ticket_parent.md
     title: Parent
@@ -577,7 +571,7 @@ Isolated workers produce documentation, prompts, and implementation code indepen
 Three-pass cross-reference audit: (1) collect all named references from documentation/prompt files, (2) verify each reference exists in implementation, (3) collect all named exports/constants from implementation and verify docs mention them where relevant.
 
 ## Entry Conditions
-All prior tickets (depends_on) are complete and individually verified. Test suite passes.
+All prior tickets are complete and individually verified. Test suite passes.
 
 ## Research Seeds
 - **Doc/Prompt files**: [DOC_FILES — all .md command files, README sections, prompt templates modified by prior tickets]
