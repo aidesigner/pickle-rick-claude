@@ -26,7 +26,7 @@ Decide whether to run `/pickle-refine-prd` before launching the build/review/des
 **Decision (first match wins):**
 1. `$ARGUMENTS` contains `--no-refine` → `REFINE=false`
 2. `$ARGUMENTS` contains `--refine` → `REFINE=true`
-3. `$ARGUMENTS` matches `/\brefine[\s-]?prd\b|\bprd[\s-]?refinement\b|\b(refine|refinement)\b.*\b(prd|first|before)\b/i` → `REFINE=true` (auto-inferred). This intentionally avoids triggering on feature-content uses like "refine the dropdown UX" or "refinement loop". Use `--refine` to force, `--no-refine` to suppress.
+3. `$ARGUMENTS` matches `/\brefine[\s-]?prd\b|\bprd[\s-]?refinement\b|\b(refine|refinement|decompose)\b.{0,40}\b(prd|first)\b|\b(refine|refinement|decompose)\b\s*,?\s*then\s+(build|implement|impl|ship|launch|run|tmux|pipeline)\b/i` → `REFINE=true` (auto-inferred). This intentionally avoids triggering on feature-content uses like "refine the dropdown UX", "refine the dropdown before shipping", or "refinement loop". Use `--refine` to force, `--no-refine` to suppress when ambiguous.
 4. Otherwise → `REFINE=false`
 
 If `REFINE=false` → strip `--refine`/`--no-refine` from `$ARGUMENTS` if present and continue to Step 1.
@@ -44,15 +44,15 @@ No PRD found → **fail fast**: print `"No prd.md found. Run /pickle-prd first t
 
 **Mid-refinement detection.** If the resolved session contains `refinement_manifest.json` but NOT `prd_refined.md` → refinement is in flight. Fail fast with: `"Session has in-progress refinement. Run /pickle-refine-prd --resume first to complete it, then re-invoke /pickle-pipeline --no-refine."` Stop.
 
-**0c — Run `/pickle-refine-prd` inline.** Invoke the skill in the current Claude session, passing the resolved PRD path. Wait for `<promise>TASK_COMPLETED</promise>` from the refine skill. **Capture the `SESSION_ROOT` value the refine skill reports** — Step 3 must reuse it via `--resume` instead of creating a fresh session.
+**0c — Run `/pickle-refine-prd` inline.** Invoke the skill in the current Claude session, passing the resolved PRD path as `${TASK_ARGS}`. Do **NOT** pass `--backend` to the refine skill — refine pins itself to claude regardless. Wait for `<promise>TASK_COMPLETED</promise>` from the refine skill. The refine skill's Step 3 sets a `${SESSION_ROOT}` variable which remains in scope after refine returns — Step 3 of THIS skill reuses that same variable via `--resume "${SESSION_ROOT}"` instead of creating a fresh session. Set a marker `SESSION_INITIALIZED=true` for Step 3 to branch on.
 
-Refinement always uses the `claude` backend regardless of `--backend` on this skill — this is pinned by the refine skill itself; pipeline phases honor whatever `--backend` was passed here.
+Pipeline phases (pickle, anatomy-park, szechuan-sauce) honor whatever `--backend` was passed to this skill; only refinement is pinned to claude.
 
 **Note on interactive gating:** `/pickle-refine-prd` Step 2c may pause and interview the user when PRD verification quality is PARTIAL or MISSING. The pipeline blocks until the interview completes. Pass a verification-ready PRD upfront to keep the run autonomous.
 
 **0d — On refine failure** (no `prd_refined.md` produced, or skill aborted) → **fail fast**: surface the refine error and stop. Do NOT launch the pipeline against an unrefined PRD.
 
-**0e — Continue.** Strip `--refine`/`--no-refine` from `$ARGUMENTS` so they aren't reparsed as TASK content. The `SESSION_ROOT` captured in 0c carries forward — Step 3 will use `setup.js --resume "${SESSION_ROOT}" --tmux ...` instead of creating a new session, preserving `prd_refined.md` and the ticket directories.
+**0e — Continue.** Strip `--refine`/`--no-refine` from `$ARGUMENTS` so they aren't reparsed as TASK content. The `SESSION_ROOT` and `SESSION_INITIALIZED=true` markers from 0c carry forward — Step 3 will use `setup.js --resume "${SESSION_ROOT}" --tmux ...` instead of creating a new session, preserving `prd_refined.md` and the ticket directories.
 
 ## Step 1: Check tmux
 Run `tmux -V`. If missing: "Install tmux: `brew install tmux`." Stop.
@@ -88,7 +88,7 @@ From `$ARGUMENTS`:
 - `--scope <flag>` → SCOPE_FLAG (values: `branch`, `branch:one-hop`, `diff:<ref>`, `diff:<ref>:one-hop`, `paths:<glob,...>`)
 - `--scope-base <ref>` → SCOPE_BASE (base ref override for `branch` mode)
 
-When set, pipeline-runner resolves scope at setup (writes `${SESSION_ROOT}/scope.json`) and refreshes per non-pickle phase (archives to `${SESSION_ROOT}/archive/scope.<phase>.json`). Empty diff at setup → WARN; empty diff at anatomy-park refresh → `SCOPE_EMPTY_POST_BUILD` error.
+When set, these flags are written into `pipeline.json` in Step 4 — do NOT pass them to `setup.js`. pipeline-runner reads them from `pipeline.json` at startup, resolves scope (writes `${SESSION_ROOT}/scope.json`), and refreshes per non-pickle phase (archives to `${SESSION_ROOT}/archive/scope.<phase>.json`). Empty diff at setup → WARN; empty diff at anatomy-park refresh → `SCOPE_EMPTY_POST_BUILD` error.
 
 **Remainder** = TASK (the epic description for the pickle phase)
 
@@ -98,9 +98,9 @@ Resolve TARGET to an absolute path. Verify it exists. If not found, print error 
 
 ## Step 3: Session Setup
 
-Branch on whether Step 0 already initialized a session via refinement.
+Branch on whether Step 0 already initialized a session via refinement (i.e. `SESSION_INITIALIZED=true` AND `SESSION_ROOT` is set).
 
-**If `SESSION_ROOT` was set by Step 0 (refinement ran):** call setup.js in resume mode to preserve refinement artifacts (`prd_refined.md`, ticket directories):
+**If Step 0 set `SESSION_INITIALIZED=true` (refinement ran):** call setup.js in resume mode to preserve refinement artifacts (`prd_refined.md`, ticket directories):
 ```bash
 node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --resume "${SESSION_ROOT}" --max-iterations <PICKLE_MAX_ITER> --max-time <MAX_TIME> --worker-timeout <WORKER_TIMEOUT> [--backend <BACKEND>]
 ```

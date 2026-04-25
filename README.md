@@ -103,14 +103,14 @@ Three options for polishing the result:
 
 ```bash
 /pickle-pipeline "build the caching layer"                            # No refinement (no trigger)
-/pickle-pipeline "refine then build the caching layer"                # Auto-inferred from prose
+/pickle-pipeline "refine the prd then build the caching layer"        # Auto-inferred from prose
 /pickle-pipeline --refine "build the caching layer"                   # Explicit force, prose silent
-/pickle-pipeline --no-refine --backend codex "ship X" # Suppress auto-inferred refinement
+/pickle-pipeline --no-refine "refine the prd first then ship X"       # Suppress auto-inferred refinement
 /pickle-pipeline --skip-anatomy "refactor auth"                       # Skip deep review
 /pickle-pipeline --target src/services "add retry logic"              # Scope review phases
 ```
 
-The auto-refine trigger fires when the request matches `/refine|refinement|prd[\s-]?refinement|refine[\s-]?prd/i`. Refinement always uses the `claude` backend regardless of `--backend` (refinement is planning, not implementation). Fails fast if no `prd.md` exists in cwd or session — run `/pickle-prd` first.
+The auto-refine trigger fires on `refine-prd` / `prd refinement`, on `refine`/`refinement`/`decompose` near `prd` or `first` (within 40 chars), or on workflow ordering like `refine then build`. Bare `refine the dropdown UX` won't trigger — use `--refine` to force, `--no-refine` to suppress. Refinement always uses the `claude` backend regardless of `--backend` (refinement is planning, not implementation). Fails fast if no `prd.md` exists in cwd or session — run `/pickle-prd` first.
 
 **Szechuan Sauce** — hunts coding principle violations (KISS, DRY, SOLID, security, style) and fixes them one at a time until zero remain. Great for post-feature polish before merging.
 
