@@ -1,4 +1,6 @@
-# PRD: God Function Remediation
+# PRD: God Function Remediation (Refined)
+
+*(refined: requirements, codebase, risk-scope analysts × 3 cycles)*
 
 ## Problem
 
@@ -9,341 +11,262 @@ flow in the system (orchestrators, hook handlers, subprocess spawners) and resis
 unit testing because every responsibility must be set up before any single branch
 can be exercised.
 
-Concrete consequences observed in audit:
+Concrete observed offenders *(refined: codebase analyst, line ranges corrected)*:
 
-- `_emitDot` (dot-builder.ts:1237-2261) — 905 LOC, ~48 branches, emits 5 distinct
-  pipeline topologies in one method.
-- `main` in `mux-runner.ts:814-1382` — 460 LOC, ~66 branches, 411-line `while(true)`
-  loop with 5+ nesting levels mixing rate-limit state machine, circuit breaker,
-  ticket lifecycle, and signal handling.
+- `_emitDot` (`dot-builder.ts:1237-2261`) — 905 LOC, ~48 branches, emits **6 distinct
+  pipeline topology branches** plus **2 post-emission edge-rewiring passes** (P25
+  catastrophic-recovery linkEdge at `2131-2134`, P0 isolated-workspace
+  commit_and_push splice at `2192-2232`) in one method. *(refined: codebase analyst —
+  prior PRD said "5 topologies"; correct count is 6 producers + 2 post-passes.)*
+- `main` in `mux-runner.ts:814-1396` *(refined: codebase analyst — prior PRD said
+  "1382"; closing brace is at 1396, CLI guard at 1398)* — ~480 statement-LOC, ~66
+  branches, 411-line `while(true)` loop with 5+ nesting levels mixing rate-limit
+  state machine, circuit breaker, ticket lifecycle, and signal handling.
 - `main` in `microverse-runner.ts:452-1015` — 563 LOC interleaving rate-limit
-  polling, metric measurement, regression rollback, stall detection in a single
-  loop body.
-- `main` in `stop-hook.ts:44-376` — 330 LOC classifying 8 different completion
-  token types with state mutations scattered throughout.
-
-These functions are the primary blockers cited in past debugging sessions for
-why incidents took multiple iterations to root-cause.
+  polling, metric measurement, regression rollback, stall detection.
+- `main` in `stop-hook.ts:44-376` — 330 LOC classifying **8 completion token
+  types** (enumerated below) with state mutations scattered throughout.
 
 ## Goals
 
-1. No function in `extension/src/` exceeds **120 LOC** (statements, excluding blanks/comments).
+1. No function in `extension/src/` exceeds **120 LOC** (statements, excluding blanks/
+   comments), with **two carve-outs** *(refined: requirements + risk analysts —
+   promoted from per-ticket to goal-level)*:
+   - **Topology emitters in `dot-builder.ts`** may be up to **200 LOC** because ≥ 70%
+     of the body is string-literal output via `emit({...})`. Cyclomatic complexity
+     still ≤ 15.
+   - **`executeMainLoop` in `microverse-runner.ts`** may be up to **200 LOC** because
+     the iteration body is intrinsically sequential. Cyclomatic complexity still ≤ 15.
 2. No function in `extension/src/` exceeds **cyclomatic complexity 15**.
 3. Each extracted helper is independently testable — `node --test` covers the
-   helper directly, not only via its parent.
-4. Behavior is preserved: full lint + test gate (`npx tsc --noEmit && npx eslint
-   src/ --max-warnings=-1 && npx tsc && npm test`) passes after each ticket.
-5. Refactor commits do not change the deployed `~/.claude/pickle-rick/` runtime
-   contract: hook decisions remain `"approve"`/`"block"`, state.json schema
-   unchanged, CLI args unchanged.
+   helper directly, not only via its parent. **All extracted helpers are exported**
+   *(refined: risk analyst — drops the prior "module-private unless tested" clause;
+   tests import from compiled JS, so testability requires export)*.
+4. Behavior is preserved: full lint + test gate (`cd extension && npx tsc --noEmit
+   && npx eslint src/ --max-warnings=-1 && npx tsc && npm test`) passes after each
+   ticket, **plus** the three hygiene gates already in `package.json:13`
+   (`tests/test-registration-hygiene.test.js`, `tests/test-quality-hygiene.test.js`,
+   `tests/complexity-tier.test.js`) *(refined: codebase analyst)*.
+5. **Behavior of the deployed runtime contract — hook decisions, state.json schema,
+   CLI args — is byte-identical pre/post each refactor PR** *(refined: requirements
+   + risk analysts — corrected wording; prior "do not change deployed files" was
+   technically false because `bash install.sh` always rsyncs)*. Verified by
+   transcript-replay fixtures captured in T0 and a deployed-hooks smoke test in T14.
 
 ## Non-Goals
 
-- No new features. No new commands. No prompt-template changes.
-- Not refactoring files under the threshold (e.g., state-manager.ts, metrics-utils.ts).
-- Not touching deployed `.js` files directly — source-only changes per
-  `pickle-rick-claude/CLAUDE.md`.
-- Not introducing dependency injection frameworks, class hierarchies, or
-  plugin architectures. Extracted helpers are plain functions.
-
-## Tickets
-
-Each ticket is atomic: one god function → one PR. Ordered by severity / blast radius.
-
----
-
-### T1 — Split `_emitDot` in dot-builder.ts
-
-**File**: `extension/src/services/dot-builder.ts:1237-2261`
-**Current**: 905 LOC, ~48 branches, emits 5 pipeline topologies inline.
-
-**Extract**:
-- `_emitConvergenceTopology()` — lines 1576-1750 (v8 body + post-chain)
-- `_emitSequentialPhases()` — lines 1752-2128 (phase loop, docOnly, convergence check)
-- `_emitMicroverseLoop()` — lines 2136-2168
-- `_emitReviewRatchet()` — lines 2170-2189
-- `_emitFanOutTopology()` and `_emitCompetingTopology()` — corresponding inline blocks
-
-**Acceptance criteria**:
-- `_emitDot` body ≤ 120 LOC after split.
-- Each extracted helper ≤ 200 LOC (some topology emitters are inherently large
-  string templates; relax cap, but enforce single responsibility).
-- Existing dot-builder tests pass unchanged.
-- New tests: invoke each helper with a minimal builder and assert output contains
-  the expected node IDs and edges.
-- `grep -c '^  _emit' src/services/dot-builder.ts` ≥ 6.
-
----
-
-### T2 — Split `main()` in mux-runner.ts
-
-**File**: `extension/src/bin/mux-runner.ts:814-1382`
-**Current**: 460 LOC, ~66 branches, 411-line monolithic loop.
-
-**Extract**:
-- `validateStartupState(state, statePath)` ← lines 877-906
-- `setupSignalHandlers(statePath, log)` ← lines 847-861
-- `processRateLimitCycle(...)` ← lines 1071-1150 (API limit detection, wait, sleep, wake cleanup)
-- `processIterationOutcome(...)` ← lines 1188-1344 (CB recording + completion branching)
-- `applyTimeoutCounter(...)` ← lines 1153-1186 (already exists as a pure function;
-  inline logic must call it instead of duplicating)
-- `shouldExitMainLoop(state, ctx)` ← lines 948-999 (exit gates)
-
-**Acceptance criteria**:
-- `main` body ≤ 120 LOC.
-- Inner `while(true)` loop body ≤ 80 LOC after extractions.
-- New tests: `processRateLimitCycle` and `processIterationOutcome` covered by
-  unit tests with mocked state; assert state transitions for at least
-  rate-limited / completed / timeout / circuit-open paths.
-- Existing `extension/tests/mux-runner-pending-guard.test.js` still passes.
-
----
-
-### T3 — Split `main()` in microverse-runner.ts
-
-**File**: `extension/src/bin/microverse-runner.ts:452-1015`
-**Current**: 563 LOC, ~25 branches, two phases interleaved.
-
-**Extract**:
-- `executeGapAnalysis()` — gap_analysis phase + baseline measurement + status transition
-- `executeMainLoop()` — extract the 327-line `while` loop into its own async fn
-- `handleRateLimit()` ← lines 715-774
-- `measureAndClassifyIteration()` ← lines 856-970 (metric measurement, comparison,
-  failure classification, recovery injection)
-
-**Acceptance criteria**:
-- `main` body ≤ 120 LOC.
-- `executeMainLoop` body ≤ 200 LOC (still iterative but flat).
-- New tests: `measureAndClassifyIteration` exercised with synthetic baselines
-  for at least improved / regressed / unchanged cases.
-- `microverse-state.ts` schema unchanged.
-
----
-
-### T4 — Split `main()` in spawn-morty.ts
-
-**File**: `extension/src/bin/spawn-morty.ts:31-408`
-**Current**: 377 LOC, ~20 branches.
-
-**Extract**:
-- `parseAndValidateArgs()` ← lines 32-68
-- `resolveEffectiveTimeout()` ← lines 96-139 (clamp from parent state + wall clock)
-- `buildWorkerPrompt()` ← lines 164-222 (model selection + prompt assembly + GitNexus injection)
-- `runWorkerProcess()` ← lines 224-407 (spawn, pipe, escalating timeouts, completion Promise)
-
-**Acceptance criteria**:
-- `main` body ≤ 80 LOC.
-- `runWorkerProcess` body ≤ 150 LOC; nested `finalize` closure also extracted to
-  module-private function.
-- Behavior preserved: SIGTERM → SIGKILL escalation, hang guard, log-flush
-  guardian all still fire under the same conditions.
-- Existing `spawn-morty` tests pass; add unit test for `resolveEffectiveTimeout`
-  covering wall-clock clamp.
-
----
-
-### T5 — Split `main()` in stop-hook.ts
-
-**File**: `extension/src/hooks/handlers/stop-hook.ts:44-376`
-**Current**: 330 LOC, ~28 branches, classifies 8 token types inline.
-
-**Extract**:
-- `detectCompletionTokens(transcript)` — returns a discriminated-union result for
-  the 8 token types
-- `enforceRateLimitGate(state, transcript)` — rate-limit pattern detection
-- `enforceLimits(state)` — iteration + time-budget checks
-- `detectDegenerateResponse(state, transcript)` — degenerate counter logic
-- `classifyDecision(...)` — single function that returns `"approve"` or `"block"`
-
-**Acceptance criteria**:
-- `main` body ≤ 80 LOC.
-- Hook contract preserved: only `"approve"` or `"block"` returned (per
-  `pickle-rick-claude/CLAUDE.md` Required Patterns).
-- All `detectCompletionTokens` branches have direct unit tests.
-- `extension/tests/activity-logger.test.js` and any stop-hook tests still pass.
-
----
-
-### T6 — Split `main()` in spawn-refinement-team.ts
-
-**File**: `extension/src/bin/spawn-refinement-team.ts:389-711`
-**Current**: 322 LOC, ~15 branches.
-
-**Extract**:
-- `parseAndValidateArgs()` ← lines 390-406
-- `loadRefinementSettings()` ← lines 414-432
-- `orchestrateCycles()` ← lines 544-648 (multi-cycle loop, spinner, archive)
-- `writeManifestAtomic()` ← lines 668-699
-
-**Acceptance criteria**:
-- `main` body ≤ 80 LOC.
-- Manifest write atomicity preserved (temp file + rename).
-- New unit test for `writeManifestAtomic` asserts no partial file on simulated
-  write failure.
-
----
-
-### T7 — Split `main()` in pipeline-runner.ts
-
-**File**: `extension/src/bin/pipeline-runner.ts:644-956`
-**Current**: 312 LOC, ~28 branches, three near-duplicate phase blocks.
-
-**Extract**:
-- `setupPhase(phase, config)` — factory returning phase-specific setup fn + command template
-- `executePhaseRunner(phase, command, env)` ← lines 791-842 spawn pattern
-- `postPhaseCleanup(phase, sessionDir)` — `cleanPhaseArtifacts` + archive + PRD write
-- `updatePipelineStatus(...)` — already exists; ensure all inline call-sites use it
-
-**Acceptance criteria**:
-- `main` body ≤ 100 LOC.
-- The three phase blocks (pickle / anatomy-park / szechuan-sauce) collapse to a
-  single dispatch driven by `setupPhase`.
-- Pipeline status JSON schema unchanged.
-- E2E: dry-run pipeline (no actual spawn) executes all three phases without
-  error.
-
----
-
-### T8 — Split `main()` in setup.ts
-
-**File**: `extension/src/bin/setup.ts:18-316`
-**Current**: 298 LOC, ~22 branches.
-
-**Extract**:
-- `parseArguments(argv)` — 13-flag parsing loop
-- `handleResumeSession(args)` — resume-specific state logic
-- `initializeNewSession(args)` — new session creation + dir layout
-- `displaySetupSummary(session)` — output panel rendering
-
-**Acceptance criteria**:
-- `main` body ≤ 80 LOC.
-- state.json schema unchanged.
-- Unit tests: `parseArguments` exercised for resume / reset / paused flag combinations.
-
----
-
-### T9 — Split `main()` in jar-runner.ts
-
-**File**: `extension/src/bin/jar-runner.ts:194-373`
-**Current**: 146 LOC, ~21 branches; three near-duplicate guard-skip blocks.
-
-**Extract**:
-- `validateTaskIntegrity(taskDir, meta)` ← lines 285-316 (PRD hash, path traversal)
-- `handleTaskEnoent(result, tasks, currentTaskId)` ← lines 335-355
-- `skipTaskWithReason(meta, reason)` — collapse the three repeated guard-skip
-  blocks (lines 268-274, 276-282, 292-296)
-
-**Acceptance criteria**:
-- `main` body ≤ 100 LOC.
-- The three guard-skip patterns reduced to single-line calls.
-- Unit test for `validateTaskIntegrity` covers happy path + hash mismatch + path traversal.
-
----
-
-### T10 — Split `build()` in dot-builder.ts
-
-**File**: `extension/src/services/dot-builder.ts:1102-1209`
-**Current**: 109 LOC, ~17 branches, orchestrates 13 preflight + 16 structural validators.
-
-**Extract**:
-- `_validatePreflightSpecs()` ← lines 1110-1129
-- `_validateConvergenceSpec()` ← lines 1132-1173 (predicate, model diversity, collisions)
-- `_runStructuralRules()` ← lines 1182-1206
-
-**Acceptance criteria**:
-- `build` body ≤ 60 LOC.
-- BuildResult shape unchanged; existing dot-builder tests pass.
-- Each extracted validator independently invokable.
-
----
-
-### T11 — Split `fromSpec()` in dot-builder.ts
-
-**File**: `extension/src/services/dot-builder.ts:942-1010`
-**Current**: 69 LOC, ~22 branches (high density).
-
-**Extract**:
-- `_parsePhases(raw)` ← lines 961-966
-- `_parseConvergenceSpec(raw)` ← lines 985-1007 (15-field unmarshaling)
-
-**Acceptance criteria**:
-- `fromSpec` body ≤ 40 LOC.
-- Parse helpers tolerate the same null/missing-field cases as before
-  (assert via existing fixtures).
-
----
-
-### T12 — Split `ensureMonitorWindow()` in pickle-utils.ts
-
-**File**: `extension/src/services/pickle-utils.ts:749-848`
-**Current**: 99 LOC, ~14 branches, 5 spawnSync paths.
-
-**Extract**:
-- `getSessionName()` — tmux session resolution
-- `checkAndRecreateWindow()` — existing window validation + kill on mode mismatch
-- `createMonitorWindow()` — script invocation + mode stamping
-- `readWindowMode()` — already exists at lines 851-860; keep.
-
-**Acceptance criteria**:
-- `ensureMonitorWindow` body ≤ 50 LOC.
-- All 5 spawnSync error paths still log with the same prefix.
-- Manual smoke test: kill monitor window, re-run mux-runner, window comes back.
-
----
-
-### T13 — Tighten `findImporters()` in scope-resolver.ts
-
-**File**: `extension/src/services/scope-resolver.ts:630-662`
-**Current**: 33 LOC; small but mixes rg + grep + parsing + dedup.
-
-**Extract**:
-- `_runRgImportWalk()` ← lines 638-647
-- `_runGrepImportWalk()` ← lines 649-659
-
-**Acceptance criteria**:
-- `findImporters` body ≤ 20 LOC.
-- Failure modes distinguishable in logs (rg fail / grep fail / both fail / timeout).
-- Existing scope-resolver tests pass.
+- No new features. No new commands. **No `--dry-run` flag, no `DRY_RUN` env var**
+  *(refined: requirements + risk + codebase analysts — prior T7 AC violated this)*.
+- Not refactoring `state-manager.ts`, `metrics-utils.ts`, or any file the audit
+  cleared.
+- Not introducing dependency injection frameworks, class hierarchies, or plugin
+  architectures.
+- **Not generalizing trap-door spawn helpers across files** *(refined: risk
+  analyst)*. T13's `_runRgImportWalk`/`_runGrepImportWalk` are PRIVATE to
+  `scope-resolver.ts`. T12 does not introduce a shared osascript helper.
+  Cross-file trap-door consolidation (`council-publish.ts:gh`,
+  `plumbus-frame-analyzer.ts:bun`, `pickle-utils.ts:displayMacNotification`) is a
+  separate epic.
 
 ## Approach
 
-1. One ticket = one PR. No batching.
-2. Each PR runs the full gate: `npx tsc --noEmit && npx eslint src/
-   --max-warnings=-1 && npx tsc && npm test`.
-3. Extracted helpers stay in the same file unless reuse demands a new module.
-   The audit is about cohesion, not file count.
-4. Helpers are module-private (not exported) unless tested externally; in that
-   case export and add to the file's public surface section.
-5. Tests added for extracted helpers must be true unit tests — no subprocess
-   spawning, no real fs writes outside `os.tmpdir()`.
-6. After each PR: bump patch version per `pickle-rick-claude/CLAUDE.md`
-   versioning rules (refactor = patch).
+1. **One ticket = one PR. Atomic.** No batching.
+2. **Full gate per PR**: `cd extension && npx tsc --noEmit && npx eslint src/
+   --max-warnings=-1 && npx tsc && npm test`. Plus the three hygiene gates fire
+   automatically as part of `npm test`.
+3. **Same-file PR rebase rule**: T1, T10, T11 all touch `dot-builder.ts` (line
+   ranges 1237-2261, 1102-1209, 942-1010 — non-overlapping). Any merge order works
+   provided each PR rebases onto its merged predecessor before review *(refined:
+   requirements + codebase + risk analysts — prior "smallest-first" rule was wrong;
+   non-overlapping ranges).
+4. **Test placement**: unit tests in `extension/tests/<name>.test.js`; integration
+   tests (subprocess spawn, real fs) in `extension/tests/integration/<name>.test.js`.
+   Both must be appended to `extension/package.json:13`'s test allowlist *(refined:
+   codebase analyst — `tests/test-registration-hygiene.test.js` enforces presence)*.
+5. **`package.json:13` append protocol**: new test files appended at end of line in
+   dependency order. Second-merging PR rebases by re-appending. T14 alphabetizes
+   the entire allowlist as a one-shot epic-closer *(refined: risk analyst — prior
+   "structurally rebase-incompatible" claim was overstated; tail-of-line appends
+   are git-merge-friendly)*.
+6. **Version cadence — single bump at epic close**: per-PR commits use
+   `refactor(god-fn):` prefix WITHOUT version bumps. T14 bumps `1.54.2 → 1.55.0`
+   (semver-MINOR justified: new internal test seam in T7 plus new exported helpers).
+   Acknowledges contradiction with `pickle-rick-claude/CLAUDE.md` "refactor = patch"
+   guidance — explicit one-line justification: 13 patches in one epic = release
+   noise *(refined: requirements + risk analysts)*.
+7. **Fixture lockdown protocol**: all fixtures committed in T0
+   (`extension/tests/fixtures/{dot-builder,mux-runner,microverse,stop-hook,setup}/`)
+   are LOCKED. Mid-epic fixture updates require a separate `fixture-update`-labeled
+   PR citing the SHA of the runtime change. Refactor PRs T1–T13 MUST NOT modify
+   fixtures inline *(refined: risk analyst)*.
+8. **Helper-signature spec rule**: every extracted helper has its TypeScript
+   signature declared in the ticket body BEFORE the PR opens. Helpers that report
+   success/failure return discriminated unions (`{ kind: 'ok', value } | { kind:
+   'fail', reason }`), NOT booleans. Helpers that mutate state declare the
+   contract: either (a) take an injectable update callback, or (b) return new
+   state. **Side-effects via passed-in mutable refs are FORBIDDEN** *(refined: risk
+   analyst — recurring "collapse N blocks" trap)*.
+9. **Trap-door preservation**: T12 and T13 abide by the silent-hang trap-door
+   conventions in `extension/CLAUDE.md`. Every `spawnSync` into a foreign tool
+   keeps its `timeout` literal. T12 must not introduce or modify `osascript` call
+   sites; `displayMacNotification` (sibling at `pickle-utils.ts:893+`) remains
+   untouched *(refined: codebase + risk analysts)*.
+10. **Rollback discipline**: each PR is independently revertible via `git revert
+    <sha>`. If revert conflicts due to downstream dependency, revert in reverse
+    merge order until conflict resolves. Fixture-update PRs revert independently;
+    orphan fixtures get reverted with the refactor *(refined: risk analyst)*.
+11. **Reviewer rotation**: single named reviewer for the epic, ≤ 24h SLA per PR.
+    If multiple reviewers, name the merge sequencer who arbitrates rebase
+    conflicts *(refined: requirements analyst)*.
+12. Each refactor file's LOC may grow 5-15% post-refactor due to helper signature
+    boilerplate and split documentation. Cohesion (each function has one
+    responsibility) supersedes raw line count *(refined: risk analyst — ~50 helpers
+    across 11 files)*.
 
 ## Acceptance Criteria (epic-level, machine-checkable)
 
-After all 13 tickets land:
+After all tickets land:
 
-- `find extension/src -name '*.ts' -exec awk '/^(async )?function|^  (private )?(async )?[a-zA-Z_]+\\(/{n=NR; name=$0} END{}' {} \\;`
-  shows zero functions over 120 LOC.
-- ESLint complexity rule (`complexity: ["error", 15]`) added to
-  `extension/.eslintrc` and the codebase passes it clean.
-- Test count (per `npm test`) is **strictly greater** than the pre-refactor
-  baseline — every extraction must come with at least one new unit test.
-- `git log --oneline | grep -c 'refactor(god-fn)'` ≥ 13.
+- `cd extension && npx eslint src/ --max-warnings=0` passes — promoted from `warn`
+  to `error` by T14 with the global rules `complexity: ['error', 15]` and
+  `max-lines-per-function: ['error', { max: 120, skipBlankLines: true,
+  skipComments: true }]`, plus T0-installed per-file `files:` overrides for
+  `dot-builder.ts` and `microverse-runner.ts` (200 LOC each, complexity still 15)
+  *(refined: requirements + risk analysts — replaces the broken `find...awk
+  END{}` AC; flat-config `eslint.config.js`, NOT `.eslintrc`)*.
+- `cd extension && npm test` passes; test count ≥ baseline (T0
+  `extension/REFACTOR_BASELINE.md`) + 56 new tests minimum (sum of per-ticket
+  `min_new_tests`) *(refined: requirements analyst — concrete sum)*.
+- `cd extension && bash scripts/smoke-deployed-hooks.sh` exits 0 — invokes
+  deployed `stop-hook.js` against each of 8 token-fixture transcripts and
+  asserts byte-identical decisions vs. T0 baseline *(refined: risk analyst — Goal
+  #5 integration verification)*.
+- `git log --oneline | grep -c 'refactor(god-fn)'` ≥ 15 (T0–T14).
 
 ## Risks
 
 | Risk | Mitigation |
 |---|---|
-| Behavior drift in mux-runner's rate-limit loop | Snapshot test: feed recorded transcripts through `processRateLimitCycle` and assert state transitions match pre-refactor recording |
-| stop-hook returns wrong decision after split | Cover all 8 token types with explicit unit tests; CI fails if any decision branch lacks a test |
-| dot-builder topology emission produces different DOT output | Golden-file tests: capture current `_emitDot` output for representative specs, assert byte-equal after refactor |
-| Iteration ordering changes in microverse main loop | Record state.json mutations across a full convergence cycle pre-refactor; assert identical sequence post-refactor |
+| Behavior drift in mux-runner's rate-limit loop | State-transition fixture replay against `processRateLimitCycle`; `tests/mux-runner.test.js` (83.6KB) and `tests/mux-runner-pending-guard.test.js` continue to pass |
+| stop-hook returns wrong decision after split | Decision fixture replay covering all 8 token types; CI fails if any decision branch lacks a fixture |
+| dot-builder topology emission produces different DOT output | Golden-file fixtures for 6 topology helpers; byte-equal assertions in T1 PR |
+| Iteration ordering changes in microverse main loop | Mutation-trace fixture across full convergence cycle replayed pre/post in T3 |
+| T1 silent regression of post-emission edge mutation invariants (P25 + P0 isolated-workspace) | Post-pass MUST remain inline in `_emitDot` after all topology emitters; golden fixture suite includes `workspace: 'isolated'` + convergence case |
+| T13 silently regresses `findImporters` rg/grep timeout (FIFO/FUSE/backtracking trap door) | `_runRgImportWalk`/`_runGrepImportWalk` thread `timeoutMs`; `tests/scope-one-hop-hang-guard.test.js` continues to pass; per-helper hang-path tests use existing `__hang__` shim pattern |
+| T12 silently regresses `ensureMonitorWindow` per-call timeouts (5 spawnSync paths) | Each extracted helper preserves original timeout literals; `tests/ensure-monitor-window.test.js` extended with timeout-propagation assertions |
+| T12 inadvertently touches `displayMacNotification` (4th trap door, same file) | Diff-scope assertion in PR review: every hunk start ≥ 749 AND end ≤ 848; `tests/notification-hang-guard.test.js` continues to pass |
+| ESLint LOC carve-outs (200 LOC for T1 topology, T3 executeMainLoop) require flat-config `files:` overrides that no ticket adds | T0 adds two `files:` override blocks at `warn`; T14 promotes to `error` |
+| `package.json:13` test-allowlist tail-of-line append collisions across 13 PRs | Append-at-end protocol; T14 alphabetizes once at epic close; `test-registration-hygiene.test.js` enforces presence per-PR |
+| Cyclomatic-15 ceiling unverified-feasible for proposed splits | T0 runs speculative-split feasibility proof; documents at `extension/REFACTOR_FEASIBILITY.md`; T1/T2 redesign before opening PR if any helper would exceed 15 |
+| Mid-epic fixture updates orphan rollback semantics | Fixture lockdown protocol (Approach §7); fixture-update PRs are separate and labeled |
+| Helper extraction "collapse N blocks" tickets fork on signature decisions (T2, T7, T9) | Helper-signature spec rule (Approach §8); every helper signature pre-declared in ticket body |
+| 13 sequential GitHub releases create user update fatigue + ~50min CI on release gate alone | Approach §6: T14 single bump 1.54.2 → 1.55.0; per-PR commits use `refactor(god-fn):` without version bump |
+| T13 helpers temptation to generalize across other 3 trap-door files | T13 explicit scope freeze: helpers are PRIVATE to `scope-resolver.ts`; cross-file trap-door work is a separate epic |
+| T4 depends on Anthropic `claude -p` CLI signal-handling semantics | Pin tested CLI version in `tests/fixtures/spawn-morty/cli-version.txt`; CI advisory if local CLI differs |
+| Manual smoke test in T12 cannot gate CI | Replace with automated test using stub `tmux` shim (same pattern as `scope-one-hop-hang-guard.test.js`) |
 
-## Out of Scope
+## Token Enumeration (T5)
 
-- Refactoring `state-manager.ts`, `metrics-utils.ts`, or any file the audit cleared.
-- Performance work (these refactors are cohesion-focused, not perf).
-- Changes to `pickle_settings.json` defaults or hook contracts.
-- Documentation updates beyond the `README.md` rule already in
-  `pickle-rick-claude/CLAUDE.md` (no commands added/removed → no doc churn).
+*(refined: codebase + requirements analysts — verified at `stop-hook.ts:170-183`)*
+
+| # | Token | Source | Roles | Effect |
+|---|---|---|---|---|
+| 1 | `state.completion_promise` (variable, configured per-session) | line 171 | all | full exit |
+| 2 | `EPIC_COMPLETED` | 174 | all | full exit + activity event |
+| 3 | `TASK_COMPLETED` | 175 | all | full exit + activity event |
+| 4 | `ANALYSIS_DONE` | 177 | refinement-worker only | full exit |
+| 5 | `EXISTENCE_IS_PAIN` \|\| `THE_CITADEL_APPROVES` | 178 | all | full exit (review_clean), gated by `min_iterations` |
+| 6 | `WORKER_DONE` | 179 | worker only | full exit |
+| 7 | `PRD_COMPLETE` | 182 | non-worker | block (inline) / approve (tmux) — checkpoint |
+| 8 | `TICKET_SELECTED` | 183 | non-worker | block (inline) / approve (tmux) — checkpoint |
+
+T5 requires **9 tests minimum**: 8 token-presence tests + 1 alias-equivalence test
+asserting `EXISTENCE_IS_PAIN` and `THE_CITADEL_APPROVES` produce byte-identical
+decisions on the same transcript fixture. The OR-alias is a token-format
+silent-failure class (rename either side and the default branch silently swallows
+it).
+
+## T1 Post-Pass Invariants (Non-Extracted)
+
+*(refined: codebase + requirements analysts)*
+
+These remain inline in `_emitDot` AFTER all topology emitters run. NOT extracted:
+
+- **P25 catastrophic-recovery `linkEdge`** at `dot-builder.ts:2131-2134`: gated on
+  `!isFanOut && !hasCompeting && implPhases.length > 0 && !hasConvergence`.
+- **P0 isolated-workspace edge-splice** at `dot-builder.ts:2192-2232`: surgical
+  `edges.findIndex` + `edges.splice` + `seenEdges.delete` + `edgeList.splice` to
+  remove `repro_verify -> done` (convergence branch 2203-2216) or `quality_review
+  -> exit` (non-convergence branch 2217-2229), then re-thread through
+  `commit_and_push`.
+
+Required regression tests (in addition to 6 helper tests):
+- Build a spec with `workspace: 'isolated'` + convergence; assert final `edgeList`
+  contains `repro_verify -> commit_and_push` AND `commit_and_push -> done` AND
+  does NOT contain `repro_verify -> done`.
+- Build a spec satisfying `!isFanOut && !hasCompeting && implPhases.length > 0 &&
+  !hasConvergence`; assert `regression_check -> setup_deps` with
+  `loop_restart='true'` is present.
+
+## Closure-Threading Strategy (T1, binding)
+
+*(refined: codebase analyst — picks default to avoid implementer flame war)*
+
+**Strategy A (default)**: Promote 4 closures (`emit`, `link`, `linkEdge`,
+`emitSubgraph` at `dot-builder.ts:1323-1358`) to private methods on `DotBuilder`.
+Promote 8 mutable buffers + `nodeMap` to instance fields cleared at the start of
+each `_emitDot()` invocation. The `_built` guard at `1103-1106` prevents
+re-entry, so transient mutation is safe.
+
+**Strategy B (alternative, requires PR-description justification)**: Thread a
+17-field `EmitContext` interface through every helper.
+
+T1 implementer picks Strategy A unless the reviewer accepts a documented reason
+for B in the PR description.
+
+## Fixture Taxonomy
+
+*(refined: risk analyst)*
+
+- `golden-file fixture` (`tests/fixtures/dot-builder/golden-*.dot`): byte-equal
+  output of `_emitDot` for a representative spec, captured by running pre-refactor
+  binary, asserted via `assert.strictEqual(actual, expected)`.
+- `state-transition fixture`
+  (`tests/fixtures/mux-runner/rate-limit-cycle-2026-04.json`): ordered list of
+  `{state-in, state-out}` pairs across the rate-limit cycle, captured by
+  instrumented run of `tests/integration/mux-loop.test.js`, replayed with
+  `processRateLimitCycle` + assertion of identical sequence.
+- `mutation-trace fixture` (`tests/fixtures/microverse/convergence-mutations.json`):
+  ordered list of `state.json` writes across a convergence cycle, captured
+  similarly, replayed with `executeMainLoop`.
+- `decision fixture` (`tests/fixtures/stop-hook/token-{1..8}.json`): pairs of
+  `{transcript, expected-decision}` for each of the 8 token types. Plus
+  `token-alias-equivalence.json` asserting `EXISTENCE_IS_PAIN` and
+  `THE_CITADEL_APPROVES` produce byte-identical decisions.
+
+## Implementation Task Breakdown
+
+| Order | ID | Title | Priority | Tier | Files | min_new_tests | Trap Door |
+|---|---|---|---|---|---|---|---|
+| 10 | 6f3e3f01 | T0 — Pre-refactor scaffolding (fixtures, ESLint carve-outs, feasibility, baseline) | High | medium | `eslint.config.js`, `package.json`, `tests/fixtures/**`, `scripts/smoke-deployed-hooks.sh`, `REFACTOR_*.md` | 0 | — |
+| 20 | f068af3f | T1 — Split _emitDot in dot-builder.ts (6 topology helpers, 2 post-passes inline) | High | large | `src/services/dot-builder.ts`, `tests/dot-builder-emit-helpers.test.js` | 8 | — |
+| 30 | 53caa9a4 | T2 — Split main() in mux-runner.ts (outer loop only) | High | large | `src/bin/mux-runner.ts`, `tests/process-iteration-outcome.test.js` | 4 | — |
+| 40 | 2b4b0501 | T3 — Split main() in microverse-runner.ts (200 LOC carve-out for executeMainLoop) | High | large | `src/bin/microverse-runner.ts`, `tests/microverse-helpers.test.js` | 3 | — |
+| 50 | 626cd1d5 | T4 — Split main() in spawn-morty.ts (finalize stays nested closure) | High | large | `src/bin/spawn-morty.ts`, `tests/spawn-morty-helpers.test.js` | 4 | — |
+| 60 | 5059df9a | T5 — Split main() in stop-hook.ts (8 token detectors + alias-equivalence) | High | large | `src/hooks/handlers/stop-hook.ts`, `tests/stop-hook-helpers.test.js` | 9 | — |
+| 70 | 16efc5dc | T6 — Split main() in spawn-refinement-team.ts (manifest atomicity) | Medium | medium | `src/bin/spawn-refinement-team.ts`, `tests/refinement-manifest-atomic.test.js` | 1 | — |
+| 80 | 7aa55af1 | T7 — Split main() in pipeline-runner.ts (PhaseConfig dispatch, NO --dry-run) | High | medium | `src/bin/pipeline-runner.ts`, `tests/pipeline-runner-dispatch.test.js` | 1 | — |
+| 90 | f5ac5de1 | T8 — Split main() in setup.ts (parseArguments, resume, init, summary) | Medium | medium | `src/bin/setup.ts`, `tests/setup.test.js` (NEW) | 3 | — |
+| 100 | a6c9c59b | T9 — Split main() in jar-runner.ts (line range corrected: 194-383, tier promoted) | Medium | medium | `src/bin/jar-runner.ts`, `tests/jar-runner-helpers.test.js` | 5 | — |
+| 110 | e54eebf6 | T10 — Split build() in dot-builder.ts (preflight, convergence, structural rules) | Medium | small | `src/services/dot-builder.ts`, `tests/dot-builder-build-helpers.test.js` | 3 | — |
+| 120 | e2e6e1cc | T11 — Split fromSpec() in dot-builder.ts (parsePhases, parseConvergenceSpec) | Low | small | `src/services/dot-builder.ts`, `tests/dot-builder-fromspec-helpers.test.js` | 2 | — |
+| 130 | 189df244 | T12 — Split ensureMonitorWindow() in pickle-utils.ts | Medium | small | `src/services/pickle-utils.ts:749-848`, `tests/ensure-monitor-window-stub.test.js` | 2 | **YES** (displayMacNotification sibling) |
+| 140 | bdfb528b | T13 — Split findImporters() in scope-resolver.ts (helpers PRIVATE) | Low | small | `src/services/scope-resolver.ts`, `tests/scope-resolver-import-walks.test.js` | 4 | **YES** (FIFO/FUSE rg/grep hang) |
+| 150 | 5fa8759a | T14 — Epic closer: ESLint to error, alphabetize, 1.55.0 bump, smoke | High | trivial | `eslint.config.js`, `package.json`, GitHub release | 0 | — |
+| 160 | e5e73494 | T15 — Wire: integrate all extracted helpers (Library variant) | High | medium | All MODIFIED_FILES | 0 | — |
+| 170 | 24cd1805 | Harden: code quality review of god-function refactor diff | High | large | All 14 MODIFIED_FILES | varies | — |
+| 180 | 9dbd0bfd | Audit: data flow integrity for god-function refactor diff | High | large | All 14 MODIFIED_FILES | varies | — |
+| 190 | d6e98b45 | Harden: test quality review of god-function refactor diff | High | large | All new test files | varies | — |
+| 200 | 7be94584 | Audit: cross-reference consistency for god-function refactor | High | medium | DOC_FILES + impl files | 0 | — |
+
+**Per-ticket minimum new tests sum**: 0+8+4+3+4+9+1+1+3+5+3+2+2+4+0 = **49** new unit tests minimum from T0–T14. Hardening tickets add additional regression tests as findings demand.
