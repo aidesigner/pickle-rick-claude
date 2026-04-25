@@ -11,6 +11,7 @@
 |---|---|---|
 | `prds/god-functions-remediation.md` | Refined (3-cycle / 3-analyst team) | `1658d81` |
 | (Original, pre-refinement)            | Committed earlier in the day        | `b535e71` |
+| `prds/codex-classifier-prompt-leak.md` | Draft (2026-04-25) — fixes mux-runner false-`task_completed` from prompt-resident promise tokens when `--backend codex`. Surfaced during attractor v10 Phase 1 resume; workaround `--backend claude`. | uncommitted |
 
 The refined PRD includes: corrected line ranges, T0 prelude + T14 closer, goal-level 200 LOC carve-outs, 8-token enumeration, T1 post-pass invariants, T7 dry-run replacement (test seam, NO `--dry-run`), T2 scope clarification (`runIteration` already extracted), per-ticket frontmatter, fixture lockdown protocol, helper-signature spec rule, trap-door preservation, and a 17-row Risks table.
 
