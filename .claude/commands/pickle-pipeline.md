@@ -10,7 +10,7 @@ You are launching the **full pipeline** — build it, inspect every organ, then 
 - User asks for a not-yet-started feature AND mentions verification/cleanup phases
 - User says "use codex" / "--backend codex" alongside multiple stages → still this skill, append `--backend codex`
 
-If the user names `refine-prd` / `pickle-refine-prd` as a stage AND `prd_refined.md` does not exist in the session, run `/pickle-refine-prd` FIRST, then invoke this skill. The orchestrator itself runs only build → anatomy-park → szechuan-sauce.
+Step 0 (below) handles refinement automatically when triggered. Do NOT pre-invoke `/pickle-refine-prd` — this skill drives it. The runtime orchestrator (`pipeline-runner.js`) only runs build → anatomy-park → szechuan-sauce; refinement happens in Step 0 of THIS skill prompt, before tmux launches.
 
 ## When NOT to invoke
 - User explicitly names ONE stage (`/pickle-tmux`, `/szechuan-sauce`, `/anatomy-park`) — use that skill directly
@@ -21,10 +21,12 @@ If the user names `refine-prd` / `pickle-refine-prd` as a stage AND `prd_refined
 
 Decide whether to run `/pickle-refine-prd` before launching the build/review/deslop pipeline. Explicit flags win; otherwise auto-infer from the request.
 
+**Pre-check:** If `$ARGUMENTS` contains BOTH `--refine` AND `--no-refine` → print `"Conflicting flags: --refine and --no-refine cannot both be passed. Pick one."` and stop. Do NOT proceed.
+
 **Decision (first match wins):**
 1. `$ARGUMENTS` contains `--no-refine` → `REFINE=false`
 2. `$ARGUMENTS` contains `--refine` → `REFINE=true`
-3. `$ARGUMENTS` matches `/refine|refinement|prd[\s-]?refinement|refine[\s-]?prd/i` (case-insensitive) → `REFINE=true` (auto-inferred)
+3. `$ARGUMENTS` matches `/\brefine[\s-]?prd\b|\bprd[\s-]?refinement\b|\b(refine|refinement)\b.*\b(prd|first|before)\b/i` → `REFINE=true` (auto-inferred). This intentionally avoids triggering on feature-content uses like "refine the dropdown UX" or "refinement loop". Use `--refine` to force, `--no-refine` to suppress.
 4. Otherwise → `REFINE=false`
 
 If `REFINE=false` → strip `--refine`/`--no-refine` from `$ARGUMENTS` if present and continue to Step 1.
@@ -38,13 +40,19 @@ If `REFINE=false` → strip `--refine`/`--no-refine` from `$ARGUMENTS` if presen
 
 No PRD found → **fail fast**: print `"No prd.md found. Run /pickle-prd first to draft one, then re-invoke /pickle-pipeline."` Stop. Do NOT launch tmux.
 
-**0b — Skip if already refined.** If `${SESSION_ROOT}/prd_refined.md` exists for the resolved session → log `"PRD already refined at <path> — skipping refinement."` Continue to Step 1.
+**0b — Skip if already refined.** If `${SESSION_ROOT}/prd_refined.md` exists for the resolved session → log `"PRD already refined at <path> — skipping refinement."` Continue to Step 1, carrying `${SESSION_ROOT}` forward.
 
-**0c — Run `/pickle-refine-prd` inline.** Invoke the skill in the current Claude session, passing the resolved PRD path. Wait for `<promise>TASK_COMPLETED</promise>` from the refine skill. Refinement always uses the `claude` backend regardless of `--backend` on this skill (refinement is planning, not implementation; pinned by the refine skill itself).
+**Mid-refinement detection.** If the resolved session contains `refinement_manifest.json` but NOT `prd_refined.md` → refinement is in flight. Fail fast with: `"Session has in-progress refinement. Run /pickle-refine-prd --resume first to complete it, then re-invoke /pickle-pipeline --no-refine."` Stop.
+
+**0c — Run `/pickle-refine-prd` inline.** Invoke the skill in the current Claude session, passing the resolved PRD path. Wait for `<promise>TASK_COMPLETED</promise>` from the refine skill. **Capture the `SESSION_ROOT` value the refine skill reports** — Step 3 must reuse it via `--resume` instead of creating a fresh session.
+
+Refinement always uses the `claude` backend regardless of `--backend` on this skill — this is pinned by the refine skill itself; pipeline phases honor whatever `--backend` was passed here.
+
+**Note on interactive gating:** `/pickle-refine-prd` Step 2c may pause and interview the user when PRD verification quality is PARTIAL or MISSING. The pipeline blocks until the interview completes. Pass a verification-ready PRD upfront to keep the run autonomous.
 
 **0d — On refine failure** (no `prd_refined.md` produced, or skill aborted) → **fail fast**: surface the refine error and stop. Do NOT launch the pipeline against an unrefined PRD.
 
-**0e — Continue.** Strip `--refine`/`--no-refine` from `$ARGUMENTS` so they aren't reparsed as TASK content. Proceed to Step 1 with the same `${SESSION_ROOT}` (refinement initialized it).
+**0e — Continue.** Strip `--refine`/`--no-refine` from `$ARGUMENTS` so they aren't reparsed as TASK content. The `SESSION_ROOT` captured in 0c carries forward — Step 3 will use `setup.js --resume "${SESSION_ROOT}" --tmux ...` instead of creating a new session, preserving `prd_refined.md` and the ticket directories.
 
 ## Step 1: Check tmux
 Run `tmux -V`. If missing: "Install tmux: `brew install tmux`." Stop.
@@ -90,13 +98,19 @@ Resolve TARGET to an absolute path. Verify it exists. If not found, print error 
 
 ## Step 3: Session Setup
 
-Build the setup.js flags from pickle phase settings:
+Branch on whether Step 0 already initialized a session via refinement.
+
+**If `SESSION_ROOT` was set by Step 0 (refinement ran):** call setup.js in resume mode to preserve refinement artifacts (`prd_refined.md`, ticket directories):
+```bash
+node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --resume "${SESSION_ROOT}" --max-iterations <PICKLE_MAX_ITER> --max-time <MAX_TIME> --worker-timeout <WORKER_TIMEOUT> [--backend <BACKEND>]
+```
+
+**Otherwise (no refinement, fresh pipeline):**
 ```bash
 node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux --max-iterations <PICKLE_MAX_ITER> --max-time <MAX_TIME> --worker-timeout <WORKER_TIMEOUT> [--backend <BACKEND>] --task "<TASK>"
 ```
-Append `--backend <BACKEND>` only when the flag was passed.
 
-Extract `SESSION_ROOT=<path>` from output.
+Append `--backend <BACKEND>` only when the flag was passed. Extract `SESSION_ROOT=<path>` from output (resume mode echoes the same path).
 
 ## Step 4: Create pipeline.json
 

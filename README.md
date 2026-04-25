@@ -102,11 +102,12 @@ Three options for polishing the result:
 **Full Pipeline** — chains all three phases in a single tmux session: build, deep review, then deslop. No manual intervention between phases. When refinement is mentioned in the request (or `--refine` is passed), the skill auto-runs `/pickle-refine-prd` first — no need to call it separately.
 
 ```bash
-/pickle-pipeline "build the caching layer"                     # Full pipeline
-/pickle-pipeline --refine "refine then build the caching layer" # Refine PRD first, then pipeline
-/pickle-pipeline --no-refine "build X" --backend codex          # Suppress auto-refine
-/pickle-pipeline --skip-anatomy "refactor auth"                # Skip deep review
-/pickle-pipeline --target src/services "add retry logic"       # Scope review phases
+/pickle-pipeline "build the caching layer"                            # No refinement (no trigger)
+/pickle-pipeline "refine then build the caching layer"                # Auto-inferred from prose
+/pickle-pipeline --refine "build the caching layer"                   # Explicit force, prose silent
+/pickle-pipeline --no-refine --backend codex "ship X" # Suppress auto-inferred refinement
+/pickle-pipeline --skip-anatomy "refactor auth"                       # Skip deep review
+/pickle-pipeline --target src/services "add retry logic"              # Scope review phases
 ```
 
 The auto-refine trigger fires when the request matches `/refine|refinement|prd[\s-]?refinement|refine[\s-]?prd/i`. Refinement always uses the `claude` backend regardless of `--backend` (refinement is planning, not implementation). Fails fast if no `prd.md` exists in cwd or session — run `/pickle-prd` first.
@@ -274,7 +275,7 @@ Queue tasks for unattended batch execution overnight.
 | `/pickle-microverse` † | Metric convergence loop. `--metric` for numeric, `--goal` for LLM judge |
 | `/szechuan-sauce [target]` † | Principle-driven deslopping. `--dry-run`, `--focus`, `--domain` |
 | `/anatomy-park` † | Three-phase deep subsystem review with trap door cataloging |
-| `/pickle-pipeline "task"` | Full lifecycle: pickle-tmux → anatomy-park → szechuan-sauce in one tmux session |
+| `/pickle-pipeline "task"` † | Full lifecycle: pickle-tmux → anatomy-park → szechuan-sauce in one tmux session |
 | `/plumbus <file.dot>` | Iterative DAG shaping on a single `.dot` file. `--dry-run`, `--focus`, `--no-validator` |
 | `/council-of-ricks` | Graphite PR stack review — szechuan principles + anatomy data-flow tracing + Codex adversarial challenge. Directives only, never fixes code. `--no-codex` to disable, `--gitnexus` for graph queries |
 | `/portal-gun <source>` | Gene transfusion from another codebase |
@@ -308,7 +309,7 @@ Most flags are command-scoped. The table groups them by command family — flags
 | `--resume [PATH]` | General | Resume from an existing session |
 | `--reset` | General | Reset iteration counter and start time (use with `--resume`) |
 | `--paused` | General | Start in paused mode (PRD only) |
-| `--backend <claude\|codex>` | `/pickle`, `/pickle-tmux`, `/pickle-microverse`, `/anatomy-park`, `/szechuan-sauce` | Route worker/manager spawns through `codex exec` instead of `claude`. Persisted in `state.json`. Env var alternative: `PICKLE_BACKEND=codex`. Precedence: CLI flag > env var > session state > default `claude` |
+| `--backend <claude\|codex>` | `/pickle`, `/pickle-tmux`, `/pickle-microverse`, `/anatomy-park`, `/szechuan-sauce`, `/pickle-pipeline` | Route worker/manager spawns through `codex exec` instead of `claude`. Persisted in `state.json`. Env var alternative: `PICKLE_BACKEND=codex`. Precedence: CLI flag > env var > session state > default `claude` |
 | `--run` | `/pickle-refine-prd`, `/portal-gun` | Auto-launch tmux |
 | `--interactive` | `/pickle-microverse` | Run inline instead of tmux |
 | `--metric "<CMD>"` | `/pickle-microverse` | Shell command outputting a numeric score |
