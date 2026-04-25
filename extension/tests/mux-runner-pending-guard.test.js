@@ -46,8 +46,11 @@ test('findPendingNonCurrentTickets: status normalisation (case + quotes + whites
     assert.deepEqual(findPendingNonCurrentTickets(tickets, null), []);
 });
 
-test('findPendingNonCurrentTickets: pending ticket detected (the bug scenario)', () => {
-    // Model emits EPIC_COMPLETED while current=T08 done but T09–T23 still pending.
+test('findPendingNonCurrentTickets: pending tickets detected when current is Done', () => {
+    // Mirrors the bug shape: model emits EPIC_COMPLETED while current=T08 is Done
+    // but T09–T23 are still pending. This test only covers the helper — the
+    // actual exit-code-1 fail-loud branch in main() is asserted separately
+    // by `mux-runner-pending-guard.integration.test.js`.
     const tickets = [
         T('T05', 'Done'),
         T('T06', 'Done'),

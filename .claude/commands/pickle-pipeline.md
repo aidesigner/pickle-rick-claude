@@ -33,16 +33,18 @@ If `REFINE=false` → strip `--refine`/`--no-refine` from `$ARGUMENTS` if presen
 
 **If `REFINE=true`:**
 
-**0a — Resolve PRD path.** First match wins:
-1. Explicit path in `$ARGUMENTS` (e.g. `path/to/prd.md`)
-2. `prd.md` or `PRD.md` in current working directory
-3. Most recent session's `prd.md` via `node "$HOME/.claude/pickle-rick/extension/bin/get-session.js"`
+**0a — Resolve PRD path AND session, if any.** First match wins:
+1. Explicit path in `$ARGUMENTS` (e.g. `path/to/prd.md`) → `PRD_PATH=<resolved>`, leave `SESSION_ROOT` unset (no session associated yet)
+2. `prd.md` or `PRD.md` in current working directory → `PRD_PATH=<resolved>`, leave `SESSION_ROOT` unset
+3. Most recent session's `prd.md` via `node "$HOME/.claude/pickle-rick/extension/bin/get-session.js"` → `PRD_PATH=<resolved>`, set `SESSION_ROOT=$(dirname "$PRD_PATH")` (the returned path is session-relative)
 
 No PRD found → **fail fast**: print `"No prd.md found. Run /pickle-prd first to draft one, then re-invoke /pickle-pipeline."` Stop. Do NOT launch tmux.
 
-**0b — Skip if already refined.** If `${SESSION_ROOT}/prd_refined.md` exists for the resolved session → log `"PRD already refined at <path> — skipping refinement."` Continue to Step 1, carrying `${SESSION_ROOT}` forward.
+**0b — Skip if already refined.** Only applies when `SESSION_ROOT` is set (path 3 above). If `${SESSION_ROOT}/prd_refined.md` exists → log `"PRD already refined at ${SESSION_ROOT}/prd_refined.md — skipping refinement."` Continue to Step 1, carrying `SESSION_ROOT` and `SESSION_INITIALIZED=true` forward so Step 3 resumes the same session.
 
-**Mid-refinement detection.** If the resolved session contains `refinement_manifest.json` but NOT `prd_refined.md` → refinement is in flight. Fail fast with: `"Session has in-progress refinement. Run /pickle-refine-prd --resume first to complete it, then re-invoke /pickle-pipeline --no-refine."` Stop.
+**Mid-refinement detection.** Only applies when `SESSION_ROOT` is set (path 3 above). If `${SESSION_ROOT}/refinement_manifest.json` exists but `${SESSION_ROOT}/prd_refined.md` does NOT → refinement is in flight. Fail fast with: `"Session has in-progress refinement. Run /pickle-refine-prd --resume first to complete it, then re-invoke /pickle-pipeline --no-refine."` Stop.
+
+For paths 1 and 2 (no session yet), skip both checks above and proceed directly to 0c — the refine skill will create the session.
 
 **0c — Run `/pickle-refine-prd` inline.** Invoke the skill in the current Claude session, passing the resolved PRD path as `${TASK_ARGS}`. Do **NOT** pass `--backend` to the refine skill — refine pins itself to claude regardless. Wait for `<promise>TASK_COMPLETED</promise>` from the refine skill. The refine skill's Step 3 sets a `${SESSION_ROOT}` variable which remains in scope after refine returns — Step 3 of THIS skill reuses that same variable via `--resume "${SESSION_ROOT}"` instead of creating a fresh session. Set a marker `SESSION_INITIALIZED=true` for Step 3 to branch on.
 

@@ -351,7 +351,7 @@ test('CLI: truncates title at 200 chars', () => {
     }
 });
 
-test('CLI: accepts all 21 valid event types', () => {
+test('CLI: accepts all 23 valid event types', () => {
     const expected = [
         'session_start', 'session_end', 'ticket_completed', 'epic_completed',
         'meeseeks_pass', 'commit', 'research', 'bug_fix', 'feature',
@@ -360,6 +360,8 @@ test('CLI: accepts all 21 valid event types', () => {
         'iteration_start', 'iteration_end',
         'rate_limit_wait', 'rate_limit_resume', 'rate_limit_exhausted',
         'multi_repo_warning',
+        'meeseeks_model_select',
+        'pending_tickets_on_completion',
     ];
     const extRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-activity-'));
     try {
