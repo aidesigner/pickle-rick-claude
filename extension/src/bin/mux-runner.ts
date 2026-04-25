@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawn } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, type TicketInfo } from '../services/pickle-utils.js';
 import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, hasLifecycleArtifact, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole } from '../types/index.js';
 import { StateManager, safeDeactivate, writeActivityEntry, writeTimeoutStub } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -133,6 +133,29 @@ export function detectMultiRepo(sessionDir: string): string[] | null {
       .filter((d): d is string => d !== null && d !== undefined)
   );
   return dirs.size >= 2 ? [...dirs] : null;
+}
+
+/**
+ * Returns tickets that are still pending (not Done, not Skipped) excluding
+ * `currentTicket`. Used to fail-loud when the model emits EPIC_COMPLETED but
+ * the ticket queue is not actually drained — silent loop-termination on a
+ * partial epic is the most expensive class of bug for autonomous agents.
+ *
+ * Status comparison is case-insensitive and strips quotes (matches the
+ * normalisation already used at line ~1017 and in monitor.ts).
+ */
+export function findPendingNonCurrentTickets(
+  tickets: readonly TicketInfo[],
+  currentTicket: string | null
+): TicketInfo[] {
+  const norm = (s: string | null): string =>
+    (s || '').toLowerCase().replace(/["']/g, '').trim();
+  return tickets.filter(t => {
+    if (!t.id) return false;
+    if (t.id === currentTicket) return false;
+    const s = norm(t.status);
+    return s !== 'done' && s !== 'skipped';
+  });
 }
 
 /**
@@ -1246,6 +1269,24 @@ async function main() {
         const msg = safeErrorMessage(err);
         log(`ERROR: Cannot read state.json after task_completed: ${msg}. Exiting.`);
         exitReason = 'success';
+        break;
+      }
+      // Guard: don't trust EPIC_COMPLETED if other tickets are still pending.
+      // Otherwise a misfiring model token silently abandons unimplemented work
+      // and the phase exits 0 — the operator only discovers the loss hours later.
+      const allTickets = collectTickets(sessionDir);
+      const pendingOthers = findPendingNonCurrentTickets(allTickets, curState.current_ticket || null);
+      if (pendingOthers.length > 0) {
+        const ids = pendingOthers.map(t => t.id).filter((s): s is string => !!s);
+        log(`ERROR: ${PromiseTokens.EPIC_COMPLETED} received but ${pendingOthers.length} ticket(s) still pending: ${ids.join(', ')}. Not marking current_ticket Done; exiting non-zero.`);
+        logActivity({
+          event: 'pending_tickets_on_completion',
+          source: 'pickle',
+          session: path.basename(sessionDir),
+          error: `${pendingOthers.length} pending ticket(s) at ${PromiseTokens.EPIC_COMPLETED}: ${ids.join(',')}`,
+        });
+        safeDeactivate(statePath);
+        exitReason = 'error';
         break;
       }
       // Mark final ticket as Done before exiting or chaining

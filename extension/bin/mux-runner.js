@@ -119,6 +119,26 @@ export function detectMultiRepo(sessionDir) {
     return dirs.size >= 2 ? [...dirs] : null;
 }
 /**
+ * Returns tickets that are still pending (not Done, not Skipped) excluding
+ * `currentTicket`. Used to fail-loud when the model emits EPIC_COMPLETED but
+ * the ticket queue is not actually drained — silent loop-termination on a
+ * partial epic is the most expensive class of bug for autonomous agents.
+ *
+ * Status comparison is case-insensitive and strips quotes (matches the
+ * normalisation already used at line ~1017 and in monitor.ts).
+ */
+export function findPendingNonCurrentTickets(tickets, currentTicket) {
+    const norm = (s) => (s || '').toLowerCase().replace(/["']/g, '').trim();
+    return tickets.filter(t => {
+        if (!t.id)
+            return false;
+        if (t.id === currentTicket)
+            return false;
+        const s = norm(t.status);
+        return s !== 'done' && s !== 'skipped';
+    });
+}
+/**
  * Extracts text content from assistant messages in stream-json output.
  * Filters out tool_result / user / system lines so that promise tokens
  * embedded in reviewed source code (e.g. stop-hook.ts containing
@@ -1198,6 +1218,24 @@ async function main() {
                 const msg = safeErrorMessage(err);
                 log(`ERROR: Cannot read state.json after task_completed: ${msg}. Exiting.`);
                 exitReason = 'success';
+                break;
+            }
+            // Guard: don't trust EPIC_COMPLETED if other tickets are still pending.
+            // Otherwise a misfiring model token silently abandons unimplemented work
+            // and the phase exits 0 — the operator only discovers the loss hours later.
+            const allTickets = collectTickets(sessionDir);
+            const pendingOthers = findPendingNonCurrentTickets(allTickets, curState.current_ticket || null);
+            if (pendingOthers.length > 0) {
+                const ids = pendingOthers.map(t => t.id).filter((s) => !!s);
+                log(`ERROR: ${PromiseTokens.EPIC_COMPLETED} received but ${pendingOthers.length} ticket(s) still pending: ${ids.join(', ')}. Not marking current_ticket Done; exiting non-zero.`);
+                logActivity({
+                    event: 'pending_tickets_on_completion',
+                    source: 'pickle',
+                    session: path.basename(sessionDir),
+                    error: `${pendingOthers.length} pending ticket(s) at ${PromiseTokens.EPIC_COMPLETED}: ${ids.join(',')}`,
+                });
+                safeDeactivate(statePath);
+                exitReason = 'error';
                 break;
             }
             // Mark final ticket as Done before exiting or chaining
