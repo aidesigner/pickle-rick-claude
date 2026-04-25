@@ -1,8 +1,21 @@
-Run a full Pickle Rick pipeline in one tmux session: build (pickle-tmux) → deep review (anatomy-park) → deslop (szechuan-sauce).
+Full pipeline orchestrator: pickle-tmux build, anatomy-park, szechuan-sauce.
 
 # /pickle-pipeline
 
 You are launching the **full pipeline** — build it, inspect every organ, then clean the slop. Three phases, one tmux session, zero hand-holding between phases.
+
+## When to invoke this skill
+- User lists 2+ pipeline stages in one request ("refine then build then szechuan", "build, review, deslop")
+- User says "full pipeline", "everything", "the whole flow", "X then Y then Z"
+- User asks for a not-yet-started feature AND mentions verification/cleanup phases
+- User says "use codex" / "--backend codex" alongside multiple stages → still this skill, append `--backend codex`
+
+If the user names `refine-prd` / `pickle-refine-prd` as a stage AND `prd_refined.md` does not exist in the session, run `/pickle-refine-prd` FIRST, then invoke this skill. The orchestrator itself runs only build → anatomy-park → szechuan-sauce.
+
+## When NOT to invoke
+- User explicitly names ONE stage (`/pickle-tmux`, `/szechuan-sauce`, `/anatomy-park`) — use that skill directly
+- Resuming an existing session — use the specific stage skill instead
+- Single-file edit, typo fix, question — answer directly
 
 ## Step 1: Check tmux
 Run `tmux -V`. If missing: "Install tmux: `brew install tmux`." Stop.
