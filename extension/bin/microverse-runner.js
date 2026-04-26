@@ -11,6 +11,46 @@ import { StateManager } from '../services/state-manager.js';
 const sm = new StateManager();
 import { runIteration, loadRateLimitSettings, classifyIterationExit, computeRateLimitAction, killCurrentChild, } from './mux-runner.js';
 import { logActivity } from '../services/activity-logger.js';
+function normalizeExcludePrefixes(excludePrefixes) {
+    return excludePrefixes
+        .map((prefix) => prefix.replace(/^\.?\/+/, '').replace(/\/+$/, ''))
+        .filter((prefix) => prefix.length > 0);
+}
+function buildExcludePathspecs(excludePrefixes) {
+    const normalized = normalizeExcludePrefixes(excludePrefixes);
+    return normalized.flatMap((prefix) => [`:!${prefix}`, `:!${prefix}/**`]);
+}
+export function stageAutoCommitPaths(workingDir, excludePrefixes = []) {
+    const excludePathspecs = buildExcludePathspecs(excludePrefixes);
+    const addTrackedArgs = ['add', '-u'];
+    const statusArgs = ['status', '--porcelain', '-z'];
+    if (excludePathspecs.length > 0) {
+        addTrackedArgs.push('--', '.', ...excludePathspecs);
+        statusArgs.push('--', '.', ...excludePathspecs);
+    }
+    execFileSync('git', addTrackedArgs, {
+        cwd: workingDir,
+        timeout: 30_000,
+        stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const statusOutput = execFileSync('git', statusArgs, {
+        cwd: workingDir,
+        timeout: 30_000,
+        encoding: 'utf-8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    const untrackedPaths = statusOutput
+        .split('\0')
+        .filter((entry) => entry.startsWith('?? '))
+        .map((entry) => entry.slice(3));
+    for (const filePath of untrackedPaths) {
+        execFileSync('git', ['add', '--', filePath], {
+            cwd: workingDir,
+            timeout: 30_000,
+            stdio: ['pipe', 'pipe', 'pipe'],
+        });
+    }
+}
 export function measureMetric(validation, timeoutSeconds, cwd) {
     if (!validation || typeof validation !== 'string')
         return null;
@@ -403,7 +443,7 @@ export async function main(sessionDir) {
         }
         log('Working tree is dirty — auto-committing before microverse start');
         try {
-            execFileSync('git', ['add', '-u'], { cwd: workingDir, timeout: 30_000 });
+            stageAutoCommitPaths(workingDir, PREFLIGHT_DIRT_EXCLUDES);
             execFileSync('git', ['commit', '-m', 'microverse: auto-commit dirty tree before start'], { cwd: workingDir, timeout: 30_000 });
             log(`Auto-committed pre-flight: ${getHeadSha(workingDir)}`);
         }
@@ -704,7 +744,7 @@ export async function main(sessionDir) {
                 }
                 else {
                     try {
-                        execFileSync('git', ['add', '-u'], { cwd: workingDir, timeout: 30_000 });
+                        stageAutoCommitPaths(workingDir);
                         execFileSync('git', ['commit', '-m', `microverse: auto-commit (worker timed out before committing)`], { cwd: workingDir, timeout: 30_000 });
                         postIterSha = getHeadSha(workingDir);
                         log(`Auto-committed: ${postIterSha}`);

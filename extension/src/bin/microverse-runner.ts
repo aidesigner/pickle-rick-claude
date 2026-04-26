@@ -44,6 +44,53 @@ import { logActivity } from '../services/activity-logger.js';
 
 type ExitReason = 'converged' | 'limit_reached' | 'stopped' | 'error' | 'rate_limit_exhausted' | 'approach_exhaustion' | 'no_progress';
 
+function normalizeExcludePrefixes(excludePrefixes: readonly string[]): string[] {
+  return excludePrefixes
+    .map((prefix) => prefix.replace(/^\.?\/+/, '').replace(/\/+$/, ''))
+    .filter((prefix) => prefix.length > 0);
+}
+
+function buildExcludePathspecs(excludePrefixes: readonly string[]): string[] {
+  const normalized = normalizeExcludePrefixes(excludePrefixes);
+  return normalized.flatMap((prefix) => [`:!${prefix}`, `:!${prefix}/**`]);
+}
+
+export function stageAutoCommitPaths(workingDir: string, excludePrefixes: readonly string[] = []): void {
+  const excludePathspecs = buildExcludePathspecs(excludePrefixes);
+  const addTrackedArgs = ['add', '-u'];
+  const statusArgs = ['status', '--porcelain', '-z'];
+  if (excludePathspecs.length > 0) {
+    addTrackedArgs.push('--', '.', ...excludePathspecs);
+    statusArgs.push('--', '.', ...excludePathspecs);
+  }
+
+  execFileSync('git', addTrackedArgs, {
+    cwd: workingDir,
+    timeout: 30_000,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  const statusOutput = execFileSync('git', statusArgs, {
+    cwd: workingDir,
+    timeout: 30_000,
+    encoding: 'utf-8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+
+  const untrackedPaths = statusOutput
+    .split('\0')
+    .filter((entry) => entry.startsWith('?? '))
+    .map((entry) => entry.slice(3));
+
+  for (const filePath of untrackedPaths) {
+    execFileSync('git', ['add', '--', filePath], {
+      cwd: workingDir,
+      timeout: 30_000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+  }
+}
+
 export function measureMetric(
   validation: string,
   timeoutSeconds: number,
@@ -520,7 +567,7 @@ export async function main(sessionDir: string): Promise<void> {
     }
     log('Working tree is dirty — auto-committing before microverse start');
     try {
-      execFileSync('git', ['add', '-u'], { cwd: workingDir, timeout: 30_000 });
+      stageAutoCommitPaths(workingDir, PREFLIGHT_DIRT_EXCLUDES);
       execFileSync('git', ['commit', '-m', 'microverse: auto-commit dirty tree before start'], { cwd: workingDir, timeout: 30_000 });
       log(`Auto-committed pre-flight: ${getHeadSha(workingDir)}`);
     } catch (commitErr) {
@@ -822,7 +869,7 @@ export async function main(sessionDir: string): Promise<void> {
           log(`Auto-commit skipped: not a git repository (${workingDir})`);
         } else {
           try {
-            execFileSync('git', ['add', '-u'], { cwd: workingDir, timeout: 30_000 });
+            stageAutoCommitPaths(workingDir);
             execFileSync('git', ['commit', '-m', `microverse: auto-commit (worker timed out before committing)`], { cwd: workingDir, timeout: 30_000 });
             postIterSha = getHeadSha(workingDir);
             log(`Auto-committed: ${postIterSha}`);

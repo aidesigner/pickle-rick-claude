@@ -366,7 +366,7 @@ test('runIteration is exported from mux-runner', () => {
 
 // --- microverse-runner tests ---
 
-import { measureMetric, measureLlmMetric, extractScore, buildJudgePrompt, buildMicroverseHandoff, main, _deps } from '../bin/microverse-runner.js';
+import { measureMetric, measureLlmMetric, extractScore, buildJudgePrompt, buildMicroverseHandoff, main, _deps, stageAutoCommitPaths } from '../bin/microverse-runner.js';
 import { resetToSha } from '../services/git-utils.js';
 import { writeStateFile } from '../services/pickle-utils.js';
 
@@ -1356,13 +1356,36 @@ test('auto-rescue: dirty tree gets auto-committed when no commits detected', () 
         assert.equal(postIterSha, preSha, 'no commits yet');
 
         if (postIterSha === preSha && isWorkingTreeDirty(dir)) {
-            execSync('git add -A', { cwd: dir, timeout: 30_000 });
+            stageAutoCommitPaths(dir);
             execSync('git commit -m "microverse: auto-commit (test)"', { cwd: dir, timeout: 30_000 });
             postIterSha = getHeadSha(dir);
         }
 
         assert.notEqual(postIterSha, preSha, 'auto-commit should advance HEAD');
         assert.equal(isWorkingTreeDirty(dir), false, 'tree should be clean after auto-commit');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('stageAutoCommitPaths stages untracked files without sweeping excluded docs/prds paths', () => {
+    const dir = createTempGitRepo();
+    try {
+        fs.mkdirSync(path.join(dir, 'docs'), { recursive: true });
+        fs.mkdirSync(path.join(dir, 'prds'), { recursive: true });
+        fs.writeFileSync(path.join(dir, 'worker-output.txt'), 'worker changes');
+        fs.writeFileSync(path.join(dir, 'docs', 'note.md'), 'leave me alone');
+        fs.writeFileSync(path.join(dir, 'prds', 'idea.md'), 'leave me alone too');
+
+        stageAutoCommitPaths(dir, ['docs', 'prds']);
+        execSync('git commit -m "microverse: preflight auto-commit (test)"', { cwd: dir, timeout: 30_000 });
+
+        const committedFiles = execSync('git show --name-only --format=oneline HEAD', { cwd: dir, encoding: 'utf-8' });
+        assert.match(committedFiles, /worker-output\.txt/, 'should stage untracked worker output');
+        assert.doesNotMatch(committedFiles, /docs\/note\.md/, 'should not stage excluded docs changes');
+        assert.doesNotMatch(committedFiles, /prds\/idea\.md/, 'should not stage excluded prd changes');
+        assert.equal(isWorkingTreeDirty(dir, ['docs', 'prds']), false, 'excluded leftovers should not block preflight');
+        assert.equal(isWorkingTreeDirty(dir), true, 'excluded leftovers remain intentionally uncommitted');
     } finally {
         fs.rmSync(dir, { recursive: true });
     }
