@@ -25,7 +25,10 @@ Before you finish:
 
 ## Scope
 - **NEVER** modify `state.json`, `active`, or `completion_promise`
-- Write ONLY to `${TICKET_DIR}`. Signal done ONLY via `<promise>I AM DONE</promise>`
+- Ticket-artifact files (`research_*.md`, `research_review.md`, `plan_*.md`, `plan_review.md`, `conformance_*.md`, `code_review_*.md`, `TASK_NOTES.md`) belong in `${TICKET_DIR}` — never in the project working tree
+- Steps 5 (Implement) and 8 (Simplify) write to the project working tree as required by this ticket's Acceptance Criteria — that's the whole point. Edit, create, and delete repo files freely within the ticket's scope
+- Do NOT write into other tickets' directories or the session root (`${SESSION_ROOT}` outside `${TICKET_DIR}`)
+- Signal done ONLY via `<promise>I AM DONE</promise>`
 
 ## Lifecycle — ONE TICKET, all phases in sequence
 
