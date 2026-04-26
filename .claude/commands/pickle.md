@@ -117,6 +117,12 @@ You are the MANAGER — FORBIDDEN from implementing code. Always delegate to Mor
 
 Process tickets one by one until ALL are Done.
 
+## Mode Selection
+
+Read `${SESSION_ROOT}/state.json` once at Phase 3 entry. If `state.teams_mode === true`, use **Teams Mode (3.B)**. Otherwise use **Legacy Mode (3.A)**. Both modes share the All-Tickets-Done block at the end.
+
+## Phase 3.A — Legacy Mode (default)
+
 **Per ticket**:
 1. **Pick**: lowest-order non-Done ticket. Tickets marked `[!]` Skipped were not verified
    as complete by the safety net — re-attempt Skipped tickets before starting new Todo tickets.
@@ -133,4 +139,35 @@ Process tickets one by one until ALL are Done.
    ```
 8. **Next ticket**: repeat
 
-**All tickets Done**: mark parent Done. If on `main`/`master` → skip auto-PR, output `<promise` + `>EPIC_COMPLETED</promise>`. Otherwise → `node ${EXTENSION_ROOT}/extension/services/pr-factory.js ${SESSION_ROOT}`, output `<promise` + `>EPIC_COMPLETED</promise>`.
+## Phase 3.B — Teams Mode (`--teams`)
+
+When `state.teams_mode === true`. Claude backend only (setup.js rejects codex+teams). Use harness team primitives instead of `spawn-morty.js`. **Spec:** `prds/pickle-agent-teams.md`.
+
+**Setup (once)**:
+1. Derive a session id once: `SESSION_ID = path.basename(${SESSION_ROOT})`.
+2. **TeamCreate**: `team_name = "pickle-${SESSION_ID}"`, `description` = `original_prompt` truncated to ~80 chars.
+3. **TaskCreate per ticket**: for each non-Done ticket in `order` order, create one task with `subject` = ticket title, `description` = `Implement ticket ${TICKET_ID} — see ${SESSION_ROOT}/${TICKET_ID}/linear_ticket_${TICKET_ID}.md`, and metadata `{ ticket_id: <id> }`. Capture the returned task IDs and keep a local mapping `{ticket_id → team_task_id}`.
+
+**v1 dispatches every ticket to `morty-implementer`**. Review-group / hardening tickets that the legacy mode would route to a review worker fall through to `morty-implementer` in v1; wiring up `morty-reviewer` dispatch is a follow-up (see PRD Not-in-scope).
+
+**Per ticket** (sequential in v1 — `state.max_parallel` is plumbed for a follow-up that fans out independent tickets in parallel; today, treat as 1):
+1. **Pick**: lowest-order non-Done ticket whose team task is not yet `completed`. `update-state.js current_ticket <ID> ${SESSION_ROOT}` + `update-state.js step research ${SESSION_ROOT}`.
+2. **Spawn**: call `Agent` with:
+   - `subagent_type: "morty-implementer"`
+   - `team_name: "pickle-${SESSION_ID}"`
+   - `name: "morty-impl-${TICKET_ID}"`
+   - `prompt`: a self-contained brief that includes `SESSION_ROOT`, `TICKET_ID`, `TICKET_DIR=${SESSION_ROOT}/${TICKET_ID}`, the `team_task_id` (so the teammate can call `TaskUpdate(taskId=<that>, status="completed")`), the path to `linear_ticket_${TICKET_ID}.md`, AND the `working_dir` from the ticket's frontmatter (if present — needed for sub-repo targets). The teammate runs the 8-phase lifecycle per `~/.claude/agents/morty-implementer.md`.
+3. **Wait**: the teammate's `TaskUpdate(status="completed")` arrives as an auto-delivered notification (a new turn). Do NOT poll. Only fall back to a `TaskList` check if no notification has arrived past `state.worker_timeout_seconds`.
+4. **Validate**: run `node "${EXTENSION_ROOT}/extension/bin/validate-teams-ticket.js" --ticket-path "${SESSION_ROOT}/${TICKET_ID}" --role implementation`. Exit 0 → continue. Exit 1 → log the missing artifacts (stderr lists them), mark the ticket Failed in frontmatter, do NOT commit.
+5. **Commit**: pass → run `git status`, `git diff`, project tests/build, then commit. Fail → `git stash` + `git checkout .`.
+6. **Update**: mark ticket Done in frontmatter; output `<promise` + `>TASK_COMPLETED</promise>`.
+7. **Increment iteration** (same as Legacy step 7).
+8. **Next ticket**: repeat until `TaskList` shows all team tasks `completed` or all tickets in frontmatter are Done/Failed.
+
+**Teardown (once, before EPIC_COMPLETED)**:
+- For each still-running teammate (rare — should only happen if a teammate hung past timeout), send `SendMessage` with `{type: "shutdown_request"}` and wait for the shutdown response.
+- Once no teammates remain active, call `TeamDelete`.
+
+## All Tickets Done (shared)
+
+Mark parent Done. If on `main`/`master` → skip auto-PR, output `<promise` + `>EPIC_COMPLETED</promise>`. Otherwise → `node ${EXTENSION_ROOT}/extension/services/pr-factory.js ${SESSION_ROOT}`, output `<promise` + `>EPIC_COMPLETED</promise>`.

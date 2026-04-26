@@ -95,6 +95,7 @@ chmod +x "$EXTENSION_ROOT/extension/bin/morty-watcher.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/spawn-refinement-team.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/get-session.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/update-state.js"
+[ -f "$EXTENSION_ROOT/extension/bin/validate-teams-ticket.js" ] && chmod +x "$EXTENSION_ROOT/extension/bin/validate-teams-ticket.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/log-activity.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/log-commit.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/prune-activity.js"
@@ -113,6 +114,16 @@ chmod +x "$EXTENSION_ROOT/extension/scripts/tmux-monitor.sh"
 # --- INTERNAL TEMPLATES (hidden from slash command list) ---
 if [ -d "$SCRIPT_DIR/templates" ]; then
   rsync -a "$SCRIPT_DIR/templates/" "$EXTENSION_ROOT/templates/"
+fi
+
+# --- AGENTS ---
+# Subagent definitions for /pickle --teams (morty-implementer, morty-reviewer).
+# rsync into the user's agents dir; no --delete to preserve user-defined agents.
+AGENTS_DIR="$HOME/.claude/agents"
+if [ -d "$SCRIPT_DIR/.claude/agents" ]; then
+  mkdir -p "$AGENTS_DIR"
+  rsync -a "$SCRIPT_DIR/.claude/agents/" "$AGENTS_DIR/"
+  echo "✅ Agent definitions installed to $AGENTS_DIR/"
 fi
 
 # --- COMMANDS ---

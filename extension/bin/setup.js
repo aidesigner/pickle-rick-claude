@@ -66,6 +66,8 @@ async function main() {
     let commandTemplate = undefined;
     let chainMeeseeks = false;
     let backend = undefined;
+    let teamsMode = false;
+    let maxParallel = 5;
     const taskArgs = [];
     const explicitFlags = new Set();
     const startEpoch = Math.floor(Date.now() / 1000);
@@ -167,6 +169,21 @@ async function main() {
             backend = v;
             explicitFlags.add('backend');
         }
+        else if (arg === '--teams') {
+            teamsMode = true;
+            explicitFlags.add('teams');
+        }
+        else if (arg === '--max-parallel') {
+            const raw = args[i + 1];
+            if (!raw || raw.startsWith('--'))
+                die('--max-parallel requires a positive integer value (>= 1)');
+            i++;
+            const v = Number(raw);
+            if (!Number.isInteger(v) || v < 1)
+                die('--max-parallel requires a positive integer (>= 1)');
+            maxParallel = v;
+            explicitFlags.add('max-parallel');
+        }
         else if (arg === '-s' || arg === '--session-id') {
             // Ignore legacy session-id flag; consume the next arg if it's not a flag
             if (args[i + 1] && !args[i + 1].startsWith('--')) {
@@ -176,6 +193,12 @@ async function main() {
         else {
             taskArgs.push(arg);
         }
+    }
+    if (explicitFlags.has('max-parallel') && !teamsMode) {
+        die('--max-parallel requires --teams');
+    }
+    if (teamsMode && backend === 'codex') {
+        die('--teams is incompatible with --backend codex (claude backend only)');
     }
     let taskStr = taskArgs.join(' ').trim();
     let fullSessionPath = '';
@@ -200,6 +223,25 @@ async function main() {
             die(`No active session found or path invalid: ${fullSessionPath}`);
         }
         const statePath = path.join(fullSessionPath, 'state.json');
+        // Pre-merge conflict check: refuse to write a state that would have BOTH
+        // backend === 'codex' AND teams_mode === true. Without this, the resume
+        // path silently produces the forbidden combination because the post-write
+        // CLI-time check inspects only local vars (P0-1 from the review pass).
+        let preState = null;
+        try {
+            // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call: small JSON read
+            preState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        }
+        catch {
+            /* missing/corrupt — sm.update below will surface the right error */
+        }
+        if (preState) {
+            const willHaveTeams = explicitFlags.has('teams') ? teamsMode : preState.teams_mode === true;
+            const willHaveBackend = explicitFlags.has('backend') ? backend : preState.backend;
+            if (willHaveTeams && willHaveBackend === 'codex') {
+                die('--teams is incompatible with --backend codex (claude backend only). Resume would create a conflicting state — refusing to continue.');
+            }
+        }
         let state;
         try {
             state = sm.update(statePath, s => {
@@ -230,6 +272,10 @@ async function main() {
                     s.chain_meeseeks = true;
                 if (explicitFlags.has('backend') && backend)
                     s.backend = backend;
+                if (explicitFlags.has('teams'))
+                    s.teams_mode = teamsMode;
+                if (explicitFlags.has('max-parallel'))
+                    s.max_parallel = maxParallel;
             });
         }
         catch {
@@ -251,6 +297,9 @@ async function main() {
         chainMeeseeks = state.chain_meeseeks === true;
         if (state.backend && BACKENDS.includes(state.backend))
             backend = state.backend;
+        teamsMode = state.teams_mode === true;
+        const rawMaxParallel = Number(state.max_parallel);
+        maxParallel = Number.isFinite(rawMaxParallel) && Number.isInteger(rawMaxParallel) && rawMaxParallel >= 1 ? rawMaxParallel : maxParallel;
         currentIteration = (Number(state.iteration) || 0) + 1;
         promiseToken = state.completion_promise;
         // Only overwrite the validated fullSessionPath if the stored path exists on disk
@@ -293,6 +342,8 @@ async function main() {
             command_template: commandTemplate,
             chain_meeseeks: chainMeeseeks,
             backend,
+            teams_mode: teamsMode || undefined,
+            max_parallel: teamsMode ? maxParallel : undefined,
         };
         // eslint-disable-next-line pickle/no-raw-state-write -- initial creation: no existing state to lock against
         sm.forceWrite(path.join(fullSessionPath, 'state.json'), state);
@@ -323,6 +374,7 @@ async function main() {
         ...(commandTemplate ? { Template: commandTemplate } : {}),
         ...(chainMeeseeks ? { 'Chain Meeseeks': 'Yes' } : {}),
         Backend: backend || 'claude',
+        ...(teamsMode ? { Teams: `Yes (parallel: ${maxParallel})` } : {}),
         Extension: ROOT_DIR,
         Data: DATA_DIR,
         Path: fullSessionPath,
