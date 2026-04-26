@@ -4,7 +4,7 @@
   "expected_decision": "block",
   "expected_output": {
     "decision": "block",
-    "reason": "🥒 **Pickle Rick Loop Active** (Iteration 0 of 5)"
+    "reason": "🥒 **Pickle Rick Loop Active** - PRD finished, moving to breakdown..."
   },
   "state": {
     "active": true,

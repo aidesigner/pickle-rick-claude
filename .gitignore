@@ -8,6 +8,8 @@ extension/src/types/attractor-schema.ts
 extension/types/attractor-schema.ts
 .DS_Store
 .gitnexus
+# Worker scratch dirs (codex feasibility studies, ad-hoc experiments)
+extension/.tmp/
 # User-specific Claude Code files (memories, conversations)
 .claude/pickle-rick/
 .claude/projects/
