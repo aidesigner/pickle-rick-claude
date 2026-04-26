@@ -93,7 +93,7 @@ Every violation emits with `[P<N>, conf=<score>]` per the `## Confidence Scoring
 Estimated iterations: N
 ```
 
-5. Do NOT modify any code. Output `<promise>TASK_COMPLETED</promise>` and stop.
+5. Do NOT modify any code. Output `<promise` + `>TASK_COMPLETED</promise>` and stop.
 
 Skip Steps 5–11 entirely.
 
@@ -224,7 +224,7 @@ Stall limit: STALL_LIMIT | Max iterations: MAX_ITER (includes gap analysis as it
  That was fake. I-I-I'm driven by finding that McNugget sauce."
 ```
 
-Output: `<promise>TASK_COMPLETED</promise>`
+Output: `<promise` + `>TASK_COMPLETED</promise>`
 
 ---
 

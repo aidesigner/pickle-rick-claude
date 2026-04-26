@@ -71,7 +71,7 @@ Mark checkboxes as sections are drafted.
 
 ### PRD Completion Protocol
 1. Run `node ${EXTENSION_ROOT}/extension/bin/update-state.js step breakdown ${SESSION_ROOT}`
-2. Output `<promise>PRD_COMPLETE</promise>`
+2. Output `<promise` + `>PRD_COMPLETE</promise>`
 3. Output `[STOP_TURN]` — FORBIDDEN from starting breakdown in this turn.
 
 # Phase 2: TICKET MANAGER
@@ -108,7 +108,7 @@ links:
 ### Ticket Manager Completion Protocol
 1. Select lowest-order non-Done ticket: `update-state.js current_ticket [ID] ${SESSION_ROOT}`
 2. Advance: `update-state.js step research ${SESSION_ROOT}`
-3. Output `<promise>TICKET_SELECTED</promise>`
+3. Output `<promise` + `>TICKET_SELECTED</promise>`
 4. Output `[STOP_TURN]` — FORBIDDEN from spawning Morty in this turn.
 
 # Phase 3: ORCHESTRATION (The Loop)
@@ -125,7 +125,7 @@ Process tickets one by one until ALL are Done.
 3. **Validate** (after Morty outputs `<promise>I AM DONE</promise>`): check `${SESSION_ROOT}/[id]/` for `research_*.md`, `research_review.md`, `plan_*.md`, `plan_review.md`, `conformance_*.md`, `code_review_*.md` — FORBIDDEN to mark Done if missing. Run `git status`, `git diff`, tests/build.
 4. **Cleanup**: validation fail → `git stash` + `git checkout .`; pass → commit
 5. **Update**: mark ticket Done in frontmatter
-6. **Signal**: output `<promise>TASK_COMPLETED</promise>` to confirm ticket completion
+6. **Signal**: output `<promise` + `>TASK_COMPLETED</promise>` to confirm ticket completion
 7. **Increment iteration**:
    ```bash
    CURRENT=$(node -e "console.log(JSON.parse(require('fs').readFileSync('${SESSION_ROOT}/state.json','utf-8')).iteration)")
@@ -133,4 +133,4 @@ Process tickets one by one until ALL are Done.
    ```
 8. **Next ticket**: repeat
 
-**All tickets Done**: mark parent Done. If on `main`/`master` → skip auto-PR, output `<promise>EPIC_COMPLETED</promise>`. Otherwise → `node ${EXTENSION_ROOT}/extension/services/pr-factory.js ${SESSION_ROOT}`, output `<promise>EPIC_COMPLETED</promise>`.
+**All tickets Done**: mark parent Done. If on `main`/`master` → skip auto-PR, output `<promise` + `>EPIC_COMPLETED</promise>`. Otherwise → `node ${EXTENSION_ROOT}/extension/services/pr-factory.js ${SESSION_ROOT}`, output `<promise` + `>EPIC_COMPLETED</promise>`.

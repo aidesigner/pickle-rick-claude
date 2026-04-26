@@ -37,4 +37,4 @@ mux-runner auto-creates the 4-pane monitor window on startup — no manual invoc
 ## Step 6: Report
 Print: session name, `tmux attach -t <name>`, window layout (monitor: dashboard top-left / log-stream top-right / morty-logs bottom-left / raw-morty bottom-right; runner: Ctrl+B 0), cancel: `cd <working_dir> && /eat-pickle`, emergency: `tmux kill-session -t <name>` then `node ~/.claude/pickle-rick/extension/bin/cancel.js`, state path: `<SESSION_ROOT>/state.json`.
 
-Output: `<promise>TASK_COMPLETED</promise>`
+Output: `<promise` + `>TASK_COMPLETED</promise>`

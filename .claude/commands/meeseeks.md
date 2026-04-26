@@ -65,7 +65,7 @@ mux-runner auto-creates the monitor window on startup (meeseeks layout — dashb
 Print: session name, `tmux attach -t <name>`, window layout (monitor: dashboard/log-stream/runner-log, runner: background), min/max passes, cancel: `cd <working_dir> && /eat-pickle`, emergency: `tmux kill-session -t <name>` then `node ~/.claude/pickle-rick/extension/bin/cancel.js`, state path: `<SESSION_ROOT>/state.json`.
 
 ### Step 9: Exit
-Output: `<promise>TASK_COMPLETED</promise>`
+Output: `<promise` + `>TASK_COMPLETED</promise>`
 
 ---
 
@@ -124,7 +124,7 @@ Only flag real issues. Every issue MUST be fixed — no "informational" items.
 
 **Issues found**: Fix all. Re-run tests until passing. Commit: `git add -A && git commit -m "meeseeks pass <N>: <summary>"`. Append findings summary.
 
-**No issues**: "EXISTENCE IS PAIN!" Append clean-pass entry. Output: `<promise>EXISTENCE_IS_PAIN</promise>`
+**No issues**: "EXISTENCE IS PAIN!" Append clean-pass entry. Output: `<promise` + `>EXISTENCE_IS_PAIN</promise>`
 
 The mux-runner handles min_iterations gating.
 
