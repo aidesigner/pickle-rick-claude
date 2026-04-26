@@ -13,6 +13,7 @@ import {
   assertCleanWorkingTree,
   writePipelineStatus,
   resolveBackendWithSource,
+  enterPicklePhase,
 } from '../bin/pipeline-runner.js';
 import { backendEnvOverrides } from '../services/backend-spawn.js';
 
@@ -847,5 +848,117 @@ describe('restamp guard', () => {
     const after = fs.statSync(statePath).mtimeMs;
     assert.equal(before, after, 'mtime must not change when guard short-circuits');
     fs.rmSync(path.dirname(statePath), { recursive: true });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// enterPicklePhase — guards against stale command_template and stale phase
+// config files from a previous run misrouting a resumed pickle worker.
+// ---------------------------------------------------------------------------
+
+function writeBaseState(statePath, overrides = {}) {
+  const base = {
+    active: false,
+    working_dir: '/tmp',
+    step: 'implement',
+    iteration: 7,
+    max_iterations: 100,
+    max_time_minutes: 720,
+    worker_timeout_seconds: 1200,
+    start_time_epoch: 1000,
+    completion_promise: null,
+    original_prompt: 'test',
+    current_ticket: 'TICKET-7',
+    history: [],
+    started_at: new Date().toISOString(),
+    session_dir: path.dirname(statePath),
+    tmux_mode: true,
+    chain_meeseeks: false,
+    backend: 'claude',
+    ...overrides,
+  };
+  fs.writeFileSync(statePath, JSON.stringify(base));
+}
+
+describe('pickle phase entry', () => {
+  test('overwrites stale command_template = "anatomy-park.md" with "pickle.md"', () => {
+    const dir = tmpDir();
+    const statePath = path.join(dir, 'state.json');
+    writeBaseState(statePath, { command_template: 'anatomy-park.md' });
+
+    enterPicklePhase(dir, statePath, 'claude');
+
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    assert.equal(state.command_template, 'pickle.md');
+    assert.equal(state.chain_meeseeks, false);
+    fs.rmSync(dir, { recursive: true });
+  });
+
+  test('overwrites stale command_template = "szechuan-sauce.md" with "pickle.md"', () => {
+    const dir = tmpDir();
+    const statePath = path.join(dir, 'state.json');
+    writeBaseState(statePath, { command_template: 'szechuan-sauce.md' });
+
+    enterPicklePhase(dir, statePath, 'claude');
+
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    assert.equal(state.command_template, 'pickle.md');
+    fs.rmSync(dir, { recursive: true });
+  });
+
+  test('preserves resume pointers (current_ticket, step, iteration, start_time_epoch)', () => {
+    const dir = tmpDir();
+    const statePath = path.join(dir, 'state.json');
+    writeBaseState(statePath, {
+      command_template: 'anatomy-park.md',
+      current_ticket: 'TICKET-42',
+      step: 'implement',
+      iteration: 13,
+      start_time_epoch: 1000,
+    });
+
+    enterPicklePhase(dir, statePath, 'claude');
+
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    assert.equal(state.current_ticket, 'TICKET-42');
+    assert.equal(state.step, 'implement');
+    assert.equal(state.iteration, 13);
+    assert.equal(state.start_time_epoch, 1000);
+    fs.rmSync(dir, { recursive: true });
+  });
+
+  test('removes stale anatomy-park.json and szechuan-sauce.json from session dir', () => {
+    const dir = tmpDir();
+    const statePath = path.join(dir, 'state.json');
+    writeBaseState(statePath, { command_template: 'anatomy-park.md' });
+    fs.writeFileSync(path.join(dir, 'anatomy-park.json'), '{"stale":true}');
+    fs.writeFileSync(path.join(dir, 'szechuan-sauce.json'), '{"stale":true}');
+
+    enterPicklePhase(dir, statePath, 'claude');
+
+    assert.ok(!fs.existsSync(path.join(dir, 'anatomy-park.json')));
+    assert.ok(!fs.existsSync(path.join(dir, 'szechuan-sauce.json')));
+    fs.rmSync(dir, { recursive: true });
+  });
+
+  test('is a no-op for missing phase config files', () => {
+    const dir = tmpDir();
+    const statePath = path.join(dir, 'state.json');
+    writeBaseState(statePath);
+
+    assert.doesNotThrow(() => enterPicklePhase(dir, statePath, 'claude'));
+    fs.rmSync(dir, { recursive: true });
+  });
+
+  test('updates state.backend on drift', () => {
+    const dir = tmpDir();
+    const statePath = path.join(dir, 'state.json');
+    writeBaseState(statePath, { backend: 'claude' });
+
+    enterPicklePhase(dir, statePath, 'codex');
+
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    assert.equal(state.backend, 'codex');
+    fs.rmSync(dir, { recursive: true });
   });
 });

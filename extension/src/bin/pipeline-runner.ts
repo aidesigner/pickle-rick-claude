@@ -301,6 +301,52 @@ export function cleanPhaseArtifacts(sessionDir: string, phase: string): void {
   }
 }
 
+/**
+ * Pickle phase entry: pin command_template and scrub stale phase configs.
+ *
+ * Two failure modes this guards against on resume:
+ *   1. command_template drift: a prior run advanced into anatomy-park or
+ *      szechuan-sauce and persisted its template. Without re-pinning, mux-runner
+ *      would spawn the pickle worker with the wrong prompt — worker runs the
+ *      wrong phase, commits with the wrong prefix, emits EPIC_COMPLETED for the
+ *      wrong reason. Always overwrite to 'pickle.md' on entry.
+ *   2. Stale phase config files (anatomy-park.json, szechuan-sauce.json) left
+ *      in the session dir from a previous run. A worker that scans the session
+ *      dir might infer wrong context even with the right template. Remove them.
+ *
+ * Intentionally does NOT touch current_ticket / step / iteration /
+ * start_time_epoch — pickle is the only phase that resumes mid-flight, and
+ * those pointers must survive an interrupted run.
+ */
+export function enterPicklePhase(
+  sessionDir: string,
+  statePath: string,
+  backend: Backend,
+): void {
+  // Fix A — pin command_template. Stale value from a previous anatomy-park or
+  // szechuan-sauce run would otherwise misroute the pickle worker.
+  sm.update(statePath, (s: State) => {
+    s.chain_meeseeks = false;
+    s.command_template = 'pickle.md';
+    if (s.backend !== backend) s.backend = backend;
+  });
+  // Fix B — scrub stale foreign-phase residue left behind by a previous
+  // pipeline run. cleanPhaseArtifacts archives TASK_NOTES.md / gap_analysis.md
+  // and removes handoff.txt for the named phase; the explicit unlinkSync of
+  // <phase>.json catches the microverse-runner convergence state files
+  // (anatomy-park.json, szechuan-sauce.json) which cleanPhaseArtifacts does
+  // not handle. Either residue can misroute a resumed pickle worker even
+  // after command_template is pinned.
+  cleanPhaseArtifacts(sessionDir, 'anatomy-park');
+  cleanPhaseArtifacts(sessionDir, 'szechuan-sauce');
+  for (const stalePhase of ['anatomy-park', 'szechuan-sauce']) {
+    const stalePath = path.join(sessionDir, `${stalePhase}.json`);
+    if (fs.existsSync(stalePath)) {
+      try { fs.unlinkSync(stalePath); } catch { /* best effort */ }
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Scope Lifecycle
 // ---------------------------------------------------------------------------
@@ -799,10 +845,12 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
       // instead of transitioning to the deprecated meeseeks review loop.
       // Re-stamp backend only when it drifted: resetStateForPhase on later
       // phases preserves it, but a pre-existing state.json could differ.
-      sm.update(statePath, s => {
-        s.chain_meeseeks = false;
-        if (s.backend !== backend) s.backend = backend;
-      });
+      // Pin command_template='pickle.md' and scrub stale anatomy-park.json /
+      // szechuan-sauce.json so a resumed pickle phase can't be misrouted by
+      // residue from a previous run. Helper preserves current_ticket / step /
+      // iteration / start_time_epoch — pickle is the only phase that resumes
+      // mid-flight; the others wipe via resetStateForPhase on every entry.
+      enterPicklePhase(sessionDir, statePath, backend);
       exitCode = await spawnRunner('node', [
         path.join(extensionRoot, 'extension', 'bin', 'mux-runner.js'), sessionDir,
       ], phaseEnv);
