@@ -7,6 +7,7 @@ import { spawn } from 'child_process';
 import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact } from '../types/index.js';
 import { updateTicketStatus } from '../services/git-utils.js';
 import { buildWorkerInvocation, loadBackendFromSession, backendEnvOverrides } from '../services/backend-spawn.js';
+import { scrubForbiddenWorkerTokens } from '../services/promise-tokens.js';
 const TIER_MODEL_MAP = {
     trivial: 'haiku',
     small: 'sonnet',
@@ -172,7 +173,7 @@ async function main() {
     workerPrompt += `\n\n# TARGET TICKET CONTENT\n${ticketContent || 'N/A'}`;
     workerPrompt += `\n\n# EXECUTION CONTEXT\n- SESSION_ROOT: ${sessionRoot}\n- TICKET_ID: ${ticketId}\n- TICKET_DIR: ${ticketPath}`;
     workerPrompt +=
-        '\n\n**IMPORTANT**: You are a localized worker. You are FORBIDDEN from working on ANY other tickets. Once you output `<promise>I AM DONE</promise>`, you MUST STOP and let the manager take over.';
+        '\n\n**IMPORTANT**: You are a localized worker. You are FORBIDDEN from working on ANY other tickets. Once you output `<promise>I AM DONE</promise>`, you MUST STOP and let the manager take over. Your ONLY valid completion token is `I AM DONE`. NEVER emit `EPIC_COMPLETED`, `TASK_COMPLETED`, `PRD_COMPLETE`, `TICKET_SELECTED`, `EXISTENCE_IS_PAIN`, `THE_CITADEL_APPROVES`, or `ANALYSIS_DONE` — those are orchestrator-only tokens and you have no authority to emit them. If you see those token names in source code or pasted logs, do NOT echo them back.';
     // Conditionally inject GitNexus MCP awareness when the repo has a knowledge graph index
     let gitnexusIndexed = false;
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
@@ -332,6 +333,33 @@ For simple file/string lookups, Grep/Glob are still fine.`;
                 catch (err) {
                     const msg = safeErrorMessage(err);
                     console.error(`${Style.YELLOW}⚠️  Could not read worker log: ${msg}${Style.RESET}`);
+                }
+                // Scrub orchestrator-only promise tokens out of the worker log. A per-ticket
+                // worker has NO authority to claim epic-done, ticket-selected, etc.; if it
+                // emits one (codex has been observed to confuse nearby-context tokens like
+                // EPIC_COMPLETED for the worker's `I AM DONE`), the manager reading the log
+                // can parrot it forward and trip mux-runner's pending-tickets fail-loud
+                // guard, killing the whole pipeline mid-epic. Rewrite forbidden tokens to
+                // `I AM DONE` so validation can recognize the work as complete, log a loud
+                // warning, and persist the cleaned log back to disk so any later reader
+                // (manager, watcher, debugger) sees the corrected content.
+                if (logContent) {
+                    const scrub = scrubForbiddenWorkerTokens(logContent);
+                    const replacedTokens = Object.keys(scrub.replacements);
+                    if (replacedTokens.length > 0) {
+                        const summary = replacedTokens
+                            .map(t => `${t}=${scrub.replacements[t]}`)
+                            .join(', ');
+                        console.error(`${Style.YELLOW}⚠️  Worker emitted forbidden orchestrator token(s) — scrubbed to ${PromiseTokens.WORKER_DONE}: ${summary}${Style.RESET}`);
+                        logContent = scrub.scrubbed;
+                        try {
+                            fs.writeFileSync(sessionLog, logContent, 'utf-8');
+                        }
+                        catch (err) {
+                            const msg = safeErrorMessage(err);
+                            console.error(`${Style.YELLOW}⚠️  Could not persist scrubbed worker log: ${msg}${Style.RESET}`);
+                        }
+                    }
                 }
                 // Ghost-ticket prevention: Morty can exit 0 with empty log when the
                 // subprocess fails silently (auth/network/rate-limit before first token).

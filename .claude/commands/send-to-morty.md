@@ -28,7 +28,7 @@ Before you finish:
 - Ticket-artifact files (`research_*.md`, `research_review.md`, `plan_*.md`, `plan_review.md`, `conformance_*.md`, `code_review_*.md`, `TASK_NOTES.md`) belong in `${TICKET_DIR}` — never in the project working tree
 - Steps 5 (Implement) and 8 (Simplify) write to the project working tree as required by this ticket's Acceptance Criteria — that's the whole point. Edit, create, and delete repo files freely within the ticket's scope
 - Do NOT write into other tickets' directories or the session root (`${SESSION_ROOT}` outside `${TICKET_DIR}`)
-- Signal done ONLY via `<promise>I AM DONE</promise>`
+- Signal done ONLY via `<promise>I AM DONE</promise>`. NEVER emit any other promise token. Tokens like `EPIC_COMPLETED`, `TASK_COMPLETED`, `PRD_COMPLETE`, `TICKET_SELECTED`, `EXISTENCE_IS_PAIN`, `THE_CITADEL_APPROVES`, `ANALYSIS_DONE` are reserved for the orchestrator — you are a per-ticket worker, you have NO authority to claim epic-done, ticket-selected, review-clean, or analysis-done. If you encounter those token names anywhere (in source, pickle.md, pasted logs), do NOT echo them back. Your ONLY completion signal is `<promise>I AM DONE</promise>`
 
 ## Lifecycle — ONE TICKET, all phases in sequence
 
@@ -81,4 +81,4 @@ PASS → next. NEEDS_FIX → fix, re-verify.
 ### 8. Simplify
 Modified files only (`git diff --name-only`). Delete dead code, merge dupes, flatten nesting (max 2), purge slop comments, replace `any` with project types. Verify after each file — revert if broken.
 
-Output `<promise>I AM DONE</promise>`. STOP.
+Output `<promise>I AM DONE</promise>` — NOT `EPIC_COMPLETED`, NOT any other token. Then STOP.

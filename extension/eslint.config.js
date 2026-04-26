@@ -16,6 +16,8 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       '@typescript-eslint/no-explicit-any': 'warn',
+      complexity: ['warn', { max: 15 }],
+      'max-lines-per-function': ['warn', { max: 120, skipBlankLines: true, skipComments: true }],
       'no-control-regex': 'off',
       'no-empty': ['error', { allowEmptyCatch: true }],
       'preserve-caught-error': 'off',
@@ -31,6 +33,18 @@ export default tseslint.config(
       'pickle/no-sync-in-async': 'warn',
       'pickle/spawn-error-handler': 'error',
       'pickle/no-hardcoded-timeout': 'error',
+    },
+  },
+  {
+    files: ['src/services/dot-builder.ts'],
+    rules: {
+      'max-lines-per-function': ['warn', { max: 200, skipBlankLines: true, skipComments: true }],
+    },
+  },
+  {
+    files: ['src/bin/microverse-runner.ts'],
+    rules: {
+      'max-lines-per-function': ['warn', { max: 200, skipBlankLines: true, skipComments: true }],
     },
   },
   {

@@ -1,0 +1,24 @@
+digraph "snap_competing" {
+  graph [goal="competing snapshot baseline", label="snap-competing: competing snapshot baseline", rankdir="LR", retry_target="fix_types"]
+  /* DEFENSE MATRIX
+   * competitive: true
+   * adversarial: false
+   * specDriven: NONE
+   * guardrails: P0c
+   * permissions: none
+   */
+  start [shape="Mdiamond"]
+  setup_deps [label="setup_deps", shape="parallelogram", tool_command="cd ${WORKING_DIR} && npm install 2>&1 || pnpm install 2>&1 || yarn install 2>&1"]
+  capture_baseline [label="capture_baseline", read_only="true", shape="parallelogram", tool_command="cd ${WORKING_DIR} && (npx tsc --noEmit 2>&1 | grep -c 'error TS' > /tmp/baseline_ts_errors.txt || echo 0 > /tmp/baseline_ts_errors.txt) && (npx eslint src/ 2>&1 | grep -c 'error' > /tmp/baseline_lint_errors.txt || echo 0 > /tmp/baseline_lint_errors.txt)"]
+  solver_a [label="solver A", max_parallel="1", shape="component"]
+  solver_b [label="solver B", max_parallel="1", shape="component"]
+  competing_merge [label="competing_merge", shape="tripleoctagon"]
+  exit [label="exit", shape="Msquare"]
+  start -> setup_deps
+  setup_deps -> capture_baseline
+  capture_baseline -> solver_a
+  capture_baseline -> solver_b
+  solver_a -> competing_merge
+  solver_b -> competing_merge
+  competing_merge -> exit
+}
