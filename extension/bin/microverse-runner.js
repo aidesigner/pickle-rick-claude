@@ -391,8 +391,11 @@ export async function main(sessionDir) {
         writeMicroverseState(sessionDir, mvState);
     }
     const workingDir = state.working_dir || process.cwd();
-    // Pre-flight: dirty tree check — auto-commit instead of aborting
-    if (isWorkingTreeDirty(workingDir)) {
+    // Pre-flight: dirty tree check — auto-commit instead of aborting.
+    // Exclude prds/ and docs/ so user doc edits aren't swept into a microverse
+    // commit (matches pipeline-runner's clean-tree exclusions).
+    const PREFLIGHT_DIRT_EXCLUDES = ['prds', 'docs'];
+    if (isWorkingTreeDirty(workingDir, PREFLIGHT_DIRT_EXCLUDES)) {
         // eslint-disable-next-line pickle/no-sync-in-async -- sync guard is fine here; pre-flight before async work
         if (!fs.existsSync(path.join(workingDir, '.git'))) {
             log('ERROR: Working tree is dirty and not a git repository. Aborting.');
