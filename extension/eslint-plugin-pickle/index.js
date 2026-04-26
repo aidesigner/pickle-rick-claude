@@ -554,8 +554,9 @@ const promiseTokenFormat = {
   },
   create(context) {
     const filename = context.filename || context.getFilename();
-    // Allow the definition file itself
+    // Allow the definition files (canonical sources of truth)
     if (/types[/\\]index\./.test(filename)) return {};
+    if (/services[/\\]promise-tokens\./.test(filename)) return {};
     // Allow test files
     if (/tests?[/\\]/.test(filename)) return {};
 

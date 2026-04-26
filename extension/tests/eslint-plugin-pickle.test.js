@@ -321,6 +321,8 @@ describe('pickle/promise-token-format', () => {
         { code: `const t = PromiseTokens.EPIC_COMPLETED;`, filename: 'src/bin/setup.ts' },
         // Token in definition file is fine
         { code: `const EPIC_COMPLETED = 'EPIC_COMPLETED';`, filename: 'src/types/index.ts' },
+        // Token in canonical promise-tokens module is fine
+        { code: `const TOKENS = ['EPIC_COMPLETED', 'TASK_COMPLETED'];`, filename: 'src/services/promise-tokens.ts' },
         // Token in test file is fine
         { code: `const r = 'EPIC_COMPLETED';`, filename: 'tests/stop-hook.test.js' },
         // Non-token string is fine
