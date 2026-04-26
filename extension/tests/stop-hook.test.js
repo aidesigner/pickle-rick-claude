@@ -172,6 +172,38 @@ test('stop-hook: tmux_mode, no PICKLE_STATE_FILE (main window) → approve, stat
   assert.equal(state.active, true, 'main window must not deactivate the session');
 });
 
+test('stop-hook: stale state (active:false + tmux_mode:true) → inactive path fires first, not tmux defer', () => {
+    // REGRESSION: a stale state.json from a prior tmux session (active:false but
+    // tmux_mode:true) used to short-circuit through the "tmux defer" early-exit
+    // BEFORE the inactive check, masking a wrong-state-file resolution bug. The
+    // inactive check must fire first so the decision reflects the actual state.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-stale-'));
+    const sessionDir = path.join(tmpDir, 'session');
+    fs.mkdirSync(sessionDir);
+    const stateFile = path.join(sessionDir, 'state.json');
+    fs.writeFileSync(stateFile, JSON.stringify(baseState({ active: false, tmux_mode: true })));
+    fs.writeFileSync(
+        path.join(tmpDir, 'current_sessions.json'),
+        JSON.stringify({ [process.cwd()]: sessionDir }),
+    );
+    const env = { ...process.env, EXTENSION_DIR: tmpDir, FORCE_COLOR: '0', PICKLE_STATE_FILE: stateFile };
+    delete env.PICKLE_ROLE;
+    try {
+        execFileSync(process.execPath, [STOP_HOOK], {
+            input: JSON.stringify({ last_assistant_message: '' }),
+            encoding: 'utf-8',
+            env,
+        });
+        const debugLog = fs.readFileSync(path.join(tmpDir, 'debug.log'), 'utf-8');
+        assert.match(debugLog, /Decision: APPROVE \(Session inactive\)/,
+            'stale inactive session must hit the inactive branch, not tmux defer');
+        assert.doesNotMatch(debugLog, /tmux mode — main window defers to tmux-runner/,
+            'inactive check must fire before tmux defer check');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('stop-hook: tmux_mode, PICKLE_STATE_FILE set (subprocess) → does not early-exit', () => {
   // Subprocess: has PICKLE_STATE_FILE, should fall through to normal block logic
   const { decision } = runHook({

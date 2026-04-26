@@ -122,17 +122,21 @@ async function main() {
     const isWorker = role === 'worker';
     log(`State: active=${state.active}, iteration=${state.iteration}/${state.max_iterations}`);
     log(`Context: role=${role}, isWorker=${isWorker}, cwd=${process.cwd()}`);
-    // 5a. In tmux mode, allow the main Claude window to exit freely.
+    // 5a. Inactive sessions exit cleanly regardless of tmux_mode. A stale state.json
+    // with tmux_mode:true and active:false from a prior session must not short-circuit
+    // through the tmux defer path — that would mask the more accurate "session inactive"
+    // exit and (when the wrong state file is resolved at all) hide bugs in resolution.
+    if (state.active !== true) {
+        log('Decision: APPROVE (Session inactive)');
+        approve();
+        return;
+    }
+    // 5b. In tmux mode, allow the main Claude window to exit freely.
     // tmux-runner sets PICKLE_STATE_FILE for its subprocesses; the main Claude window has
     // no such env var. We use this to distinguish the two — the early-exit must NOT fire
     // for tmux-runner subprocesses (they still need block/checkpoint handling to run phases).
     if (state.tmux_mode === true && !process.env.PICKLE_STATE_FILE) {
         log('Decision: APPROVE (tmux mode — main window defers to tmux-runner)');
-        approve();
-        return;
-    }
-    if (state.active !== true) {
-        log('Decision: APPROVE (Session inactive)');
         approve();
         return;
     }

@@ -15,6 +15,7 @@ import {
     pruneOldSessions,
     extractFrontmatter,
     getExtensionRoot,
+    getDataRoot,
     markTicketDone,
     markTicketSkipped,
     safeErrorMessage,
@@ -60,6 +61,54 @@ test('getExtensionRoot: defaults to ~/.claude/pickle-rick', () => {
     } finally {
         if (saved !== undefined) process.env.EXTENSION_DIR = saved;
     }
+});
+
+// --- getDataRoot ---
+
+function withCleanDataEnv(fn) {
+    const savedData = process.env.PICKLE_DATA_DIR;
+    const savedExt = process.env.EXTENSION_DIR;
+    try {
+        delete process.env.PICKLE_DATA_DIR;
+        delete process.env.EXTENSION_DIR;
+        fn();
+    } finally {
+        if (savedData === undefined) delete process.env.PICKLE_DATA_DIR;
+        else process.env.PICKLE_DATA_DIR = savedData;
+        if (savedExt === undefined) delete process.env.EXTENSION_DIR;
+        else process.env.EXTENSION_DIR = savedExt;
+    }
+}
+
+test('getDataRoot: PICKLE_DATA_DIR overrides everything', () => {
+    withCleanDataEnv(() => {
+        process.env.PICKLE_DATA_DIR = '/explicit/data';
+        process.env.EXTENSION_DIR = '/some/extension';
+        assert.equal(getDataRoot(), '/explicit/data');
+    });
+});
+
+test('getDataRoot: EXTENSION_DIR=tmpdir is honored for test isolation', () => {
+    withCleanDataEnv(() => {
+        process.env.EXTENSION_DIR = '/tmp/pickle-test-isolated';
+        assert.equal(getDataRoot(), '/tmp/pickle-test-isolated');
+    });
+});
+
+test('getDataRoot: EXTENSION_DIR=canonical install path is IGNORED (production)', () => {
+    // REGRESSION: dispatch.ts injects EXTENSION_DIR=~/.claude/pickle-rick into every
+    // hook subprocess. Before the fix, getDataRoot returned that install path,
+    // so hooks read sessions from the install dir instead of ~/.local/share/pickle-rick.
+    withCleanDataEnv(() => {
+        process.env.EXTENSION_DIR = path.join(os.homedir(), '.claude/pickle-rick');
+        assert.equal(getDataRoot(), path.join(os.homedir(), '.local/share/pickle-rick'));
+    });
+});
+
+test('getDataRoot: defaults to ~/.local/share/pickle-rick when nothing set', () => {
+    withCleanDataEnv(() => {
+        assert.equal(getDataRoot(), path.join(os.homedir(), '.local/share/pickle-rick'));
+    });
 });
 
 test('pipeline-runner: spawn targets are under extension/bin/, never directly under extensionRoot/bin/', () => {

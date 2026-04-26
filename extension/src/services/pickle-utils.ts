@@ -170,14 +170,21 @@ export function getExtensionRoot(): string {
  *
  * Resolution order:
  *   1. PICKLE_DATA_DIR (explicit override — production or test)
- *   2. EXTENSION_DIR (test-harness convenience: when tests pin the extension
- *      root to a tmp dir, mirror data there so a single env var still isolates
- *      a test run. Never set in production — production hits case 3.)
+ *   2. EXTENSION_DIR — ONLY when it's been pinned to a non-canonical path
+ *      (test-harness convenience: tests redirect data into the same tmp dir
+ *      they pin the extension root to). The hook dispatcher sets EXTENSION_DIR
+ *      to the canonical install path (~/.claude/pickle-rick) in production,
+ *      which would otherwise poison data resolution — every hook subprocess
+ *      would read sessions from the install dir instead of the XDG data dir.
  *   3. ~/.local/share/pickle-rick (production default)
  */
 export function getDataRoot(): string {
   if (process.env.PICKLE_DATA_DIR) return process.env.PICKLE_DATA_DIR;
-  if (process.env.EXTENSION_DIR) return process.env.EXTENSION_DIR;
+  const extDir = process.env.EXTENSION_DIR;
+  if (extDir) {
+    const canonicalExtDir = path.join(os.homedir(), '.claude/pickle-rick');
+    if (path.resolve(extDir) !== path.resolve(canonicalExtDir)) return extDir;
+  }
   return path.join(os.homedir(), '.local/share/pickle-rick');
 }
 
