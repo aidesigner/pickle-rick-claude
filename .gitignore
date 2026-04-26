@@ -1,5 +1,6 @@
 node_modules/
 *.log
+!extension/tests/fixtures/iteration-logs/*.log
 *.dot
 !extension/tests/__fixtures__/*.dot
 !extension/tests/__fixtures__/**/*.dot

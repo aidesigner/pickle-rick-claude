@@ -158,60 +158,93 @@ export function findPendingNonCurrentTickets(
   });
 }
 
+// Codex plain-text block delimiters. A line matching this regex marks the
+// start of a new named block; content between a 'codex' delimiter and the
+// next delimiter (or EOF) is assistant output. All other blocks are dropped.
+const CODEX_DELIMITER_RE = /^(user|codex|exec|tokens used|reasoning|tool_call)\s*$/;
+
 /**
- * Extracts text content from assistant messages in stream-json output.
- * Filters out tool_result / user / system lines so that promise tokens
- * embedded in reviewed source code (e.g. stop-hook.ts containing
- * `<promise>EPIC_COMPLETED</promise>`) do not cause false matches.
+ * Extracts text content from assistant messages.
  *
- * Stream-json detection: if any non-empty line is valid JSON, the entire
- * output is treated as stream-json. Non-JSON lines in stream-json output
- * (e.g. error text from a catch block) are skipped — they are artifacts,
- * not model responses, and must not trigger promise token matches.
+ * Detection precedence:
+ * 1. Stream-json: ≥1 line parses as JSON with type:'assistant'. Extracts
+ *    only assistant text blocks and result blocks. Non-JSON lines and all
+ *    other JSON types (user, system, tool_use) are skipped.
+ * 2. Codex plain-text: ≥1 line matches CODEX_DELIMITER_RE. Extracts content
+ *    between 'codex' delimiters only; user/exec/tokens/reasoning/tool_call
+ *    blocks are dropped. Multi-turn: union of all surviving codex blocks.
+ * 3. Pure plain-text fallback: returns output as-is.
  *
- * For pure plain-text output (zero JSON lines), every line is included
- * as-is, preserving backward compatibility with non-stream-json callers.
+ * Promise tokens embedded in reviewed source (tool_result, user prompts,
+ * codex user blocks) are excluded in all modes.
  */
 export function extractAssistantContent(output: string): string {
   const lines = output.split('\n');
 
-  // First pass: detect stream-json mode
+  // Mode 1: stream-json — requires ≥1 JSON line that is a typed object
+  // ({type:...}). Bare JSON values (null, numbers, arrays, objects without
+  // a 'type' key) do NOT trigger this mode, so codex logs with a stray null
+  // line fall through to codex-mode detection instead of silently eating all
+  // content as stream-json with zero extractions.
   let isStreamJson = false;
-  for (const line of lines) {
-    if (!line.trim()) continue;
-    try { JSON.parse(line); isStreamJson = true; break; } catch { /* not JSON */ }
-  }
-
-  const parts: string[] = [];
   for (const line of lines) {
     if (!line.trim()) continue;
     try {
       const parsed = JSON.parse(line);
-      if (parsed.type === 'assistant') {
-        const content = parsed.message?.content;
-        if (Array.isArray(content)) {
-          for (const block of content) {
-            if (block.type === 'text' && typeof block.text === 'string') {
-              parts.push(block.text);
-            }
-          }
-        } else if (typeof content === 'string') {
-          parts.push(content);
-        }
-      } else if (parsed.type === 'result' && typeof parsed.result === 'string') {
-        parts.push(parsed.result);
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) && 'type' in parsed) {
+        isStreamJson = true;
+        break;
       }
-      // Intentionally skip: user (tool_result), system, tool_use
-    } catch {
-      // Non-JSON line: only include in pure plain-text mode.
-      // In stream-json mode, non-JSON lines are catch/error artifacts — skip
-      // them to prevent false promise token matches.
-      if (!isStreamJson) {
-        parts.push(line);
-      }
-    }
+    } catch { /* not JSON */ }
   }
-  return parts.join('\n');
+
+  if (isStreamJson) {
+    const parts: string[] = [];
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const parsed = JSON.parse(line);
+        if (parsed.type === 'assistant') {
+          const content = parsed.message?.content;
+          if (Array.isArray(content)) {
+            for (const block of content) {
+              if (block.type === 'text' && typeof block.text === 'string') {
+                parts.push(block.text);
+              }
+            }
+          } else if (typeof content === 'string') {
+            parts.push(content);
+          }
+        } else if (parsed.type === 'result' && typeof parsed.result === 'string') {
+          parts.push(parsed.result);
+        }
+        // Intentionally skip: user (tool_result), system, tool_use
+      } catch { /* skip non-JSON in stream-json mode */ }
+    }
+    return parts.join('\n');
+  }
+
+  // Mode 2: codex plain-text — block-delimiter format.
+  let isCodexMode = false;
+  for (const line of lines) {
+    if (CODEX_DELIMITER_RE.test(line)) { isCodexMode = true; break; }
+  }
+
+  if (isCodexMode) {
+    const parts: string[] = [];
+    let inCodexBlock = false;
+    for (const line of lines) {
+      if (CODEX_DELIMITER_RE.test(line)) {
+        inCodexBlock = /^codex\s*$/.test(line);
+        continue;
+      }
+      if (inCodexBlock) parts.push(line);
+    }
+    return parts.join('\n');
+  }
+
+  // Mode 3: pure plain-text fallback — return everything.
+  return output;
 }
 
 /**
