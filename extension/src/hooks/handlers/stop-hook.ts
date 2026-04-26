@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn } from 'child_process';
 import { State, HookInput, PromiseTokens, hasToken } from '../../types/index.js';
+import { PROMISE_TOKENS } from '../../services/promise-tokens.js';
 import { resolveStateFile, approve } from '../resolve-state.js';
 import { getExtensionRoot, getDataRoot, safeErrorMessage } from '../../services/pickle-utils.js';
 import { StateManager } from '../../services/state-manager.js';
@@ -187,7 +188,7 @@ async function main() {
   const isTicketSelected = !isWorker && hasToken(responseText, PromiseTokens.TICKET_SELECTED);
 
   log(
-    `Promises: hasPromise=${hasPromise}, isEpicDone=${isEpicDone}, isTaskFinished=${isTaskFinished}, isWorkerDone=${isWorkerDone}, isAnalysisDone=${isAnalysisDone}, isExistenceIsPain=${isExistenceIsPain}, isPrdDone=${isPrdDone}, isTicketSelected=${isTicketSelected}`
+    `Promises(${PROMISE_TOKENS.length}): hasPromise=${hasPromise}, isEpicDone=${isEpicDone}, isTaskFinished=${isTaskFinished}, isWorkerDone=${isWorkerDone}, isAnalysisDone=${isAnalysisDone}, isExistenceIsPain=${isExistenceIsPain}, isPrdDone=${isPrdDone}, isTicketSelected=${isTicketSelected}`
   );
 
   // EXIT CONDITIONS: Full Exit

@@ -45,6 +45,7 @@ export const VALID_STEPS = ['prd', 'breakdown', 'research', 'plan', 'implement',
 // ---------------------------------------------------------------------------
 // Promise Tokens
 // ---------------------------------------------------------------------------
+export { PROMISE_TOKENS } from '../services/promise-tokens.js';
 export const PromiseTokens = {
     EPIC_COMPLETED: 'EPIC_COMPLETED',
     TASK_COMPLETED: 'TASK_COMPLETED',

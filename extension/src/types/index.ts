@@ -120,6 +120,8 @@ export type Step = typeof VALID_STEPS[number];
 // Promise Tokens
 // ---------------------------------------------------------------------------
 
+export { PROMISE_TOKENS, type PromiseToken } from '../services/promise-tokens.js';
+
 export const PromiseTokens = {
   EPIC_COMPLETED: 'EPIC_COMPLETED',
   TASK_COMPLETED: 'TASK_COMPLETED',

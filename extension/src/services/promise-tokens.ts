@@ -1,0 +1,12 @@
+export const PROMISE_TOKENS = [
+  'EPIC_COMPLETED',
+  'TASK_COMPLETED',
+  'ANALYSIS_DONE',
+  'EXISTENCE_IS_PAIN',
+  'THE_CITADEL_APPROVES',
+  'WORKER_DONE',
+  'PRD_COMPLETE',
+  'TICKET_SELECTED',
+] as const;
+
+export type PromiseToken = typeof PROMISE_TOKENS[number];

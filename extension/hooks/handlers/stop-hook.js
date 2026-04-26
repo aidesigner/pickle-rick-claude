@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn } from 'child_process';
 import { PromiseTokens, hasToken } from '../../types/index.js';
+import { PROMISE_TOKENS } from '../../services/promise-tokens.js';
 import { resolveStateFile, approve } from '../resolve-state.js';
 import { getExtensionRoot, getDataRoot, safeErrorMessage } from '../../services/pickle-utils.js';
 import { StateManager } from '../../services/state-manager.js';
@@ -171,7 +172,7 @@ async function main() {
     // Checkpoint Tokens (block exit in inline mode, approve in tmux mode for respawn)
     const isPrdDone = !isWorker && hasToken(responseText, PromiseTokens.PRD_COMPLETE);
     const isTicketSelected = !isWorker && hasToken(responseText, PromiseTokens.TICKET_SELECTED);
-    log(`Promises: hasPromise=${hasPromise}, isEpicDone=${isEpicDone}, isTaskFinished=${isTaskFinished}, isWorkerDone=${isWorkerDone}, isAnalysisDone=${isAnalysisDone}, isExistenceIsPain=${isExistenceIsPain}, isPrdDone=${isPrdDone}, isTicketSelected=${isTicketSelected}`);
+    log(`Promises(${PROMISE_TOKENS.length}): hasPromise=${hasPromise}, isEpicDone=${isEpicDone}, isTaskFinished=${isTaskFinished}, isWorkerDone=${isWorkerDone}, isAnalysisDone=${isAnalysisDone}, isExistenceIsPain=${isExistenceIsPain}, isPrdDone=${isPrdDone}, isTicketSelected=${isTicketSelected}`);
     // EXIT CONDITIONS: Full Exit
     if (hasPromise || isEpicDone || isTaskFinished || isWorkerDone || isAnalysisDone || isExistenceIsPain) {
         // min_iterations gate: applies to review-clean tokens (EXISTENCE_IS_PAIN / THE_CITADEL_APPROVES)

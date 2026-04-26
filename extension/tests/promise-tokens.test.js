@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PromiseTokens, hasToken, wrapToken } from '../types/index.js';
+import { PROMISE_TOKENS } from '../services/promise-tokens.js';
 
 // ---------------------------------------------------------------------------
 // wrapToken
@@ -140,4 +141,42 @@ test('PromiseTokens: THE_CITADEL_APPROVES is "THE_CITADEL_APPROVES"', () => {
 
 test('hasToken: detects THE_CITADEL_APPROVES with whitespace tolerance', () => {
   assert.equal(hasToken('<promise> THE_CITADEL_APPROVES </promise>', PromiseTokens.THE_CITADEL_APPROVES), true);
+});
+
+// ---------------------------------------------------------------------------
+// PROMISE_TOKENS constants module
+// ---------------------------------------------------------------------------
+
+test('PROMISE_TOKENS: has exactly 8 entries', () => {
+  assert.equal(PROMISE_TOKENS.length, 8);
+});
+
+test('PROMISE_TOKENS: contains all expected key names', () => {
+  const expected = [
+    'EPIC_COMPLETED',
+    'TASK_COMPLETED',
+    'ANALYSIS_DONE',
+    'EXISTENCE_IS_PAIN',
+    'THE_CITADEL_APPROVES',
+    'WORKER_DONE',
+    'PRD_COMPLETE',
+    'TICKET_SELECTED',
+  ];
+  for (const name of expected) {
+    assert.ok(PROMISE_TOKENS.includes(name), `Missing ${name} from PROMISE_TOKENS`);
+  }
+});
+
+test('PROMISE_TOKENS: every key name exists as a key in PromiseTokens object', () => {
+  for (const key of PROMISE_TOKENS) {
+    assert.ok(key in PromiseTokens, `PROMISE_TOKENS key "${key}" not found in PromiseTokens object`);
+  }
+});
+
+test('PROMISE_TOKENS: no duplicate entries', () => {
+  const seen = new Set();
+  for (const name of PROMISE_TOKENS) {
+    assert.ok(!seen.has(name), `Duplicate entry "${name}" in PROMISE_TOKENS`);
+    seen.add(name);
+  }
 });
