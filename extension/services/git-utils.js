@@ -126,8 +126,18 @@ export function resetToSha(sha, cwd) {
     runGit(['reset', '--hard', sha], cwd);
     runGit(['clean', '-fd'], cwd);
 }
-export function isWorkingTreeDirty(cwd) {
-    return runGit(['status', '--porcelain'], cwd).trim().length > 0;
+export function isWorkingTreeDirty(cwd, excludePrefixes) {
+    const args = ['status', '--porcelain'];
+    if (excludePrefixes && excludePrefixes.length > 0) {
+        args.push('--', '.');
+        for (const prefix of excludePrefixes) {
+            const cleaned = prefix.replace(/^\.?\/+/, '').replace(/\/+$/, '');
+            if (cleaned.length === 0)
+                continue;
+            args.push(`:!${cleaned}`, `:!${cleaned}/**`);
+        }
+    }
+    return runGit(args, cwd).trim().length > 0;
 }
 /**
  * Returns file-level diff between `base` and `head` for `repoRoot`.

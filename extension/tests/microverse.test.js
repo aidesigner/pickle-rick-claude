@@ -56,6 +56,42 @@ test('isWorkingTreeDirty returns true when untracked file exists', () => {
     }
 });
 
+test('isWorkingTreeDirty ignores excluded path prefixes (untracked + modified + nested)', () => {
+    const dir = createTempGitRepo();
+    try {
+        fs.mkdirSync(path.join(dir, 'prds'));
+        fs.mkdirSync(path.join(dir, 'docs', 'sub'), { recursive: true });
+        fs.writeFileSync(path.join(dir, 'prds', 'untracked.md'), '# new');
+        fs.writeFileSync(path.join(dir, 'docs', 'sub', 'nested.md'), '# nested');
+        // Tracked-then-modified file under prds/
+        fs.writeFileSync(path.join(dir, 'prds', 'tracked.md'), 'v1');
+        execSync('git add prds/tracked.md && git commit -m "track prd"', { cwd: dir, stdio: 'pipe' });
+        fs.writeFileSync(path.join(dir, 'prds', 'tracked.md'), 'v2');
+
+        assert.equal(isWorkingTreeDirty(dir), true, 'no exclusions: dirty');
+        assert.equal(isWorkingTreeDirty(dir, ['prds', 'docs']), false, 'excluded both: clean');
+        assert.equal(isWorkingTreeDirty(dir, ['prds']), true, 'docs/ still dirty');
+
+        fs.writeFileSync(path.join(dir, 'src.txt'), 'real change');
+        assert.equal(isWorkingTreeDirty(dir, ['prds', 'docs']), true, 'change outside excluded dirs is dirty');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('isWorkingTreeDirty tolerates trailing slashes and leading ./ in exclude prefixes', () => {
+    const dir = createTempGitRepo();
+    try {
+        fs.mkdirSync(path.join(dir, 'prds'));
+        fs.writeFileSync(path.join(dir, 'prds', 'a.md'), '# a');
+        assert.equal(isWorkingTreeDirty(dir, ['prds/']), false);
+        assert.equal(isWorkingTreeDirty(dir, ['./prds']), false);
+        assert.equal(isWorkingTreeDirty(dir, ['']), true, 'empty string ignored, still dirty');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
 // --- microverse-state tests ---
 
 const TEST_METRIC = {

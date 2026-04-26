@@ -129,8 +129,17 @@ export function resetToSha(sha: string, cwd: string): void {
   runGit(['clean', '-fd'], cwd);
 }
 
-export function isWorkingTreeDirty(cwd: string): boolean {
-  return runGit(['status', '--porcelain'], cwd).trim().length > 0;
+export function isWorkingTreeDirty(cwd: string, excludePrefixes?: string[]): boolean {
+  const args = ['status', '--porcelain'];
+  if (excludePrefixes && excludePrefixes.length > 0) {
+    args.push('--', '.');
+    for (const prefix of excludePrefixes) {
+      const cleaned = prefix.replace(/^\.?\/+/, '').replace(/\/+$/, '');
+      if (cleaned.length === 0) continue;
+      args.push(`:!${cleaned}`, `:!${cleaned}/**`);
+    }
+  }
+  return runGit(args, cwd).trim().length > 0;
 }
 
 export type DiffStatus = 'A' | 'M' | 'D' | 'R' | 'B';

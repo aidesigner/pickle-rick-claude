@@ -59,7 +59,10 @@ interface PipelineConfig {
   anatomy_max_iterations: number;
   szechuan_max_iterations: number;
   backend?: Backend;
+  ignore_dirty_paths: string[];
 }
+
+const DEFAULT_IGNORE_DIRTY_PATHS: readonly string[] = ['prds', 'docs'];
 
 type PipelineStatusKind = 'running' | 'completed' | 'failed' | 'cancelled';
 
@@ -83,6 +86,10 @@ export function parsePipelineConfig(raw: Record<string, unknown>): PipelineConfi
     typeof rawBackend === 'string' && (BACKENDS as readonly string[]).includes(rawBackend)
       ? (rawBackend as Backend)
       : undefined;
+  const rawIgnore = raw.ignore_dirty_paths;
+  const ignore_dirty_paths = Array.isArray(rawIgnore) && rawIgnore.every((p) => typeof p === 'string')
+    ? (rawIgnore as string[])
+    : [...DEFAULT_IGNORE_DIRTY_PATHS];
   return {
     phases: Array.isArray(raw.phases) ? raw.phases as PipelinePhase[] : [],
     target: (raw.target as string) || '',
@@ -93,6 +100,7 @@ export function parsePipelineConfig(raw: Record<string, unknown>): PipelineConfi
     anatomy_max_iterations: Number.isFinite(Number(raw.anatomy_max_iterations)) ? Number(raw.anatomy_max_iterations) : 100,
     szechuan_max_iterations: Number.isFinite(Number(raw.szechuan_max_iterations)) ? Number(raw.szechuan_max_iterations) : 50,
     backend,
+    ignore_dirty_paths,
   };
 }
 
@@ -197,11 +205,17 @@ export function discoverSubsystems(target: string): { name: string; fileCount: n
  * masks which phase introduced which change — downstream microverse phases
  * would otherwise auto-commit the user's pre-existing work under a generic
  * message. Fail fast so the user makes that call deliberately.
+ *
+ * `ignoreDirtyPaths` excludes those path prefixes (typically docs/prds) from
+ * the dirty check — frequent doc edits during a long-running epic shouldn't
+ * block resume. Defaults to ['prds', 'docs'] when omitted.
  */
-export function assertCleanWorkingTree(workingDir: string): void {
-  if (!isWorkingTreeDirty(workingDir)) return;
+export function assertCleanWorkingTree(workingDir: string, ignoreDirtyPaths?: string[]): void {
+  const ignore = ignoreDirtyPaths ?? [...DEFAULT_IGNORE_DIRTY_PATHS];
+  if (!isWorkingTreeDirty(workingDir, ignore)) return;
+  const suffix = ignore.length > 0 ? ` (ignored prefixes: ${ignore.join(', ')})` : '';
   throw new Error(
-    `Working tree at ${workingDir} is dirty. Commit, stash, or discard changes before starting the pipeline (git status).`,
+    `Working tree at ${workingDir} is dirty${suffix}. Commit, stash, or discard changes before starting the pipeline (git status).`,
   );
 }
 
@@ -704,8 +718,9 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
 
   // Pre-flight: refuse to start on a dirty tree. Downstream phases auto-commit
   // on their own, which would roll the user's unrelated WIP into a pipeline
-  // commit and obscure which phase changed what.
-  assertCleanWorkingTree(workingDir);
+  // commit and obscure which phase changed what. `ignore_dirty_paths` (default
+  // ['prds', 'docs']) carves out doc dirs that get edited during long epics.
+  assertCleanWorkingTree(workingDir, config.ignore_dirty_paths);
 
   // Scope resolution (optional). argv > pipeline.json. Omitted → no scope.json,
   // no phases_entered — pipeline-runner behaves as it did pre-change.

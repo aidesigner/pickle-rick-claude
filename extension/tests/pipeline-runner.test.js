@@ -601,6 +601,31 @@ describe('parsePipelineConfig', () => {
     const config = parsePipelineConfig({ phases: [], target: '' });
     assert.equal(config.backend, undefined);
   });
+
+  test('defaults ignore_dirty_paths to ["prds","docs"]', () => {
+    const config = parsePipelineConfig({ phases: [], target: '' });
+    assert.deepEqual(config.ignore_dirty_paths, ['prds', 'docs']);
+  });
+
+  test('roundtrips ignore_dirty_paths when array of strings', () => {
+    const config = parsePipelineConfig({ phases: [], target: '', ignore_dirty_paths: ['notes', 'wip'] });
+    assert.deepEqual(config.ignore_dirty_paths, ['notes', 'wip']);
+  });
+
+  test('roundtrips empty ignore_dirty_paths (opt-out)', () => {
+    const config = parsePipelineConfig({ phases: [], target: '', ignore_dirty_paths: [] });
+    assert.deepEqual(config.ignore_dirty_paths, []);
+  });
+
+  test('falls back to default when ignore_dirty_paths is non-array', () => {
+    const config = parsePipelineConfig({ phases: [], target: '', ignore_dirty_paths: 'prds' });
+    assert.deepEqual(config.ignore_dirty_paths, ['prds', 'docs']);
+  });
+
+  test('falls back to default when ignore_dirty_paths contains non-strings', () => {
+    const config = parsePipelineConfig({ phases: [], target: '', ignore_dirty_paths: ['prds', 42] });
+    assert.deepEqual(config.ignore_dirty_paths, ['prds', 'docs']);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -638,6 +663,35 @@ describe('assertCleanWorkingTree', () => {
     initRepo(dir);
     fs.writeFileSync(path.join(dir, 'README.md'), 'changed');
     assert.throws(() => assertCleanWorkingTree(dir), /dirty/);
+    fs.rmSync(dir, { recursive: true });
+  });
+
+  test('default ignore list excludes prds/ and docs/ from dirty check', () => {
+    const dir = tmpDir();
+    initRepo(dir);
+    fs.mkdirSync(path.join(dir, 'prds'));
+    fs.mkdirSync(path.join(dir, 'docs'));
+    fs.writeFileSync(path.join(dir, 'prds', 'idea.md'), 'wip');
+    fs.writeFileSync(path.join(dir, 'docs', 'guide.md'), 'wip');
+    assert.doesNotThrow(() => assertCleanWorkingTree(dir));
+    // Anything outside still trips the check.
+    fs.writeFileSync(path.join(dir, 'src.js'), 'real change');
+    assert.throws(() => assertCleanWorkingTree(dir), /dirty/);
+    fs.rmSync(dir, { recursive: true });
+  });
+
+  test('explicit ignore list overrides defaults', () => {
+    const dir = tmpDir();
+    initRepo(dir);
+    fs.mkdirSync(path.join(dir, 'prds'));
+    fs.writeFileSync(path.join(dir, 'prds', 'idea.md'), 'wip');
+    // Empty list disables exclusions — prds/ now trips the check.
+    assert.throws(() => assertCleanWorkingTree(dir, []), /dirty/);
+    // Custom list accepts unrelated dirs.
+    fs.rmSync(path.join(dir, 'prds'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'notes'));
+    fs.writeFileSync(path.join(dir, 'notes', 'jot.md'), 'wip');
+    assert.doesNotThrow(() => assertCleanWorkingTree(dir, ['notes']));
     fs.rmSync(dir, { recursive: true });
   });
 });
