@@ -10,6 +10,8 @@ New to PRDs? See the **[PRD Writing Guide](PRD_GUIDE.md)** for developers or the
 
 > **New in v1.51+: Codex backend.** `/pickle`, `/pickle-tmux`, `/pickle-microverse`, `/anatomy-park`, and `/szechuan-sauce` now accept `--backend codex` (or `PICKLE_BACKEND=codex`) to route worker and manager spawns through `codex exec` (GPT-5.4) instead of `claude`. Useful for a second-opinion implementation pass or benchmarking backends. `/council-of-ricks` has a separate Codex integration — its Phase C adversarial reviewer runs by default (`--no-codex` to disable).
 
+> **New in v1.55+: Agent Teams mode.** `/pickle --teams` opts into harness-native worker spawning (`TeamCreate` + `Agent` + `TaskUpdate`) instead of the `spawn-morty.js` subprocess path. Each ticket runs as a `morty-implementer` subagent on the team and signals completion via `TaskUpdate` rather than the legacy `WORKER_DONE` token + log-size check — strict all-of artifact validation gates each commit. Sequential v1; `--max-parallel <N>` (default 5) is plumbed for the parallel-fan-out follow-up. Claude backend only — incompatible with `--backend codex`. Default behavior (no flag) is unchanged. Spec: [`prds/pickle-agent-teams.md`](prds/pickle-agent-teams.md).
+
 ---
 
 ## How to Build Things with Pickle Rick
@@ -72,6 +74,8 @@ Sit back. Rick handles the rest.
 
 > **Backend choice** — append `--backend codex` (or export `PICKLE_BACKEND=codex`) to route worker/manager spawns through `codex exec` instead of `claude`. See [Codex backend](#codex-backend) below for precedence and examples.
 
+> **Worker-spawn mechanism** — `/pickle --teams` swaps the per-ticket `claude -p` subprocess for a harness-native subagent on a team (`TeamCreate` + `Agent` + `TaskUpdate`). Same 8-phase lifecycle, same artifact contract, no token-sniffing log heuristics. Claude backend only. See [Agent Teams Mode](#agent-teams) below.
+
 ### Step 4 (Optional): Metric-Driven Refinement
 
 If you can define a measurable goal — test coverage, response time, bundle size, extraction accuracy — the Microverse grinds toward it. Each cycle: make one change, measure, keep or revert. Failed approaches are tracked so it never repeats a dead end.
@@ -82,7 +86,7 @@ If you can define a measurable goal — test coverage, response time, bundle siz
 /pickle-microverse --goal "error messages are user-friendly and actionable" --task "improve UX"
 ```
 
-<a id="codex-backend"></a>**Codex backend** — `/pickle`, `/pickle-tmux`, `/szechuan-sauce`, `/anatomy-park`, and `/pickle-microverse` accept `--backend codex` to route the implementation spawn through `codex exec` (via the installed Codex CLI plugin) instead of `claude`. The choice is persisted in `state.json` and survives resume; omit the flag to keep the default `claude` backend. Set `PICKLE_BACKEND=codex` for a session-independent alternative that persists across commands. Precedence: CLI flag > env var > session state > default `claude`.
+<a id="codex-backend"></a>**Codex backend** — `/pickle`, `/pickle-tmux`, `/szechuan-sauce`, `/anatomy-park`, and `/pickle-microverse` accept `--backend codex` to route the implementation spawn through `codex exec` (via the installed Codex CLI plugin) instead of `claude`. The choice is persisted in `state.json` and survives resume; omit the flag to keep the default `claude` backend. Set `PICKLE_BACKEND=codex` for a session-independent alternative that persists across commands. Precedence: CLI flag > env var > session state > default `claude`. **Incompatible with `--teams`** — agent-teams mode is claude-harness-native; setup rejects the combination at session creation and on `--resume` in either direction.
 
 ```bash
 /pickle --backend codex "refactor the auth middleware"
@@ -94,6 +98,18 @@ PICKLE_BACKEND=codex /pickle-tmux "refactor the auth middleware"
 ```
 
 `/council-of-ricks` integrates Codex differently — its Phase C runs an adversarial Codex subagent by default (`--no-codex` to disable, `--codex-timeout <sec>` to tune). See the Council of Ricks section below.
+
+<a id="agent-teams"></a>**Agent Teams mode** *(v1.55+, claude backend only)* — `/pickle --teams` switches Phase 3 from spawning per-ticket `claude -p` subprocesses to spawning subagents on a harness-native team. Each ticket runs as a `morty-implementer` agent (`Agent` tool with `team_name` + `subagent_type`) that signals completion via `TaskUpdate(status="completed")` instead of the legacy `<promise>I AM DONE</promise>` token + log-size check. Manager-side validation switches to a strict all-of artifact check (`validate-teams-ticket.js`): every required prefix (`research_*.md`, `plan_*.md`, `conformance_*.md`, `code_review_*.md`) must have a matching file or the ticket is marked Failed. The flag is persisted in `state.json` and survives resume.
+
+```bash
+/pickle --teams "add a /healthz endpoint"
+/pickle --teams --max-parallel 10 "build the caching layer"   # plumbed; v1 sequential
+/pickle --resume                                              # teams_mode survives resume
+```
+
+Subagent definitions live at `~/.claude/agents/morty-implementer.md` (8-phase implementation lifecycle) and `~/.claude/agents/morty-reviewer.md` (4-phase review lifecycle). Both are deployed by `install.sh`. v1 always dispatches `morty-implementer`; review-group dispatch via `morty-reviewer` is a follow-up — see the [PRD](prds/pickle-agent-teams.md) for the v1 boundary. Legacy subprocess path is untouched and remains the default — passing no `--teams` flag preserves byte-for-byte v1.54 behavior.
+
+When NOT to use: codex backend (rejected at setup), `/pickle-tmux` / `/pickle-zellij` / `/pickle-microverse` / `/pickle-pipeline` (out of scope for v1; legacy spawn only). When to use: epics where you want clean bidirectional comms with the worker, native completion notifications, and the strictest artifact gate available.
 
 ### Step 5 (Optional): Cleanup
 
@@ -294,7 +310,7 @@ Queue tasks for unattended batch execution overnight.
 | `/help-pickle` | Show all commands and flags |
 | `/meeseeks` | **Deprecated** — superseded by `/anatomy-park` and `/szechuan-sauce` |
 
-† accepts `--backend <claude\|codex>` to swap the worker/manager spawn backend (or set `PICKLE_BACKEND=codex`). `/council-of-ricks` has a separate Codex integration (Phase C adversarial reviewer, `--no-codex` / `--codex-timeout`).
+† accepts `--backend <claude\|codex>` to swap the worker/manager spawn backend (or set `PICKLE_BACKEND=codex`). `/council-of-ricks` has a separate Codex integration (Phase C adversarial reviewer, `--no-codex` / `--codex-timeout`). `/pickle` additionally accepts `--teams` (claude only) to spawn workers via harness team primitives — see [Agent Teams](#agent-teams).
 
 ### Flags
 
@@ -355,6 +371,7 @@ Most flags are command-scoped. The table groups them by command family — flags
 ### Tips
 
 - **`/pickle` vs `/pickle-tmux`** — `/pickle` for short epics (1–7 iterations, full keyboard access); `/pickle-tmux` for long epics (8+) where each iteration spawns a fresh Claude subprocess with a clean context window.
+- **`/pickle` vs `/pickle --teams`** — both run the same 8-phase lifecycle. Default (no flag) spawns `claude -p` subprocesses per ticket; `--teams` spawns harness-native subagents on a team. Use teams when you want cleaner completion signals (`TaskUpdate` instead of token sniffing) and stricter artifact validation. Use the default when you need the codex backend, are running through `mux-runner` (`/pickle-tmux` / `/pickle-zellij` / `/pickle-microverse` / `/pickle-pipeline`), or just want byte-for-byte v1.54 behavior.
 - **"Stop hook error" is normal** — Claude Code labels every `decision: block` from the stop hook as "Stop hook error" in the UI. Not an error — the loop is working.
 - **Recovering from a failed Morty** — `/pickle-retry <ticket-id>` instead of restarting the whole epic.
 
