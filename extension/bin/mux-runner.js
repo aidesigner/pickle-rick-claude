@@ -1256,7 +1256,7 @@ async function main() {
             const pendingOthers = findPendingNonCurrentTickets(allTickets, curState.current_ticket || null);
             if (pendingOthers.length > 0) {
                 const ids = pendingOthers.map(t => t.id).filter((s) => !!s);
-                log(`ERROR: ${PromiseTokens.EPIC_COMPLETED} received but ${pendingOthers.length} ticket(s) still pending: ${ids.join(', ')}. Not marking current_ticket Done; exiting non-zero.`);
+                log(`ERROR: ${PromiseTokens.EPIC_COMPLETED} received but ${pendingOthers.length} ticket(s) still pending: ${ids.join(', ')}. Not marking current_ticket Done; exiting non-zero.\n       Iteration log: ${iterLogFile}`);
                 logActivity({
                     event: 'pending_tickets_on_completion',
                     source: 'pickle',
