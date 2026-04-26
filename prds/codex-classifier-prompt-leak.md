@@ -87,8 +87,8 @@ Out:
 |---|---|---|
 | R1 | P0 | `extractAssistantContent` MUST distinguish prompt content from model response in codex plain-text logs. |
 | R2 | P0 | `classifyCompletion` MUST return `'task_completed'` only when the model's response (not the prompt) contains the EPIC_COMPLETED token. |
-| R3 | P0 | Worker template files (`pickle.md`, `meeseeks.md`, `szechuan-sauce.md`, `microverse.md`, `pickle-tmux.md`) MUST NOT contain the literal substring `<promise>EPIC_COMPLETED</promise>` (or any other classifier-matched token in unbroken form). Use a sentinel/escaped form that documents the contract without colliding with the scanner. |
-| R4 | P1 | Stream-json detection MUST NOT silently fall through to plain-text mode for codex logs — codex format detection should be explicit. |
+| R3 | P0 | Worker template files (`pickle.md`, `meeseeks.md`, `szechuan-sauce.md`, `microverse.md`, `pickle-tmux.md`) MUST NOT contain any classifier-matched promise token in unbroken substring form. The authoritative token list is enumerated at `extension/src/hooks/handlers/stop-hook.ts:170-183` (8 tokens: `EPIC_COMPLETED`, `TASK_COMPLETED`, `ANALYSIS_DONE`, `EXISTENCE_IS_PAIN`, `THE_CITADEL_APPROVES`, `WORKER_DONE`, `PRD_COMPLETE`, `TICKET_SELECTED`, plus the per-session `state.completion_promise` variable). The template-scrubber test MUST source its blocklist from that file (or a constants module both files import) so renames cannot drift the two surfaces apart. Use a sentinel/escaped form that documents the contract without colliding with the scanner. |
+| R4 | P1 | Codex output format MUST be detected explicitly via the block-delimiter rule in R1, not via "stream-json failed → assume plain-text." If a future codex release drops or renames the `user`/`codex`/`exec`/`tokens used`/`reasoning`/`tool_call` delimiters, detection MUST fail loud (CI smoke pinned to `codex --version`) rather than silently regress to the prompt-leaking plain-text fallback. R4 is the *fail-loud* contract; the parser fix lives in R1. |
 | R5 | P1 | `mux-runner` regression tests MUST cover: codex log with promise tokens only in prompt → `'continue'`; codex log with promise tokens in model response → `'task_completed'`; claude log with promise tokens in prompt-shaped JSON → `'continue'`. |
 | R6 | P2 | When `classifyCompletion` returns `'task_completed'` and the all-tickets-pending guard fires, the runner SHOULD include the iteration log path in the error message so operators can diagnose without grepping logs by hand. |
 
@@ -101,7 +101,7 @@ Out:
 Detection precedence (top wins):
 
 1. **Stream-json**: ≥1 line parses as JSON AND ≥1 of those is `{type:"assistant", ...}`. Keep only `type:"assistant"` and `type:"result"` text content.
-2. **Codex plain-text**: ≥1 line matches `/^(user|codex|exec|tokens used|reasoning|tool_call)\s*$/` as a block delimiter. Treat content between a `codex` delimiter and the next delimiter (or EOF) as assistant content. Treat content after `user` / `exec` as non-assistant and drop.
+2. **Codex plain-text**: ≥1 line matches `/^(user|codex|exec|tokens used|reasoning|tool_call)\s*$/` as a block delimiter. Treat content between a `codex` delimiter and the next delimiter (or EOF) as assistant content. Treat content after `user` / `exec` / `tokens used` / `reasoning` / `tool_call` as non-assistant and drop. **Multi-turn handling**: when the same iteration log contains multiple `user` blocks (codex re-prompted mid-iteration), every `user` block is dropped — only `codex` blocks survive. The classifier scans the union of all surviving `codex` blocks; a token in any one of them counts.
 3. **Pure plain-text fallback**: neither detection above. Keep all lines (preserves existing non-codex non-claude callers).
 
 Stream-json detection bug fix: a single non-`type:"assistant"` JSON line (e.g. `null`, `42`, `{type:"system"}`) MUST NOT trigger stream-json mode. Detection requires evidence of *assistant* JSON, not just *any* JSON.
@@ -190,10 +190,18 @@ Fixture corpus: `extension/tests/fixtures/iteration-logs/`
 - Restores codex backend as a viable production option. Today, the only safe workaround is `--backend claude`, foreclosing codex's cost advantage on long-running sessions.
 - Hardens the contract between worker prompts and runner classifiers. Once promise tokens cannot bleed from prompts into classifier matches, future template authors gain a substantive guarantee instead of a "don't accidentally include the literal token" landmine.
 
+## Coupling with God-Function Remediation Epic
+
+This PRD shares a parsing surface with **T5 (`stop-hook.ts` split, 8-token detectors)** in `prds/god-functions-remediation.md`. Both depend on a single authoritative enumeration of the promise tokens.
+
+**Ordering**: this PRD lands FIRST. T5 then consumes the tokens-constants module this PRD introduces (or, if no module is introduced, T5 imports the same `stop-hook.ts:170-183` constants the template-scrubber test imports). Landing T5 first risks two simultaneous renames of the token list with no shared source of truth.
+
+**Coordination**: if both PRDs are open at once, the codex-classifier fix MUST extract a shared `extension/src/services/promise-tokens.ts` constants module, and T5's plan must be amended to import from it instead of redeclaring the literals.
+
 ## Stakeholders
 
 - **Author**: Gregory Dickson (Pickle Rick)
-- **Implementer**: TBD (single Morty worker, ~half-day estimate excluding fixture authoring)
+- **Implementer**: TBD (single Morty worker, ~half-day estimate excluding fixture authoring). **Backend constraint**: implement and verify with `--backend claude`. Running this fix through `--backend codex` would reproduce the very bug being fixed and risk silent loss of the implementer's own work mid-PR.
 - **Reviewers**: any operator who has run `/pickle-tmux --backend codex`
 
 ## References
