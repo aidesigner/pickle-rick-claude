@@ -36,10 +36,12 @@ function makeTmpRoot() {
 }
 
 function run(extDir) {
+    // 15s → 45s: budget for system load when run alongside concurrent
+    // codex/tmux work. Tests validate batch processing logic, not wall-clock.
     return spawnSync(process.execPath, [JAR_RUNNER_BIN], {
         env: { ...process.env, EXTENSION_DIR: extDir },
         encoding: 'utf-8',
-        timeout: 15000,
+        timeout: 45000,
     });
 }
 

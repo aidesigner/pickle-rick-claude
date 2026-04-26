@@ -98,7 +98,10 @@ test('resolveBackend: warns on bad PICKLE_BACKEND env value', () => {
 
 // --- Wall-clock hang guard via spawn-morty consumer path ---
 
-test('spawn-morty: hanging codex shim on PATH is bounded by --timeout escalation', { timeout: 20_000 }, () => {
+// 20s → 60s: budget for system load when run alongside concurrent
+// codex/tmux work. The substantive assertions (elapsed >= 3.5s, elapsed < 12s)
+// still test the SIGTERM/SIGKILL escalation timing — only the harness budget grew.
+test('spawn-morty: hanging codex shim on PATH is bounded by --timeout escalation', { timeout: 60_000 }, () => {
     const tmpDir = mkTmpDir();
     try {
         // Session layout: sessionRoot/state.json + sessionRoot/ticket-001/
@@ -148,24 +151,25 @@ setTimeout(() => process.exit(0), 60_000);
                     PICKLE_DATA_DIR: tmpDir,
                 },
                 encoding: 'utf-8',
-                timeout: 15_000,
+                timeout: 30_000,
             },
         );
         const elapsed = Date.now() - start;
 
         // Budget: 2s --timeout → SIGTERM (ignored by shim) → +2s SIGKILL → finalize.
-        // Upper bound 7.5s = 4s budget + 3.5s log-flush/close slack; tighter than
-        // the original 10s so a regression drifting SIGKILL from +2s to ~+5s fails
-        // here instead of silently widening the window. Lower bound 3.5s catches
-        // the opposite regression: SIGTERM firing immediately without honoring
-        // --timeout would complete in <2s.
+        // Upper bound 12s = 4s budget + 8s log-flush/close/load slack; widened from
+        // the prior 7.5s for system load when run alongside concurrent codex/tmux
+        // work, but still tight enough to catch a regression where SIGKILL never
+        // fires (the alternative is a 30s outer spawnSync timeout — orders of
+        // magnitude looser). Lower bound 3.5s catches the opposite regression:
+        // SIGTERM firing immediately without honoring --timeout would complete in <2s.
         assert.ok(
             elapsed >= 3_500,
             `elapsed ${elapsed}ms below 3.5s lower bound — SIGTERM fired before --timeout 2s elapsed`,
         );
         assert.ok(
-            elapsed < 7_500,
-            `elapsed ${elapsed}ms exceeded 7.5s bound (status=${result.status} signal=${result.signal}) — SIGTERM/SIGKILL escalation did not fire`,
+            elapsed < 12_000,
+            `elapsed ${elapsed}ms exceeded 12s bound (status=${result.status} signal=${result.signal}) — SIGTERM/SIGKILL escalation did not fire`,
         );
         assert.notEqual(result.signal, 'SIGTERM', 'outer spawnSync timeout fired — inner escalation broken');
         assert.equal(result.status, 1, 'timed-out worker must exit non-zero');

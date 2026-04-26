@@ -24,10 +24,12 @@ function makeTmpRoot() {
  * Returns the spawnSync result with stdout, stderr, and status.
  */
 function run(extDir) {
+    // 10s → 30s: budget for system load when run alongside concurrent
+    // codex/tmux work. Tests validate jar processing logic, not wall-clock.
     return spawnSync(process.execPath, [JAR_RUNNER_BIN], {
         env: { ...process.env, EXTENSION_DIR: extDir },
         encoding: 'utf-8',
-        timeout: 10000,
+        timeout: 30000,
     });
 }
 

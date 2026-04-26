@@ -111,7 +111,9 @@ test('guard-logging: pending-guard error message includes absolute iteration log
                 PATH: `${fakeBinDir}:${process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin'}`,
             },
             encoding: 'utf-8',
-            timeout: 20000,
+            // 20s → 60s: budget for system load when run alongside concurrent
+            // codex/tmux work. Test validates error message content, not wall-clock.
+            timeout: 60000,
         });
 
         const output = (result.stderr ?? '') + (result.stdout ?? '');

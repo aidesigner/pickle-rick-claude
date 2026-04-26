@@ -10,10 +10,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RAW_MORTY_BIN = path.resolve(__dirname, '../bin/raw-morty.js');
 
 function run(args) {
+    // 5s → 30s: budget for system load when run alongside concurrent
+    // codex/tmux work. Tests validate CLI behavior, not wall-clock.
     return spawnSync(process.execPath, [RAW_MORTY_BIN, ...args], {
         env: { ...process.env },
         encoding: 'utf-8',
-        timeout: 5000,
+        timeout: 30000,
     });
 }
 

@@ -1189,7 +1189,8 @@ describe('Convergence v8 topology — refined PRD §5 ACs', () => {
             t.skip(`attractor unreachable: ${cliPath} missing`);
             return;
         }
-        const ver = spawnSync('bun', ['--version'], { timeout: 2000, encoding: 'utf8' });
+        // 2s → 10s: load-tolerance for bun probe under concurrent test runs.
+        const ver = spawnSync('bun', ['--version'], { timeout: 10000, encoding: 'utf8' });
         if (ver.status !== 0) {
             process.stderr.write('[AC-INT-2] attractor unreachable: bun --version failed\n');
             t.skip('attractor unreachable: bun --version failed');
@@ -1198,7 +1199,8 @@ describe('Convergence v8 topology — refined PRD §5 ACs', () => {
         // AC-INT-1: integration reachable. Invoke the CLI with `--help` to probe the
         // binary without coupling to the attractor parser — the goal is to verify
         // the gate ran, not to assert cross-project parser compatibility.
-        const run = spawnSync('bun', [cliPath, '--help'], { timeout: 10000, encoding: 'utf8' });
+        // 10s → 30s: load-tolerance for bun --help under concurrent test runs.
+        const run = spawnSync('bun', [cliPath, '--help'], { timeout: 30000, encoding: 'utf8' });
         assert.ok(run.signal !== 'SIGTERM', `attractor CLI must not time out: signal=${run.signal}`);
         process.stderr.write(`[AC-INT-1] attractor reachable, --help status=${run.status}\n`);
     });

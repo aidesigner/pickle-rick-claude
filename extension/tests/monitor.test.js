@@ -25,10 +25,12 @@ const MONITOR_BIN = path.resolve(__dirname, '../bin/monitor.js');
  * @param {string[]} args - CLI arguments
  */
 function run(args) {
+    // 10s → 45s: budget for system load when run alongside concurrent
+    // codex/tmux work. Tests validate CLI/panel output, not wall-clock.
     return spawnSync(process.execPath, [MONITOR_BIN, ...args], {
         env: { ...process.env },
         encoding: 'utf-8',
-        timeout: 10000,
+        timeout: 45000,
     });
 }
 

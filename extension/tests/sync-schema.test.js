@@ -42,11 +42,13 @@ function validSchema() {
 
 function runSync(env = {}) {
     return new Promise((resolve) => {
+        // 15s → 45s: budget for system load when run alongside concurrent
+        // codex/tmux work. Tests validate sync output, not wall-clock.
         const child = execFile(
             process.execPath,
             [SYNC_SCRIPT],
             {
-                timeout: 15_000,
+                timeout: 45_000,
                 env: { ...process.env, ...env },
                 cwd: path.resolve(__dirname, '..'),
             },
@@ -114,7 +116,8 @@ describe('sync-schema', () => {
             const child = execFile(
                 process.execPath,
                 [SYNC_SCRIPT],
-                { timeout: 15_000, env, cwd: path.resolve(__dirname, '..') },
+                // 15s → 45s: load-tolerance under concurrent test runs.
+                { timeout: 45_000, env, cwd: path.resolve(__dirname, '..') },
                 (err, stdout, stderr) => {
                     resolve({
                         code: err ? (err.code ?? 1) : 0,
@@ -153,7 +156,8 @@ describe('sync-schema', () => {
                 tscBin,
                 ['--noEmit', '--strict', '--esModuleInterop', OUTPUT_FILE],
                 {
-                    timeout: 30_000,
+                    // 30s → 90s: tsc compile budget under concurrent test runs.
+                    timeout: 90_000,
                     cwd: path.resolve(__dirname, '..', '..'),
                 },
                 (err, stdout, stderr) => {

@@ -543,9 +543,11 @@ test('state persistence: write then read back produces equivalent state', () => 
 const CIRCUIT_RESET_BIN = path.join(import.meta.dirname, '..', 'bin', 'circuit-reset.js');
 
 function runResetCli(args, env = {}) {
+    // 10s → 30s: budget for system load when run alongside concurrent
+    // codex/tmux work. Tests validate CLI behavior, not wall-clock.
     return spawnSync(process.execPath, [CIRCUIT_RESET_BIN, ...args], {
         encoding: 'utf-8',
-        timeout: 10000,
+        timeout: 30000,
         env: { ...process.env, ...env },
     });
 }

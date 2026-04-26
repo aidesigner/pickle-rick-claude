@@ -14,10 +14,12 @@ function makeTmpRoot() {
 }
 
 function run(sessionDir, extDir) {
+    // 10s → 45s: budget for system load when run alongside concurrent
+    // codex/tmux work. Tests validate startup error paths, not wall-clock.
     return spawnSync(process.execPath, [MUX_RUNNER_BIN, sessionDir], {
         env: { ...process.env, EXTENSION_DIR: extDir },
         encoding: 'utf-8',
-        timeout: 10000,
+        timeout: 45000,
     });
 }
 

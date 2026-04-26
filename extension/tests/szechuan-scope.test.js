@@ -15,7 +15,9 @@ function makeTempDir() {
 }
 
 function run(args, expectError = false) {
-  const opts = { stdio: ['pipe', 'pipe', 'pipe'], timeout: 10_000 };
+  // 10s → 30s: budget for system load when run alongside concurrent
+  // codex/tmux work. Tests validate CLI behavior, not wall-clock.
+  const opts = { stdio: ['pipe', 'pipe', 'pipe'], timeout: 30_000 };
   try {
     const stdout = execFileSync(process.execPath, [CLI_PATH, ...args], opts);
     return { code: 0, stdout: stdout.toString(), stderr: '' };

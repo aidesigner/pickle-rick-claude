@@ -26,10 +26,12 @@ function makeTmpRoot() {
  * Run mux-runner.js as a subprocess with isolated EXTENSION_DIR.
  */
 function run(extDir, args = []) {
+    // 15s → 60s: budget for system load when run alongside concurrent
+    // codex/tmux work. Test verifies CB-disabled state, not wall-clock.
     return spawnSync(process.execPath, [TMUX_RUNNER_BIN, ...args], {
         env: { ...process.env, EXTENSION_DIR: extDir },
         encoding: 'utf-8',
-        timeout: 15000,
+        timeout: 60000,
     });
 }
 

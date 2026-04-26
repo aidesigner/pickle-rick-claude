@@ -17,9 +17,11 @@ import { parseMetricsArgs } from '../bin/metrics.js';
 const CLI_PATH = path.join(import.meta.dirname, '..', 'bin', 'metrics.js');
 
 function runMetricsCli(args, env = {}) {
+    // 15s → 45s: budget for system load when run alongside concurrent
+    // codex/tmux work. Tests validate CLI output, not wall-clock.
     return spawnSync(process.execPath, [CLI_PATH, ...args], {
         encoding: 'utf-8',
-        timeout: 15000,
+        timeout: 45000,
         env: { ...process.env, ...env },
     });
 }

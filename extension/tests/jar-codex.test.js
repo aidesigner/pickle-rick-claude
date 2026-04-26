@@ -75,7 +75,7 @@ function setupCodexTask(tmpRoot, taskId = 'codex-task-1') {
 
 // --- Test 1: panel shows Backend: codex for codex-backed task ---
 
-test('jar-runner (codex): panel displays Backend: codex for codex-backed task', { timeout: 10_000 }, () => {
+test('jar-runner (codex): panel displays Backend: codex for codex-backed task', { timeout: 30_000 }, () => {
     const tmpRoot = makeTmpRoot();
     try {
         const { metaPath } = setupCodexTask(tmpRoot);
@@ -95,7 +95,8 @@ test('jar-runner (codex): panel displays Backend: codex for codex-backed task', 
                 PICKLE_BACKEND: '',
             },
             encoding: 'utf-8',
-            timeout: 8000,
+            // 8s → 25s: budget for system load under concurrent test runs.
+            timeout: 25000,
         });
 
         const combined = result.stdout + result.stderr;
@@ -114,7 +115,7 @@ test('jar-runner (codex): panel displays Backend: codex for codex-backed task', 
 
 // --- Test 2: codex shim invoked with exec + bypass + skip-git + ephemeral + -- <prompt> ---
 
-test('jar-runner (codex): shim receives exec --dangerously-bypass --skip-git --ephemeral ... -- <prompt>', { timeout: 10_000 }, () => {
+test('jar-runner (codex): shim receives exec --dangerously-bypass --skip-git --ephemeral ... -- <prompt>', { timeout: 30_000 }, () => {
     const tmpRoot = makeTmpRoot();
     try {
         setupCodexTask(tmpRoot);
@@ -131,7 +132,8 @@ test('jar-runner (codex): shim receives exec --dangerously-bypass --skip-git --e
                 PICKLE_BACKEND: '',
             },
             encoding: 'utf-8',
-            timeout: 8000,
+            // 8s → 25s: budget for system load under concurrent test runs.
+            timeout: 25000,
         });
 
         assert.ok(fs.existsSync(shimLog), `Shim never wrote log — codex was not invoked`);
@@ -160,7 +162,7 @@ test('jar-runner (codex): shim receives exec --dangerously-bypass --skip-git --e
 
 // --- Test 3: PICKLE_BACKEND=codex spread into child env ---
 
-test('jar-runner (codex): spreads PICKLE_BACKEND=codex into child env', { timeout: 10_000 }, () => {
+test('jar-runner (codex): spreads PICKLE_BACKEND=codex into child env', { timeout: 30_000 }, () => {
     const tmpRoot = makeTmpRoot();
     try {
         setupCodexTask(tmpRoot);
@@ -179,7 +181,8 @@ test('jar-runner (codex): spreads PICKLE_BACKEND=codex into child env', { timeou
                 PICKLE_BACKEND: '',
             },
             encoding: 'utf-8',
-            timeout: 8000,
+            // 8s → 25s: budget for system load under concurrent test runs.
+            timeout: 25000,
         });
 
         assert.ok(fs.existsSync(shimLog), `Shim never wrote log`);
@@ -193,7 +196,7 @@ test('jar-runner (codex): spreads PICKLE_BACKEND=codex into child env', { timeou
 
 // --- Test 4: ENOENT prints install hint AND does NOT mark task failed ---
 
-test('jar-runner (codex): ENOENT leaves task marinating and prints install hint', { timeout: 10_000 }, () => {
+test('jar-runner (codex): ENOENT leaves task marinating and prints install hint', { timeout: 30_000 }, () => {
     const tmpRoot = makeTmpRoot();
     try {
         const { metaPath } = setupCodexTask(tmpRoot);
@@ -216,7 +219,8 @@ test('jar-runner (codex): ENOENT leaves task marinating and prints install hint'
                 PICKLE_BACKEND: '',
             },
             encoding: 'utf-8',
-            timeout: 8000,
+            // 8s → 25s: budget for system load under concurrent test runs.
+            timeout: 25000,
         });
 
         const combined = result.stdout + result.stderr;
@@ -246,7 +250,7 @@ test('jar-runner (codex): ENOENT leaves task marinating and prints install hint'
 
 // --- Test 5: ENOENT on first codex task skips remaining codex tasks (early-exit) ---
 
-test('jar-runner (codex): ENOENT short-circuits remaining codex tasks', { timeout: 10_000 }, () => {
+test('jar-runner (codex): ENOENT short-circuits remaining codex tasks', { timeout: 30_000 }, () => {
     const tmpRoot = makeTmpRoot();
     try {
         // Two codex tasks queued — both should remain marinating after ENOENT
@@ -264,7 +268,8 @@ test('jar-runner (codex): ENOENT short-circuits remaining codex tasks', { timeou
                 PICKLE_BACKEND: '',
             },
             encoding: 'utf-8',
-            timeout: 8000,
+            // 8s → 25s: budget for system load under concurrent test runs.
+            timeout: 25000,
         });
 
         const combined = result.stdout + result.stderr;

@@ -15,10 +15,12 @@ const LOG_ACTIVITY_BIN = path.resolve(__dirname, '../bin/log-activity.js');
  */
 function run(args, envOverrides = {}) {
     const extRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-log-activity-')));
+    // 10s → 30s: budget for system load when run alongside concurrent
+    // codex/tmux work. Tests validate event-emission logic, not wall-clock.
     const result = spawnSync(process.execPath, [LOG_ACTIVITY_BIN, ...args], {
         env: { ...process.env, EXTENSION_DIR: extRoot, FORCE_COLOR: '0', ...envOverrides },
         encoding: 'utf-8',
-        timeout: 10000,
+        timeout: 30000,
     });
     // Collect any activity events written
     const activityDir = path.join(extRoot, 'activity');

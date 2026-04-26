@@ -34,7 +34,9 @@ function makeRepo() {
 }
 
 function run(args, { cwd = process.cwd(), expectError = false } = {}) {
-  const opts = { stdio: ['pipe', 'pipe', 'pipe'], timeout: 15_000, cwd };
+  // 15s → 45s: budget for system load when run alongside concurrent
+  // codex/tmux work. Tests validate scope resolution, not wall-clock.
+  const opts = { stdio: ['pipe', 'pipe', 'pipe'], timeout: 45_000, cwd };
   try {
     const stdout = execFileSync(process.execPath, [CLI_PATH, ...args], opts);
     return { code: 0, stdout: stdout.toString(), stderr: '' };

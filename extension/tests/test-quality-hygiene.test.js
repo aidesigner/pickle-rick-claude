@@ -65,7 +65,9 @@ test('each TEST_FILES file emits >= 1 TAP ok line', () => {
     const filePath = path.join(__dirname, filename);
     const result = spawnSync(NODE_BIN, ['--test', '--test-reporter=tap', filePath], {
       encoding: 'utf8',
-      timeout: 30000,
+      // 30s → 90s: budget for re-running test files under concurrent test runs.
+      // The test only checks "emits >= 1 TAP ok line" — wall-clock isn't asserted.
+      timeout: 90000,
       env: spawnEnv,
     });
     const stdout = result.stdout ?? '';

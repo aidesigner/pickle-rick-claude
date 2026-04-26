@@ -18,7 +18,11 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const TMUX_RUNNER_BIN = path.resolve(__dirname, '../bin/mux-runner.js');
 
-test('FR-B10: fixture manager sleeps 95% of worker_timeout budget, writes artifact, no SIGTERM', { timeout: 15_000 }, () => {
+// 15s → 60s outer / 12s → 45s inner: budget for system load when run alongside
+// concurrent codex/tmux work. The test verifies "subprocess completes without
+// SIGTERM at worker_timeout_seconds=1s"; the fake claude sleeps 1200ms. The
+// wall-clock budget is not the assertion — the artifact-existence check is.
+test('FR-B10: fixture manager sleeps 95% of worker_timeout budget, writes artifact, no SIGTERM', { timeout: 60_000 }, () => {
     const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-happy-path-')));
     try {
         const sessionDir = path.join(dir, 'session');
@@ -83,7 +87,7 @@ process.exit(0);
                 PATH: `${fakeBinDir}:${process.env.PATH}`,
             },
             encoding: 'utf-8',
-            timeout: 12_000,
+            timeout: 45_000,
         });
 
         // Artifact must exist — proves the subprocess ran to completion unsigterm'd

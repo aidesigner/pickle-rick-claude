@@ -201,7 +201,8 @@ test('CLI: runs standalone without error on empty activity dir', () => {
     try {
         const result = spawnSync(process.execPath, [CLI_PATH], {
             encoding: 'utf-8',
-            timeout: 10000,
+            // 10s → 30s: budget for system load under concurrent test runs.
+            timeout: 30000,
             env: { ...process.env, EXTENSION_DIR: extRoot },
         });
         assert.equal(result.status, 0, `stderr: ${result.stderr}`);
@@ -219,7 +220,8 @@ test('CLI: reports pruned count', () => {
     try {
         const result = spawnSync(process.execPath, [CLI_PATH], {
             encoding: 'utf-8',
-            timeout: 10000,
+            // 10s → 30s: budget for system load under concurrent test runs.
+            timeout: 30000,
             env: { ...process.env, EXTENSION_DIR: extRoot },
         });
         assert.equal(result.status, 0, `stderr: ${result.stderr}`);

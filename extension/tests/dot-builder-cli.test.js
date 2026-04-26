@@ -33,7 +33,8 @@ function runCli(input) {
         const child = execFile(
             process.execPath,
             [CLI_PATH],
-            { timeout: 10_000, maxBuffer: 2 * 1024 * 1024 },
+            // 10s → 30s: budget for system load under concurrent test runs.
+            { timeout: 30_000, maxBuffer: 2 * 1024 * 1024 },
             (err, stdout, stderr) => {
                 resolve({
                     code: err ? err.code : 0,

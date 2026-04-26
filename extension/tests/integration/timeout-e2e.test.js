@@ -20,7 +20,11 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MUX_RUNNER_BIN = path.resolve(__dirname, '../../bin/mux-runner.js');
 
-test('timeout-e2e: manager sleeps 95% of budget, writes artifact, iteration advances, no SIGTERM', { timeout: 15_000 }, () => {
+// 15s → 60s outer / 12s → 45s inner: budget for system load when run alongside
+// concurrent codex/tmux work. The test verifies "subprocess completes without
+// SIGTERM"; fake claude sleeps 950ms. The artifact-existence check is the
+// real assertion, not the wall-clock budget.
+test('timeout-e2e: manager sleeps 95% of budget, writes artifact, iteration advances, no SIGTERM', { timeout: 60_000 }, () => {
     const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-timeout-e2e-')));
     try {
         const sessionDir = path.join(base, 'session');
@@ -79,7 +83,7 @@ process.exit(0);
                 PATH: `${fakeBinDir}:${process.env.PATH}`,
             },
             encoding: 'utf-8',
-            timeout: 12_000,
+            timeout: 45_000,
         });
 
         // Artifact must exist — subprocess ran to completion unsigterm'd
@@ -100,7 +104,10 @@ process.exit(0);
     }
 });
 
-test('timeout-e2e: session deactivated by subprocess → mux-runner exits cleanly', { timeout: 15_000 }, () => {
+// 15s → 45s outer / 10s → 30s inner: budget for system load when run alongside
+// concurrent codex/tmux work. Fake claude exits immediately; budget covers
+// node spawn + module load + state-file deactivation under contention.
+test('timeout-e2e: session deactivated by subprocess → mux-runner exits cleanly', { timeout: 45_000 }, () => {
     const base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-timeout-e2e2-')));
     try {
         const sessionDir = path.join(base, 'session');
@@ -146,7 +153,7 @@ process.exit(0);
                 PATH: `${fakeBinDir}:${process.env.PATH}`,
             },
             encoding: 'utf-8',
-            timeout: 10_000,
+            timeout: 30_000,
         });
 
         assert.ok(result.signal !== 'SIGKILL', 'mux-runner must exit before spawnSync timeout');

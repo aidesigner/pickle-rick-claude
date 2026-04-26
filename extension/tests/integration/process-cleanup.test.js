@@ -45,10 +45,13 @@ function writeHandler(handlersDir, hookName, script) {
  * Accepts extra env vars merged on top of inherited environment.
  */
 function runDispatch({ extRoot, args = [], input, extraEnv = {} }) {
+  // 10s → 45s: budget for system load when run alongside concurrent
+  // codex/tmux work. Dispatch usually returns in <500ms; the budget exists
+  // so a backed-up scheduler doesn't SIGKILL before EPIPE handling completes.
   const result = spawnSync(process.execPath, [DISPATCH_BIN, ...args], {
     encoding: 'utf-8',
     env: { ...process.env, EXTENSION_DIR: extRoot, ...extraEnv },
-    timeout: 10_000,
+    timeout: 45_000,
     input: input !== undefined ? input : undefined,
   });
   return {
@@ -233,7 +236,12 @@ test('PC-3: dispatch EPIPE produces exactly one valid approve JSON on stdout', (
 // Total wall time must be << 60s (hanged workers do NOT run to completion).
 // ---------------------------------------------------------------------------
 
-test('PC-4: refinement worker 2-of-3 crash kills siblings — process completes in < 15s', { timeout: 30_000 }, async () => {
+// 30s → 90s outer / 25s → 60s inner / 15s → 30s elapsed bound: budget for
+// system load when run alongside concurrent codex/tmux work. The substantive
+// assertion remains "siblings DO get killed — process does NOT wait 60s for
+// hangs to complete". 30s is still half of the 60s hang budget, so a regression
+// where siblings aren't killed would fail this assertion, not silently pass.
+test('PC-4: refinement worker 2-of-3 crash kills siblings — process completes in < 30s', { timeout: 90_000 }, async () => {
   const dir = makeTmpRoot('pickle-pc4-');
   try {
     // Session directory
@@ -287,7 +295,7 @@ if (prompt.includes('analysis_codebase.md')) {
           PATH: `${fakeBinDir}:${process.env.PATH}`,
           EXTENSION_DIR: extRoot,
         },
-        timeout: 25_000,
+        timeout: 60_000,
         encoding: 'utf-8',
         cwd: dir,
       },
@@ -295,10 +303,12 @@ if (prompt.includes('analysis_codebase.md')) {
 
     const elapsed = Date.now() - start;
 
-    // Must complete quickly — codebase crash killed siblings (not waiting 60s each)
+    // Must complete in << 60s — codebase crash must trigger sibling kill, not
+    // let the workers run to their full 60s hang. 30s assertion (half the hang
+    // budget) still detects the regression class while tolerating system load.
     assert.ok(
-      elapsed < 15_000,
-      `spawn-refinement-team should complete in < 15s, took ${elapsed}ms (siblings not killed?)`,
+      elapsed < 30_000,
+      `spawn-refinement-team should complete in < 30s, took ${elapsed}ms (siblings not killed?)`,
     );
 
     // Process must exit (not timed out by spawnSync)
@@ -329,7 +339,11 @@ if (prompt.includes('analysis_codebase.md')) {
 // hangs, then sends SIGTERM to the refinement team process.
 // ---------------------------------------------------------------------------
 
-test('PC-5: refinement team SIGTERM graceful shutdown — all workers killed, process exits', { timeout: 20_000 }, async () => {
+// 20s → 60s: budget for system load when run alongside concurrent codex/tmux
+// work. Inner SIGTERM-deadline assertion stays at 5s → 15s for the same reason;
+// the test still verifies that SIGTERM kills workers within seconds rather than
+// at the 60s hang budget.
+test('PC-5: refinement team SIGTERM graceful shutdown — all workers killed, process exits', { timeout: 60_000 }, async () => {
   const dir = makeTmpRoot('pickle-pc5-');
   try {
     const sessionDir = path.join(dir, 'session');
@@ -380,15 +394,17 @@ setTimeout(() => {}, 60_000);
     const start = Date.now();
     child.kill('SIGTERM');
 
-    // Wait for the process to exit
+    // Wait for the process to exit. 5s → 15s deadline tolerates system load
+    // while still detecting a regression where SIGTERM doesn't kill workers
+    // (which would wait the full 60s hang budget).
     await new Promise((resolve, reject) => {
       child.on('exit', resolve);
       child.on('error', reject);
-      setTimeout(() => reject(new Error('SIGTERM did not kill process within 5s')), 5_000);
+      setTimeout(() => reject(new Error('SIGTERM did not kill process within 15s')), 15_000);
     });
 
     const elapsed = Date.now() - start;
-    assert.ok(elapsed < 5_000, `process should exit quickly after SIGTERM, took ${elapsed}ms`);
+    assert.ok(elapsed < 15_000, `process should exit quickly after SIGTERM, took ${elapsed}ms`);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

@@ -13,7 +13,8 @@ const { loadEngineKeysRegistry, isEngineWritten, isUserWritten } = await import(
   path.resolve(__dirname, '..', 'lib', 'engine-keys-registry.js')
 );
 
-const bunCheck = spawnSync('bun', ['--version'], { encoding: 'utf8', timeout: 3000 });
+// 3s → 10s: load-tolerance for bun probe (skip-when-unavailable gate).
+const bunCheck = spawnSync('bun', ['--version'], { encoding: 'utf8', timeout: 10000 });
 const BUN_AVAILABLE = !bunCheck.error && bunCheck.status === 0;
 
 const ATTRACTOR_PROBE = path.join('packages', 'attractor', 'src', 'cli.ts');

@@ -46,7 +46,8 @@ function walkDotFiles(dir) {
   return results;
 }
 
-const bunCheck = spawnSync('bun', ['--version'], { encoding: 'utf8', timeout: 3000 });
+// 3s → 10s: load-tolerance for bun probe (skip-when-unavailable gate).
+const bunCheck = spawnSync('bun', ['--version'], { encoding: 'utf8', timeout: 10000 });
 const BUN_AVAILABLE = !bunCheck.error && bunCheck.status === 0;
 
 const ATTRACTOR_ROOT = discoverAttractorRoot();
@@ -91,7 +92,8 @@ test('Frame 5 produces zero false-positive P0s on shipped attractor pipelines', 
       [BIN_PATH, dotFile],
       {
         encoding: 'utf8',
-        timeout: 30000,
+        // 30s → 60s: budget for bun analyzer under concurrent test runs.
+        timeout: 60000,
         env: { ...process.env, ATTRACTOR_ROOT },
       },
     );

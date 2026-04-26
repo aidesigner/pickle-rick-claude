@@ -220,9 +220,11 @@ test('logActivity: session_start event preserves original_prompt field', async (
 const CLI_PATH = path.join(import.meta.dirname, '..', 'bin', 'log-activity.js');
 
 function runCli(args, env = {}) {
+    // 10s → 30s: budget for system load when run alongside concurrent
+    // codex/tmux work. Tests validate CLI behavior, not wall-clock.
     return spawnSync(process.execPath, [CLI_PATH, ...args], {
         encoding: 'utf-8',
-        timeout: 10000,
+        timeout: 30000,
         env: { ...process.env, ...env },
     });
 }

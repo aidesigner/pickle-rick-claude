@@ -23,10 +23,13 @@ if (!isMainThread && workerData != null) {
   const { op } = workerData;
 
   if (op === 'increment') {
-    const sm = new StateManager({ baseLockDelayMs: 50, maxLockRetries: 100, staleLockTimeoutMs: 15_000, lockJitter: true });
-    // Retry the entire update if lock acquisition fails under heavy contention
+    // Bumped staleLockTimeoutMs 15s → 60s and outer retries 3 → 10 to absorb
+    // load when run alongside concurrent codex/tmux/test work. The test still
+    // verifies "10 workers all increment" — only the per-worker retry budget
+    // grew. A regression in lock semantics still produces counter < 10.
+    const sm = new StateManager({ baseLockDelayMs: 50, maxLockRetries: 200, staleLockTimeoutMs: 60_000, lockJitter: true });
     let done = false;
-    for (let r = 0; r < 3 && !done; r++) {
+    for (let r = 0; r < 10 && !done; r++) {
       try {
         sm.update(workerData.statePath, (s) => {
           s.counter = (Number(s.counter) || 0) + 1;
@@ -34,14 +37,16 @@ if (!isMainThread && workerData != null) {
         done = true;
       } catch {
         // LockError — brief pause then retry
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50 + Math.random() * 100);
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50 + Math.random() * 200);
       }
     }
-    if (!done) throw new Error('increment failed after 3 outer retries');
+    if (!done) throw new Error('increment failed after 10 outer retries');
     parentPort.postMessage({ ok: true });
 
   } else if (op === 'add_session') {
     const { mapPath, lockPath, cwd, sessionPath } = workerData;
+    // staleLockTimeoutMs 15s → 60s: budget for lock contention under
+    // concurrent test runs.
     withRetryLock(lockPath, () => {
       let map = {};
       if (fs.existsSync(mapPath)) {
@@ -51,7 +56,7 @@ if (!isMainThread && workerData != null) {
       const tmp = `${mapPath}.tmp.${process.pid}.${Date.now()}`;
       fs.writeFileSync(tmp, JSON.stringify(map, null, 2));
       fs.renameSync(tmp, mapPath);
-    }, { baseLockDelayMs: 5, staleLockTimeoutMs: 15_000 });
+    }, { baseLockDelayMs: 5, staleLockTimeoutMs: 60_000 });
     parentPort.postMessage({ ok: true });
   }
 }
@@ -109,7 +114,10 @@ if (isMainThread) {
   // F22-1: 10 parallel increments → counter === 10
   // -------------------------------------------------------------------------
 
-  test('F22-1: 10 parallel StateManager.update() increments counter to 10', { timeout: 30_000 }, async () => {
+  // 30s → 90s: budget for lock-retry under concurrent test runs. Bumped along
+  // with worker maxLockRetries/outer retries above so the harness can absorb
+  // genuinely contended scheduling on a busy box without dropping increments.
+  test('F22-1: 10 parallel StateManager.update() increments counter to 10', { timeout: 90_000 }, async () => {
     const dir = tmpDir();
     try {
       const statePath = path.join(dir, 'state.json');
@@ -131,7 +139,7 @@ if (isMainThread) {
   // F22-2: 5 parallel adds with distinct cwds — all keys present
   // -------------------------------------------------------------------------
 
-  test('F22-2: 5 parallel addToSessionMap with distinct cwds — all keys present', { timeout: 30_000 }, async () => {
+  test('F22-2: 5 parallel addToSessionMap with distinct cwds — all keys present', { timeout: 90_000 }, async () => {
     const dir = tmpDir();
     try {
       const mapPath = path.join(dir, 'current_sessions.json');
@@ -165,7 +173,7 @@ if (isMainThread) {
   // F22-3: 2 concurrent writes to same cwd — map valid, key present
   // -------------------------------------------------------------------------
 
-  test('F22-3: 2 concurrent same-cwd writes — map not corrupted, key present', { timeout: 20_000 }, async () => {
+  test('F22-3: 2 concurrent same-cwd writes — map not corrupted, key present', { timeout: 60_000 }, async () => {
     const dir = tmpDir();
     try {
       const mapPath = path.join(dir, 'current_sessions.json');

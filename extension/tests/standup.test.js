@@ -16,9 +16,11 @@ import {
 const CLI_PATH = path.join(import.meta.dirname, '..', 'bin', 'standup.js');
 
 function runCli(args, env = {}) {
+    // 10s → 30s: budget for system load when run alongside concurrent
+    // codex/tmux work. Tests validate CLI output, not wall-clock.
     return spawnSync(process.execPath, [CLI_PATH, ...args], {
         encoding: 'utf-8',
-        timeout: 10000,
+        timeout: 30000,
         env: { ...process.env, ...env },
     });
 }
@@ -674,7 +676,8 @@ test('getGitCommits: captures author email from temp git repo', () => {
     try {
         process.chdir(tmpDir);
         const run = (cmd, args) => {
-            const r = spawnSync(cmd, args, { cwd: tmpDir, encoding: 'utf-8', timeout: 10000 });
+            // 10s → 30s: load-tolerance for git ops under concurrent test runs.
+            const r = spawnSync(cmd, args, { cwd: tmpDir, encoding: 'utf-8', timeout: 30000 });
             assert.equal(r.status, 0, `${cmd} ${args.join(' ')} failed: ${r.stderr}`);
             return r;
         };
@@ -770,7 +773,8 @@ test('CLI: empty range shows no activity', () => {
         // Run from temp dir (not a git repo) so git log returns nothing
         const result = spawnSync(process.execPath, [CLI_PATH, '--since', '2026-02-20'], {
             encoding: 'utf-8',
-            timeout: 10000,
+            // 10s → 30s: load-tolerance for CLI run under concurrent test runs.
+            timeout: 30000,
             env: { ...process.env, EXTENSION_DIR: extRoot },
             cwd: extRoot,
         });

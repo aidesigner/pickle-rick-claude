@@ -18,11 +18,16 @@ function tmpDir() {
 }
 
 function runWatcher(args, opts = {}) {
+  // Default 10s → 30s; per-call overrides get tripled (callers passing
+  // 5_000/15_000 become 15_000/45_000). Budget for system load when run
+  // alongside concurrent codex/tmux work; tests validate watcher output,
+  // not wall-clock. Splat opts first then force timeout to override.
+  const baseTimeout = opts.timeout ? opts.timeout * 3 : 30_000;
   return execFileSync(process.execPath, [WATCHER, ...args], {
     encoding: 'utf-8',
-    timeout: opts.timeout || 10_000,
     env: { ...process.env, ...opts.env },
     ...opts,
+    timeout: baseTimeout,
   });
 }
 

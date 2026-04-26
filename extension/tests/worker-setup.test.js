@@ -25,11 +25,13 @@ function makeTmpRoot() {
  * @param {string} [cwd] - working directory for the subprocess (defaults to extDir)
  */
 function run(extDir, args = [], cwd) {
+    // 10s → 30s: budget for system load when run alongside concurrent
+    // codex/tmux work. Tests validate setup logic, not wall-clock.
     return spawnSync(process.execPath, [WORKER_SETUP_BIN, ...args], {
         cwd: cwd || extDir,
         env: { ...process.env, EXTENSION_DIR: extDir },
         encoding: 'utf-8',
-        timeout: 10000,
+        timeout: 30000,
     });
 }
 

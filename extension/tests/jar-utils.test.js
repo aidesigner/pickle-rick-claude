@@ -140,7 +140,8 @@ test('addToJar: prd.md and meta.json are written atomically (no leftover .tmp fi
 test('jar-utils CLI: --session as last arg (no value) exits 1 with error', () => {
     const result = spawnSync(process.execPath, [JAR_UTILS_BIN, 'add', '--session'], {
         encoding: 'utf-8',
-        timeout: 10000,
+        // 10s → 30s: load-tolerance for CLI run under concurrent test runs.
+        timeout: 30000,
     });
     assert.equal(result.status, 1, 'should exit with code 1');
     assert.ok(
@@ -152,7 +153,8 @@ test('jar-utils CLI: --session as last arg (no value) exits 1 with error', () =>
 test('jar-utils CLI: --session with value starting with -- exits 1 with error', () => {
     const result = spawnSync(process.execPath, [JAR_UTILS_BIN, 'add', '--session', '--bogus'], {
         encoding: 'utf-8',
-        timeout: 10000,
+        // 10s → 30s: load-tolerance for CLI run under concurrent test runs.
+        timeout: 30000,
     });
     assert.equal(result.status, 1, 'should exit with code 1');
     assert.ok(

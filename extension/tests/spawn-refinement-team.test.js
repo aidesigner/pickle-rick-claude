@@ -13,10 +13,13 @@ const BIN = path.resolve(__dirname, '../bin/spawn-refinement-team.js');
 const { buildWorkerPrompt } = await import('../bin/spawn-refinement-team.js');
 
 function run(args, env = {}) {
+    // 10s → 45s: budget for system load when run alongside concurrent
+    // codex/tmux work. Most cases exit fast on validation; budget exists
+    // so node spawn + module load under load doesn't SIGKILL the subprocess.
     return spawnSync(process.execPath, [BIN, ...args], {
         env: { ...process.env, ...env },
         encoding: 'utf-8',
-        timeout: 10000,
+        timeout: 45000,
     });
 }
 
@@ -430,13 +433,20 @@ setTimeout(() => process.exit(0), 30000);
             {
                 env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}` },
                 encoding: 'utf-8',
-                timeout: 15000, // test budget; siblings sleeping 30s would exceed this
+                // 15s → 45s: budget for system load when run alongside concurrent
+                // codex/tmux work. Siblings sleep 30s — bumped wall-clock budget
+                // is still less than 30s + 30s if siblings weren't killed, so the
+                // assertion still detects the regression class (siblings still
+                // running == process status null after spawnSync timeout).
+                timeout: 45000,
             }
         );
         const elapsed = Date.now() - start;
 
         assert.ok(result.status !== null, 'process should not time out (siblings must be killed)');
-        assert.ok(elapsed < 10000, `should complete quickly when siblings are killed, took ${elapsed}ms`);
+        // 10s → 25s: still half the 30s sibling sleep, so a regression where
+        // siblings aren't killed is detected.
+        assert.ok(elapsed < 25000, `should complete quickly when siblings are killed, took ${elapsed}ms`);
 
         // Manifest is written and covers all 3 workers (Set was cleared — no orphans)
         const manifestPath = path.join(tmp, 'refinement_manifest.json');

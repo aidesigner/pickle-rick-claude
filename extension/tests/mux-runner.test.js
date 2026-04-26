@@ -23,10 +23,14 @@ function makeTmpRoot() {
  * @param {string[]} args - additional arguments to pass
  */
 function run(extDir, args = []) {
+    // 15s → 60s: budget for system load when run alongside concurrent
+    // codex/tmux work. Fast-path tests (no-args, missing state.json, etc.)
+    // exit in <100ms; the budget exists so node spawn + module load under
+    // load doesn't blow the wall-clock and SIGKILL the subprocess.
     return spawnSync(process.execPath, [TMUX_RUNNER_BIN, ...args], {
         env: { ...process.env, EXTENSION_DIR: extDir },
         encoding: 'utf-8',
-        timeout: 15000,
+        timeout: 60000,
     });
 }
 
@@ -1465,10 +1469,14 @@ function runAndCollectActivity(stateOverrides = {}) {
         try { return !fs.existsSync(path.join(d, 'claude')); } catch { return true; }
     });
 
+    // 15s → 60s: budget for system load when run alongside concurrent
+    // codex/tmux work. The runner spawns claude (which fails fast because
+    // we stripped it from PATH) and writes activity events; under load the
+    // 15s budget got SIGKILL'd before the subprocess could even flush logs.
     const result = spawnSync(process.execPath, [TMUX_RUNNER_BIN, sessionDir], {
         env: { ...process.env, EXTENSION_DIR: tmpRoot, PATH: pathDirs.join(':') },
         encoding: 'utf-8',
-        timeout: 15000,
+        timeout: 60000,
     });
 
     const activityDir = path.join(tmpRoot, 'activity');

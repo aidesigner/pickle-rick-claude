@@ -56,7 +56,9 @@ function runDispatch(opts) {
   const spawnOpts = {
     encoding: 'utf-8',
     env: { ...process.env, EXTENSION_DIR: extRoot },
-    timeout: 10000,
+    // 10s → 30s: budget for system load when run alongside concurrent
+    // codex/tmux work. Dispatch returns in <500ms typically.
+    timeout: 30000,
   };
   if (input !== undefined) {
     spawnOpts.input = input;

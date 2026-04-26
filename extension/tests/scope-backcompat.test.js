@@ -125,7 +125,8 @@ test('backcompat (c): microverse.json has no allowed_paths when scope flag omitt
             session, '/some/target',
             '--stall-limit', '5',
             '--convergence-target', '0',
-        ], { stdio: ['pipe', 'pipe', 'pipe'], timeout: 15_000 });
+            // 15s → 45s: budget for system load under concurrent test runs.
+        ], { stdio: ['pipe', 'pipe', 'pipe'], timeout: 45_000 });
 
         const state = JSON.parse(fs.readFileSync(path.join(session, 'microverse.json'), 'utf-8'));
 
