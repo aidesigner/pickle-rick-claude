@@ -3,10 +3,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { State, Defaults } from '../types/index.js';
-import type { Backend, MicroverseSessionState, MicroverseHistoryEntry, FailureClass } from '../types/index.js';
+import type { Backend, MicroverseSessionState, MicroverseHistoryEntry, FailureClass, GateResult } from '../types/index.js';
 import {
   resolveBackend,
   buildJudgeInvocation,
+  buildWorkerInvocation,
   backendEnvOverrides,
 } from '../services/backend-spawn.js';
 import {
@@ -41,8 +42,196 @@ import {
   killCurrentChild,
 } from './mux-runner.js';
 import { logActivity } from '../services/activity-logger.js';
+import { runGate } from '../services/convergence-gate.js';
+import { spawnGateRemediatorMain } from './spawn-gate-remediator.js';
 
 type ExitReason = 'converged' | 'limit_reached' | 'stopped' | 'error' | 'rate_limit_exhausted' | 'approach_exhaustion' | 'no_progress';
+
+function loadConvergenceGateSettings(extRoot: string): {
+  enabled_convergence_files: string[];
+  regression_warning_threshold: number;
+  remediator_timeout_s: number;
+} {
+  const defaults = {
+    enabled_convergence_files: ['anatomy-park.json'],
+    regression_warning_threshold: 5,
+    remediator_timeout_s: 600,
+  };
+  try {
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking read at startup
+    const raw = JSON.parse(fs.readFileSync(path.join(extRoot, 'pickle_settings.json'), 'utf-8'));
+    const cg = raw.convergence_gate;
+    if (!cg || typeof cg !== 'object') return defaults;
+    return {
+      enabled_convergence_files: Array.isArray(cg.enabled_convergence_files)
+        ? (cg.enabled_convergence_files as string[])
+        : defaults.enabled_convergence_files,
+      regression_warning_threshold: typeof cg.regression_warning_threshold === 'number'
+        ? cg.regression_warning_threshold
+        : defaults.regression_warning_threshold,
+      remediator_timeout_s: typeof cg.remediator_timeout_s === 'number'
+        ? cg.remediator_timeout_s
+        : defaults.remediator_timeout_s,
+    };
+  } catch {
+    return defaults;
+  }
+}
+
+async function runRemediatorForIteration(
+  gateResult: GateResult,
+  sessionDir: string,
+  workingDir: string,
+  backend: Backend,
+  remediatorTimeoutS: number,
+): Promise<{ success: boolean }> {
+  const iso = new Date().toISOString().replace(/:/g, '-').replace(/\..+/, 'Z');
+  const gateDir = path.join(sessionDir, 'gate');
+  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+  fs.mkdirSync(gateDir, { recursive: true });
+  const gateResultPath = path.join(gateDir, `gate_result_iter_${iso}.json`);
+  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+  fs.writeFileSync(gateResultPath, JSON.stringify(gateResult, null, 2), 'utf-8');
+
+  const briefLines: string[] = [];
+  const briefCode = await spawnGateRemediatorMain({
+    argv: ['--gate-result', gateResultPath, '--session-root', sessionDir, '--reason', 'per-iteration'],
+    stdout: (msg) => briefLines.push(msg),
+    stderr: (msg) => process.stderr.write(`[gate-remediator] ${msg}\n`),
+  });
+
+  if (briefCode !== 0) return { success: false };
+  const briefPathLine = briefLines.find(l => l.startsWith('BRIEF_PATH='));
+  if (!briefPathLine) return { success: false };
+  const briefPath = briefPathLine.slice('BRIEF_PATH='.length);
+
+  let briefContent: string;
+  try {
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+    briefContent = fs.readFileSync(briefPath, 'utf-8');
+  } catch {
+    return { success: false };
+  }
+
+  const startMs = Date.now();
+  const invocation = buildWorkerInvocation(backend, {
+    prompt: briefContent,
+    addDirs: [workingDir],
+  });
+
+  try {
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking subprocess (single attempt, bounded by timeout)
+    execFileSync(invocation.cmd, invocation.args, {
+      cwd: workingDir,
+      timeout: remediatorTimeoutS * 1000,
+      stdio: 'pipe',
+      env: { ...process.env, ...backendEnvOverrides(backend) },
+    });
+  } catch (err) {
+    const msg = safeErrorMessage(err);
+    process.stderr.write(`[gate-remediator] agent exited non-zero or timed out: ${msg}\n`);
+    // Still check for a result file — agent may have written one before failing
+  }
+
+  try {
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+    const resultFiles = fs.readdirSync(gateDir)
+      .filter(f => f.startsWith('remediation_') && f.endsWith('_result.json'))
+      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+      .map(f => ({ name: f, mtime: fs.statSync(path.join(gateDir, f)).mtimeMs }))
+      .filter(({ mtime }) => mtime >= startMs)
+      .sort((a, b) => b.mtime - a.mtime);
+
+    if (resultFiles.length === 0) return { success: false };
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+    const resultRaw = JSON.parse(fs.readFileSync(path.join(gateDir, resultFiles[0].name), 'utf-8'));
+    return { success: resultRaw.aborted !== true && resultRaw.failures_out === 0 };
+  } catch {
+    return { success: false };
+  }
+}
+
+export interface PerIterationGateDeps {
+  runGateFn?: typeof runGate;
+  runRemediatorFn?: (gateResult: GateResult, sessionDir: string) => Promise<{ success: boolean }>;
+  writeMicroverseStateFn?: typeof writeMicroverseState;
+  logActivityFn?: typeof logActivity;
+  getHeadShaFn?: (dir: string) => string;
+}
+
+export async function runPerIterationGateHook(opts: {
+  currentMv: MicroverseSessionState;
+  preIterSha: string;
+  workingDir: string;
+  sessionDir: string;
+  enabledFiles: string[];
+  regressionWarningThreshold: number;
+  backend: Backend;
+  remediatorTimeoutS: number;
+  log: (msg: string) => void;
+  _deps?: PerIterationGateDeps;
+}): Promise<MicroverseSessionState> {
+  const {
+    preIterSha, workingDir, sessionDir, enabledFiles, regressionWarningThreshold,
+    backend, remediatorTimeoutS, log, _deps,
+  } = opts;
+  let currentMv = opts.currentMv;
+
+  const runGateFn = _deps?.runGateFn ?? runGate;
+  const runRemediatorFn = _deps?.runRemediatorFn ??
+    ((gr: GateResult, sd: string) => runRemediatorForIteration(gr, sd, workingDir, backend, remediatorTimeoutS));
+  const writeMvStateFn = _deps?.writeMicroverseStateFn ?? writeMicroverseState;
+  const logActivityFn = _deps?.logActivityFn ?? logActivity;
+  const getHeadShaFn = _deps?.getHeadShaFn ?? getHeadSha;
+
+  const isEnabled = enabledFiles.includes(currentMv.convergence_file ?? '');
+  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+  const headSha = getHeadShaFn(workingDir);
+  const commitsHappened = preIterSha !== headSha;
+
+  if (isEnabled && commitsHappened) {
+    const result = await runGateFn({
+      workingDir,
+      mode: 'baseline',
+      scope: 'changed',
+      since: preIterSha,
+      baselinePath: path.join(sessionDir, 'gate', 'baseline.json'),
+      allowedPaths: currentMv.allowed_paths,
+      checks: ['typecheck', 'lint'],
+    });
+
+    if (result.status === 'red' && result.failures.length > 0) {
+      const remediationOutcome = await runRemediatorFn(result, sessionDir);
+      if (!remediationOutcome.success) {
+        currentMv = {
+          ...currentMv,
+          iteration_regressions: (currentMv.iteration_regressions ?? 0) + 1,
+        };
+        writeMvStateFn(sessionDir, currentMv);
+        logActivityFn({
+          event: 'iteration_left_regression',
+          source: 'pickle',
+          gate_payload: { failures_in: result.failures.length },
+        });
+      }
+    }
+  } else if (isEnabled && !commitsHappened) {
+    logActivityFn({ event: 'gate_skipped', source: 'pickle', gate_payload: { reason: 'no_commits' } });
+  }
+
+  // One-time threshold warning — fires only when regressions first exceed the limit
+  if (
+    (currentMv.iteration_regressions ?? 0) > regressionWarningThreshold &&
+    !currentMv.gate_regression_threshold_warning_emitted
+  ) {
+    log(`[anatomy-park] ${regressionWarningThreshold}+ iterations have left toolchain regressions — review the audit trail before shipping`);
+    currentMv = { ...currentMv, gate_regression_threshold_warning_emitted: true };
+    writeMvStateFn(sessionDir, currentMv);
+    logActivityFn({ event: 'gate_regression_threshold_warning', source: 'pickle' });
+  }
+
+  return currentMv;
+}
 
 function normalizeExcludePrefixes(excludePrefixes: readonly string[]): string[] {
   return excludePrefixes
@@ -527,6 +716,9 @@ export async function main(sessionDir: string): Promise<void> {
     if (settings.enable_failure_classification === false) enableFailureClassification = false;
   } catch { /* default true */ }
 
+  // Read convergence_gate settings at startup (used in worker-mode per-iteration gate hook)
+  const cgSettings = loadConvergenceGateSettings(extensionRoot);
+
   // Read initial state
   let state: State;
   try {
@@ -853,6 +1045,19 @@ export async function main(sessionDir: string): Promise<void> {
       } catch {
         log(`Iteration ${iteration} — convergence file not found/unparseable — continuing`);
       }
+      // Per-iteration baseline gate — fires before sleep/continue
+      currentMv = await runPerIterationGateHook({
+        currentMv,
+        preIterSha,
+        workingDir,
+        sessionDir,
+        enabledFiles: cgSettings.enabled_convergence_files,
+        regressionWarningThreshold: cgSettings.regression_warning_threshold,
+        backend: resolveBackend(state),
+        remediatorTimeoutS: cgSettings.remediator_timeout_s,
+        log,
+      });
+
       await sleep(1000);
       continue;
     }
