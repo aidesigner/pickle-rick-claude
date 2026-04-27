@@ -3,7 +3,7 @@ import * as path from 'path';
 import { execFile, spawnSync } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
-import type { GateResult, GateMode, GateFailure } from '../types/index.js';
+import type { GateResult, GateMode, GateFailure, GateBaselineFile } from '../types/index.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -21,6 +21,98 @@ export class GateError extends Error {
     super(message);
     this.name = 'GateError';
     this.kind = kind;
+  }
+}
+
+export class BaselineMissingError extends GateError {
+  constructor(baselinePath: string) {
+    super('BASELINE_MISSING', `No baseline at ${baselinePath}`);
+    this.name = 'BaselineMissingError';
+  }
+}
+
+export class BaselineStaleError extends GateError {
+  constructor(message: string) {
+    super('BASELINE_STALE', message);
+    this.name = 'BaselineStaleError';
+  }
+}
+
+function buildFingerprint(f: GateFailure): string {
+  return `${f.file}::${f.ruleOrCode}::${f.occurrence_index}`;
+}
+
+export function assignOccurrenceIndices(failures: GateFailure[]): GateFailure[] {
+  const groups = new Map<string, GateFailure[]>();
+  for (const f of failures) {
+    const key = `${f.file}::${f.ruleOrCode}`;
+    const group = groups.get(key) ?? [];
+    group.push(f);
+    groups.set(key, group);
+  }
+  const result: GateFailure[] = [];
+  for (const group of groups.values()) {
+    group.sort((a, b) => a.line - b.line);
+    for (let i = 0; i < group.length; i++) {
+      result.push({ ...group[i], occurrence_index: i });
+    }
+  }
+  return result;
+}
+
+function validateBaselineStructure(data: unknown): data is GateBaselineFile {
+  if (!data || typeof data !== 'object') return false;
+  const d = data as Record<string, unknown>;
+  return (
+    d['schema_version'] === 1 &&
+    typeof d['captured_at'] === 'string' &&
+    typeof d['working_dir'] === 'string' &&
+    typeof d['project_type'] === 'string' &&
+    ['pnpm', 'npm', 'yarn', 'cargo', 'go'].includes(d['project_type'] as string) &&
+    Array.isArray(d['checks']) &&
+    Array.isArray(d['failures'])
+  );
+}
+
+export function loadBaselineFile(baselinePath: string): GateBaselineFile {
+  const raw = JSON.parse(fs.readFileSync(baselinePath, 'utf-8')) as unknown;
+  if (!validateBaselineStructure(raw)) {
+    throw new GateError('BASELINE_CORRUPT', `Invalid baseline file at ${baselinePath}`);
+  }
+  return raw;
+}
+
+export function subtractBaseline(current: GateFailure[], baseline: GateBaselineFile): GateFailure[] {
+  const baselineSet = new Set(baseline.failures.map(buildFingerprint));
+  return current.filter(f => !baselineSet.has(buildFingerprint(f)));
+}
+
+export function assertBaselineFresh(
+  baselinePath: string,
+  opts: { max_age_iterations: number; max_age_seconds: number; current_iteration: number }
+): void {
+  if (!fs.existsSync(baselinePath)) {
+    const dir = path.dirname(baselinePath);
+    fs.mkdirSync(dir, { recursive: true });
+    const now = new Date().toISOString();
+    const iso = now.replace(/[:.]/g, '-');
+    fs.writeFileSync(
+      path.join(dir, `baseline_missing_${iso}.md`),
+      `# Baseline Missing\n\nPath: \`${baselinePath}\`\nCaptured: ${now}\n`
+    );
+    throw new BaselineMissingError(baselinePath);
+  }
+  const stat = fs.statSync(baselinePath);
+  const ageMs = Date.now() - stat.mtimeMs;
+  if (ageMs > opts.max_age_seconds * 1000) {
+    throw new BaselineStaleError(
+      `Baseline at ${baselinePath} is ${Math.round(ageMs / 1000)}s old (max ${opts.max_age_seconds}s)`
+    );
+  }
+  if (opts.current_iteration >= opts.max_age_iterations) {
+    throw new BaselineStaleError(
+      `current_iteration (${opts.current_iteration}) >= max_age_iterations (${opts.max_age_iterations})`
+    );
   }
 }
 
@@ -257,6 +349,42 @@ export async function runGate(opts: RunGateOpts): Promise<GateResult> {
       const failures = buildFailures(result, check, dir);
       allFailures.push(...failures);
     }
+  }
+
+  if (opts.mode === 'baseline' && opts.baselinePath) {
+    const withIndices = assignOccurrenceIndices(allFailures);
+    if (!fs.existsSync(opts.baselinePath)) {
+      const baseline: GateBaselineFile = {
+        schema_version: 1,
+        captured_at: new Date().toISOString(),
+        working_dir: opts.workingDir,
+        project_type: projectType,
+        checks: opts.checks,
+        failures: withIndices,
+      };
+      fs.mkdirSync(path.dirname(opts.baselinePath), { recursive: true });
+      fs.writeFileSync(opts.baselinePath, JSON.stringify(baseline, null, 2));
+      return {
+        status: 'green',
+        failures: [],
+        baseline_used: false,
+        allowed_paths_used: allowedPathsUsed,
+        elapsed_ms: Date.now() - start,
+        total_raw_failure_count: withIndices.length,
+        new_failures_vs_baseline: 0,
+      };
+    }
+    const baseline = loadBaselineFile(opts.baselinePath);
+    const newFailures = subtractBaseline(withIndices, baseline);
+    return {
+      status: newFailures.length === 0 ? 'green' : 'red',
+      failures: newFailures,
+      baseline_used: true,
+      allowed_paths_used: allowedPathsUsed,
+      elapsed_ms: Date.now() - start,
+      total_raw_failure_count: withIndices.length,
+      new_failures_vs_baseline: newFailures.length,
+    };
   }
 
   const status = allFailures.length === 0 ? 'green' : 'red';
