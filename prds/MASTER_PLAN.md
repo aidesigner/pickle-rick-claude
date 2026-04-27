@@ -1,7 +1,7 @@
 # MASTER_PLAN — God Function Remediation
 
-**Last updated**: 2026-04-26
-**Status**: Pipeline paused mid-T0 implement phase after SIGHUP from concurrent pickle session. State recoverable. Codex classifier prompt-leak (workaround blocker) shipped 2026-04-26 — `--backend codex` no longer required to fall back to `--backend claude`.
+**Last updated**: 2026-04-27
+**Status**: T0 complete. Pipeline paused mid-T1. Stashed for later resume. Five infrastructure bugs found and fixed in flight (v1.56.0 → v1.56.4 release line).
 
 ---
 
@@ -11,7 +11,7 @@
 |---|---|---|
 | `prds/god-functions-remediation.md` | Refined (3-cycle / 3-analyst team) | `1658d81` |
 | (Original, pre-refinement)            | Committed earlier in the day        | `b535e71` |
-| `prds/codex-classifier-prompt-leak.md` | **Shipped** (2026-04-26) — codex-aware classifier + shared `PROMISE_TOKENS` constants module + bare-token template scrub + ESLint allowlist. Workaround (`--backend claude`) no longer needed. | `a48097b`, `3bc9bd2`, `a90ed73`, `4b1f784`, `17f6b03` |
+| `prds/codex-classifier-prompt-leak.md` | **Shipped** (2026-04-26) | `a48097b`, `3bc9bd2`, `a90ed73`, `4b1f784`, `17f6b03` |
 
 The refined PRD includes: corrected line ranges, T0 prelude + T14 closer, goal-level 200 LOC carve-outs, 8-token enumeration, T1 post-pass invariants, T7 dry-run replacement (test seam, NO `--dry-run`), T2 scope clarification (`runIteration` already extracted), per-ticket frontmatter, fixture lockdown protocol, helper-signature spec rule, trap-door preservation, and a 17-row Risks table.
 
@@ -19,107 +19,135 @@ Pre-refinement preserved at `~/.local/share/pickle-rick/sessions/2026-04-25-9152
 
 ---
 
-## 2. What we did today
+## 2. Today's session — 2026-04-26 / 2026-04-27
 
-1. **Audited** `extension/src/` with 4 parallel Explore agents → identified **13 god functions** across 11 files (worst: `_emitDot` at 905 LOC; `mux-runner main` at 460 LOC, 66 branches).
-2. **Drafted** the initial PRD (13 atomic tickets + epic AC + risks).
-3. **Refined** via `/pickle-refine-prd` → 3 cycles × 3 analysts (requirements / codebase / risk-scope) → all 9 succeeded → 49 P0/P1 findings adopted.
-4. **Decomposed** into **20 atomic tickets** with frontmatter (priority, complexity_tier, min_new_tests, fixture_dependencies, file_dependencies, trap_door_risk, signature_spec):
-   - **T0** (gate): pre-refactor scaffolding — fixtures, ESLint flat-config carve-outs, feasibility proof, baseline doc, smoke script
-   - **T1–T13**: one extraction per god function (with corrections from refinement: line ranges, post-pass invariants, scope freezes)
-   - **T14** (closer): promote ESLint to `error`, alphabetize `package.json:13`, single `1.54.2 → 1.55.0` bump, run deployed-hooks smoke
-   - **T15**: wire (Library variant)
-   - **+4 hardening tickets**: code quality, data flow audit, test quality, cross-reference audit
-5. **Launched** the full pipeline (`/pickle-pipeline --backend codex`) — codex backend on all three phases (build → anatomy-park → szechuan-sauce).
-6. **Pipeline ran for ~7.5 minutes** on T0 — completed research + plan phases, stopped before implement when a concurrent pickle session sent SIGHUP at 11:01:47 (timestamp matches new tmux session creation).
+T0 completed cleanly after a marathon debug session that surfaced and fixed five distinct PRC infrastructure bugs. The release line below is the actual deliverable from this session, alongside T0.
+
+### Releases shipped this session
+
+| Version | Bug fixed |
+|---|---|
+| `v1.56.0` | Pickle phase didn't pin `command_template`; stale `anatomy-park.md` misrouted resumed workers. Added phase-entry helper `enterPicklePhase()` that pins template + scrubs foreign-phase JSON files. Also added `ignore_dirty_paths` (default `prds/`, `docs/`) to clean-tree check. Microverse pre-flight applies same exclusion + auto-commit stages untracked files. Master plan moved to `prds/MASTER_PLAN.md`. |
+| `v1.56.1` | Worker prompt "Write ONLY to `${TICKET_DIR}`" — codex took literally and refused all repo writes. Disambiguated to name ticket-artifact files explicitly and authorize Steps 5/8 to write to project working tree. |
+| `v1.56.2` | 38 timing-sensitive tests bumped 3–5x to survive load when codex runs concurrent tool calls during baseline capture. Verified under 2x concurrent runs. |
+| `v1.56.3` | Morty workers leaked orchestrator promise tokens upstream. Added `FORBIDDEN_WORKER_TOKENS` + runtime scrub in `spawn-morty.ts` finalize-time, plus prompt-level forbidden list. |
+| `v1.56.4` | **Manager itself misuses EPIC_COMPLETED** — conflates per-ticket completion with epic completion. Replaced fail-loud guard with `evaluateEpicCompletion()` recovery state machine: 4-arm decision (genuine / recover_advance / recover_retry / persistent_hallucination). Pipeline survives manager hallucination structurally. Counter persists in `state.false_epic_completed_count`. **This is the fix that finally let T0 complete.** |
+
+### T0 deliverables landed
+
+- `extension/REFACTOR_BASELINE.md` — captured `npm test`/`tsc`/`eslint` baseline at HEAD `c205292`
+- `extension/REFACTOR_FEASIBILITY.md` — feasibility proof for `_emitDot`/`mux-runner main` extractions, all helpers under cyclomatic-15 ceiling
+- `extension/eslint.config.js` — added warn-level `complexity` (15) and `max-lines-per-function` (120) rules + per-file 200-LOC carve-outs for `dot-builder.ts` and `microverse-runner.ts`
+- `extension/scripts/smoke-deployed-hooks.sh` — exec'able, exits 0 against deployed stop-hook (verified)
+- `extension/tests/fixtures/dot-builder/` — 8 golden DOT fixtures (catastrophic-recovery, competing, convergence, fan-out, isolated-workspace-convergence, microverse, review-ratchet, sequential)
+- `extension/tests/fixtures/{microverse,mux-runner,setup,spawn-morty,stop-hook}/` — token, schema, version, mutation fixtures
+- T0 frontmatter `status: "Done"`
+
+### What ate the day (so the next session has the receipts)
+
+- v1.56.0 was the structural unblocker — without it, every resume picked up an `anatomy-park.md` template and the codex worker dutifully ran the wrong skill.
+- v1.56.1 — codex is a literalist. Any prompt rule with "ONLY" or "NEVER" is read absolutely, even when context makes the intended scope obvious. Future prompt edits in this codebase: enumerate scopes explicitly; never use "ONLY" as a hard constraint.
+- v1.56.4 worked exactly as designed: the v1.56.4 run logged **18 `MANAGER_FALSE_EPIC_COMPLETED` markers** during T0 alone. Every one of those was a hallucinated epic completion that would have killed the pipeline pre-fix. Recovery state machine caught all 18.
+
+### Why the run still stopped
+
+After T0 landed and codex advanced to T1 (`f068af3f` — Split `_emitDot`, the largest god function), codex ran for 5 iterations doing research/plan analysis without making implementation commits. Mux-runner's circuit breaker (separate from the EPIC_COMPLETED recovery — this one watches actual progress like ticket-status changes and commits) tripped at iteration 8 and exited. **This is not a hallucination — it's that T1's complexity (905 LOC, 6 helpers, 8 new tests) exceeded codex's per-iteration thinking budget.**
+
+T1 status reset to `Todo` so resume starts fresh.
 
 ---
 
-## 3. Current state (verified on disk)
+## 3. Current state (verified on disk, 2026-04-27 13:21Z)
 
 | Item | Value |
 |---|---|
 | Session root | `~/.local/share/pickle-rick/sessions/2026-04-25-9152e64b/` |
-| `state.json`: active | `false` |
-| `state.json`: step | `research` |
-| `state.json`: current_ticket | `6f3e3f01` (T0) |
-| `pipeline-status.json` | `cancelled` (status field) |
-| `pipeline-cancel` sentinel | exists, contents: `SIGHUP` |
-| T0 artifacts | `research_2026-04-25.md` (9.2K), `plan_2026-04-25.md` (5.7K), `worker_session_77275.log` (701K) |
-| Source tree | clean — `git status` shows no in-flight refactor edits; T0 had not yet entered implement phase |
-| tmux | `pipeline-9152e64b` is dead. `pickle-49a70650` (your separate attractor epic) is alive. |
+| `state.json: active` | `false` |
+| `state.json: step` | `research` |
+| `state.json: current_ticket` | `f068af3f` (T1) |
+| `state.json: command_template` | `pickle.md` ✅ (v1.56.0 fix held) |
+| `state.json: false_epic_completed_count` | `18` (proof v1.56.4 fired and recovered) |
+| `pipeline-status.json` | `failed` (circuit-breaker exit; not relaunch-blocking) |
+| `pipeline-cancel` sentinel | absent |
+| Working tree | clean except untracked `prds/bmad-inspired-hardening.md` (user draft) |
+| Source tree | T0 deliverables committed; no in-flight T1 edits |
+| tmux | `pipeline-9152e64b` is dead. |
+| Tickets done | 1 of 20 (T0 / `6f3e3f01`) |
+| Tickets in progress | 0 (T1 reset to Todo) |
+| Tickets pending | 19 |
+
+T1 has research/plan artifacts on disk from the failed run (5 worker-session logs, plan/research markdown). Resuming T1 will reuse those if the prompt instructs, or restart fresh if cleared.
 
 ---
 
-## 4. How to resume tomorrow
+## 4. Resume strategy
 
-### Option A: continue the existing run (cheapest — research/plan already paid for)
+### Option A: hand-execute T1 with claude backend (recommended)
+
+T1 is mechanical extraction (split `_emitDot` into 6 topology helpers + 2 inline post-passes per the refined PRD). Codex stalled on it because of complexity, not capability gaps. Claude with full file context will burn through it cleanly in 30–60 minutes.
 
 ```bash
+# Edit state.json directly OR launch /pickle on T1's ticket file with --backend claude
 SESSION_ROOT=~/.local/share/pickle-rick/sessions/2026-04-25-9152e64b
+# Switch backend for one ticket
+node "$HOME/.claude/pickle-rick/extension/bin/update-state.js" backend claude "$SESSION_ROOT"
+node "$HOME/.claude/pickle-rick/extension/bin/update-state.js" start_time_epoch "$(date +%s)" "$SESSION_ROOT"
+node "$HOME/.claude/pickle-rick/extension/bin/update-state.js" iteration 0 "$SESSION_ROOT"
+node "$HOME/.claude/pickle-rick/extension/bin/update-state.js" current_ticket f068af3f "$SESSION_ROOT"
+rm -f "$SESSION_ROOT/pipeline-cancel"
 
-# 1. Clear cancellation signals
-rm "$SESSION_ROOT/pipeline-cancel"
-
-# 2. Reset pipeline status (the runner overwrites this on next start, but be tidy)
-node "$HOME/.claude/pickle-rick/extension/bin/update-state.js" active true "$SESSION_ROOT"
-
-# 3. Re-create the tmux session (do NOT call setup.js again — it was the
-#    session-map writer that triggered the cross-session SIGHUP last time)
 tmux new-session -d -s pipeline-9152e64b -c /Users/gregorydickson/loanlight/pickle-rick/pickle-rick-claude
-
-# 4. Relaunch the runner
 tmux send-keys -t pipeline-9152e64b:0 \
   "node \$HOME/.claude/pickle-rick/extension/bin/pipeline-runner.js $SESSION_ROOT; read" Enter
-
-# 5. Attach to monitor
 tmux attach -t pipeline-9152e64b
 ```
 
-The runner will see existing `pipeline.json` (phases, target, codex backend) and resume PHASE 1/3 PICKLE on T0. Mux-runner reads state.json — since research + plan artifacts already exist on disk, it should advance directly to the implement phase.
+After T1 lands, switch `state.backend` back to `codex` for T2+ if desired — most remaining tickets are smaller-scope splits where codex performed acceptably.
 
-**Cross-session safety**: if your attractor pickle session is still running (`pickle-49a70650`), avoid invoking `setup.js --tmux` in either session simultaneously — that's the suspected SIGHUP trigger. Pause attractor work briefly during step 3 above to be safe.
+### Option B: bump circuit-breaker budget for large-tier tickets, retry codex on T1
 
-### Option B: hand off T0 manually (if you want to inspect/edit before resuming)
+Currently 5 iterations × ~10 min = 50 min before stall. T1 needs more. Code change in `mux-runner.ts` to read `linear_ticket_*.md` frontmatter `complexity_tier` and use a tier-keyed budget (`large` = 12, `medium` = 6, `small` = 4). Modest scope, would land as v1.56.5. Then retry codex.
 
-T0 is scaffold-only (no source-logic changes). You can:
-1. Read `$SESSION_ROOT/6f3e3f01/research_2026-04-25.md` and `plan_2026-04-25.md`.
-2. Implement the plan by hand (it's ~12 fixture files + 1 ESLint append + 1 smoke script).
-3. Mark T0 done in its frontmatter (`status: Done`) and advance `current_ticket` to `f068af3f` (T1).
-4. Restart pipeline at T1 via Option A.
+### Option C: pure hand-execution for T1 by user (no agent)
 
-### Option C: full restart (NOT recommended — discards the 7.5 min of T0 thinking)
+T1 is the kind of work a senior dev does in 90 minutes. The refined PRD has the helper signatures spelled out. If the agent loops are getting tedious, this is the fastest path to "T1 done, resume codex on T2."
 
-Don't do this. T0's research + plan are good and save real time on T1's same-file rebase coordination.
+Whichever option, **T1's research/plan artifacts at `$SESSION_ROOT/f068af3f/` are good context** — codex did real analysis there even if it didn't commit code. Worth reading before starting.
+
+### Option D: full restart from T0 (NOT recommended)
+
+T0 is committed. There's nothing to redo there. The session is genuinely past T0.
 
 ---
 
 ## 5. The 20 tickets (in execution order)
 
-| Order | ID | Title | Tier | Min new tests |
-|---|---|---|---|---|
-| 10 | `6f3e3f01` | T0 — Pre-refactor scaffolding (fixtures, ESLint carve-outs, feasibility) **[GATE]** | medium | 0 |
-| 20 | `f068af3f` | T1 — Split `_emitDot` (6 topology helpers, 2 post-passes inline) | large | 8 |
-| 30 | `53caa9a4` | T2 — Split `mux-runner main` (outer loop only) | large | 4 |
-| 40 | `2b4b0501` | T3 — Split `microverse-runner main` (200 LOC carve-out) | large | 3 |
-| 50 | `626cd1d5` | T4 — Split `spawn-morty main` (`finalize` stays nested closure) | large | 4 |
-| 60 | `5059df9a` | T5 — Split `stop-hook main` (8 token detectors + alias-equivalence) | large | 9 |
-| 70 | `16efc5dc` | T6 — Split `spawn-refinement-team main` | medium | 1 |
-| 80 | `7aa55af1` | T7 — Split `pipeline-runner main` (PhaseConfig dispatch, NO `--dry-run`) | medium | 1 |
-| 90 | `f5ac5de1` | T8 — Split `setup main` (NEW `tests/setup.test.js`) | medium | 3 |
-| 100 | `a6c9c59b` | T9 — Split `jar-runner main` (line range corrected; tier promoted) | medium | 5 |
-| 110 | `e54eebf6` | T10 — Split `build()` | small | 3 |
-| 120 | `e2e6e1cc` | T11 — Split `fromSpec()` | small | 2 |
-| 130 | `189df244` | T12 — Split `ensureMonitorWindow` **[TRAP DOOR]** | small | 2 |
-| 140 | `bdfb528b` | T13 — Split `findImporters` **[TRAP DOOR]** | small | 4 |
-| 150 | `5fa8759a` | T14 — Epic closer (ESLint→error, single 1.55.0 bump, smoke) | trivial | 0 |
-| 160 | `e5e73494` | T15 — Wire (Library variant) | medium | 0 |
-| 170 | `24cd1805` | Harden — code quality of refactor diff | large | varies |
-| 180 | `9dbd0bfd` | Audit — data flow integrity | large | varies |
-| 190 | `d6e98b45` | Harden — test quality | large | varies |
-| 200 | `7be94584` | Audit — cross-reference consistency | medium | 0 |
+| Order | ID | Title | Tier | Min new tests | Status |
+|---|---|---|---|---|---|
+| 10 | `6f3e3f01` | T0 — Pre-refactor scaffolding **[GATE]** | medium | 0 | **Done** ✅ |
+| 20 | `f068af3f` | T1 — Split `_emitDot` (6 topology helpers, 2 post-passes inline) | large | 8 | Todo (research/plan staged) |
+| 30 | `53caa9a4` | T2 — Split `mux-runner main` (outer loop only) | large | 4 | Todo |
+| 40 | `2b4b0501` | T3 — Split `microverse-runner main` | large | 3 | Todo |
+| 50 | `626cd1d5` | T4 — Split `spawn-morty main` | large | 4 | Todo |
+| 60 | `5059df9a` | T5 — Split `stop-hook main` (8 token detectors) | large | 9 | Todo |
+| 70 | `16efc5dc` | T6 — Split `spawn-refinement-team main` | medium | 1 | Todo |
+| 80 | `7aa55af1` | T7 — Split `pipeline-runner main` (PhaseConfig dispatch) | medium | 1 | Todo |
+| 90 | `f5ac5de1` | T8 — Split `setup main` | medium | 3 | Todo |
+| 100 | `a6c9c59b` | T9 — Split `jar-runner main` | medium | 5 | Todo |
+| 110 | `e54eebf6` | T10 — Split `build()` | small | 3 | Todo |
+| 120 | `e2e6e1cc` | T11 — Split `fromSpec()` | small | 2 | Todo |
+| 130 | `189df244` | T12 — Split `ensureMonitorWindow` **[TRAP DOOR]** | small | 2 | Todo |
+| 140 | `bdfb528b` | T13 — Split `findImporters` **[TRAP DOOR]** | small | 4 | Todo |
+| 150 | `5fa8759a` | T14 — Epic closer (ESLint→error, single 1.55.0 bump, smoke) | trivial | 0 | Todo |
+| 160 | `e5e73494` | T15 — Wire (Library variant) | medium | 0 | Todo |
+| 170 | `24cd1805` | Harden — code quality of refactor diff | large | varies | Todo |
+| 180 | `9dbd0bfd` | Audit — data flow integrity | large | varies | Todo |
+| 190 | `d6e98b45` | Harden — test quality | large | varies | Todo |
+| 200 | `7be94584` | Audit — cross-reference consistency | medium | 0 | Todo |
 
-Total minimum new tests from T0–T14: **49**. Hardening tickets add more as findings demand.
+T14's planned bump target (`1.54.2 → 1.55.0`) is now obsolete — we've already shipped `1.55.0` for an unrelated agent-teams feature (commit `a4662df`) and `1.56.4` for this session's PRC fixes. Reset T14's bump to whatever the current latest is at the time T14 lands.
+
+Total minimum new tests from T1–T14: **49**. Hardening tickets add more as findings demand.
 
 Per-ticket details: `~/.local/share/pickle-rick/sessions/2026-04-25-9152e64b/<hash>/linear_ticket_<hash>.md`.
 
@@ -134,7 +162,7 @@ These apply to every PR in the epic — keep them in mind during code review:
 3. **Same-file rebase rule** — T1, T10, T11 all touch `dot-builder.ts` (non-overlapping line ranges; rebase-before-review, not strict numeric order).
 4. **Test placement** — unit tests in `extension/tests/`; integration in `extension/tests/integration/`. Both append to `package.json:13`.
 5. **`package.json:13` append-at-end protocol** — alphabetize once at T14, never per-PR.
-6. **Single version bump at T14** (`1.54.2 → 1.55.0`) — per-PR commits use `refactor(god-fn):` without bumps.
+6. **Single version bump at T14** — per-PR commits use `refactor(god-fn):` without bumps. Target version reset (see §5 above).
 7. **Fixture lockdown** — refactor PRs cannot modify fixtures inline; mid-epic fixture updates are separate `fixture-update`-labeled PRs.
 8. **Helper-signature spec rule** — every helper signature pre-declared in ticket body; discriminated unions over booleans; no mutable-ref side-effects.
 9. **Trap-door preservation** — T12 must NOT touch `displayMacNotification` (sibling at `pickle-utils.ts:893+`); T13 helpers stay PRIVATE to `scope-resolver.ts`.
@@ -144,25 +172,37 @@ These apply to every PR in the epic — keep them in mind during code review:
 
 ---
 
-## 7. Outstanding pre-implementation questions
+## 7. Open questions / pre-implementation gates
 
-- **Reviewer assignment** — refined PRD §11 requires a named reviewer with ≤24h SLA. Not assigned yet. Decide before T0 lands.
-- **Branch strategy** — refined PRD §6 says all PRs land on `refactor/god-fn-epic` branch with one cumulative `1.55.0` bump at T14. Confirm vs landing each PR directly on `main`.
-- **Codex backend timing** — at the moment SIGHUP arrived, T0's worker had completed research/plan in ~7.5 min. Extrapolating to T1 (large tier, 8 new tests) suggests 30-60 min/large ticket on codex. Total epic ETA: ~12-18 hours of pipeline time. Run during low-conflict windows (no other pickle sessions).
+- **Reviewer assignment** — refined PRD §11 requires a named reviewer with ≤24h SLA. Not assigned yet. Decide before T1 lands.
+- **Branch strategy** — refined PRD §6 originally called for `refactor/god-fn-epic` branch with single bump at T14. We've already landed multiple commits to `main` directly (release line v1.56.0–v1.56.4). Decide: continue on main per-PR, or carve out a feature branch from current HEAD for T1+? Either works.
+- **Backend choice for T1** — see Resume Strategy §4 above. Default recommendation: claude for T1, codex for T2+.
+- **Codex large-tier circuit-breaker tuning** — if pursuing Option B in §4, this is the implementation work.
 
 ---
 
-## 8. Quick reference
+## 8. Bug-class observations (record for future codex prompt design)
+
+Codex backend exhibits a consistent class of failures we hit five times today. Each is now mitigated, but the pattern is worth documenting for future prompt authors:
+
+1. **Codex is a literalist.** Any "ONLY"/"NEVER" rule is read absolutely. Don't write rules whose plain reading contradicts later steps in the same prompt.
+2. **Codex bleeds context across nearby instructions.** If `pickle.md` (manager) and `send-to-morty.md` (worker) both define completion tokens and the worker has both in its addDirs, codex can use the wrong one. Mitigation: per-context forbidden lists, runtime token scrubbing (v1.56.3).
+3. **Codex confuses scope levels.** Per-ticket completion vs epic completion both look like "I finished" to codex. Mitigation: structural recovery in mux-runner (v1.56.4) — never trust the model's claim of "epic done" without verifying ticket statuses.
+4. **Codex stalls on large refactors.** Iteration budgets sized for "implement one helper extraction" don't cover "implement six". Mitigation: tier-aware circuit-breaker budgets (deferred), or hand-do large tickets.
+5. **Codex tests are load-fragile.** Wall-clock-bounded tests with `{ timeout: 15_000 }` flake when codex runs them concurrent with its own tool calls. Mitigation: 3–5x budget bumps in v1.56.2.
+
+---
+
+## 9. Quick reference
 
 ```
 Pipeline session dir:    ~/.local/share/pickle-rick/sessions/2026-04-25-9152e64b/
-Pre-refinement PRD:      $SESSION_ROOT/prd.md
 Refined PRD (committed): prds/god-functions-remediation.md (SHA 1658d81)
 Refinement summary:      $SESSION_ROOT/refinement_summary.md
 Per-ticket files:        $SESSION_ROOT/<hash>/linear_ticket_<hash>.md
-T0 research:             $SESSION_ROOT/6f3e3f01/research_2026-04-25.md
-T0 plan:                 $SESSION_ROOT/6f3e3f01/plan_2026-04-25.md
-Worker transcript:       $SESSION_ROOT/6f3e3f01/worker_session_77275.log
+T1 staged research:      $SESSION_ROOT/f068af3f/research_2026-04-26.md
+T1 staged plan:          $SESSION_ROOT/f068af3f/plan_2026-04-26.md
 Pipeline config:         $SESSION_ROOT/pipeline.json
-Cancel signal (rm to resume): $SESSION_ROOT/pipeline-cancel
+Cancel signal (rm to resume): $SESSION_ROOT/pipeline-cancel (currently absent)
+Latest release:          v1.56.4 — https://github.com/gregorydickson/pickle-rick-claude/releases/tag/v1.56.4
 ```
