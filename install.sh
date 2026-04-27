@@ -109,6 +109,9 @@ ln -sf "$SCRIPT_DIR/extension/node_modules/.bin/tsc" "$SCRIPT_DIR/node_modules/.
 chmod +x "$EXTENSION_ROOT/extension/bin/dot-builder-cli.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/dot-builder.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/plumbus-frame-analyzer.js"
+chmod +x "$EXTENSION_ROOT/extension/bin/check-gate.js"
+chmod +x "$EXTENSION_ROOT/extension/bin/finalize-gate.js"
+chmod +x "$EXTENSION_ROOT/extension/bin/spawn-gate-remediator.js"
 chmod +x "$EXTENSION_ROOT/extension/scripts/tmux-monitor.sh"
 
 # --- INTERNAL TEMPLATES (hidden from slash command list) ---

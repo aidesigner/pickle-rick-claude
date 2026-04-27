@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { VALID_ACTIVITY_EVENTS } from '../types/index.js';
+import { GATE_REMEDIATION_EVENT_NAMES } from '../services/convergence-gate.js';
 
 const GATE_EVENTS = [
   'gate_baseline_captured',
@@ -56,4 +57,11 @@ test('gate-events: gate_payload is optional on ActivityEvent (runtime constructi
   const parsed = JSON.parse(json);
   assert.deepEqual(parsed.gate_payload, { status: 'green', elapsed_ms: 42 });
   assert.equal(parsed.event, 'gate_run_complete');
+});
+
+test('GATE_REMEDIATION_EVENT_NAMES: all 3 remediation events are in VALID_ACTIVITY_EVENTS', () => {
+  const set = new Set(VALID_ACTIVITY_EVENTS);
+  for (const name of GATE_REMEDIATION_EVENT_NAMES) {
+    assert.ok(set.has(name), `Remediation event missing from VALID_ACTIVITY_EVENTS: ${name}`);
+  }
 });

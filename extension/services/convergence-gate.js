@@ -90,7 +90,7 @@ function validateBaselineStructure(data) {
         Array.isArray(d['checks']) &&
         Array.isArray(d['failures']));
 }
-export function loadBaselineFile(baselinePath) {
+function loadBaselineFile(baselinePath) {
     const raw = JSON.parse(fs.readFileSync(baselinePath, 'utf-8'));
     if (!validateBaselineStructure(raw)) {
         throw new GateError('BASELINE_CORRUPT', `Invalid baseline file at ${baselinePath}`);

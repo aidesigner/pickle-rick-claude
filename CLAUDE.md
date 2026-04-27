@@ -53,6 +53,7 @@ Before creating a release, run the full lint and test gate from `extension/`: `n
 | monitor.js / log-watcher.js / morty-watcher.js / raw-morty.js | tmux TUI panes (Matrix-styled) |
 | refinement-watcher.js | PRD refinement team monitor pane |
 | microverse-runner.js + microverse-state.js | Metric convergence loop: measure, compare, rollback, stall detection |
+| convergence-gate.ts | Gate service: runGate, filterByScope, assertBaselineFresh, baseline subtraction; invoked by check-gate / finalize-gate / microverse-runner |
 | pipeline-runner.js | Sequential phase orchestrator: pickle → anatomy-park → szechuan-sauce |
 | state-manager.js | Atomic file locks, crash recovery, schema migration, multi-file transactions |
 | types/index.js | Shared types: State, errors (StateError/LockError/TransactionError), PromiseTokens, activity events |

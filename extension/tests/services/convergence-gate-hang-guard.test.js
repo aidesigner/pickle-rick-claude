@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { runGate } from '../../services/convergence-gate.js';
+import { runGate, GateError, GateTimeoutError } from '../../services/convergence-gate.js';
 
 function makeTmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'cg-hg-'));
@@ -124,4 +124,20 @@ test('runGate hang-guard: fast commands succeed with timeouts configured', async
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// ---------------------------------------------------------------------------
+// GateTimeoutError shape — verifies the exported class has the right fields
+// ---------------------------------------------------------------------------
+
+test('GateTimeoutError: constructor sets check, timeout_ms, and kind', () => {
+  const err = new GateTimeoutError('lint', 5000);
+  assert.ok(err instanceof GateTimeoutError, 'should be instanceof GateTimeoutError');
+  assert.ok(err instanceof GateError, 'should be instanceof GateError');
+  assert.ok(err instanceof Error, 'should be instanceof Error');
+  assert.equal(err.check, 'lint');
+  assert.equal(err.timeout_ms, 5000);
+  assert.equal(err.kind, 'GATE_CHECK_TIMEOUT');
+  assert.ok(err.message.includes('lint'), 'message should mention the check name');
+  assert.ok(err.message.includes('5000'), 'message should mention the timeout');
 });

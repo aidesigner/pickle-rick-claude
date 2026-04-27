@@ -105,7 +105,7 @@ function validateBaselineStructure(data: unknown): data is GateBaselineFile {
   );
 }
 
-export function loadBaselineFile(baselinePath: string): GateBaselineFile {
+function loadBaselineFile(baselinePath: string): GateBaselineFile {
   const raw = JSON.parse(fs.readFileSync(baselinePath, 'utf-8')) as unknown;
   if (!validateBaselineStructure(raw)) {
     throw new GateError('BASELINE_CORRUPT', `Invalid baseline file at ${baselinePath}`);

@@ -644,7 +644,10 @@ pickle-rick-claude/
 │   │   ├── dot-builder-cli.js        # DotBuilder CLI
 │   │   ├── plumbus-frame-analyzer.js # .dot frame analyzer (Override 6)
 │   │   ├── sync-schema.js            # Attractor schema sync
-│   │   └── council-publish.js        # Council-of-Ricks end-of-session PR publisher
+│   │   ├── council-publish.js        # Council-of-Ricks end-of-session PR publisher
+│   │   ├── check-gate.js             # Gate check CLI (typecheck/lint/tests, --mode baseline|strict)
+│   │   ├── finalize-gate.js          # Post-skill gate enforcement + remediator orchestration
+│   │   └── spawn-gate-remediator.js  # Remediator brief writer (gate result → morty-gate-remediator.md)
 │   ├── layouts/
 │   │   ├── monitor-pickle.kdl   # Zellij layout for /pickle-zellij
 │   │   └── monitor-meeseeks.kdl # Zellij layout for /meeseeks-zellij
@@ -665,6 +668,7 @@ pickle-rick-claude/
 │   │   ├── state-manager.js      # Atomic file locks, crash recovery, schema migration
 │   │   ├── scope-resolver.js     # Scope filter (anatomy-park, szechuan-sauce)
 │   │   ├── convergence-defaults.js # DotBuilder convergence preset defaults
+│   │   ├── convergence-gate.js   # Gate service: runGate, filterByScope, assertBaselineFresh, baseline subtraction
 │   │   └── dot-builder.js        # DotBuilder core (attractor .dot codegen)
 │   ├── lib/
 │   │   ├── cluster-fix-selector.js  # .dot cluster fix selector
