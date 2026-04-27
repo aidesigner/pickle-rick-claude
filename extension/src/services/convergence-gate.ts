@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { execFile, spawnSync } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
-import { LockError, type GateResult, type GateMode, type GateFailure, type GateBaselineFile } from '../types/index.js';
+import { LockError, type ActivityEventType, type GateResult, type GateMode, type GateFailure, type GateBaselineFile } from '../types/index.js';
 import { withLock } from './state-manager.js';
 
 const execFileAsync = promisify(execFile);
@@ -50,6 +50,13 @@ export class BaselineStaleError extends GateError {
     this.name = 'BaselineStaleError';
   }
 }
+
+/** Event names emitted by the remediator layer after runGate. Exported for remediator callers. */
+export const GATE_REMEDIATION_EVENT_NAMES: readonly ActivityEventType[] = [
+  'gate_remediation_complete',
+  'gate_remediation_aborted_unverified_production_change',
+  'gate_autofix_reverted',
+] as const;
 
 const PER_CHECK_TIMEOUT_MS: Record<'typecheck' | 'lint' | 'tests', number> = {
   typecheck: 120_000,
@@ -156,6 +163,8 @@ export interface RunGateOpts {
   expected_branch?: string;
   /** Optional event callback for testable gate event emission. */
   onEvent?: (event: string, data: Record<string, unknown>) => void;
+  /** Optional settings bag for flake allowlist and other convergence_gate config. */
+  settings?: { convergence_gate?: { known_flake_files?: string[] } };
   /** @internal test overrides for timeout values */
   _timeouts?: {
     perCheck?: Partial<Record<'typecheck' | 'lint' | 'tests', number>>;
@@ -164,7 +173,7 @@ export interface RunGateOpts {
   };
 }
 
-export function detectProjectType(workingDir: string): 'pnpm' | 'npm' | 'yarn' | 'cargo' | 'go' | null {
+export function detectProjectType(workingDir: string): 'pnpm' | 'npm' | 'yarn' | 'cargo' | 'go' | 'bun' | null {
   const has = (f: string) => fs.existsSync(path.join(workingDir, f));
   if (has('pnpm-lock.yaml') || has('pnpm-workspace.yaml')) return 'pnpm';
   if (has('yarn.lock')) return 'yarn';
@@ -172,6 +181,7 @@ export function detectProjectType(workingDir: string): 'pnpm' | 'npm' | 'yarn' |
   if (has('package.json')) return 'npm';
   if (has('Cargo.toml')) return 'cargo';
   if (has('go.mod')) return 'go';
+  if (has('bun.lockb')) return 'bun';
   return null;
 }
 
@@ -258,6 +268,18 @@ function globToRegex(pattern: string): RegExp {
   return new RegExp(`^${re}(/.*)?$`);
 }
 
+function applyFlakeFilter(
+  failures: GateFailure[], workingDir: string, flakeGlobs: string[]
+): { real: GateFailure[]; flake: GateFailure[] } {
+  if (flakeGlobs.length === 0) return { real: failures, flake: [] };
+  const regexes = flakeGlobs.map(globToRegex);
+  const isFlake = (f: GateFailure) => {
+    const rel = path.relative(workingDir, f.file);
+    return regexes.some(re => re.test(rel));
+  };
+  return { real: failures.filter(f => !isFlake(f)), flake: failures.filter(isFlake) };
+}
+
 export function filterByScope(
   files: string[],
   opts: { scope: 'full' | 'changed'; since?: string; allowedPaths?: string[] }
@@ -327,6 +349,8 @@ const CHECK_KEY_MAP: Record<'typecheck' | 'lint' | 'tests', keyof { typecheck?: 
 
 export async function runGate(opts: RunGateOpts): Promise<GateResult> {
   const start = Date.now();
+  const emit = (event: string, data: Record<string, unknown>) => opts.onEvent?.(event, data);
+
   const empty: GateResult = {
     status: 'green',
     failures: [],
@@ -337,12 +361,36 @@ export async function runGate(opts: RunGateOpts): Promise<GateResult> {
     new_failures_vs_baseline: 0,
   };
 
+  function finalize(result: GateResult): GateResult {
+    emit('gate_run_complete', {
+      gate_payload: {
+        mode: opts.mode,
+        scope: opts.scope,
+        checks: opts.checks,
+        status: result.status,
+        failure_count: result.failures.length,
+        total_raw_failure_count: result.total_raw_failure_count,
+        new_failures_vs_baseline: result.new_failures_vs_baseline,
+        elapsed_ms: result.elapsed_ms,
+        allowed_paths_used: result.allowed_paths_used,
+        baseline_used: result.baseline_used,
+      },
+    });
+    return result;
+  }
+
   const projectType = detectProjectType(opts.workingDir);
-  if (!projectType) return { ...empty, elapsed_ms: Date.now() - start };
+  if (!projectType) {
+    emit('gate_skipped', { reason: 'no_project_type_detected' });
+    return { ...empty, elapsed_ms: Date.now() - start };
+  }
 
   const commands = loadGateCommands();
   const cmdMap = commands[projectType];
-  if (!cmdMap) return { ...empty, elapsed_ms: Date.now() - start };
+  if (!cmdMap) {
+    emit('gate_skipped', { reason: 'project_type_low_confidence', detected_signals: [projectType] });
+    return { ...empty, elapsed_ms: Date.now() - start };
+  }
 
   const workspacePackages = getWorkspacePackages(opts.workingDir);
   const allowedPathsUsed = Boolean(opts.allowedPaths && opts.allowedPaths.length > 0);
@@ -369,10 +417,13 @@ export async function runGate(opts: RunGateOpts): Promise<GateResult> {
 
     targetDirs = candidates;
   } else {
-    // Single-package: run checks in workingDir
     if (opts.scope === 'changed' && opts.since) {
       const changedFiles = getChangedSince(opts.workingDir, opts.since);
-      if (changedFiles.length === 0) return { ...empty, elapsed_ms: Date.now() - start };
+      if (changedFiles.length === 0) {
+        const result = { ...empty, elapsed_ms: Date.now() - start };
+        emit('gate_diff_scope_fallback', { since: opts.since, reason: 'no_changed_files' });
+        return finalize(result);
+      }
     }
     targetDirs = [opts.workingDir];
   }
@@ -383,7 +434,7 @@ export async function runGate(opts: RunGateOpts): Promise<GateResult> {
     });
     const dirtyLines = ((porcelainR.stdout as string | null) ?? '').split('\n').filter(Boolean);
     if (dirtyLines.length > 0) {
-      opts.onEvent?.('gate_skipped', { reason: 'dirty_worktree_no_rescue' });
+      emit('gate_skipped', { reason: 'dirty_worktree_no_rescue' });
       return { ...empty, elapsed_ms: Date.now() - start };
     }
   }
@@ -408,13 +459,13 @@ export async function runGate(opts: RunGateOpts): Promise<GateResult> {
         path.join(gateDir, `workingdir_drift_${iso}.md`),
         `# Working Directory Drift\n\nDetected at: ${now}\n\nExpected HEAD: ${opts.expected_head ?? '(any)'}\nCurrent HEAD: ${currentHead}\nExpected branch: ${opts.expected_branch ?? '(any)'}\nCurrent branch: ${currentBranch}\n`
       );
-      opts.onEvent?.('gate_workingdir_drift_detected', {
+      emit('gate_workingdir_drift_detected', {
         expected_head: opts.expected_head,
         current_head: currentHead,
         expected_branch: opts.expected_branch,
         current_branch: currentBranch,
       });
-      return {
+      const driftResult: GateResult = {
         status: 'red' as const,
         failures: [{
           check: 'tests' as 'typecheck' | 'lint' | 'tests',
@@ -431,6 +482,7 @@ export async function runGate(opts: RunGateOpts): Promise<GateResult> {
         total_raw_failure_count: 1,
         new_failures_vs_baseline: 0,
       };
+      return finalize(driftResult);
     }
   }
 
@@ -469,7 +521,7 @@ export async function runGate(opts: RunGateOpts): Promise<GateResult> {
           } catch { /* */ }
         }
         if (UNSAFE_TEST_SCRIPT_REGEX.test(scriptContent)) {
-          opts.onEvent?.('gate_unsafe_test_command_blocked', { script: scriptContent });
+          emit('gate_unsafe_test_command_blocked', { script: scriptContent });
           continue;
         }
         if (!SAFE_TEST_RUNNER_REGEX.test(scriptContent)) {
@@ -510,24 +562,32 @@ export async function runGate(opts: RunGateOpts): Promise<GateResult> {
     }
   }
 
+  const flakeGlobs = opts.settings?.convergence_gate?.known_flake_files ?? [];
+  const { real: realFailures, flake: flakeFailures } = applyFlakeFilter(allFailures, opts.workingDir, flakeGlobs);
+
   if (opts.mode === 'baseline' && opts.baselinePath) {
-    const withIndices = assignOccurrenceIndices(allFailures);
+    const withIndices = assignOccurrenceIndices(realFailures);
     const lockKey = `gate-${createHash('sha256').update(opts.workingDir).digest('hex')}`;
     const lockMs = opts._timeouts?.lockMs ?? GATE_LOCK_TIMEOUT_MS;
 
     try {
-      return await withLock(lockKey, { timeout_ms: lockMs }, async () => {
+      return finalize(await withLock(lockKey, { timeout_ms: lockMs }, async () => {
+        emit('gate_lock_acquired', { lock_key: lockKey });
+
         if (!fs.existsSync(opts.baselinePath!)) {
           const baseline: GateBaselineFile = {
             schema_version: 1,
             captured_at: new Date().toISOString(),
             working_dir: opts.workingDir,
-            project_type: projectType,
+            // 'bun' and other low-confidence types are filtered by !cmdMap above, so this cast is safe
+            project_type: projectType as GateBaselineFile['project_type'],
             checks: opts.checks,
             failures: withIndices,
           };
           fs.mkdirSync(path.dirname(opts.baselinePath!), { recursive: true });
           fs.writeFileSync(opts.baselinePath!, JSON.stringify(baseline, null, 2));
+          emit('gate_baseline_captured', { path: opts.baselinePath, failure_count: withIndices.length });
+          emit('gate_preexisting_tests_baselined', { failure_count: withIndices.length });
           return {
             status: 'green' as const,
             failures: [] as GateFailure[],
@@ -549,10 +609,11 @@ export async function runGate(opts: RunGateOpts): Promise<GateResult> {
           total_raw_failure_count: withIndices.length,
           new_failures_vs_baseline: newFailures.length,
         };
-      });
+      }));
     } catch (err) {
       if (err instanceof LockError) {
-        return {
+        emit('gate_lock_timeout', { lock_key: lockKey, waited_ms: err.waited_ms ?? lockMs });
+        const lockTimeoutResult: GateResult = {
           status: 'red',
           failures: [{
             check: 'gate' as 'typecheck' | 'lint' | 'tests',
@@ -569,19 +630,44 @@ export async function runGate(opts: RunGateOpts): Promise<GateResult> {
           total_raw_failure_count: 0,
           new_failures_vs_baseline: 0,
         };
+        return finalize(lockTimeoutResult);
       }
       throw err;
     }
   }
 
-  const status = allFailures.length === 0 ? 'green' : 'red';
-  return {
+  if (realFailures.length === 0 && flakeFailures.length > 0) {
+    const now = new Date().toISOString();
+    const iso = now.replace(/[:.]/g, '-');
+    const gateDir = path.join(opts.workingDir, 'gate');
+    fs.mkdirSync(gateDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(gateDir, `known_flake_failures_${iso}.md`),
+      `# Known Flake Failures\n\nCaptured: ${now}\n\n${flakeFailures.map(f => `- \`${f.file}\` [${f.check}]: ${f.message.slice(0, 200)}`).join('\n')}\n`
+    );
+    emit('gate_out_of_scope_failures_present', { flake_count: flakeFailures.length, paths: flakeFailures.map(f => f.file) });
+    return finalize({
+      status: 'green-with-known-flake-warnings',
+      failures: [],
+      baseline_used: false,
+      allowed_paths_used: allowedPathsUsed,
+      elapsed_ms: Date.now() - start,
+      total_raw_failure_count: allFailures.length,
+      new_failures_vs_baseline: 0,
+    });
+  }
+
+  const status = realFailures.length === 0 ? 'green' : 'red';
+  if (status === 'red') {
+    emit('gate_regression_threshold_warning', { failure_count: realFailures.length });
+  }
+  return finalize({
     status,
-    failures: allFailures,
+    failures: realFailures,
     baseline_used: false,
     allowed_paths_used: allowedPathsUsed,
     elapsed_ms: Date.now() - start,
     total_raw_failure_count: allFailures.length,
     new_failures_vs_baseline: 0,
-  };
+  });
 }

@@ -43,6 +43,12 @@ export class BaselineStaleError extends GateError {
         this.name = 'BaselineStaleError';
     }
 }
+/** Event names emitted by the remediator layer after runGate. Exported for remediator callers. */
+export const GATE_REMEDIATION_EVENT_NAMES = [
+    'gate_remediation_complete',
+    'gate_remediation_aborted_unverified_production_change',
+    'gate_autofix_reverted',
+];
 const PER_CHECK_TIMEOUT_MS = {
     typecheck: 120_000,
     lint: 60_000,
@@ -127,6 +133,8 @@ export function detectProjectType(workingDir) {
         return 'cargo';
     if (has('go.mod'))
         return 'go';
+    if (has('bun.lockb'))
+        return 'bun';
     return null;
 }
 function parsePnpmWorkspaceYaml(content) {
@@ -211,6 +219,16 @@ function globToRegex(pattern) {
         .replace(/\?/g, '[^/]');
     return new RegExp(`^${re}(/.*)?$`);
 }
+function applyFlakeFilter(failures, workingDir, flakeGlobs) {
+    if (flakeGlobs.length === 0)
+        return { real: failures, flake: [] };
+    const regexes = flakeGlobs.map(globToRegex);
+    const isFlake = (f) => {
+        const rel = path.relative(workingDir, f.file);
+        return regexes.some(re => re.test(rel));
+    };
+    return { real: failures.filter(f => !isFlake(f)), flake: failures.filter(isFlake) };
+}
 export function filterByScope(files, opts) {
     if (!opts.allowedPaths || opts.allowedPaths.length === 0)
         return files;
@@ -270,6 +288,7 @@ const CHECK_KEY_MAP = {
 };
 export async function runGate(opts) {
     const start = Date.now();
+    const emit = (event, data) => opts.onEvent?.(event, data);
     const empty = {
         status: 'green',
         failures: [],
@@ -279,13 +298,34 @@ export async function runGate(opts) {
         total_raw_failure_count: 0,
         new_failures_vs_baseline: 0,
     };
+    function finalize(result) {
+        emit('gate_run_complete', {
+            gate_payload: {
+                mode: opts.mode,
+                scope: opts.scope,
+                checks: opts.checks,
+                status: result.status,
+                failure_count: result.failures.length,
+                total_raw_failure_count: result.total_raw_failure_count,
+                new_failures_vs_baseline: result.new_failures_vs_baseline,
+                elapsed_ms: result.elapsed_ms,
+                allowed_paths_used: result.allowed_paths_used,
+                baseline_used: result.baseline_used,
+            },
+        });
+        return result;
+    }
     const projectType = detectProjectType(opts.workingDir);
-    if (!projectType)
+    if (!projectType) {
+        emit('gate_skipped', { reason: 'no_project_type_detected' });
         return { ...empty, elapsed_ms: Date.now() - start };
+    }
     const commands = loadGateCommands();
     const cmdMap = commands[projectType];
-    if (!cmdMap)
+    if (!cmdMap) {
+        emit('gate_skipped', { reason: 'project_type_low_confidence', detected_signals: [projectType] });
         return { ...empty, elapsed_ms: Date.now() - start };
+    }
     const workspacePackages = getWorkspacePackages(opts.workingDir);
     const allowedPathsUsed = Boolean(opts.allowedPaths && opts.allowedPaths.length > 0);
     let targetDirs;
@@ -306,11 +346,13 @@ export async function runGate(opts) {
         targetDirs = candidates;
     }
     else {
-        // Single-package: run checks in workingDir
         if (opts.scope === 'changed' && opts.since) {
             const changedFiles = getChangedSince(opts.workingDir, opts.since);
-            if (changedFiles.length === 0)
-                return { ...empty, elapsed_ms: Date.now() - start };
+            if (changedFiles.length === 0) {
+                const result = { ...empty, elapsed_ms: Date.now() - start };
+                emit('gate_diff_scope_fallback', { since: opts.since, reason: 'no_changed_files' });
+                return finalize(result);
+            }
         }
         targetDirs = [opts.workingDir];
     }
@@ -320,7 +362,7 @@ export async function runGate(opts) {
         });
         const dirtyLines = (porcelainR.stdout ?? '').split('\n').filter(Boolean);
         if (dirtyLines.length > 0) {
-            opts.onEvent?.('gate_skipped', { reason: 'dirty_worktree_no_rescue' });
+            emit('gate_skipped', { reason: 'dirty_worktree_no_rescue' });
             return { ...empty, elapsed_ms: Date.now() - start };
         }
     }
@@ -341,13 +383,13 @@ export async function runGate(opts) {
             const gateDir = path.join(opts.workingDir, 'gate');
             fs.mkdirSync(gateDir, { recursive: true });
             fs.writeFileSync(path.join(gateDir, `workingdir_drift_${iso}.md`), `# Working Directory Drift\n\nDetected at: ${now}\n\nExpected HEAD: ${opts.expected_head ?? '(any)'}\nCurrent HEAD: ${currentHead}\nExpected branch: ${opts.expected_branch ?? '(any)'}\nCurrent branch: ${currentBranch}\n`);
-            opts.onEvent?.('gate_workingdir_drift_detected', {
+            emit('gate_workingdir_drift_detected', {
                 expected_head: opts.expected_head,
                 current_head: currentHead,
                 expected_branch: opts.expected_branch,
                 current_branch: currentBranch,
             });
-            return {
+            const driftResult = {
                 status: 'red',
                 failures: [{
                         check: 'tests',
@@ -364,6 +406,7 @@ export async function runGate(opts) {
                 total_raw_failure_count: 1,
                 new_failures_vs_baseline: 0,
             };
+            return finalize(driftResult);
         }
     }
     const totalDeadline = Date.now() + (opts._timeouts?.total ?? GATE_TOTAL_TIMEOUT_MS);
@@ -397,7 +440,7 @@ export async function runGate(opts) {
                     catch { /* */ }
                 }
                 if (UNSAFE_TEST_SCRIPT_REGEX.test(scriptContent)) {
-                    opts.onEvent?.('gate_unsafe_test_command_blocked', { script: scriptContent });
+                    emit('gate_unsafe_test_command_blocked', { script: scriptContent });
                     continue;
                 }
                 if (!SAFE_TEST_RUNNER_REGEX.test(scriptContent)) {
@@ -436,23 +479,29 @@ export async function runGate(opts) {
             }
         }
     }
+    const flakeGlobs = opts.settings?.convergence_gate?.known_flake_files ?? [];
+    const { real: realFailures, flake: flakeFailures } = applyFlakeFilter(allFailures, opts.workingDir, flakeGlobs);
     if (opts.mode === 'baseline' && opts.baselinePath) {
-        const withIndices = assignOccurrenceIndices(allFailures);
+        const withIndices = assignOccurrenceIndices(realFailures);
         const lockKey = `gate-${createHash('sha256').update(opts.workingDir).digest('hex')}`;
         const lockMs = opts._timeouts?.lockMs ?? GATE_LOCK_TIMEOUT_MS;
         try {
-            return await withLock(lockKey, { timeout_ms: lockMs }, async () => {
+            return finalize(await withLock(lockKey, { timeout_ms: lockMs }, async () => {
+                emit('gate_lock_acquired', { lock_key: lockKey });
                 if (!fs.existsSync(opts.baselinePath)) {
                     const baseline = {
                         schema_version: 1,
                         captured_at: new Date().toISOString(),
                         working_dir: opts.workingDir,
+                        // 'bun' and other low-confidence types are filtered by !cmdMap above, so this cast is safe
                         project_type: projectType,
                         checks: opts.checks,
                         failures: withIndices,
                     };
                     fs.mkdirSync(path.dirname(opts.baselinePath), { recursive: true });
                     fs.writeFileSync(opts.baselinePath, JSON.stringify(baseline, null, 2));
+                    emit('gate_baseline_captured', { path: opts.baselinePath, failure_count: withIndices.length });
+                    emit('gate_preexisting_tests_baselined', { failure_count: withIndices.length });
                     return {
                         status: 'green',
                         failures: [],
@@ -474,11 +523,12 @@ export async function runGate(opts) {
                     total_raw_failure_count: withIndices.length,
                     new_failures_vs_baseline: newFailures.length,
                 };
-            });
+            }));
         }
         catch (err) {
             if (err instanceof LockError) {
-                return {
+                emit('gate_lock_timeout', { lock_key: lockKey, waited_ms: err.waited_ms ?? lockMs });
+                const lockTimeoutResult = {
                     status: 'red',
                     failures: [{
                             check: 'gate',
@@ -495,18 +545,39 @@ export async function runGate(opts) {
                     total_raw_failure_count: 0,
                     new_failures_vs_baseline: 0,
                 };
+                return finalize(lockTimeoutResult);
             }
             throw err;
         }
     }
-    const status = allFailures.length === 0 ? 'green' : 'red';
-    return {
+    if (realFailures.length === 0 && flakeFailures.length > 0) {
+        const now = new Date().toISOString();
+        const iso = now.replace(/[:.]/g, '-');
+        const gateDir = path.join(opts.workingDir, 'gate');
+        fs.mkdirSync(gateDir, { recursive: true });
+        fs.writeFileSync(path.join(gateDir, `known_flake_failures_${iso}.md`), `# Known Flake Failures\n\nCaptured: ${now}\n\n${flakeFailures.map(f => `- \`${f.file}\` [${f.check}]: ${f.message.slice(0, 200)}`).join('\n')}\n`);
+        emit('gate_out_of_scope_failures_present', { flake_count: flakeFailures.length, paths: flakeFailures.map(f => f.file) });
+        return finalize({
+            status: 'green-with-known-flake-warnings',
+            failures: [],
+            baseline_used: false,
+            allowed_paths_used: allowedPathsUsed,
+            elapsed_ms: Date.now() - start,
+            total_raw_failure_count: allFailures.length,
+            new_failures_vs_baseline: 0,
+        });
+    }
+    const status = realFailures.length === 0 ? 'green' : 'red';
+    if (status === 'red') {
+        emit('gate_regression_threshold_warning', { failure_count: realFailures.length });
+    }
+    return finalize({
         status,
-        failures: allFailures,
+        failures: realFailures,
         baseline_used: false,
         allowed_paths_used: allowedPathsUsed,
         elapsed_ms: Date.now() - start,
         total_raw_failure_count: allFailures.length,
         new_failures_vs_baseline: 0,
-    };
+    });
 }
