@@ -524,14 +524,14 @@ export async function runGate(opts: RunGateOpts): Promise<GateResult> {
         current_branch: currentBranch,
       });
       const driftResult: GateResult = {
-        status: 'red' as const,
+        status: 'red',
         failures: [{
-          check: 'tests' as 'typecheck' | 'lint' | 'tests',
+          check: 'tests',
           file: '<workingdir-drift>',
           line: 0,
           ruleOrCode: 'GATE_WORKINGDIR_DRIFT',
           message: `Working directory drift: expected branch "${opts.expected_branch ?? '(any)'}", got "${currentBranch}"; expected HEAD "${opts.expected_head ?? '(any)'}", got "${currentHead}"`,
-          severity: 'error' as const,
+          severity: 'error',
           occurrence_index: 0,
         }],
         baseline_used: false,
