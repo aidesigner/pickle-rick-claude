@@ -1,0 +1,230 @@
+import { test, describe } from 'node:test';
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { finalizeGateMain } from '../../bin/finalize-gate.js';
+
+function makeTmpDir() {
+    return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'fg-test-')));
+}
+
+function makeGateResult(status = 'green', failures = []) {
+    return {
+        status,
+        failures,
+        baseline_used: false,
+        allowed_paths_used: false,
+        elapsed_ms: 10,
+        total_raw_failure_count: failures.length,
+        new_failures_vs_baseline: 0,
+    };
+}
+
+function makeFailure(file = '/tmp/src/foo.ts') {
+    return { check: 'lint', file, line: 1, ruleOrCode: 'no-any', message: 'no any', severity: 'error', occurrence_index: 0 };
+}
+
+function baseDeps(sessionRoot) {
+    return {
+        readMicroverseStateFn: () => ({ status: 'iterating', allowed_paths: undefined }),
+        readStateForWorkingDirFn: () => ({ workingDir: '/tmp/wd', backend: 'claude' }),
+        loadSettingsFn: () => ({ szechuan_max_remediation_cycles: 2, anatomy_park_max_remediation_cycles: 2, remediator_timeout_s: 60 }),
+        mkdirSyncFn: () => {},
+        writeFileFn: (p, data) => fs.writeFileSync(p, data, 'utf-8'),
+        logActivityFn: () => {},
+        isoFn: () => '2026-01-01T00-00-00Z',
+        stdout: () => {},
+        stderr: () => {},
+    };
+}
+
+// ---------------------------------------------------------------------------
+// Arg validation
+// ---------------------------------------------------------------------------
+
+describe('arg validation', () => {
+    test('missing session-root → exit 1', async () => {
+        const errs = [];
+        const code = await finalizeGateMain({
+            argv: [],
+            stderr: m => errs.push(m),
+            stdout: () => {},
+        });
+        assert.equal(code, 1);
+        assert.ok(errs.some(l => l.includes('Usage')));
+    });
+
+    test('missing skill → exit 1', async () => {
+        const code = await finalizeGateMain({
+            argv: ['/tmp/session'],
+            stderr: () => {},
+            stdout: () => {},
+        });
+        assert.equal(code, 1);
+    });
+
+    test('invalid skill → exit 1', async () => {
+        const errs = [];
+        const code = await finalizeGateMain({
+            argv: ['/tmp/session', 'bad-skill'],
+            stderr: m => errs.push(m),
+            stdout: () => {},
+        });
+        assert.equal(code, 1);
+        assert.ok(errs.some(l => l.includes('Invalid skill')));
+    });
+});
+
+// ---------------------------------------------------------------------------
+// PICKLE_GATE_DISABLED kill switch
+// ---------------------------------------------------------------------------
+
+describe('PICKLE_GATE_DISABLED', () => {
+    test('PICKLE_GATE_DISABLED=1 → exit 0, gate_skipped event emitted', async () => {
+        const events = [];
+        const outs = [];
+        const code = await finalizeGateMain({
+            argv: ['/tmp/session', 'szechuan'],
+            env: { PICKLE_GATE_DISABLED: '1' },
+            logActivityFn: e => events.push(e),
+            stdout: m => outs.push(m),
+            stderr: () => {},
+        });
+        assert.equal(code, 0);
+        assert.ok(events.some(e => e.event === 'gate_skipped' && e.gate_payload?.reason === 'kill_switch'));
+        assert.ok(outs.some(l => l.includes('PICKLE_GATE_DISABLED')));
+    });
+
+    test('PICKLE_GATE_DISABLED unset → gate runs normally', async () => {
+        const sessionRoot = makeTmpDir();
+        fs.mkdirSync(path.join(sessionRoot, 'gate'), { recursive: true });
+        let gateCalled = false;
+        const code = await finalizeGateMain({
+            argv: [sessionRoot, 'szechuan'],
+            env: {},
+            ...baseDeps(sessionRoot),
+            runGateFn: async () => { gateCalled = true; return makeGateResult('green'); },
+        });
+        assert.equal(code, 0);
+        assert.ok(gateCalled);
+        fs.rmSync(sessionRoot, { recursive: true, force: true });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Green first cycle
+// ---------------------------------------------------------------------------
+
+describe('green gate', () => {
+    test('green on cycle 1 → exit 0 without calling remediator', async () => {
+        const sessionRoot = makeTmpDir();
+        fs.mkdirSync(path.join(sessionRoot, 'gate'), { recursive: true });
+        let remediatorCalled = false;
+        const code = await finalizeGateMain({
+            argv: [sessionRoot, 'szechuan'],
+            env: {},
+            ...baseDeps(sessionRoot),
+            runGateFn: async () => makeGateResult('green'),
+            spawnGateRemediatorMainFn: async () => { remediatorCalled = true; return 0; },
+        });
+        assert.equal(code, 0);
+        assert.equal(remediatorCalled, false);
+        fs.rmSync(sessionRoot, { recursive: true, force: true });
+    });
+
+    test('green-with-known-flake-warnings → exit 0', async () => {
+        const sessionRoot = makeTmpDir();
+        fs.mkdirSync(path.join(sessionRoot, 'gate'), { recursive: true });
+        const code = await finalizeGateMain({
+            argv: [sessionRoot, 'anatomy-park'],
+            env: {},
+            ...baseDeps(sessionRoot),
+            runGateFn: async () => makeGateResult('green-with-known-flake-warnings'),
+        });
+        assert.equal(code, 0);
+        fs.rmSync(sessionRoot, { recursive: true, force: true });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// Cap exhaustion → exit 2 + escalation file
+// ---------------------------------------------------------------------------
+
+describe('cap exhaustion', () => {
+    test('cap=1 persistent failure → exit 2 + escalation file', async () => {
+        const sessionRoot = makeTmpDir();
+        const gateDir = path.join(sessionRoot, 'gate');
+        fs.mkdirSync(gateDir, { recursive: true });
+
+        const failure = makeFailure('/tmp/wd/src/foo.ts');
+        const code = await finalizeGateMain({
+            argv: [sessionRoot, 'szechuan'],
+            env: {},
+            readMicroverseStateFn: () => ({ status: 'iterating', allowed_paths: undefined }),
+            readStateForWorkingDirFn: () => ({ workingDir: '/tmp/wd', backend: 'claude' }),
+            loadSettingsFn: () => ({ szechuan_max_remediation_cycles: 1, anatomy_park_max_remediation_cycles: 1, remediator_timeout_s: 60 }),
+            mkdirSyncFn: (p) => fs.mkdirSync(p, { recursive: true }),
+            writeFileFn: (p, data) => fs.writeFileSync(p, data, 'utf-8'),
+            logActivityFn: () => {},
+            isoFn: () => '2026-01-01T00-00-00Z',
+            runGateFn: async () => makeGateResult('red', [failure]),
+            spawnGateRemediatorMainFn: async (briefOpts) => {
+                briefOpts.stdout?.('BRIEF_PATH=/tmp/brief.md');
+                return 0;
+            },
+            spawnRemediatorFn: () => { /* no-op — gate won't clear */ },
+            stdout: () => {},
+            stderr: () => {},
+        });
+
+        assert.equal(code, 2);
+        const files = fs.readdirSync(gateDir);
+        assert.ok(files.some(f => f.startsWith('escalation_')), `escalation file missing in ${gateDir}: ${files.join(', ')}`);
+        fs.rmSync(sessionRoot, { recursive: true, force: true });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// microverse.json missing → exit 1
+// ---------------------------------------------------------------------------
+
+describe('error conditions', () => {
+    test('missing microverse.json → exit 1', async () => {
+        const errs = [];
+        const code = await finalizeGateMain({
+            argv: ['/nonexistent/session', 'szechuan'],
+            env: {},
+            readMicroverseStateFn: () => null,
+            readStateForWorkingDirFn: () => ({ workingDir: '/tmp', backend: 'claude' }),
+            loadSettingsFn: () => ({ szechuan_max_remediation_cycles: 3, anatomy_park_max_remediation_cycles: 5, remediator_timeout_s: 600 }),
+            mkdirSyncFn: () => {},
+            writeFileFn: () => {},
+            logActivityFn: () => {},
+            isoFn: () => '2026-01-01T00-00-00Z',
+            stderr: m => errs.push(m),
+            stdout: () => {},
+        });
+        assert.equal(code, 1);
+        assert.ok(errs.some(l => l.includes('microverse.json')));
+    });
+
+    test('missing state.json → exit 1', async () => {
+        const errs = [];
+        const code = await finalizeGateMain({
+            argv: ['/nonexistent/session', 'szechuan'],
+            env: {},
+            readMicroverseStateFn: () => ({ status: 'iterating', allowed_paths: undefined }),
+            readStateForWorkingDirFn: () => null,
+            loadSettingsFn: () => ({ szechuan_max_remediation_cycles: 3, anatomy_park_max_remediation_cycles: 5, remediator_timeout_s: 600 }),
+            mkdirSyncFn: () => {},
+            writeFileFn: () => {},
+            logActivityFn: () => {},
+            isoFn: () => '2026-01-01T00-00-00Z',
+            stderr: m => errs.push(m),
+            stdout: () => {},
+        });
+        assert.equal(code, 1);
+        assert.ok(errs.some(l => l.includes('state.json')));
+    });
+});
