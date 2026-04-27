@@ -67,3 +67,4 @@ Location: `~/.claude/pickle-rick/sessions/<date-hash>/`
 - session stuck → check state.json iteration/step/current_ticket + logs
 - formatted status → `/pickle-status`
 - tokens/usage/commits/LOC → `/pickle-metrics`
+- meta-route a build (pick metaphor + followups) → `/cronenberg` (explicit invocation only; never auto-trigger)

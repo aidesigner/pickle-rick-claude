@@ -50,7 +50,6 @@ const PER_CHECK_TIMEOUT_MS = {
 };
 const GATE_TOTAL_TIMEOUT_MS = 600_000;
 const GATE_LOCK_TIMEOUT_MS = 30_000;
-// P0.6 — test-script safety
 const UNSAFE_TEST_SCRIPT_REGEX = /integration|e2e|golden|smoke|baseline|playwright|cypress|hardhat/i;
 const SAFE_TEST_RUNNER_REGEX = /(vitest|jest|node|mocha)/;
 function buildFingerprint(f) {
@@ -315,7 +314,6 @@ export async function runGate(opts) {
         }
         targetDirs = [opts.workingDir];
     }
-    // P0.6b — dirty-tree: skip cleanly when working tree has uncommitted changes
     if (opts.workerMode) {
         const porcelainR = spawnSync('git', ['status', '--porcelain'], {
             cwd: opts.workingDir, encoding: 'utf-8', timeout: 10_000,
@@ -326,7 +324,6 @@ export async function runGate(opts) {
             return { ...empty, elapsed_ms: Date.now() - start };
         }
     }
-    // P0.6c — branch-switch: halt with red when branch or HEAD has drifted
     if (opts.expected_head !== undefined || opts.expected_branch !== undefined) {
         const headR = spawnSync('git', ['rev-parse', 'HEAD'], {
             cwd: opts.workingDir, encoding: 'utf-8', timeout: 10_000,
@@ -390,7 +387,6 @@ export async function runGate(opts) {
             const cmd = cmdMap[cmdKey];
             if (!cmd)
                 continue;
-            // P0.6 + P0.6a — test-script safety: block before any spawn (JS/TS projects only)
             if (check === 'tests' && (projectType === 'pnpm' || projectType === 'npm' || projectType === 'yarn')) {
                 const pkgJsonPath = path.join(dir, 'package.json');
                 let scriptContent = '';
@@ -398,14 +394,14 @@ export async function runGate(opts) {
                     try {
                         scriptContent = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf-8')).scripts?.test ?? '';
                     }
-                    catch { /* unreadable package.json */ }
+                    catch { /* */ }
                 }
                 if (UNSAFE_TEST_SCRIPT_REGEX.test(scriptContent)) {
                     opts.onEvent?.('gate_unsafe_test_command_blocked', { script: scriptContent });
                     continue;
                 }
                 if (!SAFE_TEST_RUNNER_REGEX.test(scriptContent)) {
-                    continue; // no recognized runner — skip green (P0.6a)
+                    continue;
                 }
             }
             const perCheckMs = opts._timeouts?.perCheck?.[check] ?? PER_CHECK_TIMEOUT_MS[check];

@@ -292,6 +292,7 @@ Queue tasks for unattended batch execution overnight.
 | `/szechuan-sauce [target]` † | Principle-driven deslopping. `--dry-run`, `--focus`, `--domain` |
 | `/anatomy-park` † | Three-phase deep subsystem review with trap door cataloging |
 | `/pickle-pipeline "task"` † | Full lifecycle: pickle-tmux → anatomy-park → szechuan-sauce in one tmux session |
+| `/cronenberg "task"` | Meta-router — deterministic decision matrix picks the right metaphor + cleanup chain. Dry-run by default; `--go` to execute. Forwards all non-cronenberg flags through |
 | `/plumbus <file.dot>` | Iterative DAG shaping on a single `.dot` file. `--dry-run`, `--focus`, `--no-validator` |
 | `/council-of-ricks` | Graphite PR stack review — szechuan principles + anatomy data-flow tracing + Codex adversarial challenge. Directives only, never fixes code. `--no-codex` to disable, `--gitnexus` for graph queries |
 | `/portal-gun <source>` | Gene transfusion from another codebase |
@@ -367,6 +368,8 @@ Most flags are command-scoped. The table groups them by command family — flags
 | `--no-codex` | `/council-of-ricks` | Disable the Codex adversarial reviewer |
 | `--codex-timeout <S>` | `/council-of-ricks` | Timeout for Codex adversarial reviewer (seconds) |
 | `--no-publish` | `/council-of-ricks` | Skip auto-publishing PR comments at session end |
+| `--go` | `/cronenberg` | Execute the chosen plan (default: dry-run, print plan and stop) |
+| `--no-followups` | `/cronenberg` | Skip the cleanup chain regardless of signals |
 
 ### Tips
 
@@ -613,6 +616,81 @@ The `--run` flag goes further: after generating the transplant PRD, it launches 
 `/pickle-dot` generates attractor pipelines by default via the `DotBuilder` TypeScript class — schema-validated codegen with 32 active patterns and 15 structural validation rules. Use `--builder` to opt in explicitly or `--legacy` to fall back to prompt-only generation.
 
 **Full reference:** [DOT_BUILDER.md](DOT_BUILDER.md) — Builder API, BuilderSpec JSON schema, CLI contract, fix-loop behavior, and error codes.
+
+### 🧬 Cronenberg — The Meta-Router
+
+<p align="center">
+  <img src="images/cronenberg.jpg" alt="Cronenberg — Mutate the request. Pick the pipeline." width="100%" />
+</p>
+
+> *"This is a Cronenberg world, Morty. We just gotta accept it and route around it."*
+
+`/cronenberg` is the **explicit-invocation meta-router**. You hand it a request — a task, a PRD path, a bag of flags — and it deterministically mutates that request into the correct pipeline shape: which build skill to launch, which cleanup skills to chain after, which flags to forward. Same signals always produce the same plan. No LLM judgment inside the matrix.
+
+It's opt-in. The persona's existing routing rules are untouched — type `/cronenberg` only when you want the router to decide for you instead of guessing the right command yourself.
+
+```
+$ARGUMENTS  ──┐
+PRD?         ─┤   ┌─────────────────────────┐    ┌──────────────────┐
+git status   ─┼──►│  Step 2: gather signals │───►│ Step 3: pick     │
+TASK verbs   ─┘   │  PRD / METRIC / TICKETS │    │   metaphor       │
+                  │  MULTI_STAGE / STACK    │    └────────┬─────────┘
+                  │  SUBSYSTEMS / INTERACT  │             │
+                  └─────────────────────────┘             ▼
+                                                ┌──────────────────┐
+                                                │ Step 4: pick     │
+                                                │   followups      │
+                                                └────────┬─────────┘
+                                                         ▼
+                                                  Print plan
+                                              (dry-run by default;
+                                                --go to execute)
+```
+
+**Decision matrix — metaphor (first match wins):**
+
+| Signal | → |
+|---|---|
+| `STACK_REVIEW` (review-focused, mentions PR stack / `gt log`) | `/council-of-ricks` |
+| `MEASURABLE_METRIC` and TASK reads "optimize/improve/reduce X to Y" | `/pickle-microverse` |
+| `MULTI_STAGE` (TASK lists 2+ of refine/build/optimize/cleanup/review) | `/pickle-pipeline` |
+| `INTERACTIVE_HINT` ("interactive", "watch me", "step through") | `/pickle` |
+| `TICKET_COUNT ≥ 3` | `/pickle-tmux` |
+| Default | `/pickle` |
+
+**Decision matrix — followups (additive):**
+
+| Signal | → |
+|---|---|
+| `SUBSYSTEM_TOUCHES ≥ 2` | `/anatomy-park` |
+| Diff ≥ 500 LOC OR ≥ 10 files OR TASK mentions "cleanup / deslop / refactor sweep" | `/szechuan-sauce` |
+
+Followups are skipped automatically when the chosen metaphor is `/pickle-pipeline` (it already chains anatomy-park + szechuan-sauce internally), `/pickle-microverse`, or `/council-of-ricks` (orthogonal to cleanup), or when you pass `--no-followups`. Hardening tickets are produced upstream by `/pickle-refine-prd` — there is no separate review-pass step.
+
+**Tmux-detach safety:** `/pickle-tmux`, `/pickle-pipeline`, `/pickle-microverse`, and `/council-of-ricks` launch detached tmux sessions and return immediately. Cronenberg will **not** auto-chain followups onto these — they would race the in-progress build. Instead, when you pass `--go` for a tmux-launching metaphor, cronenberg launches the build and prints the followup commands ready to copy-paste once the session finishes.
+
+**Flag pass-through:** Only `--go` and `--no-followups` are cronenberg-only. Everything else (`--backend codex`, `--refine`, `--scope branch`, `--max-iterations`, `--target`, `--interactive`, …) passes through verbatim to the chosen metaphor and applicable followups.
+
+| | **Cronenberg** | **Persona Routing** |
+|---|---|---|
+| **Trigger** | Explicit `/cronenberg` | Automatic on every prompt |
+| **Decision** | Deterministic matrix | LLM-judged from context |
+| **Output** | Dry-run plan (or chained execution) | Direct skill invocation |
+| **Flag handling** | Pass-through forwarded | Persona-curated |
+| **When to use** | You want auditable, repeatable routing | You want fast, contextual routing |
+
+**Example:**
+
+```bash
+/cronenberg refine then build the auth refactor and clean it up --backend codex
+```
+
+Plan:
+
+```
+1. /pickle-pipeline refine then build the auth refactor and clean it up --backend codex
+   (followups skipped — pipeline chains anatomy-park + szechuan-sauce internally)
+```
 
 ---
 
