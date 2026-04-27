@@ -150,11 +150,9 @@ export async function finalizeGateMain(opts) {
             out('[finalize-gate] all failures are out-of-scope — exit 0 (closed within scope)');
             return 0;
         }
-        // Write in-scope gate result for brief-prep
         const gateResultPath = path.join(gateDir, `gate_result_cycle_${iso()}.json`);
         const inScopeResult = { ...result, failures: inScope };
         writeFile(gateResultPath, JSON.stringify(inScopeResult, null, 2));
-        // Brief-prep
         const briefLines = [];
         let briefCode;
         try {
@@ -201,10 +199,8 @@ export async function finalizeGateMain(opts) {
         }
         catch (e) {
             err(`[finalize-gate] remediator exited non-zero or timed out: ${safeErrorMessage(e)}`);
-            // Continue — agent may have written result before failing
         }
     }
-    // Cap exhausted
     const escalationPath = path.join(gateDir, `escalation_${iso()}.md`);
     const failureLines = (lastResult?.failures ?? []).map(f => `- \`${f.file}\` [${f.check}] ${f.ruleOrCode}: ${f.message.slice(0, 200)}`);
     writeFile(escalationPath, [

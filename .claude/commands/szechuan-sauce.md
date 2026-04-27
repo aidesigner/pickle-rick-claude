@@ -202,7 +202,10 @@ Session name: `szechuan-<hash>` from SESSION_ROOT basename.
 ```bash
 tmux new-session -d -s <name> -c <working_dir>
 sleep 1
-tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/microverse-runner.js ${SESSION_ROOT}; echo ''; echo 'The sauce... is obtained.'; read" Enter
+tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/microverse-runner.js ${SESSION_ROOT} && \
+  node $HOME/.claude/pickle-rick/extension/bin/finalize-gate.js ${SESSION_ROOT} szechuan; \
+  RC=$?; if [ $RC -eq 0 ]; then echo ''; echo 'The sauce... is obtained. Gate green.'; \
+  else echo ''; echo 'Sauce obtained but gate exhausted remediation cycles — see ${SESSION_ROOT}/gate/escalation_*.md'; fi; read" Enter
 ```
 
 microverse-runner auto-creates the 4-pane monitor window on startup — no manual invocation needed.
@@ -271,6 +274,13 @@ The metric is **violation count** (lower is better). Each iteration:
 <!-- scope-hook: override-3-allowed-paths -->
 1. **Always read the target code** — Check `microverse.json` for an `allowed_paths` field. If present, read only files within those paths (Glob + Read restricted to `allowed_paths`). If absent, Glob + Read the full target directory. The code is the source of truth; never skip this step.
 2. Consult `${SESSION_ROOT}/gap_analysis.md` if it exists as a **checklist hint** to speed up scanning, but do NOT trust it over what the code actually says — fixes may have introduced new violations or resolved ones the gap analysis still lists. Also consult the `## Contract Mismatches` section — contract violations are scored as P1.
+<!--
+PRINCIPLE FILTER vs GATE LAYERING (per PRD convergence-toolchain-gates):
+The filter below intentionally drops "CI-surfaceable linter/typechecker/compiler noise"
+during the principle scan because the spec is the review, not the toolchain. The toolchain
+gate is layered ORTHOGONALLY in `extension/src/bin/finalize-gate.ts` (invoked from the
+tmux send-keys chain at line 205) AFTER principles converge. Do not collapse the two.
+-->
 2.5. **Apply the false-positives filter, then score confidence.** First, walk the candidate violations and discard any that match the `## False Positives — Do NOT Flag` bullets in `szechuan-sauce-principles.md` — pre-existing issues on unmodified lines, CI-surfaceable linter/typechecker/compiler noise, generic coverage hand-wringing, author-silenced issues (`// eslint-disable`, `// @ts-expect-error`, etc.), uncodified style nits, speculative future-risk, and findings already raised and resolved in a prior iteration. Drop them before scoring. Then score each surviving candidate for confidence per the `## Confidence Scoring` rubric (0/25/50/75/100); any candidate with `conf < 80` is dropped and must NOT be selected as the iteration's violation even if its P-level is P0. Severity composes with confidence independently — P0 at conf=50 is dropped; P2 at conf=100 is kept if nothing higher survives. Record the dropped candidates (one line each: title + score + reason) in `gap_analysis.md` under a `## Dropped Candidates (conf < 80)` section. **Append, never overwrite** — subsequent iterations need the audit trail. Cap the `## Dropped Candidates (conf < 80)` section at the 50 most recent entries. When appending would push past 50, drop the oldest entry (FIFO) — `gap_analysis.md` is a working document, not an archive. Historical drops pre-dating the current 50 are not load-bearing for the iteration loop; the principle is the filter, not the history.
 3. Find the **single highest-priority** remaining violation (P0 > P1 > P2 > P3 > P4) among the surviving, confidence≥80 candidates that is NOT in the failed approaches list from the handoff
 4. If no violations found: print "The sauce is obtained." and exit cleanly
