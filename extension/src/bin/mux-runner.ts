@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { spawn } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, type TicketInfo } from '../services/pickle-utils.js';
-import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, hasLifecycleArtifact, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole } from '../types/index.js';
+import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole } from '../types/index.js';
 import { StateManager, safeDeactivate, writeActivityEntry, writeTimeoutStub } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, resetCircuitBreaker, type CircuitBreakerState } from '../services/circuit-breaker.js';
@@ -156,6 +156,86 @@ export function findPendingNonCurrentTickets(
     const s = norm(t.status);
     return s !== 'done' && s !== 'skipped';
   });
+}
+
+/**
+ * Decision returned by `evaluateEpicCompletion`. Replaces the prior fail-loud
+ * "exit 1 on any false EPIC_COMPLETED" behaviour with structural recovery.
+ *
+ * - `genuine` — every ticket reports `status: Done` (case/quote-insensitive).
+ *   Behave as today: mark current Done, exit success or chain meeseeks.
+ * - `recover_advance` — manager lied about epic completion BUT current_ticket
+ *   really is Done. Treat as a single TASK_COMPLETED; advance to next ticket,
+ *   keep iterating. Increment false-epic counter for telemetry.
+ * - `recover_retry` — manager lied AND current_ticket is not Done either.
+ *   Force another iteration on the same ticket with a stricter retry brief.
+ *   Increment counter; reset on next genuine advance.
+ * - `persistent_hallucination` — counter has crossed the threshold for the
+ *   same ticket. Bail with a distinct exit class so a human can intervene.
+ *
+ * Pure function — no I/O. Caller owns ticket collection, state mutation, and
+ * iteration handoff. Behaviour is fully deterministic from inputs.
+ */
+export type EpicCompletionDecision =
+  | { kind: 'genuine'; doneCount: number; totalCount: number }
+  | { kind: 'recover_advance'; doneCount: number; totalCount: number; pendingIds: string[]; nextCount: number }
+  | { kind: 'recover_retry'; doneCount: number; totalCount: number; pendingIds: string[]; nextCount: number }
+  | { kind: 'persistent_hallucination'; doneCount: number; totalCount: number; ticket: string; nextCount: number };
+
+export interface EvaluateEpicCompletionInput {
+  tickets: readonly TicketInfo[];
+  currentTicket: string | null;
+  /** Prior counter value from `state.false_epic_completed_count` (0 if absent). */
+  priorFalseCount: number;
+  /** Ticket the prior counter is associated with. Counter resets when this differs from `currentTicket`. */
+  priorFalseTicket: string | null;
+  /** Threshold beyond which we exit with MANAGER_PERSISTENT_HALLUCINATION. Defaults to FALSE_EPIC_THRESHOLD. */
+  threshold?: number;
+}
+
+/**
+ * Decide what to do when the manager emits EPIC_COMPLETED. This is the
+ * single source of truth for the recovery state machine — the main loop just
+ * acts on the returned decision.
+ */
+export function evaluateEpicCompletion(input: EvaluateEpicCompletionInput): EpicCompletionDecision {
+  const { tickets, currentTicket, priorFalseCount, priorFalseTicket } = input;
+  const threshold = input.threshold ?? FALSE_EPIC_THRESHOLD;
+
+  const norm = (s: string | null): string =>
+    (s || '').toLowerCase().replace(/["']/g, '').trim();
+
+  const totalCount = tickets.filter(t => !!t.id).length;
+  const doneCount = tickets.filter(t => !!t.id && norm(t.status) === 'done').length;
+  const pendingIds = tickets
+    .filter(t => !!t.id && norm(t.status) !== 'done' && norm(t.status) !== 'skipped' && t.id !== currentTicket)
+    .map(t => t.id!)
+    .filter((s): s is string => typeof s === 'string');
+
+  const currentInfo = currentTicket ? tickets.find(t => t.id === currentTicket) : null;
+  const currentIsDone = !!currentInfo && norm(currentInfo.status) === 'done';
+
+  // The current ticket is allowed to count as "about to be Done" because the
+  // manager normally marks it Done in the same iteration as EPIC_COMPLETED.
+  // We treat it as Done iff it is BOTH actually Done AND no other tickets are
+  // pending. This keeps the genuine path identical to the prior guard.
+  if (pendingIds.length === 0 && (currentTicket == null || currentIsDone)) {
+    return { kind: 'genuine', doneCount, totalCount };
+  }
+
+  // From here on the manager lied. Bump the counter (resetting when ticket
+  // changes — different ticket means we're not stuck in the same loop).
+  const sameTicket = currentTicket != null && priorFalseTicket === currentTicket;
+  const nextCount = (sameTicket ? priorFalseCount : 0) + 1;
+
+  if (currentTicket != null && nextCount > threshold) {
+    return { kind: 'persistent_hallucination', doneCount, totalCount, ticket: currentTicket, nextCount };
+  }
+
+  if (currentIsDone) {
+    return { kind: 'recover_advance', doneCount, totalCount, pendingIds, nextCount };
+  }
+  return { kind: 'recover_retry', doneCount, totalCount, pendingIds, nextCount };
 }
 
 // Codex plain-text block delimiters. A line matching this regex marks the
@@ -768,10 +848,26 @@ export function writeHandoffAtomic(
   }
 }
 
-export type ExitReason = 'success' | 'cancelled' | 'error' | 'limit' | 'stall' | 'circuit_open' | 'rate_limit_exhausted' | 'timeout_repeat';
+/**
+ * Best-effort append of a one-line marker to `pipeline-runner.log` in the
+ * session directory. The pipeline-runner owns that file when it spawns
+ * mux-runner; in standalone mux-runner runs the file may not exist (we never
+ * create it). Failure is silent — the same marker also lands in mux-runner's
+ * own log via the caller's `log()`. This exists so a human reading the
+ * pipeline log alone sees the recovery event.
+ */
+export function appendPipelineRunnerMarker(sessionDir: string, message: string): void {
+  const target = path.join(sessionDir, 'pipeline-runner.log');
+  if (!fs.existsSync(target)) return; // standalone mux-runner — nothing to annotate
+  try {
+    fs.appendFileSync(target, `[${new Date().toISOString()}] [mux-runner] ${message}\n`);
+  } catch { /* non-critical — the marker is also in mux-runner.log */ }
+}
+
+export type ExitReason = 'success' | 'cancelled' | 'error' | 'limit' | 'stall' | 'circuit_open' | 'rate_limit_exhausted' | 'timeout_repeat' | 'manager_persistent_hallucination';
 
 const isHaltExit = (r: ExitReason): boolean => r === 'cancelled' || r === 'limit' || r === 'timeout_repeat';
-const isFailureExit = (r: ExitReason): boolean => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat';
+const isFailureExit = (r: ExitReason): boolean => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination';
 
 // ---------------------------------------------------------------------------
 // Per-ticket timeout counter (FR-B3/B4/B12/B14) — non-persisted loop state
@@ -1304,24 +1400,102 @@ async function main() {
         exitReason = 'success';
         break;
       }
-      // Guard: don't trust EPIC_COMPLETED if other tickets are still pending.
-      // Otherwise a misfiring model token silently abandons unimplemented work
-      // and the phase exits 0 — the operator only discovers the loss hours later.
+      // Verify EPIC_COMPLETED against ticket frontmatter. The pure helper
+      // below is the only place that decides genuine vs. recoverable vs.
+      // pathological — a single false EPIC_COMPLETED no longer kills the
+      // pipeline. See `evaluateEpicCompletion` for the full state machine.
       const allTickets = collectTickets(sessionDir);
-      const pendingOthers = findPendingNonCurrentTickets(allTickets, curState.current_ticket || null);
-      if (pendingOthers.length > 0) {
-        const ids = pendingOthers.map(t => t.id).filter((s): s is string => !!s);
-        log(`ERROR: ${PromiseTokens.EPIC_COMPLETED} received but ${pendingOthers.length} ticket(s) still pending: ${ids.join(', ')}. Not marking current_ticket Done; exiting non-zero.\n       Iteration log: ${iterLogFile}`);
+      const decision = evaluateEpicCompletion({
+        tickets: allTickets,
+        currentTicket: curState.current_ticket || null,
+        priorFalseCount: Number(curState.false_epic_completed_count) || 0,
+        priorFalseTicket: curState.false_epic_completed_ticket ?? null,
+      });
+
+      if (decision.kind === 'persistent_hallucination') {
+        log(`MANAGER_PERSISTENT_HALLUCINATION: ticket ${decision.ticket} emitted ${PromiseTokens.EPIC_COMPLETED} ${decision.nextCount} times without finishing (threshold ${FALSE_EPIC_THRESHOLD}). Done=${decision.doneCount}/${decision.totalCount}. Bailing for human review.\n       Iteration log: ${iterLogFile}`);
+        appendPipelineRunnerMarker(sessionDir, `MANAGER_PERSISTENT_HALLUCINATION ticket=${decision.ticket} count=${decision.nextCount} done=${decision.doneCount}/${decision.totalCount}`);
+        try {
+          sm.update(statePath, s => {
+            s.false_epic_completed_count = decision.nextCount;
+            s.false_epic_completed_ticket = decision.ticket;
+          });
+        } catch (err) { log(`WARN: failed to persist false_epic counter: ${safeErrorMessage(err)}`); }
         logActivity({
-          event: 'pending_tickets_on_completion',
+          event: 'manager_persistent_hallucination',
           source: 'pickle',
           session: path.basename(sessionDir),
-          error: `${pendingOthers.length} pending ticket(s) at ${PromiseTokens.EPIC_COMPLETED}: ${ids.join(',')}`,
+          ticket: decision.ticket,
+          error: `${PromiseTokens.EPIC_COMPLETED} hallucinated ${decision.nextCount}× on ticket ${decision.ticket} (done ${decision.doneCount}/${decision.totalCount})`,
         });
         safeDeactivate(statePath);
-        exitReason = 'error';
+        exitReason = 'manager_persistent_hallucination';
         break;
       }
+
+      if (decision.kind === 'recover_advance' || decision.kind === 'recover_retry') {
+        const tag = decision.kind === 'recover_advance' ? 'advancing' : 'retrying same ticket';
+        const currentId = curState.current_ticket || '(none)';
+        log(`MANAGER_FALSE_${PromiseTokens.EPIC_COMPLETED}: ${PromiseTokens.EPIC_COMPLETED} claimed but ${decision.doneCount} of ${decision.totalCount} tickets Done (pending: ${decision.pendingIds.join(', ') || '(none)'}). Treating as ${PromiseTokens.TASK_COMPLETED} — ${tag}. count=${decision.nextCount}/${FALSE_EPIC_THRESHOLD}.\n       Iteration log: ${iterLogFile}`);
+        appendPipelineRunnerMarker(sessionDir, `MANAGER_FALSE_${PromiseTokens.EPIC_COMPLETED} ticket=${currentId} mode=${tag} count=${decision.nextCount}/${FALSE_EPIC_THRESHOLD} done=${decision.doneCount}/${decision.totalCount} pending=${decision.pendingIds.join(',')}`);
+        logActivity({
+          event: 'manager_false_epic_completed',
+          source: 'pickle',
+          session: path.basename(sessionDir),
+          ticket: curState.current_ticket || undefined,
+          error: `${PromiseTokens.EPIC_COMPLETED} with ${decision.totalCount - decision.doneCount} pending — ${tag}`,
+        });
+
+        if (decision.kind === 'recover_advance' && curState.current_ticket) {
+          // current_ticket is already Done — close it out so the next
+          // iteration picks the next non-Done ticket. Counter persists at the
+          // CURRENT ticket so a subsequent false epic on the SAME current
+          // ticket doesn't get a fresh budget.
+          if (markTicketDone(sessionDir, curState.current_ticket)) {
+            log(`Marked ticket ${curState.current_ticket} as Done (recover_advance)`);
+          }
+        }
+
+        try {
+          sm.update(statePath, s => {
+            s.false_epic_completed_count = decision.nextCount;
+            s.false_epic_completed_ticket = curState.current_ticket || null;
+          });
+        } catch (err) { log(`WARN: failed to persist false_epic counter: ${safeErrorMessage(err)}`); }
+
+        // Stricter retry brief — handed to the next iteration via handoff.txt.
+        const retryBrief = [
+          `=== MANAGER FALSE EPIC RECOVERY (count ${decision.nextCount}/${FALSE_EPIC_THRESHOLD}) ===`,
+          `You emitted <promise>${PromiseTokens.EPIC_COMPLETED}</promise> but only ${decision.doneCount} of ${decision.totalCount} tickets are status: Done.`,
+          decision.pendingIds.length > 0 ? `Pending tickets: ${decision.pendingIds.join(', ')}.` : '',
+          decision.kind === 'recover_advance'
+            ? `Continue with the next non-Done ticket. Do NOT emit ${PromiseTokens.EPIC_COMPLETED} again until every linear_ticket_*.md file in the session root reports status: Done.`
+            : `Resume work on current_ticket=${curState.current_ticket}. It is NOT yet Done. Do NOT emit ${PromiseTokens.EPIC_COMPLETED} again until every linear_ticket_*.md file in the session root reports status: Done.`,
+          `Use ${PromiseTokens.TASK_COMPLETED} for single-ticket completions; reserve ${PromiseTokens.EPIC_COMPLETED} for the moment all tickets are Done.`,
+        ].filter(Boolean).join('\n');
+        const handoffSummary = buildHandoffSummary(state, sessionDir, iteration + 1);
+        writeHandoffAtomic(sessionDir, `${handoffSummary}\n\n${retryBrief}`, process.pid, log);
+
+        // Reset stall counter so the recovery iteration isn't immediately
+        // killed by the no-progress detector — the manager IS making progress
+        // (we just disagree about whether it's done).
+        lastStateIteration = -1;
+        stallCount = 0;
+        await sleep(1000);
+        continue;
+      }
+
+      // Genuine epic completion — clear any lingering false-epic counter and
+      // proceed as before.
+      if (Number(curState.false_epic_completed_count) > 0) {
+        try {
+          sm.update(statePath, s => {
+            s.false_epic_completed_count = 0;
+            s.false_epic_completed_ticket = null;
+          });
+        } catch (err) { log(`WARN: failed to clear false_epic counter: ${safeErrorMessage(err)}`); }
+      }
+
       // Mark final ticket as Done before exiting or chaining
       if (curState.current_ticket) {
         if (markTicketDone(sessionDir, curState.current_ticket)) {

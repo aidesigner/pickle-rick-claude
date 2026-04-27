@@ -1,7 +1,16 @@
 /**
- * Verifies the all-pending guard error message includes the absolute iteration
- * log path. Runs mux-runner.js as a subprocess with a fake `claude` that emits
- * EPIC_COMPLETED while a second ticket remains pending.
+ * Verifies the EPIC_COMPLETED recovery state machine end-to-end. Runs
+ * mux-runner.js as a subprocess with a fake `claude` that emits
+ * EPIC_COMPLETED on every iteration while a second ticket remains pending.
+ *
+ * History: pre-v1.57 this path exited 1 on the FIRST false EPIC_COMPLETED
+ * (the "pending-tickets guard"). That cost an entire pipeline run for one
+ * misfiring token. The replacement structural recovery: log loudly, mark
+ * the manager's claim as a TASK_COMPLETED retry, and only bail with
+ * `manager_persistent_hallucination` after the same ticket misbehaves
+ * `FALSE_EPIC_THRESHOLD` times in a row. This test asserts both halves —
+ * the per-iteration `MANAGER_FALSE_EPIC_COMPLETED` log AND the eventual
+ * `MANAGER_PERSISTENT_HALLUCINATION` exit.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -23,11 +32,15 @@ function buildSession(tmpRoot) {
     const templatesDir = path.join(extDir, 'templates');
     fs.mkdirSync(templatesDir, { recursive: true });
 
-    // Minimal pickle_settings.json with CB disabled so the guard path is not blocked.
+    // Minimal pickle_settings.json with CB disabled so the recovery loop
+    // isn't short-circuited by a CB trip before persistent_hallucination
+    // fires. Set max_iterations comfortably above FALSE_EPIC_THRESHOLD so
+    // the recovery hits the persistent-hallucination exit, not the
+    // max-iterations exit.
     fs.writeFileSync(
         path.join(extDir, 'pickle_settings.json'),
         JSON.stringify({
-            default_max_iterations: 3,
+            default_max_iterations: 50,
             default_max_time_minutes: 720,
             default_worker_timeout_seconds: 1200,
             default_manager_max_turns: 50,
@@ -70,7 +83,7 @@ function buildSession(tmpRoot) {
             working_dir: tmpRoot,
             step: 'implement',
             iteration: 0,
-            max_iterations: 3,
+            max_iterations: 50,
             max_time_minutes: 720,
             worker_timeout_seconds: 1200,
             start_time_epoch: Math.floor(Date.now() / 1000),
@@ -98,7 +111,7 @@ function buildSession(tmpRoot) {
     return { extDir, sessionDir, fakeBinDir };
 }
 
-test('guard-logging: pending-guard error message includes absolute iteration log path', () => {
+test('guard-logging: false EPIC_COMPLETED triggers structural recovery (not exit-1) and eventually exits with manager_persistent_hallucination', () => {
     const tmpRoot = makeTmpRoot();
     try {
         const { extDir, sessionDir, fakeBinDir } = buildSession(tmpRoot);
@@ -111,38 +124,51 @@ test('guard-logging: pending-guard error message includes absolute iteration log
                 PATH: `${fakeBinDir}:${process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin'}`,
             },
             encoding: 'utf-8',
-            // 20s → 60s: budget for system load when run alongside concurrent
-            // codex/tmux work. Test validates error message content, not wall-clock.
+            // 60s budget: the recovery loop runs FALSE_EPIC_THRESHOLD+1
+            // iterations spawning the fake claude shim each time.
             timeout: 60000,
         });
 
         const output = (result.stderr ?? '') + (result.stdout ?? '');
 
-        assert.ok(
-            result.status === 1,
-            `Expected exit code 1, got ${result.status}. Output:\n${output}`
+        // Should ALWAYS exit non-zero — but on the persistent-hallucination
+        // exit class, NOT on the first-false-EPIC fail-loud (which has been
+        // replaced with structural recovery).
+        assert.equal(
+            result.status, 1,
+            `Expected exit code 1 from manager_persistent_hallucination. Got ${result.status}. Output:\n${output}`
         );
 
+        // Recovery must have logged the false-EPIC marker at least once
+        // (every recovery iteration emits it).
         assert.ok(
-            output.includes('still pending'),
-            `Expected "still pending" in output. Got:\n${output}`
+            output.includes('MANAGER_FALSE_EPIC_COMPLETED'),
+            `Expected MANAGER_FALSE_EPIC_COMPLETED log line from recovery. Got:\n${output}`
         );
 
+        // Eventual bail with the persistent-hallucination class.
+        assert.ok(
+            output.includes('MANAGER_PERSISTENT_HALLUCINATION'),
+            `Expected MANAGER_PERSISTENT_HALLUCINATION exit class. Got:\n${output}`
+        );
+
+        // Iteration log path is preserved in the recovery message for
+        // operator triage (kept from the prior fail-loud version).
         assert.ok(
             output.includes('Iteration log:'),
-            `Expected "Iteration log:" in guard error. Got:\n${output}`
+            `Expected "Iteration log:" in recovery message. Got:\n${output}`
         );
 
         assert.ok(
             output.includes(expectedLogPath),
-            `Expected absolute log path "${expectedLogPath}" in guard error. Got:\n${output}`
+            `Expected absolute log path "${expectedLogPath}" in recovery message. Got:\n${output}`
         );
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
 });
 
-test('guard-logging: compiled mux-runner.js embeds iterLogFile in the pending-guard message', () => {
+test('guard-logging: compiled mux-runner.js embeds iterLogFile in the recovery / hallucination messages', () => {
     const compiled = fs.readFileSync(path.resolve(__dirname, '../bin/mux-runner.js'), 'utf-8');
     assert.ok(
         /Iteration log:.*iterLogFile|iterLogFile.*Iteration log:/.test(compiled),

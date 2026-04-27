@@ -31,7 +31,24 @@ export interface State {
   teams_mode?: boolean;
   /** Concurrency cap for parallel `morty-implementer` teammates when teams_mode is true. Default 5. v1 ships sequential; this field is plumbed for the parallel-fan-out follow-up. */
   max_parallel?: number;
+  /**
+   * Count of consecutive false EPIC_COMPLETED emissions on the same `current_ticket`.
+   * Reset to 0 whenever the manager genuinely advances to a new ticket OR succeeds.
+   * When this exceeds FALSE_EPIC_THRESHOLD on the same ticket, mux-runner exits with
+   * `MANAGER_PERSISTENT_HALLUCINATION` rather than continuing to retry.
+   */
+  false_epic_completed_count?: number;
+  /** Ticket ID associated with the current `false_epic_completed_count`. Resets the counter when current_ticket diverges. */
+  false_epic_completed_ticket?: string | null;
 }
+
+/**
+ * Threshold for consecutive false EPIC_COMPLETED emissions on the same ticket
+ * before mux-runner gives up and exits with MANAGER_PERSISTENT_HALLUCINATION.
+ * Recovery is the default; this guards against a manager stuck in a permanent
+ * hallucination loop.
+ */
+export const FALSE_EPIC_THRESHOLD = 3;
 
 export type Backend = 'claude' | 'codex';
 
@@ -189,6 +206,8 @@ export const VALID_ACTIVITY_EVENTS = [
   'multi_repo_warning',
   'meeseeks_model_select',
   'pending_tickets_on_completion',
+  'manager_false_epic_completed',
+  'manager_persistent_hallucination',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];

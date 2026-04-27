@@ -1,3 +1,10 @@
+/**
+ * Threshold for consecutive false EPIC_COMPLETED emissions on the same ticket
+ * before mux-runner gives up and exits with MANAGER_PERSISTENT_HALLUCINATION.
+ * Recovery is the default; this guards against a manager stuck in a permanent
+ * hallucination loop.
+ */
+export const FALSE_EPIC_THRESHOLD = 3;
 export const BACKENDS = ['claude', 'codex'];
 export const STATE_MANAGER_DEFAULTS = {
     maxLockRetries: 10,
@@ -96,6 +103,8 @@ export const VALID_ACTIVITY_EVENTS = [
     'multi_repo_warning',
     'meeseeks_model_select',
     'pending_tickets_on_completion',
+    'manager_false_epic_completed',
+    'manager_persistent_hallucination',
 ];
 // ---------------------------------------------------------------------------
 // DOT Builder Types

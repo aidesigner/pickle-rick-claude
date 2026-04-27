@@ -171,3 +171,14 @@ When `state.teams_mode === true`. Claude backend only (setup.js rejects codex+te
 ## All Tickets Done (shared)
 
 Mark parent Done. If on `main`/`master` → skip auto-PR, output `<promise` + `>EPIC_COMPLETED</promise>`. Otherwise → `node ${EXTENSION_ROOT}/extension/services/pr-factory.js ${SESSION_ROOT}`, output `<promise` + `>EPIC_COMPLETED</promise>`.
+
+## CRITICAL: Before emitting `<promise` + `>EPIC_COMPLETED</promise>`
+
+`EPIC_COMPLETED` means EVERY ticket is finished — not just the one you just closed. Use `TASK_COMPLETED` for single-ticket completions; reserve `EPIC_COMPLETED` for the final tear-down only.
+
+Verify before you emit:
+1. List `linear_ticket_*.md` files in `${SESSION_ROOT}` (excluding `linear_ticket_parent.md` and the `refinement/` directory).
+2. For each, confirm the frontmatter `status` field equals `"Done"` (case-insensitive, quotes optional).
+3. If ANY ticket is Todo, In Progress, Skipped, or anything other than Done — STOP. Output `<promise` + `>TASK_COMPLETED</promise>` (single-ticket signal) and continue iterating on the next non-Done ticket. Do NOT emit `EPIC_COMPLETED`.
+
+A premature `EPIC_COMPLETED` will be detected by mux-runner, logged as `MANAGER_FALSE_EPIC_COMPLETED`, and the loop will retry — it does NOT shortcut your way out of remaining work.
