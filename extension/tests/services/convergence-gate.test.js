@@ -28,6 +28,15 @@ const MINIMAL_PKG = JSON.stringify({
   },
 }, null, 2);
 
+function makeLintScript(failures) {
+  const output = [
+    'src/foo.ts',
+    ...failures.map(f => `  ${f.line}:1  error  ${f.message}  ${f.ruleOrCode}`),
+  ].join('\n');
+  const program = `console.error(${JSON.stringify(output)}); process.exit(1);`;
+  return `node -e ${JSON.stringify(program)}`;
+}
+
 test('runGate: returns GateResult with all required fields', async () => {
   await withGitPnpmFixture(async dir => {
     fs.writeFileSync(path.join(dir, 'package.json'), MINIMAL_PKG);
@@ -94,12 +103,97 @@ test('runGate: unknown project type returns green with no failures', async () =>
   }
 });
 
-test('runGate: baseline_used and new_failures_vs_baseline always 0/false (deferred)', async () => {
+test('runGate: baseline mode fingerprints duplicate lint failures across capture and subtraction', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-baseline-'));
   try {
-    const result = await runGate({ workingDir: dir, mode: 'baseline', scope: 'full', checks: [] });
-    assert.equal(result.baseline_used, false);
-    assert.equal(result.new_failures_vs_baseline, 0);
+    const baselinePath = path.join(dir, 'gate', 'baseline.json');
+    const pkg = {
+      name: 'baseline-roundtrip-test',
+      version: '1.0.0',
+      scripts: {
+        lint: makeLintScript([
+          { line: 5, message: 'first duplicate', ruleOrCode: 'no-unused-vars' },
+          { line: 20, message: 'second duplicate', ruleOrCode: 'no-unused-vars' },
+        ]),
+      },
+    };
+    fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'src', 'foo.ts'), 'export const foo = 1;\n');
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify(pkg, null, 2));
+
+    const captured = await runGate({
+      workingDir: dir,
+      mode: 'baseline',
+      scope: 'full',
+      checks: ['lint'],
+      baselinePath,
+    });
+
+    assert.equal(captured.status, 'green');
+    assert.equal(captured.baseline_used, false);
+    assert.equal(captured.total_raw_failure_count, 2);
+    assert.equal(captured.new_failures_vs_baseline, 0);
+
+    const baseline = JSON.parse(fs.readFileSync(baselinePath, 'utf-8'));
+    assert.deepEqual(
+      baseline.failures.map(f => ({ file: path.basename(f.file), line: f.line, occurrence_index: f.occurrence_index })),
+      [
+        { file: 'foo.ts', line: 5, occurrence_index: 0 },
+        { file: 'foo.ts', line: 20, occurrence_index: 1 },
+      ],
+      'baseline capture must persist duplicate fingerprints with stable occurrence indices'
+    );
+
+    const replay = await runGate({
+      workingDir: dir,
+      mode: 'baseline',
+      scope: 'full',
+      checks: ['lint'],
+      baselinePath,
+    });
+
+    assert.equal(replay.status, 'green');
+    assert.equal(replay.baseline_used, true);
+    assert.equal(replay.total_raw_failure_count, 2);
+    assert.equal(replay.new_failures_vs_baseline, 0);
+    assert.deepEqual(replay.failures, [], 'identical duplicate failures should subtract against baseline');
+
+    pkg.scripts.lint = makeLintScript([
+      { line: 5, message: 'first duplicate', ruleOrCode: 'no-unused-vars' },
+      { line: 20, message: 'second duplicate', ruleOrCode: 'no-unused-vars' },
+      { line: 30, message: 'third duplicate', ruleOrCode: 'no-unused-vars' },
+    ]);
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify(pkg, null, 2));
+
+    const regression = await runGate({
+      workingDir: dir,
+      mode: 'baseline',
+      scope: 'full',
+      checks: ['lint'],
+      baselinePath,
+    });
+
+    assert.equal(regression.status, 'red');
+    assert.equal(regression.baseline_used, true);
+    assert.equal(regression.total_raw_failure_count, 3);
+    assert.equal(regression.new_failures_vs_baseline, 1);
+    assert.deepEqual(
+      regression.failures.map(f => ({
+        file: path.basename(f.file),
+        line: f.line,
+        ruleOrCode: f.ruleOrCode,
+        occurrence_index: f.occurrence_index,
+      })),
+      [
+        {
+          file: 'foo.ts',
+          line: 30,
+          ruleOrCode: 'no-unused-vars',
+          occurrence_index: 2,
+        },
+      ],
+      'a new duplicate must survive subtraction with the next occurrence index'
+    );
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

@@ -260,17 +260,23 @@ describe('spawn-gate-remediator', () => {
 
     const briefPath = path.join(sessionRoot, 'gate', `remediation_${iso}_brief.md`);
     const content = fs.readFileSync(briefPath, 'utf-8');
+    const lines = content.split('\n');
 
     assert.ok(content.includes('## Section 1: Gate Failures'), 'Section 1 missing');
     assert.ok(content.includes('## Section 2: Failing File Contents'), 'Section 2 missing');
     assert.ok(content.includes('## Section 3: Relevant CLAUDE.md Trap Doors'), 'Section 3 missing');
     assert.ok(content.includes('## Section 4: Hard Rule and Abort Grammar'), 'Section 4 missing');
 
-    // Section 1: failures table
-    assert.ok(content.includes('no-control-regex'), 'Failure ruleOrCode missing');
+    const failureHeaderIndex = lines.indexOf('| Check | File | Line | Rule/Code | Severity | Message |');
+    assert.ok(failureHeaderIndex >= 0, 'Failure table header missing');
+    assert.equal(
+      lines[failureHeaderIndex + 2],
+      `| lint | ${failingFile} | 1 | no-control-regex | error | use \\u form |`,
+      'Failure table row must preserve the exact GateFailure fields'
+    );
 
-    // Section 2: file content
-    assert.ok(content.includes('foo.ts'), 'Failing file reference missing');
+    const fileSectionIndex = lines.indexOf(`### \`${failingFile}\``);
+    assert.ok(fileSectionIndex >= 0, 'Failing file heading missing');
 
     // Section 3: trap doors
     assert.ok(content.includes('Fake trap door content'), 'Trap door content missing');

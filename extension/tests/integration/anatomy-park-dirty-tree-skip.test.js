@@ -107,3 +107,31 @@ test('dirty-tree skip: dirty tree WITHOUT workerMode → gate runs normally', as
     assert.ok(['green', 'red'].includes(result.status));
   });
 });
+
+test('dirty-tree skip: baseline mode + workerMode + dirty tree skips before baseline write', async () => {
+  await withDirtyGitFixture(async dir => {
+    const baselinePath = path.join(dir, 'gate', 'baseline.json');
+    const events = [];
+    const result = await runGate({
+      workingDir: dir,
+      mode: 'baseline',
+      scope: 'full',
+      checks: ['tests'],
+      baselinePath,
+      workerMode: true,
+      onEvent: (event, data) => events.push({ event, data }),
+    });
+
+    assert.equal(result.status, 'green', `Expected green skip, got ${result.status}`);
+    assert.deepEqual(result.failures, []);
+    assert.equal(result.baseline_used, false);
+    assert.equal(result.new_failures_vs_baseline, 0);
+    assert.equal(fs.existsSync(baselinePath), false, 'dirty-tree skip must not write a baseline file');
+
+    const skipped = events.find(e => e.event === 'gate_skipped');
+    assert.ok(skipped, `Expected gate_skipped event; got events: ${JSON.stringify(events)}`);
+    assert.equal(skipped.data.reason, 'dirty_worktree_no_rescue');
+    assert.ok(!events.some(e => e.event === 'gate_lock_acquired'), 'skip must happen before baseline lock acquisition');
+    assert.ok(!events.some(e => e.event === 'gate_baseline_captured'), 'skip must happen before baseline capture');
+  });
+});

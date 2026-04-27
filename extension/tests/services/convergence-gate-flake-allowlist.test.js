@@ -72,7 +72,20 @@ test('runGate: flake-listed failure → green-with-known-flake-warnings', async 
 
     const complete = events.find(e => e.event === 'gate_run_complete');
     assert.ok(complete, 'gate_run_complete must be emitted');
-    assert.equal(complete.data.gate_payload.status, 'green-with-known-flake-warnings');
+    const { elapsed_ms, ...payload } = complete.data.gate_payload;
+    assert.equal(typeof elapsed_ms, 'number', 'elapsed_ms must be numeric');
+    assert.ok(elapsed_ms >= 0, 'elapsed_ms must be non-negative');
+    assert.deepEqual(payload, {
+      mode: 'strict',
+      scope: 'full',
+      checks: ['tests'],
+      status: 'green-with-known-flake-warnings',
+      failure_count: 0,
+      total_raw_failure_count: 1,
+      new_failures_vs_baseline: 0,
+      allowed_paths_used: false,
+      baseline_used: false,
+    });
 
     // gate/known_flake_failures_*.md should be written
     const gateDir = path.join(dir, 'gate');
@@ -107,12 +120,37 @@ test('runGate: gate_run_complete gate_payload has all required fields', async ()
     assert.ok(complete, 'gate_run_complete must be emitted');
     const p = complete.data.gate_payload;
     assert.ok(p, 'gate_payload must exist');
-    assert.equal(typeof p.mode, 'string', 'mode must be a string');
-    assert.equal(typeof p.scope, 'string', 'scope must be a string');
-    assert.ok(Array.isArray(p.checks), 'checks must be an array');
-    assert.ok(['green', 'red', 'green-with-known-flake-warnings'].includes(p.status), 'status must be valid');
-    assert.equal(typeof p.failure_count, 'number', 'failure_count must be a number');
-    assert.equal(typeof p.elapsed_ms, 'number', 'elapsed_ms must be a number');
+    assert.deepEqual(
+      Object.keys(p).sort(),
+      [
+        'allowed_paths_used',
+        'baseline_used',
+        'checks',
+        'elapsed_ms',
+        'failure_count',
+        'mode',
+        'new_failures_vs_baseline',
+        'scope',
+        'status',
+        'total_raw_failure_count',
+      ],
+      'gate_payload shape must stay stable'
+    );
+
+    const { elapsed_ms, ...payload } = p;
+    assert.equal(typeof elapsed_ms, 'number', 'elapsed_ms must be a number');
+    assert.ok(elapsed_ms >= 0, 'elapsed_ms must be non-negative');
+    assert.deepEqual(payload, {
+      mode: 'strict',
+      scope: 'full',
+      checks: ['typecheck'],
+      status: 'green',
+      failure_count: 0,
+      total_raw_failure_count: 0,
+      new_failures_vs_baseline: 0,
+      allowed_paths_used: false,
+      baseline_used: false,
+    });
   });
 });
 

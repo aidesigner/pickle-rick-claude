@@ -17,6 +17,14 @@ function makeRedResult(failures) {
     return { status: 'red', failures, baseline_used: false, allowed_paths_used: false, elapsed_ms: 5, total_raw_failure_count: failures.length, new_failures_vs_baseline: 0 };
 }
 
+function readOutOfScopeReport(gateDir) {
+    const gateFiles = fs.readdirSync(gateDir);
+    const outOfScopeFiles = gateFiles.filter(f => f.startsWith('out_of_scope_failures_'));
+    assert.equal(outOfScopeFiles.length, 1, `Expected exactly one OOS file, got: ${gateFiles.join(', ')}`);
+    const reportPath = path.join(gateDir, outOfScopeFiles[0]);
+    return fs.readFileSync(reportPath, 'utf-8').trimEnd().split('\n');
+}
+
 describe('anatomy-park scoped final gate', () => {
     test('all failures in web-app (out of scope) → OOS file written, no remediator, exit 0', async () => {
         const sessionRoot = makeTmpDir();
@@ -64,21 +72,22 @@ describe('anatomy-park scoped final gate', () => {
         assert.equal(remediatorCalled, false, 'remediator must NOT be called when all failures are OOS');
 
         // OOS file should be written
-        const gateFiles = fs.readdirSync(gateDir);
-        assert.ok(
-            gateFiles.some(f => f.startsWith('out_of_scope_failures_')),
-            `OOS file missing. gate/ contents: ${gateFiles.join(', ')}`
+        const reportLines = readOutOfScopeReport(gateDir);
+        assert.equal(reportLines[0], '# Out-of-Scope Gate Failures');
+        assert.equal(reportLines[2], 'Cycle: 1');
+        assert.equal(reportLines[3], 'Skill: anatomy-park');
+        assert.equal(
+            reportLines[6],
+            `- \`${oosFailure.file}\` [lint] no-any: no any types`,
+            'OOS file should serialize the exact failure row'
         );
 
-        const oosFile = gateFiles.find(f => f.startsWith('out_of_scope_failures_'));
-        const oosContent = fs.readFileSync(path.join(gateDir, oosFile), 'utf-8');
-        assert.ok(oosContent.includes('packages/web-app'), 'OOS file should reference the web-app path');
-
-        // gate_out_of_scope_failures_present event emitted
-        assert.ok(
-            events.some(e => e.event === 'gate_out_of_scope_failures_present'),
-            'gate_out_of_scope_failures_present event should be emitted'
-        );
+        const outOfScopeEvent = events.find(e => e.event === 'gate_out_of_scope_failures_present');
+        assert.deepEqual(outOfScopeEvent, {
+            event: 'gate_out_of_scope_failures_present',
+            source: 'pickle',
+            gate_payload: { count: 1, cycle: 1 },
+        });
 
         fs.rmSync(sessionRoot, { recursive: true, force: true });
         fs.rmSync(workingDir, { recursive: true, force: true });
@@ -138,8 +147,12 @@ describe('anatomy-park scoped final gate', () => {
         assert.equal(code, 0, 'should exit 0 after in-scope failure cleared');
         assert.equal(remediatorCalled, true, 'remediator should run for in-scope failure');
 
-        const gateFiles = fs.readdirSync(gateDir);
-        assert.ok(gateFiles.some(f => f.startsWith('out_of_scope_failures_')), 'OOS file should exist');
+        const reportLines = readOutOfScopeReport(gateDir);
+        assert.equal(
+            reportLines[6],
+            `- \`${oosFailure.file}\` [lint] no-any: no any`,
+            'OOS report should include the out-of-scope failure only'
+        );
 
         fs.rmSync(sessionRoot, { recursive: true, force: true });
         fs.rmSync(workingDir, { recursive: true, force: true });
