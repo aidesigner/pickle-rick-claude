@@ -91,6 +91,10 @@ export class StateError extends Error {
 }
 
 export class LockError extends StateError {
+  kind?: 'LockError';
+  key?: string;
+  timeout_ms?: number;
+  waited_ms?: number;
   constructor(message: string) {
     super('LOCK_FAILED', message);
     this.name = 'LockError';

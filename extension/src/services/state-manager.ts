@@ -6,7 +6,9 @@
  * no lock — for signal/crash handlers).
  */
 
+import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   type State,
@@ -470,5 +472,61 @@ export function writeTimeoutStub(sessionDir: string, meta: TimeoutStubMeta): voi
   } catch {
     try { fs.writeFileSync(stubPath, stub); } catch { /* best-effort */ }
     try { fs.unlinkSync(tmpPath); } catch { /* cleanup */ }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// workingDir-scoped advisory lock (async, key-based)
+// ---------------------------------------------------------------------------
+
+export interface WithLockOptions {
+  timeout_ms?: number;
+  retry_interval_ms?: number;
+  onAcquire?: (waited_ms: number) => void;
+  onTimeout?: (waited_ms: number) => void;
+}
+
+function gateLockPath(key: string): string {
+  const hash = createHash('sha256').update(key).digest('hex');
+  return path.join(os.tmpdir(), `pickle-gate-lock-${hash}.lock`);
+}
+
+export async function withLock<T>(
+  key: string,
+  opts: WithLockOptions,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const timeout_ms = opts.timeout_ms ?? 30_000;
+  const retry_interval_ms = opts.retry_interval_ms ?? 100;
+  const lp = gateLockPath(key);
+  const start = Date.now();
+
+  for (;;) {
+    try {
+      const fd = fs.openSync(lp, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY);
+      fs.writeSync(fd, JSON.stringify({ pid: process.pid, ts: Date.now() }));
+      fs.closeSync(fd);
+      const waited = Date.now() - start;
+      opts.onAcquire?.(waited);
+      break;
+    } catch {
+      const waited = Date.now() - start;
+      if (waited >= timeout_ms) {
+        opts.onTimeout?.(waited);
+        const err = new LockError(`withLock timeout after ${waited}ms waiting for key: ${key}`);
+        err.kind = 'LockError';
+        err.key = key;
+        err.timeout_ms = timeout_ms;
+        err.waited_ms = waited;
+        throw err;
+      }
+      await new Promise<void>(resolve => setTimeout(resolve, retry_interval_ms));
+    }
+  }
+
+  try {
+    return await fn();
+  } finally {
+    try { fs.unlinkSync(lp); } catch { /* already gone — harmless */ }
   }
 }
