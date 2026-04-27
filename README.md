@@ -18,31 +18,38 @@ New to PRDs? See the **[PRD Writing Guide](PRD_GUIDE.md)** for developers or the
 
 ## How to Build Things with Pickle Rick
 
-This is the actual workflow. You don't need to memorize commands — just follow the flow.
+Two ways to drive every step: **just describe what you want** (Rick routes to the right skill) or **invoke the slash command yourself** (explicit control). Same artifacts either way.
+
+> **Fire and forget** — for one-shot autopilot from goal to shipped code, hand the whole thing to `/pickle-pipeline "<goal>"` (build → anatomy-park → szechuan-sauce, sequential, with auto-refine when prose triggers it) or `/cronenberg "<goal>"` (meta-router that picks the right metaphor + cleanup chain for the task). Skip the step-by-step below.
 
 ### Step 1: Write a PRD
 
-Every feature starts with a PRD. Open a Claude Code session in your project and describe what you want to build:
+Every feature starts with a PRD. Just describe what you want:
 
 ```
-"Help me create a PRD for caching the loan status API responses in Redis"
+"Help me write a PRD for caching loan status API responses in Redis"
 ```
 
-Rick interrogates you — *why* are you building this, *who* is it for, and critically: **how will we verify each requirement automatically?** This is a back-and-forth conversation, not a form to fill out. Rick also explores your codebase during the interview, grounding the PRD in what actually exists.
+Rick interrogates you — *why* are you building this, *who* is it for, and critically: **how will we verify each requirement automatically?** He explores your codebase during the interview, grounding the PRD in what actually exists.
 
 Or write your own `prd.md` and skip the interview — whatever gets requirements on paper with machine-checkable acceptance criteria.
 
 ```bash
-/pickle-prd                      # Interactive PRD drafting interview
-# or just start talking — "Help me write a PRD for X"
+/pickle-prd                      # Slash-command alternative — same interactive interview
 ```
 
 ### Step 2: Refine the PRD
 
+Just ask:
+
+```
+"Refine prd.md"
+```
+
 Three AI analysts run in parallel and tear your PRD apart from different angles — requirements gaps, codebase integration points, and risk/scope. They cross-reference each other across 3 cycles.
 
 ```bash
-/pickle-refine-prd my-prd.md    # Refine with 3 parallel analysts
+/pickle-refine-prd my-prd.md     # Slash-command alternative
 ```
 
 What you get back:
@@ -59,12 +66,17 @@ The hardening tickets (skipped for trivial/small single-ticket PRDs) run as norm
 
 ### Step 3: Implement with tmux (the Ralph Loop)
 
+Just ask:
+
+```
+"Build the tickets"
+```
+
 This is where Rick takes over. Each ticket goes through 8 phases autonomously: Research → Review → Plan → Review → Implement → Spec Conformance → Code Review → Simplify. Context clears between every iteration — no drift, even on 500+ iteration epics.
 
 ```bash
-/pickle-tmux --resume            # Launch tmux mode, picks up refined tickets
-# or combine refine + implement in one shot:
-/pickle-refine-prd --run my-prd.md
+/pickle-tmux --resume            # Slash-command alternative — picks up refined tickets
+/pickle-refine-prd --run my-prd.md   # Combine refine + implement in one shot
 ```
 
 Rick prints a `tmux attach` command — open a second terminal to watch the live 3-pane dashboard:
@@ -80,9 +92,16 @@ Sit back. Rick handles the rest.
 
 ### Step 4 (Optional): Metric-Driven Refinement
 
+Just ask:
+
+```
+"Push test coverage to 90%"
+```
+
 If you can define a measurable goal — test coverage, response time, bundle size, extraction accuracy — the Microverse grinds toward it. Each cycle: make one change, measure, keep or revert. Failed approaches are tracked so it never repeats a dead end.
 
 ```bash
+# Slash-command alternative:
 /pickle-microverse --metric "npm run coverage:score" --task "hit 90% test coverage"
 /pickle-microverse --metric "node perf-test.js" --task "reduce p99 latency" --direction lower
 /pickle-microverse --goal "error messages are user-friendly and actionable" --task "improve UX"
@@ -115,11 +134,16 @@ When NOT to use: codex backend (rejected at setup), `/pickle-tmux` / `/pickle-ze
 
 ### Step 5 (Optional): Cleanup
 
-Three options for polishing the result:
+Four options for polishing the result.
 
-**Full Pipeline** — chains all three phases in a single tmux session: build, deep review, then deslop. No manual intervention between phases. When refinement is mentioned in the request (or `--refine` is passed), the skill auto-runs `/pickle-refine-prd` first — no need to call it separately.
+**Full Pipeline** — chains build, deep review, and deslop in a single tmux session. No manual intervention between phases. When refinement is mentioned in the request (or `--refine` is passed), the skill auto-runs `/pickle-refine-prd` first.
+
+```
+"Run the full pipeline to build the caching layer"
+```
 
 ```bash
+# Slash-command alternative:
 /pickle-pipeline "build the caching layer"                            # No refinement (no trigger)
 /pickle-pipeline "refine the prd then build the caching layer"        # Auto-inferred from prose
 /pickle-pipeline --refine "build the caching layer"                   # Explicit force, prose silent
@@ -132,17 +156,33 @@ The auto-refine trigger fires on `refine-prd` / `prd refinement`, on `refine`/`r
 
 **Szechuan Sauce** — hunts coding principle violations (KISS, DRY, SOLID, security, style) and fixes them one at a time until zero remain. Great for post-feature polish before merging.
 
+```
+"Deslop src/services with szechuan sauce"
+```
+
 ```bash
-/szechuan-sauce src/services/              # Deslop a directory
-/szechuan-sauce --dry-run src/             # Catalog violations without fixing
+# Slash-command alternative:
+/szechuan-sauce src/services/                  # Deslop a directory
+/szechuan-sauce --dry-run src/                 # Catalog violations without fixing
 /szechuan-sauce --focus "error handling" src/  # Narrow the review
 ```
 
 **Anatomy Park** — traces data flows through subsystems looking for runtime bugs: data corruption, timezone issues, rounding errors, schema drift. Catalogs "trap doors" (files that keep breaking) in `CLAUDE.md` files for future engineers.
 
+```
+"Run anatomy park on src/"
+```
+
 ```bash
+# Slash-command alternative:
 /anatomy-park src/                         # Deep subsystem review
 /anatomy-park --dry-run                    # Review only, no fixes
+```
+
+**Cronenberg (meta-router)** — when you don't know which cleanup metaphor fits, describe the goal and let `/cronenberg` pick the right pickle metaphor + cleanup chain for the task. Explicit invocation only — never auto-triggers.
+
+```bash
+/cronenberg "tighten the integrations package"
 ```
 
 ### The Full Flow at a Glance
