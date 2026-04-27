@@ -327,9 +327,67 @@ async function runCheckCommand(cmd: string, cwd: string, timeout_ms: number): Pr
   }
 }
 
+function parseTscOutput(output: string, pkgDir: string): GateFailure[] {
+  const failures: GateFailure[] = [];
+  const re = /^(.+?)\((\d+),\d+\):\s+error\s+(TS\d+):\s+(.*)$/;
+  for (const line of output.split('\n')) {
+    const m = line.match(re);
+    if (!m) continue;
+    failures.push({
+      check: 'typecheck',
+      file: path.isAbsolute(m[1]!) ? m[1]! : path.resolve(pkgDir, m[1]!),
+      line: parseInt(m[2]!, 10),
+      ruleOrCode: m[3]!,
+      message: (m[4] ?? '').slice(0, 500),
+      severity: 'error',
+      occurrence_index: 0,
+    });
+  }
+  return failures;
+}
+
+function parseEslintOutput(output: string, pkgDir: string): GateFailure[] {
+  const failures: GateFailure[] = [];
+  let currentFile = '';
+  const violationRe = /^\s+(\d+):(\d+)\s+(error|warning)\s+(.*\S)\s{2,}(\S+)\s*$/;
+  for (const line of output.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (/^[✖×√]/.test(trimmed) || /^\d+ problem/.test(trimmed)) continue;
+    if (line.charAt(0) !== ' ' && line.charAt(0) !== '\t') {
+      currentFile = path.isAbsolute(trimmed) ? trimmed : path.resolve(pkgDir, trimmed);
+    } else {
+      const m = line.match(violationRe);
+      if (m && currentFile) {
+        failures.push({
+          check: 'lint',
+          file: currentFile,
+          line: parseInt(m[1]!, 10),
+          ruleOrCode: m[5]!.trim(),
+          message: m[4]!.trim().slice(0, 500),
+          severity: m[3] === 'error' ? 'error' : 'warning',
+          occurrence_index: 0,
+        });
+      }
+    }
+  }
+  return failures;
+}
+
 function buildFailures(result: CheckResult, check: 'typecheck' | 'lint' | 'tests', pkgDir: string): GateFailure[] {
   if (result.exitCode === 0) return [];
   const output = (result.stderr || result.stdout).trim();
+
+  if (check === 'typecheck') {
+    const parsed = parseTscOutput(output, pkgDir);
+    if (parsed.length > 0) return parsed;
+  }
+
+  if (check === 'lint') {
+    const parsed = parseEslintOutput(output, pkgDir);
+    if (parsed.length > 0) return parsed;
+  }
+
   return [{
     check,
     file: pkgDir,
