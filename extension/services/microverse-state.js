@@ -43,6 +43,8 @@ export function createMicroverseState(opts) {
         baseline_score: 0,
         failure_history: [],
         approach_exhaustion_fired: false,
+        iteration_regressions: 0,
+        gate_regression_threshold_warning_emitted: false,
     };
     if (convergenceTarget != null)
         state.convergence_target = convergenceTarget;
@@ -174,6 +176,8 @@ export function readMicroverseState(sessionDir) {
         const parsed = JSON.parse(raw);
         parsed.failure_history ??= [];
         parsed.approach_exhaustion_fired ??= false;
+        parsed.iteration_regressions ??= 0;
+        parsed.gate_regression_threshold_warning_emitted ??= false;
         return parsed;
     }
     catch (err) {
