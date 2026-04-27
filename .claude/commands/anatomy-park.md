@@ -326,13 +326,22 @@ During Phase 1, identify trap doors when:
 ```markdown
 ## Trap Doors
 
-- `filename.ts` — constraint description; why it breaks; what must hold
+- `filename.ts` — INVARIANT: <constraint>. BREAKS: <failure mode>. ENFORCE: <guard or test name>.
 ```
+
+**Token budget:** ≤ 40 words per entry. Three labeled fields, one line each. Agent readability beats prose.
+
+**Forbidden in entries:**
+- Commit SHAs or "N prior commits missed this" narrative — that's `git log` territory
+- Cross-references to other trap doors ("same class as X above")
+- Multi-sentence rationale or examples — keep it to the three labels
+- Restating what the code already shows (function signatures, imports)
 
 **Merge rules:**
 - One line per file. Multiple traps for the same file go on the same line separated by `;`
 - If the `## Trap Doors` section already exists, merge — don't duplicate entries
 - If an existing trap door is now enforced by a type or test you added, remove it
+- If an entry exceeds 40 words, rewrite it before committing
 
 ### Override 4: Commit Message Format
 
