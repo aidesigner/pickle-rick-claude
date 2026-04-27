@@ -29,12 +29,30 @@ function parseFlag(argv: string[], flag: string): string | undefined {
   return argv[idx + 1];
 }
 
+const VALID_GATE_STATUSES = new Set<string>(['green', 'red', 'green-with-known-flake-warnings']);
+const VALID_FAILURE_CHECKS = new Set<string>(['typecheck', 'lint', 'tests']);
+const VALID_FAILURE_SEVERITIES = new Set<string>(['error', 'warning']);
+
+function isGateFailure(v: unknown): v is GateFailure {
+  if (!v || typeof v !== 'object') return false;
+  const f = v as Record<string, unknown>;
+  return (
+    typeof f['check'] === 'string' && VALID_FAILURE_CHECKS.has(f['check']) &&
+    typeof f['file'] === 'string' &&
+    typeof f['line'] === 'number' &&
+    typeof f['ruleOrCode'] === 'string' &&
+    typeof f['message'] === 'string' &&
+    typeof f['severity'] === 'string' && VALID_FAILURE_SEVERITIES.has(f['severity']) &&
+    typeof f['occurrence_index'] === 'number'
+  );
+}
+
 function isGateResult(v: unknown): v is GateResult {
   if (!v || typeof v !== 'object') return false;
   const obj = v as Record<string, unknown>;
   return (
-    typeof obj['status'] === 'string' &&
-    Array.isArray(obj['failures']) &&
+    typeof obj['status'] === 'string' && VALID_GATE_STATUSES.has(obj['status']) &&
+    Array.isArray(obj['failures']) && obj['failures'].every(isGateFailure) &&
     typeof obj['elapsed_ms'] === 'number'
   );
 }

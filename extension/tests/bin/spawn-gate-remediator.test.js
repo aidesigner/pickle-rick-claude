@@ -134,6 +134,68 @@ describe('spawn-gate-remediator', () => {
     fs.rmSync(tmpDir, { recursive: true });
   });
 
+  test('gate-result with malformed failure entries → exit 1, no brief', async () => {
+    const tmpDir = makeTmpDir();
+    const grPath = path.join(tmpDir, 'gate-result.json');
+    // failures[] present but each entry is missing required GateFailure fields
+    fs.writeFileSync(
+      grPath,
+      JSON.stringify({ status: 'red', failures: [{ check: 'lint' }], elapsed_ms: 0 }),
+      'utf-8'
+    );
+
+    const sessionRoot = path.join(tmpDir, 'session');
+    fs.mkdirSync(sessionRoot, { recursive: true });
+
+    const errLines = [];
+    const outLines = [];
+    const code = await spawnGateRemediatorMain({
+      argv: ['--gate-result', grPath, '--session-root', sessionRoot, '--reason', 'strict'],
+      isoOverride: '2026-01-01T00-00-00Z',
+      extensionClaudeMdContent: '## Trap Doors\nNone.',
+      stderr: (m) => errLines.push(m),
+      stdout: (m) => outLines.push(m),
+    });
+
+    assert.equal(code, 1, 'malformed failure entry must reject at validator');
+    assert.ok(errLines.some(l => l.includes('not a valid GateResult')), 'stderr must explain rejection');
+    assert.ok(!outLines.some(l => l.startsWith('BRIEF_PATH=')), 'no BRIEF_PATH must be emitted');
+
+    const gateDir = path.join(sessionRoot, 'gate');
+    if (fs.existsSync(gateDir)) {
+      const briefs = fs.readdirSync(gateDir).filter(f => /^remediation_.*_brief\.md$/.test(f));
+      assert.equal(briefs.length, 0, 'no brief file must be written when validator rejects');
+    }
+
+    fs.rmSync(tmpDir, { recursive: true });
+  });
+
+  test('gate-result with invalid status enum → exit 1', async () => {
+    const tmpDir = makeTmpDir();
+    const grPath = path.join(tmpDir, 'gate-result.json');
+    fs.writeFileSync(
+      grPath,
+      JSON.stringify({ status: 'maybe', failures: [], elapsed_ms: 0 }),
+      'utf-8'
+    );
+
+    const sessionRoot = path.join(tmpDir, 'session');
+    fs.mkdirSync(sessionRoot, { recursive: true });
+
+    const errLines = [];
+    const code = await spawnGateRemediatorMain({
+      argv: ['--gate-result', grPath, '--session-root', sessionRoot, '--reason', 'strict'],
+      isoOverride: '2026-01-01T00-00-00Z',
+      extensionClaudeMdContent: '## Trap Doors\nNone.',
+      stderr: (m) => errLines.push(m),
+      stdout: () => {},
+    });
+
+    assert.equal(code, 1, 'invalid status enum must reject');
+    assert.ok(errLines.some(l => l.includes('not a valid GateResult')), 'stderr must explain rejection');
+    fs.rmSync(tmpDir, { recursive: true });
+  });
+
   // ---------------------------------------------------------------------------
   // Successful brief write
   // ---------------------------------------------------------------------------

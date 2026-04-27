@@ -11,12 +11,27 @@ function parseFlag(argv, flag) {
         return undefined;
     return argv[idx + 1];
 }
+const VALID_GATE_STATUSES = new Set(['green', 'red', 'green-with-known-flake-warnings']);
+const VALID_FAILURE_CHECKS = new Set(['typecheck', 'lint', 'tests']);
+const VALID_FAILURE_SEVERITIES = new Set(['error', 'warning']);
+function isGateFailure(v) {
+    if (!v || typeof v !== 'object')
+        return false;
+    const f = v;
+    return (typeof f['check'] === 'string' && VALID_FAILURE_CHECKS.has(f['check']) &&
+        typeof f['file'] === 'string' &&
+        typeof f['line'] === 'number' &&
+        typeof f['ruleOrCode'] === 'string' &&
+        typeof f['message'] === 'string' &&
+        typeof f['severity'] === 'string' && VALID_FAILURE_SEVERITIES.has(f['severity']) &&
+        typeof f['occurrence_index'] === 'number');
+}
 function isGateResult(v) {
     if (!v || typeof v !== 'object')
         return false;
     const obj = v;
-    return (typeof obj['status'] === 'string' &&
-        Array.isArray(obj['failures']) &&
+    return (typeof obj['status'] === 'string' && VALID_GATE_STATUSES.has(obj['status']) &&
+        Array.isArray(obj['failures']) && obj['failures'].every(isGateFailure) &&
         typeof obj['elapsed_ms'] === 'number');
 }
 function formatFailuresTable(failures) {
