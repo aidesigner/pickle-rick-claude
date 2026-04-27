@@ -24,6 +24,7 @@ import { getHeadSha, resetToSha, isWorkingTreeDirty } from '../services/git-util
 import {
   writeStateFile,
   getExtensionRoot,
+  isoCompactStamp,
   sleep,
   Style,
   formatTime,
@@ -85,7 +86,7 @@ async function runRemediatorForIteration(
   backend: Backend,
   remediatorTimeoutS: number,
 ): Promise<{ success: boolean }> {
-  const iso = new Date().toISOString().replace(/:/g, '-').replace(/\..+/, 'Z');
+  const iso = isoCompactStamp();
   const gateDir = path.join(sessionDir, 'gate');
   // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   fs.mkdirSync(gateDir, { recursive: true });

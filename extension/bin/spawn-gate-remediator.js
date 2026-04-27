@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { safeErrorMessage } from '../services/pickle-utils.js';
+import { isoCompactStamp, safeErrorMessage } from '../services/pickle-utils.js';
 const USAGE = 'Usage: spawn-gate-remediator --gate-result <path> --session-root <path> --reason strict|per-iteration';
 const LOCKFILE_NAME = 'remediator.lockfile';
 const MAX_FILE_BYTES = 50_000;
@@ -126,7 +126,7 @@ export async function spawnGateRemediatorMain(opts) {
         stderr(`Failed to read --gate-result ${gateResultPath}: ${safeErrorMessage(e)}`);
         return 1;
     }
-    const iso = isoOverride ?? new Date().toISOString().replace(/:/g, '-').replace(/\..+/, 'Z');
+    const iso = isoOverride ?? isoCompactStamp();
     const gateDir = path.join(sessionRoot, 'gate');
     try {
         mkdirSync(gateDir, { recursive: true });

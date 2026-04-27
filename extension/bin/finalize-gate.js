@@ -5,7 +5,7 @@ import { runGate, filterByScope } from '../services/convergence-gate.js';
 import { spawnGateRemediatorMain } from './spawn-gate-remediator.js';
 import { readMicroverseState } from '../services/microverse-state.js';
 import { logActivity } from '../services/activity-logger.js';
-import { getExtensionRoot, safeErrorMessage } from '../services/pickle-utils.js';
+import { getExtensionRoot, isoCompactStamp, safeErrorMessage } from '../services/pickle-utils.js';
 import { buildWorkerInvocation, backendEnvOverrides, resolveBackendFromStateFile, } from '../services/backend-spawn.js';
 const VALID_SKILLS = new Set(['szechuan', 'anatomy-park']);
 function loadFinalizeGateSettings(extRoot) {
@@ -36,9 +36,6 @@ function loadFinalizeGateSettings(extRoot) {
         return defaults;
     }
 }
-function isoStamp() {
-    return new Date().toISOString().replace(/:/g, '-').replace(/\..+/, 'Z');
-}
 function splitByScope(failures, allowedPaths, workingDir) {
     if (!allowedPaths || allowedPaths.length === 0) {
         return { inScope: failures, outOfScope: [] };
@@ -67,7 +64,7 @@ export async function finalizeGateMain(opts) {
     const out = opts.stdout ?? ((msg) => process.stdout.write(msg + '\n'));
     const err = opts.stderr ?? ((msg) => process.stderr.write(msg + '\n'));
     const doLogActivity = opts.logActivityFn ?? logActivity;
-    const iso = opts.isoFn ?? isoStamp;
+    const iso = opts.isoFn ?? isoCompactStamp;
     const [sessionRoot, skill] = opts.argv;
     if (!sessionRoot || !skill) {
         err('Usage: finalize-gate <session-root> <skill>');

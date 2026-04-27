@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { safeErrorMessage } from '../services/pickle-utils.js';
+import { isoCompactStamp, safeErrorMessage } from '../services/pickle-utils.js';
 import type { GateResult, GateFailure } from '../types/index.js';
 
 const USAGE = 'Usage: spawn-gate-remediator --gate-result <path> --session-root <path> --reason strict|per-iteration';
@@ -171,7 +171,7 @@ export async function spawnGateRemediatorMain(opts: SpawnGateRemediatorOpts): Pr
     return 1;
   }
 
-  const iso = isoOverride ?? new Date().toISOString().replace(/:/g, '-').replace(/\..+/, 'Z');
+  const iso = isoOverride ?? isoCompactStamp();
   const gateDir = path.join(sessionRoot, 'gate');
 
   try {

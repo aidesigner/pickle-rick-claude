@@ -5,7 +5,7 @@ import { runGate, filterByScope, type RunGateOpts } from '../services/convergenc
 import { spawnGateRemediatorMain } from './spawn-gate-remediator.js';
 import { readMicroverseState } from '../services/microverse-state.js';
 import { logActivity } from '../services/activity-logger.js';
-import { getExtensionRoot, safeErrorMessage } from '../services/pickle-utils.js';
+import { getExtensionRoot, isoCompactStamp, safeErrorMessage } from '../services/pickle-utils.js';
 import {
   buildWorkerInvocation,
   backendEnvOverrides,
@@ -51,9 +51,6 @@ function loadFinalizeGateSettings(extRoot: string): FinalizeGateSettings {
   }
 }
 
-function isoStamp(): string {
-  return new Date().toISOString().replace(/:/g, '-').replace(/\..+/, 'Z');
-}
 
 function splitByScope(
   failures: GateFailure[],
@@ -105,7 +102,7 @@ export async function finalizeGateMain(opts: FinalizeGateOpts): Promise<number> 
   const out = opts.stdout ?? ((msg: string) => process.stdout.write(msg + '\n'));
   const err = opts.stderr ?? ((msg: string) => process.stderr.write(msg + '\n'));
   const doLogActivity = opts.logActivityFn ?? logActivity;
-  const iso = opts.isoFn ?? isoStamp;
+  const iso = opts.isoFn ?? isoCompactStamp;
 
   const [sessionRoot, skill] = opts.argv;
 

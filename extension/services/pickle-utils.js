@@ -82,6 +82,10 @@ export function formatTime(seconds) {
     const s = Math.floor(seconds % 60);
     return `${m}m ${s}s`;
 }
+/** Compact ISO stamp safe for use in file/dir names: `2026-04-27T20-15-30Z`. */
+export function isoCompactStamp(d = new Date()) {
+    return d.toISOString().replace(/:/g, '-').replace(/\..+/, 'Z');
+}
 export function runCmd(cmd, options = {}) {
     const { cwd, check = true, capture = true } = options;
     // Array form: use spawnSync so each argument is passed verbatim (no shell splitting).

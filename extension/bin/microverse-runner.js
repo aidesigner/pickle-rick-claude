@@ -6,7 +6,7 @@ import { Defaults } from '../types/index.js';
 import { resolveBackend, buildJudgeInvocation, buildWorkerInvocation, backendEnvOverrides, } from '../services/backend-spawn.js';
 import { readMicroverseState, writeMicroverseState, recordIteration as stateRecordIteration, recordStall, recordFailedApproach, isConverged, compareMetric, classifyFailure, } from '../services/microverse-state.js';
 import { getHeadSha, resetToSha, isWorkingTreeDirty } from '../services/git-utils.js';
-import { writeStateFile, getExtensionRoot, sleep, Style, formatTime, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, } from '../services/pickle-utils.js';
+import { writeStateFile, getExtensionRoot, isoCompactStamp, sleep, Style, formatTime, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 const sm = new StateManager();
 import { runIteration, loadRateLimitSettings, classifyIterationExit, computeRateLimitAction, killCurrentChild, } from './mux-runner.js';
@@ -42,7 +42,7 @@ function loadConvergenceGateSettings(extRoot) {
     }
 }
 async function runRemediatorForIteration(gateResult, sessionDir, workingDir, backend, remediatorTimeoutS) {
-    const iso = new Date().toISOString().replace(/:/g, '-').replace(/\..+/, 'Z');
+    const iso = isoCompactStamp();
     const gateDir = path.join(sessionDir, 'gate');
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     fs.mkdirSync(gateDir, { recursive: true });

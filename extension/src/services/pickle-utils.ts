@@ -101,6 +101,11 @@ export function formatTime(seconds: number): string {
   return `${m}m ${s}s`;
 }
 
+/** Compact ISO stamp safe for use in file/dir names: `2026-04-27T20-15-30Z`. */
+export function isoCompactStamp(d: Date = new Date()): string {
+  return d.toISOString().replace(/:/g, '-').replace(/\..+/, 'Z');
+}
+
 interface ShellError extends Error {
   stderr?: Buffer | string;
   stdout?: Buffer | string;
