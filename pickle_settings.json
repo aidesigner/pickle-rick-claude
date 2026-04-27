@@ -26,5 +26,23 @@
   "enable_failure_classification": true,
   "enable_complexity_tiers": true,
   "enable_config_protection": true,
-  "enable_model_tiers": true
+  "enable_model_tiers": true,
+  "convergence_gate": {
+    "commands": {},
+    "enabled_convergence_files": ["anatomy-park.json"],
+    "timeout_ms": {
+      "typecheck": 120000,
+      "lint": 60000,
+      "tests": 300000
+    },
+    "gate_total_timeout_ms": 600000,
+    "remediator_timeout_s": 600,
+    "szechuan_max_remediation_cycles": 3,
+    "anatomy_park_max_remediation_cycles": 5,
+    "regression_warning_threshold": 5,
+    "baseline_max_age_iterations": 30,
+    "baseline_max_age_seconds": 14400,
+    "prefer_test_unit_alias": false,
+    "known_flake_files": []
+  }
 }
