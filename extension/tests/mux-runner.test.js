@@ -27,8 +27,11 @@ function run(extDir, args = []) {
     // codex/tmux work. Fast-path tests (no-args, missing state.json, etc.)
     // exit in <100ms; the budget exists so node spawn + module load under
     // load doesn't blow the wall-clock and SIGKILL the subprocess.
+    const env = { ...process.env, EXTENSION_DIR: extDir };
+    delete env.PICKLE_ROLE;
+    env.PICKLE_BACKEND = 'claude';
     return spawnSync(process.execPath, [TMUX_RUNNER_BIN, ...args], {
-        env: { ...process.env, EXTENSION_DIR: extDir },
+        env,
         encoding: 'utf-8',
         timeout: 60000,
     });
@@ -1474,7 +1477,12 @@ function runAndCollectActivity(stateOverrides = {}) {
     // we stripped it from PATH) and writes activity events; under load the
     // 15s budget got SIGKILL'd before the subprocess could even flush logs.
     const result = spawnSync(process.execPath, [TMUX_RUNNER_BIN, sessionDir], {
-        env: { ...process.env, EXTENSION_DIR: tmpRoot, PATH: pathDirs.join(':') },
+        env: {
+            ...process.env,
+            EXTENSION_DIR: tmpRoot,
+            PATH: pathDirs.join(':'),
+            PICKLE_BACKEND: 'claude',
+        },
         encoding: 'utf-8',
         timeout: 60000,
     });

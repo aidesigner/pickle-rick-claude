@@ -85,6 +85,7 @@ process.exit(0);
                 ...process.env,
                 EXTENSION_DIR: dir,
                 PATH: `${fakeBinDir}:${process.env.PATH}`,
+                PICKLE_BACKEND: 'claude',
             },
             encoding: 'utf-8',
             timeout: 45_000,

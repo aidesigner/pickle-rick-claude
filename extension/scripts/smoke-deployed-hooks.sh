@@ -58,7 +58,7 @@ run_dispatch() {
     PICKLE_STATE_FILE="$state_file" PICKLE_ROLE="$role" FORCE_COLOR=0 \
       node "$DISPATCH_JS" stop-hook <<<"$input"
   else
-    PICKLE_STATE_FILE="$state_file" FORCE_COLOR=0 \
+    env -u PICKLE_ROLE PICKLE_STATE_FILE="$state_file" FORCE_COLOR=0 \
       node "$DISPATCH_JS" stop-hook <<<"$input"
   fi
 }

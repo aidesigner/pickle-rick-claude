@@ -122,6 +122,7 @@ test('guard-logging: false EPIC_COMPLETED triggers structural recovery (not exit
                 ...process.env,
                 EXTENSION_DIR: extDir,
                 PATH: `${fakeBinDir}:${process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin'}`,
+                PICKLE_BACKEND: 'claude',
             },
             encoding: 'utf-8',
             // 60s budget: the recovery loop runs FALSE_EPIC_THRESHOLD+1

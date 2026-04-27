@@ -16,14 +16,29 @@ function mkTmpDir(prefix) {
     return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }
 
+function withUnsetBackendEnv(fn) {
+    const prev = process.env.PICKLE_BACKEND;
+    delete process.env.PICKLE_BACKEND;
+    try {
+        fn();
+    } finally {
+        if (prev === undefined) delete process.env.PICKLE_BACKEND;
+        else process.env.PICKLE_BACKEND = prev;
+    }
+}
+
 // --- resolveBackend ---
 
 test('resolveBackend: returns claude when state is null', () => {
-    assert.equal(resolveBackend(null), 'claude');
+    withUnsetBackendEnv(() => {
+        assert.equal(resolveBackend(null), 'claude');
+    });
 });
 
 test('resolveBackend: returns claude when backend is absent', () => {
-    assert.equal(resolveBackend({}), 'claude');
+    withUnsetBackendEnv(() => {
+        assert.equal(resolveBackend({}), 'claude');
+    });
 });
 
 test('resolveBackend: reads backend from state', () => {
@@ -31,7 +46,9 @@ test('resolveBackend: reads backend from state', () => {
 });
 
 test('resolveBackend: rejects invalid backend', () => {
-    assert.equal(resolveBackend({ backend: 'gemini' }), 'claude');
+    withUnsetBackendEnv(() => {
+        assert.equal(resolveBackend({ backend: 'gemini' }), 'claude');
+    });
 });
 
 test('resolveBackend: falls through to PICKLE_BACKEND env', () => {
@@ -62,26 +79,18 @@ test('resolveBackendFromStateFile: reads backend from JSON', () => {
 });
 
 test('resolveBackendFromStateFile: defaults to claude on missing file', () => {
-    const prev = process.env.PICKLE_BACKEND;
-    delete process.env.PICKLE_BACKEND;
-    try {
+    withUnsetBackendEnv(() => {
         assert.equal(resolveBackendFromStateFile('/nonexistent/state.json'), 'claude');
-    } finally {
-        if (prev !== undefined) process.env.PICKLE_BACKEND = prev;
-    }
+    });
 });
 
 test('resolveBackendFromStateFile: defaults to claude on corrupt JSON', () => {
-    const prev = process.env.PICKLE_BACKEND;
-    delete process.env.PICKLE_BACKEND;
     const dir = mkTmpDir('backend-spawn-');
     const file = path.join(dir, 'state.json');
     fs.writeFileSync(file, '{not valid json');
-    try {
+    withUnsetBackendEnv(() => {
         assert.equal(resolveBackendFromStateFile(file), 'claude');
-    } finally {
-        if (prev !== undefined) process.env.PICKLE_BACKEND = prev;
-    }
+    });
 });
 
 // --- buildWorkerInvocation: claude ---
