@@ -545,15 +545,20 @@ export function setupAnatomyPark(
     description: 'none', validation: 'none', type: 'none',
     timeout_seconds: 0, tolerance: 0, direction: 'lower',
   });
+  const initArgs = [
+    path.join(extensionRoot, 'extension', 'bin', 'init-microverse.js'),
+    sessionDir, target,
+    '--stall-limit', String(runnerStallLimit),
+    '--convergence-mode', 'worker',
+    '--convergence-file', 'anatomy-park.json',
+    '--metric-json', metricJson,
+  ];
+  const scopePath = path.join(sessionDir, 'scope.json');
+  if (scope && scope.allowedPaths.length > 0 && fs.existsSync(scopePath)) {
+    initArgs.push('--allowed-paths-file', scopePath);
+  }
   try {
-    execFileSync('node', [
-      path.join(extensionRoot, 'extension', 'bin', 'init-microverse.js'),
-      sessionDir, target,
-      '--stall-limit', String(runnerStallLimit),
-      '--convergence-mode', 'worker',
-      '--convergence-file', 'anatomy-park.json',
-      '--metric-json', metricJson,
-    ], { timeout: 30_000, encoding: 'utf-8' });
+    execFileSync('node', initArgs, { timeout: 30_000, encoding: 'utf-8' });
   } catch (err) {
     log(`init-microverse.js failed: ${safeErrorMessage(err)}`);
     return false;

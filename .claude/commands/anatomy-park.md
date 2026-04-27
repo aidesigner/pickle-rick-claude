@@ -127,7 +127,7 @@ METRIC_JSON='{"description":"none","validation":"none","type":"none","timeout_se
 
 Initialize microverse:
 ```bash
-node "$HOME/.claude/pickle-rick/extension/bin/init-microverse.js" "${SESSION_ROOT}" "${TARGET_ABSOLUTE_PATH}" --stall-limit ${RUNNER_STALL_LIMIT} --convergence-mode worker --convergence-file anatomy-park.json --metric-json "${METRIC_JSON}"
+node "$HOME/.claude/pickle-rick/extension/bin/init-microverse.js" "${SESSION_ROOT}" "${TARGET_ABSOLUTE_PATH}" --stall-limit ${RUNNER_STALL_LIMIT} --convergence-mode worker --convergence-file anatomy-park.json --metric-json "${METRIC_JSON}" ${SCOPE_FLAG:+--allowed-paths-file "${SESSION_ROOT}/scope.json"}
 ```
 
 ### Step 8: Write prd.md

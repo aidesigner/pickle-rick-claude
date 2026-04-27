@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setupAnatomyPark } from '../bin/pipeline-runner.js';
+import { finalizeGateMain } from '../bin/finalize-gate.js';
 import { filterBySubsystem } from '../services/scope-resolver.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -31,6 +32,10 @@ function readAnatomyPark(sessionDir) {
   return JSON.parse(fs.readFileSync(path.join(sessionDir, 'anatomy-park.json'), 'utf-8'));
 }
 
+function readMicroverse(sessionDir) {
+  return JSON.parse(fs.readFileSync(path.join(sessionDir, 'microverse.json'), 'utf-8'));
+}
+
 // ---------------------------------------------------------------------------
 // Pipeline mode: scope filters subsystems in anatomy-park.json
 // ---------------------------------------------------------------------------
@@ -52,6 +57,75 @@ test('pipeline filter: 4 subsystems, scope covering 2 → anatomy-park.json has 
 
     const ap = readAnatomyPark(session);
     assert.deepStrictEqual(ap.subsystems, ['alpha', 'gamma']);
+  } finally {
+    fs.rmSync(session, { recursive: true, force: true });
+    fs.rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test('pipeline scoped setup injects allowed_paths into microverse.json so final gate honors out-of-scope failures', async () => {
+  const session = makeSession();
+  const target = makeTarget();
+  try {
+    makeSubsystem(target, 'alpha');
+    makeSubsystem(target, 'beta');
+    fs.writeFileSync(
+      path.join(session, 'scope.json'),
+      JSON.stringify({ allowed_paths: ['alpha/f0.ts'], mode: 'branch', strategy: 'strict', head_sha: 'abc123' }),
+    );
+
+    setupAnatomyPark(session, target, 3, EXTENSION_ROOT, () => {}, {
+      allowedPaths: ['alpha/f0.ts'],
+      repoRoot: target,
+    });
+
+    const mv = readMicroverse(session);
+    assert.deepStrictEqual(mv.allowed_paths, ['alpha/f0.ts']);
+
+    const gateDir = path.join(session, 'gate');
+    let remediatorCalled = false;
+    const code = await finalizeGateMain({
+      argv: [session, 'anatomy-park'],
+      env: {},
+      readStateForWorkingDirFn: () => ({ workingDir: target, backend: 'claude' }),
+      loadSettingsFn: () => ({
+        szechuan_max_remediation_cycles: 3,
+        anatomy_park_max_remediation_cycles: 1,
+        remediator_timeout_s: 60,
+      }),
+      runGateFn: async () => ({
+        status: 'red',
+        failures: [{
+          check: 'lint',
+          file: path.join(target, 'beta/f0.ts'),
+          line: 1,
+          ruleOrCode: 'no-any',
+          message: 'out of scope',
+          severity: 'error',
+          occurrence_index: 0,
+        }],
+        baseline_used: false,
+        allowed_paths_used: false,
+        elapsed_ms: 5,
+        total_raw_failure_count: 1,
+        new_failures_vs_baseline: 0,
+      }),
+      spawnGateRemediatorMainFn: async () => {
+        remediatorCalled = true;
+        return 0;
+      },
+      spawnRemediatorFn: () => {
+        remediatorCalled = true;
+      },
+      stdout: () => {},
+      stderr: () => {},
+    });
+
+    assert.equal(code, 0, 'final gate should close when every failure is out of scope');
+    assert.equal(remediatorCalled, false, 'remediator must not run for out-of-scope failures');
+
+    const gateFiles = fs.readdirSync(gateDir);
+    assert.equal(gateFiles.filter(f => f.startsWith('out_of_scope_failures_')).length, 1);
   } finally {
     fs.rmSync(session, { recursive: true, force: true });
     fs.rmSync(target, { recursive: true, force: true });
@@ -117,6 +191,19 @@ test('standalone scope-hook does not reference a nonexistent "full" mode', () =>
   );
 });
 
+test('Step 7 references --allowed-paths-file after Step 6.5 (scope wiring for standalone mode)', () => {
+  const content = fs.readFileSync(ANATOMY_PARK_MD, 'utf-8');
+  const stepIdx = content.indexOf('### Step 6.5: Resolve Scope');
+  const createIdx = content.indexOf('### Step 7: Create anatomy-park.json and microverse.json');
+  const flagIdx = content.lastIndexOf('--allowed-paths-file');
+  assert.ok(stepIdx > 0, 'Step 6.5 heading must exist in anatomy-park.md');
+  assert.ok(createIdx > stepIdx, 'Step 7 must come after Step 6.5');
+  assert.ok(
+    flagIdx > createIdx,
+    '--allowed-paths-file must appear in the init-microverse command after scope.json has been created',
+  );
+});
+
 // ---------------------------------------------------------------------------
 // Backcompat: omitted scope → all subsystems pass through unfiltered
 // ---------------------------------------------------------------------------
@@ -134,8 +221,10 @@ test('backcompat: no scope arg → anatomy-park.json contains all 4 subsystems',
     setupAnatomyPark(session, target, 3, EXTENSION_ROOT, () => {});
 
     const ap = readAnatomyPark(session);
+    const mv = readMicroverse(session);
     assert.equal(ap.subsystems.length, 4);
     assert.deepStrictEqual(ap.subsystems.sort(), ['alpha', 'beta', 'delta', 'gamma']);
+    assert.equal(mv.allowed_paths, undefined);
   } finally {
     fs.rmSync(session, { recursive: true, force: true });
     fs.rmSync(target, { recursive: true, force: true });
