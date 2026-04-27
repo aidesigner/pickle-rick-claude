@@ -8,9 +8,11 @@ Pickle Rick is a complete agentic engineering toolbelt built on the [Ralph Wiggu
 
 New to PRDs? See the **[PRD Writing Guide](PRD_GUIDE.md)** for developers or the **[Product Manager's Guide](PM_GUIDE.md)** for PMs defining and refining requirements. For internals, see [Architecture](architecture.md). For what's coming next, see the [Feature Roadmap](roadmap.md).
 
-> **New in v1.51+: Codex backend.** `/pickle`, `/pickle-tmux`, `/pickle-microverse`, `/anatomy-park`, and `/szechuan-sauce` now accept `--backend codex` (or `PICKLE_BACKEND=codex`) to route worker and manager spawns through `codex exec` (GPT-5.4) instead of `claude`. Useful for a second-opinion implementation pass or benchmarking backends. `/council-of-ricks` has a separate Codex integration — its Phase C adversarial reviewer runs by default (`--no-codex` to disable).
+> **New in v1.51+: Codex backend.** `--backend codex` routes workers through `codex exec` (GPT-5.4) on `/pickle`, `/pickle-tmux`, `/pickle-microverse`, `/anatomy-park`, `/szechuan-sauce`. `/council-of-ricks` runs Codex in Phase C by default (`--no-codex` to disable).
 
-> **New in v1.55+: Agent Teams mode.** `/pickle --teams` opts into harness-native worker spawning (`TeamCreate` + `Agent` + `TaskUpdate`) instead of the `spawn-morty.js` subprocess path. Each ticket runs as a `morty-implementer` subagent on the team and signals completion via `TaskUpdate` rather than the legacy `WORKER_DONE` token + log-size check — strict all-of artifact validation gates each commit. Sequential v1; `--max-parallel <N>` (default 5) is plumbed for the parallel-fan-out follow-up. Claude backend only — incompatible with `--backend codex`. Default behavior (no flag) is unchanged. Spec: [`prds/pickle-agent-teams.md`](prds/pickle-agent-teams.md).
+> **New in v1.55+: Agent Teams mode.** `/pickle --teams` spawns workers as harness-native `morty-implementer` subagents (Claude backend only). Spec: [`prds/pickle-agent-teams.md`](prds/pickle-agent-teams.md).
+
+> **New in v1.57+: `/cronenberg`.** Explicit meta-router that picks the right pickle metaphor + cleanup chain for your task. Never auto-triggers.
 
 ---
 
