@@ -78,6 +78,23 @@ node "$HOME/.claude/pickle-rick/extension/bin/resolve-scope.js" --scope "<SCOPE_
 ```
 Omit `--scope-base` when SCOPE_BASE was not provided. If the command exits non-zero, print the stderr and stop.
 
+### Step 6.6: Capture Gate Baseline
+
+Capture pre-existing typecheck + lint failures so the per-iteration gate (in microverse-runner.ts) can subtract them and only fail on NEW regressions:
+
+```bash
+mkdir -p "${SESSION_ROOT}/gate"
+node "$HOME/.claude/pickle-rick/extension/bin/check-gate.js" \
+  --mode baseline \
+  --scope full \
+  --checks typecheck,lint \
+  --baseline-path "${SESSION_ROOT}/gate/baseline.json" \
+  --working-dir "${TARGET_ABSOLUTE_PATH}" \
+  ${SCOPE_FLAG:+--allowed-paths-file "${SESSION_ROOT}/scope.json"}
+```
+
+Tests are NOT baselined — Step 5 already enforces green tests at session start, so any test failure at iteration N is by definition NEW. Activity event `gate_baseline_captured` records `failure_count`, `elapsed_ms`, `allowed_paths_used`.
+
 ### Step 7: Create anatomy-park.json and microverse.json
 
 <!-- scope-hook: discovery-filter -->
@@ -163,7 +180,14 @@ Session name: `anatomy-park-<hash>` from SESSION_ROOT basename.
 ```bash
 tmux new-session -d -s <name> -c <working_dir>
 sleep 1
-tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/microverse-runner.js ${SESSION_ROOT}; echo ''; echo 'Anatomy Park is closed. All organs accounted for.'; read" Enter
+tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/microverse-runner.js ${SESSION_ROOT} && \
+  node $HOME/.claude/pickle-rick/extension/bin/finalize-gate.js ${SESSION_ROOT} anatomy-park; \
+  RC=$?; \
+  REGRESSIONS=\$(node $HOME/.claude/pickle-rick/extension/bin/read-microverse.js ${SESSION_ROOT} iteration_regressions); \
+  if [ \"\$PICKLE_GATE_DISABLED\" = \"1\" ]; then echo ''; echo 'Anatomy Park is closed. All organs accounted for. Gate skipped (PICKLE_GATE_DISABLED=1).'; \
+  elif [ \$RC -eq 0 ] && [ \$REGRESSIONS -eq 0 ]; then echo ''; echo 'Anatomy Park is closed. All organs accounted for. Gate green. No regressions during loop.'; \
+  elif [ \$RC -eq 0 ]; then echo ''; echo 'Anatomy Park is closed. All organs accounted for. Gate green. \$REGRESSIONS regression flags during loop, all cleared by final gate.'; \
+  else echo ''; echo 'Park closed but gate exhausted remediation cycles — see ${SESSION_ROOT}/gate/escalation_*.md'; fi; read" Enter
 ```
 
 microverse-runner auto-creates the 4-pane monitor window on startup — no manual invocation needed.
