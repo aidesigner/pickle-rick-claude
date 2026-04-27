@@ -674,7 +674,7 @@ export async function runGate(opts: RunGateOpts): Promise<GateResult> {
         const lockTimeoutResult: GateResult = {
           status: 'red',
           failures: [{
-            check: 'gate' as 'typecheck' | 'lint' | 'tests',
+            check: 'tests',
             file: '<lock-timeout>',
             line: 0,
             ruleOrCode: 'GATE_LOCK_TIMEOUT',

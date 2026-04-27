@@ -590,7 +590,7 @@ export async function runGate(opts) {
                 const lockTimeoutResult = {
                     status: 'red',
                     failures: [{
-                            check: 'gate',
+                            check: 'tests',
                             file: '<lock-timeout>',
                             line: 0,
                             ruleOrCode: 'GATE_LOCK_TIMEOUT',

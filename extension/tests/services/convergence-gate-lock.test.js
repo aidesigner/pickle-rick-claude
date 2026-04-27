@@ -105,6 +105,13 @@ test('runGate lock: baseline lock timeout → red with GATE_LOCK_TIMEOUT', async
     const lf = result.failures.find(f => f.ruleOrCode === 'GATE_LOCK_TIMEOUT');
     assert.ok(lf, `Expected GATE_LOCK_TIMEOUT failure, got: ${JSON.stringify(result.failures)}`);
     assert.equal(lf.file, '<lock-timeout>');
+    // Regression guard (harden ticket): the synthetic lock-timeout failure's `check` field
+    // must carry one of the GateFailure union values — not a sentinel like 'gate' that
+    // breaks downstream `f.check === 'tests'` consumers.
+    assert.ok(
+      ['typecheck', 'lint', 'tests'].includes(lf.check),
+      `Expected lf.check ∈ {typecheck,lint,tests}, got: ${lf.check}`
+    );
     assert.equal(result.baseline_used, false);
     assert.equal(result.new_failures_vs_baseline, 0);
   } finally {
