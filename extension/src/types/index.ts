@@ -428,6 +428,18 @@ export interface GateBaselineFile {
   failures: GateFailure[];
 }
 
+export interface RemediationResult {
+  iso: string;
+  failures_in: number;
+  failures_out: number;
+  auto_fixes_applied: number;
+  hand_fixes_applied: number;
+  aborted: boolean;
+  abort_reason: string | null;
+  production_coverage_test_path: string | null;
+  elapsed_ms: number;
+}
+
 export interface CreateMicroverseOpts {
   prdPath: string;
   metric: MicroverseMetric;
