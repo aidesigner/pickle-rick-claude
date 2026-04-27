@@ -1,8 +1,11 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { createHash } from 'node:crypto';
 import { execFile, spawnSync } from 'child_process';
 import { promisify } from 'util';
 import { fileURLToPath } from 'url';
+import { LockError } from '../types/index.js';
+import { withLock } from './state-manager.js';
 const execFileAsync = promisify(execFile);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,6 +21,16 @@ export class GateError extends Error {
         this.kind = kind;
     }
 }
+export class GateTimeoutError extends GateError {
+    check;
+    timeout_ms;
+    constructor(check, timeout_ms) {
+        super('GATE_CHECK_TIMEOUT', `${check} timed out after ${timeout_ms}ms`);
+        this.name = 'GateTimeoutError';
+        this.check = check;
+        this.timeout_ms = timeout_ms;
+    }
+}
 export class BaselineMissingError extends GateError {
     constructor(baselinePath) {
         super('BASELINE_MISSING', `No baseline at ${baselinePath}`);
@@ -30,6 +43,13 @@ export class BaselineStaleError extends GateError {
         this.name = 'BaselineStaleError';
     }
 }
+const PER_CHECK_TIMEOUT_MS = {
+    typecheck: 120_000,
+    lint: 60_000,
+    tests: 300_000,
+};
+const GATE_TOTAL_TIMEOUT_MS = 600_000;
+const GATE_LOCK_TIMEOUT_MS = 30_000;
 function buildFingerprint(f) {
     return `${f.file}::${f.ruleOrCode}::${f.occurrence_index}`;
 }
@@ -205,14 +225,15 @@ function getChangedSince(workingDir, since) {
         return [];
     return (result.stdout || '').split('\n').filter(Boolean);
 }
-async function runCheckCommand(cmd, cwd) {
+async function runCheckCommand(cmd, cwd, timeout_ms) {
     const parts = cmd.split(' ');
     const bin = parts[0];
     const args = parts.slice(1);
     try {
         const { stdout, stderr } = await execFileAsync(bin, args, {
             cwd,
-            timeout: 300_000,
+            timeout: timeout_ms,
+            killSignal: 'SIGKILL',
             maxBuffer: 10 * 1024 * 1024,
         });
         return { stdout: stdout ?? '', stderr: stderr ?? '', exitCode: 0 };
@@ -291,52 +312,121 @@ export async function runGate(opts) {
         }
         targetDirs = [opts.workingDir];
     }
+    const totalDeadline = Date.now() + (opts._timeouts?.total ?? GATE_TOTAL_TIMEOUT_MS);
     const allFailures = [];
-    for (const dir of targetDirs) {
+    outerLoop: for (const dir of targetDirs) {
         for (const check of opts.checks) {
+            const remaining = totalDeadline - Date.now();
+            if (remaining <= 0) {
+                allFailures.push({
+                    check,
+                    file: '<timeout>',
+                    line: 0,
+                    ruleOrCode: 'GATE_CHECK_TIMEOUT',
+                    message: `cumulative gate timeout exceeded`,
+                    severity: 'error',
+                    occurrence_index: 0,
+                });
+                break outerLoop;
+            }
             const cmdKey = CHECK_KEY_MAP[check];
             const cmd = cmdMap[cmdKey];
             if (!cmd)
                 continue;
-            const result = await runCheckCommand(cmd, dir);
-            const failures = buildFailures(result, check, dir);
-            allFailures.push(...failures);
+            const perCheckMs = opts._timeouts?.perCheck?.[check] ?? PER_CHECK_TIMEOUT_MS[check];
+            const effectiveMs = Math.min(perCheckMs, remaining);
+            const checkPromise = runCheckCommand(cmd, dir, effectiveMs);
+            let timeoutHandle;
+            const timeoutPromise = new Promise((_, rej) => {
+                timeoutHandle = setTimeout(() => rej(new GateTimeoutError(check, effectiveMs)), effectiveMs);
+            });
+            try {
+                const result = await Promise.race([checkPromise, timeoutPromise]);
+                clearTimeout(timeoutHandle);
+                allFailures.push(...buildFailures(result, check, dir));
+            }
+            catch (err) {
+                clearTimeout(timeoutHandle);
+                if (err instanceof GateTimeoutError) {
+                    checkPromise.catch(() => { });
+                    allFailures.push({
+                        check,
+                        file: '<timeout>',
+                        line: 0,
+                        ruleOrCode: 'GATE_CHECK_TIMEOUT',
+                        message: `${check} timed out after ${effectiveMs}ms`,
+                        severity: 'error',
+                        occurrence_index: 0,
+                    });
+                }
+                else {
+                    throw err;
+                }
+            }
         }
     }
     if (opts.mode === 'baseline' && opts.baselinePath) {
         const withIndices = assignOccurrenceIndices(allFailures);
-        if (!fs.existsSync(opts.baselinePath)) {
-            const baseline = {
-                schema_version: 1,
-                captured_at: new Date().toISOString(),
-                working_dir: opts.workingDir,
-                project_type: projectType,
-                checks: opts.checks,
-                failures: withIndices,
-            };
-            fs.mkdirSync(path.dirname(opts.baselinePath), { recursive: true });
-            fs.writeFileSync(opts.baselinePath, JSON.stringify(baseline, null, 2));
-            return {
-                status: 'green',
-                failures: [],
-                baseline_used: false,
-                allowed_paths_used: allowedPathsUsed,
-                elapsed_ms: Date.now() - start,
-                total_raw_failure_count: withIndices.length,
-                new_failures_vs_baseline: 0,
-            };
+        const lockKey = `gate-${createHash('sha256').update(opts.workingDir).digest('hex')}`;
+        const lockMs = opts._timeouts?.lockMs ?? GATE_LOCK_TIMEOUT_MS;
+        try {
+            return await withLock(lockKey, { timeout_ms: lockMs }, async () => {
+                if (!fs.existsSync(opts.baselinePath)) {
+                    const baseline = {
+                        schema_version: 1,
+                        captured_at: new Date().toISOString(),
+                        working_dir: opts.workingDir,
+                        project_type: projectType,
+                        checks: opts.checks,
+                        failures: withIndices,
+                    };
+                    fs.mkdirSync(path.dirname(opts.baselinePath), { recursive: true });
+                    fs.writeFileSync(opts.baselinePath, JSON.stringify(baseline, null, 2));
+                    return {
+                        status: 'green',
+                        failures: [],
+                        baseline_used: false,
+                        allowed_paths_used: allowedPathsUsed,
+                        elapsed_ms: Date.now() - start,
+                        total_raw_failure_count: withIndices.length,
+                        new_failures_vs_baseline: 0,
+                    };
+                }
+                const baseline = loadBaselineFile(opts.baselinePath);
+                const newFailures = subtractBaseline(withIndices, baseline);
+                return {
+                    status: newFailures.length === 0 ? 'green' : 'red',
+                    failures: newFailures,
+                    baseline_used: true,
+                    allowed_paths_used: allowedPathsUsed,
+                    elapsed_ms: Date.now() - start,
+                    total_raw_failure_count: withIndices.length,
+                    new_failures_vs_baseline: newFailures.length,
+                };
+            });
         }
-        const baseline = loadBaselineFile(opts.baselinePath);
-        const newFailures = subtractBaseline(withIndices, baseline);
-        return {
-            status: newFailures.length === 0 ? 'green' : 'red',
-            failures: newFailures,
-            baseline_used: true,
-            allowed_paths_used: allowedPathsUsed,
-            elapsed_ms: Date.now() - start,
-            total_raw_failure_count: withIndices.length,
-            new_failures_vs_baseline: newFailures.length,
-        };
+        catch (err) {
+            if (err instanceof LockError) {
+                return {
+                    status: 'red',
+                    failures: [{
+                            check: 'gate',
+                            file: '<lock-timeout>',
+                            line: 0,
+                            ruleOrCode: 'GATE_LOCK_TIMEOUT',
+                            message: `baseline lock timeout after ${err.waited_ms ?? lockMs}ms`,
+                            severity: 'error',
+                            occurrence_index: 0,
+                        }],
+                    baseline_used: false,
+                    allowed_paths_used: allowedPathsUsed,
+                    elapsed_ms: Date.now() - start,
+                    total_raw_failure_count: 0,
+                    new_failures_vs_baseline: 0,
+                };
+            }
+            throw err;
+        }
     }
     const status = allFailures.length === 0 ? 'green' : 'red';
     return {
