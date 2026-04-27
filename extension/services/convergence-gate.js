@@ -50,6 +50,9 @@ const PER_CHECK_TIMEOUT_MS = {
 };
 const GATE_TOTAL_TIMEOUT_MS = 600_000;
 const GATE_LOCK_TIMEOUT_MS = 30_000;
+// P0.6 — test-script safety
+const UNSAFE_TEST_SCRIPT_REGEX = /integration|e2e|golden|smoke|baseline|playwright|cypress|hardhat/i;
+const SAFE_TEST_RUNNER_REGEX = /(vitest|jest|node|mocha)/;
 function buildFingerprint(f) {
     return `${f.file}::${f.ruleOrCode}::${f.occurrence_index}`;
 }
@@ -312,6 +315,60 @@ export async function runGate(opts) {
         }
         targetDirs = [opts.workingDir];
     }
+    // P0.6b — dirty-tree: skip cleanly when working tree has uncommitted changes
+    if (opts.workerMode) {
+        const porcelainR = spawnSync('git', ['status', '--porcelain'], {
+            cwd: opts.workingDir, encoding: 'utf-8', timeout: 10_000,
+        });
+        const dirtyLines = (porcelainR.stdout ?? '').split('\n').filter(Boolean);
+        if (dirtyLines.length > 0) {
+            opts.onEvent?.('gate_skipped', { reason: 'dirty_worktree_no_rescue' });
+            return { ...empty, elapsed_ms: Date.now() - start };
+        }
+    }
+    // P0.6c — branch-switch: halt with red when branch or HEAD has drifted
+    if (opts.expected_head !== undefined || opts.expected_branch !== undefined) {
+        const headR = spawnSync('git', ['rev-parse', 'HEAD'], {
+            cwd: opts.workingDir, encoding: 'utf-8', timeout: 10_000,
+        });
+        const branchR = spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+            cwd: opts.workingDir, encoding: 'utf-8', timeout: 10_000,
+        });
+        const currentHead = (headR.stdout ?? '').trim();
+        const currentBranch = (branchR.stdout ?? '').trim();
+        const headMismatch = opts.expected_head !== undefined && currentHead !== opts.expected_head;
+        const branchMismatch = opts.expected_branch !== undefined && currentBranch !== opts.expected_branch;
+        if (headMismatch || branchMismatch) {
+            const now = new Date().toISOString();
+            const iso = now.replace(/[:.]/g, '-');
+            const gateDir = path.join(opts.workingDir, 'gate');
+            fs.mkdirSync(gateDir, { recursive: true });
+            fs.writeFileSync(path.join(gateDir, `workingdir_drift_${iso}.md`), `# Working Directory Drift\n\nDetected at: ${now}\n\nExpected HEAD: ${opts.expected_head ?? '(any)'}\nCurrent HEAD: ${currentHead}\nExpected branch: ${opts.expected_branch ?? '(any)'}\nCurrent branch: ${currentBranch}\n`);
+            opts.onEvent?.('gate_workingdir_drift_detected', {
+                expected_head: opts.expected_head,
+                current_head: currentHead,
+                expected_branch: opts.expected_branch,
+                current_branch: currentBranch,
+            });
+            return {
+                status: 'red',
+                failures: [{
+                        check: 'tests',
+                        file: '<workingdir-drift>',
+                        line: 0,
+                        ruleOrCode: 'GATE_WORKINGDIR_DRIFT',
+                        message: `Working directory drift: expected branch "${opts.expected_branch ?? '(any)'}", got "${currentBranch}"; expected HEAD "${opts.expected_head ?? '(any)'}", got "${currentHead}"`,
+                        severity: 'error',
+                        occurrence_index: 0,
+                    }],
+                baseline_used: false,
+                allowed_paths_used: allowedPathsUsed,
+                elapsed_ms: Date.now() - start,
+                total_raw_failure_count: 1,
+                new_failures_vs_baseline: 0,
+            };
+        }
+    }
     const totalDeadline = Date.now() + (opts._timeouts?.total ?? GATE_TOTAL_TIMEOUT_MS);
     const allFailures = [];
     outerLoop: for (const dir of targetDirs) {
@@ -333,6 +390,24 @@ export async function runGate(opts) {
             const cmd = cmdMap[cmdKey];
             if (!cmd)
                 continue;
+            // P0.6 + P0.6a — test-script safety: block before any spawn (JS/TS projects only)
+            if (check === 'tests' && (projectType === 'pnpm' || projectType === 'npm' || projectType === 'yarn')) {
+                const pkgJsonPath = path.join(dir, 'package.json');
+                let scriptContent = '';
+                if (fs.existsSync(pkgJsonPath)) {
+                    try {
+                        scriptContent = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf-8')).scripts?.test ?? '';
+                    }
+                    catch { /* unreadable package.json */ }
+                }
+                if (UNSAFE_TEST_SCRIPT_REGEX.test(scriptContent)) {
+                    opts.onEvent?.('gate_unsafe_test_command_blocked', { script: scriptContent });
+                    continue;
+                }
+                if (!SAFE_TEST_RUNNER_REGEX.test(scriptContent)) {
+                    continue; // no recognized runner — skip green (P0.6a)
+                }
+            }
             const perCheckMs = opts._timeouts?.perCheck?.[check] ?? PER_CHECK_TIMEOUT_MS[check];
             const effectiveMs = Math.min(perCheckMs, remaining);
             const checkPromise = runCheckCommand(cmd, dir, effectiveMs);
