@@ -105,6 +105,21 @@ export const VALID_ACTIVITY_EVENTS = [
     'pending_tickets_on_completion',
     'manager_false_epic_completed',
     'manager_persistent_hallucination',
+    'gate_baseline_captured',
+    'gate_run_complete',
+    'gate_skipped',
+    'gate_unsafe_test_command_blocked',
+    'gate_remediation_complete',
+    'gate_remediation_aborted_unverified_production_change',
+    'gate_autofix_reverted',
+    'gate_workingdir_drift_detected',
+    'gate_lock_acquired',
+    'gate_lock_timeout',
+    'gate_diff_scope_fallback',
+    'gate_preexisting_tests_baselined',
+    'iteration_left_regression',
+    'gate_regression_threshold_warning',
+    'gate_out_of_scope_failures_present',
 ];
 // ---------------------------------------------------------------------------
 // DOT Builder Types

@@ -208,6 +208,21 @@ export const VALID_ACTIVITY_EVENTS = [
   'pending_tickets_on_completion',
   'manager_false_epic_completed',
   'manager_persistent_hallucination',
+  'gate_baseline_captured',
+  'gate_run_complete',
+  'gate_skipped',
+  'gate_unsafe_test_command_blocked',
+  'gate_remediation_complete',
+  'gate_remediation_aborted_unverified_production_change',
+  'gate_autofix_reverted',
+  'gate_workingdir_drift_detected',
+  'gate_lock_acquired',
+  'gate_lock_timeout',
+  'gate_diff_scope_fallback',
+  'gate_preexisting_tests_baselined',
+  'iteration_left_regression',
+  'gate_regression_threshold_warning',
+  'gate_out_of_scope_failures_present',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];
@@ -262,6 +277,7 @@ export interface ActivityEvent {
   exit_type?: IterationExitType;
   original_prompt?: string;
   model?: string;
+  gate_payload?: Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -369,6 +385,43 @@ export interface MicroverseSessionState {
   stash_ref?: string;
   failure_history: ClassifiedFailure[];
   approach_exhaustion_fired: boolean;
+  iteration_regressions?: number;
+  gate_regression_threshold_warning_emitted?: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Gate Types
+// ---------------------------------------------------------------------------
+
+export interface GateFailure {
+  check: 'typecheck' | 'lint' | 'tests';
+  file: string;
+  line: number;
+  ruleOrCode: string;
+  message: string;
+  severity: 'error' | 'warning';
+  occurrence_index: number;
+}
+
+export type GateMode = 'baseline' | 'strict';
+
+export interface GateResult {
+  status: 'green' | 'red' | 'green-with-known-flake-warnings';
+  failures: GateFailure[];
+  baseline_used: boolean;
+  allowed_paths_used: boolean;
+  elapsed_ms: number;
+  total_raw_failure_count: number;
+  new_failures_vs_baseline: number;
+}
+
+export interface GateBaselineFile {
+  schema_version: 1;
+  captured_at: string;
+  working_dir: string;
+  project_type: 'pnpm' | 'npm' | 'yarn' | 'cargo' | 'go';
+  checks: ('typecheck' | 'lint' | 'tests')[];
+  failures: GateFailure[];
 }
 
 export interface CreateMicroverseOpts {
