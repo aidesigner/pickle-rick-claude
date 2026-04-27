@@ -47,6 +47,12 @@ test('filterByScope: allowedPaths=packages/a/** + packages/c/** returns a and c'
   assert.deepEqual(filtered.sort(), ['packages/a', 'packages/c']);
 });
 
+test('filterByScope: exact file allowedPaths keeps owning workspace package in scope', () => {
+  const files = ['packages/a', 'packages/b', 'packages/c'];
+  const filtered = filterByScope(files, { scope: 'full', allowedPaths: ['packages/b/src/index.ts'] });
+  assert.deepEqual(filtered, ['packages/b']);
+});
+
 test('runGate: workspace fixture scope=full allowedPaths=packages/a/** only runs in a', async () => {
   const result = await runGate({
     workingDir: FIXTURE,
@@ -96,11 +102,15 @@ test('runGate: allowedPaths can exclude an otherwise-failing workspace package',
       version: '1.0.0',
       scripts: { test: 'node -e "process.exit(0)"' },
     }, null, 2));
+    fs.mkdirSync(path.join(passingDir, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(passingDir, 'src', 'index.ts'), 'export const ok = true;\n');
     fs.writeFileSync(path.join(failingDir, 'package.json'), JSON.stringify({
       name: 'failing',
       version: '1.0.0',
       scripts: { test: 'node -e "process.exit(1)"' },
     }, null, 2));
+    fs.mkdirSync(path.join(failingDir, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(failingDir, 'src', 'index.ts'), 'export const nope = false;\n');
 
     const scoped = await runGate({
       workingDir: dir,
@@ -139,6 +149,23 @@ test('runGate: allowedPaths can exclude an otherwise-failing workspace package',
         },
       ],
       'without allowedPaths the failing out-of-scope package must surface as a gate failure'
+    );
+
+    const scopedToExactFile = await runGate({
+      workingDir: dir,
+      mode: 'strict',
+      scope: 'full',
+      checks: ['tests'],
+      allowedPaths: ['packages/passing/src/index.ts'],
+    });
+
+    assert.equal(scopedToExactFile.status, 'green');
+    assert.deepEqual(scopedToExactFile.failures, []);
+    assert.equal(scopedToExactFile.allowed_paths_used, true);
+    assert.equal(
+      scopedToExactFile.total_raw_failure_count,
+      0,
+      'an exact file scope must still run the owning package and exclude the failing sibling package',
     );
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

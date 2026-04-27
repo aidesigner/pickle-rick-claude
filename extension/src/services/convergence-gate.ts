@@ -268,6 +268,34 @@ function globToRegex(pattern: string): RegExp {
   return new RegExp(`^${re}(/.*)?$`);
 }
 
+function normalizeScopePath(value: string): string {
+  return value.replace(/\\/g, '/').replace(/^\.\/+/, '').replace(/\/+$/, '');
+}
+
+function staticScopePrefix(pattern: string): string {
+  const normalized = normalizeScopePath(pattern);
+  const wildcardIdx = normalized.search(/[*?]/);
+  const prefix = wildcardIdx === -1 ? normalized : normalized.slice(0, wildcardIdx);
+  return prefix.replace(/\/+$/, '');
+}
+
+function matchesAllowedPath(candidate: string, allowedPaths: readonly string[]): boolean {
+  const normalizedCandidate = normalizeScopePath(candidate);
+  return allowedPaths.some((allowedPath) => {
+    const normalizedAllowed = normalizeScopePath(allowedPath);
+    if (globToRegex(normalizedAllowed).test(normalizedCandidate)) return true;
+
+    const prefix = staticScopePrefix(normalizedAllowed);
+    if (!prefix) return true;
+
+    return (
+      prefix === normalizedCandidate ||
+      prefix.startsWith(`${normalizedCandidate}/`) ||
+      normalizedCandidate.startsWith(`${prefix}/`)
+    );
+  });
+}
+
 function applyFlakeFilter(
   failures: GateFailure[], workingDir: string, flakeGlobs: string[]
 ): { real: GateFailure[]; flake: GateFailure[] } {
@@ -285,8 +313,7 @@ export function filterByScope(
   opts: { scope: 'full' | 'changed'; since?: string; allowedPaths?: string[] }
 ): string[] {
   if (!opts.allowedPaths || opts.allowedPaths.length === 0) return files;
-  const regexes = opts.allowedPaths.map(globToRegex);
-  return files.filter(f => regexes.some(re => re.test(f)));
+  return files.filter((file) => matchesAllowedPath(file, opts.allowedPaths ?? []));
 }
 
 function getChangedSince(workingDir: string, since: string): string[] {

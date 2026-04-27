@@ -219,6 +219,29 @@ function globToRegex(pattern) {
         .replace(/\?/g, '[^/]');
     return new RegExp(`^${re}(/.*)?$`);
 }
+function normalizeScopePath(value) {
+    return value.replace(/\\/g, '/').replace(/^\.\/+/, '').replace(/\/+$/, '');
+}
+function staticScopePrefix(pattern) {
+    const normalized = normalizeScopePath(pattern);
+    const wildcardIdx = normalized.search(/[*?]/);
+    const prefix = wildcardIdx === -1 ? normalized : normalized.slice(0, wildcardIdx);
+    return prefix.replace(/\/+$/, '');
+}
+function matchesAllowedPath(candidate, allowedPaths) {
+    const normalizedCandidate = normalizeScopePath(candidate);
+    return allowedPaths.some((allowedPath) => {
+        const normalizedAllowed = normalizeScopePath(allowedPath);
+        if (globToRegex(normalizedAllowed).test(normalizedCandidate))
+            return true;
+        const prefix = staticScopePrefix(normalizedAllowed);
+        if (!prefix)
+            return true;
+        return (prefix === normalizedCandidate ||
+            prefix.startsWith(`${normalizedCandidate}/`) ||
+            normalizedCandidate.startsWith(`${prefix}/`));
+    });
+}
 function applyFlakeFilter(failures, workingDir, flakeGlobs) {
     if (flakeGlobs.length === 0)
         return { real: failures, flake: [] };
@@ -232,8 +255,7 @@ function applyFlakeFilter(failures, workingDir, flakeGlobs) {
 export function filterByScope(files, opts) {
     if (!opts.allowedPaths || opts.allowedPaths.length === 0)
         return files;
-    const regexes = opts.allowedPaths.map(globToRegex);
-    return files.filter(f => regexes.some(re => re.test(f)));
+    return files.filter((file) => matchesAllowedPath(file, opts.allowedPaths ?? []));
 }
 function getChangedSince(workingDir, since) {
     const result = spawnSync('git', ['diff', '--name-only', `${since}..HEAD`], {
