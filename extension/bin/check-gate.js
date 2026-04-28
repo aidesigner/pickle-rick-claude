@@ -1,7 +1,7 @@
-import * as fs from 'fs';
 import * as path from 'path';
 import { runGate } from '../services/convergence-gate.js';
 import { safeErrorMessage } from '../services/pickle-utils.js';
+import { readRecoverableJsonObject } from '../services/microverse-state.js';
 const USAGE = 'Usage: check-gate --mode baseline|strict --scope full|changed --checks typecheck,lint,tests --working-dir <path> [--since <ref>] [--baseline-path <path>] [--allowed-paths-file <scope.json>] [--json]';
 const VALUE_FLAGS = new Set([
     '--mode', '--scope', '--since', '--checks',
@@ -92,7 +92,7 @@ export async function checkGateMain(opts) {
     if (allowedPathsFile) {
         let raw;
         try {
-            raw = JSON.parse(fs.readFileSync(allowedPathsFile, 'utf-8'));
+            raw = readRecoverableJsonObject(allowedPathsFile);
         }
         catch (e) {
             err(`Failed to read --allowed-paths-file ${allowedPathsFile}: ${safeErrorMessage(e)}`);

@@ -1,7 +1,6 @@
-import * as fs from 'fs';
 import * as path from 'path';
 import type { MicroverseMetric } from '../types/index.js';
-import { createMicroverseState, writeMicroverseState } from '../services/microverse-state.js';
+import { createMicroverseState, readRecoverableJsonObject, writeMicroverseState } from '../services/microverse-state.js';
 import { safeErrorMessage } from '../services/pickle-utils.js';
 
 const DEFAULT_METRIC: MicroverseMetric = {
@@ -74,7 +73,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'init-microverse.js') 
   if (allowedPathsFile) {
     let raw: unknown;
     try {
-      raw = JSON.parse(fs.readFileSync(allowedPathsFile, 'utf-8'));
+      raw = readRecoverableJsonObject(allowedPathsFile);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error(`Failed to read --allowed-paths-file ${allowedPathsFile}: ${msg}`);

@@ -145,6 +145,32 @@ describe('--allowed-paths-file', () => {
         }
     });
 
+    test('promotes newer dead tmp scope before reading allowed_paths', async () => {
+        const tmpDir = makeTmpDir();
+        try {
+            const scopePath = path.join(tmpDir, 'scope.json');
+            const tmpScopePath = `${scopePath}.tmp.99999999`;
+            fs.writeFileSync(scopePath, JSON.stringify({ allowed_paths: ['stale/**'] }));
+            fs.writeFileSync(tmpScopePath, JSON.stringify({ allowed_paths: ['fresh/**'] }));
+            const future = new Date(Date.now() + 1000);
+            fs.utimesSync(tmpScopePath, future, future);
+
+            let capturedOpts;
+            const code = await checkGateMain({
+                argv: [...BASE_ARGV, '--allowed-paths-file', scopePath],
+                runGateFn: async (opts) => { capturedOpts = opts; return makeResult(); },
+                stdout: () => {},
+                stderr: () => {},
+            });
+
+            assert.equal(code, 0);
+            assert.deepEqual(capturedOpts.allowedPaths, ['fresh/**']);
+            assert.equal(fs.existsSync(tmpScopePath), false);
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+
     test('exits 1 when file is missing', async () => {
         const stderrLines = [];
         const code = await checkGateMain({

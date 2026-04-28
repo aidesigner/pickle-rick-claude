@@ -205,4 +205,24 @@ describe('init-microverse convergence flags', () => {
       fs.rmSync(dir, { recursive: true });
     }
   });
+
+  test('--allowed-paths-file promotes newer dead tmp scope before reading allowed_paths', () => {
+    const dir = makeTempDir();
+    try {
+      const scopePath = path.join(dir, 'scope.json');
+      const tmpScopePath = `${scopePath}.tmp.99999999`;
+      fs.writeFileSync(scopePath, JSON.stringify({ version: 1, allowed_paths: ['stale.ts'] }));
+      fs.writeFileSync(tmpScopePath, JSON.stringify({ version: 1, allowed_paths: ['fresh.ts'] }));
+      const future = new Date(Date.now() + 1000);
+      fs.utimesSync(tmpScopePath, future, future);
+
+      run([dir, '/some/target', '--allowed-paths-file', scopePath]);
+
+      const state = readMicroverse(dir);
+      assert.deepEqual(state.allowed_paths, ['fresh.ts']);
+      assert.equal(fs.existsSync(tmpScopePath), false);
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
 });

@@ -1,6 +1,5 @@
-import * as fs from 'fs';
 import * as path from 'path';
-import { createMicroverseState, writeMicroverseState } from '../services/microverse-state.js';
+import { createMicroverseState, readRecoverableJsonObject, writeMicroverseState } from '../services/microverse-state.js';
 import { safeErrorMessage } from '../services/pickle-utils.js';
 const DEFAULT_METRIC = {
     description: 'Number of coding principle violations (lower is better)',
@@ -64,7 +63,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'init-microverse.js') 
     if (allowedPathsFile) {
         let raw;
         try {
-            raw = JSON.parse(fs.readFileSync(allowedPathsFile, 'utf-8'));
+            raw = readRecoverableJsonObject(allowedPathsFile);
         }
         catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
