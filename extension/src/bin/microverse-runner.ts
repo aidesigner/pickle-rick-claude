@@ -99,6 +99,15 @@ interface ResolvedPerIterationGateDeps {
   getHeadShaFn: (dir: string) => string;
 }
 
+async function pathExists(targetPath: string): Promise<boolean> {
+  try {
+    await fs.promises.access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function loadConvergenceGateSettings(extRoot: string): {
   enabled_convergence_files: string[];
   regression_warning_threshold: number;
@@ -114,7 +123,6 @@ function loadConvergenceGateSettings(extRoot: string): {
     baseline_max_age_seconds: 14_400,
   };
   try {
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking read at startup
     const raw = JSON.parse(fs.readFileSync(path.join(extRoot, 'pickle_settings.json'), 'utf-8'));
     const cg = raw.convergence_gate;
     if (!cg || typeof cg !== 'object') return defaults;
@@ -182,7 +190,6 @@ async function runRemediatorForIteration(
   });
 
   try {
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking subprocess (single attempt, bounded by timeout)
     execFileSync(invocation.cmd, invocation.args, {
       cwd: workingDir,
       timeout: remediatorTimeoutS * 1000,
@@ -199,7 +206,6 @@ async function runRemediatorForIteration(
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     const resultFiles = fs.readdirSync(gateDir)
       .filter(f => f.startsWith('remediation_') && f.endsWith('_result.json'))
-      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
       .map(f => ({ name: f, mtime: fs.statSync(path.join(gateDir, f)).mtimeMs }))
       .filter(({ mtime }) => mtime >= startMs)
       .sort((a, b) => b.mtime - a.mtime);
@@ -334,7 +340,7 @@ export async function ensurePerIterationGateBaseline(opts: {
   if (!enabledFiles.includes(currentMv.convergence_file ?? '')) return;
 
   const baselinePath = path.join(sessionDir, 'gate', 'baseline.json');
-  if (fs.existsSync(baselinePath)) {
+  if (await pathExists(baselinePath)) {
     if (
       currentIteration !== undefined &&
       baselineMaxAgeIterations !== undefined &&
@@ -394,11 +400,10 @@ export async function runPerIterationGateHook(opts: {
   const deps = resolvePerIterationGateDeps({ workingDir, backend, remediatorTimeoutS, _deps });
 
   const isEnabled = enabledFiles.includes(currentMv.convergence_file ?? '');
-  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   const headSha = deps.getHeadShaFn(workingDir);
   const commitsHappened = preIterSha !== headSha;
   const baselinePath = path.join(sessionDir, 'gate', 'baseline.json');
-  const gateMode = fs.existsSync(baselinePath) ? 'baseline' : 'strict';
+  const gateMode = await pathExists(baselinePath) ? 'baseline' : 'strict';
 
   if (isEnabled && commitsHappened) {
     currentMv = await runChangedPerIterationGate({
@@ -972,12 +977,10 @@ function replaceMicroverseState(target: MicroverseState, next: MicroverseState):
 }
 
 function writeHandoffFile(sessionDir: string, content: string): void {
-  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking handoff write
   fs.writeFileSync(path.join(sessionDir, 'handoff.txt'), content);
 }
 
 function clearRateLimitWaitFile(sessionDir: string): void {
-  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking cleanup
   try { fs.unlinkSync(path.join(sessionDir, 'rate_limit_wait.json')); } catch { /* ok */ }
 }
 
@@ -1006,7 +1009,6 @@ function measureCurrentMetric(
 
 function loadFailureClassificationFlag(extensionRoot: string): boolean {
   try {
-    // eslint-disable-next-line pickle/no-sync-in-async -- settings read before async work begins
     const settings = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
     return settings.enable_failure_classification !== false;
   } catch {
@@ -1028,7 +1030,6 @@ function resetStoppedMicroverseState(state: MicroverseState, sessionDir: string,
 function preflightAutoCommit(workingDir: string, log: (msg: string) => void): void {
   const PREFLIGHT_DIRT_EXCLUDES = ['prds', 'docs'];
   if (!isWorkingTreeDirty(workingDir, PREFLIGHT_DIRT_EXCLUDES)) return;
-  // eslint-disable-next-line pickle/no-sync-in-async -- sync guard is fine here; pre-flight before async work
   if (!fs.existsSync(path.join(workingDir, '.git'))) {
     log('ERROR: Working tree is dirty and not a git repository. Aborting.');
     throw new Error('Working tree is dirty — not a git repo, cannot auto-commit');
@@ -1276,7 +1277,6 @@ async function handleNoCommitStall(
 function autoRescueDirtyTree(ctx: RunContext): void {
   if (!_deps.isWorkingTreeDirty(ctx.workingDir)) return;
   ctx.log('No commits but dirty tree detected — auto-committing worker changes');
-  // eslint-disable-next-line pickle/no-sync-in-async -- sync guard is fine here; async context already uses execFileSync
   if (!fs.existsSync(path.join(ctx.workingDir, '.git'))) {
     ctx.log(`Auto-commit skipped: not a git repository (${ctx.workingDir})`);
     return;

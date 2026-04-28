@@ -119,6 +119,7 @@ interface ShellError extends Error {
   stdout?: Buffer | string;
 }
 
+// eslint-disable-next-line complexity -- command wrapper intentionally handles shell and argv forms plus checked/unchecked failures
 export function runCmd(
   cmd: string | string[],
   options: { cwd?: string; check?: boolean; capture?: boolean } = {}
@@ -360,6 +361,7 @@ export function collectTickets(sessionDir: string): TicketInfo[] {
   }
 }
 
+// eslint-disable-next-line complexity -- summary composition is centralized to preserve stable handoff wording
 export function buildHandoffSummary(state: Partial<State>, sessionDir: string, iterationNum?: number): string {
   const task = state.original_prompt || '';
   const truncatedTask = task.length > 300 ? task.slice(0, 300) + ' [truncated]' : task;
@@ -463,6 +465,7 @@ const RETRY_LOCK_DEFAULTS = {
  * Writes PID to lock file for stale detection. NEVER silently falls through —
  * throws LockError if maxRetries is exhausted.
  */
+// eslint-disable-next-line complexity -- lock acquisition loop keeps stale-lock, retry, and cleanup semantics together
 export function withRetryLock<T>(lockPath: string, fn: () => T, opts: RetryLockOptions = {}): T {
   const maxRetries = opts.maxRetries ?? RETRY_LOCK_DEFAULTS.maxRetries;
   const baseLockDelayMs = opts.baseLockDelayMs ?? RETRY_LOCK_DEFAULTS.baseLockDelayMs;
@@ -612,6 +615,7 @@ function selectScannedSessionPath(
  * Resolves the session for a cwd from the session map first, then falls back
  * to scanning session state by working_dir when the map is missing or stale.
  */
+// eslint-disable-next-line complexity -- resolver preserves map fallback and active-session scan precedence in one place
 export function findSessionPathForCwd(
   cwd: string,
   options: { requireActive?: boolean } = {},
