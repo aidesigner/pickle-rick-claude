@@ -495,7 +495,7 @@ test('resolve-state: resolveStateFile resolves via sessions map when no PICKLE_S
   const sessionDir = path.join(tmpDir, 'session');
   fs.mkdirSync(sessionDir);
   const stateFile = path.join(sessionDir, 'state.json');
-  fs.writeFileSync(stateFile, '{}');
+  fs.writeFileSync(stateFile, JSON.stringify(baseState({ session_dir: sessionDir })));
   fs.writeFileSync(
     path.join(tmpDir, 'current_sessions.json'),
     JSON.stringify({ [process.cwd()]: sessionDir })

@@ -79,6 +79,10 @@ test('getSessionPath: returns session path when map entry and dir both exist', (
             path.join(tmpDir, 'current_sessions.json'),
             JSON.stringify({ [fakeCwd]: sessionDir })
         );
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({ active: true, working_dir: fakeCwd, session_dir: sessionDir })
+        );
 
         try {
             const result = getSessionPath(fakeCwd);
@@ -103,5 +107,31 @@ test('getSessionPath: falls back to active session state when the sessions map i
 
         const result = getSessionPath(fakeCwd);
         assert.equal(result, sessionDir);
+    });
+});
+
+test('getSessionPath: stale mapped inactive session does not outrank a live session for the same cwd', () => {
+    withExtensionDir((tmpDir) => {
+        const fakeCwd = path.join(tmpDir, 'repo');
+        const staleSessionDir = path.join(tmpDir, 'sessions', 'stale-session');
+        const liveSessionDir = path.join(tmpDir, 'sessions', 'live-session');
+        fs.mkdirSync(fakeCwd, { recursive: true });
+        fs.mkdirSync(staleSessionDir, { recursive: true });
+        fs.mkdirSync(liveSessionDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(tmpDir, 'current_sessions.json'),
+            JSON.stringify({ [fakeCwd]: staleSessionDir })
+        );
+        fs.writeFileSync(
+            path.join(staleSessionDir, 'state.json'),
+            JSON.stringify({ active: false, working_dir: fakeCwd, session_dir: staleSessionDir })
+        );
+        fs.writeFileSync(
+            path.join(liveSessionDir, 'state.json'),
+            JSON.stringify({ active: true, working_dir: fakeCwd, session_dir: liveSessionDir })
+        );
+
+        const result = getSessionPath(fakeCwd);
+        assert.equal(result, liveSessionDir);
     });
 });

@@ -527,6 +527,24 @@ function readSessionLookupState(sessionPath: string): { active?: unknown; workin
   }
 }
 
+function selectScannedSessionPath(
+  sessionPaths: string[],
+  cwd: string,
+  requireActive: boolean,
+): string {
+  let inactiveMatch = '';
+
+  for (const sessionPath of sessionPaths) {
+    const state = readSessionLookupState(sessionPath);
+    if (!state) continue;
+    if (!sameWorkingDir(state.working_dir, cwd)) continue;
+    if (state.active === true) return sessionPath;
+    if (!requireActive && !inactiveMatch) inactiveMatch = sessionPath;
+  }
+
+  return inactiveMatch;
+}
+
 /**
  * Resolves the session for a cwd from the session map first, then falls back
  * to scanning session state by working_dir when the map is missing or stale.
@@ -538,16 +556,25 @@ export function findSessionPathForCwd(
   const { requireActive = false } = options;
   const dataRoot = getDataRoot();
   const sessionsMapPath = path.join(dataRoot, 'current_sessions.json');
+  let mappedFallback = '';
 
   if (fs.existsSync(sessionsMapPath)) {
     try {
       const map = JSON.parse(fs.readFileSync(sessionsMapPath, 'utf-8')) as Record<string, unknown>;
       const mappedPath = resolveSessionPath(map[cwd]);
       if (mappedPath && fs.existsSync(mappedPath)) {
-        if (!requireActive) return mappedPath;
         const state = readSessionLookupState(mappedPath);
-        if (state && state.active === true && sameWorkingDir(state.working_dir, cwd)) {
-          return mappedPath;
+        if (!state) return mappedPath;
+        const workingDirMatches = state.working_dir == null
+          || state.working_dir === ''
+          || sameWorkingDir(state.working_dir, cwd);
+        if (workingDirMatches) {
+          if (state.active === true) return mappedPath;
+          if (state.active === false) {
+            if (!requireActive) mappedFallback = mappedPath;
+          } else {
+            return mappedPath;
+          }
         }
       }
     } catch {
@@ -560,19 +587,19 @@ export function findSessionPathForCwd(
   try {
     entries = fs.readdirSync(sessionsDir);
   } catch {
-    return '';
+    return mappedFallback;
   }
 
-  for (const entry of entries) {
-    const sessionPath = path.join(sessionsDir, entry);
-    const state = readSessionLookupState(sessionPath);
-    if (!state) continue;
-    if (!sameWorkingDir(state.working_dir, cwd)) continue;
-    if (requireActive && state.active !== true) continue;
-    return sessionPath;
+  const scannedMatch = selectScannedSessionPath(
+    entries.map((entry) => path.join(sessionsDir, entry)),
+    cwd,
+    requireActive,
+  );
+  if (scannedMatch) {
+    return scannedMatch;
   }
 
-  return '';
+  return mappedFallback;
 }
 
 /** Matrix palette shared across all monitor panes. */

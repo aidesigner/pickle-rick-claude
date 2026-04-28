@@ -9,6 +9,14 @@ function sameWorkingDir(a: unknown, b: string): boolean {
   return typeof a === 'string' && path.resolve(a) === path.resolve(b);
 }
 
+function readLookupState(stateFile: string): { active?: unknown; working_dir?: unknown } | null {
+  try {
+    return JSON.parse(fs.readFileSync(stateFile, 'utf8')) as { active?: unknown; working_dir?: unknown };
+  } catch {
+    return null;
+  }
+}
+
 function resolveStateFileFromSessionsDir(dataDir: string): string | null {
   const sessionsDir = path.join(dataDir, 'sessions');
   let entries: string[];
@@ -18,17 +26,16 @@ function resolveStateFileFromSessionsDir(dataDir: string): string | null {
     return null;
   }
 
+  let inactiveMatch: string | null = null;
   for (const entry of entries) {
     const stateFile = path.join(sessionsDir, entry, 'state.json');
-    try {
-      const state = JSON.parse(fs.readFileSync(stateFile, 'utf8')) as { working_dir?: unknown };
-      if (sameWorkingDir(state.working_dir, process.cwd())) return stateFile;
-    } catch {
-      /* unreadable state — keep scanning */
-    }
+    const state = readLookupState(stateFile);
+    if (!state || !sameWorkingDir(state.working_dir, process.cwd())) continue;
+    if (state.active === true) return stateFile;
+    if (!inactiveMatch) inactiveMatch = stateFile;
   }
 
-  return null;
+  return inactiveMatch;
 }
 
 /**
@@ -44,7 +51,13 @@ export function resolveStateFile(dataDir: string): string | null {
       try {
         const map = JSON.parse(fs.readFileSync(sessionsMapPath, 'utf8'));
         const sessionPath = resolveSessionPath(map[process.cwd()]);
-        if (sessionPath) stateFile = path.join(sessionPath, 'state.json');
+        if (sessionPath) {
+          const mappedStateFile = path.join(sessionPath, 'state.json');
+          const state = readLookupState(mappedStateFile);
+          if (state && sameWorkingDir(state.working_dir, process.cwd()) && state.active === true) {
+            stateFile = mappedStateFile;
+          }
+        }
       } catch {
         /* corrupt sessions map — fall through to state scan below */
       }

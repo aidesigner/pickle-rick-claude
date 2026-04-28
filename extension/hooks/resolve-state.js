@@ -5,6 +5,14 @@ const ALLOW = JSON.stringify({ decision: 'approve' });
 function sameWorkingDir(a, b) {
     return typeof a === 'string' && path.resolve(a) === path.resolve(b);
 }
+function readLookupState(stateFile) {
+    try {
+        return JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    }
+    catch {
+        return null;
+    }
+}
 function resolveStateFileFromSessionsDir(dataDir) {
     const sessionsDir = path.join(dataDir, 'sessions');
     let entries;
@@ -14,18 +22,18 @@ function resolveStateFileFromSessionsDir(dataDir) {
     catch {
         return null;
     }
+    let inactiveMatch = null;
     for (const entry of entries) {
         const stateFile = path.join(sessionsDir, entry, 'state.json');
-        try {
-            const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-            if (sameWorkingDir(state.working_dir, process.cwd()))
-                return stateFile;
-        }
-        catch {
-            /* unreadable state — keep scanning */
-        }
+        const state = readLookupState(stateFile);
+        if (!state || !sameWorkingDir(state.working_dir, process.cwd()))
+            continue;
+        if (state.active === true)
+            return stateFile;
+        if (!inactiveMatch)
+            inactiveMatch = stateFile;
     }
-    return null;
+    return inactiveMatch;
 }
 /**
  * Resolves the state file path from env or the sessions map.
@@ -40,8 +48,13 @@ export function resolveStateFile(dataDir) {
             try {
                 const map = JSON.parse(fs.readFileSync(sessionsMapPath, 'utf8'));
                 const sessionPath = resolveSessionPath(map[process.cwd()]);
-                if (sessionPath)
-                    stateFile = path.join(sessionPath, 'state.json');
+                if (sessionPath) {
+                    const mappedStateFile = path.join(sessionPath, 'state.json');
+                    const state = readLookupState(mappedStateFile);
+                    if (state && sameWorkingDir(state.working_dir, process.cwd()) && state.active === true) {
+                        stateFile = mappedStateFile;
+                    }
+                }
             }
             catch {
                 /* corrupt sessions map — fall through to state scan below */

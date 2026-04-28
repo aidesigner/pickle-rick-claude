@@ -78,7 +78,7 @@ test('resolveStateFile: falls back to sessions map when env not set', () => {
     const sessionDir = path.join(tmp, 'session1');
     fs.mkdirSync(sessionDir);
     const stateFile = path.join(sessionDir, 'state.json');
-    fs.writeFileSync(stateFile, '{}');
+    fs.writeFileSync(stateFile, JSON.stringify(baseState({ working_dir: process.cwd(), session_dir: sessionDir })));
     const map = { [process.cwd()]: sessionDir };
     fs.writeFileSync(path.join(tmp, 'current_sessions.json'), JSON.stringify(map));
 
@@ -122,6 +122,39 @@ test('resolveStateFile: falls back to sessions/*/state.json when the sessions ma
     try {
       const result = resolveStateFile(tmp);
       assert.equal(result, stateFile);
+    } finally {
+      if (orig !== undefined) process.env.PICKLE_STATE_FILE = orig;
+    }
+  } finally {
+    fs.rmSync(tmp, { recursive: true });
+  }
+});
+
+test('resolveStateFile: stale mapped inactive session falls back to the live active state for the cwd', () => {
+  const tmp = tmpDir();
+  try {
+    const staleSessionDir = path.join(tmp, 'sessions', 'stale-session');
+    const liveSessionDir = path.join(tmp, 'sessions', 'live-session');
+    fs.mkdirSync(staleSessionDir, { recursive: true });
+    fs.mkdirSync(liveSessionDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(staleSessionDir, 'state.json'),
+      JSON.stringify(baseState({ active: false, session_dir: staleSessionDir })),
+    );
+    const liveStateFile = path.join(liveSessionDir, 'state.json');
+    fs.writeFileSync(
+      liveStateFile,
+      JSON.stringify(baseState({ active: true, session_dir: liveSessionDir })),
+    );
+    fs.writeFileSync(
+      path.join(tmp, 'current_sessions.json'),
+      JSON.stringify({ [process.cwd()]: staleSessionDir }),
+    );
+
+    const orig = process.env.PICKLE_STATE_FILE;
+    delete process.env.PICKLE_STATE_FILE;
+    try {
+      assert.equal(resolveStateFile(tmp), liveStateFile);
     } finally {
       if (orig !== undefined) process.env.PICKLE_STATE_FILE = orig;
     }

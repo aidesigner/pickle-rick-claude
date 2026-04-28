@@ -112,6 +112,10 @@ test('worker-setup: resolves session from current_sessions.json using cwd', () =
             path.join(tmpRoot, 'current_sessions.json'),
             JSON.stringify({ [realCwd]: sessionDir })
         );
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({ active: true, working_dir: realCwd, session_dir: sessionDir })
+        );
 
         const result = run(tmpRoot, [], realCwd);
         assert.equal(result.status, 0, `Expected exit code 0, got: ${result.status}. stderr: ${result.stderr}`);
