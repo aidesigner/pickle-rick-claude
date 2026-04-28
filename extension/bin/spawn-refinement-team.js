@@ -386,11 +386,15 @@ async function main() {
     let timeout = !isNaN(rawTimeout) && rawTimeout > 0 ? rawTimeout : defaultWorkerTimeout;
     const statePath = path.join(sessionDir, 'state.json');
     let stateBackend = undefined;
+    let workingDir = process.cwd();
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     if (fs.existsSync(statePath)) {
         try {
             const state = sm.read(statePath);
             stateBackend = state.backend;
+            if (typeof state.working_dir === 'string' && state.working_dir.trim()) {
+                workingDir = state.working_dir;
+            }
             if (timeoutIndex === -1) {
                 const stateTimeout = Number(state.worker_timeout_seconds);
                 if (Number.isFinite(stateTimeout) && stateTimeout > 0)
@@ -417,7 +421,6 @@ async function main() {
     // One-shot stderr warning if state or env opted into codex — refinement
     // downgrades to claude regardless (planning, not implementation).
     warnIfCodexRequested(stateBackend, process.env.PICKLE_BACKEND);
-    const workingDir = process.cwd();
     const refinementDir = path.join(sessionDir, 'refinement');
     try {
         // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call

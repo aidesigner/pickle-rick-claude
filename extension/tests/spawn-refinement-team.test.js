@@ -27,6 +27,20 @@ function makeTmpDir(prefix = 'pickle-refine-') {
     return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
 
+function writeRefinementLogger(binDir, logPath) {
+    const claudePath = path.join(binDir, 'claude');
+    fs.writeFileSync(claudePath, `#!/usr/bin/env node
+const fs = require('fs');
+fs.appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({
+  cwd: process.cwd(),
+  argv: process.argv.slice(2),
+}) + '\\n');
+process.stdout.write('<promise>ANALYSIS_DONE</promise>\\n');
+process.exit(0);
+`);
+    fs.chmodSync(claudePath, 0o755);
+}
+
 // --- CLI arg validation ---
 
 test('spawn-refinement-team: no args → exit 1, prints Usage', () => {
@@ -291,6 +305,73 @@ test('spawn-refinement-team: recovers orphan tmp state before reading timeout an
         fs.rmSync(fakeBin, { recursive: true, force: true });
     } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('spawn-refinement-team: recovered working_dir controls worker cwd and codebase prompt target', () => {
+    const tmp = makeTmpDir();
+    const fakeBin = makeTmpDir('fake-bin-');
+    try {
+        const sessionDir = path.join(tmp, 'session');
+        const repoDir = path.join(tmp, 'target-repo');
+        const wrongCwd = path.join(tmp, 'wrong-cwd');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.mkdirSync(repoDir, { recursive: true });
+        fs.mkdirSync(wrongCwd, { recursive: true });
+
+        const prd = path.join(sessionDir, 'prd.md');
+        fs.writeFileSync(prd, '# PRD\\nContent');
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            backend: 'codex',
+            working_dir: repoDir,
+            worker_timeout_seconds: 30,
+            iteration: 1,
+            schema_version: 1,
+        }));
+
+        const logPath = path.join(tmp, 'refinement-worker.json');
+        writeRefinementLogger(fakeBin, logPath);
+
+        const result = spawnSync(
+            process.execPath,
+            [BIN, '--prd', prd, '--session-dir', sessionDir, '--cycles', '1', '--max-turns', '5', '--timeout', '5'],
+            {
+                cwd: wrongCwd,
+                env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}` },
+                encoding: 'utf-8',
+                timeout: 45000,
+            }
+        );
+
+        assert.equal(result.status, 0, `expected success, got: ${(result.stdout || '') + (result.stderr || '')}`);
+        assert.ok(fs.existsSync(logPath), 'refinement worker should be invoked');
+
+        const invocations = fs.readFileSync(logPath, 'utf-8')
+            .trim()
+            .split('\n')
+            .filter(Boolean)
+            .map((line) => JSON.parse(line));
+        assert.equal(invocations.length, 3, 'all refinement workers should be logged');
+        for (const invocation of invocations) {
+            assert.equal(invocation.cwd, repoDir, 'refinement worker should run from recovered session working_dir');
+        }
+
+        const codebaseInvocation = invocations.find((invocation) => {
+            const promptFlag = invocation.argv.indexOf('-p');
+            if (promptFlag === -1) return false;
+            return typeof invocation.argv[promptFlag + 1] === 'string' && invocation.argv[promptFlag + 1].includes('Codebase Context Analyst');
+        });
+        assert.ok(codebaseInvocation, 'one refinement worker should be the codebase analyst');
+
+        const promptFlag = codebaseInvocation.argv.indexOf('-p');
+        assert.ok(promptFlag !== -1, 'worker invocation should include -p prompt');
+        const prompt = codebaseInvocation.argv[promptFlag + 1];
+        assert.match(prompt, new RegExp(`Analyze alignment between the PRD and the actual codebase at: \\\`${repoDir.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\\``));
+        assert.doesNotMatch(prompt, new RegExp(`Analyze alignment between the PRD and the actual codebase at: \\\`${wrongCwd.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}\\\``));
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+        fs.rmSync(fakeBin, { recursive: true, force: true });
     }
 });
 
