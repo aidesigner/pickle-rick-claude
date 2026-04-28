@@ -136,6 +136,15 @@ function buildCodexInvocation(prompt: string, addDirs: string[], model?: string,
     '--dangerously-bypass-approvals-and-sandbox',
     '--skip-git-repo-check',
     '--ephemeral',
+    // Bypass user-level rule files (`~/.codex/AGENTS.md`, `~/.codex/CLAUDE.md`,
+    // `~/.codex/skills/*/SKILL.md`). A stale or parallel-universe codex
+    // installation can otherwise misdirect the manager into chasing
+    // non-existent paths mid-iteration. Pickle-rick's prompts already carry
+    // every contract codex needs — letting `~/.codex/` rules override them
+    // produces FM-4 (stall-on-imaginary-worker) where codex narrates a worker
+    // that doesn't exist instead of invoking spawn-morty.js.
+    '--ignore-rules',
+    '--ignore-user-config',
   ];
   for (const dir of addDirs) {
     if (dir && existsSilently(dir)) args.push('--add-dir', dir);
