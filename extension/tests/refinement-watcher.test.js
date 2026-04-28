@@ -247,3 +247,31 @@ test('refinement-watcher: waits for refinement dir then exits on inactive state'
     fs.rmSync(tmp, { recursive: true });
   }
 });
+
+test('refinement-watcher: recovers orphan tmp inactive state before fallback exit', () => {
+  const tmp = tmpDir();
+  try {
+    const refinementDir = path.join(tmp, 'refinement');
+    fs.mkdirSync(refinementDir);
+    writeState(tmp, { active: true, step: 'prd', iteration: 1 });
+    fs.writeFileSync(
+      path.join(tmp, 'state.json.tmp.999999'),
+      JSON.stringify({
+        active: false,
+        step: 'implement',
+        iteration: 2,
+        working_dir: process.cwd(),
+      }, null, 2),
+    );
+
+    const output = runWatcher([tmp], { timeout: 15_000 });
+    assert.ok(output.includes('refinement may have failed'));
+
+    const promoted = JSON.parse(fs.readFileSync(path.join(tmp, 'state.json'), 'utf-8'));
+    assert.equal(promoted.active, false);
+    assert.equal(promoted.iteration, 2);
+    assert.equal(fs.existsSync(path.join(tmp, 'state.json.tmp.999999')), false);
+  } finally {
+    fs.rmSync(tmp, { recursive: true });
+  }
+});

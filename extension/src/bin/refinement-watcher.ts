@@ -2,6 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { Style, sleep, formatTime, drainStreamJsonLines, safeErrorMessage } from '../services/pickle-utils.js';
+import { StateManager } from '../services/state-manager.js';
 import { processLine } from './log-watcher.js';
 
 const ROLES = ['requirements', 'codebase', 'risk-scope'] as const;
@@ -18,6 +19,8 @@ const ROLE_COLORS: Record<RoleId, string> = {
   codebase: Style.GREEN,
   'risk-scope': Style.YELLOW,
 };
+
+const sm = new StateManager();
 
 interface WorkerState {
   logPath: string | null;
@@ -196,8 +199,7 @@ async function main() {
     // the spawner likely crashed. Don't hang forever.
     try {
       const statePath = path.join(sessionDir, 'state.json');
-      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-      const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      const state = sm.read(statePath);
       if (state.active === false && state.step !== 'prd') {
         // state advanced past prd (setup --paused sets step=prd, active=false)
         // but no manifest — something went wrong
