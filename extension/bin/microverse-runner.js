@@ -106,7 +106,7 @@ async function runRemediatorForIteration(gateResult, sessionDir, workingDir, bac
         return { success: false };
     }
 }
-const PER_ITERATION_GATE_CHECKS = ['typecheck', 'lint'];
+const PER_ITERATION_GATE_CHECKS = ['typecheck', 'lint', 'tests'];
 export async function ensurePerIterationGateBaseline(opts) {
     const { currentMv, workingDir, sessionDir, enabledFiles, log, _deps } = opts;
     if (!enabledFiles.includes(currentMv.convergence_file ?? ''))

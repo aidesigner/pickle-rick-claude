@@ -160,7 +160,7 @@ export interface PerIterationGateDeps {
   getHeadShaFn?: (dir: string) => string;
 }
 
-const PER_ITERATION_GATE_CHECKS: Array<'typecheck' | 'lint'> = ['typecheck', 'lint'];
+const PER_ITERATION_GATE_CHECKS: Array<'typecheck' | 'lint' | 'tests'> = ['typecheck', 'lint', 'tests'];
 
 export async function ensurePerIterationGateBaseline(opts: {
   currentMv: MicroverseSessionState;

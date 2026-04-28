@@ -80,6 +80,7 @@ function writeGateFixtureRepo(dir) {
       scripts: {
         typecheck: 'node scripts/typecheck.cjs',
         lint: 'node scripts/lint.cjs',
+        test: 'node scripts/test.cjs',
       },
     }, null, 2),
   );
@@ -95,6 +96,17 @@ function writeGateFixtureRepo(dir) {
       "console.error('  1:1  error  simulated lint regression  no-simulated-regression');",
       "console.error('');",
       "console.error('✖ 1 problem (1 error, 0 warnings)');",
+      'process.exit(1);',
+      '',
+    ].join('\n'),
+  );
+  fs.writeFileSync(
+    path.join(dir, 'scripts', 'test.cjs'),
+    [
+      "const fs = require('node:fs');",
+      "const path = require('node:path');",
+      "if (!fs.existsSync(path.join(process.cwd(), 'trigger-test.txt'))) process.exit(0);",
+      "console.error('simulated test regression');",
       'process.exit(1);',
       '',
     ].join('\n'),
@@ -327,5 +339,54 @@ test('bootstrap baseline: first post-bootstrap lint regression is flagged instea
   assert.ok(
     events.some((event) => event.event === 'iteration_left_regression' && event.gate_payload?.failures_in === 1),
     `expected iteration_left_regression event, got: ${JSON.stringify(events)}`,
+  );
+});
+
+test('bootstrap baseline: first post-bootstrap test regression is flagged instead of false-greening the iteration', async () => {
+  const workingDir = makeGitRepo('ap-gate-test-repo-');
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-gate-test-session-'));
+  writeGateFixtureRepo(workingDir);
+  commitAll(workingDir, 'initial clean state');
+
+  await ensurePerIterationGateBaseline({
+    currentMv: makeMv(),
+    workingDir,
+    sessionDir,
+    enabledFiles: ['anatomy-park.json'],
+    log: () => {},
+  });
+
+  const baselinePath = path.join(sessionDir, 'gate', 'baseline.json');
+  const baseline = JSON.parse(fs.readFileSync(baselinePath, 'utf-8'));
+  assert.deepEqual(
+    baseline.checks,
+    ['typecheck', 'lint', 'tests'],
+    'baseline must cover tests so pure test regressions cannot slip past the per-iteration gate',
+  );
+
+  const preIterSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: workingDir, encoding: 'utf-8' }).trim();
+  fs.writeFileSync(path.join(workingDir, 'trigger-test.txt'), 'trigger\n');
+  commitAll(workingDir, 'introduce test regression');
+
+  const events = [];
+  let writtenMv;
+  const mv = await runPerIterationGateHook({
+    ...BASE_OPTS,
+    currentMv: makeMv(),
+    preIterSha,
+    workingDir,
+    sessionDir,
+    _deps: {
+      runRemediatorFn: async () => ({ success: false }),
+      writeMicroverseStateFn: (_, next) => { writtenMv = next; },
+      logActivityFn: (event) => events.push(event),
+    },
+  });
+
+  assert.equal(mv.iteration_regressions, 1, 'pure test regressions must increment iteration_regressions');
+  assert.equal(writtenMv.iteration_regressions, 1, 'test regression state must be persisted');
+  assert.ok(
+    events.some((event) => event.event === 'iteration_left_regression' && event.gate_payload?.failures_in === 1),
+    `expected iteration_left_regression event for the test regression, got: ${JSON.stringify(events)}`,
   );
 });
