@@ -84,6 +84,7 @@ function collectObservedValues(graph: Graph): Map<string, Set<string>> {
   return observed;
 }
 
+// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 export function buildDiamondRouting(graph: Graph): DiamondRoutingRow[] {
   const outgoing = new Map<string, CondEdge[]>();
   for (const edge of graph.edges) {

@@ -500,6 +500,7 @@ const CHECK_KEY_MAP: Record<'typecheck' | 'lint' | 'tests', keyof { typecheck?: 
   tests: 'test',
 };
 
+// eslint-disable-next-line complexity, max-lines-per-function -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 export async function runGate(opts: RunGateOpts): Promise<GateResult> {
   const start = Date.now();
   const emit = (event: string, data: Record<string, unknown>) => opts.onEvent?.(event, data);

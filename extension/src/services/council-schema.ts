@@ -237,6 +237,7 @@ export function validateDirective(obj: unknown): Directive {
   };
 }
 
+// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 export function validateSubagentPayload(obj: unknown): SubagentPayload {
   const r = asRecord(obj, '$');
 

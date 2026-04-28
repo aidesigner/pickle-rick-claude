@@ -13,6 +13,7 @@ function isProcessAlive(pid) {
         return false;
     }
 }
+// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 export function readRecoverableJsonObject(filePath) {
     let base = null;
     try {
@@ -182,6 +183,7 @@ export function recordFailedApproach(state, description) {
  * Classify the failure mode of an iteration. Returns null if the iteration
  * succeeded (improved). Priority-ordered — first matching class wins.
  */
+// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 export function classifyFailure(mvState, metricResult, preIterSha, postIterSha) {
     // 1. tool_failure — metric measurement itself failed
     if (metricResult === null)

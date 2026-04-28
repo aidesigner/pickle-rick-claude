@@ -168,6 +168,7 @@ function saveCache(cachePath, cache) {
         process.stderr.write(`[metrics] Cache write failed (non-fatal): ${msg}\n`);
     }
 }
+// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 export function scanSessionFiles(projectsDir, since, until, cachePath) {
     const result = new Map();
     const cache = loadCache(cachePath);

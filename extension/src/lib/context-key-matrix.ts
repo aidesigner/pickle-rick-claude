@@ -13,6 +13,7 @@ function parseKeys(raw: string): string[] {
     .filter(Boolean);
 }
 
+// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 export function buildContextKeyMatrix(graph: Graph, registry: EngineKeysRegistry): ContextKeyRow[] {
   const writers = new Map<string, Set<string>>();
   const readers = new Map<string, Set<string>>();

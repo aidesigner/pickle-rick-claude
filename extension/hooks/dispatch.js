@@ -43,6 +43,7 @@ function findExecutable(name) {
     }
     return null;
 }
+// eslint-disable-next-line complexity, max-lines-per-function -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 async function main() {
     // Watchdog: if the hook hangs for any reason, approve and exit.
     // This prevents Claude Code from deadlocking on a stuck handler.

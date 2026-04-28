@@ -84,6 +84,7 @@ export function loadSettings(extensionRoot) {
         config.halfOpenAfter = 1;
     return config;
 }
+// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 export function initCircuitBreaker(sessionDir, _settings) {
     const cbPath = path.join(sessionDir, 'circuit_breaker.json');
     try {

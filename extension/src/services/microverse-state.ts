@@ -17,6 +17,7 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 export function readRecoverableJsonObject(filePath: string): object | null {
   let base: object | null = null;
   try {
@@ -190,6 +191,7 @@ export function recordFailedApproach(
  * Classify the failure mode of an iteration. Returns null if the iteration
  * succeeded (improved). Priority-ordered — first matching class wins.
  */
+// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 export function classifyFailure(
   mvState: MicroverseSessionState,
   metricResult: { raw: string; score: number } | null,

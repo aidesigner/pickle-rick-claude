@@ -167,6 +167,7 @@ export function validateDirective(obj) {
         trap_doors,
     };
 }
+// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 export function validateSubagentPayload(obj) {
     const r = asRecord(obj, '$');
     const category = requireNonEmptyString(r, 'category', '$');

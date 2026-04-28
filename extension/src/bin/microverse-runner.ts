@@ -1622,6 +1622,17 @@ export async function main(sessionDir: string): Promise<void> {
   process.exit(microverseExitCode(outcome.exitReason));
 }
 
+function markMicroverseFatalError(sessionDir: string): void {
+  const mvPath = path.join(sessionDir, 'microverse.json');
+  if (!fs.existsSync(mvPath)) return;
+  const recovered = readRecoverableJsonObject(mvPath);
+  if (!recovered) return;
+  const mv = recovered as Record<string, unknown>;
+  mv.status = 'stopped';
+  mv.exit_reason = 'error';
+  sm.forceWrite(mvPath, mv);
+}
+
 if (process.argv[1] && path.basename(process.argv[1]) === 'microverse-runner.js') {
   const sessionDir = process.argv[2];
   if (!sessionDir || !fs.existsSync(path.join(sessionDir, 'state.json'))) {
@@ -1633,13 +1644,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'microverse-runner.js'
     console.error(`${Style.RED}[FATAL] ${msg}${Style.RESET}`);
     deactivateRunnerState(path.join(sessionDir, 'state.json'));
     try {
-      const mvPath = path.join(sessionDir, 'microverse.json');
-      if (fs.existsSync(mvPath)) {
-        const mv = JSON.parse(fs.readFileSync(mvPath, 'utf-8'));
-        mv.status = 'stopped';
-        mv.exit_reason = 'error';
-        sm.forceWrite(mvPath, mv);
-      }
+      markMicroverseFatalError(sessionDir);
     } catch { /* best effort */ }
     process.exit(1);
   });

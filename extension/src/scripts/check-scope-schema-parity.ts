@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { buildScopeV1Schema } from '../services/scope-resolver.js';
 
+// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 function deepEqual(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object') return false;

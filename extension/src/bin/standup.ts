@@ -277,6 +277,7 @@ export function deduplicateCommits(
   return { hookCommits, mineGitOnlyCommits, teammateCommits };
 }
 
+// eslint-disable-next-line complexity, max-lines-per-function -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 export function formatOutput(
   events: ActivityEvent[],
   hookCommits: ActivityEvent[],

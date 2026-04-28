@@ -5,6 +5,7 @@ import { getExtensionRoot, extractFrontmatter, updateState, safeErrorMessage, fi
 import { StateManager } from '../services/state-manager.js';
 import { Defaults } from '../types/index.js';
 const sm = new StateManager();
+// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 export function retryTicket(ticketId, cwd) {
     // Validate ticketId to prevent path traversal
     if (!/^[a-zA-Z0-9_-]+$/.test(ticketId)) {

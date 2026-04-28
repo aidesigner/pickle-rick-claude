@@ -8,6 +8,7 @@ function parseKeys(raw) {
         .map(kv => kv.trim().split('=')[0].trim())
         .filter(Boolean);
 }
+// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 export function buildContextKeyMatrix(graph, registry) {
     const writers = new Map();
     const readers = new Map();

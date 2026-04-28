@@ -144,6 +144,7 @@ export function loadSettings(extensionRoot: string): CircuitBreakerConfig {
   return config;
 }
 
+// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 export function initCircuitBreaker(
   sessionDir: string,
   _settings: CircuitBreakerConfig

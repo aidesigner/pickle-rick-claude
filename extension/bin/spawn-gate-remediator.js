@@ -108,6 +108,7 @@ The abort file must contain: reason, affected file:line, what fix was requested,
 `);
     return sections.join('\n');
 }
+// eslint-disable-next-line complexity, max-lines-per-function -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 export async function spawnGateRemediatorMain(opts) {
     const { argv, isoOverride, extensionClaudeMdContent, stdout = (msg) => process.stdout.write(msg + '\n'), stderr = (msg) => process.stderr.write(msg + '\n'), } = opts;
     const readFile = opts.readFileFn ?? ((p, enc) => fs.readFileSync(p, enc));

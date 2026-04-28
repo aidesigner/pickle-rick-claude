@@ -76,6 +76,7 @@ function tarjanSCC(adj) {
     }
     return sccs;
 }
+// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 function detectConvergenceSignal(sccNodes, nodeMap) {
     for (const id of sccNodes) {
         const node = nodeMap.get(id);
@@ -114,6 +115,7 @@ function detectConvergenceSignal(sccNodes, nodeMap) {
     }
     return null;
 }
+// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 export function buildCycles(graph) {
     const adj = buildAdjacency(graph);
     const rawSccs = tarjanSCC(adj);
