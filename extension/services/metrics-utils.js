@@ -29,6 +29,30 @@ export function shortenSlug(slug) {
 function projectSlugFromPath(projectPath) {
     return path.resolve(projectPath).replace(/[\\/]/g, '-');
 }
+function discoverGitRepos(repoRoot) {
+    const repos = [];
+    const pending = [path.resolve(repoRoot)];
+    while (pending.length > 0) {
+        const current = pending.pop();
+        let entries;
+        try {
+            entries = fs.readdirSync(current, { withFileTypes: true });
+        }
+        catch {
+            continue;
+        }
+        if (entries.some((entry) => entry.isDirectory() && entry.name === '.git')) {
+            repos.push(current);
+            continue;
+        }
+        for (const entry of entries) {
+            if (!entry.isDirectory() || entry.name === '.git' || entry.isSymbolicLink())
+                continue;
+            pending.push(path.join(current, entry.name));
+        }
+    }
+    return repos;
+}
 export function parseSessionLine(line) {
     try {
         const obj = JSON.parse(line);
@@ -235,25 +259,8 @@ export function parseGitLogOutput(output) {
 }
 export function scanGitRepos(repoRoot, since, until) {
     const result = new Map();
-    let entries;
-    try {
-        entries = fs.readdirSync(repoRoot, { withFileTypes: true });
-    }
-    catch {
-        return result;
-    }
-    for (const entry of entries) {
-        if (!entry.isDirectory())
-            continue;
-        const repoPath = path.join(repoRoot, entry.name);
+    for (const repoPath of discoverGitRepos(repoRoot)) {
         const repoSlug = projectSlugFromPath(repoPath);
-        const gitDir = path.join(repoPath, '.git');
-        try {
-            fs.statSync(gitDir);
-        }
-        catch {
-            continue;
-        }
         try {
             const proc = spawnSync('git', ['log', `--since=${since}`, '--format=%aI', '--shortstat'], {
                 cwd: repoPath,

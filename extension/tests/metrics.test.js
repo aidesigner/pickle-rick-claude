@@ -791,6 +791,52 @@ test('CLI: future-dated git commits do not leak past report.until', () => {
     }
 });
 
+test('CLI: nested git repos contribute LOC to the matching nested project slug', () => {
+    const { root, cacheFile: _ } = makeTempProjectsDir();
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-metrics-nested-root-'));
+    const repoDir = path.join(repoRoot, 'group', 'nested-repo');
+    fs.mkdirSync(repoDir, { recursive: true });
+
+    try {
+        const today = formatLocalDateKey(new Date());
+        const nestedSlug = repoDir.replace(/[\\/]/g, '-');
+        writeSessionLine(root, nestedSlug, 'session.jsonl',
+            makeAssistantLine(`${today}T10:00:00Z`, 100, 200));
+
+        git({}, repoDir, ['init']);
+        git({}, repoDir, ['config', 'user.name', 'Metrics Test']);
+        git({}, repoDir, ['config', 'user.email', 'metrics@example.com']);
+
+        fs.writeFileSync(path.join(repoDir, 'report.txt'), 'nested repo\n');
+        git({}, repoDir, ['add', 'report.txt']);
+        git(
+            {
+                GIT_AUTHOR_DATE: `${today}T12:00:00Z`,
+                GIT_COMMITTER_DATE: `${today}T12:00:00Z`,
+            },
+            repoDir,
+            ['commit', '-m', 'nested commit'],
+        );
+
+        const result = runMetricsCli(['--days', '0', '--json'], {
+            CLAUDE_PROJECTS_DIR: root,
+            METRICS_REPO_ROOT: repoRoot,
+        });
+        assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+
+        const report = JSON.parse(result.stdout);
+        const project = report.projects.find((entry) => entry.slug === nestedSlug);
+        assert.ok(project, 'expected nested project slug in metrics report');
+        assert.equal(project.totals.turns, 1);
+        assert.equal(project.totals.commits, 1, 'nested repo commit should merge into the matching project');
+        assert.equal(project.totals.added, 1);
+        assert.equal(project.totals.removed, 0);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
 // ---------------------------------------------------------------------------
 // parseMetricsArgs
 // ---------------------------------------------------------------------------
