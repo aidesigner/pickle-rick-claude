@@ -535,12 +535,18 @@ describe('parsePipelineConfig', () => {
     assert.equal(config.szechuan_max_iterations, 50);
   });
 
-  test('treats null as 0 (Number(null) === 0)', () => {
+  test('defaults numeric fields when null or non-positive', () => {
     const config = parsePipelineConfig({
       phases: [], target: '',
       anatomy_stall_limit: null,
+      szechuan_stall_limit: 0,
+      anatomy_max_iterations: -1,
+      szechuan_max_iterations: '',
     });
-    assert.equal(config.anatomy_stall_limit, 0);
+    assert.equal(config.anatomy_stall_limit, 3);
+    assert.equal(config.szechuan_stall_limit, 5);
+    assert.equal(config.anatomy_max_iterations, 100);
+    assert.equal(config.szechuan_max_iterations, 50);
   });
 
   test('defaults numeric fields when Infinity', () => {
