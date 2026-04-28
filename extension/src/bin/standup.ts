@@ -14,6 +14,25 @@ interface ParsedArgs {
   range: DateRange;
 }
 
+function parseExactLocalDate(dateStr: string): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null;
+  const [yearRaw, monthRaw, dayRaw] = dateStr.split('-');
+  const year = Number(yearRaw);
+  const monthIndex = Number(monthRaw) - 1;
+  const day = Number(dayRaw);
+  if (!Number.isInteger(year) || !Number.isInteger(monthIndex) || !Number.isInteger(day)) return null;
+  const parsed = new Date(year, monthIndex, day);
+  if (
+    parsed.getFullYear() !== year ||
+    parsed.getMonth() !== monthIndex ||
+    parsed.getDate() !== day
+  ) {
+    return null;
+  }
+  parsed.setHours(0, 0, 0, 0);
+  return parsed;
+}
+
 function consumeArg(argv: string[], i: number, flagName: string, hint: string): string {
   const val = argv[i + 1];
   if (val === undefined || val.startsWith('--')) {
@@ -48,8 +67,8 @@ export function parseArgs(argv: string[]): ParsedArgs {
   const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
   if (sinceStr !== null) {
-    const parsed = new Date(sinceStr + 'T00:00:00');
-    if (isNaN(parsed.getTime())) {
+    const parsed = parseExactLocalDate(sinceStr);
+    if (parsed === null) {
       console.error(`Error: invalid date "${sinceStr}". Use YYYY-MM-DD format.`);
       process.exit(1);
     }

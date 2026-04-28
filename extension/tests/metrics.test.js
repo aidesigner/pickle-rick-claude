@@ -454,6 +454,12 @@ test('CLI: --since future date exits with error', () => {
     assert.match(result.stderr, /future/);
 });
 
+test('CLI: --since impossible calendar date exits with error', () => {
+    const result = runMetricsCli(['--since', '2026-02-30']);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /invalid date/);
+});
+
 test('CLI: unknown flag exits with error', () => {
     const result = runMetricsCli(['--verbose']);
     assert.equal(result.status, 1);

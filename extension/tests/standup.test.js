@@ -133,6 +133,12 @@ test('CLI: --since with invalid date exits with error', () => {
     assert.match(result.stderr, /invalid date/);
 });
 
+test('CLI: --since with impossible calendar date exits with error', () => {
+    const result = runCli(['--since', '2026-02-30']);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /invalid date/);
+});
+
 test('CLI: --since with future date exits with error', () => {
     const result = runCli(['--since', '2099-01-01']);
     assert.equal(result.status, 1);
