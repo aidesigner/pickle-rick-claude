@@ -110,6 +110,26 @@ test('resolveStateFile: returns null when sessions map is missing', () => {
   }
 });
 
+test('resolveStateFile: falls back to sessions/*/state.json when the sessions map is missing', () => {
+  const tmp = tmpDir();
+  try {
+    const sessionDir = path.join(tmp, 'sessions', 'session1');
+    fs.mkdirSync(sessionDir, { recursive: true });
+    const stateFile = path.join(sessionDir, 'state.json');
+    fs.writeFileSync(stateFile, JSON.stringify(baseState({ working_dir: process.cwd() })));
+    const orig = process.env.PICKLE_STATE_FILE;
+    delete process.env.PICKLE_STATE_FILE;
+    try {
+      const result = resolveStateFile(tmp);
+      assert.equal(result, stateFile);
+    } finally {
+      if (orig !== undefined) process.env.PICKLE_STATE_FILE = orig;
+    }
+  } finally {
+    fs.rmSync(tmp, { recursive: true });
+  }
+});
+
 test('resolveStateFile: returns null when sessions map is corrupt JSON', () => {
   const tmp = tmpDir();
   try {

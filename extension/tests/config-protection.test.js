@@ -40,11 +40,14 @@ function runHandler(opts = {}) {
     toolName = 'Write',
     toolInput = {},
     withStateFile = true,
+    withSessionsMap = withStateFile,
+    setStateFileEnv = withStateFile,
+    persistState = true,
     configChange = false,
   } = opts;
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-'));
-  const sessionDir = path.join(tmpDir, 'session');
+  const sessionDir = path.join(tmpDir, 'sessions', 'session');
   fs.mkdirSync(sessionDir, { recursive: true });
 
   const stateFile = path.join(sessionDir, 'state.json');
@@ -67,8 +70,10 @@ function runHandler(opts = {}) {
     fs.writeFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`), frontmatter);
   }
 
-  fs.writeFileSync(stateFile, JSON.stringify(resolvedState));
-  if (withStateFile) {
+  if (persistState) {
+    fs.writeFileSync(stateFile, JSON.stringify(resolvedState));
+  }
+  if (withSessionsMap) {
     fs.writeFileSync(
       path.join(tmpDir, 'current_sessions.json'),
       JSON.stringify({ [process.cwd()]: sessionDir })
@@ -77,7 +82,7 @@ function runHandler(opts = {}) {
 
   const env = { ...process.env, EXTENSION_DIR: tmpDir, FORCE_COLOR: '0' };
   delete env.PICKLE_STATE_FILE;
-  if (withStateFile) env.PICKLE_STATE_FILE = stateFile;
+  if (setStateFileEnv) env.PICKLE_STATE_FILE = stateFile;
 
   const hookInput = JSON.stringify({ tool_name: toolName, tool_input: toolInput });
 
@@ -214,7 +219,9 @@ test('approves any tool when no state file exists', () => {
   const result = runHandler({
     toolName: 'Write',
     toolInput: { file_path: '/project/.eslintrc.json' },
-    withStateFile: false,
+    withSessionsMap: false,
+    setStateFileEnv: false,
+    persistState: false,
   });
   assert.equal(result.decision, 'approve');
 });
@@ -226,4 +233,14 @@ test('approves any tool when session is inactive (active: false)', () => {
     toolInput: { file_path: '/project/.eslintrc.json' },
   });
   assert.equal(result.decision, 'approve');
+});
+
+test('blocks protected config edits when the sessions map is missing but a live session state exists', () => {
+  const result = runHandler({
+    toolName: 'Write',
+    toolInput: { file_path: '/project/tsconfig.json' },
+    withSessionsMap: false,
+    setStateFileEnv: false,
+  });
+  assert.equal(result.decision, 'block');
 });
