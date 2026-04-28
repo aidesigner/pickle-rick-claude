@@ -322,133 +322,117 @@ function spawnWorker(roleId, prompt, refinementDir, extensionRoot, timeout, work
         });
     });
 }
-async function main() {
-    const args = process.argv.slice(2);
-    const prdIndex = args.indexOf('--prd');
-    const sessionIndex = args.indexOf('--session-dir');
-    const timeoutIndex = args.indexOf('--timeout');
-    const cyclesIndex = args.indexOf('--cycles');
-    const maxTurnsIndex = args.indexOf('--max-turns');
-    const prdPath = prdIndex !== -1 ? args[prdIndex + 1] : undefined;
-    const sessionDir = sessionIndex !== -1 ? args[sessionIndex + 1] : undefined;
-    // Validate all required args are present and non-empty
-    if (!prdPath || !sessionDir || prdPath.startsWith('--') || sessionDir.startsWith('--')) {
-        console.error(`${Style.RED}❌ Usage: node spawn-refinement-team.js --prd <path> --session-dir <dir> [--timeout <sec>] [--cycles <n>] [--max-turns <n>]${Style.RESET}`);
+function usageAndExit() {
+    console.error(`${Style.RED}❌ Usage: node spawn-refinement-team.js --prd <path> --session-dir <dir> [--timeout <sec>] [--cycles <n>] [--max-turns <n>]${Style.RESET}`);
+    process.exit(1);
+}
+function parsePositiveFlag(argv, index, flag) {
+    if (index === -1)
+        return undefined;
+    const raw = argv[index + 1];
+    const value = parseInt(raw, 10);
+    if (isNaN(value) || value < 1) {
+        console.error(`${Style.RED}❌ ${flag} requires a positive integer, got: ${raw}${Style.RESET}`);
         process.exit(1);
     }
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+    return value;
+}
+function parseTimeoutFlag(argv) {
+    const timeoutIndex = argv.indexOf('--timeout');
+    const rawTimeout = timeoutIndex !== -1 ? parseInt(argv[timeoutIndex + 1], 10) : NaN;
+    return !isNaN(rawTimeout) && rawTimeout > 0 ? rawTimeout : undefined;
+}
+export function parseAndValidateArgs(argv) {
+    const prdIndex = argv.indexOf('--prd');
+    const sessionIndex = argv.indexOf('--session-dir');
+    const prdPath = prdIndex !== -1 ? argv[prdIndex + 1] : undefined;
+    const sessionDir = sessionIndex !== -1 ? argv[sessionIndex + 1] : undefined;
+    if (!prdPath || !sessionDir || prdPath.startsWith('--') || sessionDir.startsWith('--')) {
+        usageAndExit();
+    }
     if (!fs.existsSync(prdPath)) {
         console.error(`${Style.RED}❌ PRD not found: ${prdPath}${Style.RESET}`);
         process.exit(1);
     }
-    // Load settings for refinement-specific defaults
-    const extensionRoot = getExtensionRoot();
-    const settingsFile = path.join(extensionRoot, 'pickle_settings.json');
-    let defaultCycles = 3;
-    let defaultMaxTurns = 100;
-    let defaultWorkerTimeout = Defaults.WORKER_TIMEOUT_SECONDS;
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    if (fs.existsSync(settingsFile)) {
-        try {
-            // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-            const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf-8'));
-            if (typeof settings.default_refinement_cycles === 'number' && settings.default_refinement_cycles > 0)
-                defaultCycles = settings.default_refinement_cycles;
-            if (typeof settings.default_refinement_max_turns === 'number' && settings.default_refinement_max_turns > 0)
-                defaultMaxTurns = settings.default_refinement_max_turns;
-            if (typeof settings.default_worker_timeout_seconds === 'number' && settings.default_worker_timeout_seconds > 0)
-                defaultWorkerTimeout = settings.default_worker_timeout_seconds;
-        }
-        catch { /* use hardcoded defaults */ }
+    return {
+        prdPath,
+        sessionDir,
+        timeout: parseTimeoutFlag(argv),
+        cycles: parsePositiveFlag(argv, argv.indexOf('--cycles'), '--cycles'),
+        maxTurns: parsePositiveFlag(argv, argv.indexOf('--max-turns'), '--max-turns'),
+    };
+}
+export function loadRefinementSettings(settingsPath = path.join(getExtensionRoot(), 'pickle_settings.json')) {
+    const settings = {
+        defaultCycles: 3,
+        defaultMaxTurns: 100,
+        defaultWorkerTimeout: Defaults.WORKER_TIMEOUT_SECONDS,
+    };
+    if (!fs.existsSync(settingsPath))
+        return settings;
+    try {
+        const loaded = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+        if (typeof loaded.default_refinement_cycles === 'number' && loaded.default_refinement_cycles > 0)
+            settings.defaultCycles = loaded.default_refinement_cycles;
+        if (typeof loaded.default_refinement_max_turns === 'number' && loaded.default_refinement_max_turns > 0)
+            settings.defaultMaxTurns = loaded.default_refinement_max_turns;
+        if (typeof loaded.default_worker_timeout_seconds === 'number' && loaded.default_worker_timeout_seconds > 0)
+            settings.defaultWorkerTimeout = loaded.default_worker_timeout_seconds;
     }
-    // Parse --cycles (validate if explicitly provided)
-    let cycles = defaultCycles;
-    if (cyclesIndex !== -1) {
-        const rawCycles = parseInt(args[cyclesIndex + 1], 10);
-        if (isNaN(rawCycles) || rawCycles < 1) {
-            console.error(`${Style.RED}❌ --cycles requires a positive integer, got: ${args[cyclesIndex + 1]}${Style.RESET}`);
-            process.exit(1);
-        }
-        cycles = rawCycles;
-    }
-    // Parse --max-turns (validate if explicitly provided)
-    let maxTurns = defaultMaxTurns;
-    if (maxTurnsIndex !== -1) {
-        const rawMaxTurns = parseInt(args[maxTurnsIndex + 1], 10);
-        if (isNaN(rawMaxTurns) || rawMaxTurns < 1) {
-            console.error(`${Style.RED}❌ --max-turns requires a positive integer, got: ${args[maxTurnsIndex + 1]}${Style.RESET}`);
-            process.exit(1);
-        }
-        maxTurns = rawMaxTurns;
-    }
-    // Respect worker_timeout_seconds from session state (mirrors spawn-morty.ts)
-    const rawTimeout = timeoutIndex !== -1 ? parseInt(args[timeoutIndex + 1], 10) : NaN;
-    let timeout = !isNaN(rawTimeout) && rawTimeout > 0 ? rawTimeout : defaultWorkerTimeout;
-    const statePath = path.join(sessionDir, 'state.json');
-    let stateBackend = undefined;
+    catch { /* use hardcoded defaults */ }
+    return settings;
+}
+function resolveRuntime(args, settings) {
+    let timeout = args.timeout ?? settings.defaultWorkerTimeout;
     let workingDir = process.cwd();
-    // Read state.effort so it survives in the recovered snapshot. Refinement is
-    // claude-only so this is a no-op for the spawn invocation today, but the
-    // value is logged in the deploy panel and kept for parity with spawn-morty.
+    let stateBackend = undefined;
     let sessionEffort;
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+    const statePath = path.join(args.sessionDir, 'state.json');
     if (fs.existsSync(statePath)) {
         try {
             const state = sm.read(statePath);
             stateBackend = state.backend;
-            if (typeof state.working_dir === 'string' && state.working_dir.trim()) {
+            if (typeof state.working_dir === 'string' && state.working_dir.trim())
                 workingDir = state.working_dir;
-            }
-            if (state.effort === 'low' || state.effort === 'medium' || state.effort === 'high') {
+            if (state.effort === 'low' || state.effort === 'medium' || state.effort === 'high')
                 sessionEffort = state.effort;
-            }
-            if (timeoutIndex === -1) {
+            if (args.timeout === undefined) {
                 const stateTimeout = Number(state.worker_timeout_seconds);
                 if (Number.isFinite(stateTimeout) && stateTimeout > 0)
                     timeout = stateTimeout;
             }
-            // Clamp to remaining session time if a wall-clock limit is set
-            const maxMins = Number(state.max_time_minutes);
-            const startEpoch = Number(state.start_time_epoch);
-            if (Number.isFinite(maxMins) && maxMins > 0 && Number.isFinite(startEpoch) && startEpoch > 0) {
-                const remaining = Math.floor(maxMins * 60 - (Math.floor(Date.now() / 1000) - startEpoch));
-                if (remaining <= 0) {
-                    console.log(`${Style.YELLOW}⚠️  Session time already elapsed; running with requested timeout.${Style.RESET}`);
-                }
-                else if (remaining < timeout) {
-                    timeout = remaining;
-                    console.log(`${Style.YELLOW}⚠️  Worker timeout clamped to ${timeout}s (session wall-clock)${Style.RESET}`);
-                }
-            }
+            timeout = clampTimeoutToSession(timeout, state);
         }
         catch {
-            // Ignore — use parsed/default timeout
+            // Ignore — use parsed/default timeout.
         }
     }
-    // One-shot stderr warning if state or env opted into codex — refinement
-    // downgrades to claude regardless (planning, not implementation).
     warnIfCodexRequested(stateBackend, process.env.PICKLE_BACKEND);
-    const refinementDir = path.join(sessionDir, 'refinement');
-    try {
-        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-        fs.mkdirSync(refinementDir, { recursive: true });
+    return {
+        cycles: args.cycles ?? settings.defaultCycles,
+        maxTurns: args.maxTurns ?? settings.defaultMaxTurns,
+        timeout,
+        workingDir,
+        sessionEffort,
+    };
+}
+function clampTimeoutToSession(timeout, state) {
+    const maxMins = Number(state.max_time_minutes);
+    const startEpoch = Number(state.start_time_epoch);
+    if (!Number.isFinite(maxMins) || maxMins <= 0 || !Number.isFinite(startEpoch) || startEpoch <= 0) {
+        return timeout;
     }
-    catch (err) {
-        const msg = safeErrorMessage(err);
-        console.error(`${Style.RED}❌ Failed to create ${refinementDir}: ${msg}${Style.RESET}`);
-        process.exit(1);
+    const remaining = Math.floor(maxMins * 60 - (Math.floor(Date.now() / 1000) - startEpoch));
+    if (remaining <= 0) {
+        console.log(`${Style.YELLOW}⚠️  Session time already elapsed; running with requested timeout.${Style.RESET}`);
     }
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    const prdContent = fs.readFileSync(prdPath, 'utf-8');
-    // Detect portal artifacts for refinement workers
-    const portalDir = path.join(sessionDir, 'portal');
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    const hasPortal = fs.existsSync(portalDir);
-    const portalContext = hasPortal
-        ? { portalDir, patternSummaryLines: 50 }
-        : undefined;
-    // Graceful shutdown: kill all active worker subprocesses on SIGTERM/SIGINT
-    // so orphaned `claude` processes don't keep burning API tokens.
+    else if (remaining < timeout) {
+        console.log(`${Style.YELLOW}⚠️  Worker timeout clamped to ${remaining}s (session wall-clock)${Style.RESET}`);
+        return remaining;
+    }
+    return timeout;
+}
+function registerShutdownHandlers() {
     const handleShutdownSignal = (signal) => {
         console.error(`\n${Style.YELLOW}⚠️  Received ${signal} — killing ${activeWorkerProcs.size} active worker(s)${Style.RESET}`);
         for (const wp of activeWorkerProcs) {
@@ -461,8 +445,24 @@ async function main() {
     };
     process.on('SIGTERM', () => handleShutdownSignal('SIGTERM'));
     process.on('SIGINT', () => handleShutdownSignal('SIGINT'));
+}
+function ensureRefinementDir(refinementDir) {
+    try {
+        fs.mkdirSync(refinementDir, { recursive: true });
+    }
+    catch (err) {
+        const msg = safeErrorMessage(err);
+        console.error(`${Style.RED}❌ Failed to create ${refinementDir}: ${msg}${Style.RESET}`);
+        process.exit(1);
+    }
+}
+function detectPortalContext(sessionDir) {
+    const portalDir = path.join(sessionDir, 'portal');
+    return fs.existsSync(portalDir) ? { portalDir, patternSummaryLines: 50 } : undefined;
+}
+function printDeploymentPanel(args, refinementDir, cycles, maxTurns, timeout, sessionEffort) {
     printMinimalPanel('PRD Refinement Team Deploying', {
-        PRD: path.basename(prdPath),
+        PRD: path.basename(args.prdPath),
         Workers: WORKER_ROLES.map((r) => r.id).join(' | '),
         Cycles: cycles,
         'Max Turns': `${maxTurns}/worker`,
@@ -470,100 +470,114 @@ async function main() {
         Output: refinementDir,
         ...(sessionEffort ? { Effort: `${sessionEffort} (claude no-op)` } : {}),
     }, 'MAGENTA', '🥒');
-    // Collect all results across all cycles
-    const allCycleResults = [];
-    for (let cycle = 1; cycle <= cycles; cycle++) {
-        if (cycles > 1) {
-            printMinimalPanel(`Cycle ${cycle} of ${cycles}`, {
-                Phase: cycle === 1 ? 'Initial Analysis' : 'Deep-Dive (cross-referencing previous findings)',
-                Workers: WORKER_ROLES.map((r) => r.id).join(' | '),
-            }, 'CYAN', '🔄');
-        }
-        // Load previous cycle analyses for cross-reference (cycle 2+)
-        let previousAnalyses;
-        if (cycle > 1) {
-            previousAnalyses = new Map();
-            for (const { id } of WORKER_ROLES) {
-                // Read from the canonical analysis file (written by previous cycle)
-                const prevFile = path.join(refinementDir, `analysis_${id}.md`);
-                // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-                if (fs.existsSync(prevFile)) {
-                    try {
-                        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-                        previousAnalyses.set(id, fs.readFileSync(prevFile, 'utf-8'));
-                    }
-                    catch { /* skip unreadable */ }
-                }
+}
+function loadPreviousAnalyses(refinementDir, cycle) {
+    if (cycle <= 1)
+        return undefined;
+    const previousAnalyses = new Map();
+    for (const { id } of WORKER_ROLES) {
+        const prevFile = path.join(refinementDir, `analysis_${id}.md`);
+        if (fs.existsSync(prevFile)) {
+            try {
+                previousAnalyses.set(id, fs.readFileSync(prevFile, 'utf-8'));
             }
-            if (previousAnalyses.size === 0) {
-                console.log(`${Style.YELLOW}⚠️  No previous analyses found — cycle ${cycle} will run as independent analysis.${Style.RESET}`);
-            }
+            catch { /* skip unreadable */ }
         }
-        // Track statuses for live display
-        const statuses = new Map(WORKER_ROLES.map((r) => [r.id, '⏳']));
-        const spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-        let spinIdx = 0;
-        const startTime = Date.now();
-        const interval = setInterval(() => {
-            const elapsed = Math.floor((Date.now() - startTime) / 1000);
-            const spinChar = spinner[spinIdx % spinner.length];
-            const statusParts = WORKER_ROLES.map((r) => `${statuses.get(r.id)} ${r.id}`).join(' | ');
-            const cycleLabel = cycles > 1 ? ` C${cycle}` : '';
-            process.stdout.write(`\r   ${Style.CYAN}${spinChar}${Style.RESET} ${statusParts} ${Style.DIM}[${formatTime(elapsed)}${cycleLabel}]${Style.RESET}\x1b[K`);
-            spinIdx++;
-        }, 200);
-        let results;
+    }
+    if (previousAnalyses.size === 0) {
+        console.log(`${Style.YELLOW}⚠️  No previous analyses found — cycle ${cycle} will run as independent analysis.${Style.RESET}`);
+    }
+    return previousAnalyses;
+}
+function startCycleSpinner(statuses, cycles, cycle) {
+    const spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+    let spinIdx = 0;
+    const startTime = Date.now();
+    return setInterval(() => {
+        const elapsed = Math.floor((Date.now() - startTime) / 1000);
+        const spinChar = spinner[spinIdx % spinner.length];
+        const statusParts = WORKER_ROLES.map((r) => `${statuses.get(r.id)} ${r.id}`).join(' | ');
+        const cycleLabel = cycles > 1 ? ` C${cycle}` : '';
+        process.stdout.write(`\r   ${Style.CYAN}${spinChar}${Style.RESET} ${statusParts} ${Style.DIM}[${formatTime(elapsed)}${cycleLabel}]${Style.RESET}\x1b[K`);
+        spinIdx++;
+    }, 200);
+}
+async function runCycle(opts) {
+    const statuses = new Map(WORKER_ROLES.map((r) => [r.id, '⏳']));
+    const interval = startCycleSpinner(statuses, opts.cycles, opts.cycle);
+    try {
+        const workerPromises = WORKER_ROLES.map(({ id }) => {
+            const outputFile = path.join(opts.refinementDir, `analysis_${id}.md`);
+            const prompt = buildWorkerPrompt(id, opts.prd, outputFile, opts.workingDir, opts.cycle, opts.previousAnalyses, opts.portalContext);
+            return spawnWorker(id, prompt, opts.refinementDir, opts.extensionRoot, opts.timeout, opts.workingDir, opts.maxTurns, opts.cycle, (result) => {
+                statuses.set(id, result.success ? '✅' : '❌');
+                if (result.exitCode !== null && result.exitCode !== 0)
+                    killSiblingWorkers(result);
+            }, opts.sessionDir);
+        });
+        return await Promise.all(workerPromises);
+    }
+    finally {
+        clearInterval(interval);
+        process.stdout.write('\r\x1b[K\n');
+    }
+}
+function killSiblingWorkers(result) {
+    const siblings = [...activeWorkerProcs];
+    if (siblings.length === 0)
+        return;
+    console.error(`\n${Style.RED}⚠️  Worker ${result.roleId} crashed (exit ${result.exitCode}) — killing ${siblings.length} sibling(s)${Style.RESET}`);
+    for (const sibling of siblings) {
         try {
-            const workerPromises = WORKER_ROLES.map(({ id }) => {
-                const outputFile = path.join(refinementDir, `analysis_${id}.md`);
-                const prompt = buildWorkerPrompt(id, prdContent, outputFile, workingDir, cycle, previousAnalyses, portalContext);
-                return spawnWorker(id, prompt, refinementDir, extensionRoot, timeout, workingDir, maxTurns, cycle, (result) => {
-                    statuses.set(id, result.success ? '✅' : '❌');
-                    if (result.exitCode !== null && result.exitCode !== 0) {
-                        const siblings = [...activeWorkerProcs];
-                        if (siblings.length > 0) {
-                            console.error(`\n${Style.RED}⚠️  Worker ${result.roleId} crashed (exit ${result.exitCode}) — killing ${siblings.length} sibling(s)${Style.RESET}`);
-                            for (const sibling of siblings) {
-                                try {
-                                    sibling.kill('SIGTERM');
-                                }
-                                catch { /* already dead */ }
-                            }
-                        }
-                    }
-                }, sessionDir);
-            });
-            results = await Promise.all(workerPromises);
+            sibling.kill('SIGTERM');
         }
-        finally {
-            clearInterval(interval);
-            process.stdout.write('\r\x1b[K\n');
-        }
-        // Archive cycle results (copy analysis files to cycle-specific names)
-        if (cycles > 1) {
-            for (const { id } of WORKER_ROLES) {
-                const canonical = path.join(refinementDir, `analysis_${id}.md`);
-                const cycleArchive = path.join(refinementDir, `analysis_${id}_c${cycle}.md`);
-                // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-                if (fs.existsSync(canonical)) {
-                    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-                    try {
-                        fs.copyFileSync(canonical, cycleArchive);
-                    }
-                    catch { /* best-effort */ }
-                }
+        catch { /* already dead */ }
+    }
+}
+function archiveCycleResults(refinementDir, cycles, cycle) {
+    if (cycles <= 1)
+        return;
+    for (const { id } of WORKER_ROLES) {
+        const canonical = path.join(refinementDir, `analysis_${id}.md`);
+        const cycleArchive = path.join(refinementDir, `analysis_${id}_c${cycle}.md`);
+        if (fs.existsSync(canonical)) {
+            try {
+                fs.copyFileSync(canonical, cycleArchive);
             }
+            catch { /* best-effort */ }
         }
+    }
+}
+export async function orchestrateCycles(args, settings, prd) {
+    const runtime = resolveRuntime(args, settings);
+    const refinementDir = path.join(args.sessionDir, 'refinement');
+    const extensionRoot = getExtensionRoot();
+    ensureRefinementDir(refinementDir);
+    registerShutdownHandlers();
+    printDeploymentPanel(args, refinementDir, runtime.cycles, runtime.maxTurns, runtime.timeout, runtime.sessionEffort);
+    const allCycleResults = [];
+    const portalContext = detectPortalContext(args.sessionDir);
+    for (let cycle = 1; cycle <= runtime.cycles; cycle++) {
+        if (runtime.cycles > 1)
+            printCyclePanel(cycle, runtime.cycles);
+        const results = await runCycle({
+            cycle,
+            cycles: runtime.cycles,
+            prd,
+            refinementDir,
+            extensionRoot,
+            timeout: runtime.timeout,
+            workingDir: runtime.workingDir,
+            maxTurns: runtime.maxTurns,
+            previousAnalyses: loadPreviousAnalyses(refinementDir, cycle),
+            portalContext,
+            sessionDir: args.sessionDir,
+        });
+        archiveCycleResults(refinementDir, runtime.cycles, cycle);
         allCycleResults.push(results);
-        if (cycles > 1) {
-            const statusLine = results.map((r) => `${r.roleId}: ${r.success ? '✅' : '❌'}`).join(' | ');
-            console.log(`   ${Style.DIM}Cycle ${cycle}: ${statusLine}${Style.RESET}`);
-        }
-        // If all workers failed this cycle, don't bother with more cycles
-        if (results.every((r) => !r.success)) {
-            console.log(`${Style.YELLOW}⚠️  All workers failed in cycle ${cycle} — skipping remaining cycles.${Style.RESET}`);
+        printCycleSummary(results, runtime.cycles, cycle);
+        if (results.every((r) => !r.success))
             break;
-        }
     }
     if (allCycleResults.length === 0) {
         console.error(`${Style.RED}❌ No cycles completed${Style.RESET}`);
@@ -571,17 +585,37 @@ async function main() {
     }
     const finalResults = allCycleResults[allCycleResults.length - 1];
     const allSuccess = finalResults.every((r) => r.success);
+    printCompletionPanel(finalResults, allSuccess);
+    return { refinementDir, cyclesRequested: runtime.cycles, maxTurns: runtime.maxTurns, allCycleResults, finalResults, allSuccess };
+}
+function printCyclePanel(cycle, cycles) {
+    printMinimalPanel(`Cycle ${cycle} of ${cycles}`, {
+        Phase: cycle === 1 ? 'Initial Analysis' : 'Deep-Dive (cross-referencing previous findings)',
+        Workers: WORKER_ROLES.map((r) => r.id).join(' | '),
+    }, 'CYAN', '🔄');
+}
+function printCycleSummary(results, cycles, cycle) {
+    if (cycles > 1) {
+        const statusLine = results.map((r) => `${r.roleId}: ${r.success ? '✅' : '❌'}`).join(' | ');
+        console.log(`   ${Style.DIM}Cycle ${cycle}: ${statusLine}${Style.RESET}`);
+    }
+    if (results.every((r) => !r.success)) {
+        console.log(`${Style.YELLOW}⚠️  All workers failed in cycle ${cycle} — skipping remaining cycles.${Style.RESET}`);
+    }
+}
+function printCompletionPanel(finalResults, allSuccess) {
     printMinimalPanel('Refinement Team Complete', Object.fromEntries(finalResults.map((r) => [r.roleId, r.success ? '✅ analysis written' : '❌ failed — check log'])), allSuccess ? 'GREEN' : 'YELLOW', '🥒');
-    // Build manifest with cycle info
-    const manifest = {
-        prd_path: prdPath,
-        refinement_dir: refinementDir,
-        all_success: allSuccess,
-        cycles_requested: cycles,
-        cycles_completed: allCycleResults.length,
-        max_turns_per_worker: maxTurns,
-        workers: finalResults.map((r) => {
-            const outputFile = path.join(refinementDir, `analysis_${r.roleId}.md`);
+}
+function buildRefinementManifest(args, results) {
+    return {
+        prd_path: args.prdPath,
+        refinement_dir: results.refinementDir,
+        all_success: results.allSuccess,
+        cycles_requested: results.cyclesRequested,
+        cycles_completed: results.allCycleResults.length,
+        max_turns_per_worker: results.maxTurns,
+        workers: results.finalResults.map((r) => {
+            const outputFile = path.join(results.refinementDir, `analysis_${r.roleId}.md`);
             return {
                 role: r.roleId,
                 success: r.success,
@@ -593,28 +627,33 @@ async function main() {
         }),
         completed_at: new Date().toISOString(),
     };
-    const manifestPath = path.join(sessionDir, 'refinement_manifest.json');
-    const manifestTmp = manifestPath + `.tmp.${process.pid}`;
+}
+export async function writeManifestAtomic(manifestPath, manifest) {
+    const manifestTmp = `${manifestPath}.tmp`;
     try {
-        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-        fs.writeFileSync(manifestTmp, JSON.stringify(manifest, null, 2));
-        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-        fs.renameSync(manifestTmp, manifestPath);
+        await fs.promises.writeFile(manifestTmp, JSON.stringify(manifest, null, 2));
+        await fs.promises.rename(manifestTmp, manifestPath);
     }
     catch (err) {
-        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         try {
-            fs.unlinkSync(manifestTmp);
+            await fs.promises.unlink(manifestTmp);
         }
         catch { /* ignore cleanup failure */ }
         throw err;
     }
-    if (!allSuccess) {
-        const failed = finalResults.filter((r) => !r.success).map((r) => r.roleId);
+}
+async function main() {
+    const args = parseAndValidateArgs(process.argv.slice(2));
+    const settings = loadRefinementSettings();
+    const prdContent = await fs.promises.readFile(args.prdPath, 'utf-8');
+    const cycleResults = await orchestrateCycles(args, settings, prdContent);
+    const manifestPath = path.join(args.sessionDir, 'refinement_manifest.json');
+    await writeManifestAtomic(manifestPath, buildRefinementManifest(args, cycleResults));
+    if (!cycleResults.allSuccess) {
+        const failed = cycleResults.finalResults.filter((r) => !r.success).map((r) => r.roleId);
         console.log(`${Style.YELLOW}⚠️  Workers failed: ${failed.join(', ')}. Synthesis will proceed with available analyses.${Style.RESET}`);
     }
-    // Machine-readable output for command parsing
-    process.stdout.write(`REFINEMENT_DIR=${refinementDir}\n`);
+    process.stdout.write(`REFINEMENT_DIR=${cycleResults.refinementDir}\n`);
     process.stdout.write(`MANIFEST=${manifestPath}\n`);
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'spawn-refinement-team.js') {
