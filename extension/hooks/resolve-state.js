@@ -1,13 +1,16 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { resolveSessionPath } from '../services/pickle-utils.js';
+import { StateManager } from '../services/state-manager.js';
 const ALLOW = JSON.stringify({ decision: 'approve' });
+const sm = new StateManager();
 function sameWorkingDir(a, b) {
     return typeof a === 'string' && path.resolve(a) === path.resolve(b);
 }
 function readLookupState(stateFile) {
     try {
-        return JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+        const state = sm.read(stateFile);
+        return { active: state.active, working_dir: state.working_dir };
     }
     catch {
         return null;
@@ -72,19 +75,18 @@ export function resolveStateFile(dataDir) {
  * inactive or the working directory doesn't match the current cwd.
  */
 export function loadActiveState(stateFile) {
-    let state;
     try {
-        state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+        const state = sm.read(stateFile);
+        if (state.working_dir != null && state.working_dir !== '' && path.resolve(state.working_dir) !== path.resolve(process.cwd())) {
+            return null;
+        }
+        if (state.active !== true)
+            return null;
+        return state;
     }
     catch {
         return null;
     }
-    if (state.working_dir != null && state.working_dir !== '' && path.resolve(state.working_dir) !== path.resolve(process.cwd())) {
-        return null;
-    }
-    if (state.active !== true)
-        return null;
-    return state;
 }
 /** Prints the "approve" decision to stdout. */
 export function approve() {

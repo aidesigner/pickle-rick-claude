@@ -235,6 +235,16 @@ test('approves any tool when session is inactive (active: false)', () => {
   assert.equal(result.decision, 'approve');
 });
 
+test('approves protected config edits when the resolved session is stale active=true with a dead pid', () => {
+  const result = runHandler({
+    state: baseState({ active: true, pid: 99999999 }),
+    toolName: 'Write',
+    toolInput: { file_path: '/project/.eslintrc.json' },
+    setStateFileEnv: false,
+  });
+  assert.equal(result.decision, 'approve');
+});
+
 test('blocks protected config edits when the sessions map is missing but a live session state exists', () => {
   const result = runHandler({
     toolName: 'Write',

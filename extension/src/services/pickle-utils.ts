@@ -520,8 +520,8 @@ function sameWorkingDir(a: unknown, b: string): boolean {
 
 function readSessionLookupState(sessionPath: string): { active?: unknown; working_dir?: unknown } | null {
   try {
-    const raw = fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8');
-    return JSON.parse(raw) as { active?: unknown; working_dir?: unknown };
+    const state = new StateManager().read(path.join(sessionPath, 'state.json'));
+    return { active: state.active, working_dir: state.working_dir };
   } catch {
     return null;
   }

@@ -475,8 +475,8 @@ function sameWorkingDir(a, b) {
 }
 function readSessionLookupState(sessionPath) {
     try {
-        const raw = fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8');
-        return JSON.parse(raw);
+        const state = new StateManager().read(path.join(sessionPath, 'state.json'));
+        return { active: state.active, working_dir: state.working_dir };
     }
     catch {
         return null;

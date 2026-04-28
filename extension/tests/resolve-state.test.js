@@ -163,6 +163,39 @@ test('resolveStateFile: stale mapped inactive session falls back to the live act
   }
 });
 
+test('resolveStateFile: mapped dead-pid active session falls back to the live active state for the cwd', () => {
+  const tmp = tmpDir();
+  try {
+    const staleSessionDir = path.join(tmp, 'sessions', 'stale-session');
+    const liveSessionDir = path.join(tmp, 'sessions', 'live-session');
+    fs.mkdirSync(staleSessionDir, { recursive: true });
+    fs.mkdirSync(liveSessionDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(staleSessionDir, 'state.json'),
+      JSON.stringify(baseState({ active: true, pid: 99999999, session_dir: staleSessionDir })),
+    );
+    const liveStateFile = path.join(liveSessionDir, 'state.json');
+    fs.writeFileSync(
+      liveStateFile,
+      JSON.stringify(baseState({ active: true, session_dir: liveSessionDir })),
+    );
+    fs.writeFileSync(
+      path.join(tmp, 'current_sessions.json'),
+      JSON.stringify({ [process.cwd()]: staleSessionDir }),
+    );
+
+    const orig = process.env.PICKLE_STATE_FILE;
+    delete process.env.PICKLE_STATE_FILE;
+    try {
+      assert.equal(resolveStateFile(tmp), liveStateFile);
+    } finally {
+      if (orig !== undefined) process.env.PICKLE_STATE_FILE = orig;
+    }
+  } finally {
+    fs.rmSync(tmp, { recursive: true });
+  }
+});
+
 test('resolveStateFile: returns null when sessions map is corrupt JSON', () => {
   const tmp = tmpDir();
   try {
@@ -279,6 +312,20 @@ test('loadActiveState: returns null when session is inactive', () => {
     const state = baseState({ active: false });
     fs.writeFileSync(stateFile, JSON.stringify(state));
     assert.equal(loadActiveState(stateFile), null);
+  } finally {
+    fs.rmSync(tmp, { recursive: true });
+  }
+});
+
+test('loadActiveState: returns null when active session belongs to a dead pid', () => {
+  const tmp = tmpDir();
+  try {
+    const stateFile = path.join(tmp, 'state.json');
+    const state = baseState({ active: true, pid: 99999999 });
+    fs.writeFileSync(stateFile, JSON.stringify(state));
+    assert.equal(loadActiveState(stateFile), null);
+    const persisted = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    assert.equal(persisted.active, false, 'dead-pid recovery should persist active=false');
   } finally {
     fs.rmSync(tmp, { recursive: true });
   }
