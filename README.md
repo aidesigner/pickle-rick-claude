@@ -334,7 +334,7 @@ Queue tasks for unattended batch execution overnight.
 | `/szechuan-sauce [target]` † | Principle-driven deslopping. `--dry-run`, `--focus`, `--domain` |
 | `/anatomy-park` † | Three-phase deep subsystem review with trap door cataloging |
 | `/pickle-pipeline "task"` † | Full lifecycle: pickle-tmux → anatomy-park → szechuan-sauce in one tmux session |
-| `/cronenberg "task"` | Meta-router — deterministic decision matrix picks the right metaphor + cleanup chain. Executes by default; `--dry-run` to preview only. Forwards all non-cronenberg flags through |
+| `/cronenberg "task"` | Meta-router — deterministic decision matrix picks the right metaphor + cleanup chain, and decides whether to run `/pickle-refine-prd` first based on PRD shape signals. Executes by default; `--dry-run` to preview only. Forwards all non-cronenberg flags through |
 | `/plumbus <file.dot>` | Iterative DAG shaping on a single `.dot` file. `--dry-run`, `--focus`, `--no-validator` |
 | `/council-of-ricks` | Graphite PR stack review — szechuan principles + anatomy data-flow tracing + Codex adversarial challenge. Directives only, never fixes code. `--no-codex` to disable, `--gitnexus` for graph queries |
 | `/portal-gun <source>` | Gene transfusion from another codebase |
@@ -412,6 +412,8 @@ Most flags are command-scoped. The table groups them by command family — flags
 | `--no-publish` | `/council-of-ricks` | Skip auto-publishing PR comments at session end |
 | `--dry-run` | `/cronenberg` | Print the chosen plan and stop (default: execute) |
 | `--no-followups` | `/cronenberg` | Skip the cleanup chain regardless of signals |
+| `--no-refine` | `/cronenberg` | Force-skip the refinement pre-pass even when signals say it should run |
+| `--refine` | `/cronenberg` | Force-include the refinement pre-pass even when signals would skip it |
 
 ### Tips
 
@@ -711,7 +713,9 @@ Followups are skipped automatically when the chosen metaphor is `/pickle-pipelin
 
 **Tmux-detach safety:** `/pickle-tmux`, `/pickle-pipeline`, `/pickle-microverse`, and `/council-of-ricks` launch detached tmux sessions and return immediately. Cronenberg will **not** auto-chain followups onto these — they would race the in-progress build. Instead, when cronenberg routes to a tmux-launching metaphor, it launches the build and prints the followup commands ready to copy-paste once the session finishes.
 
-**Flag pass-through:** Only `--dry-run` and `--no-followups` are cronenberg-only. Everything else (`--backend codex`, `--refine`, `--scope branch`, `--max-iterations`, `--target`, `--interactive`, …) passes through verbatim to the chosen metaphor and applicable followups.
+**Flag pass-through:** `--dry-run`, `--no-followups`, `--no-refine`, and `--refine` are cronenberg-only (the latter two control the refinement decision). Everything else (`--backend codex`, `--scope branch`, `--max-iterations`, `--target`, `--interactive`, …) passes through verbatim to the chosen metaphor and applicable followups.
+
+**Refine decision:** Cronenberg analyzes whether to run `/pickle-refine-prd` *before* the build, instead of defaulting to skip. Refinement runs when there's a PRD that hasn't been refined yet AND any of: ≥3 inferred tickets, ≥2 subsystems touched, multi-stage TASK, AC-shape smell (endpoint-enumerated AC bullets), or machine-uncheckable AC prose. Refinement is skipped when there's no PRD, when `prd_refined.md` already exists, when single-file scope, or when `/pickle-pipeline` is the chosen metaphor (it chains refinement internally). The plan output prints the trigger reason so you know why cronenberg made its call.
 
 | | **Cronenberg** | **Persona Routing** |
 |---|---|---|
