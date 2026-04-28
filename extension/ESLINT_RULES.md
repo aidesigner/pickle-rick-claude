@@ -135,15 +135,17 @@ The extension path is `~/.claude/pickle-rick/`. An early version of the project 
 
 ### Violation
 ```js
-const dir = `${os.homedir()}/.gemini/pickle-rick/sessions`;
+const personaPath = `${os.homedir()}/.gemini/pickle-rick/persona.md`;
 const cfgPath = '~/.gemini/pickle-rick/pickle_settings.json';
 ```
 
 ### Fix
 ```js
-const dir = `${os.homedir()}/.claude/pickle-rick/sessions`;
+const personaPath = `${os.homedir()}/.claude/pickle-rick/persona.md`;
 const cfgPath = '~/.claude/pickle-rick/pickle_settings.json';
 ```
+
+> Note: this rule covers deployed extension files (`~/.claude/pickle-rick/`). Runtime data — sessions, activity, jar queue, worktrees — lives at `~/.local/share/pickle-rick/` (XDG data dir, see `getDataRoot()` in `pickle-utils.ts`).
 
 ---
 
@@ -160,7 +162,7 @@ Deployed files are managed exclusively by `install.sh`. Editing them directly br
 ### Violation
 ```js
 fs.writeFileSync('~/.claude/pickle-rick/pickle_settings.json', JSON.stringify(settings));
-fs.unlinkSync(`${homeDir}/.claude/pickle-rick/sessions/${id}/state.json`);
+fs.appendFileSync(`${homeDir}/.claude/pickle-rick/persona.md`, '\nextra rule\n');
 ```
 
 ### Fix

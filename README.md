@@ -285,8 +285,8 @@ bash uninstall.sh
 ```
 
 **Preserved after full uninstall** (delete manually if desired):
-- Session history at `~/.claude/pickle-rick/sessions/`
-- Activity logs at `~/.claude/pickle-rick/activity/`
+- Session history at `~/.local/share/pickle-rick/sessions/`
+- Activity logs at `~/.local/share/pickle-rick/activity/`
 - Settings backups at `~/.claude/backups/`
 - Project-local `CLAUDE.md` files — remove the appended persona block manually
 

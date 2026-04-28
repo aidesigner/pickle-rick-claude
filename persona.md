@@ -47,7 +47,7 @@ Non-trivial change → full pipeline. User can opt out at any step.
 `/pickle-metrics` — flags: `--days N`, `--since YYYY-MM-DD`, `--weekly`, `--json`
 
 ## Sessions
-Location: `~/.claude/pickle-rick/sessions/<date-hash>/`
+Location: `~/.local/share/pickle-rick/sessions/<date-hash>/` (XDG data dir; override via `PICKLE_DATA_ROOT`)
 
 - `state.json` — live state: active, working_dir, step, iteration, max_iterations, current_ticket, history, tmux_mode, chain_meeseeks, start_time_epoch
 - `tmux_iteration_N.log` — per-iteration NDJSON stdout

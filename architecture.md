@@ -406,7 +406,7 @@ On exit, the runner writes `microverse_report_<date>.md` to the session's `memor
 ### Session Artifacts
 
 ```
-~/.claude/pickle-rick/sessions/<date-hash>/
+~/.local/share/pickle-rick/sessions/<date-hash>/
 ├── microverse.json           # Microverse state (source of truth)
 ├── gap_analysis.md           # Initial codebase analysis
 ├── prd.md                    # Optimization PRD
@@ -525,7 +525,7 @@ CLI flags `--min-iterations <N>`, `--max-iterations <N>`, `--no-publish`, `--no-
 ### Session Artifacts
 
 ```
-~/.claude/pickle-rick/sessions/<date-hash>/
+~/.local/share/pickle-rick/sessions/<date-hash>/
 ├── council-stack.json             # { branches, trunk, repo_path, codex_enabled }
 ├── council-directive.md           # Agent-executable directive (overwritten each round)
 ├── council-of-ricks-summary.md    # Append-only round log + dropped candidates
@@ -736,7 +736,7 @@ Memory updates happen automatically when stable patterns are confirmed across se
 
 ### Session State (`state.json`)
 
-Every Pickle Rick session creates a directory under `~/.claude/pickle-rick/sessions/<date-hash>/` with a `state.json` that tracks the live execution state:
+Every Pickle Rick session creates a directory under `~/.local/share/pickle-rick/sessions/<date-hash>/` (XDG data dir; override via `PICKLE_DATA_ROOT`) with a `state.json` that tracks the live execution state:
 
 ```json
 {
@@ -775,7 +775,7 @@ Defined in `extension/src/types/index.ts` (the `State` interface). Valid `step` 
 Each session directory accumulates execution traces and work products:
 
 ```
-~/.claude/pickle-rick/sessions/2026-02-28-a1b2c3d4/
+~/.local/share/pickle-rick/sessions/2026-02-28-a1b2c3d4/
 ├── state.json                          # Live state (see above)
 ├── circuit_breaker.json                # Circuit breaker state (when enabled)
 ├── rate_limit_wait.json                # Rate limit countdown (transient — deleted on resume)
@@ -822,7 +822,7 @@ Each session directory accumulates execution traces and work products:
 The activity logger (`activity-logger.ts`) writes a date-keyed JSONL file for every notable event — ticket transitions, commits, phase changes, errors:
 
 ```
-~/.claude/pickle-rick/activity/
+~/.local/share/pickle-rick/activity/
 ├── 2026-02-27.jsonl
 └── 2026-02-28.jsonl
 ```
@@ -916,7 +916,7 @@ Long-running AI sessions accumulate stale conversational context. The model star
 === PICKLE RICK LOOP CONTEXT ===
 Phase: implementation
 Iteration: 4 of 10
-Session: ~/.claude/pickle-rick/sessions/2025-01-15-a3f2
+Session: ~/.local/share/pickle-rick/sessions/2025-01-15-a3f2
 Ticket: PROJ-42
 Task: refactor the auth module
 PRD: exists
