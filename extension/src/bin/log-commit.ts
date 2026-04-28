@@ -1,21 +1,43 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { logActivity } from '../services/activity-logger.js';
-import { getDataRoot } from '../services/pickle-utils.js';
+import { getDataRoot, resolveSessionPath } from '../services/pickle-utils.js';
 
 const COMMIT_CMD_RE = /\bgit\s+(commit|cherry-pick|merge|rebase)\b/;
 const COMMIT_HASH_RE = /\[[^\]]*\s+([a-f0-9]{7,})\]\s+(.+)/;
 
+function sameWorkingDir(a: unknown, b: string): boolean {
+  return typeof a === 'string' && path.resolve(a) === path.resolve(b);
+}
+
 function findActiveSession(): string | null {
   try {
-    const sessionsDir = path.join(getDataRoot(), 'sessions');
+    const dataRoot = getDataRoot();
+    const cwd = process.cwd();
+    const sessionsMapPath = path.join(dataRoot, 'current_sessions.json');
+    if (fs.existsSync(sessionsMapPath)) {
+      try {
+        const map = JSON.parse(fs.readFileSync(sessionsMapPath, 'utf-8'));
+        const sessionPath = resolveSessionPath(map[cwd]);
+        if (sessionPath) {
+          const raw = fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8');
+          const state = JSON.parse(raw);
+          if (state.active === true && sameWorkingDir(state.working_dir, cwd)) {
+            return path.basename(sessionPath);
+          }
+        }
+      } catch {
+      }
+    }
+
+    const sessionsDir = path.join(dataRoot, 'sessions');
     const entries = fs.readdirSync(sessionsDir);
     for (const entry of entries) {
       const statePath = path.join(sessionsDir, entry, 'state.json');
       try {
         const raw = fs.readFileSync(statePath, 'utf-8');
         const state = JSON.parse(raw);
-        if (state.active === true) return entry;
+        if (state.active === true && sameWorkingDir(state.working_dir, cwd)) return entry;
       } catch {
       }
     }

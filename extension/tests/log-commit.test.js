@@ -173,6 +173,41 @@ test('log-commit: piped command with git commit detected', () => {
   assert.equal(events[0].commit_hash, 'abcdef0');
 });
 
+test('log-commit: resolves the session mapped to the current cwd when multiple sessions are active', () => {
+  const currentCwd = process.cwd();
+  const { events } = runHook(
+    commitInput(
+      'git commit -m "fix: scoped attribution"',
+      '[main 7654321] fix: scoped attribution\n 1 file changed'
+    ),
+    {},
+    (dataRoot) => {
+      const sessionsDir = path.join(dataRoot, 'sessions');
+      const otherSession = path.join(sessionsDir, 'aaa-other');
+      const currentSession = path.join(sessionsDir, 'zzz-current');
+      fs.mkdirSync(otherSession, { recursive: true });
+      fs.mkdirSync(currentSession, { recursive: true });
+
+      fs.writeFileSync(
+        path.join(otherSession, 'state.json'),
+        JSON.stringify({ active: true, working_dir: '/tmp/not-this-repo' })
+      );
+      fs.writeFileSync(
+        path.join(currentSession, 'state.json'),
+        JSON.stringify({ active: true, working_dir: currentCwd })
+      );
+      fs.writeFileSync(
+        path.join(dataRoot, 'current_sessions.json'),
+        JSON.stringify({ [currentCwd]: currentSession })
+      );
+    }
+  );
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].session, 'zzz-current');
+  assert.equal(events[0].commit_hash, '7654321');
+});
+
 // ---------------------------------------------------------------------------
 // Zero stdout verification
 // ---------------------------------------------------------------------------
@@ -304,7 +339,10 @@ test('log-commit: commit during active session includes session field', () => {
     (extRoot) => {
       const sessionDir = path.join(extRoot, 'sessions', sessionId);
       fs.mkdirSync(sessionDir, { recursive: true });
-      fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({ active: true }));
+      fs.writeFileSync(
+        path.join(sessionDir, 'state.json'),
+        JSON.stringify({ active: true, working_dir: process.cwd() })
+      );
     }
   );
   assert.equal(events.length, 1);
