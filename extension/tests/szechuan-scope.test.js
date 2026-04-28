@@ -110,6 +110,31 @@ describe('szechuan scope injection', () => {
     }
   });
 
+  test('resume: persisted scope.json promotes newer dead tmp before injecting allowed_paths', () => {
+    const dir = makeTempDir();
+    try {
+      const scopePath = path.join(dir, 'scope.json');
+      fs.writeFileSync(
+        scopePath,
+        JSON.stringify({ allowed_paths: ['src/stale.ts'], mode: 'diff', strategy: 'strict', head_sha: 'old' }),
+      );
+      fs.writeFileSync(
+        `${scopePath}.tmp.99999999`,
+        JSON.stringify({ allowed_paths: ['src/live.ts'], mode: 'diff', strategy: 'strict', head_sha: 'new' }),
+      );
+      fs.utimesSync(`${scopePath}.tmp.99999999`, new Date(Date.now() + 1_000), new Date(Date.now() + 1_000));
+
+      const ok = setupSzechuanSauce(dir, '/some/target', 5, EXTENSION_ROOT, undefined, undefined, () => {});
+      assert.equal(ok, true, 'setup should succeed');
+
+      const state = readMicroverse(dir);
+      assert.deepStrictEqual(state.allowed_paths, ['src/live.ts']);
+      assert.equal(fs.existsSync(`${scopePath}.tmp.99999999`), false);
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
   // ---------------------------------------------------------------------------
   // Override 3 marker: scope-hook present in szechuan-sauce.md
   // ---------------------------------------------------------------------------

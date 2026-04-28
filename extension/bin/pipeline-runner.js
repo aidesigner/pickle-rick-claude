@@ -22,6 +22,7 @@ import { backendEnvOverrides, isBackend } from '../services/backend-spawn.js';
 import { getExtensionRoot, Style, formatTime, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, displayMacNotification, } from '../services/pickle-utils.js';
 import { isWorkingTreeDirty } from '../services/git-utils.js';
 import { logActivity } from '../services/activity-logger.js';
+import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { resolveScope, refreshScope, filterBySubsystem, ScopeError, } from '../services/scope-resolver.js';
 const sm = new StateManager();
 const DEFAULT_IGNORE_DIRTY_PATHS = ['prds', 'docs'];
@@ -389,7 +390,9 @@ function readPersistedAllowedPaths(sessionDir) {
     if (!fs.existsSync(scopePath))
         return undefined;
     try {
-        const raw = JSON.parse(fs.readFileSync(scopePath, 'utf-8'));
+        const raw = readRecoverableJsonObject(scopePath);
+        if (!raw)
+            return undefined;
         const field = raw.allowed_paths;
         if (!Array.isArray(field) || field.length === 0 || !field.every((value) => typeof value === 'string')) {
             return undefined;

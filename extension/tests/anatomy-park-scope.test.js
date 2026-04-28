@@ -179,6 +179,37 @@ test('resume: persisted scope.json still filters anatomy-park when refreshScope 
   }
 });
 
+test('resume: persisted scope.json promotes newer dead tmp before filtering anatomy-park', () => {
+  const session = makeSession();
+  const target = makeTarget();
+  try {
+    makeSubsystem(target, 'alpha');
+    makeSubsystem(target, 'beta');
+    writeState(session, target);
+    const scopePath = path.join(session, 'scope.json');
+    fs.writeFileSync(
+      scopePath,
+      JSON.stringify({ allowed_paths: ['beta/f0.ts'], mode: 'branch', strategy: 'strict', head_sha: 'old' }),
+    );
+    fs.writeFileSync(
+      `${scopePath}.tmp.99999999`,
+      JSON.stringify({ allowed_paths: ['alpha/f0.ts'], mode: 'branch', strategy: 'strict', head_sha: 'new' }),
+    );
+    fs.utimesSync(`${scopePath}.tmp.99999999`, new Date(Date.now() + 1_000), new Date(Date.now() + 1_000));
+
+    setupAnatomyPark(session, target, 3, EXTENSION_ROOT, () => {});
+
+    const ap = readAnatomyPark(session);
+    const mv = readMicroverse(session);
+    assert.deepStrictEqual(ap.subsystems, ['alpha']);
+    assert.deepStrictEqual(mv.allowed_paths, ['alpha/f0.ts']);
+    assert.equal(fs.existsSync(`${scopePath}.tmp.99999999`), false);
+  } finally {
+    fs.rmSync(session, { recursive: true, force: true });
+    fs.rmSync(target, { recursive: true, force: true });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Standalone mode parity: filterBySubsystem with same fixture → same result
 // ---------------------------------------------------------------------------

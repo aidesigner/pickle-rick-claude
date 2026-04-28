@@ -33,6 +33,7 @@ import {
 } from '../services/pickle-utils.js';
 import { isWorkingTreeDirty } from '../services/git-utils.js';
 import { logActivity } from '../services/activity-logger.js';
+import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import {
   resolveScope,
   refreshScope,
@@ -487,7 +488,8 @@ function readPersistedAllowedPaths(sessionDir: string): string[] | undefined {
   const scopePath = path.join(sessionDir, 'scope.json');
   if (!fs.existsSync(scopePath)) return undefined;
   try {
-    const raw = JSON.parse(fs.readFileSync(scopePath, 'utf-8')) as Record<string, unknown>;
+    const raw = readRecoverableJsonObject(scopePath) as Record<string, unknown> | null;
+    if (!raw) return undefined;
     const field = raw.allowed_paths;
     if (!Array.isArray(field) || field.length === 0 || !field.every((value) => typeof value === 'string')) {
       return undefined;
