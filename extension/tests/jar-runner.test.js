@@ -552,6 +552,68 @@ test('jar-runner: SIGTERM shutdown preserves a newer orphan tmp session payload'
     }
 });
 
+test('jar-runner: recovers a newer orphan tmp state before bootstrapping a jarred task', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const taskId = 'task-bootstrap-recovery';
+        const taskDir = path.join(tmpRoot, 'jar', '2026-01-01', taskId);
+        fs.mkdirSync(taskDir, { recursive: true });
+        const metaPath = path.join(taskDir, 'meta.json');
+        fs.writeFileSync(path.join(taskDir, 'meta.json'), JSON.stringify({
+            status: 'marinating',
+            repo_path: tmpRoot,
+        }, null, 2));
+
+        const sessionDir = path.join(tmpRoot, 'sessions', taskId);
+        fs.mkdirSync(sessionDir, { recursive: true });
+        const statePath = path.join(sessionDir, 'state.json');
+        fs.writeFileSync(statePath, '{broken json');
+        const orphanTmpPath = `${statePath}.tmp.99999999`;
+        fs.writeFileSync(orphanTmpPath, JSON.stringify({
+            schema_version: 1,
+            active: false,
+            backend: 'claude',
+            working_dir: tmpRoot,
+            session_dir: sessionDir,
+            step: 'implement',
+            iteration: 7,
+            max_iterations: 10,
+            worker_timeout_seconds: 1,
+            current_ticket: 'T-RECOVERED',
+            original_prompt: 'Recovered jar task state',
+        }, null, 2));
+
+        const fakeBin = path.join(tmpRoot, 'fake-bin');
+        fs.mkdirSync(fakeBin, { recursive: true });
+        const fakeClaude = path.join(fakeBin, 'claude');
+        fs.writeFileSync(fakeClaude, '#!/bin/sh\nexit 0\n');
+        fs.chmodSync(fakeClaude, 0o755);
+
+        const result = spawnSync(process.execPath, [JAR_RUNNER_BIN], {
+            env: { ...process.env, EXTENSION_DIR: tmpRoot, PATH: fakeBin },
+            encoding: 'utf-8',
+            timeout: 30000,
+        });
+
+        const combined = `${result.stdout}\n${result.stderr}`;
+        assert.equal(result.status, 0, `expected clean exit, got output:\n${combined}`);
+        assert.match(combined, new RegExp(`Task ${taskId} complete`), `expected recovered task to complete, got output:\n${combined}`);
+        assert.doesNotMatch(combined, /Failed to read state\.json/, `bootstrap should recover the orphan tmp before task load, got output:\n${combined}`);
+
+        const updatedMeta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+        assert.equal(updatedMeta.status, 'consumed', 'recovered task should be marked consumed after successful run');
+
+        const finalState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(finalState.active, false, 'completed task should be deactivated');
+        assert.equal(finalState.iteration, 7, 'recovered tmp state should be promoted before task activation');
+        assert.equal(finalState.current_ticket, 'T-RECOVERED');
+        assert.equal(finalState.original_prompt, 'Recovered jar task state');
+        assert.equal(fs.existsSync(orphanTmpPath), false, 'recovered tmp should be consumed during task bootstrap');
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
 // --- Notification logic (buildJarNotification) ---
 
 import { buildJarNotification, loadJarTaskTimeout } from '../bin/jar-runner.js';

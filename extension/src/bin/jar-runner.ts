@@ -62,8 +62,7 @@ async function runTask(sessionDir: string, repoCwd: string, extensionRoot: strin
 
   let state: State;
   try {
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    state = JSON.parse(fs.readFileSync(statePath, 'utf-8')) as State;
+    state = sm.read(statePath);
   } catch (err) {
     const msg = safeErrorMessage(err);
     throw new Error(`Failed to read state.json for ${path.basename(sessionDir)}: ${msg}`);
