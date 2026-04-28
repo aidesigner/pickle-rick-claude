@@ -48,6 +48,7 @@ const sm = new StateManager();
 // ---------------------------------------------------------------------------
 
 type PipelinePhase = 'pickle' | 'anatomy-park' | 'szechuan-sauce';
+export type PhaseName = PipelinePhase;
 
 interface PipelineConfig {
   phases: PipelinePhase[];
@@ -73,6 +74,33 @@ interface PipelineStatus {
   skipped_phases: number;
   total_phases: number;
   updated_at: string;
+}
+
+export interface SetupArgs {
+  sessionDir: string;
+  target: string;
+  workingDir: string;
+  extensionRoot: string;
+  log: (msg: string) => void;
+  scope?: ScopeJson;
+}
+
+export type PhaseConfig = {
+  name: PhaseName;
+  prevPhase: 'pickle' | 'anatomy-park' | null;
+  runnerScript: 'mux-runner.js' | 'microverse-runner.js';
+  setup: null | ((args: SetupArgs) => boolean);
+  setupExtraArgs?: { domain?: string; focus?: string };
+  refreshScope: boolean;
+  throwOnEmptyScope: boolean;
+  preSpawnStateMutation: null | ((s: State) => void);
+};
+
+export type SpawnRunnerFn = (cmd: string, args: string[], env?: NodeJS.ProcessEnv) => Promise<number>;
+
+interface PhaseRunnerContext {
+  sessionDir: string;
+  extensionRoot: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -224,6 +252,8 @@ export function assertCleanWorkingTree(workingDir: string, ignoreDirtyPaths?: st
 // ---------------------------------------------------------------------------
 
 let activeChild: ChildProcess | null = null;
+let spawnRunnerOverride: SpawnRunnerFn | null = null;
+let phaseRunnerContext: PhaseRunnerContext | null = null;
 
 function spawnRunner(cmd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -233,6 +263,14 @@ function spawnRunner(cmd: string, args: string[], env?: NodeJS.ProcessEnv): Prom
     child.on('exit', (code) => { if (!settled) { settled = true; activeChild = null; resolve(code ?? 1); } });
     child.on('error', (err) => { if (!settled) { settled = true; activeChild = null; reject(err); } });
   });
+}
+
+function runSpawnRunner(cmd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<number> {
+  return (spawnRunnerOverride ?? spawnRunner)(cmd, args, env);
+}
+
+export function __setSpawnRunnerForTests(fn: SpawnRunnerFn | null): void {
+  spawnRunnerOverride = fn;
 }
 
 export function writePipelineStatus(
@@ -399,23 +437,23 @@ export function setupScope(args: SetupScopeArgs): ScopeJson | null {
  */
 export function writeSkippedByScope(
   sessionDir: string,
-  phase: string,
+  scopePhase: string,
   scope: ScopeJson,
   target: string,
   workingDir: string,
 ): void {
   const archiveDir = path.join(sessionDir, 'archive');
   fs.mkdirSync(archiveDir, { recursive: true });
-  const outPath = path.join(archiveDir, `skipped_by_scope.${phase}.json`);
+  const outPath = path.join(archiveDir, `skipped_by_scope.${scopePhase}.json`);
 
   let payload: Record<string, unknown>;
-  if (phase === 'anatomy-park') {
+  if (scopePhase === 'anatomy-park') {
     const discovered = discoverSubsystems(target).map((s) => s.name);
     const kept = filterBySubsystem(discovered, scope.allowed_paths, target, workingDir);
     const keptSet = new Set(kept);
     const skipped = discovered.filter((n) => !keptSet.has(n));
     payload = {
-      phase,
+      phase: scopePhase,
       head_sha: scope.head_sha,
       allowed_paths: scope.allowed_paths,
       subsystems_discovered: discovered,
@@ -424,7 +462,7 @@ export function writeSkippedByScope(
     };
   } else {
     payload = {
-      phase,
+      phase: scopePhase,
       head_sha: scope.head_sha,
       allowed_paths: scope.allowed_paths,
     };
@@ -745,6 +783,184 @@ export function setupSzechuanSauce(
 }
 
 // ---------------------------------------------------------------------------
+// Phase Dispatch
+// ---------------------------------------------------------------------------
+
+interface PipelineRuntime {
+  sessionDir: string;
+  extensionRoot: string;
+  statePath: string;
+  config: PipelineConfig;
+  target: string;
+  workingDir: string;
+  backend: Backend;
+  phaseEnv: NodeJS.ProcessEnv;
+  log: (msg: string) => void;
+}
+
+interface PhaseCounters {
+  completed: number;
+  skipped: number;
+}
+
+const PHASE_NAMES: readonly PhaseName[] = ['pickle', 'anatomy-park', 'szechuan-sauce'];
+
+function isPhaseName(phase: unknown): phase is PhaseName {
+  return typeof phase === 'string' && (PHASE_NAMES as readonly string[]).includes(phase);
+}
+
+export function setupPhase(phase: PhaseName, config: PipelineConfig): PhaseConfig {
+  const phaseConfigs: Record<PhaseName, PhaseConfig> = {
+    pickle: {
+      name: 'pickle',
+      prevPhase: null,
+      runnerScript: 'mux-runner.js',
+      setup: null,
+      refreshScope: false,
+      throwOnEmptyScope: false,
+      preSpawnStateMutation: (s) => { s.chain_meeseeks = false; },
+    },
+    'anatomy-park': {
+      name: 'anatomy-park',
+      prevPhase: 'pickle',
+      runnerScript: 'microverse-runner.js',
+      setup: (args) => setupAnatomyPark(
+        args.sessionDir,
+        args.target,
+        config.anatomy_stall_limit,
+        args.extensionRoot,
+        args.log,
+        args.scope ? { allowedPaths: args.scope.allowed_paths, repoRoot: args.workingDir } : undefined,
+      ),
+      refreshScope: true,
+      throwOnEmptyScope: true,
+      preSpawnStateMutation: null,
+    },
+    'szechuan-sauce': {
+      name: 'szechuan-sauce',
+      prevPhase: 'anatomy-park',
+      runnerScript: 'microverse-runner.js',
+      setup: (args) => setupSzechuanSauce(
+        args.sessionDir,
+        args.target,
+        config.szechuan_stall_limit,
+        args.extensionRoot,
+        config.szechuan_domain,
+        config.szechuan_focus,
+        args.log,
+        args.scope ? { allowedPaths: args.scope.allowed_paths } : undefined,
+      ),
+      setupExtraArgs: { domain: config.szechuan_domain, focus: config.szechuan_focus },
+      refreshScope: true,
+      throwOnEmptyScope: false,
+      preSpawnStateMutation: null,
+    },
+  };
+  return phaseConfigs[phase];
+}
+
+export async function executePhaseRunner(
+  phaseConfig: PhaseConfig,
+  env: NodeJS.ProcessEnv,
+): Promise<{ exitCode: number }> {
+  if (!phaseRunnerContext) throw new Error('phase runner context not initialized');
+  const exitCode = await runSpawnRunner('node', [
+    path.join(phaseRunnerContext.extensionRoot, 'extension', 'bin', phaseConfig.runnerScript),
+    phaseRunnerContext.sessionDir,
+  ], env);
+  return { exitCode };
+}
+
+export async function postPhaseCleanup(phase: PhaseName, sessionDir: string): Promise<void> {
+  const prevPhaseByPhase: Record<PhaseName, PhaseConfig['prevPhase']> = {
+    pickle: null,
+    'anatomy-park': 'pickle',
+    'szechuan-sauce': 'anatomy-park',
+  };
+  const prevPhase = prevPhaseByPhase[phase];
+  if (prevPhase) cleanPhaseArtifacts(sessionDir, prevPhase);
+}
+
+function restampBackendIfNeeded(statePath: string, backend: Backend): void {
+  const cur = sm.read(statePath);
+  if (cur.backend !== backend) sm.update(statePath, s => { s.backend = backend; });
+}
+
+function preparePhaseState(phaseConfig: PhaseConfig, runtime: PipelineRuntime): void {
+  const resetByPhase: Partial<Record<PhaseName, { template: string; maxIterations: number }>> = {
+    'anatomy-park': {
+      template: 'anatomy-park.md',
+      maxIterations: runtime.config.anatomy_max_iterations,
+    },
+    'szechuan-sauce': {
+      template: 'szechuan-sauce.md',
+      maxIterations: runtime.config.szechuan_max_iterations,
+    },
+  };
+  const reset = resetByPhase[phaseConfig.name];
+  if (phaseConfig.name === 'pickle') {
+    enterPicklePhase(runtime.sessionDir, runtime.statePath, runtime.backend);
+  } else if (reset) {
+    resetStateForPhase(runtime.statePath, reset.template, reset.maxIterations);
+    restampBackendIfNeeded(runtime.statePath, runtime.backend);
+  }
+  if (phaseConfig.preSpawnStateMutation) {
+    sm.update(runtime.statePath, phaseConfig.preSpawnStateMutation);
+  }
+}
+
+function refreshPhaseScope(
+  phaseConfig: PhaseConfig,
+  runtime: PipelineRuntime,
+  counters: PhaseCounters,
+): ScopeJson | undefined {
+  if (!phaseConfig.refreshScope) return undefined;
+  try {
+    const refreshed = refreshScope(runtime.sessionDir, phaseConfig.name, {
+      repoRoot: runtime.workingDir,
+      target: runtime.target,
+      log: runtime.log,
+    });
+    if (refreshed) {
+      writeSkippedByScope(runtime.sessionDir, phaseConfig.name, refreshed, runtime.target, runtime.workingDir);
+    }
+    return refreshed ?? undefined;
+  } catch (err) {
+    if (phaseConfig.throwOnEmptyScope && err instanceof Error && err instanceof ScopeError && err.code === 'SCOPE_EMPTY_POST_BUILD') {
+      runtime.log(`SCOPE_EMPTY_POST_BUILD at ${phaseConfig.name} — ${err.message}`);
+      writePipelineStatus(runtime.sessionDir, 'failed', {
+        current_phase: phaseConfig.name,
+        completed_phases: counters.completed,
+        skipped_phases: counters.skipped,
+        total_phases: runtime.config.phases.length,
+      });
+      throw err;
+    }
+    throw err;
+  }
+}
+
+async function runConfiguredPhase(
+  runtime: PipelineRuntime,
+  phaseConfig: PhaseConfig,
+  counters: PhaseCounters,
+): Promise<{ skipped: boolean; exitCode: number | null }> {
+  await postPhaseCleanup(phaseConfig.name, runtime.sessionDir);
+  preparePhaseState(phaseConfig, runtime);
+  const scope = refreshPhaseScope(phaseConfig, runtime, counters);
+  const setupOk = phaseConfig.setup ? phaseConfig.setup({
+    sessionDir: runtime.sessionDir,
+    target: runtime.target,
+    workingDir: runtime.workingDir,
+    extensionRoot: runtime.extensionRoot,
+    log: runtime.log,
+    scope,
+  }) : true;
+  if (!setupOk) return { skipped: true, exitCode: null };
+  return { skipped: false, exitCode: (await executePhaseRunner(phaseConfig, runtime.phaseEnv)).exitCode };
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -753,19 +969,19 @@ export interface MainOpts {
   scopeBase?: string;
 }
 
-export async function main(sessionDir: string, opts: MainOpts = {}): Promise<void> {
-  const extensionRoot = getExtensionRoot();
-  const statePath = path.join(sessionDir, 'state.json');
-  const pipelinePath = path.join(sessionDir, 'pipeline.json');
+function createPipelineLog(sessionDir: string): (msg: string) => void {
   const runnerLog = path.join(sessionDir, 'pipeline-runner.log');
-
-  const log = (msg: string) => {
+  return (msg: string) => {
     const line = `[${new Date().toISOString()}] ${msg}\n`;
     fs.appendFileSync(runnerLog, line);
     process.stderr.write(line);
   };
+}
 
-  log('pipeline-runner started');
+function loadPipelineRuntime(sessionDir: string, opts: MainOpts, log: (msg: string) => void): PipelineRuntime {
+  const extensionRoot = getExtensionRoot();
+  const statePath = path.join(sessionDir, 'state.json');
+  const pipelinePath = path.join(sessionDir, 'pipeline.json');
 
   // Auto-spawn the 4-pane monitor window. Matches mux-runner behaviour —
   // skill prompts no longer need a manual tmux-monitor.sh step.
@@ -779,7 +995,6 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
   let config: PipelineConfig;
   let pipelineRaw: Record<string, unknown>;
   try {
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     pipelineRaw = JSON.parse(fs.readFileSync(pipelinePath, 'utf-8'));
     config = parsePipelineConfig(pipelineRaw);
   } catch (err) {
@@ -787,7 +1002,6 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
   }
 
   // Validate state.json exists
-  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   if (!fs.existsSync(statePath)) {
     throw new Error('state.json not found — run setup.js first');
   }
@@ -835,247 +1049,168 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
     });
   }
 
-  const startTime = Date.now();
-  let completedPhases = 0;
-  let skippedPhases = 0;
+  return {
+    sessionDir,
+    extensionRoot,
+    statePath,
+    config,
+    target: config.target || workingDir,
+    workingDir,
+    backend,
+    phaseEnv,
+    log,
+  };
+}
 
-  const cancelMarker = path.join(sessionDir, 'pipeline-cancel');
-
-  // Graceful shutdown — write cancel marker, kill the child runner (which
-  // handles its own state cleanup), then exit. We do NOT write state.json
-  // here to avoid a race where both the child and ours clobber the file.
+function installShutdownHandlers(runtime: PipelineRuntime, counters: PhaseCounters, cancelMarker: string): () => void {
   const handleShutdown = (signal: string) => {
-    log(`Received ${signal} — shutting down pipeline`);
+    runtime.log(`Received ${signal} — shutting down pipeline`);
     try { fs.writeFileSync(cancelMarker, signal); } catch { /* best effort */ }
     try {
-      writePipelineStatus(sessionDir, 'cancelled', {
+      writePipelineStatus(runtime.sessionDir, 'cancelled', {
         current_phase: null,
-        completed_phases: completedPhases,
-        skipped_phases: skippedPhases,
-        total_phases: config.phases.length,
+        completed_phases: counters.completed,
+        skipped_phases: counters.skipped,
+        total_phases: runtime.config.phases.length,
       });
     } catch { /* best effort */ }
     if (activeChild && !activeChild.killed) activeChild.kill('SIGTERM');
-    logActivity({ event: 'session_end', source: 'pickle', session: path.basename(sessionDir), mode: 'tmux' });
+    logActivity({ event: 'session_end', source: 'pickle', session: path.basename(runtime.sessionDir), mode: 'tmux' });
     process.exit(1);
   };
-  process.on('SIGTERM', () => handleShutdown('SIGTERM'));
-  process.on('SIGINT', () => handleShutdown('SIGINT'));
-  process.on('SIGHUP', () => handleShutdown('SIGHUP'));
+  const handlers = {
+    SIGTERM: () => handleShutdown('SIGTERM'),
+    SIGINT: () => handleShutdown('SIGINT'),
+    SIGHUP: () => handleShutdown('SIGHUP'),
+  };
+  process.on('SIGTERM', handlers.SIGTERM);
+  process.on('SIGINT', handlers.SIGINT);
+  process.on('SIGHUP', handlers.SIGHUP);
+  return () => {
+    process.off('SIGTERM', handlers.SIGTERM);
+    process.off('SIGINT', handlers.SIGINT);
+    process.off('SIGHUP', handlers.SIGHUP);
+  };
+}
 
-  writePipelineStatus(sessionDir, 'running', {
-    current_phase: null,
-    completed_phases: 0,
-    skipped_phases: 0,
-    total_phases: config.phases.length,
+function writeRunningStatus(runtime: PipelineRuntime, counters: PhaseCounters, currentPhase: PhaseName | null): void {
+  writePipelineStatus(runtime.sessionDir, 'running', {
+    current_phase: currentPhase,
+    completed_phases: counters.completed,
+    skipped_phases: counters.skipped,
+    total_phases: runtime.config.phases.length,
   });
+}
 
-  for (let i = 0; i < config.phases.length; i++) {
-    const phase = config.phases[i];
-    const phaseLabel = `${i + 1}/${config.phases.length}`;
+function logPhaseStart(runtime: PipelineRuntime, phase: PhaseName, index: number): void {
+  const phaseLabel = `${index + 1}/${runtime.config.phases.length}`;
+  runtime.log(`\n${'═'.repeat(60)}`);
+  runtime.log(`PHASE ${phaseLabel}: ${phase.toUpperCase()} (backend=${runtime.backend})`);
+  runtime.log(`${'═'.repeat(60)}`);
+  printMinimalPanel(`Pipeline Phase: ${phase}`, {
+    Phase: phaseLabel,
+    Target: runtime.target,
+  }, 'CYAN', '🧪');
+}
 
-    log(`\n${'═'.repeat(60)}`);
-    log(`PHASE ${phaseLabel}: ${phase.toUpperCase()} (backend=${backend})`);
-    log(`${'═'.repeat(60)}`);
-
-    printMinimalPanel(`Pipeline Phase: ${phase}`, {
-      Phase: phaseLabel,
-      Target: config.target || workingDir,
-    }, 'CYAN', '🧪');
-
-    writePipelineStatus(sessionDir, 'running', {
-      current_phase: phase,
-      completed_phases: completedPhases,
-      skipped_phases: skippedPhases,
-      total_phases: config.phases.length,
-    });
-
-    let exitCode: number;
-
-    if (phase === 'pickle') {
-      // Ensure chain_meeseeks is off so mux-runner exits cleanly back to us
-      // instead of transitioning to the deprecated meeseeks review loop.
-      // Re-stamp backend only when it drifted: resetStateForPhase on later
-      // phases preserves it, but a pre-existing state.json could differ.
-      // Pin command_template='pickle.md' and scrub stale anatomy-park.json /
-      // szechuan-sauce.json so a resumed pickle phase can't be misrouted by
-      // residue from a previous run. Helper preserves current_ticket / step /
-      // iteration / start_time_epoch — pickle is the only phase that resumes
-      // mid-flight; the others wipe via resetStateForPhase on every entry.
-      enterPicklePhase(sessionDir, statePath, backend);
-      exitCode = await spawnRunner('node', [
-        path.join(extensionRoot, 'extension', 'bin', 'mux-runner.js'), sessionDir,
-      ], phaseEnv);
-    } else if (phase === 'anatomy-park') {
-      cleanPhaseArtifacts(sessionDir, 'pickle');
-      resetStateForPhase(statePath, 'anatomy-park.md', config.anatomy_max_iterations);
-      // resetStateForPhase preserves state.backend — only write when it drifted.
-      {
-        const cur = sm.read(statePath);
-        if (cur.backend !== backend) sm.update(statePath, s => { s.backend = backend; });
-      }
-
-      let refreshed: ScopeJson | null;
-      try {
-        refreshed = refreshScope(sessionDir, 'anatomy-park', {
-          repoRoot: workingDir,
-          target: config.target || workingDir,
-          log,
-        });
-        if (refreshed) {
-          writeSkippedByScope(sessionDir, 'anatomy-park', refreshed, config.target || workingDir, workingDir);
-        }
-      } catch (err) {
-        if (err instanceof Error && err instanceof ScopeError && err.code === 'SCOPE_EMPTY_POST_BUILD') {
-          log(`SCOPE_EMPTY_POST_BUILD at anatomy-park — ${err.message}`);
-          writePipelineStatus(sessionDir, 'failed', {
-            current_phase: 'anatomy-park',
-            completed_phases: completedPhases,
-            skipped_phases: skippedPhases,
-            total_phases: config.phases.length,
-          });
-          throw err;
-        }
-        throw err;
-      }
-
-      const setupOk = setupAnatomyPark(
-        sessionDir, config.target || workingDir,
-        config.anatomy_stall_limit, extensionRoot, log,
-        refreshed ? { allowedPaths: refreshed.allowed_paths, repoRoot: workingDir } : undefined,
-      );
-      if (!setupOk) {
-        skippedPhases++;
-        writePipelineStatus(sessionDir, 'running', {
-          current_phase: null,
-          completed_phases: completedPhases,
-          skipped_phases: skippedPhases,
-          total_phases: config.phases.length,
-        });
-        log(`Phase ${phase} skipped (setup returned false)`);
-        continue;
-      }
-
-      exitCode = await spawnRunner('node', [
-        path.join(extensionRoot, 'extension', 'bin', 'microverse-runner.js'), sessionDir,
-      ], phaseEnv);
-    } else if (phase === 'szechuan-sauce') {
-      cleanPhaseArtifacts(sessionDir, 'anatomy-park');
-      resetStateForPhase(statePath, 'szechuan-sauce.md', config.szechuan_max_iterations);
-      // resetStateForPhase preserves state.backend — only write when it drifted.
-      {
-        const cur = sm.read(statePath);
-        if (cur.backend !== backend) sm.update(statePath, s => { s.backend = backend; });
-      }
-
-      const refreshedSz = refreshScope(sessionDir, 'szechuan-sauce', {
-        repoRoot: workingDir,
-        target: config.target || workingDir,
-        log,
-      });
-      if (refreshedSz) {
-        writeSkippedByScope(sessionDir, 'szechuan-sauce', refreshedSz, config.target || workingDir, workingDir);
-      }
-
-      const setupOk = setupSzechuanSauce(
-        sessionDir, config.target || workingDir,
-        config.szechuan_stall_limit, extensionRoot,
-        config.szechuan_domain, config.szechuan_focus, log,
-        refreshedSz ? { allowedPaths: refreshedSz.allowed_paths } : undefined,
-      );
-      if (!setupOk) {
-        skippedPhases++;
-        writePipelineStatus(sessionDir, 'running', {
-          current_phase: null,
-          completed_phases: completedPhases,
-          skipped_phases: skippedPhases,
-          total_phases: config.phases.length,
-        });
-        log(`Phase ${phase} skipped (setup returned false)`);
-        continue;
-      }
-
-      exitCode = await spawnRunner('node', [
-        path.join(extensionRoot, 'extension', 'bin', 'microverse-runner.js'), sessionDir,
-      ], phaseEnv);
-    } else {
-      log(`Unknown phase: ${phase} — skipping`);
-      continue;
-    }
-
-    log(`Phase ${phase} exited with code ${exitCode}`);
-
-    // Known limitation: if the child is cancelled externally (eat-pickle,
-    // external SIGTERM to child PID), it exits 0 (mux-runner maps 'cancelled'
-    // to exit 0). Pipeline cannot distinguish this from genuine success.
-    // Full pipeline stop = kill the tmux session or SIGTERM the pipeline PID.
-    if (exitCode !== 0) {
-      log(`Phase ${phase} failed (exit ${exitCode}) — stopping pipeline`);
-      break;
-    }
-
-    completedPhases++;
-    writePipelineStatus(sessionDir, 'running', {
-      current_phase: null,
-      completed_phases: completedPhases,
-      skipped_phases: skippedPhases,
-      total_phases: config.phases.length,
-    });
-
-    // Check for cancellation (signal handler writes this marker)
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    if (fs.existsSync(cancelMarker)) {
-      log('Pipeline cancelled (cancel marker found) — stopping');
-      break;
-    }
-
-    log(`Phase ${phase} completed successfully`);
-  }
-
-  // Finalize
+function finalizePipeline(
+  runtime: PipelineRuntime,
+  counters: PhaseCounters,
+  cancelMarker: string,
+  startTime: number,
+): void {
   const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
-  try { sm.update(statePath, s => { s.active = false; }); } catch { /* already inactive */ }
+  try { sm.update(runtime.statePath, s => { s.active = false; }); } catch { /* already inactive */ }
 
-  const phasesSummary = skippedPhases > 0
-    ? `${completedPhases}/${config.phases.length} (${skippedPhases} skipped)`
-    : `${completedPhases}/${config.phases.length}`;
+  const phasesSummary = counters.skipped > 0
+    ? `${counters.completed}/${runtime.config.phases.length} (${counters.skipped} skipped)`
+    : `${counters.completed}/${runtime.config.phases.length}`;
 
   printMinimalPanel('Pipeline Complete', {
     Phases: phasesSummary,
     Elapsed: formatTime(totalElapsed),
   }, 'GREEN', '🧪');
 
-  log(`Pipeline finished: ${phasesSummary} phases, ${formatTime(totalElapsed)}`);
+  runtime.log(`Pipeline finished: ${phasesSummary} phases, ${formatTime(totalElapsed)}`);
 
   logActivity({
     event: 'session_end', source: 'pickle',
-    session: path.basename(sessionDir),
+    session: path.basename(runtime.sessionDir),
     duration_min: Math.round(totalElapsed / 60),
     mode: 'tmux',
   });
 
   // macOS notification — helper applies NOTIFICATION_TIMEOUT_MS and swallows
   // errors so a wedged UI server cannot block the exit path.
-  const allDone = (completedPhases + skippedPhases) === config.phases.length;
+  const allDone = (counters.completed + counters.skipped) === runtime.config.phases.length;
   displayMacNotification(
     allDone ? '🧪 Pipeline Complete' : '🧪 Pipeline Stopped',
     `${phasesSummary} phases, ${formatTime(totalElapsed)}`,
   );
 
   // Clean up cancel marker
-  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   try { fs.unlinkSync(cancelMarker); } catch { /* may not exist */ }
 
   // Explicit exit code so callers can detect pipeline failure.
   // Skipped phases (e.g. no subsystems for anatomy-park) are not failures.
-  const pipelineFailed = (completedPhases + skippedPhases) < config.phases.length;
-  writePipelineStatus(sessionDir, pipelineFailed ? 'failed' : 'completed', {
+  const pipelineFailed = (counters.completed + counters.skipped) < runtime.config.phases.length;
+  writePipelineStatus(runtime.sessionDir, pipelineFailed ? 'failed' : 'completed', {
     current_phase: null,
-    completed_phases: completedPhases,
-    skipped_phases: skippedPhases,
-    total_phases: config.phases.length,
+    completed_phases: counters.completed,
+    skipped_phases: counters.skipped,
+    total_phases: runtime.config.phases.length,
   });
   process.exit(pipelineFailed ? 1 : 0);
+}
+
+export async function main(sessionDir: string, opts: MainOpts = {}): Promise<void> {
+  const log = createPipelineLog(sessionDir);
+  log('pipeline-runner started');
+  const runtime = loadPipelineRuntime(sessionDir, opts, log);
+  const counters: PhaseCounters = { completed: 0, skipped: 0 };
+  const cancelMarker = path.join(sessionDir, 'pipeline-cancel');
+  const cleanupShutdownHandlers = installShutdownHandlers(runtime, counters, cancelMarker);
+  const startTime = Date.now();
+  phaseRunnerContext = { sessionDir, extensionRoot: runtime.extensionRoot };
+  writeRunningStatus(runtime, counters, null);
+
+  try {
+    for (let i = 0; i < runtime.config.phases.length; i++) {
+      const rawPhase = runtime.config.phases[i];
+      if (!isPhaseName(rawPhase)) {
+        log(`Unknown phase: ${String(rawPhase)} — skipping`);
+        continue;
+      }
+      logPhaseStart(runtime, rawPhase, i);
+      writeRunningStatus(runtime, counters, rawPhase);
+      const result = await runConfiguredPhase(runtime, setupPhase(rawPhase, runtime.config), counters);
+      if (result.skipped) {
+        counters.skipped++;
+        writeRunningStatus(runtime, counters, null);
+        log(`Phase ${rawPhase} skipped (setup returned false)`);
+        continue;
+      }
+      const exitCode = result.exitCode ?? 1;
+      log(`Phase ${rawPhase} exited with code ${exitCode}`);
+      if (exitCode !== 0) {
+        log(`Phase ${rawPhase} failed (exit ${exitCode}) — stopping pipeline`);
+        break;
+      }
+      counters.completed++;
+      writeRunningStatus(runtime, counters, null);
+      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+      if (fs.existsSync(cancelMarker)) {
+        log('Pipeline cancelled (cancel marker found) — stopping');
+        break;
+      }
+      log(`Phase ${rawPhase} completed successfully`);
+    }
+  } finally {
+    phaseRunnerContext = null;
+    cleanupShutdownHandlers();
+  }
+
+  finalizePipeline(runtime, counters, cancelMarker, startTime);
 }
 
 /** Extract the value following `flag` in argv, or `undefined` if absent. */
