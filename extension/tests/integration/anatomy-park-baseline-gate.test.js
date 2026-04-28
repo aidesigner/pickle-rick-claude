@@ -466,7 +466,7 @@ test('stale baseline refresh: matching stale failure is discarded before the nex
   );
 });
 
-test('worker convergence: converged=true still runs the per-iteration gate before exit', async () => {
+test('worker convergence: converged=true is deferred when the per-iteration gate leaves regressions behind', async () => {
   const workingDir = makeGitRepo('ap-gate-worker-converged-repo-');
   const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-gate-worker-converged-session-'));
   writeGateFixtureRepo(workingDir);
@@ -503,8 +503,8 @@ test('worker convergence: converged=true still runs the per-iteration gate befor
     },
   });
 
-  assert.equal(result.converged, true, 'worker convergence signal must still be honored');
-  assert.equal(result.reason, 'clean passes done');
+  assert.equal(result.converged, false, 'worker convergence must be deferred when the final iteration still leaves regressions');
+  assert.equal(result.reason, 'per-iteration gate left unresolved regressions');
   assert.equal(result.currentMv.iteration_regressions, 1, 'final converged iteration must still record the regression');
   assert.equal(writtenMv.iteration_regressions, 1, 'regression state must persist before exit');
   assert.ok(
@@ -514,5 +514,9 @@ test('worker convergence: converged=true still runs the per-iteration gate befor
   assert.ok(
     logs.some((msg) => msg.includes('running per-iteration gate before exit')),
     `expected worker convergence gate log, got: ${JSON.stringify(logs)}`,
+  );
+  assert.ok(
+    logs.some((msg) => msg.includes('convergence deferred')),
+    `expected convergence deferral log, got: ${JSON.stringify(logs)}`,
   );
 });

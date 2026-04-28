@@ -219,6 +219,7 @@ export async function handleWorkerManagedIteration(opts) {
     let currentMv = opts.currentMv;
     let converged = false;
     let reason = 'no reason';
+    const priorIterationRegressions = Number(currentMv.iteration_regressions ?? 0);
     const cfPath = path.join(sessionDir, currentMv.convergence_file);
     try {
         const raw = JSON.parse(await fs.promises.readFile(cfPath, 'utf-8'));
@@ -246,6 +247,15 @@ export async function handleWorkerManagedIteration(opts) {
         log,
         _deps,
     });
+    const iterationLeftRegression = Number(currentMv.iteration_regressions ?? 0) > priorIterationRegressions;
+    if (converged && iterationLeftRegression) {
+        log(`Iteration ${iteration} — convergence deferred: per-iteration gate left unresolved regressions`);
+        return {
+            currentMv,
+            converged: false,
+            reason: 'per-iteration gate left unresolved regressions',
+        };
+    }
     return { currentMv, converged, reason };
 }
 function normalizeExcludePrefixes(excludePrefixes) {
