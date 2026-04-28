@@ -57,10 +57,39 @@ export interface RunTaskResult {
   backend: 'claude' | 'codex';
 }
 
+export type SpawnResult = RunTaskResult;
+
+export type IntegrityResult =
+  | { kind: 'ok' }
+  | { kind: 'fail'; reason: 'hash-mismatch' | 'path-traversal' | 'missing-file' };
+
+export interface TaskMeta extends Record<string, unknown> {
+  status?: unknown;
+  repo_path?: unknown;
+  prd_path?: unknown;
+  prd_hash?: unknown;
+  task_id?: unknown;
+  backend?: unknown;
+}
+
 interface JarTask {
   taskId: string;
   metaPath: string;
-  meta: Record<string, unknown>;
+  meta: TaskMeta;
+}
+
+const metaPaths = new WeakMap<TaskMeta, string>();
+const metaTaskIds = new WeakMap<TaskMeta, string>();
+const metaSessionDirs = new WeakMap<TaskMeta, string>();
+
+function registerTaskMeta(meta: TaskMeta, metaPath: string, taskId: string): TaskMeta {
+  metaPaths.set(meta, metaPath);
+  metaTaskIds.set(meta, taskId);
+  return meta;
+}
+
+function taskIdForMeta(meta: TaskMeta): string | null {
+  return typeof meta.task_id === 'string' ? meta.task_id : metaTaskIds.get(meta) ?? null;
 }
 
 async function runTask(sessionDir: string, repoCwd: string, extensionRoot: string): Promise<RunTaskResult> {
@@ -214,61 +243,84 @@ export function discoverMarinatingTasks(jarRoot: string): JarTask[] {
       const metaPath = path.join(dayPath, taskId, 'meta.json');
       if (!fs.existsSync(metaPath)) continue;
 
-      let meta: Record<string, unknown>;
+      let meta: TaskMeta;
       try {
         meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
       } catch {
         console.error(`${Style.RED}⚠️  Skipping ${taskId}: meta.json is corrupt or unreadable${Style.RESET}`);
         continue;
       }
-      if (meta.status === 'marinating') tasks.push({ taskId, metaPath, meta });
+      if (meta.status === 'marinating') tasks.push({ taskId, metaPath, meta: registerTaskMeta(meta, metaPath, taskId) });
     }
   }
 
   return tasks;
 }
 
-function markTaskFailed(task: JarTask, message: string): void {
-  console.error(message);
-  task.meta.status = 'failed';
-  writeStateFile(task.metaPath, task.meta);
+function writeTaskMeta(meta: TaskMeta): void {
+  const metaPath = metaPaths.get(meta);
+  if (metaPath) writeStateFile(metaPath, meta);
 }
 
-function verifyJarredPrd(task: JarTask): boolean {
-  if (typeof task.meta.prd_hash !== 'string' || task.meta.prd_hash.length === 0) {
-    return true;
+export function skipTaskWithReason(meta: TaskMeta, reason: string): void {
+  void reason;
+  meta.status = 'failed';
+  writeTaskMeta(meta);
+}
+
+function markTaskConsumed(meta: TaskMeta): void {
+  meta['status'] = 'consumed';
+  writeTaskMeta(meta);
+}
+
+export function validateTaskIntegrity(taskDir: string, meta: TaskMeta): IntegrityResult {
+  if (typeof meta.prd_hash !== 'string' || meta.prd_hash.length === 0) {
+    return { kind: 'ok' };
   }
 
-  const taskDir = path.dirname(task.metaPath);
-  const rawPrdRel = typeof task.meta.prd_path === 'string' ? task.meta.prd_path : 'prd.md';
+  const rawPrdRel = typeof meta.prd_path === 'string' ? meta.prd_path : 'prd.md';
   const prdPath = path.resolve(taskDir, rawPrdRel);
   if (!prdPath.startsWith(taskDir + path.sep) && prdPath !== taskDir) {
-    markTaskFailed(task, `${Style.RED}⚠️  Skipping ${task.taskId}: prd_path escapes task directory${Style.RESET}`);
-    return false;
+    return { kind: 'fail', reason: 'path-traversal' };
   }
 
   try {
     const prdContent = fs.readFileSync(prdPath, 'utf-8');
     const currentHash = crypto.createHash('sha256').update(prdContent).digest('hex');
-    if (currentHash === task.meta.prd_hash) return true;
+    if (currentHash === meta.prd_hash) return { kind: 'ok' };
   } catch {
-    markTaskFailed(task, `${Style.RED}⚠️  Skipping ${task.taskId}: cannot read jarred PRD for integrity check${Style.RESET}`);
-    return false;
+    return { kind: 'fail', reason: 'missing-file' };
   }
 
-  markTaskFailed(task, `${Style.RED}⚠️  Skipping ${task.taskId}: PRD integrity check failed (content modified since jarring)${Style.RESET}`);
+  return { kind: 'fail', reason: 'hash-mismatch' };
+}
+
+function verifyJarredPrd(task: JarTask): boolean {
+  const result = validateTaskIntegrity(path.dirname(task.metaPath), task.meta);
+  if (result.kind === 'ok') return true;
+
+  const messages: Record<'hash-mismatch' | 'path-traversal' | 'missing-file', string> = {
+    'path-traversal': `${Style.RED}⚠️  Skipping ${task.taskId}: prd_path escapes task directory${Style.RESET}`,
+    'missing-file': `${Style.RED}⚠️  Skipping ${task.taskId}: cannot read jarred PRD for integrity check${Style.RESET}`,
+    'hash-mismatch': `${Style.RED}⚠️  Skipping ${task.taskId}: PRD integrity check failed (content modified since jarring)${Style.RESET}`,
+  };
+  console.error(messages[result.reason]);
+  skipTaskWithReason(task.meta, result.reason);
   return false;
 }
 
 function resolveTaskExecution(task: JarTask, sessionsRoot: string): { sessionDir: string; repoPath: string } | null {
   const sessionDir = path.join(sessionsRoot, task.taskId);
+  metaSessionDirs.set(task.meta, sessionDir);
   if (!fs.existsSync(sessionDir)) {
-    markTaskFailed(task, `${Style.RED}⚠️  Session dir not found for ${task.taskId}${Style.RESET}`);
+    console.error(`${Style.RED}⚠️  Session dir not found for ${task.taskId}${Style.RESET}`);
+    skipTaskWithReason(task.meta, 'missing-session');
     return null;
   }
 
   if (typeof task.meta.repo_path !== 'string') {
-    markTaskFailed(task, `${Style.RED}⚠️  Skipping ${task.taskId}: meta.repo_path is missing or not a string${Style.RESET}`);
+    console.error(`${Style.RED}⚠️  Skipping ${task.taskId}: meta.repo_path is missing or not a string${Style.RESET}`);
+    skipTaskWithReason(task.meta, 'missing-repo-path');
     return null;
   }
 
@@ -299,6 +351,27 @@ function countRemainingQueuedBackendTasks(
     if (resolveBackend(taskState) === backend) count++;
   }
   return count;
+}
+
+export function handleTaskEnoent(result: SpawnResult, tasks: TaskMeta[], currentTaskId: string): { skippedTasks: string[] } {
+  if (!result.enoent || result.backend !== 'codex') return { skippedTasks: [] };
+
+  const currentIndex = tasks.findIndex(meta => taskIdForMeta(meta) === currentTaskId);
+  if (currentIndex < 0) return { skippedTasks: [] };
+
+  const skippedTasks: string[] = [];
+  for (const meta of tasks.slice(currentIndex + 1)) {
+    if (meta.status !== 'marinating') continue;
+    const taskId = taskIdForMeta(meta);
+    if (!taskId) continue;
+    const sessionDir = metaSessionDirs.get(meta);
+    const taskState = sessionDir ? readTaskState(sessionDir) : null;
+    if ((sessionDir ? resolveBackend(taskState) : resolveBackend(meta as unknown as State)) === result.backend) {
+      skippedTasks.push(taskId);
+    }
+  }
+
+  return { skippedTasks };
 }
 
 function installShutdownHandlers(): void {
@@ -342,24 +415,24 @@ async function processJarTask(
 
   if (result.enoent) {
     console.log(`\n${Style.YELLOW}⏸️  Task ${task.taskId} skipped (backend ${result.backend} CLI missing) — status left as '${task.meta.status}' for future retry${Style.RESET}`);
-    if (result.backend === 'codex') {
-      const skipped = countRemainingQueuedBackendTasks(tasks, currentIndex, sessionsRoot, result.backend);
-      if (skipped > 0) {
-        console.log(`${Style.YELLOW}⏸️  ${skipped} additional codex task(s) remain queued — install codex CLI and re-run /pickle-jar-open${Style.RESET}`);
-        return { succeededDelta: 0, failedDelta: 0, stop: true };
-      }
+    const { skippedTasks } = handleTaskEnoent(result, tasks.map(item => item.meta), task.taskId);
+    const skipped = result.backend === 'codex'
+      ? skippedTasks.length || countRemainingQueuedBackendTasks(tasks, currentIndex, sessionsRoot, result.backend)
+      : 0;
+    if (skipped > 0) {
+      console.log(`${Style.YELLOW}⏸️  ${skipped} additional codex task(s) remain queued — install codex CLI and re-run /pickle-jar-open${Style.RESET}`);
+      return { succeededDelta: 0, failedDelta: 0, stop: true };
     }
     return { succeededDelta: 0, failedDelta: 0, stop: false };
   }
 
-  task.meta.status = result.ok ? 'consumed' : 'failed';
-  writeStateFile(task.metaPath, task.meta);
-
   if (result.ok) {
+    markTaskConsumed(task.meta);
     console.log(`\n${Style.GREEN}✅ Task ${task.taskId} complete${Style.RESET}`);
     return { succeededDelta: 1, failedDelta: 0, stop: false };
   }
 
+  skipTaskWithReason(task.meta, 'task-failed');
   console.log(`\n${Style.RED}❌ Task ${task.taskId} failed${Style.RESET}`);
   return { succeededDelta: 0, failedDelta: 1, stop: false };
 }
