@@ -366,9 +366,10 @@ test('runIteration is exported from mux-runner', () => {
 
 // --- microverse-runner tests ---
 
-import { measureMetric, measureLlmMetric, extractScore, buildJudgePrompt, buildMicroverseHandoff, main, _deps, stageAutoCommitPaths } from '../bin/microverse-runner.js';
+import { measureMetric, measureLlmMetric, extractScore, buildJudgePrompt, buildMicroverseHandoff, main, _deps, readRunnerState, stageAutoCommitPaths } from '../bin/microverse-runner.js';
 import { resetToSha } from '../services/git-utils.js';
 import { writeStateFile } from '../services/pickle-utils.js';
+import { resolveBackend } from '../services/backend-spawn.js';
 
 function createSessionDir(workingDir, mvOverrides = {}) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mv-session-'));
@@ -404,6 +405,44 @@ function createSessionDir(workingDir, mvOverrides = {}) {
     fs.writeFileSync(path.join(dir, 'microverse.json'), JSON.stringify(mvState, null, 2));
     return { dir, state, mvState };
 }
+
+test('readRunnerState promotes orphan tmp state before microverse control-flow reads', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mv-state-'));
+    const statePath = path.join(dir, 'state.json');
+    try {
+        const baseState = {
+            active: true,
+            working_dir: dir,
+            step: 'implement',
+            iteration: 1,
+            max_iterations: 10,
+            max_time_minutes: 60,
+            worker_timeout_seconds: 120,
+            start_time_epoch: Math.floor(Date.now() / 1000),
+            backend: 'claude',
+        };
+        const promotedState = {
+            ...baseState,
+            active: false,
+            iteration: 2,
+            backend: 'codex',
+        };
+
+        fs.writeFileSync(statePath, JSON.stringify(baseState, null, 2));
+        fs.writeFileSync(`${statePath}.tmp.99999999`, JSON.stringify(promotedState, null, 2));
+
+        const staleRaw = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(staleRaw.active, true, 'raw base state misses the cancellation bit');
+        assert.equal(resolveBackend(staleRaw), 'claude', 'raw base state still resolves the old backend');
+
+        const recovered = readRunnerState(statePath);
+        assert.equal(recovered.active, false, 'runner reads the promoted inactive tmp state');
+        assert.equal(recovered.iteration, 2, 'runner sees the higher-iteration promoted state');
+        assert.equal(resolveBackend(recovered), 'codex', 'runner resolves backend from the promoted state');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
 
 // --- measureMetric tests ---
 

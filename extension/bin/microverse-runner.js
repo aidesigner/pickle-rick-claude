@@ -580,6 +580,9 @@ function remainingSessionSeconds(state) {
     const elapsed = Math.floor(Date.now() / 1000) - startEpoch;
     return Math.max(0, (maxTimeMins * 60) - elapsed);
 }
+export function readRunnerState(statePath) {
+    return sm.read(statePath);
+}
 export async function main(sessionDir) {
     const extensionRoot = getExtensionRoot();
     const statePath = path.join(sessionDir, 'state.json');
@@ -614,8 +617,7 @@ export async function main(sessionDir) {
     // Read initial state
     let state;
     try {
-        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-        state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        state = readRunnerState(statePath);
     }
     catch (err) {
         const msg = safeErrorMessage(err);
@@ -753,8 +755,7 @@ export async function main(sessionDir) {
             // corrupting stall/rollback logic. Mirror the iteration-loop idiom.
             let freshState;
             try {
-                // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-                freshState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+                freshState = readRunnerState(statePath);
             }
             catch (err) {
                 log(`WARNING: Could not re-read state.json before baseline (${safeErrorMessage(err)}) — using in-memory state`);
@@ -787,8 +788,7 @@ export async function main(sessionDir) {
     while (currentMv.status === 'iterating') {
         // Re-read state for external changes
         try {
-            // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-            state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+            state = readRunnerState(statePath);
         }
         catch (err) {
             const msg = safeErrorMessage(err);
@@ -885,8 +885,7 @@ export async function main(sessionDir) {
             while (Date.now() < waitEnd) {
                 await sleep(Defaults.RATE_LIMIT_POLL_MS);
                 try {
-                    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-                    const ws = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+                    const ws = readRunnerState(statePath);
                     if (ws.active !== true) {
                         exitReason = 'stopped';
                         break;
