@@ -3,6 +3,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import { getDataRoot } from '../services/pickle-utils.js';
+import { StateManager } from '../services/state-manager.js';
+const sm = new StateManager();
 function parseExactLocalDate(dateStr) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr))
         return null;
@@ -79,8 +81,7 @@ function getSessionProject(sessionId) {
     const sessionsDir = path.join(getDataRoot(), 'sessions');
     const stateFile = path.join(sessionsDir, sessionId, 'state.json');
     try {
-        const data = JSON.parse(fs.readFileSync(stateFile, 'utf-8'));
-        const wd = data?.working_dir;
+        const wd = sm.read(stateFile).working_dir;
         if (typeof wd === 'string' && wd) {
             return path.basename(wd);
         }

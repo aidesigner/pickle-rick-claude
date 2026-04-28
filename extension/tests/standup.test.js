@@ -544,6 +544,49 @@ test('formatOutput: session with iterations and commits', () => {
     assert.match(output, /`abc1234` feat: circuit breaker/);
 });
 
+test('formatOutput: session project uses crash-recovered working_dir', () => {
+    withTempActivityDir((_activityDir, dataRoot) => {
+        const prevRoot = process.env.PICKLE_DATA_ROOT;
+        const prevDir = process.env.PICKLE_DATA_DIR;
+        const sessionDir = path.join(dataRoot, 'sessions', 'sess-1');
+        const statePath = path.join(sessionDir, 'state.json');
+        const tmpPath = `${statePath}.tmp.999999`;
+
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.writeFileSync(statePath, JSON.stringify({
+            schema_version: 1,
+            iteration: 1,
+            working_dir: '/tmp/stale-project',
+        }));
+        fs.writeFileSync(tmpPath, JSON.stringify({
+            schema_version: 1,
+            iteration: 2,
+            working_dir: '/tmp/live-project',
+        }));
+
+        process.env.PICKLE_DATA_ROOT = dataRoot;
+        delete process.env.PICKLE_DATA_DIR;
+
+        try {
+            const events = [
+                { ts: '2026-02-26T10:00:00Z', event: 'session_start', source: 'pickle', session: 'sess-1', original_prompt: 'Recover project' },
+                { ts: '2026-02-26T10:05:00Z', event: 'iteration_start', source: 'pickle', session: 'sess-1', iteration: 1 },
+                { ts: '2026-02-26T10:30:00Z', event: 'session_end', source: 'pickle', session: 'sess-1' },
+            ];
+            const output = formatOutput(events, [], [], [], new Date('2026-02-26'), new Date('2026-02-27'));
+
+            assert.match(output, /## Recover project \[live-project\] \(sess-1\)/);
+            assert.equal(JSON.parse(fs.readFileSync(statePath, 'utf-8')).working_dir, '/tmp/live-project');
+            assert.equal(fs.existsSync(tmpPath), false);
+        } finally {
+            if (prevRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+            else process.env.PICKLE_DATA_ROOT = prevRoot;
+            if (prevDir === undefined) delete process.env.PICKLE_DATA_DIR;
+            else process.env.PICKLE_DATA_DIR = prevDir;
+        }
+    });
+});
+
 test('formatOutput: commit attribution by session field', () => {
     const events = [
         { ts: '2026-02-26T10:00:00Z', event: 'session_start', source: 'pickle', session: 'sess-1' },
