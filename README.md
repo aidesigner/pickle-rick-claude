@@ -12,7 +12,11 @@ New to PRDs? See the **[PRD Writing Guide](PRD_GUIDE.md)** for developers or the
 
 > **New in v1.55+: Agent Teams mode.** `/pickle --teams` spawns workers as harness-native `morty-implementer` subagents (Claude backend only). Spec: [`prds/pickle-agent-teams.md`](prds/pickle-agent-teams.md).
 
+> **New in v1.56+: Pipeline resume hardening.** `prds/` and `docs/` are excluded from clean-tree pre-flight (override via `pipeline.json.ignore_dirty_paths`). The pickle phase pins its own `command_template` on entry — resumed pipelines no longer misroute to a stale phase prompt.
+
 > **New in v1.57+: `/cronenberg`.** Explicit meta-router that picks the right pickle metaphor + cleanup chain for your task. Never auto-triggers.
+
+> **New in v1.58+: Convergence Toolchain Gates.** `/szechuan-sauce` and `/anatomy-park` cannot declare convergence until typecheck + lint + tests are green. A new `morty-gate-remediator` subagent handles mechanical autofix (prettier/eslint + a small set of hand-fix classes) inside a snapshot-and-revert envelope. Kill-switch: `PICKLE_GATE_DISABLED=1`. See [Convergence Gate](#convergence-gate) below.
 
 ---
 
@@ -153,6 +157,8 @@ Four options for polishing the result.
 ```
 
 The auto-refine trigger fires on `refine-prd` / `prd refinement`, on `refine`/`refinement`/`decompose` near `prd` or `first` (within 40 chars), or on workflow ordering like `refine then build`. Bare `refine the dropdown UX` won't trigger — use `--refine` to force, `--no-refine` to suppress. Refinement always uses the `claude` backend regardless of `--backend` (refinement is planning, not implementation). Fails fast if no `prd.md` exists in cwd or session — run `/pickle-prd` first.
+
+**Resume hardening** *(v1.56+)* — pipeline pre-flight excludes `prds/` and `docs/` from the clean-tree check by default, so doc churn during a long-running epic doesn't block resume. Override the list per-session via `pipeline.json.ignore_dirty_paths` (set `[]` to opt out entirely). The pickle phase pins its own `command_template` on entry — a stale `state.command_template` from a prior phase no longer misroutes resumed workers to the wrong skill prompt.
 
 **Szechuan Sauce** — hunts coding principle violations (KISS, DRY, SOLID, security, style) and fixes them one at a time until zero remain. Great for post-feature polish before merging.
 
@@ -342,7 +348,7 @@ Queue tasks for unattended batch execution overnight.
 | `/attract [file.dot]` | Submit pipeline to attractor server |
 | `/pickle-prd` | Draft a PRD standalone (no execution) |
 | `/pickle-metrics` | Token usage, commits, LOC. `--days N`, `--weekly`, `--json` |
-| `/pickle-standup` | Formatted standup summary from activity logs |
+| `/pickle-standup` | Linear-keyed standup: cross-references activity logs with Linear MCP, drops internal churn |
 | `/pickle-status` | Current session phase, iteration, ticket status |
 | `/eat-pickle` | Cancel the active loop |
 | `/pickle-retry <ticket-id>` | Re-attempt a failed ticket |
@@ -445,6 +451,25 @@ All defaults are configurable via `~/.claude/pickle-rick/pickle_settings.json`:
 | `default_rate_limit_wait_minutes` | 60 | Fallback wait when no API reset time |
 | `default_max_rate_limit_retries` | 3 | Consecutive rate limits before stopping |
 
+**Convergence Gate** *(v1.58+, nested under `convergence_gate`)*
+
+| Setting | Default | Description |
+|---|---|---|
+| `convergence_gate.commands` | `{}` | Per-project command overrides (typecheck/lint/tests). Empty = auto-detect from `gate-commands.json` |
+| `convergence_gate.enabled_convergence_files` | `["anatomy-park.json"]` | Microverse convergence files that opt in to per-iteration gating |
+| `convergence_gate.timeout_ms.typecheck` | 120000 | Per-check timeout (ms) |
+| `convergence_gate.timeout_ms.lint` | 60000 | Per-check timeout (ms) |
+| `convergence_gate.timeout_ms.tests` | 300000 | Per-check timeout (ms) |
+| `convergence_gate.gate_total_timeout_ms` | 600000 | Cumulative cap for a full gate run (ms) |
+| `convergence_gate.remediator_timeout_s` | 600 | `morty-gate-remediator` subprocess timeout (s) |
+| `convergence_gate.szechuan_max_remediation_cycles` | 3 | Gate ↔ remediator loop cap for `/szechuan-sauce` |
+| `convergence_gate.anatomy_park_max_remediation_cycles` | 5 | Gate ↔ remediator loop cap for `/anatomy-park` |
+| `convergence_gate.regression_warning_threshold` | 5 | Per-iteration regressions before the one-time warning fires |
+| `convergence_gate.baseline_max_age_iterations` | 30 | Halt if baseline older than N iterations |
+| `convergence_gate.baseline_max_age_seconds` | 14400 | Halt if baseline older than N seconds (4h) |
+| `convergence_gate.prefer_test_unit_alias` | false | Prefer `npm run test:unit` (or pnpm/yarn equivalent) over plain `npm test` when present |
+| `convergence_gate.known_flake_files` | `[]` | Test files whose failures yield `green-with-known-flake-warnings` instead of red |
+
 ### Upgrading settings from 1.48.x → 1.49.x
 
 1.49 replaces the Council's sequential pass rotation with parallel rounds (every category runs every round via `Agent` fan-out). The settings keys change accordingly:
@@ -540,6 +565,27 @@ Auto-discovers subsystems, rotates through them round-robin, three-phase protoco
 ```
 
 **Backend** — add `--backend codex` (or set `PICKLE_BACKEND=codex`) to run the Review/Fix/Verify phases through `codex exec` instead of `claude`. The subsystem rotation and trap-door cataloging behave identically regardless of backend.
+
+<a id="convergence-gate"></a>### 🚪 Convergence Gate — Toolchain Truth Layer *(v1.58+)*
+
+> *"Done means the gate says done, Morty. Not vibes."*
+
+`/szechuan-sauce` and `/anatomy-park` can no longer declare convergence on a branch that's semantically clean but mechanically broken (failing typecheck, lint errors, red tests). The gate is the truth layer they consult before stopping.
+
+**How it runs:**
+
+- **Finalize** — at convergence-trigger time both skills hand off to `extension/src/bin/finalize-gate.ts`, which runs the project's typecheck + lint + tests (project-aware via `extension/data/gate-commands.json` — pnpm/npm/yarn/cargo/go), compares results against a baseline fingerprint set, and either lets the skill exit clean or kicks the remediator.
+- **Per-iteration** (anatomy-park only) — `microverse-runner` runs a *changed-files* gate after each iteration commit. Regressions increment a soft counter; the loop continues with a one-time warning at threshold (default 5).
+- **Remediator** — `morty-gate-remediator` is a mechanical-only worker: prettier/eslint autofix plus four hand-fix classes (control-regex, async-generator require-await, unnecessary-type-assertion, spec-mock alignment). Every fix runs inside a snapshot-and-revert envelope — if previously-green tests go red, the change is reverted and `gate_autofix_reverted` is logged. `/szechuan-sauce` caps the gate ↔ remediator loop at 3 cycles, `/anatomy-park` at 5.
+- **Out-of-scope failures** — anything outside the session's `scope.json:allowed_paths` is written to `gate/out_of_scope_failures_<iso>.md` and surfaced without invoking the remediator.
+
+**Baseline mode** — fingerprints are `(file, ruleOrCode, occurrence_index)` tuples persisted to `${SESSION_ROOT}/gate/baseline.json`. Strict mode requires zero failures. Baseline mode requires no *new* failures (pre-existing problems don't block convergence). Freshness invariant halts on missing or stale baseline (default 30 iterations / 4 hours).
+
+**Hang & flake guards** — per-check timeouts (typecheck 120s / lint 60s / tests 300s) plus a 600s cumulative cap. Test scripts are filtered against a hard-refusal regex (`integration|e2e|golden|smoke|baseline|playwright|cypress|hardhat`) and a positive-allow list (`vitest|jest|node --test|mocha`). Add `convergence_gate.known_flake_files` to surface flaky test paths as `green-with-known-flake-warnings` instead of false-red.
+
+**Kill-switch** — set `PICKLE_GATE_DISABLED=1` to bypass the post-runner gate entirely. The skill convergence rules revert to pre-1.58 behavior (semantic-only).
+
+**Microverse opt-in** — `/pickle-microverse` runs are NOT gated by default. Add a filename to `convergence_gate.enabled_convergence_files` (default `["anatomy-park.json"]`) to opt a microverse-driven convergence file into per-iteration gating.
 
 ### 🏛️ Council of Ricks — Details
 
@@ -686,9 +732,9 @@ TASK verbs   ─┘   │  PRD / METRIC / TICKETS │    │   metaphor       �
                                                 │   followups      │
                                                 └────────┬─────────┘
                                                          ▼
-                                                  Print plan
-                                              (dry-run by default;
-                                                --go to execute)
+                                                  Execute plan
+                                              (or --dry-run to
+                                                preview only)
 ```
 
 **Decision matrix — metaphor (first match wins):**
