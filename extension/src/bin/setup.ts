@@ -15,6 +15,13 @@ function die(message: string): never {
   process.exit(1);
 }
 
+function resolveWorkingDirOrNull(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  return path.resolve(trimmed);
+}
+
 async function main() {
   const ROOT_DIR = getExtensionRoot();
   const DATA_DIR = getDataRoot();
@@ -207,6 +214,11 @@ async function main() {
       /* missing/corrupt — sm.update below will surface the right error */
     }
     if (preState) {
+      const resumeWorkingDir = resolveWorkingDirOrNull(preState.working_dir);
+      const currentWorkingDir = path.resolve(process.cwd());
+      if (resumeWorkingDir && resumeWorkingDir !== currentWorkingDir) {
+        die(`--resume session belongs to ${resumeWorkingDir}, not ${currentWorkingDir}. Refusing cross-repo resume.`);
+      }
       const willHaveTeams = explicitFlags.has('teams') ? teamsMode : preState.teams_mode === true;
       const willHaveBackend = explicitFlags.has('backend') ? backend : preState.backend;
       if (willHaveTeams && willHaveBackend === 'codex') {

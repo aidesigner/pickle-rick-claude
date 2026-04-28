@@ -156,7 +156,7 @@ test('setup: --resume rejects codex teams conflict from recovered tmp state', ()
     const sessionPath = path.join(dataRoot, 'sessions', 'resume-conflict');
     fs.mkdirSync(sessionPath, { recursive: true });
     const statePath = path.join(sessionPath, 'state.json');
-    const workingDir = path.join(dataRoot, 'repo');
+    const workingDir = process.cwd();
 
     fs.writeFileSync(statePath, JSON.stringify({
         schema_version: 1,
@@ -231,6 +231,45 @@ test('setup: --resume keeps the resolved session path authoritative over stale s
 
         const sessionsMap = JSON.parse(fs.readFileSync(path.join(dataRoot, 'current_sessions.json'), 'utf-8'));
         assert.equal(sessionsMap[workingDir].sessionPath, liveSessionDir, 'resume should update current_sessions.json with the resolved live session path');
+    } finally {
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('setup: --resume rejects a session whose recovered working_dir belongs to another repo', () => {
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-cross-repo-data-'));
+    const sessionsRoot = path.join(dataRoot, 'sessions');
+    const foreignRepo = path.join(dataRoot, 'foreign-repo');
+    const sessionPath = path.join(sessionsRoot, 'foreign-session');
+
+    fs.mkdirSync(foreignRepo, { recursive: true });
+    fs.mkdirSync(sessionPath, { recursive: true });
+    fs.writeFileSync(path.join(sessionPath, 'state.json'), JSON.stringify({
+        schema_version: 1,
+        active: false,
+        backend: 'claude',
+        session_dir: sessionPath,
+        working_dir: foreignRepo,
+        iteration: 4,
+        step: 'implement',
+        original_prompt: 'cross-repo resume should fail',
+    }, null, 2));
+
+    try {
+        assert.throws(
+            () => runSetupWithEnv(['--resume', sessionPath], { PICKLE_DATA_ROOT: dataRoot }),
+            /Refusing cross-repo resume/i,
+        );
+
+        const resumedState = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+        assert.equal(resumedState.active, false, 'cross-repo resume must not reactivate the foreign session');
+
+        const sessionsMapPath = path.join(dataRoot, 'current_sessions.json');
+        assert.equal(
+            fs.existsSync(sessionsMapPath),
+            false,
+            'cross-repo resume must not write a current_sessions.json entry for the wrong cwd',
+        );
     } finally {
         fs.rmSync(dataRoot, { recursive: true, force: true });
     }
