@@ -160,6 +160,37 @@ export interface PerIterationGateDeps {
   getHeadShaFn?: (dir: string) => string;
 }
 
+const PER_ITERATION_GATE_CHECKS: Array<'typecheck' | 'lint'> = ['typecheck', 'lint'];
+
+export async function ensurePerIterationGateBaseline(opts: {
+  currentMv: MicroverseSessionState;
+  workingDir: string;
+  sessionDir: string;
+  enabledFiles: string[];
+  log: (msg: string) => void;
+  _deps?: Pick<PerIterationGateDeps, 'runGateFn'>;
+}): Promise<void> {
+  const { currentMv, workingDir, sessionDir, enabledFiles, log, _deps } = opts;
+  if (!enabledFiles.includes(currentMv.convergence_file ?? '')) return;
+
+  const baselinePath = path.join(sessionDir, 'gate', 'baseline.json');
+  if (fs.existsSync(baselinePath)) return;
+
+  const runGateFn = _deps?.runGateFn ?? runGate;
+  const result = await runGateFn({
+    workingDir,
+    mode: 'baseline',
+    scope: 'full',
+    baselinePath,
+    allowedPaths: currentMv.allowed_paths,
+    checks: [...PER_ITERATION_GATE_CHECKS],
+  });
+  log(
+    `[anatomy-park] initialized per-iteration gate baseline ` +
+      `(captured ${result.total_raw_failure_count} pre-existing failure(s))`,
+  );
+}
+
 export async function runPerIterationGateHook(opts: {
   currentMv: MicroverseSessionState;
   preIterSha: string;
@@ -189,16 +220,24 @@ export async function runPerIterationGateHook(opts: {
   // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   const headSha = getHeadShaFn(workingDir);
   const commitsHappened = preIterSha !== headSha;
+  const baselinePath = path.join(sessionDir, 'gate', 'baseline.json');
+  const gateMode = fs.existsSync(baselinePath) ? 'baseline' : 'strict';
 
   if (isEnabled && commitsHappened) {
+    if (gateMode === 'strict') {
+      log(
+        '[anatomy-park] per-iteration gate baseline missing after commit — ' +
+        'falling back to strict mode for this iteration',
+      );
+    }
     const result = await runGateFn({
       workingDir,
-      mode: 'baseline',
+      mode: gateMode,
       scope: 'changed',
       since: preIterSha,
-      baselinePath: path.join(sessionDir, 'gate', 'baseline.json'),
+      baselinePath: gateMode === 'baseline' ? baselinePath : undefined,
       allowedPaths: currentMv.allowed_paths,
-      checks: ['typecheck', 'lint'],
+      checks: [...PER_ITERATION_GATE_CHECKS],
     });
 
     if (result.status === 'red' && result.failures.length > 0) {
@@ -892,6 +931,14 @@ export async function main(sessionDir: string): Promise<void> {
   // tells mux-runner's runIteration() to skip the timeout entirely.
   sm.update(statePath, s => { s.worker_timeout_seconds = 0; });
   log('Worker timeout disabled — session time limit is the only gate');
+
+  await ensurePerIterationGateBaseline({
+    currentMv,
+    workingDir,
+    sessionDir,
+    enabledFiles: cgSettings.enabled_convergence_files,
+    log,
+  });
 
   // --- Main Iteration Loop ---
   while (currentMv.status === 'iterating') {

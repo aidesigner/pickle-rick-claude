@@ -1,11 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
 import { fileURLToPath } from 'node:url';
 import * as path from 'node:path';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const { runPerIterationGateHook } = await import(
+const { ensurePerIterationGateBaseline, runPerIterationGateHook } = await import(
   path.resolve(__dirname, '../../bin/microverse-runner.js')
 );
 
@@ -58,6 +61,52 @@ const BASE_OPTS = {
   remediatorTimeoutS: 600,
   log: () => {},
 };
+
+function makeGitRepo(prefix) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  execFileSync('git', ['init'], { cwd: dir, stdio: 'pipe' });
+  execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: dir, stdio: 'pipe' });
+  execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir, stdio: 'pipe' });
+  return dir;
+}
+
+function writeGateFixtureRepo(dir) {
+  fs.mkdirSync(path.join(dir, 'scripts'), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'package.json'),
+    JSON.stringify({
+      name: 'gate-fixture',
+      private: true,
+      scripts: {
+        typecheck: 'node scripts/typecheck.cjs',
+        lint: 'node scripts/lint.cjs',
+      },
+    }, null, 2),
+  );
+  fs.writeFileSync(path.join(dir, 'scripts', 'typecheck.cjs'), 'process.exit(0);\n');
+  fs.writeFileSync(
+    path.join(dir, 'scripts', 'lint.cjs'),
+    [
+      "const fs = require('node:fs');",
+      "const path = require('node:path');",
+      "if (!fs.existsSync(path.join(process.cwd(), 'trigger-lint.txt'))) process.exit(0);",
+      "const failingFile = path.join(process.cwd(), 'src', 'broken.js');",
+      "console.error(failingFile);",
+      "console.error('  1:1  error  simulated lint regression  no-simulated-regression');",
+      "console.error('');",
+      "console.error('✖ 1 problem (1 error, 0 warnings)');",
+      'process.exit(1);',
+      '',
+    ].join('\n'),
+  );
+  fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+  fs.writeFileSync(path.join(dir, 'src', 'broken.js'), 'module.exports = 1;\n');
+}
+
+function commitAll(dir, message) {
+  execFileSync('git', ['add', '.'], { cwd: dir, stdio: 'pipe' });
+  execFileSync('git', ['commit', '-m', message], { cwd: dir, stdio: 'pipe' });
+}
 
 // Fixture i: gate enabled + commits happened + gate green → no events
 test('gate-fixture-i: green gate + commits → no regression events', async () => {
@@ -235,4 +284,48 @@ test('threshold-warning: 6 regressions → exactly one warning, second crossing 
   const warningEventsAfter = events.filter(e => e.event === 'gate_regression_threshold_warning');
   assert.equal(warningEventsAfter.length, 1, 'warning must not fire a second time');
   assert.equal(mv.gate_regression_threshold_warning_emitted, true, 'flag must remain true');
+});
+
+test('bootstrap baseline: first post-bootstrap lint regression is flagged instead of becoming the baseline', async () => {
+  const workingDir = makeGitRepo('ap-gate-repo-');
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-gate-session-'));
+  writeGateFixtureRepo(workingDir);
+  commitAll(workingDir, 'initial clean state');
+
+  await ensurePerIterationGateBaseline({
+    currentMv: makeMv(),
+    workingDir,
+    sessionDir,
+    enabledFiles: ['anatomy-park.json'],
+    log: () => {},
+  });
+
+  const baselinePath = path.join(sessionDir, 'gate', 'baseline.json');
+  assert.ok(fs.existsSync(baselinePath), 'baseline must be captured before the first iteration gate');
+
+  const preIterSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: workingDir, encoding: 'utf-8' }).trim();
+  fs.writeFileSync(path.join(workingDir, 'trigger-lint.txt'), 'trigger\n');
+  commitAll(workingDir, 'introduce lint regression');
+
+  const events = [];
+  let writtenMv;
+  const mv = await runPerIterationGateHook({
+    ...BASE_OPTS,
+    currentMv: makeMv(),
+    preIterSha,
+    workingDir,
+    sessionDir,
+    _deps: {
+      runRemediatorFn: async () => ({ success: false }),
+      writeMicroverseStateFn: (_, next) => { writtenMv = next; },
+      logActivityFn: (event) => events.push(event),
+    },
+  });
+
+  assert.equal(mv.iteration_regressions, 1, 'first regression after bootstrap must increment iteration_regressions');
+  assert.equal(writtenMv.iteration_regressions, 1, 'regression state must be persisted');
+  assert.ok(
+    events.some((event) => event.event === 'iteration_left_regression' && event.gate_payload?.failures_in === 1),
+    `expected iteration_left_regression event, got: ${JSON.stringify(events)}`,
+  );
 });
