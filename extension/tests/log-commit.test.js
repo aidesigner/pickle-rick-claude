@@ -208,6 +208,41 @@ test('log-commit: resolves the session mapped to the current cwd when multiple s
   assert.equal(events[0].commit_hash, '7654321');
 });
 
+test('log-commit: mapped session missing active does not outrank a scanned live same-cwd session', () => {
+  const currentCwd = process.cwd();
+  const { events } = runHook(
+    commitInput(
+      'git commit -m "fix: active session lookup"',
+      '[main 1122334] fix: active session lookup\n 1 file changed'
+    ),
+    {},
+    (dataRoot) => {
+      const sessionsDir = path.join(dataRoot, 'sessions');
+      const staleSession = path.join(sessionsDir, 'aaa-stale');
+      const liveSession = path.join(sessionsDir, 'zzz-live');
+      fs.mkdirSync(staleSession, { recursive: true });
+      fs.mkdirSync(liveSession, { recursive: true });
+
+      fs.writeFileSync(
+        path.join(staleSession, 'state.json'),
+        JSON.stringify({ working_dir: currentCwd, session_dir: staleSession })
+      );
+      fs.writeFileSync(
+        path.join(liveSession, 'state.json'),
+        JSON.stringify({ active: true, working_dir: currentCwd, session_dir: liveSession })
+      );
+      fs.writeFileSync(
+        path.join(dataRoot, 'current_sessions.json'),
+        JSON.stringify({ [currentCwd]: staleSession })
+      );
+    }
+  );
+
+  assert.equal(events.length, 1);
+  assert.equal(events[0].session, 'zzz-live');
+  assert.equal(events[0].commit_hash, '1122334');
+});
+
 // ---------------------------------------------------------------------------
 // Zero stdout verification
 // ---------------------------------------------------------------------------

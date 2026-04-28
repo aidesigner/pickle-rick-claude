@@ -136,6 +136,32 @@ test('getSessionPath: stale mapped inactive session does not outrank a live sess
     });
 });
 
+test('getSessionPath: mapped session missing active does not outrank a live session for the same cwd', () => {
+    withExtensionDir((tmpDir) => {
+        const fakeCwd = path.join(tmpDir, 'repo');
+        const staleSessionDir = path.join(tmpDir, 'sessions', 'stale-session');
+        const liveSessionDir = path.join(tmpDir, 'sessions', 'live-session');
+        fs.mkdirSync(fakeCwd, { recursive: true });
+        fs.mkdirSync(staleSessionDir, { recursive: true });
+        fs.mkdirSync(liveSessionDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(tmpDir, 'current_sessions.json'),
+            JSON.stringify({ [fakeCwd]: staleSessionDir })
+        );
+        fs.writeFileSync(
+            path.join(staleSessionDir, 'state.json'),
+            JSON.stringify({ working_dir: fakeCwd, session_dir: staleSessionDir })
+        );
+        fs.writeFileSync(
+            path.join(liveSessionDir, 'state.json'),
+            JSON.stringify({ active: true, working_dir: fakeCwd, session_dir: liveSessionDir })
+        );
+
+        const result = getSessionPath(fakeCwd);
+        assert.equal(result, liveSessionDir);
+    });
+});
+
 test('getSessionPath: unreadable mapped state does not outrank a live session for the same cwd', () => {
     withExtensionDir((tmpDir) => {
         const fakeCwd = path.join(tmpDir, 'repo');

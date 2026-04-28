@@ -568,11 +568,7 @@ export function findSessionPathForCwd(
           if (!requireActive) mappedFallback = mappedPath;
         } else if (sameWorkingDir(state.working_dir, cwd)) {
           if (state.active === true) return mappedPath;
-          if (state.active === false) {
-            if (!requireActive) mappedFallback = mappedPath;
-          } else {
-            return mappedPath;
-          }
+          if (!requireActive) mappedFallback = mappedPath;
         } else if (!requireActive && (state.working_dir == null || state.working_dir === '')) {
           mappedFallback = mappedPath;
         }
