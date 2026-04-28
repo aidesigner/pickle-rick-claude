@@ -211,6 +211,56 @@ test('approves Write to .eslintrc.json when ticket has config_change: true', () 
   assert.equal(result.decision, 'approve');
 });
 
+test('approves config_change override when resolved state.session_dir is stale', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-stale-session-dir-'));
+  const liveSessionDir = path.join(tmpDir, 'sessions', 'live-session');
+  const staleSessionDir = path.join(tmpDir, 'sessions', 'stale-session');
+  fs.mkdirSync(liveSessionDir, { recursive: true });
+  fs.mkdirSync(staleSessionDir, { recursive: true });
+
+  const ticketId = 'test-ticket-01';
+  const liveTicketDir = path.join(liveSessionDir, ticketId);
+  fs.mkdirSync(liveTicketDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(liveTicketDir, `linear_ticket_${ticketId}.md`),
+    `---\nid: ${ticketId}\ntitle: "Test"\nconfig_change: true\n---\n# Ticket\n`,
+  );
+
+  const liveStateFile = path.join(liveSessionDir, 'state.json');
+  fs.writeFileSync(
+    liveStateFile,
+    JSON.stringify(baseState({
+      current_ticket: ticketId,
+      session_dir: staleSessionDir,
+    })),
+  );
+  fs.writeFileSync(
+    path.join(tmpDir, 'current_sessions.json'),
+    JSON.stringify({ [process.cwd()]: liveSessionDir }),
+  );
+
+  const env = {
+    ...process.env,
+    EXTENSION_DIR: tmpDir,
+    FORCE_COLOR: '0',
+    PICKLE_STATE_FILE: liveStateFile,
+  };
+
+  try {
+    const stdout = execFileSync(process.execPath, [HANDLER], {
+      input: JSON.stringify({
+        tool_name: 'Write',
+        tool_input: { file_path: '/project/.eslintrc.json' },
+      }),
+      encoding: 'utf-8',
+      env,
+    });
+    assert.equal(JSON.parse(stdout.trim()).decision, 'approve');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Inactive session cases
 // ---------------------------------------------------------------------------

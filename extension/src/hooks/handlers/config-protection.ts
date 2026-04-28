@@ -34,10 +34,13 @@ function isBashTargetingConfig(command: string): boolean {
   return tokens.some(token => isProtectedFile(token));
 }
 
-function hasConfigChangeOverride(state: { session_dir?: string; current_ticket?: string | null }): boolean {
+function hasConfigChangeOverride(
+  sessionDir: string,
+  state: { current_ticket?: string | null },
+): boolean {
   try {
-    if (!state.session_dir || !state.current_ticket) return false;
-    const ticketDir = path.join(state.session_dir, state.current_ticket);
+    if (!state.current_ticket) return false;
+    const ticketDir = path.join(sessionDir, state.current_ticket);
     const files = fs.readdirSync(ticketDir);
     const ticketFile = files.find(f => f.startsWith('linear_ticket_') && f.endsWith('.md'));
     if (!ticketFile) return false;
@@ -124,7 +127,7 @@ async function main() {
   }
 
   // Check per-ticket override
-  if (hasConfigChangeOverride(state)) {
+  if (hasConfigChangeOverride(path.dirname(stateFile), state)) {
     approve();
     return;
   }

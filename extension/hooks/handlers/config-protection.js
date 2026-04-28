@@ -21,11 +21,11 @@ function isBashTargetingConfig(command) {
     const tokens = command.split(/[\s'"]+/).filter(t => t.length > 0);
     return tokens.some(token => isProtectedFile(token));
 }
-function hasConfigChangeOverride(state) {
+function hasConfigChangeOverride(sessionDir, state) {
     try {
-        if (!state.session_dir || !state.current_ticket)
+        if (!state.current_ticket)
             return false;
-        const ticketDir = path.join(state.session_dir, state.current_ticket);
+        const ticketDir = path.join(sessionDir, state.current_ticket);
         const files = fs.readdirSync(ticketDir);
         const ticketFile = files.find(f => f.startsWith('linear_ticket_') && f.endsWith('.md'));
         if (!ticketFile)
@@ -106,7 +106,7 @@ async function main() {
         return;
     }
     // Check per-ticket override
-    if (hasConfigChangeOverride(state)) {
+    if (hasConfigChangeOverride(path.dirname(stateFile), state)) {
         approve();
         return;
     }
