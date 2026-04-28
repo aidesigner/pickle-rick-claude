@@ -171,6 +171,40 @@ test('showStatus: falls back to active session state when the sessions map is mi
     });
 });
 
+test('showStatus: unreadable mapped state falls back to the live same-cwd session', () => {
+    withExtensionDir((tmpDir) => {
+        const fakeCwd = path.join(tmpDir, 'repo');
+        const staleSessionDir = path.join(tmpDir, 'sessions', 'stale-session');
+        const liveSessionDir = path.join(tmpDir, 'sessions', 'live-session');
+        fs.mkdirSync(fakeCwd, { recursive: true });
+        fs.mkdirSync(staleSessionDir, { recursive: true });
+        fs.mkdirSync(liveSessionDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(tmpDir, 'current_sessions.json'),
+            JSON.stringify({ [fakeCwd]: staleSessionDir })
+        );
+        fs.writeFileSync(path.join(staleSessionDir, 'state.json'), '{{{corrupt json');
+        fs.writeFileSync(
+            path.join(liveSessionDir, 'state.json'),
+            JSON.stringify({
+                active: true,
+                working_dir: fakeCwd,
+                session_dir: liveSessionDir,
+                step: 'implement',
+                iteration: 4,
+                max_iterations: 9,
+                current_ticket: 'T-LIVE',
+                original_prompt: 'Prefer the readable live session',
+            })
+        );
+
+        const output = captureStdout(() => showStatus(fakeCwd));
+        assert.ok(output.includes('Session Status'), `Expected panel title in output, got: ${output}`);
+        assert.ok(output.includes('T-LIVE'), `Expected live session ticket in output, got: ${output}`);
+        assert.ok(!output.includes('Session state is unreadable.'), `Should not report unreadable stale state, got: ${output}`);
+    });
+});
+
 // --- Truncates long prompts ---
 
 test('showStatus: truncates original_prompt longer than 80 chars', () => {

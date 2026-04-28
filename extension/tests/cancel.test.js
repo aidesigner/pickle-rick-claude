@@ -217,6 +217,38 @@ test('cancelSession: falls back to active session state when the sessions map is
     }
 });
 
+test('cancelSession: unreadable mapped state falls back to the live same-cwd session', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const cwdDir = path.join(tmpRoot, 'repo');
+        const staleSessionDir = path.join(tmpRoot, 'sessions', 'stale-session');
+        const liveSessionDir = path.join(tmpRoot, 'sessions', 'live-session');
+        fs.mkdirSync(cwdDir, { recursive: true });
+        fs.mkdirSync(staleSessionDir, { recursive: true });
+        fs.mkdirSync(liveSessionDir, { recursive: true });
+        writeSessionsMap(tmpRoot, { [cwdDir]: staleSessionDir });
+        fs.writeFileSync(path.join(staleSessionDir, 'state.json'), '{{{corrupt json');
+        fs.writeFileSync(
+            path.join(liveSessionDir, 'state.json'),
+            JSON.stringify({
+                active: true,
+                working_dir: cwdDir,
+                session_dir: liveSessionDir,
+                step: 'implement',
+                iteration: 2,
+                original_prompt: 'cancel the live session',
+            }, null, 2)
+        );
+
+        runCancelSubprocess(tmpRoot, cwdDir);
+
+        const updated = readState(liveSessionDir);
+        assert.equal(updated.active, false, 'live session should be deactivated');
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
 // --- Unreadable sessions map ---
 
 test('cancelSession: returns early when sessions map is unreadable JSON', () => {
