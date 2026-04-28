@@ -32,6 +32,33 @@ function isProcessAlive(pid) {
         return false;
     }
 }
+function readMtimeMs(filePath) {
+    try {
+        return fs.statSync(filePath).mtimeMs;
+    }
+    catch {
+        return 0;
+    }
+}
+function readFiniteIteration(state) {
+    const iteration = Number(state.iteration);
+    return Number.isFinite(iteration) ? iteration : null;
+}
+function isStateSnapshotNewer(currentState, currentMtimeMs, candidateState, candidateMtimeMs) {
+    const currentIteration = readFiniteIteration(currentState);
+    const candidateIteration = readFiniteIteration(candidateState);
+    if (candidateIteration !== null && currentIteration !== null) {
+        if (candidateIteration !== currentIteration) {
+            return candidateIteration > currentIteration;
+        }
+        return candidateMtimeMs > currentMtimeMs;
+    }
+    if (candidateIteration !== null)
+        return true;
+    if (currentIteration !== null)
+        return false;
+    return candidateMtimeMs > currentMtimeMs;
+}
 // ---------------------------------------------------------------------------
 // StateManager
 // ---------------------------------------------------------------------------
@@ -300,11 +327,10 @@ export class StateManager {
                 const parsed = JSON.parse(fs.readFileSync(tmpPath, 'utf-8'));
                 if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed))
                     continue;
-                const iteration = Number(parsed.iteration);
-                if (!Number.isFinite(iteration))
-                    continue;
-                if (!winner || iteration > winner.iteration) {
-                    winner = { tmpPath, state: parsed, iteration };
+                const mtimeMs = readMtimeMs(tmpPath);
+                if (!winner ||
+                    isStateSnapshotNewer(winner.state, winner.mtimeMs, parsed, mtimeMs)) {
+                    winner = { tmpPath, state: parsed, mtimeMs };
                 }
             }
             catch {
@@ -327,6 +353,7 @@ export class StateManager {
     recoverOrphanTmpFiles(statePath, _state) {
         const dir = path.dirname(statePath);
         const base = path.basename(statePath);
+        let currentMtimeMs = readMtimeMs(statePath);
         let entries;
         try {
             entries = fs.readdirSync(dir);
@@ -348,13 +375,14 @@ export class StateManager {
             try {
                 const raw = fs.readFileSync(tmpPath, 'utf-8');
                 const tmpState = JSON.parse(raw);
-                // Promote if tmpfile has a higher iteration (crash during write)
-                const tmpIter = Number(tmpState.iteration);
-                const curIter = Number(_state.iteration);
-                if (Number.isFinite(tmpIter) && Number.isFinite(curIter) && tmpIter > curIter) {
+                // Promote a dead-process snapshot if it represents a newer state write.
+                // Same-iteration tmpfiles happen when control-flow fields (active/backend/
+                // working_dir/session_dir) change without incrementing iteration.
+                if (isStateSnapshotNewer(_state, currentMtimeMs, tmpState, readMtimeMs(tmpPath))) {
                     fs.renameSync(tmpPath, statePath);
                     // Re-read promoted state into _state
                     Object.assign(_state, JSON.parse(fs.readFileSync(statePath, 'utf-8')));
+                    currentMtimeMs = readMtimeMs(statePath);
                 }
                 else {
                     fs.unlinkSync(tmpPath);

@@ -82,7 +82,7 @@ test('crash-recovery: orphan tmpfile with higher iteration is promoted to state.
 });
 
 // ---------------------------------------------------------------------------
-// 2. Orphan tmpfile with SAME / LOWER iteration → deleted, not promoted
+// 2. Orphan tmpfile with LOWER iteration → deleted; newer SAME iteration → promoted
 // ---------------------------------------------------------------------------
 
 test('crash-recovery: orphan tmpfile with lower iteration is deleted, not promoted', () => {
@@ -116,23 +116,29 @@ test('crash-recovery: orphan tmpfile with lower iteration is deleted, not promot
     }
 });
 
-test('crash-recovery: orphan tmpfile with SAME iteration is deleted', () => {
+test('crash-recovery: newer orphan tmpfile with SAME iteration is promoted', () => {
     const dir = makeTmpDir();
     try {
         const sm = new StateManager({ lockJitter: false });
         const statePath = path.join(dir, 'state.json');
+        const baseTs = new Date('2026-04-28T12:00:00.000Z');
+        const tmpTs = new Date('2026-04-28T12:00:01.000Z');
 
-        const currentState = makeState({ iteration: 4 });
+        const currentState = makeState({ iteration: 4, backend: 'claude', active: true });
         writeStateFile(statePath, currentState);
+        fs.utimesSync(statePath, baseTs, baseTs);
 
         const deadPid = 99999997;
         const tmpPath = `${statePath}.tmp.${deadPid}`;
-        const sameIterState = makeState({ iteration: 4 });
+        const sameIterState = makeState({ iteration: 4, backend: 'codex', active: false });
         fs.writeFileSync(tmpPath, JSON.stringify(sameIterState, null, 2));
+        fs.utimesSync(tmpPath, tmpTs, tmpTs);
 
         const result = sm.read(statePath);
         assert.equal(result.iteration, 4);
-        assert.equal(fs.existsSync(tmpPath), false, 'same-iteration tmpfile must be deleted');
+        assert.equal(result.backend, 'codex');
+        assert.equal(result.active, false);
+        assert.equal(fs.existsSync(tmpPath), false, 'promoted same-iteration tmpfile must be consumed');
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
