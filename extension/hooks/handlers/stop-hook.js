@@ -277,16 +277,6 @@ function classifyDegenerateDecision(state, transcript, role) {
         token: { kind: 'none' },
     };
 }
-function applyStateMutations(stateFile, mutations) {
-    if (!mutations || Object.keys(mutations).length === 0)
-        return;
-    try {
-        sm.update(stateFile, (s) => { Object.assign(s, mutations); });
-    }
-    catch {
-        /* fail-open */
-    }
-}
 function isCompletionToken(token) {
     return [
         'completion-promise',
@@ -470,7 +460,14 @@ async function main() {
     const decision = classifyDecisionInternal(state, responseText, role || '');
     log(promiseSummary(responseText, state, role || ''));
     log(decision.logMessage);
-    applyStateMutations(stateFile, decision.stateMutations);
+    if (decision.stateMutations && Object.keys(decision.stateMutations).length > 0) {
+        try {
+            sm.update(stateFile, (s) => { Object.assign(s, decision.stateMutations); });
+        }
+        catch {
+            /* fail-open */
+        }
+    }
     if (decision.decision === 'approve') {
         if (isCompletionToken(decision.token))
             maybeSpawnUpdateCheck(extensionDir, log);
