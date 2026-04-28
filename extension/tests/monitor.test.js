@@ -501,3 +501,35 @@ test('shouldMonitorExit: inactive pipeline session exits once terminal', () => {
     assert.equal(shouldMonitorExit(dir, false), true);
     fs.rmSync(dir, { recursive: true });
 });
+
+test('monitor CLI exits after orphan tmp recovery promotes an inactive higher-iteration state', () => {
+    const dir = tmpDir();
+    try {
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({
+            active: true,
+            iteration: 1,
+            step: 'implement',
+            original_prompt: 'stale base state',
+            working_dir: '/tmp/stale-base',
+            pid: 999999,
+        }));
+        fs.writeFileSync(path.join(dir, `state.json.tmp.999999`), JSON.stringify({
+            active: false,
+            iteration: 2,
+            step: 'review',
+            original_prompt: 'recovered inactive state',
+            working_dir: '/tmp/recovered-state',
+            pid: 999999,
+        }));
+
+        const result = run([dir]);
+        assert.equal(result.status, 0, `expected clean exit, got status=${result.status}, stderr=${result.stderr}`);
+        assert.match(result.stdout, /SESSION COMPLETE/, `expected completion banner, got: ${result.stdout}`);
+        assert.match(result.stdout, /OFFLINE/, `expected recovered inactive state to render offline, got: ${result.stdout}`);
+        const persisted = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf-8'));
+        assert.equal(persisted.iteration, 2, 'higher-iteration tmp state should be promoted');
+        assert.equal(persisted.active, false, 'promoted state should stay inactive');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});

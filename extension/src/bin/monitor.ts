@@ -2,9 +2,11 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { collectTickets, statusSymbol, formatTime, getWidth, getHeight, Style, sleep, MatrixStyle, matrixSeparator, latestIterationLog, safeErrorMessage, TicketInfo } from '../services/pickle-utils.js';
+import { StateManager } from '../services/state-manager.js';
 import { State, MicroverseSessionState } from '../types/index.js';
 
 type PipelineLifecycleStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'unknown' | 'none';
+const sm = new StateManager();
 
 /**
  * Extracts a short readable summary from a stream-json log line.
@@ -289,7 +291,7 @@ function render(sessionDir: string): boolean {
   const statePath = path.join(sessionDir, 'state.json');
   let state: State;
   try {
-    state = JSON.parse(fs.readFileSync(statePath, 'utf-8')) as State;
+    state = sm.read(statePath);
   } catch {
     process.stdout.write(`\x1b[2J\x1b[H${MX.DIM}Awaiting signal...${MX.R}\n`);
     return true;

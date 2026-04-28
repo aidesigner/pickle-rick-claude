@@ -2,6 +2,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { collectTickets, statusSymbol, formatTime, getWidth, getHeight, Style, sleep, MatrixStyle, matrixSeparator, latestIterationLog, safeErrorMessage } from '../services/pickle-utils.js';
+import { StateManager } from '../services/state-manager.js';
+const sm = new StateManager();
 /**
  * Extracts a short readable summary from a stream-json log line.
  * Returns the original line (sans ANSI) if it's not valid JSON.
@@ -266,7 +268,7 @@ function render(sessionDir) {
     const statePath = path.join(sessionDir, 'state.json');
     let state;
     try {
-        state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        state = sm.read(statePath);
     }
     catch {
         process.stdout.write(`\x1b[2J\x1b[H${MX.DIM}Awaiting signal...${MX.R}\n`);
