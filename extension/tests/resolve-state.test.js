@@ -202,6 +202,48 @@ test('selectScannedStateFile: picks the newest active same-cwd session when olde
   }
 });
 
+test('resolveStateFile: future-dated started_at does not outrank a newer same-cwd active session', () => {
+  const tmp = tmpDir();
+  try {
+    const staleSessionDir = path.join(tmp, 'sessions', 'stale-session');
+    const liveSessionDir = path.join(tmp, 'sessions', 'live-session');
+    fs.mkdirSync(staleSessionDir, { recursive: true });
+    fs.mkdirSync(liveSessionDir, { recursive: true });
+    const staleStateFile = path.join(staleSessionDir, 'state.json');
+    const liveStateFile = path.join(liveSessionDir, 'state.json');
+    fs.writeFileSync(
+      staleStateFile,
+      JSON.stringify(baseState({
+        schema_version: 1,
+        session_dir: staleSessionDir,
+        current_ticket: 'future-ticket',
+        started_at: '2099-12-31T23:59:59.000Z',
+      })),
+    );
+    fs.writeFileSync(
+      liveStateFile,
+      JSON.stringify(baseState({
+        schema_version: 1,
+        session_dir: liveSessionDir,
+        current_ticket: 'live-ticket',
+        started_at: '2026-04-28T12:00:00.000Z',
+      })),
+    );
+    fs.utimesSync(staleStateFile, new Date('2026-04-01T12:00:00.000Z'), new Date('2026-04-01T12:00:00.000Z'));
+    fs.utimesSync(liveStateFile, new Date('2026-04-28T12:00:00.000Z'), new Date('2026-04-28T12:00:00.000Z'));
+
+    const orig = process.env.PICKLE_STATE_FILE;
+    delete process.env.PICKLE_STATE_FILE;
+    try {
+      assert.equal(resolveStateFile(tmp), liveStateFile);
+    } finally {
+      if (orig !== undefined) process.env.PICKLE_STATE_FILE = orig;
+    }
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
 test('resolveStateFile: stale mapped inactive session falls back to the live active state for the cwd', () => {
   const tmp = tmpDir();
   try {

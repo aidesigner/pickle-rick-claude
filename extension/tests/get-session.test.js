@@ -152,6 +152,48 @@ test('getSessionPath: missing map prefers the newest inactive same-cwd fallback 
     });
 });
 
+test('getSessionPath: future-dated started_at does not outrank a newer same-cwd fallback session', () => {
+    withExtensionDir((tmpDir) => {
+        const fakeCwd = path.join(tmpDir, 'repo');
+        const sessionsDir = path.join(tmpDir, 'sessions');
+        const staleSessionDir = path.join(sessionsDir, 'stale-future');
+        const liveSessionDir = path.join(sessionsDir, 'live-current');
+        fs.mkdirSync(fakeCwd, { recursive: true });
+        fs.mkdirSync(staleSessionDir, { recursive: true });
+        fs.mkdirSync(liveSessionDir, { recursive: true });
+
+        const staleStatePath = path.join(staleSessionDir, 'state.json');
+        const liveStatePath = path.join(liveSessionDir, 'state.json');
+        fs.writeFileSync(
+            staleStatePath,
+            JSON.stringify({
+                schema_version: 1,
+                active: false,
+                working_dir: fakeCwd,
+                session_dir: staleSessionDir,
+                current_ticket: 'T-FUTURE',
+                started_at: '2099-12-31T23:59:59.000Z',
+            })
+        );
+        fs.writeFileSync(
+            liveStatePath,
+            JSON.stringify({
+                schema_version: 1,
+                active: false,
+                working_dir: fakeCwd,
+                session_dir: liveSessionDir,
+                current_ticket: 'T-LIVE',
+                started_at: '2026-04-28T12:00:00.000Z',
+            })
+        );
+        fs.utimesSync(staleStatePath, new Date('2026-04-01T12:00:00.000Z'), new Date('2026-04-01T12:00:00.000Z'));
+        fs.utimesSync(liveStatePath, new Date('2026-04-28T12:00:00.000Z'), new Date('2026-04-28T12:00:00.000Z'));
+
+        const result = getSessionPath(fakeCwd);
+        assert.equal(result, liveSessionDir);
+    });
+});
+
 test('getSessionPath: stale mapped inactive session does not outrank a live session for the same cwd', () => {
     withExtensionDir((tmpDir) => {
         const fakeCwd = path.join(tmpDir, 'repo');

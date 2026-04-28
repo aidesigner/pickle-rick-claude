@@ -537,6 +537,8 @@ interface SessionLookupCandidate {
   recencyMs: number;
 }
 
+const MAX_FUTURE_RECENCY_DRIFT_MS = 5 * 60 * 1000;
+
 function readSessionLookupState(sessionPath: string): SessionLookupState | null {
   try {
     const state = new StateManager().read(path.join(sessionPath, 'state.json'));
@@ -554,7 +556,10 @@ function getSessionRecencyMs(sessionPath: string, state: SessionLookupState): nu
   let recencyMs = 0;
   if (typeof state.started_at === 'string') {
     const startedAtMs = new Date(state.started_at).getTime();
-    if (Number.isFinite(startedAtMs)) recencyMs = startedAtMs;
+    const maxTrustedFutureMs = Date.now() + MAX_FUTURE_RECENCY_DRIFT_MS;
+    if (Number.isFinite(startedAtMs) && startedAtMs <= maxTrustedFutureMs) {
+      recencyMs = startedAtMs;
+    }
   }
   try {
     recencyMs = Math.max(recencyMs, fs.statSync(path.join(sessionPath, 'state.json')).mtimeMs);

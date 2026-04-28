@@ -22,6 +22,8 @@ interface StateFileCandidate {
   recencyMs: number;
 }
 
+const MAX_FUTURE_RECENCY_DRIFT_MS = 5 * 60 * 1000;
+
 function readLookupState(stateFile: string): LookupState | null {
   try {
     const state = sm.read(stateFile);
@@ -35,7 +37,10 @@ function getStateFileRecencyMs(stateFile: string, state: LookupState): number {
   let recencyMs = 0;
   if (typeof state.started_at === 'string') {
     const startedAtMs = new Date(state.started_at).getTime();
-    if (Number.isFinite(startedAtMs)) recencyMs = startedAtMs;
+    const maxTrustedFutureMs = Date.now() + MAX_FUTURE_RECENCY_DRIFT_MS;
+    if (Number.isFinite(startedAtMs) && startedAtMs <= maxTrustedFutureMs) {
+      recencyMs = startedAtMs;
+    }
   }
   try {
     recencyMs = Math.max(recencyMs, fs.statSync(stateFile).mtimeMs);
