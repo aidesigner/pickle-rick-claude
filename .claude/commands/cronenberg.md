@@ -15,7 +15,7 @@ User explicitly types `/cronenberg`. Never auto-trigger; persona's existing Rout
 ## Step 1: Parse Flags
 
 From `$ARGUMENTS`:
-- `--go` — execute the plan (default: dry-run, print and stop). Cronenberg-only.
+- `--dry-run` — print the plan and stop without executing. Cronenberg-only. (Default behavior is to execute the plan.)
 - `--no-followups` — skip cleanup chain. Cronenberg-only.
 - Everything else (flags + free text) → `FORWARD` — passed through verbatim to the chosen metaphor and its followups.
 
@@ -69,14 +69,14 @@ Plan:
   1. <metaphor> <FORWARD>
   <numbered followups, each invoked with --target <cwd> + any FORWARD flags the followup accepts>
 
-Forward any flag (e.g. --backend codex, --refine, --scope branch, --max-iterations 50) by passing it to /cronenberg — it carries through. Cronenberg-only flags: --go, --no-followups.
+Forward any flag (e.g. --backend codex, --refine, --scope branch, --max-iterations 50) by passing it to /cronenberg — it carries through. Cronenberg-only flags: --dry-run, --no-followups.
 ```
 
 ## Step 6: Execute or Stop
 
-**Default (no `--go`)** → print `"Dry run. Re-invoke with --go to execute, or copy the commands above."` Stop. Output `<promise>TASK_COMPLETED</promise>`.
+**With `--dry-run`** → print `"Dry run. Re-invoke without --dry-run to execute, or copy the commands above."` Stop. Output `<promise>TASK_COMPLETED</promise>`.
 
-**With `--go`** — chain behavior depends on the chosen metaphor:
+**Default (no `--dry-run`)** — chain behavior depends on the chosen metaphor:
 
 - **`/pickle` (interactive, in-session)** — invoke and wait for `TASK_COMPLETED`. Then chain followups in-session with `--target <cwd>` + applicable forwarded flags. On any failure, stop and report the failed step.
 
