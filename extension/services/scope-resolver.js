@@ -194,7 +194,7 @@ export function refreshScope(sessionRoot, phase, opts = {}) {
     const sm = new StateManager();
     if (isPhaseAlreadyEntered(sm, statePath, phase))
         return null;
-    const scope = JSON.parse(fs.readFileSync(scopePath, 'utf-8'));
+    const scope = readScopeJson(scopePath);
     const repoRoot = opts.repoRoot ?? resolveRepoRootFromState(sm, statePath);
     const log = opts.log ?? ((msg) => { process.stderr.write(`${msg}\n`); });
     const newHead = getHeadSha(repoRoot);
@@ -230,6 +230,65 @@ function resolveRepoRootFromState(sm, statePath) {
         throw new ScopeError('SCOPE_NOT_A_REPO', `refreshScope: no repoRoot given and no state.json at ${statePath}`);
     }
     return sm.read(statePath).working_dir;
+}
+function isProcessAlive(pid) {
+    try {
+        process.kill(pid, 0);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+function readScopeJson(scopePath) {
+    const base = JSON.parse(fs.readFileSync(scopePath, 'utf-8'));
+    const baseMtimeMs = fs.statSync(scopePath).mtimeMs;
+    const dir = path.dirname(scopePath);
+    const baseName = path.basename(scopePath);
+    const tmpPattern = new RegExp(`^${baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.tmp\\.(\\d+)$`);
+    let winner = null;
+    let entries;
+    try {
+        entries = fs.readdirSync(dir);
+    }
+    catch {
+        return base;
+    }
+    for (const entry of entries) {
+        const match = entry.match(tmpPattern);
+        if (!match)
+            continue;
+        const tmpPid = Number(match[1]);
+        if (Number.isFinite(tmpPid) && isProcessAlive(tmpPid))
+            continue;
+        const tmpPath = path.join(dir, entry);
+        try {
+            const scope = JSON.parse(fs.readFileSync(tmpPath, 'utf-8'));
+            const mtimeMs = fs.statSync(tmpPath).mtimeMs;
+            if (mtimeMs <= baseMtimeMs) {
+                fs.unlinkSync(tmpPath);
+                continue;
+            }
+            if (!winner || mtimeMs > winner.mtimeMs) {
+                winner = { path: tmpPath, scope, mtimeMs };
+            }
+        }
+        catch {
+            try {
+                fs.unlinkSync(tmpPath);
+            }
+            catch { /* ignore invalid tmp cleanup failure */ }
+        }
+    }
+    if (!winner)
+        return base;
+    try {
+        fs.renameSync(winner.path, scopePath);
+        return winner.scope;
+    }
+    catch {
+        return base;
+    }
 }
 function computeRefreshedAllowed(scope, newHead, repoRoot, target) {
     if (scope.mode === 'paths')

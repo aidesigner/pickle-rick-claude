@@ -171,6 +171,45 @@ test('refreshScope: idempotent — second call for same phase is a no-op', () =>
     }
 });
 
+test('refreshScope: promotes newer dead-writer scope.json tmp before recomputing allowed paths', () => {
+    const repo = makeRepo();
+    const session = makeSession(repo);
+    try {
+        const head = git(['rev-parse', 'HEAD'], repo);
+        const staleScope = {
+            version: 1,
+            mode: 'paths',
+            strategy: 'strict',
+            base_ref: null,
+            base_sha: null,
+            head_sha: head,
+            allowed_paths: ['stale.ts'],
+            resolved_at: new Date().toISOString(),
+            refresh_history: [],
+        };
+        const recoveredScope = {
+            ...staleScope,
+            allowed_paths: ['live.ts'],
+        };
+        const scopePath = path.join(session, 'scope.json');
+        const tmpPath = path.join(session, 'scope.json.tmp.999999');
+        fs.writeFileSync(scopePath, JSON.stringify(staleScope, null, 2));
+        fs.writeFileSync(tmpPath, JSON.stringify(recoveredScope, null, 2));
+        fs.utimesSync(scopePath, new Date('2026-04-01T00:00:00.000Z'), new Date('2026-04-01T00:00:00.000Z'));
+        fs.utimesSync(tmpPath, new Date('2026-04-02T00:00:00.000Z'), new Date('2026-04-02T00:00:00.000Z'));
+
+        const refreshed = refreshScope(session, 'anatomy-park', { repoRoot: repo });
+
+        assert.ok(refreshed);
+        assert.deepStrictEqual(refreshed.allowed_paths, ['live.ts']);
+        assert.equal(fs.existsSync(tmpPath), false, 'dead-writer tmp should be promoted or removed');
+        const persisted = JSON.parse(fs.readFileSync(scopePath, 'utf-8'));
+        assert.deepStrictEqual(persisted.allowed_paths, ['live.ts']);
+    } finally {
+        cleanup(repo, session);
+    }
+});
+
 test('refreshScope: archive refuses to overwrite (SCOPE_ARCHIVE_EXISTS)', () => {
     const repo = makeRepo();
     const session = makeSession(repo);
