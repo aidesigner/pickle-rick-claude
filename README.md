@@ -124,6 +124,13 @@ PICKLE_BACKEND=codex /pickle-tmux "refactor the auth middleware"
 
 `/council-of-ricks` integrates Codex differently — its Phase C runs an adversarial Codex subagent by default (`--no-codex` to disable, `--codex-timeout <sec>` to tune). See the Council of Ricks section below.
 
+**Reasoning effort** *(codex backend)* — append `--effort <low|medium|high>` to opt into a non-default reasoning effort. Pickle threads it through to `codex exec` as `-c reasoning.effort=<level>` before the prompt separator. Omit the flag to inherit whatever your local `codex` CLI / `~/.codex/config.toml` is set at — Pickle does not override the default. Persisted in `state.json` and survives `--resume`. Claude path is a no-op (no public reasoning-effort flag for `claude -p`); refinement displays the level for visibility but does not pass it (claude-only).
+
+```bash
+/pickle --backend codex --effort high "refactor the auth middleware"
+/pickle-tmux --backend codex --effort high "build the caching layer"
+```
+
 <a id="agent-teams"></a>**Agent Teams mode** *(v1.55+, claude backend only)* — `/pickle --teams` switches Phase 3 from spawning per-ticket `claude -p` subprocesses to spawning subagents on a harness-native team. Each ticket runs as a `morty-implementer` agent (`Agent` tool with `team_name` + `subagent_type`) that signals completion via `TaskUpdate(status="completed")` instead of the legacy `<promise>I AM DONE</promise>` token + log-size check. Manager-side validation switches to a strict all-of artifact check (`validate-teams-ticket.js`): every required prefix (`research_*.md`, `plan_*.md`, `conformance_*.md`, `code_review_*.md`) must have a matching file or the ticket is marked Failed. The flag is persisted in `state.json` and survives resume.
 
 ```bash
@@ -413,6 +420,7 @@ Most flags are command-scoped. The table groups them by command family — flags
 | `--min-iterations <N>` | `/council-of-ricks` | Minimum review rounds before convergence (overrides size-tier scaling) |
 | `--max-iterations <N>` | `/council-of-ricks` | Maximum review rounds before forced stop (overrides scaled headroom) |
 | `--gitnexus` | `/council-of-ricks` | Enable GitNexus-backed code intelligence during review |
+| `--effort <low\|medium\|high>` | `/pickle`, `/pickle-tmux`, `/pickle-microverse`, `/szechuan-sauce`, `/anatomy-park` | Codex reasoning effort (`-c reasoning.effort=<level>`); claude no-op |
 | `--no-codex` | `/council-of-ricks` | Disable the Codex adversarial reviewer |
 | `--codex-timeout <S>` | `/council-of-ricks` | Timeout for Codex adversarial reviewer (seconds) |
 | `--no-publish` | `/council-of-ricks` | Skip auto-publishing PR comments at session end |
