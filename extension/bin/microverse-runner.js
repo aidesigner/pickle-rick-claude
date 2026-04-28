@@ -11,13 +11,15 @@ import { StateManager } from '../services/state-manager.js';
 const sm = new StateManager();
 import { runIteration, loadRateLimitSettings, classifyIterationExit, computeRateLimitAction, killCurrentChild, } from './mux-runner.js';
 import { logActivity } from '../services/activity-logger.js';
-import { runGate } from '../services/convergence-gate.js';
+import { assertBaselineFresh, BaselineMissingError, BaselineStaleError, runGate } from '../services/convergence-gate.js';
 import { spawnGateRemediatorMain } from './spawn-gate-remediator.js';
 function loadConvergenceGateSettings(extRoot) {
     const defaults = {
         enabled_convergence_files: ['anatomy-park.json'],
         regression_warning_threshold: 5,
         remediator_timeout_s: 600,
+        baseline_max_age_iterations: 30,
+        baseline_max_age_seconds: 14_400,
     };
     try {
         // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking read at startup
@@ -35,6 +37,12 @@ function loadConvergenceGateSettings(extRoot) {
             remediator_timeout_s: typeof cg.remediator_timeout_s === 'number'
                 ? cg.remediator_timeout_s
                 : defaults.remediator_timeout_s,
+            baseline_max_age_iterations: typeof cg.baseline_max_age_iterations === 'number'
+                ? cg.baseline_max_age_iterations
+                : defaults.baseline_max_age_iterations,
+            baseline_max_age_seconds: typeof cg.baseline_max_age_seconds === 'number'
+                ? cg.baseline_max_age_seconds
+                : defaults.baseline_max_age_seconds,
         };
     }
     catch {
@@ -108,12 +116,34 @@ async function runRemediatorForIteration(gateResult, sessionDir, workingDir, bac
 }
 const PER_ITERATION_GATE_CHECKS = ['typecheck', 'lint', 'tests'];
 export async function ensurePerIterationGateBaseline(opts) {
-    const { currentMv, workingDir, sessionDir, enabledFiles, log, _deps } = opts;
+    const { currentMv, workingDir, sessionDir, enabledFiles, log, currentIteration, baselineMaxAgeIterations, baselineMaxAgeSeconds, _deps, } = opts;
     if (!enabledFiles.includes(currentMv.convergence_file ?? ''))
         return;
     const baselinePath = path.join(sessionDir, 'gate', 'baseline.json');
-    if (fs.existsSync(baselinePath))
-        return;
+    if (fs.existsSync(baselinePath)) {
+        if (currentIteration !== undefined &&
+            baselineMaxAgeIterations !== undefined &&
+            baselineMaxAgeSeconds !== undefined) {
+            try {
+                assertBaselineFresh(baselinePath, {
+                    max_age_iterations: baselineMaxAgeIterations,
+                    max_age_seconds: baselineMaxAgeSeconds,
+                    current_iteration: currentIteration,
+                });
+                return;
+            }
+            catch (err) {
+                if (!(err instanceof BaselineMissingError || err instanceof BaselineStaleError)) {
+                    throw err;
+                }
+                fs.rmSync(baselinePath, { force: true });
+                log(`[anatomy-park] refreshing per-iteration gate baseline (${safeErrorMessage(err)})`);
+            }
+        }
+        else {
+            return;
+        }
+    }
     const runGateFn = _deps?.runGateFn ?? runGate;
     const result = await runGateFn({
         workingDir,
@@ -753,13 +783,6 @@ export async function main(sessionDir) {
     // tells mux-runner's runIteration() to skip the timeout entirely.
     sm.update(statePath, s => { s.worker_timeout_seconds = 0; });
     log('Worker timeout disabled — session time limit is the only gate');
-    await ensurePerIterationGateBaseline({
-        currentMv,
-        workingDir,
-        sessionDir,
-        enabledFiles: cgSettings.enabled_convergence_files,
-        log,
-    });
     // --- Main Iteration Loop ---
     while (currentMv.status === 'iterating') {
         // Re-read state for external changes
@@ -799,6 +822,16 @@ export async function main(sessionDir) {
             exitReason = 'limit_reached';
             break;
         }
+        await ensurePerIterationGateBaseline({
+            currentMv,
+            workingDir,
+            sessionDir,
+            enabledFiles: cgSettings.enabled_convergence_files,
+            log,
+            currentIteration: iteration,
+            baselineMaxAgeIterations: cgSettings.baseline_max_age_iterations,
+            baselineMaxAgeSeconds: cgSettings.baseline_max_age_seconds,
+        });
         iteration++;
         log(`--- Iteration ${iteration} ---`);
         logActivity({ event: 'iteration_start', source: 'pickle', session: path.basename(sessionDir), iteration });

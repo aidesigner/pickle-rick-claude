@@ -390,3 +390,78 @@ test('bootstrap baseline: first post-bootstrap test regression is flagged instea
     `expected iteration_left_regression event for the test regression, got: ${JSON.stringify(events)}`,
   );
 });
+
+test('stale baseline refresh: matching stale failure is discarded before the next iteration gate runs', async () => {
+  const workingDir = makeGitRepo('ap-gate-stale-repo-');
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-gate-stale-session-'));
+  writeGateFixtureRepo(workingDir);
+  commitAll(workingDir, 'initial clean state');
+
+  const baselinePath = path.join(sessionDir, 'gate', 'baseline.json');
+  fs.mkdirSync(path.dirname(baselinePath), { recursive: true });
+  fs.writeFileSync(baselinePath, JSON.stringify({
+    schema_version: 1,
+    captured_at: new Date().toISOString(),
+    working_dir: workingDir,
+    project_type: 'npm',
+    checks: ['typecheck', 'lint', 'tests'],
+    failures: [{
+      check: 'lint',
+      file: path.join(workingDir, 'src', 'broken.js'),
+      line: 1,
+      ruleOrCode: 'no-simulated-regression',
+      message: 'simulated lint regression',
+      severity: 'error',
+      occurrence_index: 0,
+    }],
+  }, null, 2));
+
+  const baselineLogs = [];
+  await ensurePerIterationGateBaseline({
+    currentMv: makeMv(),
+    workingDir,
+    sessionDir,
+    enabledFiles: ['anatomy-park.json'],
+    currentIteration: 30,
+    baselineMaxAgeIterations: 30,
+    baselineMaxAgeSeconds: 14_400,
+    log: (msg) => baselineLogs.push(msg),
+  });
+
+  const refreshedBaseline = JSON.parse(fs.readFileSync(baselinePath, 'utf-8'));
+  assert.deepEqual(
+    refreshedBaseline.failures,
+    [],
+    'stale baseline must be recaptured from the clean pre-iteration tree instead of reusing stale failures',
+  );
+  assert.ok(
+    baselineLogs.some((msg) => msg.includes('refreshing per-iteration gate baseline')),
+    `expected stale-baseline refresh log, got: ${JSON.stringify(baselineLogs)}`,
+  );
+
+  const preIterSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: workingDir, encoding: 'utf-8' }).trim();
+  fs.writeFileSync(path.join(workingDir, 'trigger-lint.txt'), 'trigger\n');
+  commitAll(workingDir, 'introduce lint regression after refresh');
+
+  const events = [];
+  let writtenMv;
+  const mv = await runPerIterationGateHook({
+    ...BASE_OPTS,
+    currentMv: makeMv(),
+    preIterSha,
+    workingDir,
+    sessionDir,
+    _deps: {
+      runRemediatorFn: async () => ({ success: false }),
+      writeMicroverseStateFn: (_, next) => { writtenMv = next; },
+      logActivityFn: (event) => events.push(event),
+    },
+  });
+
+  assert.equal(mv.iteration_regressions, 1, 'refreshed baseline must not subtract the new lint regression');
+  assert.equal(writtenMv.iteration_regressions, 1, 'refreshed-baseline regression must persist state');
+  assert.ok(
+    events.some((event) => event.event === 'iteration_left_regression' && event.gate_payload?.failures_in === 1),
+    `expected iteration_left_regression after stale baseline refresh, got: ${JSON.stringify(events)}`,
+  );
+});
