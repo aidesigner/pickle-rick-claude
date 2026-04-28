@@ -45,6 +45,51 @@ test('addToJar: throws when prd.md does not exist', () => {
     }
 });
 
+test('addToJar: recovers orphan tmp state before writing jar metadata', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-jar-'));
+
+    try {
+        const staleRepo = path.join(dir, 'stale-repo');
+        const liveRepo = path.join(dir, 'live-repo');
+        fs.mkdirSync(staleRepo, { recursive: true });
+        fs.mkdirSync(liveRepo, { recursive: true });
+
+        const statePath = path.join(dir, 'state.json');
+        fs.writeFileSync(statePath, JSON.stringify({
+            active: true,
+            working_dir: staleRepo,
+            iteration: 1,
+            schema_version: 1,
+        }));
+        fs.writeFileSync(
+            `${statePath}.tmp.99999999`,
+            JSON.stringify({
+                active: true,
+                working_dir: liveRepo,
+                iteration: 2,
+                schema_version: 1,
+            }),
+        );
+        fs.writeFileSync(path.join(dir, 'prd.md'), '# Recovered PRD');
+
+        const resultPath = addToJar(dir);
+        const meta = JSON.parse(fs.readFileSync(path.join(resultPath, 'meta.json'), 'utf-8'));
+        const updatedState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+
+        assert.equal(meta.repo_path, liveRepo, 'jar metadata must use the recovered working_dir');
+        assert.equal(updatedState.working_dir, liveRepo, 'state recovery should promote the orphan tmp payload');
+        assert.equal(updatedState.active, false, 'session should still be deactivated after jarring');
+
+        fs.rmSync(resultPath, { recursive: true });
+        const parentDir = path.dirname(resultPath);
+        if (fs.existsSync(parentDir) && fs.readdirSync(parentDir).length === 0) {
+            fs.rmdirSync(parentDir);
+        }
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
 // --- Happy path ---
 
 test('addToJar: creates jar entry, writes meta.json, deactivates session', () => {

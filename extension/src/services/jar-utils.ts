@@ -23,7 +23,7 @@ export function addToJar(sessionDir: string): string {
   }
   let state: State;
   try {
-    state = JSON.parse(fs.readFileSync(statePath, 'utf-8')) as State;
+    state = sm.read(statePath);
   } catch {
     throw new Error(`state.json is corrupt or unreadable in ${sessionDir}`);
   }
