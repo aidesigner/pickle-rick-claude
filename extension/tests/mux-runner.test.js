@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -15,6 +15,15 @@ const TMUX_RUNNER_BIN = path.resolve(__dirname, '../bin/mux-runner.js');
  */
 function makeTmpRoot() {
     return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mux-runner-')));
+}
+
+async function waitFor(predicate, timeoutMs = 5000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if (predicate()) return;
+        await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    throw new Error(`Timed out after ${timeoutMs}ms waiting for condition`);
 }
 
 /**
@@ -348,6 +357,102 @@ test('mux-runner: recovered inactive orphan tmp stops the loop before stale comm
         const finalState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
         assert.equal(finalState.active, false, 'promoted inactive state must persist');
         assert.equal(finalState.iteration, 4, 'higher-iteration orphan tmp must be promoted');
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('mux-runner: SIGTERM shutdown preserves a newer orphan tmp session payload', async () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = path.join(tmpRoot, 'session');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        const statePath = path.join(sessionDir, 'state.json');
+        fs.writeFileSync(statePath, JSON.stringify({
+            schema_version: 1,
+            active: false,
+            tmux_mode: true,
+            backend: 'claude',
+            step: 'implement',
+            iteration: 1,
+            max_iterations: 10,
+            worker_timeout_seconds: 1200,
+            current_ticket: 'T-BASE',
+            original_prompt: 'Base mux session state',
+            working_dir: tmpRoot,
+            session_dir: sessionDir,
+        }, null, 2));
+
+        const templatesDir = path.join(tmpRoot, 'templates');
+        fs.mkdirSync(templatesDir, { recursive: true });
+        fs.writeFileSync(path.join(templatesDir, 'pickle.md'), '# Pickle\n\nResume: $ARGUMENTS\n');
+
+        const fakeBin = path.join(tmpRoot, 'fake-bin');
+        fs.mkdirSync(fakeBin, { recursive: true });
+        const fakeClaude = path.join(fakeBin, 'claude');
+        fs.writeFileSync(fakeClaude, '#!/bin/sh\n/bin/sleep 30\n');
+        fs.chmodSync(fakeClaude, 0o755);
+
+        const child = spawn(process.execPath, [TMUX_RUNNER_BIN, sessionDir], {
+            env: { ...process.env, EXTENSION_DIR: tmpRoot, PATH: fakeBin, PICKLE_BACKEND: 'claude' },
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let stdout = '';
+        let stderr = '';
+        child.stdout.on('data', chunk => { stdout += chunk.toString(); });
+        child.stderr.on('data', chunk => { stderr += chunk.toString(); });
+
+        await waitFor(() => {
+            try {
+                const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+                return state.active === true && fs.existsSync(path.join(sessionDir, 'tmux_iteration_1.log'));
+            } catch {
+                return false;
+            }
+        });
+
+        const orphanTmpPath = `${statePath}.tmp.99999999`;
+        fs.writeFileSync(orphanTmpPath, JSON.stringify({
+            schema_version: 1,
+            active: true,
+            tmux_mode: true,
+            backend: 'claude',
+            step: 'implement',
+            iteration: 7,
+            max_iterations: 10,
+            worker_timeout_seconds: 1200,
+            current_ticket: 'T-RECOVERED',
+            original_prompt: 'Recovered mux session state',
+            working_dir: tmpRoot,
+            session_dir: sessionDir,
+        }, null, 2));
+
+        child.kill('SIGTERM');
+        await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                child.kill('SIGKILL');
+                reject(new Error('mux-runner did not exit after SIGTERM'));
+            }, 10000);
+            child.on('exit', () => {
+                clearTimeout(timer);
+                resolve(undefined);
+            });
+            child.on('error', (err) => {
+                clearTimeout(timer);
+                reject(err);
+            });
+        });
+
+        const combined = stdout + stderr;
+        const finalState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.ok(
+            combined.includes('Received SIGTERM'),
+            `Expected shutdown log in output, got: ${combined.slice(0, 1000)}`
+        );
+        assert.equal(finalState.iteration, 7, 'shutdown must promote the newer orphan tmp before deactivation');
+        assert.equal(finalState.current_ticket, 'T-RECOVERED', 'shutdown must preserve the recovered session payload');
+        assert.equal(finalState.active, false, 'shutdown must deactivate the session');
+        assert.equal(fs.existsSync(orphanTmpPath), false, 'orphan tmp should be consumed during shutdown recovery');
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
