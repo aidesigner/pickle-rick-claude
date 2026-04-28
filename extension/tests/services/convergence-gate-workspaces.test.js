@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { execSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { getWorkspacePackages, filterByScope, runGate } from '../../services/convergence-gate.js';
 
@@ -239,6 +240,116 @@ test('runGate: nested workspace globs do not false-green failing nested packages
       result.failures.map(f => path.relative(dir, f.file).replace(/\\\\/g, '/')),
       ['packages/group-b/failing'],
       'nested workspace failures must surface instead of silently skipping every package',
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('runGate: root workspace control files keep all workspace packages in scope', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-workspace-root-scope-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
+      name: 'workspace-root',
+      private: true,
+      workspaces: ['packages/*'],
+    }, null, 2));
+    fs.writeFileSync(path.join(dir, 'pnpm-workspace.yaml'), 'packages:\n  - packages/*\n');
+
+    const passingDir = path.join(dir, 'packages', 'passing');
+    const failingDir = path.join(dir, 'packages', 'failing');
+    fs.mkdirSync(passingDir, { recursive: true });
+    fs.mkdirSync(failingDir, { recursive: true });
+
+    fs.writeFileSync(path.join(passingDir, 'package.json'), JSON.stringify({
+      name: 'passing',
+      version: '1.0.0',
+      scripts: { test: 'node -e "process.exit(0)"' },
+    }, null, 2));
+    fs.writeFileSync(path.join(failingDir, 'package.json'), JSON.stringify({
+      name: 'failing',
+      version: '1.0.0',
+      scripts: { test: 'node -e "process.exit(1)"' },
+    }, null, 2));
+
+    for (const allowedPaths of [['package.json'], ['pnpm-workspace.yaml']]) {
+      const result = await runGate({
+        workingDir: dir,
+        mode: 'strict',
+        scope: 'full',
+        checks: ['tests'],
+        allowedPaths,
+      });
+
+      assert.equal(result.status, 'red');
+      assert.equal(result.total_raw_failure_count, 1);
+      assert.deepEqual(
+        result.failures.map(f => path.relative(dir, f.file).replace(/\\\\/g, '/')),
+        ['packages/failing'],
+        `root control file scope ${allowedPaths[0]} must still run the failing workspace package`,
+      );
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('runGate: changed root workspace control files keep all workspace packages in scope', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-workspace-root-changed-'));
+  try {
+    execSync('git init', { cwd: dir, stdio: 'pipe' });
+    execSync('git config user.email "test@test.com"', { cwd: dir, stdio: 'pipe' });
+    execSync('git config user.name "Test"', { cwd: dir, stdio: 'pipe' });
+
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
+      name: 'workspace-root',
+      private: true,
+      workspaces: ['packages/*'],
+    }, null, 2));
+
+    const passingDir = path.join(dir, 'packages', 'passing');
+    const failingDir = path.join(dir, 'packages', 'failing');
+    fs.mkdirSync(passingDir, { recursive: true });
+    fs.mkdirSync(failingDir, { recursive: true });
+
+    fs.writeFileSync(path.join(passingDir, 'package.json'), JSON.stringify({
+      name: 'passing',
+      version: '1.0.0',
+      scripts: { test: 'node -e "process.exit(0)"' },
+    }, null, 2));
+    fs.writeFileSync(path.join(failingDir, 'package.json'), JSON.stringify({
+      name: 'failing',
+      version: '1.0.0',
+      scripts: { test: 'node -e "process.exit(1)"' },
+    }, null, 2));
+
+    execSync('git add .', { cwd: dir, stdio: 'pipe' });
+    execSync('git commit -m "init workspace"', { cwd: dir, stdio: 'pipe' });
+
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
+      name: 'workspace-root',
+      private: true,
+      version: '2.0.0',
+      workspaces: ['packages/*'],
+    }, null, 2));
+    execSync('git add package.json', { cwd: dir, stdio: 'pipe' });
+    execSync('git commit -m "change root workspace manifest"', { cwd: dir, stdio: 'pipe' });
+
+    const result = await runGate({
+      workingDir: dir,
+      mode: 'strict',
+      scope: 'changed',
+      since: 'HEAD~1',
+      checks: ['tests'],
+      allowedPaths: ['package.json'],
+    });
+
+    assert.equal(result.status, 'red');
+    assert.equal(result.total_raw_failure_count, 1);
+    assert.deepEqual(
+      result.failures.map(f => path.relative(dir, f.file).replace(/\\\\/g, '/')),
+      ['packages/failing'],
+      'changed root workspace manifests must keep every workspace package in scope',
     );
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

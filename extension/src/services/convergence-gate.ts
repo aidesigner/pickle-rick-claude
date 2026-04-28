@@ -65,6 +65,15 @@ const PER_CHECK_TIMEOUT_MS: Record<'typecheck' | 'lint' | 'tests', number> = {
 };
 const GATE_TOTAL_TIMEOUT_MS = 600_000;
 const GATE_LOCK_TIMEOUT_MS = 30_000;
+const WORKSPACE_ROOT_CONTROL_FILES = new Set([
+  'package.json',
+  'pnpm-workspace.yaml',
+  'pnpm-lock.yaml',
+  'yarn.lock',
+  'package-lock.json',
+  'bun.lock',
+  'bun.lockb',
+]);
 
 const UNSAFE_TEST_SCRIPT_REGEX = /integration|e2e|golden|smoke|baseline|playwright|cypress|hardhat/i;
 const SAFE_TEST_RUNNER_REGEX = /(vitest|jest|node|mocha)/;
@@ -348,6 +357,10 @@ function matchesAllowedPath(candidate: string, allowedPaths: readonly string[]):
   });
 }
 
+function affectsAllWorkspacePackages(repoRelativePaths: readonly string[]): boolean {
+  return repoRelativePaths.some((filePath) => WORKSPACE_ROOT_CONTROL_FILES.has(normalizeScopePath(filePath)));
+}
+
 function applyFlakeFilter(
   failures: GateFailure[], workingDir: string, flakeGlobs: string[]
 ): { real: GateFailure[]; flake: GateFailure[] } {
@@ -535,18 +548,21 @@ export async function runGate(opts: RunGateOpts): Promise<GateResult> {
   let targetDirs: string[];
   if (workspacePackages.length > 0) {
     let candidates = workspacePackages;
+    let changedFiles: string[] = [];
 
     if (opts.scope === 'changed' && opts.since) {
-      const changedFiles = getChangedSince(opts.workingDir, opts.since);
-      candidates = workspacePackages.filter(pkgDir =>
-        changedFiles.some(f => {
-          const absFile = path.resolve(opts.workingDir, f);
-          return absFile.startsWith(pkgDir + path.sep) || absFile === pkgDir;
-        })
-      );
+      changedFiles = getChangedSince(opts.workingDir, opts.since);
+      if (!affectsAllWorkspacePackages(changedFiles)) {
+        candidates = workspacePackages.filter(pkgDir =>
+          changedFiles.some(f => {
+            const absFile = path.resolve(opts.workingDir, f);
+            return absFile.startsWith(pkgDir + path.sep) || absFile === pkgDir;
+          })
+        );
+      }
     }
 
-    if (allowedPathsUsed) {
+    if (allowedPathsUsed && !affectsAllWorkspacePackages(opts.allowedPaths ?? [])) {
       const relCandidates = candidates.map(p => path.relative(opts.workingDir, p));
       const filtered = filterByScope(relCandidates, { scope: opts.scope, allowedPaths: opts.allowedPaths });
       candidates = filtered.map(rel => path.resolve(opts.workingDir, rel));
