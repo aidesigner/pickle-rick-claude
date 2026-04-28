@@ -731,6 +731,66 @@ test('getGitCommits: captures author email from temp git repo', () => {
     }
 });
 
+test('getGitCommits: excludes commits at or after the exclusive until bound', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-standup-git-range-'));
+    try {
+        const run = (cmd, args, extraEnv = {}) => {
+            const r = spawnSync(cmd, args, {
+                cwd: tmpDir,
+                encoding: 'utf-8',
+                timeout: 30000,
+                env: { ...process.env, ...extraEnv },
+            });
+            assert.equal(r.status, 0, `${cmd} ${args.join(' ')} failed: ${r.stderr}`);
+            return r;
+        };
+        run('git', ['init', '-q', '-b', 'main']);
+        run('git', ['config', 'user.email', 'alice@example.com']);
+        run('git', ['config', 'user.name', 'Alice']);
+        run('git', ['config', 'commit.gpgsign', 'false']);
+
+        fs.writeFileSync(path.join(tmpDir, 'a.txt'), 'in range\n');
+        run('git', ['add', 'a.txt']);
+        run(
+            'git',
+            ['commit', '-q', '-m', 'feat: in range'],
+            {
+                GIT_AUTHOR_DATE: '2026-02-26T12:00:00Z',
+                GIT_COMMITTER_DATE: '2026-02-26T12:00:00Z',
+            },
+        );
+
+        fs.writeFileSync(path.join(tmpDir, 'b.txt'), 'future\n');
+        run('git', ['add', 'b.txt']);
+        run(
+            'git',
+            ['commit', '-q', '-m', 'feat: future leak'],
+            {
+                GIT_AUTHOR_DATE: '2026-02-27T00:00:00Z',
+                GIT_COMMITTER_DATE: '2026-02-27T00:00:00Z',
+            },
+        );
+
+        const script = `
+          import { getGitCommits } from ${JSON.stringify(path.join(import.meta.dirname, '..', 'bin', 'standup.js'))};
+          const commits = getGitCommits(new Date('2026-02-26T00:00:00Z'), new Date('2026-02-27T00:00:00Z'));
+          console.log(JSON.stringify([...commits.entries()]));
+        `;
+        const probe = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+            cwd: tmpDir,
+            encoding: 'utf-8',
+            timeout: 30000,
+            env: process.env,
+        });
+        assert.equal(probe.status, 0, `probe failed: ${probe.stderr}`);
+        const commits = JSON.parse(probe.stdout.trim());
+        assert.equal(commits.length, 1);
+        assert.equal(commits[0][1].subject, 'feat: in range');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 // --- getCurrentUserEmail ---
 
 test('getCurrentUserEmail: returns lowercased email from real git repo', () => {

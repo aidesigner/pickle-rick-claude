@@ -184,24 +184,31 @@ export interface GitCommitEntry {
   subject: string;
 }
 
-export function getGitCommits(since: Date): Map<string, GitCommitEntry> {
+export function getGitCommits(since: Date, untilExclusive?: Date): Map<string, GitCommitEntry> {
   const commits = new Map<string, GitCommitEntry>();
   try {
-    const output = execSync(`git log --after="${since.toISOString()}" --pretty=format:"%H%x09%ae%x09%s"`, {
+    const beforeArg = untilExclusive ? ` --before="${untilExclusive.toISOString()}"` : '';
+    const output = execSync(`git log --after="${since.toISOString()}"${beforeArg} --pretty=format:"%aI%x09%H%x09%ae%x09%s"`, {
       encoding: 'utf-8',
       timeout: 10000,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     for (const line of output.split('\n')) {
       if (!line) continue;
-      // Tab-separated: hash \t author-email \t subject. Subject may contain tabs in theory; join the remainder.
+      // Tab-separated: author-date \t hash \t author-email \t subject. Subject may contain tabs in theory; join the remainder.
       const firstTab = line.indexOf('\t');
       if (firstTab <= 0) continue;
       const secondTab = line.indexOf('\t', firstTab + 1);
       if (secondTab <= firstTab) continue;
-      const hash = line.slice(0, firstTab);
-      const authorEmail = line.slice(firstTab + 1, secondTab).toLowerCase();
-      const subject = line.slice(secondTab + 1);
+      const thirdTab = line.indexOf('\t', secondTab + 1);
+      if (thirdTab <= secondTab) continue;
+      const authoredAt = new Date(line.slice(0, firstTab));
+      if (!Number.isFinite(authoredAt.getTime())) continue;
+      if (authoredAt < since) continue;
+      if (untilExclusive && authoredAt >= untilExclusive) continue;
+      const hash = line.slice(firstTab + 1, secondTab);
+      const authorEmail = line.slice(secondTab + 1, thirdTab).toLowerCase();
+      const subject = line.slice(thirdTab + 1);
       if (!hash) continue;
       commits.set(hash, { authorEmail, subject });
     }
@@ -427,7 +434,7 @@ function main(): void {
   const { range } = parseArgs(process.argv.slice(2));
   const activityDir = path.join(getDataRoot(), 'activity');
   const events = readActivityFiles(activityDir, range.since, range.until);
-  const gitCommits = getGitCommits(range.since);
+  const gitCommits = getGitCommits(range.since, range.until);
   const currentUserEmail = getCurrentUserEmail();
   const { hookCommits, mineGitOnlyCommits, teammateCommits } = deduplicateCommits(events, gitCommits, currentUserEmail);
   const output = formatOutput(events, hookCommits, mineGitOnlyCommits, teammateCommits, range.since, range.until);
