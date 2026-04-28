@@ -17,6 +17,16 @@ export function cancelSession(cwd) {
         console.log('State file not found.');
         return;
     }
+    try {
+        if (sm.read(statePath).active !== true) {
+            console.log('No active session found for this directory.');
+            return;
+        }
+    }
+    catch {
+        console.log('State file is unreadable.');
+        return;
+    }
     // Deactivate state AND remove map entry inside one lock to prevent inconsistent state
     // if the process crashes between the two operations.
     let cancelled = false;

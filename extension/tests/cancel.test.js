@@ -148,17 +148,18 @@ test('cancelSession: removes cwd entry from sessions map after cancel', () => {
     }
 });
 
-// --- Already inactive: still writes false ---
+// --- Already inactive: refuse to masquerade as a live loop ---
 
-test('cancelSession: idempotent — already-inactive session stays inactive', () => {
+test('cancelSession: already-inactive mapped session reports no active loop and stays inactive', () => {
     const tmpRoot = makeTmpRoot();
     try {
         const sessionDir = makeSessionDir(tmpRoot, false);
         writeSessionsMap(tmpRoot, { [tmpRoot]: sessionDir });
 
-        runCancelSubprocess(tmpRoot, tmpRoot);
+        const output = runCancelSubprocess(tmpRoot, tmpRoot);
 
         const updated = readState(sessionDir);
+        assert.ok(output.includes('No active session found'), 'inactive mapped session should not be treated as active');
         assert.equal(updated.active, false, 'active should remain false');
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
@@ -244,6 +245,38 @@ test('cancelSession: unreadable mapped state falls back to the live same-cwd ses
 
         const updated = readState(liveSessionDir);
         assert.equal(updated.active, false, 'live session should be deactivated');
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('cancelSession: inactive same-cwd fallback session does not masquerade as an active loop', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const cwdDir = path.join(tmpRoot, 'repo');
+        const sessionDir = path.join(tmpRoot, 'sessions', 'inactive-session');
+        fs.mkdirSync(cwdDir, { recursive: true });
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({
+                active: false,
+                working_dir: cwdDir,
+                session_dir: sessionDir,
+                step: 'done',
+                iteration: 9,
+                original_prompt: 'completed-session',
+            }, null, 2)
+        );
+
+        const output = runCancelSubprocess(tmpRoot, cwdDir);
+        assert.ok(
+            output.includes('No active session found'),
+            `Expected inactive fallback to be ignored, got: ${output}`
+        );
+
+        const updated = readState(sessionDir);
+        assert.equal(updated.active, false, 'inactive fallback should remain untouched');
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
