@@ -232,6 +232,89 @@ test('retryTicket: falls back to active session state when the sessions map is m
     }
 });
 
+test('retryTicket: missing map prefers the newest inactive same-cwd fallback session', () => {
+    const tmpExtDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-retry-ext-')));
+    const saved = process.env.EXTENSION_DIR;
+    process.env.EXTENSION_DIR = tmpExtDir;
+
+    try {
+        const fakeCwd = path.join(tmpExtDir, 'repo');
+        const sessionsDir = path.join(tmpExtDir, 'sessions');
+        const oldSessionDir = path.join(sessionsDir, '2026-04-01-old');
+        const newSessionDir = path.join(sessionsDir, '2026-04-28-new');
+        const ticketId = 'fallback-ticket';
+        const oldTicketDir = path.join(oldSessionDir, ticketId);
+        const newTicketDir = path.join(newSessionDir, ticketId);
+        fs.mkdirSync(fakeCwd, { recursive: true });
+        fs.mkdirSync(oldTicketDir, { recursive: true });
+        fs.mkdirSync(newTicketDir, { recursive: true });
+
+        fs.writeFileSync(
+            path.join(oldTicketDir, `linear_ticket_${ticketId}.md`),
+            `---\nid: ${ticketId}\ntitle: Old\nstatus: Done\norder: 10\n---\n`
+        );
+        fs.writeFileSync(
+            path.join(newTicketDir, `linear_ticket_${ticketId}.md`),
+            `---\nid: ${ticketId}\ntitle: New\nstatus: Done\norder: 10\n---\n`
+        );
+
+        const oldStatePath = path.join(oldSessionDir, 'state.json');
+        const newStatePath = path.join(newSessionDir, 'state.json');
+        fs.writeFileSync(
+            oldStatePath,
+            JSON.stringify({
+                schema_version: 1,
+                active: false,
+                working_dir: fakeCwd,
+                step: 'implement',
+                iteration: 1,
+                session_dir: oldSessionDir,
+                original_prompt: 'retry old fallback',
+                current_ticket: 'T-OLD',
+                worker_timeout_seconds: 1200,
+                started_at: '2026-04-01T12:00:00.000Z',
+            })
+        );
+        fs.writeFileSync(
+            newStatePath,
+            JSON.stringify({
+                schema_version: 1,
+                active: false,
+                working_dir: fakeCwd,
+                step: 'implement',
+                iteration: 2,
+                session_dir: newSessionDir,
+                original_prompt: 'retry new fallback',
+                current_ticket: 'T-NEW',
+                worker_timeout_seconds: 1200,
+                started_at: '2026-04-28T12:00:00.000Z',
+            })
+        );
+        fs.utimesSync(oldStatePath, new Date('2026-04-01T12:00:00.000Z'), new Date('2026-04-01T12:00:00.000Z'));
+        fs.utimesSync(newStatePath, new Date('2026-04-28T12:00:00.000Z'), new Date('2026-04-28T12:00:00.000Z'));
+
+        retryTicket(ticketId, fakeCwd);
+
+        const oldState = JSON.parse(fs.readFileSync(oldStatePath, 'utf-8'));
+        const newState = JSON.parse(fs.readFileSync(newStatePath, 'utf-8'));
+        assert.equal(oldState.active, false, 'older fallback session must stay inactive');
+        assert.equal(newState.active, true, 'newest fallback session should be reactivated');
+        assert.equal(newState.current_ticket, ticketId, 'newest fallback session should own the retry');
+
+        const oldTicketContent = fs.readFileSync(path.join(oldTicketDir, `linear_ticket_${ticketId}.md`), 'utf-8');
+        const newTicketContent = fs.readFileSync(path.join(newTicketDir, `linear_ticket_${ticketId}.md`), 'utf-8');
+        assert.match(oldTicketContent, /^status: Done$/m, 'older fallback ticket must remain untouched');
+        assert.match(newTicketContent, /^status: "Todo"$/m, 'newest fallback ticket should be reset');
+    } finally {
+        if (saved === undefined) {
+            delete process.env.EXTENSION_DIR;
+        } else {
+            process.env.EXTENSION_DIR = saved;
+        }
+        fs.rmSync(tmpExtDir, { recursive: true, force: true });
+    }
+});
+
 test('retryTicket: resolved session path wins over stale state.session_dir', () => {
     const tmpExtDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-retry-ext-')));
     const liveSessionDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-live-session-')));

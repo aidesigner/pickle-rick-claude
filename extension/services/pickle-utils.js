@@ -483,26 +483,61 @@ function sameWorkingDir(a, b) {
 function readSessionLookupState(sessionPath) {
     try {
         const state = new StateManager().read(path.join(sessionPath, 'state.json'));
-        return { active: state.active, working_dir: state.working_dir };
+        return {
+            active: state.active,
+            working_dir: state.working_dir,
+            started_at: state.started_at,
+        };
     }
     catch {
         return null;
     }
 }
+function getSessionRecencyMs(sessionPath, state) {
+    let recencyMs = 0;
+    if (typeof state.started_at === 'string') {
+        const startedAtMs = new Date(state.started_at).getTime();
+        if (Number.isFinite(startedAtMs))
+            recencyMs = startedAtMs;
+    }
+    try {
+        recencyMs = Math.max(recencyMs, fs.statSync(path.join(sessionPath, 'state.json')).mtimeMs);
+    }
+    catch {
+        // Keep the best signal we already have.
+    }
+    return recencyMs;
+}
+function preferNewerSession(best, candidate) {
+    if (!best)
+        return candidate;
+    if (candidate.recencyMs !== best.recencyMs) {
+        return candidate.recencyMs > best.recencyMs ? candidate : best;
+    }
+    return candidate.sessionPath.localeCompare(best.sessionPath) > 0 ? candidate : best;
+}
 function selectScannedSessionPath(sessionPaths, cwd, requireActive) {
-    let inactiveMatch = '';
+    let activeMatch = null;
+    let inactiveMatch = null;
     for (const sessionPath of sessionPaths) {
         const state = readSessionLookupState(sessionPath);
         if (!state)
             continue;
         if (!sameWorkingDir(state.working_dir, cwd))
             continue;
-        if (state.active === true)
-            return sessionPath;
-        if (!requireActive && !inactiveMatch)
-            inactiveMatch = sessionPath;
+        const candidate = {
+            sessionPath,
+            recencyMs: getSessionRecencyMs(sessionPath, state),
+        };
+        if (state.active === true) {
+            activeMatch = preferNewerSession(activeMatch, candidate);
+            continue;
+        }
+        if (!requireActive) {
+            inactiveMatch = preferNewerSession(inactiveMatch, candidate);
+        }
     }
-    return inactiveMatch;
+    return activeMatch?.sessionPath ?? inactiveMatch?.sessionPath ?? '';
 }
 /**
  * Resolves the session for a cwd from the session map first, then falls back

@@ -110,6 +110,48 @@ test('getSessionPath: falls back to active session state when the sessions map i
     });
 });
 
+test('getSessionPath: missing map prefers the newest inactive same-cwd fallback session', () => {
+    withExtensionDir((tmpDir) => {
+        const fakeCwd = path.join(tmpDir, 'repo');
+        const sessionsDir = path.join(tmpDir, 'sessions');
+        const oldSessionDir = path.join(sessionsDir, '2026-04-01-old');
+        const newSessionDir = path.join(sessionsDir, '2026-04-28-new');
+        fs.mkdirSync(fakeCwd, { recursive: true });
+        fs.mkdirSync(oldSessionDir, { recursive: true });
+        fs.mkdirSync(newSessionDir, { recursive: true });
+
+        const oldStatePath = path.join(oldSessionDir, 'state.json');
+        const newStatePath = path.join(newSessionDir, 'state.json');
+        fs.writeFileSync(
+            oldStatePath,
+            JSON.stringify({
+                schema_version: 1,
+                active: false,
+                working_dir: fakeCwd,
+                session_dir: oldSessionDir,
+                current_ticket: 'T-OLD',
+                started_at: '2026-04-01T12:00:00.000Z',
+            })
+        );
+        fs.writeFileSync(
+            newStatePath,
+            JSON.stringify({
+                schema_version: 1,
+                active: false,
+                working_dir: fakeCwd,
+                session_dir: newSessionDir,
+                current_ticket: 'T-NEW',
+                started_at: '2026-04-28T12:00:00.000Z',
+            })
+        );
+        fs.utimesSync(oldStatePath, new Date('2026-04-01T12:00:00.000Z'), new Date('2026-04-01T12:00:00.000Z'));
+        fs.utimesSync(newStatePath, new Date('2026-04-28T12:00:00.000Z'), new Date('2026-04-28T12:00:00.000Z'));
+
+        const result = getSessionPath(fakeCwd);
+        assert.equal(result, newSessionDir);
+    });
+});
+
 test('getSessionPath: stale mapped inactive session does not outrank a live session for the same cwd', () => {
     withExtensionDir((tmpDir) => {
         const fakeCwd = path.join(tmpDir, 'repo');

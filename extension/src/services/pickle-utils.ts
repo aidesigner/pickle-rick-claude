@@ -526,13 +526,53 @@ function sameWorkingDir(a: unknown, b: string): boolean {
   return typeof a === 'string' && path.resolve(a) === path.resolve(b);
 }
 
-function readSessionLookupState(sessionPath: string): { active?: unknown; working_dir?: unknown } | null {
+interface SessionLookupState {
+  active?: unknown;
+  working_dir?: unknown;
+  started_at?: unknown;
+}
+
+interface SessionLookupCandidate {
+  sessionPath: string;
+  recencyMs: number;
+}
+
+function readSessionLookupState(sessionPath: string): SessionLookupState | null {
   try {
     const state = new StateManager().read(path.join(sessionPath, 'state.json'));
-    return { active: state.active, working_dir: state.working_dir };
+    return {
+      active: state.active,
+      working_dir: state.working_dir,
+      started_at: state.started_at,
+    };
   } catch {
     return null;
   }
+}
+
+function getSessionRecencyMs(sessionPath: string, state: SessionLookupState): number {
+  let recencyMs = 0;
+  if (typeof state.started_at === 'string') {
+    const startedAtMs = new Date(state.started_at).getTime();
+    if (Number.isFinite(startedAtMs)) recencyMs = startedAtMs;
+  }
+  try {
+    recencyMs = Math.max(recencyMs, fs.statSync(path.join(sessionPath, 'state.json')).mtimeMs);
+  } catch {
+    // Keep the best signal we already have.
+  }
+  return recencyMs;
+}
+
+function preferNewerSession(
+  best: SessionLookupCandidate | null,
+  candidate: SessionLookupCandidate,
+): SessionLookupCandidate {
+  if (!best) return candidate;
+  if (candidate.recencyMs !== best.recencyMs) {
+    return candidate.recencyMs > best.recencyMs ? candidate : best;
+  }
+  return candidate.sessionPath.localeCompare(best.sessionPath) > 0 ? candidate : best;
 }
 
 function selectScannedSessionPath(
@@ -540,17 +580,27 @@ function selectScannedSessionPath(
   cwd: string,
   requireActive: boolean,
 ): string {
-  let inactiveMatch = '';
+  let activeMatch: SessionLookupCandidate | null = null;
+  let inactiveMatch: SessionLookupCandidate | null = null;
 
   for (const sessionPath of sessionPaths) {
     const state = readSessionLookupState(sessionPath);
     if (!state) continue;
     if (!sameWorkingDir(state.working_dir, cwd)) continue;
-    if (state.active === true) return sessionPath;
-    if (!requireActive && !inactiveMatch) inactiveMatch = sessionPath;
+    const candidate = {
+      sessionPath,
+      recencyMs: getSessionRecencyMs(sessionPath, state),
+    };
+    if (state.active === true) {
+      activeMatch = preferNewerSession(activeMatch, candidate);
+      continue;
+    }
+    if (!requireActive) {
+      inactiveMatch = preferNewerSession(inactiveMatch, candidate);
+    }
   }
 
-  return inactiveMatch;
+  return activeMatch?.sessionPath ?? inactiveMatch?.sessionPath ?? '';
 }
 
 /**
