@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { BACKENDS } from '../types/index.js';
+import { StateManager } from './state-manager.js';
 export function isBackend(value) {
     return typeof value === 'string' && BACKENDS.includes(value);
 }
@@ -9,6 +10,7 @@ export function isBackend(value) {
 // class as the spawnSync-no-timeout cluster: a downgrade to 'claude' that should
 // have been 'codex' wastes a whole Morty spawn with no signal.
 const _warnedBackends = new Set();
+const _sm = new StateManager();
 export function __resetBackendWarnings() {
     _warnedBackends.clear();
 }
@@ -47,8 +49,7 @@ export function resolveBackendFromStateFile(statePath) {
     if (process.env.PICKLE_REFINEMENT_LOCK === '1')
         return 'claude';
     try {
-        const raw = fs.readFileSync(statePath, 'utf-8');
-        const parsed = JSON.parse(raw);
+        const parsed = _sm.read(statePath);
         return resolveBackend(parsed);
     }
     catch {

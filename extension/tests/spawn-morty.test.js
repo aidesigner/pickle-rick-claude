@@ -32,6 +32,21 @@ function makeTmpDir(prefix = 'pickle-spawn-morty-') {
     return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
 
+function writeCodexShim(shimDir, logPath) {
+    fs.mkdirSync(shimDir, { recursive: true });
+    const shimPath = path.join(shimDir, 'codex');
+    fs.writeFileSync(shimPath, `#!/usr/bin/env node
+const fs = require('fs');
+fs.writeFileSync(${JSON.stringify(logPath)}, JSON.stringify({
+  argv: process.argv.slice(2),
+  pickle_backend: process.env.PICKLE_BACKEND || null,
+}, null, 2));
+process.exit(0);
+`);
+    fs.chmodSync(shimPath, 0o755);
+    return shimPath;
+}
+
 // --- Argument validation ---
 
 test('spawn-morty: no args → exit 1, prints Usage', () => {
@@ -421,6 +436,61 @@ test('spawn-morty F15: negative remaining with short --timeout yields >=30s', ()
         const combined = result.stdout + result.stderr;
         // With remaining<=0 and --timeout 5, effectiveTimeout = max(30, 5) = 30
         assert.match(combined, /Timeout.*\b30s\b/, 'effectiveTimeout should be at least 30s even when session elapsed');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('spawn-morty: recovers orphan tmp backend state before routing worker CLI', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketDir = path.join(sessionDir, 'ticket-backend-recovery');
+        fs.mkdirSync(ticketDir, { recursive: true });
+
+        const statePath = path.join(sessionDir, 'state.json');
+        fs.writeFileSync(statePath, JSON.stringify({
+            active: true,
+            backend: 'claude',
+            iteration: 1,
+            schema_version: 1,
+        }));
+        fs.writeFileSync(
+            `${statePath}.tmp.99999999`,
+            JSON.stringify({
+                active: true,
+                backend: 'codex',
+                iteration: 2,
+                schema_version: 1,
+            }),
+        );
+
+        const shimDir = path.join(tmpDir, 'bin');
+        const shimLog = path.join(tmpDir, 'codex-invocation.json');
+        writeCodexShim(shimDir, shimLog);
+
+        const result = spawnSync(process.execPath, [SPAWN_MORTY_BIN,
+            'implement the thing',
+            '--ticket-id', 'ticket-backend-recovery',
+            '--ticket-path', ticketDir,
+            '--timeout', '30',
+        ], {
+            env: {
+                ...process.env,
+                EXTENSION_DIR: tmpDir,
+                PATH: `${shimDir}${path.delimiter}${process.env.PATH || ''}`,
+                PICKLE_BACKEND: '',
+            },
+            encoding: 'utf-8',
+            timeout: 45000,
+        });
+
+        const combined = result.stdout + result.stderr;
+        assert.equal(result.status, 1, `expected validation failure after codex shim exit, got: ${combined}`);
+        assert.ok(combined.includes('Backend') && combined.includes('codex'), `expected Backend: codex in output, got: ${combined}`);
+        assert.ok(fs.existsSync(shimLog), 'codex shim should be invoked after backend recovery');
+        const invocation = JSON.parse(fs.readFileSync(shimLog, 'utf-8'));
+        assert.equal(invocation.pickle_backend, 'codex');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

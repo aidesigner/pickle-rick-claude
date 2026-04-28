@@ -93,6 +93,21 @@ test('resolveBackendFromStateFile: defaults to claude on corrupt JSON', () => {
     });
 });
 
+test('resolveBackendFromStateFile: recovers higher-iteration orphan tmp backend before resolving', () => {
+    const dir = mkTmpDir('backend-spawn-');
+    const file = path.join(dir, 'state.json');
+    fs.writeFileSync(file, JSON.stringify({ backend: 'claude', iteration: 1, schema_version: 1 }));
+    fs.writeFileSync(
+        `${file}.tmp.99999999`,
+        JSON.stringify({ backend: 'codex', iteration: 2, schema_version: 1 })
+    );
+    withUnsetBackendEnv(() => {
+        assert.equal(resolveBackendFromStateFile(file), 'codex');
+    });
+    const promoted = JSON.parse(fs.readFileSync(file, 'utf-8'));
+    assert.equal(promoted.backend, 'codex');
+});
+
 // --- buildWorkerInvocation: claude ---
 
 test('buildWorkerInvocation(claude): includes --dangerously-skip-permissions and -p', () => {
