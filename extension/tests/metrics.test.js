@@ -408,7 +408,7 @@ test('scanGitRepos: filters out commits dated after the report until day', () =>
         );
 
         const loc = scanGitRepos(repoRoot, yesterdayStr, todayStr);
-        const repoStats = loc.get('future-dated-repo');
+        const repoStats = loc.get(repoDir.replace(/[\\/]/g, '-'));
         assert.ok(repoStats, 'expected repo stats for in-range commit');
         assert.ok(repoStats.has(todayStr), 'today commit should be included');
         assert.ok(!repoStats.has(tomorrowStr), 'future-dated commit must be excluded');
@@ -467,14 +467,14 @@ test('buildReport: empty maps produce empty report', () => {
     assert.equal(report.totals.commits, 0);
 });
 
-test('buildReport: LOC merges into matching project by slug suffix', () => {
+test('buildReport: LOC merges into matching project by exact project slug', () => {
     const tokens = new Map([
         ['-Users-greg-loanlight-api', new Map([
             ['2026-02-28', { turns: 1, input: 10, output: 20, cache_read: 0, cache_create: 0 }],
         ])],
     ]);
     const loc = new Map([
-        ['loanlight-api', new Map([
+        ['-Users-greg-loanlight-api', new Map([
             ['2026-02-28', { commits: 1, added: 50, removed: 10 }],
         ])],
     ]);
@@ -485,6 +485,29 @@ test('buildReport: LOC merges into matching project by slug suffix', () => {
     assert.equal(proj.totals.commits, 1);
     assert.equal(proj.totals.added, 50);
     assert.equal(proj.totals.removed, 10);
+});
+
+test('buildReport: LOC stays separate when only a fuzzy basename would have matched', () => {
+    const tokens = new Map([
+        ['-Users-greg-loanlight-api', new Map([
+            ['2026-02-28', { turns: 1, input: 10, output: 20, cache_read: 0, cache_create: 0 }],
+        ])],
+    ]);
+    const loc = new Map([
+        ['api', new Map([
+            ['2026-02-28', { commits: 1, added: 50, removed: 10 }],
+        ])],
+    ]);
+
+    const report = buildReport(tokens, loc, '2026-02-28', '2026-02-28', 'daily');
+    const tokenProject = report.projects.find(p => p.slug === '-Users-greg-loanlight-api');
+    const locOnlyProject = report.projects.find(p => p.slug === 'api');
+    assert.ok(tokenProject);
+    assert.equal(tokenProject.totals.commits, 0, 'fuzzy basename matches must not steal LOC into another slug');
+    assert.ok(locOnlyProject);
+    assert.equal(locOnlyProject.totals.commits, 1);
+    assert.equal(locOnlyProject.totals.added, 50);
+    assert.equal(locOnlyProject.totals.removed, 10);
 });
 
 // ---------------------------------------------------------------------------

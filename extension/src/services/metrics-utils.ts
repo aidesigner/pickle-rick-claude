@@ -82,6 +82,10 @@ export function shortenSlug(slug: string): string {
   return result;
 }
 
+function projectSlugFromPath(projectPath: string): string {
+  return path.resolve(projectPath).replace(/[\\/]/g, '-');
+}
+
 // ---------------------------------------------------------------------------
 // Session Line Parser
 // ---------------------------------------------------------------------------
@@ -300,6 +304,7 @@ export function scanGitRepos(repoRoot: string, since: string, until: string): Ma
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const repoPath = path.join(repoRoot, entry.name);
+    const repoSlug = projectSlugFromPath(repoPath);
     const gitDir = path.join(repoPath, '.git');
     try {
       fs.statSync(gitDir);
@@ -319,7 +324,7 @@ export function scanGitRepos(repoRoot: string, since: string, until: string): Ma
         if (date < since || date > until) continue;
         boundedLocMap.set(date, totals);
       }
-      if (boundedLocMap.size > 0) result.set(entry.name, boundedLocMap);
+      if (boundedLocMap.size > 0) result.set(repoSlug, boundedLocMap);
     } catch {
       // Individual repo failure is non-fatal
     }
@@ -378,22 +383,9 @@ export function buildReport(
     }
     projectTotals.set(slug, t);
   }
-  // Merge LOC into project totals — pre-build a repo→slug lookup to avoid O(n²)
-  const repoToSlug = new Map<string, string>();
-  for (const slug of projectTotals.keys()) {
-    // Match repo name against the last segment of the slug (e.g. "l-loanlight-api" → "loanlight-api")
-    // Use full suffix match to avoid ambiguity (e.g. "api" matching multiple slugs)
-    for (const [repo] of loc) {
-      if (slug.endsWith(repo) || slug.endsWith('-' + repo)) {
-        repoToSlug.set(repo, slug);
-      }
-    }
-  }
-
-  for (const [repo, dateMap] of loc) {
-    const matchedSlug = repoToSlug.get(repo);
-    if (!matchedSlug && !projectTotals.has(repo)) projectTotals.set(repo, emptyTotals());
-    const target = matchedSlug ? projectTotals.get(matchedSlug)! : projectTotals.get(repo)!;
+  for (const [slug, dateMap] of loc) {
+    if (!projectTotals.has(slug)) projectTotals.set(slug, emptyTotals());
+    const target = projectTotals.get(slug)!;
     for (const dl of dateMap.values()) {
       target.commits += dl.commits;
       target.added += dl.added;
