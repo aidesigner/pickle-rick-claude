@@ -16,6 +16,14 @@ function readLookupState(stateFile) {
         return null;
     }
 }
+function resolveMatchingStateFile(stateFile, cwd) {
+    if (!fs.existsSync(stateFile))
+        return null;
+    const state = readLookupState(stateFile);
+    if (!state || !sameWorkingDir(state.working_dir, cwd))
+        return null;
+    return { stateFile, active: state.active };
+}
 function resolveStateFileFromSessionsDir(dataDir) {
     const sessionsDir = path.join(dataDir, 'sessions');
     let entries;
@@ -41,34 +49,44 @@ function resolveStateFileFromSessionsDir(dataDir) {
 /**
  * Resolves the state file path from env or the sessions map.
  * `dataDir` is where current_sessions.json lives (pickle data root, not the
- * extension install dir). Returns null if no active state file is found.
+ * extension install dir). Returns null if no matching state file is found.
  */
 export function resolveStateFile(dataDir) {
-    let stateFile = process.env.PICKLE_STATE_FILE || null;
-    if (!stateFile) {
-        const sessionsMapPath = path.join(dataDir, 'current_sessions.json');
-        if (fs.existsSync(sessionsMapPath)) {
-            try {
-                const map = JSON.parse(fs.readFileSync(sessionsMapPath, 'utf8'));
-                const sessionPath = resolveSessionPath(map[process.cwd()]);
-                if (sessionPath) {
-                    const mappedStateFile = path.join(sessionPath, 'state.json');
-                    const state = readLookupState(mappedStateFile);
-                    if (state && sameWorkingDir(state.working_dir, process.cwd()) && state.active === true) {
-                        stateFile = mappedStateFile;
-                    }
-                }
-            }
-            catch {
-                /* corrupt sessions map — fall through to state scan below */
-            }
+    const cwd = process.cwd();
+    let fallbackStateFile = null;
+    const envStateFile = process.env.PICKLE_STATE_FILE;
+    if (envStateFile) {
+        const envMatch = resolveMatchingStateFile(envStateFile, cwd);
+        if (envMatch) {
+            if (envMatch.active === true)
+                return envMatch.stateFile;
+            fallbackStateFile = envMatch.stateFile;
         }
     }
-    if (!stateFile)
-        stateFile = resolveStateFileFromSessionsDir(dataDir);
-    if (!stateFile || !fs.existsSync(stateFile))
-        return null;
-    return stateFile;
+    const sessionsMapPath = path.join(dataDir, 'current_sessions.json');
+    if (fs.existsSync(sessionsMapPath)) {
+        try {
+            const map = JSON.parse(fs.readFileSync(sessionsMapPath, 'utf8'));
+            const sessionPath = resolveSessionPath(map[cwd]);
+            if (sessionPath) {
+                const mappedStateFile = path.join(sessionPath, 'state.json');
+                const mappedMatch = resolveMatchingStateFile(mappedStateFile, cwd);
+                if (mappedMatch) {
+                    if (mappedMatch.active === true)
+                        return mappedMatch.stateFile;
+                    if (!fallbackStateFile)
+                        fallbackStateFile = mappedMatch.stateFile;
+                }
+            }
+        }
+        catch {
+            /* corrupt sessions map — fall through to state scan below */
+        }
+    }
+    const scannedStateFile = resolveStateFileFromSessionsDir(dataDir);
+    if (scannedStateFile)
+        return scannedStateFile;
+    return fallbackStateFile;
 }
 /**
  * Loads state from a state file, returning null if the session is

@@ -477,7 +477,7 @@ const { resolveStateFile, loadActiveState } = await import(RESOLVE_STATE);
 test('resolve-state: resolveStateFile returns path when PICKLE_STATE_FILE set and file exists', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rs-'));
   const stateFile = path.join(tmpDir, 'state.json');
-  fs.writeFileSync(stateFile, '{}');
+  fs.writeFileSync(stateFile, JSON.stringify(baseState()));
   const saved = process.env.PICKLE_STATE_FILE;
   try {
     process.env.PICKLE_STATE_FILE = stateFile;

@@ -41,12 +41,47 @@ test('resolveStateFile: returns env PICKLE_STATE_FILE when set and file exists',
   const tmp = tmpDir();
   try {
     const stateFile = path.join(tmp, 'state.json');
-    fs.writeFileSync(stateFile, '{}');
+    fs.writeFileSync(stateFile, JSON.stringify(baseState()));
     const orig = process.env.PICKLE_STATE_FILE;
     process.env.PICKLE_STATE_FILE = stateFile;
     try {
       const result = resolveStateFile(tmp);
       assert.equal(result, stateFile);
+    } finally {
+      if (orig === undefined) delete process.env.PICKLE_STATE_FILE;
+      else process.env.PICKLE_STATE_FILE = orig;
+    }
+  } finally {
+    fs.rmSync(tmp, { recursive: true });
+  }
+});
+
+test('resolveStateFile: stale env state for another cwd falls back to the live mapped session for this cwd', () => {
+  const tmp = tmpDir();
+  try {
+    const staleSessionDir = path.join(tmp, 'sessions', 'stale-session');
+    const liveSessionDir = path.join(tmp, 'sessions', 'live-session');
+    fs.mkdirSync(staleSessionDir, { recursive: true });
+    fs.mkdirSync(liveSessionDir, { recursive: true });
+    const staleStateFile = path.join(staleSessionDir, 'state.json');
+    const liveStateFile = path.join(liveSessionDir, 'state.json');
+    fs.writeFileSync(
+      staleStateFile,
+      JSON.stringify(baseState({ working_dir: '/tmp/other-project', session_dir: staleSessionDir })),
+    );
+    fs.writeFileSync(
+      liveStateFile,
+      JSON.stringify(baseState({ working_dir: process.cwd(), session_dir: liveSessionDir })),
+    );
+    fs.writeFileSync(
+      path.join(tmp, 'current_sessions.json'),
+      JSON.stringify({ [process.cwd()]: liveSessionDir }),
+    );
+
+    const orig = process.env.PICKLE_STATE_FILE;
+    process.env.PICKLE_STATE_FILE = staleStateFile;
+    try {
+      assert.equal(resolveStateFile(tmp), liveStateFile);
     } finally {
       if (orig === undefined) delete process.env.PICKLE_STATE_FILE;
       else process.env.PICKLE_STATE_FILE = orig;

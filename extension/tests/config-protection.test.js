@@ -254,3 +254,47 @@ test('blocks protected config edits when the sessions map is missing but a live 
   });
   assert.equal(result.decision, 'block');
 });
+
+test('blocks protected config edits when PICKLE_STATE_FILE points to another cwd but a live same-cwd session exists', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-stale-env-'));
+  const staleSessionDir = path.join(tmpDir, 'sessions', 'stale-session');
+  const liveSessionDir = path.join(tmpDir, 'sessions', 'live-session');
+  fs.mkdirSync(staleSessionDir, { recursive: true });
+  fs.mkdirSync(liveSessionDir, { recursive: true });
+
+  const staleStateFile = path.join(staleSessionDir, 'state.json');
+  const liveStateFile = path.join(liveSessionDir, 'state.json');
+  fs.writeFileSync(
+    staleStateFile,
+    JSON.stringify(baseState({ working_dir: '/tmp/other-project', session_dir: staleSessionDir })),
+  );
+  fs.writeFileSync(
+    liveStateFile,
+    JSON.stringify(baseState({ working_dir: process.cwd(), session_dir: liveSessionDir })),
+  );
+  fs.writeFileSync(
+    path.join(tmpDir, 'current_sessions.json'),
+    JSON.stringify({ [process.cwd()]: liveSessionDir }),
+  );
+
+  const env = {
+    ...process.env,
+    EXTENSION_DIR: tmpDir,
+    FORCE_COLOR: '0',
+    PICKLE_STATE_FILE: staleStateFile,
+  };
+
+  try {
+    const stdout = execFileSync(process.execPath, [HANDLER], {
+      input: JSON.stringify({
+        tool_name: 'Write',
+        tool_input: { file_path: '/project/.eslintrc.json' },
+      }),
+      encoding: 'utf-8',
+      env,
+    });
+    assert.equal(JSON.parse(stdout.trim()).decision, 'block');
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
