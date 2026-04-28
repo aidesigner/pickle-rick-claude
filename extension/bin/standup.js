@@ -78,6 +78,11 @@ function dateToFilename(d) {
     const day = String(d.getDate()).padStart(2, '0');
     return `${y}-${m}-${day}`;
 }
+function displayRangeEnd(untilExclusive) {
+    const displayEnd = new Date(untilExclusive);
+    displayEnd.setDate(displayEnd.getDate() - 1);
+    return dateToFilename(displayEnd);
+}
 export function readActivityFiles(activityDir, since, until) {
     if (!fs.existsSync(activityDir))
         return [];
@@ -203,7 +208,7 @@ export function deduplicateCommits(events, gitCommits, currentUserEmail = null) 
 }
 export function formatOutput(events, hookCommits, mineGitOnlyCommits, teammateCommits, since, until) {
     const sinceStr = dateToFilename(since);
-    const untilStr = dateToFilename(until);
+    const untilStr = displayRangeEnd(until);
     const nonCommitEvents = events.filter((e) => e.event !== 'commit');
     const hasContent = nonCommitEvents.length > 0 || hookCommits.length > 0
         || mineGitOnlyCommits.length > 0 || teammateCommits.length > 0;

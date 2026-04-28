@@ -85,9 +85,7 @@ function toDateStr(d: Date): string {
 function computeDateRange(args: ParsedMetricsArgs): { since: string; until: string } {
   const now = new Date();
   const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const tomorrow = new Date(todayMidnight);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  const until = toDateStr(tomorrow);
+  const until = toDateStr(todayMidnight);
 
   if (args.since !== null) {
     const parsed = new Date(args.since + 'T00:00:00');
@@ -95,7 +93,7 @@ function computeDateRange(args: ParsedMetricsArgs): { since: string; until: stri
       console.error(`Error: invalid date "${args.since}". Use YYYY-MM-DD format.`);
       process.exit(1);
     }
-    if (parsed >= tomorrow) {
+    if (parsed > todayMidnight) {
       console.error(`Error: --since date "${args.since}" is in the future.`);
       process.exit(1);
     }

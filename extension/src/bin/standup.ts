@@ -95,6 +95,12 @@ function dateToFilename(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
+function displayRangeEnd(untilExclusive: Date): string {
+  const displayEnd = new Date(untilExclusive);
+  displayEnd.setDate(displayEnd.getDate() - 1);
+  return dateToFilename(displayEnd);
+}
+
 export function readActivityFiles(activityDir: string, since: Date, until: Date): ActivityEvent[] {
   if (!fs.existsSync(activityDir)) return [];
 
@@ -248,7 +254,7 @@ export function formatOutput(
   until: Date,
 ): string {
   const sinceStr = dateToFilename(since);
-  const untilStr = dateToFilename(until);
+  const untilStr = displayRangeEnd(until);
   const nonCommitEvents = events.filter((e) => e.event !== 'commit');
   const hasContent = nonCommitEvents.length > 0 || hookCommits.length > 0
     || mineGitOnlyCommits.length > 0 || teammateCommits.length > 0;

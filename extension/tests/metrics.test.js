@@ -474,6 +474,7 @@ test('CLI: --days 0 returns today only', () => {
         });
         assert.equal(result.status, 0, `stderr: ${result.stderr}`);
         const report = JSON.parse(result.stdout);
+        assert.equal(report.until, today, 'Report end date should reflect the last included day');
         for (const row of report.rows) {
             assert.equal(row.date, today, 'All rows should be today');
         }

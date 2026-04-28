@@ -139,6 +139,17 @@ test('CLI: --since with future date exits with error', () => {
     assert.match(result.stderr, /future/);
 });
 
+test('CLI: --days 0 displays an inclusive end date for today', () => {
+    withTempActivityDir((activityDir, dataRoot) => {
+        const todayStr = today();
+        writeEvent(activityDir, todayStr, { ts: `${todayStr}T08:00:00Z`, event: 'feature', source: 'persona', title: 'today work' });
+
+        const result = runCli(['--days', '0'], { PICKLE_DATA_DIR: dataRoot });
+        assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+        assert.match(result.stdout, new RegExp(`# Standup — ${todayStr} to ${todayStr}`));
+    });
+});
+
 test('CLI: --since without value exits with error', () => {
     const result = runCli(['--since']);
     assert.equal(result.status, 1);
@@ -468,11 +479,12 @@ test('deduplicateCommits: omitted currentUserEmail defaults to null (backward co
 // --- formatOutput ---
 
 test('formatOutput: empty range shows no activity message', () => {
-    const since = new Date('2026-02-26');
-    const until = new Date('2026-02-27');
+    const since = new Date('2026-02-26T00:00:00');
+    const until = new Date('2026-02-27T00:00:00');
     const output = formatOutput([], [], [], [], since, until);
     assert.match(output, /No activity found/);
     assert.match(output, /2026-02-26/);
+    assert.doesNotMatch(output, /2026-02-27/);
 });
 
 test('formatOutput: session with iterations and commits', () => {
