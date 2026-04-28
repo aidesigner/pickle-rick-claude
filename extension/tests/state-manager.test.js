@@ -648,3 +648,34 @@ test('safeDeactivate: falls back to {active:false} seed when file unreadable', (
     assert.equal(read.active, false);
   });
 });
+
+test('safeDeactivate: fallback preserves crash-recovered tmp state before deactivating', () => {
+  withDir((dir) => {
+    const sp = path.join(dir, 'state.json');
+    writeStateFile(sp, makeState({ iteration: 1, current_ticket: 'T-BASE' }));
+    const tmpFile = `${sp}.tmp.99999999`;
+    fs.writeFileSync(tmpFile, JSON.stringify(makeState({
+      iteration: 2,
+      current_ticket: 'T-RECOVERED',
+      command_template: 'council-of-ricks.md',
+    })));
+
+    const originalUpdate = StateManager.prototype.update;
+    StateManager.prototype.update = () => {
+      throw new LockError('forced fallback');
+    };
+
+    try {
+      safeDeactivate(sp);
+    } finally {
+      StateManager.prototype.update = originalUpdate;
+    }
+
+    const recovered = new StateManager().read(sp);
+    assert.equal(recovered.iteration, 2, 'fallback must preserve the promoted iteration');
+    assert.equal(recovered.current_ticket, 'T-RECOVERED');
+    assert.equal(recovered.command_template, 'council-of-ricks.md');
+    assert.equal(recovered.active, false);
+    assert.equal(fs.existsSync(tmpFile), false, 'recovered tmp should be consumed');
+  });
+});

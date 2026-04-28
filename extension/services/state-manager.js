@@ -349,7 +349,7 @@ function forceWriteMutate(statePath, mutator, fallbackFactory) {
     catch { /* fall through to best-effort path */ }
     let seed = null;
     try {
-        const parsed = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        const parsed = _sm.read(statePath);
         mutator(parsed);
         seed = parsed;
     }

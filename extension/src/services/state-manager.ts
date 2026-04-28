@@ -377,7 +377,7 @@ function forceWriteMutate(
 
   let seed: State | object | null = null;
   try {
-    const parsed = JSON.parse(fs.readFileSync(statePath, 'utf-8')) as State;
+    const parsed = _sm.read(statePath);
     mutator(parsed);
     seed = parsed;
   } catch {
