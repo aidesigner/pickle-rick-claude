@@ -29,6 +29,10 @@ function makeTmpDir() {
     return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-morty-watcher-')));
 }
 
+function makeSessionDir(prefix) {
+    return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+}
+
 // --- Startup validation ---
 
 test('morty-watcher: no args → exit 1, stderr includes Usage', () => {
@@ -150,5 +154,29 @@ test('discoverArtifacts: empty session dir returns empty', () => {
         assert.equal(results.length, 0);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('morty-watcher: dead-pid active session terminates via recovered state', () => {
+    const sessionDir = makeSessionDir('pickle-morty-watcher-session-');
+    try {
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            pid: 999999,
+            step: 'implement',
+            iteration: 2,
+        }, null, 2));
+
+        const result = spawnSync(process.execPath, [MORTY_WATCHER_BIN, sessionDir], {
+            env: { ...process.env },
+            encoding: 'utf-8',
+            timeout: 4000,
+        });
+
+        assert.notEqual(result.error?.code, 'ETIMEDOUT', `Watcher hung instead of terminating: ${result.stderr}`);
+        assert.equal(result.status, 0, `Expected clean exit, got stderr: ${result.stderr}`);
+        assert.ok(result.stdout.includes('FEED TERMINATED'), `Expected termination banner, got: ${result.stdout}`);
+    } finally {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
     }
 });

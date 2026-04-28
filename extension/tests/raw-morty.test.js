@@ -1,5 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +19,10 @@ function run(args) {
         encoding: 'utf-8',
         timeout: 30000,
     });
+}
+
+function makeSessionDir(prefix) {
+    return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
 
 // --- Startup validation ---
@@ -270,4 +276,28 @@ test('processLineRaw: non-object JSON (array) → null', () => {
 test('processLineRaw: non-object JSON (number) → null', () => {
     const line = JSON.stringify(42);
     assert.equal(processLineRaw(line), null);
+});
+
+test('raw-morty: dead-pid active session terminates via recovered state', () => {
+    const sessionDir = makeSessionDir('pickle-raw-morty-session-');
+    try {
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            pid: 999999,
+            step: 'implement',
+            iteration: 3,
+        }, null, 2));
+
+        const result = spawnSync(process.execPath, [RAW_MORTY_BIN, sessionDir], {
+            env: { ...process.env },
+            encoding: 'utf-8',
+            timeout: 4000,
+        });
+
+        assert.notEqual(result.error?.code, 'ETIMEDOUT', `Watcher hung instead of terminating: ${result.stderr}`);
+        assert.equal(result.status, 0, `Expected clean exit, got stderr: ${result.stderr}`);
+        assert.ok(result.stdout.includes('FEED TERMINATED'), `Expected termination banner, got: ${result.stdout}`);
+    } finally {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
 });

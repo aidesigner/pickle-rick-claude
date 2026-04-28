@@ -9,10 +9,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { sleep, MatrixStyle, matrixSeparator, latestIterationLog, drainStreamJsonLines, RAIN_CHARS, safeErrorMessage } from '../services/pickle-utils.js';
+import { StateManager } from '../services/state-manager.js';
 const MX = {
     ...MatrixStyle,
     TOOL: MatrixStyle.CYAN, // alias for tool call styling
 };
+const sm = new StateManager();
 function randomRainChar() {
     return RAIN_CHARS[Math.floor(Math.random() * RAIN_CHARS.length)];
 }
@@ -152,8 +154,7 @@ async function main() {
         const log = latestIterationLog(sessionDir);
         if (!log) {
             try {
-                // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-                const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+                const state = sm.read(path.join(sessionDir, 'state.json'));
                 if (state.active !== true) {
                     process.stdout.write(`\n${sep()}\n${MX.BRIGHT}◤ FEED TERMINATED ◢${MX.R}\n`);
                     break;
@@ -175,8 +176,7 @@ async function main() {
         offset = result.offset;
         lineBuf = result.lineBuf;
         try {
-            // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-            const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+            const state = sm.read(path.join(sessionDir, 'state.json'));
             if (state.active !== true) {
                 await sleep(2000);
                 drainStreamJsonLines(currentLog, offset, lineBuf, processLineRaw, emit);

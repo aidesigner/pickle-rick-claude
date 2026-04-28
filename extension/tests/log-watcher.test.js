@@ -160,6 +160,10 @@ function makeTmpDir() {
     return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-log-watcher-')));
 }
 
+function makeSessionDir(prefix) {
+    return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+}
+
 test('drainStreamJsonLines: parses complete lines and emits results', () => {
     const tmpDir = makeTmpDir();
     try {
@@ -229,4 +233,28 @@ test('drainStreamJsonLines: non-existent file returns unchanged state', () => {
     const result = drainStreamJsonLines('/nonexistent/path/test.log', 0, '', processLine, (t) => emitted.push(t));
     assert.equal(emitted.length, 0);
     assert.equal(result.offset, 0);
+});
+
+test('log-watcher: dead-pid active session terminates via recovered state', () => {
+    const sessionDir = makeSessionDir('pickle-log-watcher-session-');
+    try {
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            pid: 999999,
+            step: 'implement',
+            iteration: 4,
+        }, null, 2));
+
+        const result = spawnSync(process.execPath, [LOG_WATCHER_BIN, sessionDir], {
+            env: { ...process.env },
+            encoding: 'utf-8',
+            timeout: 4000,
+        });
+
+        assert.notEqual(result.error?.code, 'ETIMEDOUT', `Watcher hung instead of terminating: ${result.stderr}`);
+        assert.equal(result.status, 0, `Expected clean exit, got stderr: ${result.stderr}`);
+        assert.ok(result.stdout.includes('FEED TERMINATED'), `Expected termination banner, got: ${result.stdout}`);
+    } finally {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
 });
