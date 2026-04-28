@@ -110,6 +110,22 @@ function cleanup(paths) {
   }
 }
 
+function assertRunnerScript(actualPath, scriptName) {
+  const normalized = path.normalize(actualPath);
+  assert.equal(path.isAbsolute(normalized), true);
+  assert.deepEqual(normalized.split(path.sep).slice(-3), ['extension', 'bin', scriptName]);
+}
+
+function readLines(filePath) {
+  return fs.readFileSync(filePath, 'utf-8').split(/\r?\n/);
+}
+
+function assertSectionBody(lines, heading, body) {
+  const index = lines.indexOf(heading);
+  assert.notEqual(index, -1);
+  assert.equal(lines[index + 1], body);
+}
+
 afterEach(() => {
   __setSpawnRunnerForTests(null);
 });
@@ -163,7 +179,7 @@ describe('pipeline phase config dispatch', () => {
       await expectMainExit(sessionDir, 0);
       assert.equal(calls.length, 1);
       assert.equal(calls[0].cmd, 'node');
-      assert.ok(calls[0].args[0].endsWith(path.join('extension', 'bin', 'mux-runner.js')));
+      assertRunnerScript(calls[0].args[0], 'mux-runner.js');
       assert.equal(calls[0].args[1], sessionDir);
       assert.equal(calls[0].env.PICKLE_BACKEND, 'claude');
       const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
@@ -184,7 +200,7 @@ describe('pipeline phase config dispatch', () => {
     try {
       await expectMainExit(sessionDir, 0);
       assert.equal(calls.length, 1);
-      assert.ok(calls[0].args[0].endsWith(path.join('extension', 'bin', 'microverse-runner.js')));
+      assertRunnerScript(calls[0].args[0], 'microverse-runner.js');
       assert.equal(calls[0].env.PICKLE_BACKEND, 'claude');
       assert.ok(fs.existsSync(path.join(sessionDir, 'anatomy-park.json')));
       const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
@@ -208,9 +224,9 @@ describe('pipeline phase config dispatch', () => {
     try {
       await expectMainExit(sessionDir, 0);
       assert.equal(calls.length, 1);
-      assert.ok(calls[0].args[0].endsWith(path.join('extension', 'bin', 'microverse-runner.js')));
+      assertRunnerScript(calls[0].args[0], 'microverse-runner.js');
       assert.equal(calls[0].env.PICKLE_BACKEND, 'claude');
-      assert.ok(fs.readFileSync(path.join(sessionDir, 'prd.md'), 'utf-8').includes('small functions'));
+      assertSectionBody(readLines(path.join(sessionDir, 'prd.md')), '## Focus', 'small functions');
       const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
       assert.equal(state.command_template, 'szechuan-sauce.md');
       assert.equal(state.max_iterations, 50);

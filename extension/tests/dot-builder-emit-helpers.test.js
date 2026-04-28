@@ -102,8 +102,13 @@ describe('DotBuilder inline post-pass invariants', () => {
       phases: [phase('core')],
       acceptanceCriteria: { core_done: 'true' },
     }));
-    assert.ok(dot.includes('regression_check -> setup_deps'), 'regression_check must restart setup_deps');
-    assert.ok(dot.includes('loop_restart="true"'), 'restart edge must carry loop_restart=true');
+    const { edges } = parseDot(dot);
+    const restartEdge = edges.find(e => e.from === 'regression_check' && e.to === 'setup_deps');
+    assert.deepEqual(restartEdge, {
+      from: 'regression_check',
+      to: 'setup_deps',
+      attrs: { loop_restart: 'true' },
+    });
   });
 
   it('P0 isolated workspace splice rewires convergence terminal edge', () => {

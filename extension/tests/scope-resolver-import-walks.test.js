@@ -74,8 +74,14 @@ function runTimedComputeOneHop(repo, scripts) {
     };
 }
 
-function hasWarning(warnings, fragment) {
-    return warnings.some((line) => line.includes(fragment));
+function hasWarning(warnings, tool, category) {
+    const pattern = new RegExp(`\\b${tool}\\b[^\\n]*\\b${category}\\b`);
+    return warnings.some((line) => pattern.test(line));
+}
+
+function warningCategoryCount(warnings, category) {
+    const pattern = new RegExp(`\\b${category}\\b`);
+    return warnings.filter((line) => pattern.test(line)).length;
 }
 
 function assertFinishedWithin(elapsed, label) {
@@ -99,35 +105,35 @@ test('computeOneHop import walks', async (t) => {
     await t.test('rg fails and grep recovers', () => {
         const output = runInRepo({ rg: FAIL_SCRIPT(2), grep: SUCCESS_SCRIPT });
         assert.deepStrictEqual(output.result, ['a.ts', 'b.ts']);
-        assert.ok(hasWarning(output.warnings, 'rg fail'));
-        assert.ok(!hasWarning(output.warnings, 'grep fail'));
+        assert.equal(hasWarning(output.warnings, 'rg', 'fail'), true);
+        assert.equal(hasWarning(output.warnings, 'grep', 'fail'), false);
     });
 
     await t.test('grep failure is logged distinctly', () => {
         const output = runInRepo({ rg: FAIL_SCRIPT(2), grep: FAIL_SCRIPT(3) });
         assert.deepStrictEqual(output.result, ['a.ts']);
-        assert.ok(hasWarning(output.warnings, 'rg fail'));
-        assert.ok(hasWarning(output.warnings, 'grep fail'));
+        assert.equal(hasWarning(output.warnings, 'rg', 'fail'), true);
+        assert.equal(hasWarning(output.warnings, 'grep', 'fail'), true);
     });
 
     await t.test('both tools fail and importer expansion is empty', () => {
         const output = runInRepo({ rg: FAIL_SCRIPT(4), grep: FAIL_SCRIPT(5) });
         assert.deepStrictEqual(output.result, ['a.ts']);
-        assert.equal(output.warnings.filter((line) => line.includes('fail')).length, 2);
+        assert.equal(warningCategoryCount(output.warnings, 'fail'), 2);
     });
 
     await t.test('rg hang is bounded by findImportersTimeoutMs', () => {
         const output = runInRepo({ rg: HANG_SCRIPT, grep: SUCCESS_SCRIPT });
         assert.deepStrictEqual(output.result, ['a.ts', 'b.ts']);
         assertFinishedWithin(output.elapsed, 'rg hang');
-        assert.ok(hasWarning(output.warnings, 'rg timeout'));
+        assert.equal(hasWarning(output.warnings, 'rg', 'timeout'), true);
     });
 
     await t.test('grep hang is bounded by findImportersTimeoutMs', () => {
         const output = runInRepo({ rg: FAIL_SCRIPT(2), grep: HANG_SCRIPT });
         assert.deepStrictEqual(output.result, ['a.ts']);
         assertFinishedWithin(output.elapsed, 'grep hang');
-        assert.ok(hasWarning(output.warnings, 'rg fail'));
-        assert.ok(hasWarning(output.warnings, 'grep timeout'));
+        assert.equal(hasWarning(output.warnings, 'rg', 'fail'), true);
+        assert.equal(hasWarning(output.warnings, 'grep', 'timeout'), true);
     });
 });
