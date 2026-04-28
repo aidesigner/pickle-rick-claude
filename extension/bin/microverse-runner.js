@@ -7,7 +7,7 @@ import { resolveBackend, buildJudgeInvocation, buildWorkerInvocation, backendEnv
 import { readMicroverseState, writeMicroverseState, recordIteration as stateRecordIteration, recordStall, recordFailedApproach, isConverged, compareMetric, classifyFailure, } from '../services/microverse-state.js';
 import { getHeadSha, resetToSha, isWorkingTreeDirty } from '../services/git-utils.js';
 import { writeStateFile, getExtensionRoot, isoCompactStamp, sleep, Style, formatTime, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, } from '../services/pickle-utils.js';
-import { StateManager } from '../services/state-manager.js';
+import { StateManager, safeDeactivate } from '../services/state-manager.js';
 const sm = new StateManager();
 import { runIteration, loadRateLimitSettings, classifyIterationExit, computeRateLimitAction, killCurrentChild, } from './mux-runner.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -617,6 +617,9 @@ function remainingSessionSeconds(state) {
 export function readRunnerState(statePath) {
     return sm.read(statePath);
 }
+export function deactivateRunnerState(statePath) {
+    safeDeactivate(statePath);
+}
 export async function main(sessionDir) {
     const extensionRoot = getExtensionRoot();
     const statePath = path.join(sessionDir, 'state.json');
@@ -710,17 +713,7 @@ export async function main(sessionDir) {
     const handleShutdownSignal = (signal) => {
         log(`Received ${signal} — deactivating session`);
         killCurrentChild();
-        // eslint-disable-next-line pickle/no-raw-state-write -- crash-path bypass: signal handler cannot await lock
-        sm.forceWrite(statePath, (() => {
-            try {
-                const s = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-                s.active = false;
-                return s;
-            }
-            catch {
-                return { active: false };
-            }
-        })());
+        deactivateRunnerState(statePath);
         const finalMv = readMicroverseState(sessionDir);
         if (finalMv) {
             finalMv.status = 'stopped';
@@ -757,13 +750,12 @@ export async function main(sessionDir) {
             currentMv.exit_reason = 'error';
             writeMicroverseState(sessionDir, currentMv);
             exitReason = 'error';
-            // eslint-disable-next-line pickle/no-raw-state-write -- fallback after lock acquisition failure
             try {
                 sm.update(statePath, s => { s.active = false; });
             }
             catch (err) {
-                log(`sm.update failed at gap-analysis-error path, falling back to forceWrite: ${safeErrorMessage(err)}`);
-                sm.forceWrite(statePath, { active: false });
+                log(`sm.update failed at gap-analysis-error path, falling back to safeDeactivate: ${safeErrorMessage(err)}`);
+                deactivateRunnerState(statePath);
             }
             writeFinalReport(sessionDir, currentMv, exitReason, iteration, Math.floor((Date.now() - startTime) / 1000));
             process.exit(1);
@@ -1137,13 +1129,12 @@ export async function main(sessionDir) {
     currentMv.status = exitReason === 'converged' ? 'converged' : 'stopped';
     currentMv.exit_reason = exitReason;
     writeMicroverseState(sessionDir, currentMv);
-    // eslint-disable-next-line pickle/no-raw-state-write -- fallback after lock acquisition failure
     try {
         sm.update(statePath, s => { s.active = false; });
     }
     catch (err) {
-        log(`sm.update failed at finalize path, falling back to forceWrite: ${safeErrorMessage(err)}`);
-        sm.forceWrite(statePath, { active: false });
+        log(`sm.update failed at finalize path, falling back to safeDeactivate: ${safeErrorMessage(err)}`);
+        deactivateRunnerState(statePath);
     }
     writeFinalReport(sessionDir, currentMv, exitReason, iteration, totalElapsed);
     logActivity({
@@ -1173,17 +1164,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'microverse-runner.js'
     main(sessionDir).catch((err) => {
         const msg = safeErrorMessage(err);
         console.error(`${Style.RED}[FATAL] ${msg}${Style.RESET}`);
-        // eslint-disable-next-line pickle/no-raw-state-write -- crash-path bypass: fatal error handler cannot await lock
-        sm.forceWrite(path.join(sessionDir, 'state.json'), (() => {
-            try {
-                const s = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
-                s.active = false;
-                return s;
-            }
-            catch {
-                return { active: false };
-            }
-        })());
+        deactivateRunnerState(path.join(sessionDir, 'state.json'));
         try {
             const mvPath = path.join(sessionDir, 'microverse.json');
             if (fs.existsSync(mvPath)) {

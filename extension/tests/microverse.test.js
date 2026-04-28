@@ -366,10 +366,12 @@ test('runIteration is exported from mux-runner', () => {
 
 // --- microverse-runner tests ---
 
-import { measureMetric, measureLlmMetric, extractScore, buildJudgePrompt, buildMicroverseHandoff, main, _deps, readRunnerState, stageAutoCommitPaths } from '../bin/microverse-runner.js';
+import { measureMetric, measureLlmMetric, extractScore, buildJudgePrompt, buildMicroverseHandoff, deactivateRunnerState, main, _deps, readRunnerState, stageAutoCommitPaths } from '../bin/microverse-runner.js';
 import { resetToSha } from '../services/git-utils.js';
+import { StateManager } from '../services/state-manager.js';
 import { writeStateFile } from '../services/pickle-utils.js';
 import { resolveBackend } from '../services/backend-spawn.js';
+import { LockError } from '../types/index.js';
 
 function createSessionDir(workingDir, mvOverrides = {}) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mv-session-'));
@@ -439,6 +441,46 @@ test('readRunnerState promotes orphan tmp state before microverse control-flow r
         assert.equal(recovered.active, false, 'runner reads the promoted inactive tmp state');
         assert.equal(recovered.iteration, 2, 'runner sees the higher-iteration promoted state');
         assert.equal(resolveBackend(recovered), 'codex', 'runner resolves backend from the promoted state');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('deactivateRunnerState preserves session fields when lock-backed update fails', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mv-state-'));
+    const statePath = path.join(dir, 'state.json');
+    try {
+        writeStateFile(statePath, {
+            active: true,
+            working_dir: '/tmp/project',
+            session_dir: dir,
+            step: 'implement',
+            iteration: 7,
+            current_ticket: 'T-7',
+            backend: 'codex',
+            command_template: 'microverse.md',
+            schema_version: 1,
+        });
+
+        const originalUpdate = StateManager.prototype.update;
+        StateManager.prototype.update = () => {
+            throw new LockError('forced fallback');
+        };
+
+        try {
+            deactivateRunnerState(statePath);
+        } finally {
+            StateManager.prototype.update = originalUpdate;
+        }
+
+        const recovered = readRunnerState(statePath);
+        assert.equal(recovered.active, false);
+        assert.equal(recovered.working_dir, '/tmp/project');
+        assert.equal(recovered.session_dir, dir);
+        assert.equal(recovered.iteration, 7);
+        assert.equal(recovered.current_ticket, 'T-7');
+        assert.equal(recovered.backend, 'codex');
+        assert.equal(recovered.command_template, 'microverse.md');
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
