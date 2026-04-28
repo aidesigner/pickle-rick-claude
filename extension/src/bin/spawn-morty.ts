@@ -13,7 +13,7 @@ import {
   parseTicketFrontmatter,
 } from '../services/pickle-utils.js';
 import { spawn } from 'child_process';
-import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact } from '../types/index.js';
+import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact, type Backend, type State } from '../types/index.js';
 import { updateTicketStatus } from '../services/git-utils.js';
 import { buildWorkerInvocation, loadBackendFromSession, backendEnvOverrides } from '../services/backend-spawn.js';
 import { scrubForbiddenWorkerTokens } from '../services/promise-tokens.js';
@@ -26,10 +26,191 @@ const TIER_MODEL_MAP: Record<string, string> = {
   large: 'opus',
 };
 const sm = new StateManager();
+const MIN_TIMEOUT_SECONDS = 30;
+
+export type ParsedArgs = {
+  ticket: string;
+  ticketId: string;
+  ticketPath: string;
+  ticketFilePath: string | null;
+  ticketContent: string;
+  sessionRoot: string;
+  sessionLogPath: string;
+  backend: Backend;
+  timeout: number;
+  outputFormat: string;
+  isReviewTicket: boolean;
+};
+
+export type TicketSpec = {
+  task: string;
+  ticketContent: string;
+  ticketId: string;
+  ticketPath: string;
+  sessionRoot: string;
+  backend: Backend;
+  isReviewTicket: boolean;
+};
+
+export type WorkerProcessContext = {
+  args: ParsedArgs;
+  prompt: string;
+  ticketPath: string;
+  ticketId: string;
+  sessionRoot: string;
+  sessionLog: fs.WriteStream;
+  sessionLogPath: string;
+  sessionWorkingDir: string;
+  timeoutStatePath: string | null;
+  workerStatePath: string;
+  effectiveTimeoutMs: number;
+  mutableState: { finalized: boolean; timedOut: boolean };
+  model?: string;
+  effort?: 'low' | 'medium' | 'high';
+};
 
 export function tierToModel(tier: string | undefined): string {
   if (!tier) return 'sonnet';
   return TIER_MODEL_MAP[tier] ?? 'sonnet';
+}
+
+function die(message: string): never {
+  console.error(message);
+  process.exit(1);
+}
+
+function requireFlagValue(args: string[], index: number): string {
+  const value = args[index + 1];
+  if (!value || value.startsWith('--')) die('Error: --ticket-id and --ticket-path require non-empty values.');
+  return value;
+}
+
+function parseTimeoutArg(argv: string[]): number {
+  const timeoutIndex = argv.indexOf('--timeout');
+  const rawTimeout = timeoutIndex !== -1 ? parseInt(argv[timeoutIndex + 1], 10) : NaN;
+  return !isNaN(rawTimeout) && rawTimeout > 0 ? rawTimeout : Defaults.WORKER_TIMEOUT_SECONDS;
+}
+
+function parseOutputFormatArg(argv: string[]): string {
+  const formatIndex = argv.indexOf('--output-format');
+  const rawFormat = formatIndex !== -1 ? argv[formatIndex + 1] : undefined;
+  return rawFormat && !rawFormat.startsWith('--') ? rawFormat : 'text';
+}
+
+function readTicketFileArg(argv: string[]): { ticketFilePath: string | null; ticketContent: string } {
+  const ticketFileIndex = argv.indexOf('--ticket-file');
+  const rawTicketFile = ticketFileIndex !== -1 ? argv[ticketFileIndex + 1] : undefined;
+  if (!rawTicketFile || rawTicketFile.startsWith('--') || !fs.existsSync(rawTicketFile)) {
+    return { ticketFilePath: null, ticketContent: '' };
+  }
+  return { ticketFilePath: rawTicketFile, ticketContent: fs.readFileSync(rawTicketFile, 'utf-8') };
+}
+
+function normalizeTicketPath(ticketPath: string): string {
+  if (ticketPath.endsWith('.md') || (fs.existsSync(ticketPath) && fs.statSync(ticketPath).isFile())) {
+    return path.dirname(ticketPath);
+  }
+  return ticketPath;
+}
+
+export function parseAndValidateArgs(argv: string[]): ParsedArgs {
+  if (argv.length < 1) {
+    die('Usage: node spawn-morty.js <task> --ticket-id <id> --ticket-path <path> [--timeout <sec>] [--output-format <fmt>]');
+  }
+
+  const ticketIdIndex = argv.indexOf('--ticket-id');
+  const ticketPathIndex = argv.indexOf('--ticket-path');
+  if (ticketIdIndex === -1 || ticketPathIndex === -1) {
+    die('Error: --ticket-id and --ticket-path are required.');
+  }
+
+  const ticketId = requireFlagValue(argv, ticketIdIndex);
+  const ticketPath = normalizeTicketPath(requireFlagValue(argv, ticketPathIndex));
+  if (!/^[a-zA-Z0-9_-]+$/.test(ticketId)) die('Error: --ticket-id contains invalid characters.');
+  const ticketFile = readTicketFileArg(argv);
+  fs.mkdirSync(ticketPath, { recursive: true });
+
+  return {
+    ticket: argv[0],
+    ticketId,
+    ticketPath,
+    ticketFilePath: ticketFile.ticketFilePath,
+    ticketContent: ticketFile.ticketContent,
+    sessionRoot: path.dirname(ticketPath),
+    sessionLogPath: path.join(ticketPath, `worker_session_${process.pid}.log`),
+    backend: 'claude',
+    timeout: parseTimeoutArg(argv),
+    outputFormat: parseOutputFormatArg(argv),
+    isReviewTicket: argv.includes('--review'),
+  };
+}
+
+export function resolveEffectiveTimeout(
+  configuredTimeoutSec: number,
+  parentState: State | null,
+  wallClockNowMs: number
+): number {
+  const maxMins = Number(parentState?.max_time_minutes);
+  const startEpoch = Number(parentState?.start_time_epoch);
+  if (!Number.isFinite(maxMins) || maxMins <= 0 || !Number.isFinite(startEpoch) || startEpoch <= 0) {
+    return configuredTimeoutSec;
+  }
+
+  const remaining = Math.floor(maxMins * 60 - (Math.floor(wallClockNowMs / 1000) - startEpoch));
+  if (remaining <= 0) return Math.max(MIN_TIMEOUT_SECONDS, configuredTimeoutSec);
+  if (remaining < configuredTimeoutSec) return Math.max(MIN_TIMEOUT_SECONDS, remaining);
+  return configuredTimeoutSec;
+}
+
+export function buildWorkerPrompt(opts: { ticket: TicketSpec; model: string; repoRoot?: string }): string {
+  const { ticket } = opts;
+  const promptFilename = ticket.isReviewTicket ? 'send-to-morty-review.md' : 'send-to-morty.md';
+  const mortyPromptPath = path.join(os.homedir(), '.claude', 'commands', promptFilename);
+  let workerPrompt: string;
+  if (fs.existsSync(mortyPromptPath)) {
+    workerPrompt = fs.readFileSync(mortyPromptPath, 'utf-8').replace(/\$ARGUMENTS/g, ticket.task);
+  } else {
+    workerPrompt = ticket.isReviewTicket
+      ? `# **REVIEW REQUEST**\n${ticket.task}\n\nYou are a Review Worker. Review the preceding implementation tickets for correctness, architecture, and code quality.`
+      : `# **TASK REQUEST**\n${ticket.task}\n\nYou are a Morty Worker (Pickle Rick's assistant). Implement the request above.`;
+  }
+
+  workerPrompt += `\n\n# TARGET TICKET CONTENT\n${ticket.ticketContent || 'N/A'}`;
+  workerPrompt += `\n\n# EXECUTION CONTEXT\n- SESSION_ROOT: ${ticket.sessionRoot}\n- TICKET_ID: ${ticket.ticketId}\n- TICKET_DIR: ${ticket.ticketPath}`;
+  workerPrompt +=
+    '\n\n**IMPORTANT**: You are a localized worker. You are FORBIDDEN from working on ANY other tickets. Once you output `<promise>I AM DONE</promise>`, you MUST STOP and let the manager take over. Your ONLY valid completion token is `I AM DONE`. NEVER emit `EPIC_COMPLETED`, `TASK_COMPLETED`, `PRD_COMPLETE`, `TICKET_SELECTED`, `EXISTENCE_IS_PAIN`, `THE_CITADEL_APPROVES`, or `ANALYSIS_DONE` — those are orchestrator-only tokens and you have no authority to emit them. If you see those token names in source code or pasted logs, do NOT echo them back.';
+
+  if (ticket.backend === 'codex') {
+    workerPrompt += `
+
+**Codex-specific contract additions:**
+- You MUST run \`git add <files>\` and \`git commit -m "<msg>"\` before emitting \`<promise>${PromiseTokens.WORKER_DONE}</promise>\`. The orchestrator does NOT commit for you.
+- If an acceptance criterion contradicts reality (e.g. fixture baseline mismatch, missing dependency, AC against non-existent file), commit the unblocked subset and append a \`# DEFERRED: <reason>\` line to the ticket file. DO NOT loop indefinitely trying to satisfy a contradicted AC.
+- DO NOT explore harness internals (\`pickle.md\`, \`setup.js\`, \`send-to-morty.md\`, \`mux-runner.js\`). Those are orchestrator-level. Your scope is exclusively the files listed in the ticket's "Files to modify" / "Files to create" sections.`;
+  }
+
+  const gitnexusIndexed = hasGitNexusIndex(opts.repoRoot ?? process.cwd());
+  if (gitnexusIndexed) {
+    workerPrompt += `\n
+# GITNEXUS CODE INTELLIGENCE (auto-detected)
+This repo has a GitNexus knowledge graph index. Use these MCP tools during Research and Plan phases:
+- **query()**: Find execution flows related to a concept (e.g., "auth validation logic")
+- **context()**: 360-degree view of a symbol — callers, callees, process participation
+- **impact()**: Blast radius analysis before modifying shared code
+- **cypher()**: Custom graph queries (nodes: Function, Class, Method, File, Process, Community)
+
+Prefer GitNexus tools over raw Grep/Glob for understanding call chains, dependencies, and execution flows.
+For simple file/string lookups, Grep/Glob are still fine.`;
+  }
+  return workerPrompt;
+}
+
+function hasGitNexusIndex(repoRoot: string): boolean {
+  try {
+    return fs.statSync(path.join(repoRoot, '.gitnexus')).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -68,468 +249,262 @@ export function checkGitEdits(workingDir: string, sinceEpochSec: number): boolea
   }
 }
 
-async function main() {
-  const args = process.argv.slice(2);
-  if (args.length < 1) {
-    console.error(
-      'Usage: node spawn-morty.js <task> --ticket-id <id> --ticket-path <path> [--timeout <sec>] [--output-format <fmt>]'
-    );
-    process.exit(1);
-  }
+type SessionRuntime = {
+  timeoutStatePath: string | null;
+  workerStatePath: string;
+  state: State | null;
+  sessionWorkingDir: string;
+  sessionEffort?: 'low' | 'medium' | 'high';
+};
 
-  const task = args[0];
-  const ticketIdIndex = args.indexOf('--ticket-id');
-  const ticketPathIndex = args.indexOf('--ticket-path');
-  const ticketFileIndex = args.indexOf('--ticket-file');
-  const timeoutIndex = args.indexOf('--timeout');
-  const formatIndex = args.indexOf('--output-format');
-  const reviewFlagIndex = args.indexOf('--review');
-  const isReviewTicket = reviewFlagIndex !== -1;
+function readSessionRuntime(args: ParsedArgs): SessionRuntime {
+  const parentStatePath = path.join(args.sessionRoot, 'state.json');
+  const workerStatePath = path.join(args.ticketPath, 'state.json');
+  let timeoutStatePath: string | null = null;
+  if (fs.existsSync(parentStatePath)) timeoutStatePath = parentStatePath;
+  else if (fs.existsSync(workerStatePath)) timeoutStatePath = workerStatePath;
 
-  if (ticketIdIndex === -1 || ticketPathIndex === -1) {
-    console.error('Error: --ticket-id and --ticket-path are required.');
-    process.exit(1);
-  }
-
-  const ticketId = args[ticketIdIndex + 1];
-  let ticketPath = args[ticketPathIndex + 1];
-
-  if (!ticketId || ticketId.startsWith('--') || !ticketPath || ticketPath.startsWith('--')) {
-    console.error('Error: --ticket-id and --ticket-path require non-empty values.');
-    process.exit(1);
-  }
-  if (!/^[a-zA-Z0-9_-]+$/.test(ticketId)) {
-    console.error('Error: --ticket-id contains invalid characters.');
-    process.exit(1);
-  }
-  const rawTimeout = timeoutIndex !== -1 ? parseInt(args[timeoutIndex + 1], 10) : NaN;
-  const timeout = !isNaN(rawTimeout) && rawTimeout > 0 ? rawTimeout : Defaults.WORKER_TIMEOUT_SECONDS;
-  const rawFormat = formatIndex !== -1 ? args[formatIndex + 1] : undefined;
-  const outputFormat = rawFormat && !rawFormat.startsWith('--') ? rawFormat : 'text';
-
-  // Read ticket content if provided
-  let ticketContent = '';
-  let ticketFilePath: string | null = null;
-  if (ticketFileIndex !== -1) {
-    const rawTicketFile = args[ticketFileIndex + 1];
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    if (rawTicketFile && !rawTicketFile.startsWith('--') && fs.existsSync(rawTicketFile)) {
-      ticketFilePath = rawTicketFile;
-      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-      ticketContent = fs.readFileSync(ticketFilePath, 'utf-8');
-    }
-  }
-
-  // Normalize path
-  if (
-    ticketPath.endsWith('.md') ||
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    (fs.existsSync(ticketPath) && fs.statSync(ticketPath).isFile())
-  ) {
-    ticketPath = path.dirname(ticketPath);
-  }
-
-  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-  fs.mkdirSync(ticketPath, { recursive: true });
-  const sessionLog = path.join(ticketPath, `worker_session_${process.pid}.log`);
-
-  // --- Timeout Logic ---
-  let effectiveTimeout = timeout;
-  const sessionRoot = path.dirname(ticketPath);
-  const parentState = path.join(sessionRoot, 'state.json');
-  const workerState = path.join(ticketPath, 'state.json');
-  let sessionWorkingDir = process.cwd();
-  let sessionEffort: 'low' | 'medium' | 'high' | undefined;
-
-  let timeoutStatePath = null;
-  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-  if (fs.existsSync(parentState)) {
-    timeoutStatePath = parentState;
-  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-  } else if (fs.existsSync(workerState)) {
-    timeoutStatePath = workerState;
-  }
-
-  if (timeoutStatePath) {
-    try {
-      const state = sm.read(timeoutStatePath);
-      if (typeof state.working_dir === 'string' && state.working_dir.trim()) {
-        sessionWorkingDir = state.working_dir;
-      }
-      if (state.effort === 'low' || state.effort === 'medium' || state.effort === 'high') {
-        sessionEffort = state.effort;
-      }
-      const maxMins = Number(state.max_time_minutes);
-      const startEpoch = Number(state.start_time_epoch);
-
-      if (Number.isFinite(maxMins) && maxMins > 0 && Number.isFinite(startEpoch) && startEpoch > 0) {
-        const remaining = Math.floor(maxMins * 60 - (Math.floor(Date.now() / 1000) - startEpoch));
-        const MIN_TIMEOUT = 30;
-        if (remaining <= 0) {
-          // Session wall-clock already elapsed; enforce a minimum timeout floor so the
-          // worker gets at least 30s to produce output (stop-hook handles the limit).
-          effectiveTimeout = Math.max(MIN_TIMEOUT, effectiveTimeout);
-          console.log(`${Style.YELLOW}⚠️  Session time already elapsed; running with requested timeout.${Style.RESET}`);
-        } else if (remaining < effectiveTimeout) {
-          // Clamp to remaining wall time, but never below the 30s floor — a worker
-          // with less than 30s almost certainly can't complete, but it's better than
-          // killing it instantly on a slow machine.
-          effectiveTimeout = Math.max(MIN_TIMEOUT, remaining);
-          console.log(
-            `${Style.YELLOW}⚠️  Worker timeout clamped: ${effectiveTimeout}s${Style.RESET}`
-          );
-        }
-      }
-    } catch {
-      // Ignore
-    }
-  }
-
-  let backend = loadBackendFromSession(sessionRoot);
-
-  // Parse ticket frontmatter once — used by both backend routing and tier-to-model.
-  let ticketInfo: ReturnType<typeof parseTicketFrontmatter> | null = null;
   try {
-    ticketInfo = ticketFilePath ? parseTicketFrontmatter(ticketFilePath) : null;
+    const state = timeoutStatePath ? sm.read(timeoutStatePath) : null;
+    const sessionWorkingDir = state?.working_dir?.trim() ? state.working_dir : process.cwd();
+    const sessionEffort = state?.effort === 'low' || state?.effort === 'medium' || state?.effort === 'high'
+      ? state.effort
+      : undefined;
+    return { timeoutStatePath, workerStatePath, state, sessionWorkingDir, sessionEffort };
+  } catch {
+    return { timeoutStatePath, workerStatePath, state: null, sessionWorkingDir: process.cwd() };
+  }
+}
+
+function readTicketInfo(ticketFilePath: string | null): ReturnType<typeof parseTicketFrontmatter> | null {
+  try {
+    return ticketFilePath ? parseTicketFrontmatter(ticketFilePath) : null;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[spawn-morty] WARNING: ticket frontmatter parse failed: ${msg}`);
+    return null;
   }
+}
 
-  // P2: Per-ticket backend routing heuristic. Default OFF. When enabled and
-  // session is on codex, flip cross-cutting / wiring tickets back to claude
-  // because they benefit from claude's research-heavy approach. Codex stays
-  // on codex for tight, well-scoped tickets where it shines.
+function routeBackend(sessionRoot: string, ticketInfo: ReturnType<typeof parseTicketFrontmatter> | null): Backend {
+  let backend = loadBackendFromSession(sessionRoot);
   try {
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    const routingSettings = JSON.parse(fs.readFileSync(path.join(getExtensionRoot(), 'pickle_settings.json'), 'utf-8'));
-    if (routingSettings.enable_backend_routing_heuristic === true && backend === 'codex') {
-      let routedReason: string | null = null;
-      if (ticketInfo?.complexity_tier === 'large') {
-        routedReason = 'complexity_tier=large';
-      } else if (ticketInfo?.title && /\b(UI|Wire|Audit)\b/i.test(ticketInfo.title)) {
-        routedReason = `title-signal:${ticketInfo.title}`;
-      }
-      if (routedReason) {
-        console.error(`[spawn-morty] backend routed: codex → claude (reason: ${routedReason})`);
-        backend = 'claude';
-      }
+    const settings = JSON.parse(fs.readFileSync(path.join(getExtensionRoot(), 'pickle_settings.json'), 'utf-8'));
+    if (settings.enable_backend_routing_heuristic !== true || backend !== 'codex') return backend;
+    const routedReason = ticketInfo?.complexity_tier === 'large'
+      ? 'complexity_tier=large'
+      : ticketInfo?.title && /\b(UI|Wire|Audit)\b/i.test(ticketInfo.title) ? `title-signal:${ticketInfo.title}` : null;
+    if (routedReason) {
+      console.error(`[spawn-morty] backend routed: codex → claude (reason: ${routedReason})`);
+      backend = 'claude';
     }
   } catch { /* settings missing or unreadable: no override */ }
+  return backend;
+}
 
-  printMinimalPanel(
-    isReviewTicket ? 'Spawning Review Worker' : 'Spawning Morty Worker',
-    {
-      Request: task,
-      Ticket: ticketId,
-      Type: isReviewTicket ? 'review' : 'implementation',
-      Format: outputFormat,
-      Backend: backend,
-      Timeout: `${effectiveTimeout}s (Req: ${timeout}s)`,
-      PID: process.pid,
-    },
-    isReviewTicket ? 'MAGENTA' : 'CYAN',
-    '🥒'
-  );
-
-  const extensionRoot = getExtensionRoot();
-  const dataRoot = getDataRoot();
-  const includes = [extensionRoot, dataRoot, sessionWorkingDir, ticketPath];
-
-  // Route to tier-appropriate model based on ticket complexity. Codex ignores
-  // claude's tier-shaped names, so the settings read + tier resolution only
-  // runs on the claude backend.
-  let model: string | undefined;
-  if (backend === 'claude') {
-    model = 'sonnet';
-    let enableComplexityTiers = true;
-    try {
-      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-      const flagSettings = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
-      if (flagSettings.enable_complexity_tiers === false) enableComplexityTiers = false;
-    } catch { /* default true */ }
-    try {
-      if (enableComplexityTiers) {
-        model = tierToModel(ticketInfo?.complexity_tier);
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      console.warn(`[spawn-morty] WARNING: complexity tier subsystem failed: ${msg}`);
-    }
+function resolveWorkerModel(backend: Backend, extensionRoot: string, ticketInfo: ReturnType<typeof parseTicketFrontmatter> | null): string | undefined {
+  if (backend !== 'claude') return undefined;
+  let enableComplexityTiers = true;
+  try {
+    const settings = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
+    if (settings.enable_complexity_tiers === false) enableComplexityTiers = false;
+  } catch { /* default true */ }
+  try {
+    return enableComplexityTiers ? tierToModel(ticketInfo?.complexity_tier) : 'sonnet';
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[spawn-morty] WARNING: complexity tier subsystem failed: ${msg}`);
+    return 'sonnet';
   }
+}
 
-  // Prompt Construction — read the appropriate lifecycle template.
-  // Review workers get send-to-morty-review.md (4-phase), implementation workers get send-to-morty.md (8-phase).
-  const promptFilename = isReviewTicket ? 'send-to-morty-review.md' : 'send-to-morty.md';
-  const mortyPromptPath = path.join(os.homedir(), '.claude', 'commands', promptFilename);
-  let workerPrompt: string;
-  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-  if (fs.existsSync(mortyPromptPath)) {
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    workerPrompt = fs.readFileSync(mortyPromptPath, 'utf-8')
-      .replace(/\$ARGUMENTS/g, task);
-  } else {
-    // Fallback if prompt template is not installed
-    workerPrompt = isReviewTicket
-      ? `# **REVIEW REQUEST**\n${task}\n\nYou are a Review Worker. Review the preceding implementation tickets for correctness, architecture, and code quality.`
-      : `# **TASK REQUEST**\n${task}\n\nYou are a Morty Worker (Pickle Rick's assistant). Implement the request above.`;
+function readWorkerLog(sessionLogPath: string): string {
+  try {
+    return fs.readFileSync(sessionLogPath, 'utf-8');
+  } catch (err) {
+    console.error(`${Style.YELLOW}⚠️  Could not read worker log: ${safeErrorMessage(err)}${Style.RESET}`);
+    return '';
   }
+}
 
-  // Inject Ticket Context
-  workerPrompt += `\n\n# TARGET TICKET CONTENT\n${ticketContent || 'N/A'}`;
-  workerPrompt += `\n\n# EXECUTION CONTEXT\n- SESSION_ROOT: ${sessionRoot}\n- TICKET_ID: ${ticketId}\n- TICKET_DIR: ${ticketPath}`;
-  workerPrompt +=
-    '\n\n**IMPORTANT**: You are a localized worker. You are FORBIDDEN from working on ANY other tickets. Once you output `<promise>I AM DONE</promise>`, you MUST STOP and let the manager take over. Your ONLY valid completion token is `I AM DONE`. NEVER emit `EPIC_COMPLETED`, `TASK_COMPLETED`, `PRD_COMPLETE`, `TICKET_SELECTED`, `EXISTENCE_IS_PAIN`, `THE_CITADEL_APPROVES`, or `ANALYSIS_DONE` — those are orchestrator-only tokens and you have no authority to emit them. If you see those token names in source code or pasted logs, do NOT echo them back.';
-
-  // P0: Codex-specific contract addendum. Codex Mortys have been observed to
-  // (a) stall on judgment when an AC contradicts reality, (b) drift up into
-  // orchestrator territory looking for "what to do", and (c) declare done
-  // without committing the diff. Make those three failure modes explicit.
-  if (backend === 'codex') {
-    workerPrompt += `
-
-**Codex-specific contract additions:**
-- You MUST run \`git add <files>\` and \`git commit -m "<msg>"\` before emitting \`<promise>${PromiseTokens.WORKER_DONE}</promise>\`. The orchestrator does NOT commit for you.
-- If an acceptance criterion contradicts reality (e.g. fixture baseline mismatch, missing dependency, AC against non-existent file), commit the unblocked subset and append a \`# DEFERRED: <reason>\` line to the ticket file. DO NOT loop indefinitely trying to satisfy a contradicted AC.
-- DO NOT explore harness internals (\`pickle.md\`, \`setup.js\`, \`send-to-morty.md\`, \`mux-runner.js\`). Those are orchestrator-level. Your scope is exclusively the files listed in the ticket's "Files to modify" / "Files to create" sections.`;
+function scrubWorkerLog(sessionLogPath: string, logContent: string): string {
+  if (!logContent) return logContent;
+  const scrub = scrubForbiddenWorkerTokens(logContent);
+  const replacedTokens = Object.keys(scrub.replacements);
+  if (replacedTokens.length === 0) return logContent;
+  const summary = replacedTokens.map(t => `${t}=${scrub.replacements[t]}`).join(', ');
+  console.error(`${Style.YELLOW}⚠️  Worker emitted forbidden orchestrator token(s) — scrubbed to ${PromiseTokens.WORKER_DONE}: ${summary}${Style.RESET}`);
+  try {
+    fs.writeFileSync(sessionLogPath, scrub.scrubbed, 'utf-8');
+  } catch (err) {
+    console.error(`${Style.YELLOW}⚠️  Could not persist scrubbed worker log: ${safeErrorMessage(err)}${Style.RESET}`);
   }
+  return scrub.scrubbed;
+}
 
-  // Conditionally inject GitNexus MCP awareness when the repo has a knowledge graph index
-  let gitnexusIndexed = false;
-  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-  try { gitnexusIndexed = fs.statSync(path.join(sessionWorkingDir, '.gitnexus')).isDirectory(); } catch { /* no index */ }
-  if (gitnexusIndexed) {
-    workerPrompt += `\n
-# GITNEXUS CODE INTELLIGENCE (auto-detected)
-This repo has a GitNexus knowledge graph index. Use these MCP tools during Research and Plan phases:
-- **query()**: Find execution flows related to a concept (e.g., "auth validation logic")
-- **context()**: 360-degree view of a symbol — callers, callees, process participation
-- **impact()**: Blast radius analysis before modifying shared code
-- **cypher()**: Custom graph queries (nodes: Function, Class, Method, File, Process, Community)
-
-Prefer GitNexus tools over raw Grep/Glob for understanding call chains, dependencies, and execution flows.
-For simple file/string lookups, Grep/Glob are still fine.`;
+function readTicketFiles(ticketPath: string): string[] {
+  try {
+    return fs.readdirSync(ticketPath);
+  } catch {
+    return [];
   }
+}
 
-  const invocation = buildWorkerInvocation(backend, {
-    prompt: workerPrompt,
-    addDirs: includes,
-    model,
-    outputFormat,
-    effort: sessionEffort,
+function buildValidationFailureReasons(checks: {
+  timedOut: boolean;
+  tokenPresent: boolean;
+  hasArtifact: boolean;
+  role: string;
+  logContentLength: number;
+  logNonTrivial: boolean;
+  hasEdits: boolean;
+}): string {
+  return [
+    checks.timedOut ? 'timeout' : null,
+    !checks.tokenPresent ? 'no WORKER_DONE token' : null,
+    !checks.hasArtifact ? `no ${checks.role} lifecycle artifact` : null,
+    (!checks.logNonTrivial && !checks.hasEdits) ? `log ${checks.logContentLength}B < 200B and no git edits` : null,
+  ].filter(Boolean).join(', ');
+}
+
+export async function runWorkerProcess(ctx: WorkerProcessContext): Promise<{ exitCode: number; isSuccess: boolean }> {
+  const { args, ticketPath, ticketId, sessionRoot, sessionLog, sessionLogPath, sessionWorkingDir } = ctx;
+  const invocation = buildWorkerInvocation(args.backend, {
+    prompt: ctx.prompt,
+    addDirs: [getExtensionRoot(), getDataRoot(), sessionWorkingDir, ticketPath],
+    model: ctx.model,
+    outputFormat: args.outputFormat,
+    effort: ctx.effort,
   });
-
-  // Mark ticket as In Progress so the monitor shows [~]
   try { updateTicketStatus(ticketId, 'In Progress', sessionRoot); } catch { /* best-effort */ }
-
-  const logStream = fs.createWriteStream(sessionLog, { flags: 'w' });
-  logStream.on('error', (err) => {
-    const msg = safeErrorMessage(err);
-    console.error(`${Style.RED}❌ Log stream error: ${msg}${Style.RESET}`);
-  });
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    ...backendEnvOverrides(backend),
-    PICKLE_STATE_FILE: timeoutStatePath || workerState,
-    PICKLE_ROLE: 'worker',
-    PYTHONUNBUFFERED: '1',
-  };
+  sessionLog.on('error', err => console.error(`${Style.RED}❌ Log stream error: ${safeErrorMessage(err)}${Style.RESET}`));
+  const env: NodeJS.ProcessEnv = { ...process.env, ...backendEnvOverrides(args.backend), PICKLE_STATE_FILE: ctx.timeoutStatePath || ctx.workerStatePath, PICKLE_ROLE: 'worker', PYTHONUNBUFFERED: '1' };
   delete env['CLAUDECODE'];
-
-  const proc = spawn(invocation.cmd, invocation.args, {
-    cwd: sessionWorkingDir,
-    env,
-    stdio: ['inherit', 'pipe', 'pipe'],
-  });
-
-  // Use { end: false } so that when stdout ends first it doesn't call
-  // logStream.end(), which would discard any stderr data still in-flight.
-  // logStream.end() is called explicitly in the 'close' handler.
-  proc.stdout?.pipe(logStream, { end: false });
-  proc.stderr?.pipe(logStream, { end: false });
+  const proc = spawn(invocation.cmd, invocation.args, { cwd: sessionWorkingDir, env, stdio: ['inherit', 'pipe', 'pipe'] });
+  proc.stdout?.pipe(sessionLog, { end: false });
+  proc.stderr?.pipe(sessionLog, { end: false });
 
   const spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
   let idx = 0;
   const startTime = Date.now();
-
-  const isTTY = process.stdout.isTTY;
   const interval = setInterval(() => {
-    if (!isTTY) return;
-    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+    if (!process.stdout.isTTY) return;
     const spinChar = spinner[idx % spinner.length];
-    process.stdout.write(
-      `\r   ${Style.CYAN}${spinChar}${Style.RESET} Worker Active... ${Style.DIM}[${formatTime(elapsed)}]${Style.RESET}\x1b[K`
-    );
+    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+    process.stdout.write(`\r   ${Style.CYAN}${spinChar}${Style.RESET} Worker Active... ${Style.DIM}[${formatTime(elapsed)}]${Style.RESET}\x1b[K`);
     idx++;
   }, 100);
-
-  let timedOut = false;
   let killEscalation: ReturnType<typeof setTimeout> | null = null;
   const timeoutHandle = setTimeout(() => {
-    timedOut = true;
-    console.log(`\n${Style.RED}❌ Worker timed out after ${effectiveTimeout}s${Style.RESET}`);
+    ctx.mutableState.timedOut = true;
+    console.log(`\n${Style.RED}❌ Worker timed out after ${Math.floor(ctx.effectiveTimeoutMs / 1000)}s${Style.RESET}`);
     try { proc.kill('SIGTERM'); } catch { /* already dead */ }
     killEscalation = setTimeout(() => {
       try { proc.kill('SIGKILL'); } catch { /* already dead */ }
     }, 2000);
-  }, effectiveTimeout * 1000);
-
-  // Safety net: if the Promise doesn't resolve within timeout + 30s, force exit.
+  }, ctx.effectiveTimeoutMs);
   const hangGuard = setTimeout(() => {
     console.error(`${Style.RED}❌ Worker hang detected — forcing exit${Style.RESET}`);
-    try { logStream.destroy(); } catch { /* best-effort */ }
+    try { sessionLog.destroy(); } catch { /* best-effort */ }
     try {
-      // Sync flush any pending log data before exit
-      const fd = fs.openSync(sessionLog, 'a');
+      const fd = fs.openSync(sessionLogPath, 'a');
       fs.fdatasyncSync(fd);
       fs.closeSync(fd);
     } catch { /* best-effort */ }
     try { updateTicketStatus(ticketId, 'Failed', sessionRoot); } catch { /* best-effort */ }
     process.exit(1);
-  }, (effectiveTimeout + 30) * 1000);
-  hangGuard.unref(); // Don't keep the process alive just for the guard
+  }, ctx.effectiveTimeoutMs + 30_000);
+  hangGuard.unref();
 
-  return new Promise<void>((resolve) => {
-    // Handle spawn failure (e.g., ENOENT when claude binary not found).
-    // Without this, 'close' may never fire on some Node versions, leaving
-    // the Promise unresolved until the hangGuard force-exits (~timeout+30s).
-    proc.on('error', (err) => {
+  return new Promise(resolve => {
+    const clearLifecycleTimers = () => {
       clearInterval(interval);
       clearTimeout(timeoutHandle);
       if (killEscalation) clearTimeout(killEscalation);
       clearTimeout(hangGuard);
       if (process.stdout.isTTY) process.stdout.write('\r\x1b[K');
-      logStream.end();
-      const msg = safeErrorMessage(err);
-      console.error(`${Style.RED}[pickle-rick] Failed to spawn '${invocation.cmd}' (backend=${backend}): ${msg}${Style.RESET}`);
+    };
+    proc.on('error', err => {
+      clearLifecycleTimers();
+      sessionLog.end();
+      console.error(`${Style.RED}[pickle-rick] Failed to spawn '${invocation.cmd}' (backend=${args.backend}): ${safeErrorMessage(err)}${Style.RESET}`);
       try { updateTicketStatus(ticketId, 'Failed', sessionRoot); } catch { /* best-effort */ }
-      printMinimalPanel(
-        'Worker Report',
-        { status: 'spawn-error', validation: 'failed' },
-        'RED',
-        '🥒'
-      );
+      printMinimalPanel('Worker Report', { status: 'spawn-error', validation: 'failed' }, 'RED', '🥒');
       process.exit(1);
     });
-
-    proc.on('close', (code) => {
-      clearInterval(interval);
-      clearTimeout(timeoutHandle);
-      if (killEscalation) clearTimeout(killEscalation);
-      clearTimeout(hangGuard);
-      if (process.stdout.isTTY) process.stdout.write('\r\x1b[K');
-
-      // Wait for log stream to flush before reading. Use once() to prevent
-      // double-finalization if both the finish event and timeout fire.
+    proc.on('close', code => {
+      clearLifecycleTimers();
       const flushTimeout = setTimeout(() => {
         console.error(`${Style.YELLOW}⚠️  Log flush timed out — reading partial log${Style.RESET}`);
         finalize(code);
       }, 5000);
-
-      logStream.once('finish', () => {
+      sessionLog.once('finish', () => {
         clearTimeout(flushTimeout);
         finalize(code);
       });
+      sessionLog.end();
 
-      // End the write stream and wait for flush before reading the log.
-      // Without this, pipe buffers may not have drained to disk yet and
-      // the WORKER_DONE token could be missed — causing a false failure.
-      logStream.end();
-
-      let finalized = false;
       function finalize(exitCode: number | null) {
-        if (finalized) return;
-        finalized = true;
+        if (ctx.mutableState.finalized) return;
+        ctx.mutableState.finalized = true;
         clearTimeout(flushTimeout);
-
-        let logContent = '';
-        try {
-          logContent = fs.readFileSync(sessionLog, 'utf-8');
-        } catch (err) {
-          const msg = safeErrorMessage(err);
-          console.error(`${Style.YELLOW}⚠️  Could not read worker log: ${msg}${Style.RESET}`);
-        }
-        // Scrub orchestrator-only promise tokens out of the worker log. A per-ticket
-        // worker has NO authority to claim epic-done, ticket-selected, etc.; if it
-        // emits one (codex has been observed to confuse nearby-context tokens like
-        // EPIC_COMPLETED for the worker's `I AM DONE`), the manager reading the log
-        // can parrot it forward and trip mux-runner's pending-tickets fail-loud
-        // guard, killing the whole pipeline mid-epic. Rewrite forbidden tokens to
-        // `I AM DONE` so validation can recognize the work as complete, log a loud
-        // warning, and persist the cleaned log back to disk so any later reader
-        // (manager, watcher, debugger) sees the corrected content.
-        if (logContent) {
-          const scrub = scrubForbiddenWorkerTokens(logContent);
-          const replacedTokens = Object.keys(scrub.replacements);
-          if (replacedTokens.length > 0) {
-            const summary = replacedTokens
-              .map(t => `${t}=${scrub.replacements[t]}`)
-              .join(', ');
-            console.error(
-              `${Style.YELLOW}⚠️  Worker emitted forbidden orchestrator token(s) — scrubbed to ${PromiseTokens.WORKER_DONE}: ${summary}${Style.RESET}`
-            );
-            logContent = scrub.scrubbed;
-            try {
-              fs.writeFileSync(sessionLog, logContent, 'utf-8');
-            } catch (err) {
-              const msg = safeErrorMessage(err);
-              console.error(`${Style.YELLOW}⚠️  Could not persist scrubbed worker log: ${msg}${Style.RESET}`);
-            }
-          }
-        }
-        // Ghost-ticket prevention: Morty can exit 0 with empty log when the
-        // subprocess fails silently (auth/network/rate-limit before first token).
-        // Require three orthogonal signals: WORKER_DONE token, non-trivial log
-        // output, AND at least one lifecycle artifact in the ticket dir.
-        // Fail-closed on readdir error.
-        const role = isReviewTicket ? 'review' : 'implementation';
-        let ticketFiles: string[] = [];
-        try {
-          ticketFiles = fs.readdirSync(ticketPath);
-        } catch { /* fail-closed → hasLifecycleArtifact returns false on [] */ }
+        const logContent = scrubWorkerLog(sessionLogPath, readWorkerLog(sessionLogPath));
+        const role = args.isReviewTicket ? 'review' : 'implementation';
+        const ticketFiles = readTicketFiles(ticketPath);
         const tokenPresent = hasToken(logContent, PromiseTokens.WORKER_DONE);
         const logNonTrivial = logContent.length > 200;
         const hasArtifact = hasLifecycleArtifact(ticketFiles, role);
-        // P2: post-flush guard. The 200B log heuristic false-fails workers whose
-        // post-promise log is short but who actually committed/staged real work.
-        // If git shows edits since spawn, accept regardless of log size. On
-        // non-git working dirs `checkGitEdits` returns false, falling through
-        // to the original logNonTrivial check for safe degradation.
-        const startEpochSec = Math.floor(startTime / 1000);
-        const hasEdits = checkGitEdits(sessionWorkingDir, startEpochSec);
-        const isSuccess = !timedOut && tokenPresent && hasArtifact && (logNonTrivial || hasEdits);
-
+        const hasEdits = checkGitEdits(sessionWorkingDir, Math.floor(startTime / 1000));
+        const isSuccess = !ctx.mutableState.timedOut && tokenPresent && hasArtifact && (logNonTrivial || hasEdits);
         if (!isSuccess) {
-          const reasons = [
-            timedOut ? 'timeout' : null,
-            !tokenPresent ? 'no WORKER_DONE token' : null,
-            !hasArtifact ? `no ${role} lifecycle artifact` : null,
-            (!logNonTrivial && !hasEdits) ? `log ${logContent.length}B < 200B and no git edits` : null,
-          ].filter(Boolean).join(', ');
+          const reasons = buildValidationFailureReasons({
+            timedOut: ctx.mutableState.timedOut, tokenPresent, hasArtifact, role,
+            logContentLength: logContent.length, logNonTrivial, hasEdits,
+          });
           console.error(`${Style.RED}Worker validation failed: ${reasons}${Style.RESET}`);
         }
-
-        // Update ticket frontmatter so monitor/status reflect the outcome
-        if (isSuccess) {
-          try { updateTicketStatus(ticketId, 'Done', sessionRoot); } catch { /* best-effort */ }
-        } else {
-          try { updateTicketStatus(ticketId, 'Failed', sessionRoot); } catch { /* best-effort */ }
-        }
-
-        printMinimalPanel(
-          'Worker Report',
-          {
-            status: timedOut ? 'timeout' : `exit:${exitCode}`,
-            validation: isSuccess ? 'successful' : 'failed',
-          },
-          isSuccess ? 'GREEN' : 'RED',
-          '🥒'
-        );
-
+        try { updateTicketStatus(ticketId, isSuccess ? 'Done' : 'Failed', sessionRoot); } catch { /* best-effort */ }
+        printMinimalPanel('Worker Report', { status: ctx.mutableState.timedOut ? 'timeout' : `exit:${exitCode}`, validation: isSuccess ? 'successful' : 'failed' }, isSuccess ? 'GREEN' : 'RED', '🥒');
         if (!isSuccess) process.exit(1);
-        resolve();
+        resolve({ exitCode: exitCode ?? 0, isSuccess });
       }
     });
+  });
+}
+
+async function main() {
+  const parsed = parseAndValidateArgs(process.argv.slice(2));
+  const runtime = readSessionRuntime(parsed);
+  const effectiveTimeout = resolveEffectiveTimeout(parsed.timeout, runtime.state, Date.now());
+  if (runtime.state && effectiveTimeout > parsed.timeout) {
+    console.log(`${Style.YELLOW}⚠️  Session time already elapsed; running with requested timeout.${Style.RESET}`);
+  } else if (effectiveTimeout < parsed.timeout) {
+    console.log(`${Style.YELLOW}⚠️  Worker timeout clamped: ${effectiveTimeout}s${Style.RESET}`);
+  }
+
+  const ticketInfo = readTicketInfo(parsed.ticketFilePath);
+  const backend = routeBackend(parsed.sessionRoot, ticketInfo);
+  const args = { ...parsed, backend };
+  const extensionRoot = getExtensionRoot();
+  const model = resolveWorkerModel(backend, extensionRoot, ticketInfo);
+  printMinimalPanel(
+    args.isReviewTicket ? 'Spawning Review Worker' : 'Spawning Morty Worker',
+    { Request: args.ticket, Ticket: args.ticketId, Type: args.isReviewTicket ? 'review' : 'implementation', Format: args.outputFormat, Backend: backend, Timeout: `${effectiveTimeout}s (Req: ${args.timeout}s)`, PID: process.pid },
+    args.isReviewTicket ? 'MAGENTA' : 'CYAN',
+    '🥒'
+  );
+  const prompt = buildWorkerPrompt({
+    ticket: { task: args.ticket, ticketContent: args.ticketContent, ticketId: args.ticketId, ticketPath: args.ticketPath, sessionRoot: args.sessionRoot, backend, isReviewTicket: args.isReviewTicket },
+    model: model ?? 'sonnet',
+    repoRoot: runtime.sessionWorkingDir,
+  });
+  const sessionLog = fs.createWriteStream(args.sessionLogPath, { flags: 'w' });
+  await runWorkerProcess({
+    args, prompt, ticketPath: args.ticketPath, ticketId: args.ticketId, sessionRoot: args.sessionRoot, sessionLog,
+    sessionLogPath: args.sessionLogPath, sessionWorkingDir: runtime.sessionWorkingDir,
+    timeoutStatePath: runtime.timeoutStatePath, workerStatePath: runtime.workerStatePath,
+    effectiveTimeoutMs: effectiveTimeout * 1000, mutableState: { finalized: false, timedOut: false },
+    model, effort: runtime.sessionEffort,
   });
 }
 
