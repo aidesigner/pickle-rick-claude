@@ -326,7 +326,14 @@ export function measureMetric(validation, timeoutSeconds, cwd) {
     }
 }
 /** @internal test seam — do not use outside tests */
-export const _deps = { execFileSync: execFileSync };
+export const _deps = {
+    execFileSync: execFileSync,
+    runIteration: runIteration,
+    getHeadSha: getHeadSha,
+    resetToSha: resetToSha,
+    isWorkingTreeDirty: isWorkingTreeDirty,
+    sleep: sleep,
+};
 const RECOVERY_TEMPLATES = {
     tool_failure: 'Metric tool failed. Check tool prerequisites, env vars, and dependencies before retrying.',
     approach_exhaustion: 'Multiple approaches failed. Reset strategy: re-read the PRD, identify untried angles, consider simplifying scope.',
@@ -630,6 +637,461 @@ export function readRunnerState(statePath) {
 export function deactivateRunnerState(statePath) {
     safeDeactivate(statePath);
 }
+function replaceMicroverseState(target, next) {
+    for (const key of Object.keys(target)) {
+        delete target[key];
+    }
+    Object.assign(target, next);
+}
+function writeHandoffFile(sessionDir, content) {
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking handoff write
+    fs.writeFileSync(path.join(sessionDir, 'handoff.txt'), content);
+}
+function clearRateLimitWaitFile(sessionDir) {
+    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking cleanup
+    try {
+        fs.unlinkSync(path.join(sessionDir, 'rate_limit_wait.json'));
+    }
+    catch { /* ok */ }
+}
+function measureCurrentMetric(state, ctx, backend) {
+    if (state.key_metric.type === 'command') {
+        return measureMetric(state.key_metric.validation, state.key_metric.timeout_seconds, ctx.workingDir);
+    }
+    if (state.key_metric.type === 'llm') {
+        return measureLlmMetric(state.key_metric.validation, state.key_metric.timeout_seconds, ctx.workingDir, state.key_metric.judge_model, state.convergence.history, state.prd_path, state.judge_context_path, backend);
+    }
+    return null;
+}
+function loadFailureClassificationFlag(extensionRoot) {
+    try {
+        // eslint-disable-next-line pickle/no-sync-in-async -- settings read before async work begins
+        const settings = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
+        return settings.enable_failure_classification !== false;
+    }
+    catch {
+        return true;
+    }
+}
+function resetStoppedMicroverseState(state, sessionDir, log) {
+    if (state.status !== 'stopped')
+        return;
+    const hasHistory = state.convergence?.history?.length > 0;
+    const hasBaseline = state.baseline_score !== 0;
+    const newStatus = (hasHistory || hasBaseline) ? 'iterating' : 'gap_analysis';
+    log(`Resuming from failed state — resetting status to ${newStatus}`);
+    state.status = newStatus;
+    delete state.exit_reason;
+    writeMicroverseState(sessionDir, state);
+}
+function preflightAutoCommit(workingDir, log) {
+    const PREFLIGHT_DIRT_EXCLUDES = ['prds', 'docs'];
+    if (!isWorkingTreeDirty(workingDir, PREFLIGHT_DIRT_EXCLUDES))
+        return;
+    // eslint-disable-next-line pickle/no-sync-in-async -- sync guard is fine here; pre-flight before async work
+    if (!fs.existsSync(path.join(workingDir, '.git'))) {
+        log('ERROR: Working tree is dirty and not a git repository. Aborting.');
+        throw new Error('Working tree is dirty — not a git repo, cannot auto-commit');
+    }
+    log('Working tree is dirty — auto-committing before microverse start');
+    try {
+        stageAutoCommitPaths(workingDir, PREFLIGHT_DIRT_EXCLUDES);
+        execFileSync('git', ['commit', '-m', 'microverse: auto-commit dirty tree before start'], { cwd: workingDir, timeout: 30_000 });
+        log(`Auto-committed pre-flight: ${getHeadSha(workingDir)}`);
+    }
+    catch (commitErr) {
+        const commitMsg = safeErrorMessage(commitErr);
+        log(`Pre-flight auto-commit failed: ${commitMsg} — aborting`);
+        try {
+            execFileSync('git', ['reset'], { cwd: workingDir, timeout: 10_000 });
+        }
+        catch { /* best effort */ }
+        throw new Error(`Working tree is dirty and auto-commit failed: ${commitMsg}`);
+    }
+}
+function installShutdownHandlers(sessionDir, statePath, log) {
+    const handleShutdownSignal = (signal) => {
+        log(`Received ${signal} — deactivating session`);
+        killCurrentChild();
+        deactivateRunnerState(statePath);
+        const finalMv = readMicroverseState(sessionDir);
+        if (finalMv) {
+            finalMv.status = 'stopped';
+            finalMv.exit_reason = 'signal';
+            writeMicroverseState(sessionDir, finalMv);
+        }
+        logActivity({ event: 'session_end', source: 'pickle', session: path.basename(sessionDir), mode: 'tmux' });
+        process.exit(0);
+    };
+    process.on('SIGTERM', () => handleShutdownSignal('SIGTERM'));
+    process.on('SIGINT', () => handleShutdownSignal('SIGINT'));
+    process.on('SIGHUP', () => handleShutdownSignal('SIGHUP'));
+}
+function ensureRunnerStateActive(statePath) {
+    sm.update(statePath, s => {
+        s.tmux_mode = true;
+        if (!s.command_template)
+            s.command_template = 'microverse.md';
+        s.active = true;
+        s.pid = process.pid;
+    });
+}
+export async function executeGapAnalysis(state, ctx) {
+    ctx.log('Starting gap analysis phase');
+    ctx.iteration++;
+    writeHandoffFile(ctx.sessionDir, buildMicroverseHandoff(state, ctx.iteration, ctx.workingDir, ctx.sessionDir));
+    sm.update(ctx.statePath, s => { s.iteration = ctx.iteration; });
+    const outcome = await _deps.runIteration(ctx.sessionDir, ctx.iteration, ctx.extensionRoot, '');
+    if (outcome.completion === 'error' || outcome.completion === 'inactive') {
+        ctx.log(`Gap analysis failed: ${outcome.completion}`);
+        state.status = 'stopped';
+        state.exit_reason = 'error';
+        writeMicroverseState(ctx.sessionDir, state);
+        throw new Error('gap analysis failed');
+    }
+    if (state.key_metric.type === 'llm') {
+        try {
+            ctx.currentRunnerState = readRunnerState(ctx.statePath);
+        }
+        catch (err) {
+            ctx.log(`WARNING: Could not re-read state.json before baseline (${safeErrorMessage(err)}) — using in-memory state`);
+        }
+    }
+    const baseline = measureCurrentMetric(state, ctx, resolveBackend(ctx.currentRunnerState));
+    if (baseline) {
+        state.baseline_score = baseline.score;
+        ctx.log(`${state.key_metric.type === 'llm' ? 'LLM baseline' : 'Baseline'} metric: ${baseline.score}${state.key_metric.type === 'command' ? ` (raw: ${baseline.raw})` : ''}`);
+    }
+    else if (state.key_metric.type === 'none') {
+        ctx.log(`Baseline measurement skipped — metric type '${state.key_metric.type}' has no measurement branch`);
+    }
+    else {
+        ctx.log(`WARNING: Could not measure ${state.key_metric.type === 'llm' ? 'LLM baseline' : 'baseline metric'} — defaulting to 0`);
+    }
+    state.status = 'iterating';
+    writeMicroverseState(ctx.sessionDir, state);
+    ctx.log('Gap analysis complete — transitioning to iterating');
+    return { baseline: baseline ?? { raw: '', score: state.baseline_score } };
+}
+export async function handleRateLimit(_state, ctx, signal) {
+    signal.throwIfAborted();
+    const actualWaitMs = ctx.rateLimitWaitMs ?? 0;
+    writeStateFile(path.join(ctx.sessionDir, 'rate_limit_wait.json'), {
+        waiting: true, reason: 'API rate limit',
+        started_at: new Date().toISOString(),
+        wait_until: new Date(Date.now() + actualWaitMs).toISOString(),
+        consecutive_waits: ctx.consecutiveRateLimits,
+    });
+    const waitEnd = Date.now() + actualWaitMs;
+    while (Date.now() < waitEnd) {
+        signal.throwIfAborted();
+        await _deps.sleep(Defaults.RATE_LIMIT_POLL_MS);
+        try {
+            const waitState = readRunnerState(ctx.statePath);
+            if (waitState.active !== true) {
+                ctx.rateLimitExitReason = 'stopped';
+                break;
+            }
+        }
+        catch (err) {
+            ctx.log(`WARNING: Could not read state.json during rate limit wait: ${safeErrorMessage(err)}`);
+        }
+        const remainingPoll = remainingSessionSeconds(ctx.currentRunnerState);
+        if (remainingPoll !== null && remainingPoll <= 0) {
+            ctx.rateLimitExitReason = 'limit_reached';
+            break;
+        }
+    }
+    if (!ctx.rateLimitExitReason) {
+        clearRateLimitWaitFile(ctx.sessionDir);
+        if (ctx.resetRateLimitCounter)
+            ctx.consecutiveRateLimits = 0;
+        logActivity({ event: 'rate_limit_resume', source: 'pickle', session: path.basename(ctx.sessionDir) });
+    }
+}
+export async function measureAndClassifyIteration(state, baseline, ctx) {
+    const backend = resolveBackend(ctx.currentRunnerState);
+    let metricResult = measureCurrentMetric(state, ctx, backend);
+    if (!metricResult) {
+        ctx.log('WARNING: Metric measurement failed — retrying once after 10s');
+        await _deps.sleep(Defaults.RATE_LIMIT_POLL_MS);
+        metricResult = measureCurrentMetric(state, ctx, backend);
+    }
+    if (!metricResult) {
+        ctx.log('WARNING: Metric measurement failed twice — treating as stall (commit preserved)');
+        replaceMicroverseState(state, recordStall(state));
+        writeMicroverseState(ctx.sessionDir, state);
+        return { kind: 'unchanged' };
+    }
+    ctx.log(`Metric: ${metricResult.score} (raw: ${metricResult.raw})`);
+    const lastAccepted = [...state.convergence.history].reverse().find(h => h.action === 'accept');
+    if (baseline.score === 0 && state.baseline_score === 0 && !lastAccepted) {
+        state.baseline_score = metricResult.score;
+        ctx.log(`Late baseline adopted: ${metricResult.score} (initial measurement failed)`);
+        writeMicroverseState(ctx.sessionDir, state);
+    }
+    const previousScore = lastAccepted ? lastAccepted.score : state.baseline_score;
+    const classification = compareMetric(metricResult.score, previousScore, state.key_metric.tolerance, state.key_metric.direction);
+    ctx.log(`Classification: ${classification} (previous=${previousScore}, tolerance=${state.key_metric.tolerance})`);
+    const entry = {
+        iteration: ctx.iteration,
+        metric_value: metricResult.raw,
+        score: metricResult.score,
+        action: classification === 'regressed' ? 'revert' : 'accept',
+        description: `${classification}: ${metricResult.score} vs ${previousScore}`,
+        pre_iteration_sha: ctx.preIterSha ?? '',
+        timestamp: new Date().toISOString(),
+    };
+    if (classification === 'regressed') {
+        ctx.log(`Regression detected — rolling back to ${ctx.preIterSha}`);
+        _deps.resetToSha(ctx.preIterSha ?? '', ctx.workingDir);
+        replaceMicroverseState(state, recordFailedApproach(state, `Iteration ${ctx.iteration}: score dropped from ${previousScore} to ${metricResult.score}`));
+    }
+    replaceMicroverseState(state, stateRecordIteration(state, entry, classification));
+    writeMicroverseState(ctx.sessionDir, state);
+    if (ctx.enableFailureClassification) {
+        recordFailureClassification(state, metricResult, entry, ctx);
+    }
+    if (classification === 'improved')
+        return { kind: 'improved', metric: metricResult };
+    if (classification === 'regressed')
+        return { kind: 'regressed', rollback: true };
+    return { kind: 'unchanged' };
+}
+function recordFailureClassification(state, metricResult, entry, ctx) {
+    try {
+        const failureClass = classifyFailure(state, metricResult, ctx.preIterSha ?? '', ctx.postIterSha ?? '');
+        if (!failureClass)
+            return;
+        state.failure_history.push({
+            iteration: ctx.iteration,
+            failure_class: failureClass,
+            description: entry.description,
+            timestamp: new Date().toISOString(),
+        });
+        injectRecoveryGuidance(ctx.sessionDir, failureClass, state);
+        if (failureClass === 'approach_exhaustion')
+            state.approach_exhaustion_fired = true;
+        writeMicroverseState(ctx.sessionDir, state);
+    }
+    catch (classifyErr) {
+        ctx.log(`WARNING: Failure classification error (non-fatal): ${safeErrorMessage(classifyErr)}`);
+    }
+}
+function currentExitForFailureHistory(state, ctx) {
+    const last = state.failure_history[state.failure_history.length - 1];
+    if (!last)
+        return null;
+    if (last.failure_class === 'approach_exhaustion' && state.approach_exhaustion_fired) {
+        const previous = state.failure_history.slice(0, -1).some(f => f.failure_class === 'approach_exhaustion');
+        if (previous) {
+            ctx.log('approach_exhaustion fired twice — bailing');
+            writeMicroverseState(ctx.sessionDir, state);
+            return 'approach_exhaustion';
+        }
+    }
+    if (last.failure_class === 'no_progress') {
+        const recent = state.failure_history.slice(-3);
+        if (recent.length === 3 && recent.every(f => f.failure_class === 'no_progress')) {
+            ctx.log('3 consecutive no_progress — bailing');
+            writeMicroverseState(ctx.sessionDir, state);
+            return 'no_progress';
+        }
+    }
+    return null;
+}
+async function handleNoCommitStall(state, ctx) {
+    ctx.log('No commits made — stall (no rollback)');
+    replaceMicroverseState(state, recordStall(state));
+    writeMicroverseState(ctx.sessionDir, state);
+    if (isConverged(state)) {
+        ctx.log('Converged (stall limit reached with no new commits)');
+        return 'converged';
+    }
+    await _deps.sleep(1000);
+    return null;
+}
+function autoRescueDirtyTree(ctx) {
+    if (!_deps.isWorkingTreeDirty(ctx.workingDir))
+        return;
+    ctx.log('No commits but dirty tree detected — auto-committing worker changes');
+    // eslint-disable-next-line pickle/no-sync-in-async -- sync guard is fine here; async context already uses execFileSync
+    if (!fs.existsSync(path.join(ctx.workingDir, '.git'))) {
+        ctx.log(`Auto-commit skipped: not a git repository (${ctx.workingDir})`);
+        return;
+    }
+    try {
+        stageAutoCommitPaths(ctx.workingDir);
+        execFileSync('git', ['commit', '-m', `microverse: auto-commit (worker timed out before committing)`], { cwd: ctx.workingDir, timeout: 30_000 });
+        ctx.postIterSha = _deps.getHeadSha(ctx.workingDir);
+        ctx.log(`Auto-committed: ${ctx.postIterSha}`);
+    }
+    catch (commitErr) {
+        ctx.log(`Auto-commit failed: ${safeErrorMessage(commitErr)} — unstaging and treating as stall`);
+        try {
+            execFileSync('git', ['reset'], { cwd: ctx.workingDir, timeout: 10_000 });
+        }
+        catch { /* best effort */ }
+    }
+}
+async function handleWorkerMode(state, ctx) {
+    const workerResult = await handleWorkerManagedIteration({
+        currentMv: state,
+        preIterSha: ctx.preIterSha ?? '',
+        workingDir: ctx.workingDir,
+        sessionDir: ctx.sessionDir,
+        enabledFiles: ctx.cgSettings.enabled_convergence_files,
+        regressionWarningThreshold: ctx.cgSettings.regression_warning_threshold,
+        backend: resolveBackend(ctx.currentRunnerState),
+        remediatorTimeoutS: ctx.cgSettings.remediator_timeout_s,
+        log: ctx.log,
+        iteration: ctx.iteration,
+    });
+    replaceMicroverseState(state, workerResult.currentMv);
+    if (workerResult.converged) {
+        ctx.log(`Converged (worker-managed: ${workerResult.reason})`);
+        return 'converged';
+    }
+    await _deps.sleep(1000);
+    return null;
+}
+function readLoopExit(ctx) {
+    try {
+        ctx.currentRunnerState = readRunnerState(ctx.statePath);
+    }
+    catch (err) {
+        ctx.log(`ERROR: Cannot read state.json: ${safeErrorMessage(err)}. Exiting loop.`);
+        return 'error';
+    }
+    if (Number(ctx.currentRunnerState.worker_timeout_seconds) !== 0) {
+        sm.update(ctx.statePath, s => { s.worker_timeout_seconds = 0; });
+    }
+    if (ctx.currentRunnerState.active !== true) {
+        ctx.log('Session inactive. Exiting.');
+        return 'stopped';
+    }
+    const maxIter = Number.isFinite(Number(ctx.currentRunnerState.max_iterations))
+        ? Number(ctx.currentRunnerState.max_iterations)
+        : 0;
+    if (maxIter > 0 && ctx.iteration >= maxIter) {
+        ctx.log(`Max iterations reached (${ctx.iteration}/${maxIter}). Exiting.`);
+        return 'limit_reached';
+    }
+    const remaining = remainingSessionSeconds(ctx.currentRunnerState);
+    if (remaining !== null && remaining <= 0) {
+        ctx.log('Time limit reached. Exiting.');
+        return 'limit_reached';
+    }
+    return null;
+}
+async function prepareIteration(state, ctx) {
+    await ensurePerIterationGateBaseline({
+        currentMv: state,
+        workingDir: ctx.workingDir,
+        sessionDir: ctx.sessionDir,
+        enabledFiles: ctx.cgSettings.enabled_convergence_files,
+        log: ctx.log,
+        currentIteration: ctx.iteration,
+        baselineMaxAgeIterations: ctx.cgSettings.baseline_max_age_iterations,
+        baselineMaxAgeSeconds: ctx.cgSettings.baseline_max_age_seconds,
+    });
+    ctx.iteration++;
+    ctx.log(`--- Iteration ${ctx.iteration} ---`);
+    logActivity({ event: 'iteration_start', source: 'pickle', session: path.basename(ctx.sessionDir), iteration: ctx.iteration });
+    ctx.preIterSha = _deps.getHeadSha(ctx.workingDir);
+    writeHandoffFile(ctx.sessionDir, buildMicroverseHandoff(state, ctx.iteration, ctx.workingDir, ctx.sessionDir));
+    sm.update(ctx.statePath, s => { s.iteration = ctx.iteration; });
+}
+async function handleRateLimitExit(state, ctx, exitResult) {
+    if (exitResult.type !== 'api_limit')
+        return null;
+    ctx.consecutiveRateLimits++;
+    ctx.log(`API rate limit detected (consecutive: ${ctx.consecutiveRateLimits}/${ctx.maxRateLimitRetries})`);
+    const action = computeRateLimitAction(exitResult, ctx.consecutiveRateLimits, ctx.maxRateLimitRetries, ctx.rateLimitWaitMinutes);
+    if (action.action === 'bail') {
+        logActivity({ event: 'rate_limit_exhausted', source: 'pickle', session: path.basename(ctx.sessionDir), error: `max retries exceeded` });
+        return 'rate_limit_exhausted';
+    }
+    const remainingWait = remainingSessionSeconds(ctx.currentRunnerState);
+    if (remainingWait !== null && remainingWait <= 0)
+        return 'limit_reached';
+    ctx.rateLimitWaitMs = Math.min(action.waitMs, remainingWait === null ? action.waitMs : remainingWait * 1000);
+    ctx.resetRateLimitCounter = action.resetCounter;
+    ctx.rateLimitExitReason = undefined;
+    ctx.log(`Rate limit wait: ${Math.ceil(ctx.rateLimitWaitMs / 60_000)}min (source: ${action.waitSource})`);
+    await handleRateLimit(state, ctx, new AbortController().signal);
+    return ctx.rateLimitExitReason ?? 'continue';
+}
+async function handleMetricMode(state, baseline, ctx) {
+    ctx.postIterSha = _deps.getHeadSha(ctx.workingDir);
+    if (ctx.postIterSha === ctx.preIterSha)
+        autoRescueDirtyTree(ctx);
+    if (ctx.postIterSha === ctx.preIterSha)
+        return await handleNoCommitStall(state, ctx) ?? 'continue';
+    const classification = await measureAndClassifyIteration(state, baseline, ctx);
+    const failureExit = currentExitForFailureHistory(state, ctx);
+    if (failureExit)
+        return failureExit;
+    if (!isConverged(state))
+        return null;
+    const targetHit = classification.kind === 'improved' &&
+        state.convergence_target != null &&
+        classification.metric.score === state.convergence_target;
+    ctx.log(`Converged after ${ctx.iteration} iterations (${targetHit ? `target=${state.convergence_target} reached` : `stall_counter=${state.convergence.stall_counter}`})`);
+    return 'converged';
+}
+async function handleIterationOutcome(state, baseline, ctx, outcome) {
+    const iterLogFile = path.join(ctx.sessionDir, `tmux_iteration_${ctx.iteration}.log`);
+    const exitResult = classifyIterationExit(outcome.completion, iterLogFile, {
+        didTimeout: outcome.timedOut, exitCode: outcome.exitCode, wallSeconds: outcome.wallSeconds,
+    });
+    logActivity({ event: 'iteration_end', source: 'pickle', session: path.basename(ctx.sessionDir), iteration: ctx.iteration, exit_type: exitResult.type });
+    const rateLimitExit = await handleRateLimitExit(state, ctx, exitResult);
+    if (rateLimitExit)
+        return rateLimitExit;
+    if (exitResult.type === 'success')
+        ctx.consecutiveRateLimits = 0;
+    if (outcome.completion === 'error') {
+        ctx.log('Subprocess error. Exiting loop.');
+        return 'error';
+    }
+    if (outcome.completion === 'inactive') {
+        ctx.log('Session deactivated. Exiting loop.');
+        return 'stopped';
+    }
+    if (state.convergence_mode === 'worker')
+        return await handleWorkerMode(state, ctx) ?? 'continue';
+    return await handleMetricMode(state, baseline, ctx);
+}
+export async function executeMainLoop(state, ctx) {
+    let exitReason = 'error';
+    const baseline = { raw: '', score: state.baseline_score };
+    sm.update(ctx.statePath, s => { s.worker_timeout_seconds = 0; });
+    ctx.log('Worker timeout disabled — session time limit is the only gate');
+    while (state.status === 'iterating') {
+        const loopExit = readLoopExit(ctx);
+        if (loopExit) {
+            exitReason = loopExit;
+            break;
+        }
+        await prepareIteration(state, ctx);
+        const outcome = await _deps.runIteration(ctx.sessionDir, ctx.iteration, ctx.extensionRoot, '');
+        const stepResult = await handleIterationOutcome(state, baseline, ctx, outcome);
+        if (stepResult === 'continue')
+            continue;
+        if (stepResult) {
+            exitReason = stepResult;
+            break;
+        }
+        await _deps.sleep(1000);
+    }
+    return {
+        state,
+        exitReason,
+        iterations: ctx.iteration,
+        elapsedSeconds: Math.floor((Date.now() - ctx.startTime) / 1000),
+    };
+}
 export async function main(sessionDir) {
     const extensionRoot = getExtensionRoot();
     const statePath = path.join(sessionDir, 'state.json');
@@ -650,18 +1112,8 @@ export async function main(sessionDir) {
     catch (err) {
         log(`ensureMonitorWindow: threw (ignored): ${safeErrorMessage(err)}`);
     }
-    // Feature flag: enable_failure_classification (default true)
-    let enableFailureClassification = true;
-    try {
-        // eslint-disable-next-line pickle/no-sync-in-async -- settings read before async work begins
-        const settings = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
-        if (settings.enable_failure_classification === false)
-            enableFailureClassification = false;
-    }
-    catch { /* default true */ }
-    // Read convergence_gate settings at startup (used in worker-mode per-iteration gate hook)
+    const enableFailureClassification = loadFailureClassificationFlag(extensionRoot);
     const cgSettings = loadConvergenceGateSettings(extensionRoot);
-    // Read initial state
     let state;
     try {
         state = readRunnerState(statePath);
@@ -674,471 +1126,48 @@ export async function main(sessionDir) {
     if (!mvState) {
         throw new Error('microverse.json not found — run setup first');
     }
-    // Recovery: reset stale status on resume so the session isn't permanently dead
-    if (mvState.status === 'stopped') {
-        const hasHistory = mvState.convergence?.history?.length > 0;
-        const hasBaseline = mvState.baseline_score !== 0;
-        const newStatus = (hasHistory || hasBaseline) ? 'iterating' : 'gap_analysis';
-        log(`Resuming from failed state — resetting status to ${newStatus}`);
-        mvState.status = newStatus;
-        delete mvState.exit_reason;
-        writeMicroverseState(sessionDir, mvState);
-    }
+    resetStoppedMicroverseState(mvState, sessionDir, log);
     const workingDir = state.working_dir || process.cwd();
-    // Pre-flight: dirty tree check — auto-commit instead of aborting.
-    // Exclude prds/ and docs/ so user doc edits aren't swept into a microverse
-    // commit (matches pipeline-runner's clean-tree exclusions).
-    const PREFLIGHT_DIRT_EXCLUDES = ['prds', 'docs'];
-    if (isWorkingTreeDirty(workingDir, PREFLIGHT_DIRT_EXCLUDES)) {
-        // eslint-disable-next-line pickle/no-sync-in-async -- sync guard is fine here; pre-flight before async work
-        if (!fs.existsSync(path.join(workingDir, '.git'))) {
-            log('ERROR: Working tree is dirty and not a git repository. Aborting.');
-            throw new Error('Working tree is dirty — not a git repo, cannot auto-commit');
-        }
-        log('Working tree is dirty — auto-committing before microverse start');
-        try {
-            stageAutoCommitPaths(workingDir, PREFLIGHT_DIRT_EXCLUDES);
-            execFileSync('git', ['commit', '-m', 'microverse: auto-commit dirty tree before start'], { cwd: workingDir, timeout: 30_000 });
-            log(`Auto-committed pre-flight: ${getHeadSha(workingDir)}`);
-        }
-        catch (commitErr) {
-            const commitMsg = safeErrorMessage(commitErr);
-            log(`Pre-flight auto-commit failed: ${commitMsg} — aborting`);
-            try {
-                execFileSync('git', ['reset'], { cwd: workingDir, timeout: 10_000 });
-            }
-            catch { /* best effort */ }
-            throw new Error(`Working tree is dirty and auto-commit failed: ${commitMsg}`);
-        }
-    }
-    // Ensure tmux_mode and command_template
-    sm.update(statePath, s => {
-        s.tmux_mode = true;
-        if (!s.command_template)
-            s.command_template = 'microverse.md';
-        s.active = true;
-        s.pid = process.pid;
-    });
-    // Signal handlers
-    const handleShutdownSignal = (signal) => {
-        log(`Received ${signal} — deactivating session`);
-        killCurrentChild();
-        deactivateRunnerState(statePath);
-        const finalMv = readMicroverseState(sessionDir);
-        if (finalMv) {
-            finalMv.status = 'stopped';
-            finalMv.exit_reason = 'signal';
-            writeMicroverseState(sessionDir, finalMv);
-        }
-        logActivity({ event: 'session_end', source: 'pickle', session: path.basename(sessionDir), mode: 'tmux' });
-        process.exit(0);
-    };
-    process.on('SIGTERM', () => handleShutdownSignal('SIGTERM'));
-    process.on('SIGINT', () => handleShutdownSignal('SIGINT'));
-    process.on('SIGHUP', () => handleShutdownSignal('SIGHUP'));
-    // Rate limit settings
+    preflightAutoCommit(workingDir, log);
+    ensureRunnerStateActive(statePath);
+    installShutdownHandlers(sessionDir, statePath, log);
     const { waitMinutes: rateLimitWaitMinutes, maxRetries: maxRateLimitRetries } = loadRateLimitSettings(extensionRoot);
     const startTime = Date.now();
-    let iteration = 0;
-    let consecutiveRateLimits = 0;
-    let exitReason = 'error';
-    let currentMv = structuredClone(mvState);
-    // --- Gap Analysis Phase ---
-    if (currentMv.status === 'gap_analysis') {
-        log('Starting gap analysis phase');
-        iteration++;
-        // Write gap analysis handoff
-        const handoffContent = buildMicroverseHandoff(currentMv, iteration, workingDir, sessionDir);
-        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-        fs.writeFileSync(path.join(sessionDir, 'handoff.txt'), handoffContent);
-        sm.update(statePath, s => { s.iteration = iteration; });
-        const outcome = await runIteration(sessionDir, iteration, extensionRoot, '');
-        const result = outcome.completion;
-        if (result === 'error' || result === 'inactive') {
-            log(`Gap analysis failed: ${result}`);
-            currentMv.status = 'stopped';
-            currentMv.exit_reason = 'error';
-            writeMicroverseState(sessionDir, currentMv);
-            exitReason = 'error';
-            try {
-                sm.update(statePath, s => { s.active = false; });
-            }
-            catch (err) {
-                log(`sm.update failed at gap-analysis-error path, falling back to safeDeactivate: ${safeErrorMessage(err)}`);
-                deactivateRunnerState(statePath);
-            }
-            writeFinalReport(sessionDir, currentMv, exitReason, iteration, Math.floor((Date.now() - startTime) / 1000));
-            process.exit(1);
-        }
-        // Measure baseline
-        if (currentMv.key_metric.type === 'command') {
-            const baseline = measureMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir);
-            if (baseline) {
-                currentMv.baseline_score = baseline.score;
-                log(`Baseline metric: ${baseline.score} (raw: ${baseline.raw})`);
-            }
-            else {
-                log('WARNING: Could not measure baseline metric — defaulting to 0');
-            }
-        }
-        else if (currentMv.key_metric.type === 'llm') {
-            // Re-read state from disk before resolving the baseline backend.
-            // The `state` in scope was loaded at main()'s top (pre-flight); if the
-            // user flipped state.backend between session start and gap-analysis,
-            // a stale in-memory copy would measure the baseline on the OLD backend
-            // while the iteration loop (which re-reads state every tick) uses the
-            // NEW one — causing compareMetric() to compare apples to oranges and
-            // corrupting stall/rollback logic. Mirror the iteration-loop idiom.
-            let freshState;
-            try {
-                freshState = readRunnerState(statePath);
-            }
-            catch (err) {
-                log(`WARNING: Could not re-read state.json before baseline (${safeErrorMessage(err)}) — using in-memory state`);
-                freshState = state;
-            }
-            const baselineBackend = resolveBackend(freshState);
-            const baseline = measureLlmMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir, currentMv.key_metric.judge_model, undefined, currentMv.prd_path, currentMv.judge_context_path, baselineBackend);
-            if (baseline) {
-                currentMv.baseline_score = baseline.score;
-                log(`LLM baseline metric: ${baseline.score}`);
-            }
-            else {
-                log('WARNING: Could not measure LLM baseline — defaulting to 0');
-            }
-        }
-        else {
-            log(`Baseline measurement skipped — metric type '${currentMv.key_metric.type}' has no measurement branch`);
-        }
-        currentMv.status = 'iterating';
-        writeMicroverseState(sessionDir, currentMv);
-        log('Gap analysis complete — transitioning to iterating');
+    const currentMv = structuredClone(mvState);
+    const ctx = {
+        sessionDir,
+        extensionRoot,
+        statePath,
+        workingDir,
+        startTime,
+        initialIteration: 0,
+        enableFailureClassification,
+        cgSettings,
+        rateLimitWaitMinutes,
+        maxRateLimitRetries,
+        log,
+        currentRunnerState: state,
+        iteration: 0,
+        consecutiveRateLimits: 0,
+    };
+    let outcome;
+    try {
+        if (currentMv.status === 'gap_analysis')
+            await executeGapAnalysis(currentMv, ctx);
+        outcome = await executeMainLoop(currentMv, ctx);
     }
-    // Disable per-iteration worker timeout for microverse. The session-level
-    // max_time_minutes is the only time gate — individual iterations can take
-    // as long as they need (slow metrics, large codebases). Setting to 0
-    // tells mux-runner's runIteration() to skip the timeout entirely.
-    sm.update(statePath, s => { s.worker_timeout_seconds = 0; });
-    log('Worker timeout disabled — session time limit is the only gate');
-    // --- Main Iteration Loop ---
-    while (currentMv.status === 'iterating') {
-        // Re-read state for external changes
-        try {
-            state = readRunnerState(statePath);
-        }
-        catch (err) {
-            const msg = safeErrorMessage(err);
-            log(`ERROR: Cannot read state.json: ${msg}. Exiting loop.`);
-            exitReason = 'error';
-            break;
-        }
-        // Re-enforce disabled worker timeout (external edits could restore it).
-        // Coerce to Number first — JSON round-trips may deserialize 0 as '0' (string),
-        // and '0' !== 0 is true, which would trigger a spurious write on every tick.
-        if (Number(state.worker_timeout_seconds) !== 0) {
-            sm.update(statePath, s => { s.worker_timeout_seconds = 0; });
-        }
-        if (state.active !== true) {
-            log('Session inactive. Exiting.');
-            exitReason = 'stopped';
-            break;
-        }
-        // Check max_iterations
-        const rawMaxIter = Number(state.max_iterations);
-        const maxIter = Number.isFinite(rawMaxIter) ? rawMaxIter : 0;
-        if (maxIter > 0 && iteration >= maxIter) {
-            log(`Max iterations reached (${iteration}/${maxIter}). Exiting.`);
-            exitReason = 'limit_reached';
-            break;
-        }
-        // Check max_time_minutes
-        const remaining = remainingSessionSeconds(state);
-        if (remaining !== null && remaining <= 0) {
-            log('Time limit reached. Exiting.');
-            exitReason = 'limit_reached';
-            break;
-        }
-        await ensurePerIterationGateBaseline({
-            currentMv,
-            workingDir,
-            sessionDir,
-            enabledFiles: cgSettings.enabled_convergence_files,
-            log,
-            currentIteration: iteration,
-            baselineMaxAgeIterations: cgSettings.baseline_max_age_iterations,
-            baselineMaxAgeSeconds: cgSettings.baseline_max_age_seconds,
-        });
-        iteration++;
-        log(`--- Iteration ${iteration} ---`);
-        logActivity({ event: 'iteration_start', source: 'pickle', session: path.basename(sessionDir), iteration });
-        // Record pre-iteration SHA
-        const preIterSha = getHeadSha(workingDir);
-        // Write microverse-specific handoff
-        const handoffContent = buildMicroverseHandoff(currentMv, iteration, workingDir, sessionDir);
-        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-        fs.writeFileSync(path.join(sessionDir, 'handoff.txt'), handoffContent);
-        sm.update(statePath, s => { s.iteration = iteration; });
-        // Run iteration
-        const outcome = await runIteration(sessionDir, iteration, extensionRoot, '');
-        const result = outcome.completion;
-        const iterLogFile = path.join(sessionDir, `tmux_iteration_${iteration}.log`);
-        // Rate limit check
-        const exitResult = classifyIterationExit(outcome.completion, iterLogFile, {
-            didTimeout: outcome.timedOut,
-            exitCode: outcome.exitCode,
-            wallSeconds: outcome.wallSeconds,
-        });
-        logActivity({ event: 'iteration_end', source: 'pickle', session: path.basename(sessionDir), iteration, exit_type: exitResult.type });
-        if (exitResult.type === 'api_limit') {
-            consecutiveRateLimits++;
-            log(`API rate limit detected (consecutive: ${consecutiveRateLimits}/${maxRateLimitRetries})`);
-            const rlAction = computeRateLimitAction(exitResult, consecutiveRateLimits, maxRateLimitRetries, rateLimitWaitMinutes);
-            if (rlAction.action === 'bail') {
-                exitReason = 'rate_limit_exhausted';
-                logActivity({ event: 'rate_limit_exhausted', source: 'pickle', session: path.basename(sessionDir), error: `max retries exceeded` });
-                break;
-            }
-            const { waitMs, waitSource } = rlAction;
-            log(`Rate limit wait: ${Math.ceil(waitMs / 60_000)}min (source: ${waitSource})`);
-            // Clamp wait to remaining session wall-clock time (mirrors mux-runner.ts behaviour)
-            let actualWaitMs = waitMs;
-            const remainingWait = remainingSessionSeconds(state);
-            if (remainingWait !== null) {
-                if (remainingWait <= 0) {
-                    exitReason = 'limit_reached';
-                    break;
-                }
-                actualWaitMs = Math.min(actualWaitMs, remainingWait * 1000);
-            }
-            writeStateFile(path.join(sessionDir, 'rate_limit_wait.json'), {
-                waiting: true, reason: 'API rate limit',
-                started_at: new Date().toISOString(),
-                wait_until: new Date(Date.now() + actualWaitMs).toISOString(),
-                consecutive_waits: consecutiveRateLimits,
-            });
-            // Cancellable + time-limit-aware sleep (mirrors mux-runner.ts)
-            const waitEnd = Date.now() + actualWaitMs;
-            while (Date.now() < waitEnd) {
-                await sleep(Defaults.RATE_LIMIT_POLL_MS);
-                try {
-                    const ws = readRunnerState(statePath);
-                    if (ws.active !== true) {
-                        exitReason = 'stopped';
-                        break;
-                    }
-                }
-                catch (err) {
-                    const msg = safeErrorMessage(err);
-                    log(`WARNING: Could not read state.json during rate limit wait: ${msg}`);
-                }
-                const remainingPoll = remainingSessionSeconds(state);
-                if (remainingPoll !== null && remainingPoll <= 0) {
-                    exitReason = 'limit_reached';
-                    break;
-                }
-            }
-            if (exitReason === 'stopped' || exitReason === 'limit_reached')
-                break;
-            // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-            try {
-                fs.unlinkSync(path.join(sessionDir, 'rate_limit_wait.json'));
-            }
-            catch { /* ok */ }
-            if (rlAction.resetCounter)
-                consecutiveRateLimits = 0;
-            logActivity({ event: 'rate_limit_resume', source: 'pickle', session: path.basename(sessionDir) });
-            continue;
-        }
-        if (exitResult.type === 'success')
-            consecutiveRateLimits = 0;
-        if (result === 'error') {
-            log('Subprocess error. Exiting loop.');
-            exitReason = 'error';
-            break;
-        }
-        if (result === 'inactive') {
-            log('Session deactivated. Exiting loop.');
-            exitReason = 'stopped';
-            break;
-        }
-        // --- Worker-managed convergence bypass ---
-        // When convergence_mode === 'worker', the worker writes a convergence file.
-        // Skip ALL metric logic (measureMetric, recordStall, isConverged).
-        if (currentMv.convergence_mode === 'worker') {
-            const workerResult = await handleWorkerManagedIteration({
-                currentMv,
-                preIterSha,
-                workingDir,
-                sessionDir,
-                enabledFiles: cgSettings.enabled_convergence_files,
-                regressionWarningThreshold: cgSettings.regression_warning_threshold,
-                backend: resolveBackend(state),
-                remediatorTimeoutS: cgSettings.remediator_timeout_s,
-                log,
-                iteration,
-            });
-            currentMv = workerResult.currentMv;
-            if (workerResult.converged) {
-                log(`Converged (worker-managed: ${workerResult.reason})`);
-                exitReason = 'converged';
-                break;
-            }
-            await sleep(1000);
-            continue;
-        }
-        // Check if HEAD advanced (agent made commits)
-        let postIterSha = getHeadSha(workingDir);
-        if (postIterSha === preIterSha) {
-            // Auto-rescue: if the worker made changes but timed out before committing,
-            // commit on its behalf so we don't lose the work.
-            if (isWorkingTreeDirty(workingDir)) {
-                log('No commits but dirty tree detected — auto-committing worker changes');
-                // eslint-disable-next-line pickle/no-sync-in-async -- sync guard is fine here; async context already uses execFileSync
-                if (!fs.existsSync(path.join(workingDir, '.git'))) {
-                    log(`Auto-commit skipped: not a git repository (${workingDir})`);
-                }
-                else {
-                    try {
-                        stageAutoCommitPaths(workingDir);
-                        execFileSync('git', ['commit', '-m', `microverse: auto-commit (worker timed out before committing)`], { cwd: workingDir, timeout: 30_000 });
-                        postIterSha = getHeadSha(workingDir);
-                        log(`Auto-committed: ${postIterSha}`);
-                    }
-                    catch (commitErr) {
-                        const commitMsg = safeErrorMessage(commitErr);
-                        log(`Auto-commit failed: ${commitMsg} — unstaging and treating as stall`);
-                        // Unstage to prevent orphaned staged changes; preserve working tree
-                        try {
-                            execFileSync('git', ['reset'], { cwd: workingDir, timeout: 10_000 });
-                        }
-                        catch { /* best effort */ }
-                    }
-                }
-            }
-            if (postIterSha === preIterSha) {
-                log('No commits made — stall (no rollback)');
-                currentMv = recordStall(currentMv);
-                writeMicroverseState(sessionDir, currentMv);
-                if (isConverged(currentMv)) {
-                    log('Converged (stall limit reached with no new commits)');
-                    exitReason = 'converged';
-                    break;
-                }
-                await sleep(1000);
-                continue;
-            }
-        }
-        // Re-resolve backend per iteration — mux-runner does the same so that
-        // users editing state.json mid-session (or flipping PICKLE_BACKEND on
-        // resume) take effect without a full restart.
-        const iterationBackend = resolveBackend(state);
-        // Measure metric (with one retry on failure)
-        const measureFn = () => {
-            if (currentMv.key_metric.type === 'command') {
-                return measureMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir);
-            }
-            else if (currentMv.key_metric.type === 'llm') {
-                return measureLlmMetric(currentMv.key_metric.validation, currentMv.key_metric.timeout_seconds, workingDir, currentMv.key_metric.judge_model, currentMv.convergence.history, currentMv.prd_path, currentMv.judge_context_path, iterationBackend);
-            }
-            return null;
+    catch (err) {
+        log(`microverse-runner error: ${safeErrorMessage(err)}`);
+        outcome = {
+            state: currentMv,
+            exitReason: 'error',
+            iterations: ctx.iteration,
+            elapsedSeconds: Math.floor((Date.now() - startTime) / 1000),
         };
-        let metricResult = measureFn();
-        if (!metricResult) {
-            log('WARNING: Metric measurement failed — retrying once after 10s');
-            await sleep(Defaults.RATE_LIMIT_POLL_MS);
-            metricResult = measureFn();
-        }
-        if (!metricResult) {
-            log('WARNING: Metric measurement failed twice — treating as stall (commit preserved)');
-            currentMv = recordStall(currentMv);
-            writeMicroverseState(sessionDir, currentMv);
-            if (isConverged(currentMv)) {
-                log('Converged (stall limit reached — metric unmeasurable)');
-                exitReason = 'converged';
-                break;
-            }
-            await sleep(1000);
-            continue;
-        }
-        log(`Metric: ${metricResult.score} (raw: ${metricResult.raw})`);
-        // Late baseline: if baseline measurement failed (stayed 0) and this is the first
-        // successful measurement, adopt it as baseline instead of comparing against 0.
-        const lastAccepted = [...currentMv.convergence.history].reverse().find(h => h.action === 'accept');
-        if (currentMv.baseline_score === 0 && !lastAccepted) {
-            currentMv.baseline_score = metricResult.score;
-            log(`Late baseline adopted: ${metricResult.score} (initial measurement failed)`);
-            writeMicroverseState(sessionDir, currentMv);
-        }
-        const previousScore = lastAccepted ? lastAccepted.score : currentMv.baseline_score;
-        const classification = compareMetric(metricResult.score, previousScore, currentMv.key_metric.tolerance, currentMv.key_metric.direction);
-        log(`Classification: ${classification} (previous=${previousScore}, tolerance=${currentMv.key_metric.tolerance})`);
-        const entry = {
-            iteration,
-            metric_value: metricResult.raw,
-            score: metricResult.score,
-            action: classification === 'regressed' ? 'revert' : 'accept',
-            description: `${classification}: ${metricResult.score} vs ${previousScore}`,
-            pre_iteration_sha: preIterSha,
-            timestamp: new Date().toISOString(),
-        };
-        if (classification === 'regressed') {
-            log(`Regression detected — rolling back to ${preIterSha}`);
-            resetToSha(preIterSha, workingDir);
-            currentMv = recordFailedApproach(currentMv, `Iteration ${iteration}: score dropped from ${previousScore} to ${metricResult.score}`);
-        }
-        currentMv = stateRecordIteration(currentMv, entry, classification);
-        writeMicroverseState(sessionDir, currentMv);
-        // --- Failure classification and recovery guidance ---
-        if (enableFailureClassification) {
-            try {
-                const failureClass = classifyFailure(currentMv, metricResult, preIterSha, postIterSha);
-                if (failureClass) {
-                    currentMv.failure_history.push({
-                        iteration,
-                        failure_class: failureClass,
-                        description: entry.description,
-                        timestamp: new Date().toISOString(),
-                    });
-                    injectRecoveryGuidance(sessionDir, failureClass, currentMv);
-                    if (failureClass === 'approach_exhaustion') {
-                        if (currentMv.approach_exhaustion_fired) {
-                            log('approach_exhaustion fired twice — bailing');
-                            exitReason = 'approach_exhaustion';
-                            writeMicroverseState(sessionDir, currentMv);
-                            break;
-                        }
-                        currentMv.approach_exhaustion_fired = true;
-                    }
-                    if (failureClass === 'no_progress') {
-                        const recent = currentMv.failure_history.slice(-3);
-                        if (recent.length === 3 && recent.every(f => f.failure_class === 'no_progress')) {
-                            log('3 consecutive no_progress — bailing');
-                            exitReason = 'no_progress';
-                            writeMicroverseState(sessionDir, currentMv);
-                            break;
-                        }
-                    }
-                    writeMicroverseState(sessionDir, currentMv);
-                }
-            }
-            catch (classifyErr) {
-                const msg = safeErrorMessage(classifyErr);
-                log(`WARNING: Failure classification error (non-fatal): ${msg}`);
-            }
-        }
-        if (isConverged(currentMv)) {
-            const targetHit = currentMv.convergence_target != null && metricResult.score === currentMv.convergence_target;
-            log(`Converged after ${iteration} iterations (${targetHit ? `target=${currentMv.convergence_target} reached` : `stall_counter=${currentMv.convergence.stall_counter}`})`);
-            exitReason = 'converged';
-            break;
-        }
-        await sleep(1000);
     }
-    // --- Finalize ---
-    const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
-    currentMv.status = exitReason === 'converged' ? 'converged' : 'stopped';
-    currentMv.exit_reason = exitReason;
-    writeMicroverseState(sessionDir, currentMv);
+    outcome.state.status = outcome.exitReason === 'converged' ? 'converged' : 'stopped';
+    outcome.state.exit_reason = outcome.exitReason;
+    writeMicroverseState(sessionDir, outcome.state);
     try {
         sm.update(statePath, s => { s.active = false; });
     }
@@ -1146,23 +1175,23 @@ export async function main(sessionDir) {
         log(`sm.update failed at finalize path, falling back to safeDeactivate: ${safeErrorMessage(err)}`);
         deactivateRunnerState(statePath);
     }
-    writeFinalReport(sessionDir, currentMv, exitReason, iteration, totalElapsed);
+    writeFinalReport(sessionDir, outcome.state, outcome.exitReason, outcome.iterations, outcome.elapsedSeconds);
     logActivity({
         event: 'session_end', source: 'pickle',
         session: path.basename(sessionDir),
-        duration_min: Math.round(totalElapsed / 60),
+        duration_min: Math.round(outcome.elapsedSeconds / 60),
         mode: 'tmux',
-        ...(exitReason === 'error' || exitReason === 'rate_limit_exhausted' ? { error: exitReason } : {}),
+        ...(outcome.exitReason === 'error' || outcome.exitReason === 'rate_limit_exhausted' ? { error: outcome.exitReason } : {}),
     });
-    const panelBestScore = getBestScore(currentMv);
+    const panelBestScore = getBestScore(outcome.state);
     printMinimalPanel('microverse-runner Complete', {
-        Iterations: iteration,
-        Elapsed: formatTime(totalElapsed),
-        ExitReason: exitReason,
+        Iterations: outcome.iterations,
+        Elapsed: formatTime(outcome.elapsedSeconds),
+        ExitReason: outcome.exitReason,
         BestScore: panelBestScore,
     }, 'GREEN', '🔬');
-    log(`microverse-runner finished. ${iteration} iterations, ${formatTime(totalElapsed)}, exit: ${exitReason}`);
-    const exitCode = (exitReason === 'converged' || exitReason === 'stopped' || exitReason === 'limit_reached' || exitReason === 'approach_exhaustion' || exitReason === 'no_progress') ? 0 : 1;
+    log(`microverse-runner finished. ${outcome.iterations} iterations, ${formatTime(outcome.elapsedSeconds)}, exit: ${outcome.exitReason}`);
+    const exitCode = (outcome.exitReason === 'converged' || outcome.exitReason === 'stopped' || outcome.exitReason === 'limit_reached' || outcome.exitReason === 'approach_exhaustion' || outcome.exitReason === 'no_progress') ? 0 : 1;
     process.exit(exitCode);
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'microverse-runner.js') {
