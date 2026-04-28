@@ -827,13 +827,47 @@ export function inferMonitorMode(sessionDir) {
  */
 export function ensureMonitorWindow(opts) {
     const log = opts.log || (() => { });
-    const tmuxBin = opts.tmuxBin || 'tmux';
-    const bashBin = opts.bashBin || 'bash';
     const inTmux = opts.inTmux !== undefined ? opts.inTmux : !!process.env.TMUX;
     if (!inTmux) {
         log('ensureMonitorWindow: not inside tmux, skipping');
         return { status: 'skipped', reason: 'not in tmux' };
     }
+    activeMonitorWindowContext = {
+        opts,
+        log,
+        tmuxBin: opts.tmuxBin || 'tmux',
+        bashBin: opts.bashBin || 'bash',
+        mode: opts.mode || inferMonitorMode(opts.sessionDir),
+    };
+    try {
+        const sessionName = getSessionName();
+        if (!sessionName)
+            return activeMonitorWindowContext.outcome || { status: 'error', reason: 'empty session name' };
+        const { recreate } = checkAndRecreateWindow(sessionName);
+        if (activeMonitorWindowContext.outcome)
+            return activeMonitorWindowContext.outcome;
+        createMonitorWindow(sessionName);
+        if (activeMonitorWindowContext.outcome)
+            return activeMonitorWindowContext.outcome;
+        if (recreate) {
+            log(`ensureMonitorWindow: recreated 4-pane monitor (mode=${activeMonitorWindowContext.mode}) on ${sessionName}`);
+            return { status: 'recreated' };
+        }
+        log(`ensureMonitorWindow: created 4-pane monitor (mode=${activeMonitorWindowContext.mode}) on ${sessionName}`);
+        return { status: 'created' };
+    }
+    finally {
+        activeMonitorWindowContext = null;
+    }
+}
+let activeMonitorWindowContext = null;
+function currentMonitorWindowContext() {
+    if (!activeMonitorWindowContext)
+        throw new Error('ensureMonitorWindow context not initialized');
+    return activeMonitorWindowContext;
+}
+function getSessionName() {
+    const { log, tmuxBin } = currentMonitorWindowContext();
     // Resolve session name via tmux itself — the TMUX env var alone only proves
     // we're inside *some* tmux, not which session owns this pane.
     const displayName = spawnSync(tmuxBin, ['display-message', '-p', '#S'], {
@@ -843,16 +877,20 @@ export function ensureMonitorWindow(opts) {
     if (displayName.status !== 0) {
         const err = (displayName.stderr || '').toString().trim();
         log(`ensureMonitorWindow: tmux display-message failed: ${err}`);
-        return { status: 'error', reason: `display-message: ${err || 'non-zero exit'}` };
+        activeMonitorWindowContext.outcome = { status: 'error', reason: `display-message: ${err || 'non-zero exit'}` };
+        return null;
     }
     const sessionName = (displayName.stdout || '').trim();
     if (!sessionName) {
         log('ensureMonitorWindow: empty tmux session name');
-        return { status: 'error', reason: 'empty session name' };
+        activeMonitorWindowContext.outcome = { status: 'error', reason: 'empty session name' };
+        return null;
     }
-    const mode = opts.mode || inferMonitorMode(opts.sessionDir);
+    return sessionName;
+}
+function checkAndRecreateWindow(sessionName) {
+    const { log, mode, tmuxBin } = currentMonitorWindowContext();
     const target = `${sessionName}:monitor`;
-    let recreated = false;
     // Compatibility guard — a "monitor" window from a previous command (e.g.
     // anatomy-park then council) has the wrong layout. Check the window's
     // `@pickle_monitor_mode` user-option and recreate on mismatch.
@@ -860,33 +898,40 @@ export function ensureMonitorWindow(opts) {
         encoding: 'utf-8',
         timeout: 5_000,
     });
-    if (listWindows.status === 0) {
-        const names = (listWindows.stdout || '').split('\n').map(s => s.trim());
-        if (names.includes('monitor')) {
-            const existingMode = readWindowMode(tmuxBin, target);
-            if (monitorModesCompatible(existingMode, mode)) {
-                log(`ensureMonitorWindow: monitor window already exists on ${sessionName} (mode=${mode})`);
-                return { status: 'exists' };
-            }
-            log(`ensureMonitorWindow: mode mismatch on ${sessionName} ` +
-                `(existing=${existingMode || 'unset'}, want=${mode}) — killing stale window`);
-            const kill = spawnSync(tmuxBin, ['kill-window', '-t', target], {
-                encoding: 'utf-8',
-                timeout: 5_000,
-            });
-            if (kill.status !== 0) {
-                const err = (kill.stderr || '').toString().trim();
-                log(`ensureMonitorWindow: kill-window failed: ${err}`);
-                return { status: 'error', reason: `kill-window: ${err || 'non-zero exit'}` };
-            }
-            recreated = true;
-        }
+    if (listWindows.status !== 0)
+        return { recreate: false };
+    const names = (listWindows.stdout || '').split('\n').map(s => s.trim());
+    if (!names.includes('monitor'))
+        return { recreate: false };
+    const existingMode = readWindowMode(tmuxBin, target);
+    if (monitorModesCompatible(existingMode, mode)) {
+        log(`ensureMonitorWindow: monitor window already exists on ${sessionName} (mode=${mode})`);
+        activeMonitorWindowContext.outcome = { status: 'exists' };
+        return { recreate: false };
     }
+    log(`ensureMonitorWindow: mode mismatch on ${sessionName} ` +
+        `(existing=${existingMode || 'unset'}, want=${mode}) — killing stale window`);
+    const kill = spawnSync(tmuxBin, ['kill-window', '-t', target], {
+        encoding: 'utf-8',
+        timeout: 5_000,
+    });
+    if (kill.status !== 0) {
+        const err = (kill.stderr || '').toString().trim();
+        log(`ensureMonitorWindow: kill-window failed: ${err}`);
+        activeMonitorWindowContext.outcome = { status: 'error', reason: `kill-window: ${err || 'non-zero exit'}` };
+        return { recreate: false };
+    }
+    return { recreate: true };
+}
+function createMonitorWindow(sessionName) {
+    const { bashBin, log, mode, opts, tmuxBin } = currentMonitorWindowContext();
+    const target = `${sessionName}:monitor`;
     const extensionRoot = opts.extensionRoot || getExtensionRoot();
     const script = path.join(extensionRoot, 'extension', 'scripts', 'tmux-monitor.sh');
     if (!fs.existsSync(script)) {
         log(`ensureMonitorWindow: tmux-monitor.sh missing at ${script}`);
-        return { status: 'error', reason: `script missing: ${script}` };
+        activeMonitorWindowContext.outcome = { status: 'error', reason: `script missing: ${script}` };
+        return;
     }
     const result = spawnSync(bashBin, [script, sessionName, opts.sessionDir, mode], {
         encoding: 'utf-8',
@@ -895,7 +940,8 @@ export function ensureMonitorWindow(opts) {
     if (result.status !== 0) {
         const err = (result.stderr || result.stdout || '').toString().trim();
         log(`ensureMonitorWindow: tmux-monitor.sh failed (exit ${result.status}): ${err}`);
-        return { status: 'error', reason: `script exit ${result.status}: ${err || 'no stderr'}` };
+        activeMonitorWindowContext.outcome = { status: 'error', reason: `script exit ${result.status}: ${err || 'no stderr'}` };
+        return;
     }
     // Stamp the mode on the freshly-created window so the next invocation can
     // detect compatibility. Non-fatal if it fails — we log and move on.
@@ -904,12 +950,6 @@ export function ensureMonitorWindow(opts) {
         const err = (setOpt.stderr || '').toString().trim();
         log(`ensureMonitorWindow: set-option @pickle_monitor_mode failed (non-fatal): ${err}`);
     }
-    if (recreated) {
-        log(`ensureMonitorWindow: recreated 4-pane monitor (mode=${mode}) on ${sessionName}`);
-        return { status: 'recreated' };
-    }
-    log(`ensureMonitorWindow: created 4-pane monitor (mode=${mode}) on ${sessionName}`);
-    return { status: 'created' };
 }
 /** Reads the monitor window's stamped mode via tmux user-option, or null. */
 function readWindowMode(tmuxBin, target) {
