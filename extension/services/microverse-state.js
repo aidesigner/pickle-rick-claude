@@ -4,6 +4,77 @@ import { StateManager } from './state-manager.js';
 import { safeErrorMessage } from './pickle-utils.js';
 const sm = new StateManager();
 const MICROVERSE_FILE = 'microverse.json';
+function isProcessAlive(pid) {
+    try {
+        process.kill(pid, 0);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+function readRecoverableJsonObject(filePath) {
+    let base = null;
+    try {
+        const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
+            base = parsed;
+    }
+    catch {
+        // A dead writer may have left the valid snapshot in a sibling tmp file.
+    }
+    const dir = path.dirname(filePath);
+    const baseName = path.basename(filePath);
+    let entries;
+    try {
+        entries = fs.readdirSync(dir);
+    }
+    catch {
+        return base;
+    }
+    const tmpPattern = new RegExp(`^${baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.tmp\\.(\\d+)$`);
+    let winner = null;
+    const baseMtimeMs = fs.existsSync(filePath) ? fs.statSync(filePath).mtimeMs : 0;
+    for (const entry of entries) {
+        const match = entry.match(tmpPattern);
+        if (!match)
+            continue;
+        const tmpPid = Number(match[1]);
+        if (Number.isFinite(tmpPid) && isProcessAlive(tmpPid))
+            continue;
+        const tmpPath = path.join(dir, entry);
+        try {
+            const parsed = JSON.parse(fs.readFileSync(tmpPath, 'utf-8'));
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+                fs.unlinkSync(tmpPath);
+                continue;
+            }
+            const mtimeMs = fs.statSync(tmpPath).mtimeMs;
+            if (mtimeMs <= baseMtimeMs) {
+                fs.unlinkSync(tmpPath);
+                continue;
+            }
+            if (!winner || mtimeMs > winner.mtimeMs) {
+                winner = { tmpPath, parsed, mtimeMs };
+            }
+        }
+        catch {
+            try {
+                fs.unlinkSync(tmpPath);
+            }
+            catch { /* ignore invalid tmp cleanup failure */ }
+        }
+    }
+    if (!winner)
+        return base;
+    try {
+        fs.renameSync(winner.tmpPath, filePath);
+        return winner.parsed;
+    }
+    catch {
+        return base;
+    }
+}
 export function compareMetric(current, previous, tolerance, direction) {
     if (!Number.isFinite(current) || !Number.isFinite(previous) || !Number.isFinite(tolerance)) {
         return 'held';
@@ -172,8 +243,9 @@ export function writeMicroverseState(sessionDir, state) {
 export function readMicroverseState(sessionDir) {
     const filePath = path.join(sessionDir, MICROVERSE_FILE);
     try {
-        const raw = fs.readFileSync(filePath, 'utf-8');
-        const parsed = JSON.parse(raw);
+        const parsed = readRecoverableJsonObject(filePath);
+        if (!parsed)
+            return null;
         parsed.failure_history ??= [];
         parsed.approach_exhaustion_fired ??= false;
         parsed.iteration_regressions ??= 0;

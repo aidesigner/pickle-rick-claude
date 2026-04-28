@@ -3,11 +3,14 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { spawnSync } from 'node:child_process';
 import {
   createMicroverseState,
   writeMicroverseState,
   readMicroverseState,
 } from '../../services/microverse-state.js';
+
+const READ_MICROVERSE_BIN = path.resolve('bin/read-microverse.js');
 
 function makeTempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'mv-iter-reg-'));
@@ -61,6 +64,33 @@ test('writeMicroverseState preserves modified iteration_regressions across round
     assert.notEqual(read, null);
     assert.equal(read.iteration_regressions, 5);
     assert.equal(read.gate_regression_threshold_warning_emitted, true);
+  } finally {
+    fs.rmSync(dir, { recursive: true });
+  }
+});
+
+test('read-microverse CLI promotes dead writer tmp before reading iteration_regressions', () => {
+  const dir = makeTempDir();
+  try {
+    const stale = createMicroverseState(BASE_OPTS);
+    stale.iteration_regressions = 0;
+    writeMicroverseState(dir, stale);
+
+    const recovered = createMicroverseState(BASE_OPTS);
+    recovered.iteration_regressions = 4;
+    fs.writeFileSync(path.join(dir, 'microverse.json.tmp.999999'), JSON.stringify(recovered, null, 2));
+    const future = new Date(Date.now() + 1000);
+    fs.utimesSync(path.join(dir, 'microverse.json.tmp.999999'), future, future);
+
+    const result = spawnSync(process.execPath, [READ_MICROVERSE_BIN, dir, 'iteration_regressions'], {
+      cwd: path.resolve('.'),
+      encoding: 'utf-8',
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), '4');
+    assert.equal(fs.existsSync(path.join(dir, 'microverse.json.tmp.999999')), false);
+    assert.equal(readMicroverseState(dir)?.iteration_regressions, 4);
   } finally {
     fs.rmSync(dir, { recursive: true });
   }
