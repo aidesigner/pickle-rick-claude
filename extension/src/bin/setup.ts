@@ -10,6 +10,43 @@ import { logActivity, pruneActivity } from '../services/activity-logger.js';
 
 const sm = new StateManager();
 
+interface SetupPaths {
+  rootDir: string;
+  dataDir: string;
+  sessionsRoot: string;
+  jarRoot: string;
+  worktreesRoot: string;
+  sessionsMap: string;
+}
+
+interface SetupConfig {
+  loopLimit: number;
+  timeLimit: number;
+  workerTimeout: number;
+  promiseToken: string | null;
+  resumeMode: boolean;
+  resumePath: string | null;
+  resetMode: boolean;
+  pausedMode: boolean;
+  tmuxMode: boolean;
+  minIterations: number;
+  commandTemplate: string | undefined;
+  chainMeeseeks: boolean;
+  backend: Backend | undefined;
+  teamsMode: boolean;
+  maxParallel: number;
+  taskArgs: string[];
+  explicitFlags: Set<string>;
+  startEpoch: number;
+}
+
+interface SessionResult {
+  fullSessionPath: string;
+  currentIteration: number;
+}
+
+type ArgHandler = (config: SetupConfig, args: string[], index: number) => number;
+
 function die(message: string): never {
   console.error(`${Style.RED}❌ Error: ${message}${Style.RESET}`);
   process.exit(1);
@@ -22,307 +59,389 @@ function resolveWorkingDirOrNull(value: unknown): string | null {
   return path.resolve(trimmed);
 }
 
-async function main() {
-  const ROOT_DIR = getExtensionRoot();
-  const DATA_DIR = getDataRoot();
-  const SESSIONS_ROOT = path.join(DATA_DIR, 'sessions');
-  const JAR_ROOT = path.join(DATA_DIR, 'jar');
-  const WORKTREES_ROOT = path.join(DATA_DIR, 'worktrees');
-  const SESSIONS_MAP = path.join(DATA_DIR, 'current_sessions.json');
-
-  const updateSessionMap = (cwd: string, sessionPath: string) => {
-    withRetryLock(SESSIONS_MAP + '.lock', () => {
-      let map: Record<string, SessionMapEntry> = {};
-      if (fs.existsSync(SESSIONS_MAP)) {
-        try {
-          map = JSON.parse(fs.readFileSync(SESSIONS_MAP, 'utf-8'));
-        } catch {
-          /* ignore */
-        }
-      }
-      map[cwd] = { sessionPath, pid: process.pid };
-      const tmpMap = SESSIONS_MAP + `.tmp.${process.pid}.${Date.now()}`;
-      try {
-        fs.writeFileSync(tmpMap, JSON.stringify(map, null, 2));
-        fs.renameSync(tmpMap, SESSIONS_MAP);
-      } catch (err) {
-        try { fs.unlinkSync(tmpMap); } catch { /* cleanup best-effort */ }
-        throw err;
-      }
-    });
+function buildSetupPaths(): SetupPaths {
+  const dataDir = getDataRoot();
+  return {
+    rootDir: getExtensionRoot(),
+    dataDir,
+    sessionsRoot: path.join(dataDir, 'sessions'),
+    jarRoot: path.join(dataDir, 'jar'),
+    worktreesRoot: path.join(dataDir, 'worktrees'),
+    sessionsMap: path.join(dataDir, 'current_sessions.json'),
   };
+}
 
-  // Ensure core directories exist
-  [SESSIONS_ROOT, JAR_ROOT, WORKTREES_ROOT].forEach((dir) => {
+function createSetupConfig(): SetupConfig {
+  return {
+    loopLimit: 100,
+    timeLimit: 720,
+    workerTimeout: Defaults.WORKER_TIMEOUT_SECONDS,
+    promiseToken: null,
+    resumeMode: false,
+    resumePath: null,
+    resetMode: false,
+    pausedMode: false,
+    tmuxMode: false,
+    minIterations: 0,
+    commandTemplate: undefined,
+    chainMeeseeks: false,
+    backend: undefined,
+    teamsMode: false,
+    maxParallel: 5,
+    taskArgs: [],
+    explicitFlags: new Set<string>(),
+    startEpoch: Math.floor(Date.now() / 1000),
+  };
+}
+
+function updateSessionMap(sessionsMap: string, cwd: string, sessionPath: string) {
+  withRetryLock(sessionsMap + '.lock', () => {
+    let map: Record<string, SessionMapEntry> = {};
+    if (fs.existsSync(sessionsMap)) {
+      try {
+        map = JSON.parse(fs.readFileSync(sessionsMap, 'utf-8'));
+      } catch {
+        /* ignore */
+      }
+    }
+    map[cwd] = { sessionPath, pid: process.pid };
+    const tmpMap = sessionsMap + `.tmp.${process.pid}.${Date.now()}`;
+    try {
+      fs.writeFileSync(tmpMap, JSON.stringify(map, null, 2));
+      fs.renameSync(tmpMap, sessionsMap);
+    } catch (err) {
+      try { fs.unlinkSync(tmpMap); } catch { /* cleanup best-effort */ }
+      throw err;
+    }
+  });
+}
+
+function ensureCoreDirectories(paths: SetupPaths) {
+  [paths.sessionsRoot, paths.jarRoot, paths.worktreesRoot].forEach((dir) => {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   });
+}
 
-  // Silently prune sessions older than 7 days that are no longer active
-  pruneOldSessions(SESSIONS_ROOT);
-
-  // Defaults
-  let loopLimit = 100;
-  let timeLimit = 720;
-  let workerTimeout: number = Defaults.WORKER_TIMEOUT_SECONDS;
-  let promiseToken: string | null = null;
-  let resumeMode = false;
-  let resumePath: string | null = null;
-  let resetMode = false;
-  let pausedMode = false;
-  let tmuxMode = false;
-  let minIterations = 0;
-  let commandTemplate: string | undefined = undefined;
-  let chainMeeseeks = false;
-  let backend: Backend | undefined = undefined;
-  let teamsMode = false;
-  let maxParallel = 5;
-  const taskArgs: string[] = [];
-  const explicitFlags = new Set<string>();
-
-  const startEpoch = Math.floor(Date.now() / 1000);
-
-  // Load Settings
-  const settingsFile = path.join(ROOT_DIR, 'pickle_settings.json');
-  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-  if (fs.existsSync(settingsFile)) {
-    try {
-      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-      const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf-8'));
-      if (typeof settings.default_max_iterations === 'number' && settings.default_max_iterations > 0)
-        loopLimit = settings.default_max_iterations;
-      if (typeof settings.default_max_time_minutes === 'number' && settings.default_max_time_minutes > 0)
-        timeLimit = settings.default_max_time_minutes;
-      if (typeof settings.default_worker_timeout_seconds === 'number' && settings.default_worker_timeout_seconds > 0)
-        workerTimeout = settings.default_worker_timeout_seconds;
-    } catch (err) {
-      const msg = safeErrorMessage(err);
-      console.error(`Warning: could not parse pickle_settings.json — using defaults: ${msg}`);
-    }
-  }
-
-  // Argument Parser
-  const args = process.argv.slice(2);
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-    if (arg === '--max-iterations') {
-      const v = parseInt(args[++i], 10);
-      if (isNaN(v) || v < 0) die(`--max-iterations requires a non-negative integer`);
-      loopLimit = v;
-      explicitFlags.add('max-iterations');
-    } else if (arg === '--max-time') {
-      const v = parseInt(args[++i], 10);
-      if (isNaN(v) || v < 0) die(`--max-time requires a non-negative integer`);
-      timeLimit = v;
-      explicitFlags.add('max-time');
-    } else if (arg === '--worker-timeout') {
-      const v = parseInt(args[++i], 10);
-      if (isNaN(v) || v <= 0) die(`--worker-timeout requires a positive integer`);
-      workerTimeout = v;
-      explicitFlags.add('worker-timeout');
-    } else if (arg === '--completion-promise') {
-      const v = args[++i];
-      if (!v || v.startsWith('--')) die(`--completion-promise requires a non-empty value`);
-      promiseToken = v;
-    } else if (arg === '--resume') {
-      resumeMode = true;
-      if (args[i + 1] && !args[i + 1].startsWith('--')) {
-        resumePath = args[++i];
-      }
-    } else if (arg === '--reset') {
-      resetMode = true;
-    } else if (arg === '--paused') {
-      pausedMode = true;
-    } else if (arg === '--tmux') {
-      tmuxMode = true;
-    } else if (arg === '--task') {
-      if (i + 1 < args.length) taskArgs.push(args[++i]);
-    } else if (arg === '--min-iterations') {
-      const v = parseInt(args[++i], 10);
-      if (isNaN(v) || v < 0) die('--min-iterations requires a non-negative integer');
-      minIterations = v;
-      explicitFlags.add('min-iterations');
-    } else if (arg === '--command-template') {
-      const v = args[++i];
-      if (!v || v.startsWith('--')) die('--command-template requires a non-empty value');
-      if (v.includes('/') || v.includes('\\') || v.includes('..')) die('--command-template must be a plain filename');
-      commandTemplate = v;
-      explicitFlags.add('command-template');
-    } else if (arg === '--chain-meeseeks') {
-      chainMeeseeks = true;
-    } else if (arg === '--backend') {
-      const v = args[++i];
-      if (!v || v.startsWith('--')) die('--backend requires a value (claude|codex)');
-      if (!(BACKENDS as readonly string[]).includes(v)) {
-        die(`--backend must be one of: ${BACKENDS.join(', ')}`);
-      }
-      backend = v as Backend;
-      explicitFlags.add('backend');
-    } else if (arg === '--teams') {
-      teamsMode = true;
-      explicitFlags.add('teams');
-    } else if (arg === '--max-parallel') {
-      const raw = args[i + 1];
-      if (!raw || raw.startsWith('--')) die('--max-parallel requires a positive integer value (>= 1)');
-      i++;
-      const v = Number(raw);
-      if (!Number.isInteger(v) || v < 1) die('--max-parallel requires a positive integer (>= 1)');
-      maxParallel = v;
-      explicitFlags.add('max-parallel');
-    } else if (arg === '-s' || arg === '--session-id') {
-      // Ignore legacy session-id flag; consume the next arg if it's not a flag
-      if (args[i + 1] && !args[i + 1].startsWith('--')) {
-        i++;
-      }
-    } else {
-      taskArgs.push(arg);
-    }
-  }
-
-  if (explicitFlags.has('max-parallel') && !teamsMode) {
-    die('--max-parallel requires --teams');
-  }
-  if (teamsMode && backend === 'codex') {
-    die('--teams is incompatible with --backend codex (claude backend only)');
-  }
-
-  let taskStr = taskArgs.join(' ').trim();
-  let fullSessionPath: string;
-  let currentIteration = 1;
-
-  if (resumeMode) {
-    if (resumePath) {
-      fullSessionPath = resolvePath(resumePath);
-    } else {
-      fullSessionPath = findSessionPathForCwd(process.cwd());
-    }
-
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    if (!fullSessionPath || !fs.existsSync(fullSessionPath)) {
-      die(`No active session found or path invalid: ${fullSessionPath}`);
-    }
-
-    const statePath = path.join(fullSessionPath, 'state.json');
-
-    // Pre-merge conflict check: refuse to write a state that would have BOTH
-    // backend === 'codex' AND teams_mode === true. Without this, the resume
-    // path silently produces the forbidden combination because the post-write
-    // CLI-time check inspects only local vars (P0-1 from the review pass).
-    let preState: State | null = null;
-    try {
-      preState = sm.read(statePath);
-    } catch {
-      /* missing/corrupt — sm.update below will surface the right error */
-    }
-    if (preState) {
-      const resumeWorkingDir = resolveWorkingDirOrNull(preState.working_dir);
-      const currentWorkingDir = path.resolve(process.cwd());
-      if (resumeWorkingDir && resumeWorkingDir !== currentWorkingDir) {
-        die(`--resume session belongs to ${resumeWorkingDir}, not ${currentWorkingDir}. Refusing cross-repo resume.`);
-      }
-      const willHaveTeams = explicitFlags.has('teams') ? teamsMode : preState.teams_mode === true;
-      const willHaveBackend = explicitFlags.has('backend') ? backend : preState.backend;
-      if (willHaveTeams && willHaveBackend === 'codex') {
-        die('--teams is incompatible with --backend codex (claude backend only). Resume would create a conflicting state — refusing to continue.');
-      }
-    }
-
-    let state: State;
-    try {
-      state = sm.update(statePath, s => {
-        s.active = !pausedMode;
-        if (resetMode) {
-          s.iteration = 0;
-          s.start_time_epoch = startEpoch;
-        }
-        // Only override limits that were explicitly passed on the command line;
-        // otherwise preserve the values from the stored session state.
-        if (explicitFlags.has('max-iterations')) s.max_iterations = loopLimit;
-        if (explicitFlags.has('max-time')) s.max_time_minutes = timeLimit;
-        if (explicitFlags.has('worker-timeout')) s.worker_timeout_seconds = workerTimeout;
-        if (promiseToken) s.completion_promise = promiseToken;
-        if (explicitFlags.has('min-iterations')) s.min_iterations = minIterations;
-        if (explicitFlags.has('command-template')) s.command_template = commandTemplate;
-        // Propagate tmux mode on resume — needed when transitioning a paused/non-tmux
-        // session into tmux mode (e.g. /pickle-refine-prd --run).
-        if (tmuxMode) s.tmux_mode = true;
-        if (chainMeeseeks) s.chain_meeseeks = true;
-        if (explicitFlags.has('backend') && backend) s.backend = backend;
-        if (explicitFlags.has('teams')) s.teams_mode = teamsMode;
-        if (explicitFlags.has('max-parallel')) s.max_parallel = maxParallel;
-        s.session_dir = fullSessionPath;
-      });
-    } catch {
-      die(`state.json is missing or corrupt in ${fullSessionPath}`);
-    }
-
-    // Sync local vars with (potentially preserved) state for display — coerce
-    // to Number to guard against string-typed values from external edits / old state.
-    // Use Number.isFinite so that 0 (meaning infinite) is preserved rather than
-    // falling back to the settings default via `|| loopLimit`.
-    const rawLoopLimit = Number(state.max_iterations);
-    loopLimit = Number.isFinite(rawLoopLimit) ? rawLoopLimit : loopLimit;
-    const rawTimeLimit = Number(state.max_time_minutes);
-    timeLimit = Number.isFinite(rawTimeLimit) ? rawTimeLimit : timeLimit;
-    const rawWorkerTimeout = Number(state.worker_timeout_seconds);
-    workerTimeout = Number.isFinite(rawWorkerTimeout) && rawWorkerTimeout > 0 ? rawWorkerTimeout : workerTimeout;
-
-    const rawMinIter = Number(state.min_iterations);
-    minIterations = Number.isFinite(rawMinIter) ? rawMinIter : 0;
-    commandTemplate = state.command_template;
-    chainMeeseeks = state.chain_meeseeks === true;
-    if (state.backend && (BACKENDS as readonly string[]).includes(state.backend)) backend = state.backend;
-    teamsMode = state.teams_mode === true;
-    const rawMaxParallel = Number(state.max_parallel);
-    maxParallel = Number.isFinite(rawMaxParallel) && Number.isInteger(rawMaxParallel) && rawMaxParallel >= 1 ? rawMaxParallel : maxParallel;
-
-    currentIteration = (Number(state.iteration) || 0) + 1;
-    promiseToken = state.completion_promise;
-  } else {
-    if (!taskStr && !pausedMode) die('No task specified. Run /pickle --help for usage.');
-    if (!taskStr) taskStr = 'PRD Interview (task to be determined via interview)';
-
-    const today = new Date().toISOString().split('T')[0];
-    const hash = crypto.randomBytes(4).toString('hex');
-    const sessionId = `${today}-${hash}`;
-    fullSessionPath = path.join(SESSIONS_ROOT, sessionId);
-
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    if (!fs.existsSync(fullSessionPath)) fs.mkdirSync(fullSessionPath, { recursive: true });
-
-    const state: State = {
-      // tmux mode: start inactive so the main Claude window's stop hook never fires.
-      // tmux-runner.ts takes ownership by setting active: true before its loop begins.
-      active: !pausedMode && !tmuxMode,
-      working_dir: process.cwd(),
-      step: 'prd',
-      iteration: 0,
-      max_iterations: loopLimit,
-      max_time_minutes: timeLimit,
-      worker_timeout_seconds: workerTimeout,
-      start_time_epoch: startEpoch,
-      completion_promise: promiseToken,
-      original_prompt: taskStr,
-      current_ticket: null,
-      history: [],
-      started_at: new Date().toISOString(),
-      session_dir: fullSessionPath,
-      tmux_mode: tmuxMode,
-      min_iterations: minIterations,
-      command_template: commandTemplate,
-      chain_meeseeks: chainMeeseeks,
-      backend,
-      teams_mode: teamsMode || undefined,
-      max_parallel: teamsMode ? maxParallel : undefined,
-    };
-
-    // eslint-disable-next-line pickle/no-raw-state-write -- initial creation: no existing state to lock against
-    sm.forceWrite(path.join(fullSessionPath, 'state.json'), state);
-    try { pruneActivity(); } catch { /* must not block session start */ }
-    logActivity({ event: 'session_start', source: 'pickle', session: sessionId, mode: tmuxMode ? 'tmux' : 'inline', original_prompt: taskStr });
-  }
+function loadSettings(config: SetupConfig, rootDir: string) {
+  const settingsFile = path.join(rootDir, 'pickle_settings.json');
+  if (!fs.existsSync(settingsFile)) return;
 
   try {
-    updateSessionMap(process.cwd(), fullSessionPath);
+    const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf-8'));
+    if (typeof settings.default_max_iterations === 'number' && settings.default_max_iterations > 0) {
+      config.loopLimit = settings.default_max_iterations;
+    }
+    if (typeof settings.default_max_time_minutes === 'number' && settings.default_max_time_minutes > 0) {
+      config.timeLimit = settings.default_max_time_minutes;
+    }
+    if (typeof settings.default_worker_timeout_seconds === 'number' && settings.default_worker_timeout_seconds > 0) {
+      config.workerTimeout = settings.default_worker_timeout_seconds;
+    }
+  } catch (err) {
+    const msg = safeErrorMessage(err);
+    console.error(`Warning: could not parse pickle_settings.json — using defaults: ${msg}`);
+  }
+}
+
+function parseIntegerFlag(args: string[], index: number, flag: string, validate: (value: number) => boolean, errorMessage: string): number {
+  const value = parseInt(args[index + 1], 10);
+  if (isNaN(value) || !validate(value)) die(errorMessage);
+  return value;
+}
+
+const ARG_HANDLERS: Record<string, ArgHandler> = {
+  '--max-iterations': (config, args, index) => {
+    config.loopLimit = parseIntegerFlag(args, index, '--max-iterations', value => value >= 0, '--max-iterations requires a non-negative integer');
+    config.explicitFlags.add('max-iterations');
+    return index + 1;
+  },
+  '--max-time': (config, args, index) => {
+    config.timeLimit = parseIntegerFlag(args, index, '--max-time', value => value >= 0, '--max-time requires a non-negative integer');
+    config.explicitFlags.add('max-time');
+    return index + 1;
+  },
+  '--worker-timeout': (config, args, index) => {
+    config.workerTimeout = parseIntegerFlag(args, index, '--worker-timeout', value => value > 0, '--worker-timeout requires a positive integer');
+    config.explicitFlags.add('worker-timeout');
+    return index + 1;
+  },
+  '--completion-promise': (config, args, index) => {
+    const value = args[index + 1];
+    if (!value || value.startsWith('--')) die('--completion-promise requires a non-empty value');
+    config.promiseToken = value;
+    return index + 1;
+  },
+  '--resume': (config, args, index) => {
+    config.resumeMode = true;
+    if (args[index + 1] && !args[index + 1].startsWith('--')) {
+      config.resumePath = args[index + 1];
+      return index + 1;
+    }
+    return index;
+  },
+  '--reset': (config, _args, index) => {
+    config.resetMode = true;
+    return index;
+  },
+  '--paused': (config, _args, index) => {
+    config.pausedMode = true;
+    return index;
+  },
+  '--tmux': (config, _args, index) => {
+    config.tmuxMode = true;
+    return index;
+  },
+  '--task': (config, args, index) => {
+    if (index + 1 < args.length) config.taskArgs.push(args[index + 1]);
+    return index + 1;
+  },
+  '--min-iterations': (config, args, index) => {
+    config.minIterations = parseIntegerFlag(args, index, '--min-iterations', value => value >= 0, '--min-iterations requires a non-negative integer');
+    config.explicitFlags.add('min-iterations');
+    return index + 1;
+  },
+  '--command-template': (config, args, index) => {
+    const value = args[index + 1];
+    if (!value || value.startsWith('--')) die('--command-template requires a non-empty value');
+    if (value.includes('/') || value.includes('\\') || value.includes('..')) die('--command-template must be a plain filename');
+    config.commandTemplate = value;
+    config.explicitFlags.add('command-template');
+    return index + 1;
+  },
+  '--chain-meeseeks': (config, _args, index) => {
+    config.chainMeeseeks = true;
+    return index;
+  },
+  '--backend': (config, args, index) => {
+    const value = args[index + 1];
+    if (!value || value.startsWith('--')) die('--backend requires a value (claude|codex)');
+    if (!(BACKENDS as readonly string[]).includes(value)) {
+      die(`--backend must be one of: ${BACKENDS.join(', ')}`);
+    }
+    config.backend = value as Backend;
+    config.explicitFlags.add('backend');
+    return index + 1;
+  },
+  '--teams': (config, _args, index) => {
+    config.teamsMode = true;
+    config.explicitFlags.add('teams');
+    return index;
+  },
+  '--max-parallel': (config, args, index) => {
+    const raw = args[index + 1];
+    if (!raw || raw.startsWith('--')) die('--max-parallel requires a positive integer value (>= 1)');
+    const value = Number(raw);
+    if (!Number.isInteger(value) || value < 1) die('--max-parallel requires a positive integer (>= 1)');
+    config.maxParallel = value;
+    config.explicitFlags.add('max-parallel');
+    return index + 1;
+  },
+  '-s': (_config, args, index) => (args[index + 1] && !args[index + 1].startsWith('--') ? index + 1 : index),
+  '--session-id': (_config, args, index) => (args[index + 1] && !args[index + 1].startsWith('--') ? index + 1 : index),
+};
+
+function parseCommandLine(config: SetupConfig, args: string[]) {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    const handler = ARG_HANDLERS[arg];
+    if (!handler) {
+      config.taskArgs.push(arg);
+      continue;
+    }
+    i = handler(config, args, i);
+  }
+}
+
+function validateCommandLine(config: SetupConfig) {
+  if (config.explicitFlags.has('max-parallel') && !config.teamsMode) {
+    die('--max-parallel requires --teams');
+  }
+  if (config.teamsMode && config.backend === 'codex') {
+    die('--teams is incompatible with --backend codex (claude backend only)');
+  }
+}
+
+function validateResumeCompatibility(preState: State, config: SetupConfig) {
+  const resumeWorkingDir = resolveWorkingDirOrNull(preState.working_dir);
+  const currentWorkingDir = path.resolve(process.cwd());
+  if (resumeWorkingDir && resumeWorkingDir !== currentWorkingDir) {
+    die(`--resume session belongs to ${resumeWorkingDir}, not ${currentWorkingDir}. Refusing cross-repo resume.`);
+  }
+
+  const willHaveTeams = config.explicitFlags.has('teams') ? config.teamsMode : preState.teams_mode === true;
+  const willHaveBackend = config.explicitFlags.has('backend') ? config.backend : preState.backend;
+  if (willHaveTeams && willHaveBackend === 'codex') {
+    die('--teams is incompatible with --backend codex (claude backend only). Resume would create a conflicting state — refusing to continue.');
+  }
+}
+
+function syncConfigFromState(config: SetupConfig, state: State) {
+  const rawLoopLimit = Number(state.max_iterations);
+  config.loopLimit = Number.isFinite(rawLoopLimit) ? rawLoopLimit : config.loopLimit;
+
+  const rawTimeLimit = Number(state.max_time_minutes);
+  config.timeLimit = Number.isFinite(rawTimeLimit) ? rawTimeLimit : config.timeLimit;
+
+  const rawWorkerTimeout = Number(state.worker_timeout_seconds);
+  config.workerTimeout = Number.isFinite(rawWorkerTimeout) && rawWorkerTimeout > 0 ? rawWorkerTimeout : config.workerTimeout;
+
+  const rawMinIter = Number(state.min_iterations);
+  config.minIterations = Number.isFinite(rawMinIter) ? rawMinIter : 0;
+  config.commandTemplate = state.command_template;
+  config.chainMeeseeks = state.chain_meeseeks === true;
+  if (state.backend && (BACKENDS as readonly string[]).includes(state.backend)) config.backend = state.backend;
+  config.teamsMode = state.teams_mode === true;
+
+  const rawMaxParallel = Number(state.max_parallel);
+  config.maxParallel = Number.isFinite(rawMaxParallel) && Number.isInteger(rawMaxParallel) && rawMaxParallel >= 1
+    ? rawMaxParallel
+    : config.maxParallel;
+
+  config.promiseToken = state.completion_promise;
+}
+
+function resumeSession(config: SetupConfig): SessionResult {
+  const fullSessionPath = config.resumePath
+    ? resolvePath(config.resumePath)
+    : findSessionPathForCwd(process.cwd());
+
+  if (!fullSessionPath || !fs.existsSync(fullSessionPath)) {
+    die(`No active session found or path invalid: ${fullSessionPath}`);
+  }
+
+  const statePath = path.join(fullSessionPath, 'state.json');
+
+  let preState: State | null = null;
+  try {
+    preState = sm.read(statePath);
+  } catch {
+    /* missing/corrupt — sm.update below will surface the right error */
+  }
+  if (preState) validateResumeCompatibility(preState, config);
+
+  let state: State;
+  try {
+    state = sm.update(statePath, s => {
+      s.active = !config.pausedMode;
+      if (config.resetMode) {
+        s.iteration = 0;
+        s.start_time_epoch = config.startEpoch;
+      }
+      if (config.explicitFlags.has('max-iterations')) s.max_iterations = config.loopLimit;
+      if (config.explicitFlags.has('max-time')) s.max_time_minutes = config.timeLimit;
+      if (config.explicitFlags.has('worker-timeout')) s.worker_timeout_seconds = config.workerTimeout;
+      if (config.promiseToken) s.completion_promise = config.promiseToken;
+      if (config.explicitFlags.has('min-iterations')) s.min_iterations = config.minIterations;
+      if (config.explicitFlags.has('command-template')) s.command_template = config.commandTemplate;
+      if (config.tmuxMode) s.tmux_mode = true;
+      if (config.chainMeeseeks) s.chain_meeseeks = true;
+      if (config.explicitFlags.has('backend') && config.backend) s.backend = config.backend;
+      if (config.explicitFlags.has('teams')) s.teams_mode = config.teamsMode;
+      if (config.explicitFlags.has('max-parallel')) s.max_parallel = config.maxParallel;
+      s.session_dir = fullSessionPath;
+    });
+  } catch {
+    die(`state.json is missing or corrupt in ${fullSessionPath}`);
+  }
+
+  syncConfigFromState(config, state);
+  return {
+    fullSessionPath,
+    currentIteration: (Number(state.iteration) || 0) + 1,
+  };
+}
+
+function resolveTask(config: SetupConfig): string {
+  const taskStr = config.taskArgs.join(' ').trim();
+  if (config.resumeMode) return taskStr;
+  if (!taskStr && !config.pausedMode) die('No task specified. Run /pickle --help for usage.');
+  if (!taskStr) return 'PRD Interview (task to be determined via interview)';
+  return taskStr;
+}
+
+function createInitialState(config: SetupConfig, sessionPath: string, taskStr: string): State {
+  return {
+    active: !config.pausedMode && !config.tmuxMode,
+    working_dir: process.cwd(),
+    step: 'prd',
+    iteration: 0,
+    max_iterations: config.loopLimit,
+    max_time_minutes: config.timeLimit,
+    worker_timeout_seconds: config.workerTimeout,
+    start_time_epoch: config.startEpoch,
+    completion_promise: config.promiseToken,
+    original_prompt: taskStr,
+    current_ticket: null,
+    history: [],
+    started_at: new Date().toISOString(),
+    session_dir: sessionPath,
+    tmux_mode: config.tmuxMode,
+    min_iterations: config.minIterations,
+    command_template: config.commandTemplate,
+    chain_meeseeks: config.chainMeeseeks,
+    backend: config.backend,
+    teams_mode: config.teamsMode || undefined,
+    max_parallel: config.teamsMode ? config.maxParallel : undefined,
+  };
+}
+
+function createSession(config: SetupConfig, paths: SetupPaths, taskStr: string): SessionResult {
+  const today = new Date().toISOString().split('T')[0];
+  const hash = crypto.randomBytes(4).toString('hex');
+  const sessionId = `${today}-${hash}`;
+  const fullSessionPath = path.join(paths.sessionsRoot, sessionId);
+
+  if (!fs.existsSync(fullSessionPath)) fs.mkdirSync(fullSessionPath, { recursive: true });
+
+  const state = createInitialState(config, fullSessionPath, taskStr);
+  // eslint-disable-next-line pickle/no-raw-state-write -- initial creation: no existing state to lock against
+  sm.forceWrite(path.join(fullSessionPath, 'state.json'), state);
+  try { pruneActivity(); } catch { /* must not block session start */ }
+  logActivity({ event: 'session_start', source: 'pickle', session: sessionId, mode: config.tmuxMode ? 'tmux' : 'inline', original_prompt: taskStr });
+
+  return { fullSessionPath, currentIteration: 1 };
+}
+
+function printActivationPanel(paths: SetupPaths, config: SetupConfig, fullSessionPath: string, currentIteration: number) {
+  printMinimalPanel(
+    'Pickle Rick Activated!',
+    {
+      Iteration: currentIteration,
+      Limit: config.loopLimit > 0 ? config.loopLimit : '∞',
+      'Max Time': config.timeLimit > 0 ? `${config.timeLimit}m` : '∞',
+      'Worker TO': `${config.workerTimeout}s`,
+      Promise: config.promiseToken || 'None',
+      ...(config.minIterations > 0 ? { 'Min Passes': config.minIterations } : {}),
+      ...(config.commandTemplate ? { Template: config.commandTemplate } : {}),
+      ...(config.chainMeeseeks ? { 'Chain Meeseeks': 'Yes' } : {}),
+      Backend: config.backend || 'claude',
+      ...(config.teamsMode ? { Teams: `Yes (parallel: ${config.maxParallel})` } : {}),
+      Extension: paths.rootDir,
+      Data: paths.dataDir,
+      Path: fullSessionPath,
+    },
+    'GREEN',
+    '🥒'
+  );
+}
+
+async function main() {
+  const paths = buildSetupPaths();
+  const config = createSetupConfig();
+
+  ensureCoreDirectories(paths);
+  pruneOldSessions(paths.sessionsRoot);
+  loadSettings(config, paths.rootDir);
+  parseCommandLine(config, process.argv.slice(2));
+  validateCommandLine(config);
+
+  const taskStr = resolveTask(config);
+  const session = config.resumeMode
+    ? resumeSession(config)
+    : createSession(config, paths, taskStr);
+
+  try {
+    updateSessionMap(paths.sessionsMap, process.cwd(), session.fullSessionPath);
   } catch (err) {
     if (err instanceof LockError) {
       console.error(`[pickle] WARNING: session map not updated — ${safeErrorMessage(err)}`);
@@ -331,34 +450,15 @@ async function main() {
     }
   }
 
-  printMinimalPanel(
-    'Pickle Rick Activated!',
-    {
-      Iteration: currentIteration,
-      Limit: loopLimit > 0 ? loopLimit : '∞',
-      'Max Time': timeLimit > 0 ? `${timeLimit}m` : '∞',
-      'Worker TO': `${workerTimeout}s`,
-      Promise: promiseToken || 'None',
-      ...(minIterations > 0 ? { 'Min Passes': minIterations } : {}),
-      ...(commandTemplate ? { Template: commandTemplate } : {}),
-      ...(chainMeeseeks ? { 'Chain Meeseeks': 'Yes' } : {}),
-      Backend: backend || 'claude',
-      ...(teamsMode ? { Teams: `Yes (parallel: ${maxParallel})` } : {}),
-      Extension: ROOT_DIR,
-      Data: DATA_DIR,
-      Path: fullSessionPath,
-    },
-    'GREEN',
-    '🥒'
-  );
+  printActivationPanel(paths, config, session.fullSessionPath, session.currentIteration);
 
   // Machine-readable line for reliable parsing even when ANSI codes are present
-  process.stdout.write(`SESSION_ROOT=${fullSessionPath}\n`);
+  process.stdout.write(`SESSION_ROOT=${session.fullSessionPath}\n`);
 
-  if (promiseToken) {
+  if (config.promiseToken) {
     console.log(`
 ${Style.YELLOW}⚠️  STRICT EXIT CONDITION ACTIVE${Style.RESET}`);
-    console.log(`   You must output: <promise>${promiseToken}</promise>
+    console.log(`   You must output: <promise>${config.promiseToken}</promise>
 `);
   }
 }
