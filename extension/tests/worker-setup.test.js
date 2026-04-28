@@ -158,6 +158,32 @@ test('worker-setup: falls back to active session state when the sessions map is 
     }
 });
 
+test('worker-setup: ignores inactive same-cwd fallback sessions when no --resume path is provided', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = path.join(tmpRoot, 'sessions', 'inactive-session');
+        fs.mkdirSync(sessionDir, { recursive: true });
+
+        const cwdDir = path.join(tmpRoot, 'repo');
+        fs.mkdirSync(cwdDir, { recursive: true });
+        const realCwd = fs.realpathSync(cwdDir);
+
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({ active: false, working_dir: realCwd, session_dir: sessionDir })
+        );
+
+        const result = run(tmpRoot, [], realCwd);
+        assert.equal(result.status, 1, `Expected exit code 1, got: ${result.status}. stdout: ${result.stdout}`);
+        assert.ok(
+            result.stderr.includes('No session path found'),
+            `Expected "No session path found" in stderr, got: ${result.stderr}`
+        );
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
 test('worker-setup: unreadable mapped state falls back to the live same-cwd session', () => {
     const tmpRoot = makeTmpRoot();
     try {

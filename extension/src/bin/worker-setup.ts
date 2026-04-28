@@ -14,7 +14,7 @@ function main() {
   }
 
   if (!sessionPath || !fs.existsSync(sessionPath)) {
-    sessionPath = findSessionPathForCwd(process.cwd());
+    sessionPath = findSessionPathForCwd(process.cwd(), { requireActive: true });
   }
 
   if (!sessionPath || !fs.existsSync(sessionPath)) {

@@ -11,7 +11,7 @@ function main() {
         sessionPath = args[resumeIndex + 1];
     }
     if (!sessionPath || !fs.existsSync(sessionPath)) {
-        sessionPath = findSessionPathForCwd(process.cwd());
+        sessionPath = findSessionPathForCwd(process.cwd(), { requireActive: true });
     }
     if (!sessionPath || !fs.existsSync(sessionPath)) {
         console.error('Worker Error: No session path found.');
