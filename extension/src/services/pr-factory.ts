@@ -1,7 +1,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { runCmd, Style, safeErrorMessage } from './pickle-utils.js';
+import { StateManager } from './state-manager.js';
 import { State } from '../types/index.js';
+
+const sm = new StateManager();
 
 export function createPR(sessionDir: string): string {
   const statePath = path.join(sessionDir, 'state.json');
@@ -11,7 +14,7 @@ export function createPR(sessionDir: string): string {
 
   let state: State;
   try {
-    state = JSON.parse(fs.readFileSync(statePath, 'utf-8')) as State;
+    state = sm.read(statePath);
   } catch {
     throw new Error('state.json is corrupt or unreadable');
   }

@@ -119,6 +119,55 @@ test('createPR includes the full original prompt in the PR body', () => {
     }
 });
 
+test('createPR recovers orphan tmp state before deriving repo path and prompt', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-factory-recovery-'));
+    try {
+        const staleRepo = path.join(tmp, 'stale-repo');
+        const liveRepo = path.join(tmp, 'live-repo');
+        fs.mkdirSync(staleRepo, { recursive: true });
+        fs.mkdirSync(liveRepo, { recursive: true });
+
+        const statePath = path.join(tmp, 'state.json');
+        fs.writeFileSync(
+            statePath,
+            JSON.stringify({
+                working_dir: staleRepo,
+                original_prompt: 'stale prompt',
+                iteration: 1,
+                schema_version: 1,
+            })
+        );
+        fs.writeFileSync(
+            `${statePath}.tmp.99999999`,
+            JSON.stringify({
+                working_dir: liveRepo,
+                original_prompt: 'fresh prompt',
+                iteration: 2,
+                schema_version: 1,
+            })
+        );
+
+        let caught;
+        try {
+            createPR(tmp);
+        } catch (err) {
+            caught = err;
+        }
+
+        assert.ok(caught instanceof Error, 'expected createPR to throw');
+        assert.ok(
+            caught.message.includes('Prompt: fresh prompt'),
+            `Recovered state should drive the PR body.\nGot: ${caught.message}`
+        );
+
+        const promotedState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(promotedState.working_dir, liveRepo, 'StateManager recovery should promote the newer tmp state');
+        assert.equal(promotedState.original_prompt, 'fresh prompt');
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
 test('createPR does not append "..." for short prompts', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-factory-'));
     try {
