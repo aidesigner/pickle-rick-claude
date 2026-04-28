@@ -440,6 +440,32 @@ export function writeSkippedByScope(
   }
 }
 
+function readPersistedAllowedPaths(sessionDir: string): string[] | undefined {
+  const scopePath = path.join(sessionDir, 'scope.json');
+  if (!fs.existsSync(scopePath)) return undefined;
+  try {
+    const raw = JSON.parse(fs.readFileSync(scopePath, 'utf-8')) as Record<string, unknown>;
+    const field = raw.allowed_paths;
+    if (!Array.isArray(field) || field.length === 0 || !field.every((value) => typeof value === 'string')) {
+      return undefined;
+    }
+    return field as string[];
+  } catch {
+    return undefined;
+  }
+}
+
+function readWorkingDirFromState(sessionDir: string, fallback: string): string {
+  const statePath = path.join(sessionDir, 'state.json');
+  if (!fs.existsSync(statePath)) return fallback;
+  try {
+    const workingDir = sm.read(statePath).working_dir;
+    return typeof workingDir === 'string' && workingDir.length > 0 ? workingDir : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Phase Setup: Anatomy Park
 // ---------------------------------------------------------------------------
@@ -535,7 +561,22 @@ export function setupAnatomyPark(
   log: (msg: string) => void,
   scope?: { allowedPaths: string[]; repoRoot: string },
 ): boolean {
-  const subsystems = resolveAnatomySubsystems(target, scope, log);
+  const persistedAllowedPaths = !scope || scope.allowedPaths.length === 0
+    ? readPersistedAllowedPaths(sessionDir)
+    : undefined;
+  const effectiveScope = scope && scope.allowedPaths.length > 0
+    ? scope
+    : persistedAllowedPaths && persistedAllowedPaths.length > 0
+      ? {
+          allowedPaths: persistedAllowedPaths,
+          repoRoot: readWorkingDirFromState(sessionDir, target),
+        }
+      : undefined;
+  if (!scope && effectiveScope) {
+    log(`anatomy-park: reusing persisted scope.json with ${effectiveScope.allowedPaths.length} allowed path(s)`);
+  }
+
+  const subsystems = resolveAnatomySubsystems(target, effectiveScope, log);
   if (!subsystems) return false;
 
   writeAnatomyConfig(sessionDir, subsystems, stallLimit);
@@ -554,7 +595,7 @@ export function setupAnatomyPark(
     '--metric-json', metricJson,
   ];
   const scopePath = path.join(sessionDir, 'scope.json');
-  if (scope && scope.allowedPaths.length > 0 && fs.existsSync(scopePath)) {
+  if (effectiveScope && effectiveScope.allowedPaths.length > 0 && fs.existsSync(scopePath)) {
     initArgs.push('--allowed-paths-file', scopePath);
   }
   try {
@@ -656,7 +697,7 @@ function buildSzechuanPrd(
   return prdParts.join('\n');
 }
 
-function setupSzechuanSauce(
+export function setupSzechuanSauce(
   sessionDir: string,
   target: string,
   stallLimit: number,
@@ -668,6 +709,12 @@ function setupSzechuanSauce(
 ): boolean {
   const principlesPath = path.join(extensionRoot, 'szechuan-sauce-principles.md');
   const judgeContextArg = buildSzechuanJudgeContext(sessionDir, principlesPath, extensionRoot, domain, focus, log);
+  const effectiveAllowedPaths = scope?.allowedPaths?.length
+    ? scope.allowedPaths
+    : readPersistedAllowedPaths(sessionDir);
+  if ((!scope || scope.allowedPaths.length === 0) && effectiveAllowedPaths && effectiveAllowedPaths.length > 0) {
+    log(`szechuan-sauce: reusing persisted scope.json with ${effectiveAllowedPaths.length} allowed path(s)`);
+  }
 
   archiveFile(sessionDir, 'microverse.json', 'pre-szechuan');
   const initArgs = [
@@ -678,7 +725,7 @@ function setupSzechuanSauce(
   ];
   if (judgeContextArg) initArgs.push('--judge-context', judgeContextArg);
   const scopePath = path.join(sessionDir, 'scope.json');
-  if (scope && scope.allowedPaths.length > 0 && fs.existsSync(scopePath)) {
+  if (effectiveAllowedPaths && effectiveAllowedPaths.length > 0 && fs.existsSync(scopePath)) {
     initArgs.push('--allowed-paths-file', scopePath);
   }
   try {

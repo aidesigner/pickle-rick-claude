@@ -5,10 +5,12 @@ import { fileURLToPath } from 'node:url';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { setupSzechuanSauce } from '../bin/pipeline-runner.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLI_PATH = path.resolve(__dirname, '..', 'bin', 'init-microverse.js');
 const SZECHUAN_MD = path.resolve(__dirname, '../../.claude/commands/szechuan-sauce.md');
+const EXTENSION_ROOT = path.join(os.homedir(), '.claude/pickle-rick');
 
 function makeTempDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'szechuan-scope-'));
@@ -85,6 +87,24 @@ describe('szechuan scope injection', () => {
       run([dir, '/some/target', '--allowed-paths-file', path.join(dir, 'scope.json')]);
       const state = readMicroverse(dir);
       assert.equal(state.allowed_paths, undefined);
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
+  test('resume: persisted scope.json still injects allowed_paths when phase setup reruns without an explicit scope arg', () => {
+    const dir = makeTempDir();
+    try {
+      fs.writeFileSync(
+        path.join(dir, 'scope.json'),
+        JSON.stringify({ allowed_paths: ['src/foo.ts'], mode: 'diff', strategy: 'strict', head_sha: 'abc123' }),
+      );
+
+      const ok = setupSzechuanSauce(dir, '/some/target', 5, EXTENSION_ROOT, undefined, undefined, () => {});
+      assert.equal(ok, true, 'setup should succeed');
+
+      const state = readMicroverse(dir);
+      assert.deepStrictEqual(state.allowed_paths, ['src/foo.ts']);
     } finally {
       fs.rmSync(dir, { recursive: true });
     }

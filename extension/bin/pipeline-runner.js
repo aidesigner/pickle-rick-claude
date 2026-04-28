@@ -372,6 +372,34 @@ export function writeSkippedByScope(sessionDir, phase, scope, target, workingDir
         throw err;
     }
 }
+function readPersistedAllowedPaths(sessionDir) {
+    const scopePath = path.join(sessionDir, 'scope.json');
+    if (!fs.existsSync(scopePath))
+        return undefined;
+    try {
+        const raw = JSON.parse(fs.readFileSync(scopePath, 'utf-8'));
+        const field = raw.allowed_paths;
+        if (!Array.isArray(field) || field.length === 0 || !field.every((value) => typeof value === 'string')) {
+            return undefined;
+        }
+        return field;
+    }
+    catch {
+        return undefined;
+    }
+}
+function readWorkingDirFromState(sessionDir, fallback) {
+    const statePath = path.join(sessionDir, 'state.json');
+    if (!fs.existsSync(statePath))
+        return fallback;
+    try {
+        const workingDir = sm.read(statePath).working_dir;
+        return typeof workingDir === 'string' && workingDir.length > 0 ? workingDir : fallback;
+    }
+    catch {
+        return fallback;
+    }
+}
 // ---------------------------------------------------------------------------
 // Phase Setup: Anatomy Park
 // ---------------------------------------------------------------------------
@@ -443,7 +471,21 @@ function writeAnatomyConfig(sessionDir, subsystems, stallLimit) {
     fs.writeFileSync(path.join(sessionDir, 'anatomy-park.json'), JSON.stringify(apState, null, 2));
 }
 export function setupAnatomyPark(sessionDir, target, stallLimit, extensionRoot, log, scope) {
-    const subsystems = resolveAnatomySubsystems(target, scope, log);
+    const persistedAllowedPaths = !scope || scope.allowedPaths.length === 0
+        ? readPersistedAllowedPaths(sessionDir)
+        : undefined;
+    const effectiveScope = scope && scope.allowedPaths.length > 0
+        ? scope
+        : persistedAllowedPaths && persistedAllowedPaths.length > 0
+            ? {
+                allowedPaths: persistedAllowedPaths,
+                repoRoot: readWorkingDirFromState(sessionDir, target),
+            }
+            : undefined;
+    if (!scope && effectiveScope) {
+        log(`anatomy-park: reusing persisted scope.json with ${effectiveScope.allowedPaths.length} allowed path(s)`);
+    }
+    const subsystems = resolveAnatomySubsystems(target, effectiveScope, log);
     if (!subsystems)
         return false;
     writeAnatomyConfig(sessionDir, subsystems, stallLimit);
@@ -461,7 +503,7 @@ export function setupAnatomyPark(sessionDir, target, stallLimit, extensionRoot, 
         '--metric-json', metricJson,
     ];
     const scopePath = path.join(sessionDir, 'scope.json');
-    if (scope && scope.allowedPaths.length > 0 && fs.existsSync(scopePath)) {
+    if (effectiveScope && effectiveScope.allowedPaths.length > 0 && fs.existsSync(scopePath)) {
         initArgs.push('--allowed-paths-file', scopePath);
     }
     try {
@@ -524,9 +566,15 @@ function buildSzechuanPrd(target, stallLimit, principlesPath, extensionRoot, dom
     prdParts.push('', '## Key Metric', '- **Type**: llm (LLM judge scoring)', '- **Direction**: lower', '- **Convergence Target**: 0', `- **Stall Limit**: ${stallLimit}`, '', '## Process', '### Iteration 1: Contract Discovery + Gap Analysis', '1. Extract all exports from target files', '2. Grep the entire codebase for importers — build contract map', '3. Flag cross-module mismatches as P1', '4. Catalog all violations into gap_analysis.md', '', '### Each subsequent iteration', '1. Read the principles reference and target code', '2. Identify the highest-priority violation (P0 > P1 > P2 > P3 > P4)', '3. Fix it — one logical change per iteration', '4. Run tests — ensure green', '5. Commit', '', '## Rules', '- One fix per iteration (atomic, revertible)', '- Never repeat a failed approach', '- P0 before P1 before P2 before P3 before P4');
     return prdParts.join('\n');
 }
-function setupSzechuanSauce(sessionDir, target, stallLimit, extensionRoot, domain, focus, log, scope) {
+export function setupSzechuanSauce(sessionDir, target, stallLimit, extensionRoot, domain, focus, log, scope) {
     const principlesPath = path.join(extensionRoot, 'szechuan-sauce-principles.md');
     const judgeContextArg = buildSzechuanJudgeContext(sessionDir, principlesPath, extensionRoot, domain, focus, log);
+    const effectiveAllowedPaths = scope?.allowedPaths?.length
+        ? scope.allowedPaths
+        : readPersistedAllowedPaths(sessionDir);
+    if ((!scope || scope.allowedPaths.length === 0) && effectiveAllowedPaths && effectiveAllowedPaths.length > 0) {
+        log(`szechuan-sauce: reusing persisted scope.json with ${effectiveAllowedPaths.length} allowed path(s)`);
+    }
     archiveFile(sessionDir, 'microverse.json', 'pre-szechuan');
     const initArgs = [
         path.join(extensionRoot, 'extension', 'bin', 'init-microverse.js'),
@@ -537,7 +585,7 @@ function setupSzechuanSauce(sessionDir, target, stallLimit, extensionRoot, domai
     if (judgeContextArg)
         initArgs.push('--judge-context', judgeContextArg);
     const scopePath = path.join(sessionDir, 'scope.json');
-    if (scope && scope.allowedPaths.length > 0 && fs.existsSync(scopePath)) {
+    if (effectiveAllowedPaths && effectiveAllowedPaths.length > 0 && fs.existsSync(scopePath)) {
         initArgs.push('--allowed-paths-file', scopePath);
     }
     try {

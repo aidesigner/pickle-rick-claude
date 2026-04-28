@@ -20,6 +20,28 @@ function makeSession() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'ap-scope-session-'));
 }
 
+function writeState(sessionDir, workingDir) {
+  fs.writeFileSync(
+    path.join(sessionDir, 'state.json'),
+    JSON.stringify({
+      active: false,
+      working_dir: workingDir,
+      step: 'review',
+      iteration: 0,
+      max_iterations: 10,
+      max_time_minutes: 60,
+      worker_timeout_seconds: 1200,
+      start_time_epoch: Math.floor(Date.now() / 1000),
+      completion_promise: null,
+      original_prompt: 'test',
+      current_ticket: null,
+      history: [],
+      started_at: new Date().toISOString(),
+      session_dir: sessionDir,
+    }, null, 2),
+  );
+}
+
 function makeSubsystem(root, name, fileCount = 3) {
   const dir = path.join(root, name);
   fs.mkdirSync(dir, { recursive: true });
@@ -69,6 +91,7 @@ test('pipeline scoped setup injects allowed_paths into microverse.json so final 
   try {
     makeSubsystem(target, 'alpha');
     makeSubsystem(target, 'beta');
+    writeState(session, target);
     fs.writeFileSync(
       path.join(session, 'scope.json'),
       JSON.stringify({ allowed_paths: ['alpha/f0.ts'], mode: 'branch', strategy: 'strict', head_sha: 'abc123' }),
@@ -126,6 +149,30 @@ test('pipeline scoped setup injects allowed_paths into microverse.json so final 
 
     const gateFiles = fs.readdirSync(gateDir);
     assert.equal(gateFiles.filter(f => f.startsWith('out_of_scope_failures_')).length, 1);
+  } finally {
+    fs.rmSync(session, { recursive: true, force: true });
+    fs.rmSync(target, { recursive: true, force: true });
+  }
+});
+
+test('resume: persisted scope.json still filters anatomy-park when refreshScope already entered the phase', () => {
+  const session = makeSession();
+  const target = makeTarget();
+  try {
+    makeSubsystem(target, 'alpha');
+    makeSubsystem(target, 'beta');
+    writeState(session, target);
+    fs.writeFileSync(
+      path.join(session, 'scope.json'),
+      JSON.stringify({ allowed_paths: ['alpha/f0.ts'], mode: 'branch', strategy: 'strict', head_sha: 'abc123' }),
+    );
+
+    setupAnatomyPark(session, target, 3, EXTENSION_ROOT, () => {});
+
+    const ap = readAnatomyPark(session);
+    const mv = readMicroverse(session);
+    assert.deepStrictEqual(ap.subsystems, ['alpha']);
+    assert.deepStrictEqual(mv.allowed_paths, ['alpha/f0.ts']);
   } finally {
     fs.rmSync(session, { recursive: true, force: true });
     fs.rmSync(target, { recursive: true, force: true });
