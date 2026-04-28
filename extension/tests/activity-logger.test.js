@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { VALID_ACTIVITY_EVENTS } from '../types/index.js';
 import { _setRetryDelayMs, _getPendingBuffer, _clearPendingBuffer } from '../services/activity-logger.js';
+import { readActivityFiles } from '../bin/standup.js';
 
 // Helper: create temp dir that acts as extension root, return activity dir path
 function withTempActivityDir(fn) {
@@ -28,6 +29,13 @@ async function getLogActivity() {
     // but since EXTENSION_DIR is read at call time (not import time), static import is fine.
     const mod = await import('../services/activity-logger.js');
     return mod.logActivity;
+}
+
+function localDateWithOffset(daysOffset, hour = 12) {
+    const d = new Date();
+    d.setHours(hour, 0, 0, 0);
+    d.setDate(d.getDate() + daysOffset);
+    return d;
 }
 
 // --- VALID_ACTIVITY_EVENTS ---
@@ -96,9 +104,10 @@ test('logActivity: sets ts field automatically', async () => {
 test('logActivity: preserves caller-provided ts', async () => {
     const logActivity = await getLogActivity();
     withTempActivityDir((activityDir) => {
-        const customTs = '2026-01-15T10:00:00.000Z';
+        const customDate = localDateWithOffset(-1);
+        const customTs = customDate.toISOString();
         logActivity({ event: 'commit', source: 'hook', ts: customTs });
-        const date = new Date().toLocaleDateString('en-CA');
+        const date = customDate.toLocaleDateString('en-CA');
         const filepath = path.join(activityDir, `${date}.jsonl`);
         const parsed = JSON.parse(fs.readFileSync(filepath, 'utf8').trim());
         assert.equal(parsed.ts, customTs);
@@ -410,7 +419,7 @@ test('logActivity: buffers event when write fails on both attempts (ENOSPC simul
 
         assert.equal(_getPendingBuffer().length, 1, 'failed event should be buffered');
         assert.ok(
-            _getPendingBuffer()[0].includes('"commit"'),
+            _getPendingBuffer()[0].line.includes('"commit"'),
             'buffered entry should contain the event type'
         );
     } finally {
@@ -454,6 +463,53 @@ test('logActivity: flushes buffer on next successful write', async () => {
         assert.equal(JSON.parse(lines[0]).event, 'feature', 'new event written first');
         assert.equal(JSON.parse(lines[1]).event, 'commit', 'buffered event flushed second');
     } finally {
+        process.env.EXTENSION_DIR = origEnv;
+        if (origEnv === undefined) delete process.env.EXTENSION_DIR;
+        fs.rmSync(extRoot, { recursive: true, force: true });
+        _clearPendingBuffer();
+        _setRetryDelayMs(500);
+    }
+});
+
+test('logActivity: buffered events flush back to the original day partition and standup reads that day', async () => {
+    _setRetryDelayMs(0);
+    _clearPendingBuffer();
+    const logActivity = await getLogActivity();
+
+    const extRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-activity-'));
+    const activityDir = path.join(extRoot, 'activity');
+    const origEnv = process.env.EXTENSION_DIR;
+    process.env.EXTENSION_DIR = extRoot;
+
+    const yesterday = localDateWithOffset(-1);
+    const yesterdayStart = new Date(yesterday);
+    yesterdayStart.setHours(0, 0, 0, 0);
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const yesterdayFile = path.join(activityDir, `${yesterday.toLocaleDateString('en-CA')}.jsonl`);
+    const todayFile = path.join(activityDir, `${todayStart.toLocaleDateString('en-CA')}.jsonl`);
+
+    try {
+        fs.mkdirSync(activityDir);
+        fs.writeFileSync(yesterdayFile, '', { mode: 0o444 });
+
+        logActivity({ event: 'commit', source: 'hook', commit_hash: 'retro123', ts: yesterday.toISOString() });
+        assert.equal(_getPendingBuffer().length, 1, 'failed retro event should be buffered');
+
+        fs.chmodSync(yesterdayFile, 0o644);
+        logActivity({ event: 'feature', source: 'persona', title: 'today write succeeds' });
+
+        assert.equal(_getPendingBuffer().length, 0, 'buffer should drain after the successful write');
+        assert.equal(JSON.parse(fs.readFileSync(yesterdayFile, 'utf8').trim()).commit_hash, 'retro123');
+        assert.equal(JSON.parse(fs.readFileSync(todayFile, 'utf8').trim()).event, 'feature');
+
+        const events = readActivityFiles(activityDir, yesterdayStart, todayStart);
+        assert.equal(events.length, 1, 'yesterday range should read the retro event from the restored file');
+        assert.equal(events[0].commit_hash, 'retro123');
+    } finally {
+        if (fs.existsSync(yesterdayFile)) {
+            fs.chmodSync(yesterdayFile, 0o644);
+        }
         process.env.EXTENSION_DIR = origEnv;
         if (origEnv === undefined) delete process.env.EXTENSION_DIR;
         fs.rmSync(extRoot, { recursive: true, force: true });

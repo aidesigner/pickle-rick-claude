@@ -8,7 +8,12 @@ export function getActivityDir(): string {
 }
 
 const MAX_BUFFER = 100;
-const pendingBuffer: string[] = [];
+interface PendingActivityEntry {
+  filepath: string;
+  line: string;
+}
+
+const pendingBuffer: PendingActivityEntry[] = [];
 
 // Configurable retry delay — override in tests via _setRetryDelayMs(0)
 let retryDelayMs = 500;
@@ -22,8 +27,16 @@ function sleepSync(ms: number): void {
 
 /** Exported for tests only. */
 export function _setRetryDelayMs(ms: number): void { retryDelayMs = ms; }
-export function _getPendingBuffer(): string[] { return pendingBuffer; }
+export function _getPendingBuffer(): PendingActivityEntry[] { return pendingBuffer; }
 export function _clearPendingBuffer(): void { pendingBuffer.splice(0); }
+
+function getActivityFilepath(activityDir: string, ts: string): string {
+  const parsed = new Date(ts);
+  const date = Number.isFinite(parsed.getTime())
+    ? parsed.toLocaleDateString('en-CA')
+    : new Date().toLocaleDateString('en-CA');
+  return path.join(activityDir, `${date}.jsonl`);
+}
 
 export function logActivity(
   event: Partial<ActivityEvent> & { event: ActivityEventType; source: ActivityEvent['source'] }
@@ -31,9 +44,8 @@ export function logActivity(
   try {
     const activityDir = getActivityDir();
     fs.mkdirSync(activityDir, { recursive: true });
-    const date = new Date().toLocaleDateString('en-CA');
-    const filepath = path.join(activityDir, `${date}.jsonl`);
     const fullEvent: ActivityEvent = { ts: new Date().toISOString(), ...event };
+    const filepath = getActivityFilepath(activityDir, fullEvent.ts);
     const line = JSON.stringify(fullEvent) + '\n';
 
     // Attempt primary write; retry once after retryDelayMs on failure
@@ -53,7 +65,7 @@ export function logActivity(
     if (writeErr) {
       // Buffer event (capped at MAX_BUFFER) for flush on next success
       if (pendingBuffer.length < MAX_BUFFER) {
-        pendingBuffer.push(line);
+        pendingBuffer.push({ filepath, line });
       }
       process.stderr.write(`[activity-logger] Failed to log event (buffered ${pendingBuffer.length}/${MAX_BUFFER}): ${writeErr.message}\n`);
       return;
@@ -62,9 +74,23 @@ export function logActivity(
     // Flush buffered events on success
     if (pendingBuffer.length > 0) {
       const toFlush = pendingBuffer.splice(0);
-      try {
-        fs.appendFileSync(filepath, toFlush.join(''), { mode: 0o600 });
-      } catch { /* flush failed — buffered events lost, non-fatal */ }
+      const byPath = new Map<string, PendingActivityEntry[]>();
+      for (const entry of toFlush) {
+        const list = byPath.get(entry.filepath) || [];
+        list.push(entry);
+        byPath.set(entry.filepath, list);
+      }
+      for (const [flushPath, entries] of byPath) {
+        try {
+          fs.appendFileSync(flushPath, entries.map((entry) => entry.line).join(''), { mode: 0o600 });
+        } catch {
+          for (const entry of entries) {
+            if (pendingBuffer.length < MAX_BUFFER) {
+              pendingBuffer.push(entry);
+            }
+          }
+        }
+      }
     }
   } catch (err) {
     // Activity logging must never break the caller, but warn so data loss is visible

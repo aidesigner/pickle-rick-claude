@@ -17,13 +17,19 @@ function sleepSync(ms) {
 export function _setRetryDelayMs(ms) { retryDelayMs = ms; }
 export function _getPendingBuffer() { return pendingBuffer; }
 export function _clearPendingBuffer() { pendingBuffer.splice(0); }
+function getActivityFilepath(activityDir, ts) {
+    const parsed = new Date(ts);
+    const date = Number.isFinite(parsed.getTime())
+        ? parsed.toLocaleDateString('en-CA')
+        : new Date().toLocaleDateString('en-CA');
+    return path.join(activityDir, `${date}.jsonl`);
+}
 export function logActivity(event) {
     try {
         const activityDir = getActivityDir();
         fs.mkdirSync(activityDir, { recursive: true });
-        const date = new Date().toLocaleDateString('en-CA');
-        const filepath = path.join(activityDir, `${date}.jsonl`);
         const fullEvent = { ts: new Date().toISOString(), ...event };
+        const filepath = getActivityFilepath(activityDir, fullEvent.ts);
         const line = JSON.stringify(fullEvent) + '\n';
         // Attempt primary write; retry once after retryDelayMs on failure
         let writeErr = null;
@@ -43,7 +49,7 @@ export function logActivity(event) {
         if (writeErr) {
             // Buffer event (capped at MAX_BUFFER) for flush on next success
             if (pendingBuffer.length < MAX_BUFFER) {
-                pendingBuffer.push(line);
+                pendingBuffer.push({ filepath, line });
             }
             process.stderr.write(`[activity-logger] Failed to log event (buffered ${pendingBuffer.length}/${MAX_BUFFER}): ${writeErr.message}\n`);
             return;
@@ -51,10 +57,24 @@ export function logActivity(event) {
         // Flush buffered events on success
         if (pendingBuffer.length > 0) {
             const toFlush = pendingBuffer.splice(0);
-            try {
-                fs.appendFileSync(filepath, toFlush.join(''), { mode: 0o600 });
+            const byPath = new Map();
+            for (const entry of toFlush) {
+                const list = byPath.get(entry.filepath) || [];
+                list.push(entry);
+                byPath.set(entry.filepath, list);
             }
-            catch { /* flush failed — buffered events lost, non-fatal */ }
+            for (const [flushPath, entries] of byPath) {
+                try {
+                    fs.appendFileSync(flushPath, entries.map((entry) => entry.line).join(''), { mode: 0o600 });
+                }
+                catch {
+                    for (const entry of entries) {
+                        if (pendingBuffer.length < MAX_BUFFER) {
+                            pendingBuffer.push(entry);
+                        }
+                    }
+                }
+            }
         }
     }
     catch (err) {
