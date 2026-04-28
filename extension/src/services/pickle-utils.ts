@@ -566,18 +566,15 @@ export function findSessionPathForCwd(
         const state = readSessionLookupState(mappedPath);
         if (!state) {
           if (!requireActive) mappedFallback = mappedPath;
-        } else {
-          const workingDirMatches = state.working_dir == null
-            || state.working_dir === ''
-            || sameWorkingDir(state.working_dir, cwd);
-          if (workingDirMatches) {
-            if (state.active === true) return mappedPath;
-            if (state.active === false) {
-              if (!requireActive) mappedFallback = mappedPath;
-            } else {
-              return mappedPath;
-            }
+        } else if (sameWorkingDir(state.working_dir, cwd)) {
+          if (state.active === true) return mappedPath;
+          if (state.active === false) {
+            if (!requireActive) mappedFallback = mappedPath;
+          } else {
+            return mappedPath;
           }
+        } else if (!requireActive && (state.working_dir == null || state.working_dir === '')) {
+          mappedFallback = mappedPath;
         }
       }
     } catch {

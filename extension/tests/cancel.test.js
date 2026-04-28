@@ -249,6 +249,49 @@ test('cancelSession: unreadable mapped state falls back to the live same-cwd ses
     }
 });
 
+test('cancelSession: mapped session missing working_dir does not outrank the live same-cwd session', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const cwdDir = path.join(tmpRoot, 'repo');
+        const staleSessionDir = path.join(tmpRoot, 'sessions', 'stale-session');
+        const liveSessionDir = path.join(tmpRoot, 'sessions', 'live-session');
+        fs.mkdirSync(cwdDir, { recursive: true });
+        fs.mkdirSync(staleSessionDir, { recursive: true });
+        fs.mkdirSync(liveSessionDir, { recursive: true });
+        writeSessionsMap(tmpRoot, { [cwdDir]: staleSessionDir });
+        fs.writeFileSync(
+            path.join(staleSessionDir, 'state.json'),
+            JSON.stringify({
+                active: true,
+                session_dir: staleSessionDir,
+                step: 'implement',
+                iteration: 1,
+                original_prompt: 'stale mapped session without cwd proof',
+            }, null, 2)
+        );
+        fs.writeFileSync(
+            path.join(liveSessionDir, 'state.json'),
+            JSON.stringify({
+                active: true,
+                working_dir: cwdDir,
+                session_dir: liveSessionDir,
+                step: 'implement',
+                iteration: 2,
+                original_prompt: 'cancel the live session',
+            }, null, 2)
+        );
+
+        runCancelSubprocess(tmpRoot, cwdDir);
+
+        const staleState = readState(staleSessionDir);
+        const liveState = readState(liveSessionDir);
+        assert.equal(staleState.active, true, 'stale session should remain active');
+        assert.equal(liveState.active, false, 'live session should be deactivated');
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
 // --- Unreadable sessions map ---
 
 test('cancelSession: returns early when sessions map is unreadable JSON', () => {
