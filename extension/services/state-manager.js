@@ -105,6 +105,13 @@ export class StateManager {
                 throw new StateError('CORRUPT', 'State file does not contain a JSON object');
             }
         }
+        // Future schema versions cannot be safely read by older code — throw.
+        // Past schema versions (state < current) are tolerated: unknown fields are ignored.
+        if (state.schema_version !== undefined && state.schema_version > this.opts.schemaVersion) {
+            throw new StateError('SCHEMA_MISMATCH', `State file schema_version ${state.schema_version} is newer than supported version ${this.opts.schemaVersion}`);
+        }
+        // --- Recovery protocol ---
+        this.recoverOrphanTmpFiles(statePath, state);
         // --- Schema migration ---
         if (state.schema_version === undefined) {
             state.schema_version = 1;
@@ -115,13 +122,9 @@ export class StateManager {
             }
             catch { /* migration write failed, non-fatal */ }
         }
-        // Future schema versions cannot be safely read by older code — throw.
-        // Past schema versions (state < current) are tolerated: unknown fields are ignored.
         if (state.schema_version > this.opts.schemaVersion) {
             throw new StateError('SCHEMA_MISMATCH', `State file schema_version ${state.schema_version} is newer than supported version ${this.opts.schemaVersion}`);
         }
-        // --- Recovery protocol ---
-        this.recoverOrphanTmpFiles(statePath, state);
         this.recoverStaleActiveFlag(statePath, state);
         return state;
     }

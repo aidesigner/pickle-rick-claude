@@ -130,17 +130,9 @@ export class StateManager {
       }
     }
 
-    // --- Schema migration ---
-    if (state.schema_version === undefined) {
-      state.schema_version = 1;
-      process.stderr.write(`[state-manager] schema_version missing in ${statePath} — migrating to 1\n`);
-      // Best-effort persist migration — don't throw if write fails
-      try { writeStateFile(statePath, state); } catch { /* migration write failed, non-fatal */ }
-    }
-
     // Future schema versions cannot be safely read by older code — throw.
     // Past schema versions (state < current) are tolerated: unknown fields are ignored.
-    if (state.schema_version > this.opts.schemaVersion) {
+    if (state.schema_version !== undefined && state.schema_version > this.opts.schemaVersion) {
       throw new StateError(
         'SCHEMA_MISMATCH',
         `State file schema_version ${state.schema_version} is newer than supported version ${this.opts.schemaVersion}`,
@@ -149,6 +141,22 @@ export class StateManager {
 
     // --- Recovery protocol ---
     this.recoverOrphanTmpFiles(statePath, state);
+
+    // --- Schema migration ---
+    if (state.schema_version === undefined) {
+      state.schema_version = 1;
+      process.stderr.write(`[state-manager] schema_version missing in ${statePath} — migrating to 1\n`);
+      // Best-effort persist migration — don't throw if write fails
+      try { writeStateFile(statePath, state); } catch { /* migration write failed, non-fatal */ }
+    }
+
+    if (state.schema_version > this.opts.schemaVersion) {
+      throw new StateError(
+        'SCHEMA_MISMATCH',
+        `State file schema_version ${state.schema_version} is newer than supported version ${this.opts.schemaVersion}`,
+      );
+    }
+
     this.recoverStaleActiveFlag(statePath, state);
 
     return state;

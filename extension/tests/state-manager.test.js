@@ -156,6 +156,8 @@ test('StateManager.read: throws SCHEMA_MISMATCH for future schema version', () =
     const sm = new StateManager({ schemaVersion: 1 });
     const sp = path.join(dir, 'state.json');
     writeStateFile(sp, makeState({ schema_version: 2 }));
+    const tmpFile = `${sp}.tmp.99999999`;
+    fs.writeFileSync(tmpFile, JSON.stringify(makeState({ iteration: 10, schema_version: 1 })));
     try {
       sm.read(sp);
       assert.fail('should have thrown');
@@ -163,6 +165,7 @@ test('StateManager.read: throws SCHEMA_MISMATCH for future schema version', () =
       assert.ok(err instanceof StateError);
       assert.equal(err.code, 'SCHEMA_MISMATCH');
     }
+    assert.equal(fs.existsSync(tmpFile), true, 'future-schema base must fail before tmp recovery mutates siblings');
   });
 });
 
@@ -228,6 +231,38 @@ test('StateManager.read: promotes orphan tmp file with higher iteration', () => 
     const result = sm.read(sp);
     assert.equal(result.iteration, 10, 'should promote higher iteration');
     assert.equal(fs.existsSync(tmpFile), false, 'tmp file should be consumed');
+  });
+});
+
+test('StateManager.read: promotes same-iteration orphan tmp before legacy schema migration touches base mtime', () => {
+  withDir((dir) => {
+    const sm = new StateManager();
+    const sp = path.join(dir, 'state.json');
+    const base = makeState({ iteration: 5, active: true, current_ticket: 'T-BASE' });
+    delete base.schema_version;
+    fs.writeFileSync(sp, JSON.stringify(base, null, 2));
+
+    const tmpFile = `${sp}.tmp.99999999`;
+    fs.writeFileSync(tmpFile, JSON.stringify(makeState({
+      iteration: 5,
+      active: false,
+      current_ticket: 'T-RECOVERED',
+      schema_version: 1,
+    }), null, 2));
+    const future = new Date(Date.now() + 1000);
+    fs.utimesSync(tmpFile, future, future);
+
+    const result = sm.read(sp);
+
+    assert.equal(result.iteration, 5);
+    assert.equal(result.active, false);
+    assert.equal(result.current_ticket, 'T-RECOVERED');
+    assert.equal(fs.existsSync(tmpFile), false, 'same-iteration tmp should be consumed');
+
+    const onDisk = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+    assert.equal(onDisk.active, false);
+    assert.equal(onDisk.current_ticket, 'T-RECOVERED');
+    assert.equal(onDisk.schema_version, 1);
   });
 });
 
