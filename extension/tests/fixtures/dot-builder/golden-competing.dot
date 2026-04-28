@@ -1,5 +1,5 @@
-digraph "snap_competing" {
-  graph [goal="competing snapshot baseline", label="snap-competing: competing snapshot baseline", rankdir="LR", retry_target="fix_types"]
+digraph "emit_helper_competing" {
+  graph [goal="exercise extracted emit helper topology", label="emit-helper-competing: exercise extracted emit helper topology", rankdir="LR", retry_target="fix_types"]
   /* DEFENSE MATRIX
    * competitive: true
    * adversarial: false

@@ -1,5 +1,5 @@
-digraph "snap_fan_out" {
-  graph [acceptance_criteria="context.api_done=true && context.auth_done=true", goal="fan-out snapshot baseline", label="snap-fan-out: fan-out snapshot baseline", rankdir="LR", retry_target="fix_types"]
+digraph "emit_helper_fanout" {
+  graph [acceptance_criteria="context.api_done=true && context.auth_done=true", goal="exercise extracted emit helper topology", label="emit-helper-fanout: exercise extracted emit helper topology", rankdir="LR", retry_target="fix_types"]
   /* DEFENSE MATRIX
    * competitive: false
    * adversarial: false

@@ -103,6 +103,7 @@ function expandWithTestDirs(paths: string[]): string[] {
 // Internal types
 // ---------------------------------------------------------------------------
 interface EdgeEntry { from: string; to: string; label?: string; attrs?: Record<string, string> }
+interface NodeSpec { id: string; attrs: Record<string, string> }
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -938,6 +939,33 @@ export class DotBuilder {
   private _seenIds = new Set<string>();
   private _spec: InternalSpec;
   private _built = false;
+  private _nodes: string[] = [];
+  private _edges: string[] = [];
+  private _subgraphBlocks: string[] = [];
+  private _seenEdges = new Set<string>();
+  private _nodeMap = new Map<string, Record<string, string>>();
+  private _edgeList: EdgeEntry[] = [];
+  private _standaloneNodeIds = new Set<string>();
+  private _emittedDiagnostics: Diagnostic[] = [];
+  private _applied = new Set<string>();
+  private _graphAttrs: Record<string, string> = {};
+  private _defenseMatrix: DefenseMatrix = {
+    competitive: false,
+    guardrails: [],
+    specDriven: 'NONE',
+    permissions: [],
+    adversarial: false,
+  };
+  private _independentPhases: PhaseSpec[] = [];
+  private _implPhases: PhaseSpec[] = [];
+  private _hasFanOut = false;
+  private _hasCompeting = false;
+  private _hasConvergence = false;
+  private _unionPaths = '';
+  private _unionEscalate = '';
+  private _verifyTypecheckKV: Record<string, string> = {};
+  private _verifyLintKV: Record<string, string> = {};
+  private _verifyTestsKV: Record<string, string> = {};
 
   static fromSpec(raw: unknown): DotBuilder {
     if (!isRecord(raw)) {
@@ -1234,175 +1262,179 @@ export class DotBuilder {
     return parts.join(' ');
   }
 
-  private _emitDot(): {
-    dot: string;
-    nodeMap: Map<string, Record<string, string>>;
-    edgeList: EdgeEntry[];
-    graphAttrs: Record<string, string>;
-    standaloneNodeIds: Set<string>;
-    patternsApplied: string[];
-    defenseMatrix: DefenseMatrix;
-    emittedDiagnostics: Diagnostic[];
-  } {
+  private _resetEmitState(): void {
+    this._nodes = [];
+    this._edges = [];
+    this._subgraphBlocks = [];
+    this._seenEdges = new Set<string>();
+    this._nodeMap = new Map<string, Record<string, string>>();
+    this._edgeList = [];
+    this._standaloneNodeIds = new Set<string>();
+    this._emittedDiagnostics = [];
+    this._applied = new Set<string>();
+    this._graphAttrs = {};
+    this._defenseMatrix = {
+      competitive: false,
+      guardrails: [],
+      specDriven: 'NONE',
+      permissions: [],
+      adversarial: false,
+    };
+    this._independentPhases = [];
+    this._implPhases = [];
+    this._hasFanOut = false;
+    this._hasCompeting = false;
+    this._hasConvergence = false;
+    this._unionPaths = '';
+    this._unionEscalate = '';
+    this._verifyTypecheckKV = {};
+    this._verifyLintKV = {};
+    this._verifyTestsKV = {};
+  }
+
+  private _initializeEmitContext(): void {
     const spec = this._spec;
     const phases = this._phases;
-    const graphId = sanitizeId(this._slug) || 'pipeline';
-    const applied = new Set<string>();
-
-    const independent = phases.filter(p => {
+    const hasRedTeam = phases.some(p => p.redTeam);
+    const hasBDD = phases.some(p => p.bddScenarios);
+    const hasSpecFile = Boolean(spec.specFile);
+    const hasSpecFirstAny = phases.some(p => p.specFirst === true || (p.goalGate && p.specFirst !== false));
+    this._independentPhases = phases.filter(p => {
       if (p.securityScan) return false;
       if (p.docOnly) return false;
       if (spec.workspace === 'isolated' && isCommitPushPhaseId(sanitizeId(p.name))) return false;
       return !p.dependsOn || p.dependsOn.length === 0;
     });
-    const isFanOut = independent.length >= 2 && !phases.some(p => p.competing);
-    const hasCompeting = phases.some(p => p.competing);
-    const hasRedTeam = phases.some(p => p.redTeam);
-    const hasBDD = phases.some(p => p.bddScenarios);
-    const hasConvergence = !!spec.convergence;
-    const hasSpecFile = Boolean(spec.specFile);
-    const hasSpecFirstAny = phases.some(p => p.specFirst === true || (p.goalGate && p.specFirst !== false));
+    this._hasFanOut = this._independentPhases.length >= 2 && !phases.some(p => p.competing);
+    this._hasCompeting = phases.some(p => p.competing);
+    this._hasConvergence = !!spec.convergence;
 
-    // Defense matrix
     let specDriven: DefenseMatrix['specDriven'] = 'NONE';
     if (hasBDD && hasSpecFile) specDriven = 'spec_file + BDD + conformance';
     else if (hasBDD) specDriven = 'BDD + conformance';
     else if (hasSpecFile) specDriven = 'spec_file + conformance';
     else if (hasSpecFirstAny) specDriven = 'conformance';
-    const defenseMatrix: DefenseMatrix = {
-      competitive: hasCompeting,
+    this._defenseMatrix = {
+      competitive: this._hasCompeting,
       guardrails: [],
       specDriven,
       permissions: [],
       adversarial: hasRedTeam,
     };
 
-    // Graph-level attrs
-    const graphAttrs: Record<string, string> = {
-      label: hasConvergence ? escapeAttr(this._slug) : escapeAttr(`${this._slug}: ${this._goal}`),
+    this._graphAttrs = {
+      label: this._hasConvergence ? escapeAttr(this._slug) : escapeAttr(`${this._slug}: ${this._goal}`),
       rankdir: 'LR',
       goal: escapeAttr(this._goal),
-      retry_target: hasConvergence ? 'converge' : 'fix_types',
+      retry_target: this._hasConvergence ? 'converge' : 'fix_types',
     };
-    if (spec.workingDir) {
-      graphAttrs['working_dir'] = escapeAttr(spec.workingDir);
-    }
-    if (spec.specFile) {
-      graphAttrs['spec_file'] = escapeAttr(spec.specFile);
-    }
-    if (spec.defaultMaxRetry) {
-      graphAttrs['default_max_retry'] = String(spec.defaultMaxRetry);
-    }
+    if (spec.workingDir) this._graphAttrs['working_dir'] = escapeAttr(spec.workingDir);
+    if (spec.specFile) this._graphAttrs['spec_file'] = escapeAttr(spec.specFile);
+    if (spec.defaultMaxRetry) this._graphAttrs['default_max_retry'] = String(spec.defaultMaxRetry);
     if (spec.workspace === 'isolated') {
-      graphAttrs['workspace'] = 'isolated';
-      applied.add('P0');
+      this._graphAttrs['workspace'] = 'isolated';
+      this._applied.add('P0');
     }
-    if (spec.modelStylesheet) {
-      graphAttrs['model_stylesheet'] = this._buildStylesheet(spec.modelStylesheet);
-    }
-    // GL-6: acceptance_criteria as context.K=V && context.K2=V2 (sorted).
-    // Convergence mode merges built-in {fp_pass, repro_pass} — built-ins win
-    // on collision. Shared helper guarantees parity with the grRule6 call.
+    if (spec.modelStylesheet) this._graphAttrs['model_stylesheet'] = this._buildStylesheet(spec.modelStylesheet);
+
     const mergedAc = this._mergedAcceptanceCriteria();
     const acKeys = Object.keys(mergedAc).sort();
     if (acKeys.length > 0) {
-      graphAttrs['acceptance_criteria'] = escapeAttr(
+      this._graphAttrs['acceptance_criteria'] = escapeAttr(
         acKeys.map(k => `context.${k}=${String(mergedAc[k])}`).join(' && ')
       );
     }
 
-    const nodes: string[] = [];
-    const edges: string[] = [];
-    const subgraphBlocks: string[] = [];
-    const seenEdges = new Set<string>();
-    const nodeMap = new Map<string, Record<string, string>>();
-    const edgeList: EdgeEntry[] = [];
-    const standaloneNodeIds = new Set<string>();
-    const emittedDiagnostics: Diagnostic[] = [];
-
-    const emit = (id: string, attrs: Record<string, string>): void => {
-      nodes.push(`  ${id} [${fmtAttrs(attrs)}]`);
-      nodeMap.set(id, { ...attrs });
-    };
-    const link = (from: string, to: string, attrs?: Record<string, string>): void => {
-      const edgeLine = (attrs && Object.keys(attrs).length > 0)
-        ? `  ${from} -> ${to} [${fmtAttrs(attrs)}]`
-        : `  ${from} -> ${to}`;
-      if (seenEdges.has(edgeLine)) return;
-      seenEdges.add(edgeLine);
-      edges.push(edgeLine);
-      if (attrs && Object.keys(attrs).length > 0) {
-        edgeList.push({ from, to, label: attrs['label'], attrs });
-      } else {
-        edgeList.push({ from, to });
-      }
-    };
-    const linkEdge = (from: string, to: string, attrs: Record<string, string>): void => {
-      const edgeLine = `  ${from} -> ${to} [${fmtAttrs(attrs)}]`;
-      if (seenEdges.has(edgeLine)) return;
-      seenEdges.add(edgeLine);
-      edges.push(edgeLine);
-      edgeList.push({ from, to, attrs });
-    };
-    const emitSubgraph = (clusterId: string, label: string, bodyEmitter: () => void): void => {
-      const prevNodesLen = nodes.length;
-      const prevEdgesLen = edges.length;
-      bodyEmitter();
-      const bodyNodes = nodes.splice(prevNodesLen);
-      const bodyEdges = edges.splice(prevEdgesLen);
-      subgraphBlocks.push(`  subgraph cluster_${clusterId} {`);
-      subgraphBlocks.push(`    label="${escapeAttr(label)}"`);
-      for (const n of bodyNodes) subgraphBlocks.push(`  ${n}`);
-      for (const e of bodyEdges) subgraphBlocks.push(`  ${e}`);
-      subgraphBlocks.push('  }');
-    };
-
-    // P0a: setup_deps
-    emit('start', { shape: 'Mdiamond' });
-    emit('setup_deps', {
+    this._emit('start', { shape: 'Mdiamond' });
+    this._emit('setup_deps', {
       label: 'setup_deps',
       shape: 'parallelogram',
       tool_command: 'cd ${WORKING_DIR} && npm install 2>&1 || pnpm install 2>&1 || yarn install 2>&1',
     });
-    applied.add('P0a');
-
-    // P0c: capture_baseline
-    emit('capture_baseline', {
+    this._applied.add('P0a');
+    this._emit('capture_baseline', {
       label: 'capture_baseline',
       read_only: 'true',
       shape: 'parallelogram',
       tool_command: "cd ${WORKING_DIR} && (npx tsc --noEmit 2>&1 | grep -c 'error TS' > /tmp/baseline_ts_errors.txt || echo 0 > /tmp/baseline_ts_errors.txt) && (npx eslint src/ 2>&1 | grep -c 'error' > /tmp/baseline_lint_errors.txt || echo 0 > /tmp/baseline_lint_errors.txt)",
     });
-    applied.add('P0c');
-    link('start', 'setup_deps');
-    link('setup_deps', 'capture_baseline');
+    this._applied.add('P0c');
+    this._link('start', 'setup_deps');
+    this._link('setup_deps', 'capture_baseline');
 
-    const implPhases = phases.filter(p => !p.securityScan && !p.docOnly);
+    this._implPhases = phases.filter(p => !p.securityScan && !p.docOnly);
     const allDependentPhases = phases.filter(p => !p.securityScan);
     const rawUnionPaths = [...new Set(allDependentPhases.flatMap(p => p.allowedPaths ?? []))];
-    const unionPaths = expandWithTestDirs(rawUnionPaths).join(',');
-    const unionEscalate = [...new Set(allDependentPhases.flatMap(p => p.escalateOn ?? []))].join(',');
+    this._unionPaths = expandWithTestDirs(rawUnionPaths).join(',');
+    this._unionEscalate = [...new Set(allDependentPhases.flatMap(p => p.escalateOn ?? []))].join(',');
 
-    // Tier 1 (explicit) + Tier 2 (auto) keys distributed across verify nodes
     const tier1Keys: Record<string, string> = {};
     for (const p of phases) {
       if (p.contextOnSuccess) {
-        for (const [k, v] of Object.entries(p.contextOnSuccess)) {
-          tier1Keys[k] = v;
-        }
+        for (const [k, v] of Object.entries(p.contextOnSuccess)) tier1Keys[k] = v;
       }
     }
-    // verify_typecheck gets types_compile; verify_lint gets lint_clean;
-    // verify_tests gets the rest (tests_pass, cli_contract, determinism, validation_rules) + tier1
-    const verifyTypecheckKV: Record<string, string> = { types_compile: 'true' };
-    const verifyLintKV: Record<string, string> = { lint_clean: 'true' };
-    const verifyTestsKV: Record<string, string> = {
+    this._verifyTypecheckKV = { types_compile: 'true' };
+    this._verifyLintKV = { lint_clean: 'true' };
+    this._verifyTestsKV = {
       cli_contract: 'true', determinism: 'true', tests_pass: 'true', validation_rules: 'true',
       ...tier1Keys,
     };
+  }
 
-    // Helper: emit the disaggregated endgame chain
-    const emitEndgameChain = (prevId: string, prevAttrs?: Record<string, string>): void => {
+  private _emit(node: NodeSpec): void;
+  private _emit(id: string, attrs: Record<string, string>): void;
+  private _emit(nodeOrId: NodeSpec | string, attrs?: Record<string, string>): void {
+    const node = typeof nodeOrId === 'string' ? { id: nodeOrId, attrs: attrs ?? {} } : nodeOrId;
+    this._nodes.push(`  ${node.id} [${fmtAttrs(node.attrs)}]`);
+    this._nodeMap.set(node.id, { ...node.attrs });
+  }
+
+  private _link(from: string, to: string): void;
+  private _link(from: string, to: string, attrs?: Record<string, string>): void;
+  private _link(from: string, to: string, attrs?: Record<string, string>): void {
+    const edgeLine = (attrs && Object.keys(attrs).length > 0)
+      ? `  ${from} -> ${to} [${fmtAttrs(attrs)}]`
+      : `  ${from} -> ${to}`;
+    if (this._seenEdges.has(edgeLine)) return;
+    this._seenEdges.add(edgeLine);
+    this._edges.push(edgeLine);
+    if (attrs && Object.keys(attrs).length > 0) this._edgeList.push({ from, to, label: attrs['label'], attrs });
+    else this._edgeList.push({ from, to });
+  }
+
+  private _linkEdge(from: string, to: string, attrs?: Record<string, string>): void {
+    this._link(from, to, attrs ?? {});
+  }
+
+  private _emitSubgraph(name: string, body: () => void): void;
+  private _emitSubgraph(clusterId: string, label: string, bodyEmitter: () => void): void;
+  private _emitSubgraph(clusterId: string, labelOrBody: string | (() => void), body?: () => void): void {
+    const label = typeof labelOrBody === 'string' ? labelOrBody : clusterId;
+    const bodyEmitter = typeof labelOrBody === 'function' ? labelOrBody : body;
+    if (!bodyEmitter) return;
+    const prevNodesLen = this._nodes.length;
+    const prevEdgesLen = this._edges.length;
+    bodyEmitter();
+    const bodyNodes = this._nodes.splice(prevNodesLen);
+    const bodyEdges = this._edges.splice(prevEdgesLen);
+    this._subgraphBlocks.push(`  subgraph cluster_${clusterId} {`);
+    this._subgraphBlocks.push(`    label="${escapeAttr(label)}"`);
+    for (const n of bodyNodes) this._subgraphBlocks.push(`  ${n}`);
+    for (const e of bodyEdges) this._subgraphBlocks.push(`  ${e}`);
+    this._subgraphBlocks.push('  }');
+  }
+
+  // eslint-disable-next-line max-lines-per-function
+  private _emitEndgameChain(prevId: string, prevAttrs?: Record<string, string>): void {
+    const spec = this._spec;
+    const unionPaths = this._unionPaths;
+    const unionEscalate = this._unionEscalate;
+    const verifyTypecheckKV = this._verifyTypecheckKV;
+    const verifyLintKV = this._verifyLintKV;
+    const verifyTestsKV = this._verifyTestsKV;
+    const emit = this._emit.bind(this);
+    const link = this._link.bind(this);
       // audit: diagnostic node, never fails (|| true on all commands)
       emit('audit', {
         label: 'audit',
@@ -1519,10 +1551,17 @@ export class DotBuilder {
       link('regression_check', 'quality_review', { condition: 'outcome=success', label: 'pass' });
       link('quality_review', 'exit', { condition: 'outcome=success', label: 'pass' });
       link('quality_review', 'fix_types', { condition: 'outcome=fail', label: 'fail' });
-    };
 
-    // Fan-out (Pattern 4)
-    if (isFanOut) {
+  }
+
+  private _emitFanOutTopology(): void {
+    const phases = this._phases;
+    const independent = this._independentPhases;
+    const applied = this._applied;
+    const nodes = this._nodes;
+    const emit = this._emit.bind(this);
+    const link = this._link.bind(this);
+    const emitEndgameChain = this._emitEndgameChain.bind(this);
       applied.add('P4');
       emit('split_phases', { label: 'split_phases', max_parallel: '1', shape: 'component' });
       applied.add('P0b');
@@ -1552,8 +1591,13 @@ export class DotBuilder {
       // P21: disaggregated verify/fix endgame chain
       applied.add('P21');
       emitEndgameChain(afterMerge);
+  }
 
-    } else if (hasCompeting) {
+  private _emitCompetingTopology(): void {
+    const phases = this._phases;
+    const applied = this._applied;
+    const emit = this._emit.bind(this);
+    const link = this._link.bind(this);
       // Competing implementations (Pattern 18)
       applied.add('P18');
       const cp = phases.find(p => p.competing)!;
@@ -1566,14 +1610,15 @@ export class DotBuilder {
       link(`${baseId}_a`, 'competing_merge');
       link(`${baseId}_b`, 'competing_merge');
       link('competing_merge', 'exit');
+  }
 
-    } else {
-      // Sequential execution
-      const hasAnyPhase = phases.length > 0;
-      let prevId = 'capture_baseline';
-      let prevAttrs: Record<string, string> | undefined = undefined;
-
-      if (hasConvergence) {
+  // eslint-disable-next-line max-lines-per-function
+  private _emitConvergenceTopology(): void {
+    const spec = this._spec;
+    const applied = this._applied;
+    const emit = this._emit.bind(this);
+    const link = this._link.bind(this);
+    const emitSubgraph = this._emitSubgraph.bind(this);
         // Convergence mode: v8 topology — 10-node body + fp/repro post-chain + done terminal.
         const cv = spec.convergence!;
         const fb = cv.fixBackend;
@@ -1602,7 +1647,7 @@ export class DotBuilder {
           timeout: cv.timeout ?? DEFAULT_CONVERGE_TIMEOUT,
           until: cv.until,
         });
-        link(prevId, 'converge', prevAttrs);
+        link('capture_baseline', 'converge');
 
         emitSubgraph('iter_body', 'iter-body', () => {
           emit('fix_backend', {
@@ -1745,9 +1790,33 @@ export class DotBuilder {
 
         applied.add('P32');
 
+  }
+
+  // eslint-disable-next-line max-lines-per-function
+  private _emitSequentialPhases(): void {
+    const spec = this._spec;
+    const phases = this._phases;
+    const applied = this._applied;
+    const nodes = this._nodes;
+    const nodeMap = this._nodeMap;
+    const implPhases = this._implPhases;
+    const emittedDiagnostics = this._emittedDiagnostics;
+    const defenseMatrix = this._defenseMatrix;
+    const hasConvergence = this._hasConvergence;
+    const emit = this._emit.bind(this);
+    const link = this._link.bind(this);
+    const emitEndgameChain = this._emitEndgameChain.bind(this);
+      // Sequential execution
+      const hasAnyPhase = phases.length > 0;
+      let prevId = 'capture_baseline';
+      let prevAttrs: Record<string, string> | undefined = undefined;
+
+      if (hasConvergence) {
+        this._emitConvergenceTopology();
         prevId = 'done';
         prevAttrs = {};
-      } // end hasConvergence
+      }
+
 
       for (let i = 0; i < phases.length && !hasConvergence; i++) {
         const p = phases[i];
@@ -2125,16 +2194,16 @@ export class DotBuilder {
       } else if (!hasConvergence) {
         link('capture_baseline', 'exit');
       }
-    }
+  }
 
-    // P25: Catastrophic recovery loop (suppressed by convergence — iterate has its own retry)
-    if (!isFanOut && !hasCompeting && implPhases.length > 0 && !hasConvergence) {
-      applied.add('P25');
-      linkEdge('regression_check', 'setup_deps', { loop_restart: 'true' });
-    }
-
-    // Microverse loop (Pattern 20)
-    if (spec.microverse) {
+  private _emitMicroverseLoop(): void {
+    const spec = this._spec;
+    const phases = this._phases;
+    const applied = this._applied;
+    const standaloneNodeIds = this._standaloneNodeIds;
+    const emit = this._emit.bind(this);
+    const link = this._link.bind(this);
+    if (!spec.microverse) return;
       applied.add('P20');
       const mv = spec.microverse;
       const mvOpts = mv.opts as unknown as MicroverseOptsType;
@@ -2165,10 +2234,15 @@ export class DotBuilder {
           standaloneNodeIds.add(mvId);
         }
       }
-    }
+  }
 
-    // Review ratchet (Pattern 19)
-    if (spec.reviewRatchet) {
+  private _emitReviewRatchet(): void {
+    const spec = this._spec;
+    const applied = this._applied;
+    const standaloneNodeIds = this._standaloneNodeIds;
+    const emit = this._emit.bind(this);
+    const link = this._link.bind(this);
+    if (!spec.reviewRatchet) return;
       applied.add('P19');
       const n = spec.reviewRatchet;
       for (let i = 1; i <= n; i++) {
@@ -2186,77 +2260,112 @@ export class DotBuilder {
       for (let ri = 1; ri <= n; ri++) standaloneNodeIds.add(`review_pass_${ri}`);
       standaloneNodeIds.add('review_merge');
       standaloneNodeIds.add('fix_review');
+  }
+
+  private _emitDot(): {
+    dot: string;
+    nodeMap: Map<string, Record<string, string>>;
+    edgeList: EdgeEntry[];
+    graphAttrs: Record<string, string>;
+    standaloneNodeIds: Set<string>;
+    patternsApplied: string[];
+    defenseMatrix: DefenseMatrix;
+    emittedDiagnostics: Diagnostic[];
+  } {
+    this._resetEmitState();
+    this._initializeEmitContext();
+
+    if (this._hasFanOut) this._emitFanOutTopology();
+    else if (this._hasCompeting) this._emitCompetingTopology();
+    else this._emitSequentialPhases();
+
+    // P25: Catastrophic recovery loop (suppressed by convergence — iterate has its own retry)
+    if (!this._hasFanOut && !this._hasCompeting && this._implPhases.length > 0 && !this._hasConvergence) {
+      this._applied.add('P25');
+      this._linkEdge('regression_check', 'setup_deps', { loop_restart: 'true' });
     }
 
+    this._emitMicroverseLoop();
+    this._emitReviewRatchet();
+
     // P0: Auto-inject commit_and_push for isolated workspace if missing
-    if (spec.workspace === 'isolated') {
-      const hasExplicitPush = [...nodeMap.keys()].some(isCommitPushPhaseId);
+    if (this._spec.workspace === 'isolated') {
+      const hasExplicitPush = [...this._nodeMap.keys()].some(isCommitPushPhaseId);
       if (!hasExplicitPush) {
         const slug = this._slug;
-        emit('commit_and_push', {
+        this._emit('commit_and_push', {
           label: 'commit_and_push',
           shape: 'parallelogram',
           timeout: DEFAULT_COMMIT_PUSH_TIMEOUT,
           tool_command: `cd \${WORKING_DIR} && BRANCH="attractor/${slug}-$(echo $ATTRACTOR_RUN_ID | cut -c1-8)" && git checkout -B "$BRANCH" && git add -A && git -c user.name=attractor -c user.email=attractor@local commit -m "feat: ${slug} — attractor pipeline output" --allow-empty && git push origin "$BRANCH" --force 2>&1 && echo "Pushed branch: $BRANCH"`,
         });
         // Rewire: inject commit_and_push into the terminal chain
-        if (hasConvergence) {
+        if (this._hasConvergence) {
           // v8: anchor on repro_verify -> done [condition="outcome=success"]
-          const rpToDone = edges.findIndex(e =>
+          const rpToDone = this._edges.findIndex(e =>
             e.includes('repro_verify -> done') && e.includes('outcome=success')
           );
           if (rpToDone !== -1) {
-            const removedEdgeStr = edges[rpToDone];
-            edges.splice(rpToDone, 1);
-            const removedEdge = edgeList.findIndex(e => e.from === 'repro_verify' && e.to === 'done');
-            if (removedEdge !== -1) edgeList.splice(removedEdge, 1);
-            seenEdges.delete(removedEdgeStr);
+            const removedEdgeStr = this._edges[rpToDone];
+            this._edges.splice(rpToDone, 1);
+            const removedEdge = this._edgeList.findIndex(e => e.from === 'repro_verify' && e.to === 'done');
+            if (removedEdge !== -1) this._edgeList.splice(removedEdge, 1);
+            this._seenEdges.delete(removedEdgeStr);
           }
-          link('repro_verify', 'commit_and_push', { condition: 'outcome=success', label: 'pass' });
-          link('commit_and_push', 'done', { condition: 'outcome=success', label: 'pass' });
+          this._link('repro_verify', 'commit_and_push', { condition: 'outcome=success', label: 'pass' });
+          this._link('commit_and_push', 'done', { condition: 'outcome=success', label: 'pass' });
         } else {
           // non-convergence: anchor on quality_review -> exit
-          const qrToExit = edges.findIndex(e => e.includes('quality_review -> exit'));
+          const qrToExit = this._edges.findIndex(e => e.includes('quality_review -> exit'));
           if (qrToExit !== -1) {
-            const removedEdgeStr = edges[qrToExit];
-            edges.splice(qrToExit, 1);
-            const removedEdge = edgeList.findIndex(e => e.from === 'quality_review' && e.to === 'exit');
-            if (removedEdge !== -1) edgeList.splice(removedEdge, 1);
-            seenEdges.delete(removedEdgeStr);
+            const removedEdgeStr = this._edges[qrToExit];
+            this._edges.splice(qrToExit, 1);
+            const removedEdge = this._edgeList.findIndex(e => e.from === 'quality_review' && e.to === 'exit');
+            if (removedEdge !== -1) this._edgeList.splice(removedEdge, 1);
+            this._seenEdges.delete(removedEdgeStr);
           }
-          link('quality_review', 'commit_and_push', { condition: 'outcome=success', label: 'pass' });
-          link('commit_and_push', 'exit');
+          this._link('quality_review', 'commit_and_push', { condition: 'outcome=success', label: 'pass' });
+          this._link('commit_and_push', 'exit');
         }
-        applied.add('P0');
+        this._applied.add('P0');
       }
     }
 
     // Emit exit terminal (suppressed in convergence mode — done is the sole Msquare terminal)
-    if (!hasConvergence) {
-      emit('exit', { label: 'exit', shape: 'Msquare' });
-    }
+    if (!this._hasConvergence) this._emit('exit', { label: 'exit', shape: 'Msquare' });
 
     // P23: defense matrix comment block
     const guardPatterns = ['P0c', 'P6b', 'P10', 'P13', 'P14', 'P15', 'P17', 'P25'];
-    defenseMatrix.guardrails = guardPatterns.filter(pg => applied.has(pg));
-    applied.add('P23');
+    this._defenseMatrix.guardrails = guardPatterns.filter(pg => this._applied.has(pg));
+    this._applied.add('P23');
 
+    const graphId = sanitizeId(this._slug) || 'pipeline';
     const lines = [
       `digraph "${graphId}" {`,
-      `  graph [${fmtAttrs(graphAttrs)}]`,
-      ...subgraphBlocks,
+      `  graph [${fmtAttrs(this._graphAttrs)}]`,
+      ...this._subgraphBlocks,
       `  /* DEFENSE MATRIX`,
-      `   * competitive: ${defenseMatrix.competitive}`,
-      `   * adversarial: ${defenseMatrix.adversarial}`,
-      `   * specDriven: ${defenseMatrix.specDriven}`,
-      `   * guardrails: ${defenseMatrix.guardrails.length > 0 ? defenseMatrix.guardrails.join(', ') : 'none'}`,
-      `   * permissions: ${defenseMatrix.permissions.length > 0 ? defenseMatrix.permissions.join(', ') : 'none'}`,
+      `   * competitive: ${this._defenseMatrix.competitive}`,
+      `   * adversarial: ${this._defenseMatrix.adversarial}`,
+      `   * specDriven: ${this._defenseMatrix.specDriven}`,
+      `   * guardrails: ${this._defenseMatrix.guardrails.length > 0 ? this._defenseMatrix.guardrails.join(', ') : 'none'}`,
+      `   * permissions: ${this._defenseMatrix.permissions.length > 0 ? this._defenseMatrix.permissions.join(', ') : 'none'}`,
       `   */`,
-      ...nodes,
-      ...edges,
+      ...this._nodes,
+      ...this._edges,
       '}',
     ];
 
-    return { dot: lines.join('\n'), nodeMap, edgeList, graphAttrs, standaloneNodeIds, patternsApplied: [...applied], defenseMatrix, emittedDiagnostics };
+    return {
+      dot: lines.join('\n'),
+      nodeMap: this._nodeMap,
+      edgeList: this._edgeList,
+      graphAttrs: this._graphAttrs,
+      standaloneNodeIds: this._standaloneNodeIds,
+      patternsApplied: [...this._applied],
+      defenseMatrix: this._defenseMatrix,
+      emittedDiagnostics: this._emittedDiagnostics,
+    };
   }
+
 }
