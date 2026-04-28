@@ -10,6 +10,7 @@ import {
   getDataRoot,
   safeErrorMessage,
 } from '../services/pickle-utils.js';
+import { StateManager } from '../services/state-manager.js';
 import { buildWorkerInvocation, SpawnInvocation } from '../services/backend-spawn.js';
 import { Backend, PromiseTokens, hasToken, Defaults } from '../types/index.js';
 
@@ -17,6 +18,7 @@ import { Backend, PromiseTokens, hasToken, Defaults } from '../types/index.js';
 // implementation loops only — if the parent session opted into codex, we
 // still force claude here so analysis stays on the Claude model family.
 const REFINEMENT_BACKEND: Backend = 'claude';
+const sm = new StateManager();
 
 // Emit the codex-override warning at most once per process.
 let _codexOverrideWarned = false;
@@ -461,8 +463,7 @@ async function main() {
   // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   if (fs.existsSync(statePath)) {
     try {
-      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-      const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      const state = sm.read(statePath);
       stateBackend = state.backend;
       if (timeoutIndex === -1) {
         const stateTimeout = Number(state.worker_timeout_seconds);

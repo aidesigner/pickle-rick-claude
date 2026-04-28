@@ -249,6 +249,51 @@ test('spawn-refinement-team: reads worker_timeout_seconds from state.json', () =
     }
 });
 
+test('spawn-refinement-team: recovers orphan tmp state before reading timeout and backend preference', () => {
+    const tmp = makeTmpDir();
+    try {
+        const prd = path.join(tmp, 'prd.md');
+        fs.writeFileSync(prd, '# PRD\nContent');
+        const statePath = path.join(tmp, 'state.json');
+        fs.writeFileSync(statePath, JSON.stringify({
+            worker_timeout_seconds: 300,
+            backend: 'claude',
+            iteration: 1,
+            schema_version: 1,
+            active: true,
+        }));
+        fs.writeFileSync(`${statePath}.tmp.424242`, JSON.stringify({
+            worker_timeout_seconds: 45,
+            backend: 'codex',
+            iteration: 2,
+            schema_version: 1,
+            active: true,
+        }));
+        const fakeBin = makeTmpDir('fake-bin-');
+        fs.writeFileSync(path.join(fakeBin, 'claude'), '#!/bin/sh\nexit 1\n');
+        fs.chmodSync(path.join(fakeBin, 'claude'), 0o755);
+
+        const result = run(
+            ['--prd', prd, '--session-dir', tmp, '--cycles', '1'],
+            { PATH: `${fakeBin}:${process.env.PATH}`, PICKLE_BACKEND: '' }
+        );
+        const combined = result.stdout + result.stderr;
+        assert.ok(combined.includes('45s each'), `Panel should use recovered timeout, got: ${combined.slice(0, 500)}`);
+        assert.ok(
+            combined.includes('PRD refinement forces backend=claude'),
+            `Recovered codex backend should trigger downgrade warning, got: ${combined.slice(0, 500)}`
+        );
+
+        const promoted = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(promoted.worker_timeout_seconds, 45, 'higher-iteration tmp should be promoted before timeout selection');
+        assert.equal(promoted.backend, 'codex', 'higher-iteration tmp should be promoted before backend warning selection');
+        assert.equal(fs.existsSync(`${statePath}.tmp.424242`), false, 'orphan tmp should be consumed during recovery');
+        fs.rmSync(fakeBin, { recursive: true, force: true });
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
 test('spawn-refinement-team: --timeout flag overrides state.json', () => {
     const tmp = makeTmpDir();
     try {
