@@ -970,6 +970,78 @@ interface InternalSpec {
   convergence?: ConvergenceSpecType;
 }
 
+type ConvergenceSpec = ConvergenceSpecType;
+type ConvergenceRecordKey = 'fixBackend' | 'fixFrontend' | 'mechanicalGates' | 'reviewers' | 'adversary' | 'fpVerify' | 'reproVerify';
+type ConvergenceNumberKey = 'maxVisits' | 'convergenceEpsilon' | 'maxIterations';
+type ConvergenceStringKey = 'timeout' | 'sealedFromSource';
+
+export function _parsePhases(raw: unknown): PhaseSpec[] {
+  if (!Array.isArray(raw)) {
+    throw new BuildError('INVALID_SPEC', 'spec.phases must be an array');
+  }
+  return raw.map((p) => {
+    if (!isRecord(p) || typeof p['name'] !== 'string') {
+      throw new BuildError('INVALID_SPEC', 'each phase must be an object with a string "name" field');
+    }
+    return p as unknown as PhaseSpec;
+  });
+}
+
+function recordOrEmpty(raw: unknown): Record<string, unknown> {
+  return isRecord(raw) ? raw : {};
+}
+
+function copyConvergenceRecord(out: ConvergenceSpec, cv: Record<string, unknown>, key: ConvergenceRecordKey): void {
+  if (isRecord(cv[key])) {
+    (out as Record<ConvergenceRecordKey, unknown>)[key] = cv[key];
+  }
+}
+
+function copyConvergenceNumber(out: ConvergenceSpec, cv: Record<string, unknown>, key: ConvergenceNumberKey): void {
+  if (typeof cv[key] === 'number') {
+    (out as Record<ConvergenceNumberKey, unknown>)[key] = cv[key];
+  }
+}
+
+function copyConvergenceString(out: ConvergenceSpec, cv: Record<string, unknown>, key: ConvergenceStringKey): void {
+  if (typeof cv[key] === 'string') {
+    (out as Record<ConvergenceStringKey, unknown>)[key] = cv[key];
+  }
+}
+
+export function _parseConvergenceSpec(raw: unknown): ConvergenceSpec | null {
+  if (!isRecord(raw)) return null;
+  const cv = raw;
+  const impl = recordOrEmpty(cv['impl']);
+  const out: ConvergenceSpec = {
+    until: cv['until'] as ConvergenceSpec['until'],
+    impl: {
+      harness: (impl['harness'] as ConvergenceSpec['impl']['harness']) || 'claude-code',
+      prompt: (impl['prompt'] as string) || '',
+    },
+  };
+  (['timeout', 'sealedFromSource'] as const).forEach(key => copyConvergenceString(out, cv, key));
+  (['fixBackend', 'fixFrontend', 'mechanicalGates', 'reviewers', 'adversary', 'fpVerify', 'reproVerify'] as const)
+    .forEach(key => copyConvergenceRecord(out, cv, key));
+  (['maxVisits', 'convergenceEpsilon', 'maxIterations'] as const).forEach(key => copyConvergenceNumber(out, cv, key));
+  return out;
+}
+
+function applySpecConfig(builder: DotBuilder, spec: Record<string, unknown>): void {
+  if (spec['workspace'] === 'isolated') {
+    builder.workspace(isRecord(spec['workspaceOpts']) ? spec['workspaceOpts'] as unknown as WorkspaceOptsType : undefined);
+  }
+  if (isRecord(spec['microverse'])) {
+    const mv = spec['microverse'] as Record<string, unknown>;
+    if (typeof mv['name'] === 'string' && isRecord(mv['opts'])) builder.microverse(mv['name'], mv['opts']);
+  }
+  if (typeof spec['reviewRatchet'] === 'number') builder.reviewRatchet(spec['reviewRatchet']);
+  if (isRecord(spec['modelStylesheet'])) builder.modelStylesheet(spec['modelStylesheet']);
+  if (isRecord(spec['endgame'])) builder.endgame(spec['endgame'] as { broadPass?: boolean });
+  const convergence = _parseConvergenceSpec(spec['convergence']);
+  if (convergence) builder.convergence(convergence);
+}
+
 export class DotBuilder {
   private _slug: string;
   private _goal: string;
@@ -1010,9 +1082,7 @@ export class DotBuilder {
       throw new BuildError('INVALID_SPEC', 'spec must be a non-null object');
     }
     const spec = raw;
-    if (!Array.isArray(spec['phases'])) {
-      throw new BuildError('INVALID_SPEC', 'spec.phases must be an array');
-    }
+    const phases = _parsePhases(spec['phases']);
     const base: InternalSpec = {
       slug: spec['slug'] as string,
       goal: spec['goal'] as string,
@@ -1024,54 +1094,8 @@ export class DotBuilder {
       specFile: typeof spec['specFile'] === 'string' ? spec['specFile'] : undefined,
     };
     const builder = new DotBuilder(base);
-    for (const p of spec['phases'] as unknown[]) {
-      if (!isRecord(p) || typeof p['name'] !== 'string') {
-        throw new BuildError('INVALID_SPEC', 'each phase must be an object with a string "name" field');
-      }
-      builder.phase(p as unknown as PhaseSpec);
-    }
-    if (spec['workspace'] === 'isolated') {
-      builder.workspace(isRecord(spec['workspaceOpts']) ? spec['workspaceOpts'] as unknown as WorkspaceOptsType : undefined);
-    }
-    if (isRecord(spec['microverse'])) {
-      const mv = spec['microverse'] as Record<string, unknown>;
-      if (typeof mv['name'] === 'string' && isRecord(mv['opts'])) {
-        builder.microverse(mv['name'], mv['opts']);
-      }
-    }
-    if (typeof spec['reviewRatchet'] === 'number') {
-      builder.reviewRatchet(spec['reviewRatchet']);
-    }
-    if (isRecord(spec['modelStylesheet'])) {
-      builder.modelStylesheet(spec['modelStylesheet']);
-    }
-    if (isRecord(spec['endgame'])) {
-      builder.endgame(spec['endgame'] as { broadPass?: boolean });
-    }
-    if (isRecord(spec['convergence'])) {
-      const cv = spec['convergence'] as Record<string, unknown>;
-      const impl = isRecord(cv['impl']) ? cv['impl'] as Record<string, unknown> : {};
-      const out: ConvergenceSpecType = {
-        until: cv['until'] as ConvergenceSpecType['until'],
-        impl: {
-          harness: (impl['harness'] as ConvergenceSpecType['impl']['harness']) || 'claude-code',
-          prompt: (impl['prompt'] as string) || '',
-        },
-      };
-      if (typeof cv['maxVisits'] === 'number') out.maxVisits = cv['maxVisits'];
-      if (typeof cv['timeout'] === 'string') out.timeout = cv['timeout'];
-      if (typeof cv['sealedFromSource'] === 'string') out.sealedFromSource = cv['sealedFromSource'];
-      if (isRecord(cv['fixBackend'])) out.fixBackend = cv['fixBackend'] as ConvergenceSpecType['fixBackend'];
-      if (isRecord(cv['fixFrontend'])) out.fixFrontend = cv['fixFrontend'] as ConvergenceSpecType['fixFrontend'];
-      if (isRecord(cv['mechanicalGates'])) out.mechanicalGates = cv['mechanicalGates'] as ConvergenceSpecType['mechanicalGates'];
-      if (isRecord(cv['reviewers'])) out.reviewers = cv['reviewers'] as ConvergenceSpecType['reviewers'];
-      if (isRecord(cv['adversary'])) out.adversary = cv['adversary'] as ConvergenceSpecType['adversary'];
-      if (isRecord(cv['fpVerify'])) out.fpVerify = cv['fpVerify'] as ConvergenceSpecType['fpVerify'];
-      if (isRecord(cv['reproVerify'])) out.reproVerify = cv['reproVerify'] as ConvergenceSpecType['reproVerify'];
-      if (typeof cv['convergenceEpsilon'] === 'number') out.convergenceEpsilon = cv['convergenceEpsilon'];
-      if (typeof cv['maxIterations'] === 'number') out.maxIterations = cv['maxIterations'];
-      builder.convergence(out);
-    }
+    for (const p of phases) builder.phase(p);
+    applySpecConfig(builder, spec);
     return builder;
   }
 
