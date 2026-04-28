@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { collectTickets, statusSymbol, formatTime, getWidth, getHeight, Style, sleep, MatrixStyle, matrixSeparator, latestIterationLog, safeErrorMessage, TicketInfo } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
+import { readMicroverseState } from '../services/microverse-state.js';
 import { State, MicroverseSessionState } from '../types/index.js';
 
 type PipelineLifecycleStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'unknown' | 'none';
@@ -369,9 +370,8 @@ function render(sessionDir: string): boolean {
 
   // Microverse convergence trend (szechuan-sauce, pickle-microverse, etc.)
   try {
-    const mvRaw = fs.readFileSync(path.join(sessionDir, 'microverse.json'), 'utf-8');
-    const mv = JSON.parse(mvRaw) as MicroverseSessionState;
-    if (mv.convergence?.history) {
+    const mv = readMicroverseState(sessionDir);
+    if (mv?.convergence?.history) {
       out.push(...renderMicroverseTrend(mv, width));
     }
   } catch {

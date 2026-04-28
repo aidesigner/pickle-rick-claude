@@ -533,3 +533,51 @@ test('monitor CLI exits after orphan tmp recovery promotes an inactive higher-it
         fs.rmSync(dir, { recursive: true, force: true });
     }
 });
+
+test('monitor CLI promotes dead writer microverse tmp before rendering trend', () => {
+    const dir = tmpDir();
+    try {
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({
+            active: false,
+            iteration: 2,
+            step: 'review',
+            original_prompt: 'render microverse trend',
+            working_dir: '/tmp/recovered-state',
+            pid: 999999,
+        }));
+
+        const stale = makeMicroverseState({
+            convergence: {
+                stall_limit: 5,
+                stall_counter: 0,
+                history: [
+                    { iteration: 1, metric_value: '9', score: 9, action: 'accept', description: 'stale', pre_iteration_sha: 'a', timestamp: new Date().toISOString() },
+                ],
+            },
+        });
+        const recovered = makeMicroverseState({
+            convergence: {
+                stall_limit: 5,
+                stall_counter: 2,
+                history: [
+                    { iteration: 1, metric_value: '9', score: 9, action: 'accept', description: 'stale', pre_iteration_sha: 'a', timestamp: new Date().toISOString() },
+                    { iteration: 2, metric_value: '4', score: 4, action: 'accept', description: 'recovered', pre_iteration_sha: 'b', timestamp: new Date().toISOString() },
+                ],
+            },
+        });
+        fs.writeFileSync(path.join(dir, 'microverse.json'), JSON.stringify(stale, null, 2));
+        fs.writeFileSync(path.join(dir, 'microverse.json.tmp.999999'), JSON.stringify(recovered, null, 2));
+        const future = new Date(Date.now() + 1000);
+        fs.utimesSync(path.join(dir, 'microverse.json.tmp.999999'), future, future);
+
+        const result = run([dir]);
+        assert.equal(result.status, 0, `expected clean exit, got status=${result.status}, stderr=${result.stderr}`);
+        assert.match(result.stdout, /2:4/, `expected recovered microverse score in monitor output, got: ${result.stdout}`);
+        assert.match(result.stdout, /Stall: 2\/5/, `expected recovered stall counter in monitor output, got: ${result.stdout}`);
+        assert.equal(fs.existsSync(path.join(dir, 'microverse.json.tmp.999999')), false);
+        const persisted = JSON.parse(fs.readFileSync(path.join(dir, 'microverse.json'), 'utf-8'));
+        assert.equal(persisted.convergence.history.length, 2);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});

@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { collectTickets, statusSymbol, formatTime, getWidth, getHeight, Style, sleep, MatrixStyle, matrixSeparator, latestIterationLog, safeErrorMessage } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
+import { readMicroverseState } from '../services/microverse-state.js';
 const sm = new StateManager();
 /**
  * Extracts a short readable summary from a stream-json log line.
@@ -343,9 +344,8 @@ function render(sessionDir) {
     }
     // Microverse convergence trend (szechuan-sauce, pickle-microverse, etc.)
     try {
-        const mvRaw = fs.readFileSync(path.join(sessionDir, 'microverse.json'), 'utf-8');
-        const mv = JSON.parse(mvRaw);
-        if (mv.convergence?.history) {
+        const mv = readMicroverseState(sessionDir);
+        if (mv?.convergence?.history) {
             out.push(...renderMicroverseTrend(mv, width));
         }
     }
