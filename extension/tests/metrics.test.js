@@ -290,6 +290,57 @@ test('scanSessionFiles: cache hit returns same data', () => {
     }
 });
 
+test('scanSessionFiles: timezone-mismatched cache is rebuilt from source JSONL', () => {
+    const { root, cacheFile } = makeTempProjectsDir();
+    try {
+        const timestamp = '2026-02-28T12:00:00Z';
+        writeSessionLine(root, 'tz-proj', 'sess.jsonl', makeAssistantLine(timestamp, 100, 200));
+
+        const sessionFile = path.join(root, 'tz-proj', 'sess.jsonl');
+        const stat = fs.statSync(sessionFile);
+        const actualDate = toLocalDateStr(new Date(timestamp));
+        const staleDate = actualDate === '2026-02-28' ? '2026-02-27' : '2026-02-28';
+        const currentTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown';
+
+        fs.writeFileSync(cacheFile, JSON.stringify({
+            version: 2,
+            time_zone: '__stale_timezone__',
+            files: {
+                [sessionFile]: {
+                    mtime: stat.mtimeMs,
+                    size: stat.size,
+                    data: {
+                        [staleDate]: {
+                            turns: 9,
+                            input: 999,
+                            output: 999,
+                            cache_read: 0,
+                            cache_create: 0,
+                        },
+                    },
+                },
+            },
+        }));
+
+        const result = scanSessionFiles(root, actualDate, actualDate, cacheFile);
+        const dateMap = result.get('tz-proj');
+        assert.ok(dateMap);
+        assert.ok(dateMap.has(actualDate));
+        assert.ok(!dateMap.has(staleDate));
+        const tokens = dateMap.get(actualDate);
+        assert.equal(tokens.turns, 1);
+        assert.equal(tokens.input, 100);
+        assert.equal(tokens.output, 200);
+
+        const cache = JSON.parse(fs.readFileSync(cacheFile, 'utf-8'));
+        assert.equal(cache.time_zone, currentTimeZone);
+        assert.equal(cache.files[sessionFile].data[actualDate].input, 100);
+        assert.ok(!(staleDate in cache.files[sessionFile].data));
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
 test('scanSessionFiles: date range filtering', () => {
     const { root, cacheFile } = makeTempProjectsDir();
     try {

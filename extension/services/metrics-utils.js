@@ -56,7 +56,13 @@ export function parseSessionLine(line) {
 // Session File Scanner with Incremental Cache
 // ---------------------------------------------------------------------------
 const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB guard
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2;
+function getMetricsTimeZone() {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown';
+}
+function emptyCache() {
+    return { version: CACHE_VERSION, time_zone: getMetricsTimeZone(), files: {} };
+}
 function emptyDailyTokens() {
     return { turns: 0, input: 0, output: 0, cache_read: 0, cache_create: 0 };
 }
@@ -89,11 +95,13 @@ function loadCache(cachePath) {
         const raw = fs.readFileSync(cachePath, 'utf-8');
         const parsed = JSON.parse(raw);
         if (parsed.version !== CACHE_VERSION)
-            return { version: CACHE_VERSION, files: {} };
+            return emptyCache();
+        if (parsed.time_zone !== getMetricsTimeZone())
+            return emptyCache();
         return parsed;
     }
     catch {
-        return { version: CACHE_VERSION, files: {} };
+        return emptyCache();
     }
 }
 function saveCache(cachePath, cache) {

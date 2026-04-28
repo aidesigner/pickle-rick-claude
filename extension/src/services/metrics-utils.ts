@@ -57,6 +57,7 @@ export interface MetricsReport {
 
 export interface MetricsCache {
   version: number;
+  time_zone: string;
   files: Record<string, { mtime: number; size: number; data: Record<string, DailyTokens> }>;
 }
 
@@ -121,7 +122,15 @@ export function parseSessionLine(line: string): ParsedLine | null {
 // ---------------------------------------------------------------------------
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB guard
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2;
+
+function getMetricsTimeZone(): string {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown';
+}
+
+function emptyCache(): MetricsCache {
+  return { version: CACHE_VERSION, time_zone: getMetricsTimeZone(), files: {} };
+}
 
 function emptyDailyTokens(): DailyTokens {
   return { turns: 0, input: 0, output: 0, cache_read: 0, cache_create: 0 };
@@ -154,10 +163,11 @@ function loadCache(cachePath: string): MetricsCache {
   try {
     const raw = fs.readFileSync(cachePath, 'utf-8');
     const parsed = JSON.parse(raw) as MetricsCache;
-    if (parsed.version !== CACHE_VERSION) return { version: CACHE_VERSION, files: {} };
+    if (parsed.version !== CACHE_VERSION) return emptyCache();
+    if (parsed.time_zone !== getMetricsTimeZone()) return emptyCache();
     return parsed;
   } catch {
-    return { version: CACHE_VERSION, files: {} };
+    return emptyCache();
   }
 }
 
