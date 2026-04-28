@@ -127,14 +127,14 @@ export function detectProjectType(workingDir) {
         return 'yarn';
     if (has('package-lock.json'))
         return 'npm';
+    if (has('bun.lockb'))
+        return 'bun';
     if (has('package.json'))
         return 'npm';
     if (has('Cargo.toml'))
         return 'cargo';
     if (has('go.mod'))
         return 'go';
-    if (has('bun.lockb'))
-        return 'bun';
     return null;
 }
 function parsePnpmWorkspaceYaml(content) {

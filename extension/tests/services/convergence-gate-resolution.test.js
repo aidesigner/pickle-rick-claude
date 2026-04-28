@@ -99,3 +99,38 @@ test('runGate: bun project emits gate_skipped with project_type_low_confidence',
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('runGate: bun.lockb wins over package.json so bun repos do not false-green as npm', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-bun-pkg-'));
+  try {
+    const events = [];
+    fs.writeFileSync(
+      path.join(dir, 'package.json'),
+      JSON.stringify({
+        name: 'bun-project',
+        private: true,
+        scripts: { test: 'bun test' },
+      }, null, 2),
+    );
+    fs.writeFileSync(path.join(dir, 'bun.lockb'), '');
+
+    assert.equal(detectProjectType(dir), 'bun');
+
+    const result = await runGate({
+      workingDir: dir,
+      mode: 'strict',
+      scope: 'full',
+      checks: ['tests'],
+      onEvent: (event, data) => events.push({ event, data }),
+    });
+
+    assert.equal(result.status, 'green');
+    assert.deepEqual(result.failures, []);
+    const skipped = events.find(e => e.event === 'gate_skipped');
+    assert.ok(skipped, 'gate_skipped event must be emitted');
+    assert.equal(skipped.data.reason, 'project_type_low_confidence');
+    assert.deepEqual(skipped.data.detected_signals, ['bun']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
