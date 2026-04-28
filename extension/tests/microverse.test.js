@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { execSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { execSync, spawnSync } from 'node:child_process';
 import { getHeadSha, isWorkingTreeDirty } from '../services/git-utils.js';
 import { runIteration } from '../bin/mux-runner.js';
 import {
@@ -373,6 +374,11 @@ import { writeStateFile } from '../services/pickle-utils.js';
 import { resolveBackend } from '../services/backend-spawn.js';
 import { LockError } from '../types/index.js';
 
+const MICROVERSE_RUNNER_BIN = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../bin/microverse-runner.js',
+);
+
 function createSessionDir(workingDir, mvOverrides = {}) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mv-session-'));
     const state = {
@@ -481,6 +487,42 @@ test('deactivateRunnerState preserves session fields when lock-backed update fai
         assert.equal(recovered.current_ticket, 'T-7');
         assert.equal(recovered.backend, 'codex');
         assert.equal(recovered.command_template, 'microverse.md');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('microverse-runner fatal path promotes newer microverse tmp before marking stopped', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mv-fatal-'));
+    const mvPath = path.join(dir, 'microverse.json');
+    const tmpPath = `${mvPath}.tmp.99999999`;
+    try {
+        fs.writeFileSync(path.join(dir, 'state.json'), '{ not json');
+        fs.writeFileSync(mvPath, JSON.stringify({
+            status: 'iterating',
+            iteration_regressions: 0,
+            convergence: { history: [] },
+        }, null, 2));
+        fs.writeFileSync(tmpPath, JSON.stringify({
+            status: 'iterating',
+            iteration_regressions: 3,
+            convergence: { history: [{ iteration: 11, action: 'held' }] },
+        }, null, 2));
+        const future = new Date(Date.now() + 1000);
+        fs.utimesSync(tmpPath, future, future);
+
+        const result = spawnSync(process.execPath, [MICROVERSE_RUNNER_BIN, dir], {
+            encoding: 'utf-8',
+            timeout: 10_000,
+        });
+
+        assert.equal(result.status, 1, `runner should fail startup on corrupt state: ${result.stderr}`);
+        const recovered = JSON.parse(fs.readFileSync(mvPath, 'utf-8'));
+        assert.equal(recovered.status, 'stopped');
+        assert.equal(recovered.exit_reason, 'error');
+        assert.equal(recovered.iteration_regressions, 3, 'fatal cleanup preserves recovered regression counters');
+        assert.deepEqual(recovered.convergence.history, [{ iteration: 11, action: 'held' }]);
+        assert.equal(fs.existsSync(tmpPath), false, 'fatal cleanup consumes the promoted tmp snapshot');
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
