@@ -960,6 +960,7 @@ export function pruneOldSessions(sessionsRoot, maxAgeDays = 7) {
     if (!fs.existsSync(sessionsRoot))
         return;
     const cutoffMs = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+    const maxTrustedFutureMs = Date.now() + MAX_FUTURE_RECENCY_DRIFT_MS;
     const sm = new StateManager();
     for (const entry of fs.readdirSync(sessionsRoot)) {
         const sessionDir = path.join(sessionsRoot, entry);
@@ -974,7 +975,7 @@ export function pruneOldSessions(sessionsRoot, maxAgeDays = 7) {
             const rawMs = state.started_at
                 ? new Date(state.started_at).getTime()
                 : NaN;
-            const startedMs = Number.isFinite(rawMs)
+            const startedMs = Number.isFinite(rawMs) && rawMs <= maxTrustedFutureMs
                 ? rawMs
                 : sessionDirMtimeMs;
             if (startedMs < cutoffMs) {

@@ -473,6 +473,47 @@ test('setup: prunes dead-pid stale sessions before creating a new session', () =
     }
 });
 
+test('setup: prunes future-dated stale inactive sessions before creating a new session', () => {
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-future-stale-data-'));
+    const staleSessionDir = path.join(dataRoot, 'sessions', 'future-stale-session');
+    fs.mkdirSync(staleSessionDir, { recursive: true });
+    const statePath = path.join(staleSessionDir, 'state.json');
+    fs.writeFileSync(
+        statePath,
+        JSON.stringify({
+            active: false,
+            started_at: '2099-12-31T23:59:59.000Z',
+            working_dir: path.join(dataRoot, 'old-repo'),
+            session_dir: staleSessionDir,
+        }, null, 2)
+    );
+    const oldTime = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    fs.utimesSync(staleSessionDir, oldTime, oldTime);
+    fs.utimesSync(statePath, oldTime, oldTime);
+
+    const output = runSetupWithEnv(
+        ['--task', 'prune-future-dated-stale-session'],
+        {
+            EXTENSION_DIR: path.resolve(__dirname, '..', '..'),
+            PICKLE_DATA_ROOT: dataRoot,
+        }
+    );
+    const match = output.match(/SESSION_ROOT=(.+)/);
+    assert.ok(match, `SESSION_ROOT not found in output:\n${output}`);
+    const sessionPath = match[1].trim();
+
+    try {
+        assert.equal(
+            fs.existsSync(staleSessionDir),
+            false,
+            'setup should prune stale inactive sessions whose future-dated started_at exceeds the trusted skew window'
+        );
+    } finally {
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+        cleanup(sessionPath);
+    }
+});
+
 test('setup: session_start original_prompt matches exact task text', () => {
     const taskText = 'exact-prompt-match-test with spaces and $pecial chars';
     const sessionPath = runSetup(['--task', taskText]);
