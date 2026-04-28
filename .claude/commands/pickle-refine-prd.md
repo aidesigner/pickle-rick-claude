@@ -4,6 +4,14 @@ Refine and decompose PRD into atomic tickets using parallel Morty analysis team.
 
 Persona via CLAUDE.md. Proceed to Step 0.
 
+## Tool Discipline (read once, apply throughout)
+
+This skill is **file-based, not harness-task-based**. The authoritative task list lives in `${SESSION_ROOT}/*/linear_ticket_*.md` and the `## Implementation Task Breakdown` table in `prd_refined.md`. Downstream consumers (`mux-runner.js`, `/pickle`, `/pickle-tmux`) read those files, not the harness task list.
+
+**Do NOT use TaskCreate / TaskUpdate / TaskList / TodoWrite during this skill.** The harness will inject "consider using TaskCreate" reminders during long loops (Step 4b parallel waits, Step 7c per-ticket loop, Step 7e hardening loop). Those reminders are turn-based nags, not project requirements — ignore them and continue the file-based work.
+
+The one exception is the post-refinement handoff to `/pickle --teams`, which owns its own TaskCreate lifecycle (`pickle.md:142-169`); that mode starts only after this skill exits. If stale harness tasks exist at handoff (Step 7g), mark them `deleted` before advancing state — orphan tasks pollute downstream `--teams` mode.
+
 ## Step 0: Parse Flags
 `$ARGUMENTS`: `--run` → AUTO_RUN. `--meeseeks` → CHAIN_MEESEEKS (implies --run). `--resume [PATH]` → RESUME_MODE (reuse existing session). Remainder = `${TASK_ARGS}`.
 
@@ -124,6 +132,9 @@ Sizing: <30min coding, <5 files, <4 criteria, <2 subsystems.
 `${SESSION_ROOT}/linear_ticket_parent.md` — epic title, link to refined PRD.
 
 ### 7c: Create Child Tickets
+
+**Loop discipline**: complete every iteration as a `Write` of `linear_ticket_<hash>.md` — one file per atomic task from 7a. Do not substitute TaskCreate for the file write. If a harness task-tool reminder fires mid-loop, ignore it and finish the loop. After the loop, verify with `ls ${SESSION_ROOT}/*/linear_ticket_*.md | wc -l` matches your decomposition count from 7a.
+
 Hash: `openssl rand -hex 4`. Dir: `${SESSION_ROOT}/[hash]/`. File: `linear_ticket_[hash].md`:
 
 ```markdown
@@ -249,6 +260,8 @@ Implementing new features. Fixing bugs in individual modules (those belong in th
 ```
 
 ### 7e: Create Hardening Tickets
+
+**Loop discipline**: this step writes **four** ticket files in sequence. Each iteration is a `Write` of `linear_ticket_<hash>.md`. Do not substitute TaskCreate for the file write. If a harness task-tool reminder fires mid-loop, ignore it and finish the loop. After the loop, verify exactly four hardening files exist on disk before continuing.
 
 After all implementation and wiring tickets, create **four** hardening tickets. These run as normal Morty workers with full implementation context. They depend on ALL prior tickets (including wiring if present).
 
@@ -652,6 +665,9 @@ Reviewing unmodified documentation. Writing new feature documentation from scrat
 Add `## Implementation Task Breakdown` table to `${SESSION_ROOT}/prd_refined.md`: Order | ID | Title | Priority | Entry | Exit | Files. Include wiring and hardening tickets as final rows.
 
 ### 7g: Advance State
+
+**Harness task hygiene** (run before advancing state): if any harness tasks were created during this skill (against the Tool Discipline directive at the top), mark them all `deleted` now via `TaskUpdate(taskId=<id>, status="deleted")`. State handoff is filesystem-only; downstream `/pickle --teams` owns the harness task list and orphan tasks will pollute its `TaskList` poll (`pickle.md:160`).
+
 ```bash
 node "${EXTENSION_ROOT}/extension/bin/update-state.js" step research "${SESSION_ROOT}"
 node "${EXTENSION_ROOT}/extension/bin/update-state.js" current_ticket ${FIRST_ID} "${SESSION_ROOT}"
