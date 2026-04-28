@@ -13,19 +13,28 @@ can be exercised.
 
 Concrete observed offenders *(refined: codebase analyst, line ranges corrected)*:
 
-- `_emitDot` (`dot-builder.ts:1237-2261`) — 905 LOC, ~48 branches, emits **6 distinct
-  pipeline topology branches** plus **2 post-emission edge-rewiring passes** (P25
-  catastrophic-recovery linkEdge at `2131-2134`, P0 isolated-workspace
-  commit_and_push splice at `2192-2232`) in one method. *(refined: codebase analyst —
-  prior PRD said "5 topologies"; correct count is 6 producers + 2 post-passes.)*
-- `main` in `mux-runner.ts:814-1396` *(refined: codebase analyst — prior PRD said
-  "1382"; closing brace is at 1396, CLI guard at 1398)* — ~480 statement-LOC, ~66
-  branches, 411-line `while(true)` loop with 5+ nesting levels mixing rate-limit
-  state machine, circuit breaker, ticket lifecycle, and signal handling.
-- `main` in `microverse-runner.ts:452-1015` — 563 LOC interleaving rate-limit
-  polling, metric measurement, regression rollback, stall detection.
-- `main` in `stop-hook.ts:44-376` — 330 LOC classifying **8 completion token
-  types** (enumerated below) with state mutations scattered throughout.
+- Original `_emitDot` was refactored into a post-refactor coordinator at
+  `dot-builder.ts:2318-2422`, with topology emitters split into helpers such as
+  `_initializeEmitContext` (`1347-1435`), `_emitFanOutTopology` (`1608-1645`),
+  `_emitCompetingTopology` (`1647-1664`), `_emitConvergenceTopology`
+  (`1667-1845`), `_emitSequentialPhases` (`1848-2249`), `_emitMicroverseLoop`
+  (`2251-2289`), and `_emitReviewRatchet` (`2291-2315`). The retained
+  post-emission edge-rewiring passes are P25 catastrophic recovery at `2335-2339`
+  and P0 isolated-workspace commit-and-push splice at `2344-2385`. *(refined:
+  codebase analyst — prior PRD said "5 topologies"; correct count is 6 producers
+  + 2 post-passes.)*
+- Original `main` in `mux-runner.ts` was refactored into `runMuxRunnerMain`
+  (`1508-2226`) plus exported loop helpers: `processRateLimitCycle`
+  (`1183-1197`), `processIterationOutcome` (`1252-1260`), and
+  `processCompletionBranch` (`1417-1454`). The loop still coordinates
+  rate-limit state, circuit breaker, ticket lifecycle, and signal handling.
+- Original `main` in `microverse-runner.ts` was refactored around
+  `executeMainLoop` (`1433-1459`) and helper phases for rate-limit polling,
+  metric measurement, regression rollback, and stall detection.
+- Original `main` in `stop-hook.ts` was refactored into token detection at
+  `detectCompletionTokens` (`102-116`) and decision routing at
+  `classifyDecisionInternal` (`175-203`) plus `classifyTokenDecision`
+  (`205-247`) for the **8 completion token types** enumerated below.
 
 ## Goals
 
@@ -75,7 +84,7 @@ Concrete observed offenders *(refined: codebase analyst, line ranges corrected)*
    --max-warnings=-1 && npx tsc && npm test`. Plus the three hygiene gates fire
    automatically as part of `npm test`.
 3. **Same-file PR rebase rule**: T1, T10, T11 all touch `dot-builder.ts` (line
-   ranges 1237-2261, 1102-1209, 942-1010 — non-overlapping). Any merge order works
+   current ranges 2318-2422, 1194-1224, 980-1045 — non-overlapping). Any merge order works
    provided each PR rebases onto its merged predecessor before review *(refined:
    requirements + codebase + risk analysts — prior "smallest-first" rule was wrong;
    non-overlapping ranges).
@@ -109,7 +118,7 @@ Concrete observed offenders *(refined: codebase analyst, line ranges corrected)*
 9. **Trap-door preservation**: T12 and T13 abide by the silent-hang trap-door
    conventions in `extension/CLAUDE.md`. Every `spawnSync` into a foreign tool
    keeps its `timeout` literal. T12 must not introduce or modify `osascript` call
-   sites; `displayMacNotification` (sibling at `pickle-utils.ts:893+`) remains
+   sites; `displayMacNotification` (sibling at `pickle-utils.ts:1117+`) remains
    untouched *(refined: codebase + risk analysts)*.
 10. **Rollback discipline**: each PR is independently revertible via `git revert
     <sha>`. If revert conflicts due to downstream dependency, revert in reverse
@@ -167,7 +176,7 @@ After all tickets land:
 
 ## Token Enumeration (T5)
 
-*(refined: codebase + requirements analysts — verified at `stop-hook.ts:170-183`)*
+*(refined: codebase + requirements analysts — verified at `stop-hook.ts:102-116`)*
 
 | # | Token | Source | Roles | Effect |
 |---|---|---|---|---|
@@ -190,14 +199,15 @@ it).
 
 *(refined: codebase + requirements analysts)*
 
-These remain inline in `_emitDot` AFTER all topology emitters run. NOT extracted:
+These remain in the post-refactor `_emitDot` coordinator AFTER all topology
+emitters run:
 
-- **P25 catastrophic-recovery `linkEdge`** at `dot-builder.ts:2131-2134`: gated on
-  `!isFanOut && !hasCompeting && implPhases.length > 0 && !hasConvergence`.
-- **P0 isolated-workspace edge-splice** at `dot-builder.ts:2192-2232`: surgical
+- **P25 catastrophic-recovery `_linkEdge`** at `dot-builder.ts:2335-2339`: gated on
+  `!this._hasFanOut && !this._hasCompeting && this._implPhases.length > 0 && !this._hasConvergence`.
+- **P0 isolated-workspace edge-splice** at `dot-builder.ts:2344-2385`: surgical
   `edges.findIndex` + `edges.splice` + `seenEdges.delete` + `edgeList.splice` to
-  remove `repro_verify -> done` (convergence branch 2203-2216) or `quality_review
-  -> exit` (non-convergence branch 2217-2229), then re-thread through
+  remove `repro_verify -> done` (convergence branch 2356-2369) or `quality_review
+  -> exit` (non-convergence branch 2370-2381), then re-thread through
   `commit_and_push`.
 
 Required regression tests (in addition to 6 helper tests):
@@ -213,9 +223,10 @@ Required regression tests (in addition to 6 helper tests):
 *(refined: codebase analyst — picks default to avoid implementer flame war)*
 
 **Strategy A (default)**: Promote 4 closures (`emit`, `link`, `linkEdge`,
-`emitSubgraph` at `dot-builder.ts:1323-1358`) to private methods on `DotBuilder`.
+`emitSubgraph`) to private methods on `DotBuilder`; current helpers are `_emit`,
+`_link`, `_linkEdge`, and `_emitSubgraph` at `dot-builder.ts:1437-1478`.
 Promote 8 mutable buffers + `nodeMap` to instance fields cleared at the start of
-each `_emitDot()` invocation. The `_built` guard at `1103-1106` prevents
+each `_emitDot()` invocation. The `_built` guard at `1194-1197` prevents
 re-entry, so transient mutation is safe.
 
 **Strategy B (alternative, requires PR-description justification)**: Thread a
@@ -257,10 +268,10 @@ for B in the PR description.
 | 70 | 16efc5dc | T6 — Split main() in spawn-refinement-team.ts (manifest atomicity) | Medium | medium | `src/bin/spawn-refinement-team.ts`, `tests/refinement-manifest-atomic.test.js` | 1 | — |
 | 80 | 7aa55af1 | T7 — Split main() in pipeline-runner.ts (PhaseConfig dispatch, NO --dry-run) | High | medium | `src/bin/pipeline-runner.ts`, `tests/pipeline-runner-dispatch.test.js` | 1 | — |
 | 90 | f5ac5de1 | T8 — Split main() in setup.ts (parseArguments, resume, init, summary) | Medium | medium | `src/bin/setup.ts`, `tests/setup.test.js` (NEW) | 3 | — |
-| 100 | a6c9c59b | T9 — Split main() in jar-runner.ts (line range corrected: 194-383, tier promoted) | Medium | medium | `src/bin/jar-runner.ts`, `tests/jar-runner-helpers.test.js` | 5 | — |
+| 100 | a6c9c59b | T9 — Split main() in jar-runner.ts (current task loop helpers around 393-439, tier promoted) | Medium | medium | `src/bin/jar-runner.ts`, `tests/jar-runner-helpers.test.js` | 5 | — |
 | 110 | e54eebf6 | T10 — Split build() in dot-builder.ts (preflight, convergence, structural rules) | Medium | small | `src/services/dot-builder.ts`, `tests/dot-builder-build-helpers.test.js` | 3 | — |
 | 120 | e2e6e1cc | T11 — Split fromSpec() in dot-builder.ts (parsePhases, parseConvergenceSpec) | Low | small | `src/services/dot-builder.ts`, `tests/dot-builder-fromspec-helpers.test.js` | 2 | — |
-| 130 | 189df244 | T12 — Split ensureMonitorWindow() in pickle-utils.ts | Medium | small | `src/services/pickle-utils.ts:749-848`, `tests/ensure-monitor-window-stub.test.js` | 2 | **YES** (displayMacNotification sibling) |
+| 130 | 189df244 | T12 — Split ensureMonitorWindow() in pickle-utils.ts | Medium | small | `src/services/pickle-utils.ts:927-1088`, `tests/ensure-monitor-window-stub.test.js` | 2 | **YES** (displayMacNotification sibling) |
 | 140 | bdfb528b | T13 — Split findImporters() in scope-resolver.ts (helpers PRIVATE) | Low | small | `src/services/scope-resolver.ts`, `tests/scope-resolver-import-walks.test.js` | 4 | **YES** (FIFO/FUSE rg/grep hang) |
 | 150 | 5fa8759a | T14 — Epic closer: ESLint to error, alphabetize, 1.55.0 bump, smoke | High | trivial | `eslint.config.js`, `package.json`, GitHub release | 0 | — |
 | 160 | e5e73494 | T15 — Wire: integrate all extracted helpers (Library variant) | High | medium | All MODIFIED_FILES | 0 | — |
