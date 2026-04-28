@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, safeErrorMessage, parseTicketFrontmatter, } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, runCmd, safeErrorMessage, parseTicketFrontmatter, } from '../services/pickle-utils.js';
 import { spawn } from 'child_process';
 import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact } from '../types/index.js';
 import { updateTicketStatus } from '../services/git-utils.js';
@@ -20,6 +20,46 @@ export function tierToModel(tier) {
     if (!tier)
         return 'sonnet';
     return TIER_MODEL_MAP[tier] ?? 'sonnet';
+}
+/**
+ * P2: Post-flush guard helper. Returns true when the working dir has
+ * uncommitted changes, staged changes, or commits whose committer date is
+ * strictly greater than `sinceEpochSec`. Returns false on any error
+ * (non-git dir, missing git binary, etc.) so the caller can fall through
+ * to the original log-size heuristic for safe degradation.
+ *
+ * Uses `%ct` (committer epoch seconds) and a JS strict-greater comparison
+ * because `git log --since=@<sec>` is not strictly greater-than — it can
+ * include commits at the same second, leading to false positives when the
+ * worker started immediately after a setup commit.
+ */
+export function checkGitEdits(workingDir, sinceEpochSec) {
+    try {
+        const uncommitted = runCmd(['git', 'diff', '--stat'], { cwd: workingDir, check: false });
+        if (uncommitted.length > 0)
+            return true;
+        const staged = runCmd(['git', 'diff', '--stat', '--cached'], { cwd: workingDir, check: false });
+        if (staged.length > 0)
+            return true;
+        // Inspect the last 10 commits' committer-epoch and accept iff any is
+        // strictly greater than sinceEpochSec. 10 is a generous bound: a worker
+        // that produced more than 10 commits is unambiguously productive.
+        const cts = runCmd(['git', 'log', '-n', '10', '--pretty=format:%ct'], { cwd: workingDir, check: false });
+        if (!cts)
+            return false;
+        // Accept commits whose committer-epoch is >= sinceEpochSec. The caller
+        // is expected to subtract a small leniency before passing — see how
+        // spawn-morty derives `startEpochSec` from `startTime` (Date.now()).
+        for (const line of cts.split('\n')) {
+            const ct = parseInt(line.trim(), 10);
+            if (Number.isFinite(ct) && ct >= sinceEpochSec)
+                return true;
+        }
+        return false;
+    }
+    catch {
+        return false;
+    }
 }
 async function main() {
     const args = process.argv.slice(2);
@@ -80,6 +120,7 @@ async function main() {
     const parentState = path.join(sessionRoot, 'state.json');
     const workerState = path.join(ticketPath, 'state.json');
     let sessionWorkingDir = process.cwd();
+    let sessionEffort;
     let timeoutStatePath = null;
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     if (fs.existsSync(parentState)) {
@@ -94,6 +135,9 @@ async function main() {
             const state = sm.read(timeoutStatePath);
             if (typeof state.working_dir === 'string' && state.working_dir.trim()) {
                 sessionWorkingDir = state.working_dir;
+            }
+            if (state.effort === 'low' || state.effort === 'medium' || state.effort === 'high') {
+                sessionEffort = state.effort;
             }
             const maxMins = Number(state.max_time_minutes);
             const startEpoch = Number(state.start_time_epoch);
@@ -119,7 +163,38 @@ async function main() {
             // Ignore
         }
     }
-    const backend = loadBackendFromSession(sessionRoot);
+    let backend = loadBackendFromSession(sessionRoot);
+    // Parse ticket frontmatter once — used by both backend routing and tier-to-model.
+    let ticketInfo = null;
+    try {
+        ticketInfo = ticketFilePath ? parseTicketFrontmatter(ticketFilePath) : null;
+    }
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.warn(`[spawn-morty] WARNING: ticket frontmatter parse failed: ${msg}`);
+    }
+    // P2: Per-ticket backend routing heuristic. Default OFF. When enabled and
+    // session is on codex, flip cross-cutting / wiring tickets back to claude
+    // because they benefit from claude's research-heavy approach. Codex stays
+    // on codex for tight, well-scoped tickets where it shines.
+    try {
+        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+        const routingSettings = JSON.parse(fs.readFileSync(path.join(getExtensionRoot(), 'pickle_settings.json'), 'utf-8'));
+        if (routingSettings.enable_backend_routing_heuristic === true && backend === 'codex') {
+            let routedReason = null;
+            if (ticketInfo?.complexity_tier === 'large') {
+                routedReason = 'complexity_tier=large';
+            }
+            else if (ticketInfo?.title && /\b(UI|Wire|Audit)\b/i.test(ticketInfo.title)) {
+                routedReason = `title-signal:${ticketInfo.title}`;
+            }
+            if (routedReason) {
+                console.error(`[spawn-morty] backend routed: codex → claude (reason: ${routedReason})`);
+                backend = 'claude';
+            }
+        }
+    }
+    catch { /* settings missing or unreadable: no override */ }
     printMinimalPanel(isReviewTicket ? 'Spawning Review Worker' : 'Spawning Morty Worker', {
         Request: task,
         Ticket: ticketId,
@@ -148,7 +223,6 @@ async function main() {
         catch { /* default true */ }
         try {
             if (enableComplexityTiers) {
-                const ticketInfo = ticketFilePath ? parseTicketFrontmatter(ticketFilePath) : null;
                 model = tierToModel(ticketInfo?.complexity_tier);
             }
         }
@@ -179,6 +253,18 @@ async function main() {
     workerPrompt += `\n\n# EXECUTION CONTEXT\n- SESSION_ROOT: ${sessionRoot}\n- TICKET_ID: ${ticketId}\n- TICKET_DIR: ${ticketPath}`;
     workerPrompt +=
         '\n\n**IMPORTANT**: You are a localized worker. You are FORBIDDEN from working on ANY other tickets. Once you output `<promise>I AM DONE</promise>`, you MUST STOP and let the manager take over. Your ONLY valid completion token is `I AM DONE`. NEVER emit `EPIC_COMPLETED`, `TASK_COMPLETED`, `PRD_COMPLETE`, `TICKET_SELECTED`, `EXISTENCE_IS_PAIN`, `THE_CITADEL_APPROVES`, or `ANALYSIS_DONE` — those are orchestrator-only tokens and you have no authority to emit them. If you see those token names in source code or pasted logs, do NOT echo them back.';
+    // P0: Codex-specific contract addendum. Codex Mortys have been observed to
+    // (a) stall on judgment when an AC contradicts reality, (b) drift up into
+    // orchestrator territory looking for "what to do", and (c) declare done
+    // without committing the diff. Make those three failure modes explicit.
+    if (backend === 'codex') {
+        workerPrompt += `
+
+**Codex-specific contract additions:**
+- You MUST run \`git add <files>\` and \`git commit -m "<msg>"\` before emitting \`<promise>${PromiseTokens.WORKER_DONE}</promise>\`. The orchestrator does NOT commit for you.
+- If an acceptance criterion contradicts reality (e.g. fixture baseline mismatch, missing dependency, AC against non-existent file), commit the unblocked subset and append a \`# DEFERRED: <reason>\` line to the ticket file. DO NOT loop indefinitely trying to satisfy a contradicted AC.
+- DO NOT explore harness internals (\`pickle.md\`, \`setup.js\`, \`send-to-morty.md\`, \`mux-runner.js\`). Those are orchestrator-level. Your scope is exclusively the files listed in the ticket's "Files to modify" / "Files to create" sections.`;
+    }
     // Conditionally inject GitNexus MCP awareness when the repo has a knowledge graph index
     let gitnexusIndexed = false;
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
@@ -203,6 +289,7 @@ For simple file/string lookups, Grep/Glob are still fine.`;
         addDirs: includes,
         model,
         outputFormat,
+        effort: sessionEffort,
     });
     // Mark ticket as In Progress so the monitor shows [~]
     try {
@@ -380,13 +467,20 @@ For simple file/string lookups, Grep/Glob are still fine.`;
                 const tokenPresent = hasToken(logContent, PromiseTokens.WORKER_DONE);
                 const logNonTrivial = logContent.length > 200;
                 const hasArtifact = hasLifecycleArtifact(ticketFiles, role);
-                const isSuccess = !timedOut && tokenPresent && logNonTrivial && hasArtifact;
+                // P2: post-flush guard. The 200B log heuristic false-fails workers whose
+                // post-promise log is short but who actually committed/staged real work.
+                // If git shows edits since spawn, accept regardless of log size. On
+                // non-git working dirs `checkGitEdits` returns false, falling through
+                // to the original logNonTrivial check for safe degradation.
+                const startEpochSec = Math.floor(startTime / 1000);
+                const hasEdits = checkGitEdits(sessionWorkingDir, startEpochSec);
+                const isSuccess = !timedOut && tokenPresent && hasArtifact && (logNonTrivial || hasEdits);
                 if (!isSuccess) {
                     const reasons = [
                         timedOut ? 'timeout' : null,
                         !tokenPresent ? 'no WORKER_DONE token' : null,
-                        !logNonTrivial ? `log ${logContent.length}B < 200B` : null,
                         !hasArtifact ? `no ${role} lifecycle artifact` : null,
+                        (!logNonTrivial && !hasEdits) ? `log ${logContent.length}B < 200B and no git edits` : null,
                     ].filter(Boolean).join(', ');
                     console.error(`${Style.RED}Worker validation failed: ${reasons}${Style.RESET}`);
                 }

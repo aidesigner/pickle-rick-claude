@@ -8,6 +8,7 @@ import { Defaults, LockError, BACKENDS } from '../types/index.js';
 import { StateManager } from '../services/state-manager.js';
 import { logActivity, pruneActivity } from '../services/activity-logger.js';
 const sm = new StateManager();
+const VALID_EFFORTS = ['low', 'medium', 'high'];
 function die(message) {
     console.error(`${Style.RED}❌ Error: ${message}${Style.RESET}`);
     process.exit(1);
@@ -48,9 +49,11 @@ function createSetupConfig() {
         backend: undefined,
         teamsMode: false,
         maxParallel: 5,
+        effort: undefined,
         taskArgs: [],
         explicitFlags: new Set(),
         startEpoch: Math.floor(Date.now() / 1000),
+        iterationBudgetPerBackend: null,
     };
 }
 function updateSessionMap(sessionsMap, cwd, sessionPath) {
@@ -100,10 +103,47 @@ function loadSettings(config, rootDir) {
         if (typeof settings.default_worker_timeout_seconds === 'number' && settings.default_worker_timeout_seconds > 0) {
             config.workerTimeout = settings.default_worker_timeout_seconds;
         }
+        // Per-backend iteration budget overrides default_max_iterations when the
+        // resolved backend has an entry. Codex iteration semantics are coarser than
+        // claude — same wall-clock work fits in fewer codex iterations.
+        const rawPerBackend = settings.iteration_budget_per_backend;
+        if (rawPerBackend && typeof rawPerBackend === 'object' && !Array.isArray(rawPerBackend)) {
+            const map = {};
+            for (const backend of BACKENDS) {
+                const v = rawPerBackend[backend];
+                if (typeof v === 'number' && Number.isFinite(v) && v >= 0) {
+                    map[backend] = v;
+                }
+            }
+            if (Object.keys(map).length > 0)
+                config.iterationBudgetPerBackend = map;
+        }
     }
     catch (err) {
         const msg = safeErrorMessage(err);
         console.error(`Warning: could not parse pickle_settings.json — using defaults: ${msg}`);
+    }
+}
+/**
+ * Apply the per-backend iteration budget AFTER CLI parsing, so we know which
+ * backend was selected. Resolution order:
+ *   1. Explicit --max-iterations CLI flag wins (already in config.loopLimit).
+ *   2. iteration_budget_per_backend[backend] if present.
+ *   3. default_max_iterations (already in config.loopLimit from loadSettings).
+ *   4. Hard-coded 100 fallback (config default).
+ *
+ * Backend defaults to 'claude' when --backend is not passed (matches the
+ * activation panel's `config.backend || 'claude'` rendering).
+ */
+function applyPerBackendBudget(config) {
+    if (config.explicitFlags.has('max-iterations'))
+        return;
+    if (!config.iterationBudgetPerBackend)
+        return;
+    const backend = config.backend || 'claude';
+    const perBackend = config.iterationBudgetPerBackend[backend];
+    if (typeof perBackend === 'number' && Number.isFinite(perBackend) && perBackend >= 0) {
+        config.loopLimit = perBackend;
     }
 }
 function parseIntegerFlag(args, index, flag, validate, errorMessage) {
@@ -206,6 +246,17 @@ const ARG_HANDLERS = {
         config.explicitFlags.add('max-parallel');
         return index + 1;
     },
+    '--effort': (config, args, index) => {
+        const value = args[index + 1];
+        if (!value || value.startsWith('--'))
+            die(`--effort requires a value (${VALID_EFFORTS.join('|')})`);
+        if (!VALID_EFFORTS.includes(value)) {
+            die(`--effort must be one of: ${VALID_EFFORTS.join(', ')}`);
+        }
+        config.effort = value;
+        config.explicitFlags.add('effort');
+        return index + 1;
+    },
     '-s': (_config, args, index) => (args[index + 1] && !args[index + 1].startsWith('--') ? index + 1 : index),
     '--session-id': (_config, args, index) => (args[index + 1] && !args[index + 1].startsWith('--') ? index + 1 : index),
 };
@@ -258,6 +309,9 @@ function syncConfigFromState(config, state) {
     config.maxParallel = Number.isFinite(rawMaxParallel) && Number.isInteger(rawMaxParallel) && rawMaxParallel >= 1
         ? rawMaxParallel
         : config.maxParallel;
+    if (typeof state.effort === 'string' && VALID_EFFORTS.includes(state.effort)) {
+        config.effort = state.effort;
+    }
     config.promiseToken = state.completion_promise;
 }
 function resumeSession(config) {
@@ -307,6 +361,8 @@ function resumeSession(config) {
                 s.teams_mode = config.teamsMode;
             if (config.explicitFlags.has('max-parallel'))
                 s.max_parallel = config.maxParallel;
+            if (config.explicitFlags.has('effort'))
+                s.effort = config.effort;
             s.session_dir = fullSessionPath;
         });
     }
@@ -352,6 +408,7 @@ function createInitialState(config, sessionPath, taskStr) {
         backend: config.backend,
         teams_mode: config.teamsMode || undefined,
         max_parallel: config.teamsMode ? config.maxParallel : undefined,
+        effort: config.effort,
     };
 }
 function createSession(config, paths, taskStr) {
@@ -382,6 +439,7 @@ function printActivationPanel(paths, config, fullSessionPath, currentIteration) 
         ...(config.commandTemplate ? { Template: config.commandTemplate } : {}),
         ...(config.chainMeeseeks ? { 'Chain Meeseeks': 'Yes' } : {}),
         Backend: config.backend || 'claude',
+        ...(config.effort ? { Effort: config.effort } : {}),
         ...(config.teamsMode ? { Teams: `Yes (parallel: ${config.maxParallel})` } : {}),
         Extension: paths.rootDir,
         Data: paths.dataDir,
@@ -396,6 +454,7 @@ async function main() {
     loadSettings(config, paths.rootDir);
     parseCommandLine(config, process.argv.slice(2));
     validateCommandLine(config);
+    applyPerBackendBudget(config);
     const taskStr = resolveTask(config);
     const session = config.resumeMode
         ? resumeSession(config)

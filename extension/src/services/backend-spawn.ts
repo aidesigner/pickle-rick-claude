@@ -3,11 +3,14 @@ import * as path from 'path';
 import { Backend, BACKENDS, State } from '../types/index.js';
 import { StateManager } from './state-manager.js';
 
+export type ReasoningEffort = 'low' | 'medium' | 'high';
+
 export interface WorkerInvocationOptions {
   prompt: string;
   addDirs: string[];
   model?: string;
   outputFormat?: string;
+  effort?: ReasoningEffort;
 }
 
 export interface ManagerInvocationOptions {
@@ -87,7 +90,7 @@ export function resolveBackendFromStateFile(statePath: string): Backend {
 }
 
 export function buildWorkerInvocation(backend: Backend, opts: WorkerInvocationOptions): SpawnInvocation {
-  if (backend === 'codex') return buildCodexInvocation(opts.prompt, opts.addDirs, opts.model);
+  if (backend === 'codex') return buildCodexInvocation(opts.prompt, opts.addDirs, opts.model, opts.effort);
   return buildClaudeWorkerInvocation(opts);
 }
 
@@ -105,6 +108,9 @@ function buildClaudeWorkerInvocation(opts: WorkerInvocationOptions): SpawnInvoca
     args.push('--output-format', opts.outputFormat);
   }
   if (opts.model) args.push('--model', opts.model);
+  // NOTE: claude CLI has no public reasoning-effort flag for `claude -p`; opts.effort
+  // is intentionally ignored here. Don't inject --append-system-prompt or env vars
+  // as a workaround — the value still survives in state.json for future logging/use.
   args.push('-p', opts.prompt);
   return { cmd: 'claude', args, backend: 'claude' };
 }
@@ -124,7 +130,7 @@ function buildClaudeManagerInvocation(opts: ManagerInvocationOptions): SpawnInvo
   return { cmd: 'claude', args, backend: 'claude' };
 }
 
-function buildCodexInvocation(prompt: string, addDirs: string[], model?: string): SpawnInvocation {
+function buildCodexInvocation(prompt: string, addDirs: string[], model?: string, effort?: ReasoningEffort): SpawnInvocation {
   const args: string[] = [
     'exec',
     '--dangerously-bypass-approvals-and-sandbox',
@@ -135,6 +141,9 @@ function buildCodexInvocation(prompt: string, addDirs: string[], model?: string)
     if (dir && existsSilently(dir)) args.push('--add-dir', dir);
   }
   if (model) args.push('-m', model);
+  // Codex `-c key=value` is the documented config-override syntax. Must come
+  // BEFORE the `--` prompt separator or codex parses it as part of the prompt.
+  if (effort) args.push('-c', `reasoning.effort=${effort}`);
   args.push('--', prompt);
   return { cmd: 'codex', args, backend: 'codex' };
 }

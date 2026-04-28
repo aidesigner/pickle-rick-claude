@@ -124,6 +124,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'iteration_left_regression',
     'gate_regression_threshold_warning',
     'gate_out_of_scope_failures_present',
+    'commit_pending_probe_fired',
 ];
 // ---------------------------------------------------------------------------
 // DOT Builder Types

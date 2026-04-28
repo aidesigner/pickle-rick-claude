@@ -461,6 +461,10 @@ async function main() {
   const statePath = path.join(sessionDir, 'state.json');
   let stateBackend: unknown = undefined;
   let workingDir = process.cwd();
+  // Read state.effort so it survives in the recovered snapshot. Refinement is
+  // claude-only so this is a no-op for the spawn invocation today, but the
+  // value is logged in the deploy panel and kept for parity with spawn-morty.
+  let sessionEffort: 'low' | 'medium' | 'high' | undefined;
   // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   if (fs.existsSync(statePath)) {
     try {
@@ -468,6 +472,9 @@ async function main() {
       stateBackend = state.backend;
       if (typeof state.working_dir === 'string' && state.working_dir.trim()) {
         workingDir = state.working_dir;
+      }
+      if (state.effort === 'low' || state.effort === 'medium' || state.effort === 'high') {
+        sessionEffort = state.effort;
       }
       if (timeoutIndex === -1) {
         const stateTimeout = Number(state.worker_timeout_seconds);
@@ -537,6 +544,7 @@ async function main() {
       'Max Turns': `${maxTurns}/worker`,
       Timeout: `${timeout}s each`,
       Output: refinementDir,
+      ...(sessionEffort ? { Effort: `${sessionEffort} (claude no-op)` } : {}),
     },
     'MAGENTA',
     '🥒'

@@ -528,6 +528,83 @@ test('setup: session_start original_prompt matches exact task text', () => {
     }
 });
 
+// ---------------------------------------------------------------------------
+// --effort flag (reasoning effort for codex backend; claude no-op)
+// ---------------------------------------------------------------------------
+
+test('setup: --effort high persists into state.effort', () => {
+    const sessionPath = runSetup(['--effort', 'high', '--task', 'effort-high-test']);
+    try {
+        const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+        assert.equal(state.effort, 'high');
+    } finally {
+        cleanup(sessionPath);
+    }
+});
+
+test('setup: --effort low and --effort medium persist correctly', () => {
+    for (const level of ['low', 'medium']) {
+        const sessionPath = runSetup(['--effort', level, '--task', `effort-${level}-test`]);
+        try {
+            const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+            assert.equal(state.effort, level);
+        } finally {
+            cleanup(sessionPath);
+        }
+    }
+});
+
+test('setup: without --effort, state.effort is undefined (preserves CLI default)', () => {
+    const sessionPath = runSetup(['--task', 'effort-default-test']);
+    try {
+        const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+        assert.equal(state.effort, undefined);
+    } finally {
+        cleanup(sessionPath);
+    }
+});
+
+test('setup: --effort bogus errors out with a clear message', () => {
+    assert.throws(
+        () => runSetup(['--effort', 'bogus', '--task', 'effort-bogus-test']),
+        /--effort must be one of: low, medium, high/i,
+    );
+});
+
+test('setup: --effort without value errors out', () => {
+    assert.throws(
+        () => runSetup(['--task', 'effort-missing-test', '--effort']),
+        /--effort requires a value/i,
+    );
+});
+
+test('setup: --resume with --effort high overrides stored effort', () => {
+    const sessionPath = runSetup(['--effort', 'low', '--task', 'effort-resume-test']);
+    try {
+        const statePath = path.join(sessionPath, 'state.json');
+        let state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(state.effort, 'low');
+
+        runSetup(['--resume', sessionPath, '--effort', 'high']);
+        state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(state.effort, 'high', 'explicit --effort on resume must override stored value');
+    } finally {
+        cleanup(sessionPath);
+    }
+});
+
+test('setup: --resume without --effort preserves stored effort', () => {
+    const sessionPath = runSetup(['--effort', 'medium', '--task', 'effort-preserve-test']);
+    try {
+        const statePath = path.join(sessionPath, 'state.json');
+        runSetup(['--resume', sessionPath]);
+        const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(state.effort, 'medium', 'resume without --effort must preserve stored effort');
+    } finally {
+        cleanup(sessionPath);
+    }
+});
+
 test('setup: --resume with explicit flag overrides stored limit', () => {
     // Create a session with default limits
     const sessionPath = runSetup(['--task', 'resume-override-test']);
@@ -540,5 +617,97 @@ test('setup: --resume with explicit flag overrides stored limit', () => {
         assert.equal(state.max_iterations, 99, 'explicit --max-iterations should override on resume');
     } finally {
         cleanup(sessionPath);
+    }
+});
+
+// ---------------------------------------------------------------------------
+// iteration_budget_per_backend — codex iteration semantics are coarser than
+// claude, so the per-backend split keeps wall-clock budgets comparable.
+// ---------------------------------------------------------------------------
+
+function makeExtensionRootWithSettings(settings) {
+    const extRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-budget-ext-'));
+    fs.writeFileSync(path.join(extRoot, 'pickle_settings.json'), JSON.stringify(settings, null, 2));
+    return extRoot;
+}
+
+test('setup: iteration_budget_per_backend.codex honored when --backend codex', () => {
+    const extRoot = makeExtensionRootWithSettings({
+        default_max_iterations: 100,
+        iteration_budget_per_backend: { claude: 100, codex: 80 },
+    });
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-budget-data-'));
+    const output = runSetupWithEnv(
+        ['--backend', 'codex', '--task', 'codex-budget-test'],
+        { EXTENSION_DIR: extRoot, PICKLE_DATA_ROOT: dataRoot }
+    );
+    const sessionPath = output.match(/SESSION_ROOT=(.+)/)[1].trim();
+    try {
+        const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+        assert.equal(state.max_iterations, 80, 'codex backend must pick up codex per-backend budget');
+        assert.equal(state.backend, 'codex');
+    } finally {
+        fs.rmSync(extRoot, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('setup: iteration_budget_per_backend.claude honored when --backend claude', () => {
+    const extRoot = makeExtensionRootWithSettings({
+        default_max_iterations: 500,
+        iteration_budget_per_backend: { claude: 100, codex: 80 },
+    });
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-budget-data-'));
+    const output = runSetupWithEnv(
+        ['--backend', 'claude', '--task', 'claude-budget-test'],
+        { EXTENSION_DIR: extRoot, PICKLE_DATA_ROOT: dataRoot }
+    );
+    const sessionPath = output.match(/SESSION_ROOT=(.+)/)[1].trim();
+    try {
+        const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+        assert.equal(state.max_iterations, 100, 'claude backend must pick up claude per-backend budget, not default_max_iterations');
+    } finally {
+        fs.rmSync(extRoot, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('setup: falls back to default_max_iterations when iteration_budget_per_backend is absent', () => {
+    const extRoot = makeExtensionRootWithSettings({
+        default_max_iterations: 250,
+        // no iteration_budget_per_backend field at all
+    });
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-budget-data-'));
+    const output = runSetupWithEnv(
+        ['--backend', 'codex', '--task', 'budget-fallback-test'],
+        { EXTENSION_DIR: extRoot, PICKLE_DATA_ROOT: dataRoot }
+    );
+    const sessionPath = output.match(/SESSION_ROOT=(.+)/)[1].trim();
+    try {
+        const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+        assert.equal(state.max_iterations, 250, 'absent per-backend map must fall through to default_max_iterations');
+    } finally {
+        fs.rmSync(extRoot, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('setup: falls back to default_max_iterations when backend missing from per-backend map', () => {
+    const extRoot = makeExtensionRootWithSettings({
+        default_max_iterations: 250,
+        iteration_budget_per_backend: { claude: 100 }, // no codex entry
+    });
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-budget-data-'));
+    const output = runSetupWithEnv(
+        ['--backend', 'codex', '--task', 'budget-missing-key-test'],
+        { EXTENSION_DIR: extRoot, PICKLE_DATA_ROOT: dataRoot }
+    );
+    const sessionPath = output.match(/SESSION_ROOT=(.+)/)[1].trim();
+    try {
+        const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+        assert.equal(state.max_iterations, 250, 'codex backend with no codex key must fall through to default_max_iterations');
+    } finally {
+        fs.rmSync(extRoot, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
     }
 });

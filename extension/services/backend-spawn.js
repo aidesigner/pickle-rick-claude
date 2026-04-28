@@ -58,7 +58,7 @@ export function resolveBackendFromStateFile(statePath) {
 }
 export function buildWorkerInvocation(backend, opts) {
     if (backend === 'codex')
-        return buildCodexInvocation(opts.prompt, opts.addDirs, opts.model);
+        return buildCodexInvocation(opts.prompt, opts.addDirs, opts.model, opts.effort);
     return buildClaudeWorkerInvocation(opts);
 }
 export function buildManagerInvocation(backend, opts) {
@@ -77,6 +77,9 @@ function buildClaudeWorkerInvocation(opts) {
     }
     if (opts.model)
         args.push('--model', opts.model);
+    // NOTE: claude CLI has no public reasoning-effort flag for `claude -p`; opts.effort
+    // is intentionally ignored here. Don't inject --append-system-prompt or env vars
+    // as a workaround — the value still survives in state.json for future logging/use.
     args.push('-p', opts.prompt);
     return { cmd: 'claude', args, backend: 'claude' };
 }
@@ -98,7 +101,7 @@ function buildClaudeManagerInvocation(opts) {
     args.push('-p', opts.prompt);
     return { cmd: 'claude', args, backend: 'claude' };
 }
-function buildCodexInvocation(prompt, addDirs, model) {
+function buildCodexInvocation(prompt, addDirs, model, effort) {
     const args = [
         'exec',
         '--dangerously-bypass-approvals-and-sandbox',
@@ -111,6 +114,10 @@ function buildCodexInvocation(prompt, addDirs, model) {
     }
     if (model)
         args.push('-m', model);
+    // Codex `-c key=value` is the documented config-override syntax. Must come
+    // BEFORE the `--` prompt separator or codex parses it as part of the prompt.
+    if (effort)
+        args.push('-c', `reasoning.effort=${effort}`);
     args.push('--', prompt);
     return { cmd: 'codex', args, backend: 'codex' };
 }

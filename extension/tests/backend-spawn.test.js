@@ -296,3 +296,66 @@ test('backendEnvOverrides: emits PICKLE_BACKEND', () => {
     assert.deepEqual(backendEnvOverrides('codex'), { PICKLE_BACKEND: 'codex' });
     assert.deepEqual(backendEnvOverrides('claude'), { PICKLE_BACKEND: 'claude' });
 });
+
+// --- buildWorkerInvocation: --effort threading ---
+
+test('buildWorkerInvocation(codex): emits -c reasoning.effort=high before -- when effort is set', () => {
+    const inv = buildWorkerInvocation('codex', {
+        prompt: 'do the thing',
+        addDirs: [],
+        effort: 'high',
+    });
+    const dashCIdx = inv.args.indexOf('-c');
+    assert.ok(dashCIdx >= 0, 'codex invocation should include -c when effort is set');
+    assert.equal(inv.args[dashCIdx + 1], 'reasoning.effort=high');
+    // Must come BEFORE the `--` prompt separator or codex parses it as prompt
+    const sepIdx = inv.args.indexOf('--');
+    assert.ok(sepIdx >= 0 && dashCIdx < sepIdx, '-c must precede --');
+    // Prompt is still the final positional after --
+    assert.equal(inv.args[inv.args.length - 1], 'do the thing');
+});
+
+test('buildWorkerInvocation(codex): emits NO effort flag when effort is unset', () => {
+    const inv = buildWorkerInvocation('codex', {
+        prompt: 'do the thing',
+        addDirs: [],
+    });
+    assert.equal(inv.args.includes('-c'), false, 'codex invocation should NOT include -c when effort is unset');
+    assert.ok(!inv.args.some(a => typeof a === 'string' && a.startsWith('reasoning.effort=')));
+});
+
+test('buildWorkerInvocation(codex): all three effort levels round-trip', () => {
+    for (const level of ['low', 'medium', 'high']) {
+        const inv = buildWorkerInvocation('codex', {
+            prompt: 'x',
+            addDirs: [],
+            effort: level,
+        });
+        const dashCIdx = inv.args.indexOf('-c');
+        assert.ok(dashCIdx >= 0);
+        assert.equal(inv.args[dashCIdx + 1], `reasoning.effort=${level}`);
+    }
+});
+
+test('buildWorkerInvocation(claude): does NOT emit any effort/reasoning flag whether effort is set or unset', () => {
+    // Claude CLI has no public reasoning-effort flag for `claude -p` — must be a no-op.
+    const invSet = buildWorkerInvocation('claude', {
+        prompt: 'x',
+        addDirs: [],
+        effort: 'high',
+    });
+    assert.equal(invSet.args.includes('-c'), false);
+    assert.equal(invSet.args.includes('--reasoning-effort'), false);
+    assert.equal(invSet.args.includes('reasoning.effort'), false);
+    assert.ok(!invSet.args.some(a => typeof a === 'string' && a.startsWith('reasoning.effort=')));
+    // No --append-system-prompt sneak-in either
+    assert.equal(invSet.args.includes('--append-system-prompt'), false);
+
+    const invUnset = buildWorkerInvocation('claude', {
+        prompt: 'x',
+        addDirs: [],
+    });
+    assert.equal(invUnset.args.includes('-c'), false);
+    assert.equal(invUnset.args.includes('--reasoning-effort'), false);
+    assert.equal(invUnset.args.includes('--append-system-prompt'), false);
+});

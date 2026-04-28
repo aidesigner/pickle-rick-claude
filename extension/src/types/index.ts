@@ -40,6 +40,12 @@ export interface State {
   false_epic_completed_count?: number;
   /** Ticket ID associated with the current `false_epic_completed_count`. Resets the counter when current_ticket diverges. */
   false_epic_completed_ticket?: string | null;
+  /**
+   * Reasoning effort for worker spawns. Currently honored only by the codex
+   * backend (`-c reasoning.effort=<value>`); claude has no public flag and
+   * silently ignores. When unset, workers inherit the CLI default.
+   */
+  effort?: 'low' | 'medium' | 'high';
 }
 
 /**
@@ -227,6 +233,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'iteration_left_regression',
   'gate_regression_threshold_warning',
   'gate_out_of_scope_failures_present',
+  'commit_pending_probe_fired',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];

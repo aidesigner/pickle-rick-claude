@@ -625,6 +625,586 @@ test('spawn-morty: session working_dir controls child cwd, repo access, and GitN
 });
 
 // ---------------------------------------------------------------------------
+// --effort threading: state.effort -> codex `-c reasoning.effort=<value>`
+// ---------------------------------------------------------------------------
+
+test('spawn-morty: state.effort=high reaches codex invocation as -c reasoning.effort=high', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketDir = path.join(sessionDir, 'ticket-effort-thread');
+        fs.mkdirSync(ticketDir, { recursive: true });
+
+        const statePath = path.join(sessionDir, 'state.json');
+        fs.writeFileSync(statePath, JSON.stringify({
+            active: true,
+            backend: 'codex',
+            effort: 'high',
+            iteration: 1,
+            schema_version: 1,
+        }));
+
+        const shimDir = path.join(tmpDir, 'bin');
+        const shimLog = path.join(tmpDir, 'codex-effort.json');
+        writeCodexShim(shimDir, shimLog);
+
+        const result = spawnSync(process.execPath, [SPAWN_MORTY_BIN,
+            'implement the thing',
+            '--ticket-id', 'ticket-effort-thread',
+            '--ticket-path', ticketDir,
+            '--timeout', '30',
+        ], {
+            env: {
+                ...process.env,
+                EXTENSION_DIR: tmpDir,
+                PATH: `${shimDir}${path.delimiter}${process.env.PATH || ''}`,
+                PICKLE_BACKEND: '',
+            },
+            encoding: 'utf-8',
+            timeout: 45000,
+        });
+
+        // shim exits 0 with no real artifact -> validation failure (status 1) is expected
+        assert.equal(result.status, 1);
+        assert.ok(fs.existsSync(shimLog), 'codex shim should be invoked');
+        const invocation = JSON.parse(fs.readFileSync(shimLog, 'utf-8'));
+        const argv = invocation.argv;
+        const dashCIdx = argv.indexOf('-c');
+        assert.ok(dashCIdx >= 0, `expected -c in argv, got: ${JSON.stringify(argv)}`);
+        assert.equal(argv[dashCIdx + 1], 'reasoning.effort=high');
+        // -c must appear BEFORE the `--` prompt separator
+        const sepIdx = argv.indexOf('--');
+        assert.ok(sepIdx >= 0 && dashCIdx < sepIdx, '-c reasoning.effort must come before --');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// P0: Codex worker contract addendum
+// ---------------------------------------------------------------------------
+
+test('spawn-morty P0: codex backend prompt contains "Codex-specific contract additions"', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketDir = path.join(sessionDir, 'ticket-codex-addendum');
+        fs.mkdirSync(ticketDir, { recursive: true });
+
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            backend: 'codex',
+            iteration: 1,
+            schema_version: 1,
+        }));
+
+        const shimDir = path.join(tmpDir, 'bin');
+        const shimLog = path.join(tmpDir, 'codex-addendum.json');
+        writeCodexShim(shimDir, shimLog);
+
+        const result = spawnSync(process.execPath, [SPAWN_MORTY_BIN,
+            'implement the thing',
+            '--ticket-id', 'ticket-codex-addendum',
+            '--ticket-path', ticketDir,
+            '--timeout', '30',
+        ], {
+            env: {
+                ...process.env,
+                EXTENSION_DIR: tmpDir,
+                PATH: `${shimDir}${path.delimiter}${process.env.PATH || ''}`,
+                PICKLE_BACKEND: '',
+            },
+            encoding: 'utf-8',
+            timeout: 45000,
+        });
+
+        assert.equal(result.status, 1, `expected validation failure after shim exit, got: ${result.stdout + result.stderr}`);
+        assert.ok(fs.existsSync(shimLog), 'codex shim should be invoked');
+        const invocation = JSON.parse(fs.readFileSync(shimLog, 'utf-8'));
+        const prompt = invocation.argv[invocation.argv.length - 1];
+        assert.match(prompt, /Codex-specific contract additions/,
+            'codex prompt MUST contain the codex contract addendum');
+        assert.match(prompt, /git add.*git commit.*before emitting/s,
+            'codex addendum MUST require commit before promise');
+        assert.match(prompt, /DEFERRED/,
+            'codex addendum MUST mention DEFERRED for contradicted ACs');
+        assert.match(prompt, /DO NOT explore harness internals/,
+            'codex addendum MUST forbid harness exploration');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('spawn-morty P0: claude backend prompt does NOT contain codex addendum', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketDir = path.join(sessionDir, 'ticket-claude-no-addendum');
+        fs.mkdirSync(ticketDir, { recursive: true });
+
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            backend: 'claude',
+            iteration: 1,
+            schema_version: 1,
+        }));
+
+        // Shim "claude" — same trick as codex shim. Captures prompt argv.
+        const shimDir = path.join(tmpDir, 'bin');
+        fs.mkdirSync(shimDir, { recursive: true });
+        const shimLog = path.join(tmpDir, 'claude-prompt.json');
+        const shimPath = path.join(shimDir, 'claude');
+        fs.writeFileSync(shimPath, `#!/usr/bin/env node
+const fs = require('fs');
+fs.writeFileSync(${JSON.stringify(shimLog)}, JSON.stringify({
+  argv: process.argv.slice(2),
+}, null, 2));
+process.exit(0);
+`);
+        fs.chmodSync(shimPath, 0o755);
+
+        const result = spawnSync(process.execPath, [SPAWN_MORTY_BIN,
+            'implement the thing',
+            '--ticket-id', 'ticket-claude-no-addendum',
+            '--ticket-path', ticketDir,
+            '--timeout', '30',
+        ], {
+            env: {
+                ...process.env,
+                EXTENSION_DIR: tmpDir,
+                PATH: `${shimDir}${path.delimiter}${process.env.PATH || ''}`,
+                PICKLE_BACKEND: '',
+            },
+            encoding: 'utf-8',
+            timeout: 45000,
+        });
+
+        assert.equal(result.status, 1, `expected validation failure after shim exit, got: ${result.stdout + result.stderr}`);
+        assert.ok(fs.existsSync(shimLog), 'claude shim should be invoked');
+        const invocation = JSON.parse(fs.readFileSync(shimLog, 'utf-8'));
+        // The prompt is the value following `--append-system-prompt` or the last positional;
+        // for claude shim, just join all argv and confirm the addendum string is absent.
+        const allArgv = invocation.argv.join('\n');
+        assert.ok(
+            !allArgv.includes('Codex-specific contract additions'),
+            'claude prompt MUST NOT contain codex contract addendum'
+        );
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// P2: Per-ticket backend routing heuristic
+// ---------------------------------------------------------------------------
+
+/**
+ * Helper: write a `pickle_settings.json` to the EXTENSION_DIR. The flag value
+ * controls whether the routing heuristic is enabled.
+ */
+function writeSettings(extensionDir, enableRouting) {
+    fs.mkdirSync(extensionDir, { recursive: true });
+    fs.writeFileSync(
+        path.join(extensionDir, 'pickle_settings.json'),
+        JSON.stringify({ enable_backend_routing_heuristic: enableRouting })
+    );
+}
+
+/**
+ * Helper: write a ticket file with frontmatter for routing tests. Returns
+ * the ticket file path.
+ */
+function writeTicketFile(ticketDir, frontmatter) {
+    const ticketFile = path.join(ticketDir, 'ticket.md');
+    const fmBody = Object.entries(frontmatter)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join('\n');
+    fs.writeFileSync(ticketFile, `---\n${fmBody}\n---\n\n# Ticket\n\nBody.\n`);
+    return ticketFile;
+}
+
+test('spawn-morty P2: heuristic OFF (default) — large tier on codex stays codex', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        writeSettings(tmpDir, false);
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketDir = path.join(sessionDir, 'ticket-routing-off');
+        fs.mkdirSync(ticketDir, { recursive: true });
+        const ticketFile = writeTicketFile(ticketDir, {
+            id: 'ticket-routing-off',
+            title: 'Refactor tokenizer',
+            complexity_tier: 'large',
+        });
+
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            backend: 'codex',
+            iteration: 1,
+            schema_version: 1,
+        }));
+
+        const shimDir = path.join(tmpDir, 'bin');
+        const shimLog = path.join(tmpDir, 'codex-routing-off.json');
+        writeCodexShim(shimDir, shimLog);
+
+        const result = spawnSync(process.execPath, [SPAWN_MORTY_BIN,
+            'do thing',
+            '--ticket-id', 'ticket-routing-off',
+            '--ticket-path', ticketDir,
+            '--ticket-file', ticketFile,
+            '--timeout', '30',
+        ], {
+            env: {
+                ...process.env,
+                EXTENSION_DIR: tmpDir,
+                PATH: `${shimDir}${path.delimiter}${process.env.PATH || ''}`,
+                PICKLE_BACKEND: '',
+            },
+            encoding: 'utf-8',
+            timeout: 45000,
+        });
+
+        const combined = result.stdout + result.stderr;
+        assert.equal(result.status, 1);
+        // No override fired → backend stays codex → codex shim runs → shim log written.
+        assert.ok(fs.existsSync(shimLog), 'codex shim should run when heuristic is OFF');
+        assert.ok(combined.includes('Backend') && combined.includes('codex'),
+            `expected Backend: codex, got: ${combined}`);
+        assert.ok(!combined.includes('backend routed: codex → claude'),
+            'no routing override message expected when heuristic is OFF');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('spawn-morty P2: heuristic ON — large tier flips codex → claude', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        writeSettings(tmpDir, true);
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketDir = path.join(sessionDir, 'ticket-routing-large');
+        fs.mkdirSync(ticketDir, { recursive: true });
+        const ticketFile = writeTicketFile(ticketDir, {
+            id: 'ticket-routing-large',
+            title: 'Refactor tokenizer',
+            complexity_tier: 'large',
+        });
+
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            backend: 'codex',
+            iteration: 1,
+            schema_version: 1,
+        }));
+
+        // Shim claude (the override target). codex would also be invoked if
+        // override fails — distinct shim logs make the assertion unambiguous.
+        const shimDir = path.join(tmpDir, 'bin');
+        fs.mkdirSync(shimDir, { recursive: true });
+        const claudeLog = path.join(tmpDir, 'claude-large.json');
+        const claudeShim = path.join(shimDir, 'claude');
+        fs.writeFileSync(claudeShim, `#!/usr/bin/env node
+const fs = require('fs');
+fs.writeFileSync(${JSON.stringify(claudeLog)}, JSON.stringify({ argv: process.argv.slice(2) }));
+process.exit(0);
+`);
+        fs.chmodSync(claudeShim, 0o755);
+        // No codex shim — if heuristic fails to flip, ENOENT crashes loudly.
+
+        const result = spawnSync(process.execPath, [SPAWN_MORTY_BIN,
+            'do thing',
+            '--ticket-id', 'ticket-routing-large',
+            '--ticket-path', ticketDir,
+            '--ticket-file', ticketFile,
+            '--timeout', '30',
+        ], {
+            env: {
+                ...process.env,
+                EXTENSION_DIR: tmpDir,
+                PATH: `${shimDir}${path.delimiter}${process.env.PATH || ''}`,
+                PICKLE_BACKEND: '',
+            },
+            encoding: 'utf-8',
+            timeout: 45000,
+        });
+
+        const combined = result.stdout + result.stderr;
+        assert.equal(result.status, 1);
+        assert.ok(fs.existsSync(claudeLog), 'claude shim should run after override fires');
+        assert.ok(combined.includes('backend routed: codex → claude'),
+            `expected override log line, got: ${combined}`);
+        assert.ok(combined.includes('complexity_tier=large'),
+            `expected reason=complexity_tier=large, got: ${combined}`);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('spawn-morty P2: heuristic ON — UI title flips codex → claude', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        writeSettings(tmpDir, true);
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketDir = path.join(sessionDir, 'ticket-routing-ui');
+        fs.mkdirSync(ticketDir, { recursive: true });
+        const ticketFile = writeTicketFile(ticketDir, {
+            id: 'ticket-routing-ui',
+            title: 'Polish UI for billing dashboard',
+            complexity_tier: 'medium',
+        });
+
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            backend: 'codex',
+            iteration: 1,
+            schema_version: 1,
+        }));
+
+        const shimDir = path.join(tmpDir, 'bin');
+        fs.mkdirSync(shimDir, { recursive: true });
+        const claudeLog = path.join(tmpDir, 'claude-ui.json');
+        const claudeShim = path.join(shimDir, 'claude');
+        fs.writeFileSync(claudeShim, `#!/usr/bin/env node
+const fs = require('fs');
+fs.writeFileSync(${JSON.stringify(claudeLog)}, JSON.stringify({ argv: process.argv.slice(2) }));
+process.exit(0);
+`);
+        fs.chmodSync(claudeShim, 0o755);
+
+        const result = spawnSync(process.execPath, [SPAWN_MORTY_BIN,
+            'do thing',
+            '--ticket-id', 'ticket-routing-ui',
+            '--ticket-path', ticketDir,
+            '--ticket-file', ticketFile,
+            '--timeout', '30',
+        ], {
+            env: {
+                ...process.env,
+                EXTENSION_DIR: tmpDir,
+                PATH: `${shimDir}${path.delimiter}${process.env.PATH || ''}`,
+                PICKLE_BACKEND: '',
+            },
+            encoding: 'utf-8',
+            timeout: 45000,
+        });
+
+        const combined = result.stdout + result.stderr;
+        assert.equal(result.status, 1);
+        assert.ok(fs.existsSync(claudeLog), 'claude shim should run after UI title override fires');
+        assert.ok(combined.includes('backend routed: codex → claude'),
+            `expected override message, got: ${combined}`);
+        assert.ok(/title-signal/.test(combined),
+            `expected title-signal reason, got: ${combined}`);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('spawn-morty P2: heuristic ON — small tier + neutral title stays codex', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        writeSettings(tmpDir, true);
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketDir = path.join(sessionDir, 'ticket-routing-stay');
+        fs.mkdirSync(ticketDir, { recursive: true });
+        const ticketFile = writeTicketFile(ticketDir, {
+            id: 'ticket-routing-stay',
+            title: 'Fix typo in helper',
+            complexity_tier: 'small',
+        });
+
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            backend: 'codex',
+            iteration: 1,
+            schema_version: 1,
+        }));
+
+        const shimDir = path.join(tmpDir, 'bin');
+        const shimLog = path.join(tmpDir, 'codex-stay.json');
+        writeCodexShim(shimDir, shimLog);
+
+        const result = spawnSync(process.execPath, [SPAWN_MORTY_BIN,
+            'do thing',
+            '--ticket-id', 'ticket-routing-stay',
+            '--ticket-path', ticketDir,
+            '--ticket-file', ticketFile,
+            '--timeout', '30',
+        ], {
+            env: {
+                ...process.env,
+                EXTENSION_DIR: tmpDir,
+                PATH: `${shimDir}${path.delimiter}${process.env.PATH || ''}`,
+                PICKLE_BACKEND: '',
+            },
+            encoding: 'utf-8',
+            timeout: 45000,
+        });
+
+        const combined = result.stdout + result.stderr;
+        assert.equal(result.status, 1);
+        assert.ok(fs.existsSync(shimLog), 'codex shim should run because small/neutral did not flip');
+        assert.ok(!combined.includes('backend routed'),
+            `no routing override expected for small/neutral, got: ${combined}`);
+        assert.ok(combined.includes('Backend') && combined.includes('codex'),
+            `expected Backend: codex, got: ${combined}`);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// P2: Post-flush guard — short log + git edits + artifact = success
+// ---------------------------------------------------------------------------
+
+/**
+ * Helper: writes a shim that prints WORKER_DONE token (small log <200B),
+ * creates a lifecycle artifact in the ticket dir, AND makes a git commit
+ * in the session working_dir. Then exits 0.
+ */
+function writePostFlushShim(shimDir, ticketDir, workingDir, makeGitEdit) {
+    fs.mkdirSync(shimDir, { recursive: true });
+    const shimPath = path.join(shimDir, 'codex');
+    const shimSrc = `#!/usr/bin/env node
+const fs = require('fs');
+const path = require('path');
+const { execSync } = require('child_process');
+// Small post-promise log — under 200B
+process.stdout.write('<promise>I AM DONE</promise>\\n');
+// Lifecycle artifact for implementation role: research_*.md
+fs.writeFileSync(path.join(${JSON.stringify(ticketDir)}, 'research_done.md'), 'r');
+${makeGitEdit ? `
+// Real git edit + commit in working dir
+try {
+  fs.writeFileSync(path.join(${JSON.stringify(workingDir)}, 'morty-edit.txt'), 'committed by shim\\n');
+  execSync('git add morty-edit.txt && git commit -m "shim edit"', { cwd: ${JSON.stringify(workingDir)} });
+} catch (e) { process.stderr.write('shim git failed: ' + e.message); }
+` : ''}
+process.exit(0);
+`;
+    fs.writeFileSync(shimPath, shimSrc);
+    fs.chmodSync(shimPath, 0o755);
+    return shimPath;
+}
+
+test('spawn-morty P2 post-flush: token + artifact + git edits + log<200B → success', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketDir = path.join(sessionDir, 'ticket-postflush-success');
+        const workingDir = path.join(tmpDir, 'repo');
+        fs.mkdirSync(ticketDir, { recursive: true });
+        fs.mkdirSync(workingDir, { recursive: true });
+
+        // Init real git repo so checkGitEdits can run.
+        // git init + initial commit using imported spawnSync. Backdate the
+        // base commit so checkGitEdits's ">= startTime" comparison cleanly
+        // excludes it (otherwise a same-second seed commit looks like worker
+        // edits and the negative test false-passes).
+        const baseEpoch = Math.floor(Date.now() / 1000) - 5;
+        const gitSetup = spawnSync('bash', ['-c',
+            `GIT_AUTHOR_DATE='@${baseEpoch} +0000' GIT_COMMITTER_DATE='@${baseEpoch} +0000' git init -q && ` +
+            'git config user.email t@t && git config user.name t && ' +
+            `GIT_AUTHOR_DATE='@${baseEpoch} +0000' GIT_COMMITTER_DATE='@${baseEpoch} +0000' git commit --allow-empty -q -m base`
+        ], { cwd: workingDir, encoding: 'utf-8' });
+        assert.equal(gitSetup.status, 0, `git init failed: ${gitSetup.stderr}`);
+
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            backend: 'codex',
+            working_dir: workingDir,
+            iteration: 1,
+            schema_version: 1,
+        }));
+
+        const shimDir = path.join(tmpDir, 'bin');
+        writePostFlushShim(shimDir, ticketDir, workingDir, /* makeGitEdit */ true);
+
+        const result = spawnSync(process.execPath, [SPAWN_MORTY_BIN,
+            'do thing',
+            '--ticket-id', 'ticket-postflush-success',
+            '--ticket-path', ticketDir,
+            '--timeout', '30',
+        ], {
+            env: {
+                ...process.env,
+                EXTENSION_DIR: tmpDir,
+                PATH: `${shimDir}${path.delimiter}${process.env.PATH || ''}`,
+                PICKLE_BACKEND: '',
+            },
+            encoding: 'utf-8',
+            timeout: 45000,
+        });
+
+        const combined = result.stdout + result.stderr;
+        assert.equal(result.status, 0,
+            `expected isSuccess via post-flush guard (exit 0), got: ${combined}`);
+        assert.ok(/validation.*successful/i.test(combined),
+            `expected successful validation, got: ${combined}`);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('spawn-morty P2 post-flush: token + artifact + zero git edits + log<200B → failure', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketDir = path.join(sessionDir, 'ticket-postflush-fail');
+        const workingDir = path.join(tmpDir, 'repo');
+        fs.mkdirSync(ticketDir, { recursive: true });
+        fs.mkdirSync(workingDir, { recursive: true });
+
+        // git init + initial commit using imported spawnSync. Backdate the
+        // base commit so checkGitEdits's ">= startTime" comparison cleanly
+        // excludes it (otherwise a same-second seed commit looks like worker
+        // edits and the negative test false-passes).
+        const baseEpoch = Math.floor(Date.now() / 1000) - 5;
+        const gitSetup = spawnSync('bash', ['-c',
+            `GIT_AUTHOR_DATE='@${baseEpoch} +0000' GIT_COMMITTER_DATE='@${baseEpoch} +0000' git init -q && ` +
+            'git config user.email t@t && git config user.name t && ' +
+            `GIT_AUTHOR_DATE='@${baseEpoch} +0000' GIT_COMMITTER_DATE='@${baseEpoch} +0000' git commit --allow-empty -q -m base`
+        ], { cwd: workingDir, encoding: 'utf-8' });
+        assert.equal(gitSetup.status, 0, `git init failed: ${gitSetup.stderr}`);
+
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            backend: 'codex',
+            working_dir: workingDir,
+            iteration: 1,
+            schema_version: 1,
+        }));
+
+        const shimDir = path.join(tmpDir, 'bin');
+        writePostFlushShim(shimDir, ticketDir, workingDir, /* makeGitEdit */ false);
+
+        const result = spawnSync(process.execPath, [SPAWN_MORTY_BIN,
+            'do thing',
+            '--ticket-id', 'ticket-postflush-fail',
+            '--ticket-path', ticketDir,
+            '--timeout', '30',
+        ], {
+            env: {
+                ...process.env,
+                EXTENSION_DIR: tmpDir,
+                PATH: `${shimDir}${path.delimiter}${process.env.PATH || ''}`,
+                PICKLE_BACKEND: '',
+            },
+            encoding: 'utf-8',
+            timeout: 45000,
+        });
+
+        const combined = result.stdout + result.stderr;
+        assert.equal(result.status, 1,
+            `expected validation failure when log<200B AND no git edits, got: ${combined}`);
+        assert.ok(/no git edits|validation failed/i.test(combined),
+            `expected validation failure message, got: ${combined}`);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+// ---------------------------------------------------------------------------
 // tierToModel — tier-based model routing
 // ---------------------------------------------------------------------------
 
