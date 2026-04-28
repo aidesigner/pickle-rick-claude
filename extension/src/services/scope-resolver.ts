@@ -644,11 +644,17 @@ function findImporters(name: string, repoRoot: string, timeoutMs: number): strin
   // aliased imports (`{ foo as bar }`) are NOT matched: `\bfoo\b\s*[,}]`
   // requires , or } after foo — ` as` does not satisfy this (documented miss).
   const pattern = `import\\s+${name}\\b|import[^{;]*\\{[^}]*\\b${name}\\b\\s*[,}]`;
+  const rgMatches = _runRgImportWalk(pattern, repoRoot, timeoutMs);
+  if (rgMatches.length > 0) return rgMatches;
+  return _runGrepImportWalk(pattern, repoRoot, timeoutMs);
+}
+
+function _runRgImportWalk(pattern: string, root: string, timeoutMs: number): string[] {
   // `timeout` guards against a wedged rg/grep (FIFO under repoRoot, stuck
   // FUSE mount, catastrophic backtracking) that would otherwise block the
   // entire scope-resolution phase indefinitely with no log output.
   const rg = spawnSync('rg', ['-l', '--glob', '*.{ts,tsx,js,jsx,mjs,cjs}', '-e', pattern, '.'], {
-    cwd: repoRoot,
+    cwd: root,
     encoding: 'utf-8',
     timeout: timeoutMs,
   });
@@ -658,11 +664,17 @@ function findImporters(name: string, repoRoot: string, timeoutMs: number): strin
       .filter((f) => f.length > 0)
       .map((f) => toPosix(f.replace(/^\.\//, '')));
   }
+  const errorCode = (rg.error as NodeJS.ErrnoException | undefined)?.code;
+  console.warn(`scope-resolver import walk: rg ${errorCode === 'ETIMEDOUT' ? 'timeout' : 'fail'} status=${rg.status ?? 'null'} signal=${rg.signal ?? 'null'} error=${errorCode ?? 'none'}`);
+  return [];
+}
+
+function _runGrepImportWalk(pattern: string, root: string, timeoutMs: number): string[] {
   const grep = spawnSync(
     'grep',
     ['-rl', '-E', '--include=*.ts', '--include=*.tsx', '--include=*.js', '--include=*.jsx',
       pattern, '.'],
-    { cwd: repoRoot, encoding: 'utf-8', timeout: timeoutMs },
+    { cwd: root, encoding: 'utf-8', timeout: timeoutMs },
   );
   if (grep.status === 0 || grep.status === 1) {
     return (grep.stdout || '')
@@ -670,5 +682,7 @@ function findImporters(name: string, repoRoot: string, timeoutMs: number): strin
       .filter((f) => f.length > 0)
       .map((f) => toPosix(f.replace(/^\.\//, '')));
   }
+  const errorCode = (grep.error as NodeJS.ErrnoException | undefined)?.code;
+  console.warn(`scope-resolver import walk: grep ${errorCode === 'ETIMEDOUT' ? 'timeout' : 'fail'} status=${grep.status ?? 'null'} signal=${grep.signal ?? 'null'} error=${errorCode ?? 'none'}`);
   return [];
 }
