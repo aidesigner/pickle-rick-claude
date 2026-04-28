@@ -52,6 +52,24 @@ process.exit(0);
     return shimPath;
 }
 
+function writeClaudeShim(shimDir, logPath) {
+    fs.mkdirSync(shimDir, { recursive: true });
+    const shimPath = path.join(shimDir, 'claude');
+    const body = `#!${process.execPath}
+const fs = require('fs');
+const rec = {
+    argv: process.argv.slice(2),
+    pickle_backend: process.env.PICKLE_BACKEND || null,
+    pwd: process.cwd(),
+};
+fs.writeFileSync(${JSON.stringify(logPath)}, JSON.stringify(rec, null, 2));
+process.exit(0);
+`;
+    fs.writeFileSync(shimPath, body);
+    fs.chmodSync(shimPath, 0o755);
+    return shimPath;
+}
+
 function setupCodexTask(tmpRoot, taskId = 'codex-task-1') {
     const taskDir = path.join(tmpRoot, 'jar', '2026-01-01', taskId);
     fs.mkdirSync(taskDir, { recursive: true });
@@ -285,6 +303,59 @@ test('jar-runner (codex): ENOENT short-circuits remaining codex tasks', { timeou
             path.join(tmpRoot, 'jar', '2026-01-01', 'codex-task-b', 'meta.json'), 'utf-8'));
         assert.equal(metaA.status, 'marinating', `task-a should stay marinating, got: ${metaA.status}`);
         assert.equal(metaB.status, 'marinating', `task-b should stay marinating, got: ${metaB.status}`);
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('jar-runner (codex): recovered claude task is not skipped by codex ENOENT short-circuit', { timeout: 30_000 }, () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        setupCodexTask(tmpRoot, 'codex-task-a');
+        const { metaPath, sessionDir } = setupCodexTask(tmpRoot, 'codex-task-b');
+
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: false,
+            step: 'prd',
+            iteration: 1,
+            backend: 'codex',
+            working_dir: tmpRoot,
+        }, null, 2));
+        fs.writeFileSync(path.join(sessionDir, 'state.json.tmp.999999'), JSON.stringify({
+            active: false,
+            step: 'prd',
+            iteration: 2,
+            backend: 'claude',
+            working_dir: tmpRoot,
+        }, null, 2));
+
+        const shimDir = path.join(tmpRoot, 'bin');
+        const claudeLog = path.join(tmpRoot, 'claude-invocation.json');
+        writeClaudeShim(shimDir, claudeLog);
+
+        const result = spawnSync(process.execPath, [JAR_RUNNER_BIN], {
+            env: {
+                PATH: shimDir,
+                HOME: process.env.HOME || '/tmp',
+                EXTENSION_DIR: tmpRoot,
+                PICKLE_BACKEND: '',
+            },
+            encoding: 'utf-8',
+            timeout: 25000,
+        });
+
+        const combined = result.stdout + result.stderr;
+        assert.ok(
+            combined.includes('codex CLI not found'),
+            `Expected codex ENOENT install hint, got: ${combined.slice(0, 800)}`,
+        );
+        assert.ok(fs.existsSync(claudeLog), 'Recovered claude task never ran');
+
+        const metaA = JSON.parse(fs.readFileSync(
+            path.join(tmpRoot, 'jar', '2026-01-01', 'codex-task-a', 'meta.json'), 'utf-8'));
+        const metaB = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+        assert.equal(metaA.status, 'marinating', `codex task should stay marinating, got: ${metaA.status}`);
+        assert.equal(metaB.status, 'consumed', `Recovered claude task should run, got: ${metaB.status}`);
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }

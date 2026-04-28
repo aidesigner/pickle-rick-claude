@@ -39,7 +39,7 @@ export function loadJarTaskTimeout(extensionRoot: string, state: State): number 
  */
 function readTaskState(sessionDir: string): State | null {
   try {
-    return JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8')) as State;
+    return sm.read(path.join(sessionDir, 'state.json'));
   } catch {
     return null;
   }

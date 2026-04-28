@@ -36,7 +36,7 @@ export function loadJarTaskTimeout(extensionRoot, state) {
  */
 function readTaskState(sessionDir) {
     try {
-        return JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+        return sm.read(path.join(sessionDir, 'state.json'));
     }
     catch {
         return null;
