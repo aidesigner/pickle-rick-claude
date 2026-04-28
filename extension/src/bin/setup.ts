@@ -237,6 +237,7 @@ async function main() {
         if (explicitFlags.has('backend') && backend) s.backend = backend;
         if (explicitFlags.has('teams')) s.teams_mode = teamsMode;
         if (explicitFlags.has('max-parallel')) s.max_parallel = maxParallel;
+        s.session_dir = fullSessionPath;
       });
     } catch {
       die(`state.json is missing or corrupt in ${fullSessionPath}`);
@@ -264,11 +265,6 @@ async function main() {
 
     currentIteration = (Number(state.iteration) || 0) + 1;
     promiseToken = state.completion_promise;
-    // Only overwrite the validated fullSessionPath if the stored path exists on disk
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    if (state.session_dir && fs.existsSync(state.session_dir)) {
-      fullSessionPath = state.session_dir;
-    }
   } else {
     if (!taskStr && !pausedMode) die('No task specified. Run /pickle --help for usage.');
     if (!taskStr) taskStr = 'PRD Interview (task to be determined via interview)';

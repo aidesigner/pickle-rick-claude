@@ -267,6 +267,7 @@ async function main() {
                     s.teams_mode = teamsMode;
                 if (explicitFlags.has('max-parallel'))
                     s.max_parallel = maxParallel;
+                s.session_dir = fullSessionPath;
             });
         }
         catch {
@@ -293,11 +294,6 @@ async function main() {
         maxParallel = Number.isFinite(rawMaxParallel) && Number.isInteger(rawMaxParallel) && rawMaxParallel >= 1 ? rawMaxParallel : maxParallel;
         currentIteration = (Number(state.iteration) || 0) + 1;
         promiseToken = state.completion_promise;
-        // Only overwrite the validated fullSessionPath if the stored path exists on disk
-        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-        if (state.session_dir && fs.existsSync(state.session_dir)) {
-            fullSessionPath = state.session_dir;
-        }
     }
     else {
         if (!taskStr && !pausedMode)

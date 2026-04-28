@@ -191,6 +191,51 @@ test('setup: --resume rejects codex teams conflict from recovered tmp state', ()
     }
 });
 
+test('setup: --resume keeps the resolved session path authoritative over stale state.session_dir', () => {
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-session-dir-data-'));
+    const sessionsRoot = path.join(dataRoot, 'sessions');
+    const liveSessionDir = path.join(sessionsRoot, 'live-session');
+    const staleSessionDir = path.join(sessionsRoot, 'stale-session');
+    const workingDir = process.cwd();
+
+    fs.mkdirSync(liveSessionDir, { recursive: true });
+    fs.mkdirSync(staleSessionDir, { recursive: true });
+
+    fs.writeFileSync(path.join(liveSessionDir, 'state.json'), JSON.stringify({
+        schema_version: 1,
+        active: false,
+        backend: 'claude',
+        session_dir: staleSessionDir,
+        working_dir: workingDir,
+        iteration: 2,
+        step: 'implement',
+        original_prompt: 'resume stale session_dir test',
+    }, null, 2));
+    fs.writeFileSync(path.join(staleSessionDir, 'state.json'), JSON.stringify({
+        schema_version: 1,
+        active: true,
+        backend: 'claude',
+        session_dir: staleSessionDir,
+        working_dir: workingDir,
+        iteration: 9,
+        step: 'review',
+        original_prompt: 'wrong organ',
+    }, null, 2));
+
+    try {
+        const output = runSetupWithEnv(['--resume', liveSessionDir], { PICKLE_DATA_ROOT: dataRoot });
+        assert.match(output, new RegExp(`SESSION_ROOT=${liveSessionDir.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\$&')}`));
+
+        const resumedState = JSON.parse(fs.readFileSync(path.join(liveSessionDir, 'state.json'), 'utf-8'));
+        assert.equal(resumedState.session_dir, liveSessionDir, 'resume should repair state.session_dir to the resolved live session path');
+
+        const sessionsMap = JSON.parse(fs.readFileSync(path.join(dataRoot, 'current_sessions.json'), 'utf-8'));
+        assert.equal(sessionsMap[workingDir].sessionPath, liveSessionDir, 'resume should update current_sessions.json with the resolved live session path');
+    } finally {
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
 test('setup: --resume preserves max_time_minutes=0 (unlimited) without falling back to default', () => {
     // Create a session with max_time=0 (unlimited)
     const sessionPath = runSetup(['--max-time', '0', '--task', 'unlimited-time-test']);
