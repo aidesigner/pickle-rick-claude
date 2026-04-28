@@ -923,13 +923,15 @@ export function pruneOldSessions(sessionsRoot, maxAgeDays = 7) {
     if (!fs.existsSync(sessionsRoot))
         return;
     const cutoffMs = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
+    const sm = new StateManager();
     for (const entry of fs.readdirSync(sessionsRoot)) {
         const sessionDir = path.join(sessionsRoot, entry);
         const statePath = path.join(sessionDir, 'state.json');
         if (!fs.existsSync(statePath))
             continue;
         try {
-            const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+            const sessionDirMtimeMs = fs.statSync(sessionDir).mtimeMs;
+            const state = sm.read(statePath);
             if (state.active === true)
                 continue;
             const rawMs = state.started_at
@@ -937,7 +939,7 @@ export function pruneOldSessions(sessionsRoot, maxAgeDays = 7) {
                 : NaN;
             const startedMs = Number.isFinite(rawMs)
                 ? rawMs
-                : fs.statSync(sessionDir).mtimeMs;
+                : sessionDirMtimeMs;
             if (startedMs < cutoffMs) {
                 fs.rmSync(sessionDir, { recursive: true, force: true });
             }

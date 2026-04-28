@@ -19,6 +19,13 @@ function runSetup(args) {
     return match[1].trim();
 }
 
+function runSetupWithEnv(args, extraEnv) {
+    return execFileSync(process.execPath, [SETUP, ...args], {
+        encoding: 'utf-8',
+        env: { ...process.env, FORCE_COLOR: '0', ...extraEnv },
+    });
+}
+
 function cleanup(sessionPath) {
     try { fs.rmSync(sessionPath, { recursive: true, force: true }); } catch { /* ignore */ }
 }
@@ -299,6 +306,44 @@ test('setup: resumed session does NOT log additional session_start', () => {
         const afterCount = getActivityEvents(sid).length;
         assert.equal(afterCount, beforeCount, 'resume should NOT log additional session_start');
     } finally {
+        cleanup(sessionPath);
+    }
+});
+
+test('setup: prunes dead-pid stale sessions before creating a new session', () => {
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-data-'));
+    const staleSessionDir = path.join(dataRoot, 'sessions', 'stale-session');
+    fs.mkdirSync(staleSessionDir, { recursive: true });
+    fs.writeFileSync(
+        path.join(staleSessionDir, 'state.json'),
+        JSON.stringify({
+            active: true,
+            pid: 99999999,
+            started_at: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
+            working_dir: path.join(dataRoot, 'old-repo'),
+            session_dir: staleSessionDir,
+        }, null, 2)
+    );
+
+    const output = runSetupWithEnv(
+        ['--task', 'prune-dead-pid-stale-session'],
+        {
+            EXTENSION_DIR: path.resolve(__dirname, '..', '..'),
+            PICKLE_DATA_ROOT: dataRoot,
+        }
+    );
+    const match = output.match(/SESSION_ROOT=(.+)/);
+    assert.ok(match, `SESSION_ROOT not found in output:\n${output}`);
+    const sessionPath = match[1].trim();
+
+    try {
+        assert.equal(
+            fs.existsSync(staleSessionDir),
+            false,
+            'setup should prune stale sessions whose dead PID is recovered to inactive before age check'
+        );
+    } finally {
+        fs.rmSync(dataRoot, { recursive: true, force: true });
         cleanup(sessionPath);
     }
 });
