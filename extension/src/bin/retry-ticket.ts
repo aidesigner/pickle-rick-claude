@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { getExtensionRoot, getDataRoot, extractFrontmatter, updateState, safeErrorMessage, resolveSessionPath } from '../services/pickle-utils.js';
+import { getExtensionRoot, getDataRoot, extractFrontmatter, updateState, safeErrorMessage, resolveSessionPath, clearTicketResolutionTimestamps } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { State, Defaults } from '../types/index.js';
 
@@ -67,7 +67,7 @@ export function retryTicket(ticketId: string, cwd: string): void {
   let updatedContent: string;
   if (fmResult) {
     const fmSection = ticketContent.slice(0, fmResult.end).replace(/^status:.*$/m, 'status: "Todo"');
-    updatedContent = fmSection + ticketContent.slice(fmResult.end);
+    updatedContent = clearTicketResolutionTimestamps(fmSection) + ticketContent.slice(fmResult.end);
   } else {
     updatedContent = ticketContent.replace(/^status:.*$/m, 'status: "Todo"');
   }

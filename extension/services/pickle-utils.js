@@ -194,16 +194,30 @@ export function extractFrontmatter(content) {
     const end = content[rawEnd] === '\n' ? rawEnd + 1 : content[rawEnd] === '\r' && content[rawEnd + 1] === '\n' ? rawEnd + 2 : rawEnd;
     return { body: content.slice(openLen, closeIdx), start: 0, end };
 }
-function insertFrontmatterField(content, field, value) {
+function setFrontmatterField(content, field, value) {
     const fm = extractFrontmatter(content);
     if (!fm)
         return content;
+    const existingField = new RegExp(`^${field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:\\s*.*$`, 'm');
+    if (existingField.test(fm.body)) {
+        return content.replace(existingField, `${field}: "${value}"`);
+    }
     const closingNewline = content.lastIndexOf('\n---', fm.end - 1);
     if (closingNewline === -1)
         return content;
     const insertPoint = closingNewline + 1;
     const newLine = `${field}: "${value}"\n`;
     return content.slice(0, insertPoint) + newLine + content.slice(insertPoint);
+}
+export function clearTicketResolutionTimestamps(content) {
+    const fm = extractFrontmatter(content);
+    if (!fm)
+        return content;
+    const filteredBody = fm.body
+        .split(/\r?\n/)
+        .filter((line) => !/^(completed_at|skipped_at):\s*/.test(line))
+        .join('\n');
+    return content.slice(0, fm.start) + `---\n${filteredBody}\n---\n` + content.slice(fm.end);
 }
 export function parseTicketFrontmatter(filePath) {
     try {
@@ -254,7 +268,7 @@ export function markTicketDone(sessionDir, ticketId) {
         const updated = content.replace(/^(status:\s*).*$/m, '$1"Done"');
         if (updated === content)
             return false;
-        const withTimestamp = insertFrontmatterField(updated, 'completed_at', new Date().toISOString());
+        const withTimestamp = setFrontmatterField(updated, 'completed_at', new Date().toISOString());
         fs.writeFileSync(filePath, withTimestamp);
         return true;
     }
@@ -274,7 +288,7 @@ export function markTicketSkipped(sessionDir, ticketId) {
         const updated = content.replace(/^(status:\s*).*$/m, '$1"Skipped"');
         if (updated === content)
             return false;
-        const withTimestamp = insertFrontmatterField(updated, 'skipped_at', new Date().toISOString());
+        const withTimestamp = setFrontmatterField(updated, 'skipped_at', new Date().toISOString());
         fs.writeFileSync(filePath, withTimestamp);
         return true;
     }

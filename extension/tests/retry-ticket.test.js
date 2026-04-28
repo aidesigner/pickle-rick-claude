@@ -131,3 +131,55 @@ test('retryTicket: resets ticket status to Todo and archives artifacts', () => {
         fs.rmSync(sessionDir, { recursive: true, force: true });
     }
 });
+
+test('retryTicket: clears stale completed_at and skipped_at when resetting to Todo', () => {
+    const tmpExtDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-retry-ext-')));
+    const sessionDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-session-')));
+    const fakeCwd = sessionDir;
+    const saved = process.env.EXTENSION_DIR;
+    process.env.EXTENSION_DIR = tmpExtDir;
+
+    try {
+        const ticketId = 'retry-timestamps';
+        const ticketDir = path.join(sessionDir, ticketId);
+        fs.mkdirSync(ticketDir, { recursive: true });
+
+        fs.writeFileSync(
+            path.join(ticketDir, `linear_ticket_${ticketId}.md`),
+            `---\nid: ${ticketId}\ntitle: Test\nstatus: Done\norder: 10\ncompleted_at: "2026-03-01T00:00:00.000Z"\nskipped_at: "2026-03-02T00:00:00.000Z"\n---\n`
+        );
+
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({
+                active: false,
+                step: 'implement',
+                iteration: 2,
+                session_dir: sessionDir,
+                original_prompt: 'test task',
+                worker_timeout_seconds: 1200,
+            })
+        );
+
+        fs.writeFileSync(
+            path.join(tmpExtDir, 'current_sessions.json'),
+            JSON.stringify({ [fakeCwd]: sessionDir })
+        );
+
+        retryTicket(ticketId, fakeCwd);
+
+        const ticketContent = fs.readFileSync(
+            path.join(ticketDir, `linear_ticket_${ticketId}.md`), 'utf-8');
+        assert.match(ticketContent, /^status: "Todo"$/m);
+        assert.doesNotMatch(ticketContent, /^completed_at:/m);
+        assert.doesNotMatch(ticketContent, /^skipped_at:/m);
+    } finally {
+        if (saved === undefined) {
+            delete process.env.EXTENSION_DIR;
+        } else {
+            process.env.EXTENSION_DIR = saved;
+        }
+        fs.rmSync(tmpExtDir, { recursive: true, force: true });
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+});

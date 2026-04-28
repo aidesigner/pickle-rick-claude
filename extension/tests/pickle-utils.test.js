@@ -807,6 +807,23 @@ test('markTicketDone: inserts completed_at timestamp', () => {
     }
 });
 
+test('markTicketDone: replaces existing completed_at timestamp instead of duplicating it', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        const sub = path.join(dir, 'ts2');
+        fs.mkdirSync(sub);
+        fs.writeFileSync(path.join(sub, 'linear_ticket_ts2.md'),
+            '---\nid: ts2\ntitle: Test\nstatus: Todo\norder: 10\ncompleted_at: "2026-03-01T00:00:00.000Z"\n---\nBody');
+        const result = markTicketDone(dir, 'ts2');
+        assert.equal(result, true);
+        const content = fs.readFileSync(path.join(sub, 'linear_ticket_ts2.md'), 'utf-8');
+        assert.equal((content.match(/^completed_at:/gm) || []).length, 1);
+        assert.doesNotMatch(content, /completed_at: "2026-03-01T00:00:00.000Z"/);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
 // --- markTicketSkipped ---
 
 test('markTicketSkipped: updates Todo to Skipped', () => {
@@ -838,6 +855,23 @@ test('markTicketSkipped: inserts skipped_at timestamp', () => {
         const content = fs.readFileSync(path.join(sub, 'linear_ticket_skip2.md'), 'utf-8');
         assert.ok(content.includes('status: "Skipped"'));
         assert.match(content, /skipped_at: "\d{4}-\d{2}-\d{2}T/);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('markTicketSkipped: replaces existing skipped_at timestamp instead of duplicating it', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    try {
+        const sub = path.join(dir, 'skip4');
+        fs.mkdirSync(sub);
+        fs.writeFileSync(path.join(sub, 'linear_ticket_skip4.md'),
+            '---\nid: skip4\ntitle: Test\nstatus: Todo\norder: 10\nskipped_at: "2026-03-01T00:00:00.000Z"\n---\n');
+        const result = markTicketSkipped(dir, 'skip4');
+        assert.equal(result, true);
+        const content = fs.readFileSync(path.join(sub, 'linear_ticket_skip4.md'), 'utf-8');
+        assert.equal((content.match(/^skipped_at:/gm) || []).length, 1);
+        assert.doesNotMatch(content, /skipped_at: "2026-03-01T00:00:00.000Z"/);
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
