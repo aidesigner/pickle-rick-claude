@@ -205,29 +205,27 @@ function parsePnpmWorkspaceYaml(content: string): string[] {
 }
 
 function resolveWorkspaceGlobs(workingDir: string, patterns: string[]): string[] {
-  const results: string[] = [];
+  const results = new Set<string>();
+  const packageDirs = listWorkspacePackageDirs(workingDir).map(abs => ({
+    abs,
+    rel: normalizeScopePath(path.relative(workingDir, abs)),
+  }));
   for (const pattern of patterns) {
-    const parts = pattern.split('/');
-    const starIdx = parts.findIndex(p => p.includes('*'));
-    if (starIdx === -1) {
-      const resolved = path.resolve(workingDir, pattern);
-      if (fs.existsSync(path.join(resolved, 'package.json'))) results.push(resolved);
+    const normalizedPattern = normalizeScopePath(pattern);
+    if (!/[*?]/.test(normalizedPattern)) {
+      const resolved = path.resolve(workingDir, normalizedPattern);
+      if (fs.existsSync(path.join(resolved, 'package.json'))) results.add(resolved);
       continue;
     }
-    const base = path.resolve(workingDir, parts.slice(0, starIdx).join('/') || '.');
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(base, { withFileTypes: true });
-    } catch {
-      continue;
-    }
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const candidate = path.join(base, entry.name);
-      if (fs.existsSync(path.join(candidate, 'package.json'))) results.push(candidate);
+
+    const regex = workspaceGlobToRegex(normalizedPattern);
+    for (const candidate of packageDirs) {
+      if (regex.test(candidate.rel)) {
+        results.add(candidate.abs);
+      }
     }
   }
-  return results;
+  return Array.from(results).sort();
 }
 
 export function getWorkspacePackages(workingDir: string): string[] {
@@ -266,6 +264,60 @@ function globToRegex(pattern: string): RegExp {
     .replace(/\x00/g, '.*')
     .replace(/\?/g, '[^/]');
   return new RegExp(`^${re}(/.*)?$`);
+}
+
+function workspaceGlobToRegex(pattern: string): RegExp {
+  let re = '';
+  let i = 0;
+  while (i < pattern.length) {
+    const c = pattern[i];
+    if (c === '*') {
+      if (pattern[i + 1] === '*') {
+        re += '.*';
+        i += 2;
+        continue;
+      }
+      re += '[^/]*';
+    } else if (c === '?') {
+      re += '[^/]';
+    } else if (/[.+^${}()|[\]\\]/.test(c)) {
+      re += `\\${c}`;
+    } else {
+      re += c;
+    }
+    i += 1;
+  }
+  return new RegExp(`^${re}$`);
+}
+
+function listWorkspacePackageDirs(rootDir: string): string[] {
+  const found = new Set<string>();
+  const pending = [rootDir];
+
+  while (pending.length > 0) {
+    const current = pending.pop() as string;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    if (
+      current !== rootDir &&
+      entries.some(entry => entry.isFile() && entry.name === 'package.json')
+    ) {
+      found.add(current);
+    }
+
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      if (entry.name === '.git' || entry.name === 'node_modules') continue;
+      pending.push(path.join(current, entry.name));
+    }
+  }
+
+  return Array.from(found);
 }
 
 function normalizeScopePath(value: string): string {

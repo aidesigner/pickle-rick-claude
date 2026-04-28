@@ -25,6 +25,35 @@ test('getWorkspacePackages: returns packages/a, packages/b, packages/c', () => {
   assert.deepEqual(names, ['a', 'b', 'c']);
 });
 
+test('getWorkspacePackages: nested workspace globs resolve nested package dirs', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-nested-workspaces-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
+      name: 'workspace-root',
+      private: true,
+      workspaces: ['packages/*/*'],
+    }, null, 2));
+
+    const nestedA = path.join(dir, 'packages', 'group-a', 'svc-a');
+    const nestedB = path.join(dir, 'packages', 'group-b', 'svc-b');
+    fs.mkdirSync(nestedA, { recursive: true });
+    fs.mkdirSync(nestedB, { recursive: true });
+    fs.writeFileSync(path.join(nestedA, 'package.json'), JSON.stringify({ name: 'svc-a' }, null, 2));
+    fs.writeFileSync(path.join(nestedB, 'package.json'), JSON.stringify({ name: 'svc-b' }, null, 2));
+
+    const pkgs = getWorkspacePackages(dir)
+      .map(p => path.relative(dir, p).replace(/\\\\/g, '/'))
+      .sort();
+
+    assert.deepEqual(pkgs, [
+      'packages/group-a/svc-a',
+      'packages/group-b/svc-b',
+    ]);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('filterByScope: allowedPaths=packages/b/** returns only b (relative paths)', () => {
   const relPaths = ['packages/a', 'packages/b', 'packages/c'];
   const filtered = filterByScope(relPaths, { scope: 'full', allowedPaths: ['packages/b/**'] });
@@ -166,6 +195,50 @@ test('runGate: allowedPaths can exclude an otherwise-failing workspace package',
       scopedToExactFile.total_raw_failure_count,
       0,
       'an exact file scope must still run the owning package and exclude the failing sibling package',
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('runGate: nested workspace globs do not false-green failing nested packages', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-workspace-nested-'));
+  try {
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({
+      name: 'workspace-root',
+      private: true,
+      workspaces: ['packages/*/*'],
+    }, null, 2));
+
+    const passingDir = path.join(dir, 'packages', 'group-a', 'passing');
+    const failingDir = path.join(dir, 'packages', 'group-b', 'failing');
+    fs.mkdirSync(passingDir, { recursive: true });
+    fs.mkdirSync(failingDir, { recursive: true });
+
+    fs.writeFileSync(path.join(passingDir, 'package.json'), JSON.stringify({
+      name: 'nested-passing',
+      version: '1.0.0',
+      scripts: { test: 'node -e "process.exit(0)"' },
+    }, null, 2));
+    fs.writeFileSync(path.join(failingDir, 'package.json'), JSON.stringify({
+      name: 'nested-failing',
+      version: '1.0.0',
+      scripts: { test: 'node -e "process.exit(1)"' },
+    }, null, 2));
+
+    const result = await runGate({
+      workingDir: dir,
+      mode: 'strict',
+      scope: 'full',
+      checks: ['tests'],
+    });
+
+    assert.equal(result.status, 'red');
+    assert.equal(result.total_raw_failure_count, 1);
+    assert.deepEqual(
+      result.failures.map(f => path.relative(dir, f.file).replace(/\\\\/g, '/')),
+      ['packages/group-b/failing'],
+      'nested workspace failures must surface instead of silently skipping every package',
     );
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
