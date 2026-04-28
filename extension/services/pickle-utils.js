@@ -86,6 +86,13 @@ export function formatTime(seconds) {
 export function isoCompactStamp(d = new Date()) {
     return d.toISOString().replace(/:/g, '-').replace(/\..+/, 'Z');
 }
+/** Local calendar day key used for filenames/report buckets: `YYYY-MM-DD`. */
+export function formatLocalDateKey(d) {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+}
 export function runCmd(cmd, options = {}) {
     const { cwd, check = true, capture = true } = options;
     // Array form: use spawnSync so each argument is passed verbatim (no shell splitting).

@@ -106,6 +106,14 @@ export function isoCompactStamp(d: Date = new Date()): string {
   return d.toISOString().replace(/:/g, '-').replace(/\..+/, 'Z');
 }
 
+/** Local calendar day key used for filenames/report buckets: `YYYY-MM-DD`. */
+export function formatLocalDateKey(d: Date): string {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 interface ShellError extends Error {
   stderr?: Buffer | string;
   stdout?: Buffer | string;

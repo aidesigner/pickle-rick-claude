@@ -13,6 +13,7 @@ import {
     formatNumber,
     buildReport,
 } from '../services/metrics-utils.js';
+import { formatLocalDateKey } from '../services/pickle-utils.js';
 import { parseMetricsArgs } from '../bin/metrics.js';
 
 const CLI_PATH = path.join(import.meta.dirname, '..', 'bin', 'metrics.js');
@@ -34,7 +35,22 @@ function makeTempProjectsDir() {
 }
 
 function toLocalDateStr(date) {
-    return date.toLocaleDateString('en-CA');
+    return formatLocalDateKey(date);
+}
+
+function withBrokenCanadianDateLocale(fn) {
+    const original = Date.prototype.toLocaleDateString;
+    Date.prototype.toLocaleDateString = function (locale, ...args) {
+        if (locale === 'en-CA') {
+            return '04/27/2026';
+        }
+        return original.call(this, locale, ...args);
+    };
+    try {
+        fn();
+    } finally {
+        Date.prototype.toLocaleDateString = original;
+    }
 }
 
 function git(env, cwd, args) {
@@ -265,6 +281,31 @@ test('scanSessionFiles: scans JSONL and returns correct map', () => {
         assert.equal(tokens.output, 500);
         assert.equal(tokens.cache_read, 110);
         assert.equal(tokens.cache_create, 55);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('scanSessionFiles: keeps YYYY-MM-DD buckets even when locale formatting falls back', () => {
+    const { root, cacheFile } = makeTempProjectsDir();
+    try {
+        writeSessionLine(
+            root,
+            'my-project',
+            'session.jsonl',
+            makeAssistantLine(new Date(2026, 1, 28, 12, 0, 0, 0).toISOString(), 100, 200)
+        );
+
+        let result;
+        withBrokenCanadianDateLocale(() => {
+            result = scanSessionFiles(root, '2026-02-28', '2026-02-28', cacheFile);
+        });
+
+        assert.equal(result.size, 1);
+        const dateMap = result.get('my-project');
+        assert.ok(dateMap);
+        assert.ok(dateMap.has('2026-02-28'));
+        assert.equal(dateMap.get('2026-02-28').turns, 1);
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }
@@ -569,7 +610,7 @@ test('CLI: default invocation with mock data', () => {
     const { root, cacheFile: _ } = makeTempProjectsDir();
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-metrics-repos-'));
     try {
-        const today = new Date().toLocaleDateString('en-CA');
+        const today = formatLocalDateKey(new Date());
         writeSessionLine(root, 'test-project', 'session.jsonl',
             makeAssistantLine(`${today}T10:00:00Z`, 100, 200));
 
@@ -588,7 +629,7 @@ test('CLI: --json outputs valid MetricsReport shape', () => {
     const { root, cacheFile: _ } = makeTempProjectsDir();
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-metrics-repos-'));
     try {
-        const today = new Date().toLocaleDateString('en-CA');
+        const today = formatLocalDateKey(new Date());
         writeSessionLine(root, 'json-project', 'session.jsonl',
             makeAssistantLine(`${today}T10:00:00Z`, 500, 1000, 50, 25));
 
@@ -657,7 +698,7 @@ test('CLI: --days 0 returns today only', () => {
     const { root, cacheFile: _ } = makeTempProjectsDir();
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-metrics-repos-'));
     try {
-        const today = new Date().toLocaleDateString('en-CA');
+        const today = formatLocalDateKey(new Date());
         writeSessionLine(root, 'today-proj', 'session.jsonl',
             makeAssistantLine(`${today}T08:00:00Z`, 100, 200));
 
@@ -828,7 +869,7 @@ test('CLI: --weekly --json returns weekly grouping', () => {
     const { root, cacheFile: _ } = makeTempProjectsDir();
     const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-metrics-repos-'));
     try {
-        const today = new Date().toLocaleDateString('en-CA');
+        const today = formatLocalDateKey(new Date());
         writeSessionLine(root, 'weekly-proj', 'session.jsonl',
             makeAssistantLine(`${today}T10:00:00Z`, 100, 200));
 

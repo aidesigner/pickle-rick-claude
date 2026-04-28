@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { getDataRoot, safeErrorMessage } from './pickle-utils.js';
+import { formatLocalDateKey, getDataRoot, safeErrorMessage } from './pickle-utils.js';
 export function getActivityDir() {
     return path.join(getDataRoot(), 'activity');
 }
@@ -20,8 +20,8 @@ export function _clearPendingBuffer() { pendingBuffer.splice(0); }
 function getActivityFilepath(activityDir, ts) {
     const parsed = new Date(ts);
     const date = Number.isFinite(parsed.getTime())
-        ? parsed.toLocaleDateString('en-CA')
-        : new Date().toLocaleDateString('en-CA');
+        ? formatLocalDateKey(parsed)
+        : formatLocalDateKey(new Date());
     return path.join(activityDir, `${date}.jsonl`);
 }
 export function logActivity(event) {

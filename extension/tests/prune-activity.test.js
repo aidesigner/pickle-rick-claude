@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { formatLocalDateKey } from '../services/pickle-utils.js';
 
 // Import under test — getActivityDir reads EXTENSION_DIR at call time
 import { pruneActivity } from '../services/activity-logger.js';
@@ -26,8 +27,7 @@ function withTempActivityDir(fn) {
 function dateStr(daysAgo) {
     const d = new Date();
     d.setDate(d.getDate() - daysAgo);
-    // en-CA gives YYYY-MM-DD
-    return d.toLocaleDateString('en-CA');
+    return formatLocalDateKey(d);
 }
 
 // --- pruneActivity function tests ---
@@ -153,7 +153,7 @@ test('pruneActivity: handles large maxAgeDays across year boundaries', () => {
         const d = new Date();
         const targetMs = d.getTime() - 800 * 86_400_000;
         const target = new Date(targetMs);
-        const dateStr = target.toLocaleDateString('en-CA');
+        const dateStr = formatLocalDateKey(target);
         const filepath = path.join(activityDir, `${dateStr}.jsonl`);
         fs.writeFileSync(filepath, '{"event":"ancient"}\n');
         const deleted = pruneActivity(365);
@@ -168,7 +168,7 @@ test('pruneActivity: month boundary — file from prev month is correctly aged',
         const d = new Date();
         const targetMs = d.getTime() - 40 * 86_400_000;
         const target = new Date(targetMs);
-        const dateStr = target.toLocaleDateString('en-CA');
+        const dateStr = formatLocalDateKey(target);
         const filepath = path.join(activityDir, `${dateStr}.jsonl`);
         fs.writeFileSync(filepath, '{"event":"cross-month"}\n');
         // maxAge=30 should delete it, maxAge=50 should keep it

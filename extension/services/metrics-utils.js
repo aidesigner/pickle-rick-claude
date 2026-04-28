@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawnSync } from 'child_process';
-import { safeErrorMessage } from './pickle-utils.js';
+import { formatLocalDateKey, safeErrorMessage } from './pickle-utils.js';
 // ---------------------------------------------------------------------------
 // Utility Functions
 // ---------------------------------------------------------------------------
@@ -83,7 +83,7 @@ function parseJsonlFile(filePath) {
         const parsed = parseSessionLine(line);
         if (!parsed)
             continue;
-        const date = new Date(parsed.timestamp).toLocaleDateString('en-CA');
+        const date = formatLocalDateKey(new Date(parsed.timestamp));
         if (!result[date])
             result[date] = emptyDailyTokens();
         addTokens(result[date], parsed.usage);
@@ -218,7 +218,7 @@ export function parseGitLogOutput(output) {
             const d = new Date(line);
             if (isNaN(d.getTime()))
                 continue;
-            currentDate = d.toLocaleDateString('en-CA');
+            currentDate = formatLocalDateKey(d);
             if (!result.has(currentDate))
                 result.set(currentDate, { commits: 0, added: 0, removed: 0 });
             result.get(currentDate).commits += 1;

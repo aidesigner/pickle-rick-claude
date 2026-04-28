@@ -2,7 +2,7 @@
 import * as path from 'path';
 import * as os from 'os';
 import { scanSessionFiles, scanGitRepos, buildReport, formatNumber, shortenSlug, } from '../services/metrics-utils.js';
-import { printMinimalPanel, Style, getDataRoot, } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatLocalDateKey, getDataRoot, } from '../services/pickle-utils.js';
 function parseExactLocalDate(dateStr) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr))
         return null;
@@ -70,7 +70,7 @@ export function parseMetricsArgs(argv) {
 // Date Computation
 // ---------------------------------------------------------------------------
 function toDateStr(d) {
-    return d.toLocaleDateString('en-CA'); // YYYY-MM-DD
+    return formatLocalDateKey(d);
 }
 function computeDateRange(args) {
     const now = new Date();

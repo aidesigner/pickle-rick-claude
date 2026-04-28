@@ -14,6 +14,7 @@ import {
 import {
   printMinimalPanel,
   Style,
+  formatLocalDateKey,
   getDataRoot,
 } from '../services/pickle-utils.js';
 
@@ -98,7 +99,7 @@ export function parseMetricsArgs(argv: string[]): ParsedMetricsArgs {
 // ---------------------------------------------------------------------------
 
 function toDateStr(d: Date): string {
-  return d.toLocaleDateString('en-CA'); // YYYY-MM-DD
+  return formatLocalDateKey(d);
 }
 
 function computeDateRange(args: ParsedMetricsArgs): { since: string; until: string } {

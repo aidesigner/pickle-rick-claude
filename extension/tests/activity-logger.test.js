@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { VALID_ACTIVITY_EVENTS } from '../types/index.js';
 import { _setRetryDelayMs, _getPendingBuffer, _clearPendingBuffer } from '../services/activity-logger.js';
+import { formatLocalDateKey } from '../services/pickle-utils.js';
 import { readActivityFiles } from '../bin/standup.js';
 
 // Helper: create temp dir that acts as extension root, return activity dir path
@@ -36,6 +37,21 @@ function localDateWithOffset(daysOffset, hour = 12) {
     d.setHours(hour, 0, 0, 0);
     d.setDate(d.getDate() + daysOffset);
     return d;
+}
+
+function withBrokenCanadianDateLocale(fn) {
+    const original = Date.prototype.toLocaleDateString;
+    Date.prototype.toLocaleDateString = function (locale, ...args) {
+        if (locale === 'en-CA') {
+            return '04/27/2026';
+        }
+        return original.call(this, locale, ...args);
+    };
+    try {
+        fn();
+    } finally {
+        Date.prototype.toLocaleDateString = original;
+    }
 }
 
 // --- VALID_ACTIVITY_EVENTS ---
@@ -76,7 +92,7 @@ test('logActivity: appends valid JSONL to date-named file', async () => {
     const logActivity = await getLogActivity();
     withTempActivityDir((activityDir) => {
         logActivity({ event: 'commit', source: 'hook', commit_hash: 'abc1234' });
-        const date = new Date().toLocaleDateString('en-CA');
+        const date = formatLocalDateKey(new Date());
         const filepath = path.join(activityDir, `${date}.jsonl`);
         assert.ok(fs.existsSync(filepath), 'JSONL file should exist');
         const line = fs.readFileSync(filepath, 'utf8').trim();
@@ -93,7 +109,7 @@ test('logActivity: sets ts field automatically', async () => {
         const before = new Date().toISOString();
         logActivity({ event: 'session_start', source: 'pickle' });
         const after = new Date().toISOString();
-        const date = new Date().toLocaleDateString('en-CA');
+        const date = formatLocalDateKey(new Date());
         const filepath = path.join(activityDir, `${date}.jsonl`);
         const parsed = JSON.parse(fs.readFileSync(filepath, 'utf8').trim());
         assert.ok(parsed.ts >= before, 'ts should be >= test start');
@@ -107,10 +123,33 @@ test('logActivity: preserves caller-provided ts', async () => {
         const customDate = localDateWithOffset(-1);
         const customTs = customDate.toISOString();
         logActivity({ event: 'commit', source: 'hook', ts: customTs });
-        const date = customDate.toLocaleDateString('en-CA');
+        const date = formatLocalDateKey(customDate);
         const filepath = path.join(activityDir, `${date}.jsonl`);
         const parsed = JSON.parse(fs.readFileSync(filepath, 'utf8').trim());
         assert.equal(parsed.ts, customTs);
+    });
+});
+
+test('logActivity: uses strict YYYY-MM-DD partitions even when locale formatting falls back', async () => {
+    const logActivity = await getLogActivity();
+    withTempActivityDir((activityDir) => {
+        const eventDate = new Date(2026, 3, 27, 12, 0, 0, 0);
+        const eventTs = eventDate.toISOString();
+
+        withBrokenCanadianDateLocale(() => {
+            logActivity({ event: 'commit', source: 'hook', ts: eventTs, commit_hash: 'locale-bug' });
+        });
+
+        const expectedDate = formatLocalDateKey(eventDate);
+        const expectedFile = path.join(activityDir, `${expectedDate}.jsonl`);
+        assert.ok(fs.existsSync(expectedFile), 'event should be written under an ISO local-day filename');
+        assert.equal(fs.existsSync(path.join(activityDir, '04/27/2026.jsonl')), false, 'locale fallback filename should never be used');
+
+        const since = new Date(2026, 3, 27, 0, 0, 0, 0);
+        const until = new Date(2026, 3, 28, 0, 0, 0, 0);
+        const events = readActivityFiles(activityDir, since, until);
+        assert.equal(events.length, 1);
+        assert.equal(events[0].commit_hash, 'locale-bug');
     });
 });
 
@@ -129,7 +168,7 @@ test('logActivity: multiple events append to same file', async () => {
         logActivity({ event: 'session_start', source: 'pickle' });
         logActivity({ event: 'ticket_completed', source: 'pickle', ticket: 'abc' });
         logActivity({ event: 'session_end', source: 'pickle' });
-        const date = new Date().toLocaleDateString('en-CA');
+        const date = formatLocalDateKey(new Date());
         const filepath = path.join(activityDir, `${date}.jsonl`);
         const lines = fs.readFileSync(filepath, 'utf8').trim().split('\n');
         assert.equal(lines.length, 3);
@@ -163,7 +202,7 @@ test('logActivity: file permissions are 0o600', async () => {
     const logActivity = await getLogActivity();
     withTempActivityDir((activityDir) => {
         logActivity({ event: 'feature', source: 'persona', title: 'test perms' });
-        const date = new Date().toLocaleDateString('en-CA');
+        const date = formatLocalDateKey(new Date());
         const filepath = path.join(activityDir, `${date}.jsonl`);
         const stats = fs.statSync(filepath);
         const mode = stats.mode & 0o777;
@@ -182,7 +221,7 @@ test('logActivity: includes all provided optional fields', async () => {
             step: 'implement',
             epic: 'my-epic',
         });
-        const date = new Date().toLocaleDateString('en-CA');
+        const date = formatLocalDateKey(new Date());
         const filepath = path.join(activityDir, `${date}.jsonl`);
         const parsed = JSON.parse(fs.readFileSync(filepath, 'utf8').trim());
         assert.equal(parsed.session, 'sess-123');
@@ -198,7 +237,7 @@ test('logActivity: iteration_start event preserves iteration field', async () =>
     const logActivity = await getLogActivity();
     withTempActivityDir((activityDir) => {
         logActivity({ event: 'iteration_start', source: 'pickle', iteration: 3, session: 'sess-abc' });
-        const date = new Date().toLocaleDateString('en-CA');
+        const date = formatLocalDateKey(new Date());
         const filepath = path.join(activityDir, `${date}.jsonl`);
         const parsed = JSON.parse(fs.readFileSync(filepath, 'utf8').trim());
         assert.equal(parsed.event, 'iteration_start');
@@ -211,7 +250,7 @@ test('logActivity: iteration_end event preserves iteration and exit_type fields'
     const logActivity = await getLogActivity();
     withTempActivityDir((activityDir) => {
         logActivity({ event: 'iteration_end', source: 'pickle', iteration: 5, exit_type: 'error' });
-        const date = new Date().toLocaleDateString('en-CA');
+        const date = formatLocalDateKey(new Date());
         const filepath = path.join(activityDir, `${date}.jsonl`);
         const parsed = JSON.parse(fs.readFileSync(filepath, 'utf8').trim());
         assert.equal(parsed.event, 'iteration_end');
@@ -224,7 +263,7 @@ test('logActivity: session_start event preserves original_prompt field', async (
     const logActivity = await getLogActivity();
     withTempActivityDir((activityDir) => {
         logActivity({ event: 'session_start', source: 'pickle', original_prompt: 'Build the portal gun' });
-        const date = new Date().toLocaleDateString('en-CA');
+        const date = formatLocalDateKey(new Date());
         const filepath = path.join(activityDir, `${date}.jsonl`);
         const parsed = JSON.parse(fs.readFileSync(filepath, 'utf8').trim());
         assert.equal(parsed.event, 'session_start');
@@ -288,7 +327,7 @@ test('CLI: valid call exits 0 and writes event', () => {
         const result = runCli(['bug_fix', 'Fixed the auth race'], { EXTENSION_DIR: extRoot });
         assert.equal(result.status, 0, `stderr: ${result.stderr}`);
         const activityDir = path.join(extRoot, 'activity');
-        const date = new Date().toLocaleDateString('en-CA');
+        const date = formatLocalDateKey(new Date());
         const filepath = path.join(activityDir, `${date}.jsonl`);
         assert.ok(fs.existsSync(filepath), 'JSONL file should exist');
         const parsed = JSON.parse(fs.readFileSync(filepath, 'utf8').trim());
@@ -306,7 +345,7 @@ test('CLI: strips newlines from title', () => {
         const result = runCli(['feature', 'line1\nline2\rline3'], { EXTENSION_DIR: extRoot });
         assert.equal(result.status, 0, `stderr: ${result.stderr}`);
         const activityDir = path.join(extRoot, 'activity');
-        const date = new Date().toLocaleDateString('en-CA');
+        const date = formatLocalDateKey(new Date());
         const filepath = path.join(activityDir, `${date}.jsonl`);
         const parsed = JSON.parse(fs.readFileSync(filepath, 'utf8').trim());
         assert.ok(!parsed.title.includes('\n'), 'title should not contain \\n');
@@ -323,7 +362,7 @@ test('CLI: strips ANSI escape codes from title', () => {
         const result = runCli(['feature', ansiTitle], { EXTENSION_DIR: extRoot });
         assert.equal(result.status, 0, `stderr: ${result.stderr}`);
         const activityDir = path.join(extRoot, 'activity');
-        const date = new Date().toLocaleDateString('en-CA');
+        const date = formatLocalDateKey(new Date());
         const filepath = path.join(activityDir, `${date}.jsonl`);
         const parsed = JSON.parse(fs.readFileSync(filepath, 'utf8').trim());
         assert.ok(!parsed.title.includes('\x1b'), 'title should not contain ANSI escape codes');
@@ -341,7 +380,7 @@ test('CLI: strips control characters (bell, backspace, vertical tab) from title'
         const result = runCli(['bug_fix', controlTitle], { EXTENSION_DIR: extRoot });
         assert.equal(result.status, 0, `stderr: ${result.stderr}`);
         const activityDir = path.join(extRoot, 'activity');
-        const date = new Date().toLocaleDateString('en-CA');
+        const date = formatLocalDateKey(new Date());
         const filepath = path.join(activityDir, `${date}.jsonl`);
         const parsed = JSON.parse(fs.readFileSync(filepath, 'utf8').trim());
         assert.ok(!parsed.title.includes('\x07'), 'title should not contain bell char');
@@ -361,7 +400,7 @@ test('CLI: truncates title at 200 chars', () => {
         const result = runCli(['research', longTitle], { EXTENSION_DIR: extRoot });
         assert.equal(result.status, 0, `stderr: ${result.stderr}`);
         const activityDir = path.join(extRoot, 'activity');
-        const date = new Date().toLocaleDateString('en-CA');
+        const date = formatLocalDateKey(new Date());
         const filepath = path.join(activityDir, `${date}.jsonl`);
         const parsed = JSON.parse(fs.readFileSync(filepath, 'utf8').trim());
         assert.equal(parsed.title.length, 200);
@@ -410,7 +449,7 @@ test('logActivity: buffers event when write fails on both attempts (ENOSPC simul
     process.env.EXTENSION_DIR = extRoot;
     try {
         fs.mkdirSync(activityDir);
-        const date = new Date().toLocaleDateString('en-CA');
+        const date = formatLocalDateKey(new Date());
         const filepath = path.join(activityDir, `${date}.jsonl`);
         // Create file as read-only so both write attempts fail
         fs.writeFileSync(filepath, '', { mode: 0o444 });
@@ -423,7 +462,7 @@ test('logActivity: buffers event when write fails on both attempts (ENOSPC simul
             'buffered entry should contain the event type'
         );
     } finally {
-        fs.chmodSync(path.join(activityDir, new Date().toLocaleDateString('en-CA') + '.jsonl'), 0o644);
+        fs.chmodSync(path.join(activityDir, formatLocalDateKey(new Date()) + '.jsonl'), 0o644);
         process.env.EXTENSION_DIR = origEnv;
         if (origEnv === undefined) delete process.env.EXTENSION_DIR;
         fs.rmSync(extRoot, { recursive: true, force: true });
@@ -443,7 +482,7 @@ test('logActivity: flushes buffer on next successful write', async () => {
     process.env.EXTENSION_DIR = extRoot;
     try {
         fs.mkdirSync(activityDir);
-        const date = new Date().toLocaleDateString('en-CA');
+        const date = formatLocalDateKey(new Date());
         const filepath = path.join(activityDir, `${date}.jsonl`);
         fs.writeFileSync(filepath, '', { mode: 0o444 });
 
@@ -486,8 +525,8 @@ test('logActivity: buffered events flush back to the original day partition and 
     yesterdayStart.setHours(0, 0, 0, 0);
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
-    const yesterdayFile = path.join(activityDir, `${yesterday.toLocaleDateString('en-CA')}.jsonl`);
-    const todayFile = path.join(activityDir, `${todayStart.toLocaleDateString('en-CA')}.jsonl`);
+    const yesterdayFile = path.join(activityDir, `${formatLocalDateKey(yesterday)}.jsonl`);
+    const todayFile = path.join(activityDir, `${formatLocalDateKey(todayStart)}.jsonl`);
 
     try {
         fs.mkdirSync(activityDir);
@@ -525,7 +564,7 @@ test('logActivity: buffer capped at 100 events — excess events dropped', async
 
     const extRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-activity-'));
     const activityDir = path.join(extRoot, 'activity');
-    const date = new Date().toLocaleDateString('en-CA');
+    const date = formatLocalDateKey(new Date());
     const filepath = path.join(activityDir, `${date}.jsonl`);
     const origEnv = process.env.EXTENSION_DIR;
     process.env.EXTENSION_DIR = extRoot;

@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { ActivityEvent, ActivityEventType } from '../types/index.js';
-import { getDataRoot, safeErrorMessage } from './pickle-utils.js';
+import { formatLocalDateKey, getDataRoot, safeErrorMessage } from './pickle-utils.js';
 
 export function getActivityDir(): string {
   return path.join(getDataRoot(), 'activity');
@@ -33,8 +33,8 @@ export function _clearPendingBuffer(): void { pendingBuffer.splice(0); }
 function getActivityFilepath(activityDir: string, ts: string): string {
   const parsed = new Date(ts);
   const date = Number.isFinite(parsed.getTime())
-    ? parsed.toLocaleDateString('en-CA')
-    : new Date().toLocaleDateString('en-CA');
+    ? formatLocalDateKey(parsed)
+    : formatLocalDateKey(new Date());
   return path.join(activityDir, `${date}.jsonl`);
 }
 
