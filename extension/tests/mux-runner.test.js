@@ -2185,3 +2185,262 @@ test('writeHandoffAtomic: both rename and fallback fail, error logged, does not 
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
 });
+
+// ---------------------------------------------------------------------------
+// Codex manager relaunch on per-iteration error.
+//
+// The hang-guard at `Defaults.MAX_ITERATION_SECONDS` SIGTERMs the long-lived
+// codex manager subprocess after 4h and resolves
+// `{ completion: 'error', timedOut: true }`. The legacy error branch
+// unconditionally exited; tickets the manager hadn't started yet were
+// stranded in `Todo`. processCompletionBranch() must consult
+// `evaluateCodexManagerRelaunch()` and return a `relaunch` LoopAction so the
+// outer loop spawns a fresh manager that resumes the queue.
+// ---------------------------------------------------------------------------
+import {
+    processCompletionBranch as processCompletionBranchForRelaunch,
+    evaluateCodexManagerRelaunch as evaluateCodexManagerRelaunchUnit,
+    recordCodexManagerRelaunch as recordCodexManagerRelaunchUnit,
+} from '../bin/mux-runner.js';
+import { Defaults as DefaultsForRelaunch } from '../types/index.js';
+
+function writeRelaunchTicket(sessionDir, id, status, order = 1) {
+    const ticketDir = path.join(sessionDir, id);
+    fs.mkdirSync(ticketDir, { recursive: true });
+    fs.writeFileSync(path.join(ticketDir, `linear_ticket_${id}.md`), [
+        '---',
+        `id: ${id}`,
+        `title: ${id}`,
+        `status: "${status}"`,
+        `order: ${order}`,
+        '---',
+        '',
+    ].join('\n'));
+}
+
+function makeCodexRelaunchSession({ backend = 'codex', priorRelaunchCount = 0, tickets = [] } = {}) {
+    const sessionDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mux-relaunch-')));
+    const dataRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mux-relaunch-data-')));
+    const statePath = path.join(sessionDir, 'state.json');
+    fs.writeFileSync(statePath, JSON.stringify({
+        active: true,
+        step: 'implement',
+        iteration: 5,
+        max_iterations: 100,
+        worker_timeout_seconds: 1200,
+        start_time_epoch: Math.floor(Date.now() / 1000),
+        max_time_minutes: 720,
+        working_dir: sessionDir,
+        backend,
+        codex_manager_relaunch_count: priorRelaunchCount,
+    }, null, 2));
+    for (const t of tickets) writeRelaunchTicket(sessionDir, t.id, t.status, t.order);
+    return { sessionDir, statePath, dataRoot };
+}
+
+function withRelaunchDataRoot(dataRoot, fn) {
+    const prev = process.env.PICKLE_DATA_ROOT;
+    process.env.PICKLE_DATA_ROOT = dataRoot;
+    try { return fn(); }
+    finally {
+        if (prev === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = prev;
+    }
+}
+
+function readRelaunchActivityEvents(dataRoot) {
+    const activityDir = path.join(dataRoot, 'activity');
+    if (!fs.existsSync(activityDir)) return [];
+    const events = [];
+    for (const entry of fs.readdirSync(activityDir)) {
+        if (!entry.endsWith('.jsonl')) continue;
+        const content = fs.readFileSync(path.join(activityDir, entry), 'utf-8');
+        for (const line of content.split('\n')) {
+            if (!line.trim()) continue;
+            try { events.push(JSON.parse(line)); } catch { /* ignore */ }
+        }
+    }
+    return events;
+}
+
+test('mux-runner relaunch: processCompletionBranch returns relaunch action with side effects', async () => {
+    const session = makeCodexRelaunchSession({
+        backend: 'codex',
+        priorRelaunchCount: 0,
+        tickets: [
+            { id: 't-done', status: 'Done', order: 1 },
+            { id: 't-pending', status: 'Todo', order: 2 },
+        ],
+    });
+    try {
+        await withRelaunchDataRoot(session.dataRoot, async () => {
+            const logs = [];
+            const ctx = {
+                sessionDir: session.sessionDir,
+                statePath: session.statePath,
+                extensionRoot: path.resolve('.'),
+                iteration: 6,
+                log: (msg) => logs.push(msg),
+                cbEnabled: false,
+                cbState: null,
+            };
+            const action = await processCompletionBranchForRelaunch(
+                JSON.parse(fs.readFileSync(session.statePath, 'utf-8')),
+                'error',
+                ctx,
+            );
+            assert.equal(action.kind, 'relaunch',
+                `expected relaunch LoopAction, got ${action.kind} (reason=${action.reason || ''})`);
+            assert.equal(action.relaunchCount, 1);
+            assert.equal(action.pendingTickets, 1);
+            assert.equal(action.resetStall, true);
+
+            // Side effect: state counter persisted.
+            const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
+            assert.equal(persisted.codex_manager_relaunch_count, 1);
+            assert.equal(persisted.active, true,
+                'session must remain active so the next iteration spawns a fresh codex manager');
+
+            // Side effect: activity event emitted.
+            const relaunch = readRelaunchActivityEvents(session.dataRoot)
+                .filter(e => e.event === 'codex_manager_relaunch');
+            assert.equal(relaunch.length, 1);
+            assert.equal(relaunch[0].iteration, 6);
+            assert.equal(relaunch[0].source, 'pickle');
+
+            // Operator-visible log.
+            assert.ok(
+                logs.some(m => m.includes('relaunching') && m.includes('1/' + DefaultsForRelaunch.CODEX_MANAGER_RELAUNCH_CAP)),
+                `expected relaunch log line, got: ${JSON.stringify(logs)}`,
+            );
+        });
+    } finally {
+        fs.rmSync(session.sessionDir, { recursive: true, force: true });
+        fs.rmSync(session.dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('mux-runner relaunch: cap honored — break on error after CODEX_MANAGER_RELAUNCH_CAP relaunches', async () => {
+    const session = makeCodexRelaunchSession({
+        backend: 'codex',
+        priorRelaunchCount: DefaultsForRelaunch.CODEX_MANAGER_RELAUNCH_CAP,
+        tickets: [
+            { id: 't-pending', status: 'Todo', order: 1 },
+        ],
+    });
+    try {
+        await withRelaunchDataRoot(session.dataRoot, async () => {
+            const ctx = {
+                sessionDir: session.sessionDir,
+                statePath: session.statePath,
+                extensionRoot: path.resolve('.'),
+                iteration: 99,
+                log: () => {},
+                cbEnabled: false,
+                cbState: null,
+            };
+            const action = await processCompletionBranchForRelaunch(
+                JSON.parse(fs.readFileSync(session.statePath, 'utf-8')),
+                'error',
+                ctx,
+            );
+            assert.equal(action.kind, 'break');
+            assert.equal(action.reason, 'error');
+            const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
+            assert.equal(persisted.codex_manager_relaunch_count, DefaultsForRelaunch.CODEX_MANAGER_RELAUNCH_CAP);
+        });
+    } finally {
+        fs.rmSync(session.sessionDir, { recursive: true, force: true });
+        fs.rmSync(session.dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('mux-runner relaunch: claude backend untouched — error still breaks the loop', async () => {
+    const session = makeCodexRelaunchSession({
+        backend: 'claude',
+        tickets: [
+            { id: 't-pending', status: 'Todo', order: 1 },
+        ],
+    });
+    try {
+        await withRelaunchDataRoot(session.dataRoot, async () => {
+            const ctx = {
+                sessionDir: session.sessionDir,
+                statePath: session.statePath,
+                extensionRoot: path.resolve('.'),
+                iteration: 2,
+                log: () => {},
+                cbEnabled: false,
+                cbState: null,
+            };
+            const action = await processCompletionBranchForRelaunch(
+                JSON.parse(fs.readFileSync(session.statePath, 'utf-8')),
+                'error',
+                ctx,
+            );
+            assert.equal(action.kind, 'break');
+            assert.equal(action.reason, 'error');
+            const events = readRelaunchActivityEvents(session.dataRoot)
+                .filter(e => e.event === 'codex_manager_relaunch');
+            assert.equal(events.length, 0);
+        });
+    } finally {
+        fs.rmSync(session.sessionDir, { recursive: true, force: true });
+        fs.rmSync(session.dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('mux-runner relaunch: circuit-breaker OPEN suppresses relaunch even with pending tickets', async () => {
+    const session = makeCodexRelaunchSession({
+        backend: 'codex',
+        priorRelaunchCount: 0,
+        tickets: [
+            { id: 't-pending', status: 'Todo', order: 1 },
+        ],
+    });
+    try {
+        await withRelaunchDataRoot(session.dataRoot, async () => {
+            const ctx = {
+                sessionDir: session.sessionDir,
+                statePath: session.statePath,
+                extensionRoot: path.resolve('.'),
+                iteration: 3,
+                log: () => {},
+                cbEnabled: true,
+                cbState: { state: 'OPEN', reason: 'no_progress' },
+            };
+            const action = await processCompletionBranchForRelaunch(
+                JSON.parse(fs.readFileSync(session.statePath, 'utf-8')),
+                'error',
+                ctx,
+            );
+            assert.equal(action.kind, 'break');
+            assert.equal(action.reason, 'error');
+            const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
+            assert.equal(persisted.codex_manager_relaunch_count, 0,
+                'CB OPEN must NOT bump relaunch counter');
+        });
+    } finally {
+        fs.rmSync(session.sessionDir, { recursive: true, force: true });
+        fs.rmSync(session.dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('evaluateCodexManagerRelaunch (mux-runner): smoke test for exported helper', () => {
+    // Sanity duplicate of the iteration-outcome.test.js coverage so the
+    // mux-runner test file holds its own loop-action contract test as
+    // required by the trap-door entry.
+    const codex = { backend: 'codex', codex_manager_relaunch_count: 0 };
+    const tickets = [
+        { id: 't1', status: 'Todo', title: '', order: 1, type: null, working_dir: null, completed_at: null, skipped_at: null },
+    ];
+    const result = evaluateCodexManagerRelaunchUnit(codex, tickets, null);
+    assert.equal(result.shouldRelaunch, true);
+    assert.equal(result.pendingCount, 1);
+    assert.equal(result.nextRelaunchCount, 1);
+
+    // Ensure exports are wired correctly.
+    assert.equal(typeof recordCodexManagerRelaunchUnit, 'function');
+    assert.equal(typeof DefaultsForRelaunch.CODEX_MANAGER_RELAUNCH_CAP, 'number');
+    assert.ok(DefaultsForRelaunch.CODEX_MANAGER_RELAUNCH_CAP >= 1);
+});

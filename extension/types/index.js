@@ -48,6 +48,17 @@ export const Defaults = {
     MAX_ITERATION_SECONDS: 14_400,
     MANAGER_MAX_TURNS: 50,
     RATE_LIMIT_POLL_MS: 10_000,
+    /**
+     * Maximum number of times mux-runner will relaunch the codex manager
+     * subprocess after a per-iteration error while pending tickets remain.
+     * Codex tmux_mode runs ONE long-lived manager that loops across many
+     * tickets internally; the 4h `MAX_ITERATION_SECONDS` hang-guard SIGTERMs
+     * that subprocess and resolves `{ completion: 'error', timedOut: true }`,
+     * which the loop would otherwise treat as terminal. Past this cap, fall
+     * back to the legacy exit-on-error so a genuinely broken backend cannot
+     * loop forever.
+     */
+    CODEX_MANAGER_RELAUNCH_CAP: 5,
 };
 // ---------------------------------------------------------------------------
 // Lifecycle Steps
@@ -125,6 +136,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'gate_regression_threshold_warning',
     'gate_out_of_scope_failures_present',
     'commit_pending_probe_fired',
+    'codex_manager_relaunch',
 ];
 // ---------------------------------------------------------------------------
 // DOT Builder Types

@@ -1175,7 +1175,57 @@ function readPostIterationState(state, ctx) {
         return state;
     }
 }
-async function processCompletionBranch(state, result, ctx) {
+export function evaluateCodexManagerRelaunch(state, tickets, cbState) {
+    const backend = resolveBackend(state);
+    if (backend !== 'codex') {
+        return { shouldRelaunch: false, pendingCount: 0, nextRelaunchCount: 0, reason: 'not_codex' };
+    }
+    // Tripped circuit breaker → real backend failure, do not paper over it.
+    if (cbState && cbState.state === 'OPEN') {
+        return { shouldRelaunch: false, pendingCount: 0, nextRelaunchCount: 0, reason: 'circuit_open' };
+    }
+    const norm = (s) => (s || '').toLowerCase().replace(/["']/g, '').trim();
+    const pending = tickets.filter(t => {
+        if (!t.id)
+            return false;
+        const s = norm(t.status);
+        return s !== 'done' && s !== 'skipped';
+    });
+    if (pending.length === 0) {
+        return { shouldRelaunch: false, pendingCount: 0, nextRelaunchCount: 0, reason: 'no_pending' };
+    }
+    const prior = Number(state.codex_manager_relaunch_count) || 0;
+    const cap = Defaults.CODEX_MANAGER_RELAUNCH_CAP;
+    if (prior >= cap) {
+        return { shouldRelaunch: false, pendingCount: pending.length, nextRelaunchCount: prior, reason: 'cap_exceeded' };
+    }
+    return { shouldRelaunch: true, pendingCount: pending.length, nextRelaunchCount: prior + 1, reason: 'eligible' };
+}
+/**
+ * Persists the codex-manager relaunch decision: bumps
+ * `state.codex_manager_relaunch_count` via the StateManager so concurrent
+ * readers see the update, and emits a `codex_manager_relaunch` activity
+ * event so standup/metrics surface it. Best-effort — caller already
+ * decided to relaunch; a state-write failure logs a warning but still
+ * lets the next iteration spawn a fresh manager.
+ */
+export function recordCodexManagerRelaunch(statePath, sessionDir, decision, iteration, log) {
+    try {
+        sm.update(statePath, s => {
+            s.codex_manager_relaunch_count = decision.nextRelaunchCount;
+        });
+    }
+    catch (err) {
+        log(`WARN: failed to persist codex_manager_relaunch_count: ${safeErrorMessage(err)}`);
+    }
+    logActivity({
+        event: 'codex_manager_relaunch',
+        source: 'pickle',
+        session: path.basename(sessionDir),
+        iteration,
+    });
+}
+export async function processCompletionBranch(state, result, ctx) {
     if (result === 'task_completed')
         return processTaskCompleted(state, ctx);
     if (result === 'review_clean')
@@ -1185,6 +1235,26 @@ async function processCompletionBranch(state, result, ctx) {
         return { kind: 'break', reason: 'cancelled' };
     }
     if (result === 'error') {
+        // Codex tmux_mode runs one long-lived manager across many tickets.
+        // A 4h hang-guard SIGTERM (or other subprocess error) does not mean
+        // the work is doomed — relaunch the manager and let it pick up the
+        // remaining ticket queue. Bounded by CODEX_MANAGER_RELAUNCH_CAP and
+        // gated on circuit-breaker state.
+        let postState = state;
+        try {
+            postState = ctxReadState(ctx);
+        }
+        catch { /* fall back to pre-iteration state */ }
+        const decision = evaluateCodexManagerRelaunch(postState, collectTickets(ctx.sessionDir), ctx.cbState ?? null);
+        if (decision.shouldRelaunch) {
+            ctx.log(`Codex manager subprocess errored with ${decision.pendingCount} ticket(s) still pending — ` +
+                `relaunching (count ${decision.nextRelaunchCount}/${Defaults.CODEX_MANAGER_RELAUNCH_CAP}).`);
+            recordCodexManagerRelaunch(ctx.statePath, ctx.sessionDir, decision, ctx.iteration, ctx.log);
+            // Relaunch IS progress — reset stall counter. Do NOT deactivate.
+            // Do NOT reset the circuit breaker: a 4h hang-guard timeout is
+            // exactly the kind of repeated event the CB should observe.
+            return { kind: 'relaunch', relaunchCount: decision.nextRelaunchCount, pendingTickets: decision.pendingCount, resetStall: true };
+        }
         ctx.log('Subprocess error. Exiting loop.');
         ctxDeactivate(ctx);
         return { kind: 'break', reason: 'error' };
@@ -1880,6 +1950,30 @@ async function runMuxRunnerMain() {
             break;
         }
         else if (result === 'error') {
+            // Codex tmux_mode runs ONE long-lived manager subprocess that loops
+            // across many tickets internally. The 4h hang-guard SIGTERMs it with
+            // `{ completion: 'error', timedOut: true }`. Treating that as terminal
+            // strands every Todo ticket the manager hadn't picked up yet. Bounded
+            // relaunch path keeps the queue draining; CB-OPEN and the cap still
+            // fall through to the legacy exit-on-error.
+            let postState = state;
+            try {
+                postState = readRunnerState(statePath);
+            }
+            catch { /* fall back */ }
+            const relaunchDecision = evaluateCodexManagerRelaunch(postState, collectTickets(sessionDir), cbState);
+            if (relaunchDecision.shouldRelaunch) {
+                log(`Codex manager subprocess errored with ${relaunchDecision.pendingCount} ticket(s) still pending — ` +
+                    `relaunching (count ${relaunchDecision.nextRelaunchCount}/${Defaults.CODEX_MANAGER_RELAUNCH_CAP}).`);
+                recordCodexManagerRelaunch(statePath, sessionDir, relaunchDecision, iteration, log);
+                // Relaunch IS progress for outer-loop stall detection — reset stall.
+                // Do NOT clear the circuit breaker: a 4h hang-guard timeout is the
+                // exact event the CB should observe across relaunches.
+                lastStateIteration = -1;
+                stallCount = 0;
+                await sleep(1000);
+                continue;
+            }
             log('Subprocess error. Exiting loop.');
             safeDeactivate(statePath);
             exitReason = 'error';

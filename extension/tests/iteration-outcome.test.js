@@ -11,7 +11,15 @@ import * as path from 'node:path';
 
 import { execFileSync } from 'node:child_process';
 
-import { runIteration, commitPendingProbe, COMMIT_PENDING_HANDOFF_TEXT } from '../bin/mux-runner.js';
+import {
+    runIteration,
+    commitPendingProbe,
+    COMMIT_PENDING_HANDOFF_TEXT,
+    processCompletionBranch,
+    evaluateCodexManagerRelaunch,
+    recordCodexManagerRelaunch,
+} from '../bin/mux-runner.js';
+import { Defaults } from '../types/index.js';
 
 function makeInactiveSession() {
     const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-outcome-')));
@@ -197,5 +205,305 @@ test('commitPendingProbe: codex + uncommitted edits + stagnation → fires and w
     } finally {
         fs.rmSync(sessionDir, { recursive: true, force: true });
         fs.rmSync(workingDir, { recursive: true, force: true });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// Codex manager relaunch on per-iteration error (mux-runner trap door).
+// Codex tmux_mode runs ONE long-lived manager; the 4h hang-guard treats it as
+// terminal and strands remaining Todo tickets. mux-runner must consult
+// `evaluateCodexManagerRelaunch()` and relaunch instead of exiting when the
+// backend is codex, tickets remain Todo/In Progress, the relaunch counter is
+// below the cap, and the circuit breaker is not OPEN.
+// ---------------------------------------------------------------------------
+
+function writeTicketFile(sessionDir, id, status, order = 1) {
+    const ticketDir = path.join(sessionDir, id);
+    fs.mkdirSync(ticketDir, { recursive: true });
+    fs.writeFileSync(path.join(ticketDir, `linear_ticket_${id}.md`), [
+        '---',
+        `id: ${id}`,
+        `title: ${id} title`,
+        `status: "${status}"`,
+        `order: ${order}`,
+        '---',
+        '',
+    ].join('\n'));
+}
+
+function makeRelaunchSession(opts = {}) {
+    const sessionDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-codex-relaunch-')));
+    const dataRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-codex-relaunch-data-')));
+    const statePath = path.join(sessionDir, 'state.json');
+    fs.writeFileSync(statePath, JSON.stringify({
+        active: true,
+        step: 'implement',
+        iteration: 3,
+        max_iterations: 100,
+        worker_timeout_seconds: 1200,
+        start_time_epoch: Math.floor(Date.now() / 1000),
+        max_time_minutes: 720,
+        working_dir: sessionDir,
+        backend: opts.backend ?? 'codex',
+        codex_manager_relaunch_count: opts.priorRelaunchCount ?? 0,
+    }, null, 2));
+
+    for (const t of opts.tickets || []) {
+        writeTicketFile(sessionDir, t.id, t.status, t.order);
+    }
+
+    return { sessionDir, statePath, dataRoot };
+}
+
+function makeBranchCtx(session, overrides = {}) {
+    const logs = [];
+    const ctx = {
+        sessionDir: session.sessionDir,
+        statePath: session.statePath,
+        extensionRoot: path.resolve('.'),
+        iteration: 4,
+        log: (msg) => logs.push(msg),
+        cbEnabled: false,
+        cbState: null,
+        ...overrides,
+    };
+    return { ctx, logs };
+}
+
+function withDataRoot(dataRoot, fn) {
+    const prev = process.env.PICKLE_DATA_ROOT;
+    process.env.PICKLE_DATA_ROOT = dataRoot;
+    try {
+        return fn();
+    } finally {
+        if (prev === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = prev;
+    }
+}
+
+function readActivityEvents(dataRoot) {
+    const activityDir = path.join(dataRoot, 'activity');
+    if (!fs.existsSync(activityDir)) return [];
+    const events = [];
+    for (const entry of fs.readdirSync(activityDir)) {
+        if (!entry.endsWith('.jsonl')) continue;
+        const content = fs.readFileSync(path.join(activityDir, entry), 'utf-8');
+        for (const line of content.split('\n')) {
+            if (!line.trim()) continue;
+            try { events.push(JSON.parse(line)); } catch { /* ignore */ }
+        }
+    }
+    return events;
+}
+
+test('processCompletionBranch: codex + error + pending tickets + below cap → relaunch action', async () => {
+    const session = makeRelaunchSession({
+        backend: 'codex',
+        priorRelaunchCount: 1,
+        tickets: [
+            { id: 't-done', status: 'Done', order: 1 },
+            { id: 't-pending', status: 'Todo', order: 2 },
+            { id: 't-in-progress', status: 'In Progress', order: 3 },
+        ],
+    });
+    try {
+        await withDataRoot(session.dataRoot, async () => {
+            const { ctx } = makeBranchCtx(session);
+            const action = await processCompletionBranch(
+                JSON.parse(fs.readFileSync(session.statePath, 'utf-8')),
+                'error',
+                ctx,
+            );
+            assert.equal(action.kind, 'relaunch', `expected relaunch, got ${action.kind} (${action.reason || ''})`);
+            assert.equal(action.relaunchCount, 2, 'relaunchCount must be prior+1');
+            assert.equal(action.pendingTickets, 2, 'pendingTickets must count Todo+InProgress');
+            assert.equal(action.resetStall, true);
+
+            const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
+            assert.equal(persisted.codex_manager_relaunch_count, 2,
+                'state.codex_manager_relaunch_count must be incremented');
+            assert.equal(persisted.active, true,
+                'session must remain active across relaunch (no safeDeactivate)');
+
+            const events = readActivityEvents(session.dataRoot);
+            const relaunchEvents = events.filter(e => e.event === 'codex_manager_relaunch');
+            assert.equal(relaunchEvents.length, 1,
+                `expected 1 codex_manager_relaunch event, got ${relaunchEvents.length}`);
+            assert.equal(relaunchEvents[0].source, 'pickle');
+            assert.equal(relaunchEvents[0].session, path.basename(session.sessionDir));
+            assert.equal(relaunchEvents[0].iteration, 4);
+        });
+    } finally {
+        fs.rmSync(session.sessionDir, { recursive: true, force: true });
+        fs.rmSync(session.dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('processCompletionBranch: codex + error + all tickets Done → break with reason error', async () => {
+    const session = makeRelaunchSession({
+        backend: 'codex',
+        tickets: [
+            { id: 't-1', status: 'Done', order: 1 },
+            { id: 't-2', status: 'Done', order: 2 },
+        ],
+    });
+    try {
+        await withDataRoot(session.dataRoot, async () => {
+            const { ctx } = makeBranchCtx(session);
+            const action = await processCompletionBranch(
+                JSON.parse(fs.readFileSync(session.statePath, 'utf-8')),
+                'error',
+                ctx,
+            );
+            assert.equal(action.kind, 'break');
+            assert.equal(action.reason, 'error');
+            const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
+            // No relaunch happened — counter unchanged.
+            assert.equal(persisted.codex_manager_relaunch_count, 0);
+        });
+    } finally {
+        fs.rmSync(session.sessionDir, { recursive: true, force: true });
+        fs.rmSync(session.dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('processCompletionBranch: codex + error + counter at cap → break with reason error', async () => {
+    const session = makeRelaunchSession({
+        backend: 'codex',
+        priorRelaunchCount: Defaults.CODEX_MANAGER_RELAUNCH_CAP,
+        tickets: [
+            { id: 't-pending', status: 'Todo', order: 1 },
+            { id: 't-done', status: 'Done', order: 2 },
+        ],
+    });
+    try {
+        await withDataRoot(session.dataRoot, async () => {
+            const { ctx } = makeBranchCtx(session);
+            const action = await processCompletionBranch(
+                JSON.parse(fs.readFileSync(session.statePath, 'utf-8')),
+                'error',
+                ctx,
+            );
+            assert.equal(action.kind, 'break',
+                `expected break at cap, got ${action.kind} (count ${action.relaunchCount ?? 'n/a'})`);
+            assert.equal(action.reason, 'error');
+            // Cap honored: counter not bumped past the cap.
+            const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
+            assert.equal(persisted.codex_manager_relaunch_count, Defaults.CODEX_MANAGER_RELAUNCH_CAP);
+            const events = readActivityEvents(session.dataRoot);
+            assert.equal(
+                events.filter(e => e.event === 'codex_manager_relaunch').length,
+                0,
+                'must NOT emit codex_manager_relaunch when cap is exceeded',
+            );
+        });
+    } finally {
+        fs.rmSync(session.sessionDir, { recursive: true, force: true });
+        fs.rmSync(session.dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('processCompletionBranch: claude backend + error + pending → break with reason error (no relaunch)', async () => {
+    const session = makeRelaunchSession({
+        backend: 'claude',
+        tickets: [
+            { id: 't-pending', status: 'Todo', order: 1 },
+        ],
+    });
+    try {
+        await withDataRoot(session.dataRoot, async () => {
+            const { ctx } = makeBranchCtx(session);
+            const action = await processCompletionBranch(
+                JSON.parse(fs.readFileSync(session.statePath, 'utf-8')),
+                'error',
+                ctx,
+            );
+            assert.equal(action.kind, 'break');
+            assert.equal(action.reason, 'error');
+            const events = readActivityEvents(session.dataRoot);
+            assert.equal(
+                events.filter(e => e.event === 'codex_manager_relaunch').length,
+                0,
+                'claude backend must never emit codex_manager_relaunch',
+            );
+        });
+    } finally {
+        fs.rmSync(session.sessionDir, { recursive: true, force: true });
+        fs.rmSync(session.dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('evaluateCodexManagerRelaunch: pure decision honors cap, CB-OPEN, and pending state', () => {
+    const codexState = { backend: 'codex', codex_manager_relaunch_count: 0 };
+    const claudeState = { backend: 'claude' };
+    const pending = [
+        { id: 't1', status: 'Todo', title: '', order: 1, type: null, working_dir: null, completed_at: null, skipped_at: null },
+        { id: 't2', status: 'Done', title: '', order: 2, type: null, working_dir: null, completed_at: null, skipped_at: null },
+    ];
+    const allDone = pending.map(t => ({ ...t, status: 'Done' }));
+
+    // Eligible
+    const eligible = evaluateCodexManagerRelaunch(codexState, pending, null);
+    assert.equal(eligible.shouldRelaunch, true);
+    assert.equal(eligible.pendingCount, 1);
+    assert.equal(eligible.nextRelaunchCount, 1);
+    assert.equal(eligible.reason, 'eligible');
+
+    // Not codex
+    const notCodex = evaluateCodexManagerRelaunch(claudeState, pending, null);
+    assert.equal(notCodex.shouldRelaunch, false);
+    assert.equal(notCodex.reason, 'not_codex');
+
+    // No pending
+    const noPending = evaluateCodexManagerRelaunch(codexState, allDone, null);
+    assert.equal(noPending.shouldRelaunch, false);
+    assert.equal(noPending.reason, 'no_pending');
+
+    // Cap exceeded
+    const capped = evaluateCodexManagerRelaunch(
+        { ...codexState, codex_manager_relaunch_count: Defaults.CODEX_MANAGER_RELAUNCH_CAP },
+        pending,
+        null,
+    );
+    assert.equal(capped.shouldRelaunch, false);
+    assert.equal(capped.reason, 'cap_exceeded');
+
+    // Circuit breaker OPEN
+    const cbOpen = evaluateCodexManagerRelaunch(codexState, pending, { state: 'OPEN' });
+    assert.equal(cbOpen.shouldRelaunch, false);
+    assert.equal(cbOpen.reason, 'circuit_open');
+
+    // Status normalization: quoted "Todo" still counts as pending
+    const quoted = evaluateCodexManagerRelaunch(codexState, [
+        { id: 't1', status: '"Todo"', title: '', order: 1, type: null, working_dir: null, completed_at: null, skipped_at: null },
+    ], null);
+    assert.equal(quoted.shouldRelaunch, true);
+    assert.equal(quoted.pendingCount, 1);
+});
+
+test('recordCodexManagerRelaunch: persists counter and emits activity event', () => {
+    const session = makeRelaunchSession({ backend: 'codex', priorRelaunchCount: 0 });
+    try {
+        withDataRoot(session.dataRoot, () => {
+            const logs = [];
+            recordCodexManagerRelaunch(
+                session.statePath,
+                session.sessionDir,
+                { shouldRelaunch: true, pendingCount: 3, nextRelaunchCount: 1, reason: 'eligible' },
+                7,
+                (m) => logs.push(m),
+            );
+            const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
+            assert.equal(persisted.codex_manager_relaunch_count, 1);
+
+            const events = readActivityEvents(session.dataRoot);
+            const relaunch = events.find(e => e.event === 'codex_manager_relaunch');
+            assert.ok(relaunch, 'codex_manager_relaunch event must be present');
+            assert.equal(relaunch.iteration, 7);
+            assert.equal(relaunch.session, path.basename(session.sessionDir));
+        });
+    } finally {
+        fs.rmSync(session.sessionDir, { recursive: true, force: true });
+        fs.rmSync(session.dataRoot, { recursive: true, force: true });
     }
 });

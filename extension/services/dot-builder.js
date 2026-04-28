@@ -379,6 +379,7 @@ function preflightMissingAllowedPaths(phases) {
     }
     return diags;
 }
+// eslint-disable-next-line complexity -- compact topological preflight keeps graph construction local and side-effect free
 function preflightCircularDeps(phases) {
     const adj = new Map();
     const ids = new Set();
@@ -660,6 +661,7 @@ function grRule16(nodeMap, acceptanceCriteria) {
 // Runtime validator namespace objects
 // ---------------------------------------------------------------------------
 export const DiagnosticNs = {
+    // eslint-disable-next-line complexity -- runtime contract validation enumerates independent field guards
     create(data) {
         if (!isRecord(data))
             throw new Error('Diagnostic.create requires an object');
@@ -1232,6 +1234,7 @@ export class DotBuilder {
         this._verifyLintKV = {};
         this._verifyTestsKV = {};
     }
+    // eslint-disable-next-line complexity -- emit context derives multiple graph-wide flags from the spec in one initialization pass
     _initializeEmitContext() {
         const spec = this._spec;
         const phases = this._phases;
@@ -1364,7 +1367,6 @@ export class DotBuilder {
             this._subgraphBlocks.push(`  ${e}`);
         this._subgraphBlocks.push('  }');
     }
-    // eslint-disable-next-line max-lines-per-function
     _emitEndgameChain(prevId, prevAttrs) {
         const spec = this._spec;
         const unionPaths = this._unionPaths;
@@ -1542,7 +1544,7 @@ export class DotBuilder {
         link(`${baseId}_b`, 'competing_merge');
         link('competing_merge', 'exit');
     }
-    // eslint-disable-next-line max-lines-per-function
+    // eslint-disable-next-line complexity -- convergence topology is a stable generated graph template
     _emitConvergenceTopology() {
         const spec = this._spec;
         const applied = this._applied;
@@ -1576,6 +1578,7 @@ export class DotBuilder {
             until: cv.until,
         });
         link('capture_baseline', 'converge');
+        // eslint-disable-next-line complexity -- subgraph callback declaratively emits the fixed convergence body
         emitSubgraph('iter_body', 'iter-body', () => {
             emit('fix_backend', {
                 allow_multi_retry_target: 'true',
@@ -1713,7 +1716,7 @@ export class DotBuilder {
         link('converge', 'fp_verify', { condition: 'outcome=success', weight: '2' });
         applied.add('P32');
     }
-    // eslint-disable-next-line max-lines-per-function
+    // eslint-disable-next-line max-lines-per-function, complexity -- sequential phase emission preserves established graph edge ordering
     _emitSequentialPhases() {
         const spec = this._spec;
         const phases = this._phases;
@@ -2172,6 +2175,7 @@ export class DotBuilder {
         standaloneNodeIds.add('review_merge');
         standaloneNodeIds.add('fix_review');
     }
+    // eslint-disable-next-line complexity -- final assembly coordinates topology selection and isolated-workspace terminal rewiring
     _emitDot() {
         this._resetEmitState();
         this._initializeEmitContext();
