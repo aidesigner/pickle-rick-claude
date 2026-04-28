@@ -141,6 +141,10 @@ export function readActivityFiles(activityDir, since, until) {
             try {
                 const parsed = JSON.parse(line);
                 if (typeof parsed.ts === 'string' && typeof parsed.event === 'string') {
+                    const eventMs = new Date(parsed.ts).getTime();
+                    if (!Number.isFinite(eventMs) || eventMs < sinceMs || eventMs >= untilMs) {
+                        continue;
+                    }
                     events.push(parsed);
                 }
                 else {

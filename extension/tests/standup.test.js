@@ -370,6 +370,24 @@ test('readActivityFiles: rejects events with non-string ts or event', () => {
     });
 });
 
+test('readActivityFiles: drops out-of-range events even when the filename is in range', () => {
+    withTempActivityDir((activityDir) => {
+        const todayStr = today();
+        const yesterdayStr = yesterday();
+        writeEvent(activityDir, todayStr, { ts: `${yesterdayStr}T23:30:00Z`, event: 'commit', source: 'hook', commit_hash: 'legacy-bleed' });
+        writeEvent(activityDir, todayStr, { ts: `${todayStr}T08:00:00Z`, event: 'feature', source: 'persona', title: 'today work' });
+
+        const now = new Date();
+        const todayMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const tomorrowMidnight = new Date(todayMidnight);
+        tomorrowMidnight.setDate(tomorrowMidnight.getDate() + 1);
+
+        const events = readActivityFiles(activityDir, todayMidnight, tomorrowMidnight);
+        assert.equal(events.length, 1, 'mispartitioned legacy events must not bleed into the requested range');
+        assert.equal(events[0].title, 'today work');
+    });
+});
+
 test('readActivityFiles: ignores malformed date filenames', () => {
     withTempActivityDir((activityDir) => {
         // Write a file with an invalid date filename that passes the .jsonl filter

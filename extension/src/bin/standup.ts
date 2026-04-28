@@ -161,6 +161,10 @@ export function readActivityFiles(activityDir: string, since: Date, until: Date)
       try {
         const parsed = JSON.parse(line) as ActivityEvent;
         if (typeof parsed.ts === 'string' && typeof parsed.event === 'string') {
+          const eventMs = new Date(parsed.ts).getTime();
+          if (!Number.isFinite(eventMs) || eventMs < sinceMs || eventMs >= untilMs) {
+            continue;
+          }
           events.push(parsed);
         } else {
           corruptLines++;
