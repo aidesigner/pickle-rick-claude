@@ -92,6 +92,40 @@ test('worker-setup: exits with code 1 when --resume path does not exist and no m
     }
 });
 
+test('worker-setup: invalid explicit --resume path does not fall through to a live same-cwd session', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const liveSessionDir = path.join(tmpRoot, 'sessions', 'live-session');
+        fs.mkdirSync(liveSessionDir, { recursive: true });
+
+        const cwdDir = path.join(tmpRoot, 'repo');
+        fs.mkdirSync(cwdDir, { recursive: true });
+        const realCwd = fs.realpathSync(cwdDir);
+
+        fs.writeFileSync(
+            path.join(tmpRoot, 'current_sessions.json'),
+            JSON.stringify({ [realCwd]: liveSessionDir })
+        );
+        fs.writeFileSync(
+            path.join(liveSessionDir, 'state.json'),
+            JSON.stringify({ active: true, working_dir: realCwd, session_dir: liveSessionDir })
+        );
+
+        const result = run(tmpRoot, ['--resume', '/nonexistent/session/path/xyz'], realCwd);
+        assert.equal(result.status, 1, `Expected exit code 1, got: ${result.status}. stdout: ${result.stdout}`);
+        assert.ok(
+            result.stderr.includes('No session path found'),
+            `Expected "No session path found" in stderr, got: ${result.stderr}`
+        );
+        assert.ok(
+            !result.stdout.includes('live-session'),
+            `Explicit --resume should not fall through to the live same-cwd session, got: ${result.stdout}`
+        );
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
 // --- Session from current_sessions.json map ---
 
 test('worker-setup: resolves session from current_sessions.json using cwd', () => {
