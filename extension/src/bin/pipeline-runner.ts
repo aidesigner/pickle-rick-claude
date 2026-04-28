@@ -20,7 +20,7 @@ import * as path from 'path';
 import { execFileSync, spawn, type ChildProcess } from 'child_process';
 import type { Backend, State } from '../types/index.js';
 import { BACKENDS } from '../types/index.js';
-import { StateManager } from '../services/state-manager.js';
+import { StateManager, safeDeactivate } from '../services/state-manager.js';
 import { backendEnvOverrides, isBackend } from '../services/backend-spawn.js';
 import {
   getExtensionRoot,
@@ -1062,7 +1062,7 @@ function loadPipelineRuntime(sessionDir: string, opts: MainOpts, log: (msg: stri
   };
 }
 
-function installShutdownHandlers(runtime: PipelineRuntime, counters: PhaseCounters, cancelMarker: string): () => void {
+export function installShutdownHandlers(runtime: PipelineRuntime, counters: PhaseCounters, cancelMarker: string): () => void {
   const handleShutdown = (signal: string) => {
     runtime.log(`Received ${signal} — shutting down pipeline`);
     try { fs.writeFileSync(cancelMarker, signal); } catch { /* best effort */ }
@@ -1075,6 +1075,7 @@ function installShutdownHandlers(runtime: PipelineRuntime, counters: PhaseCounte
       });
     } catch { /* best effort */ }
     if (activeChild && !activeChild.killed) activeChild.kill('SIGTERM');
+    safeDeactivate(runtime.statePath);
     logActivity({ event: 'session_end', source: 'pickle', session: path.basename(runtime.sessionDir), mode: 'tmux' });
     process.exit(1);
   };
@@ -1120,7 +1121,7 @@ function finalizePipeline(
   startTime: number,
 ): void {
   const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
-  try { sm.update(runtime.statePath, s => { s.active = false; }); } catch { /* already inactive */ }
+  safeDeactivate(runtime.statePath);
 
   const phasesSummary = counters.skipped > 0
     ? `${counters.completed}/${runtime.config.phases.length} (${counters.skipped} skipped)`

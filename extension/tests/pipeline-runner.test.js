@@ -14,6 +14,7 @@ import {
   writePipelineStatus,
   resolveBackendWithSource,
   enterPicklePhase,
+  installShutdownHandlers,
 } from '../bin/pipeline-runner.js';
 import { backendEnvOverrides } from '../services/backend-spawn.js';
 
@@ -960,5 +961,53 @@ describe('pickle phase entry', () => {
     const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
     assert.equal(state.backend, 'codex');
     fs.rmSync(dir, { recursive: true });
+  });
+});
+
+describe('pipeline shutdown', () => {
+  test('SIGTERM deactivates session state before exiting', () => {
+    const dir = tmpDir();
+    const statePath = path.join(dir, 'state.json');
+    const dataRoot = path.join(dir, 'data-root');
+    const cancelMarker = path.join(dir, 'pipeline-cancel');
+    writeBaseState(statePath, { active: true, session_dir: dir });
+
+    const runtime = {
+      sessionDir: dir,
+      extensionRoot: path.resolve('extension'),
+      statePath,
+      config: { phases: ['pickle'] },
+      target: dir,
+      workingDir: dir,
+      backend: 'claude',
+      phaseEnv: process.env,
+      log: () => {},
+    };
+    const oldExit = process.exit;
+    const oldDataRoot = process.env.PICKLE_DATA_ROOT;
+    const exitSentinel = new Error('process.exit intercepted');
+    let cleanup = () => {};
+
+    try {
+      process.env.PICKLE_DATA_ROOT = dataRoot;
+      process.exit = ((code) => {
+        assert.equal(code, 1);
+        throw exitSentinel;
+      });
+      cleanup = installShutdownHandlers(runtime, { completed: 0, skipped: 0 }, cancelMarker);
+
+      assert.throws(() => process.emit('SIGTERM'), exitSentinel);
+
+      const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      assert.equal(state.active, false);
+      const status = JSON.parse(fs.readFileSync(path.join(dir, 'pipeline-status.json'), 'utf-8'));
+      assert.equal(status.status, 'cancelled');
+    } finally {
+      cleanup();
+      process.exit = oldExit;
+      if (oldDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+      else process.env.PICKLE_DATA_ROOT = oldDataRoot;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

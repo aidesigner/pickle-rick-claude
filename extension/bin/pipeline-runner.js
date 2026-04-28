@@ -17,7 +17,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync, spawn } from 'child_process';
 import { BACKENDS } from '../types/index.js';
-import { StateManager } from '../services/state-manager.js';
+import { StateManager, safeDeactivate } from '../services/state-manager.js';
 import { backendEnvOverrides, isBackend } from '../services/backend-spawn.js';
 import { getExtensionRoot, Style, formatTime, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, displayMacNotification, } from '../services/pickle-utils.js';
 import { isWorkingTreeDirty } from '../services/git-utils.js';
@@ -822,7 +822,7 @@ function loadPipelineRuntime(sessionDir, opts, log) {
         log,
     };
 }
-function installShutdownHandlers(runtime, counters, cancelMarker) {
+export function installShutdownHandlers(runtime, counters, cancelMarker) {
     const handleShutdown = (signal) => {
         runtime.log(`Received ${signal} — shutting down pipeline`);
         try {
@@ -840,6 +840,7 @@ function installShutdownHandlers(runtime, counters, cancelMarker) {
         catch { /* best effort */ }
         if (activeChild && !activeChild.killed)
             activeChild.kill('SIGTERM');
+        safeDeactivate(runtime.statePath);
         logActivity({ event: 'session_end', source: 'pickle', session: path.basename(runtime.sessionDir), mode: 'tmux' });
         process.exit(1);
     };
@@ -877,10 +878,7 @@ function logPhaseStart(runtime, phase, index) {
 }
 function finalizePipeline(runtime, counters, cancelMarker, startTime) {
     const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
-    try {
-        sm.update(runtime.statePath, s => { s.active = false; });
-    }
-    catch { /* already inactive */ }
+    safeDeactivate(runtime.statePath);
     const phasesSummary = counters.skipped > 0
         ? `${counters.completed}/${runtime.config.phases.length} (${counters.skipped} skipped)`
         : `${counters.completed}/${runtime.config.phases.length}`;
