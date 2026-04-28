@@ -79,6 +79,7 @@ async function main() {
     const sessionRoot = path.dirname(ticketPath);
     const parentState = path.join(sessionRoot, 'state.json');
     const workerState = path.join(ticketPath, 'state.json');
+    let sessionWorkingDir = process.cwd();
     let timeoutStatePath = null;
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     if (fs.existsSync(parentState)) {
@@ -91,6 +92,9 @@ async function main() {
     if (timeoutStatePath) {
         try {
             const state = sm.read(timeoutStatePath);
+            if (typeof state.working_dir === 'string' && state.working_dir.trim()) {
+                sessionWorkingDir = state.working_dir;
+            }
             const maxMins = Number(state.max_time_minutes);
             const startEpoch = Number(state.start_time_epoch);
             if (Number.isFinite(maxMins) && maxMins > 0 && Number.isFinite(startEpoch) && startEpoch > 0) {
@@ -127,7 +131,7 @@ async function main() {
     }, isReviewTicket ? 'MAGENTA' : 'CYAN', '🥒');
     const extensionRoot = getExtensionRoot();
     const dataRoot = getDataRoot();
-    const includes = [extensionRoot, dataRoot, ticketPath];
+    const includes = [extensionRoot, dataRoot, sessionWorkingDir, ticketPath];
     // Route to tier-appropriate model based on ticket complexity. Codex ignores
     // claude's tier-shaped names, so the settings read + tier resolution only
     // runs on the claude backend.
@@ -179,7 +183,7 @@ async function main() {
     let gitnexusIndexed = false;
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     try {
-        gitnexusIndexed = fs.statSync(path.join(process.cwd(), '.gitnexus')).isDirectory();
+        gitnexusIndexed = fs.statSync(path.join(sessionWorkingDir, '.gitnexus')).isDirectory();
     }
     catch { /* no index */ }
     if (gitnexusIndexed) {
@@ -219,7 +223,7 @@ For simple file/string lookups, Grep/Glob are still fine.`;
     };
     delete env['CLAUDECODE'];
     const proc = spawn(invocation.cmd, invocation.args, {
-        cwd: process.cwd(),
+        cwd: sessionWorkingDir,
         env,
         stdio: ['inherit', 'pipe', 'pipe'],
     });

@@ -39,6 +39,7 @@ function writeCodexShim(shimDir, logPath) {
 const fs = require('fs');
 fs.writeFileSync(${JSON.stringify(logPath)}, JSON.stringify({
   argv: process.argv.slice(2),
+  cwd: process.cwd(),
   pickle_backend: process.env.PICKLE_BACKEND || null,
 }, null, 2));
 process.exit(0);
@@ -553,6 +554,71 @@ test('spawn-morty: recovers orphan tmp session timeout before printing worker bu
             Number.isFinite(effective) && effective >= 80 && effective <= 95,
             `expected recovered timeout near 90s, got ${effective}s`,
         );
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('spawn-morty: session working_dir controls child cwd, repo access, and GitNexus detection', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketDir = path.join(sessionDir, 'ticket-working-dir');
+        const repoDir = path.join(tmpDir, 'target-repo');
+        const wrongCwd = path.join(tmpDir, 'wrong-cwd');
+        fs.mkdirSync(ticketDir, { recursive: true });
+        fs.mkdirSync(repoDir, { recursive: true });
+        fs.mkdirSync(wrongCwd, { recursive: true });
+        fs.mkdirSync(path.join(repoDir, '.gitnexus'), { recursive: true });
+
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            backend: 'codex',
+            working_dir: repoDir,
+            iteration: 1,
+            schema_version: 1,
+        }));
+
+        const shimDir = path.join(tmpDir, 'bin');
+        const shimLog = path.join(tmpDir, 'codex-working-dir.json');
+        writeCodexShim(shimDir, shimLog);
+
+        const result = spawnSync(process.execPath, [SPAWN_MORTY_BIN,
+            'implement the thing',
+            '--ticket-id', 'ticket-working-dir',
+            '--ticket-path', ticketDir,
+            '--timeout', '30',
+        ], {
+            cwd: wrongCwd,
+            env: {
+                ...process.env,
+                EXTENSION_DIR: tmpDir,
+                PATH: `${shimDir}${path.delimiter}${process.env.PATH || ''}`,
+                PICKLE_BACKEND: '',
+            },
+            encoding: 'utf-8',
+            timeout: 45000,
+        });
+
+        const combined = result.stdout + result.stderr;
+        assert.equal(result.status, 1, `expected validation failure after codex shim exit, got: ${combined}`);
+        assert.ok(fs.existsSync(shimLog), 'codex shim should be invoked');
+
+        const invocation = JSON.parse(fs.readFileSync(shimLog, 'utf-8'));
+        assert.equal(invocation.cwd, repoDir, 'worker subprocess should run from the recovered session working_dir');
+
+        const addDirs = [];
+        for (let i = 0; i < invocation.argv.length; i++) {
+            if (invocation.argv[i] === '--add-dir' && typeof invocation.argv[i + 1] === 'string') {
+                addDirs.push(invocation.argv[i + 1]);
+                i++;
+            }
+        }
+        assert.ok(addDirs.includes(repoDir), 'worker invocation should explicitly include the recovered repo root');
+        assert.ok(addDirs.includes(ticketDir), 'worker invocation should still include the ticket directory');
+
+        const prompt = invocation.argv[invocation.argv.length - 1];
+        assert.match(prompt, /GITNEXUS CODE INTELLIGENCE/, 'GitNexus detection should use the recovered repo root, not the caller cwd');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
