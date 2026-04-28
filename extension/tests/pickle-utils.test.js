@@ -66,19 +66,32 @@ test('getExtensionRoot: defaults to ~/.claude/pickle-rick', () => {
 // --- getDataRoot ---
 
 function withCleanDataEnv(fn) {
+    const savedRoot = process.env.PICKLE_DATA_ROOT;
     const savedData = process.env.PICKLE_DATA_DIR;
     const savedExt = process.env.EXTENSION_DIR;
     try {
+        delete process.env.PICKLE_DATA_ROOT;
         delete process.env.PICKLE_DATA_DIR;
         delete process.env.EXTENSION_DIR;
         fn();
     } finally {
+        if (savedRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = savedRoot;
         if (savedData === undefined) delete process.env.PICKLE_DATA_DIR;
         else process.env.PICKLE_DATA_DIR = savedData;
         if (savedExt === undefined) delete process.env.EXTENSION_DIR;
         else process.env.EXTENSION_DIR = savedExt;
     }
 }
+
+test('getDataRoot: PICKLE_DATA_ROOT is the canonical override', () => {
+    withCleanDataEnv(() => {
+        process.env.PICKLE_DATA_ROOT = '/canonical/data-root';
+        process.env.PICKLE_DATA_DIR = '/legacy/data-dir';
+        process.env.EXTENSION_DIR = '/some/extension';
+        assert.equal(getDataRoot(), '/canonical/data-root');
+    });
+});
 
 test('getDataRoot: PICKLE_DATA_DIR overrides everything', () => {
     withCleanDataEnv(() => {

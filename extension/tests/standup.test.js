@@ -156,6 +156,17 @@ test('CLI: --days 0 displays an inclusive end date for today', () => {
     });
 });
 
+test('CLI: PICKLE_DATA_ROOT routes standup to the overridden activity root', () => {
+    withTempActivityDir((activityDir, dataRoot) => {
+        const todayStr = today();
+        writeEvent(activityDir, todayStr, { ts: `${todayStr}T08:00:00Z`, event: 'feature', source: 'persona', title: 'root override work' });
+
+        const result = runCli(['--days', '0'], { PICKLE_DATA_ROOT: dataRoot });
+        assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+        assert.match(result.stdout, /root override work/);
+    });
+});
+
 test('CLI: --since without value exits with error', () => {
     const result = runCli(['--since']);
     assert.equal(result.status, 1);
