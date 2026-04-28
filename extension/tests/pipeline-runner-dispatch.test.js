@@ -211,6 +211,37 @@ describe('pipeline phase config dispatch', () => {
     }
   });
 
+  test('main recovers newer dead-writer pipeline.json tmp before dispatch', async () => {
+    const { repo, sessionDir } = makeSession(['pickle']);
+    const stalePath = path.join(sessionDir, 'pipeline.json');
+    const tmpPath = `${stalePath}.tmp.99999999`;
+    fs.writeFileSync(tmpPath, JSON.stringify({
+      phases: ['anatomy-park'],
+      target: repo,
+      anatomy_stall_limit: 3,
+      szechuan_stall_limit: 5,
+      anatomy_max_iterations: 100,
+      szechuan_max_iterations: 50,
+      ignore_dirty_paths: ['prds', 'docs'],
+    }, null, 2));
+    const future = new Date(Date.now() + 1000);
+    fs.utimesSync(tmpPath, future, future);
+    const calls = [];
+    __setSpawnRunnerForTests(async (cmd, args, env) => {
+      calls.push({ cmd, args, env });
+      return 0;
+    });
+    try {
+      await expectMainExit(sessionDir, 0);
+      assert.equal(calls.length, 1);
+      assertRunnerScript(calls[0].args[0], 'microverse-runner.js');
+      assert.ok(fs.existsSync(path.join(sessionDir, 'anatomy-park.json')));
+      assert.equal(fs.existsSync(tmpPath), false);
+    } finally {
+      cleanup([repo, sessionDir]);
+    }
+  });
+
   test('main dispatches szechuan-sauce through microverse-runner with domain and focus setup', async () => {
     const { repo, sessionDir } = makeSession(['szechuan-sauce'], {
       szechuan_domain: 'typescript',

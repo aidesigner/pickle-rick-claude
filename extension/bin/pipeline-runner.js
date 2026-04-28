@@ -767,7 +767,10 @@ function loadPipelineRuntime(sessionDir, opts, log) {
     let config;
     let pipelineRaw;
     try {
-        pipelineRaw = JSON.parse(fs.readFileSync(pipelinePath, 'utf-8'));
+        const recoveredPipeline = readRecoverableJsonObject(pipelinePath);
+        if (!recoveredPipeline)
+            throw new Error('pipeline.json did not contain an object');
+        pipelineRaw = recoveredPipeline;
         config = parsePipelineConfig(pipelineRaw);
     }
     catch (err) {

@@ -1002,7 +1002,9 @@ function loadPipelineRuntime(sessionDir: string, opts: MainOpts, log: (msg: stri
   let config: PipelineConfig;
   let pipelineRaw: Record<string, unknown>;
   try {
-    pipelineRaw = JSON.parse(fs.readFileSync(pipelinePath, 'utf-8'));
+    const recoveredPipeline = readRecoverableJsonObject(pipelinePath);
+    if (!recoveredPipeline) throw new Error('pipeline.json did not contain an object');
+    pipelineRaw = recoveredPipeline as Record<string, unknown>;
     config = parsePipelineConfig(pipelineRaw);
   } catch (err) {
     throw new Error(`Cannot read pipeline.json: ${safeErrorMessage(err)}`);
