@@ -107,8 +107,7 @@ async function main() {
   // 3. Read State
   let state: State;
   try {
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    state = sm.read(stateFile);
   } catch {
     log('Failed to parse state.json');
     approve();

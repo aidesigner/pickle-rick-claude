@@ -162,6 +162,16 @@ test('stop-hook: session inactive → approve', () => {
   assert.equal(state.active, false);
 });
 
+test('stop-hook: stale active=true dead pid from PICKLE_STATE_FILE is recovered to inactive before hook gating', () => {
+  const { decision, state } = runHook({
+    state: baseState({ active: true, pid: 99999999 }),
+    response: '',
+    setStateFileEnv: true,
+  });
+  assert.deepEqual(decision, { decision: 'approve' });
+  assert.equal(state.active, false, 'dead-pid recovery must clear stale active sessions before stop-hook gating');
+});
+
 test('stop-hook: tmux_mode, no PICKLE_STATE_FILE (main window) → approve, state unchanged', () => {
   // Main Claude window: resolves state via sessions map, not PICKLE_STATE_FILE
   const { decision, state } = runHook({
