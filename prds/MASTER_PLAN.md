@@ -1,7 +1,7 @@
 # MASTER_PLAN — God Function Remediation
 
-**Last updated**: 2026-04-27
-**Status**: T0 complete. Pipeline paused mid-T1. Stashed for later resume. Five infrastructure bugs found and fixed in flight (v1.56.0 → v1.56.4 release line).
+**Last updated**: 2026-04-28 (post convergence-toolchain-gates v1.58.0 release)
+**Status**: God-fn epic T0 complete; T1 still paused, stashed for later resume. Convergence-toolchain-gates **shipped v1.58.0** — full 3-phase pipeline (build + anatomy-park + szechuan-sauce) on codex backend, 25 tickets + 78 anatomy-park findings + szechuan god-fn decomposition, all gates green, 2889/2889 tests pass. Cronenberg meta-router shipped earlier as v1.57.0. Stall-recovery PRD still drafted, not started.
 
 ---
 
@@ -9,9 +9,15 @@
 
 | Path | Status | SHA |
 |---|---|---|
-| `prds/god-functions-remediation.md` | Refined (3-cycle / 3-analyst team) | `1658d81` |
+| `prds/god-functions-remediation.md` | Refined (3-cycle / 3-analyst team). T0 done; T1+ paused. | `1658d81` |
 | (Original, pre-refinement)            | Committed earlier in the day        | `b535e71` |
 | `prds/codex-classifier-prompt-leak.md` | **Shipped** (2026-04-26) | `a48097b`, `3bc9bd2`, `a90ed73`, `4b1f784`, `17f6b03` |
+| `prds/convergence-toolchain-gates.md` | **Shipped v1.58.0** (2026-04-28) — full 3-phase pipeline: 25 atomic tickets (gate primitive + finalize-gate orchestrator + remediator brief-prep + skill prompt updates + LOA-618 fixture) → anatomy-park surfaced 78 cross-cutting bugs, all fixed (incl. metrics worktree/nested-repo, runner ownership pid stamps, orphan-tmp recovery, hook fallback routing) → szechuan-sauce decomposed god-fns. Phase 1 ran on claude (rate-limited at 5h), phases 2/3 ran on codex (5–10× faster). 122 commits, +19,597/-1,921 LOC. iteration_regressions counter held at 0 throughout — gate didn't false-flag itself. | tag `v1.58.0` |
+| `prds/large-tier-stall-recovery.md` | Draft (2026-04-27) — 3 atomic tickets (tier-aware circuit-breaker budget, worker resume detection, e2e verification). Targets god-fn T1 codex stall. **NOT started.** Planned v1.57.0 release tag was claimed by cronenberg — retarget to v1.58.0 when picked up. | uncommitted |
+| `prds/deepseek-integration.md` | Draft (2026-04-27) — third backend `'deepseek'` riding `claude` CLI via DeepSeek's Anthropic-compat shim; honest identity in state/logs/metrics; ~230 LOC. **NOT started.** | uncommitted |
+| `prds/bmad-inspired-hardening.md` | Draft (user authored, 2026-04-2x) — BMAD-inspired hardening practices for the engineering loop. **NOT started.** | uncommitted |
+| `prds/citadel.md` | Draft (2026-04-27) — new `/citadel` command (post-implementation conformance audit: PRD ↔ implementation invariants, AC coverage, sibling guard parity, rule-set invariants, trap-door enforcement) **plus** matched cross-skill updates to `/pickle-refine-prd` (T20 AC-shape collapse-or-justify), anatomy-park (T21 phase-2.5 pattern-replay sweep + `pattern_shape` schema), and szechuan-sauce (T22 diff-hygiene gate, T23 trap-door-as-test sweep). Driven by LOA-618 post-mortem: 7 issues that reached code review, 6 of which now have a primary owner + safety net. Reviewed by 5-agent team and rescoped twice (Venn-overlap model: anatomy-park ∩ citadel ∩ szechuan-sauce, slight overlap intentional). 16 core tasks (T0–T16) + 4 cross-skill tasks (T20–T23) + cronenberg integration (T13.5). 17 ACs (`AC-CIT-01..17`). **NOT started.** | uncommitted |
+| Cronenberg meta-router skill | **Shipped v1.57.0** (2026-04-27) — explicit-invocation `/cronenberg` skill with deterministic decision matrix + tmux-detach-safe followup chaining. No PRD; designed inline. | `711f92c` |
 
 The refined PRD includes: corrected line ranges, T0 prelude + T14 closer, goal-level 200 LOC carve-outs, 8-token enumeration, T1 post-pass invariants, T7 dry-run replacement (test seam, NO `--dry-run`), T2 scope clarification (`runIteration` already extracted), per-ticket frontmatter, fixture lockdown protocol, helper-signature spec rule, trap-door preservation, and a 17-row Risks table.
 
@@ -32,6 +38,8 @@ T0 completed cleanly after a marathon debug session that surfaced and fixed five
 | `v1.56.2` | 38 timing-sensitive tests bumped 3–5x to survive load when codex runs concurrent tool calls during baseline capture. Verified under 2x concurrent runs. |
 | `v1.56.3` | Morty workers leaked orchestrator promise tokens upstream. Added `FORBIDDEN_WORKER_TOKENS` + runtime scrub in `spawn-morty.ts` finalize-time, plus prompt-level forbidden list. |
 | `v1.56.4` | **Manager itself misuses EPIC_COMPLETED** — conflates per-ticket completion with epic completion. Replaced fail-loud guard with `evaluateEpicCompletion()` recovery state machine: 4-arm decision (genuine / recover_advance / recover_retry / persistent_hallucination). Pipeline survives manager hallucination structurally. Counter persists in `state.false_epic_completed_count`. **This is the fix that finally let T0 complete.** |
+| `v1.57.0` | **Cronenberg meta-router shipped** (post-stash, 2026-04-27). New `/cronenberg` skill — explicit-invocation deterministic router that picks the right pickle metaphor + cleanup chain for a build/implement request. Tmux-detach-safe, flag pass-through, persona footprint = one Dispatch line. Unrelated to the god-fn epic; shipped as a side-quest. |
+| `v1.58.0` | **Convergence-toolchain-gates shipped** (2026-04-28). New `convergence-gate` primitive (`runGate({mode,scope,checks,allowedPaths})`) + `finalize-gate.ts` post-runner orchestrator + `morty-gate-remediator` agent (mechanical-only autofix worker with snapshot-and-revert protocol) + `check-gate.ts`/`spawn-gate-remediator.ts` CLIs. Wires into `/szechuan-sauce` (line-205 tmux chain) and `/anatomy-park` (Step 6.6 baseline + line-166 chain). 14 new activity events, `iteration_regressions` counter on `MicroverseSessionState`, `gate-commands.json` for pnpm/npm/yarn/cargo/go, baseline schema with `(file, ruleOrCode, occurrence_index)` fingerprint, freshness invariants, R17 OOS handling, R18 dirty-worktree skip, R19 baseline-stale halt, R20 bootstrap recursion (gate-the-gate). Anatomy-park run on this PR exercised the gate against itself and found 78 cross-cutting bugs (CRITICAL/HIGH) across pickle-rick — all fixed in-loop. LOA-618 fixture replay test pinned. Final fixes pre-release: metrics-utils `git log --since` semantic bug (date-only boundary) + worktree commit attribution + 2 P1 findings in convergence-gate.ts (unsafe `as string` cast on empty cmd, silent error swallow on race). |
 
 ### T0 deliverables landed
 
@@ -69,7 +77,7 @@ T1 status reset to `Todo` so resume starts fresh.
 | `state.json: false_epic_completed_count` | `18` (proof v1.56.4 fired and recovered) |
 | `pipeline-status.json` | `failed` (circuit-breaker exit; not relaunch-blocking) |
 | `pipeline-cancel` sentinel | absent |
-| Working tree | clean except untracked `prds/bmad-inspired-hardening.md` (user draft) |
+| Working tree | 5 untracked PRD drafts (`bmad-inspired-hardening`, `citadel`, `convergence-toolchain-gates`, `deepseek-integration`, `large-tier-stall-recovery`) + this `MASTER_PLAN.md` modification. No code-level dirt. |
 | Source tree | T0 deliverables committed; no in-flight T1 edits |
 | tmux | `pipeline-9152e64b` is dead. |
 | Tickets done | 1 of 20 (T0 / `6f3e3f01`) |
@@ -145,7 +153,7 @@ T0 is committed. There's nothing to redo there. The session is genuinely past T0
 | 190 | `d6e98b45` | Harden — test quality | large | varies | Todo |
 | 200 | `7be94584` | Audit — cross-reference consistency | medium | 0 | Todo |
 
-T14's planned bump target (`1.54.2 → 1.55.0`) is now obsolete — we've already shipped `1.55.0` for an unrelated agent-teams feature (commit `a4662df`) and `1.56.4` for this session's PRC fixes. Reset T14's bump to whatever the current latest is at the time T14 lands.
+T14's planned bump target (`1.54.2 → 1.55.0`) is now obsolete — we've already shipped `1.55.0` for an unrelated agent-teams feature (commit `a4662df`), `1.56.4` for this session's PRC fixes, and `1.57.0` for the cronenberg meta-router (commit `711f92c`). Reset T14's bump to whatever the current latest is at the time T14 lands.
 
 Total minimum new tests from T1–T14: **49**. Hardening tickets add more as findings demand.
 
@@ -204,5 +212,5 @@ T1 staged research:      $SESSION_ROOT/f068af3f/research_2026-04-26.md
 T1 staged plan:          $SESSION_ROOT/f068af3f/plan_2026-04-26.md
 Pipeline config:         $SESSION_ROOT/pipeline.json
 Cancel signal (rm to resume): $SESSION_ROOT/pipeline-cancel (currently absent)
-Latest release:          v1.56.4 — https://github.com/gregorydickson/pickle-rick-claude/releases/tag/v1.56.4
+Latest release:          v1.57.0 — https://github.com/gregorydickson/pickle-rick-claude/releases/tag/v1.57.0
 ```

@@ -326,7 +326,10 @@ function getChangedSince(workingDir, since) {
     return (result.stdout || '').split('\n').filter(Boolean);
 }
 async function runCheckCommand(cmd, cwd, timeout_ms) {
-    const parts = cmd.split(' ');
+    const parts = cmd.split(' ').filter((p) => p.length > 0);
+    if (parts.length === 0) {
+        throw new Error(`runCheckCommand: empty command — refusing to spawn`);
+    }
     const bin = parts[0];
     const args = parts.slice(1);
     try {
@@ -604,7 +607,12 @@ export async function runGate(opts) {
             catch (err) {
                 clearTimeout(timeoutHandle);
                 if (err instanceof GateTimeoutError) {
-                    checkPromise.catch(() => { });
+                    // Drain the losing race so node doesn't crash on unhandledRejection,
+                    // but keep the diagnostic so a wedged child surfaces in the activity log.
+                    checkPromise.catch((raceErr) => {
+                        const msg = raceErr instanceof Error ? raceErr.message : String(raceErr);
+                        emit('gate_check_promise_lost', { check, message: msg });
+                    });
                     allFailures.push({
                         check,
                         file: '<timeout>',

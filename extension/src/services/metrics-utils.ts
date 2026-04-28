@@ -115,6 +115,31 @@ function discoverGitRepos(repoRoot: string): string[] {
   return repos;
 }
 
+/**
+ * Worktrees share commit history with their main repo. Returns the main repo's
+ * primary branch name so the worktree's `git log` can subtract it (`HEAD ^<ref>`)
+ * and only count commits unique to the worktree's checkout. Returns null when
+ * `repoPath` is not a worktree, or when the main HEAD is detached/unreadable.
+ */
+function getWorktreeBaseRef(repoPath: string): string | null {
+  const gitPath = path.join(repoPath, '.git');
+  try {
+    const stat = fs.statSync(gitPath);
+    if (!stat.isFile()) return null;
+    const content = fs.readFileSync(gitPath, 'utf-8').trim();
+    const match = content.match(/^gitdir:\s*(.+)$/);
+    if (!match) return null;
+    // gitdir target is `<main>/.git/worktrees/<name>` — main repo's .git is two levels up
+    const mainGitDir = path.dirname(path.dirname(match[1]!));
+    const headPath = path.join(mainGitDir, 'HEAD');
+    const head = fs.readFileSync(headPath, 'utf-8').trim();
+    const refMatch = head.match(/^ref:\s*refs\/heads\/(.+)$/);
+    return refMatch ? refMatch[1]! : null;
+  } catch {
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Session Line Parser
 // ---------------------------------------------------------------------------
@@ -336,7 +361,21 @@ export function scanGitRepos(repoRoot: string, since: string, until: string): Ma
     const repoSlug = projectSlugFromPath(repoPath);
 
     try {
-      const proc = spawnSync('git', ['log', `--since=${since}`, '--format=%aI', '--shortstat'], {
+      const baseRef = getWorktreeBaseRef(repoPath);
+      const logArgs = [
+        'log',
+        `--since=${since} 00:00`,
+        `--until=${until} 23:59:59`,
+        '--format=%aI',
+        '--shortstat',
+      ];
+      if (baseRef) {
+        // Worktree: subtract main repo's branch so we only count commits unique
+        // to this checkout. Without this, every commit in the shared history
+        // gets attributed to the worktree slug too.
+        logArgs.push('HEAD', `^${baseRef}`);
+      }
+      const proc = spawnSync('git', logArgs, {
         cwd: repoPath,
         encoding: 'utf-8',
         timeout: 30_000,
