@@ -210,6 +210,33 @@ test('initCircuitBreaker: uses recovered orphan tmp state before staleness reset
     }
 });
 
+test('initCircuitBreaker: promotes newer orphan circuit_breaker tmp before deciding state', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const cbPath = path.join(tmpDir, 'circuit_breaker.json');
+        const tmpPath = `${cbPath}.tmp.99999999`;
+        fs.writeFileSync(cbPath, JSON.stringify(makeFreshState({ state: 'CLOSED' })));
+        fs.writeFileSync(tmpPath, JSON.stringify(makeFreshState({
+            state: 'OPEN',
+            consecutive_no_progress: 5,
+            reason: 'No progress in 5 iterations',
+        })));
+        const baseTime = new Date('2026-04-28T12:00:00.000Z');
+        const tmpTime = new Date('2026-04-28T12:00:01.000Z');
+        fs.utimesSync(cbPath, baseTime, baseTime);
+        fs.utimesSync(tmpPath, tmpTime, tmpTime);
+
+        const state = initCircuitBreaker(tmpDir, makeSettings());
+
+        assert.equal(state.state, 'OPEN');
+        assert.equal(state.consecutive_no_progress, 5);
+        assert.equal(fs.existsSync(tmpPath), false, 'promoted tmp should be consumed');
+        assert.equal(JSON.parse(fs.readFileSync(cbPath, 'utf-8')).state, 'OPEN');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 // ---------------------------------------------------------------------------
 // canExecute
 // ---------------------------------------------------------------------------
@@ -531,6 +558,33 @@ test('resetCircuitBreaker: CLOSED is a no-op (no file rewrite)', () => {
     }
 });
 
+test('resetCircuitBreaker: promotes newer orphan tmp before deciding no-op', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const cbPath = path.join(tmpDir, 'circuit_breaker.json');
+        const tmpPath = `${cbPath}.tmp.99999999`;
+        fs.writeFileSync(cbPath, JSON.stringify(makeFreshState({ state: 'CLOSED' })));
+        fs.writeFileSync(tmpPath, JSON.stringify(makeFreshState({
+            state: 'OPEN',
+            history: [{ timestamp: '2026-01-01T00:00:00Z', iteration: 1, from: 'CLOSED', to: 'OPEN', reason: 'test' }],
+        })));
+        const baseTime = new Date('2026-04-28T12:00:00.000Z');
+        const tmpTime = new Date('2026-04-28T12:00:01.000Z');
+        fs.utimesSync(cbPath, baseTime, baseTime);
+        fs.utimesSync(tmpPath, tmpTime, tmpTime);
+
+        resetCircuitBreaker(tmpDir, 'recover tmp reset');
+
+        const after = JSON.parse(fs.readFileSync(cbPath, 'utf-8'));
+        assert.equal(after.state, 'CLOSED');
+        assert.equal(fs.existsSync(tmpPath), false, 'reset should consume the newer tmp snapshot');
+        assert.equal(after.history.at(-1).from, 'OPEN');
+        assert.match(after.history.at(-1).reason, /recover tmp reset/);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 // ---------------------------------------------------------------------------
 // State persistence round-trip
 // ---------------------------------------------------------------------------
@@ -628,6 +682,30 @@ test('circuit-reset CLI: writes valid JSON after reset', () => {
         const parsed = JSON.parse(raw);
         assert.equal(typeof parsed.state, 'string');
         assert.ok(Array.isArray(parsed.history));
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('circuit-reset CLI: promotes newer orphan tmp before no-op check', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const cbPath = path.join(tmpDir, 'circuit_breaker.json');
+        const tmpPath = `${cbPath}.tmp.99999999`;
+        fs.writeFileSync(cbPath, JSON.stringify(makeFreshState({ state: 'CLOSED' })));
+        fs.writeFileSync(tmpPath, JSON.stringify(makeFreshState({ state: 'OPEN' })));
+        const baseTime = new Date('2026-04-28T12:00:00.000Z');
+        const tmpTime = new Date('2026-04-28T12:00:01.000Z');
+        fs.utimesSync(cbPath, baseTime, baseTime);
+        fs.utimesSync(tmpPath, tmpTime, tmpTime);
+
+        const result = runResetCli([tmpDir, '--reason', 'CLI tmp recovery']);
+
+        assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+        const after = JSON.parse(fs.readFileSync(cbPath, 'utf-8'));
+        assert.equal(after.state, 'CLOSED');
+        assert.equal(fs.existsSync(tmpPath), false, 'CLI should consume stale writer tmp');
+        assert.equal(after.history.at(-1).from, 'OPEN');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

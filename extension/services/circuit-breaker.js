@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { runCmd, writeStateFile, safeErrorMessage } from './pickle-utils.js';
 import { StateManager } from './state-manager.js';
+import { readRecoverableJsonObject } from './microverse-state.js';
 // ---------------------------------------------------------------------------
 // Module state
 // ---------------------------------------------------------------------------
@@ -25,6 +26,30 @@ function freshState() {
         reason: '',
         opened_at: null,
         history: [],
+    };
+}
+function isCircuitState(value) {
+    return value === 'CLOSED' || value === 'HALF_OPEN' || value === 'OPEN';
+}
+export function readCircuitBreakerState(sessionDir) {
+    const cbPath = path.join(sessionDir, 'circuit_breaker.json');
+    const raw = readRecoverableJsonObject(cbPath);
+    if (!raw || !isCircuitState(raw.state))
+        return null;
+    return {
+        state: raw.state,
+        last_change: raw.last_change || new Date().toISOString(),
+        consecutive_no_progress: Number(raw.consecutive_no_progress) || 0,
+        consecutive_same_error: Number(raw.consecutive_same_error) || 0,
+        last_error_signature: raw.last_error_signature ?? null,
+        last_known_head: raw.last_known_head || '',
+        last_known_step: raw.last_known_step ?? null,
+        last_known_ticket: raw.last_known_ticket ?? null,
+        last_progress_iteration: Number(raw.last_progress_iteration) || 0,
+        total_opens: Number(raw.total_opens) || 0,
+        reason: raw.reason || '',
+        opened_at: raw.opened_at ?? null,
+        history: Array.isArray(raw.history) ? raw.history : [],
     };
 }
 function transition(state, to, reason, iteration) {
@@ -86,11 +111,10 @@ export function loadSettings(extensionRoot) {
 }
 // eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 export function initCircuitBreaker(sessionDir, _settings) {
-    const cbPath = path.join(sessionDir, 'circuit_breaker.json');
     try {
-        const raw = JSON.parse(fs.readFileSync(cbPath, 'utf-8'));
+        const raw = readCircuitBreakerState(sessionDir);
         // Validate structure — must have a valid state field
-        if (raw.state !== 'CLOSED' && raw.state !== 'HALF_OPEN' && raw.state !== 'OPEN') {
+        if (!raw) {
             return freshState();
         }
         // Staleness check: if last_progress_iteration is wildly out of range
@@ -106,22 +130,7 @@ export function initCircuitBreaker(sessionDir, _settings) {
         catch {
             // Can't read state.json — trust the CB file as-is
         }
-        // Reconstruct with defaults for any missing fields
-        return {
-            state: raw.state,
-            last_change: raw.last_change || new Date().toISOString(),
-            consecutive_no_progress: Number(raw.consecutive_no_progress) || 0,
-            consecutive_same_error: Number(raw.consecutive_same_error) || 0,
-            last_error_signature: raw.last_error_signature ?? null,
-            last_known_head: raw.last_known_head || '',
-            last_known_step: raw.last_known_step ?? null,
-            last_known_ticket: raw.last_known_ticket ?? null,
-            last_progress_iteration: Number(raw.last_progress_iteration) || 0,
-            total_opens: Number(raw.total_opens) || 0,
-            reason: raw.reason || '',
-            opened_at: raw.opened_at ?? null,
-            history: Array.isArray(raw.history) ? raw.history : [],
-        };
+        return raw;
     }
     catch {
         // Corrupted or missing — start fresh
@@ -257,13 +266,12 @@ export function recordIterationResult(state, result, iteration, settings) {
 export function resetCircuitBreaker(sessionDir, reason) {
     const cbPath = path.join(sessionDir, 'circuit_breaker.json');
     let current;
-    try {
-        current = JSON.parse(fs.readFileSync(cbPath, 'utf-8'));
-    }
-    catch {
+    const recovered = readCircuitBreakerState(sessionDir);
+    if (!recovered) {
         console.error('[circuit-breaker] No circuit_breaker.json found — nothing to reset');
         return;
     }
+    current = recovered;
     if (current.state === 'CLOSED') {
         console.error('[circuit-breaker] Already CLOSED — no reset needed');
         return;

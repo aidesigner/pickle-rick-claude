@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { printMinimalPanel } from '../services/pickle-utils.js';
-import { resetCircuitBreaker, type CircuitBreakerState } from '../services/circuit-breaker.js';
+import { readCircuitBreakerState, resetCircuitBreaker, type CircuitBreakerState } from '../services/circuit-breaker.js';
 
 function main(): void {
   const sessionDir = process.argv[2];
@@ -20,12 +20,12 @@ function main(): void {
   const cbPath = path.join(sessionDir, 'circuit_breaker.json');
 
   let current: CircuitBreakerState;
-  try {
-    current = JSON.parse(fs.readFileSync(cbPath, 'utf-8'));
-  } catch {
+  const recovered = readCircuitBreakerState(sessionDir);
+  if (!recovered) {
     console.error(`Error: cannot read ${cbPath}`);
     process.exit(1);
   }
+  current = recovered;
 
   if (!current.state || !['CLOSED', 'HALF_OPEN', 'OPEN'].includes(current.state)) {
     console.error(`Error: invalid circuit state in ${cbPath}`);
