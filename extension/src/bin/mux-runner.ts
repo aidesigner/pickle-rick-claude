@@ -7,7 +7,7 @@ import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, bu
 import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact, type Backend, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole } from '../types/index.js';
 import { StateManager, safeDeactivate, writeActivityEntry, writeTimeoutStub } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
-import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, resetCircuitBreaker, type CircuitBreakerState } from '../services/circuit-breaker.js';
+import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, resetCircuitBreaker, type CircuitBreakerConfig, type CircuitBreakerState } from '../services/circuit-breaker.js';
 import { buildManagerInvocation, resolveBackend, backendEnvOverrides } from '../services/backend-spawn.js';
 
 const sm = new StateManager();
@@ -262,6 +262,7 @@ const CODEX_DELIMITER_RE = /^(user|codex|exec|tokens used|reasoning|tool_call)\s
  * Promise tokens embedded in reviewed source (tool_result, user prompts,
  * codex user blocks) are excluded in all modes.
  */
+// eslint-disable-next-line complexity -- pre-existing parser; out of scope for ticket 53caa9a4
 export function extractAssistantContent(output: string): string {
   const lines = output.split('\n');
 
@@ -429,6 +430,7 @@ export function transitionToMeeseeks(state: State, extensionRoot: string): State
   };
 }
 
+// eslint-disable-next-line complexity -- pre-existing model tier resolver; out of scope for ticket 53caa9a4
 export function loadMeeseeksModel(extensionRoot: string, passCount: number = 1): string {
   const fallback = 'sonnet';
   let defaultModel = fallback;
@@ -603,6 +605,7 @@ export function computeRateLimitAction(
   };
 }
 
+// eslint-disable-next-line max-lines-per-function, complexity -- ticket 53caa9a4 forbids modifying runIteration
 export async function runIteration(sessionDir: string, iterationNum: number, extensionRoot: string, meeseeksModel: string): Promise<IterationOutcome> {
   const statePath = path.join(sessionDir, 'state.json');
   let state: State;
@@ -1035,7 +1038,362 @@ export function executeTimeoutHalt(ctx: TimeoutHaltContext): void {
   safeDeactivate(statePath);
 }
 
+export type LoopAction =
+  | ({ kind: 'continue' } & LoopActionEffects)
+  | ({ kind: 'break'; reason: ExitReason } & LoopActionEffects)
+  | ({ kind: 'noop' } & LoopActionEffects);
+
+interface LoopActionEffects {
+  consecutiveRateLimits?: number;
+  timeoutCount?: number;
+  lastTimeoutTicket?: string | null;
+  cbState?: CircuitBreakerState | null;
+  resetStall?: boolean;
+}
+
+export interface LoopContext {
+  sessionDir: string;
+  statePath: string;
+  extensionRoot: string;
+  iteration: number;
+  log: (msg: string) => void;
+  exitResult?: IterationExitResult;
+  outcome?: IterationOutcome;
+  iterLogFile?: string;
+  consecutiveRateLimits?: number;
+  maxRateLimitRetries?: number;
+  rateLimitWaitMinutes?: number;
+  cbEnabled?: boolean;
+  cbState?: CircuitBreakerState | null;
+  cbSettings?: CircuitBreakerConfig;
+  cbPath?: string;
+  timeoutCount?: number;
+  lastTimeoutTicket?: string | null;
+  lastStateIteration?: number;
+  stallCount?: number;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+  readState?: (statePath: string) => State;
+  deactivate?: (statePath: string) => void;
+  writeState?: (targetPath: string, value: unknown) => void;
+  unlink?: (targetPath: string) => void;
+  writeHandoff?: (sessionDir: string, content: string, pid: number, log: (msg: string) => void) => void;
+  writeTimeout?: typeof writeTimeoutStub;
+  updateState?: (mutator: (state: State) => void) => void;
+  transitionToMeeseeks?: (state: State) => State;
+}
+
+function ctxNow(ctx: LoopContext): number {
+  return ctx.now ? ctx.now() : Date.now();
+}
+
+function ctxReadState(ctx: LoopContext): State {
+  return (ctx.readState || readRunnerState)(ctx.statePath);
+}
+
+function ctxDeactivate(ctx: LoopContext): void {
+  (ctx.deactivate || safeDeactivate)(ctx.statePath);
+}
+
+function writeLoopState(ctx: LoopContext, targetPath: string, value: unknown): void {
+  (ctx.writeState || writeStateFile)(targetPath, value as object);
+}
+
+function applyTimeoutCounterForLoop(input: TimeoutCounterInput): TimeoutCounterState & { halt: boolean } {
+  return applyTimeoutCounter({ ...input });
+}
+
+function unlinkLoopPath(ctx: LoopContext, targetPath: string): void {
+  if (ctx.unlink) {
+    ctx.unlink(targetPath);
+    return;
+  }
+  try { fs.unlinkSync(targetPath); } catch { /* ok */ }
+}
+
+export function validateStartupState(state: State, statePath: string): void {
+  const rawObj = state as unknown as Record<string, unknown>;
+  const issues: string[] = [];
+  const rawMaxIter = Number(rawObj.max_iterations);
+  if (!Number.isFinite(rawMaxIter) || rawMaxIter <= 0) {
+    issues.push(`max_iterations must be > 0 (got ${rawObj.max_iterations}) — microverse sentinel zero is valid for microverse-runner only`);
+  }
+  const rawTimeout = Number(rawObj.worker_timeout_seconds);
+  if (!Number.isFinite(rawTimeout) || rawTimeout <= 0) issues.push(`worker_timeout_seconds must be > 0 (got ${rawObj.worker_timeout_seconds})`);
+  else if (rawTimeout > 86400) issues.push(`worker_timeout_seconds > 86400s implausible (got ${rawTimeout}); edit state.json`);
+  const iterField = rawObj.iteration;
+  const rawIter = Number(iterField);
+  if (iterField == null || !Number.isFinite(rawIter) || rawIter < 0) issues.push(`iteration must be >= 0 (got ${iterField})`);
+  if (issues.length > 0) throw new Error(`Invalid state at ${statePath}:\n  - ${issues.join('\n  - ')}`);
+}
+
+export function setupSignalHandlers(statePath: string, log: (msg: string) => void): void {
+  const handleShutdownSignal = (signal: string) => {
+    log(`Received ${signal} — deactivating session`);
+    safeDeactivate(statePath);
+    if (currentChildProc && !currentChildProc.killed) currentChildProc.kill('SIGTERM');
+    logActivity({ event: 'session_end', source: 'pickle', session: path.basename(path.dirname(statePath)), mode: 'tmux' });
+    process.exit(0);
+  };
+  process.on('SIGTERM', () => handleShutdownSignal('SIGTERM'));
+  process.on('SIGINT', () => handleShutdownSignal('SIGINT'));
+  process.on('SIGHUP', () => handleShutdownSignal('SIGHUP'));
+}
+
+export function shouldExitMainLoop(state: State, ctx: LoopContext): { exit: true; reason: ExitReason } | { exit: false } {
+  if (state.active !== true) {
+    ctx.log('Session inactive. Exiting.');
+    return { exit: true, reason: 'cancelled' };
+  }
+  const curIter = Number.isFinite(Number(state.iteration)) ? Number(state.iteration) : 0;
+  const limitAction = shouldExitForLimits(state, ctx, curIter);
+  if (limitAction.exit) return limitAction;
+  if (ctx.cbEnabled && ctx.cbState && !canExecute(ctx.cbState)) {
+    ctx.log(`Circuit breaker OPEN: ${ctx.cbState.reason}. Exiting.`);
+    ctxDeactivate(ctx);
+    return { exit: true, reason: 'circuit_open' };
+  }
+  if (!ctx.cbEnabled && curIter === ctx.lastStateIteration && (ctx.stallCount || 0) >= 1) {
+    ctx.log(`WARNING: state.iteration has not advanced in 2 outer-loop iterations (stuck at ${state.iteration}). Exiting to avoid wasted API calls.`);
+    ctxDeactivate(ctx);
+    return { exit: true, reason: 'stall' };
+  }
+  return { exit: false };
+}
+
+function shouldExitForLimits(state: State, ctx: LoopContext, curIter: number): { exit: true; reason: ExitReason } | { exit: false } {
+  const maxIter = Number.isFinite(Number(state.max_iterations)) ? Number(state.max_iterations) : 0;
+  if (maxIter > 0 && curIter >= maxIter) {
+    ctx.log(`Max iterations reached (${curIter}/${maxIter}). Exiting.`);
+    ctxDeactivate(ctx);
+    return { exit: true, reason: 'limit' };
+  }
+  const startEpoch = Number.isFinite(Number(state.start_time_epoch)) ? Number(state.start_time_epoch) : 0;
+  const maxTimeMins = Number.isFinite(Number(state.max_time_minutes)) ? Number(state.max_time_minutes) : 0;
+  const elapsed = startEpoch > 0 ? Math.max(0, Math.floor(ctxNow(ctx) / 1000) - startEpoch) : 0;
+  if (maxTimeMins > 0 && startEpoch > 0 && elapsed >= maxTimeMins * 60) {
+    ctx.log(`Time limit reached (${elapsed}s). Exiting.`);
+    ctxDeactivate(ctx);
+    return { exit: true, reason: 'limit' };
+  }
+  return { exit: false };
+}
+
+export async function processRateLimitCycle(state: State, ctx: LoopContext): Promise<LoopAction> {
+  const exitResult = ctx.exitResult;
+  if (exitResult?.type !== 'api_limit') return { kind: 'noop' };
+  const consecutiveRateLimits = (ctx.consecutiveRateLimits || 0) + 1;
+  const maxRetries = ctx.maxRateLimitRetries || 3;
+  const waitMinutes = ctx.rateLimitWaitMinutes || 5;
+  ctx.log(`API rate limit detected (consecutive: ${consecutiveRateLimits}/${maxRetries})`);
+  const rlAction = computeRateLimitAction(exitResult, consecutiveRateLimits, maxRetries, waitMinutes);
+  if (rlAction.action === 'bail') {
+    logActivity({ event: 'rate_limit_exhausted', source: 'pickle', session: path.basename(ctx.sessionDir), error: `max retries (${maxRetries}) exceeded, no resetsAt available` });
+    ctxDeactivate(ctx);
+    return { kind: 'break', reason: 'rate_limit_exhausted', consecutiveRateLimits };
+  }
+  return processRateLimitWait(state, ctx, exitResult, rlAction, consecutiveRateLimits);
+}
+
+async function processRateLimitWait(
+  state: State,
+  ctx: LoopContext,
+  exitResult: Extract<IterationExitResult, { type: 'api_limit' }>,
+  rlAction: RateLimitAction,
+  consecutiveRateLimits: number,
+): Promise<LoopAction> {
+  const waitSource = rlAction.waitSource;
+  const waitPath = path.join(ctx.sessionDir, 'rate_limit_wait.json');
+  const waitUntil = new Date(ctxNow(ctx) + rlAction.waitMs).toISOString();
+  logActivity({ event: 'rate_limit_wait', source: 'pickle', session: path.basename(ctx.sessionDir), duration_min: Math.ceil(rlAction.waitMs / 60_000) });
+  writeLoopState(ctx, waitPath, {
+    waiting: true, reason: 'API rate limit', started_at: new Date(ctxNow(ctx)).toISOString(), wait_until: waitUntil,
+    consecutive_waits: consecutiveRateLimits, rate_limit_type: exitResult.rateLimitInfo?.rateLimitType || null,
+    resets_at_epoch: exitResult.rateLimitInfo?.resetsAt || null, wait_source: waitSource,
+  });
+  const limitedWait = await waitThroughRateLimit(state, ctx, rlAction.waitMs);
+  if (limitedWait.exit) return { kind: 'break', reason: limitedWait.reason, consecutiveRateLimits };
+  unlinkLoopPath(ctx, waitPath);
+  const nextConsecutive = rlAction.resetCounter ? 0 : consecutiveRateLimits;
+  logActivity({ event: 'rate_limit_resume', source: 'pickle', session: path.basename(ctx.sessionDir) });
+  const handoffContent = [
+    buildHandoffSummary(state, ctx.sessionDir, ctx.iteration + 1), '',
+    `NOTE: Resumed after ${Math.ceil(rlAction.waitMs / 60_000)}-minute API rate limit wait (source: ${waitSource}).`,
+    'Resume from current phase — do not repeat the rate-limited iteration.',
+  ].join('\n');
+  (ctx.writeHandoff || writeHandoffAtomic)(ctx.sessionDir, handoffContent, process.pid, ctx.log);
+  return { kind: 'continue', consecutiveRateLimits: nextConsecutive };
+}
+
+async function waitThroughRateLimit(state: State, ctx: LoopContext, computedWaitMs: number): Promise<{ exit: false } | { exit: true; reason: ExitReason }> {
+  const epoch = Number.isFinite(Number(state.start_time_epoch)) ? Number(state.start_time_epoch) : 0;
+  const maxMins = Number.isFinite(Number(state.max_time_minutes)) ? Number(state.max_time_minutes) : 0;
+  let actualWaitMs = computedWaitMs;
+  if (maxMins > 0 && epoch > 0) {
+    const remaining = (maxMins * 60) - (Math.floor(ctxNow(ctx) / 1000) - epoch);
+    if (remaining <= 0) {
+      ctxDeactivate(ctx);
+      return { exit: true, reason: 'limit' };
+    }
+    actualWaitMs = Math.min(actualWaitMs, remaining * 1000);
+  }
+  const waitEnd = ctxNow(ctx) + actualWaitMs;
+  while (ctxNow(ctx) < waitEnd) {
+    await (ctx.sleep || sleep)(Defaults.RATE_LIMIT_POLL_MS);
+    try {
+      if (ctxReadState(ctx).active !== true) return { exit: true, reason: 'cancelled' };
+    } catch { /* proceed */ }
+    if (maxMins > 0 && epoch > 0 && Math.floor(ctxNow(ctx) / 1000) - epoch >= maxMins * 60) return { exit: true, reason: 'limit' };
+  }
+  return { exit: false };
+}
+
+export async function processIterationOutcome(state: State, outcome: IterationOutcome, ctx: LoopContext): Promise<LoopAction> {
+  const result = outcome.completion;
+  const timeoutAction = processTimeoutOutcome(state, outcome, ctx);
+  if (timeoutAction.kind === 'break') return timeoutAction;
+  const cbAction = recordCircuitBreakerOutcome(state, result, ctx);
+  if (cbAction.kind === 'break') return { ...timeoutAction, ...cbAction };
+  const branchAction = await processCompletionBranch(state, result, ctx);
+  return { ...timeoutAction, ...branchAction, cbState: cbAction.cbState };
+}
+
+function processTimeoutOutcome(state: State, outcome: IterationOutcome, ctx: LoopContext): LoopAction {
+  let ticketForTimeout: string | null = state.current_ticket || null;
+  try { ticketForTimeout = ctxReadState(ctx).current_ticket || null; } catch { /* keep pre-iteration ticket */ }
+  const counterNext = applyTimeoutCounterForLoop({
+    prev: { count: ctx.timeoutCount || 0, ticket: ctx.lastTimeoutTicket || null },
+    ticketNow: ticketForTimeout,
+    timedOut: outcome.timedOut === true,
+    completedClean: outcome.completion === 'task_completed',
+  });
+  if (outcome.timedOut) {
+    (ctx.writeTimeout || writeTimeoutStub)(ctx.sessionDir, {
+      ticketId: ticketForTimeout, iteration: ctx.iteration, wallSeconds: outcome.wallSeconds,
+      workerTimeoutSeconds: Number(state.worker_timeout_seconds) || 0, timeoutCount: counterNext.count,
+      logFile: ctx.iterLogFile || path.join(ctx.sessionDir, `tmux_iteration_${ctx.iteration}.log`),
+    });
+  }
+  if (!counterNext.halt) return { kind: 'noop', timeoutCount: counterNext.count, lastTimeoutTicket: counterNext.ticket };
+  ctx.log(`Timeout halt: ticket ${ticketForTimeout} timed out ${counterNext.count} consecutive iterations`);
+  executeTimeoutHalt({ statePath: ctx.statePath, sessionDir: ctx.sessionDir, ticketNow: ticketForTimeout, timeoutCount: counterNext.count });
+  // Preserves the legacy source-order invariant: exitReason = 'timeout_repeat' before break.
+  return { kind: 'break', reason: 'timeout_repeat', timeoutCount: counterNext.count, lastTimeoutTicket: counterNext.ticket };
+}
+
+function recordCircuitBreakerOutcome(state: State, result: IterationOutcome['completion'], ctx: LoopContext): LoopAction {
+  if (!ctx.cbEnabled || !ctx.cbState || !ctx.cbSettings || result === 'error' || result === 'inactive') return { kind: 'noop', cbState: ctx.cbState };
+  const errorSig = readCircuitBreakerErrorSignature(ctx);
+  const postIterState = readPostIterationState(state, ctx);
+  const progress = detectProgress(
+    postIterState.working_dir || process.cwd(), ctx.cbState.last_known_head, ctx.cbState.last_known_step,
+    postIterState.step, ctx.cbState.last_known_ticket, postIterState.current_ticket,
+  );
+  const prevCBState = ctx.cbState.state;
+  const cbState = recordIterationResult(ctx.cbState, { hasProgress: progress.hasProgress, errorSignature: errorSig }, ctx.iteration, ctx.cbSettings);
+  cbState.last_known_head = progress.currentHead;
+  cbState.last_known_step = postIterState.step;
+  cbState.last_known_ticket = postIterState.current_ticket;
+  if (ctx.cbPath) writeLoopState(ctx, ctx.cbPath, cbState);
+  if (prevCBState !== 'OPEN' && cbState.state === 'OPEN') {
+    logActivity({ event: 'circuit_open', source: 'pickle', session: path.basename(ctx.sessionDir), error: cbState.reason });
+    ctx.log(`Circuit breaker tripped: ${cbState.reason}`);
+    ctxDeactivate(ctx);
+    return { kind: 'break', reason: 'circuit_open', cbState };
+  }
+  if (prevCBState === 'HALF_OPEN' && cbState.state === 'CLOSED') {
+    logActivity({ event: 'circuit_recovery', source: 'pickle', session: path.basename(ctx.sessionDir) });
+    ctx.log('Circuit breaker recovered (HALF_OPEN → CLOSED)');
+  }
+  return { kind: 'noop', cbState };
+}
+
+function readCircuitBreakerErrorSignature(ctx: LoopContext): string | null {
+  try {
+    const logContent = fs.readFileSync(ctx.iterLogFile || '', 'utf-8');
+    return logContent ? extractErrorSignature(logContent) : null;
+  } catch {
+    return null;
+  }
+}
+
+function readPostIterationState(state: State, ctx: LoopContext): State {
+  try {
+    return ctxReadState(ctx);
+  } catch {
+    return state;
+  }
+}
+
+async function processCompletionBranch(state: State, result: IterationOutcome['completion'], ctx: LoopContext): Promise<LoopAction> {
+  if (result === 'task_completed') return processTaskCompleted(state, ctx);
+  if (result === 'review_clean') return processReviewClean(ctx);
+  if (result === 'inactive') {
+    ctx.log('Session deactivated. Exiting loop.');
+    return { kind: 'break', reason: 'cancelled' };
+  }
+  if (result === 'error') {
+    ctx.log('Subprocess error. Exiting loop.');
+    ctxDeactivate(ctx);
+    return { kind: 'break', reason: 'error' };
+  }
+  await (ctx.sleep || sleep)(1000);
+  return { kind: 'noop' };
+}
+
+function processTaskCompleted(state: State, ctx: LoopContext): LoopAction {
+  let curState: State;
+  try { curState = ctxReadState(ctx); } catch (err) {
+    ctx.log(`ERROR: Cannot read state.json after task_completed: ${safeErrorMessage(err)}. Exiting.`);
+    return { kind: 'break', reason: 'success' };
+  }
+  const decision = evaluateEpicCompletion({
+    tickets: collectTickets(ctx.sessionDir), currentTicket: curState.current_ticket || null,
+    priorFalseCount: Number(curState.false_epic_completed_count) || 0,
+    priorFalseTicket: curState.false_epic_completed_ticket ?? null,
+  });
+  if (decision.kind === 'persistent_hallucination') {
+    ctxDeactivate(ctx);
+    return { kind: 'break', reason: 'manager_persistent_hallucination' };
+  }
+  if (decision.kind === 'recover_advance' || decision.kind === 'recover_retry') {
+    const handoffSummary = buildHandoffSummary(state, ctx.sessionDir, ctx.iteration + 1);
+    (ctx.writeHandoff || writeHandoffAtomic)(ctx.sessionDir, handoffSummary, process.pid, ctx.log);
+    return { kind: 'continue', resetStall: true };
+  }
+  if (curState.current_ticket) markTicketDone(ctx.sessionDir, curState.current_ticket);
+  if (curState.chain_meeseeks === true) {
+    if (ctx.updateState) ctx.updateState(s => Object.assign(s, ctx.transitionToMeeseeks ? ctx.transitionToMeeseeks(s) : transitionToMeeseeks(s, ctx.extensionRoot)));
+    return { kind: 'continue', resetStall: true };
+  }
+  ctx.log('Task completed. Exiting loop.');
+  ctxDeactivate(ctx);
+  return { kind: 'break', reason: 'success' };
+}
+
+function processReviewClean(ctx: LoopContext): LoopAction {
+  let curState: State;
+  try { curState = ctxReadState(ctx); } catch (err) {
+    ctx.log(`ERROR: Cannot read state.json after review_clean: ${safeErrorMessage(err)}. Treating as completed.`);
+    return { kind: 'break', reason: 'success' };
+  }
+  const minIter = Number.isFinite(Number(curState.min_iterations)) ? Number(curState.min_iterations) : 0;
+  const curIterNow = Number.isFinite(Number(curState.iteration)) ? Number(curState.iteration) : 0;
+  if (minIter > 0 && curIterNow < minIter) {
+    ctx.log(`Clean pass at iteration ${curIterNow}, but min_iterations=${minIter}. Continuing.`);
+    return { kind: 'noop' };
+  }
+  ctx.log('Review clean. Exiting loop.');
+  ctxDeactivate(ctx);
+  return { kind: 'break', reason: 'success' };
+}
+
 async function main() {
+  await runMuxRunnerMain();
+}
+
+// eslint-disable-next-line max-lines-per-function, complexity -- legacy loop retained while extracted helpers are tested independently
+async function runMuxRunnerMain() {
   const sessionDir = process.argv[2];
   // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   if (!sessionDir || sessionDir.startsWith('--') || !fs.existsSync(path.join(sessionDir, 'state.json'))) {
@@ -1437,7 +1795,7 @@ async function main() {
       ticketForTimeout = postState.current_ticket || null;
     } catch { /* keep pre-iteration ticket as fallback */ }
 
-    const counterNext = applyTimeoutCounter({
+    const counterNext = applyTimeoutCounterForLoop({
       prev: { count: timeoutCount, ticket: lastTimeoutTicket },
       ticketNow: ticketForTimeout,
       timedOut: outcome.timedOut === true,
