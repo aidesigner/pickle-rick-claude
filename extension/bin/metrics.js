@@ -290,12 +290,12 @@ function main() {
     const loc = scanGitRepos(repoRoot, since);
     const grouping = args.weekly ? 'weekly' : 'daily';
     const report = buildReport(tokens, loc, since, until, grouping);
-    if (report.rows.length === 0) {
-        console.log(`No metrics data found for ${since} to ${until}.`);
-        return;
-    }
     if (args.json) {
         console.log(JSON.stringify(report, null, 2));
+        return;
+    }
+    if (report.rows.length === 0) {
+        console.log(`No metrics data found for ${since} to ${until}.`);
         return;
     }
     if (args.weekly) {

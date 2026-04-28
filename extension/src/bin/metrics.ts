@@ -374,13 +374,13 @@ function main(): void {
   const grouping = args.weekly ? 'weekly' : 'daily';
   const report = buildReport(tokens, loc, since, until, grouping);
 
-  if (report.rows.length === 0) {
-    console.log(`No metrics data found for ${since} to ${until}.`);
+  if (args.json) {
+    console.log(JSON.stringify(report, null, 2));
     return;
   }
 
-  if (args.json) {
-    console.log(JSON.stringify(report, null, 2));
+  if (report.rows.length === 0) {
+    console.log(`No metrics data found for ${since} to ${until}.`);
     return;
   }
 

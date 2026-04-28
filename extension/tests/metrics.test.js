@@ -448,6 +448,27 @@ test('CLI: --json outputs valid MetricsReport shape', () => {
     }
 });
 
+test('CLI: --json with no data still returns empty MetricsReport JSON', () => {
+    const projectsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-metrics-empty-projects-'));
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-metrics-empty-repos-'));
+    try {
+        const result = runMetricsCli(['--json'], {
+            CLAUDE_PROJECTS_DIR: projectsRoot,
+            METRICS_REPO_ROOT: repoRoot,
+        });
+        assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+        const report = JSON.parse(result.stdout);
+        assert.equal(report.grouping, 'daily');
+        assert.deepStrictEqual(report.rows, []);
+        assert.deepStrictEqual(report.projects, []);
+        assert.equal(report.totals.turns, 0);
+        assert.equal(report.totals.commits, 0);
+    } finally {
+        fs.rmSync(projectsRoot, { recursive: true, force: true });
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
 test('CLI: --since future date exits with error', () => {
     const result = runMetricsCli(['--since', '2099-01-01']);
     assert.equal(result.status, 1);
