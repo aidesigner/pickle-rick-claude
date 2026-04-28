@@ -119,6 +119,44 @@ function mkDiag(rule: string, severity: 'error' | 'warning' | 'info', message: s
   return d;
 }
 
+function firstDefined<T>(...values: (T | undefined)[]): T | undefined {
+  return values.find(v => v !== undefined);
+}
+
+function addModelIfDefined(modelMap: Map<string, string>, selector: string, model: string | undefined): void {
+  if (model) modelMap.set(selector, model);
+}
+
+function convergenceStylesheetModels(config: Record<string, unknown> | undefined): Map<string, string> {
+  const modelMap = new Map<string, string>();
+  if (!config) return modelMap;
+  const sc = config as unknown as StylesheetConfig;
+  if (!sc.overrides || sc.overrides.length === 0) return modelMap;
+  const convergenceClasses = ['.impl', '.honest_review', '.adversary'];
+  for (const o of sc.overrides as StylesheetOverride[]) {
+    if (convergenceClasses.includes(o.selector)) {
+      modelMap.set(o.selector, o.model);
+    }
+  }
+  return modelMap;
+}
+
+function duplicateModelDiagnostic(modelMap: Map<string, string>): Diagnostic[] {
+  const seen = new Map<string, string>();
+  for (const [selector, model] of modelMap) {
+    const prior = seen.get(model);
+    if (prior) {
+      return [mkDiag(
+        'DUPLICATE_MODEL',
+        'error',
+        `model diversity violation: selectors "${prior}" and "${selector}" both use model "${model}"`
+      )];
+    }
+    seen.set(model, selector);
+  }
+  return [];
+}
+
 function pass(): ValidationResult { return { valid: true, diagnostics: [] }; }
 function fail(diagnostics: Diagnostic[]): ValidationResult { return { valid: false, diagnostics }; }
 
@@ -1132,10 +1170,37 @@ export class DotBuilder {
       throw new BuildError('ALREADY_BUILT', 'build() has already been called');
     }
     this._built = true;
+
+    const preflightDiags = this._validatePreflightSpecs();
+    const preflightError = preflightDiags.find(d => d.severity === 'error');
+    if (preflightError) {
+      throw new BuildError(preflightError.rule as BuildErrorCodeType, preflightError.message, preflightDiags);
+    }
+
+    const convergenceDiags = this._validateConvergenceSpec();
+    const convergenceError = convergenceDiags.find(d => d.severity === 'error');
+    if (convergenceError) {
+      throw new BuildError(convergenceError.rule as BuildErrorCodeType, convergenceError.message);
+    }
+
+    const { dot, patternsApplied, defenseMatrix } = this._emitDot();
+    const preflightNonErrors = preflightDiags.filter(d => d.severity !== 'error');
+    const diagnostics = [
+      ...preflightNonErrors,
+      ...this._runStructuralRules(),
+    ];
+    const firstError = diagnostics.find(d => d.severity === 'error');
+    if (firstError) {
+      throw new BuildError(firstError.rule as BuildErrorCodeType, firstError.message, diagnostics);
+    }
+
+    return { dot, slug: this._slug, patternsApplied, defenseMatrix, diagnostics };
+  }
+
+  private _validatePreflightSpecs(): Diagnostic[] {
     const phases = this._phases;
 
-    // Pre-flight spec validation
-    const preflightDiags: Diagnostic[] = [
+    return [
       ...preflightReservedIds(phases),
       ...preflightDanglingDeps(phases),
       ...preflightTimeoutFormat(phases),
@@ -1151,89 +1216,49 @@ export class DotBuilder {
       ...preflightAutoMapAC(phases, this._spec.acceptanceCriteria ?? {}),
       ...preflightPromptPaths(phases),  // must run after allowedPaths auto-correction
     ];
-    const preflightError = preflightDiags.find(d => d.severity === 'error');
-    if (preflightError) {
-      throw new BuildError(preflightError.rule as BuildErrorCodeType, preflightError.message, preflightDiags);
+  }
+
+  private _validateConvergenceSpec(): Diagnostic[] {
+    const cv = this._spec.convergence;
+    if (!cv) return [];
+
+    const validPredicates = ['V_total == 0', 'V_total == 0 && fixed_point', 'V_total == 0 && fixed_point && reproducibility'];
+    if (!validPredicates.includes(cv.until)) {
+      return [mkDiag('INVALID_CONVERGENCE_SPEC', 'error', `invalid until predicate: "${cv.until}" — must be one of: ${validPredicates.join(', ')}`)];
     }
 
-    // Validate convergence spec
-    if (this._spec.convergence) {
-      const validPredicates = ['V_total == 0', 'V_total == 0 && fixed_point', 'V_total == 0 && fixed_point && reproducibility'];
-      if (!validPredicates.includes(this._spec.convergence.until)) {
-        throw new BuildError('INVALID_CONVERGENCE_SPEC', `invalid until predicate: "${this._spec.convergence.until}" — must be one of: ${validPredicates.join(', ')}`);
-      }
+    return this._validateConvergenceModelDiversity(cv);
+  }
 
-      // Validate model diversity: .impl, .honest_review, .adversary must not share a model ID.
-      // Collect effective model per class: direct-attr fields (fixBackend.model, reviewers.*.model,
-      // adversary.model) win over modelStylesheet.overrides (§3.1 precedence rule).
-      const modelMap = new Map<string, string>();
-      if (this._spec.modelStylesheet) {
-        const sc = this._spec.modelStylesheet as unknown as StylesheetConfig;
-        if (sc.overrides && sc.overrides.length > 0) {
-          const convergenceClasses = ['.impl', '.honest_review', '.adversary'];
-          for (const o of sc.overrides as StylesheetOverride[]) {
-            if (convergenceClasses.includes(o.selector)) {
-              modelMap.set(o.selector, o.model);
-            }
-          }
-        }
-      }
-      const cv = this._spec.convergence;
-      const implDirect = cv.fixBackend?.model ?? cv.fixFrontend?.model;
-      if (implDirect) modelMap.set('.impl', implDirect);
-      const reviewerDirect = cv.reviewers?.be?.model ?? cv.reviewers?.fe?.model ?? cv.reviewers?.int?.model;
-      if (reviewerDirect) modelMap.set('.honest_review', reviewerDirect);
-      const adversaryDirect = cv.adversary?.model;
-      if (adversaryDirect) modelMap.set('.adversary', adversaryDirect);
-      if (modelMap.size >= 2) {
-        const seen = new Map<string, string>(); // model -> first selector that used it
-        for (const [selector, model] of modelMap) {
-          const prior = seen.get(model);
-          if (prior) {
-            throw new BuildError(
-              'DUPLICATE_MODEL',
-              `model diversity violation: selectors "${prior}" and "${selector}" both use model "${model}"`
-            );
-          }
-          seen.set(model, selector);
-        }
-      }
-    }
+  private _validateConvergenceModelDiversity(cv: ConvergenceSpecType): Diagnostic[] {
+    const modelMap = convergenceStylesheetModels(this._spec.modelStylesheet);
+    addModelIfDefined(modelMap, '.impl', firstDefined(cv.fixBackend?.model, cv.fixFrontend?.model));
+    addModelIfDefined(modelMap, '.honest_review', firstDefined(cv.reviewers?.be?.model, cv.reviewers?.fe?.model, cv.reviewers?.int?.model));
+    addModelIfDefined(modelMap, '.adversary', cv.adversary?.model);
+    return duplicateModelDiagnostic(modelMap);
+  }
 
-    // Emit the complete graph
-    const { dot, nodeMap, edgeList, graphAttrs, standaloneNodeIds, patternsApplied, defenseMatrix, emittedDiagnostics } = this._emitDot();
-
-    // Carry forward non-error preflight diagnostics (warnings/info from auto-corrections)
-    const preflightNonErrors = preflightDiags.filter(d => d.severity !== 'error');
-
-    // Run all 16 structural validation rules
+  private _runStructuralRules(): Diagnostic[] {
     const mergedAc = this._mergedAcceptanceCriteria();
-    const diagnostics: Diagnostic[] = [
-      ...preflightNonErrors,
-      ...emittedDiagnostics,
-      ...grRule1(nodeMap),
-      ...grRule2(nodeMap, edgeList),
-      ...grRule3(nodeMap, edgeList, standaloneNodeIds),
-      ...grRule4(nodeMap, edgeList),
-      ...grRule5(nodeMap),
-      ...grRule6(nodeMap, mergedAc),
-      ...grRule7(nodeMap),
-      ...grRule8(nodeMap),
-      ...grRule9(nodeMap),
-      ...grRule10(nodeMap, edgeList),
-      ...grRule11(nodeMap),
-      ...grRule12(nodeMap, graphAttrs),
-      ...grRule13(nodeMap, graphAttrs),
-      ...grRule14(nodeMap),
-      ...grRule15(nodeMap),
-      ...grRule16(nodeMap, mergedAc),
+    return [
+      ...this._emittedDiagnostics,
+      ...grRule1(this._nodeMap),
+      ...grRule2(this._nodeMap, this._edgeList),
+      ...grRule3(this._nodeMap, this._edgeList, this._standaloneNodeIds),
+      ...grRule4(this._nodeMap, this._edgeList),
+      ...grRule5(this._nodeMap),
+      ...grRule6(this._nodeMap, mergedAc),
+      ...grRule7(this._nodeMap),
+      ...grRule8(this._nodeMap),
+      ...grRule9(this._nodeMap),
+      ...grRule10(this._nodeMap, this._edgeList),
+      ...grRule11(this._nodeMap),
+      ...grRule12(this._nodeMap, this._graphAttrs),
+      ...grRule13(this._nodeMap, this._graphAttrs),
+      ...grRule14(this._nodeMap),
+      ...grRule15(this._nodeMap),
+      ...grRule16(this._nodeMap, mergedAc),
     ];
-    const firstError = diagnostics.find(d => d.severity === 'error');
-    if (firstError) {
-      throw new BuildError(firstError.rule as BuildErrorCodeType, firstError.message, diagnostics);
-    }
-
-    return { dot, slug: this._slug, patternsApplied, defenseMatrix, diagnostics };
   }
 
   // ---------------------------------------------------------------------------

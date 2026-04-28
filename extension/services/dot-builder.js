@@ -60,6 +60,39 @@ function mkDiag(rule, severity, message, nodeId) {
         d.nodeId = nodeId;
     return d;
 }
+function firstDefined(...values) {
+    return values.find(v => v !== undefined);
+}
+function addModelIfDefined(modelMap, selector, model) {
+    if (model)
+        modelMap.set(selector, model);
+}
+function convergenceStylesheetModels(config) {
+    const modelMap = new Map();
+    if (!config)
+        return modelMap;
+    const sc = config;
+    if (!sc.overrides || sc.overrides.length === 0)
+        return modelMap;
+    const convergenceClasses = ['.impl', '.honest_review', '.adversary'];
+    for (const o of sc.overrides) {
+        if (convergenceClasses.includes(o.selector)) {
+            modelMap.set(o.selector, o.model);
+        }
+    }
+    return modelMap;
+}
+function duplicateModelDiagnostic(modelMap) {
+    const seen = new Map();
+    for (const [selector, model] of modelMap) {
+        const prior = seen.get(model);
+        if (prior) {
+            return [mkDiag('DUPLICATE_MODEL', 'error', `model diversity violation: selectors "${prior}" and "${selector}" both use model "${model}"`)];
+        }
+        seen.set(model, selector);
+    }
+    return [];
+}
 function pass() { return { valid: true, diagnostics: [] }; }
 function fail(diagnostics) { return { valid: false, diagnostics }; }
 /** Format a requirements array as '1. X, 2. Y, 3. Z'. */
@@ -851,6 +884,33 @@ export class DotBuilder {
     _seenIds = new Set();
     _spec;
     _built = false;
+    _nodes = [];
+    _edges = [];
+    _subgraphBlocks = [];
+    _seenEdges = new Set();
+    _nodeMap = new Map();
+    _edgeList = [];
+    _standaloneNodeIds = new Set();
+    _emittedDiagnostics = [];
+    _applied = new Set();
+    _graphAttrs = {};
+    _defenseMatrix = {
+        competitive: false,
+        guardrails: [],
+        specDriven: 'NONE',
+        permissions: [],
+        adversarial: false,
+    };
+    _independentPhases = [];
+    _implPhases = [];
+    _hasFanOut = false;
+    _hasCompeting = false;
+    _hasConvergence = false;
+    _unionPaths = '';
+    _unionEscalate = '';
+    _verifyTypecheckKV = {};
+    _verifyLintKV = {};
+    _verifyTestsKV = {};
     static fromSpec(raw) {
         if (!isRecord(raw)) {
             throw new BuildError('INVALID_SPEC', 'spec must be a non-null object');
@@ -1025,9 +1085,31 @@ export class DotBuilder {
             throw new BuildError('ALREADY_BUILT', 'build() has already been called');
         }
         this._built = true;
+        const preflightDiags = this._validatePreflightSpecs();
+        const preflightError = preflightDiags.find(d => d.severity === 'error');
+        if (preflightError) {
+            throw new BuildError(preflightError.rule, preflightError.message, preflightDiags);
+        }
+        const convergenceDiags = this._validateConvergenceSpec();
+        const convergenceError = convergenceDiags.find(d => d.severity === 'error');
+        if (convergenceError) {
+            throw new BuildError(convergenceError.rule, convergenceError.message);
+        }
+        const { dot, patternsApplied, defenseMatrix } = this._emitDot();
+        const preflightNonErrors = preflightDiags.filter(d => d.severity !== 'error');
+        const diagnostics = [
+            ...preflightNonErrors,
+            ...this._runStructuralRules(),
+        ];
+        const firstError = diagnostics.find(d => d.severity === 'error');
+        if (firstError) {
+            throw new BuildError(firstError.rule, firstError.message, diagnostics);
+        }
+        return { dot, slug: this._slug, patternsApplied, defenseMatrix, diagnostics };
+    }
+    _validatePreflightSpecs() {
         const phases = this._phases;
-        // Pre-flight spec validation
-        const preflightDiags = [
+        return [
             ...preflightReservedIds(phases),
             ...preflightDanglingDeps(phases),
             ...preflightTimeoutFormat(phases),
@@ -1043,83 +1125,45 @@ export class DotBuilder {
             ...preflightAutoMapAC(phases, this._spec.acceptanceCriteria ?? {}),
             ...preflightPromptPaths(phases), // must run after allowedPaths auto-correction
         ];
-        const preflightError = preflightDiags.find(d => d.severity === 'error');
-        if (preflightError) {
-            throw new BuildError(preflightError.rule, preflightError.message, preflightDiags);
+    }
+    _validateConvergenceSpec() {
+        const cv = this._spec.convergence;
+        if (!cv)
+            return [];
+        const validPredicates = ['V_total == 0', 'V_total == 0 && fixed_point', 'V_total == 0 && fixed_point && reproducibility'];
+        if (!validPredicates.includes(cv.until)) {
+            return [mkDiag('INVALID_CONVERGENCE_SPEC', 'error', `invalid until predicate: "${cv.until}" — must be one of: ${validPredicates.join(', ')}`)];
         }
-        // Validate convergence spec
-        if (this._spec.convergence) {
-            const validPredicates = ['V_total == 0', 'V_total == 0 && fixed_point', 'V_total == 0 && fixed_point && reproducibility'];
-            if (!validPredicates.includes(this._spec.convergence.until)) {
-                throw new BuildError('INVALID_CONVERGENCE_SPEC', `invalid until predicate: "${this._spec.convergence.until}" — must be one of: ${validPredicates.join(', ')}`);
-            }
-            // Validate model diversity: .impl, .honest_review, .adversary must not share a model ID.
-            // Collect effective model per class: direct-attr fields (fixBackend.model, reviewers.*.model,
-            // adversary.model) win over modelStylesheet.overrides (§3.1 precedence rule).
-            const modelMap = new Map();
-            if (this._spec.modelStylesheet) {
-                const sc = this._spec.modelStylesheet;
-                if (sc.overrides && sc.overrides.length > 0) {
-                    const convergenceClasses = ['.impl', '.honest_review', '.adversary'];
-                    for (const o of sc.overrides) {
-                        if (convergenceClasses.includes(o.selector)) {
-                            modelMap.set(o.selector, o.model);
-                        }
-                    }
-                }
-            }
-            const cv = this._spec.convergence;
-            const implDirect = cv.fixBackend?.model ?? cv.fixFrontend?.model;
-            if (implDirect)
-                modelMap.set('.impl', implDirect);
-            const reviewerDirect = cv.reviewers?.be?.model ?? cv.reviewers?.fe?.model ?? cv.reviewers?.int?.model;
-            if (reviewerDirect)
-                modelMap.set('.honest_review', reviewerDirect);
-            const adversaryDirect = cv.adversary?.model;
-            if (adversaryDirect)
-                modelMap.set('.adversary', adversaryDirect);
-            if (modelMap.size >= 2) {
-                const seen = new Map(); // model -> first selector that used it
-                for (const [selector, model] of modelMap) {
-                    const prior = seen.get(model);
-                    if (prior) {
-                        throw new BuildError('DUPLICATE_MODEL', `model diversity violation: selectors "${prior}" and "${selector}" both use model "${model}"`);
-                    }
-                    seen.set(model, selector);
-                }
-            }
-        }
-        // Emit the complete graph
-        const { dot, nodeMap, edgeList, graphAttrs, standaloneNodeIds, patternsApplied, defenseMatrix, emittedDiagnostics } = this._emitDot();
-        // Carry forward non-error preflight diagnostics (warnings/info from auto-corrections)
-        const preflightNonErrors = preflightDiags.filter(d => d.severity !== 'error');
-        // Run all 16 structural validation rules
+        return this._validateConvergenceModelDiversity(cv);
+    }
+    _validateConvergenceModelDiversity(cv) {
+        const modelMap = convergenceStylesheetModels(this._spec.modelStylesheet);
+        addModelIfDefined(modelMap, '.impl', firstDefined(cv.fixBackend?.model, cv.fixFrontend?.model));
+        addModelIfDefined(modelMap, '.honest_review', firstDefined(cv.reviewers?.be?.model, cv.reviewers?.fe?.model, cv.reviewers?.int?.model));
+        addModelIfDefined(modelMap, '.adversary', cv.adversary?.model);
+        return duplicateModelDiagnostic(modelMap);
+    }
+    _runStructuralRules() {
         const mergedAc = this._mergedAcceptanceCriteria();
-        const diagnostics = [
-            ...preflightNonErrors,
-            ...emittedDiagnostics,
-            ...grRule1(nodeMap),
-            ...grRule2(nodeMap, edgeList),
-            ...grRule3(nodeMap, edgeList, standaloneNodeIds),
-            ...grRule4(nodeMap, edgeList),
-            ...grRule5(nodeMap),
-            ...grRule6(nodeMap, mergedAc),
-            ...grRule7(nodeMap),
-            ...grRule8(nodeMap),
-            ...grRule9(nodeMap),
-            ...grRule10(nodeMap, edgeList),
-            ...grRule11(nodeMap),
-            ...grRule12(nodeMap, graphAttrs),
-            ...grRule13(nodeMap, graphAttrs),
-            ...grRule14(nodeMap),
-            ...grRule15(nodeMap),
-            ...grRule16(nodeMap, mergedAc),
+        return [
+            ...this._emittedDiagnostics,
+            ...grRule1(this._nodeMap),
+            ...grRule2(this._nodeMap, this._edgeList),
+            ...grRule3(this._nodeMap, this._edgeList, this._standaloneNodeIds),
+            ...grRule4(this._nodeMap, this._edgeList),
+            ...grRule5(this._nodeMap),
+            ...grRule6(this._nodeMap, mergedAc),
+            ...grRule7(this._nodeMap),
+            ...grRule8(this._nodeMap),
+            ...grRule9(this._nodeMap),
+            ...grRule10(this._nodeMap, this._edgeList),
+            ...grRule11(this._nodeMap),
+            ...grRule12(this._nodeMap, this._graphAttrs),
+            ...grRule13(this._nodeMap, this._graphAttrs),
+            ...grRule14(this._nodeMap),
+            ...grRule15(this._nodeMap),
+            ...grRule16(this._nodeMap, mergedAc),
         ];
-        const firstError = diagnostics.find(d => d.severity === 'error');
-        if (firstError) {
-            throw new BuildError(firstError.rule, firstError.message, diagnostics);
-        }
-        return { dot, slug: this._slug, patternsApplied, defenseMatrix, diagnostics };
     }
     // ---------------------------------------------------------------------------
     // Pattern emission
@@ -1152,12 +1196,43 @@ export class DotBuilder {
         }
         return parts.join(' ');
     }
-    _emitDot() {
+    _resetEmitState() {
+        this._nodes = [];
+        this._edges = [];
+        this._subgraphBlocks = [];
+        this._seenEdges = new Set();
+        this._nodeMap = new Map();
+        this._edgeList = [];
+        this._standaloneNodeIds = new Set();
+        this._emittedDiagnostics = [];
+        this._applied = new Set();
+        this._graphAttrs = {};
+        this._defenseMatrix = {
+            competitive: false,
+            guardrails: [],
+            specDriven: 'NONE',
+            permissions: [],
+            adversarial: false,
+        };
+        this._independentPhases = [];
+        this._implPhases = [];
+        this._hasFanOut = false;
+        this._hasCompeting = false;
+        this._hasConvergence = false;
+        this._unionPaths = '';
+        this._unionEscalate = '';
+        this._verifyTypecheckKV = {};
+        this._verifyLintKV = {};
+        this._verifyTestsKV = {};
+    }
+    _initializeEmitContext() {
         const spec = this._spec;
         const phases = this._phases;
-        const graphId = sanitizeId(this._slug) || 'pipeline';
-        const applied = new Set();
-        const independent = phases.filter(p => {
+        const hasRedTeam = phases.some(p => p.redTeam);
+        const hasBDD = phases.some(p => p.bddScenarios);
+        const hasSpecFile = Boolean(spec.specFile);
+        const hasSpecFirstAny = phases.some(p => p.specFirst === true || (p.goalGate && p.specFirst !== false));
+        this._independentPhases = phases.filter(p => {
             if (p.securityScan)
                 return false;
             if (p.docOnly)
@@ -1166,14 +1241,9 @@ export class DotBuilder {
                 return false;
             return !p.dependsOn || p.dependsOn.length === 0;
         });
-        const isFanOut = independent.length >= 2 && !phases.some(p => p.competing);
-        const hasCompeting = phases.some(p => p.competing);
-        const hasRedTeam = phases.some(p => p.redTeam);
-        const hasBDD = phases.some(p => p.bddScenarios);
-        const hasConvergence = !!spec.convergence;
-        const hasSpecFile = Boolean(spec.specFile);
-        const hasSpecFirstAny = phases.some(p => p.specFirst === true || (p.goalGate && p.specFirst !== false));
-        // Defense matrix
+        this._hasFanOut = this._independentPhases.length >= 2 && !phases.some(p => p.competing);
+        this._hasCompeting = phases.some(p => p.competing);
+        this._hasConvergence = !!spec.convergence;
         let specDriven = 'NONE';
         if (hasBDD && hasSpecFile)
             specDriven = 'spec_file + BDD + conformance';
@@ -1183,644 +1253,526 @@ export class DotBuilder {
             specDriven = 'spec_file + conformance';
         else if (hasSpecFirstAny)
             specDriven = 'conformance';
-        const defenseMatrix = {
-            competitive: hasCompeting,
+        this._defenseMatrix = {
+            competitive: this._hasCompeting,
             guardrails: [],
             specDriven,
             permissions: [],
             adversarial: hasRedTeam,
         };
-        // Graph-level attrs
-        const graphAttrs = {
-            label: hasConvergence ? escapeAttr(this._slug) : escapeAttr(`${this._slug}: ${this._goal}`),
+        this._graphAttrs = {
+            label: this._hasConvergence ? escapeAttr(this._slug) : escapeAttr(`${this._slug}: ${this._goal}`),
             rankdir: 'LR',
             goal: escapeAttr(this._goal),
-            retry_target: hasConvergence ? 'converge' : 'fix_types',
+            retry_target: this._hasConvergence ? 'converge' : 'fix_types',
         };
-        if (spec.workingDir) {
-            graphAttrs['working_dir'] = escapeAttr(spec.workingDir);
-        }
-        if (spec.specFile) {
-            graphAttrs['spec_file'] = escapeAttr(spec.specFile);
-        }
-        if (spec.defaultMaxRetry) {
-            graphAttrs['default_max_retry'] = String(spec.defaultMaxRetry);
-        }
+        if (spec.workingDir)
+            this._graphAttrs['working_dir'] = escapeAttr(spec.workingDir);
+        if (spec.specFile)
+            this._graphAttrs['spec_file'] = escapeAttr(spec.specFile);
+        if (spec.defaultMaxRetry)
+            this._graphAttrs['default_max_retry'] = String(spec.defaultMaxRetry);
         if (spec.workspace === 'isolated') {
-            graphAttrs['workspace'] = 'isolated';
-            applied.add('P0');
+            this._graphAttrs['workspace'] = 'isolated';
+            this._applied.add('P0');
         }
-        if (spec.modelStylesheet) {
-            graphAttrs['model_stylesheet'] = this._buildStylesheet(spec.modelStylesheet);
-        }
-        // GL-6: acceptance_criteria as context.K=V && context.K2=V2 (sorted).
-        // Convergence mode merges built-in {fp_pass, repro_pass} — built-ins win
-        // on collision. Shared helper guarantees parity with the grRule6 call.
+        if (spec.modelStylesheet)
+            this._graphAttrs['model_stylesheet'] = this._buildStylesheet(spec.modelStylesheet);
         const mergedAc = this._mergedAcceptanceCriteria();
         const acKeys = Object.keys(mergedAc).sort();
         if (acKeys.length > 0) {
-            graphAttrs['acceptance_criteria'] = escapeAttr(acKeys.map(k => `context.${k}=${String(mergedAc[k])}`).join(' && '));
+            this._graphAttrs['acceptance_criteria'] = escapeAttr(acKeys.map(k => `context.${k}=${String(mergedAc[k])}`).join(' && '));
         }
-        const nodes = [];
-        const edges = [];
-        const subgraphBlocks = [];
-        const seenEdges = new Set();
-        const nodeMap = new Map();
-        const edgeList = [];
-        const standaloneNodeIds = new Set();
-        const emittedDiagnostics = [];
-        const emit = (id, attrs) => {
-            nodes.push(`  ${id} [${fmtAttrs(attrs)}]`);
-            nodeMap.set(id, { ...attrs });
-        };
-        const link = (from, to, attrs) => {
-            const edgeLine = (attrs && Object.keys(attrs).length > 0)
-                ? `  ${from} -> ${to} [${fmtAttrs(attrs)}]`
-                : `  ${from} -> ${to}`;
-            if (seenEdges.has(edgeLine))
-                return;
-            seenEdges.add(edgeLine);
-            edges.push(edgeLine);
-            if (attrs && Object.keys(attrs).length > 0) {
-                edgeList.push({ from, to, label: attrs['label'], attrs });
-            }
-            else {
-                edgeList.push({ from, to });
-            }
-        };
-        const linkEdge = (from, to, attrs) => {
-            const edgeLine = `  ${from} -> ${to} [${fmtAttrs(attrs)}]`;
-            if (seenEdges.has(edgeLine))
-                return;
-            seenEdges.add(edgeLine);
-            edges.push(edgeLine);
-            edgeList.push({ from, to, attrs });
-        };
-        const emitSubgraph = (clusterId, label, bodyEmitter) => {
-            const prevNodesLen = nodes.length;
-            const prevEdgesLen = edges.length;
-            bodyEmitter();
-            const bodyNodes = nodes.splice(prevNodesLen);
-            const bodyEdges = edges.splice(prevEdgesLen);
-            subgraphBlocks.push(`  subgraph cluster_${clusterId} {`);
-            subgraphBlocks.push(`    label="${escapeAttr(label)}"`);
-            for (const n of bodyNodes)
-                subgraphBlocks.push(`  ${n}`);
-            for (const e of bodyEdges)
-                subgraphBlocks.push(`  ${e}`);
-            subgraphBlocks.push('  }');
-        };
-        // P0a: setup_deps
-        emit('start', { shape: 'Mdiamond' });
-        emit('setup_deps', {
+        this._emit('start', { shape: 'Mdiamond' });
+        this._emit('setup_deps', {
             label: 'setup_deps',
             shape: 'parallelogram',
             tool_command: 'cd ${WORKING_DIR} && npm install 2>&1 || pnpm install 2>&1 || yarn install 2>&1',
         });
-        applied.add('P0a');
-        // P0c: capture_baseline
-        emit('capture_baseline', {
+        this._applied.add('P0a');
+        this._emit('capture_baseline', {
             label: 'capture_baseline',
             read_only: 'true',
             shape: 'parallelogram',
             tool_command: "cd ${WORKING_DIR} && (npx tsc --noEmit 2>&1 | grep -c 'error TS' > /tmp/baseline_ts_errors.txt || echo 0 > /tmp/baseline_ts_errors.txt) && (npx eslint src/ 2>&1 | grep -c 'error' > /tmp/baseline_lint_errors.txt || echo 0 > /tmp/baseline_lint_errors.txt)",
         });
-        applied.add('P0c');
-        link('start', 'setup_deps');
-        link('setup_deps', 'capture_baseline');
-        const implPhases = phases.filter(p => !p.securityScan && !p.docOnly);
+        this._applied.add('P0c');
+        this._link('start', 'setup_deps');
+        this._link('setup_deps', 'capture_baseline');
+        this._implPhases = phases.filter(p => !p.securityScan && !p.docOnly);
         const allDependentPhases = phases.filter(p => !p.securityScan);
         const rawUnionPaths = [...new Set(allDependentPhases.flatMap(p => p.allowedPaths ?? []))];
-        const unionPaths = expandWithTestDirs(rawUnionPaths).join(',');
-        const unionEscalate = [...new Set(allDependentPhases.flatMap(p => p.escalateOn ?? []))].join(',');
-        // Tier 1 (explicit) + Tier 2 (auto) keys distributed across verify nodes
+        this._unionPaths = expandWithTestDirs(rawUnionPaths).join(',');
+        this._unionEscalate = [...new Set(allDependentPhases.flatMap(p => p.escalateOn ?? []))].join(',');
         const tier1Keys = {};
         for (const p of phases) {
             if (p.contextOnSuccess) {
-                for (const [k, v] of Object.entries(p.contextOnSuccess)) {
+                for (const [k, v] of Object.entries(p.contextOnSuccess))
                     tier1Keys[k] = v;
-                }
             }
         }
-        // verify_typecheck gets types_compile; verify_lint gets lint_clean;
-        // verify_tests gets the rest (tests_pass, cli_contract, determinism, validation_rules) + tier1
-        const verifyTypecheckKV = { types_compile: 'true' };
-        const verifyLintKV = { lint_clean: 'true' };
-        const verifyTestsKV = {
+        this._verifyTypecheckKV = { types_compile: 'true' };
+        this._verifyLintKV = { lint_clean: 'true' };
+        this._verifyTestsKV = {
             cli_contract: 'true', determinism: 'true', tests_pass: 'true', validation_rules: 'true',
             ...tier1Keys,
         };
-        // Helper: emit the disaggregated endgame chain
-        const emitEndgameChain = (prevId, prevAttrs) => {
-            // audit: diagnostic node, never fails (|| true on all commands)
-            emit('audit', {
-                label: 'audit',
-                read_only: 'true',
-                shape: 'parallelogram',
-                tool_command: "cd ${WORKING_DIR} && (npx tsc --noEmit 2>&1 || true) && (npx eslint src/ --max-warnings=-1 2>&1 || true) && (npm test 2>&1 || true)",
-            });
-            link(prevId, 'audit', prevAttrs);
-            let chainPrev = 'audit';
-            // Optional fix_all broad pass (only when endgame.broadPass=true)
-            if (spec.endgame?.broadPass) {
-                const fixAllAttrs = {
-                    allowed_paths: unionPaths,
-                    class: 'codergen',
-                    label: 'fix_all',
-                    max_visits: '2',
-                    permission_mode: 'auto',
-                    timeout: '30m',
-                };
-                if (unionEscalate)
-                    fixAllAttrs['escalate_on'] = unionEscalate;
-                emit('fix_all', fixAllAttrs);
-                link('audit', 'fix_all');
-                chainPrev = 'fix_all';
-            }
-            // verify_typecheck <-> fix_types
-            emit('verify_typecheck', {
-                context_on_success: serializeKV(verifyTypecheckKV),
-                label: 'verify_typecheck',
-                max_visits: '5',
-                retry_target: 'fix_types',
-                shape: 'parallelogram',
-                timeout: '30m',
-                tool_command: 'cd ${WORKING_DIR} && npx tsc --noEmit',
-            });
-            emit('fix_types', {
+    }
+    _emit(nodeOrId, attrs) {
+        const node = typeof nodeOrId === 'string' ? { id: nodeOrId, attrs: attrs ?? {} } : nodeOrId;
+        this._nodes.push(`  ${node.id} [${fmtAttrs(node.attrs)}]`);
+        this._nodeMap.set(node.id, { ...node.attrs });
+    }
+    _link(from, to, attrs) {
+        const edgeLine = (attrs && Object.keys(attrs).length > 0)
+            ? `  ${from} -> ${to} [${fmtAttrs(attrs)}]`
+            : `  ${from} -> ${to}`;
+        if (this._seenEdges.has(edgeLine))
+            return;
+        this._seenEdges.add(edgeLine);
+        this._edges.push(edgeLine);
+        if (attrs && Object.keys(attrs).length > 0)
+            this._edgeList.push({ from, to, label: attrs['label'], attrs });
+        else
+            this._edgeList.push({ from, to });
+    }
+    _linkEdge(from, to, attrs) {
+        this._link(from, to, attrs ?? {});
+    }
+    _emitSubgraph(clusterId, labelOrBody, body) {
+        const label = typeof labelOrBody === 'string' ? labelOrBody : clusterId;
+        const bodyEmitter = typeof labelOrBody === 'function' ? labelOrBody : body;
+        if (!bodyEmitter)
+            return;
+        const prevNodesLen = this._nodes.length;
+        const prevEdgesLen = this._edges.length;
+        bodyEmitter();
+        const bodyNodes = this._nodes.splice(prevNodesLen);
+        const bodyEdges = this._edges.splice(prevEdgesLen);
+        this._subgraphBlocks.push(`  subgraph cluster_${clusterId} {`);
+        this._subgraphBlocks.push(`    label="${escapeAttr(label)}"`);
+        for (const n of bodyNodes)
+            this._subgraphBlocks.push(`  ${n}`);
+        for (const e of bodyEdges)
+            this._subgraphBlocks.push(`  ${e}`);
+        this._subgraphBlocks.push('  }');
+    }
+    // eslint-disable-next-line max-lines-per-function
+    _emitEndgameChain(prevId, prevAttrs) {
+        const spec = this._spec;
+        const unionPaths = this._unionPaths;
+        const unionEscalate = this._unionEscalate;
+        const verifyTypecheckKV = this._verifyTypecheckKV;
+        const verifyLintKV = this._verifyLintKV;
+        const verifyTestsKV = this._verifyTestsKV;
+        const emit = this._emit.bind(this);
+        const link = this._link.bind(this);
+        // audit: diagnostic node, never fails (|| true on all commands)
+        emit('audit', {
+            label: 'audit',
+            read_only: 'true',
+            shape: 'parallelogram',
+            tool_command: "cd ${WORKING_DIR} && (npx tsc --noEmit 2>&1 || true) && (npx eslint src/ --max-warnings=-1 2>&1 || true) && (npm test 2>&1 || true)",
+        });
+        link(prevId, 'audit', prevAttrs);
+        let chainPrev = 'audit';
+        // Optional fix_all broad pass (only when endgame.broadPass=true)
+        if (spec.endgame?.broadPass) {
+            const fixAllAttrs = {
                 allowed_paths: unionPaths,
                 class: 'codergen',
-                escalate_on: unionEscalate || DEFAULT_ESCALATE_ON,
-                label: 'Fix ONLY type errors reported by tsc --noEmit',
-                max_visits: '5',
+                label: 'fix_all',
+                max_visits: '2',
                 permission_mode: 'auto',
                 timeout: '30m',
-            });
-            link(chainPrev, 'verify_typecheck');
-            link('verify_typecheck', 'fix_types', { condition: 'outcome=fail', label: 'fail' });
-            link('fix_types', 'verify_typecheck');
-            // verify_lint <-> fix_lint
-            emit('verify_lint', {
-                context_on_success: serializeKV(verifyLintKV),
-                label: 'verify_lint',
-                max_visits: '5',
-                retry_target: 'fix_lint',
-                shape: 'parallelogram',
-                timeout: '30m',
-                tool_command: 'cd ${WORKING_DIR} && npx eslint src/ --max-warnings=-1',
-            });
-            emit('fix_lint', {
-                allowed_paths: unionPaths,
-                class: 'codergen',
-                escalate_on: unionEscalate || DEFAULT_ESCALATE_ON,
-                label: 'Fix ONLY lint errors reported by eslint',
-                max_visits: '5',
-                permission_mode: 'auto',
-                timeout: '30m',
-            });
-            link('verify_typecheck', 'verify_lint', { condition: 'outcome=success', label: 'pass' });
-            link('verify_lint', 'fix_lint', { condition: 'outcome=fail', label: 'fail' });
-            link('fix_lint', 'verify_lint');
-            // verify_tests <-> fix_tests
-            emit('verify_tests', {
-                context_on_success: serializeKV(verifyTestsKV),
-                label: 'verify_tests',
-                max_visits: '5',
-                retry_target: 'fix_tests',
-                shape: 'parallelogram',
-                timeout: '30m',
-                tool_command: 'cd ${WORKING_DIR} && npm test',
-            });
-            emit('fix_tests', {
-                allowed_paths: unionPaths,
-                class: 'codergen',
-                escalate_on: unionEscalate || DEFAULT_ESCALATE_ON,
-                label: 'Fix ONLY failing tests reported by npm test',
-                max_visits: '5',
-                permission_mode: 'auto',
-                timeout: '30m',
-            });
-            link('verify_lint', 'verify_tests', { condition: 'outcome=success', label: 'pass' });
-            link('verify_tests', 'fix_tests', { condition: 'outcome=fail', label: 'fail' });
-            link('fix_tests', 'verify_tests');
-            // regression_check — full suite re-run, failure routes to fix_types
-            emit('regression_check', {
-                label: 'regression_check',
-                shape: 'parallelogram',
-                timeout: '30m',
-                tool_command: 'cd ${WORKING_DIR} && npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npm test',
-            });
-            link('verify_tests', 'regression_check', { condition: 'outcome=success', label: 'pass' });
-            link('regression_check', 'fix_types', { condition: 'outcome=fail', label: 'fail' });
-            // quality_review gate
-            emit('quality_review', {
-                class: 'review',
-                label: 'Final quality review: verify all acceptance criteria met, no regressions, code is clean. Output STATUS: SUCCESS | FAIL.',
-                read_only: 'true',
-                timeout: '15m',
-            });
-            link('regression_check', 'quality_review', { condition: 'outcome=success', label: 'pass' });
-            link('quality_review', 'exit', { condition: 'outcome=success', label: 'pass' });
-            link('quality_review', 'fix_types', { condition: 'outcome=fail', label: 'fail' });
-        };
-        // Fan-out (Pattern 4)
-        if (isFanOut) {
-            applied.add('P4');
-            emit('split_phases', { label: 'split_phases', max_parallel: '1', shape: 'component' });
-            applied.add('P0b');
-            link('capture_baseline', 'split_phases');
-            for (const p of independent) {
-                const phaseIdx = phases.indexOf(p) + 1;
-                const id = sanitizeId(p.name);
-                const threadId = p.threadId ?? `phase_${phaseIdx}`;
-                nodes.push(`  // ========== PHASE ${phaseIdx}: ${id} ==========`);
-                emit(id, { label: p.name, shape: 'component', thread_id: threadId });
-                link('split_phases', id);
-            }
-            const dependent = phases.filter(p => p.dependsOn && p.dependsOn.length > 0);
-            const mergeId = 'merge_phases';
-            emit(mergeId, { label: 'merge_phases', shape: 'tripleoctagon' });
-            for (const p of independent)
-                link(sanitizeId(p.name), mergeId);
-            let afterMerge = mergeId;
-            for (const p of dependent) {
-                const phaseIdx = phases.indexOf(p) + 1;
-                const id = sanitizeId(p.name);
-                const threadId = p.threadId ?? `phase_${phaseIdx}`;
-                nodes.push(`  // ========== PHASE ${phaseIdx}: ${id} ==========`);
-                emit(id, { label: p.name, shape: 'component', thread_id: threadId });
-                link(afterMerge, id);
-                afterMerge = id;
-            }
-            // P21: disaggregated verify/fix endgame chain
-            applied.add('P21');
-            emitEndgameChain(afterMerge);
+            };
+            if (unionEscalate)
+                fixAllAttrs['escalate_on'] = unionEscalate;
+            emit('fix_all', fixAllAttrs);
+            link('audit', 'fix_all');
+            chainPrev = 'fix_all';
         }
-        else if (hasCompeting) {
-            // Competing implementations (Pattern 18)
-            applied.add('P18');
-            const cp = phases.find(p => p.competing);
-            const baseId = sanitizeId(cp.name);
-            emit(`${baseId}_a`, { label: `${cp.name} A`, max_parallel: '1', shape: 'component' });
-            emit(`${baseId}_b`, { label: `${cp.name} B`, max_parallel: '1', shape: 'component' });
-            emit('competing_merge', { label: 'competing_merge', shape: 'tripleoctagon' });
-            link('capture_baseline', `${baseId}_a`);
-            link('capture_baseline', `${baseId}_b`);
-            link(`${baseId}_a`, 'competing_merge');
-            link(`${baseId}_b`, 'competing_merge');
-            link('competing_merge', 'exit');
+        // verify_typecheck <-> fix_types
+        emit('verify_typecheck', {
+            context_on_success: serializeKV(verifyTypecheckKV),
+            label: 'verify_typecheck',
+            max_visits: '5',
+            retry_target: 'fix_types',
+            shape: 'parallelogram',
+            timeout: '30m',
+            tool_command: 'cd ${WORKING_DIR} && npx tsc --noEmit',
+        });
+        emit('fix_types', {
+            allowed_paths: unionPaths,
+            class: 'codergen',
+            escalate_on: unionEscalate || DEFAULT_ESCALATE_ON,
+            label: 'Fix ONLY type errors reported by tsc --noEmit',
+            max_visits: '5',
+            permission_mode: 'auto',
+            timeout: '30m',
+        });
+        link(chainPrev, 'verify_typecheck');
+        link('verify_typecheck', 'fix_types', { condition: 'outcome=fail', label: 'fail' });
+        link('fix_types', 'verify_typecheck');
+        // verify_lint <-> fix_lint
+        emit('verify_lint', {
+            context_on_success: serializeKV(verifyLintKV),
+            label: 'verify_lint',
+            max_visits: '5',
+            retry_target: 'fix_lint',
+            shape: 'parallelogram',
+            timeout: '30m',
+            tool_command: 'cd ${WORKING_DIR} && npx eslint src/ --max-warnings=-1',
+        });
+        emit('fix_lint', {
+            allowed_paths: unionPaths,
+            class: 'codergen',
+            escalate_on: unionEscalate || DEFAULT_ESCALATE_ON,
+            label: 'Fix ONLY lint errors reported by eslint',
+            max_visits: '5',
+            permission_mode: 'auto',
+            timeout: '30m',
+        });
+        link('verify_typecheck', 'verify_lint', { condition: 'outcome=success', label: 'pass' });
+        link('verify_lint', 'fix_lint', { condition: 'outcome=fail', label: 'fail' });
+        link('fix_lint', 'verify_lint');
+        // verify_tests <-> fix_tests
+        emit('verify_tests', {
+            context_on_success: serializeKV(verifyTestsKV),
+            label: 'verify_tests',
+            max_visits: '5',
+            retry_target: 'fix_tests',
+            shape: 'parallelogram',
+            timeout: '30m',
+            tool_command: 'cd ${WORKING_DIR} && npm test',
+        });
+        emit('fix_tests', {
+            allowed_paths: unionPaths,
+            class: 'codergen',
+            escalate_on: unionEscalate || DEFAULT_ESCALATE_ON,
+            label: 'Fix ONLY failing tests reported by npm test',
+            max_visits: '5',
+            permission_mode: 'auto',
+            timeout: '30m',
+        });
+        link('verify_lint', 'verify_tests', { condition: 'outcome=success', label: 'pass' });
+        link('verify_tests', 'fix_tests', { condition: 'outcome=fail', label: 'fail' });
+        link('fix_tests', 'verify_tests');
+        // regression_check — full suite re-run, failure routes to fix_types
+        emit('regression_check', {
+            label: 'regression_check',
+            shape: 'parallelogram',
+            timeout: '30m',
+            tool_command: 'cd ${WORKING_DIR} && npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npm test',
+        });
+        link('verify_tests', 'regression_check', { condition: 'outcome=success', label: 'pass' });
+        link('regression_check', 'fix_types', { condition: 'outcome=fail', label: 'fail' });
+        // quality_review gate
+        emit('quality_review', {
+            class: 'review',
+            label: 'Final quality review: verify all acceptance criteria met, no regressions, code is clean. Output STATUS: SUCCESS | FAIL.',
+            read_only: 'true',
+            timeout: '15m',
+        });
+        link('regression_check', 'quality_review', { condition: 'outcome=success', label: 'pass' });
+        link('quality_review', 'exit', { condition: 'outcome=success', label: 'pass' });
+        link('quality_review', 'fix_types', { condition: 'outcome=fail', label: 'fail' });
+    }
+    _emitFanOutTopology() {
+        const phases = this._phases;
+        const independent = this._independentPhases;
+        const applied = this._applied;
+        const nodes = this._nodes;
+        const emit = this._emit.bind(this);
+        const link = this._link.bind(this);
+        const emitEndgameChain = this._emitEndgameChain.bind(this);
+        applied.add('P4');
+        emit('split_phases', { label: 'split_phases', max_parallel: '1', shape: 'component' });
+        applied.add('P0b');
+        link('capture_baseline', 'split_phases');
+        for (const p of independent) {
+            const phaseIdx = phases.indexOf(p) + 1;
+            const id = sanitizeId(p.name);
+            const threadId = p.threadId ?? `phase_${phaseIdx}`;
+            nodes.push(`  // ========== PHASE ${phaseIdx}: ${id} ==========`);
+            emit(id, { label: p.name, shape: 'component', thread_id: threadId });
+            link('split_phases', id);
         }
-        else {
-            // Sequential execution
-            const hasAnyPhase = phases.length > 0;
-            let prevId = 'capture_baseline';
-            let prevAttrs = undefined;
-            if (hasConvergence) {
-                // Convergence mode: v8 topology — 10-node body + fp/repro post-chain + done terminal.
-                const cv = spec.convergence;
-                const fb = cv.fixBackend;
-                const ff = cv.fixFrontend;
-                const mg = cv.mechanicalGates;
-                const rv = cv.reviewers;
-                const adv = cv.adversary;
-                const fp = cv.fpVerify;
-                const rp = cv.reproVerify;
-                const wd = spec.workingDir ?? '${WORKING_DIR}';
-                const sub = (cmd) => cmd.split('/repos/benchmark').join(wd);
-                const fbHarness = fb?.harness ?? cv.impl.harness ?? DEFAULT_FIX_BACKEND_HARNESS;
-                const ffHarness = ff?.harness ?? cv.impl.harness ?? DEFAULT_FIX_FRONTEND_HARNESS;
-                const advSealed = adv?.sealedFromSource ?? cv.sealedFromSource ?? DEFAULT_ADVERSARY_SEALED_FROM_SOURCE;
-                emit('converge', {
-                    body: 'iter-body',
-                    class: 'iterate',
-                    convergence_epsilon: String(cv.convergenceEpsilon ?? DEFAULT_CONVERGENCE_EPSILON),
-                    label: 'converge',
-                    max_iterations: String(cv.maxIterations ?? DEFAULT_MAX_ITERATIONS),
-                    max_visits: String(cv.maxVisits ?? DEFAULT_CONVERGE_MAX_VISITS),
-                    retry_target: 'converge',
-                    shape: 'house',
-                    timeout: cv.timeout ?? DEFAULT_CONVERGE_TIMEOUT,
-                    until: cv.until,
-                });
-                link(prevId, 'converge', prevAttrs);
-                emitSubgraph('iter_body', 'iter-body', () => {
-                    emit('fix_backend', {
-                        allow_multi_retry_target: 'true',
-                        class: 'impl',
-                        context_keys: '__pool_findings__,__last_failure_output,__fix_attempt_history',
-                        harness: fbHarness,
-                        max_visits: String(fb?.maxVisits ?? DEFAULT_BODY_MAX_VISITS),
-                        model: fb?.model ?? DEFAULT_FIX_BACKEND_MODEL,
-                        prompt: fb?.prompt ?? DEFAULT_FIX_BACKEND_PROMPT,
-                        retry_target: 'fix_backend',
-                        timeout: fb?.timeout ?? DEFAULT_FIX_TIMEOUT,
-                    });
-                    emit('fix_frontend', {
-                        class: 'impl',
-                        context_keys: '__pool_findings__,__last_failure_output,__fix_attempt_history',
-                        harness: ffHarness,
-                        max_visits: String(ff?.maxVisits ?? DEFAULT_BODY_MAX_VISITS),
-                        model: ff?.model ?? DEFAULT_FIX_FRONTEND_MODEL,
-                        prompt: ff?.prompt ?? DEFAULT_FIX_FRONTEND_PROMPT,
-                        retry_target: 'fix_frontend',
-                        timeout: ff?.timeout ?? DEFAULT_FIX_TIMEOUT,
-                    });
-                    emit('run_build_api', {
-                        max_visits: String(DEFAULT_MECHANICAL_MAX_VISITS),
-                        reports_to_v: 'mechanical.typecheck',
-                        retry_target: 'fix_backend',
-                        shape: 'parallelogram',
-                        timeout: DEFAULT_MECHANICAL_BUILD_TIMEOUT,
-                        tool_command: mg?.buildApi ?? sub(DEFAULT_BUILD_API_CMD),
-                    });
-                    emit('run_tests_api', {
-                        max_visits: String(DEFAULT_MECHANICAL_MAX_VISITS),
-                        reports_to_v: 'mechanical.boot',
-                        retry_target: 'fix_backend',
-                        shape: 'parallelogram',
-                        timeout: DEFAULT_MECHANICAL_TESTS_TIMEOUT,
-                        tool_command: mg?.testsApi ?? sub(DEFAULT_TESTS_API_CMD),
-                    });
-                    emit('run_build_ui', {
-                        max_visits: String(DEFAULT_MECHANICAL_MAX_VISITS),
-                        reports_to_v: 'mechanical.build',
-                        retry_target: 'fix_frontend',
-                        shape: 'parallelogram',
-                        timeout: DEFAULT_MECHANICAL_BUILD_TIMEOUT,
-                        tool_command: mg?.buildUi ?? sub(DEFAULT_BUILD_UI_CMD),
-                    });
-                    emit('run_lint', {
-                        max_visits: String(DEFAULT_MECHANICAL_MAX_VISITS),
-                        reports_to_v: 'mechanical.lint',
-                        retry_target: 'fix_backend',
-                        shape: 'parallelogram',
-                        timeout: DEFAULT_MECHANICAL_BUILD_TIMEOUT,
-                        tool_command: mg?.lint ?? sub(DEFAULT_LINT_CMD),
-                    });
-                    emit('review_be', {
-                        class: 'honest_review',
-                        harness: rv?.be?.harness ?? 'hermes',
-                        max_visits: String(rv?.be?.maxVisits ?? DEFAULT_BODY_MAX_VISITS),
-                        model: rv?.be?.model ?? DEFAULT_REVIEW_BE_MODEL,
-                        prompt: rv?.be?.prompt ?? DEFAULT_REVIEW_BE_PROMPT,
-                        read_only: 'true',
-                        retry_target: 'review_be',
-                        reviewer_lens: 'backend',
-                        timeout: rv?.be?.timeout ?? DEFAULT_REVIEW_TIMEOUT,
-                    });
-                    emit('review_fe', {
-                        class: 'honest_review',
-                        harness: rv?.fe?.harness ?? 'hermes',
-                        max_visits: String(rv?.fe?.maxVisits ?? DEFAULT_BODY_MAX_VISITS),
-                        model: rv?.fe?.model ?? DEFAULT_REVIEW_FE_MODEL,
-                        prompt: rv?.fe?.prompt ?? DEFAULT_REVIEW_FE_PROMPT,
-                        read_only: 'true',
-                        retry_target: 'review_fe',
-                        reviewer_lens: 'frontend',
-                        timeout: rv?.fe?.timeout ?? DEFAULT_REVIEW_TIMEOUT,
-                    });
-                    emit('review_int', {
-                        class: 'honest_review',
-                        harness: rv?.int?.harness ?? 'hermes',
-                        max_visits: String(rv?.int?.maxVisits ?? DEFAULT_BODY_MAX_VISITS),
-                        model: rv?.int?.model ?? DEFAULT_REVIEW_INT_MODEL,
-                        prompt: rv?.int?.prompt ?? DEFAULT_REVIEW_INT_PROMPT,
-                        read_only: 'true',
-                        retry_target: 'review_int',
-                        reviewer_lens: 'integration',
-                        timeout: rv?.int?.timeout ?? DEFAULT_REVIEW_TIMEOUT,
-                    });
-                    emit('adversary_node', {
-                        class: 'adversary',
-                        harness: adv?.harness ?? 'hermes',
-                        max_visits: String(adv?.maxVisits ?? DEFAULT_BODY_MAX_VISITS),
-                        model: adv?.model ?? DEFAULT_ADVERSARY_MODEL,
-                        prompt: adv?.prompt ?? DEFAULT_ADVERSARY_PROMPT,
-                        read_only: 'true',
-                        sealed_from_source: advSealed,
-                        timeout: adv?.timeout ?? DEFAULT_REVIEW_TIMEOUT,
-                    });
-                    const bodyChain = [
-                        'fix_backend', 'fix_frontend',
-                        'run_build_api', 'run_tests_api', 'run_build_ui', 'run_lint',
-                        'review_be', 'review_fe', 'review_int', 'adversary_node',
-                    ];
-                    for (let bi = 0; bi < bodyChain.length - 1; bi++) {
-                        link(bodyChain[bi], bodyChain[bi + 1], { condition: 'outcome=success', label: 'pass' });
-                    }
-                });
-                // Goal-gate nodes live OUTSIDE cluster_iter_body.
-                emit('fp_verify', {
-                    context_on_failure: 'fp_pass=false',
-                    context_on_success: 'fp_pass=true',
-                    goal_gate: 'true',
-                    max_visits: String(fp?.maxVisits ?? DEFAULT_GOAL_GATE_MAX_VISITS),
-                    shape: 'parallelogram',
-                    timeout: fp?.timeout ?? DEFAULT_GOAL_GATE_TIMEOUT,
-                    tool_command: fp?.command ?? sub(DEFAULT_FP_VERIFY_CMD),
-                });
-                emit('repro_verify', {
-                    context_on_failure: 'repro_pass=false',
-                    context_on_success: 'repro_pass=true',
-                    goal_gate: 'true',
-                    max_visits: String(rp?.maxVisits ?? DEFAULT_GOAL_GATE_MAX_VISITS),
-                    shape: 'parallelogram',
-                    timeout: rp?.timeout ?? DEFAULT_GOAL_GATE_TIMEOUT,
-                    tool_command: rp?.command ?? sub(DEFAULT_REPRO_VERIFY_CMD),
-                });
-                emit('done', { label: 'done', shape: 'Msquare' });
-                // Post-chain: body exit → fp → repro → done, with fail bounces.
-                link('adversary_node', 'fp_verify');
-                link('fp_verify', 'repro_verify', { condition: 'outcome=success', label: 'pass' });
-                link('repro_verify', 'done', { condition: 'outcome=success', label: 'pass' });
-                link('fp_verify', 'converge', { condition: 'outcome=fail', label: 'fail' });
-                link('repro_verify', 'fp_verify', { condition: 'outcome=fail', label: 'fail' });
-                // Reachability edges from the iterate header.
-                link('converge', 'fix_backend', { condition: 'outcome=success', weight: '1' });
-                link('converge', 'fp_verify', { condition: 'outcome=success', weight: '2' });
-                applied.add('P32');
-                prevId = 'done';
-                prevAttrs = {};
-            } // end hasConvergence
-            for (let i = 0; i < phases.length && !hasConvergence; i++) {
-                const p = phases[i];
-                const id = sanitizeId(p.name);
-                const threadId = p.threadId ?? `phase_${i + 1}`;
-                nodes.push(`  // ========== PHASE ${i + 1}: ${id} ==========`);
-                const emitSpec = !p.securityScan && !p.docOnly && (p.specFirst === true || (p.goalGate && p.specFirst !== false));
-                const emitBDD = !p.securityScan && !p.docOnly && p.bddScenarios === true;
-                const specId = `spec_file_${id}`;
-                const bddId = `bdd_scenarios_${id}`;
-                // securityScan: simple review pass-through
-                if (p.securityScan) {
-                    const phaseAttrs = {
-                        class: 'review',
-                        label: p.prompt,
-                        read_only: 'true',
-                        thread_id: threadId,
-                    };
-                    applied.add('P6b');
-                    applied.add('P8');
-                    emit(id, phaseAttrs);
-                    link(prevId, id, prevAttrs);
-                    prevId = id;
-                    prevAttrs = undefined;
-                    continue;
-                }
-                const implId = `impl_${id}`;
-                const scopeCheckId = `scope_check_${id}`;
-                const checkProgressId = `check_progress_${id}`;
-                const conformanceId = `conformance_${id}`;
-                // docOnly phase
-                if (p.docOnly) {
-                    const implAttrs = {
-                        allowed_paths: expandWithTestDirs(p.allowedPaths ?? []).join(','),
-                        class: 'documentation',
-                        label: p.prompt,
-                        max_visits: '5',
-                        thread_id: threadId,
-                    };
-                    if (p.timeout)
-                        implAttrs['timeout'] = p.timeout;
-                    link(prevId, implId, prevAttrs);
-                    emit(implId, implAttrs);
-                    applied.add('P22');
-                    applied.add('P6');
-                    emit(checkProgressId, {
-                        label: 'check_progress',
-                        max_visits: '3',
-                        read_only: 'true',
-                        shape: 'parallelogram',
-                        thread_id: threadId,
-                        tool_command: "cd ${WORKING_DIR} && [ $(git status --porcelain | wc -l) -gt 0 ] && echo 'STATUS: SUCCESS' || echo 'STATUS: FAIL'",
-                    });
-                    applied.add('P0e');
-                    link(implId, checkProgressId);
-                    link(checkProgressId, 'exit', { condition: 'outcome=fail', label: 'fail' });
-                    emit(scopeCheckId, {
-                        class: 'review',
-                        label: 'Compare git diff against phase prompt. Flag files modified outside allowed_paths. Output STATUS: SUCCESS | FAIL.',
-                        read_only: 'true',
-                        shape: 'parallelogram',
-                        thread_id: threadId,
-                    });
-                    applied.add('P10');
-                    applied.add('P6b');
-                    link(checkProgressId, scopeCheckId);
-                    link(scopeCheckId, 'exit', { condition: 'outcome=fail', label: 'fail' });
-                    const conformanceDocAttrs = {
-                        class: 'review',
-                        label: 'Review the implementation against the phase spec and PRD requirements. Check: correct files modified, API contracts match, no regressions. Output STATUS: SUCCESS | FAIL.',
-                        read_only: 'true',
-                        thread_id: threadId,
-                        timeout: '15m',
-                    };
-                    emit(conformanceId, conformanceDocAttrs);
-                    applied.add('P15');
-                    link(scopeCheckId, conformanceId);
-                    prevId = conformanceId;
-                    prevAttrs = undefined;
-                    continue;
-                }
-                // Regular impl phase
-                // UI completeness injection: auto-append defaults for known uiType values
-                const reqs = [...(p.requirements ?? [])];
-                if (p.uiType) {
-                    const uiDefaults = UI_REQUIREMENTS[p.uiType] ?? [];
-                    for (const def of uiDefaults) {
-                        if (!reqs.some(r => r.toLowerCase().includes(def.toLowerCase()))) {
-                            reqs.push(def);
-                        }
-                    }
-                }
-                const testId = `test_${id}`;
-                const fixId = `fix_${id}`;
-                const verifyLintId = `verify_lint_${id}`;
-                const verifyTypesId = `verify_types_${id}`;
-                // Spec-first gates (P16 / P16b)
-                if (emitBDD && emitSpec) {
-                    const bddLabel = reqs.length > 0
-                        ? `Review BDD scenarios against phase prompt. Verify ${reqs.length} scenarios with Given/When/Then covering: ${formatRequirementsList(reqs)}. Output STATUS: SUCCESS | FAIL.`
-                        : 'Review BDD scenarios against phase prompt. Verify each scenario has Given/When/Then. Output STATUS: SUCCESS | FAIL.';
-                    emit(bddId, {
-                        class: 'review',
-                        label: bddLabel,
-                        read_only: 'true',
-                        thread_id: threadId,
-                        timeout: '15m',
-                    });
-                    const specLabelBDD = reqs.length > 0
-                        ? `Review spec file. Verify ${reqs.length} machine-checkable acceptance criteria for: ${formatRequirementsList(reqs)}. Output STATUS: SUCCESS | FAIL.`
-                        : 'Review spec file against phase prompt and BDD scenarios. Verify acceptance criteria are machine-checkable. Output STATUS: SUCCESS | FAIL.';
-                    emit(specId, {
-                        class: 'review',
-                        label: specLabelBDD,
-                        read_only: 'true',
-                        thread_id: threadId,
-                        timeout: '15m',
-                    });
-                    link(prevId, bddId, prevAttrs);
-                    link(bddId, specId);
-                    link(specId, implId);
-                    applied.add('P16b');
-                    applied.add('P16');
-                }
-                else if (emitSpec) {
-                    const specLabel = reqs.length > 0
-                        ? `Review spec file. Verify ${reqs.length} machine-checkable acceptance criteria for: ${formatRequirementsList(reqs)}. Output STATUS: SUCCESS | FAIL.`
-                        : 'Review spec file against phase prompt. Verify acceptance criteria are machine-checkable. Output STATUS: SUCCESS | FAIL.';
-                    emit(specId, {
-                        class: 'review',
-                        label: specLabel,
-                        read_only: 'true',
-                        thread_id: threadId,
-                        timeout: '15m',
-                    });
-                    link(prevId, specId, prevAttrs);
-                    link(specId, implId);
-                    applied.add('P16');
-                }
-                else {
-                    link(prevId, implId, prevAttrs);
-                }
-                // P22: impl node
-                const implAttrs = {
-                    allowed_paths: expandWithTestDirs(p.allowedPaths ?? []).join(','),
-                    class: 'codergen',
+        const dependent = phases.filter(p => p.dependsOn && p.dependsOn.length > 0);
+        const mergeId = 'merge_phases';
+        emit(mergeId, { label: 'merge_phases', shape: 'tripleoctagon' });
+        for (const p of independent)
+            link(sanitizeId(p.name), mergeId);
+        let afterMerge = mergeId;
+        for (const p of dependent) {
+            const phaseIdx = phases.indexOf(p) + 1;
+            const id = sanitizeId(p.name);
+            const threadId = p.threadId ?? `phase_${phaseIdx}`;
+            nodes.push(`  // ========== PHASE ${phaseIdx}: ${id} ==========`);
+            emit(id, { label: p.name, shape: 'component', thread_id: threadId });
+            link(afterMerge, id);
+            afterMerge = id;
+        }
+        // P21: disaggregated verify/fix endgame chain
+        applied.add('P21');
+        emitEndgameChain(afterMerge);
+    }
+    _emitCompetingTopology() {
+        const phases = this._phases;
+        const applied = this._applied;
+        const emit = this._emit.bind(this);
+        const link = this._link.bind(this);
+        // Competing implementations (Pattern 18)
+        applied.add('P18');
+        const cp = phases.find(p => p.competing);
+        const baseId = sanitizeId(cp.name);
+        emit(`${baseId}_a`, { label: `${cp.name} A`, max_parallel: '1', shape: 'component' });
+        emit(`${baseId}_b`, { label: `${cp.name} B`, max_parallel: '1', shape: 'component' });
+        emit('competing_merge', { label: 'competing_merge', shape: 'tripleoctagon' });
+        link('capture_baseline', `${baseId}_a`);
+        link('capture_baseline', `${baseId}_b`);
+        link(`${baseId}_a`, 'competing_merge');
+        link(`${baseId}_b`, 'competing_merge');
+        link('competing_merge', 'exit');
+    }
+    // eslint-disable-next-line max-lines-per-function
+    _emitConvergenceTopology() {
+        const spec = this._spec;
+        const applied = this._applied;
+        const emit = this._emit.bind(this);
+        const link = this._link.bind(this);
+        const emitSubgraph = this._emitSubgraph.bind(this);
+        // Convergence mode: v8 topology — 10-node body + fp/repro post-chain + done terminal.
+        const cv = spec.convergence;
+        const fb = cv.fixBackend;
+        const ff = cv.fixFrontend;
+        const mg = cv.mechanicalGates;
+        const rv = cv.reviewers;
+        const adv = cv.adversary;
+        const fp = cv.fpVerify;
+        const rp = cv.reproVerify;
+        const wd = spec.workingDir ?? '${WORKING_DIR}';
+        const sub = (cmd) => cmd.split('/repos/benchmark').join(wd);
+        const fbHarness = fb?.harness ?? cv.impl.harness ?? DEFAULT_FIX_BACKEND_HARNESS;
+        const ffHarness = ff?.harness ?? cv.impl.harness ?? DEFAULT_FIX_FRONTEND_HARNESS;
+        const advSealed = adv?.sealedFromSource ?? cv.sealedFromSource ?? DEFAULT_ADVERSARY_SEALED_FROM_SOURCE;
+        emit('converge', {
+            body: 'iter-body',
+            class: 'iterate',
+            convergence_epsilon: String(cv.convergenceEpsilon ?? DEFAULT_CONVERGENCE_EPSILON),
+            label: 'converge',
+            max_iterations: String(cv.maxIterations ?? DEFAULT_MAX_ITERATIONS),
+            max_visits: String(cv.maxVisits ?? DEFAULT_CONVERGE_MAX_VISITS),
+            retry_target: 'converge',
+            shape: 'house',
+            timeout: cv.timeout ?? DEFAULT_CONVERGE_TIMEOUT,
+            until: cv.until,
+        });
+        link('capture_baseline', 'converge');
+        emitSubgraph('iter_body', 'iter-body', () => {
+            emit('fix_backend', {
+                allow_multi_retry_target: 'true',
+                class: 'impl',
+                context_keys: '__pool_findings__,__last_failure_output,__fix_attempt_history',
+                harness: fbHarness,
+                max_visits: String(fb?.maxVisits ?? DEFAULT_BODY_MAX_VISITS),
+                model: fb?.model ?? DEFAULT_FIX_BACKEND_MODEL,
+                prompt: fb?.prompt ?? DEFAULT_FIX_BACKEND_PROMPT,
+                retry_target: 'fix_backend',
+                timeout: fb?.timeout ?? DEFAULT_FIX_TIMEOUT,
+            });
+            emit('fix_frontend', {
+                class: 'impl',
+                context_keys: '__pool_findings__,__last_failure_output,__fix_attempt_history',
+                harness: ffHarness,
+                max_visits: String(ff?.maxVisits ?? DEFAULT_BODY_MAX_VISITS),
+                model: ff?.model ?? DEFAULT_FIX_FRONTEND_MODEL,
+                prompt: ff?.prompt ?? DEFAULT_FIX_FRONTEND_PROMPT,
+                retry_target: 'fix_frontend',
+                timeout: ff?.timeout ?? DEFAULT_FIX_TIMEOUT,
+            });
+            emit('run_build_api', {
+                max_visits: String(DEFAULT_MECHANICAL_MAX_VISITS),
+                reports_to_v: 'mechanical.typecheck',
+                retry_target: 'fix_backend',
+                shape: 'parallelogram',
+                timeout: DEFAULT_MECHANICAL_BUILD_TIMEOUT,
+                tool_command: mg?.buildApi ?? sub(DEFAULT_BUILD_API_CMD),
+            });
+            emit('run_tests_api', {
+                max_visits: String(DEFAULT_MECHANICAL_MAX_VISITS),
+                reports_to_v: 'mechanical.boot',
+                retry_target: 'fix_backend',
+                shape: 'parallelogram',
+                timeout: DEFAULT_MECHANICAL_TESTS_TIMEOUT,
+                tool_command: mg?.testsApi ?? sub(DEFAULT_TESTS_API_CMD),
+            });
+            emit('run_build_ui', {
+                max_visits: String(DEFAULT_MECHANICAL_MAX_VISITS),
+                reports_to_v: 'mechanical.build',
+                retry_target: 'fix_frontend',
+                shape: 'parallelogram',
+                timeout: DEFAULT_MECHANICAL_BUILD_TIMEOUT,
+                tool_command: mg?.buildUi ?? sub(DEFAULT_BUILD_UI_CMD),
+            });
+            emit('run_lint', {
+                max_visits: String(DEFAULT_MECHANICAL_MAX_VISITS),
+                reports_to_v: 'mechanical.lint',
+                retry_target: 'fix_backend',
+                shape: 'parallelogram',
+                timeout: DEFAULT_MECHANICAL_BUILD_TIMEOUT,
+                tool_command: mg?.lint ?? sub(DEFAULT_LINT_CMD),
+            });
+            emit('review_be', {
+                class: 'honest_review',
+                harness: rv?.be?.harness ?? 'hermes',
+                max_visits: String(rv?.be?.maxVisits ?? DEFAULT_BODY_MAX_VISITS),
+                model: rv?.be?.model ?? DEFAULT_REVIEW_BE_MODEL,
+                prompt: rv?.be?.prompt ?? DEFAULT_REVIEW_BE_PROMPT,
+                read_only: 'true',
+                retry_target: 'review_be',
+                reviewer_lens: 'backend',
+                timeout: rv?.be?.timeout ?? DEFAULT_REVIEW_TIMEOUT,
+            });
+            emit('review_fe', {
+                class: 'honest_review',
+                harness: rv?.fe?.harness ?? 'hermes',
+                max_visits: String(rv?.fe?.maxVisits ?? DEFAULT_BODY_MAX_VISITS),
+                model: rv?.fe?.model ?? DEFAULT_REVIEW_FE_MODEL,
+                prompt: rv?.fe?.prompt ?? DEFAULT_REVIEW_FE_PROMPT,
+                read_only: 'true',
+                retry_target: 'review_fe',
+                reviewer_lens: 'frontend',
+                timeout: rv?.fe?.timeout ?? DEFAULT_REVIEW_TIMEOUT,
+            });
+            emit('review_int', {
+                class: 'honest_review',
+                harness: rv?.int?.harness ?? 'hermes',
+                max_visits: String(rv?.int?.maxVisits ?? DEFAULT_BODY_MAX_VISITS),
+                model: rv?.int?.model ?? DEFAULT_REVIEW_INT_MODEL,
+                prompt: rv?.int?.prompt ?? DEFAULT_REVIEW_INT_PROMPT,
+                read_only: 'true',
+                retry_target: 'review_int',
+                reviewer_lens: 'integration',
+                timeout: rv?.int?.timeout ?? DEFAULT_REVIEW_TIMEOUT,
+            });
+            emit('adversary_node', {
+                class: 'adversary',
+                harness: adv?.harness ?? 'hermes',
+                max_visits: String(adv?.maxVisits ?? DEFAULT_BODY_MAX_VISITS),
+                model: adv?.model ?? DEFAULT_ADVERSARY_MODEL,
+                prompt: adv?.prompt ?? DEFAULT_ADVERSARY_PROMPT,
+                read_only: 'true',
+                sealed_from_source: advSealed,
+                timeout: adv?.timeout ?? DEFAULT_REVIEW_TIMEOUT,
+            });
+            const bodyChain = [
+                'fix_backend', 'fix_frontend',
+                'run_build_api', 'run_tests_api', 'run_build_ui', 'run_lint',
+                'review_be', 'review_fe', 'review_int', 'adversary_node',
+            ];
+            for (let bi = 0; bi < bodyChain.length - 1; bi++) {
+                link(bodyChain[bi], bodyChain[bi + 1], { condition: 'outcome=success', label: 'pass' });
+            }
+        });
+        // Goal-gate nodes live OUTSIDE cluster_iter_body.
+        emit('fp_verify', {
+            context_on_failure: 'fp_pass=false',
+            context_on_success: 'fp_pass=true',
+            goal_gate: 'true',
+            max_visits: String(fp?.maxVisits ?? DEFAULT_GOAL_GATE_MAX_VISITS),
+            shape: 'parallelogram',
+            timeout: fp?.timeout ?? DEFAULT_GOAL_GATE_TIMEOUT,
+            tool_command: fp?.command ?? sub(DEFAULT_FP_VERIFY_CMD),
+        });
+        emit('repro_verify', {
+            context_on_failure: 'repro_pass=false',
+            context_on_success: 'repro_pass=true',
+            goal_gate: 'true',
+            max_visits: String(rp?.maxVisits ?? DEFAULT_GOAL_GATE_MAX_VISITS),
+            shape: 'parallelogram',
+            timeout: rp?.timeout ?? DEFAULT_GOAL_GATE_TIMEOUT,
+            tool_command: rp?.command ?? sub(DEFAULT_REPRO_VERIFY_CMD),
+        });
+        emit('done', { label: 'done', shape: 'Msquare' });
+        // Post-chain: body exit → fp → repro → done, with fail bounces.
+        link('adversary_node', 'fp_verify');
+        link('fp_verify', 'repro_verify', { condition: 'outcome=success', label: 'pass' });
+        link('repro_verify', 'done', { condition: 'outcome=success', label: 'pass' });
+        link('fp_verify', 'converge', { condition: 'outcome=fail', label: 'fail' });
+        link('repro_verify', 'fp_verify', { condition: 'outcome=fail', label: 'fail' });
+        // Reachability edges from the iterate header.
+        link('converge', 'fix_backend', { condition: 'outcome=success', weight: '1' });
+        link('converge', 'fp_verify', { condition: 'outcome=success', weight: '2' });
+        applied.add('P32');
+    }
+    // eslint-disable-next-line max-lines-per-function
+    _emitSequentialPhases() {
+        const spec = this._spec;
+        const phases = this._phases;
+        const applied = this._applied;
+        const nodes = this._nodes;
+        const nodeMap = this._nodeMap;
+        const implPhases = this._implPhases;
+        const emittedDiagnostics = this._emittedDiagnostics;
+        const defenseMatrix = this._defenseMatrix;
+        const hasConvergence = this._hasConvergence;
+        const emit = this._emit.bind(this);
+        const link = this._link.bind(this);
+        const emitEndgameChain = this._emitEndgameChain.bind(this);
+        // Sequential execution
+        const hasAnyPhase = phases.length > 0;
+        let prevId = 'capture_baseline';
+        let prevAttrs = undefined;
+        if (hasConvergence) {
+            this._emitConvergenceTopology();
+            prevId = 'done';
+            prevAttrs = {};
+        }
+        for (let i = 0; i < phases.length && !hasConvergence; i++) {
+            const p = phases[i];
+            const id = sanitizeId(p.name);
+            const threadId = p.threadId ?? `phase_${i + 1}`;
+            nodes.push(`  // ========== PHASE ${i + 1}: ${id} ==========`);
+            const emitSpec = !p.securityScan && !p.docOnly && (p.specFirst === true || (p.goalGate && p.specFirst !== false));
+            const emitBDD = !p.securityScan && !p.docOnly && p.bddScenarios === true;
+            const specId = `spec_file_${id}`;
+            const bddId = `bdd_scenarios_${id}`;
+            // securityScan: simple review pass-through
+            if (p.securityScan) {
+                const phaseAttrs = {
+                    class: 'review',
                     label: p.prompt,
-                    max_visits: '5',
-                    permission_mode: 'auto',
+                    read_only: 'true',
                     thread_id: threadId,
                 };
-                implAttrs['escalate_on'] = (p.escalateOn && p.escalateOn.length > 0) ? p.escalateOn.join(',') : DEFAULT_ESCALATE_ON;
-                implAttrs['timeout'] = p.timeout ?? '30m';
-                if (p.deliverables && p.deliverables.length > 0) {
-                    implAttrs['deliverables'] = p.deliverables.join(',');
-                }
-                if (spec.workspace === 'isolated' && isCommitPushPhaseId(id)) {
-                    if (spec.workspaceOpts?.repoUrl)
-                        implAttrs['repo_url'] = spec.workspaceOpts.repoUrl;
-                    if (spec.workspaceOpts?.cleanup)
-                        implAttrs['cleanup'] = spec.workspaceOpts.cleanup;
-                }
+                applied.add('P6b');
+                applied.add('P8');
+                emit(id, phaseAttrs);
+                link(prevId, id, prevAttrs);
+                prevId = id;
+                prevAttrs = undefined;
+                continue;
+            }
+            const implId = `impl_${id}`;
+            const scopeCheckId = `scope_check_${id}`;
+            const checkProgressId = `check_progress_${id}`;
+            const conformanceId = `conformance_${id}`;
+            // docOnly phase
+            if (p.docOnly) {
+                const implAttrs = {
+                    allowed_paths: expandWithTestDirs(p.allowedPaths ?? []).join(','),
+                    class: 'documentation',
+                    label: p.prompt,
+                    max_visits: '5',
+                    thread_id: threadId,
+                };
+                if (p.timeout)
+                    implAttrs['timeout'] = p.timeout;
+                link(prevId, implId, prevAttrs);
                 emit(implId, implAttrs);
                 applied.add('P22');
                 applied.add('P6');
-                if (!defenseMatrix.permissions.includes('auto')) {
-                    defenseMatrix.permissions.push('auto');
-                }
-                // P10: scope_check
-                emit(scopeCheckId, {
-                    class: 'review',
-                    label: 'Compare git diff against phase prompt. Flag files modified outside allowed_paths. Output STATUS: SUCCESS | FAIL.',
-                    read_only: 'true',
-                    shape: 'parallelogram',
-                    thread_id: threadId,
-                });
-                applied.add('P10');
-                applied.add('P6b');
-                link(implId, scopeCheckId);
-                // P0e: check_progress
                 emit(checkProgressId, {
                     label: 'check_progress',
                     max_visits: '3',
@@ -1830,312 +1782,480 @@ export class DotBuilder {
                     tool_command: "cd ${WORKING_DIR} && [ $(git status --porcelain | wc -l) -gt 0 ] && echo 'STATUS: SUCCESS' || echo 'STATUS: FAIL'",
                 });
                 applied.add('P0e');
-                // Test isolation gate: when testExpectations.isolation === true, insert between scope_check and check_progress
-                if (p.testExpectations?.isolation === true) {
-                    const testIsolationId = `test_isolation_${id}`;
-                    const testPaths = expandWithTestDirs(p.allowedPaths ?? [])
-                        .filter(tp => tp.startsWith('tests/') || tp.startsWith('__tests__/'))
-                        .join(' ');
-                    emit(testIsolationId, {
-                        label: 'Verify test isolation: beforeEach/afterEach present in test files',
-                        shape: 'parallelogram',
-                        thread_id: threadId,
-                        tool_command: `grep -rl 'beforeEach\\|afterEach' ${testPaths || '.'} && echo 'STATUS: SUCCESS' || echo 'STATUS: FAIL'`,
-                    });
-                    link(scopeCheckId, testIsolationId);
-                    link(testIsolationId, checkProgressId);
-                }
-                else {
-                    link(scopeCheckId, checkProgressId);
-                }
-                // P13: verify_lint
-                emit(verifyLintId, {
-                    label: 'verify_lint: BASELINE from cat baseline_lint_errors; CURRENT lint error count -le BASELINE',
+                link(implId, checkProgressId);
+                link(checkProgressId, 'exit', { condition: 'outcome=fail', label: 'fail' });
+                emit(scopeCheckId, {
+                    class: 'review',
+                    label: 'Compare git diff against phase prompt. Flag files modified outside allowed_paths. Output STATUS: SUCCESS | FAIL.',
+                    read_only: 'true',
                     shape: 'parallelogram',
                     thread_id: threadId,
-                    tool_command: '[ $(npx eslint src/ 2>&1 | grep -c error || echo 0) -le $(cat /tmp/baseline_lint_errors.txt 2>/dev/null || echo 0) ]',
                 });
-                applied.add('P13');
-                applied.add('P0d');
-                link(checkProgressId, verifyLintId);
-                // P14: verify_types
-                emit(verifyTypesId, {
-                    label: 'verify_types: BASELINE from cat baseline_ts_errors; CURRENT TS error count -le BASELINE',
-                    thread_id: threadId,
-                    tool_command: '[ $(npx tsc --noEmit 2>&1 | grep -c error || echo 0) -le $(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) ]',
-                });
-                applied.add('P14');
-                link(verifyLintId, verifyTypesId);
-                // P9: optional coverage gate
-                const hasCoverage = typeof p.coverageTarget === 'number';
-                if (hasCoverage) {
-                    const testRunId = `test_run_${id}`;
-                    const covId = `coverage_gate_${id}`;
-                    emit(testRunId, { label: 'test' });
-                    emit(covId, { coverage_target: String(p.coverageTarget), label: 'coverage_gate', shape: 'diamond' });
-                    applied.add('P9');
-                    link(verifyTypesId, testRunId);
-                    link(testRunId, covId);
-                    link(covId, conformanceId, { condition: 'outcome=success', label: 'pass' });
-                    link(covId, implId, { condition: 'outcome=fail', label: 'fail' });
-                }
-                else {
-                    link(verifyTypesId, conformanceId);
-                }
-                // P15: conformance
-                const conformanceLabel = reqs.length > 0
-                    ? `Verify these ${reqs.length} requirements in git diff: ${formatRequirementsList(reqs)}. Check: correct files modified, API contracts match. Output STATUS: SUCCESS | FAIL.`
-                    : 'Review the implementation against the phase spec and PRD requirements. Check: correct files modified, API contracts match, no regressions. Output STATUS: SUCCESS | FAIL.';
-                const conformanceAttrs = {
+                applied.add('P10');
+                applied.add('P6b');
+                link(checkProgressId, scopeCheckId);
+                link(scopeCheckId, 'exit', { condition: 'outcome=fail', label: 'fail' });
+                const conformanceDocAttrs = {
                     class: 'review',
-                    label: conformanceLabel,
+                    label: 'Review the implementation against the phase spec and PRD requirements. Check: correct files modified, API contracts match, no regressions. Output STATUS: SUCCESS | FAIL.',
                     read_only: 'true',
                     thread_id: threadId,
                     timeout: '15m',
                 };
-                if (p.contextOnSuccess) {
-                    conformanceAttrs['context_on_success'] = serializeKV(p.contextOnSuccess);
-                }
-                if (p.goalGate) {
-                    conformanceAttrs['goal_gate'] = 'true';
-                    applied.add('P2');
-                    conformanceAttrs['max_visits'] = String(spec.defaultMaxRetry ?? 3);
-                    // Auto-populate verifies from upstream deliverables
-                    const upstreamDeliverables = new Set();
-                    if (p.deliverables)
-                        p.deliverables.forEach(d => upstreamDeliverables.add(d));
-                    if (p.dependsOn) {
-                        for (const depName of p.dependsOn) {
-                            const dep = phases.find(pp => pp.name === depName);
-                            if (dep?.deliverables)
-                                dep.deliverables.forEach(d => upstreamDeliverables.add(d));
-                        }
-                    }
-                    if (upstreamDeliverables.size > 0) {
-                        conformanceAttrs['verifies'] = [...upstreamDeliverables].sort().join(',');
-                    }
-                }
-                emit(conformanceId, conformanceAttrs);
+                emit(conformanceId, conformanceDocAttrs);
                 applied.add('P15');
-                // P1: test diamond
-                const testAttrs = {
-                    label: `test ${id}`,
-                    retry_target: implId,
-                    shape: 'diamond',
-                };
-                if (!p.goalGate) {
-                    testAttrs['max_visits'] = p.testExpectations?.count !== undefined
-                        ? String(computeMaxVisits(p.testExpectations.count))
-                        : '5';
-                    applied.add('P6');
+                link(scopeCheckId, conformanceId);
+                prevId = conformanceId;
+                prevAttrs = undefined;
+                continue;
+            }
+            // Regular impl phase
+            // UI completeness injection: auto-append defaults for known uiType values
+            const reqs = [...(p.requirements ?? [])];
+            if (p.uiType) {
+                const uiDefaults = UI_REQUIREMENTS[p.uiType] ?? [];
+                for (const def of uiDefaults) {
+                    if (!reqs.some(r => r.toLowerCase().includes(def.toLowerCase()))) {
+                        reqs.push(def);
+                    }
                 }
-                else if (spec.defaultMaxRetry) {
-                    testAttrs['max_visits'] = String(spec.defaultMaxRetry);
-                    applied.add('P6');
-                }
-                else {
-                    testAttrs['max_visits'] = p.testExpectations?.count !== undefined
-                        ? String(computeMaxVisits(p.testExpectations.count))
-                        : '3';
-                    applied.add('P6');
-                }
-                emit(testId, testAttrs);
-                applied.add('P1');
-                applied.add('P3');
-                link(conformanceId, testId);
-                // P1: fix loop
-                emit(fixId, {
-                    allowed_paths: expandWithTestDirs(p.allowedPaths ?? []).join(','),
-                    class: 'codergen',
-                    escalate_on: (p.escalateOn && p.escalateOn.length > 0) ? p.escalateOn.join(',') : DEFAULT_ESCALATE_ON,
-                    label: `fix ${id}`,
-                    max_visits: '5',
-                    permission_mode: 'auto',
+            }
+            const testId = `test_${id}`;
+            const fixId = `fix_${id}`;
+            const verifyLintId = `verify_lint_${id}`;
+            const verifyTypesId = `verify_types_${id}`;
+            // Spec-first gates (P16 / P16b)
+            if (emitBDD && emitSpec) {
+                const bddLabel = reqs.length > 0
+                    ? `Review BDD scenarios against phase prompt. Verify ${reqs.length} scenarios with Given/When/Then covering: ${formatRequirementsList(reqs)}. Output STATUS: SUCCESS | FAIL.`
+                    : 'Review BDD scenarios against phase prompt. Verify each scenario has Given/When/Then. Output STATUS: SUCCESS | FAIL.';
+                emit(bddId, {
+                    class: 'review',
+                    label: bddLabel,
+                    read_only: 'true',
                     thread_id: threadId,
-                    timeout: '30m',
+                    timeout: '15m',
                 });
-                link(testId, fixId, { condition: 'outcome=fail', label: 'fail' });
-                link(fixId, implId);
-                // P17: red_team after test pass (RT-5: fail→fix, success→next)
-                if (p.redTeam) {
-                    const rtId = `red_team_${id}`;
-                    emit(rtId, { class: 'review', label: 'Red-team the implementation: attempt to break it via edge cases, malformed input, concurrency, and security probes. Output STATUS: SUCCESS | FAIL.', read_only: 'true', thread_id: threadId, timeout: '15m' });
-                    applied.add('P17');
-                    link(testId, rtId, { condition: 'outcome=success', label: 'pass' });
-                    link(rtId, fixId, { condition: 'outcome=fail', label: 'fail' });
-                    prevId = rtId;
-                    prevAttrs = { condition: 'outcome=success', label: 'pass' };
-                }
-                else {
-                    prevId = testId;
-                    prevAttrs = { condition: 'outcome=success', label: 'pass' };
-                }
-                // Diagnostic: warn when a complex phase has no structured requirements
-                if ((!p.requirements || p.requirements.length === 0) && (p.allowedPaths ?? []).length >= 4) {
-                    emittedDiagnostics.push(mkDiag('MISSING_REQUIREMENTS', 'warning', `Phase "${p.name}" has ${(p.allowedPaths ?? []).length} allowed paths but no structured requirements — gates cannot verify specific deliverables`, implId));
-                }
+                const specLabelBDD = reqs.length > 0
+                    ? `Review spec file. Verify ${reqs.length} machine-checkable acceptance criteria for: ${formatRequirementsList(reqs)}. Output STATUS: SUCCESS | FAIL.`
+                    : 'Review spec file against phase prompt and BDD scenarios. Verify acceptance criteria are machine-checkable. Output STATUS: SUCCESS | FAIL.';
+                emit(specId, {
+                    class: 'review',
+                    label: specLabelBDD,
+                    read_only: 'true',
+                    thread_id: threadId,
+                    timeout: '15m',
+                });
+                link(prevId, bddId, prevAttrs);
+                link(bddId, specId);
+                link(specId, implId);
+                applied.add('P16b');
+                applied.add('P16');
             }
-            // Deliverables coverage diagnostic: warn when deliverables lack matching verifies
-            const allDeliverables = new Set();
-            const allVerifies = new Set();
-            for (const p of implPhases) {
-                if (p.deliverables)
-                    p.deliverables.forEach(d => allDeliverables.add(d));
+            else if (emitSpec) {
+                const specLabel = reqs.length > 0
+                    ? `Review spec file. Verify ${reqs.length} machine-checkable acceptance criteria for: ${formatRequirementsList(reqs)}. Output STATUS: SUCCESS | FAIL.`
+                    : 'Review spec file against phase prompt. Verify acceptance criteria are machine-checkable. Output STATUS: SUCCESS | FAIL.';
+                emit(specId, {
+                    class: 'review',
+                    label: specLabel,
+                    read_only: 'true',
+                    thread_id: threadId,
+                    timeout: '15m',
+                });
+                link(prevId, specId, prevAttrs);
+                link(specId, implId);
+                applied.add('P16');
             }
-            // Collect verifies from emitted goal_gate nodes
-            for (const [, attrs] of nodeMap) {
-                if (attrs['goal_gate'] === 'true' && attrs['verifies']) {
-                    attrs['verifies'].split(',').forEach(v => allVerifies.add(v.trim()));
-                }
+            else {
+                link(prevId, implId, prevAttrs);
             }
-            for (const d of allDeliverables) {
-                if (!allVerifies.has(d)) {
-                    emittedDiagnostics.push(mkDiag('DELIVERABLES_COVERAGE', 'warning', `Deliverable "${d}" has no matching verifies in any goal_gate node`, undefined));
-                }
+            // P22: impl node
+            const implAttrs = {
+                allowed_paths: expandWithTestDirs(p.allowedPaths ?? []).join(','),
+                class: 'codergen',
+                label: p.prompt,
+                max_visits: '5',
+                permission_mode: 'auto',
+                thread_id: threadId,
+            };
+            implAttrs['escalate_on'] = (p.escalateOn && p.escalateOn.length > 0) ? p.escalateOn.join(',') : DEFAULT_ESCALATE_ON;
+            implAttrs['timeout'] = p.timeout ?? '30m';
+            if (p.deliverables && p.deliverables.length > 0) {
+                implAttrs['deliverables'] = p.deliverables.join(',');
             }
-            for (const v of allVerifies) {
-                if (!allDeliverables.has(v)) {
-                    emittedDiagnostics.push(mkDiag('DELIVERABLES_COVERAGE', 'warning', `Verifies entry "${v}" on goal_gate does not match any phase deliverable`, undefined));
-                }
+            if (spec.workspace === 'isolated' && isCommitPushPhaseId(id)) {
+                if (spec.workspaceOpts?.repoUrl)
+                    implAttrs['repo_url'] = spec.workspaceOpts.repoUrl;
+                if (spec.workspaceOpts?.cleanup)
+                    implAttrs['cleanup'] = spec.workspaceOpts.cleanup;
             }
-            // P21: disaggregated verify/fix endgame chain (suppressed by convergence — iterate handles its own exit)
-            if (hasAnyPhase && !hasConvergence) {
-                applied.add('P21');
-                emitEndgameChain(prevId, prevAttrs);
+            emit(implId, implAttrs);
+            applied.add('P22');
+            applied.add('P6');
+            if (!defenseMatrix.permissions.includes('auto')) {
+                defenseMatrix.permissions.push('auto');
             }
-            else if (spec.microverse) {
-                // Zero-phase + microverse: route into the microverse loop, not directly to exit
-                link('capture_baseline', 'commit_baseline');
-            }
-            else if (!hasConvergence) {
-                link('capture_baseline', 'exit');
-            }
-        }
-        // P25: Catastrophic recovery loop (suppressed by convergence — iterate has its own retry)
-        if (!isFanOut && !hasCompeting && implPhases.length > 0 && !hasConvergence) {
-            applied.add('P25');
-            linkEdge('regression_check', 'setup_deps', { loop_restart: 'true' });
-        }
-        // Microverse loop (Pattern 20)
-        if (spec.microverse) {
-            applied.add('P20');
-            const mv = spec.microverse;
-            const mvOpts = mv.opts;
-            emit('commit_baseline', { label: 'commit_baseline', shape: 'parallelogram' });
-            emit('baseline', { label: `baseline ${mv.name}`, shape: 'parallelogram' });
-            emit('optimize', { label: `optimize ${mv.name}` });
-            emit('measure', { label: `measure ${mv.name}` });
-            emit('compare', {
-                direction: mvOpts.direction ?? 'improve',
-                label: 'compare',
-                max_visits: String(mvOpts.maxVisits ?? 10),
-                shape: 'diamond',
-                target: String(mvOpts.target),
+            // P10: scope_check
+            emit(scopeCheckId, {
+                class: 'review',
+                label: 'Compare git diff against phase prompt. Flag files modified outside allowed_paths. Output STATUS: SUCCESS | FAIL.',
+                read_only: 'true',
+                shape: 'parallelogram',
+                thread_id: threadId,
             });
-            emit('check', { label: 'check', shape: 'diamond' });
-            link('commit_baseline', 'baseline');
-            link('baseline', 'optimize');
-            link('optimize', 'measure');
-            link('measure', 'compare');
-            link('compare', 'optimize', { condition: 'outcome=miss', label: 'miss' });
-            link('compare', 'check', { condition: 'outcome=hit', label: 'hit' });
-            link('check', 'exit', { condition: 'outcome=accept', label: 'accept' });
-            link('check', 'optimize', { condition: 'outcome=reject', label: 'reject' });
-            // Microverse is standalone (exempt from reachability check) ONLY when phases exist.
-            // In zero-phase mode, microverse IS the main pipeline — connected via capture_baseline.
-            if (phases.length > 0) {
-                for (const mvId of ['commit_baseline', 'baseline', 'optimize', 'measure', 'compare', 'check']) {
-                    standaloneNodeIds.add(mvId);
+            applied.add('P10');
+            applied.add('P6b');
+            link(implId, scopeCheckId);
+            // P0e: check_progress
+            emit(checkProgressId, {
+                label: 'check_progress',
+                max_visits: '3',
+                read_only: 'true',
+                shape: 'parallelogram',
+                thread_id: threadId,
+                tool_command: "cd ${WORKING_DIR} && [ $(git status --porcelain | wc -l) -gt 0 ] && echo 'STATUS: SUCCESS' || echo 'STATUS: FAIL'",
+            });
+            applied.add('P0e');
+            // Test isolation gate: when testExpectations.isolation === true, insert between scope_check and check_progress
+            if (p.testExpectations?.isolation === true) {
+                const testIsolationId = `test_isolation_${id}`;
+                const testPaths = expandWithTestDirs(p.allowedPaths ?? [])
+                    .filter(tp => tp.startsWith('tests/') || tp.startsWith('__tests__/'))
+                    .join(' ');
+                emit(testIsolationId, {
+                    label: 'Verify test isolation: beforeEach/afterEach present in test files',
+                    shape: 'parallelogram',
+                    thread_id: threadId,
+                    tool_command: `grep -rl 'beforeEach\\|afterEach' ${testPaths || '.'} && echo 'STATUS: SUCCESS' || echo 'STATUS: FAIL'`,
+                });
+                link(scopeCheckId, testIsolationId);
+                link(testIsolationId, checkProgressId);
+            }
+            else {
+                link(scopeCheckId, checkProgressId);
+            }
+            // P13: verify_lint
+            emit(verifyLintId, {
+                label: 'verify_lint: BASELINE from cat baseline_lint_errors; CURRENT lint error count -le BASELINE',
+                shape: 'parallelogram',
+                thread_id: threadId,
+                tool_command: '[ $(npx eslint src/ 2>&1 | grep -c error || echo 0) -le $(cat /tmp/baseline_lint_errors.txt 2>/dev/null || echo 0) ]',
+            });
+            applied.add('P13');
+            applied.add('P0d');
+            link(checkProgressId, verifyLintId);
+            // P14: verify_types
+            emit(verifyTypesId, {
+                label: 'verify_types: BASELINE from cat baseline_ts_errors; CURRENT TS error count -le BASELINE',
+                thread_id: threadId,
+                tool_command: '[ $(npx tsc --noEmit 2>&1 | grep -c error || echo 0) -le $(cat /tmp/baseline_ts_errors.txt 2>/dev/null || echo 0) ]',
+            });
+            applied.add('P14');
+            link(verifyLintId, verifyTypesId);
+            // P9: optional coverage gate
+            const hasCoverage = typeof p.coverageTarget === 'number';
+            if (hasCoverage) {
+                const testRunId = `test_run_${id}`;
+                const covId = `coverage_gate_${id}`;
+                emit(testRunId, { label: 'test' });
+                emit(covId, { coverage_target: String(p.coverageTarget), label: 'coverage_gate', shape: 'diamond' });
+                applied.add('P9');
+                link(verifyTypesId, testRunId);
+                link(testRunId, covId);
+                link(covId, conformanceId, { condition: 'outcome=success', label: 'pass' });
+                link(covId, implId, { condition: 'outcome=fail', label: 'fail' });
+            }
+            else {
+                link(verifyTypesId, conformanceId);
+            }
+            // P15: conformance
+            const conformanceLabel = reqs.length > 0
+                ? `Verify these ${reqs.length} requirements in git diff: ${formatRequirementsList(reqs)}. Check: correct files modified, API contracts match. Output STATUS: SUCCESS | FAIL.`
+                : 'Review the implementation against the phase spec and PRD requirements. Check: correct files modified, API contracts match, no regressions. Output STATUS: SUCCESS | FAIL.';
+            const conformanceAttrs = {
+                class: 'review',
+                label: conformanceLabel,
+                read_only: 'true',
+                thread_id: threadId,
+                timeout: '15m',
+            };
+            if (p.contextOnSuccess) {
+                conformanceAttrs['context_on_success'] = serializeKV(p.contextOnSuccess);
+            }
+            if (p.goalGate) {
+                conformanceAttrs['goal_gate'] = 'true';
+                applied.add('P2');
+                conformanceAttrs['max_visits'] = String(spec.defaultMaxRetry ?? 3);
+                // Auto-populate verifies from upstream deliverables
+                const upstreamDeliverables = new Set();
+                if (p.deliverables)
+                    p.deliverables.forEach(d => upstreamDeliverables.add(d));
+                if (p.dependsOn) {
+                    for (const depName of p.dependsOn) {
+                        const dep = phases.find(pp => pp.name === depName);
+                        if (dep?.deliverables)
+                            dep.deliverables.forEach(d => upstreamDeliverables.add(d));
+                    }
+                }
+                if (upstreamDeliverables.size > 0) {
+                    conformanceAttrs['verifies'] = [...upstreamDeliverables].sort().join(',');
                 }
             }
-        }
-        // Review ratchet (Pattern 19)
-        if (spec.reviewRatchet) {
-            applied.add('P19');
-            const n = spec.reviewRatchet;
-            for (let i = 1; i <= n; i++) {
-                emit(`review_pass_${i}`, { label: `review pass ${i}`, shape: 'component' });
+            emit(conformanceId, conformanceAttrs);
+            applied.add('P15');
+            // P1: test diamond
+            const testAttrs = {
+                label: `test ${id}`,
+                retry_target: implId,
+                shape: 'diamond',
+            };
+            if (!p.goalGate) {
+                testAttrs['max_visits'] = p.testExpectations?.count !== undefined
+                    ? String(computeMaxVisits(p.testExpectations.count))
+                    : '5';
+                applied.add('P6');
             }
-            emit('review_merge', { label: 'review_merge', ratchet_count: String(n), shape: 'tripleoctagon' });
-            emit('fix_review', { label: 'fix_review', shape: 'parallelogram' });
-            for (let i = 1; i < n; i++) {
-                link(`review_pass_${i}`, `review_pass_${i + 1}`);
+            else if (spec.defaultMaxRetry) {
+                testAttrs['max_visits'] = String(spec.defaultMaxRetry);
+                applied.add('P6');
             }
-            link(`review_pass_${n}`, 'review_merge');
-            link('review_merge', 'exit', { condition: 'outcome=success', label: 'pass' });
-            link('review_merge', 'fix_review', { condition: 'outcome=fail', label: 'fail' });
-            link('fix_review', 'review_pass_1');
-            for (let ri = 1; ri <= n; ri++)
-                standaloneNodeIds.add(`review_pass_${ri}`);
-            standaloneNodeIds.add('review_merge');
-            standaloneNodeIds.add('fix_review');
+            else {
+                testAttrs['max_visits'] = p.testExpectations?.count !== undefined
+                    ? String(computeMaxVisits(p.testExpectations.count))
+                    : '3';
+                applied.add('P6');
+            }
+            emit(testId, testAttrs);
+            applied.add('P1');
+            applied.add('P3');
+            link(conformanceId, testId);
+            // P1: fix loop
+            emit(fixId, {
+                allowed_paths: expandWithTestDirs(p.allowedPaths ?? []).join(','),
+                class: 'codergen',
+                escalate_on: (p.escalateOn && p.escalateOn.length > 0) ? p.escalateOn.join(',') : DEFAULT_ESCALATE_ON,
+                label: `fix ${id}`,
+                max_visits: '5',
+                permission_mode: 'auto',
+                thread_id: threadId,
+                timeout: '30m',
+            });
+            link(testId, fixId, { condition: 'outcome=fail', label: 'fail' });
+            link(fixId, implId);
+            // P17: red_team after test pass (RT-5: fail→fix, success→next)
+            if (p.redTeam) {
+                const rtId = `red_team_${id}`;
+                emit(rtId, { class: 'review', label: 'Red-team the implementation: attempt to break it via edge cases, malformed input, concurrency, and security probes. Output STATUS: SUCCESS | FAIL.', read_only: 'true', thread_id: threadId, timeout: '15m' });
+                applied.add('P17');
+                link(testId, rtId, { condition: 'outcome=success', label: 'pass' });
+                link(rtId, fixId, { condition: 'outcome=fail', label: 'fail' });
+                prevId = rtId;
+                prevAttrs = { condition: 'outcome=success', label: 'pass' };
+            }
+            else {
+                prevId = testId;
+                prevAttrs = { condition: 'outcome=success', label: 'pass' };
+            }
+            // Diagnostic: warn when a complex phase has no structured requirements
+            if ((!p.requirements || p.requirements.length === 0) && (p.allowedPaths ?? []).length >= 4) {
+                emittedDiagnostics.push(mkDiag('MISSING_REQUIREMENTS', 'warning', `Phase "${p.name}" has ${(p.allowedPaths ?? []).length} allowed paths but no structured requirements — gates cannot verify specific deliverables`, implId));
+            }
         }
+        // Deliverables coverage diagnostic: warn when deliverables lack matching verifies
+        const allDeliverables = new Set();
+        const allVerifies = new Set();
+        for (const p of implPhases) {
+            if (p.deliverables)
+                p.deliverables.forEach(d => allDeliverables.add(d));
+        }
+        // Collect verifies from emitted goal_gate nodes
+        for (const [, attrs] of nodeMap) {
+            if (attrs['goal_gate'] === 'true' && attrs['verifies']) {
+                attrs['verifies'].split(',').forEach(v => allVerifies.add(v.trim()));
+            }
+        }
+        for (const d of allDeliverables) {
+            if (!allVerifies.has(d)) {
+                emittedDiagnostics.push(mkDiag('DELIVERABLES_COVERAGE', 'warning', `Deliverable "${d}" has no matching verifies in any goal_gate node`, undefined));
+            }
+        }
+        for (const v of allVerifies) {
+            if (!allDeliverables.has(v)) {
+                emittedDiagnostics.push(mkDiag('DELIVERABLES_COVERAGE', 'warning', `Verifies entry "${v}" on goal_gate does not match any phase deliverable`, undefined));
+            }
+        }
+        // P21: disaggregated verify/fix endgame chain (suppressed by convergence — iterate handles its own exit)
+        if (hasAnyPhase && !hasConvergence) {
+            applied.add('P21');
+            emitEndgameChain(prevId, prevAttrs);
+        }
+        else if (spec.microverse) {
+            // Zero-phase + microverse: route into the microverse loop, not directly to exit
+            link('capture_baseline', 'commit_baseline');
+        }
+        else if (!hasConvergence) {
+            link('capture_baseline', 'exit');
+        }
+    }
+    _emitMicroverseLoop() {
+        const spec = this._spec;
+        const phases = this._phases;
+        const applied = this._applied;
+        const standaloneNodeIds = this._standaloneNodeIds;
+        const emit = this._emit.bind(this);
+        const link = this._link.bind(this);
+        if (!spec.microverse)
+            return;
+        applied.add('P20');
+        const mv = spec.microverse;
+        const mvOpts = mv.opts;
+        emit('commit_baseline', { label: 'commit_baseline', shape: 'parallelogram' });
+        emit('baseline', { label: `baseline ${mv.name}`, shape: 'parallelogram' });
+        emit('optimize', { label: `optimize ${mv.name}` });
+        emit('measure', { label: `measure ${mv.name}` });
+        emit('compare', {
+            direction: mvOpts.direction ?? 'improve',
+            label: 'compare',
+            max_visits: String(mvOpts.maxVisits ?? 10),
+            shape: 'diamond',
+            target: String(mvOpts.target),
+        });
+        emit('check', { label: 'check', shape: 'diamond' });
+        link('commit_baseline', 'baseline');
+        link('baseline', 'optimize');
+        link('optimize', 'measure');
+        link('measure', 'compare');
+        link('compare', 'optimize', { condition: 'outcome=miss', label: 'miss' });
+        link('compare', 'check', { condition: 'outcome=hit', label: 'hit' });
+        link('check', 'exit', { condition: 'outcome=accept', label: 'accept' });
+        link('check', 'optimize', { condition: 'outcome=reject', label: 'reject' });
+        // Microverse is standalone (exempt from reachability check) ONLY when phases exist.
+        // In zero-phase mode, microverse IS the main pipeline — connected via capture_baseline.
+        if (phases.length > 0) {
+            for (const mvId of ['commit_baseline', 'baseline', 'optimize', 'measure', 'compare', 'check']) {
+                standaloneNodeIds.add(mvId);
+            }
+        }
+    }
+    _emitReviewRatchet() {
+        const spec = this._spec;
+        const applied = this._applied;
+        const standaloneNodeIds = this._standaloneNodeIds;
+        const emit = this._emit.bind(this);
+        const link = this._link.bind(this);
+        if (!spec.reviewRatchet)
+            return;
+        applied.add('P19');
+        const n = spec.reviewRatchet;
+        for (let i = 1; i <= n; i++) {
+            emit(`review_pass_${i}`, { label: `review pass ${i}`, shape: 'component' });
+        }
+        emit('review_merge', { label: 'review_merge', ratchet_count: String(n), shape: 'tripleoctagon' });
+        emit('fix_review', { label: 'fix_review', shape: 'parallelogram' });
+        for (let i = 1; i < n; i++) {
+            link(`review_pass_${i}`, `review_pass_${i + 1}`);
+        }
+        link(`review_pass_${n}`, 'review_merge');
+        link('review_merge', 'exit', { condition: 'outcome=success', label: 'pass' });
+        link('review_merge', 'fix_review', { condition: 'outcome=fail', label: 'fail' });
+        link('fix_review', 'review_pass_1');
+        for (let ri = 1; ri <= n; ri++)
+            standaloneNodeIds.add(`review_pass_${ri}`);
+        standaloneNodeIds.add('review_merge');
+        standaloneNodeIds.add('fix_review');
+    }
+    _emitDot() {
+        this._resetEmitState();
+        this._initializeEmitContext();
+        if (this._hasFanOut)
+            this._emitFanOutTopology();
+        else if (this._hasCompeting)
+            this._emitCompetingTopology();
+        else
+            this._emitSequentialPhases();
+        // P25: Catastrophic recovery loop (suppressed by convergence — iterate has its own retry)
+        if (!this._hasFanOut && !this._hasCompeting && this._implPhases.length > 0 && !this._hasConvergence) {
+            this._applied.add('P25');
+            this._linkEdge('regression_check', 'setup_deps', { loop_restart: 'true' });
+        }
+        this._emitMicroverseLoop();
+        this._emitReviewRatchet();
         // P0: Auto-inject commit_and_push for isolated workspace if missing
-        if (spec.workspace === 'isolated') {
-            const hasExplicitPush = [...nodeMap.keys()].some(isCommitPushPhaseId);
+        if (this._spec.workspace === 'isolated') {
+            const hasExplicitPush = [...this._nodeMap.keys()].some(isCommitPushPhaseId);
             if (!hasExplicitPush) {
                 const slug = this._slug;
-                emit('commit_and_push', {
+                this._emit('commit_and_push', {
                     label: 'commit_and_push',
                     shape: 'parallelogram',
                     timeout: DEFAULT_COMMIT_PUSH_TIMEOUT,
                     tool_command: `cd \${WORKING_DIR} && BRANCH="attractor/${slug}-$(echo $ATTRACTOR_RUN_ID | cut -c1-8)" && git checkout -B "$BRANCH" && git add -A && git -c user.name=attractor -c user.email=attractor@local commit -m "feat: ${slug} — attractor pipeline output" --allow-empty && git push origin "$BRANCH" --force 2>&1 && echo "Pushed branch: $BRANCH"`,
                 });
                 // Rewire: inject commit_and_push into the terminal chain
-                if (hasConvergence) {
+                if (this._hasConvergence) {
                     // v8: anchor on repro_verify -> done [condition="outcome=success"]
-                    const rpToDone = edges.findIndex(e => e.includes('repro_verify -> done') && e.includes('outcome=success'));
+                    const rpToDone = this._edges.findIndex(e => e.includes('repro_verify -> done') && e.includes('outcome=success'));
                     if (rpToDone !== -1) {
-                        const removedEdgeStr = edges[rpToDone];
-                        edges.splice(rpToDone, 1);
-                        const removedEdge = edgeList.findIndex(e => e.from === 'repro_verify' && e.to === 'done');
+                        const removedEdgeStr = this._edges[rpToDone];
+                        this._edges.splice(rpToDone, 1);
+                        const removedEdge = this._edgeList.findIndex(e => e.from === 'repro_verify' && e.to === 'done');
                         if (removedEdge !== -1)
-                            edgeList.splice(removedEdge, 1);
-                        seenEdges.delete(removedEdgeStr);
+                            this._edgeList.splice(removedEdge, 1);
+                        this._seenEdges.delete(removedEdgeStr);
                     }
-                    link('repro_verify', 'commit_and_push', { condition: 'outcome=success', label: 'pass' });
-                    link('commit_and_push', 'done', { condition: 'outcome=success', label: 'pass' });
+                    this._link('repro_verify', 'commit_and_push', { condition: 'outcome=success', label: 'pass' });
+                    this._link('commit_and_push', 'done', { condition: 'outcome=success', label: 'pass' });
                 }
                 else {
                     // non-convergence: anchor on quality_review -> exit
-                    const qrToExit = edges.findIndex(e => e.includes('quality_review -> exit'));
+                    const qrToExit = this._edges.findIndex(e => e.includes('quality_review -> exit'));
                     if (qrToExit !== -1) {
-                        const removedEdgeStr = edges[qrToExit];
-                        edges.splice(qrToExit, 1);
-                        const removedEdge = edgeList.findIndex(e => e.from === 'quality_review' && e.to === 'exit');
+                        const removedEdgeStr = this._edges[qrToExit];
+                        this._edges.splice(qrToExit, 1);
+                        const removedEdge = this._edgeList.findIndex(e => e.from === 'quality_review' && e.to === 'exit');
                         if (removedEdge !== -1)
-                            edgeList.splice(removedEdge, 1);
-                        seenEdges.delete(removedEdgeStr);
+                            this._edgeList.splice(removedEdge, 1);
+                        this._seenEdges.delete(removedEdgeStr);
                     }
-                    link('quality_review', 'commit_and_push', { condition: 'outcome=success', label: 'pass' });
-                    link('commit_and_push', 'exit');
+                    this._link('quality_review', 'commit_and_push', { condition: 'outcome=success', label: 'pass' });
+                    this._link('commit_and_push', 'exit');
                 }
-                applied.add('P0');
+                this._applied.add('P0');
             }
         }
         // Emit exit terminal (suppressed in convergence mode — done is the sole Msquare terminal)
-        if (!hasConvergence) {
-            emit('exit', { label: 'exit', shape: 'Msquare' });
-        }
+        if (!this._hasConvergence)
+            this._emit('exit', { label: 'exit', shape: 'Msquare' });
         // P23: defense matrix comment block
         const guardPatterns = ['P0c', 'P6b', 'P10', 'P13', 'P14', 'P15', 'P17', 'P25'];
-        defenseMatrix.guardrails = guardPatterns.filter(pg => applied.has(pg));
-        applied.add('P23');
+        this._defenseMatrix.guardrails = guardPatterns.filter(pg => this._applied.has(pg));
+        this._applied.add('P23');
+        const graphId = sanitizeId(this._slug) || 'pipeline';
         const lines = [
             `digraph "${graphId}" {`,
-            `  graph [${fmtAttrs(graphAttrs)}]`,
-            ...subgraphBlocks,
+            `  graph [${fmtAttrs(this._graphAttrs)}]`,
+            ...this._subgraphBlocks,
             `  /* DEFENSE MATRIX`,
-            `   * competitive: ${defenseMatrix.competitive}`,
-            `   * adversarial: ${defenseMatrix.adversarial}`,
-            `   * specDriven: ${defenseMatrix.specDriven}`,
-            `   * guardrails: ${defenseMatrix.guardrails.length > 0 ? defenseMatrix.guardrails.join(', ') : 'none'}`,
-            `   * permissions: ${defenseMatrix.permissions.length > 0 ? defenseMatrix.permissions.join(', ') : 'none'}`,
+            `   * competitive: ${this._defenseMatrix.competitive}`,
+            `   * adversarial: ${this._defenseMatrix.adversarial}`,
+            `   * specDriven: ${this._defenseMatrix.specDriven}`,
+            `   * guardrails: ${this._defenseMatrix.guardrails.length > 0 ? this._defenseMatrix.guardrails.join(', ') : 'none'}`,
+            `   * permissions: ${this._defenseMatrix.permissions.length > 0 ? this._defenseMatrix.permissions.join(', ') : 'none'}`,
             `   */`,
-            ...nodes,
-            ...edges,
+            ...this._nodes,
+            ...this._edges,
             '}',
         ];
-        return { dot: lines.join('\n'), nodeMap, edgeList, graphAttrs, standaloneNodeIds, patternsApplied: [...applied], defenseMatrix, emittedDiagnostics };
+        return {
+            dot: lines.join('\n'),
+            nodeMap: this._nodeMap,
+            edgeList: this._edgeList,
+            graphAttrs: this._graphAttrs,
+            standaloneNodeIds: this._standaloneNodeIds,
+            patternsApplied: [...this._applied],
+            defenseMatrix: this._defenseMatrix,
+            emittedDiagnostics: this._emittedDiagnostics,
+        };
     }
 }
