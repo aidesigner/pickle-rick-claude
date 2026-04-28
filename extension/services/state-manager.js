@@ -60,11 +60,23 @@ export class StateManager {
             state = JSON.parse(raw);
         }
         catch (err) {
-            const msg = safeErrorMessage(err);
-            throw new StateError('CORRUPT', `Invalid JSON in state file: ${msg}`);
+            const recovered = this.recoverFromOrphanTmpWhenBaseCorrupt(statePath);
+            if (recovered) {
+                state = recovered;
+            }
+            else {
+                const msg = safeErrorMessage(err);
+                throw new StateError('CORRUPT', `Invalid JSON in state file: ${msg}`);
+            }
         }
         if (state === null || typeof state !== 'object' || Array.isArray(state)) {
-            throw new StateError('CORRUPT', 'State file does not contain a JSON object');
+            const recovered = this.recoverFromOrphanTmpWhenBaseCorrupt(statePath);
+            if (recovered) {
+                state = recovered;
+            }
+            else {
+                throw new StateError('CORRUPT', 'State file does not contain a JSON object');
+            }
         }
         // --- Schema migration ---
         if (state.schema_version === undefined) {
@@ -262,6 +274,51 @@ export class StateManager {
             }
             catch { /* might not exist */ }
             return false;
+        }
+    }
+    recoverFromOrphanTmpWhenBaseCorrupt(statePath) {
+        const dir = path.dirname(statePath);
+        const base = path.basename(statePath);
+        let entries;
+        try {
+            entries = fs.readdirSync(dir);
+        }
+        catch {
+            return null;
+        }
+        const tmpPattern = new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.tmp\\.(\\d+)$`);
+        let winner = null;
+        for (const entry of entries) {
+            const match = entry.match(tmpPattern);
+            if (!match)
+                continue;
+            const tmpPid = Number(match[1]);
+            if (Number.isFinite(tmpPid) && isProcessAlive(tmpPid))
+                continue;
+            try {
+                const tmpPath = path.join(dir, entry);
+                const parsed = JSON.parse(fs.readFileSync(tmpPath, 'utf-8'));
+                if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed))
+                    continue;
+                const iteration = Number(parsed.iteration);
+                if (!Number.isFinite(iteration))
+                    continue;
+                if (!winner || iteration > winner.iteration) {
+                    winner = { tmpPath, state: parsed, iteration };
+                }
+            }
+            catch {
+                continue;
+            }
+        }
+        if (!winner)
+            return null;
+        try {
+            fs.renameSync(winner.tmpPath, statePath);
+            return winner.state;
+        }
+        catch {
+            return null;
         }
     }
     // -----------------------------------------------------------------------

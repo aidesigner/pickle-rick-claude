@@ -231,6 +231,31 @@ test('StateManager.read: promotes orphan tmp file with higher iteration', () => 
   });
 });
 
+test('StateManager.read: promotes orphan tmp when base state.json is corrupt', () => {
+  withDir((dir) => {
+    const sm = new StateManager();
+    const sp = path.join(dir, 'state.json');
+    fs.writeFileSync(sp, '{invalid json!!!');
+    const tmpFile = `${sp}.tmp.99999999`;
+    fs.writeFileSync(tmpFile, JSON.stringify(makeState({
+      iteration: 9,
+      current_ticket: 'T-RECOVERED',
+      step: 'review',
+    })));
+
+    const result = sm.read(sp);
+
+    assert.equal(result.iteration, 9, 'recovered tmp iteration should win when base is corrupt');
+    assert.equal(result.current_ticket, 'T-RECOVERED');
+    assert.equal(result.step, 'review');
+    assert.equal(fs.existsSync(tmpFile), false, 'recovered tmp should be consumed');
+
+    const onDisk = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+    assert.equal(onDisk.iteration, 9, 'promoted tmp should replace the corrupt base file');
+    assert.equal(onDisk.current_ticket, 'T-RECOVERED');
+  });
+});
+
 test('StateManager.read: deletes orphan tmp with invalid JSON', () => {
   withDir((dir) => {
     const sm = new StateManager();

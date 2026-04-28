@@ -168,6 +168,46 @@ test('createPR recovers orphan tmp state before deriving repo path and prompt', 
     }
 });
 
+test('createPR recovers from a corrupt base state.json when a newer orphan tmp exists', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-factory-corrupt-recovery-'));
+    try {
+        const liveRepo = path.join(tmp, 'live-repo');
+        fs.mkdirSync(liveRepo, { recursive: true });
+
+        const statePath = path.join(tmp, 'state.json');
+        fs.writeFileSync(statePath, '{broken json');
+        fs.writeFileSync(
+            `${statePath}.tmp.99999999`,
+            JSON.stringify({
+                working_dir: liveRepo,
+                original_prompt: 'recovered prompt',
+                iteration: 4,
+                schema_version: 1,
+            })
+        );
+
+        let caught;
+        try {
+            createPR(tmp);
+        } catch (err) {
+            caught = err;
+        }
+
+        assert.ok(caught instanceof Error, 'expected createPR to throw');
+        assert.ok(
+            caught.message.includes('Prompt: recovered prompt'),
+            `Recovered tmp state should drive the PR body even when the base file is corrupt.\nGot: ${caught.message}`
+        );
+
+        const promotedState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(promotedState.working_dir, liveRepo, 'recovered tmp should replace the corrupt base file');
+        assert.equal(promotedState.original_prompt, 'recovered prompt');
+        assert.equal(fs.existsSync(`${statePath}.tmp.99999999`), false, 'recovered tmp should be consumed');
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
 test('createPR does not append "..." for short prompts', () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-factory-'));
     try {
