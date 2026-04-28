@@ -520,3 +520,41 @@ test('worker convergence: converged=true is deferred when the per-iteration gate
     `expected convergence deferral log, got: ${JSON.stringify(logs)}`,
   );
 });
+
+test('worker convergence: dead-writer tmp snapshot is promoted before convergence check', async () => {
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-gate-worker-tmp-session-'));
+  const stalePath = path.join(sessionDir, 'anatomy-park.json');
+  const tmpPath = path.join(sessionDir, 'anatomy-park.json.tmp.999999');
+  fs.writeFileSync(stalePath, JSON.stringify({ converged: false }));
+  fs.writeFileSync(tmpPath, JSON.stringify({ converged: true, reason: 'recovered clean passes' }));
+  const future = new Date(Date.now() + 1000);
+  fs.utimesSync(tmpPath, future, future);
+
+  const logs = [];
+  const result = await handleWorkerManagedIteration({
+    ...BASE_OPTS,
+    currentMv: makeMv(),
+    preIterSha: 'sha-same',
+    sessionDir,
+    iteration: 8,
+    log: (msg) => logs.push(msg),
+    _deps: {
+      getHeadShaFn: () => 'sha-same',
+      runGateFn: async () => { assert.fail('gate must not run when no commits happened'); },
+      writeMicroverseStateFn: () => {},
+      logActivityFn: () => {},
+    },
+  });
+
+  assert.equal(result.converged, true);
+  assert.equal(result.reason, 'recovered clean passes');
+  assert.equal(fs.existsSync(tmpPath), false, 'dead writer tmp should be consumed during convergence recovery');
+  assert.deepEqual(JSON.parse(fs.readFileSync(stalePath, 'utf-8')), {
+    converged: true,
+    reason: 'recovered clean passes',
+  });
+  assert.ok(
+    logs.some((msg) => msg.includes('worker convergence signaled')),
+    `expected recovered convergence log, got: ${JSON.stringify(logs)}`,
+  );
+});

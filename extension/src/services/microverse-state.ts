@@ -17,7 +17,7 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-function readRecoverableJsonObject(filePath: string): object | null {
+export function readRecoverableJsonObject(filePath: string): object | null {
   let base: object | null = null;
   try {
     const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as unknown;

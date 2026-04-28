@@ -12,6 +12,7 @@ import {
 } from '../services/backend-spawn.js';
 import {
   readMicroverseState,
+  readRecoverableJsonObject,
   writeMicroverseState,
   recordIteration as stateRecordIteration,
   recordStall,
@@ -461,7 +462,8 @@ export async function handleWorkerManagedIteration(opts: {
 
   const cfPath = path.join(sessionDir, currentMv.convergence_file!);
   try {
-    const raw = JSON.parse(await fs.promises.readFile(cfPath, 'utf-8'));
+    const raw = readRecoverableJsonObject(cfPath) as Record<string, unknown> | null;
+    if (!raw) throw new Error('convergence file empty or invalid');
     if (raw.converged === true) {
       converged = true;
       reason = typeof raw.reason === 'string' && raw.reason.trim() ? raw.reason : 'no reason';

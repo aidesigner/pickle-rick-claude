@@ -4,7 +4,7 @@ import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { Defaults } from '../types/index.js';
 import { resolveBackend, buildJudgeInvocation, buildWorkerInvocation, backendEnvOverrides, } from '../services/backend-spawn.js';
-import { readMicroverseState, writeMicroverseState, recordIteration as stateRecordIteration, recordStall, recordFailedApproach, isConverged, compareMetric, classifyFailure, } from '../services/microverse-state.js';
+import { readMicroverseState, readRecoverableJsonObject, writeMicroverseState, recordIteration as stateRecordIteration, recordStall, recordFailedApproach, isConverged, compareMetric, classifyFailure, } from '../services/microverse-state.js';
 import { getHeadSha, resetToSha, isWorkingTreeDirty } from '../services/git-utils.js';
 import { writeStateFile, getExtensionRoot, isoCompactStamp, sleep, Style, formatTime, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, } from '../services/pickle-utils.js';
 import { StateManager, safeDeactivate } from '../services/state-manager.js';
@@ -256,7 +256,9 @@ export async function handleWorkerManagedIteration(opts) {
     const priorIterationRegressions = Number(currentMv.iteration_regressions ?? 0);
     const cfPath = path.join(sessionDir, currentMv.convergence_file);
     try {
-        const raw = JSON.parse(await fs.promises.readFile(cfPath, 'utf-8'));
+        const raw = readRecoverableJsonObject(cfPath);
+        if (!raw)
+            throw new Error('convergence file empty or invalid');
         if (raw.converged === true) {
             converged = true;
             reason = typeof raw.reason === 'string' && raw.reason.trim() ? raw.reason : 'no reason';
