@@ -804,6 +804,70 @@ export function writeHandoffAtomic(sessionDir, content, pid, log, fsOps = fs) {
         }
     }
 }
+export const COMMIT_PENDING_HANDOFF_TEXT = `## CIRCUIT BREAKER HEALTH PROBE — COMMIT PENDING
+
+You have uncommitted edits in the working tree but the iteration counter has not advanced for N iterations. This commonly means you are looping on a contradiction or over-exploring instead of shipping.
+
+REQUIRED THIS TURN:
+1. Run \`git add <files>\` and \`git commit -m "<msg>"\` to lock in current edits.
+2. If an acceptance criterion is blocked (e.g. fixture mismatch, missing dependency), append a \`# DEFERRED: <reason>\` line to the ticket file and signal Done.
+3. Do NOT continue exploring — your unblocked subset is already valuable and must not be orphaned.
+
+After committing, emit \`<promise>${PromiseTokens.WORKER_DONE}</promise>\` as usual.
+`;
+/**
+ * Pre-spawn health probe. Detects the codex "commit-skip" failure mode:
+ * uncommitted edits in the working tree combined with iteration counter
+ * stagnation. When triggered, writes handoff.txt with a direct nudge so the
+ * next worker turn commits + signals Done before the circuit breaker trips.
+ *
+ * Triggers ONLY when ALL are true:
+ *   - backend === 'codex' (claude lacks this failure mode per RCA)
+ *   - iteration - lastProgressIteration >= threshold (default 2)
+ *   - `git diff --stat` OR `git diff --stat --cached` is non-empty
+ *
+ * Idempotent: if handoff.txt already exists at probe time (e.g. user-written
+ * or rate-limit handoff), the probe defers and skips. Never throws — best
+ * effort. Returns a string status for tests/logs.
+ */
+export function commitPendingProbe(input) {
+    const { sessionDir, workingDir, backend, iteration, lastProgressIteration, threshold, pid, log } = input;
+    if (backend !== 'codex')
+        return 'skipped:not-codex';
+    const stagnation = iteration - lastProgressIteration;
+    if (stagnation < threshold)
+        return 'skipped:no-stagnation';
+    const handoffPath = path.join(sessionDir, 'handoff.txt');
+    if (fs.existsSync(handoffPath)) {
+        log(`commit-pending probe deferred: existing handoff.txt at ${handoffPath}`);
+        return 'skipped:existing-handoff';
+    }
+    // Detect uncommitted edits using the same git-diff pattern as
+    // classifyTicketCompletion (lines ~381-384). Both unstaged and staged
+    // diffs count as "pending commit" — codex has been observed leaving
+    // either flavor.
+    let hasUncommitted = false;
+    try {
+        const unstaged = runCmd(['git', 'diff', '--stat'], { cwd: workingDir, check: false });
+        if (unstaged.length > 0)
+            hasUncommitted = true;
+        if (!hasUncommitted) {
+            const staged = runCmd(['git', 'diff', '--stat', '--cached'], { cwd: workingDir, check: false });
+            if (staged.length > 0)
+                hasUncommitted = true;
+        }
+    }
+    catch (err) {
+        log(`commit-pending probe: git probe failed (${safeErrorMessage(err)}) — skipping`);
+        return 'skipped:no-uncommitted';
+    }
+    if (!hasUncommitted)
+        return 'skipped:no-uncommitted';
+    const content = COMMIT_PENDING_HANDOFF_TEXT.replace('N iterations', `${stagnation} iterations`);
+    writeHandoffAtomic(sessionDir, content, pid, log);
+    log(`commit-pending probe FIRED: stagnation=${stagnation} (>= threshold ${threshold}), uncommitted edits present — handoff.txt written`);
+    return 'fired';
+}
 /**
  * Best-effort append of a one-line marker to `pipeline-runner.log` in the
  * session directory. The pipeline-runner owns that file when it spawns
@@ -983,6 +1047,17 @@ async function main() {
     // Non-persisted per-ticket timeout counter (FR-B3/B4) — resets on runner restart.
     let timeoutCount = 0;
     let lastTimeoutTicket = null;
+    // Commit-pending probe: track the last outer-loop iteration where state.iteration
+    // advanced. Used to detect stagnation independently of the circuit breaker (the
+    // probe runs whether CB is enabled or not).
+    let lastProgressOuterIteration = 0;
+    let lastObservedStateIteration = -1;
+    // Settings bag for the commit-pending probe threshold (default 2). Read once
+    // at startup; the loop is short-lived enough that hot-reloading isn't worth
+    // the disk traffic.
+    const probeSettings = loadSettingsBag(extensionRoot, 'mux-runner:commit-pending-probe:settings');
+    const rawProbeThreshold = Number(probeSettings.commit_pending_probe_threshold);
+    const commitPendingProbeThreshold = Number.isFinite(rawProbeThreshold) && rawProbeThreshold > 0 ? rawProbeThreshold : 2;
     while (true) {
         let state;
         try {
@@ -1065,6 +1140,47 @@ async function main() {
         if (templateName === 'meeseeks.md') {
             log(`Meeseeks pass ${meeseeksPassCount} → model: ${meeseeksModel}`);
             logActivity({ event: 'meeseeks_model_select', source: 'pickle', session: path.basename(sessionDir), iteration, model: meeseeksModel, pass: meeseeksPassCount });
+        }
+        // Update outer-loop progress tracker for the commit-pending probe.
+        // First observation seeds both fields so a fresh session never trips
+        // the probe at iteration 1 from the default zero-init.
+        if (lastObservedStateIteration < 0) {
+            lastObservedStateIteration = curIter;
+            lastProgressOuterIteration = iteration;
+        }
+        else if (curIter > lastObservedStateIteration) {
+            lastObservedStateIteration = curIter;
+            lastProgressOuterIteration = iteration;
+        }
+        // Pre-spawn commit-pending health probe (codex-only). RCA: codex
+        // sometimes produces edits but never `git add` + `git commit`; if
+        // stagnation persists past the threshold, nudge the next worker turn
+        // to commit + signal Done so the breaker doesn't strand orphan work.
+        try {
+            const probeBackend = resolveBackend(state);
+            const probeWorkingDir = state.working_dir || process.cwd();
+            const probeResult = commitPendingProbe({
+                sessionDir,
+                workingDir: probeWorkingDir,
+                backend: probeBackend,
+                iteration,
+                lastProgressIteration: lastProgressOuterIteration,
+                threshold: commitPendingProbeThreshold,
+                pid: process.pid,
+                log,
+            });
+            if (probeResult === 'fired') {
+                logActivity({
+                    event: 'commit_pending_probe_fired',
+                    source: 'pickle',
+                    session: path.basename(sessionDir),
+                    iteration,
+                });
+            }
+        }
+        catch (err) {
+            // Probe is best-effort — never block the iteration on probe failure.
+            log(`commit-pending probe threw (ignored): ${safeErrorMessage(err)}`);
         }
         const outcome = await runIteration(sessionDir, iteration, extensionRoot, meeseeksModel);
         const result = outcome.completion;

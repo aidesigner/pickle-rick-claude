@@ -56,7 +56,7 @@ function withBrokenCanadianDateLocale(fn) {
 
 // --- VALID_ACTIVITY_EVENTS ---
 
-test('VALID_ACTIVITY_EVENTS contains all 40 expected event types', () => {
+test('VALID_ACTIVITY_EVENTS contains all 41 expected event types', () => {
     const expected = [
         'session_start', 'session_end', 'ticket_completed', 'epic_completed',
         'meeseeks_pass', 'commit', 'research', 'bug_fix', 'feature',
@@ -74,8 +74,9 @@ test('VALID_ACTIVITY_EVENTS contains all 40 expected event types', () => {
         'gate_lock_acquired', 'gate_lock_timeout', 'gate_diff_scope_fallback',
         'gate_preexisting_tests_baselined', 'iteration_left_regression',
         'gate_regression_threshold_warning', 'gate_out_of_scope_failures_present',
+        'commit_pending_probe_fired',
     ];
-    assert.equal(VALID_ACTIVITY_EVENTS.length, 40);
+    assert.equal(VALID_ACTIVITY_EVENTS.length, 41);
     for (const e of expected) {
         assert.ok(VALID_ACTIVITY_EVENTS.includes(e), `Missing event type: ${e}`);
     }
