@@ -8,6 +8,7 @@ import {
     parseSessionLine,
     scanSessionFiles,
     parseGitLogOutput,
+    scanGitRepos,
     shortenSlug,
     formatNumber,
     buildReport,
@@ -30,6 +31,29 @@ function makeTempProjectsDir() {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-metrics-'));
     const cacheFile = path.join(root, 'metrics-cache.json');
     return { root, cacheFile };
+}
+
+function toLocalDateStr(date) {
+    return date.toLocaleDateString('en-CA');
+}
+
+function git(env, cwd, args) {
+    const result = spawnSync('git', args, {
+        cwd,
+        env: { ...process.env, ...env },
+        encoding: 'utf-8',
+        timeout: 15000,
+    });
+    assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr}`);
+}
+
+function makeIsoAtNoon(date) {
+    return new Date(
+        date.getFullYear(),
+        date.getMonth(),
+        date.getDate(),
+        12, 0, 0, 0,
+    ).toISOString();
 }
 
 function writeSessionLine(dir, slug, jsonlFilename, line) {
@@ -326,6 +350,74 @@ test('scanSessionFiles: nonexistent directory returns empty map', () => {
     assert.equal(result.size, 0);
 });
 
+test('scanGitRepos: filters out commits dated after the report until day', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-metrics-git-root-'));
+    const repoDir = path.join(repoRoot, 'future-dated-repo');
+    fs.mkdirSync(repoDir, { recursive: true });
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const todayStr = toLocalDateStr(today);
+    const yesterdayStr = toLocalDateStr(yesterday);
+    const tomorrowStr = toLocalDateStr(tomorrow);
+
+    try {
+        git({}, repoDir, ['init']);
+        git({}, repoDir, ['config', 'user.name', 'Metrics Test']);
+        git({}, repoDir, ['config', 'user.email', 'metrics@example.com']);
+
+        fs.writeFileSync(path.join(repoDir, 'report.txt'), 'today\n');
+        git(
+            {
+                GIT_AUTHOR_DATE: makeIsoAtNoon(today),
+                GIT_COMMITTER_DATE: makeIsoAtNoon(today),
+            },
+            repoDir,
+            ['add', 'report.txt'],
+        );
+        git(
+            {
+                GIT_AUTHOR_DATE: makeIsoAtNoon(today),
+                GIT_COMMITTER_DATE: makeIsoAtNoon(today),
+            },
+            repoDir,
+            ['commit', '-m', 'today commit'],
+        );
+
+        fs.writeFileSync(path.join(repoDir, 'report.txt'), 'tomorrow\n');
+        git(
+            {
+                GIT_AUTHOR_DATE: makeIsoAtNoon(tomorrow),
+                GIT_COMMITTER_DATE: makeIsoAtNoon(tomorrow),
+            },
+            repoDir,
+            ['add', 'report.txt'],
+        );
+        git(
+            {
+                GIT_AUTHOR_DATE: makeIsoAtNoon(tomorrow),
+                GIT_COMMITTER_DATE: makeIsoAtNoon(tomorrow),
+            },
+            repoDir,
+            ['commit', '-m', 'future commit'],
+        );
+
+        const loc = scanGitRepos(repoRoot, yesterdayStr, todayStr);
+        const repoStats = loc.get('future-dated-repo');
+        assert.ok(repoStats, 'expected repo stats for in-range commit');
+        assert.ok(repoStats.has(todayStr), 'today commit should be included');
+        assert.ok(!repoStats.has(tomorrowStr), 'future-dated commit must be excluded');
+        assert.equal(repoStats.get(todayStr).commits, 1);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
 // ---------------------------------------------------------------------------
 // buildReport
 // ---------------------------------------------------------------------------
@@ -507,6 +599,79 @@ test('CLI: --days 0 returns today only', () => {
         }
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
+test('CLI: future-dated git commits do not leak past report.until', () => {
+    const projectsRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-metrics-empty-projects-'));
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-metrics-cli-git-root-'));
+    const repoDir = path.join(repoRoot, 'future-dated-repo');
+    fs.mkdirSync(repoDir, { recursive: true });
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const todayStr = toLocalDateStr(today);
+    const yesterdayStr = toLocalDateStr(yesterday);
+    const tomorrowStr = toLocalDateStr(tomorrow);
+
+    try {
+        git({}, repoDir, ['init']);
+        git({}, repoDir, ['config', 'user.name', 'Metrics Test']);
+        git({}, repoDir, ['config', 'user.email', 'metrics@example.com']);
+
+        fs.writeFileSync(path.join(repoDir, 'report.txt'), 'today\n');
+        git(
+            {
+                GIT_AUTHOR_DATE: makeIsoAtNoon(today),
+                GIT_COMMITTER_DATE: makeIsoAtNoon(today),
+            },
+            repoDir,
+            ['add', 'report.txt'],
+        );
+        git(
+            {
+                GIT_AUTHOR_DATE: makeIsoAtNoon(today),
+                GIT_COMMITTER_DATE: makeIsoAtNoon(today),
+            },
+            repoDir,
+            ['commit', '-m', 'today commit'],
+        );
+
+        fs.writeFileSync(path.join(repoDir, 'report.txt'), 'tomorrow\n');
+        git(
+            {
+                GIT_AUTHOR_DATE: makeIsoAtNoon(tomorrow),
+                GIT_COMMITTER_DATE: makeIsoAtNoon(tomorrow),
+            },
+            repoDir,
+            ['add', 'report.txt'],
+        );
+        git(
+            {
+                GIT_AUTHOR_DATE: makeIsoAtNoon(tomorrow),
+                GIT_COMMITTER_DATE: makeIsoAtNoon(tomorrow),
+            },
+            repoDir,
+            ['commit', '-m', 'future commit'],
+        );
+
+        const result = runMetricsCli(['--since', yesterdayStr, '--json'], {
+            CLAUDE_PROJECTS_DIR: projectsRoot,
+            METRICS_REPO_ROOT: repoRoot,
+        });
+        assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+        const report = JSON.parse(result.stdout);
+        assert.equal(report.until, todayStr, 'report end date should stay on the requested local day');
+        assert.ok(report.rows.every((row) => row.date !== tomorrowStr), 'future rows must be excluded');
+        assert.equal(report.totals.commits, 1, 'future-dated commits must not count toward totals');
+    } finally {
+        fs.rmSync(projectsRoot, { recursive: true, force: true });
         fs.rmSync(repoRoot, { recursive: true, force: true });
     }
 });

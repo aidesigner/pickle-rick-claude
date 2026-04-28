@@ -222,7 +222,7 @@ export function parseGitLogOutput(output) {
     }
     return result;
 }
-export function scanGitRepos(repoRoot, since) {
+export function scanGitRepos(repoRoot, since, until) {
     const result = new Map();
     let entries;
     try {
@@ -252,8 +252,14 @@ export function scanGitRepos(repoRoot, since) {
             if ((proc.status ?? 1) !== 0)
                 continue;
             const locMap = parseGitLogOutput(proc.stdout || '');
-            if (locMap.size > 0)
-                result.set(entry.name, locMap);
+            const boundedLocMap = new Map();
+            for (const [date, totals] of locMap) {
+                if (date < since || date > until)
+                    continue;
+                boundedLocMap.set(date, totals);
+            }
+            if (boundedLocMap.size > 0)
+                result.set(entry.name, boundedLocMap);
         }
         catch {
             // Individual repo failure is non-fatal

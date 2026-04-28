@@ -370,7 +370,7 @@ function main(): void {
   const cachePath = path.join(getDataRoot(), 'metrics-cache.json');
 
   const tokens = scanSessionFiles(projectsDir, since, until, cachePath);
-  const loc = scanGitRepos(repoRoot, since);
+  const loc = scanGitRepos(repoRoot, since, until);
   const grouping = args.weekly ? 'weekly' : 'daily';
   const report = buildReport(tokens, loc, since, until, grouping);
 

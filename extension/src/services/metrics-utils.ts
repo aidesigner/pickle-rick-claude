@@ -287,7 +287,7 @@ export function parseGitLogOutput(output: string): Map<string, DailyLOC> {
   return result;
 }
 
-export function scanGitRepos(repoRoot: string, since: string): Map<string, Map<string, DailyLOC>> {
+export function scanGitRepos(repoRoot: string, since: string, until: string): Map<string, Map<string, DailyLOC>> {
   const result = new Map<string, Map<string, DailyLOC>>();
 
   let entries: fs.Dirent[];
@@ -314,7 +314,12 @@ export function scanGitRepos(repoRoot: string, since: string): Map<string, Map<s
       });
       if ((proc.status ?? 1) !== 0) continue;
       const locMap = parseGitLogOutput(proc.stdout || '');
-      if (locMap.size > 0) result.set(entry.name, locMap);
+      const boundedLocMap = new Map<string, DailyLOC>();
+      for (const [date, totals] of locMap) {
+        if (date < since || date > until) continue;
+        boundedLocMap.set(date, totals);
+      }
+      if (boundedLocMap.size > 0) result.set(entry.name, boundedLocMap);
     } catch {
       // Individual repo failure is non-fatal
     }
