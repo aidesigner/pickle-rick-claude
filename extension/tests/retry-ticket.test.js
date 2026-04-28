@@ -231,3 +231,63 @@ test('retryTicket: falls back to active session state when the sessions map is m
         fs.rmSync(tmpExtDir, { recursive: true, force: true });
     }
 });
+
+test('retryTicket: resolved session path wins over stale state.session_dir', () => {
+    const tmpExtDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-retry-ext-')));
+    const liveSessionDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-live-session-')));
+    const staleSessionDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-stale-session-')));
+    const fakeCwd = path.join(tmpExtDir, 'repo');
+    const saved = process.env.EXTENSION_DIR;
+    process.env.EXTENSION_DIR = tmpExtDir;
+
+    try {
+        const ticketId = 'stale-session-dir-ticket';
+        const liveTicketDir = path.join(liveSessionDir, ticketId);
+        fs.mkdirSync(fakeCwd, { recursive: true });
+        fs.mkdirSync(liveTicketDir, { recursive: true });
+
+        fs.writeFileSync(
+            path.join(liveTicketDir, `linear_ticket_${ticketId}.md`),
+            `---\nid: ${ticketId}\ntitle: Test\nstatus: Done\norder: 10\n---\n`
+        );
+
+        fs.writeFileSync(
+            path.join(liveSessionDir, 'state.json'),
+            JSON.stringify({
+                active: false,
+                working_dir: fakeCwd,
+                step: 'implement',
+                iteration: 2,
+                session_dir: staleSessionDir,
+                original_prompt: 'retry through recovered session path',
+                worker_timeout_seconds: 1200,
+            })
+        );
+
+        fs.writeFileSync(
+            path.join(tmpExtDir, 'current_sessions.json'),
+            JSON.stringify({ [fakeCwd]: liveSessionDir })
+        );
+
+        retryTicket(ticketId, fakeCwd);
+
+        const liveState = JSON.parse(
+            fs.readFileSync(path.join(liveSessionDir, 'state.json'), 'utf-8'));
+        assert.equal(liveState.active, true);
+        assert.equal(liveState.session_dir, liveSessionDir);
+        assert.equal(liveState.current_ticket, ticketId);
+
+        const ticketContent = fs.readFileSync(
+            path.join(liveTicketDir, `linear_ticket_${ticketId}.md`), 'utf-8');
+        assert.match(ticketContent, /^status: "Todo"$/m);
+    } finally {
+        if (saved === undefined) {
+            delete process.env.EXTENSION_DIR;
+        } else {
+            process.env.EXTENSION_DIR = saved;
+        }
+        fs.rmSync(tmpExtDir, { recursive: true, force: true });
+        fs.rmSync(liveSessionDir, { recursive: true, force: true });
+        fs.rmSync(staleSessionDir, { recursive: true, force: true });
+    }
+});

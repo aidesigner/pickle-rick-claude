@@ -19,16 +19,12 @@ export function retryTicket(ticketId: string, cwd: string): void {
   }
 
   const statePath = path.join(sessionPath, 'state.json');
-  let state: State;
   try {
-    state = JSON.parse(fs.readFileSync(statePath, 'utf-8')) as State;
+    sm.read(statePath);
   } catch {
     throw new Error(`state.json is corrupt or unreadable in ${sessionPath}`);
   }
-  const sessionDir = state.session_dir;
-  if (!sessionDir) {
-    throw new Error('state.json is missing session_dir field.');
-  }
+  const sessionDir = sessionPath;
 
   const ticketDir = path.join(sessionDir, ticketId);
   const ticketFile = path.join(ticketDir, `linear_ticket_${ticketId}.md`);
@@ -70,13 +66,16 @@ export function retryTicket(ticketId: string, cwd: string): void {
   }
 
   // Re-activate session and set current ticket
-  sm.update(statePath, s => { s.active = true; });
+  sm.update(statePath, s => {
+    s.active = true;
+    s.session_dir = sessionPath;
+  });
   updateState('current_ticket', ticketId, sessionDir);
 
   // Read final state for timeout/prompt values
   let finalState: State;
   try {
-    finalState = JSON.parse(fs.readFileSync(statePath, 'utf-8')) as State;
+    finalState = sm.read(statePath);
   } catch {
     throw new Error(`state.json became unreadable after update in ${sessionPath}`);
   }
