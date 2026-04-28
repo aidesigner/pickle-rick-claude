@@ -130,6 +130,7 @@ test('mux-runner: takes ownership of inactive session then respects max_iteratio
         // but iteration is already at max
         fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
             active: false,
+            tmux_mode: true,
             step: 'plan',
             iteration: 10,
             max_iterations: 10,
@@ -298,6 +299,55 @@ test('mux-runner: string max_iterations and iteration still trigger max iteratio
         // Verify state was set to inactive
         const finalState = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
         assert.equal(finalState.active, false, 'Session should be inactive after string max iterations');
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('mux-runner: recovered inactive orphan tmp stops the loop before stale command_template validation', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = path.join(tmpRoot, 'session');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        const statePath = path.join(sessionDir, 'state.json');
+        fs.writeFileSync(statePath, JSON.stringify({
+            active: true,
+            step: 'implement',
+            iteration: 0,
+            max_iterations: 5,
+            worker_timeout_seconds: 1200,
+            original_prompt: 'test recovered inactive state',
+            working_dir: tmpRoot,
+            command_template: '../stale-template.md',
+        }, null, 2));
+        fs.writeFileSync(`${statePath}.tmp.99999999`, JSON.stringify({
+            active: false,
+            step: 'review',
+            iteration: 4,
+            max_iterations: 5,
+            worker_timeout_seconds: 1200,
+            original_prompt: 'promoted inactive state',
+            working_dir: tmpRoot,
+        }, null, 2));
+
+        const result = run(tmpRoot, [sessionDir]);
+
+        const runnerLog = path.join(sessionDir, 'mux-runner.log');
+        const logContent = fs.existsSync(runnerLog) ? fs.readFileSync(runnerLog, 'utf-8') : '';
+        const combined = result.stdout + result.stderr + logContent;
+
+        assert.ok(
+            combined.includes('Session inactive. Exiting.'),
+            `Expected recovered inactive session exit, got stdout: ${result.stdout}, stderr: ${result.stderr}, log: ${logContent}`
+        );
+        assert.ok(
+            !combined.includes('Invalid command_template'),
+            `Recovered inactive state should short-circuit stale template validation, got: ${combined}`
+        );
+
+        const finalState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(finalState.active, false, 'promoted inactive state must persist');
+        assert.equal(finalState.iteration, 4, 'higher-iteration orphan tmp must be promoted');
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }

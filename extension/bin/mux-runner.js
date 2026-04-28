@@ -11,6 +11,9 @@ import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractEr
 import { buildManagerInvocation, resolveBackend, backendEnvOverrides } from '../services/backend-spawn.js';
 const sm = new StateManager();
 let currentChildProc = null;
+function readRunnerState(statePath) {
+    return sm.read(statePath);
+}
 export function killCurrentChild() {
     if (currentChildProc && !currentChildProc.killed) {
         currentChildProc.kill('SIGTERM');
@@ -539,8 +542,7 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, mees
     const statePath = path.join(sessionDir, 'state.json');
     let state;
     try {
-        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-        state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        state = readRunnerState(statePath);
     }
     catch (err) {
         const msg = safeErrorMessage(err);
@@ -923,8 +925,7 @@ async function main() {
     // before entering the loop so workers and state readers see a live session.
     let ownerState;
     try {
-        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-        ownerState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        ownerState = readRunnerState(statePath);
     }
     catch (err) {
         const msg = safeErrorMessage(err);
@@ -960,7 +961,7 @@ async function main() {
             process.exit(2);
         }
     }
-    if (ownerState.active !== true) {
+    if (ownerState.tmux_mode === true && ownerState.active !== true) {
         sm.update(statePath, s => { s.active = true; });
         log('Session ownership taken (active: false → true)');
     }
@@ -989,8 +990,7 @@ async function main() {
     while (true) {
         let state;
         try {
-            // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-            state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+            state = readRunnerState(statePath);
         }
         catch (err) {
             const msg = safeErrorMessage(err);
@@ -1076,8 +1076,7 @@ async function main() {
         const iterLogFile = path.join(sessionDir, `tmux_iteration_${iteration}.log`);
         // Detect ticket transitions: validate completion before marking Done
         try {
-            // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-            const postState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+            const postState = readRunnerState(statePath);
             const postTicket = postState.current_ticket || null;
             if (previousTicket && postTicket !== previousTicket) {
                 // Check if the model already marked it Done via prompt-driven validation
@@ -1166,8 +1165,7 @@ async function main() {
             while (Date.now() < waitEnd) {
                 await sleep(Defaults.RATE_LIMIT_POLL_MS);
                 try {
-                    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-                    const ws = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+                    const ws = readRunnerState(statePath);
                     if (ws.active !== true) {
                         exitReason = 'cancelled';
                         break;
@@ -1209,8 +1207,7 @@ async function main() {
         // --- Per-ticket timeout halt (FR-B3/B4/B12/B14) — MUST run BEFORE CB recording ---
         let ticketForTimeout = state.current_ticket || null;
         try {
-            // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-            const postState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+            const postState = readRunnerState(statePath);
             ticketForTimeout = postState.current_ticket || null;
         }
         catch { /* keep pre-iteration ticket as fallback */ }
@@ -1265,8 +1262,7 @@ async function main() {
                 // sm.update failed — fall back to direct reads/writes (iteration desync possible but non-fatal)
                 let postIterState = state;
                 try {
-                    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-                    postIterState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+                    postIterState = readRunnerState(statePath);
                 }
                 catch { /* use last known state */ }
                 const progress = detectProgress(postIterState.working_dir || process.cwd(), cbState.last_known_head, cbState.last_known_step, postIterState.step, cbState.last_known_ticket, postIterState.current_ticket);
@@ -1293,8 +1289,7 @@ async function main() {
             // EPIC_COMPLETED / TASK_COMPLETED — check for meeseeks chain before exiting
             let curState;
             try {
-                // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-                curState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+                curState = readRunnerState(statePath);
             }
             catch (err) {
                 const msg = safeErrorMessage(err);
@@ -1429,8 +1424,7 @@ async function main() {
             // review_clean (EXISTENCE_IS_PAIN / THE_CITADEL_APPROVES) — apply min_iterations gate
             let curState;
             try {
-                // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-                curState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+                curState = readRunnerState(statePath);
             }
             catch (err) {
                 const msg = safeErrorMessage(err);
@@ -1472,8 +1466,7 @@ async function main() {
     let finalActive = 'unknown';
     let finalMinIter = 0;
     try {
-        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-        const finalState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        const finalState = readRunnerState(statePath);
         const rawStep = finalState.step || 'unknown';
         finalStep = VALID_STEPS.includes(rawStep) ? rawStep : 'unknown';
         finalActive = String(finalState.active);

@@ -14,6 +14,10 @@ const sm = new StateManager();
 
 let currentChildProc: import('child_process').ChildProcess | null = null;
 
+function readRunnerState(statePath: string): State {
+  return sm.read(statePath);
+}
+
 export function killCurrentChild(): void {
   if (currentChildProc && !currentChildProc.killed) {
     currentChildProc.kill('SIGTERM');
@@ -603,8 +607,7 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
   const statePath = path.join(sessionDir, 'state.json');
   let state: State;
   try {
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    state = readRunnerState(statePath);
   } catch (err) {
     const msg = safeErrorMessage(err);
     throw new Error(`Failed to read state.json for iteration ${iterationNum}: ${msg}`);
@@ -994,8 +997,7 @@ async function main() {
   // before entering the loop so workers and state readers see a live session.
   let ownerState: State;
   try {
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    ownerState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    ownerState = readRunnerState(statePath);
   } catch (err) {
     const msg = safeErrorMessage(err);
     throw new Error(`Cannot read initial state.json: ${msg}`);
@@ -1034,7 +1036,7 @@ async function main() {
     }
   }
 
-  if (ownerState.active !== true) {
+  if (ownerState.tmux_mode === true && ownerState.active !== true) {
     sm.update(statePath, s => { s.active = true; });
     log('Session ownership taken (active: false → true)');
   }
@@ -1065,8 +1067,7 @@ async function main() {
   while (true) {
     let state: State;
     try {
-      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-      state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      state = readRunnerState(statePath);
     } catch (err) {
       const msg = safeErrorMessage(err);
       log(`ERROR: Cannot read state.json: ${msg}. Exiting loop.`);
@@ -1159,8 +1160,7 @@ async function main() {
 
     // Detect ticket transitions: validate completion before marking Done
     try {
-      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-      const postState: State = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      const postState = readRunnerState(statePath);
       const postTicket = postState.current_ticket || null;
       if (previousTicket && postTicket !== previousTicket) {
         // Check if the model already marked it Done via prompt-driven validation
@@ -1250,8 +1250,7 @@ async function main() {
       while (Date.now() < waitEnd) {
         await sleep(Defaults.RATE_LIMIT_POLL_MS);
         try {
-          // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-          const ws = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+          const ws = readRunnerState(statePath);
           if (ws.active !== true) { exitReason = 'cancelled'; break; }
         } catch { /* proceed */ }
         if (maxMins > 0 && epoch > 0) {
@@ -1282,8 +1281,7 @@ async function main() {
     // --- Per-ticket timeout halt (FR-B3/B4/B12/B14) — MUST run BEFORE CB recording ---
     let ticketForTimeout: string | null = state.current_ticket || null;
     try {
-      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-      const postState: State = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      const postState = readRunnerState(statePath);
       ticketForTimeout = postState.current_ticket || null;
     } catch { /* keep pre-iteration ticket as fallback */ }
 
@@ -1353,8 +1351,7 @@ async function main() {
         // sm.update failed — fall back to direct reads/writes (iteration desync possible but non-fatal)
         let postIterState: State = state;
         try {
-          // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-          postIterState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+          postIterState = readRunnerState(statePath);
         } catch { /* use last known state */ }
         const progress = detectProgress(
           postIterState.working_dir || process.cwd(),
@@ -1392,8 +1389,7 @@ async function main() {
       // EPIC_COMPLETED / TASK_COMPLETED — check for meeseeks chain before exiting
       let curState: State;
       try {
-        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-        curState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        curState = readRunnerState(statePath);
       } catch (err) {
         const msg = safeErrorMessage(err);
         log(`ERROR: Cannot read state.json after task_completed: ${msg}. Exiting.`);
@@ -1522,8 +1518,7 @@ async function main() {
       // review_clean (EXISTENCE_IS_PAIN / THE_CITADEL_APPROVES) — apply min_iterations gate
       let curState: State;
       try {
-        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-        curState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        curState = readRunnerState(statePath);
       } catch (err) {
         const msg = safeErrorMessage(err);
         log(`ERROR: Cannot read state.json after review_clean: ${msg}. Treating as completed.`);
@@ -1560,8 +1555,7 @@ async function main() {
   let finalActive = 'unknown';
   let finalMinIter = 0;
   try {
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    const finalState: State = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    const finalState = readRunnerState(statePath);
     const rawStep = finalState.step || 'unknown';
     finalStep = (VALID_STEPS as readonly string[]).includes(rawStep) ? rawStep : 'unknown';
     finalActive = String(finalState.active);

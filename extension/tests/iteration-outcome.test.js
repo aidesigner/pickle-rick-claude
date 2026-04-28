@@ -80,12 +80,38 @@ test('IterationOutcome: inactive path never populates exitCode with a number', a
 });
 
 test('IterationOutcome: missing state.json throws a descriptive error (not an outcome)', async () => {
-    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-outcome-miss-')));
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-outcome-miss-')));
+  try {
+    await assert.rejects(
+      runIteration(dir, 1, dir, ''),
+      /Failed to read state.json/,
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('IterationOutcome: runIteration honors a higher-iteration inactive orphan tmp state', async () => {
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-outcome-orphan-')));
     try {
-        await assert.rejects(
-            runIteration(dir, 1, dir, ''),
-            /Failed to read state.json/,
-        );
+        const statePath = path.join(dir, 'state.json');
+        fs.writeFileSync(statePath, JSON.stringify({
+            active: true,
+            step: 'implement',
+            iteration: 0,
+            command_template: '../stale-template.md',
+        }));
+        fs.writeFileSync(`${statePath}.tmp.99999999`, JSON.stringify({
+            active: false,
+            step: 'review',
+            iteration: 3,
+        }));
+
+        const outcome = await runIteration(dir, 1, dir, '');
+        assert.equal(outcome.completion, 'inactive');
+        assert.equal(outcome.timedOut, false);
+        assert.equal(outcome.exitCode, null);
+        assert.equal(outcome.wallSeconds, 0);
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
