@@ -8,12 +8,14 @@ import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact } from '../type
 import { updateTicketStatus } from '../services/git-utils.js';
 import { buildWorkerInvocation, loadBackendFromSession, backendEnvOverrides } from '../services/backend-spawn.js';
 import { scrubForbiddenWorkerTokens } from '../services/promise-tokens.js';
+import { StateManager } from '../services/state-manager.js';
 const TIER_MODEL_MAP = {
     trivial: 'haiku',
     small: 'sonnet',
     medium: 'sonnet',
     large: 'opus',
 };
+const sm = new StateManager();
 export function tierToModel(tier) {
     if (!tier)
         return 'sonnet';
@@ -88,8 +90,7 @@ async function main() {
     }
     if (timeoutStatePath) {
         try {
-            // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-            const state = JSON.parse(fs.readFileSync(timeoutStatePath, 'utf-8'));
+            const state = sm.read(timeoutStatePath);
             const maxMins = Number(state.max_time_minutes);
             const startEpoch = Number(state.start_time_epoch);
             if (Number.isFinite(maxMins) && maxMins > 0 && Number.isFinite(startEpoch) && startEpoch > 0) {

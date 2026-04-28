@@ -496,6 +496,68 @@ test('spawn-morty: recovers orphan tmp backend state before routing worker CLI',
     }
 });
 
+test('spawn-morty: recovers orphan tmp session timeout before printing worker budget', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketDir = path.join(sessionDir, 'ticket-timeout-recovery');
+        fs.mkdirSync(ticketDir, { recursive: true });
+
+        const statePath = path.join(sessionDir, 'state.json');
+        const nowEpoch = Math.floor(Date.now() / 1000);
+        fs.writeFileSync(statePath, JSON.stringify({
+            active: true,
+            backend: 'claude',
+            max_time_minutes: 20,
+            start_time_epoch: nowEpoch - 5,
+            iteration: 1,
+            schema_version: 1,
+        }));
+        fs.writeFileSync(
+            `${statePath}.tmp.99999998`,
+            JSON.stringify({
+                active: true,
+                backend: 'codex',
+                max_time_minutes: 3,
+                start_time_epoch: nowEpoch - 90,
+                iteration: 2,
+                schema_version: 1,
+            }),
+        );
+
+        const result = spawnSync(process.execPath, [SPAWN_MORTY_BIN,
+            'implement the thing',
+            '--ticket-id', 'ticket-timeout-recovery',
+            '--ticket-path', ticketDir,
+            '--timeout', '600',
+        ], {
+            env: {
+                ...process.env,
+                EXTENSION_DIR: tmpDir,
+                PATH: '/nonexistent',
+                PICKLE_BACKEND: '',
+            },
+            encoding: 'utf-8',
+            timeout: 45000,
+        });
+
+        const combined = result.stdout + result.stderr;
+        const plain = combined.replace(/\x1b\[[0-9;]*m/g, '');
+        assert.equal(result.status, 1, `expected spawn failure after recovered timeout path, got: ${plain}`);
+        assert.ok(plain.includes('Backend') && plain.includes('codex'), `expected recovered backend in output, got: ${plain}`);
+        assert.ok(plain.includes('Worker timeout clamped'), `expected timeout clamp message, got: ${plain}`);
+        const match = plain.match(/Timeout:\s*(\d+)s \(Req: 600s\)/);
+        assert.ok(match, `expected timeout panel line, got: ${plain}`);
+        const effective = Number(match[1]);
+        assert.ok(
+            Number.isFinite(effective) && effective >= 80 && effective <= 95,
+            `expected recovered timeout near 90s, got ${effective}s`,
+        );
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 // ---------------------------------------------------------------------------
 // tierToModel — tier-based model routing
 // ---------------------------------------------------------------------------
