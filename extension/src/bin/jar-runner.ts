@@ -5,7 +5,7 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { spawn } from 'child_process';
 import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, writeStateFile, safeErrorMessage } from '../services/pickle-utils.js';
-import { StateManager } from '../services/state-manager.js';
+import { StateManager, safeDeactivate } from '../services/state-manager.js';
 import { State, Defaults } from '../types/index.js';
 import { logActivity } from '../services/activity-logger.js';
 import { buildManagerInvocation, resolveBackend, backendEnvOverrides } from '../services/backend-spawn.js';
@@ -243,10 +243,7 @@ async function main() {
   const handleShutdownSignal = (signal: string) => {
     console.error(`\n${Style.YELLOW}⚠️  Received ${signal} — deactivating current task session${Style.RESET}`);
     if (activeTaskSessionDir) {
-      // eslint-disable-next-line pickle/no-raw-state-write -- crash-path bypass: signal handler cannot await lock
-      sm.forceWrite(path.join(activeTaskSessionDir, 'state.json'), (() => {
-        try { const s = JSON.parse(fs.readFileSync(path.join(activeTaskSessionDir!, 'state.json'), 'utf-8')); s.active = false; return s; } catch { return { active: false }; }
-      })());
+      safeDeactivate(path.join(activeTaskSessionDir, 'state.json'));
     }
     if (activeTaskProc && !activeTaskProc.killed) {
       activeTaskProc.kill('SIGTERM');

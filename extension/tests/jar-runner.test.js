@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -27,10 +27,19 @@ function run(extDir) {
     // 10s → 30s: budget for system load when run alongside concurrent
     // codex/tmux work. Tests validate jar processing logic, not wall-clock.
     return spawnSync(process.execPath, [JAR_RUNNER_BIN], {
-        env: { ...process.env, EXTENSION_DIR: extDir },
+        env: { ...process.env, EXTENSION_DIR: extDir, PATH: '' },
         encoding: 'utf-8',
         timeout: 30000,
     });
+}
+
+async function waitFor(predicate, timeoutMs = 5000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+        if (predicate()) return;
+        await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    throw new Error(`Timed out after ${timeoutMs}ms waiting for condition`);
 }
 
 // --- Empty jar (no jar/ directory) ---
@@ -442,6 +451,102 @@ test('jar-runner: corrupt session state.json does not abort remaining tasks', ()
             combined.includes('Jar complete'),
             `Expected batch completion summary, got: ${combined.slice(0, 500)}`
         );
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('jar-runner: SIGTERM shutdown preserves a newer orphan tmp session payload', async () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const taskId = 'task-recoverable-state';
+        const taskDir = path.join(tmpRoot, 'jar', '2026-01-01', taskId);
+        fs.mkdirSync(taskDir, { recursive: true });
+        fs.writeFileSync(path.join(taskDir, 'meta.json'), JSON.stringify({
+            status: 'marinating',
+            repo_path: tmpRoot,
+        }, null, 2));
+
+        const sessionDir = path.join(tmpRoot, 'sessions', taskId);
+        fs.mkdirSync(sessionDir, { recursive: true });
+        const statePath = path.join(sessionDir, 'state.json');
+        fs.writeFileSync(statePath, JSON.stringify({
+            schema_version: 1,
+            active: false,
+            backend: 'claude',
+            working_dir: tmpRoot,
+            session_dir: sessionDir,
+            step: 'implement',
+            iteration: 1,
+            max_iterations: 10,
+            current_ticket: 'T-BASE',
+            original_prompt: 'Base jar task state',
+        }, null, 2));
+
+        const fakeBin = path.join(tmpRoot, 'fake-bin');
+        fs.mkdirSync(fakeBin, { recursive: true });
+        const fakeClaude = path.join(fakeBin, 'claude');
+        fs.writeFileSync(fakeClaude, '#!/bin/sh\n/bin/sleep 30\n');
+        fs.chmodSync(fakeClaude, 0o755);
+
+        const child = spawn(process.execPath, [JAR_RUNNER_BIN], {
+            env: { ...process.env, EXTENSION_DIR: tmpRoot, PATH: fakeBin },
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let stdout = '';
+        let stderr = '';
+        child.stdout.on('data', chunk => { stdout += chunk.toString(); });
+        child.stderr.on('data', chunk => { stderr += chunk.toString(); });
+
+        await waitFor(() => {
+            try {
+                const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+                return state.active === true;
+            } catch {
+                return false;
+            }
+        });
+
+        const orphanTmpPath = `${statePath}.tmp.99999999`;
+        fs.writeFileSync(orphanTmpPath, JSON.stringify({
+            schema_version: 1,
+            active: true,
+            backend: 'claude',
+            working_dir: tmpRoot,
+            session_dir: sessionDir,
+            step: 'implement',
+            iteration: 7,
+            max_iterations: 10,
+            current_ticket: 'T-RECOVERED',
+            original_prompt: 'Recovered jar task state',
+        }, null, 2));
+
+        child.kill('SIGTERM');
+        await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                child.kill('SIGKILL');
+                reject(new Error('jar-runner did not exit after SIGTERM'));
+            }, 10000);
+            child.on('exit', () => {
+                clearTimeout(timer);
+                resolve(undefined);
+            });
+            child.on('error', (err) => {
+                clearTimeout(timer);
+                reject(err);
+            });
+        });
+
+        const combined = stdout + stderr;
+        const finalState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.ok(
+            combined.includes('Received SIGTERM'),
+            `Expected shutdown log in output, got: ${combined.slice(0, 1000)}`
+        );
+        assert.equal(finalState.iteration, 7, 'shutdown must promote the newer orphan tmp before deactivation');
+        assert.equal(finalState.current_ticket, 'T-RECOVERED', 'shutdown must preserve the recovered session payload');
+        assert.equal(finalState.active, false, 'shutdown must deactivate the session');
+        assert.equal(fs.existsSync(orphanTmpPath), false, 'orphan tmp should be consumed during shutdown recovery');
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
