@@ -752,8 +752,7 @@ export function updateState(key, value, sessionDir) {
 /** Infers monitor mode from state.json's command_template. Defaults to 'pickle'. */
 export function inferMonitorMode(sessionDir) {
     try {
-        const raw = fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8');
-        const state = JSON.parse(raw);
+        const state = new StateManager().read(path.join(sessionDir, 'state.json'));
         const tpl = (state.command_template || '').toLowerCase();
         if (tpl === 'meeseeks.md')
             return 'meeseeks';

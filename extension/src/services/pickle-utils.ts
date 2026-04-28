@@ -830,8 +830,7 @@ export interface EnsureMonitorWindowOptions {
 /** Infers monitor mode from state.json's command_template. Defaults to 'pickle'. */
 export function inferMonitorMode(sessionDir: string): MonitorMode {
   try {
-    const raw = fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8');
-    const state = JSON.parse(raw) as { command_template?: string };
+    const state = new StateManager().read(path.join(sessionDir, 'state.json')) as { command_template?: string };
     const tpl = (state.command_template || '').toLowerCase();
     if (tpl === 'meeseeks.md') return 'meeseeks';
     if (tpl === 'council-of-ricks.md') return 'council';

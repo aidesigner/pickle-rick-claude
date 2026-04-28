@@ -312,3 +312,24 @@ test('inferMonitorMode: maps command_template values', () => {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
 });
+
+test('inferMonitorMode: recovers orphan tmp state before reading command_template', () => {
+    const tmpRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mode-')));
+    try {
+        const statePath = path.join(tmpRoot, 'state.json');
+        fs.writeFileSync(
+            statePath,
+            JSON.stringify({ command_template: 'pickle.md', iteration: 1, schema_version: 1 }),
+        );
+        fs.writeFileSync(
+            `${statePath}.tmp.99999999`,
+            JSON.stringify({ command_template: 'meeseeks.md', iteration: 2, schema_version: 1 }),
+        );
+
+        assert.equal(inferMonitorMode(tmpRoot), 'meeseeks');
+        const promoted = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(promoted.command_template, 'meeseeks.md');
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
