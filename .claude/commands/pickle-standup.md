@@ -1,62 +1,88 @@
-Show a formatted standup summary from Pickle Rick activity logs.
+Show a Linear-keyed standup from Pickle Rick activity + Linear MCP cross-reference.
 
 Persona active via CLAUDE.md. **SPEAK BEFORE ACTING**.
 
 ## Instructions
 
-### Step 1: Run the standup helper
+### Step 1: Run the activity helper
 
 ```bash
 node ~/.claude/pickle-rick/extension/bin/standup.js $ARGUMENTS
 ```
 
-If no arguments provided, defaults to `--days 1` (yesterday's activity).
+If no arguments provided, defaults to `--days 1` (yesterday's activity). Save the output mentally — the user does NOT see it; you must surface findings yourself.
 
-### Step 2: Format as Slack standup
+### Step 2: Pull Linear ground truth (parallel with Step 3)
 
-**CRITICAL**: The raw tool output is NOT visible to the user. You MUST print the results as text in your response.
-
-Format the output as a Slack-ready standup post:
+The Linear team is `Loanlight-eng` (prefix `LOA-`). Use the Linear MCP — do NOT regex commits as your primary source.
 
 ```
-Gregory Dickson [8:14 AM] *<date or date range>*
-**Y:**
-- **[project-name]** Concise summary of accomplishment
-- **[project-name]** Another item
-...
+mcp__plugin_linear_linear__list_issues
+  assignee: "me"
+  updatedAt: "-P{N+1}D"   // N = the --days value, +1 day of slack
+  orderBy: "updatedAt"
+  limit: 50
+```
 
-**T:**
-- **[project-name]** What's planned next
+For each returned issue, capture: `identifier` (`LOA-NNN`), `title`, `state.name`, `completedAt`, `gitBranchName`, `updatedAt`.
+
+### Step 3: Pull merged PRs (parallel with Step 2)
+
+```bash
+gh pr list --author "@me" --state merged --search "merged:>=$(date -v-{N}d +%Y-%m-%d)" --json number,title,headRefName,mergedAt --limit 30
+```
+
+(Run this in each loanlight repo directory the helper output references — typically `loanlight-api`, `loanlight-integrations`, `loanlight-app`. Skip `pickle-rick-claude` for the standup proper; its activity is internal churn.)
+
+### Step 4: Join — Linear-first algorithm
+
+For each Linear issue from Step 2, find its activity in priority order:
+1. **Branch match**: any commit/session in the helper output with `branch === issue.gitBranchName` (strongest)
+2. **PR title/headRef match**: any merged PR whose title or `headRefName` contains `issue.identifier`
+3. **Commit-subject match**: any commit subject containing `issue.identifier`
+
+A ticket with at least one match → goes in **Y:**. A ticket with no match but with `state in (Todo, In Progress)` → goes in **T:**.
+
+Anything in helper output that doesn't map to a Linear ticket → drop, unless the user asked for raw output.
+
+### Step 5: Format
+
+Match the user's preferred style exactly. Plain text, no markdown headers, no project tags, no timestamp line:
+
+```
+Y:
+ LOA-### — One terse sentence describing the user-visible outcome.
+ LOA-### — One terse sentence.
+
+T:
+ LOA-### — Brief scope note in plain prose.
+ LOA-### — Brief scope note (parenthetical only when useful, e.g. "infra").
 ```
 
 **Rules:**
-1. Every bullet gets a **[project-tag]** prefix (e.g. `[attractor]`, `[loanlight-api]`, `[Pickle Rick]`)
-2. Consolidate related commits/activities into single human-readable bullets — don't list every commit or session ID
-3. Keep it concise like a real Slack standup — no raw timestamps, session IDs, or commit hashes
-4. Multi-day standups get combined into one post with a date range
-5. **Y:** = what was accomplished, **T:** = what's planned next (infer from trajectory of recent work)
-6. If the user asks for the full/raw output, print the complete standup verbatim instead
-7. `## Teammate PRs merged` from the helper is informational only — NEVER attribute those commits to the user in **Y:** bullets. If worth mentioning, append a single footer line after **T:** like `Team shipped: <brief one-liner each, with author name>`. Default is to omit unless the user asks.
-8. **Translate jargon before writing Y:**. For each of the user's own commits with a PR ref (`(#\d+)` suffix), if the subject matches the jargon heuristic, run `gh pr view <N> --json title,body` and rewrite in user-impact language (what changed for a user / admin / operator — not what code or internal component was touched). One line per PR. Jargon heuristic (any of): title matches `/szechuan|anatomy-park|anatomy park|csplit|SSE|DB-backed|dry-run|trap door|microverse|plumbus|meeseeks|pickle|morty|council of ricks|szechuan-sauce/i`; title shorter than 25 chars; title is a bare kebab-case branch slug with no prose.
+1. Lead each line with the Linear ticket ID. Em-dash separator preferred (` — `), but hyphen or no separator are both acceptable.
+2. One short sentence per ticket. User-impact language (what changed for a user / admin / operator), not internal component names.
+3. NO `**[project-tag]**` prefix. NO bold. NO timestamp header (`Gregory Dickson [8:14 AM]`). NO date range header.
+4. Skip internal Pickle Rick churn (anatomy-park trap doors, szechuan decompositions, gate plumbing, microverse internals) — these don't belong in the team standup. They surface only if the user explicitly asks for `--raw` or "full output".
+5. **Y:** = tickets with shipped activity in the window (commits/PRs/sessions matched). Use the Linear `state` to disambiguate done vs. in-flight.
+6. **T:** = concrete next tickets (Todo / In Progress, assigned to user, recently updated). 3-6 items max — pick the ones most likely to be worked next.
+7. Drift signal: if a ticket's code clearly shipped but the Linear status is still Todo/In Progress, mention it in the Y: line ("LOA-656 — UI Unit Details + Income Approach cards shipped (Linear still Todo)") so the user can update Linear.
+8. **Translate jargon before writing.** If a PR title is jargon (matches `/szechuan|anatomy-park|trap door|microverse|plumbus|meeseeks|pickle|morty|council of ricks/i`, is shorter than 25 chars, or is a bare kebab-slug), run `gh pr view <N> --json title,body` and rewrite in user-impact language.
+9. Teammate PRs (`## Teammate PRs merged` from the helper) are informational only. Never attribute to the user. Default: omit. If notable, append one footer line after **T:**: `Team shipped: <one-liner each, with author>`.
+10. If the user asks for raw / full output, print the helper output verbatim instead of this format.
 
-**Example:**
+### Example
 
 ```
-Gregory Dickson [8:14 AM] *Mar 14–16*
-**Y:**
-- **[document-ocr-prototypes]** New project to benchmark OCR across approaches. Docling appraisal extraction prototype: microverse convergence loop hit 100% extraction accuracy (96.8% → 100%) across 12 iterations — spatial proximity heuristics, checkbox detection, field defaults
-- **[Pickle Rick]** pickle-dot v1.15.0 + v1.16.0: lint/typecheck/conformance gates, multi-provider model routing, "Reviews Are Dead" patterns (spec-first TDD, adversarial red team, competing impls), review convergence ratchet, retry target scoping fix
-- **[attractor]** ESLint flat config with TS strict + import boundaries, fixed 49 errors
-- **[attractor]** Stream-json live activity monitor, pipeline queue + orphan cleanup, non-root Docker, PM Guide
-- **[Pickle Rick]** Fixed microverse infinite loop, Mastra dynamic→static imports, spawn-morty tests
+Y:
+ LOA-618 — Appraisal Comparison hardened and rebased, PR reviewed/fixed/merged.
+ LOA-697 — Fixed appraisal images.
+ LOA-656 — 1025 Appraisal Extraction started.
 
-**T:**
-- App.loanlight.com integration, support any issues coming from John.
-- **[attractor]** Test and fix cycles
-- SOC audit prep
-- develop ideas for devops automation with John (possibly tomorrow)
-- Support new UI development approaches for Encompass UI.
-- Review Bank Statement Analyzer (today or tomorrow)
+T:
+ LOA-692 — Migrate CLAUDE.md → AGENTS.md, point Claude at the agents files (infra)
+ LOA-701 — Reducto bounding boxes to show field locations in doc viewer
+ LOA-708 — Max Rules 100 on new client onboarding issue.
 ```
 
 ### Common usage
@@ -64,3 +90,4 @@ Gregory Dickson [8:14 AM] *Mar 14–16*
 - `/pickle-standup --days 0` — today's activity
 - `/pickle-standup --days 3` — last 3 days
 - `/pickle-standup --since 2026-02-25` — everything since Feb 25
+- `/pickle-standup --raw` — bypass Linear cross-reference, print helper output verbatim
