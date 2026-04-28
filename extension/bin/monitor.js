@@ -4,6 +4,7 @@ import * as path from 'path';
 import { collectTickets, statusSymbol, formatTime, getWidth, getHeight, Style, sleep, MatrixStyle, matrixSeparator, latestIterationLog, safeErrorMessage } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { readMicroverseState } from '../services/microverse-state.js';
+import { readCircuitBreakerState } from '../services/circuit-breaker.js';
 const sm = new StateManager();
 /**
  * Extracts a short readable summary from a stream-json log line.
@@ -305,8 +306,9 @@ function render(sessionDir) {
         ['Active', state.active === true ? `${MX.BRIGHT}▣ ONLINE${MX.R}` : `${MX.ERR}▢ OFFLINE${MX.R}`],
     ];
     try {
-        const cbRaw = fs.readFileSync(path.join(sessionDir, 'circuit_breaker.json'), 'utf-8');
-        const cb = JSON.parse(cbRaw);
+        const cb = readCircuitBreakerState(sessionDir);
+        if (!cb)
+            throw new Error('circuit breaker state unavailable');
         if (cb.state === 'CLOSED') {
             fields.push(['Circuit', `${MX.GREEN}CLOSED${MX.R}`]);
         }

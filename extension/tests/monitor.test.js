@@ -581,3 +581,62 @@ test('monitor CLI promotes dead writer microverse tmp before rendering trend', (
         fs.rmSync(dir, { recursive: true, force: true });
     }
 });
+
+test('monitor CLI promotes dead writer circuit breaker tmp before rendering state', () => {
+    const dir = tmpDir();
+    try {
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({
+            active: false,
+            iteration: 4,
+            step: 'review',
+            original_prompt: 'render circuit breaker state',
+            working_dir: '/tmp/recovered-state',
+            pid: 999999,
+        }));
+
+        fs.writeFileSync(path.join(dir, 'circuit_breaker.json'), JSON.stringify({
+            state: 'CLOSED',
+            last_change: new Date().toISOString(),
+            consecutive_no_progress: 0,
+            consecutive_same_error: 0,
+            last_error_signature: null,
+            last_known_head: '',
+            last_known_step: null,
+            last_known_ticket: null,
+            last_progress_iteration: 3,
+            total_opens: 0,
+            reason: '',
+            opened_at: null,
+            history: [],
+        }, null, 2));
+        const deadWriterPid = 987654321;
+        fs.writeFileSync(path.join(dir, `circuit_breaker.json.tmp.${deadWriterPid}`), JSON.stringify({
+            state: 'OPEN',
+            last_change: new Date().toISOString(),
+            consecutive_no_progress: 5,
+            consecutive_same_error: 0,
+            last_error_signature: null,
+            last_known_head: '',
+            last_known_step: 'review',
+            last_known_ticket: null,
+            last_progress_iteration: 3,
+            total_opens: 1,
+            reason: 'No progress in 5 iterations',
+            opened_at: new Date().toISOString(),
+            history: [],
+        }, null, 2));
+        const future = new Date(Date.now() + 1000);
+        fs.utimesSync(path.join(dir, `circuit_breaker.json.tmp.${deadWriterPid}`), future, future);
+
+        const result = run([dir]);
+        assert.equal(result.status, 0, `expected clean exit, got status=${result.status}, stderr=${result.stderr}`);
+        assert.match(result.stdout, /Circuit:/, `expected circuit field in monitor output, got: ${result.stdout}`);
+        assert.match(result.stdout, /OPEN \(No progress in 5 iterations\)/, `expected recovered OPEN state, got: ${result.stdout}`);
+        assert.equal(fs.existsSync(path.join(dir, `circuit_breaker.json.tmp.${deadWriterPid}`)), false);
+        const persisted = JSON.parse(fs.readFileSync(path.join(dir, 'circuit_breaker.json'), 'utf-8'));
+        assert.equal(persisted.state, 'OPEN');
+        assert.equal(persisted.reason, 'No progress in 5 iterations');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});

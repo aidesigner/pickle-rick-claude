@@ -4,6 +4,7 @@ import * as path from 'path';
 import { collectTickets, statusSymbol, formatTime, getWidth, getHeight, Style, sleep, MatrixStyle, matrixSeparator, latestIterationLog, safeErrorMessage, TicketInfo } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { readMicroverseState } from '../services/microverse-state.js';
+import { readCircuitBreakerState } from '../services/circuit-breaker.js';
 import { State, MicroverseSessionState } from '../types/index.js';
 
 type PipelineLifecycleStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'unknown' | 'none';
@@ -332,8 +333,8 @@ function render(sessionDir: string): boolean {
   ];
 
   try {
-    const cbRaw = fs.readFileSync(path.join(sessionDir, 'circuit_breaker.json'), 'utf-8');
-    const cb = JSON.parse(cbRaw) as { state?: string; reason?: string };
+    const cb = readCircuitBreakerState(sessionDir);
+    if (!cb) throw new Error('circuit breaker state unavailable');
     if (cb.state === 'CLOSED') {
       fields.push(['Circuit', `${MX.GREEN}CLOSED${MX.R}`]);
     } else if (cb.state === 'HALF_OPEN') {
