@@ -115,6 +115,60 @@ async function runRemediatorForIteration(gateResult, sessionDir, workingDir, bac
     }
 }
 const PER_ITERATION_GATE_CHECKS = ['typecheck', 'lint', 'tests'];
+function resolvePerIterationGateDeps(opts) {
+    return {
+        runGateFn: opts._deps?.runGateFn ?? runGate,
+        runRemediatorFn: opts._deps?.runRemediatorFn ??
+            ((gr, sd) => runRemediatorForIteration(gr, sd, opts.workingDir, opts.backend, opts.remediatorTimeoutS)),
+        writeMicroverseStateFn: opts._deps?.writeMicroverseStateFn ?? writeMicroverseState,
+        logActivityFn: opts._deps?.logActivityFn ?? logActivity,
+        getHeadShaFn: opts._deps?.getHeadShaFn ?? getHeadSha,
+    };
+}
+async function runChangedPerIterationGate(opts) {
+    if (opts.gateMode === 'strict') {
+        opts.log('[anatomy-park] per-iteration gate baseline missing after commit — ' +
+            'falling back to strict mode for this iteration');
+    }
+    const result = await opts.deps.runGateFn({
+        workingDir: opts.workingDir,
+        mode: opts.gateMode,
+        scope: 'changed',
+        since: opts.preIterSha,
+        baselinePath: opts.gateMode === 'baseline' ? opts.baselinePath : undefined,
+        allowedPaths: opts.currentMv.allowed_paths,
+        checks: [...PER_ITERATION_GATE_CHECKS],
+    });
+    if (result.status !== 'red' || result.failures.length === 0) {
+        return opts.currentMv;
+    }
+    const remediationOutcome = await opts.deps.runRemediatorFn(result, opts.sessionDir);
+    if (remediationOutcome.success) {
+        return opts.currentMv;
+    }
+    const nextMv = {
+        ...opts.currentMv,
+        iteration_regressions: (opts.currentMv.iteration_regressions ?? 0) + 1,
+    };
+    opts.deps.writeMicroverseStateFn(opts.sessionDir, nextMv);
+    opts.deps.logActivityFn({
+        event: 'iteration_left_regression',
+        source: 'pickle',
+        gate_payload: { failures_in: result.failures.length },
+    });
+    return nextMv;
+}
+function maybeEmitGateRegressionWarning(opts) {
+    if ((opts.currentMv.iteration_regressions ?? 0) <= opts.regressionWarningThreshold ||
+        opts.currentMv.gate_regression_threshold_warning_emitted) {
+        return opts.currentMv;
+    }
+    opts.log(`[anatomy-park] ${opts.regressionWarningThreshold}+ iterations have left toolchain regressions — review the audit trail before shipping`);
+    const nextMv = { ...opts.currentMv, gate_regression_threshold_warning_emitted: true };
+    opts.deps.writeMicroverseStateFn(opts.sessionDir, nextMv);
+    opts.deps.logActivityFn({ event: 'gate_regression_threshold_warning', source: 'pickle' });
+    return nextMv;
+}
 export async function ensurePerIterationGateBaseline(opts) {
     const { currentMv, workingDir, sessionDir, enabledFiles, log, currentIteration, baselineMaxAgeIterations, baselineMaxAgeSeconds, _deps, } = opts;
     if (!enabledFiles.includes(currentMv.convergence_file ?? ''))
@@ -159,60 +213,35 @@ export async function ensurePerIterationGateBaseline(opts) {
 export async function runPerIterationGateHook(opts) {
     const { preIterSha, workingDir, sessionDir, enabledFiles, regressionWarningThreshold, backend, remediatorTimeoutS, log, _deps, } = opts;
     let currentMv = opts.currentMv;
-    const runGateFn = _deps?.runGateFn ?? runGate;
-    const runRemediatorFn = _deps?.runRemediatorFn ??
-        ((gr, sd) => runRemediatorForIteration(gr, sd, workingDir, backend, remediatorTimeoutS));
-    const writeMvStateFn = _deps?.writeMicroverseStateFn ?? writeMicroverseState;
-    const logActivityFn = _deps?.logActivityFn ?? logActivity;
-    const getHeadShaFn = _deps?.getHeadShaFn ?? getHeadSha;
+    const deps = resolvePerIterationGateDeps({ workingDir, backend, remediatorTimeoutS, _deps });
     const isEnabled = enabledFiles.includes(currentMv.convergence_file ?? '');
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    const headSha = getHeadShaFn(workingDir);
+    const headSha = deps.getHeadShaFn(workingDir);
     const commitsHappened = preIterSha !== headSha;
     const baselinePath = path.join(sessionDir, 'gate', 'baseline.json');
     const gateMode = fs.existsSync(baselinePath) ? 'baseline' : 'strict';
     if (isEnabled && commitsHappened) {
-        if (gateMode === 'strict') {
-            log('[anatomy-park] per-iteration gate baseline missing after commit — ' +
-                'falling back to strict mode for this iteration');
-        }
-        const result = await runGateFn({
+        currentMv = await runChangedPerIterationGate({
+            currentMv,
+            preIterSha,
             workingDir,
-            mode: gateMode,
-            scope: 'changed',
-            since: preIterSha,
-            baselinePath: gateMode === 'baseline' ? baselinePath : undefined,
-            allowedPaths: currentMv.allowed_paths,
-            checks: [...PER_ITERATION_GATE_CHECKS],
+            sessionDir,
+            baselinePath,
+            gateMode,
+            log,
+            deps,
         });
-        if (result.status === 'red' && result.failures.length > 0) {
-            const remediationOutcome = await runRemediatorFn(result, sessionDir);
-            if (!remediationOutcome.success) {
-                currentMv = {
-                    ...currentMv,
-                    iteration_regressions: (currentMv.iteration_regressions ?? 0) + 1,
-                };
-                writeMvStateFn(sessionDir, currentMv);
-                logActivityFn({
-                    event: 'iteration_left_regression',
-                    source: 'pickle',
-                    gate_payload: { failures_in: result.failures.length },
-                });
-            }
-        }
     }
     else if (isEnabled && !commitsHappened) {
-        logActivityFn({ event: 'gate_skipped', source: 'pickle', gate_payload: { reason: 'no_commits' } });
+        deps.logActivityFn({ event: 'gate_skipped', source: 'pickle', gate_payload: { reason: 'no_commits' } });
     }
-    // One-time threshold warning — fires only when regressions first exceed the limit
-    if ((currentMv.iteration_regressions ?? 0) > regressionWarningThreshold &&
-        !currentMv.gate_regression_threshold_warning_emitted) {
-        log(`[anatomy-park] ${regressionWarningThreshold}+ iterations have left toolchain regressions — review the audit trail before shipping`);
-        currentMv = { ...currentMv, gate_regression_threshold_warning_emitted: true };
-        writeMvStateFn(sessionDir, currentMv);
-        logActivityFn({ event: 'gate_regression_threshold_warning', source: 'pickle' });
-    }
-    return currentMv;
+    return maybeEmitGateRegressionWarning({
+        currentMv,
+        regressionWarningThreshold,
+        sessionDir,
+        log,
+        deps,
+    });
 }
 export async function handleWorkerManagedIteration(opts) {
     const { preIterSha, workingDir, sessionDir, enabledFiles, regressionWarningThreshold, backend, remediatorTimeoutS, log, iteration, _deps, } = opts;
@@ -1092,19 +1121,15 @@ export async function executeMainLoop(state, ctx) {
         elapsedSeconds: Math.floor((Date.now() - ctx.startTime) / 1000),
     };
 }
-export async function main(sessionDir) {
-    const extensionRoot = getExtensionRoot();
-    const statePath = path.join(sessionDir, 'state.json');
+function createRunnerLogger(sessionDir) {
     const runnerLog = path.join(sessionDir, 'microverse-runner.log');
-    const log = (msg) => {
+    return (msg) => {
         const line = `[${new Date().toISOString()}] ${msg}\n`;
         fs.appendFileSync(runnerLog, line);
         process.stderr.write(line);
     };
-    log('microverse-runner started');
-    // Auto-spawn the 4-pane monitor window. Matches mux-runner/pipeline-runner —
-    // anatomy-park / szechuan-sauce / plumbus / pickle-microverse skill prompts
-    // no longer need a manual tmux-monitor.sh step.
+}
+function ensureMicroverseMonitor(sessionDir, extensionRoot, log) {
     try {
         const result = ensureMonitorWindow({ sessionDir, extensionRoot, log });
         log(`ensureMonitorWindow: ${result.status}${result.reason ? ` (${result.reason})` : ''}`);
@@ -1112,16 +1137,43 @@ export async function main(sessionDir) {
     catch (err) {
         log(`ensureMonitorWindow: threw (ignored): ${safeErrorMessage(err)}`);
     }
-    const enableFailureClassification = loadFailureClassificationFlag(extensionRoot);
-    const cgSettings = loadConvergenceGateSettings(extensionRoot);
-    let state;
+}
+function readInitialRunnerState(statePath) {
     try {
-        state = readRunnerState(statePath);
+        return readRunnerState(statePath);
     }
     catch (err) {
         const msg = safeErrorMessage(err);
         throw new Error(`Cannot read state.json: ${msg}`);
     }
+}
+function buildRunContext(opts) {
+    return {
+        sessionDir: opts.sessionDir,
+        extensionRoot: opts.extensionRoot,
+        statePath: opts.statePath,
+        workingDir: opts.workingDir,
+        startTime: opts.startTime,
+        initialIteration: 0,
+        enableFailureClassification: opts.enableFailureClassification,
+        cgSettings: opts.cgSettings,
+        rateLimitWaitMinutes: opts.rateLimitWaitMinutes,
+        maxRateLimitRetries: opts.maxRateLimitRetries,
+        log: opts.log,
+        currentRunnerState: opts.state,
+        iteration: 0,
+        consecutiveRateLimits: 0,
+    };
+}
+function initializeMicroverseRun(sessionDir) {
+    const extensionRoot = getExtensionRoot();
+    const statePath = path.join(sessionDir, 'state.json');
+    const log = createRunnerLogger(sessionDir);
+    log('microverse-runner started');
+    ensureMicroverseMonitor(sessionDir, extensionRoot, log);
+    const enableFailureClassification = loadFailureClassificationFlag(extensionRoot);
+    const cgSettings = loadConvergenceGateSettings(extensionRoot);
+    const state = readInitialRunnerState(statePath);
     const mvState = readMicroverseState(sessionDir);
     if (!mvState) {
         throw new Error('microverse.json not found — run setup first');
@@ -1134,22 +1186,22 @@ export async function main(sessionDir) {
     const { waitMinutes: rateLimitWaitMinutes, maxRetries: maxRateLimitRetries } = loadRateLimitSettings(extensionRoot);
     const startTime = Date.now();
     const currentMv = structuredClone(mvState);
-    const ctx = {
+    const ctx = buildRunContext({
         sessionDir,
         extensionRoot,
         statePath,
         workingDir,
         startTime,
-        initialIteration: 0,
         enableFailureClassification,
         cgSettings,
         rateLimitWaitMinutes,
         maxRateLimitRetries,
         log,
-        currentRunnerState: state,
-        iteration: 0,
-        consecutiveRateLimits: 0,
-    };
+        state,
+    });
+    return { currentMv, ctx, log };
+}
+async function runMicroversePhases(currentMv, ctx, log) {
     let outcome;
     try {
         if (currentMv.status === 'gap_analysis')
@@ -1162,18 +1214,21 @@ export async function main(sessionDir) {
             state: currentMv,
             exitReason: 'error',
             iterations: ctx.iteration,
-            elapsedSeconds: Math.floor((Date.now() - startTime) / 1000),
+            elapsedSeconds: Math.floor((Date.now() - ctx.startTime) / 1000),
         };
     }
+    return outcome;
+}
+function finalizeMicroverseRun(sessionDir, ctx, outcome, log) {
     outcome.state.status = outcome.exitReason === 'converged' ? 'converged' : 'stopped';
     outcome.state.exit_reason = outcome.exitReason;
     writeMicroverseState(sessionDir, outcome.state);
     try {
-        sm.update(statePath, s => { s.active = false; });
+        sm.update(ctx.statePath, s => { s.active = false; });
     }
     catch (err) {
         log(`sm.update failed at finalize path, falling back to safeDeactivate: ${safeErrorMessage(err)}`);
-        deactivateRunnerState(statePath);
+        deactivateRunnerState(ctx.statePath);
     }
     writeFinalReport(sessionDir, outcome.state, outcome.exitReason, outcome.iterations, outcome.elapsedSeconds);
     logActivity({
@@ -1191,8 +1246,16 @@ export async function main(sessionDir) {
         BestScore: panelBestScore,
     }, 'GREEN', '🔬');
     log(`microverse-runner finished. ${outcome.iterations} iterations, ${formatTime(outcome.elapsedSeconds)}, exit: ${outcome.exitReason}`);
-    const exitCode = (outcome.exitReason === 'converged' || outcome.exitReason === 'stopped' || outcome.exitReason === 'limit_reached' || outcome.exitReason === 'approach_exhaustion' || outcome.exitReason === 'no_progress') ? 0 : 1;
-    process.exit(exitCode);
+}
+function microverseExitCode(exitReason) {
+    const successfulReasons = ['converged', 'stopped', 'limit_reached', 'approach_exhaustion', 'no_progress'];
+    return successfulReasons.includes(exitReason) ? 0 : 1;
+}
+export async function main(sessionDir) {
+    const { currentMv, ctx, log } = initializeMicroverseRun(sessionDir);
+    const outcome = await runMicroversePhases(currentMv, ctx, log);
+    finalizeMicroverseRun(sessionDir, ctx, outcome, log);
+    process.exit(microverseExitCode(outcome.exitReason));
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'microverse-runner.js') {
     const sessionDir = process.argv[2];
