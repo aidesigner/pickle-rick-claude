@@ -8,7 +8,7 @@ import * as path from 'node:path';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const { ensurePerIterationGateBaseline, runPerIterationGateHook } = await import(
+const { ensurePerIterationGateBaseline, runPerIterationGateHook, handleWorkerManagedIteration } = await import(
   path.resolve(__dirname, '../../bin/microverse-runner.js')
 );
 
@@ -463,5 +463,56 @@ test('stale baseline refresh: matching stale failure is discarded before the nex
   assert.ok(
     events.some((event) => event.event === 'iteration_left_regression' && event.gate_payload?.failures_in === 1),
     `expected iteration_left_regression after stale baseline refresh, got: ${JSON.stringify(events)}`,
+  );
+});
+
+test('worker convergence: converged=true still runs the per-iteration gate before exit', async () => {
+  const workingDir = makeGitRepo('ap-gate-worker-converged-repo-');
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-gate-worker-converged-session-'));
+  writeGateFixtureRepo(workingDir);
+  commitAll(workingDir, 'initial clean state');
+
+  await ensurePerIterationGateBaseline({
+    currentMv: makeMv(),
+    workingDir,
+    sessionDir,
+    enabledFiles: ['anatomy-park.json'],
+    log: () => {},
+  });
+
+  const preIterSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: workingDir, encoding: 'utf-8' }).trim();
+  fs.writeFileSync(path.join(sessionDir, 'anatomy-park.json'), JSON.stringify({ converged: true, reason: 'clean passes done' }));
+  fs.writeFileSync(path.join(workingDir, 'trigger-lint.txt'), 'trigger\n');
+  commitAll(workingDir, 'introduce final-iteration lint regression');
+
+  const events = [];
+  const logs = [];
+  let writtenMv;
+  const result = await handleWorkerManagedIteration({
+    ...BASE_OPTS,
+    currentMv: makeMv(),
+    preIterSha,
+    workingDir,
+    sessionDir,
+    iteration: 7,
+    log: (msg) => logs.push(msg),
+    _deps: {
+      runRemediatorFn: async () => ({ success: false }),
+      writeMicroverseStateFn: (_, next) => { writtenMv = next; },
+      logActivityFn: (event) => events.push(event),
+    },
+  });
+
+  assert.equal(result.converged, true, 'worker convergence signal must still be honored');
+  assert.equal(result.reason, 'clean passes done');
+  assert.equal(result.currentMv.iteration_regressions, 1, 'final converged iteration must still record the regression');
+  assert.equal(writtenMv.iteration_regressions, 1, 'regression state must persist before exit');
+  assert.ok(
+    events.some((event) => event.event === 'iteration_left_regression' && event.gate_payload?.failures_in === 1),
+    `expected iteration_left_regression before converged exit, got: ${JSON.stringify(events)}`,
+  );
+  assert.ok(
+    logs.some((msg) => msg.includes('running per-iteration gate before exit')),
+    `expected worker convergence gate log, got: ${JSON.stringify(logs)}`,
   );
 });

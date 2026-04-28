@@ -214,6 +214,40 @@ export async function runPerIterationGateHook(opts) {
     }
     return currentMv;
 }
+export async function handleWorkerManagedIteration(opts) {
+    const { preIterSha, workingDir, sessionDir, enabledFiles, regressionWarningThreshold, backend, remediatorTimeoutS, log, iteration, _deps, } = opts;
+    let currentMv = opts.currentMv;
+    let converged = false;
+    let reason = 'no reason';
+    const cfPath = path.join(sessionDir, currentMv.convergence_file);
+    try {
+        const raw = JSON.parse(await fs.promises.readFile(cfPath, 'utf-8'));
+        if (raw.converged === true) {
+            converged = true;
+            reason = typeof raw.reason === 'string' && raw.reason.trim() ? raw.reason : 'no reason';
+            log(`Iteration ${iteration} — worker convergence signaled; running per-iteration gate before exit`);
+        }
+        else {
+            log(`Iteration ${iteration} — worker convergence: not yet`);
+        }
+    }
+    catch {
+        log(`Iteration ${iteration} — convergence file not found/unparseable — continuing`);
+    }
+    currentMv = await runPerIterationGateHook({
+        currentMv,
+        preIterSha,
+        workingDir,
+        sessionDir,
+        enabledFiles,
+        regressionWarningThreshold,
+        backend,
+        remediatorTimeoutS,
+        log,
+        _deps,
+    });
+    return { currentMv, converged, reason };
+}
 function normalizeExcludePrefixes(excludePrefixes) {
     return excludePrefixes
         .map((prefix) => prefix.replace(/^\.?\/+/, '').replace(/\/+$/, ''))
@@ -929,21 +963,7 @@ export async function main(sessionDir) {
         // When convergence_mode === 'worker', the worker writes a convergence file.
         // Skip ALL metric logic (measureMetric, recordStall, isConverged).
         if (currentMv.convergence_mode === 'worker') {
-            const cfPath = path.join(sessionDir, currentMv.convergence_file);
-            try {
-                const raw = JSON.parse(await fs.promises.readFile(cfPath, 'utf-8'));
-                if (raw.converged === true) {
-                    log(`Converged (worker-managed: ${raw.reason ?? 'no reason'})`);
-                    exitReason = 'converged';
-                    break;
-                }
-                log(`Iteration ${iteration} — worker convergence: not yet`);
-            }
-            catch {
-                log(`Iteration ${iteration} — convergence file not found/unparseable — continuing`);
-            }
-            // Per-iteration baseline gate — fires before sleep/continue
-            currentMv = await runPerIterationGateHook({
+            const workerResult = await handleWorkerManagedIteration({
                 currentMv,
                 preIterSha,
                 workingDir,
@@ -953,7 +973,14 @@ export async function main(sessionDir) {
                 backend: resolveBackend(state),
                 remediatorTimeoutS: cgSettings.remediator_timeout_s,
                 log,
+                iteration,
             });
+            currentMv = workerResult.currentMv;
+            if (workerResult.converged) {
+                log(`Converged (worker-managed: ${workerResult.reason})`);
+                exitReason = 'converged';
+                break;
+            }
             await sleep(1000);
             continue;
         }
