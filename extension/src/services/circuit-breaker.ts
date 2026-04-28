@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { runCmd, writeStateFile, safeErrorMessage } from './pickle-utils.js';
+import { StateManager } from './state-manager.js';
 
 // ---------------------------------------------------------------------------
 // Feature-local types
@@ -57,6 +58,7 @@ export interface CircuitTransition {
 // ---------------------------------------------------------------------------
 
 let warned = false;
+const sm = new StateManager();
 
 // ---------------------------------------------------------------------------
 // Functions
@@ -160,8 +162,7 @@ export function initCircuitBreaker(
     // compared to state.json iteration, re-create fresh
     const statePath = path.join(sessionDir, 'state.json');
     try {
-      const stateRaw = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-      const stateIter = Number(stateRaw.iteration);
+      const stateIter = Number(sm.read(statePath).iteration);
       const cbLastProgress = Number(raw.last_progress_iteration);
       if (Number.isFinite(stateIter) && Number.isFinite(cbLastProgress) && cbLastProgress > stateIter + 1) {
         return freshState();

@@ -182,6 +182,34 @@ test('initCircuitBreaker: detects stale state and returns fresh', () => {
     }
 });
 
+test('initCircuitBreaker: uses recovered orphan tmp state before staleness reset', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const cbState = makeFreshState({
+            state: 'OPEN',
+            consecutive_no_progress: 4,
+            last_progress_iteration: 7,
+            reason: 'No progress in 4 iterations',
+        });
+        const statePath = path.join(tmpDir, 'state.json');
+        fs.writeFileSync(path.join(tmpDir, 'circuit_breaker.json'), JSON.stringify(cbState));
+        fs.writeFileSync(statePath, JSON.stringify({ iteration: 3, active: true, pid: 99999999 }));
+        fs.writeFileSync(`${statePath}.tmp.99999999`, JSON.stringify({ iteration: 8, active: true, pid: 99999999 }));
+
+        const state = initCircuitBreaker(tmpDir, makeSettings());
+
+        assert.equal(state.state, 'OPEN', 'recovered higher-iteration state must preserve breaker state');
+        assert.equal(state.last_progress_iteration, 7, 'recovered state should prevent false staleness reset');
+        assert.equal(
+            JSON.parse(fs.readFileSync(statePath, 'utf-8')).iteration,
+            8,
+            'StateManager.read should promote the higher-iteration orphan tmp before comparison'
+        );
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 // ---------------------------------------------------------------------------
 // canExecute
 // ---------------------------------------------------------------------------
