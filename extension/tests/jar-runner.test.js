@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { buildJarNotification, discoverMarinatingTasks, loadJarTaskTimeout } from '../bin/jar-runner.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const JAR_RUNNER_BIN = path.resolve(__dirname, '../bin/jar-runner.js');
@@ -84,6 +85,58 @@ test('jar-runner: outputs "No marinating tasks" when jar/ has non-marinating tas
             `Expected "Jar Complete" signal in stdout, got: ${result.stdout}`
         );
     } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('discoverMarinatingTasks: returns only marinating tasks in stable day/task order', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const jarRoot = path.join(tmpRoot, 'jar');
+        fs.mkdirSync(path.join(jarRoot, '2026-01-02', 'task-b'), { recursive: true });
+        fs.mkdirSync(path.join(jarRoot, '2026-01-01', 'task-c'), { recursive: true });
+        fs.mkdirSync(path.join(jarRoot, '2026-01-01', 'task-a'), { recursive: true });
+
+        fs.writeFileSync(path.join(jarRoot, '2026-01-02', 'task-b', 'meta.json'), JSON.stringify({
+            status: 'marinating',
+            repo_path: '/tmp/repo-b',
+        }));
+        fs.writeFileSync(path.join(jarRoot, '2026-01-01', 'task-c', 'meta.json'), JSON.stringify({
+            status: 'consumed',
+            repo_path: '/tmp/repo-c',
+        }));
+        fs.writeFileSync(path.join(jarRoot, '2026-01-01', 'task-a', 'meta.json'), JSON.stringify({
+            status: 'marinating',
+            repo_path: '/tmp/repo-a',
+        }));
+
+        const tasks = discoverMarinatingTasks(jarRoot);
+        assert.deepEqual(tasks.map(task => task.taskId), ['task-a', 'task-b']);
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('discoverMarinatingTasks: skips non-directories, missing meta, and corrupt meta files', () => {
+    const tmpRoot = makeTmpRoot();
+    const stderr = console.error;
+    console.error = () => {};
+    try {
+        const jarRoot = path.join(tmpRoot, 'jar');
+        fs.mkdirSync(path.join(jarRoot, '2026-01-03', 'good-task'), { recursive: true });
+        fs.mkdirSync(path.join(jarRoot, '2026-01-03', 'missing-meta'), { recursive: true });
+        fs.mkdirSync(path.join(jarRoot, '2026-01-03', 'bad-task'), { recursive: true });
+        fs.writeFileSync(path.join(jarRoot, 'README.md'), 'not a day directory');
+        fs.writeFileSync(path.join(jarRoot, '2026-01-03', 'good-task', 'meta.json'), JSON.stringify({
+            status: 'marinating',
+            repo_path: '/tmp/repo-good',
+        }));
+        fs.writeFileSync(path.join(jarRoot, '2026-01-03', 'bad-task', 'meta.json'), '{{{broken');
+
+        const tasks = discoverMarinatingTasks(jarRoot);
+        assert.deepEqual(tasks.map(task => task.taskId), ['good-task']);
+    } finally {
+        console.error = stderr;
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
 });
@@ -619,8 +672,6 @@ test('jar-runner: recovers a newer orphan tmp state before bootstrapping a jarre
 });
 
 // --- Notification logic (buildJarNotification) ---
-
-import { buildJarNotification, loadJarTaskTimeout } from '../bin/jar-runner.js';
 
 test('buildJarNotification: all succeeded shows "Complete"', () => {
     const n = buildJarNotification(3, 0);

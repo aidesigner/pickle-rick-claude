@@ -57,6 +57,12 @@ export interface RunTaskResult {
   backend: 'claude' | 'codex';
 }
 
+interface JarTask {
+  taskId: string;
+  metaPath: string;
+  meta: Record<string, unknown>;
+}
+
 async function runTask(sessionDir: string, repoCwd: string, extensionRoot: string): Promise<RunTaskResult> {
   const statePath = path.join(sessionDir, 'state.json');
 
@@ -191,23 +197,11 @@ async function runTask(sessionDir: string, repoCwd: string, extensionRoot: strin
   });
 }
 
-async function main() {
-  const ROOT_DIR = getExtensionRoot();
-  const DATA_DIR = getDataRoot();
-  const JAR_ROOT = path.join(DATA_DIR, 'jar');
-  const SESSIONS_ROOT = path.join(DATA_DIR, 'sessions');
+export function discoverMarinatingTasks(jarRoot: string): JarTask[] {
+  const tasks: JarTask[] = [];
 
-  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-  if (!fs.existsSync(JAR_ROOT)) {
-    console.log('🥒 Pickle Jar is empty. No tasks to run.');
-    console.log('Signal: Jar Complete');
-    return;
-  }
-
-  const tasks: { taskId: string; metaPath: string; meta: Record<string, unknown> }[] = [];
-  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-  for (const day of fs.readdirSync(JAR_ROOT).sort()) {
-    const dayPath = path.join(JAR_ROOT, day);
+  for (const day of fs.readdirSync(jarRoot).sort()) {
+    const dayPath = path.join(jarRoot, day);
     let dayIsDir: boolean;
     try {
       dayIsDir = fs.lstatSync(dayPath).isDirectory();
@@ -215,14 +209,13 @@ async function main() {
       continue;
     }
     if (!dayIsDir) continue;
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+
     for (const taskId of fs.readdirSync(dayPath).sort()) {
       const metaPath = path.join(dayPath, taskId, 'meta.json');
-      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
       if (!fs.existsSync(metaPath)) continue;
+
       let meta: Record<string, unknown>;
       try {
-        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
       } catch {
         console.error(`${Style.RED}⚠️  Skipping ${taskId}: meta.json is corrupt or unreadable${Style.RESET}`);
@@ -232,14 +225,83 @@ async function main() {
     }
   }
 
-  if (tasks.length === 0) {
-    console.log('🥒 No marinating tasks in the Jar.');
-    console.log('Signal: Jar Complete');
-    return;
+  return tasks;
+}
+
+function markTaskFailed(task: JarTask, message: string): void {
+  console.error(message);
+  task.meta.status = 'failed';
+  writeStateFile(task.metaPath, task.meta);
+}
+
+function verifyJarredPrd(task: JarTask): boolean {
+  if (typeof task.meta.prd_hash !== 'string' || task.meta.prd_hash.length === 0) {
+    return true;
   }
 
-  // Graceful shutdown: deactivate the current task's session on SIGTERM/SIGINT
-  // so it doesn't remain orphaned with active: true when the process is killed.
+  const taskDir = path.dirname(task.metaPath);
+  const rawPrdRel = typeof task.meta.prd_path === 'string' ? task.meta.prd_path : 'prd.md';
+  const prdPath = path.resolve(taskDir, rawPrdRel);
+  if (!prdPath.startsWith(taskDir + path.sep) && prdPath !== taskDir) {
+    markTaskFailed(task, `${Style.RED}⚠️  Skipping ${task.taskId}: prd_path escapes task directory${Style.RESET}`);
+    return false;
+  }
+
+  try {
+    const prdContent = fs.readFileSync(prdPath, 'utf-8');
+    const currentHash = crypto.createHash('sha256').update(prdContent).digest('hex');
+    if (currentHash === task.meta.prd_hash) return true;
+  } catch {
+    markTaskFailed(task, `${Style.RED}⚠️  Skipping ${task.taskId}: cannot read jarred PRD for integrity check${Style.RESET}`);
+    return false;
+  }
+
+  markTaskFailed(task, `${Style.RED}⚠️  Skipping ${task.taskId}: PRD integrity check failed (content modified since jarring)${Style.RESET}`);
+  return false;
+}
+
+function resolveTaskExecution(task: JarTask, sessionsRoot: string): { sessionDir: string; repoPath: string } | null {
+  const sessionDir = path.join(sessionsRoot, task.taskId);
+  if (!fs.existsSync(sessionDir)) {
+    markTaskFailed(task, `${Style.RED}⚠️  Session dir not found for ${task.taskId}${Style.RESET}`);
+    return null;
+  }
+
+  if (typeof task.meta.repo_path !== 'string') {
+    markTaskFailed(task, `${Style.RED}⚠️  Skipping ${task.taskId}: meta.repo_path is missing or not a string${Style.RESET}`);
+    return null;
+  }
+
+  if (!verifyJarredPrd(task)) {
+    return null;
+  }
+
+  return { sessionDir, repoPath: task.meta.repo_path };
+}
+
+function deactivateTaskSession(sessionDir: string): void {
+  try {
+    const taskStatePath = path.join(sessionDir, 'state.json');
+    sm.update(taskStatePath, s => { s.active = false; });
+  } catch { /* best-effort */ }
+}
+
+function countRemainingQueuedBackendTasks(
+  tasks: JarTask[],
+  currentIndex: number,
+  sessionsRoot: string,
+  backend: 'claude' | 'codex',
+): number {
+  let count = 0;
+  for (const task of tasks.slice(currentIndex + 1)) {
+    if (task.meta.status !== 'marinating') continue;
+    const taskState = readTaskState(path.join(sessionsRoot, task.taskId));
+    if (resolveBackend(taskState) === backend) count++;
+  }
+  return count;
+}
+
+function installShutdownHandlers(): void {
   const handleShutdownSignal = (signal: string) => {
     console.error(`\n${Style.YELLOW}⚠️  Received ${signal} — deactivating current task session${Style.RESET}`);
     if (activeTaskSessionDir) {
@@ -253,115 +315,88 @@ async function main() {
   process.on('SIGTERM', () => handleShutdownSignal('SIGTERM'));
   process.on('SIGINT', () => handleShutdownSignal('SIGINT'));
   process.on('SIGHUP', () => handleShutdownSignal('SIGHUP'));
+}
+
+async function processJarTask(
+  task: JarTask,
+  currentIndex: number,
+  tasks: JarTask[],
+  sessionsRoot: string,
+  extensionRoot: string,
+): Promise<{ succeededDelta: number; failedDelta: number; stop: boolean }> {
+  const execution = resolveTaskExecution(task, sessionsRoot);
+  if (!execution) {
+    return { succeededDelta: 0, failedDelta: 1, stop: false };
+  }
+
+  let result: RunTaskResult;
+  try {
+    result = await runTask(execution.sessionDir, execution.repoPath, extensionRoot);
+  } catch (err) {
+    const msg = safeErrorMessage(err);
+    console.error(`${Style.RED}⚠️  runTask error for ${task.taskId}: ${msg}${Style.RESET}`);
+    result = { ok: false, backend: 'claude' };
+  }
+
+  deactivateTaskSession(execution.sessionDir);
+
+  if (result.enoent) {
+    console.log(`\n${Style.YELLOW}⏸️  Task ${task.taskId} skipped (backend ${result.backend} CLI missing) — status left as '${task.meta.status}' for future retry${Style.RESET}`);
+    if (result.backend === 'codex') {
+      const skipped = countRemainingQueuedBackendTasks(tasks, currentIndex, sessionsRoot, result.backend);
+      if (skipped > 0) {
+        console.log(`${Style.YELLOW}⏸️  ${skipped} additional codex task(s) remain queued — install codex CLI and re-run /pickle-jar-open${Style.RESET}`);
+        return { succeededDelta: 0, failedDelta: 0, stop: true };
+      }
+    }
+    return { succeededDelta: 0, failedDelta: 0, stop: false };
+  }
+
+  task.meta.status = result.ok ? 'consumed' : 'failed';
+  writeStateFile(task.metaPath, task.meta);
+
+  if (result.ok) {
+    console.log(`\n${Style.GREEN}✅ Task ${task.taskId} complete${Style.RESET}`);
+    return { succeededDelta: 1, failedDelta: 0, stop: false };
+  }
+
+  console.log(`\n${Style.RED}❌ Task ${task.taskId} failed${Style.RESET}`);
+  return { succeededDelta: 0, failedDelta: 1, stop: false };
+}
+
+async function main() {
+  const ROOT_DIR = getExtensionRoot();
+  const DATA_DIR = getDataRoot();
+  const JAR_ROOT = path.join(DATA_DIR, 'jar');
+  const SESSIONS_ROOT = path.join(DATA_DIR, 'sessions');
+
+  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+  if (!fs.existsSync(JAR_ROOT)) {
+    console.log('🥒 Pickle Jar is empty. No tasks to run.');
+    console.log('Signal: Jar Complete');
+    return;
+  }
+
+  const tasks = discoverMarinatingTasks(JAR_ROOT);
+
+  if (tasks.length === 0) {
+    console.log('🥒 No marinating tasks in the Jar.');
+    console.log('Signal: Jar Complete');
+    return;
+  }
+
+  installShutdownHandlers();
 
   console.log(`\n🥒 Pickle Jar Night Shift — ${tasks.length} task(s) queued\n`);
   logActivity({ event: 'jar_start', source: 'pickle' });
   let succeeded = 0;
   let failed = 0;
 
-  for (const { taskId, metaPath, meta } of tasks) {
-    const sessionDir = path.join(SESSIONS_ROOT, taskId);
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    if (!fs.existsSync(sessionDir)) {
-      console.error(`${Style.RED}⚠️  Session dir not found for ${taskId}${Style.RESET}`);
-      meta.status = 'failed';
-      writeStateFile(metaPath, meta);
-      failed++;
-      continue;
-    }
-
-    if (!meta.repo_path || typeof meta.repo_path !== 'string') {
-      console.error(`${Style.RED}⚠️  Skipping ${taskId}: meta.repo_path is missing or not a string${Style.RESET}`);
-      meta.status = 'failed';
-      writeStateFile(metaPath, meta);
-      failed++;
-      continue;
-    }
-    const repoPath: string = meta.repo_path;
-
-    // Integrity check: verify PRD content hasn't been tampered with since jarring
-    if (typeof meta.prd_hash === 'string' && meta.prd_hash.length > 0) {
-      const taskDir = path.dirname(metaPath);
-      const rawPrdRel = typeof meta.prd_path === 'string' ? meta.prd_path : 'prd.md';
-      const prdPath = path.resolve(taskDir, rawPrdRel);
-      // Prevent path traversal — resolved prd_path must stay within the task directory
-      if (!prdPath.startsWith(taskDir + path.sep) && prdPath !== taskDir) {
-        console.error(`${Style.RED}⚠️  Skipping ${taskId}: prd_path escapes task directory${Style.RESET}`);
-        meta.status = 'failed';
-        writeStateFile(metaPath, meta);
-        failed++;
-        continue;
-      }
-      try {
-        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-        const prdContent = fs.readFileSync(prdPath, 'utf-8');
-        const currentHash = crypto.createHash('sha256').update(prdContent).digest('hex');
-        if (currentHash !== meta.prd_hash) {
-          console.error(`${Style.RED}⚠️  Skipping ${taskId}: PRD integrity check failed (content modified since jarring)${Style.RESET}`);
-          meta.status = 'failed';
-          writeStateFile(metaPath, meta);
-          failed++;
-          continue;
-        }
-      } catch {
-        console.error(`${Style.RED}⚠️  Skipping ${taskId}: cannot read jarred PRD for integrity check${Style.RESET}`);
-        meta.status = 'failed';
-        writeStateFile(metaPath, meta);
-        failed++;
-        continue;
-      }
-    }
-
-    let result: RunTaskResult;
-    try {
-      result = await runTask(sessionDir, repoPath, ROOT_DIR);
-    } catch (err) {
-      const msg = safeErrorMessage(err);
-      console.error(`${Style.RED}⚠️  runTask error for ${taskId}: ${msg}${Style.RESET}`);
-      result = { ok: false, backend: 'claude' };
-    }
-
-    // Deactivate session after task completes (runTask sets active=true on start).
-    // Runs regardless of outcome so an ENOENT-skipped task doesn't leave
-    // state.active=true orphaning future resumes.
-    try {
-      const taskStatePath = path.join(sessionDir, 'state.json');
-      sm.update(taskStatePath, s => { s.active = false; });
-    } catch { /* best-effort */ }
-
-    if (result.enoent) {
-      // Infrastructure error (CLI not installed). Leave meta.status as-is so
-      // the task stays queued for a future jar-open run. Don't count it as
-      // succeeded or failed — it never ran.
-      console.log(`\n${Style.YELLOW}⏸️  Task ${taskId} skipped (backend ${result.backend} CLI missing) — status left as '${meta.status}' for future retry${Style.RESET}`);
-      if (result.backend === 'codex') {
-        // Every remaining task that declares codex will ENOENT identically.
-        // Count them as skipped and short-circuit.
-        const remaining = tasks.slice(tasks.findIndex(t => t.taskId === taskId) + 1);
-        let skipped = 0;
-        for (const { taskId: rid, meta: rmeta } of remaining) {
-          const rstate = readTaskState(path.join(SESSIONS_ROOT, rid));
-          const rbackend = resolveBackend(rstate);
-          if (rbackend === 'codex' && rmeta.status === 'marinating') skipped++;
-        }
-        if (skipped > 0) {
-          console.log(`${Style.YELLOW}⏸️  ${skipped} additional codex task(s) remain queued — install codex CLI and re-run /pickle-jar-open${Style.RESET}`);
-          break;
-        }
-      }
-      continue;
-    }
-
-    meta.status = result.ok ? 'consumed' : 'failed';
-    writeStateFile(metaPath, meta);
-
-    if (result.ok) {
-      succeeded++;
-      console.log(`\n${Style.GREEN}✅ Task ${taskId} complete${Style.RESET}`);
-    } else {
-      failed++;
-      console.log(`\n${Style.RED}❌ Task ${taskId} failed${Style.RESET}`);
-    }
+  for (const [index, task] of tasks.entries()) {
+    const outcome = await processJarTask(task, index, tasks, SESSIONS_ROOT, ROOT_DIR);
+    succeeded += outcome.succeededDelta;
+    failed += outcome.failedDelta;
+    if (outcome.stop) break;
   }
 
   console.log(`\n🥒 Jar complete. ${succeeded} succeeded, ${failed} failed.`);
