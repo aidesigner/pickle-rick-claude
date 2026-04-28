@@ -151,6 +151,46 @@ test('setup: --resume with --tmux propagates tmux_mode to state.json', () => {
     }
 });
 
+test('setup: --resume rejects codex teams conflict from recovered tmp state', () => {
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-conflict-data-'));
+    const sessionPath = path.join(dataRoot, 'sessions', 'resume-conflict');
+    fs.mkdirSync(sessionPath, { recursive: true });
+    const statePath = path.join(sessionPath, 'state.json');
+    const workingDir = path.join(dataRoot, 'repo');
+
+    fs.writeFileSync(statePath, JSON.stringify({
+        schema_version: 1,
+        active: false,
+        backend: 'claude',
+        teams_mode: false,
+        session_dir: sessionPath,
+        working_dir: workingDir,
+        iteration: 1,
+        step: 'implement',
+        original_prompt: 'resume conflict test',
+    }, null, 2));
+    fs.writeFileSync(`${statePath}.tmp.99999999`, JSON.stringify({
+        schema_version: 1,
+        active: false,
+        backend: 'codex',
+        teams_mode: true,
+        session_dir: sessionPath,
+        working_dir: workingDir,
+        iteration: 2,
+        step: 'implement',
+        original_prompt: 'resume conflict test',
+    }, null, 2));
+
+    try {
+        assert.throws(
+            () => runSetupWithEnv(['--resume', sessionPath], { PICKLE_DATA_ROOT: dataRoot }),
+            /--teams is incompatible with --backend codex/i,
+        );
+    } finally {
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
 test('setup: --resume preserves max_time_minutes=0 (unlimited) without falling back to default', () => {
     // Create a session with max_time=0 (unlimited)
     const sessionPath = runSetup(['--max-time', '0', '--task', 'unlimited-time-test']);

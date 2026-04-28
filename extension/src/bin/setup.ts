@@ -202,8 +202,7 @@ async function main() {
     // CLI-time check inspects only local vars (P0-1 from the review pass).
     let preState: State | null = null;
     try {
-      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call: small JSON read
-      preState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      preState = sm.read(statePath);
     } catch {
       /* missing/corrupt — sm.update below will surface the right error */
     }
