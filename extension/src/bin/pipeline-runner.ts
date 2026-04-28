@@ -107,10 +107,10 @@ interface PhaseRunnerContext {
 // Config Parsing
 // ---------------------------------------------------------------------------
 
-/** Parse and validate pipeline.json with safe defaults for all numeric fields. */
-function parsePositiveNumber(value: unknown, fallback: number): number {
+/** Parse and validate pipeline.json with safe defaults for all integer limit fields. */
+function parsePositiveInteger(value: unknown, fallback: number): number {
   const parsed = Number(value);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 export function parsePipelineConfig(raw: Record<string, unknown>): PipelineConfig {
@@ -128,10 +128,10 @@ export function parsePipelineConfig(raw: Record<string, unknown>): PipelineConfi
     target: (raw.target as string) || '',
     szechuan_domain: raw.szechuan_domain as string | undefined,
     szechuan_focus: raw.szechuan_focus as string | undefined,
-    anatomy_stall_limit: parsePositiveNumber(raw.anatomy_stall_limit, 3),
-    szechuan_stall_limit: parsePositiveNumber(raw.szechuan_stall_limit, 5),
-    anatomy_max_iterations: parsePositiveNumber(raw.anatomy_max_iterations, 100),
-    szechuan_max_iterations: parsePositiveNumber(raw.szechuan_max_iterations, 50),
+    anatomy_stall_limit: parsePositiveInteger(raw.anatomy_stall_limit, 3),
+    szechuan_stall_limit: parsePositiveInteger(raw.szechuan_stall_limit, 5),
+    anatomy_max_iterations: parsePositiveInteger(raw.anatomy_max_iterations, 100),
+    szechuan_max_iterations: parsePositiveInteger(raw.szechuan_max_iterations, 50),
     backend,
     ignore_dirty_paths,
   };

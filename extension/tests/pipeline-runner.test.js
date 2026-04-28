@@ -559,6 +559,20 @@ describe('parsePipelineConfig', () => {
     assert.equal(config.szechuan_stall_limit, 5);
   });
 
+  test('defaults numeric fields when fractional', () => {
+    const config = parsePipelineConfig({
+      phases: [], target: '',
+      anatomy_stall_limit: 0.5,
+      szechuan_stall_limit: '2.5',
+      anatomy_max_iterations: 10.25,
+      szechuan_max_iterations: '4.75',
+    });
+    assert.equal(config.anatomy_stall_limit, 3);
+    assert.equal(config.szechuan_stall_limit, 5);
+    assert.equal(config.anatomy_max_iterations, 100);
+    assert.equal(config.szechuan_max_iterations, 50);
+  });
+
   test('defaults phases to empty array when not array', () => {
     const config = parsePipelineConfig({ phases: 'pickle', target: '/tmp' });
     assert.deepEqual(config.phases, []);
