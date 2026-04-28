@@ -514,6 +514,67 @@ export function resolveSessionPath(entry: string | SessionMapEntry | unknown): s
   return '';
 }
 
+function sameWorkingDir(a: unknown, b: string): boolean {
+  return typeof a === 'string' && path.resolve(a) === path.resolve(b);
+}
+
+function readSessionLookupState(sessionPath: string): { active?: unknown; working_dir?: unknown } | null {
+  try {
+    const raw = fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8');
+    return JSON.parse(raw) as { active?: unknown; working_dir?: unknown };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolves the session for a cwd from the session map first, then falls back
+ * to scanning session state by working_dir when the map is missing or stale.
+ */
+export function findSessionPathForCwd(
+  cwd: string,
+  options: { requireActive?: boolean } = {},
+): string {
+  const { requireActive = false } = options;
+  const dataRoot = getDataRoot();
+  const sessionsMapPath = path.join(dataRoot, 'current_sessions.json');
+
+  if (fs.existsSync(sessionsMapPath)) {
+    try {
+      const map = JSON.parse(fs.readFileSync(sessionsMapPath, 'utf-8')) as Record<string, unknown>;
+      const mappedPath = resolveSessionPath(map[cwd]);
+      if (mappedPath && fs.existsSync(mappedPath)) {
+        if (!requireActive) return mappedPath;
+        const state = readSessionLookupState(mappedPath);
+        if (state && state.active === true && sameWorkingDir(state.working_dir, cwd)) {
+          return mappedPath;
+        }
+      }
+    } catch {
+      // Fall back to scanning session state below.
+    }
+  }
+
+  const sessionsDir = path.join(dataRoot, 'sessions');
+  let entries: string[];
+  try {
+    entries = fs.readdirSync(sessionsDir);
+  } catch {
+    return '';
+  }
+
+  for (const entry of entries) {
+    const sessionPath = path.join(sessionsDir, entry);
+    const state = readSessionLookupState(sessionPath);
+    if (!state) continue;
+    if (!sameWorkingDir(state.working_dir, cwd)) continue;
+    if (requireActive && state.active !== true) continue;
+    return sessionPath;
+  }
+
+  return '';
+}
+
 /** Matrix palette shared across all monitor panes. */
 export const MatrixStyle = {
   BRIGHT: '\x1b[1;32m',    // bold green

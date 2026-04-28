@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
-import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, resolveSessionPath } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd } from '../services/pickle-utils.js';
 import { Defaults, LockError, BACKENDS } from '../types/index.js';
 import { StateManager } from '../services/state-manager.js';
 import { logActivity, pruneActivity } from '../services/activity-logger.js';
@@ -201,22 +201,14 @@ async function main() {
         die('--teams is incompatible with --backend codex (claude backend only)');
     }
     let taskStr = taskArgs.join(' ').trim();
-    let fullSessionPath = '';
+    let fullSessionPath;
     let currentIteration = 1;
     if (resumeMode) {
         if (resumePath) {
             fullSessionPath = resolvePath(resumePath);
-            // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         }
-        else if (fs.existsSync(SESSIONS_MAP)) {
-            try {
-                // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-                const map = JSON.parse(fs.readFileSync(SESSIONS_MAP, 'utf-8'));
-                fullSessionPath = resolveSessionPath(map[process.cwd()]);
-            }
-            catch {
-                /* corrupt map — no session path */
-            }
+        else {
+            fullSessionPath = findSessionPathForCwd(process.cwd());
         }
         // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         if (!fullSessionPath || !fs.existsSync(fullSessionPath)) {

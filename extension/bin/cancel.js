@@ -1,25 +1,13 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { printMinimalPanel, getDataRoot, withRetryLock, resolveSessionPath, safeErrorMessage } from '../services/pickle-utils.js';
+import { printMinimalPanel, getDataRoot, withRetryLock, findSessionPathForCwd, safeErrorMessage } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { LockError } from '../types/index.js';
 const sm = new StateManager();
 export function cancelSession(cwd) {
     const SESSIONS_MAP = path.join(getDataRoot(), 'current_sessions.json');
-    if (!fs.existsSync(SESSIONS_MAP)) {
-        console.log('No active sessions map found.');
-        return;
-    }
-    let map;
-    try {
-        map = JSON.parse(fs.readFileSync(SESSIONS_MAP, 'utf-8'));
-    }
-    catch {
-        console.log('Sessions map is unreadable.');
-        return;
-    }
-    const sessionPath = resolveSessionPath(map[cwd]);
+    const sessionPath = findSessionPathForCwd(cwd);
     if (!sessionPath || !fs.existsSync(sessionPath)) {
         console.log('No active session found for this directory.');
         return;

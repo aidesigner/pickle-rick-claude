@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { printMinimalPanel, getDataRoot, safeErrorMessage, resolveSessionPath } from '../services/pickle-utils.js';
+import { printMinimalPanel, safeErrorMessage, findSessionPathForCwd } from '../services/pickle-utils.js';
 
 function main() {
   const args = process.argv.slice(2);
@@ -14,15 +14,7 @@ function main() {
   }
 
   if (!sessionPath || !fs.existsSync(sessionPath)) {
-    const SESSIONS_MAP = path.join(getDataRoot(), 'current_sessions.json');
-    if (fs.existsSync(SESSIONS_MAP)) {
-      try {
-        const map = JSON.parse(fs.readFileSync(SESSIONS_MAP, 'utf-8'));
-        sessionPath = resolveSessionPath(map[process.cwd()]);
-      } catch {
-        /* corrupt map — no session path */
-      }
-    }
+    sessionPath = findSessionPathForCwd(process.cwd());
   }
 
   if (!sessionPath || !fs.existsSync(sessionPath)) {

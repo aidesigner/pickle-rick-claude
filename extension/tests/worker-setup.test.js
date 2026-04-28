@@ -128,6 +128,32 @@ test('worker-setup: resolves session from current_sessions.json using cwd', () =
     }
 });
 
+test('worker-setup: falls back to active session state when the sessions map is missing', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = path.join(tmpRoot, 'sessions', 'fallback-session');
+        fs.mkdirSync(sessionDir, { recursive: true });
+
+        const cwdDir = path.join(tmpRoot, 'repo');
+        fs.mkdirSync(cwdDir, { recursive: true });
+        const realCwd = fs.realpathSync(cwdDir);
+
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({ active: true, working_dir: realCwd, session_dir: sessionDir })
+        );
+
+        const result = run(tmpRoot, [], realCwd);
+        assert.equal(result.status, 0, `Expected exit code 0, got: ${result.status}. stderr: ${result.stderr}`);
+        assert.ok(
+            result.stdout.includes('fallback-session'),
+            `Expected session name "fallback-session" in stdout, got: ${result.stdout}`
+        );
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
 // --- Corrupt sessions map → falls through to exit 1 ---
 
 test('worker-setup: exits with code 1 when sessions map is corrupt JSON', () => {

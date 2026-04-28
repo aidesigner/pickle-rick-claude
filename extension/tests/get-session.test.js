@@ -89,3 +89,19 @@ test('getSessionPath: returns session path when map entry and dir both exist', (
         }
     });
 });
+
+test('getSessionPath: falls back to active session state when the sessions map is missing', () => {
+    withExtensionDir((tmpDir) => {
+        const fakeCwd = path.join(tmpDir, 'repo');
+        const sessionDir = path.join(tmpDir, 'sessions', 'fallback-session');
+        fs.mkdirSync(fakeCwd, { recursive: true });
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({ active: true, working_dir: fakeCwd, session_dir: sessionDir })
+        );
+
+        const result = getSessionPath(fakeCwd);
+        assert.equal(result, sessionDir);
+    });
+});

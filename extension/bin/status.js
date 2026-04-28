@@ -1,22 +1,9 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { getDataRoot, printMinimalPanel, collectTickets, statusSymbol, resolveSessionPath } from '../services/pickle-utils.js';
+import { printMinimalPanel, collectTickets, statusSymbol, findSessionPathForCwd } from '../services/pickle-utils.js';
 export function showStatus(cwd) {
-    const SESSIONS_MAP = path.join(getDataRoot(), 'current_sessions.json');
-    if (!fs.existsSync(SESSIONS_MAP)) {
-        console.log('🥒 No active Pickle Rick session for this directory.');
-        return;
-    }
-    let map;
-    try {
-        map = JSON.parse(fs.readFileSync(SESSIONS_MAP, 'utf-8'));
-    }
-    catch {
-        console.log('🥒 Sessions map is unreadable. No active session.');
-        return;
-    }
-    const sessionPath = resolveSessionPath(map[cwd]);
+    const sessionPath = findSessionPathForCwd(cwd);
     if (!sessionPath || !fs.existsSync(sessionPath)) {
         console.log('🥒 No active Pickle Rick session for this directory.');
         return;

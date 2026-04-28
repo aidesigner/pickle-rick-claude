@@ -69,8 +69,8 @@ test('showStatus: prints "unreadable" when sessions map is corrupt JSON', () => 
         );
         const output = captureStdout(() => showStatus('/some/fake/cwd'));
         assert.ok(
-            output.includes('Sessions map is unreadable'),
-            `Expected "Sessions map is unreadable" in output, got: ${output}`
+            output.includes('No active Pickle Rick session'),
+            `Expected "No active Pickle Rick session" in output, got: ${output}`
         );
     });
 });
@@ -142,6 +142,32 @@ test('showStatus: does not throw with valid sessions map and state.json', () => 
         } finally {
             fs.rmSync(sessionDir, { recursive: true, force: true });
         }
+    });
+});
+
+test('showStatus: falls back to active session state when the sessions map is missing', () => {
+    withExtensionDir((tmpDir) => {
+        const fakeCwd = path.join(tmpDir, 'repo');
+        const sessionDir = path.join(tmpDir, 'sessions', 'fallback-session');
+        fs.mkdirSync(fakeCwd, { recursive: true });
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({
+                active: true,
+                working_dir: fakeCwd,
+                session_dir: sessionDir,
+                step: 'implement',
+                iteration: 2,
+                max_iterations: 5,
+                current_ticket: 'T-FALLBACK',
+                original_prompt: 'Recover from missing map',
+            })
+        );
+
+        const output = captureStdout(() => showStatus(fakeCwd));
+        assert.ok(output.includes('Session Status'), `Expected panel title in output, got: ${output}`);
+        assert.ok(output.includes('T-FALLBACK'), `Expected fallback ticket in output, got: ${output}`);
     });
 });
 

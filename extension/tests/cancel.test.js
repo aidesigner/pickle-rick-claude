@@ -68,9 +68,9 @@ function runCancelSubprocess(extRoot, cwd) {
 test('cancelSession: returns early when no sessions map', () => {
     const tmpRoot = makeTmpRoot();
     try {
-        // No current_sessions.json written — should not throw
+        // No current_sessions.json or matching session state written — should not throw
         const output = runCancelSubprocess(tmpRoot, tmpRoot);
-        assert.ok(output.includes('No active sessions map found'), 'should report missing sessions map');
+        assert.ok(output.includes('No active session found'), 'should report missing session');
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
@@ -189,16 +189,44 @@ test('cancelSession: preserves other state fields when setting active=false', ()
     }
 });
 
+test('cancelSession: falls back to active session state when the sessions map is missing', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const cwdDir = path.join(tmpRoot, 'repo');
+        const sessionDir = path.join(tmpRoot, 'sessions', 'fallback-session');
+        fs.mkdirSync(cwdDir, { recursive: true });
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({
+                active: true,
+                working_dir: cwdDir,
+                session_dir: sessionDir,
+                step: 'implement',
+                iteration: 2,
+                original_prompt: 'fallback-cancel',
+            }, null, 2)
+        );
+
+        runCancelSubprocess(tmpRoot, cwdDir);
+
+        const updated = readState(sessionDir);
+        assert.equal(updated.active, false, 'active should be false after fallback cancel');
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
 // --- Unreadable sessions map ---
 
 test('cancelSession: returns early when sessions map is unreadable JSON', () => {
     const tmpRoot = makeTmpRoot();
     try {
-        // Write garbage to sessions map
+        // Write garbage to sessions map; no fallback session state exists
         fs.writeFileSync(path.join(tmpRoot, 'current_sessions.json'), '{{{{not json}}}}');
 
         const output = runCancelSubprocess(tmpRoot, tmpRoot);
-        assert.ok(output.includes('Sessions map is unreadable'), 'should report unreadable sessions map');
+        assert.ok(output.includes('No active session found'), 'should report missing session');
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }

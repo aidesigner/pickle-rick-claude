@@ -37,7 +37,7 @@ test('retryTicket: throws when no sessions map exists', () => {
         // No current_sessions.json in tmpDir — should throw
         assert.throws(
             () => retryTicket('abc123', tmpDir),
-            /No active Pickle Rick session found\./
+            /No active session found for this directory\./
         );
     } finally {
         if (saved === undefined) {
@@ -181,5 +181,53 @@ test('retryTicket: clears stale completed_at and skipped_at when resetting to To
         }
         fs.rmSync(tmpExtDir, { recursive: true, force: true });
         fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+});
+
+test('retryTicket: falls back to active session state when the sessions map is missing', () => {
+    const tmpExtDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-retry-ext-')));
+    const saved = process.env.EXTENSION_DIR;
+    process.env.EXTENSION_DIR = tmpExtDir;
+
+    try {
+        const fakeCwd = path.join(tmpExtDir, 'repo');
+        const sessionDir = path.join(tmpExtDir, 'sessions', 'fallback-session');
+        const ticketId = 'fallback-ticket';
+        const ticketDir = path.join(sessionDir, ticketId);
+        fs.mkdirSync(fakeCwd, { recursive: true });
+        fs.mkdirSync(ticketDir, { recursive: true });
+
+        fs.writeFileSync(
+            path.join(ticketDir, `linear_ticket_${ticketId}.md`),
+            `---\nid: ${ticketId}\ntitle: Test\nstatus: Done\norder: 10\n---\n`
+        );
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({
+                active: false,
+                working_dir: fakeCwd,
+                step: 'implement',
+                iteration: 2,
+                session_dir: sessionDir,
+                original_prompt: 'retry via fallback',
+                worker_timeout_seconds: 1200,
+            })
+        );
+
+        retryTicket(ticketId, fakeCwd);
+
+        const updatedState = JSON.parse(
+            fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+        assert.equal(updatedState.active, true);
+        const ticketContent = fs.readFileSync(
+            path.join(ticketDir, `linear_ticket_${ticketId}.md`), 'utf-8');
+        assert.match(ticketContent, /^status: "Todo"$/m);
+    } finally {
+        if (saved === undefined) {
+            delete process.env.EXTENSION_DIR;
+        } else {
+            process.env.EXTENSION_DIR = saved;
+        }
+        fs.rmSync(tmpExtDir, { recursive: true, force: true });
     }
 });
