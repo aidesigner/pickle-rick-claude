@@ -127,7 +127,7 @@ export function detectProjectType(workingDir) {
         return 'yarn';
     if (has('package-lock.json'))
         return 'npm';
-    if (has('bun.lockb'))
+    if (has('bun.lock') || has('bun.lockb'))
         return 'bun';
     if (has('package.json'))
         return 'npm';
