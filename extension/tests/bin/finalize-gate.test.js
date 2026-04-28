@@ -227,4 +227,52 @@ describe('error conditions', () => {
         assert.equal(code, 1);
         assert.ok(errs.some(l => l.includes('state.json')));
     });
+
+    test('default state reader recovers orphan tmp before choosing working_dir', async () => {
+        const sessionRoot = makeTmpDir();
+        const staleRepo = path.join(sessionRoot, 'stale-repo');
+        const liveRepo = path.join(sessionRoot, 'live-repo');
+        fs.mkdirSync(staleRepo, { recursive: true });
+        fs.mkdirSync(liveRepo, { recursive: true });
+
+        const statePath = path.join(sessionRoot, 'state.json');
+        fs.writeFileSync(statePath, JSON.stringify({
+            working_dir: staleRepo,
+            backend: 'claude',
+            iteration: 1,
+            schema_version: 1,
+        }));
+        fs.writeFileSync(`${statePath}.tmp.99999999`, JSON.stringify({
+            working_dir: liveRepo,
+            backend: 'codex',
+            iteration: 2,
+            schema_version: 1,
+        }));
+
+        const seen = [];
+        const code = await finalizeGateMain({
+            argv: [sessionRoot, 'anatomy-park'],
+            env: {},
+            readMicroverseStateFn: () => ({ status: 'iterating', allowed_paths: undefined }),
+            loadSettingsFn: () => ({ szechuan_max_remediation_cycles: 1, anatomy_park_max_remediation_cycles: 1, remediator_timeout_s: 60 }),
+            mkdirSyncFn: (p) => fs.mkdirSync(p, { recursive: true }),
+            writeFileFn: (p, data) => fs.writeFileSync(p, data, 'utf-8'),
+            logActivityFn: () => {},
+            isoFn: () => '2026-01-01T00-00-00Z',
+            runGateFn: async (opts) => {
+                seen.push({ workingDir: opts.workingDir });
+                return makeGateResult('green');
+            },
+            stdout: () => {},
+            stderr: () => {},
+        });
+
+        assert.equal(code, 0);
+        assert.deepEqual(seen, [{ workingDir: liveRepo }]);
+        const promotedState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(promotedState.working_dir, liveRepo);
+        assert.equal(promotedState.backend, 'codex');
+
+        fs.rmSync(sessionRoot, { recursive: true, force: true });
+    });
 });

@@ -6,8 +6,10 @@ import { spawnGateRemediatorMain } from './spawn-gate-remediator.js';
 import { readMicroverseState } from '../services/microverse-state.js';
 import { logActivity } from '../services/activity-logger.js';
 import { getExtensionRoot, isoCompactStamp, safeErrorMessage } from '../services/pickle-utils.js';
-import { buildWorkerInvocation, backendEnvOverrides, resolveBackendFromStateFile, } from '../services/backend-spawn.js';
+import { StateManager } from '../services/state-manager.js';
+import { buildWorkerInvocation, backendEnvOverrides, resolveBackend, } from '../services/backend-spawn.js';
 const VALID_SKILLS = new Set(['szechuan', 'anatomy-park']);
+const sm = new StateManager();
 function loadFinalizeGateSettings(extRoot) {
     const defaults = {
         szechuan_max_remediation_cycles: 3,
@@ -66,10 +68,9 @@ function splitByScope(failures, allowedPaths, workingDir) {
 function defaultReadStateForWorkingDir(sessionRoot) {
     const statePath = path.join(sessionRoot, 'state.json');
     try {
-        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking read
-        const raw = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
-        const workingDir = typeof raw.working_dir === 'string' ? raw.working_dir : process.cwd();
-        const backend = resolveBackendFromStateFile(statePath);
+        const state = sm.read(statePath);
+        const workingDir = typeof state.working_dir === 'string' ? state.working_dir : process.cwd();
+        const backend = resolveBackend(state);
         return { workingDir, backend };
     }
     catch {
