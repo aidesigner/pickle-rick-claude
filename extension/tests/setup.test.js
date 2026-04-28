@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { parseArguments, initializeNewSession } from '../bin/setup.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SETUP = path.resolve(__dirname, '../bin/setup.js');
@@ -29,6 +30,59 @@ function runSetupWithEnv(args, extraEnv) {
 function cleanup(sessionPath) {
     try { fs.rmSync(sessionPath, { recursive: true, force: true }); } catch { /* ignore */ }
 }
+
+test('setup parseArguments: --resume sets resumeMode and resumePath', () => {
+    const args = parseArguments(['--resume', '/tmp/pickle-session']);
+
+    assert.equal(args.resumeMode, true);
+    assert.equal(args.resumePath, '/tmp/pickle-session');
+});
+
+test('setup parseArguments: --reset can combine with --resume', () => {
+    const args = parseArguments(['--resume', '/tmp/pickle-session', '--reset']);
+
+    assert.equal(args.resumeMode, true);
+    assert.equal(args.resetMode, true);
+});
+
+test('setup parseArguments: --paused sets pausedMode', () => {
+    const args = parseArguments(['--paused', '--task', 'paused parse test']);
+
+    assert.equal(args.pausedMode, true);
+    assert.equal(args.task, 'paused parse test');
+});
+
+test('setup initializeNewSession: state field set matches schema fixture', () => {
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-schema-data-'));
+    const previousDataRoot = process.env.PICKLE_DATA_ROOT;
+    process.env.PICKLE_DATA_ROOT = dataRoot;
+
+    try {
+        const args = parseArguments([
+            '--command-template',
+            'pickle.md',
+            '--backend',
+            'claude',
+            '--teams',
+            '--max-parallel',
+            '5',
+            '--task',
+            'schema fixture parity',
+        ]);
+        const session = initializeNewSession(args);
+        const persisted = JSON.parse(JSON.stringify(session.state));
+        const schema = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures/setup/state-schema.json'), 'utf-8'));
+
+        assert.deepEqual(Object.keys(persisted), schema.fields_in_order);
+    } finally {
+        if (previousDataRoot === undefined) {
+            delete process.env.PICKLE_DATA_ROOT;
+        } else {
+            process.env.PICKLE_DATA_ROOT = previousDataRoot;
+        }
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
 
 test('setup: --tmux sets tmux_mode: true in state.json', () => {
     const sessionPath = runSetup(['--tmux', '--task', 'tmux-test']);

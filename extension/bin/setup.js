@@ -50,11 +50,30 @@ function createSetupConfig() {
         teamsMode: false,
         maxParallel: 5,
         effort: undefined,
+        task: undefined,
         taskArgs: [],
         explicitFlags: new Set(),
         startEpoch: Math.floor(Date.now() / 1000),
         iterationBudgetPerBackend: null,
     };
+}
+function applyPositiveNumberSetting(settings, key, apply) {
+    const value = settings[key];
+    if (typeof value === 'number' && value > 0)
+        apply(value);
+}
+function readIterationBudgetPerBackend(settings) {
+    const rawPerBackend = settings.iteration_budget_per_backend;
+    if (!rawPerBackend || typeof rawPerBackend !== 'object' || Array.isArray(rawPerBackend))
+        return null;
+    const map = {};
+    for (const backend of BACKENDS) {
+        const value = rawPerBackend[backend];
+        if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+            map[backend] = value;
+        }
+    }
+    return Object.keys(map).length > 0 ? map : null;
 }
 function updateSessionMap(sessionsMap, cwd, sessionPath) {
     withRetryLock(sessionsMap + '.lock', () => {
@@ -94,30 +113,10 @@ function loadSettings(config, rootDir) {
         return;
     try {
         const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf-8'));
-        if (typeof settings.default_max_iterations === 'number' && settings.default_max_iterations > 0) {
-            config.loopLimit = settings.default_max_iterations;
-        }
-        if (typeof settings.default_max_time_minutes === 'number' && settings.default_max_time_minutes > 0) {
-            config.timeLimit = settings.default_max_time_minutes;
-        }
-        if (typeof settings.default_worker_timeout_seconds === 'number' && settings.default_worker_timeout_seconds > 0) {
-            config.workerTimeout = settings.default_worker_timeout_seconds;
-        }
-        // Per-backend iteration budget overrides default_max_iterations when the
-        // resolved backend has an entry. Codex iteration semantics are coarser than
-        // claude — same wall-clock work fits in fewer codex iterations.
-        const rawPerBackend = settings.iteration_budget_per_backend;
-        if (rawPerBackend && typeof rawPerBackend === 'object' && !Array.isArray(rawPerBackend)) {
-            const map = {};
-            for (const backend of BACKENDS) {
-                const v = rawPerBackend[backend];
-                if (typeof v === 'number' && Number.isFinite(v) && v >= 0) {
-                    map[backend] = v;
-                }
-            }
-            if (Object.keys(map).length > 0)
-                config.iterationBudgetPerBackend = map;
-        }
+        applyPositiveNumberSetting(settings, 'default_max_iterations', value => { config.loopLimit = value; });
+        applyPositiveNumberSetting(settings, 'default_max_time_minutes', value => { config.timeLimit = value; });
+        applyPositiveNumberSetting(settings, 'default_worker_timeout_seconds', value => { config.workerTimeout = value; });
+        config.iterationBudgetPerBackend = readIterationBudgetPerBackend(settings);
     }
     catch (err) {
         const msg = safeErrorMessage(err);
@@ -270,6 +269,7 @@ function parseCommandLine(config, args) {
         }
         i = handler(config, args, i);
     }
+    config.task = config.taskArgs.join(' ').trim() || undefined;
 }
 function validateCommandLine(config) {
     if (config.explicitFlags.has('max-parallel') && !config.teamsMode) {
@@ -371,8 +371,8 @@ function resumeSession(config) {
     }
     syncConfigFromState(config, state);
     return {
-        fullSessionPath,
-        currentIteration: (Number(state.iteration) || 0) + 1,
+        sessionRoot: fullSessionPath,
+        state,
     };
 }
 function resolveTask(config) {
@@ -426,7 +426,7 @@ function createSession(config, paths, taskStr) {
     }
     catch { /* must not block session start */ }
     logActivity({ event: 'session_start', source: 'pickle', session: sessionId, mode: config.tmuxMode ? 'tmux' : 'inline', original_prompt: taskStr });
-    return { fullSessionPath, currentIteration: 1 };
+    return { sessionRoot: fullSessionPath, state };
 }
 function printActivationPanel(paths, config, fullSessionPath, currentIteration) {
     printMinimalPanel('Pickle Rick Activated!', {
@@ -446,21 +446,50 @@ function printActivationPanel(paths, config, fullSessionPath, currentIteration) 
         Path: fullSessionPath,
     }, 'GREEN', '🥒');
 }
-async function main() {
+export function parseArguments(argv) {
     const paths = buildSetupPaths();
     const config = createSetupConfig();
-    ensureCoreDirectories(paths);
-    pruneOldSessions(paths.sessionsRoot);
     loadSettings(config, paths.rootDir);
-    parseCommandLine(config, process.argv.slice(2));
+    parseCommandLine(config, argv);
     validateCommandLine(config);
     applyPerBackendBudget(config);
-    const taskStr = resolveTask(config);
-    const session = config.resumeMode
-        ? resumeSession(config)
-        : createSession(config, paths, taskStr);
+    return config;
+}
+export function handleResumeSession(args) {
+    const session = resumeSession(args);
+    return { sessionRoot: session.sessionRoot, state: session.state };
+}
+export function initializeNewSession(args) {
+    const paths = buildSetupPaths();
+    ensureCoreDirectories(paths);
+    const taskStr = resolveTask(args);
+    const session = createSession(args, paths, taskStr);
+    return { sessionRoot: session.sessionRoot, state: session.state };
+}
+export function displaySetupSummary(session) {
+    const paths = buildSetupPaths();
+    const config = createSetupConfig();
+    syncConfigFromState(config, session.state);
+    printActivationPanel(paths, config, session.sessionRoot, (Number(session.state.iteration) || 0) + 1);
+    // Machine-readable line for reliable parsing even when ANSI codes are present
+    process.stdout.write(`SESSION_ROOT=${session.sessionRoot}\n`);
+    if (config.promiseToken) {
+        console.log(`
+${Style.YELLOW}⚠️  STRICT EXIT CONDITION ACTIVE${Style.RESET}`);
+        console.log(`   You must output: <promise>${config.promiseToken}</promise>
+`);
+    }
+}
+async function main() {
+    const paths = buildSetupPaths();
+    ensureCoreDirectories(paths);
+    pruneOldSessions(paths.sessionsRoot);
+    const args = parseArguments(process.argv.slice(2));
+    const session = args.resumeMode
+        ? handleResumeSession(args)
+        : initializeNewSession(args);
     try {
-        updateSessionMap(paths.sessionsMap, process.cwd(), session.fullSessionPath);
+        updateSessionMap(paths.sessionsMap, process.cwd(), session.sessionRoot);
     }
     catch (err) {
         if (err instanceof LockError) {
@@ -470,15 +499,7 @@ async function main() {
             throw err;
         }
     }
-    printActivationPanel(paths, config, session.fullSessionPath, session.currentIteration);
-    // Machine-readable line for reliable parsing even when ANSI codes are present
-    process.stdout.write(`SESSION_ROOT=${session.fullSessionPath}\n`);
-    if (config.promiseToken) {
-        console.log(`
-${Style.YELLOW}⚠️  STRICT EXIT CONDITION ACTIVE${Style.RESET}`);
-        console.log(`   You must output: <promise>${config.promiseToken}</promise>
-`);
-    }
+    displaySetupSummary(session);
 }
 function resolvePath(p) {
     if (p.startsWith('~'))
