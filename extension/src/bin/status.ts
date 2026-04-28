@@ -2,7 +2,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { printMinimalPanel, collectTickets, statusSymbol, findSessionPathForCwd } from '../services/pickle-utils.js';
+import { StateManager } from '../services/state-manager.js';
 import { State } from '../types/index.js';
+
+const sm = new StateManager();
 
 export function showStatus(cwd: string): void {
   const sessionPath = findSessionPathForCwd(cwd);
@@ -14,7 +17,7 @@ export function showStatus(cwd: string): void {
 
   let state: State;
   try {
-    state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+    state = sm.read(path.join(sessionPath, 'state.json'));
   } catch {
     console.log('🥒 Session state is unreadable.');
     process.exit(1);

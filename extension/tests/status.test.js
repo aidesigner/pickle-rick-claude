@@ -205,6 +205,55 @@ test('showStatus: unreadable mapped state falls back to the live same-cwd sessio
     });
 });
 
+test('showStatus: prefers the crash-recovered orphan tmp snapshot over stale base state', () => {
+    withExtensionDir((tmpDir) => {
+        const fakeCwd = path.join(tmpDir, 'repo');
+        const sessionDir = path.join(tmpDir, 'sessions', 'recovered-session');
+        const statePath = path.join(sessionDir, 'state.json');
+        fs.mkdirSync(fakeCwd, { recursive: true });
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(tmpDir, 'current_sessions.json'),
+            JSON.stringify({ [fakeCwd]: sessionDir })
+        );
+        fs.writeFileSync(
+            statePath,
+            JSON.stringify({
+                active: true,
+                working_dir: fakeCwd,
+                session_dir: sessionDir,
+                step: 'implement',
+                iteration: 1,
+                max_iterations: 9,
+                current_ticket: 'T-BASE',
+                original_prompt: 'Base state should lose to recovered tmp',
+            })
+        );
+        fs.writeFileSync(
+            `${statePath}.tmp.999999`,
+            JSON.stringify({
+                active: false,
+                working_dir: fakeCwd,
+                session_dir: sessionDir,
+                step: 'verify',
+                iteration: 7,
+                max_iterations: 9,
+                current_ticket: 'T-RECOVERED',
+                original_prompt: 'Recovered state should drive status output',
+            })
+        );
+
+        const output = captureStdout(() => showStatus(fakeCwd));
+        const persisted = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.ok(output.includes('T-RECOVERED'), `Expected recovered ticket in output, got: ${output}`);
+        assert.ok(output.includes('verify'), `Expected recovered phase in output, got: ${output}`);
+        assert.ok(output.includes('7 of 9'), `Expected recovered iteration in output, got: ${output}`);
+        assert.ok(output.includes('No'), `Expected recovered inactive status in output, got: ${output}`);
+        assert.equal(persisted.current_ticket, 'T-RECOVERED', 'recovered tmp should be promoted into state.json');
+        assert.equal(fs.existsSync(`${statePath}.tmp.999999`), false, 'orphan tmp should be consumed during recovery');
+    });
+});
+
 // --- Truncates long prompts ---
 
 test('showStatus: truncates original_prompt longer than 80 chars', () => {
