@@ -127,6 +127,35 @@ test('setupScope CUJ-6a: SCOPE_EMPTY_DIFF at setup → WARN, not error', () => {
     }
 });
 
+test('setupScope: diff:HEAD honors inline ref and does not fall back to main', () => {
+    const repo = makeRepo();
+    const session = makeSession(repo);
+    try {
+        git(['checkout', '-qb', 'feature'], repo);
+        fs.writeFileSync(path.join(repo, 'f.ts'), 'v\n');
+        git(['add', '.'], repo);
+        git(['commit', '-qm', 'f'], repo);
+
+        const messages = [];
+        const scope = setupScope({
+            sessionDir: session,
+            workingDir: repo,
+            target: repo,
+            scopeFlag: 'diff:HEAD',
+            log: (m) => messages.push(m),
+        });
+
+        assert.equal(scope, null, 'diff:HEAD should resolve against HEAD, producing an empty diff');
+        assert.ok(!fs.existsSync(path.join(session, 'scope.json')),
+            'empty diff:HEAD must not write scope.json via main fallback');
+
+        const warn = messages.find((m) => m.includes('SCOPE_EMPTY_DIFF'));
+        assert.ok(warn, `expected a WARN line mentioning SCOPE_EMPTY_DIFF, got: ${JSON.stringify(messages)}`);
+    } finally {
+        cleanup(repo, session);
+    }
+});
+
 test('setupScope: other ScopeError codes propagate (SCOPE_BAD_FLAG)', () => {
     const repo = makeRepo();
     const session = makeSession(repo);

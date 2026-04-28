@@ -120,7 +120,12 @@ function resolveAllowedFromPaths(globSpec, target, repoRoot) {
     return allowed;
 }
 function resolveAllowedFromDiffMode(parsed, args, headSha, repoRoot) {
-    const baseRef = args.scopeBase ?? resolveDefaultBase(repoRoot);
+    const baseRef = parsed.mode === 'diff'
+        ? parsed.base
+        : (args.scopeBase ?? resolveDefaultBase(repoRoot));
+    if (!baseRef) {
+        throw new ScopeError('SCOPE_BAD_FLAG', `Malformed --scope diff form: expected diff:<ref>, got ${args.scopeFlag}`);
+    }
     let baseSha;
     try {
         baseSha = getMergeBase(baseRef, 'HEAD', repoRoot);

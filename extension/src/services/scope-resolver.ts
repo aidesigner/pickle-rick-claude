@@ -191,7 +191,12 @@ function resolveAllowedFromDiffMode(
   headSha: string,
   repoRoot: string,
 ): { allowed: string[]; baseRef: string; baseSha: string } {
-  const baseRef = args.scopeBase ?? resolveDefaultBase(repoRoot);
+  const baseRef = parsed.mode === 'diff'
+    ? parsed.base
+    : (args.scopeBase ?? resolveDefaultBase(repoRoot));
+  if (!baseRef) {
+    throw new ScopeError('SCOPE_BAD_FLAG', `Malformed --scope diff form: expected diff:<ref>, got ${args.scopeFlag}`);
+  }
   let baseSha: string;
   try {
     baseSha = getMergeBase(baseRef, 'HEAD', repoRoot);
