@@ -219,6 +219,67 @@ describe('anatomy-park scoped final gate', () => {
         fs.rmSync(workingDir, { recursive: true, force: true });
     });
 
+    test('synthetic gate timeout failure stays in scope when allowed_paths are present', async () => {
+        const sessionRoot = makeTmpDir();
+        const workingDir = makeTmpDir();
+        const gateDir = path.join(sessionRoot, 'gate');
+        fs.mkdirSync(gateDir, { recursive: true });
+
+        const syntheticFailure = {
+            check: 'tests',
+            file: '<timeout>',
+            line: 0,
+            ruleOrCode: 'GATE_CHECK_TIMEOUT',
+            message: 'tests timed out after 1000ms',
+            severity: 'error',
+            occurrence_index: 0,
+        };
+
+        let gateCalls = 0;
+        let remediatorCalled = false;
+
+        const code = await finalizeGateMain({
+            argv: [sessionRoot, 'anatomy-park'],
+            env: {},
+            readMicroverseStateFn: () => ({
+                status: 'iterating',
+                allowed_paths: ['packages/api/**'],
+            }),
+            readStateForWorkingDirFn: () => ({ workingDir, backend: 'claude' }),
+            loadSettingsFn: () => ({ szechuan_max_remediation_cycles: 3, anatomy_park_max_remediation_cycles: 2, remediator_timeout_s: 60 }),
+            mkdirSyncFn: (p) => fs.mkdirSync(p, { recursive: true }),
+            writeFileFn: (p, data) => fs.writeFileSync(p, data, 'utf-8'),
+            logActivityFn: () => {},
+            isoFn: () => `2026-01-01T${String(gateCalls).padStart(2, '0')}-45-00Z`,
+            runGateFn: async () => {
+                const call = gateCalls++;
+                if (call === 0) return makeRedResult([syntheticFailure]);
+                return { status: 'green', failures: [], baseline_used: false, allowed_paths_used: false, elapsed_ms: 5, total_raw_failure_count: 0, new_failures_vs_baseline: 0 };
+            },
+            spawnGateRemediatorMainFn: async (briefOpts) => {
+                remediatorCalled = true;
+                const briefPath = path.join(gateDir, 'brief.md');
+                fs.writeFileSync(briefPath, '# Brief', 'utf-8');
+                briefOpts.stdout?.(`BRIEF_PATH=${briefPath}`);
+                return 0;
+            },
+            spawnRemediatorFn: () => {},
+            stdout: () => {},
+            stderr: () => {},
+        });
+
+        assert.equal(code, 0, 'synthetic gate failures must stay in scope and drive remediation');
+        assert.equal(remediatorCalled, true, 'remediator should run for synthetic gate failures');
+        assert.equal(
+            fs.readdirSync(gateDir).filter(f => f.startsWith('out_of_scope_failures_')).length,
+            0,
+            'synthetic gate failures must not be written as out-of-scope',
+        );
+
+        fs.rmSync(sessionRoot, { recursive: true, force: true });
+        fs.rmSync(workingDir, { recursive: true, force: true });
+    });
+
     test('no allowed_paths → all failures treated as in-scope', async () => {
         const sessionRoot = makeTmpDir();
         const workingDir = makeTmpDir();

@@ -40,10 +40,27 @@ function splitByScope(failures, allowedPaths, workingDir) {
     if (!allowedPaths || allowedPaths.length === 0) {
         return { inScope: failures, outOfScope: [] };
     }
-    const relFiles = failures.map(f => path.relative(workingDir, f.file));
-    const inScopeRel = new Set(filterByScope(relFiles, { scope: 'full', allowedPaths }));
-    const inScope = failures.filter((f, i) => inScopeRel.has(relFiles[i]));
-    const outOfScope = failures.filter((f, i) => !inScopeRel.has(relFiles[i]));
+    const inScope = [];
+    const scopeCandidates = [];
+    for (const failure of failures) {
+        if (/^<[^>]+>$/.test(failure.file) || !path.isAbsolute(failure.file)) {
+            inScope.push(failure);
+            continue;
+        }
+        scopeCandidates.push({
+            failure,
+            relFile: path.relative(workingDir, failure.file),
+        });
+    }
+    const inScopeRel = new Set(filterByScope(scopeCandidates.map(({ relFile }) => relFile), { scope: 'full', allowedPaths }));
+    for (const candidate of scopeCandidates) {
+        if (inScopeRel.has(candidate.relFile)) {
+            inScope.push(candidate.failure);
+        }
+    }
+    const outOfScope = scopeCandidates
+        .filter(candidate => !inScopeRel.has(candidate.relFile))
+        .map(candidate => candidate.failure);
     return { inScope, outOfScope };
 }
 function defaultReadStateForWorkingDir(sessionRoot) {
