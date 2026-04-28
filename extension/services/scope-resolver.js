@@ -198,7 +198,7 @@ export function refreshScope(sessionRoot, phase, opts = {}) {
     const repoRoot = opts.repoRoot ?? resolveRepoRootFromState(sm, statePath);
     const log = opts.log ?? ((msg) => { process.stderr.write(`${msg}\n`); });
     const newHead = getHeadSha(repoRoot);
-    const newAllowed = computeRefreshedAllowed(scope, newHead, repoRoot);
+    const newAllowed = computeRefreshedAllowed(scope, newHead, repoRoot, opts.target);
     if (newAllowed.length === 0 && phase === 'anatomy-park') {
         throw new ScopeError('SCOPE_EMPTY_POST_BUILD', `refreshScope: diff ${scope.base_sha}...${newHead} is empty at phase=${phase}; the build phase produced no review surface`);
     }
@@ -231,7 +231,7 @@ function resolveRepoRootFromState(sm, statePath) {
     }
     return sm.read(statePath).working_dir;
 }
-function computeRefreshedAllowed(scope, newHead, repoRoot) {
+function computeRefreshedAllowed(scope, newHead, repoRoot, target) {
     if (scope.mode === 'paths')
         return scope.allowed_paths.slice();
     if (!scope.base_sha) {
@@ -245,7 +245,8 @@ function computeRefreshedAllowed(scope, newHead, repoRoot) {
         const msg = err instanceof Error ? err.message : String(err);
         throw new ScopeError('SCOPE_BASE_MISSING', `refreshScope: diff ${scope.base_sha}...${newHead} failed: ${msg}`);
     }
-    const expanded = scope.strategy === 'one-hop' ? computeOneHop(base, repoRoot) : base;
+    const narrowed = filterByTarget(base, target, repoRoot);
+    const expanded = scope.strategy === 'one-hop' ? computeOneHop(narrowed, repoRoot) : narrowed;
     return Array.from(new Set(expanded.map(toPosix))).sort(byteOrder);
 }
 function persistRefreshedScope(sessionRoot, scopePath, refreshed, sm, statePath, phase) {

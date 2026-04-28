@@ -706,7 +706,11 @@ export async function main(sessionDir, opts = {}) {
             }
             let refreshed;
             try {
-                refreshed = refreshScope(sessionDir, 'anatomy-park', { repoRoot: workingDir, log });
+                refreshed = refreshScope(sessionDir, 'anatomy-park', {
+                    repoRoot: workingDir,
+                    target: config.target || workingDir,
+                    log,
+                });
                 if (refreshed) {
                     writeSkippedByScope(sessionDir, 'anatomy-park', refreshed, config.target || workingDir, workingDir);
                 }
@@ -749,7 +753,11 @@ export async function main(sessionDir, opts = {}) {
                 if (cur.backend !== backend)
                     sm.update(statePath, s => { s.backend = backend; });
             }
-            const refreshedSz = refreshScope(sessionDir, 'szechuan-sauce', { repoRoot: workingDir, log });
+            const refreshedSz = refreshScope(sessionDir, 'szechuan-sauce', {
+                repoRoot: workingDir,
+                target: config.target || workingDir,
+                log,
+            });
             if (refreshedSz) {
                 writeSkippedByScope(sessionDir, 'szechuan-sauce', refreshedSz, config.target || workingDir, workingDir);
             }

@@ -238,6 +238,7 @@ function computeAllowedFromDiff(baseSha: string, headSha: string, repoRoot: stri
 
 export interface RefreshScopeOpts {
   repoRoot?: string;
+  target?: string;
   log?: (msg: string) => void;
 }
 
@@ -282,7 +283,7 @@ export function refreshScope(
   const log = opts.log ?? ((msg: string) => { process.stderr.write(`${msg}\n`); });
   const newHead = getHeadSha(repoRoot);
 
-  const newAllowed = computeRefreshedAllowed(scope, newHead, repoRoot);
+  const newAllowed = computeRefreshedAllowed(scope, newHead, repoRoot, opts.target);
   if (newAllowed.length === 0 && phase === 'anatomy-park') {
     throw new ScopeError(
       'SCOPE_EMPTY_POST_BUILD',
@@ -321,7 +322,12 @@ function resolveRepoRootFromState(sm: StateManager, statePath: string): string {
   return sm.read(statePath).working_dir;
 }
 
-function computeRefreshedAllowed(scope: ScopeJson, newHead: string, repoRoot: string): string[] {
+function computeRefreshedAllowed(
+  scope: ScopeJson,
+  newHead: string,
+  repoRoot: string,
+  target: string | undefined,
+): string[] {
   if (scope.mode === 'paths') return scope.allowed_paths.slice();
   if (!scope.base_sha) {
     throw new ScopeError('SCOPE_BASE_MISSING', `refreshScope: scope.json has no base_sha for mode=${scope.mode}`);
@@ -333,7 +339,8 @@ function computeRefreshedAllowed(scope: ScopeJson, newHead: string, repoRoot: st
     const msg = err instanceof Error ? err.message : String(err);
     throw new ScopeError('SCOPE_BASE_MISSING', `refreshScope: diff ${scope.base_sha}...${newHead} failed: ${msg}`);
   }
-  const expanded = scope.strategy === 'one-hop' ? computeOneHop(base, repoRoot) : base;
+  const narrowed = filterByTarget(base, target, repoRoot);
+  const expanded = scope.strategy === 'one-hop' ? computeOneHop(narrowed, repoRoot) : narrowed;
   return Array.from(new Set(expanded.map(toPosix))).sort(byteOrder);
 }
 

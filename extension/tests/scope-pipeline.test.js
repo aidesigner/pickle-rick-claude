@@ -209,6 +209,47 @@ test('empty-post-build: refreshScope at anatomy-park throws SCOPE_EMPTY_POST_BUI
     }
 });
 
+test('refreshScope: target clamp survives phase refresh after later commits', () => {
+    const repo = makeRepo();
+    const session = makeSession(repo);
+    try {
+        git(['checkout', '-qb', 'feature'], repo);
+        fs.mkdirSync(path.join(repo, 'pkg', 'src'), { recursive: true });
+        fs.mkdirSync(path.join(repo, 'other'), { recursive: true });
+        fs.writeFileSync(path.join(repo, 'pkg', 'src', 'inside-a.ts'), 'export const insideA = 1;\n');
+        fs.writeFileSync(path.join(repo, 'other', 'outside-a.ts'), 'export const outsideA = 1;\n');
+        git(['add', '.'], repo);
+        git(['commit', '-qm', 'seed target and non-target files'], repo);
+
+        const target = path.join(repo, 'pkg');
+        const scope = setupScope({
+            sessionDir: session,
+            workingDir: repo,
+            target,
+            scopeFlag: 'branch',
+            scopeBase: 'main',
+            log: () => {},
+        });
+        assert.ok(scope, 'setupScope returns initial scope');
+        assert.deepStrictEqual(scope.allowed_paths, ['pkg/src/inside-a.ts']);
+
+        fs.writeFileSync(path.join(repo, 'pkg', 'src', 'inside-b.ts'), 'export const insideB = 1;\n');
+        fs.writeFileSync(path.join(repo, 'other', 'outside-b.ts'), 'export const outsideB = 1;\n');
+        git(['add', '.'], repo);
+        git(['commit', '-qm', 'advance both target and non-target files'], repo);
+
+        const refreshed = refreshScope(session, 'anatomy-park', { repoRoot: repo, target });
+        assert.ok(refreshed, 'refreshScope returns refreshed scope');
+        assert.deepStrictEqual(
+            refreshed.allowed_paths,
+            ['pkg/src/inside-a.ts', 'pkg/src/inside-b.ts'],
+            'phase refresh must preserve the original target subtree clamp',
+        );
+    } finally {
+        cleanup(repo, session);
+    }
+});
+
 // ---------------------------------------------------------------------------
 // Backcompat: no --scope → no scope.json, no phases_entered mutation
 // ---------------------------------------------------------------------------
