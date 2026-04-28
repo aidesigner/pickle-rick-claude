@@ -10,11 +10,34 @@ function sameWorkingDir(a, b) {
 function readLookupState(stateFile) {
     try {
         const state = sm.read(stateFile);
-        return { active: state.active, working_dir: state.working_dir };
+        return { active: state.active, working_dir: state.working_dir, started_at: state.started_at };
     }
     catch {
         return null;
     }
+}
+function getStateFileRecencyMs(stateFile, state) {
+    let recencyMs = 0;
+    if (typeof state.started_at === 'string') {
+        const startedAtMs = new Date(state.started_at).getTime();
+        if (Number.isFinite(startedAtMs))
+            recencyMs = startedAtMs;
+    }
+    try {
+        recencyMs = Math.max(recencyMs, fs.statSync(stateFile).mtimeMs);
+    }
+    catch {
+        // Keep the best signal we already have.
+    }
+    return recencyMs;
+}
+function preferNewerStateFile(best, candidate) {
+    if (!best)
+        return candidate;
+    if (candidate.recencyMs !== best.recencyMs) {
+        return candidate.recencyMs > best.recencyMs ? candidate : best;
+    }
+    return candidate.stateFile.localeCompare(best.stateFile) > 0 ? candidate : best;
 }
 function resolveMatchingStateFile(stateFile, cwd) {
     if (!fs.existsSync(stateFile))
@@ -23,6 +46,25 @@ function resolveMatchingStateFile(stateFile, cwd) {
     if (!state || !sameWorkingDir(state.working_dir, cwd))
         return null;
     return { stateFile, active: state.active };
+}
+export function selectScannedStateFile(stateFiles, cwd) {
+    let activeMatch = null;
+    let inactiveMatch = null;
+    for (const stateFile of stateFiles) {
+        const state = readLookupState(stateFile);
+        if (!state || !sameWorkingDir(state.working_dir, cwd))
+            continue;
+        const candidate = {
+            stateFile,
+            recencyMs: getStateFileRecencyMs(stateFile, state),
+        };
+        if (state.active === true) {
+            activeMatch = preferNewerStateFile(activeMatch, candidate);
+            continue;
+        }
+        inactiveMatch = preferNewerStateFile(inactiveMatch, candidate);
+    }
+    return activeMatch?.stateFile ?? inactiveMatch?.stateFile ?? null;
 }
 function resolveStateFileFromSessionsDir(dataDir) {
     const sessionsDir = path.join(dataDir, 'sessions');
@@ -33,18 +75,7 @@ function resolveStateFileFromSessionsDir(dataDir) {
     catch {
         return null;
     }
-    let inactiveMatch = null;
-    for (const entry of entries) {
-        const stateFile = path.join(sessionsDir, entry, 'state.json');
-        const state = readLookupState(stateFile);
-        if (!state || !sameWorkingDir(state.working_dir, process.cwd()))
-            continue;
-        if (state.active === true)
-            return stateFile;
-        if (!inactiveMatch)
-            inactiveMatch = stateFile;
-    }
-    return inactiveMatch;
+    return selectScannedStateFile(entries.map((entry) => path.join(sessionsDir, entry, 'state.json')), process.cwd());
 }
 /**
  * Resolves the state file path from env or the sessions map.

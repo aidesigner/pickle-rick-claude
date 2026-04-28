@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { resolveStateFile, loadActiveState, approve } from '../hooks/resolve-state.js';
+import { resolveStateFile, loadActiveState, approve, selectScannedStateFile } from '../hooks/resolve-state.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -162,6 +162,43 @@ test('resolveStateFile: falls back to sessions/*/state.json when the sessions ma
     }
   } finally {
     fs.rmSync(tmp, { recursive: true });
+  }
+});
+
+test('selectScannedStateFile: picks the newest active same-cwd session when older state files are listed first', () => {
+  const tmp = tmpDir();
+  try {
+    const sessionsDir = path.join(tmp, 'sessions');
+    const olderSessionDir = path.join(sessionsDir, 'older-session');
+    const newerSessionDir = path.join(sessionsDir, 'newer-session');
+    fs.mkdirSync(olderSessionDir, { recursive: true });
+    fs.mkdirSync(newerSessionDir, { recursive: true });
+
+    const olderStateFile = path.join(olderSessionDir, 'state.json');
+    const newerStateFile = path.join(newerSessionDir, 'state.json');
+    fs.writeFileSync(
+      olderStateFile,
+      JSON.stringify(baseState({
+        session_dir: olderSessionDir,
+        started_at: '2026-04-27T12:00:00.000Z',
+      })),
+    );
+    fs.writeFileSync(
+      newerStateFile,
+      JSON.stringify(baseState({
+        session_dir: newerSessionDir,
+        started_at: '2026-04-28T12:00:00.000Z',
+        current_ticket: 'latest-ticket',
+      })),
+    );
+    assert.equal(
+      selectScannedStateFile([olderStateFile, newerStateFile], process.cwd()),
+      newerStateFile,
+    );
+    const resolvedState = loadActiveState(newerStateFile);
+    assert.equal(resolvedState?.current_ticket, 'latest-ticket');
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
 
