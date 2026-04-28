@@ -837,6 +837,66 @@ test('CLI: nested git repos contribute LOC to the matching nested project slug',
     }
 });
 
+test('CLI: git worktrees contribute LOC to the matching worktree project slug', () => {
+    const { root, cacheFile: _ } = makeTempProjectsDir();
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-metrics-worktree-root-'));
+    const baseRepoDir = path.join(repoRoot, 'base-repo');
+    const worktreeDir = path.join(repoRoot, 'feature-worktree');
+    fs.mkdirSync(baseRepoDir, { recursive: true });
+
+    try {
+        const today = formatLocalDateKey(new Date());
+        const worktreeSlug = worktreeDir.replace(/[\\/]/g, '-');
+        writeSessionLine(root, worktreeSlug, 'session.jsonl',
+            makeAssistantLine(`${today}T10:00:00Z`, 100, 200));
+
+        git({}, baseRepoDir, ['init']);
+        git({}, baseRepoDir, ['config', 'user.name', 'Metrics Test']);
+        git({}, baseRepoDir, ['config', 'user.email', 'metrics@example.com']);
+
+        fs.writeFileSync(path.join(baseRepoDir, 'report.txt'), 'base repo\n');
+        git({}, baseRepoDir, ['add', 'report.txt']);
+        git(
+            {
+                GIT_AUTHOR_DATE: `${today}T09:00:00Z`,
+                GIT_COMMITTER_DATE: `${today}T09:00:00Z`,
+            },
+            baseRepoDir,
+            ['commit', '-m', 'base commit'],
+        );
+        git({}, baseRepoDir, ['branch', 'feature']);
+        git({}, baseRepoDir, ['worktree', 'add', worktreeDir, 'feature']);
+
+        fs.appendFileSync(path.join(worktreeDir, 'report.txt'), 'worktree line\n');
+        git({}, worktreeDir, ['add', 'report.txt']);
+        git(
+            {
+                GIT_AUTHOR_DATE: `${today}T12:00:00Z`,
+                GIT_COMMITTER_DATE: `${today}T12:00:00Z`,
+            },
+            worktreeDir,
+            ['commit', '-m', 'worktree commit'],
+        );
+
+        const result = runMetricsCli(['--days', '0', '--json'], {
+            CLAUDE_PROJECTS_DIR: root,
+            METRICS_REPO_ROOT: repoRoot,
+        });
+        assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+
+        const report = JSON.parse(result.stdout);
+        const project = report.projects.find((entry) => entry.slug === worktreeSlug);
+        assert.ok(project, 'expected worktree project slug in metrics report');
+        assert.equal(project.totals.turns, 1);
+        assert.equal(project.totals.commits, 1, 'worktree commit should merge into the matching project');
+        assert.equal(project.totals.added, 1);
+        assert.equal(project.totals.removed, 0);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+});
+
 // ---------------------------------------------------------------------------
 // parseMetricsArgs
 // ---------------------------------------------------------------------------

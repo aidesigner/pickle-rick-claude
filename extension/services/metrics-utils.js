@@ -41,7 +41,7 @@ function discoverGitRepos(repoRoot) {
         catch {
             continue;
         }
-        if (entries.some((entry) => entry.isDirectory() && entry.name === '.git')) {
+        if (entries.some((entry) => entry.name === '.git' && (entry.isDirectory() || entry.isFile()))) {
             repos.push(current);
             continue;
         }
