@@ -507,6 +507,10 @@ test('jar-runner: SIGTERM shutdown preserves a newer orphan tmp session payload'
             }
         });
 
+        const activeState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(typeof activeState.pid, 'number', `Expected numeric pid stamp after task activation, got: ${JSON.stringify(activeState)}`);
+        assert.ok(activeState.pid > 0, `Expected positive pid stamp after task activation, got: ${activeState.pid}`);
+
         const orphanTmpPath = `${statePath}.tmp.99999999`;
         fs.writeFileSync(orphanTmpPath, JSON.stringify({
             schema_version: 1,

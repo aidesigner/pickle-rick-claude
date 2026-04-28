@@ -716,8 +716,8 @@ export async function main(sessionDir) {
         s.tmux_mode = true;
         if (!s.command_template)
             s.command_template = 'microverse.md';
-        if (!s.active)
-            s.active = true;
+        s.active = true;
+        s.pid = process.pid;
     });
     // Signal handlers
     const handleShutdownSignal = (signal) => {

@@ -203,3 +203,24 @@ test('startup-validation: valid state → passes validation (not exit 2)', () =>
         fs.rmSync(root, { recursive: true, force: true });
     }
 });
+
+test('startup-validation: tmux ownership stamps runner pid into state.json', () => {
+    const root = makeTmpRoot();
+    try {
+        const sessionDir = makeSessionDir(root, {
+            active: false,
+            tmux_mode: true,
+            iteration: 10,
+            max_iterations: 10,
+        });
+        const result = run(sessionDir, root);
+        assert.notEqual(result.status, 2, `Ownership path should pass validation. stderr: ${result.stderr}`);
+
+        const finalState = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+        assert.equal(finalState.active, false, 'runner should still deactivate on the loop ceiling');
+        assert.equal(typeof finalState.pid, 'number', `Expected numeric pid stamp, got: ${JSON.stringify(finalState)}`);
+        assert.ok(finalState.pid > 0, `Expected positive pid stamp, got: ${finalState.pid}`);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});

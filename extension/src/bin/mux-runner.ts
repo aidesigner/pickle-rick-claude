@@ -1033,9 +1033,19 @@ async function main() {
     }
   }
 
-  if (ownerState.tmux_mode === true && ownerState.active !== true) {
-    sm.update(statePath, s => { s.active = true; });
-    log('Session ownership taken (active: false → true)');
+  if (
+    ownerState.tmux_mode === true &&
+    (ownerState.active !== true || ownerState.pid !== process.pid)
+  ) {
+    sm.update(statePath, s => {
+      s.active = true;
+      s.pid = process.pid;
+    });
+    log(
+      ownerState.active === true
+        ? 'Session ownership refreshed (pid updated)'
+        : 'Session ownership taken (active: false → true)',
+    );
   }
 
   // Clean up stale rate_limit_wait.json from a previous crashed session

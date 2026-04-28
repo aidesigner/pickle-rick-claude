@@ -54,6 +54,7 @@ async function runTask(sessionDir, repoCwd, extensionRoot) {
     }
     state = sm.update(statePath, s => {
         s.active = true;
+        s.pid = process.pid;
         s.completion_promise = null;
     });
     activeTaskSessionDir = sessionDir;
