@@ -762,6 +762,39 @@ test('setup: iteration_budget_per_backend.codex honored when --backend codex', (
     }
 });
 
+test('setup: promotes newer dead-writer pickle_settings tmp before applying backend budget', () => {
+    const extRoot = makeExtensionRootWithSettings({
+        default_max_iterations: 100,
+        iteration_budget_per_backend: { claude: 100, codex: 80 },
+    });
+    const settingsPath = path.join(extRoot, 'pickle_settings.json');
+    fs.writeFileSync(`${settingsPath}.tmp.99999999`, JSON.stringify({
+        default_max_iterations: 100,
+        iteration_budget_per_backend: { claude: 100, codex: 12 },
+    }, null, 2));
+    const newer = new Date(Date.now() + 1_000);
+    fs.utimesSync(`${settingsPath}.tmp.99999999`, newer, newer);
+
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-budget-data-'));
+    const output = runSetupWithEnv(
+        ['--backend', 'codex', '--task', 'codex-budget-tmp-test'],
+        { EXTENSION_DIR: extRoot, PICKLE_DATA_ROOT: dataRoot }
+    );
+    const sessionPath = output.match(/SESSION_ROOT=(.+)/)[1].trim();
+    try {
+        const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+        assert.equal(state.max_iterations, 12, 'codex backend budget must come from recovered tmp settings');
+        assert.deepEqual(JSON.parse(fs.readFileSync(settingsPath, 'utf-8')).iteration_budget_per_backend, {
+            claude: 100,
+            codex: 12,
+        });
+        assert.equal(fs.existsSync(`${settingsPath}.tmp.99999999`), false);
+    } finally {
+        fs.rmSync(extRoot, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
 test('setup: iteration_budget_per_backend.claude honored when --backend claude', () => {
     const extRoot = makeExtensionRootWithSettings({
         default_max_iterations: 500,

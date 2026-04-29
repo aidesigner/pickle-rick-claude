@@ -7,6 +7,7 @@ import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, withRetryLock,
 import { State, Defaults, LockError, SessionMapEntry, Backend, BACKENDS } from '../types/index.js';
 import { StateManager } from '../services/state-manager.js';
 import { logActivity, pruneActivity } from '../services/activity-logger.js';
+import { readRecoverableJsonObject } from '../services/microverse-state.js';
 
 const sm = new StateManager();
 
@@ -158,7 +159,8 @@ function loadSettings(config: SetupArgs, rootDir: string) {
   if (!fs.existsSync(settingsFile)) return;
 
   try {
-    const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf-8')) as Record<string, unknown>;
+    const settings = readRecoverableJsonObject(settingsFile) as Record<string, unknown> | null;
+    if (!settings) return;
     applyPositiveNumberSetting(settings, 'default_max_iterations', value => { config.loopLimit = value; });
     applyPositiveNumberSetting(settings, 'default_max_time_minutes', value => { config.timeLimit = value; });
     applyPositiveNumberSetting(settings, 'default_worker_timeout_seconds', value => { config.workerTimeout = value; });
