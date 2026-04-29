@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -6,9 +6,24 @@ import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { addToJar } from '../services/jar-utils.js';
+import { formatLocalDateKey } from '../services/pickle-utils.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const JAR_UTILS_BIN = path.resolve(__dirname, '../services/jar-utils.js');
+
+function withTimezone(tz, fn) {
+    const saved = process.env.TZ;
+    process.env.TZ = tz;
+    try {
+        return fn();
+    } finally {
+        if (saved === undefined) {
+            delete process.env.TZ;
+        } else {
+            process.env.TZ = saved;
+        }
+    }
+}
 
 // --- Error paths ---
 
@@ -219,13 +234,48 @@ test('addToJar: result path is nested under jar/<date>/<sessionId>', () => {
         fs.writeFileSync(path.join(dir, 'prd.md'), '# PRD');
 
         const resultPath = addToJar(dir);
-        const today = new Date().toISOString().split('T')[0];
+        const today = formatLocalDateKey(new Date());
         const sessionId = path.basename(dir);
         const jarRoot = path.join(os.homedir(), '.local/share/pickle-rick/jar');
 
         assert.equal(resultPath, path.join(jarRoot, today, sessionId));
 
         // Cleanup
+        fs.rmSync(resultPath, { recursive: true });
+        const parentDir = path.dirname(resultPath);
+        if (fs.existsSync(parentDir) && fs.readdirSync(parentDir).length === 0) {
+            fs.rmdirSync(parentDir);
+        }
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('addToJar: result path uses local day, not UTC day', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-jar-'));
+
+    try {
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({
+            active: true,
+            working_dir: dir,
+        }));
+        fs.writeFileSync(path.join(dir, 'prd.md'), '# PRD');
+
+        let resultPath;
+        withTimezone('America/Chicago', () => {
+            mock.timers.enable({ apis: ['Date'], now: new Date('2026-04-29T01:30:00.000Z') });
+            try {
+                resultPath = addToJar(dir);
+            } finally {
+                mock.timers.reset();
+            }
+        });
+
+        const sessionId = path.basename(dir);
+        const jarRoot = path.join(os.homedir(), '.local/share/pickle-rick/jar');
+        assert.equal(resultPath, path.join(jarRoot, '2026-04-28', sessionId));
+        assert.notEqual(resultPath, path.join(jarRoot, '2026-04-29', sessionId));
+
         fs.rmSync(resultPath, { recursive: true });
         const parentDir = path.dirname(resultPath);
         if (fs.existsSync(parentDir) && fs.readdirSync(parentDir).length === 0) {

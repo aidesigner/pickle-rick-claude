@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { runCmd, extractFrontmatter } from './pickle-utils.js';
+import { runCmd, extractFrontmatter, formatLocalDateKey } from './pickle-utils.js';
 
 export function runGit(cmd: string[], cwd?: string, check: boolean = true): string {
   return runCmd(['git', ...cmd], { cwd, check });
@@ -100,7 +100,7 @@ export function updateTicketStatus(
   }
 
   const original = fs.readFileSync(ticketPath, 'utf-8');
-  const today = new Date().toISOString().split('T')[0];
+  const today = formatLocalDateKey(new Date());
   const { content, statusReplaced } = rewriteTicketFrontmatter(original, ticketId, newStatus, today);
 
   if (!statusReplaced) {

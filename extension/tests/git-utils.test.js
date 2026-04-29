@@ -1,9 +1,24 @@
-import { test } from 'node:test';
+import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { getBranchName, getGithubUser, updateTicketStatus } from '../services/git-utils.js';
+import { formatLocalDateKey } from '../services/pickle-utils.js';
+
+function withTimezone(tz, fn) {
+    const saved = process.env.TZ;
+    process.env.TZ = tz;
+    try {
+        return fn();
+    } finally {
+        if (saved === undefined) {
+            delete process.env.TZ;
+        } else {
+            process.env.TZ = saved;
+        }
+    }
+}
 
 // --- getBranchName ---
 // getGithubUser() falls back to 'pickle-rick' when gh/git unavailable,
@@ -52,8 +67,36 @@ test('updateTicketStatus: updates status in frontmatter', () => {
             path.join(subDir, `linear_ticket_${ticketId}.md`), 'utf-8');
         assert.match(content, /^status: "Done"$/m);
         // updated date should be refreshed
-        const today = new Date().toISOString().split('T')[0];
+        const today = formatLocalDateKey(new Date());
         assert.match(content, new RegExp(`updated: "${today}"`));
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('updateTicketStatus: updated date uses local day, not UTC day', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
+    const ticketId = 'local-day';
+    const subDir = path.join(dir, ticketId);
+    fs.mkdirSync(subDir);
+    fs.writeFileSync(
+        path.join(subDir, `linear_ticket_${ticketId}.md`),
+        `---\nid: ${ticketId}\ntitle: Test\nstatus: Todo\nupdated: 2025-01-01\n---\n# Body\n`
+    );
+
+    try {
+        withTimezone('America/Chicago', () => {
+            mock.timers.enable({ apis: ['Date'], now: new Date('2026-04-29T01:30:00.000Z') });
+            try {
+                updateTicketStatus(ticketId, 'Done', dir);
+            } finally {
+                mock.timers.reset();
+            }
+        });
+        const content = fs.readFileSync(
+            path.join(subDir, `linear_ticket_${ticketId}.md`), 'utf-8');
+        assert.match(content, /updated: "2026-04-28"/);
+        assert.doesNotMatch(content, /updated: "2026-04-29"/);
     } finally {
         fs.rmSync(dir, { recursive: true });
     }
@@ -94,7 +137,7 @@ test('updateTicketStatus: updates the "updated" field to today', () => {
         updateTicketStatus(ticketId, 'InProgress', dir);
         const content = fs.readFileSync(
             path.join(subDir, `linear_ticket_${ticketId}.md`), 'utf-8');
-        const today = new Date().toISOString().split('T')[0];
+        const today = formatLocalDateKey(new Date());
         assert.match(content, new RegExp(`updated: "${today}"`),
             'updated field should be set to today');
     } finally {
@@ -289,7 +332,7 @@ test('updateTicketStatus: inserts updated field when missing from frontmatter', 
         // Status should be updated
         assert.match(content, /^status: "Done"$/m);
         // updated field should be inserted within frontmatter
-        const today = new Date().toISOString().split('T')[0];
+        const today = formatLocalDateKey(new Date());
         assert.match(content, new RegExp(`updated: "${today}"`),
             'updated field should be inserted when missing');
         // Verify inserted before closing ---

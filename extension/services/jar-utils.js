@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as crypto from 'crypto';
-import { runCmd, Style, getDataRoot, safeErrorMessage } from './pickle-utils.js';
+import { runCmd, Style, getDataRoot, safeErrorMessage, formatLocalDateKey } from './pickle-utils.js';
 import { StateManager } from './state-manager.js';
 const sm = new StateManager();
 function getBranch(repoPath) {
@@ -36,7 +36,7 @@ export function addToJar(sessionDir) {
         throw new Error(`prd.md not found in ${sessionDir}`);
     }
     // 3. Setup Jar storage
-    const today = new Date().toISOString().split('T')[0];
+    const today = formatLocalDateKey(new Date());
     const sessionId = path.basename(sessionDir);
     const jarRoot = path.join(getDataRoot(), 'jar');
     const taskDir = path.join(jarRoot, today, sessionId);

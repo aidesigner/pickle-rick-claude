@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { runCmd, extractFrontmatter } from './pickle-utils.js';
+import { runCmd, extractFrontmatter, formatLocalDateKey } from './pickle-utils.js';
 export function runGit(cmd, cwd, check = true) {
     return runCmd(['git', ...cmd], { cwd, check });
 }
@@ -98,7 +98,7 @@ export function updateTicketStatus(ticketId, newStatus, sessionDir) {
         throw new Error(`Ticket linear_ticket_${ticketId}.md not found in ${sessionDir}`);
     }
     const original = fs.readFileSync(ticketPath, 'utf-8');
-    const today = new Date().toISOString().split('T')[0];
+    const today = formatLocalDateKey(new Date());
     const { content, statusReplaced } = rewriteTicketFrontmatter(original, ticketId, newStatus, today);
     if (!statusReplaced) {
         console.warn(`Warning: no "status:" field found in ticket ${ticketId} — status not updated`);

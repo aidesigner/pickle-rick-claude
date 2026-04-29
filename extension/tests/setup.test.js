@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -29,6 +29,20 @@ function runSetupWithEnv(args, extraEnv) {
 
 function cleanup(sessionPath) {
     try { fs.rmSync(sessionPath, { recursive: true, force: true }); } catch { /* ignore */ }
+}
+
+function withTimezone(tz, fn) {
+    const saved = process.env.TZ;
+    process.env.TZ = tz;
+    try {
+        return fn();
+    } finally {
+        if (saved === undefined) {
+            delete process.env.TZ;
+        } else {
+            process.env.TZ = saved;
+        }
+    }
 }
 
 test('setup parseArguments: --resume sets resumeMode and resumePath', () => {
@@ -74,6 +88,37 @@ test('setup initializeNewSession: state field set matches schema fixture', () =>
         const schema = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures/setup/state-schema.json'), 'utf-8'));
 
         assert.deepEqual(Object.keys(persisted), schema.fields_in_order);
+    } finally {
+        if (previousDataRoot === undefined) {
+            delete process.env.PICKLE_DATA_ROOT;
+        } else {
+            process.env.PICKLE_DATA_ROOT = previousDataRoot;
+        }
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('setup initializeNewSession: session id uses local day, not UTC day', () => {
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-local-day-data-'));
+    const previousDataRoot = process.env.PICKLE_DATA_ROOT;
+    process.env.PICKLE_DATA_ROOT = dataRoot;
+
+    try {
+        const args = parseArguments(['--task', 'local day setup regression']);
+        let session;
+        withTimezone('America/Chicago', () => {
+            mock.timers.enable({ apis: ['Date'], now: new Date('2026-04-29T01:30:00.000Z') });
+            try {
+                session = initializeNewSession(args);
+            } finally {
+                mock.timers.reset();
+            }
+        });
+
+        const sessionId = path.basename(session.sessionRoot);
+        assert.match(sessionId, /^2026-04-28-[0-9a-f]{8}$/);
+        assert.doesNotMatch(sessionId, /^2026-04-29-/);
+        assert.equal(session.state.session_dir, session.sessionRoot);
     } finally {
         if (previousDataRoot === undefined) {
             delete process.env.PICKLE_DATA_ROOT;

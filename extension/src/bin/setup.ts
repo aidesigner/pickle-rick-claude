@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
-import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd, formatLocalDateKey } from '../services/pickle-utils.js';
 import { State, Defaults, LockError, SessionMapEntry, Backend, BACKENDS } from '../types/index.js';
 import { StateManager } from '../services/state-manager.js';
 import { logActivity, pruneActivity } from '../services/activity-logger.js';
@@ -450,7 +450,7 @@ function createInitialState(config: SetupArgs, sessionPath: string, taskStr: str
 }
 
 function createSession(config: SetupArgs, paths: SetupPaths, taskStr: string): SessionResult {
-  const today = new Date().toISOString().split('T')[0];
+  const today = formatLocalDateKey(new Date());
   const hash = crypto.randomBytes(4).toString('hex');
   const sessionId = `${today}-${hash}`;
   const fullSessionPath = path.join(paths.sessionsRoot, sessionId);
