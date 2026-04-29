@@ -1008,7 +1008,7 @@ function getSessionName() {
     return sessionName;
 }
 function checkAndRecreateWindow(sessionName) {
-    const { log, mode, tmuxBin } = currentMonitorWindowContext();
+    const { log, mode, opts, tmuxBin } = currentMonitorWindowContext();
     const target = `${sessionName}:monitor`;
     // Compatibility guard — a "monitor" window from a previous command (e.g.
     // anatomy-park then council) has the wrong layout. Check the window's
@@ -1025,6 +1025,7 @@ function checkAndRecreateWindow(sessionName) {
     const existingMode = readWindowMode(tmuxBin, target);
     if (monitorModesCompatible(existingMode, mode)) {
         log(`ensureMonitorWindow: monitor window already exists on ${sessionName} (mode=${mode})`);
+        restartDeadWatcherPanes(opts.sessionDir, opts.extensionRoot || getExtensionRoot(), mode);
         activeMonitorWindowContext.outcome = { status: 'exists' };
         return { recreate: false };
     }

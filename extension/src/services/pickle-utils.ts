@@ -1141,7 +1141,7 @@ function getSessionName(): string | null {
 }
 
 function checkAndRecreateWindow(sessionName: string): { recreate: boolean } {
-  const { log, mode, tmuxBin } = currentMonitorWindowContext();
+  const { log, mode, opts, tmuxBin } = currentMonitorWindowContext();
   const target = `${sessionName}:monitor`;
 
   // Compatibility guard — a "monitor" window from a previous command (e.g.
@@ -1158,6 +1158,7 @@ function checkAndRecreateWindow(sessionName: string): { recreate: boolean } {
   const existingMode = readWindowMode(tmuxBin, target);
   if (monitorModesCompatible(existingMode, mode)) {
     log(`ensureMonitorWindow: monitor window already exists on ${sessionName} (mode=${mode})`);
+    restartDeadWatcherPanes(opts.sessionDir, opts.extensionRoot || getExtensionRoot(), mode);
     activeMonitorWindowContext!.outcome = { status: 'exists' };
     return { recreate: false };
   }

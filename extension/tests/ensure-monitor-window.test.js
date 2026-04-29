@@ -22,6 +22,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 function makeFakes(opts) {
     const tmpRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-monitor-')));
     const callsLog = path.join(tmpRoot, 'calls.log');
+    const shimDir = path.join(tmpRoot, 'bin');
+    fs.mkdirSync(shimDir, { recursive: true });
 
     // Session dir with minimal state.json — inferMonitorMode reads it.
     const sessionDir = path.join(tmpRoot, 'session');
@@ -48,16 +50,26 @@ function makeFakes(opts) {
     // $TMP/.monitor-mode (empty = unset); `kill-window` and `set-option`
     // drop a marker so assertions can observe them.
     const fakeTmux = path.join(tmpRoot, 'fake-tmux.sh');
+    const pathTmux = path.join(shimDir, 'tmux');
     const markerPath = path.join(tmpRoot, '.monitor-exists');
     const modeMarkerPath = path.join(tmpRoot, '.monitor-mode');
     const killMarkerPath = path.join(tmpRoot, '.monitor-killed');
+    const paneCommands = opts.paneCommands || { 1: 'node', 2: 'node', 3: 'node' };
+    for (const pane of [1, 2, 3]) {
+        fs.writeFileSync(path.join(tmpRoot, `.pane-${pane}`), paneCommands[pane] || '');
+    }
     fs.writeFileSync(
         fakeTmux,
         `#!/bin/sh
 echo "tmux $*" >> "${callsLog}"
 case "$1" in
   display-message)
-    echo "${opts.sessionName || 'pickle-test'}"
+    case "$*" in
+      *monitor.1*pane_current_command*) cat "${path.join(tmpRoot, '.pane-1')}" ;;
+      *monitor.2*pane_current_command*) cat "${path.join(tmpRoot, '.pane-2')}" ;;
+      *monitor.3*pane_current_command*) cat "${path.join(tmpRoot, '.pane-3')}" ;;
+      *) echo "${opts.sessionName || 'pickle-test'}" ;;
+    esac
     ;;
   list-windows)
     if [ -f "${markerPath}" ]; then
@@ -86,6 +98,8 @@ exit 0
 `,
     );
     fs.chmodSync(fakeTmux, 0o755);
+    fs.copyFileSync(fakeTmux, pathTmux);
+    fs.chmodSync(pathTmux, 0o755);
 
     // Fake bash: records invocation, doesn't actually execute the script.
     const fakeBash = path.join(tmpRoot, 'fake-bash.sh');
@@ -113,6 +127,20 @@ exit 0
         },
         readCalls() {
             return fs.existsSync(callsLog) ? fs.readFileSync(callsLog, 'utf-8') : '';
+        },
+        readRunnerLog() {
+            const logPath = path.join(sessionDir, 'mux-runner.log');
+            return fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf-8') : '';
+        },
+        withPath(fn) {
+            const savedPath = process.env.PATH;
+            try {
+                process.env.PATH = `${shimDir}${path.delimiter}${savedPath || ''}`;
+                fn();
+            } finally {
+                if (savedPath === undefined) delete process.env.PATH;
+                else process.env.PATH = savedPath;
+            }
         },
     };
 }
@@ -222,28 +250,95 @@ test('ensureMonitorWindow: creates monitor when window does not exist', () => {
     }
 });
 
-test('ensureMonitorWindow: no-op when monitor window already exists', () => {
-    const f = makeFakes({ sessionName: 'pickle-abc12345' });
+test('ensureMonitorWindow: existing monitor window runs exactly one pane-recovery sweep', () => {
+    const f = makeFakes({
+        sessionName: 'pickle-abc12345',
+        paneCommands: { 1: 'zsh', 2: 'node', 3: 'bash' },
+    });
     // Simulate existing monitor window stamped with the same mode we'll infer.
     fs.writeFileSync(f.markerPath, '1');
     fs.writeFileSync(f.modeMarkerPath, 'pickle');
     try {
-        const result = ensureMonitorWindow({
-            sessionDir: f.sessionDir,
-            extensionRoot: f.extRoot,
-            inTmux: true,
-            tmuxBin: f.tmuxBin,
-            bashBin: f.bashBin,
+        let result;
+        f.withPath(() => {
+            result = ensureMonitorWindow({
+                sessionDir: f.sessionDir,
+                extensionRoot: f.extRoot,
+                inTmux: true,
+                tmuxBin: f.tmuxBin,
+                bashBin: f.bashBin,
+            });
         });
         assert.equal(result.status, 'exists');
         const calls = f.readCalls();
         assert.match(calls, /tmux list-windows/);
         assert.match(calls, /tmux show-option/, 'should read stamped mode');
+        assert.match(calls, /tmux display-message -p -t pickle-abc12345:monitor\.1 #\{pane_current_command\}/);
+        assert.match(calls, /tmux display-message -p -t pickle-abc12345:monitor\.2 #\{pane_current_command\}/);
+        assert.match(calls, /tmux display-message -p -t pickle-abc12345:monitor\.3 #\{pane_current_command\}/);
+        assert.match(calls, /tmux send-keys -t pickle-abc12345:monitor\.1 node .+log-watcher\.js .+session Enter/);
+        assert.match(calls, /tmux send-keys -t pickle-abc12345:monitor\.3 node .+raw-morty\.js .+session Enter/);
+        assert.equal((calls.match(/tmux send-keys/g) || []).length, 2, 'should respawn each dead pane once');
         assert.doesNotMatch(calls, /tmux kill-window/, 'should not kill a compatible window');
         assert.doesNotMatch(calls, /bash .+tmux-monitor\.sh/, 'should not spawn script when monitor exists');
+        assert.match(f.readRunnerLog(), /restartDeadWatcherPanes: respawned log-watcher\.js in pane 1/);
+        assert.match(f.readRunnerLog(), /restartDeadWatcherPanes: respawned raw-morty\.js in pane 3/);
     } finally {
         f.cleanup();
     }
+});
+
+test('ensureMonitorWindow: phase re-entry performs a fresh recovery sweep with mode-specific pane 2', () => {
+    const cases = [
+        ['pickle', 'pickle.md', /tmux send-keys -t pickle-phase:monitor\.2 node .+morty-watcher\.js .+session Enter/],
+        ['refinement', null, /tmux send-keys -t refinement-phase:monitor\.2 node .+refinement-watcher\.js .+session Enter/],
+        ['council', 'council-of-ricks.md', /tmux send-keys -t council-phase:monitor\.2 tail -F .+session\/mux-runner\.log Enter/],
+    ];
+
+    for (const [mode, commandTemplate, paneTwoPattern] of cases) {
+        const f = makeFakes({
+            sessionName: `${mode}-phase`,
+            commandTemplate,
+            paneCommands: { 1: 'node', 2: 'zsh', 3: 'node' },
+        });
+        fs.writeFileSync(f.markerPath, '1');
+        fs.writeFileSync(f.modeMarkerPath, mode);
+        try {
+            let result;
+            f.withPath(() => {
+                result = ensureMonitorWindow({
+                    sessionDir: f.sessionDir,
+                    extensionRoot: f.extRoot,
+                    inTmux: true,
+                    tmuxBin: f.tmuxBin,
+                    bashBin: f.bashBin,
+                    mode,
+                });
+            });
+            assert.equal(result.status, 'exists');
+            const calls = f.readCalls();
+            assert.match(calls, paneTwoPattern);
+            assert.equal((calls.match(/tmux display-message -p -t/g) || []).length, 3);
+            assert.equal((calls.match(/tmux send-keys/g) || []).length, 1);
+            assert.doesNotMatch(calls, /bash .+tmux-monitor\.sh/);
+        } finally {
+            f.cleanup();
+        }
+    }
+});
+
+test('ensureMonitorWindow: runner call sites remain limited to pipeline, mux, and microverse', () => {
+    const files = [
+        path.resolve(__dirname, '../src/bin/pipeline-runner.ts'),
+        path.resolve(__dirname, '../src/bin/mux-runner.ts'),
+        path.resolve(__dirname, '../src/bin/microverse-runner.ts'),
+    ];
+    const counts = files.map(file => {
+        const source = fs.readFileSync(file, 'utf-8');
+        return (source.match(/ensureMonitorWindow\(\{/g) || []).length;
+    });
+
+    assert.deepEqual(counts, [1, 1, 1]);
 });
 
 test('restartDeadWatcherPanes: respawns dead pickle watcher panes 1, 2, and 3', () => {
