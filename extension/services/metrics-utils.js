@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { spawnSync } from 'child_process';
 import { formatLocalDateKey, safeErrorMessage } from './pickle-utils.js';
+import { readRecoverableJsonObject } from './microverse-state.js';
 // ---------------------------------------------------------------------------
 // Utility Functions
 // ---------------------------------------------------------------------------
@@ -143,8 +144,9 @@ function parseJsonlFile(filePath) {
 }
 function loadCache(cachePath) {
     try {
-        const raw = fs.readFileSync(cachePath, 'utf-8');
-        const parsed = JSON.parse(raw);
+        const parsed = readRecoverableJsonObject(cachePath);
+        if (!parsed)
+            return emptyCache();
         if (parsed.version !== CACHE_VERSION)
             return emptyCache();
         if (parsed.time_zone !== getMetricsTimeZone())
