@@ -16,7 +16,8 @@ function parseFlag(args, flag) {
     const idx = args.indexOf(flag);
     if (idx === -1 || idx + 1 >= args.length)
         return undefined;
-    return args[idx + 1];
+    const value = args[idx + 1];
+    return value && !value.startsWith('--') ? value : undefined;
 }
 function hasFlag(args, flag) {
     return args.includes(flag);

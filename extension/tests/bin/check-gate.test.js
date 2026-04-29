@@ -233,6 +233,23 @@ describe('flag parsing', () => {
         assert.ok(stderrLines.some(l => l.includes('--working-dir')));
     });
 
+    test('flag-like --working-dir value exits 1 before gate execution', async () => {
+        const stderrLines = [];
+        let ranGate = false;
+        const code = await checkGateMain({
+            argv: ['--mode', 'strict', '--scope', 'full', '--checks', 'typecheck', '--working-dir', '--json'],
+            runGateFn: async () => {
+                ranGate = true;
+                return makeResult();
+            },
+            stdout: () => {},
+            stderr: (msg) => stderrLines.push(msg),
+        });
+        assert.equal(code, 1);
+        assert.equal(ranGate, false, 'missing working-dir value must not false-green by running against --json');
+        assert.ok(stderrLines.some(l => l.includes('--working-dir')));
+    });
+
     test('missing --mode exits 1', async () => {
         const stderrLines = [];
         const code = await checkGateMain({

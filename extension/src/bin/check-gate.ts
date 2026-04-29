@@ -19,7 +19,8 @@ const VALID_SCOPES = new Set<string>(['full', 'changed']);
 function parseFlag(args: string[], flag: string): string | undefined {
   const idx = args.indexOf(flag);
   if (idx === -1 || idx + 1 >= args.length) return undefined;
-  return args[idx + 1];
+  const value = args[idx + 1];
+  return value && !value.startsWith('--') ? value : undefined;
 }
 
 function hasFlag(args: string[], flag: string): boolean {
