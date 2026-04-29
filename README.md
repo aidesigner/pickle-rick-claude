@@ -299,7 +299,7 @@ Third-party hooks in `settings.json` (GitNexus, RTK, etc.) are never touched.
 
 ---
 
-## Advanced Workflows
+## Other Workflows
 
 ### Council of Ricks: Graphite Stack Review
 
@@ -514,126 +514,6 @@ Auto-discovers subsystems, rotates through them round-robin, three-phase protoco
 
 **Microverse opt-in** — `/pickle-microverse` runs are NOT gated by default. Add a filename to `convergence_gate.enabled_convergence_files` (default `["anatomy-park.json"]`) to opt a microverse-driven convergence file into per-iteration gating.
 
-### 🏛️ Council of Ricks — Details
-
-<p align="center">
-  <img src="images/council-of-ricks.png" alt="Council of Ricks — Graphite PR Stack Reviewer" width="100%" />
-</p>
-
-Iterative Graphite stack reviewer that generates agent-executable directives and auto-publishes review comments to each branch's PR at session end. Every round fans out category- and branch-scoped subagents in parallel via the `Agent` tool — a round review that used to take 30–60 min of serial passes now finishes in one fan-out cycle.
-
-**Requirements:**
-
-- Graphite stack with ≥1 non-trunk branch (`gt log short`)
-- A `CLAUDE.md` with project rules, passing lint, and architectural lint rules in ESLint
-- **GitHub CLI (`gh`)** authed, if you want auto-publish (see note below on why `gh` and not `gt`)
-- **Codex plugin** installed and authed, for the adversarial-review pass to be effective. Install: `/plugin install openai-codex` (or `npm i -g @openai/codex-cli` + `codex setup`). Without it, the Phase C Codex subagent is skipped — the rest of the round still runs, but you lose the adversarial-reviewer perspective.
-
-**Round structure** — each round runs four phases; within a round every category runs concurrently:
-
-- **Phase A — Historical Context** (serial, main agent): `git log` + prior PR comments (`gh pr list/view`) + in-file guidance comments → `historical-brief.md` consumed by Phase B/C subagents
-- **Phase B — Category Team** (parallel fan-out, one `Agent` per category — at stack tier ≥ `l` each category shards per-branch, so `N_branches × N_categories` concurrent subagents):
-  1. Stack Structure — PR sizing, commit hygiene, branch naming, stack ordering
-  2. CLAUDE.md Compliance — project rule verification per branch diff
-  3. Contract Discovery — producer→consumer map, Zod/enum/union coverage
-  4. Cross-Branch Contracts + Combinatorial — 2^N boolean/nullable guard verification
-  5. Test Coverage + Production Migration Safety — persisted-field change detection
-  6. Security — input validation, auth gaps, injection, tenant isolation
-  7. Migration Hygiene (conditional) — CHECK drift, idempotency, schema drift (skipped when no Drizzle journal)
-  8. Szechuan Principles Sweep — P0–P4 scan against the principles reference
-  9. Polish + Trap Door Candidates
-- **Phase C — Branch Team** (parallel fan-out, same message as Phase B):
-  - One `Agent` per non-trunk branch for per-branch Correctness + Data Flow (no checkout needed — pure diff review)
-  - One `Agent` for the Codex sweep (internally sequential because checkout needed; conditional on Codex availability)
-- **Phase D — Synthesis** (serial, main agent): false-positive pre-filter → confidence filter → dedupe (COUNCIL/CODEX merge) → directive + summary append
-
-**Severity × Confidence scoring** — every finding scored `[P0–P4, conf=0–100]`. Confidence `< 80` drops before reporting. **P0 severity escape hatch**: P0 findings at conf ≥ 50 still surface tagged `[NEEDS-VERIFICATION]` (a maybe-real SQL injection is worth an eyeball). Composes with an explicit **false-positives filter** — pre-existing issues, linter/typechecker-catchable errors, author-silenced issues, uncodified style nits, and speculative future-risk are excluded before scoring. Rubric adapted from Anthropic's official `code-review` plugin.
-
-**Approval gate** — `THE_CITADEL_APPROVES` fires only when all four conditions hold: (1) current round ≥ `min_iterations` (the tier-resolved value from Step 8 — see size-tier scaling below), (2) last two `## Round <N>:` headers in the summary both end with `— clean round.`, (3) across those two consecutive clean rounds no unconditional category (Phase A, B1–B6, B8, B9, Phase C per-branch Correctness) was `skipped`, (4) zero P0/P1 findings across COUNCIL + CODEX in those two rounds. Partial rounds (any unconditional skip) break the streak — Phase B7 Migration and Phase C Codex are conditional and may skip without demoting the round.
-
-**Size-tier scaling** — at stack discovery the Council computes `git diff --numstat <trunk>...<tip>` and scales `min_rounds` to the stack's surface area, because each round surfaces findings that reframe code earlier rounds walked past. Large PRs need more rounds to converge:
-
-| Stack diff LOC | OR | Files touched | Scaled min rounds |
-|---|---|---|---|
-| < 300 | or | < 10 | 2 |
-| 300 – 1,499 | or | 10 – 29 | 3 |
-| 1,500 – 4,999 | or | 30 – 79 | 4 |
-| 5,000 – 9,999 | or | 80 – 149 | 5 |
-| 10,000 – 19,999 | or | 150 – 299 | 6 |
-| ≥ 20,000 | or | ≥ 300 | 7 |
-
-Takes the max of the LOC tier and the files tier — either axis can flag "big enough." `effective_min = max(default_council_min_rounds, scaled_tier)`. `effective_max = max(default_council_max_rounds, effective_min + 2)` to guarantee two rounds of headroom above the floor. CLI flags `--min-iterations` / `--max-iterations` override the scaled values entirely — pass them when you want a quick sanity-check sweep on a big stack, or to force more rounds on a small one.
-
-**Auto-publish at session end** — when the gate fires OR max_iterations is hit, one PR comment per non-trunk branch is posted via `gh pr comment` to the GitHub-backed PR that Graphite manages. Idempotent via `.published/<branch-slug>` markers. Fails open at every level — `gh` unavailable / no PR / per-branch post failure never blocks the terminal promise. Fallback body files written to `council-comments/<branch-slug>.md` on every skip class. Opt out with `--no-publish` or `default_council_publish: false`.
-
-**Why `gh` and not `gt` for publishing** — Graphite's CLI has no `comment` subcommand and doesn't expose a comment-posting primitive. `gt` manages stacks (submit, restack, sync, create, branch); review comments are handled by Graphite's web dashboard, which syncs from GitHub. So the only mechanical path to post an actual comment is `gh pr comment` — the comment still shows up on the Graphite stack view because Graphite renders GitHub comments. If Graphite ever ships a `gt comment` or exposes an API token surface, the Council will switch to it.
-
-**Trap Doors** — structural weaknesses (design constraints that will re-break if forgotten) go in the directive's Trap Door section. The Council never writes to repo files; the fixing agent decides whether to add them to `CLAUDE.md`.
-
-**Directive contract (v1.50.0)** — every round writes `council-directive.json` atomically (tmp + rename) as the typed source of truth; `council-directive.md` is free-form human-readable output only, never scraped. Every subagent returns a shape-validated JSON payload (validator at `extension/src/services/council-schema.ts`); schema drift fails loud — the offending category is recorded as `skipped` with the jsonpath of the violation and the round demotes to partial. No more silent parser drift.
-
-### 🪠 Plumbus — DAG Shaping Loop
-
-<p align="center">
-  <img src="images/plumbus.jpg" alt="Plumbus — iterative DAG shaping loop" width="100%" />
-</p>
-
-> *"Everybody has a plumbus in their home, Morty. First they take the dinglebop, smooth it out with a bunch of schleem..."*
-
-The same convergence loop applied to a single attractor `.dot` pipeline. Runs the attractor validator as a hard gate, walks every edge, and converges against the `pickle-dot-patterns` rubric (DAG validity, Tier 1 mandatory patterns, anti-patterns). Use it after `/pickle-dot` generates a graph you want hardened before `/attract`.
-
-```bash
-/plumbus pipeline.dot                         # Shape a DAG into a proper plumbus
-/plumbus --dry-run pipeline.dot               # Catalog violations only
-/plumbus --focus "fan-out safety" pipeline.dot
-/plumbus --no-validator pipeline.dot          # Pattern-only (no attractor repo)
-```
-
-**When to use which:** Szechuan Sauce asks *"is this code well-designed?"* — Anatomy Park asks *"is this code correct?"* — Plumbus asks *"will this DAG actually run without deadlocking?"*
-
-#### Generative Audit Frames
-
-Plumbus runs six analysis frames during the first iteration Edge Walk (Override 6). Each frame produces findings in `gap_analysis.md` under `## Generative Findings`, using a three-severity model (`pre_verification_severity` / `post_verification_severity` / `rendered_severity`).
-
-| Frame | What it checks |
-|-------|----------------|
-| **Frame 1: Context Key Lifecycle Trace** | Orphan readers/writers, asymmetric writers, multi-writer conflicts |
-| **Frame 2: Success/Failure Symmetry** | State-mutating nodes missing the opposite-outcome unwind |
-| **Frame 3: Edge Condition Exhaustiveness** | Cartesian-product stuck states and non-deterministic routing |
-| **Frame 4: Tool Exit Code Semantics Audit** | Routing-signal vs. build/check tool wiring mismatches |
-| **Frame 5: Loop Convergence Proof Obligation** | SCCs without a reachable finite-exit convergence key |
-| **Frame 6: Counterfactual Outcome Test** | State-mutating tool nodes lacking a direct or transitive guard |
-
-**Kill-switch**: set `PLUMBUS_GENERATIVE_AUDIT=off` to skip Override 6 entirely (no analyzer invocation, no `## Generative Findings` written). Any other value (including absent) runs the audit normally.
-
-### 🌀 Portal Gun — Gene Transfusion
-
-<p align="center">
-  <img src="images/portal-gun.png" alt="Portal Gun — gene transfusion for codebases" width="100%" />
-</p>
-
-> *"You see that code over there, Morty? In that other repo? I'm gonna open a portal, reach in, and yank its DNA into OUR dimension."*
-
-`/portal-gun` implements [gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) — transferring proven coding patterns between codebases using AI agents. Point it at a GitHub URL, local file, npm package, or just describe a pattern, and it extracts the structural DNA, analyzes your target codebase, then generates a transplant PRD with behavioral validation tests and automatic refinement.
-
-The `--run` flag goes further: after generating the transplant PRD, it launches a convergence loop that executes the migration, scans coverage against the original inventory, generates a delta PRD for any missing items, and re-executes until 100% of the donor pattern has been transplanted.
-
-**v2** added a persistent **pattern library** (cached patterns reused across sessions), **complete file manifests** with anti-truncation enforcement, **multi-language import graph tracing** (TypeScript/JavaScript, Python, Go, Rust), **6-category transplant classification** (direct transplant, type-only, behavioral reference, replace with equivalent, environment prerequisite, not needed), a **PRD validation pass** that verifies every file path against the filesystem with 6 error classes, **post-edit consistency checking** that catches contradictions after scope changes, and **deep target diffs** with line-level modification specs.
-
-```bash
-/portal-gun https://github.com/org/repo/blob/main/src/auth.ts   # Transplant from GitHub
-/portal-gun ../other-project/src/cache.ts                        # Transplant from local file
-/portal-gun --run https://github.com/org/repo/tree/main/src/lib  # Transplant + auto-execute convergence loop
-/portal-gun --save-pattern retry ../donor/retry-logic.ts         # Save pattern to library for reuse
-/portal-gun --depth shallow https://github.com/org/repo           # Summary + structural pattern only
-```
-
-### 🏗️ DotBuilder — Programmatic DOT Codegen
-
-`/pickle-dot` generates attractor pipelines by default via the `DotBuilder` TypeScript class — schema-validated codegen with 32 active patterns and 15 structural validation rules. Use `--builder` to opt in explicitly or `--legacy` to fall back to prompt-only generation.
-
-**Full reference:** [DOT_BUILDER.md](DOT_BUILDER.md) — Builder API, BuilderSpec JSON schema, CLI contract, fix-loop behavior, and error codes.
-
 ### 🧬 Cronenberg — The Meta-Router
 
 <p align="center">
@@ -710,6 +590,126 @@ Plan:
 1. /pickle-pipeline refine then build the auth refactor and clean it up --backend codex
    (followups skipped — pipeline chains anatomy-park + szechuan-sauce internally)
 ```
+
+### 🏛️ Council of Ricks — Details
+
+<p align="center">
+  <img src="images/council-of-ricks.png" alt="Council of Ricks — Graphite PR Stack Reviewer" width="100%" />
+</p>
+
+Iterative Graphite stack reviewer that generates agent-executable directives and auto-publishes review comments to each branch's PR at session end. Every round fans out category- and branch-scoped subagents in parallel via the `Agent` tool — a round review that used to take 30–60 min of serial passes now finishes in one fan-out cycle.
+
+**Requirements:**
+
+- Graphite stack with ≥1 non-trunk branch (`gt log short`)
+- A `CLAUDE.md` with project rules, passing lint, and architectural lint rules in ESLint
+- **GitHub CLI (`gh`)** authed, if you want auto-publish (see note below on why `gh` and not `gt`)
+- **Codex plugin** installed and authed, for the adversarial-review pass to be effective. Install: `/plugin install openai-codex` (or `npm i -g @openai/codex-cli` + `codex setup`). Without it, the Phase C Codex subagent is skipped — the rest of the round still runs, but you lose the adversarial-reviewer perspective.
+
+**Round structure** — each round runs four phases; within a round every category runs concurrently:
+
+- **Phase A — Historical Context** (serial, main agent): `git log` + prior PR comments (`gh pr list/view`) + in-file guidance comments → `historical-brief.md` consumed by Phase B/C subagents
+- **Phase B — Category Team** (parallel fan-out, one `Agent` per category — at stack tier ≥ `l` each category shards per-branch, so `N_branches × N_categories` concurrent subagents):
+  1. Stack Structure — PR sizing, commit hygiene, branch naming, stack ordering
+  2. CLAUDE.md Compliance — project rule verification per branch diff
+  3. Contract Discovery — producer→consumer map, Zod/enum/union coverage
+  4. Cross-Branch Contracts + Combinatorial — 2^N boolean/nullable guard verification
+  5. Test Coverage + Production Migration Safety — persisted-field change detection
+  6. Security — input validation, auth gaps, injection, tenant isolation
+  7. Migration Hygiene (conditional) — CHECK drift, idempotency, schema drift (skipped when no Drizzle journal)
+  8. Szechuan Principles Sweep — P0–P4 scan against the principles reference
+  9. Polish + Trap Door Candidates
+- **Phase C — Branch Team** (parallel fan-out, same message as Phase B):
+  - One `Agent` per non-trunk branch for per-branch Correctness + Data Flow (no checkout needed — pure diff review)
+  - One `Agent` for the Codex sweep (internally sequential because checkout needed; conditional on Codex availability)
+- **Phase D — Synthesis** (serial, main agent): false-positive pre-filter → confidence filter → dedupe (COUNCIL/CODEX merge) → directive + summary append
+
+**Severity × Confidence scoring** — every finding scored `[P0–P4, conf=0–100]`. Confidence `< 80` drops before reporting. **P0 severity escape hatch**: P0 findings at conf ≥ 50 still surface tagged `[NEEDS-VERIFICATION]` (a maybe-real SQL injection is worth an eyeball). Composes with an explicit **false-positives filter** — pre-existing issues, linter/typechecker-catchable errors, author-silenced issues, uncodified style nits, and speculative future-risk are excluded before scoring. Rubric adapted from Anthropic's official `code-review` plugin.
+
+**Approval gate** — `THE_CITADEL_APPROVES` fires only when all four conditions hold: (1) current round ≥ `min_iterations` (the tier-resolved value from Step 8 — see size-tier scaling below), (2) last two `## Round <N>:` headers in the summary both end with `— clean round.`, (3) across those two consecutive clean rounds no unconditional category (Phase A, B1–B6, B8, B9, Phase C per-branch Correctness) was `skipped`, (4) zero P0/P1 findings across COUNCIL + CODEX in those two rounds. Partial rounds (any unconditional skip) break the streak — Phase B7 Migration and Phase C Codex are conditional and may skip without demoting the round.
+
+**Size-tier scaling** — at stack discovery the Council computes `git diff --numstat <trunk>...<tip>` and scales `min_rounds` to the stack's surface area, because each round surfaces findings that reframe code earlier rounds walked past. Large PRs need more rounds to converge:
+
+| Stack diff LOC | OR | Files touched | Scaled min rounds |
+|---|---|---|---|
+| < 300 | or | < 10 | 2 |
+| 300 – 1,499 | or | 10 – 29 | 3 |
+| 1,500 – 4,999 | or | 30 – 79 | 4 |
+| 5,000 – 9,999 | or | 80 – 149 | 5 |
+| 10,000 – 19,999 | or | 150 – 299 | 6 |
+| ≥ 20,000 | or | ≥ 300 | 7 |
+
+Takes the max of the LOC tier and the files tier — either axis can flag "big enough." `effective_min = max(default_council_min_rounds, scaled_tier)`. `effective_max = max(default_council_max_rounds, effective_min + 2)` to guarantee two rounds of headroom above the floor. CLI flags `--min-iterations` / `--max-iterations` override the scaled values entirely — pass them when you want a quick sanity-check sweep on a big stack, or to force more rounds on a small one.
+
+**Auto-publish at session end** — when the gate fires OR max_iterations is hit, one PR comment per non-trunk branch is posted via `gh pr comment` to the GitHub-backed PR that Graphite manages. Idempotent via `.published/<branch-slug>` markers. Fails open at every level — `gh` unavailable / no PR / per-branch post failure never blocks the terminal promise. Fallback body files written to `council-comments/<branch-slug>.md` on every skip class. Opt out with `--no-publish` or `default_council_publish: false`.
+
+**Why `gh` and not `gt` for publishing** — Graphite's CLI has no `comment` subcommand and doesn't expose a comment-posting primitive. `gt` manages stacks (submit, restack, sync, create, branch); review comments are handled by Graphite's web dashboard, which syncs from GitHub. So the only mechanical path to post an actual comment is `gh pr comment` — the comment still shows up on the Graphite stack view because Graphite renders GitHub comments. If Graphite ever ships a `gt comment` or exposes an API token surface, the Council will switch to it.
+
+**Trap Doors** — structural weaknesses (design constraints that will re-break if forgotten) go in the directive's Trap Door section. The Council never writes to repo files; the fixing agent decides whether to add them to `CLAUDE.md`.
+
+**Directive contract (v1.50.0)** — every round writes `council-directive.json` atomically (tmp + rename) as the typed source of truth; `council-directive.md` is free-form human-readable output only, never scraped. Every subagent returns a shape-validated JSON payload (validator at `extension/src/services/council-schema.ts`); schema drift fails loud — the offending category is recorded as `skipped` with the jsonpath of the violation and the round demotes to partial. No more silent parser drift.
+
+### 🌀 Portal Gun — Gene Transfusion
+
+<p align="center">
+  <img src="images/portal-gun.png" alt="Portal Gun — gene transfusion for codebases" width="100%" />
+</p>
+
+> *"You see that code over there, Morty? In that other repo? I'm gonna open a portal, reach in, and yank its DNA into OUR dimension."*
+
+`/portal-gun` implements [gene transfusion](https://factory.strongdm.ai/techniques/gene-transfusion) — transferring proven coding patterns between codebases using AI agents. Point it at a GitHub URL, local file, npm package, or just describe a pattern, and it extracts the structural DNA, analyzes your target codebase, then generates a transplant PRD with behavioral validation tests and automatic refinement.
+
+The `--run` flag goes further: after generating the transplant PRD, it launches a convergence loop that executes the migration, scans coverage against the original inventory, generates a delta PRD for any missing items, and re-executes until 100% of the donor pattern has been transplanted.
+
+**v2** added a persistent **pattern library** (cached patterns reused across sessions), **complete file manifests** with anti-truncation enforcement, **multi-language import graph tracing** (TypeScript/JavaScript, Python, Go, Rust), **6-category transplant classification** (direct transplant, type-only, behavioral reference, replace with equivalent, environment prerequisite, not needed), a **PRD validation pass** that verifies every file path against the filesystem with 6 error classes, **post-edit consistency checking** that catches contradictions after scope changes, and **deep target diffs** with line-level modification specs.
+
+```bash
+/portal-gun https://github.com/org/repo/blob/main/src/auth.ts   # Transplant from GitHub
+/portal-gun ../other-project/src/cache.ts                        # Transplant from local file
+/portal-gun --run https://github.com/org/repo/tree/main/src/lib  # Transplant + auto-execute convergence loop
+/portal-gun --save-pattern retry ../donor/retry-logic.ts         # Save pattern to library for reuse
+/portal-gun --depth shallow https://github.com/org/repo           # Summary + structural pattern only
+```
+
+### 🪠 Plumbus — DAG Shaping Loop
+
+<p align="center">
+  <img src="images/plumbus.jpg" alt="Plumbus — iterative DAG shaping loop" width="100%" />
+</p>
+
+> *"Everybody has a plumbus in their home, Morty. First they take the dinglebop, smooth it out with a bunch of schleem..."*
+
+The same convergence loop applied to a single attractor `.dot` pipeline. Runs the attractor validator as a hard gate, walks every edge, and converges against the `pickle-dot-patterns` rubric (DAG validity, Tier 1 mandatory patterns, anti-patterns). Use it after `/pickle-dot` generates a graph you want hardened before `/attract`.
+
+```bash
+/plumbus pipeline.dot                         # Shape a DAG into a proper plumbus
+/plumbus --dry-run pipeline.dot               # Catalog violations only
+/plumbus --focus "fan-out safety" pipeline.dot
+/plumbus --no-validator pipeline.dot          # Pattern-only (no attractor repo)
+```
+
+**When to use which:** Szechuan Sauce asks *"is this code well-designed?"* — Anatomy Park asks *"is this code correct?"* — Plumbus asks *"will this DAG actually run without deadlocking?"*
+
+#### Generative Audit Frames
+
+Plumbus runs six analysis frames during the first iteration Edge Walk (Override 6). Each frame produces findings in `gap_analysis.md` under `## Generative Findings`, using a three-severity model (`pre_verification_severity` / `post_verification_severity` / `rendered_severity`).
+
+| Frame | What it checks |
+|-------|----------------|
+| **Frame 1: Context Key Lifecycle Trace** | Orphan readers/writers, asymmetric writers, multi-writer conflicts |
+| **Frame 2: Success/Failure Symmetry** | State-mutating nodes missing the opposite-outcome unwind |
+| **Frame 3: Edge Condition Exhaustiveness** | Cartesian-product stuck states and non-deterministic routing |
+| **Frame 4: Tool Exit Code Semantics Audit** | Routing-signal vs. build/check tool wiring mismatches |
+| **Frame 5: Loop Convergence Proof Obligation** | SCCs without a reachable finite-exit convergence key |
+| **Frame 6: Counterfactual Outcome Test** | State-mutating tool nodes lacking a direct or transitive guard |
+
+**Kill-switch**: set `PLUMBUS_GENERATIVE_AUDIT=off` to skip Override 6 entirely (no analyzer invocation, no `## Generative Findings` written). Any other value (including absent) runs the audit normally.
+
+### 🏗️ DotBuilder — Programmatic DOT Codegen
+
+`/pickle-dot` generates attractor pipelines by default via the `DotBuilder` TypeScript class — schema-validated codegen with 32 active patterns and 15 structural validation rules. Use `--builder` to opt in explicitly or `--legacy` to fall back to prompt-only generation.
+
+**Full reference:** [DOT_BUILDER.md](DOT_BUILDER.md) — Builder API, BuilderSpec JSON schema, CLI contract, fix-loop behavior, and error codes.
 
 ---
 
