@@ -94,6 +94,39 @@ test('getSessionPath: returns session path when map entry and dir both exist', (
     });
 });
 
+test('getSessionPath: promotes newer dead current_sessions tmp before map lookup', () => {
+    withExtensionDir((tmpDir) => {
+        const sessionDir = fs.realpathSync(
+            fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-gs-session-'))
+        );
+        const fakeCwd = sessionDir + '-cwd';
+        fs.mkdirSync(fakeCwd, { recursive: true });
+
+        const mapPath = path.join(tmpDir, 'current_sessions.json');
+        const tmpMapPath = `${mapPath}.tmp.99999999.${Date.now()}`;
+        fs.writeFileSync(mapPath, JSON.stringify({ '/other/cwd': '/other/session' }));
+        fs.writeFileSync(tmpMapPath, JSON.stringify({ [fakeCwd]: sessionDir }));
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({ active: true, working_dir: fakeCwd, session_dir: sessionDir })
+        );
+        const baseTime = new Date('2026-04-28T12:00:00.000Z');
+        const tmpTime = new Date('2026-04-28T12:00:01.000Z');
+        fs.utimesSync(mapPath, baseTime, baseTime);
+        fs.utimesSync(tmpMapPath, tmpTime, tmpTime);
+
+        try {
+            const result = getSessionPath(fakeCwd);
+            assert.equal(result, sessionDir);
+            assert.equal(fs.existsSync(tmpMapPath), false, 'dead tmp map should be promoted');
+            assert.deepEqual(JSON.parse(fs.readFileSync(mapPath, 'utf-8')), { [fakeCwd]: sessionDir });
+        } finally {
+            fs.rmSync(sessionDir, { recursive: true, force: true });
+            fs.rmSync(fakeCwd, { recursive: true, force: true });
+        }
+    });
+});
+
 test('getSessionPath: falls back to active session state when the sessions map is missing', () => {
     withExtensionDir((tmpDir) => {
         const fakeCwd = path.join(tmpDir, 'repo');

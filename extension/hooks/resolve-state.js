@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { resolveSessionPath } from '../services/pickle-utils.js';
+import { readRecoverableJsonObject } from '../services/recoverable-json.js';
 import { StateManager } from '../services/state-manager.js';
 const ALLOW = JSON.stringify({ decision: 'approve' });
 const sm = new StateManager();
@@ -98,9 +99,9 @@ export function resolveStateFile(dataDir) {
         }
     }
     const sessionsMapPath = path.join(dataDir, 'current_sessions.json');
-    if (fs.existsSync(sessionsMapPath)) {
-        try {
-            const map = JSON.parse(fs.readFileSync(sessionsMapPath, 'utf8'));
+    try {
+        const map = readRecoverableJsonObject(sessionsMapPath);
+        if (map) {
             const sessionPath = resolveSessionPath(map[cwd]);
             if (sessionPath) {
                 const mappedStateFile = path.join(sessionPath, 'state.json');
@@ -113,9 +114,9 @@ export function resolveStateFile(dataDir) {
                 }
             }
         }
-        catch {
-            /* corrupt sessions map — fall through to state scan below */
-        }
+    }
+    catch {
+        /* corrupt sessions map — fall through to state scan below */
     }
     const scannedStateFile = resolveStateFileFromSessionsDir(dataDir);
     if (scannedStateFile)

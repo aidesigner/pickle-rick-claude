@@ -130,6 +130,37 @@ test('resolveStateFile: falls back to sessions map when env not set', () => {
   }
 });
 
+test('resolveStateFile: promotes newer dead current_sessions tmp before resolving hook state', () => {
+  const tmp = tmpDir();
+  try {
+    const sessionDir = path.join(tmp, 'session1');
+    fs.mkdirSync(sessionDir);
+    const stateFile = path.join(sessionDir, 'state.json');
+    fs.writeFileSync(stateFile, JSON.stringify(baseState({ working_dir: process.cwd(), session_dir: sessionDir })));
+
+    const mapPath = path.join(tmp, 'current_sessions.json');
+    const tmpMapPath = `${mapPath}.tmp.99999999.${Date.now()}`;
+    fs.writeFileSync(mapPath, JSON.stringify({ '/other/cwd': '/other/session' }));
+    fs.writeFileSync(tmpMapPath, JSON.stringify({ [process.cwd()]: sessionDir }));
+    const baseTime = new Date('2026-04-28T12:00:00.000Z');
+    const tmpTime = new Date('2026-04-28T12:00:01.000Z');
+    fs.utimesSync(mapPath, baseTime, baseTime);
+    fs.utimesSync(tmpMapPath, tmpTime, tmpTime);
+
+    const orig = process.env.PICKLE_STATE_FILE;
+    delete process.env.PICKLE_STATE_FILE;
+    try {
+      assert.equal(resolveStateFile(tmp), stateFile);
+      assert.equal(fs.existsSync(tmpMapPath), false, 'dead tmp map should be promoted');
+      assert.deepEqual(JSON.parse(fs.readFileSync(mapPath, 'utf-8')), { [process.cwd()]: sessionDir });
+    } finally {
+      if (orig !== undefined) process.env.PICKLE_STATE_FILE = orig;
+    }
+  } finally {
+    fs.rmSync(tmp, { recursive: true });
+  }
+});
+
 test('resolveStateFile: returns null when sessions map is missing', () => {
   const tmp = tmpDir();
   try {

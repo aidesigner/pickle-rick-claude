@@ -5,6 +5,7 @@ import * as os from 'os';
 import { StringDecoder } from 'string_decoder';
 import { VALID_STEPS, LockError } from '../types/index.js';
 import { StateManager } from './state-manager.js';
+import { readRecoverableJsonObject } from './recoverable-json.js';
 /** Extracts a string message from any thrown value. Never throws. */
 export function safeErrorMessage(err) {
     return err instanceof Error ? err.message : String(err);
@@ -555,9 +556,9 @@ export function findSessionPathForCwd(cwd, options = {}) {
     const dataRoot = getDataRoot();
     const sessionsMapPath = path.join(dataRoot, 'current_sessions.json');
     let mappedFallback = '';
-    if (fs.existsSync(sessionsMapPath)) {
-        try {
-            const map = JSON.parse(fs.readFileSync(sessionsMapPath, 'utf-8'));
+    try {
+        const map = readRecoverableJsonObject(sessionsMapPath);
+        if (map) {
             const mappedPath = resolveSessionPath(map[cwd]);
             if (mappedPath && fs.existsSync(mappedPath)) {
                 const state = readSessionLookupState(mappedPath);
@@ -576,9 +577,9 @@ export function findSessionPathForCwd(cwd, options = {}) {
                 }
             }
         }
-        catch {
-            // Fall back to scanning session state below.
-        }
+    }
+    catch {
+        // Fall back to scanning session state below.
     }
     const sessionsDir = path.join(dataRoot, 'sessions');
     let entries;
