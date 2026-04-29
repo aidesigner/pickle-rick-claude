@@ -1123,9 +1123,10 @@ function unlinkLoopPath(ctx: LoopContext, targetPath: string): void {
 export function validateStartupState(state: State, statePath: string): void {
   const rawObj = state as unknown as Record<string, unknown>;
   const issues: string[] = [];
-  const rawMaxIter = Number(rawObj.max_iterations);
-  if (!Number.isFinite(rawMaxIter) || rawMaxIter <= 0) {
-    issues.push(`max_iterations must be > 0 (got ${rawObj.max_iterations}) — microverse sentinel zero is valid for microverse-runner only`);
+  const maxIterField = rawObj.max_iterations;
+  const rawMaxIter = Number(maxIterField);
+  if (maxIterField == null || !Number.isFinite(rawMaxIter) || rawMaxIter < 0) {
+    issues.push(`max_iterations must be >= 0 (got ${maxIterField})`);
   }
   const rawTimeout = Number(rawObj.worker_timeout_seconds);
   if (!Number.isFinite(rawTimeout) || rawTimeout <= 0) issues.push(`worker_timeout_seconds must be > 0 (got ${rawObj.worker_timeout_seconds})`);
@@ -1577,9 +1578,10 @@ async function runMuxRunnerMain() {
     const rawObj = ownerState as unknown as Record<string, unknown>;
     const issues: string[] = [];
 
-    const rawMaxIter = Number(rawObj.max_iterations);
-    if (!Number.isFinite(rawMaxIter) || rawMaxIter <= 0) {
-      issues.push(`max_iterations must be > 0 (got ${rawObj.max_iterations}) — microverse sentinel zero is valid for microverse-runner only`);
+    const maxIterField = rawObj.max_iterations;
+    const rawMaxIter = Number(maxIterField);
+    if (maxIterField == null || !Number.isFinite(rawMaxIter) || rawMaxIter < 0) {
+      issues.push(`max_iterations must be >= 0 (got ${maxIterField})`);
     }
 
     const rawTimeout = Number(rawObj.worker_timeout_seconds);

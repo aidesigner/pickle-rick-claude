@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { validateStartupState } from '../bin/mux-runner.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MUX_RUNNER_BIN = path.resolve(__dirname, '../bin/mux-runner.js');
@@ -56,7 +57,6 @@ const DEL = Symbol('delete');
 // --- max_iterations validation ---
 
 for (const [label, value] of [
-    ['zero', 0],
     ['negative', -1],
     ['NaN', NaN],
     ['missing', DEL],
@@ -76,6 +76,17 @@ for (const [label, value] of [
         }
     });
 }
+
+test('startup-validation: setup tmux max_iterations=0 is accepted as unlimited', () => {
+    const root = makeTmpRoot();
+    try {
+        const sessionDir = makeSessionDir(root, { max_iterations: 0 });
+        const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+        assert.doesNotThrow(() => validateStartupState(state, path.join(sessionDir, 'state.json')));
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
 
 // --- worker_timeout_seconds validation ---
 
@@ -156,7 +167,7 @@ test('startup-validation: multiple bad fields → all issues in stderr', () => {
     const root = makeTmpRoot();
     try {
         const sessionDir = makeSessionDir(root, {
-            max_iterations: 0,
+            max_iterations: -1,
             worker_timeout_seconds: 0,
             iteration: -1,
         });
@@ -179,7 +190,7 @@ test('startup-validation: multiple bad fields → all issues in stderr', () => {
 test('startup-validation: invalid state → no claude child spawned', () => {
     const root = makeTmpRoot();
     try {
-        const sessionDir = makeSessionDir(root, { max_iterations: 0 });
+        const sessionDir = makeSessionDir(root, { max_iterations: -1 });
         const result = run(sessionDir, root);
         assert.equal(result.status, 2);
         // If no spawn was attempted, there's no iteration log file

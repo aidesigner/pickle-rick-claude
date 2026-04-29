@@ -972,9 +972,10 @@ function unlinkLoopPath(ctx, targetPath) {
 export function validateStartupState(state, statePath) {
     const rawObj = state;
     const issues = [];
-    const rawMaxIter = Number(rawObj.max_iterations);
-    if (!Number.isFinite(rawMaxIter) || rawMaxIter <= 0) {
-        issues.push(`max_iterations must be > 0 (got ${rawObj.max_iterations}) — microverse sentinel zero is valid for microverse-runner only`);
+    const maxIterField = rawObj.max_iterations;
+    const rawMaxIter = Number(maxIterField);
+    if (maxIterField == null || !Number.isFinite(rawMaxIter) || rawMaxIter < 0) {
+        issues.push(`max_iterations must be >= 0 (got ${maxIterField})`);
     }
     const rawTimeout = Number(rawObj.worker_timeout_seconds);
     if (!Number.isFinite(rawTimeout) || rawTimeout <= 0)
@@ -1386,9 +1387,10 @@ async function runMuxRunnerMain() {
         // Use raw object to detect null (JSON-serialized NaN) vs absent vs zero
         const rawObj = ownerState;
         const issues = [];
-        const rawMaxIter = Number(rawObj.max_iterations);
-        if (!Number.isFinite(rawMaxIter) || rawMaxIter <= 0) {
-            issues.push(`max_iterations must be > 0 (got ${rawObj.max_iterations}) — microverse sentinel zero is valid for microverse-runner only`);
+        const maxIterField = rawObj.max_iterations;
+        const rawMaxIter = Number(maxIterField);
+        if (maxIterField == null || !Number.isFinite(rawMaxIter) || rawMaxIter < 0) {
+            issues.push(`max_iterations must be >= 0 (got ${maxIterField})`);
         }
         const rawTimeout = Number(rawObj.worker_timeout_seconds);
         if (!Number.isFinite(rawTimeout) || rawTimeout <= 0) {
