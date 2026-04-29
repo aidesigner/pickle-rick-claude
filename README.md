@@ -458,7 +458,7 @@ Gap Analysis (iteration 0)
 ### 🍗 Szechuan Sauce — Iterative Code Deslopping
 
 <p align="center">
-  <img src="images/szechwan-sauce.jpeg" alt="Command: Szechwan Sauce — The Quest for Clean Code" width="600" />
+  <img src="images/szechwan-sauce.jpeg" alt="Command: Szechwan Sauce — The Quest for Clean Code" width="100%" />
 </p>
 
 > *"I'm not driven by avenging my dead family, Morty. That was fake. I-I-I'm driven by finding that McNugget sauce."*
