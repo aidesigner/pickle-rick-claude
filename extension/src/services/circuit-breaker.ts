@@ -142,7 +142,8 @@ export function loadSettings(extensionRoot: string): CircuitBreakerConfig {
 
   try {
     const settingsPath = path.join(extensionRoot, 'pickle_settings.json');
-    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    const raw = readRecoverableJsonObject(settingsPath) as Record<string, unknown> | null;
+    if (!raw) return config;
 
     if (typeof raw.default_circuit_breaker_enabled === 'boolean') {
       config.enabled = raw.default_circuit_breaker_enabled;

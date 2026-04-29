@@ -85,6 +85,37 @@ test('loadSettings: reads valid config from pickle_settings.json', () => {
     }
 });
 
+test('loadSettings: promotes newer dead-writer pickle_settings.json tmp snapshot', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const settingsPath = path.join(tmpDir, 'pickle_settings.json');
+        const tmpPath = `${settingsPath}.tmp.99999999`;
+        fs.writeFileSync(settingsPath, JSON.stringify({
+            default_circuit_breaker_enabled: true,
+            default_cb_no_progress_threshold: 5,
+        }));
+        fs.writeFileSync(tmpPath, JSON.stringify({
+            default_circuit_breaker_enabled: false,
+            default_cb_no_progress_threshold: 9,
+            default_cb_same_error_threshold: 7,
+            default_cb_half_open_after: 4,
+        }));
+        const newer = new Date(Date.now() + 1_000);
+        fs.utimesSync(tmpPath, newer, newer);
+
+        const cfg = loadSettings(tmpDir);
+
+        assert.equal(cfg.enabled, false);
+        assert.equal(cfg.noProgressThreshold, 9);
+        assert.equal(cfg.sameErrorThreshold, 7);
+        assert.equal(cfg.halfOpenAfter, 4);
+        assert.equal(fs.existsSync(tmpPath), false, 'dead-writer tmp should be promoted');
+        assert.equal(JSON.parse(fs.readFileSync(settingsPath, 'utf-8')).default_circuit_breaker_enabled, false);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('loadSettings: returns defaults when file is missing', () => {
     const tmpDir = makeTmpDir();
     try {

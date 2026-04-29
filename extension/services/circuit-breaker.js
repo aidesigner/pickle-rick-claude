@@ -1,4 +1,3 @@
-import * as fs from 'fs';
 import * as path from 'path';
 import { runCmd, writeStateFile, safeErrorMessage } from './pickle-utils.js';
 import { StateManager } from './state-manager.js';
@@ -80,7 +79,9 @@ export function loadSettings(extensionRoot) {
     };
     try {
         const settingsPath = path.join(extensionRoot, 'pickle_settings.json');
-        const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+        const raw = readRecoverableJsonObject(settingsPath);
+        if (!raw)
+            return config;
         if (typeof raw.default_circuit_breaker_enabled === 'boolean') {
             config.enabled = raw.default_circuit_breaker_enabled;
         }
