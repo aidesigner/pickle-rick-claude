@@ -559,6 +559,104 @@ test('publishCouncilStack: throws when council-directive.json contains invalid J
     }
 });
 
+test('publishCouncilStack: promotes newer dead-writer council-directive tmp before publishing', async () => {
+    const mock = makeGhMock({
+        auth: 'ok',
+        prList: { 'feat/one': 42, 'feat/two': 99 },
+        prComment: {},
+    });
+    try {
+        await withSession(async (sessionDir) => {
+            const directivePath = path.join(sessionDir, 'council-directive.json');
+            const tmpDirectivePath = `${directivePath}.tmp.99999999`;
+            fs.writeFileSync(directivePath, JSON.stringify(minimalDirective(['feat/one'])));
+            fs.writeFileSync(tmpDirectivePath, JSON.stringify(minimalDirective()));
+            const newer = new Date(Date.now() + 1000);
+            fs.utimesSync(tmpDirectivePath, newer, newer);
+
+            const report = await publishCouncilStack(sessionDir, { ghCommand: mock.ghPath });
+
+            assert.equal(report.failed, 0, 'recovered directive has entries for every stack branch');
+            assert.equal(report.posted, 2);
+            assert.equal(fs.existsSync(tmpDirectivePath), false, 'dead directive tmp should be consumed');
+            assert.ok(fs.existsSync(path.join(sessionDir, '.published', 'feat__two')));
+        });
+    } finally {
+        cleanupGhMock(mock);
+    }
+});
+
+test('publishCouncilStack: promotes newer dead-writer council-stack tmp before branch loop', async () => {
+    const mock = makeGhMock({
+        auth: 'ok',
+        prList: { 'feat/one': 42, 'feat/two': 99 },
+        prComment: {},
+    });
+    try {
+        await withSession(async (sessionDir) => {
+            const stackPath = path.join(sessionDir, 'council-stack.json');
+            const tmpStackPath = `${stackPath}.tmp.99999999`;
+            fs.writeFileSync(stackPath, JSON.stringify({
+                branches: ['feat/one', 'main'],
+                trunk: 'main',
+                repo_path: sessionDir,
+                codex_enabled: true,
+            }));
+            fs.writeFileSync(tmpStackPath, JSON.stringify({
+                branches: ['feat/one', 'feat/two', 'main'],
+                trunk: 'main',
+                repo_path: sessionDir,
+                codex_enabled: true,
+            }));
+            fs.writeFileSync(path.join(sessionDir, 'council-directive.json'), JSON.stringify(minimalDirective()));
+            const newer = new Date(Date.now() + 1000);
+            fs.utimesSync(tmpStackPath, newer, newer);
+
+            const report = await publishCouncilStack(sessionDir, { ghCommand: mock.ghPath });
+
+            assert.equal(report.failed, 0);
+            assert.deepEqual(report.results.map(r => r.branch).sort(), ['feat/one', 'feat/two']);
+            assert.equal(report.posted, 2);
+            assert.equal(fs.existsSync(tmpStackPath), false, 'dead stack tmp should be consumed');
+        });
+    } finally {
+        cleanupGhMock(mock);
+    }
+});
+
+test('publishCouncilStack: recovers council stack and directive when only dead-writer tmps exist', async () => {
+    const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-cp-missing-base-')));
+    const mock = makeGhMock({
+        auth: 'ok',
+        prList: { 'feat/one': 42 },
+        prComment: {},
+    });
+    try {
+        fs.writeFileSync(`${path.join(tmpDir, 'council-stack.json')}.tmp.99999999`, JSON.stringify({
+            branches: ['feat/one', 'main'],
+            trunk: 'main',
+            repo_path: tmpDir,
+            codex_enabled: true,
+        }));
+        fs.writeFileSync(`${path.join(tmpDir, 'council-directive.json')}.tmp.99999999`, JSON.stringify(
+            minimalDirective(['feat/one']),
+        ));
+        const newer = new Date(Date.now() + 1000);
+        fs.utimesSync(`${path.join(tmpDir, 'council-stack.json')}.tmp.99999999`, newer, newer);
+        fs.utimesSync(`${path.join(tmpDir, 'council-directive.json')}.tmp.99999999`, newer, newer);
+
+        const report = await publishCouncilStack(tmpDir, { ghCommand: mock.ghPath });
+
+        assert.equal(report.failed, 0);
+        assert.equal(report.posted, 1);
+        assert.equal(fs.existsSync(path.join(tmpDir, 'council-stack.json')), true);
+        assert.equal(fs.existsSync(path.join(tmpDir, 'council-directive.json')), true);
+    } finally {
+        cleanupGhMock(mock);
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 // --- 19. Wrong schema_version throws with schema_version in message ---
 
 test('publishCouncilStack: throws when schema_version !== 1, message contains schema_version', async () => {

@@ -3,6 +3,7 @@ import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { safeErrorMessage } from '../services/pickle-utils.js';
 import { validateDirective, CouncilSchemaError } from '../services/council-schema.js';
+import { readRecoverableJsonObject } from '../services/recoverable-json.js';
 import type { Directive, Finding, TrapDoor } from '../services/council-schema.js';
 
 export class CouncilPublishError extends Error {
@@ -155,13 +156,17 @@ function extractRoundOutcomes(summaryPath: string): string[] {
 // council-directive.json is the machine-written directive consumed by this publisher (humans: see council-directive.md for the human-readable equivalent)
 function readDirectiveJson(sessionRoot: string): Directive {
   const jsonPath = path.join(sessionRoot, 'council-directive.json');
-  if (!fs.existsSync(jsonPath)) {
-    throw new CouncilPublishError('council-directive.json missing');
-  }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+    parsed = readRecoverableJsonObject(jsonPath);
+    if (!parsed) {
+      if (!fs.existsSync(jsonPath)) {
+        throw new CouncilPublishError('council-directive.json missing');
+      }
+      throw new CouncilPublishError('council-directive.json invalid JSON');
+    }
   } catch (err) {
+    if (err instanceof CouncilPublishError) throw err;
     throw new CouncilPublishError(`council-directive.json invalid JSON: ${safeErrorMessage(err)}`);
   }
   try {
@@ -271,14 +276,19 @@ export default function publishCouncilStack(
     throw new CouncilPublishError(`session_root does not exist: ${sessionRoot}`);
   }
   const stackPath = path.join(sessionRoot, 'council-stack.json');
-  if (!fs.existsSync(stackPath)) {
-    throw new CouncilPublishError(`not a council session: council-stack.json missing at ${stackPath}`);
-  }
 
   let stack: CouncilStack;
   try {
-    stack = JSON.parse(fs.readFileSync(stackPath, 'utf-8')) as CouncilStack;
+    const parsedStack = readRecoverableJsonObject(stackPath);
+    if (!parsedStack) {
+      if (!fs.existsSync(stackPath)) {
+        throw new CouncilPublishError(`not a council session: council-stack.json missing at ${stackPath}`);
+      }
+      throw new CouncilPublishError('failed to parse council-stack.json: invalid JSON');
+    }
+    stack = parsedStack as unknown as CouncilStack;
   } catch (err) {
+    if (err instanceof CouncilPublishError) throw err;
     throw new CouncilPublishError(`failed to parse council-stack.json: ${safeErrorMessage(err)}`);
   }
   const { branches, trunk, repo_path } = stack;
