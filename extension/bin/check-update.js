@@ -96,7 +96,7 @@ export function readSettings() {
         if (typeof raw.auto_update_enabled === 'boolean') {
             defaults.auto_update_enabled = raw.auto_update_enabled;
         }
-        if (typeof raw.update_check_interval_hours === 'number' && raw.update_check_interval_hours > 0) {
+        if (typeof raw.update_check_interval_hours === 'number' && Number.isFinite(raw.update_check_interval_hours) && raw.update_check_interval_hours > 0) {
             defaults.update_check_interval_hours = raw.update_check_interval_hours;
         }
         return defaults;

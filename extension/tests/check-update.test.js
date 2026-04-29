@@ -288,6 +288,40 @@ describe('readSettings', () => {
         const settings = readSettings();
         assert.equal(settings.update_check_interval_hours, 24);
     });
+
+    test('checkForUpdate defaults non-finite interval so stale cache still fetches release', () => {
+        fs.mkdirSync(path.join(tmpDir, 'extension'), { recursive: true });
+        fs.writeFileSync(
+            path.join(tmpDir, 'extension', 'package.json'),
+            JSON.stringify({ version: '1.7.0' }),
+        );
+        fs.writeFileSync(
+            path.join(tmpDir, 'pickle_settings.json'),
+            '{"update_check_interval_hours":1e309}',
+        );
+        writeCache({
+            last_check_epoch: Math.floor(Date.now() / 1000) - 48 * 3600,
+            latest_version: '1.7.0',
+            current_version: '1.7.0',
+        });
+
+        const binDir = path.join(tmpDir, 'mock-bin');
+        fs.mkdirSync(binDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(binDir, 'gh'),
+            '#!/bin/sh\nif [ "$1" = "api" ]; then echo \'{"tag_name":"v2.0.0","assets":[]}\'; exit 0; fi\nexit 1\n',
+            { mode: 0o755 },
+        );
+        const origPath = process.env.PATH;
+        process.env.PATH = `${binDir}:${origPath}`;
+        try {
+            const result = checkForUpdate();
+            assert.equal(result.status, 'update-available');
+            assert.equal(result.latestVersion, '2.0.0');
+        } finally {
+            process.env.PATH = origPath;
+        }
+    });
 });
 
 // ---------------------------------------------------------------------------
