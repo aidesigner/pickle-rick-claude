@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { resolveStateFile, loadActiveState, approve } from '../resolve-state.js';
 import { getExtensionRoot, getDataRoot, extractFrontmatter } from '../../services/pickle-utils.js';
+import { readRecoverableJsonObject } from '../../services/microverse-state.js';
 const PROTECTED_PATTERNS = [
     /^\.eslintrc(\..*)?$/,
     /^\.prettierrc(\..*)?$/,
@@ -69,9 +70,8 @@ async function main() {
     }
     // Feature flag: enable_config_protection (default true — missing flag = enabled)
     try {
-        // eslint-disable-next-line pickle/no-sync-in-async -- feature-flag read before async work begins
-        const flagSettings = JSON.parse(fs.readFileSync(path.join(extensionDir, 'pickle_settings.json'), 'utf-8'));
-        if (flagSettings.enable_config_protection === false) {
+        const flagSettings = readRecoverableJsonObject(path.join(extensionDir, 'pickle_settings.json'));
+        if (flagSettings?.enable_config_protection === false) {
             approve();
             return;
         }

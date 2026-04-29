@@ -198,6 +198,51 @@ test('approves Read tool (not Write/Edit/Bash)', () => {
   assert.equal(result.decision, 'approve');
 });
 
+test('approves protected config edits when disabled setting is in a newer orphan tmp', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-settings-tmp-'));
+  const sessionDir = path.join(tmpDir, 'sessions', 'session');
+  fs.mkdirSync(sessionDir, { recursive: true });
+
+  const stateFile = path.join(sessionDir, 'state.json');
+  fs.writeFileSync(stateFile, JSON.stringify(baseState({ session_dir: sessionDir })));
+  fs.writeFileSync(
+    path.join(tmpDir, 'current_sessions.json'),
+    JSON.stringify({ [process.cwd()]: sessionDir }),
+  );
+
+  const settingsPath = path.join(tmpDir, 'pickle_settings.json');
+  const tmpSettingsPath = `${settingsPath}.tmp.99999999`;
+  fs.writeFileSync(settingsPath, JSON.stringify({ enable_config_protection: true }));
+  fs.writeFileSync(tmpSettingsPath, JSON.stringify({ enable_config_protection: false }));
+  const baseTime = new Date('2026-04-28T12:00:00.000Z');
+  const tmpTime = new Date('2026-04-28T12:00:01.000Z');
+  fs.utimesSync(settingsPath, baseTime, baseTime);
+  fs.utimesSync(tmpSettingsPath, tmpTime, tmpTime);
+
+  const env = {
+    ...process.env,
+    EXTENSION_DIR: tmpDir,
+    FORCE_COLOR: '0',
+    PICKLE_STATE_FILE: stateFile,
+  };
+
+  try {
+    const stdout = execFileSync(process.execPath, [HANDLER], {
+      input: JSON.stringify({
+        tool_name: 'Write',
+        tool_input: { file_path: '/project/.eslintrc.json' },
+      }),
+      encoding: 'utf-8',
+      env,
+    });
+    assert.equal(JSON.parse(stdout.trim()).decision, 'approve');
+    assert.equal(fs.existsSync(tmpSettingsPath), false, 'orphan tmp settings should be promoted');
+    assert.equal(JSON.parse(fs.readFileSync(settingsPath, 'utf-8')).enable_config_protection, false);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Override case
 // ---------------------------------------------------------------------------
