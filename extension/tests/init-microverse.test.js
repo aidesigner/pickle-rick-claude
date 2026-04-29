@@ -85,6 +85,18 @@ describe('init-microverse convergence flags', () => {
     assert.ok(result.stderr.includes('worker mode requires --convergence-file'));
   });
 
+  test('--convergence-mode with invalid value exits before writing invalid mode', () => {
+    const dir = makeTempDir();
+    try {
+      const result = run([dir, '/some/target', '--convergence-mode', 'wroker'], true);
+      assert.equal(result.code, 1);
+      assert.ok(result.stderr.includes("convergence_mode must be 'metric' or 'worker'"));
+      assert.equal(fs.existsSync(path.join(dir, 'microverse.json')), false);
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
   test('--convergence-file with path traversal (../) exits with error', () => {
     const result = run([makeTempDir(), '/some/target', '--convergence-file', '../../etc/passwd'], true);
     assert.equal(result.code, 1);

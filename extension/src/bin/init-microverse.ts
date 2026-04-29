@@ -19,6 +19,13 @@ function parseFlag(args: string[], flag: string): string | undefined {
   return args[idx + 1];
 }
 
+function parseConvergenceMode(raw: string | undefined): 'metric' | 'worker' | undefined {
+  if (raw == null) return undefined;
+  if (raw === 'metric' || raw === 'worker') return raw;
+  console.error(`convergence_mode must be 'metric' or 'worker', got ${raw}`);
+  process.exit(1);
+}
+
 if (process.argv[1] && path.basename(process.argv[1]) === 'init-microverse.js') {
   const args = process.argv.slice(2);
   const positional = args.filter((a, i) => !a.startsWith('--') && (i === 0 || !args[i - 1]?.startsWith('--')));
@@ -49,7 +56,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'init-microverse.js') 
     process.exit(1);
   }
 
-  const convergenceMode = rawConvergenceMode as 'metric' | 'worker' | undefined;
+  const convergenceMode = parseConvergenceMode(rawConvergenceMode);
 
   let metric: MicroverseMetric;
   if (rawMetricJson) {
