@@ -317,4 +317,69 @@ describe('error conditions', () => {
         assert.equal(briefSawResult, true);
         fs.rmSync(sessionRoot, { recursive: true, force: true });
     });
+
+    test('default settings loader promotes newer dead-writer tmp before applying remediation cap', async () => {
+        const sessionRoot = makeTmpDir();
+        const extRoot = makeTmpDir();
+        const settingsPath = path.join(extRoot, 'pickle_settings.json');
+        const tmpSettingsPath = `${settingsPath}.tmp.99999999`;
+        const failure = makeFailure('/tmp/wd/src/foo.ts');
+        const briefPath = path.join(sessionRoot, 'brief.md');
+        const previousExtensionDir = process.env.EXTENSION_DIR;
+
+        fs.writeFileSync(settingsPath, JSON.stringify({
+            convergence_gate: {
+                szechuan_max_remediation_cycles: 2,
+                anatomy_park_max_remediation_cycles: 2,
+                remediator_timeout_s: 60,
+            },
+        }));
+        fs.writeFileSync(tmpSettingsPath, JSON.stringify({
+            convergence_gate: {
+                szechuan_max_remediation_cycles: 1,
+                anatomy_park_max_remediation_cycles: 1,
+                remediator_timeout_s: 60,
+            },
+        }));
+        const newer = new Date(Date.now() + 1000);
+        fs.utimesSync(tmpSettingsPath, newer, newer);
+        fs.writeFileSync(briefPath, 'fix the gate');
+
+        let gateRuns = 0;
+        try {
+            process.env.EXTENSION_DIR = extRoot;
+            const code = await finalizeGateMain({
+                argv: [sessionRoot, 'anatomy-park'],
+                env: {},
+                readMicroverseStateFn: () => ({ status: 'iterating', allowed_paths: undefined }),
+                readStateForWorkingDirFn: () => ({ workingDir: '/tmp/wd', backend: 'claude' }),
+                mkdirSyncFn: (p) => fs.mkdirSync(p, { recursive: true }),
+                writeFileFn: (p, data) => fs.writeFileSync(p, data, 'utf-8'),
+                logActivityFn: () => {},
+                isoFn: () => '2026-01-01T00-00-00Z',
+                runGateFn: async () => {
+                    gateRuns += 1;
+                    return makeGateResult('red', [failure]);
+                },
+                spawnGateRemediatorMainFn: async (briefOpts) => {
+                    briefOpts.stdout?.(`BRIEF_PATH=${briefPath}`);
+                    return 0;
+                },
+                spawnRemediatorFn: () => {},
+                stdout: () => {},
+                stderr: () => {},
+            });
+
+            assert.equal(code, 2);
+            assert.equal(gateRuns, 1, 'recovered cap=1 should stop after one strict gate run');
+            assert.equal(fs.existsSync(tmpSettingsPath), false);
+            const promoted = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+            assert.equal(promoted.convergence_gate.anatomy_park_max_remediation_cycles, 1);
+        } finally {
+            if (previousExtensionDir === undefined) delete process.env.EXTENSION_DIR;
+            else process.env.EXTENSION_DIR = previousExtensionDir;
+            fs.rmSync(sessionRoot, { recursive: true, force: true });
+            fs.rmSync(extRoot, { recursive: true, force: true });
+        }
+    });
 });

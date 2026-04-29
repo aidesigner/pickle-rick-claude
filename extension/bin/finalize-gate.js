@@ -3,7 +3,7 @@ import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { runGate, filterByScope } from '../services/convergence-gate.js';
 import { spawnGateRemediatorMain } from './spawn-gate-remediator.js';
-import { readMicroverseState } from '../services/microverse-state.js';
+import { readMicroverseState, readRecoverableJsonObject } from '../services/microverse-state.js';
 import { logActivity } from '../services/activity-logger.js';
 import { getExtensionRoot, isoCompactStamp, safeErrorMessage, writeStateFile } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
@@ -18,7 +18,9 @@ function loadFinalizeGateSettings(extRoot) {
     };
     try {
         // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking read at startup
-        const raw = JSON.parse(fs.readFileSync(path.join(extRoot, 'pickle_settings.json'), 'utf-8'));
+        const raw = readRecoverableJsonObject(path.join(extRoot, 'pickle_settings.json'));
+        if (!raw)
+            return defaults;
         const cg = raw.convergence_gate;
         if (!cg || typeof cg !== 'object')
             return defaults;
