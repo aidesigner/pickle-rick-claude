@@ -157,7 +157,7 @@ export const Defaults = {
    * back to the legacy exit-on-error so a genuinely broken backend cannot
    * loop forever.
    */
-  CODEX_MANAGER_RELAUNCH_CAP: 5,
+  CODEX_MANAGER_RELAUNCH_CAP: 10,
 } as const;
 
 // ---------------------------------------------------------------------------
