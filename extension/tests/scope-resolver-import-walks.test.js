@@ -5,7 +5,13 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-const HANG_TIMEOUT_MS = 750;
+// 750ms → 2500ms: under 4-way test concurrency on macOS, subprocess spawn
+// overhead alone can exceed 750ms, racing against rg/grep timeout fallback
+// chain and producing flaky "expected ['a.ts','b.ts'], got ['a.ts']" deep-equal
+// failures plus elapsed-budget overruns. The actual hang detection is bounded
+// by findImportersTimeoutMs inside the SUT — this constant is just the
+// per-subprocess kill budget; raising it gives the spawn pipeline breathing room.
+const HANG_TIMEOUT_MS = 2_500;
 
 const FAIL_SCRIPT = (code) => `#!/bin/sh
 exit ${code}

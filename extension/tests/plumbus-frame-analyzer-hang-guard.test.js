@@ -24,7 +24,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BIN_PATH = path.resolve(__dirname, '..', 'bin', 'plumbus-frame-analyzer.js');
 const FIXTURE_PATH = path.resolve(__dirname, '__fixtures__', 'plumbus-frames', 'frame1-asymmetric-writer.dot');
 const EXPECTED_TIMEOUT_MS = 30_000;
-const WALL_CLOCK_BUDGET_MS = EXPECTED_TIMEOUT_MS + 10_000;
+// 10s → 30s slack: under 4-way test concurrency on macOS, bun subprocess
+// teardown + node analyzer startup overhead can stretch the wall clock close
+// to the 40s budget, racing against the inner 30s BUN_TIMEOUT_MS firing and
+// producing flaky "elapsed 40004ms hit the test's own budget" failures. The
+// inner timeout still bounds the actual hang detection — this slack only
+// absorbs spawn pipeline jitter.
+const WALL_CLOCK_BUDGET_MS = EXPECTED_TIMEOUT_MS + 30_000;
 
 let tmpRoot;
 
