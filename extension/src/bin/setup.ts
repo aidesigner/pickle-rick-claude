@@ -191,8 +191,9 @@ function applyPerBackendBudget(config: SetupArgs) {
 }
 
 function parseIntegerFlag(args: string[], index: number, flag: string, validate: (value: number) => boolean, errorMessage: string): number {
-  const value = parseInt(args[index + 1], 10);
-  if (isNaN(value) || !validate(value)) die(errorMessage);
+  const raw = args[index + 1];
+  const value = Number(raw);
+  if (raw === undefined || raw.startsWith('--') || !Number.isInteger(value) || !validate(value)) die(errorMessage);
   return value;
 }
 

@@ -677,6 +677,17 @@ test('setup: --effort without value errors out', () => {
     );
 });
 
+test('setup: integer CLI flags reject fractional and suffixed values', () => {
+    assert.throws(
+        () => runSetup(['--worker-timeout', '1.5', '--task', 'fractional-timeout-test']),
+        /--worker-timeout requires a positive integer/i,
+    );
+    assert.throws(
+        () => runSetup(['--max-iterations', '10abc', '--task', 'suffixed-iteration-test']),
+        /--max-iterations requires a non-negative integer/i,
+    );
+});
+
 test('setup: --resume with --effort high overrides stored effort', () => {
     const sessionPath = runSetup(['--effort', 'low', '--task', 'effort-resume-test']);
     try {
