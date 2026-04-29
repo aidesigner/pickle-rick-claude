@@ -118,6 +118,38 @@ describe('readCache', () => {
         assert.deepEqual(result, data);
     });
 
+    test('checkForUpdate ignores malformed fresh cached versions and fetches release', () => {
+        fs.mkdirSync(path.join(tmpDir, 'extension'), { recursive: true });
+        fs.writeFileSync(
+            path.join(tmpDir, 'extension', 'package.json'),
+            JSON.stringify({ version: '1.7.0' }),
+        );
+        fs.writeFileSync(path.join(tmpDir, 'update-check.json'), JSON.stringify({
+            last_check_epoch: Math.floor(Date.now() / 1000),
+            latest_version: 'not-a-version',
+            current_version: '1.7.0',
+        }));
+
+        const binDir = path.join(tmpDir, 'mock-bin');
+        const callsPath = path.join(tmpDir, 'gh-calls.txt');
+        fs.mkdirSync(binDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(binDir, 'gh'),
+            `#!/bin/sh\necho called >> ${JSON.stringify(callsPath)}\nif [ "$1" = "api" ]; then echo '{"tag_name":"v2.0.0","assets":[]}'; exit 0; fi\nexit 1\n`,
+            { mode: 0o755 },
+        );
+        const origPath = process.env.PATH;
+        process.env.PATH = `${binDir}:${origPath}`;
+        try {
+            const result = checkForUpdate();
+            assert.equal(result.status, 'update-available');
+            assert.equal(result.latestVersion, '2.0.0');
+            assert.match(fs.readFileSync(callsPath, 'utf-8'), /^called/m);
+        } finally {
+            process.env.PATH = origPath;
+        }
+    });
+
     test('checkForUpdate uses recovered newer cache tmp instead of refetching release', () => {
         fs.mkdirSync(path.join(tmpDir, 'extension'), { recursive: true });
         fs.writeFileSync(

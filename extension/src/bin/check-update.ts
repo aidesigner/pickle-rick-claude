@@ -53,10 +53,17 @@ export function readCache(): UpdateCheckCache {
       log('Cache missing or corrupted, using defaults');
       return defaultCache();
     }
+    const latestVersion = typeof raw.latest_version === 'string' && parseVersion(raw.latest_version)
+      ? raw.latest_version
+      : '';
+    const currentVersion = typeof raw.current_version === 'string' && parseVersion(raw.current_version)
+      ? raw.current_version
+      : '';
+    const cacheVersionsValid = latestVersion !== '' && currentVersion !== '';
     return {
-      last_check_epoch: typeof raw.last_check_epoch === 'number' ? raw.last_check_epoch : 0,
-      latest_version: typeof raw.latest_version === 'string' ? raw.latest_version : '',
-      current_version: typeof raw.current_version === 'string' ? raw.current_version : '',
+      last_check_epoch: cacheVersionsValid && typeof raw.last_check_epoch === 'number' ? raw.last_check_epoch : 0,
+      latest_version: latestVersion,
+      current_version: currentVersion,
     };
   } catch {
     log('Cache missing or corrupted, using defaults');
