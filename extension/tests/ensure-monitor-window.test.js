@@ -581,6 +581,26 @@ test('restartDeadWatcherPanes: mode-specific pane 2 command uses refinement and 
     }
 });
 
+test('restartDeadWatcherPanes: trap-door entry documents T3 regressions and size cap', () => {
+    const claudeMd = fs.readFileSync(path.resolve(__dirname, '../CLAUDE.md'), 'utf-8');
+    const entries = claudeMd
+        .split('\n')
+        .filter(line => line.includes('src/services/pickle-utils.ts') && line.includes('restartDeadWatcherPanes'));
+
+    assert.equal(entries.length, 1);
+    const [entry] = entries;
+    assert.ok(entry.length <= 1500, `trap-door entry is ${entry.length} chars`);
+    assert.match(entry, /INVARIANT:/);
+    assert.match(
+        entry,
+        /BREAKS: monitor window has stale watcher panes for the rest of the pipeline lifetime; user has to manually relaunch each watcher\./,
+    );
+    assert.match(entry, /ENFORCE:/);
+    assert.match(entry, /restartDeadWatcherPanes: respawns dead pickle watcher panes 1, 2, and 3/);
+    assert.match(entry, /restartDeadWatcherPanes: all watcher panes already running node is a no-op/);
+    assert.match(entry, /restartDeadWatcherPanes: inactive session skips pane probing and respawn/);
+});
+
 test('ensureMonitorWindow: kills and recreates when existing window has different @mode', () => {
     const f = makeFakes({ sessionName: 'pickle-abc12345', commandTemplate: 'council-of-ricks.md' });
     // Simulate an existing monitor window stamped for a different mode
