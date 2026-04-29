@@ -14,13 +14,12 @@ function main() {
         process.exit(1);
     }
     const cbPath = path.join(sessionDir, 'circuit_breaker.json');
-    let current;
     const recovered = readCircuitBreakerState(sessionDir);
     if (!recovered) {
         console.error(`Error: cannot read ${cbPath}`);
         process.exit(1);
     }
-    current = recovered;
+    const current = recovered;
     if (!current.state || !['CLOSED', 'HALF_OPEN', 'OPEN'].includes(current.state)) {
         console.error(`Error: invalid circuit state in ${cbPath}`);
         process.exit(1);

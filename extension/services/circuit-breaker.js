@@ -266,13 +266,12 @@ export function recordIterationResult(state, result, iteration, settings) {
 }
 export function resetCircuitBreaker(sessionDir, reason) {
     const cbPath = path.join(sessionDir, 'circuit_breaker.json');
-    let current;
     const recovered = readCircuitBreakerState(sessionDir);
     if (!recovered) {
         console.error('[circuit-breaker] No circuit_breaker.json found — nothing to reset');
         return;
     }
-    current = recovered;
+    const current = recovered;
     if (current.state === 'CLOSED') {
         console.error('[circuit-breaker] Already CLOSED — no reset needed');
         return;

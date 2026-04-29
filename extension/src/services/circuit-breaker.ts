@@ -1,4 +1,3 @@
-import * as fs from 'fs';
 import * as path from 'path';
 import { runCmd, writeStateFile, safeErrorMessage } from './pickle-utils.js';
 import { StateManager } from './state-manager.js';
@@ -371,13 +370,12 @@ export function recordIterationResult(
 export function resetCircuitBreaker(sessionDir: string, reason: string): void {
   const cbPath = path.join(sessionDir, 'circuit_breaker.json');
 
-  let current: CircuitBreakerState;
   const recovered = readCircuitBreakerState(sessionDir);
   if (!recovered) {
     console.error('[circuit-breaker] No circuit_breaker.json found — nothing to reset');
     return;
   }
-  current = recovered;
+  const current: CircuitBreakerState = recovered;
 
   if (current.state === 'CLOSED') {
     console.error('[circuit-breaker] Already CLOSED — no reset needed');

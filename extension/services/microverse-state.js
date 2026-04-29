@@ -22,6 +22,7 @@ export function compareMetric(current, previous, tolerance, direction) {
         return 'regressed';
     return 'held';
 }
+// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 export function createMicroverseState(opts) {
     const { prdPath, metric, stallLimit, convergenceTarget, convergenceMode, convergenceFile, allowedPaths } = opts;
     if (!Number.isInteger(stallLimit) || stallLimit < 1) {

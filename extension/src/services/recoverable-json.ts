@@ -57,7 +57,7 @@ export function readRecoverableJsonObject(filePath: string): object | null {
   if (!entries) return base;
 
   const tmpPattern = new RegExp(`^${baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.tmp\\.(\\d+)(?:\\..+)?$`);
-  let baseMtimeMs = 0;
+  let baseMtimeMs: number;
   try {
     baseMtimeMs = fs.existsSync(filePath) ? fs.statSync(filePath).mtimeMs : 0;
   } catch {
