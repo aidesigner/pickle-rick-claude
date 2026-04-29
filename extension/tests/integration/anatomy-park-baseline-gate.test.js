@@ -603,3 +603,28 @@ test('microverse startup settings promote newer dead tmp before gate/failure set
   assert.equal(failureClassification, false);
   assert.equal(fs.existsSync(tmpPath), false, 'dead settings tmp should be consumed before startup settings are returned');
 });
+
+test('microverse startup settings default invalid numeric gate controls before runner use', () => {
+  const extRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-gate-settings-invalid-'));
+  try {
+    fs.writeFileSync(path.join(extRoot, 'pickle_settings.json'), JSON.stringify({
+      convergence_gate: {
+        enabled_convergence_files: ['anatomy-park.json'],
+        regression_warning_threshold: 0,
+        remediator_timeout_s: 0.5,
+        baseline_max_age_iterations: -1,
+        baseline_max_age_seconds: Number.POSITIVE_INFINITY,
+      },
+    }));
+
+    const settings = loadConvergenceGateSettings(extRoot);
+
+    assert.deepEqual(settings.enabled_convergence_files, ['anatomy-park.json']);
+    assert.equal(settings.regression_warning_threshold, 5);
+    assert.equal(settings.remediator_timeout_s, 600);
+    assert.equal(settings.baseline_max_age_iterations, 30);
+    assert.equal(settings.baseline_max_age_seconds, 14_400);
+  } finally {
+    fs.rmSync(extRoot, { recursive: true, force: true });
+  }
+});

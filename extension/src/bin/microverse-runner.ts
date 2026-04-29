@@ -117,6 +117,9 @@ export function loadConvergenceGateSettings(extRoot: string): {
   baseline_max_age_iterations: number;
   baseline_max_age_seconds: number;
 } {
+  const positiveIntegerOrDefault = (value: unknown, fallback: number): number => {
+    return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : fallback;
+  };
   const defaults = {
     enabled_convergence_files: ['anatomy-park.json'],
     regression_warning_threshold: 5,
@@ -134,18 +137,22 @@ export function loadConvergenceGateSettings(extRoot: string): {
       enabled_convergence_files: Array.isArray(gateSettings.enabled_convergence_files)
         ? (gateSettings.enabled_convergence_files as string[])
         : defaults.enabled_convergence_files,
-      regression_warning_threshold: typeof gateSettings.regression_warning_threshold === 'number'
-        ? gateSettings.regression_warning_threshold
-        : defaults.regression_warning_threshold,
-      remediator_timeout_s: typeof gateSettings.remediator_timeout_s === 'number'
-        ? gateSettings.remediator_timeout_s
-        : defaults.remediator_timeout_s,
-      baseline_max_age_iterations: typeof gateSettings.baseline_max_age_iterations === 'number'
-        ? gateSettings.baseline_max_age_iterations
-        : defaults.baseline_max_age_iterations,
-      baseline_max_age_seconds: typeof gateSettings.baseline_max_age_seconds === 'number'
-        ? gateSettings.baseline_max_age_seconds
-        : defaults.baseline_max_age_seconds,
+      regression_warning_threshold: positiveIntegerOrDefault(
+        gateSettings.regression_warning_threshold,
+        defaults.regression_warning_threshold,
+      ),
+      remediator_timeout_s: positiveIntegerOrDefault(
+        gateSettings.remediator_timeout_s,
+        defaults.remediator_timeout_s,
+      ),
+      baseline_max_age_iterations: positiveIntegerOrDefault(
+        gateSettings.baseline_max_age_iterations,
+        defaults.baseline_max_age_iterations,
+      ),
+      baseline_max_age_seconds: positiveIntegerOrDefault(
+        gateSettings.baseline_max_age_seconds,
+        defaults.baseline_max_age_seconds,
+      ),
     };
   } catch {
     return defaults;
