@@ -38,7 +38,7 @@ function initRepo(repo) {
   git(['commit', '-q', '-m', 'seed'], repo);
 }
 
-function writeBaseState(sessionDir, repo) {
+function writeBaseState(sessionDir, repo, overrides = {}) {
   fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
     active: false,
     working_dir: repo,
@@ -57,6 +57,7 @@ function writeBaseState(sessionDir, repo) {
     tmux_mode: true,
     chain_meeseeks: true,
     backend: 'claude',
+    ...overrides,
   }, null, 2));
 }
 
@@ -73,13 +74,24 @@ function writePipeline(sessionDir, repo, phases, extra = {}) {
   }, null, 2));
 }
 
-function makeSession(phases, extra = {}) {
+function makeSession(phases, extra = {}, stateOverrides = {}) {
   const repo = tmpDir('pipeline-dispatch-repo-');
   const sessionDir = tmpDir('pipeline-dispatch-session-');
   initRepo(repo);
-  writeBaseState(sessionDir, repo);
+  writeBaseState(sessionDir, repo, stateOverrides);
   writePipeline(sessionDir, repo, phases, extra);
   return { repo, sessionDir };
+}
+
+function writeCodexRequiredPrd(sessionDir) {
+  fs.writeFileSync(path.join(sessionDir, 'prd.md'), [
+    '# Bundle',
+    '',
+    'frontmatter:',
+    '```',
+    'backend: codex-required',
+    '```',
+  ].join('\n'));
 }
 
 async function expectMainExit(sessionDir, code) {
@@ -299,6 +311,51 @@ describe('pipeline phase config dispatch', () => {
       } else {
         process.env.TMUX = originalTmux;
       }
+      cleanup([repo, sessionDir]);
+    }
+  });
+
+  test('main rejects codex-required bundle PRD when backend resolves non-codex', async () => {
+    const { repo, sessionDir } = makeSession(['pickle']);
+    writeCodexRequiredPrd(sessionDir);
+    __setSpawnRunnerForTests(async () => {
+      throw new Error('runner should not be called');
+    });
+    const originalTmux = process.env.TMUX;
+    delete process.env.TMUX;
+    try {
+      await assert.rejects(
+        () => main(sessionDir),
+        (err) => err instanceof Error &&
+          err.message.includes('/pickle-pipeline --backend codex') &&
+          err.message.includes('backend: codex-required'),
+      );
+      const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+      assert.equal(state.backend, 'claude');
+    } finally {
+      if (originalTmux === undefined) {
+        delete process.env.TMUX;
+      } else {
+        process.env.TMUX = originalTmux;
+      }
+      cleanup([repo, sessionDir]);
+    }
+  });
+
+  test('main allows codex-required bundle PRD when backend resolves codex', async () => {
+    const { repo, sessionDir } = makeSession(['pickle'], {}, { backend: 'codex' });
+    writeCodexRequiredPrd(sessionDir);
+    const calls = [];
+    __setSpawnRunnerForTests(async (cmd, args, env) => {
+      calls.push({ cmd, args, env });
+      return 0;
+    });
+    try {
+      await expectMainExit(sessionDir, 0);
+      assert.equal(calls.length, 1);
+      assertRunnerScript(calls[0].args[0], 'mux-runner.js');
+      assert.equal(calls[0].env.PICKLE_BACKEND, 'codex');
+    } finally {
       cleanup([repo, sessionDir]);
     }
   });

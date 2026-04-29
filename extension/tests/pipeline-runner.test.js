@@ -13,6 +13,8 @@ import {
   assertCleanWorkingTree,
   writePipelineStatus,
   resolveBackendWithSource,
+  readBundlePrdBackend,
+  assertCodexRequiredBackend,
   enterPicklePhase,
   installShutdownHandlers,
 } from '../bin/pipeline-runner.js';
@@ -792,6 +794,79 @@ describe('resolveBackendWithSource', () => {
     const result = resolveBackendWithSource({}, undefined, 'bogus');
     assert.equal(result.backend, 'claude');
     assert.equal(result.source, 'default');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bundle PRD backend contract — AC-BUNDLE-18
+// ---------------------------------------------------------------------------
+
+describe('bundle PRD backend contract', () => {
+  test('reads backend from refined bundle fenced frontmatter block', () => {
+    const prd = [
+      '# PRD',
+      '',
+      'frontmatter:',
+      '```',
+      'backend: codex-required',
+      'session_root: /tmp/session',
+      '```',
+      '',
+      '## Body',
+    ].join('\n');
+    assert.equal(readBundlePrdBackend(prd), 'codex-required');
+  });
+
+  test('reads backend from conventional leading YAML frontmatter', () => {
+    const prd = [
+      '---',
+      'backend: "codex-required"',
+      '---',
+      '',
+      '# PRD',
+    ].join('\n');
+    assert.equal(readBundlePrdBackend(prd), 'codex-required');
+  });
+
+  test('returns undefined when PRD has no backend contract', () => {
+    assert.equal(readBundlePrdBackend('# PRD\n\nNo frontmatter.'), undefined);
+  });
+
+  test('rejects non-codex backend with actionable pipeline command', () => {
+    const dir = tmpDir();
+    fs.writeFileSync(path.join(dir, 'prd.md'), [
+      '# Bundle',
+      '',
+      'frontmatter:',
+      '```',
+      'backend: codex-required',
+      '```',
+    ].join('\n'));
+    try {
+      assert.throws(
+        () => assertCodexRequiredBackend(dir, 'claude', 'default'),
+        /\/pickle-pipeline --backend codex/,
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
+  test('allows codex backend when PRD requires codex', () => {
+    const dir = tmpDir();
+    fs.writeFileSync(path.join(dir, 'prd.md'), [
+      '# Bundle',
+      '',
+      'frontmatter:',
+      '```',
+      'backend: codex-required',
+      '```',
+    ].join('\n'));
+    try {
+      assert.doesNotThrow(() => assertCodexRequiredBackend(dir, 'codex', 'state.json'));
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
   });
 });
 

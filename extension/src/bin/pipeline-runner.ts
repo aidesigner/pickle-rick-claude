@@ -66,6 +66,7 @@ interface PipelineConfig {
 }
 
 const DEFAULT_IGNORE_DIRTY_PATHS: readonly string[] = ['prds', 'docs'];
+const CODEX_REQUIRED_BACKEND = 'codex-required';
 
 type PipelineStatusKind = 'running' | 'completed' | 'failed' | 'cancelled';
 
@@ -168,6 +169,50 @@ export function resolveBackendWithSource(
   if (pipelineBackend) return { backend: pipelineBackend, source: 'pipeline.json' };
   if (isBackend(envBackend)) return { backend: envBackend, source: 'env' };
   return { backend: 'claude', source: 'default' };
+}
+
+function readYamlLikeField(body: string, field: string): string | undefined {
+  const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = body.match(new RegExp(`^${escaped}:\\s*(.+?)\\s*$`, 'm'));
+  return match ? match[1].trim().replace(/^["']|["']$/g, '') : undefined;
+}
+
+function extractLeadingYamlFrontmatter(content: string): string | undefined {
+  const openLen = content.startsWith('---\r\n') ? 5 : content.startsWith('---\n') ? 4 : 0;
+  if (openLen === 0) return undefined;
+  const closeIdx = content.indexOf('\n---', openLen);
+  return closeIdx === -1 ? undefined : content.slice(openLen, closeIdx);
+}
+
+function extractBundleFrontmatterBlock(content: string): string | undefined {
+  const marker = content.match(/^frontmatter:\s*[\r\n]+```[^\r\n]*[\r\n]/m);
+  if (!marker || marker.index == null) return undefined;
+  const bodyStart = marker.index + marker[0].length;
+  const closeIdx = content.indexOf('\n```', bodyStart);
+  return closeIdx === -1 ? undefined : content.slice(bodyStart, closeIdx);
+}
+
+export function readBundlePrdBackend(content: string): string | undefined {
+  const bundleBlock = extractBundleFrontmatterBlock(content);
+  const bundleBackend = bundleBlock ? readYamlLikeField(bundleBlock, 'backend') : undefined;
+  if (bundleBackend) return bundleBackend;
+  const yamlBlock = extractLeadingYamlFrontmatter(content);
+  return yamlBlock ? readYamlLikeField(yamlBlock, 'backend') : undefined;
+}
+
+export function assertCodexRequiredBackend(
+  sessionDir: string,
+  backend: Backend,
+  source: BackendSource,
+): void {
+  const prdPath = path.join(sessionDir, 'prd.md');
+  if (!fs.existsSync(prdPath)) return;
+  const requiredBackend = readBundlePrdBackend(fs.readFileSync(prdPath, 'utf-8'));
+  if (requiredBackend !== CODEX_REQUIRED_BACKEND || backend === 'codex') return;
+  throw new Error(
+    `Bundle PRD declares backend: ${CODEX_REQUIRED_BACKEND}, but pipeline-runner resolved backend ` +
+    `${backend} from ${source}. Restart with /pickle-pipeline --backend codex.`,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1031,6 +1076,7 @@ function loadPipelineRuntime(sessionDir: string, opts: MainOpts, log: (msg: stri
   // Backend resolution — see resolveBackendWithSource. Capture source BEFORE
   // any state write so the log reflects the actual resolution path.
   const { backend, source } = resolveBackendWithSource(state, config.backend, process.env.PICKLE_BACKEND);
+  assertCodexRequiredBackend(sessionDir, backend, source);
   // Only write when the value actually changes — avoids a lock round-trip on
   // every phase when state already matches (fresh-run and steady-state case).
   if (state.backend !== backend) {
