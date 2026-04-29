@@ -152,6 +152,52 @@ describe('green gate', () => {
 // ---------------------------------------------------------------------------
 
 describe('cap exhaustion', () => {
+    test('invalid numeric settings default before controlling strict gate loop', async () => {
+        const sessionRoot = makeTmpDir();
+        const gateDir = path.join(sessionRoot, 'gate');
+        fs.mkdirSync(gateDir, { recursive: true });
+
+        const failure = makeFailure('/tmp/wd/src/foo.ts');
+        const briefPath = path.join(sessionRoot, 'brief.md');
+        fs.writeFileSync(briefPath, 'fix the gate');
+        let gateRuns = 0;
+        const timeouts = [];
+
+        const code = await finalizeGateMain({
+            argv: [sessionRoot, 'anatomy-park'],
+            env: {},
+            readMicroverseStateFn: () => ({ status: 'iterating', allowed_paths: undefined }),
+            readStateForWorkingDirFn: () => ({ workingDir: '/tmp/wd', backend: 'claude' }),
+            loadSettingsFn: () => ({
+                szechuan_max_remediation_cycles: -1,
+                anatomy_park_max_remediation_cycles: 0,
+                remediator_timeout_s: 0.5,
+            }),
+            mkdirSyncFn: (p) => fs.mkdirSync(p, { recursive: true }),
+            writeFileFn: (p, data) => fs.writeFileSync(p, data, 'utf-8'),
+            logActivityFn: () => {},
+            isoFn: () => '2026-01-01T00-00-00Z',
+            runGateFn: async () => {
+                gateRuns += 1;
+                return makeGateResult('red', [failure]);
+            },
+            spawnGateRemediatorMainFn: async (briefOpts) => {
+                briefOpts.stdout?.(`BRIEF_PATH=${briefPath}`);
+                return 0;
+            },
+            spawnRemediatorFn: (_cmd, _args, opts) => {
+                timeouts.push(opts.timeout);
+            },
+            stdout: () => {},
+            stderr: () => {},
+        });
+
+        assert.equal(code, 2);
+        assert.equal(gateRuns, 5, 'invalid anatomy cap should fall back to the default five cycles');
+        assert.deepEqual(timeouts, [600_000, 600_000, 600_000, 600_000, 600_000]);
+        fs.rmSync(sessionRoot, { recursive: true, force: true });
+    });
+
     test('cap=1 persistent failure → exit 2 + escalation file', async () => {
         const sessionRoot = makeTmpDir();
         const gateDir = path.join(sessionRoot, 'gate');

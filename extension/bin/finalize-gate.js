@@ -10,6 +10,21 @@ import { StateManager } from '../services/state-manager.js';
 import { buildWorkerInvocation, backendEnvOverrides, resolveBackend, } from '../services/backend-spawn.js';
 const VALID_SKILLS = new Set(['szechuan', 'anatomy-park']);
 const sm = new StateManager();
+function positiveIntegerOrDefault(value, fallback) {
+    return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : fallback;
+}
+function normalizeFinalizeGateSettings(raw) {
+    const defaults = {
+        szechuan_max_remediation_cycles: 3,
+        anatomy_park_max_remediation_cycles: 5,
+        remediator_timeout_s: 600,
+    };
+    return {
+        szechuan_max_remediation_cycles: positiveIntegerOrDefault(raw?.szechuan_max_remediation_cycles, defaults.szechuan_max_remediation_cycles),
+        anatomy_park_max_remediation_cycles: positiveIntegerOrDefault(raw?.anatomy_park_max_remediation_cycles, defaults.anatomy_park_max_remediation_cycles),
+        remediator_timeout_s: positiveIntegerOrDefault(raw?.remediator_timeout_s, defaults.remediator_timeout_s),
+    };
+}
 function loadFinalizeGateSettings(extRoot) {
     const defaults = {
         szechuan_max_remediation_cycles: 3,
@@ -24,17 +39,7 @@ function loadFinalizeGateSettings(extRoot) {
         const cg = raw.convergence_gate;
         if (!cg || typeof cg !== 'object')
             return defaults;
-        return {
-            szechuan_max_remediation_cycles: typeof cg.szechuan_max_remediation_cycles === 'number'
-                ? cg.szechuan_max_remediation_cycles
-                : defaults.szechuan_max_remediation_cycles,
-            anatomy_park_max_remediation_cycles: typeof cg.anatomy_park_max_remediation_cycles === 'number'
-                ? cg.anatomy_park_max_remediation_cycles
-                : defaults.anatomy_park_max_remediation_cycles,
-            remediator_timeout_s: typeof cg.remediator_timeout_s === 'number'
-                ? cg.remediator_timeout_s
-                : defaults.remediator_timeout_s,
-        };
+        return normalizeFinalizeGateSettings(cg);
     }
     catch {
         return defaults;
@@ -113,9 +118,9 @@ export async function finalizeGateMain(opts) {
         return 1;
     }
     const { workingDir, backend } = stateInfo;
-    const settings = opts.loadSettingsFn
+    const settings = normalizeFinalizeGateSettings(opts.loadSettingsFn
         ? opts.loadSettingsFn()
-        : loadFinalizeGateSettings(getExtensionRoot());
+        : loadFinalizeGateSettings(getExtensionRoot()));
     const skillKey = skill.replace(/-/g, '_');
     const cap = skillKey === 'szechuan'
         ? settings.szechuan_max_remediation_cycles

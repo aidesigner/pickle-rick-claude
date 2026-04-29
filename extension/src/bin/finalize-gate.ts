@@ -23,6 +23,24 @@ interface FinalizeGateSettings {
   remediator_timeout_s: number;
 }
 
+function positiveIntegerOrDefault(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+function normalizeFinalizeGateSettings(raw: Partial<FinalizeGateSettings> | null | undefined): FinalizeGateSettings {
+  const defaults: FinalizeGateSettings = {
+    szechuan_max_remediation_cycles: 3,
+    anatomy_park_max_remediation_cycles: 5,
+    remediator_timeout_s: 600,
+  };
+
+  return {
+    szechuan_max_remediation_cycles: positiveIntegerOrDefault(raw?.szechuan_max_remediation_cycles, defaults.szechuan_max_remediation_cycles),
+    anatomy_park_max_remediation_cycles: positiveIntegerOrDefault(raw?.anatomy_park_max_remediation_cycles, defaults.anatomy_park_max_remediation_cycles),
+    remediator_timeout_s: positiveIntegerOrDefault(raw?.remediator_timeout_s, defaults.remediator_timeout_s),
+  };
+}
+
 function loadFinalizeGateSettings(extRoot: string): FinalizeGateSettings {
   const defaults: FinalizeGateSettings = {
     szechuan_max_remediation_cycles: 3,
@@ -35,20 +53,7 @@ function loadFinalizeGateSettings(extRoot: string): FinalizeGateSettings {
     if (!raw) return defaults;
     const cg = raw.convergence_gate as Record<string, unknown> | undefined;
     if (!cg || typeof cg !== 'object') return defaults;
-    return {
-      szechuan_max_remediation_cycles:
-        typeof cg.szechuan_max_remediation_cycles === 'number'
-          ? cg.szechuan_max_remediation_cycles
-          : defaults.szechuan_max_remediation_cycles,
-      anatomy_park_max_remediation_cycles:
-        typeof cg.anatomy_park_max_remediation_cycles === 'number'
-          ? cg.anatomy_park_max_remediation_cycles
-          : defaults.anatomy_park_max_remediation_cycles,
-      remediator_timeout_s:
-        typeof cg.remediator_timeout_s === 'number'
-          ? cg.remediator_timeout_s
-          : defaults.remediator_timeout_s,
-    };
+    return normalizeFinalizeGateSettings(cg as Partial<FinalizeGateSettings>);
   } catch {
     return defaults;
   }
@@ -159,9 +164,9 @@ export async function finalizeGateMain(opts: FinalizeGateOpts): Promise<number> 
   }
   const { workingDir, backend } = stateInfo;
 
-  const settings = opts.loadSettingsFn
+  const settings = normalizeFinalizeGateSettings(opts.loadSettingsFn
     ? opts.loadSettingsFn()
-    : loadFinalizeGateSettings(getExtensionRoot());
+    : loadFinalizeGateSettings(getExtensionRoot()));
 
   const skillKey = skill.replace(/-/g, '_') as 'szechuan' | 'anatomy_park';
   const cap = skillKey === 'szechuan'
