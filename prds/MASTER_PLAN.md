@@ -24,6 +24,7 @@
 | `prds/tool-error-retry-tracking.md` | Draft (2026-03-31) — intra-session tool-failure tracking with escalating pivot guidance, inspired by OMC Ralph mode. **NOT started.** No source impl. Lower priority than current bundle. | committed earlier (`e9e9666`) |
 | `prds/smart-iteration-handoff.md` | Refined draft — reduce wasted iterations 30%+ in microverse / 20%+ in tmux via smarter handoff intelligence. **NOT started.** No source impl. Lower priority than current bundle. | committed earlier (`e9e9666`) |
 | Cronenberg meta-router skill | **Shipped v1.57.0** (2026-04-27) — explicit-invocation `/cronenberg` skill with deterministic decision matrix + tmux-detach-safe followup chaining. No PRD; designed inline. | `711f92c` |
+| `prds/state-schema-version-ordering-incident.md` | **Hot-fix deployed** (2026-04-29 PM) — incident PRD: Citadel + Hardening Bundle pipeline ran C-T0 (schema migration, `order: 200`) before NEW-T2 (v2→v3 rollback safety net, `order: 300`). C-T0 stamped `state.json.schema_version: 3` while deployed `StateManager` capped at v2 → every read threw `SCHEMA_MISMATCH`, monitor and all 4 watcher panes wedged. Hot-patched deployed `STATE_MANAGER_DEFAULTS.schemaVersion: 2 → 3`, force-killed wedged `monitor.js`, relaunched watchers. 8 ACs (AC-SSV-01..08) — first 3 verified, F1–F5 forward fixes pending. | uncommitted (this branch) |
 
 The refined PRD includes: corrected line ranges, T0 prelude + T14 closer, goal-level 200 LOC carve-outs, 8-token enumeration, T1 post-pass invariants, T7 dry-run replacement (test seam, NO `--dry-run`), T2 scope clarification (`runIteration` already extracted), per-ticket frontmatter, fixture lockdown protocol, helper-signature spec rule, trap-door preservation, and a 17-row Risks table.
 
@@ -211,6 +212,16 @@ tmux send-keys -t pipeline-1204204c "node ~/.claude/pickle-rick/extension/bin/pi
 | First ticket | `74d2bb64` (NEW-T3 — Done, commit `585f71c`) |
 | Current ticket | `9dd914da` (B-T1 — In Progress) |
 | Watcher panes | all 4 alive (`pane_current_command = node`) |
+
+### Mid-run incident (2026-04-29 ~17:00 PDT) — schema-version ordering bug
+
+The pipeline blew through faster than expected: 13 tickets shipped in ~2.5h (NEW-T3 → B-T1 → B-T3 → NEW-T5 → A-T1..A-T4 → B-T2 → C-T0..C-T3). C-T0 ("Citadel: Session-state schema migration", order=200) bumped `state.json.schema_version: 1 → 3` per its design — but the deployed `StateManager` still capped at v2 (no `bash install.sh` run yet). Every monitor pane and hook started throwing `SCHEMA_MISMATCH`. The dashboard pane wedged on `Awaiting signal...` and required `kill -9` (the `monitor.js` SIGINT handler couldn't run because the loop was blocked inside `process.stdout.write` against a backpressured pty).
+
+**Root cause** (3 layers): (L1) my decomposition put NEW-T2 ("v2→v3 rollback safety net", order=300) AFTER C-T0 (order=200) — pipeline-runner sorts by numeric order and ignores the `links: depends_on` I expressed; (L2) pipeline-runner has no DAG awareness; (L3) source TS shipped `schemaVersion: 3` but deployed JS was stale until install.sh.
+
+**Hot-fix applied**: bumped `~/.claude/pickle-rick/extension/types/index.js` `STATE_MANAGER_DEFAULTS.schemaVersion: 2 → 3` (now consistent with source TS at `extension/src/types/index.ts:96`). Force-killed wedged `monitor.js` (PID 23280). Relaunched all four watchers via `tmux send-keys`. Pipeline never stopped progressing — recovered observability without losing in-flight work.
+
+**Forward fixes** (F1–F5) tracked in `prds/state-schema-version-ordering-incident.md`: lower NEW-T2's order; teach pipeline-runner to honor `links: depends_on` as a hard sort fence; make `StateManager.read()` emit actionable `bash install.sh` error on schema mismatch; harden `monitor.js` SIGINT against stdout backpressure; add CI parity check for deployed-vs-source schemaVersion.
 
 ---
 
