@@ -19,6 +19,7 @@
 | `prds/citadel.md` | Draft (2026-04-27) — new `/citadel` command (post-implementation conformance audit: PRD ↔ implementation invariants, AC coverage, sibling guard parity, rule-set invariants, trap-door enforcement) **plus** matched cross-skill updates to `/pickle-refine-prd` (T20 AC-shape collapse-or-justify), anatomy-park (T21 phase-2.5 pattern-replay sweep + `pattern_shape` schema), and szechuan-sauce (T22 diff-hygiene gate, T23 trap-door-as-test sweep). Driven by LOA-618 post-mortem: 7 issues that reached code review, 6 of which now have a primary owner + safety net. Reviewed by 5-agent team and rescoped twice (Venn-overlap model: anatomy-park ∩ citadel ∩ szechuan-sauce, slight overlap intentional). 16 core tasks (T0–T16) + 4 cross-skill tasks (T20–T23) + cronenberg integration (T13.5). 17 ACs (`AC-CIT-01..17`). **NOT started.** | uncommitted |
 | `prds/god-functions-remediation-phase-2.md` | Draft (2026-04-28) — follow-up epic for the 27 pre-existing god-functions across 24 files exposed by T14's ESLint ratchet (Phase 1 closer). Each function has a scoped `// eslint-disable-next-line` carve-out from commit `7bf3263`; this epic refactors them and removes the carve-outs. Worst offender: `runGate` in `convergence-gate.ts` (cyclomatic 65, 305 lines). 6 ACs, ~20 atomic tickets sketched. **NOT started.** | committed in this branch |
 | `prds/watcher-pane-recovery.md` | Draft (2026-04-28) — single-fix PRD for monitor-window watcher panes that exit on `state.active: false` and don't respawn when mux-runner relaunch brings the session back live. Discovered during the god-fn epic codex run; only `monitor.js` (dashboard) survived a relaunch, the other three watcher panes stayed at `zsh` prompts. 7 ACs, 4 atomic tickets. **NOT started.** | committed in this branch |
+| `prds/anatomy-park-followups.md` | Draft (2026-04-29) — 3 small follow-ups identified by the 5-agent review of the 59-commit anatomy-park overnight run: (T1) trap-door catalog hygiene — split 3 oversized entries (pickle-utils.ts at 4042 chars), standardize ENFORCE clauses to test filenames; (T2) `recoverable-json.test.js` — add dedicated unit tests for the extracted module (currently only via state-manager + caller tests); (T3) extend codex-manager relaunch (`bf4a002`) to `microverse-runner.ts` — anatomy-park hit the same 4h subprocess-error wall that mux-runner now handles. 12 ACs, 3 atomic tickets. **NOT started.** | committed in this branch |
 | Cronenberg meta-router skill | **Shipped v1.57.0** (2026-04-27) — explicit-invocation `/cronenberg` skill with deterministic decision matrix + tmux-detach-safe followup chaining. No PRD; designed inline. | `711f92c` |
 
 The refined PRD includes: corrected line ranges, T0 prelude + T14 closer, goal-level 200 LOC carve-outs, 8-token enumeration, T1 post-pass invariants, T7 dry-run replacement (test seam, NO `--dry-run`), T2 scope clarification (`runIteration` already extracted), per-ticket frontmatter, fixture lockdown protocol, helper-signature spec rule, trap-door preservation, and a 17-row Risks table.
@@ -64,6 +65,71 @@ T0 completed cleanly after a marathon debug session that surfaced and fixed five
 After T0 landed and codex advanced to T1 (`f068af3f` — Split `_emitDot`, the largest god function), codex ran for 5 iterations doing research/plan analysis without making implementation commits. Mux-runner's circuit breaker (separate from the EPIC_COMPLETED recovery — this one watches actual progress like ticket-status changes and commits) tripped at iteration 8 and exited. **This is not a hallucination — it's that T1's complexity (905 LOC, 6 helpers, 8 new tests) exceeded codex's per-iteration thinking budget.**
 
 T1 status reset to `Todo` so resume starts fresh.
+
+---
+
+## 2.1 Today's session — 2026-04-28 / 2026-04-29 (god-fn epic SHIPPED on codex)
+
+**Headline**: the god-function refactor epic that previously stalled at T1 with zero edits ran end-to-end on codex backend. T0–T19 (16 implementation + 4 hardening) all landed, then anatomy-park bonus phase added 59 trap-door fixes overnight. **~87 commits, ~10,500 LOC of refactor diff, 0 manual interventions.** The day's work is the validation that codex backend is now production-grade for large refactor epics.
+
+### Releases shipped this session
+
+| Version | What |
+|---|---|
+| `v1.59.0` | **Codex stall hardening** — P0 contract addendum (commit-required + DEFERRED-on-AC-contradiction + no-harness-exploration), commit-pending probe (handoff.txt nudge on stagnation), per-backend iteration budget (`claude:100, codex:80`), post-flush guard (no false-fail on short post-promise log when commits exist), per-ticket routing heuristic (default off). Plus `--effort low|medium|high` flag plumbing through codex CLI as `-c reasoning.effort=<level>`. |
+| `v1.59.1` | **Codex isolation from `~/.codex/` rule files** — `--ignore-rules --ignore-user-config` added to `buildCodexInvocation`. Bypassing the parallel-universe `~/.codex/skills/pickle*` registry that was misdirecting codex mid-iteration with stale paths. The unblocker for the god-fn epic resume. |
+
+### What landed (commit clusters)
+
+| Cluster | Commits | Source |
+|---|---|---|
+| Codex stall hardening (v1.59.x) | 8 | session work — P0/P1/P2 fixes from RCA |
+| Phase 1 god-fn epic (T0–T15) on codex | 18 | codex backend, autonomous |
+| Phase 1 hardening + audit (T16–T19) | 6 | codex backend, autonomous |
+| Anatomy-park bonus overnight | 59 | codex backend, autonomous (12h run) |
+| Lint carve-outs + cleanup | 3 | session work — eslint ratchet exposure handling |
+| PRD docs (this update + 3 follow-ups) | 2 | session work |
+| **Total** | **~96** | |
+
+### Codex backend validation — pre vs post v1.59.x
+
+| Metric | Pre-v1.59.x (this same session resumed) | Post-v1.59.1 |
+|---|---|---|
+| T1 outcome | Stalled at iter 5, **zero edits** in 50 min | Done in 14 min, 463 LOC + 116 LOC tests |
+| Tickets shipped autonomously | 0 (T0 was already pre-existing) | 19 (T0–T19) |
+| Manual interventions during run | constant | zero |
+| Wall time for full implementation phase | n/a (never finished) | 3h 41m |
+| Self-correction commits | 0 | 2 (T3 complexity cleanup, T5 state-ownership fix) |
+
+### Failure modes surfaced + addressed
+
+| FM | Symptom | Fix |
+|---|---|---|
+| FM-1 stall-on-judgment | codex loops on AC contradiction without descoping | P0 contract addendum (`v1.59.0`) — descope + DEFERRED note |
+| FM-2 stall-on-abstraction | codex explores harness internals (setup.js, mux-runner.js) instead of ticket scope | P0 contract addendum + worker prompt rule |
+| FM-3 commit-skip | codex produces edits but never commits, work orphaned at breaker trip | P0 contract addendum + post-flush guard |
+| FM-4 stall-on-imaginary-worker | codex narrates a non-existent worker subprocess, polling forever | `--ignore-rules --ignore-user-config` (`v1.59.1`) — bypasses stale `~/.codex/skills/pickle*` |
+| Codex 4h subprocess wall | codex CLI session ceiling kills long-running manager | `bf4a002` — auto-relaunch ≤5 retries (mux-runner only; microverse-runner still vulnerable, see `prds/anatomy-park-followups.md`) |
+
+### Why the pipeline stopped at Phase 2/3
+
+Pickle-pipeline was running `pickle → anatomy-park → szechuan-sauce`. Phase 1 (pickle) shipped T0–T19 cleanly. Phase 2 (anatomy-park) ran 12h, completed 70 iterations + 59 trap-door fixes, then hit the same 4h codex-subprocess-error wall — but `microverse-runner.ts` (anatomy-park's engine) doesn't have the relaunch fix that `mux-runner.ts` got in `bf4a002`. Pipeline-runner classified the phase as failed and stopped before Phase 3 (szechuan-sauce) started. **This is the C ticket in `prds/anatomy-park-followups.md`.**
+
+### Net status (verified on disk, 2026-04-29)
+
+| Check | Result |
+|---|---|
+| Working tree | Clean (only 3 pre-existing PRD drafts untracked) |
+| `tsc --noEmit` | Clean |
+| `eslint src/ --max-warnings=-1` | 0 errors, 19 advisory warnings |
+| Test suite | **3076/3076 pass** (+68 tests added by codex during the epic) |
+| 5-agent review verdict | HIGH / HIGH / MEDIUM (behavioral parity / extraction / catalog hygiene) |
+| Branch | 4 commits ahead of `origin/main` (cleanup), pushed |
+
+### Two behavioral changes worth flagging in next release notes
+
+- **`max_iterations: 0`** now valid in mux-runner (commit `8105845`) — was rejected before, now treated as "unlimited sentinel". Backward-compatible.
+- **Fractional numeric CLI flags now error** (commit `aba7369`) — was silent truncation via `parseInt`, now `Number.isInteger` rejects. `--worker-timeout 1.5` → error; users round to `2`.
 
 ---
 
