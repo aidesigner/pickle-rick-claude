@@ -367,7 +367,7 @@ test('runIteration is exported from mux-runner', () => {
 
 // --- microverse-runner tests ---
 
-import { measureMetric, measureLlmMetric, extractScore, buildJudgePrompt, buildMicroverseHandoff, deactivateRunnerState, main, _deps, readRunnerState, stageAutoCommitPaths } from '../bin/microverse-runner.js';
+import { measureMetric, measureLlmMetric, extractScore, buildJudgePrompt, buildMicroverseHandoff, deactivateRunnerState, handleRateLimit, main, _deps, readRunnerState, stageAutoCommitPaths } from '../bin/microverse-runner.js';
 import { resetToSha } from '../services/git-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { writeStateFile } from '../services/pickle-utils.js';
@@ -955,6 +955,63 @@ test('runner reads state.json and microverse.json on startup', () => {
         assert.equal(mvState.status, 'iterating');
     } finally {
         fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('handleRateLimit persists API reset metadata and emits wait activity', async () => {
+    const dir = createTempGitRepo();
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mv-data-'));
+    const previousDataRoot = process.env.PICKLE_DATA_ROOT;
+    const originalSleep = _deps.sleep;
+    try {
+        process.env.PICKLE_DATA_ROOT = dataRoot;
+        const { dir: sessionDir, state } = createSessionDir(dir);
+        const statePath = path.join(sessionDir, 'state.json');
+        const waitPath = path.join(sessionDir, 'rate_limit_wait.json');
+
+        _deps.sleep = async () => {
+            state.active = false;
+            fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+        };
+
+        const ctx = {
+            sessionDir,
+            statePath,
+            currentRunnerState: state,
+            rateLimitWaitMs: 60_000,
+            consecutiveRateLimits: 2,
+            log: () => {},
+        };
+
+        await handleRateLimit({}, ctx, new AbortController().signal, {
+            durationMin: 15,
+            rateLimitType: 'requests',
+            resetsAt: 1_714_083_600,
+            waitSource: 'api',
+        });
+
+        const waitData = JSON.parse(fs.readFileSync(waitPath, 'utf-8'));
+        assert.equal(waitData.rate_limit_type, 'requests');
+        assert.equal(waitData.resets_at_epoch, 1_714_083_600);
+        assert.equal(waitData.wait_source, 'api');
+        assert.equal(ctx.rateLimitExitReason, 'stopped');
+
+        const activityDir = path.join(dataRoot, 'activity');
+        const activityFile = path.join(activityDir, fs.readdirSync(activityDir)[0]);
+        const waitEvent = fs.readFileSync(activityFile, 'utf-8')
+            .trim()
+            .split('\n')
+            .map(line => JSON.parse(line))
+            .find(event => event.event === 'rate_limit_wait');
+        assert.ok(waitEvent, 'rate_limit_wait activity event should be logged');
+        assert.equal(waitEvent.duration_min, 15);
+        assert.equal(waitEvent.session, path.basename(sessionDir));
+    } finally {
+        _deps.sleep = originalSleep;
+        if (previousDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = previousDataRoot;
+        fs.rmSync(dir, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
     }
 });
 

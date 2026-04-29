@@ -805,14 +805,23 @@ export async function executeGapAnalysis(state, ctx) {
     ctx.log('Gap analysis complete — transitioning to iterating');
     return { baseline: baseline ?? { raw: '', score: state.baseline_score } };
 }
-export async function handleRateLimit(_state, ctx, signal) {
+export async function handleRateLimit(_state, ctx, signal, waitMetadata = {}) {
     signal.throwIfAborted();
     const actualWaitMs = ctx.rateLimitWaitMs ?? 0;
+    logActivity({
+        event: 'rate_limit_wait',
+        source: 'pickle',
+        session: path.basename(ctx.sessionDir),
+        duration_min: waitMetadata.durationMin ?? Math.ceil(actualWaitMs / 60_000),
+    });
     writeStateFile(path.join(ctx.sessionDir, 'rate_limit_wait.json'), {
         waiting: true, reason: 'API rate limit',
         started_at: new Date().toISOString(),
         wait_until: new Date(Date.now() + actualWaitMs).toISOString(),
         consecutive_waits: ctx.consecutiveRateLimits,
+        rate_limit_type: waitMetadata.rateLimitType ?? null,
+        resets_at_epoch: waitMetadata.resetsAt ?? null,
+        wait_source: waitMetadata.waitSource ?? null,
     });
     const waitEnd = Date.now() + actualWaitMs;
     while (Date.now() < waitEnd) {
@@ -1050,7 +1059,12 @@ async function handleRateLimitExit(state, ctx, exitResult) {
     ctx.resetRateLimitCounter = action.resetCounter;
     ctx.rateLimitExitReason = undefined;
     ctx.log(`Rate limit wait: ${Math.ceil(ctx.rateLimitWaitMs / 60_000)}min (source: ${action.waitSource})`);
-    await handleRateLimit(state, ctx, new AbortController().signal);
+    await handleRateLimit(state, ctx, new AbortController().signal, {
+        durationMin: Math.ceil(action.waitMs / 60_000),
+        rateLimitType: exitResult.rateLimitInfo?.rateLimitType ?? null,
+        resetsAt: exitResult.rateLimitInfo?.resetsAt ?? null,
+        waitSource: action.waitSource,
+    });
     return ctx.rateLimitExitReason ?? 'continue';
 }
 async function handleMetricMode(state, baseline, ctx) {
