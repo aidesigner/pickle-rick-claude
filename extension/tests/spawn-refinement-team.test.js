@@ -145,6 +145,32 @@ test('spawn-refinement-team: --cycles abc → exit 1, prints error', () => {
     }
 });
 
+test('spawn-refinement-team: --cycles 1abc → exit 1, prints error', () => {
+    const tmp = makeTmpDir();
+    try {
+        const prd = path.join(tmp, 'prd.md');
+        fs.writeFileSync(prd, '# PRD\nContent');
+        const result = run(['--prd', prd, '--session-dir', tmp, '--cycles', '1abc']);
+        assert.strictEqual(result.status, 1);
+        assert.ok(result.stderr.includes('--cycles requires a positive integer'));
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('spawn-refinement-team: --cycles 1.5 → exit 1, prints error', () => {
+    const tmp = makeTmpDir();
+    try {
+        const prd = path.join(tmp, 'prd.md');
+        fs.writeFileSync(prd, '# PRD\nContent');
+        const result = run(['--prd', prd, '--session-dir', tmp, '--cycles', '1.5']);
+        assert.strictEqual(result.status, 1);
+        assert.ok(result.stderr.includes('--cycles requires a positive integer'));
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
 test('spawn-refinement-team: --max-turns 0 → exit 1, prints error', () => {
     const tmp = makeTmpDir();
     try {
@@ -166,6 +192,45 @@ test('spawn-refinement-team: --max-turns abc → exit 1, prints error', () => {
         const result = run(['--prd', prd, '--session-dir', tmp, '--max-turns', 'abc']);
         assert.strictEqual(result.status, 1);
         assert.ok(result.stderr.includes('--max-turns requires a positive integer'));
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('spawn-refinement-team: --max-turns 25abc → exit 1, prints error', () => {
+    const tmp = makeTmpDir();
+    try {
+        const prd = path.join(tmp, 'prd.md');
+        fs.writeFileSync(prd, '# PRD\nContent');
+        const result = run(['--prd', prd, '--session-dir', tmp, '--max-turns', '25abc']);
+        assert.strictEqual(result.status, 1);
+        assert.ok(result.stderr.includes('--max-turns requires a positive integer'));
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('spawn-refinement-team: --timeout abc → exit 1, prints error', () => {
+    const tmp = makeTmpDir();
+    try {
+        const prd = path.join(tmp, 'prd.md');
+        fs.writeFileSync(prd, '# PRD\nContent');
+        const result = run(['--prd', prd, '--session-dir', tmp, '--timeout', 'abc']);
+        assert.strictEqual(result.status, 1);
+        assert.ok(result.stderr.includes('--timeout requires a positive integer'));
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('spawn-refinement-team: --timeout 120sec → exit 1, prints error', () => {
+    const tmp = makeTmpDir();
+    try {
+        const prd = path.join(tmp, 'prd.md');
+        fs.writeFileSync(prd, '# PRD\nContent');
+        const result = run(['--prd', prd, '--session-dir', tmp, '--timeout', '120sec']);
+        assert.strictEqual(result.status, 1);
+        assert.ok(result.stderr.includes('--timeout requires a positive integer'));
     } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
     }

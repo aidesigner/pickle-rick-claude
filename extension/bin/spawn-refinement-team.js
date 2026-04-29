@@ -327,12 +327,22 @@ function usageAndExit() {
     console.error(`${Style.RED}❌ Usage: node spawn-refinement-team.js --prd <path> --session-dir <dir> [--timeout <sec>] [--cycles <n>] [--max-turns <n>]${Style.RESET}`);
     process.exit(1);
 }
+function parsePositiveIntegerValue(raw) {
+    if (typeof raw === 'number') {
+        return Number.isInteger(raw) && raw > 0 ? raw : undefined;
+    }
+    if (typeof raw !== 'string' || !/^[1-9]\d*$/.test(raw)) {
+        return undefined;
+    }
+    const value = Number(raw);
+    return Number.isSafeInteger(value) ? value : undefined;
+}
 function parsePositiveFlag(argv, index, flag) {
     if (index === -1)
         return undefined;
     const raw = argv[index + 1];
-    const value = parseInt(raw, 10);
-    if (isNaN(value) || value < 1) {
+    const value = parsePositiveIntegerValue(raw);
+    if (value === undefined) {
         console.error(`${Style.RED}❌ ${flag} requires a positive integer, got: ${raw}${Style.RESET}`);
         process.exit(1);
     }
@@ -340,8 +350,7 @@ function parsePositiveFlag(argv, index, flag) {
 }
 function parseTimeoutFlag(argv) {
     const timeoutIndex = argv.indexOf('--timeout');
-    const rawTimeout = timeoutIndex !== -1 ? parseInt(argv[timeoutIndex + 1], 10) : NaN;
-    return !isNaN(rawTimeout) && rawTimeout > 0 ? rawTimeout : undefined;
+    return parsePositiveFlag(argv, timeoutIndex, '--timeout');
 }
 export function parseAndValidateArgs(argv) {
     const prdIndex = argv.indexOf('--prd');
@@ -375,12 +384,15 @@ export function loadRefinementSettings(settingsPath = path.join(getExtensionRoot
         const loaded = readRecoverableJsonObject(settingsPath);
         if (!loaded)
             return settings;
-        if (typeof loaded.default_refinement_cycles === 'number' && loaded.default_refinement_cycles > 0)
-            settings.defaultCycles = loaded.default_refinement_cycles;
-        if (typeof loaded.default_refinement_max_turns === 'number' && loaded.default_refinement_max_turns > 0)
-            settings.defaultMaxTurns = loaded.default_refinement_max_turns;
-        if (typeof loaded.default_worker_timeout_seconds === 'number' && loaded.default_worker_timeout_seconds > 0)
-            settings.defaultWorkerTimeout = loaded.default_worker_timeout_seconds;
+        const cycles = parsePositiveIntegerValue(loaded.default_refinement_cycles);
+        const maxTurns = parsePositiveIntegerValue(loaded.default_refinement_max_turns);
+        const workerTimeout = parsePositiveIntegerValue(loaded.default_worker_timeout_seconds);
+        if (cycles !== undefined)
+            settings.defaultCycles = cycles;
+        if (maxTurns !== undefined)
+            settings.defaultMaxTurns = maxTurns;
+        if (workerTimeout !== undefined)
+            settings.defaultWorkerTimeout = workerTimeout;
     }
     catch { /* use hardcoded defaults */ }
     return settings;
@@ -400,8 +412,8 @@ function resolveRuntime(args, settings) {
             if (state.effort === 'low' || state.effort === 'medium' || state.effort === 'high')
                 sessionEffort = state.effort;
             if (args.timeout === undefined) {
-                const stateTimeout = Number(state.worker_timeout_seconds);
-                if (Number.isFinite(stateTimeout) && stateTimeout > 0)
+                const stateTimeout = parsePositiveIntegerValue(state.worker_timeout_seconds);
+                if (stateTimeout !== undefined)
                     timeout = stateTimeout;
             }
             timeout = clampTimeoutToSession(timeout, state);
