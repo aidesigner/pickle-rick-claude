@@ -113,6 +113,30 @@ test('refinement-watcher: exits cleanly when manifest already exists', () => {
   }
 });
 
+test('refinement-watcher: promotes orphan tmp manifest before inactive fallback', () => {
+  const tmp = tmpDir();
+  try {
+    const refinementDir = path.join(tmp, 'refinement');
+    fs.mkdirSync(refinementDir);
+    writeState(tmp, { active: false, step: 'research' });
+    fs.writeFileSync(
+      path.join(tmp, 'refinement_manifest.json.tmp.999999'),
+      JSON.stringify({
+        cycles_completed: 1,
+        cycles_requested: 1,
+        workers: [{ role: 'requirements', success: true }],
+      }, null, 2),
+    );
+
+    const output = runWatcher([tmp], { timeout: 5000 });
+    assert.ok(output.includes('Refinement Complete'));
+    assert.equal(fs.existsSync(path.join(tmp, 'refinement_manifest.json')), true);
+    assert.equal(fs.existsSync(path.join(tmp, 'refinement_manifest.json.tmp.999999')), false);
+  } finally {
+    fs.rmSync(tmp, { recursive: true });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Inactive session fallback exit
 // ---------------------------------------------------------------------------

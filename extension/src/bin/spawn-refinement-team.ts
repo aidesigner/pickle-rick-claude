@@ -783,7 +783,7 @@ function buildRefinementManifest(args: RefinementArgs, results: CycleResults): R
 }
 
 export async function writeManifestAtomic(manifestPath: string, manifest: RefinementManifest): Promise<void> {
-  const manifestTmp = `${manifestPath}.tmp`;
+  const manifestTmp = `${manifestPath}.tmp.${process.pid}`;
   try {
     await fs.promises.writeFile(manifestTmp, JSON.stringify(manifest, null, 2));
     await fs.promises.rename(manifestTmp, manifestPath);

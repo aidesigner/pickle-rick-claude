@@ -3,6 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Style, sleep, formatTime, drainStreamJsonLines, safeErrorMessage } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
+import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { processLine } from './log-watcher.js';
 const ROLES = ['requirements', 'codebase', 'risk-scope'];
 const ROLE_ICONS = {
@@ -75,8 +76,8 @@ async function main() {
     let lastStatusPrint = 0;
     while (true) {
         // Check if manifest exists (refinement complete)
-        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-        if (fs.existsSync(manifestPath)) {
+        const manifest = readRecoverableJsonObject(manifestPath);
+        if (manifest) {
             // Final drain of all logs
             for (const role of ROLES) {
                 const ws = workers.get(role);
@@ -91,17 +92,18 @@ async function main() {
                     });
                 }
             }
-            // Read manifest and show summary
             try {
-                // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-                const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
                 const elapsed = Math.floor((Date.now() - startTime) / 1000);
                 process.stdout.write(`\n${sep()}\n`);
                 process.stdout.write(`${b}${Style.GREEN}🥒 Refinement Complete${r} ${d}(${formatTime(elapsed)})${r}\n`);
                 process.stdout.write(`   Cycles: ${manifest.cycles_completed}/${manifest.cycles_requested}\n`);
-                for (const w of manifest.workers || []) {
-                    const icon = w.success ? '✅' : '❌';
-                    process.stdout.write(`   ${icon} ${w.role}\n`);
+                const manifestWorkers = Array.isArray(manifest.workers) ? manifest.workers : [];
+                for (const w of manifestWorkers) {
+                    if (!w || typeof w !== 'object')
+                        continue;
+                    const worker = w;
+                    const icon = worker.success ? '✅' : '❌';
+                    process.stdout.write(`   ${icon} ${String(worker.role ?? 'unknown')}\n`);
                 }
                 process.stdout.write(`\n`);
             }
@@ -180,8 +182,7 @@ async function main() {
                 // state advanced past prd (setup --paused sets step=prd, active=false)
                 // but no manifest — something went wrong
                 await sleep(3000);
-                // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-                if (!fs.existsSync(manifestPath)) {
+                if (!readRecoverableJsonObject(manifestPath)) {
                     process.stdout.write(`\n${sep()}\n${Style.YELLOW}⚠️  Session inactive with no manifest — refinement may have failed.${r}\n`);
                     break;
                 }

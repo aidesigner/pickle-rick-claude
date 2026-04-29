@@ -36,7 +36,7 @@ test('writeManifestAtomic: failed temp write leaves no partial manifest at targe
     const originalWriteFile = fs.promises.writeFile;
     try {
         fs.promises.writeFile = async (target) => {
-            assert.equal(String(target), `${manifestPath}.tmp`, 'manifest must be written through the temp path');
+            assert.equal(String(target), `${manifestPath}.tmp.${process.pid}`, 'manifest must be written through the recoverable temp path');
             throw new Error('simulated write failure');
         };
 
