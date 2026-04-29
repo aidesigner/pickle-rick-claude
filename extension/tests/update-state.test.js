@@ -115,6 +115,33 @@ test('updateState: numeric key with non-numeric value throws', () => {
     });
 });
 
+test('updateState: numeric runner control keys reject fractional values', () => {
+    withTempSession({ active: true, step: 'prd', worker_timeout_seconds: 60 }, (dir) => {
+        assert.throws(
+            () => updateState('worker_timeout_seconds', '1.5', dir),
+            /requires an integer/i
+        );
+    });
+});
+
+test('updateState: worker_timeout_seconds rejects zero before mux-runner startup', () => {
+    withTempSession({ active: true, step: 'prd', worker_timeout_seconds: 60 }, (dir) => {
+        assert.throws(
+            () => updateState('worker_timeout_seconds', '0', dir),
+            /requires a positive integer/i
+        );
+    });
+});
+
+test('updateState: iteration rejects negative values before mux-runner startup', () => {
+    withTempSession({ active: true, step: 'prd', iteration: 0 }, (dir) => {
+        assert.throws(
+            () => updateState('iteration', '-1', dir),
+            /requires a non-negative integer/i
+        );
+    });
+});
+
 // ---------------------------------------------------------------------------
 // Boolean key coercion (C2 fix)
 // ---------------------------------------------------------------------------

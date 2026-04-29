@@ -844,6 +844,15 @@ export function updateState(key: string, value: string, sessionDir: string): voi
     if (!Number.isFinite(num)) {
       throw new Error(`Key "${key}" requires a finite number, got "${value}"`);
     }
+    if (!Number.isInteger(num)) {
+      throw new Error(`Key "${key}" requires an integer, got "${value}"`);
+    }
+    if (['iteration', 'max_iterations', 'max_time_minutes', 'start_time_epoch', 'min_iterations'].includes(key) && num < 0) {
+      throw new Error(`Key "${key}" requires a non-negative integer, got "${value}"`);
+    }
+    if (key === 'worker_timeout_seconds' && num <= 0) {
+      throw new Error(`Key "${key}" requires a positive integer, got "${value}"`);
+    }
   } else if (BOOLEAN_KEYS.has(key)) {
     if (value !== 'true' && value !== 'false') {
       throw new Error(`Key "${key}" requires "true" or "false", got "${value}"`);
