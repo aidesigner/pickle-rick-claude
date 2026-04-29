@@ -107,9 +107,9 @@ function createSetupConfig(): SetupArgs {
   };
 }
 
-function applyPositiveNumberSetting(settings: Record<string, unknown>, key: string, apply: (value: number) => void) {
+function applyPositiveIntegerSetting(settings: Record<string, unknown>, key: string, apply: (value: number) => void) {
   const value = settings[key];
-  if (typeof value === 'number' && value > 0) apply(value);
+  if (typeof value === 'number' && Number.isInteger(value) && value > 0) apply(value);
 }
 
 function readIterationBudgetPerBackend(settings: Record<string, unknown>): Partial<Record<Backend, number>> | null {
@@ -119,7 +119,7 @@ function readIterationBudgetPerBackend(settings: Record<string, unknown>): Parti
   const map: Partial<Record<Backend, number>> = {};
   for (const backend of BACKENDS) {
     const value = (rawPerBackend as Record<string, unknown>)[backend];
-    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+    if (typeof value === 'number' && Number.isInteger(value) && value >= 0) {
       map[backend] = value;
     }
   }
@@ -160,9 +160,9 @@ function loadSettings(config: SetupArgs, rootDir: string) {
   try {
     const settings = readRecoverableJsonObject(settingsFile) as Record<string, unknown> | null;
     if (!settings) return;
-    applyPositiveNumberSetting(settings, 'default_max_iterations', value => { config.loopLimit = value; });
-    applyPositiveNumberSetting(settings, 'default_max_time_minutes', value => { config.timeLimit = value; });
-    applyPositiveNumberSetting(settings, 'default_worker_timeout_seconds', value => { config.workerTimeout = value; });
+    applyPositiveIntegerSetting(settings, 'default_max_iterations', value => { config.loopLimit = value; });
+    applyPositiveIntegerSetting(settings, 'default_max_time_minutes', value => { config.timeLimit = value; });
+    applyPositiveIntegerSetting(settings, 'default_worker_timeout_seconds', value => { config.workerTimeout = value; });
     config.iterationBudgetPerBackend = readIterationBudgetPerBackend(settings);
   } catch (err) {
     const msg = safeErrorMessage(err);
@@ -186,7 +186,7 @@ function applyPerBackendBudget(config: SetupArgs) {
   if (!config.iterationBudgetPerBackend) return;
   const backend: Backend = config.backend || 'claude';
   const perBackend = config.iterationBudgetPerBackend[backend];
-  if (typeof perBackend === 'number' && Number.isFinite(perBackend) && perBackend >= 0) {
+  if (typeof perBackend === 'number' && Number.isInteger(perBackend) && perBackend >= 0) {
     config.loopLimit = perBackend;
   }
 }

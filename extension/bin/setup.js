@@ -58,9 +58,9 @@ function createSetupConfig() {
         iterationBudgetPerBackend: null,
     };
 }
-function applyPositiveNumberSetting(settings, key, apply) {
+function applyPositiveIntegerSetting(settings, key, apply) {
     const value = settings[key];
-    if (typeof value === 'number' && value > 0)
+    if (typeof value === 'number' && Number.isInteger(value) && value > 0)
         apply(value);
 }
 function readIterationBudgetPerBackend(settings) {
@@ -70,7 +70,7 @@ function readIterationBudgetPerBackend(settings) {
     const map = {};
     for (const backend of BACKENDS) {
         const value = rawPerBackend[backend];
-        if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+        if (typeof value === 'number' && Number.isInteger(value) && value >= 0) {
             map[backend] = value;
         }
     }
@@ -116,9 +116,9 @@ function loadSettings(config, rootDir) {
         const settings = readRecoverableJsonObject(settingsFile);
         if (!settings)
             return;
-        applyPositiveNumberSetting(settings, 'default_max_iterations', value => { config.loopLimit = value; });
-        applyPositiveNumberSetting(settings, 'default_max_time_minutes', value => { config.timeLimit = value; });
-        applyPositiveNumberSetting(settings, 'default_worker_timeout_seconds', value => { config.workerTimeout = value; });
+        applyPositiveIntegerSetting(settings, 'default_max_iterations', value => { config.loopLimit = value; });
+        applyPositiveIntegerSetting(settings, 'default_max_time_minutes', value => { config.timeLimit = value; });
+        applyPositiveIntegerSetting(settings, 'default_worker_timeout_seconds', value => { config.workerTimeout = value; });
         config.iterationBudgetPerBackend = readIterationBudgetPerBackend(settings);
     }
     catch (err) {
@@ -144,7 +144,7 @@ function applyPerBackendBudget(config) {
         return;
     const backend = config.backend || 'claude';
     const perBackend = config.iterationBudgetPerBackend[backend];
-    if (typeof perBackend === 'number' && Number.isFinite(perBackend) && perBackend >= 0) {
+    if (typeof perBackend === 'number' && Number.isInteger(perBackend) && perBackend >= 0) {
         config.loopLimit = perBackend;
     }
 }

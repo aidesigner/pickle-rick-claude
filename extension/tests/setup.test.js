@@ -890,3 +890,27 @@ test('setup: falls back to default_max_iterations when backend missing from per-
         fs.rmSync(dataRoot, { recursive: true, force: true });
     }
 });
+
+test('setup: ignores fractional numeric settings and backend budgets', () => {
+    const extRoot = makeExtensionRootWithSettings({
+        default_max_iterations: 250.5,
+        default_max_time_minutes: 720.25,
+        default_worker_timeout_seconds: 1200.75,
+        iteration_budget_per_backend: { claude: 100, codex: 80.5 },
+    });
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-budget-data-'));
+    const output = runSetupWithEnv(
+        ['--backend', 'codex', '--task', 'fractional-budget-test'],
+        { EXTENSION_DIR: extRoot, PICKLE_DATA_ROOT: dataRoot }
+    );
+    const sessionPath = output.match(/SESSION_ROOT=(.+)/)[1].trim();
+    try {
+        const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+        assert.equal(state.max_iterations, 100, 'fractional max_iterations and backend budgets must fall back to defaults');
+        assert.equal(state.max_time_minutes, 720, 'fractional max_time must fall back to defaults');
+        assert.equal(state.worker_timeout_seconds, 1200, 'fractional worker timeout must fall back to defaults');
+    } finally {
+        fs.rmSync(extRoot, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
