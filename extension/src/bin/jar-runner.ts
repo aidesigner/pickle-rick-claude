@@ -9,6 +9,7 @@ import { StateManager, safeDeactivate } from '../services/state-manager.js';
 import { State, Defaults } from '../types/index.js';
 import { logActivity } from '../services/activity-logger.js';
 import { buildManagerInvocation, resolveBackend, backendEnvOverrides } from '../services/backend-spawn.js';
+import { readRecoverableJsonObject } from '../services/microverse-state.js';
 
 const sm = new StateManager();
 
@@ -245,7 +246,9 @@ export function discoverMarinatingTasks(jarRoot: string): JarTask[] {
 
       let meta: TaskMeta;
       try {
-        meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+        const recoveredMeta = readRecoverableJsonObject(metaPath);
+        if (!recoveredMeta) throw new Error('meta.json is corrupt or unreadable');
+        meta = recoveredMeta as TaskMeta;
       } catch {
         console.error(`${Style.RED}⚠️  Skipping ${taskId}: meta.json is corrupt or unreadable${Style.RESET}`);
         continue;

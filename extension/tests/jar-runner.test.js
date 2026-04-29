@@ -117,6 +117,40 @@ test('discoverMarinatingTasks: returns only marinating tasks in stable day/task 
     }
 });
 
+test('discoverMarinatingTasks: recovers newer dead-writer meta tmp before filtering status', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const taskDir = path.join(tmpRoot, 'jar', '2026-01-01', 'task-a');
+        fs.mkdirSync(taskDir, { recursive: true });
+        const metaPath = path.join(taskDir, 'meta.json');
+        const tmpMetaPath = `${metaPath}.tmp.999999`;
+
+        fs.writeFileSync(metaPath, JSON.stringify({
+            status: 'marinating',
+            repo_path: '/tmp/repo-a',
+        }));
+        fs.writeFileSync(tmpMetaPath, JSON.stringify({
+            status: 'consumed',
+            repo_path: '/tmp/repo-a',
+        }));
+        const stale = new Date('2026-01-01T00:00:00.000Z');
+        const newer = new Date('2026-01-01T00:00:01.000Z');
+        fs.utimesSync(metaPath, stale, stale);
+        fs.utimesSync(tmpMetaPath, newer, newer);
+
+        const tasks = discoverMarinatingTasks(path.join(tmpRoot, 'jar'));
+
+        assert.deepEqual(tasks.map(task => task.taskId), []);
+        assert.equal(fs.existsSync(tmpMetaPath), false);
+        assert.equal(
+            JSON.parse(fs.readFileSync(metaPath, 'utf-8')).status,
+            'consumed',
+        );
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
 test('discoverMarinatingTasks: skips non-directories, missing meta, and corrupt meta files', () => {
     const tmpRoot = makeTmpRoot();
     const stderr = console.error;

@@ -9,6 +9,7 @@ import { StateManager, safeDeactivate } from '../services/state-manager.js';
 import { Defaults } from '../types/index.js';
 import { logActivity } from '../services/activity-logger.js';
 import { buildManagerInvocation, resolveBackend, backendEnvOverrides } from '../services/backend-spawn.js';
+import { readRecoverableJsonObject } from '../services/microverse-state.js';
 const sm = new StateManager();
 // Tracks the currently-running task's session dir and subprocess so signal
 // handlers can deactivate it and kill the child on shutdown.
@@ -206,7 +207,10 @@ export function discoverMarinatingTasks(jarRoot) {
                 continue;
             let meta;
             try {
-                meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+                const recoveredMeta = readRecoverableJsonObject(metaPath);
+                if (!recoveredMeta)
+                    throw new Error('meta.json is corrupt or unreadable');
+                meta = recoveredMeta;
             }
             catch {
                 console.error(`${Style.RED}⚠️  Skipping ${taskId}: meta.json is corrupt or unreadable${Style.RESET}`);
