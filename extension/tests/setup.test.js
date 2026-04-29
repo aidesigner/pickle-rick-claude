@@ -335,6 +335,42 @@ test('setup: --resume keeps the resolved session path authoritative over stale s
     }
 });
 
+test('setup: current_sessions map update preserves newer dead-writer tmp entries', () => {
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-map-tmp-data-'));
+    const sessionsMap = path.join(dataRoot, 'current_sessions.json');
+    const staleSession = path.join(dataRoot, 'sessions', 'stale-session');
+    const recoveredSession = path.join(dataRoot, 'sessions', 'recovered-session');
+    const otherCwd = path.join(dataRoot, 'other-repo');
+
+    fs.mkdirSync(path.dirname(sessionsMap), { recursive: true });
+    fs.mkdirSync(staleSession, { recursive: true });
+    fs.mkdirSync(recoveredSession, { recursive: true });
+    fs.mkdirSync(otherCwd, { recursive: true });
+    fs.writeFileSync(sessionsMap, JSON.stringify({
+        [otherCwd]: { sessionPath: staleSession, pid: 111 },
+    }, null, 2));
+    fs.writeFileSync(`${sessionsMap}.tmp.99999999`, JSON.stringify({
+        [otherCwd]: { sessionPath: recoveredSession, pid: 222 },
+    }, null, 2));
+    const newer = new Date(Date.now() + 1_000);
+    fs.utimesSync(`${sessionsMap}.tmp.99999999`, newer, newer);
+
+    const output = runSetupWithEnv(
+        ['--task', 'recover-session-map-tmp-test'],
+        { PICKLE_DATA_ROOT: dataRoot },
+    );
+    const sessionPath = output.match(/SESSION_ROOT=(.+)/)[1].trim();
+
+    try {
+        const map = JSON.parse(fs.readFileSync(sessionsMap, 'utf-8'));
+        assert.equal(map[otherCwd].sessionPath, recoveredSession);
+        assert.equal(fs.existsSync(`${sessionsMap}.tmp.99999999`), false);
+        assert.equal(map[process.cwd()].sessionPath, sessionPath);
+    } finally {
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
 test('setup: --resume rejects a session whose recovered working_dir belongs to another repo', () => {
     const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-cross-repo-data-'));
     const sessionsRoot = path.join(dataRoot, 'sessions');

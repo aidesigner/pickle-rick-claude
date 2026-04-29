@@ -79,13 +79,13 @@ function readIterationBudgetPerBackend(settings) {
 function updateSessionMap(sessionsMap, cwd, sessionPath) {
     withRetryLock(sessionsMap + '.lock', () => {
         let map = {};
-        if (fs.existsSync(sessionsMap)) {
-            try {
-                map = JSON.parse(fs.readFileSync(sessionsMap, 'utf-8'));
-            }
-            catch {
-                /* ignore */
-            }
+        try {
+            const recovered = readRecoverableJsonObject(sessionsMap);
+            if (recovered)
+                map = recovered;
+        }
+        catch {
+            /* ignore */
         }
         map[cwd] = { sessionPath, pid: process.pid };
         const tmpMap = sessionsMap + `.tmp.${process.pid}.${Date.now()}`;
