@@ -6,7 +6,7 @@ import { Defaults } from '../types/index.js';
 import { resolveBackend, buildJudgeInvocation, buildWorkerInvocation, backendEnvOverrides, } from '../services/backend-spawn.js';
 import { readMicroverseState, readRecoverableJsonObject, writeMicroverseState, recordIteration as stateRecordIteration, recordStall, recordFailedApproach, isConverged, compareMetric, classifyFailure, } from '../services/microverse-state.js';
 import { getHeadSha, resetToSha, isWorkingTreeDirty } from '../services/git-utils.js';
-import { writeStateFile, getExtensionRoot, isoCompactStamp, sleep, Style, formatTime, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, } from '../services/pickle-utils.js';
+import { writeStateFile, getExtensionRoot, isoCompactStamp, sleep, Style, formatTime, formatLocalDateKey, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, } from '../services/pickle-utils.js';
 import { StateManager, safeDeactivate } from '../services/state-manager.js';
 const sm = new StateManager();
 import { runIteration, loadRateLimitSettings, classifyIterationExit, computeRateLimitAction, killCurrentChild, } from './mux-runner.js';
@@ -627,7 +627,7 @@ export function buildEfficiencySection(history, totalIterations) {
     const pct = Math.round((wasted / totalIterations) * 100);
     return `\n## Efficiency\n\n- **Wasted iterations**: ${wasted} / ${totalIterations} (${pct}%)\n`;
 }
-function writeFinalReport(sessionDir, mvState, exitReason, iterations, elapsedSeconds) {
+export function writeFinalReport(sessionDir, mvState, exitReason, iterations, elapsedSeconds) {
     const history = mvState.convergence.history;
     const accepted = history.filter(h => h.action === 'accept').length;
     const reverted = history.filter(h => h.action === 'revert').length;
@@ -654,7 +654,7 @@ function writeFinalReport(sessionDir, mvState, exitReason, iterations, elapsedSe
         fs.mkdirSync(memoryDir, { recursive: true });
     }
     catch { /* exists */ }
-    const reportPath = path.join(memoryDir, `microverse_report_${new Date().toISOString().split('T')[0]}.md`);
+    const reportPath = path.join(memoryDir, `microverse_report_${formatLocalDateKey(new Date())}.md`);
     fs.writeFileSync(reportPath, reportText);
 }
 function remainingSessionSeconds(state) {

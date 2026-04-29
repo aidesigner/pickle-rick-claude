@@ -1,8 +1,12 @@
-import { test } from 'node:test';
+import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import {
   buildFailureDistribution,
   buildEfficiencySection,
+  writeFinalReport,
 } from '../bin/microverse-runner.js';
 
 // ── buildFailureDistribution ──
@@ -131,4 +135,41 @@ test('buildEfficiencySection: percentage rounds correctly', () => {
   ];
   const result = buildEfficiencySection(history, 3);
   assert.ok(result.includes('**Wasted iterations**: 1 / 3 (33%)'));
+});
+
+test('writeFinalReport uses local-day filename at UTC boundary', () => {
+  const previousTz = process.env.TZ;
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mv-report-'));
+  try {
+    process.env.TZ = 'America/Chicago';
+    mock.timers.enable({ apis: ['Date'], now: new Date('2026-04-29T00:30:00Z') });
+    writeFinalReport(
+      sessionDir,
+      {
+        status: 'iterating',
+        prd_path: '/tmp/prd.md',
+        key_metric: { description: 'test', validation: 'echo 50', type: 'command', timeout_seconds: 5, tolerance: 2 },
+        convergence: { stall_limit: 3, stall_counter: 0, history: [] },
+        gap_analysis_path: '',
+        failed_approaches: [],
+        failure_history: [],
+        baseline_score: 40,
+      },
+      'limit_reached',
+      0,
+      0,
+    );
+
+    const memoryDir = path.join(sessionDir, 'memory');
+    assert.equal(fs.existsSync(path.join(memoryDir, 'microverse_report_2026-04-28.md')), true);
+    assert.equal(fs.existsSync(path.join(memoryDir, 'microverse_report_2026-04-29.md')), false);
+  } finally {
+    mock.timers.reset();
+    if (previousTz === undefined) {
+      delete process.env.TZ;
+    } else {
+      process.env.TZ = previousTz;
+    }
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
 });

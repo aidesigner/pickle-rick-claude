@@ -29,6 +29,7 @@ import {
   sleep,
   Style,
   formatTime,
+  formatLocalDateKey,
   printMinimalPanel,
   safeErrorMessage,
   ensureMonitorWindow,
@@ -909,7 +910,7 @@ export function buildEfficiencySection(
   return `\n## Efficiency\n\n- **Wasted iterations**: ${wasted} / ${totalIterations} (${pct}%)\n`;
 }
 
-function writeFinalReport(
+export function writeFinalReport(
   sessionDir: string,
   mvState: MicroverseSessionState,
   exitReason: ExitReason,
@@ -950,7 +951,7 @@ function writeFinalReport(
 
   const memoryDir = path.join(sessionDir, 'memory');
   try { fs.mkdirSync(memoryDir, { recursive: true }); } catch { /* exists */ }
-  const reportPath = path.join(memoryDir, `microverse_report_${new Date().toISOString().split('T')[0]}.md`);
+  const reportPath = path.join(memoryDir, `microverse_report_${formatLocalDateKey(new Date())}.md`);
   fs.writeFileSync(reportPath, reportText);
 }
 
