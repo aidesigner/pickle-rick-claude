@@ -22,7 +22,7 @@ async function pathExists(targetPath) {
         return false;
     }
 }
-function loadConvergenceGateSettings(extRoot) {
+export function loadConvergenceGateSettings(extRoot) {
     const defaults = {
         enabled_convergence_files: ['anatomy-park.json'],
         regression_warning_threshold: 5,
@@ -31,25 +31,28 @@ function loadConvergenceGateSettings(extRoot) {
         baseline_max_age_seconds: 14_400,
     };
     try {
-        const raw = JSON.parse(fs.readFileSync(path.join(extRoot, 'pickle_settings.json'), 'utf-8'));
+        const raw = readRecoverableJsonObject(path.join(extRoot, 'pickle_settings.json'));
+        if (!raw)
+            return defaults;
         const cg = raw.convergence_gate;
         if (!cg || typeof cg !== 'object')
             return defaults;
+        const gateSettings = cg;
         return {
-            enabled_convergence_files: Array.isArray(cg.enabled_convergence_files)
-                ? cg.enabled_convergence_files
+            enabled_convergence_files: Array.isArray(gateSettings.enabled_convergence_files)
+                ? gateSettings.enabled_convergence_files
                 : defaults.enabled_convergence_files,
-            regression_warning_threshold: typeof cg.regression_warning_threshold === 'number'
-                ? cg.regression_warning_threshold
+            regression_warning_threshold: typeof gateSettings.regression_warning_threshold === 'number'
+                ? gateSettings.regression_warning_threshold
                 : defaults.regression_warning_threshold,
-            remediator_timeout_s: typeof cg.remediator_timeout_s === 'number'
-                ? cg.remediator_timeout_s
+            remediator_timeout_s: typeof gateSettings.remediator_timeout_s === 'number'
+                ? gateSettings.remediator_timeout_s
                 : defaults.remediator_timeout_s,
-            baseline_max_age_iterations: typeof cg.baseline_max_age_iterations === 'number'
-                ? cg.baseline_max_age_iterations
+            baseline_max_age_iterations: typeof gateSettings.baseline_max_age_iterations === 'number'
+                ? gateSettings.baseline_max_age_iterations
                 : defaults.baseline_max_age_iterations,
-            baseline_max_age_seconds: typeof cg.baseline_max_age_seconds === 'number'
-                ? cg.baseline_max_age_seconds
+            baseline_max_age_seconds: typeof gateSettings.baseline_max_age_seconds === 'number'
+                ? gateSettings.baseline_max_age_seconds
                 : defaults.baseline_max_age_seconds,
         };
     }
@@ -696,9 +699,11 @@ function measureCurrentMetric(state, ctx, backend) {
     }
     return null;
 }
-function loadFailureClassificationFlag(extensionRoot) {
+export function loadFailureClassificationFlag(extensionRoot) {
     try {
-        const settings = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
+        const settings = readRecoverableJsonObject(path.join(extensionRoot, 'pickle_settings.json'));
+        if (!settings)
+            return true;
         return settings.enable_failure_classification !== false;
     }
     catch {

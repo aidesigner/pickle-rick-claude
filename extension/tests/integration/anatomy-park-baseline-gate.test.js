@@ -8,7 +8,13 @@ import * as path from 'node:path';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-const { ensurePerIterationGateBaseline, runPerIterationGateHook, handleWorkerManagedIteration } = await import(
+const {
+  ensurePerIterationGateBaseline,
+  runPerIterationGateHook,
+  handleWorkerManagedIteration,
+  loadConvergenceGateSettings,
+  loadFailureClassificationFlag,
+} = await import(
   path.resolve(__dirname, '../../bin/microverse-runner.js')
 );
 
@@ -557,4 +563,43 @@ test('worker convergence: dead-writer tmp snapshot is promoted before convergenc
     logs.some((msg) => msg.includes('worker convergence signaled')),
     `expected recovered convergence log, got: ${JSON.stringify(logs)}`,
   );
+});
+
+test('microverse startup settings promote newer dead tmp before gate/failure settings are read', () => {
+  const extRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-gate-settings-tmp-'));
+  const settingsPath = path.join(extRoot, 'pickle_settings.json');
+  const tmpPath = `${settingsPath}.tmp.999999`;
+  fs.writeFileSync(settingsPath, JSON.stringify({
+    enable_failure_classification: true,
+    convergence_gate: {
+      enabled_convergence_files: [],
+      regression_warning_threshold: 9,
+      remediator_timeout_s: 60,
+      baseline_max_age_iterations: 30,
+      baseline_max_age_seconds: 14_400,
+    },
+  }));
+  fs.writeFileSync(tmpPath, JSON.stringify({
+    enable_failure_classification: false,
+    convergence_gate: {
+      enabled_convergence_files: ['anatomy-park.json'],
+      regression_warning_threshold: 2,
+      remediator_timeout_s: 120,
+      baseline_max_age_iterations: 4,
+      baseline_max_age_seconds: 600,
+    },
+  }));
+  const future = new Date(Date.now() + 1000);
+  fs.utimesSync(tmpPath, future, future);
+
+  const settings = loadConvergenceGateSettings(extRoot);
+  const failureClassification = loadFailureClassificationFlag(extRoot);
+
+  assert.deepEqual(settings.enabled_convergence_files, ['anatomy-park.json']);
+  assert.equal(settings.regression_warning_threshold, 2);
+  assert.equal(settings.remediator_timeout_s, 120);
+  assert.equal(settings.baseline_max_age_iterations, 4);
+  assert.equal(settings.baseline_max_age_seconds, 600);
+  assert.equal(failureClassification, false);
+  assert.equal(fs.existsSync(tmpPath), false, 'dead settings tmp should be consumed before startup settings are returned');
 });
