@@ -6,7 +6,7 @@
 
 Pickle Rick is a complete agentic engineering toolbelt built on the [Ralph Wiggum loop](https://ghuntley.com/ralph/) and ideas from Andrej Karpathy's [AutoResearch](https://github.com/karpathy/autoresearch) project. Hand it a PRD — or let it draft one — and it decomposes work into tickets, spawns isolated worker subprocesses, and drives each through a full **research → plan → implement → verify → review → simplify** lifecycle without human intervention.
 
-New to PRDs? See the **[PRD Writing Guide](PRD_GUIDE.md)** for developers or the **[Product Manager's Guide](PM_GUIDE.md)** for PMs defining and refining requirements. For internals, see [Architecture](architecture.md). For what's coming next, see the [Feature Roadmap](roadmap.md).
+New to PRDs? See the **[PRD Writing Guide](PRD_GUIDE.md)** for developers or the **[Product Manager's Guide](PM_GUIDE.md)** for PMs defining and refining requirements. For internals, see [Internals](internals.md). For what's coming next, see the [Feature Roadmap](roadmap.md).
 
 > **Recently released** — **v1.58** Convergence Toolchain Gates ([details](#convergence-gate)) · **v1.57** `/cronenberg` meta-router · **v1.56** pipeline resume hardening · **v1.55** Agent Teams mode (`/pickle --teams`) · **v1.51** Codex backend (`--backend codex`).
 
@@ -192,6 +192,8 @@ The auto-refine trigger fires on `refine-prd` / `prd refinement`, on `refine`/`r
 
 ### The Full Flow at a Glance
 
+End-to-end Pickle Rick pipeline — applies regardless of how you kick it off (described task, individual slash commands, `/pickle-pipeline`, or `/cronenberg`). Each step is independently invocable; the diagram is the canonical happy path.
+
 ```
 You describe a feature
        │
@@ -294,17 +296,6 @@ Third-party hooks in `settings.json` (GitNexus, RTK, etc.) are never touched.
 ---
 
 ## Advanced Workflows
-
-### Pipeline Mode: Self-Correcting DAGs
-
-For complex epics with parallel workstreams, conditional logic, and multiple quality gates. Instead of a linear ticket queue, define work as a convergence graph where failures automatically route back for correction.
-
-```bash
-/pickle-dot my-prd.md              # Convert PRD → validated DOT digraph (builder path, default)
-/attract pipeline.dot              # Submit to attractor server for execution
-```
-
-The builder enforces 32+ active patterns and 15 structural validation rules — test-fix loops, goal gates, conditional routing, parallel fan-out/in, human gates, security scanning, coverage qualification, scope creep detection, drift detection, and more. See [DotBuilder details](#-dotbuilder--programmatic-dot-codegen) below.
 
 ### Council of Ricks: Graphite Stack Review
 
@@ -428,64 +419,9 @@ Most flags are command-scoped. The table groups them by command family — flags
 - **"Stop hook error" is normal** — Claude Code labels every `decision: block` from the stop hook as "Stop hook error" in the UI. Not an error — the loop is working.
 - **Recovering from a failed Morty** — `/pickle-retry <ticket-id>` instead of restarting the whole epic.
 
-### Settings (`pickle_settings.json`)
+### Settings & migration
 
-All defaults are configurable via `~/.claude/pickle-rick/pickle_settings.json`:
-
-| Setting | Default | Description |
-|---|---|---|
-| `default_max_iterations` | 500 | Max loop iterations before auto-stop |
-| `default_max_time_minutes` | 720 | Session wall-clock limit (12 hours) |
-| `default_worker_timeout_seconds` | 1200 | Per-worker subprocess timeout |
-| `default_manager_max_turns` | 50 | Max Claude turns per iteration (interactive/jar) |
-| `default_tmux_max_turns` | 200 | Max Claude turns per iteration (tmux) |
-| `default_refinement_cycles` | 3 | Number of refinement analysis passes |
-| `default_refinement_max_turns` | 100 | Max Claude turns per refinement worker |
-| `default_council_min_rounds` | 2 | Minimum Council of Ricks parallel review rounds |
-| `default_council_max_rounds` | 5 | Maximum Council of Ricks parallel review rounds |
-| `default_council_publish` | true | Auto-publish PR comments at session end (disable with `--no-publish`) |
-| `default_circuit_breaker_enabled` | true | Enable circuit breaker |
-| `default_cb_no_progress_threshold` | 5 | No-progress iterations before OPEN |
-| `default_cb_same_error_threshold` | 5 | Identical errors before OPEN |
-| `default_cb_half_open_after` | 2 | No-progress iterations before HALF_OPEN |
-| `default_rate_limit_wait_minutes` | 60 | Fallback wait when no API reset time |
-| `default_max_rate_limit_retries` | 3 | Consecutive rate limits before stopping |
-
-**Convergence Gate** *(v1.58+, nested under `convergence_gate`)*
-
-| Setting | Default | Description |
-|---|---|---|
-| `convergence_gate.commands` | `{}` | Per-project command overrides (typecheck/lint/tests). Empty = auto-detect from `gate-commands.json` |
-| `convergence_gate.enabled_convergence_files` | `["anatomy-park.json"]` | Microverse convergence files that opt in to per-iteration gating |
-| `convergence_gate.timeout_ms.typecheck` | 120000 | Per-check timeout (ms) |
-| `convergence_gate.timeout_ms.lint` | 60000 | Per-check timeout (ms) |
-| `convergence_gate.timeout_ms.tests` | 300000 | Per-check timeout (ms) |
-| `convergence_gate.gate_total_timeout_ms` | 600000 | Cumulative cap for a full gate run (ms) |
-| `convergence_gate.remediator_timeout_s` | 600 | `morty-gate-remediator` subprocess timeout (s) |
-| `convergence_gate.szechuan_max_remediation_cycles` | 3 | Gate ↔ remediator loop cap for `/szechuan-sauce` |
-| `convergence_gate.anatomy_park_max_remediation_cycles` | 5 | Gate ↔ remediator loop cap for `/anatomy-park` |
-| `convergence_gate.regression_warning_threshold` | 5 | Per-iteration regressions before the one-time warning fires |
-| `convergence_gate.baseline_max_age_iterations` | 30 | Halt if baseline older than N iterations |
-| `convergence_gate.baseline_max_age_seconds` | 14400 | Halt if baseline older than N seconds (4h) |
-| `convergence_gate.prefer_test_unit_alias` | false | Prefer `npm run test:unit` (or pnpm/yarn equivalent) over plain `npm test` when present |
-| `convergence_gate.known_flake_files` | `[]` | Test files whose failures yield `green-with-known-flake-warnings` instead of red |
-
-### Upgrading settings from 1.48.x → 1.49.x
-
-1.49 replaces the Council's sequential pass rotation with parallel rounds (every category runs every round via `Agent` fan-out). The settings keys change accordingly:
-
-- `default_council_min_passes` → `default_council_min_rounds` (default: `2`)
-- `default_council_max_passes` → `default_council_max_rounds` (default: `5`)
-
-`install.sh` preserves user customizations by merging repo defaults underneath user values (`jq -s '.[0] * .[1]'`). Existing installs keep the now-dead `default_council_min_passes` / `default_council_max_passes` keys (harmless — the skill ignores them). Fresh installs get the new round-based defaults automatically.
-
-To migrate an existing install and drop the dead keys:
-
-```bash
-jq 'del(.default_council_min_passes, .default_council_max_passes) | .default_council_min_rounds = 2 | .default_council_max_rounds = 5' \
-  ~/.claude/pickle-rick/pickle_settings.json \
-  > /tmp/pickle-settings.json && mv /tmp/pickle-settings.json ~/.claude/pickle-rick/pickle_settings.json
-```
+`pickle_settings.json` keys, defaults, the convergence-gate block, and the 1.48 → 1.49 council settings migration live in [`internals.md`](internals.md#settings-pickle_settingsjson).
 
 ---
 
@@ -786,7 +722,7 @@ Plan:
 
 ---
 
-> **Under the hood:** See [architecture.md](architecture.md) for the 8-phase ticket lifecycle, manager/worker model, stop-hook loop, context clearing, state schema, and every internal system that makes this thing run.
+> **Under the hood:** See [internals.md](internals.md) for the 8-phase ticket lifecycle, manager/worker model, stop-hook loop, context clearing, state schema, settings reference, and every internal system that makes this thing run.
 
 ---
 

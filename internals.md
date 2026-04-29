@@ -2,9 +2,9 @@
   <img src="images/architecture.png" alt="Pickle Rick Architecture" width="100%" />
 </p>
 
-# Pickle Rick Architecture
+# Pickle Rick Internals
 
-Deep-dive internals for the Pickle Rick engineering lifecycle. For usage, commands, and quick start, see the [README](README.md).
+Deep-dive architecture, configuration, and runtime details for the Pickle Rick engineering lifecycle. For usage, commands, and quick start, see the [README](README.md).
 
 ---
 
@@ -940,3 +940,64 @@ Morty workers already get clean context naturally (each is a fresh `claude -p` s
 
 - **Rick (Manager)**: Runs in your interactive Claude session. Handles PRD, Breakdown, orchestration.
 - **Morty (Worker)**: Spawned as `claude --dangerously-skip-permissions --add-dir <extension_root> --add-dir <ticket_path> -p "..."` subprocess per ticket. Gets the full 6-phase lifecycle prompt from `send-to-morty.md`. The `CLAUDECODE` env var is stripped so workers don't detect a nested session. Workers are scope-bounded: they write artifacts only to their ticket directory, signal completion only via `<promise>I AM DONE</promise>`, and are forbidden from modifying `state.json` (enforced at both prompt and CLI level).
+
+---
+
+## Settings (`pickle_settings.json`)
+
+All defaults are configurable via `~/.claude/pickle-rick/pickle_settings.json`:
+
+| Setting | Default | Description |
+|---|---|---|
+| `default_max_iterations` | 500 | Max loop iterations before auto-stop |
+| `default_max_time_minutes` | 720 | Session wall-clock limit (12 hours) |
+| `default_worker_timeout_seconds` | 1200 | Per-worker subprocess timeout |
+| `default_manager_max_turns` | 50 | Max Claude turns per iteration (interactive/jar) |
+| `default_tmux_max_turns` | 200 | Max Claude turns per iteration (tmux) |
+| `default_refinement_cycles` | 3 | Number of refinement analysis passes |
+| `default_refinement_max_turns` | 100 | Max Claude turns per refinement worker |
+| `default_council_min_rounds` | 2 | Minimum Council of Ricks parallel review rounds |
+| `default_council_max_rounds` | 5 | Maximum Council of Ricks parallel review rounds |
+| `default_council_publish` | true | Auto-publish PR comments at session end (disable with `--no-publish`) |
+| `default_circuit_breaker_enabled` | true | Enable circuit breaker |
+| `default_cb_no_progress_threshold` | 5 | No-progress iterations before OPEN |
+| `default_cb_same_error_threshold` | 5 | Identical errors before OPEN |
+| `default_cb_half_open_after` | 2 | No-progress iterations before HALF_OPEN |
+| `default_rate_limit_wait_minutes` | 60 | Fallback wait when no API reset time |
+| `default_max_rate_limit_retries` | 3 | Consecutive rate limits before stopping |
+
+**Convergence Gate** *(v1.58+, nested under `convergence_gate`)*
+
+| Setting | Default | Description |
+|---|---|---|
+| `convergence_gate.commands` | `{}` | Per-project command overrides (typecheck/lint/tests). Empty = auto-detect from `gate-commands.json` |
+| `convergence_gate.enabled_convergence_files` | `["anatomy-park.json"]` | Microverse convergence files that opt in to per-iteration gating |
+| `convergence_gate.timeout_ms.typecheck` | 120000 | Per-check timeout (ms) |
+| `convergence_gate.timeout_ms.lint` | 60000 | Per-check timeout (ms) |
+| `convergence_gate.timeout_ms.tests` | 300000 | Per-check timeout (ms) |
+| `convergence_gate.gate_total_timeout_ms` | 600000 | Cumulative cap for a full gate run (ms) |
+| `convergence_gate.remediator_timeout_s` | 600 | `morty-gate-remediator` subprocess timeout (s) |
+| `convergence_gate.szechuan_max_remediation_cycles` | 3 | Gate ↔ remediator loop cap for `/szechuan-sauce` |
+| `convergence_gate.anatomy_park_max_remediation_cycles` | 5 | Gate ↔ remediator loop cap for `/anatomy-park` |
+| `convergence_gate.regression_warning_threshold` | 5 | Per-iteration regressions before the one-time warning fires |
+| `convergence_gate.baseline_max_age_iterations` | 30 | Halt if baseline older than N iterations |
+| `convergence_gate.baseline_max_age_seconds` | 14400 | Halt if baseline older than N seconds (4h) |
+| `convergence_gate.prefer_test_unit_alias` | false | Prefer `npm run test:unit` (or pnpm/yarn equivalent) over plain `npm test` when present |
+| `convergence_gate.known_flake_files` | `[]` | Test files whose failures yield `green-with-known-flake-warnings` instead of red |
+
+### Upgrading settings from 1.48.x → 1.49.x
+
+1.49 replaces the Council's sequential pass rotation with parallel rounds (every category runs every round via `Agent` fan-out). The settings keys change accordingly:
+
+- `default_council_min_passes` → `default_council_min_rounds` (default: `2`)
+- `default_council_max_passes` → `default_council_max_rounds` (default: `5`)
+
+`install.sh` preserves user customizations by merging repo defaults underneath user values (`jq -s '.[0] * .[1]'`). Existing installs keep the now-dead `default_council_min_passes` / `default_council_max_passes` keys (harmless — the skill ignores them). Fresh installs get the new round-based defaults automatically.
+
+To migrate an existing install and drop the dead keys:
+
+```bash
+jq 'del(.default_council_min_passes, .default_council_max_passes) | .default_council_min_rounds = 2 | .default_council_max_rounds = 5' \
+  ~/.claude/pickle-rick/pickle_settings.json \
+  > /tmp/pickle-settings.json && mv /tmp/pickle-settings.json ~/.claude/pickle-rick/pickle_settings.json
+```

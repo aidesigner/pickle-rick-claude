@@ -535,4 +535,4 @@ Pickle Rick wins on depth. ECC wins on breadth. The smart play is to absorb ECC'
 - Pickle Rick Source: `extension/src/` (33 files, 7,564 lines TS)
 - Pickle Rick Tests: `extension/tests/` (36 files, 14,214 lines)
 - Pickle Rick Commands: `.claude/commands/` (23 commands)
-- Pickle Rick Architecture: `architecture.md` (545 lines)
+- Pickle Rick Internals: `internals.md` (architecture, settings, runtime details)
