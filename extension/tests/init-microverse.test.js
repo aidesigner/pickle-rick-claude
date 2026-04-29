@@ -160,6 +160,26 @@ describe('init-microverse convergence flags', () => {
     }
   });
 
+  test('--metric-json command metric with zero timeout exits before disabling measurement hang guard', () => {
+    const dir = makeTempDir();
+    try {
+      const metricJson = JSON.stringify({
+        type: 'command',
+        description: 'score',
+        validation: 'sleep 999',
+        timeout_seconds: 0,
+        tolerance: 0,
+        direction: 'lower',
+      });
+      const result = run([dir, '/some/target', '--metric-json', metricJson], true);
+      assert.equal(result.code, 1);
+      assert.ok(result.stderr.includes('timeout_seconds must be a positive finite number'));
+      assert.equal(fs.existsSync(path.join(dir, 'microverse.json')), false);
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
   // ---------------------------------------------------------------------------
   // Usage string
   // ---------------------------------------------------------------------------

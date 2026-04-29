@@ -36,6 +36,9 @@ export function createMicroverseState(opts: CreateMicroverseOpts): MicroverseSes
   if (!Number.isFinite(metric.tolerance) || metric.tolerance < 0) {
     throw new Error(`tolerance must be a non-negative number, got ${metric.tolerance}`);
   }
+  if ((metric.type === 'command' || metric.type === 'llm') && (!Number.isFinite(metric.timeout_seconds) || metric.timeout_seconds <= 0)) {
+    throw new Error(`timeout_seconds must be a positive finite number for ${metric.type} metrics, got ${metric.timeout_seconds}`);
+  }
   if (convergenceTarget != null && !Number.isFinite(convergenceTarget)) {
     throw new Error(`convergence_target must be a finite number, got ${convergenceTarget}`);
   }
