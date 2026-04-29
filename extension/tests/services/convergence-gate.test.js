@@ -198,3 +198,71 @@ test('runGate: baseline mode fingerprints duplicate lint failures across capture
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('runGate: baseline mode promotes newer dead tmp baseline before subtraction', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-baseline-tmp-'));
+  try {
+    const baselinePath = path.join(dir, 'gate', 'baseline.json');
+    const tmpBaselinePath = `${baselinePath}.tmp.99999999`;
+    const pkg = {
+      name: 'baseline-tmp-test',
+      version: '1.0.0',
+      scripts: {
+        lint: makeLintScript([
+          { line: 5, message: 'baseline failure', ruleOrCode: 'no-unused-vars' },
+        ]),
+      },
+    };
+    fs.mkdirSync(path.join(dir, 'src'), { recursive: true });
+    fs.mkdirSync(path.dirname(baselinePath), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'src', 'foo.ts'), 'export const foo = 1;\n');
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify(pkg, null, 2));
+
+    const staleBaseline = {
+      schema_version: 1,
+      captured_at: '2026-04-01T00:00:00.000Z',
+      working_dir: dir,
+      project_type: 'npm',
+      checks: ['lint'],
+      failures: [],
+    };
+    const recoveredBaseline = {
+      ...staleBaseline,
+      captured_at: '2026-04-01T00:00:01.000Z',
+      failures: [{
+        check: 'lint',
+        file: path.join(dir, 'src', 'foo.ts'),
+        line: 5,
+        ruleOrCode: 'no-unused-vars',
+        message: 'baseline failure',
+        severity: 'error',
+        occurrence_index: 0,
+      }],
+    };
+    fs.writeFileSync(baselinePath, JSON.stringify(staleBaseline, null, 2));
+    fs.writeFileSync(tmpBaselinePath, JSON.stringify(recoveredBaseline, null, 2));
+    const baseTime = new Date(Date.now() - 10_000);
+    const tmpTime = new Date();
+    fs.utimesSync(baselinePath, baseTime, baseTime);
+    fs.utimesSync(tmpBaselinePath, tmpTime, tmpTime);
+
+    const replay = await runGate({
+      workingDir: dir,
+      mode: 'baseline',
+      scope: 'full',
+      checks: ['lint'],
+      baselinePath,
+    });
+
+    assert.equal(replay.status, 'green');
+    assert.equal(replay.baseline_used, true);
+    assert.equal(replay.total_raw_failure_count, 1);
+    assert.equal(replay.new_failures_vs_baseline, 0);
+    assert.deepEqual(replay.failures, [], 'recovered baseline failure should subtract current lint failure');
+    assert.equal(fs.existsSync(tmpBaselinePath), false, 'dead tmp baseline should be consumed');
+    const promoted = JSON.parse(fs.readFileSync(baselinePath, 'utf-8'));
+    assert.equal(promoted.failures.length, 1);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

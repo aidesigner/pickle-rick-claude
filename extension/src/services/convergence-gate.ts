@@ -6,6 +6,8 @@ import { promisify } from 'util';
 import { fileURLToPath } from 'url';
 import { LockError, type ActivityEventType, type GateResult, type GateMode, type GateFailure, type GateBaselineFile } from '../types/index.js';
 import { withLock } from './state-manager.js';
+import { readRecoverableJsonObject } from './microverse-state.js';
+import { writeStateFile } from './pickle-utils.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -115,7 +117,7 @@ function validateBaselineStructure(data: unknown): data is GateBaselineFile {
 }
 
 function loadBaselineFile(baselinePath: string): GateBaselineFile {
-  const raw = JSON.parse(fs.readFileSync(baselinePath, 'utf-8')) as unknown;
+  const raw = readRecoverableJsonObject(baselinePath) as unknown;
   if (!validateBaselineStructure(raw)) {
     throw new GateError('BASELINE_CORRUPT', `Invalid baseline file at ${baselinePath}`);
   }
@@ -747,7 +749,7 @@ export async function runGate(opts: RunGateOpts): Promise<GateResult> {
             failures: withIndices,
           };
           fs.mkdirSync(path.dirname(opts.baselinePath!), { recursive: true });
-          fs.writeFileSync(opts.baselinePath!, JSON.stringify(baseline, null, 2));
+          writeStateFile(opts.baselinePath!, baseline);
           emit('gate_baseline_captured', { path: opts.baselinePath, failure_count: withIndices.length });
           emit('gate_preexisting_tests_baselined', { failure_count: withIndices.length });
           return {
