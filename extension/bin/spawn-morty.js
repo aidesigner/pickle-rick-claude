@@ -239,8 +239,8 @@ function resolveWorkerModel(backend, extensionRoot, ticketInfo) {
         return undefined;
     let enableComplexityTiers = true;
     try {
-        const settings = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
-        if (settings.enable_complexity_tiers === false)
+        const settings = readRecoverableJsonObject(path.join(extensionRoot, 'pickle_settings.json'));
+        if (settings?.enable_complexity_tiers === false)
             enableComplexityTiers = false;
     }
     catch { /* default true */ }

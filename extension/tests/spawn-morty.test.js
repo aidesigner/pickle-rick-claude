@@ -934,6 +934,76 @@ test('spawn-morty P2: recovers disabled routing heuristic from newer dead settin
     }
 });
 
+test('spawn-morty P2: recovers disabled complexity tiers from newer dead settings tmp', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        fs.mkdirSync(tmpDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(tmpDir, 'pickle_settings.json'),
+            JSON.stringify({ enable_complexity_tiers: true })
+        );
+        fs.writeFileSync(
+            path.join(tmpDir, 'pickle_settings.json.tmp.999999'),
+            JSON.stringify({ enable_complexity_tiers: false })
+        );
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketDir = path.join(sessionDir, 'ticket-model-recovered-off');
+        fs.mkdirSync(ticketDir, { recursive: true });
+        const ticketFile = writeTicketFile(ticketDir, {
+            id: 'ticket-model-recovered-off',
+            title: 'Implement neutral worker task',
+            complexity_tier: 'large',
+        });
+
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            backend: 'claude',
+            iteration: 1,
+            schema_version: 1,
+        }));
+
+        const shimDir = path.join(tmpDir, 'bin');
+        fs.mkdirSync(shimDir, { recursive: true });
+        const claudeLog = path.join(tmpDir, 'claude-model-recovered-off.json');
+        const claudeShim = path.join(shimDir, 'claude');
+        fs.writeFileSync(claudeShim, `#!/usr/bin/env node
+const fs = require('fs');
+fs.writeFileSync(${JSON.stringify(claudeLog)}, JSON.stringify({ argv: process.argv.slice(2) }, null, 2));
+process.exit(0);
+`);
+        fs.chmodSync(claudeShim, 0o755);
+
+        const result = spawnSync(process.execPath, [SPAWN_MORTY_BIN,
+            'do thing',
+            '--ticket-id', 'ticket-model-recovered-off',
+            '--ticket-path', ticketDir,
+            '--ticket-file', ticketFile,
+            '--timeout', '30',
+        ], {
+            env: {
+                ...process.env,
+                EXTENSION_DIR: tmpDir,
+                PATH: `${shimDir}${path.delimiter}${process.env.PATH || ''}`,
+                PICKLE_BACKEND: '',
+            },
+            encoding: 'utf-8',
+            timeout: 45000,
+        });
+
+        assert.equal(result.status, 1);
+        assert.ok(fs.existsSync(claudeLog), 'claude shim should run for claude backend');
+        const invocation = JSON.parse(fs.readFileSync(claudeLog, 'utf-8'));
+        const modelIndex = invocation.argv.indexOf('--model');
+        assert.notEqual(modelIndex, -1, 'claude invocation should include a model');
+        assert.equal(invocation.argv[modelIndex + 1], 'sonnet',
+            `recovered disabled complexity tiers should force sonnet, got: ${invocation.argv.join(' ')}`);
+        assert.equal(fs.existsSync(path.join(tmpDir, 'pickle_settings.json.tmp.999999')), false,
+            'dead settings tmp should be promoted and removed');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('spawn-morty P2: heuristic ON — large tier flips codex → claude', () => {
     const tmpDir = makeTmpDir();
     try {

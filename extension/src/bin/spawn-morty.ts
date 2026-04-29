@@ -307,8 +307,8 @@ function resolveWorkerModel(backend: Backend, extensionRoot: string, ticketInfo:
   if (backend !== 'claude') return undefined;
   let enableComplexityTiers = true;
   try {
-    const settings = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
-    if (settings.enable_complexity_tiers === false) enableComplexityTiers = false;
+    const settings = readRecoverableJsonObject(path.join(extensionRoot, 'pickle_settings.json')) as Record<string, unknown> | null;
+    if (settings?.enable_complexity_tiers === false) enableComplexityTiers = false;
   } catch { /* default true */ }
   try {
     return enableComplexityTiers ? tierToModel(ticketInfo?.complexity_tier) : 'sonnet';
