@@ -23,6 +23,14 @@ describe('loadEngineKeysRegistry', () => {
     );
   });
 
+  test('rejects schema_version 1 registry with malformed array fields', () => {
+    const fixturePath = path.join(FIXTURE_DIR, 'malformed-arrays.json');
+    assert.throws(
+      () => loadEngineKeysRegistry(fixturePath),
+      /engine_keys must be an array of strings/
+    );
+  });
+
   test('loads real registry without error', () => {
     const reg = loadEngineKeysRegistry(REAL_REGISTRY);
     assert.strictEqual(reg.schema_version, 1);
