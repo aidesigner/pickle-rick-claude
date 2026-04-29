@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { collectTickets, statusSymbol, formatTime, getWidth, getHeight, Style, sleep, MatrixStyle, matrixSeparator, latestIterationLog, safeErrorMessage, TicketInfo } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
-import { readMicroverseState } from '../services/microverse-state.js';
+import { readMicroverseState, readRecoverableJsonObject } from '../services/microverse-state.js';
 import { readCircuitBreakerState } from '../services/circuit-breaker.js';
 import { State, MicroverseSessionState } from '../types/index.js';
 
@@ -349,10 +349,10 @@ function render(sessionDir: string): boolean {
   // Rate limit wait display
   try {
     const waitPath = path.join(sessionDir, 'rate_limit_wait.json');
-    const waitData = JSON.parse(fs.readFileSync(waitPath, 'utf-8'));
-    if (waitData.waiting === true && waitData.wait_until) {
-      const remainMs = new Date(waitData.wait_until).getTime() - Date.now();
-      const typeLabel = waitData.rate_limit_type ? ` [${waitData.rate_limit_type}]` : '';
+    const waitData = readRecoverableJsonObject(waitPath) as Record<string, unknown> | null;
+    if (waitData && waitData.waiting === true && waitData.wait_until) {
+      const remainMs = new Date(String(waitData.wait_until)).getTime() - Date.now();
+      const typeLabel = waitData.rate_limit_type ? ` [${String(waitData.rate_limit_type)}]` : '';
       const sourceLabel = waitData.wait_source === 'api' ? ' (API reset)' : '';
       if (remainMs > 0) {
         const remainSec = Math.ceil(remainMs / 1000);

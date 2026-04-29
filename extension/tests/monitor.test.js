@@ -640,3 +640,41 @@ test('monitor CLI promotes dead writer circuit breaker tmp before rendering stat
         fs.rmSync(dir, { recursive: true, force: true });
     }
 });
+
+test('monitor CLI promotes dead writer rate limit tmp before rendering countdown', () => {
+    const dir = tmpDir();
+    try {
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({
+            active: false,
+            iteration: 3,
+            step: 'implement',
+            original_prompt: 'render recovered wait',
+            working_dir: '/tmp/recovered-state',
+            pid: 999999,
+        }));
+        fs.writeFileSync(path.join(dir, 'rate_limit_wait.json'), JSON.stringify({
+            waiting: false,
+            wait_until: new Date(Date.now() - 60_000).toISOString(),
+        }));
+        fs.writeFileSync(path.join(dir, 'rate_limit_wait.json.tmp.999999'), JSON.stringify({
+            waiting: true,
+            reason: 'API rate limit',
+            started_at: new Date().toISOString(),
+            wait_until: new Date(Date.now() + 3_600_000).toISOString(),
+            rate_limit_type: 'tokens',
+            wait_source: 'api',
+        }, null, 2));
+        const future = new Date(Date.now() + 1000);
+        fs.utimesSync(path.join(dir, 'rate_limit_wait.json.tmp.999999'), future, future);
+
+        const result = run([dir]);
+        assert.equal(result.status, 0, `expected clean exit, got status=${result.status}, stderr=${result.stderr}`);
+        assert.match(result.stdout, /Rate limited \[tokens\] \(API reset\)/, `expected recovered wait in monitor output, got: ${result.stdout}`);
+        assert.equal(fs.existsSync(path.join(dir, 'rate_limit_wait.json.tmp.999999')), false);
+        const persisted = JSON.parse(fs.readFileSync(path.join(dir, 'rate_limit_wait.json'), 'utf-8'));
+        assert.equal(persisted.waiting, true);
+        assert.equal(persisted.rate_limit_type, 'tokens');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
