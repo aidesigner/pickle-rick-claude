@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { getExtensionRoot, safeErrorMessage } from '../services/pickle-utils.js';
+import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import type { UpdateCheckCache, UpdateResult, UpdateSettings, ReleaseInfo, UpgradeResult } from '../types/index.js';
 
 const CACHE_FILE = 'update-check.json';
@@ -47,7 +48,11 @@ function defaultCache(): UpdateCheckCache {
 export function readCache(): UpdateCheckCache {
   try {
     const filePath = path.join(getExtensionRoot(), CACHE_FILE);
-    const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    const raw = readRecoverableJsonObject(filePath) as Record<string, unknown> | null;
+    if (!raw) {
+      log('Cache missing or corrupted, using defaults');
+      return defaultCache();
+    }
     return {
       last_check_epoch: typeof raw.last_check_epoch === 'number' ? raw.last_check_epoch : 0,
       latest_version: typeof raw.latest_version === 'string' ? raw.latest_version : '',
@@ -60,11 +65,14 @@ export function readCache(): UpdateCheckCache {
 }
 
 export function writeCache(cache: UpdateCheckCache): void {
+  const filePath = path.join(getExtensionRoot(), CACHE_FILE);
+  const tmpPath = `${filePath}.tmp.${process.pid}`;
   try {
-    const filePath = path.join(getExtensionRoot(), CACHE_FILE);
-    fs.writeFileSync(filePath, JSON.stringify(cache, null, 2) + '\n');
+    fs.writeFileSync(tmpPath, JSON.stringify(cache, null, 2) + '\n');
+    fs.renameSync(tmpPath, filePath);
     log(`Cache written: ${cache.latest_version}`);
   } catch (err) {
+    try { fs.unlinkSync(tmpPath); } catch { /* ignore cleanup failure */ }
     const msg = safeErrorMessage(err);
     log(`Failed to write cache: ${msg}`);
   }

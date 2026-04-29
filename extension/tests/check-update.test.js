@@ -117,6 +117,52 @@ describe('readCache', () => {
         const result = readCache();
         assert.deepEqual(result, data);
     });
+
+    test('checkForUpdate uses recovered newer cache tmp instead of refetching release', () => {
+        fs.mkdirSync(path.join(tmpDir, 'extension'), { recursive: true });
+        fs.writeFileSync(
+            path.join(tmpDir, 'extension', 'package.json'),
+            JSON.stringify({ version: '1.7.0' }),
+        );
+        const cachePath = path.join(tmpDir, 'update-check.json');
+        fs.writeFileSync(cachePath, JSON.stringify({
+            last_check_epoch: 0,
+            latest_version: '1.7.0',
+            current_version: '1.7.0',
+        }));
+        const tmpPath = `${cachePath}.tmp.99999999`;
+        const now = Math.floor(Date.now() / 1000);
+        fs.writeFileSync(tmpPath, JSON.stringify({
+            last_check_epoch: now,
+            latest_version: '2.0.0',
+            current_version: '1.7.0',
+        }));
+        const oldTime = new Date(Date.now() - 10_000);
+        const newTime = new Date();
+        fs.utimesSync(cachePath, oldTime, oldTime);
+        fs.utimesSync(tmpPath, newTime, newTime);
+
+        const binDir = path.join(tmpDir, 'mock-bin');
+        const callsPath = path.join(tmpDir, 'gh-calls.txt');
+        fs.mkdirSync(binDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(binDir, 'gh'),
+            `#!/bin/sh\necho called >> ${JSON.stringify(callsPath)}\nexit 99\n`,
+            { mode: 0o755 },
+        );
+        const origPath = process.env.PATH;
+        process.env.PATH = `${binDir}:${origPath}`;
+        try {
+            const result = checkForUpdate();
+            assert.equal(result.status, 'update-available');
+            assert.equal(result.latestVersion, '2.0.0');
+            assert.equal(fs.existsSync(callsPath), false, 'fresh recovered cache should skip gh api');
+            assert.equal(fs.existsSync(tmpPath), false, 'recovered tmp should be promoted');
+            assert.equal(JSON.parse(fs.readFileSync(cachePath, 'utf-8')).latest_version, '2.0.0');
+        } finally {
+            process.env.PATH = origPath;
+        }
+    });
 });
 
 // ---------------------------------------------------------------------------
