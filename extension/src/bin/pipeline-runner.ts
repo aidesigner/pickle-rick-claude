@@ -30,6 +30,7 @@ import {
   safeErrorMessage,
   ensureMonitorWindow,
   displayMacNotification,
+  writeStateFile,
 } from '../services/pickle-utils.js';
 import { isWorkingTreeDirty } from '../services/git-utils.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -598,7 +599,7 @@ function writeAnatomyConfig(
     trap_doors_added: [] as unknown[],
     trap_doors_committed: [] as unknown[],
   };
-  fs.writeFileSync(path.join(sessionDir, 'anatomy-park.json'), JSON.stringify(apState, null, 2));
+  writeStateFile(path.join(sessionDir, 'anatomy-park.json'), apState);
 }
 
 export function setupAnatomyPark(

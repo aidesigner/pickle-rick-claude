@@ -19,7 +19,7 @@ import { execFileSync, spawn } from 'child_process';
 import { BACKENDS } from '../types/index.js';
 import { StateManager, safeDeactivate } from '../services/state-manager.js';
 import { backendEnvOverrides, isBackend } from '../services/backend-spawn.js';
-import { getExtensionRoot, Style, formatTime, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, displayMacNotification, } from '../services/pickle-utils.js';
+import { getExtensionRoot, Style, formatTime, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, displayMacNotification, writeStateFile, } from '../services/pickle-utils.js';
 import { isWorkingTreeDirty } from '../services/git-utils.js';
 import { logActivity } from '../services/activity-logger.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
@@ -486,7 +486,7 @@ function writeAnatomyConfig(sessionDir, subsystems, stallLimit) {
         trap_doors_added: [],
         trap_doors_committed: [],
     };
-    fs.writeFileSync(path.join(sessionDir, 'anatomy-park.json'), JSON.stringify(apState, null, 2));
+    writeStateFile(path.join(sessionDir, 'anatomy-park.json'), apState);
 }
 export function setupAnatomyPark(sessionDir, target, stallLimit, extensionRoot, log, scope) {
     const persistedAllowedPaths = !scope || scope.allowedPaths.length === 0

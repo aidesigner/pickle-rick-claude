@@ -85,6 +85,31 @@ test('pipeline filter: 4 subsystems, scope covering 2 → anatomy-park.json has 
   }
 });
 
+test('pipeline setup writes anatomy-park.json through shared atomic writer before init-microverse consumes it', () => {
+  const session = makeSession();
+  const target = makeTarget();
+  try {
+    makeSubsystem(target, 'alpha');
+
+    const compiledPipelineRunner = fs.readFileSync(
+      new URL('../bin/pipeline-runner.js', import.meta.url),
+      'utf-8',
+    );
+    assert.ok(
+      compiledPipelineRunner.includes("writeStateFile(path.join(sessionDir, 'anatomy-park.json'), apState)"),
+      'anatomy setup must publish anatomy-park.json through the shared tmp-rename writer',
+    );
+
+    setupAnatomyPark(session, target, 3, EXTENSION_ROOT, () => {});
+
+    assert.deepStrictEqual(readAnatomyPark(session).subsystems, ['alpha']);
+    assert.equal(readMicroverse(session).convergence_file, 'anatomy-park.json');
+  } finally {
+    fs.rmSync(session, { recursive: true, force: true });
+    fs.rmSync(target, { recursive: true, force: true });
+  }
+});
+
 test('pipeline scoped setup injects allowed_paths into microverse.json so final gate honors out-of-scope failures', async () => {
   const session = makeSession();
   const target = makeTarget();
