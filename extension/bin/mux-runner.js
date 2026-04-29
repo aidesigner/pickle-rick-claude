@@ -9,6 +9,7 @@ import { StateManager, safeDeactivate, writeActivityEntry, writeTimeoutStub } fr
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, resetCircuitBreaker } from '../services/circuit-breaker.js';
 import { buildManagerInvocation, resolveBackend, backendEnvOverrides } from '../services/backend-spawn.js';
+import { readRecoverableJsonObject } from '../services/microverse-state.js';
 const sm = new StateManager();
 let currentChildProc = null;
 function readRunnerState(statePath) {
@@ -340,13 +341,19 @@ export function classifyTicketCompletion(iterLogFile, workingDir, ticketDir, rol
  * own defaults; this helper owns only the file I/O + JSON decode step.
  */
 function loadSettingsBag(extensionRoot, site) {
+    const settingsPath = path.join(extensionRoot, 'pickle_settings.json');
+    const raw = readRecoverableJsonObject(settingsPath);
+    if (raw)
+        return raw;
+    if (!fs.existsSync(settingsPath))
+        return {};
     try {
-        return JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
+        fs.readFileSync(settingsPath, 'utf-8');
     }
     catch (err) {
         process.stderr.write(`[${site}] ${safeErrorMessage(err)}\n`);
-        return {};
     }
+    return {};
 }
 /**
  * Transitions a session from ticket-execution mode to Meeseeks review mode.

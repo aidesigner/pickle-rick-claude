@@ -990,6 +990,38 @@ test('transitionToMeeseeks: reads custom values from pickle_settings.json', () =
     }
 });
 
+test('transitionToMeeseeks: recovers newer dead-writer pickle_settings tmp', () => {
+    const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-')));
+    try {
+        const settingsPath = path.join(fakeRoot, 'pickle_settings.json');
+        const tmpSettingsPath = `${settingsPath}.tmp.99999999`;
+        fs.writeFileSync(settingsPath, JSON.stringify({
+            default_meeseeks_min_passes: 15,
+            default_meeseeks_max_passes: 75,
+        }));
+        fs.writeFileSync(tmpSettingsPath, JSON.stringify({
+            default_meeseeks_min_passes: 3,
+            default_meeseeks_max_passes: 9,
+        }));
+        const stale = new Date('2026-01-01T00:00:00.000Z');
+        const newer = new Date('2026-01-01T00:00:01.000Z');
+        fs.utimesSync(settingsPath, stale, stale);
+        fs.utimesSync(tmpSettingsPath, newer, newer);
+
+        const result = transitionToMeeseeks(makeState(), fakeRoot);
+
+        assert.equal(result.min_iterations, 3);
+        assert.equal(result.max_iterations, 9);
+        assert.deepEqual(JSON.parse(fs.readFileSync(settingsPath, 'utf-8')), {
+            default_meeseeks_min_passes: 3,
+            default_meeseeks_max_passes: 9,
+        });
+        assert.equal(fs.existsSync(tmpSettingsPath), false);
+    } finally {
+        fs.rmSync(fakeRoot, { recursive: true, force: true });
+    }
+});
+
 test('transitionToMeeseeks: non-number settings fall back to defaults', () => {
     const fakeRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-')));
     try {

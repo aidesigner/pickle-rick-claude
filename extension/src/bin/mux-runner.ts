@@ -9,6 +9,7 @@ import { StateManager, safeDeactivate, writeActivityEntry, writeTimeoutStub } fr
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, resetCircuitBreaker, type CircuitBreakerConfig, type CircuitBreakerState } from '../services/circuit-breaker.js';
 import { buildManagerInvocation, resolveBackend, backendEnvOverrides } from '../services/backend-spawn.js';
+import { readRecoverableJsonObject } from '../services/microverse-state.js';
 
 const sm = new StateManager();
 
@@ -396,12 +397,16 @@ export function classifyTicketCompletion(
  * own defaults; this helper owns only the file I/O + JSON decode step.
  */
 function loadSettingsBag(extensionRoot: string, site: string): Record<string, unknown> {
+  const settingsPath = path.join(extensionRoot, 'pickle_settings.json');
+  const raw = readRecoverableJsonObject(settingsPath);
+  if (raw) return raw as Record<string, unknown>;
+  if (!fs.existsSync(settingsPath)) return {};
   try {
-    return JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8')) as Record<string, unknown>;
+    fs.readFileSync(settingsPath, 'utf-8');
   } catch (err) {
     process.stderr.write(`[${site}] ${safeErrorMessage(err)}\n`);
-    return {};
   }
+  return {};
 }
 
 /**
