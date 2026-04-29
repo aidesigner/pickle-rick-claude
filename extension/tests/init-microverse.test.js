@@ -123,6 +123,18 @@ describe('init-microverse convergence flags', () => {
     }
   });
 
+  test('--convergence-target with non-numeric value exits before writing null target', () => {
+    const dir = makeTempDir();
+    try {
+      const result = run([dir, '/some/target', '--convergence-target', 'not-a-number'], true);
+      assert.equal(result.code, 1);
+      assert.ok(result.stderr.includes('convergence_target must be a finite number'));
+      assert.equal(fs.existsSync(path.join(dir, 'microverse.json')), false);
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
   // ---------------------------------------------------------------------------
   // Usage string
   // ---------------------------------------------------------------------------

@@ -36,6 +36,9 @@ export function createMicroverseState(opts: CreateMicroverseOpts): MicroverseSes
   if (!Number.isFinite(metric.tolerance) || metric.tolerance < 0) {
     throw new Error(`tolerance must be a non-negative number, got ${metric.tolerance}`);
   }
+  if (convergenceTarget != null && !Number.isFinite(convergenceTarget)) {
+    throw new Error(`convergence_target must be a finite number, got ${convergenceTarget}`);
+  }
   const state: MicroverseSessionState = {
     status: 'gap_analysis',
     prd_path: prdPath,
