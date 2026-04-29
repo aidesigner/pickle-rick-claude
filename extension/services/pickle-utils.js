@@ -818,6 +818,111 @@ export function inferMonitorMode(sessionDir) {
         return 'pickle';
     }
 }
+export function restartDeadWatcherPanes(sessionDir, extensionRoot, mode) {
+    if (isSessionInactive(sessionDir))
+        return;
+    const sessionName = readCurrentTmuxSessionName();
+    if (!sessionName) {
+        appendWatcherRestartLog(sessionDir, 'restartDeadWatcherPanes WARN: unable to resolve tmux session name');
+        return;
+    }
+    for (const watcher of watcherPaneCommands(sessionDir, extensionRoot, mode)) {
+        const target = `${sessionName}:monitor.${watcher.pane}`;
+        const currentCommand = readPaneCurrentCommand(target);
+        if (currentCommand === null) {
+            appendWatcherRestartLog(sessionDir, `restartDeadWatcherPanes WARN: unable to read pane_current_command for pane ${watcher.pane}`);
+            continue;
+        }
+        if (currentCommand === 'node')
+            continue;
+        appendWatcherRestartLog(sessionDir, `restartDeadWatcherPanes WARN: pane ${watcher.pane} command '${currentCommand || '(empty)'}' is not node`);
+        const result = spawnSync('tmux', ['send-keys', '-t', target, watcher.command, 'Enter'], {
+            encoding: 'utf-8',
+            timeout: 5_000,
+        });
+        if (result.status === 0) {
+            appendWatcherRestartLog(sessionDir, `restartDeadWatcherPanes: respawned ${watcher.name} in pane ${watcher.pane}`);
+        }
+        else {
+            const err = (result.stderr || result.stdout || '').toString().trim();
+            appendWatcherRestartLog(sessionDir, `restartDeadWatcherPanes WARN: failed to respawn ${watcher.name} in pane ${watcher.pane}: ${err || 'non-zero exit'}`);
+        }
+    }
+}
+function isSessionInactive(sessionDir) {
+    try {
+        const state = new StateManager().read(path.join(sessionDir, 'state.json'));
+        return state.active === false;
+    }
+    catch {
+        return false;
+    }
+}
+function readCurrentTmuxSessionName() {
+    const result = spawnSync('tmux', ['display-message', '-p', '#S'], {
+        encoding: 'utf-8',
+        timeout: 5_000,
+    });
+    if (result.status !== 0)
+        return null;
+    const sessionName = (result.stdout || '').trim();
+    return sessionName || null;
+}
+function readPaneCurrentCommand(target) {
+    const result = spawnSync('tmux', ['display-message', '-p', '-t', target, '#{pane_current_command}'], {
+        encoding: 'utf-8',
+        timeout: 5_000,
+    });
+    if (result.status !== 0)
+        return null;
+    return (result.stdout || '').trim();
+}
+function watcherPaneCommands(sessionDir, extensionRoot, mode) {
+    const binRoot = path.join(extensionRoot, 'extension', 'bin');
+    const paneTwo = watcherPaneTwoCommand(sessionDir, binRoot, mode);
+    return [
+        {
+            pane: 1,
+            name: 'log-watcher.js',
+            command: `node ${path.join(binRoot, 'log-watcher.js')} ${sessionDir}`,
+        },
+        paneTwo,
+        {
+            pane: 3,
+            name: 'raw-morty.js',
+            command: `node ${path.join(binRoot, 'raw-morty.js')} ${sessionDir}`,
+        },
+    ];
+}
+function watcherPaneTwoCommand(sessionDir, binRoot, mode) {
+    if (mode === 'refinement') {
+        return {
+            pane: 2,
+            name: 'refinement-watcher.js',
+            command: `node ${path.join(binRoot, 'refinement-watcher.js')} ${sessionDir}`,
+        };
+    }
+    if (mode === 'meeseeks' || mode === 'council') {
+        return {
+            pane: 2,
+            name: 'mux-runner.log tail',
+            command: `tail -F ${path.join(sessionDir, 'mux-runner.log')}`,
+        };
+    }
+    return {
+        pane: 2,
+        name: 'morty-watcher.js',
+        command: `node ${path.join(binRoot, 'morty-watcher.js')} ${sessionDir}`,
+    };
+}
+function appendWatcherRestartLog(sessionDir, line) {
+    try {
+        fs.appendFileSync(path.join(sessionDir, 'mux-runner.log'), `${new Date().toISOString()} ${line}\n`);
+    }
+    catch {
+        // Best-effort diagnostic logging must not break pane recovery.
+    }
+}
 /**
  * Idempotently creates the 4-pane monitor window in the current tmux session.
  *
