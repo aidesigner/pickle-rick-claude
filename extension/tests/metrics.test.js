@@ -132,6 +132,11 @@ test('parseSessionLine: numeric timestamp returns null', () => {
     assert.equal(parseSessionLine(line), null);
 });
 
+test('parseSessionLine: invalid timestamp returns null', () => {
+    const line = JSON.stringify(makeAssistantLine('not-a-date', 10, 20));
+    assert.equal(parseSessionLine(line), null);
+});
+
 // ---------------------------------------------------------------------------
 // formatNumber
 // ---------------------------------------------------------------------------
@@ -441,6 +446,22 @@ test('scanSessionFiles: timezone-mismatched cache is rebuilt from source JSONL',
         assert.equal(cache.time_zone, currentTimeZone);
         assert.equal(cache.files[sessionFile].data[actualDate].input, 100);
         assert.ok(!(staleDate in cache.files[sessionFile].data));
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('scanSessionFiles: invalid transcript timestamps do not pollute cache buckets', () => {
+    const { root, cacheFile } = makeTempProjectsDir();
+    try {
+        writeSessionLine(root, 'bad-ts-proj', 'sess.jsonl', makeAssistantLine('not-a-date', 100, 200));
+
+        const result = scanSessionFiles(root, '2026-02-28', '2026-02-28', cacheFile);
+        assert.equal(result.size, 0, 'invalid timestamp line should not produce report rows');
+
+        const cache = JSON.parse(fs.readFileSync(cacheFile, 'utf-8'));
+        const sessionFile = path.join(root, 'bad-ts-proj', 'sess.jsonl');
+        assert.deepEqual(cache.files[sessionFile].data, {}, 'invalid timestamp line should not create NaN date buckets');
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
     }

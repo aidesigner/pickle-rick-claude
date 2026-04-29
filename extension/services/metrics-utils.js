@@ -90,6 +90,8 @@ export function parseSessionLine(line) {
         const usage = obj.message?.usage;
         if (typeof ts !== 'string' || !usage)
             return null;
+        if (!Number.isFinite(new Date(ts).getTime()))
+            return null;
         return {
             timestamp: ts,
             usage: {
