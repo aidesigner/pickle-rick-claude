@@ -85,7 +85,8 @@ export function readSettings(): UpdateSettings {
   };
   try {
     const filePath = path.join(getExtensionRoot(), SETTINGS_FILE);
-    const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    const raw = readRecoverableJsonObject(filePath) as Record<string, unknown> | null;
+    if (!raw) return defaults;
     if (typeof raw.auto_update_enabled === 'boolean') {
       defaults.auto_update_enabled = raw.auto_update_enabled;
     }

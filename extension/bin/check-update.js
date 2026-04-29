@@ -83,7 +83,9 @@ export function readSettings() {
     };
     try {
         const filePath = path.join(getExtensionRoot(), SETTINGS_FILE);
-        const raw = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+        const raw = readRecoverableJsonObject(filePath);
+        if (!raw)
+            return defaults;
         if (typeof raw.auto_update_enabled === 'boolean') {
             defaults.auto_update_enabled = raw.auto_update_enabled;
         }

@@ -208,6 +208,46 @@ describe('readSettings', () => {
         assert.equal(settings.update_check_interval_hours, 24);
     });
 
+    test('checkForUpdate uses recovered newer settings tmp before auto-update decision', () => {
+        fs.mkdirSync(path.join(tmpDir, 'extension'), { recursive: true });
+        fs.writeFileSync(
+            path.join(tmpDir, 'extension', 'package.json'),
+            JSON.stringify({ version: '1.7.0' }),
+        );
+        const settingsPath = path.join(tmpDir, 'pickle_settings.json');
+        fs.writeFileSync(settingsPath, JSON.stringify({ auto_update_enabled: true }));
+        const tmpPath = `${settingsPath}.tmp.99999999`;
+        fs.writeFileSync(tmpPath, JSON.stringify({
+            auto_update_enabled: false,
+            update_check_interval_hours: 12,
+        }));
+        const oldTime = new Date(Date.now() - 10_000);
+        const newTime = new Date();
+        fs.utimesSync(settingsPath, oldTime, oldTime);
+        fs.utimesSync(tmpPath, newTime, newTime);
+
+        const binDir = path.join(tmpDir, 'mock-bin');
+        const callsPath = path.join(tmpDir, 'gh-calls.txt');
+        fs.mkdirSync(binDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(binDir, 'gh'),
+            `#!/bin/sh\necho called >> ${JSON.stringify(callsPath)}\nexit 99\n`,
+            { mode: 0o755 },
+        );
+        const origPath = process.env.PATH;
+        process.env.PATH = `${binDir}:${origPath}`;
+        try {
+            const result = checkForUpdate();
+            assert.equal(result.status, 'up-to-date');
+            assert.equal(result.currentVersion, '1.7.0');
+            assert.equal(fs.existsSync(callsPath), false, 'recovered disabled settings should skip gh api');
+            assert.equal(fs.existsSync(tmpPath), false, 'recovered settings tmp should be promoted');
+            assert.equal(JSON.parse(fs.readFileSync(settingsPath, 'utf-8')).auto_update_enabled, false);
+        } finally {
+            process.env.PATH = origPath;
+        }
+    });
+
     test('ignores invalid interval', () => {
         fs.writeFileSync(
             path.join(tmpDir, 'pickle_settings.json'),
