@@ -15,16 +15,20 @@ const sm = new StateManager();
 // handlers can deactivate it and kill the child on shutdown.
 let activeTaskSessionDir = null;
 let activeTaskProc = null;
+function positiveIntegerOrNull(value) {
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
 export function loadJarTaskTimeout(extensionRoot, state) {
     // Use worker_timeout_seconds from state if set, else fall back to settings, else default
-    const stateTimeout = Number(state.worker_timeout_seconds);
-    if (Number.isInteger(stateTimeout) && stateTimeout > 0)
+    const stateTimeout = positiveIntegerOrNull(state.worker_timeout_seconds);
+    if (stateTimeout !== null)
         return stateTimeout;
     try {
         const settings = readRecoverableJsonObject(path.join(extensionRoot, 'pickle_settings.json'));
-        const rawTimeout = Number(settings?.default_worker_timeout_seconds);
-        if (Number.isInteger(rawTimeout) && rawTimeout > 0)
-            return rawTimeout;
+        const settingsTimeout = positiveIntegerOrNull(settings?.default_worker_timeout_seconds);
+        if (settingsTimeout !== null)
+            return settingsTimeout;
     }
     catch { /* use default */ }
     return Defaults.WORKER_TIMEOUT_SECONDS;
@@ -86,8 +90,9 @@ async function runTask(sessionDir, repoCwd, extensionRoot) {
     try {
         // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         const settings = readRecoverableJsonObject(settingsPath);
-        if (typeof settings?.default_manager_max_turns === 'number' && settings.default_manager_max_turns > 0)
-            managerMaxTurns = settings.default_manager_max_turns;
+        const settingsMaxTurns = positiveIntegerOrNull(settings?.default_manager_max_turns);
+        if (settingsMaxTurns !== null)
+            managerMaxTurns = settingsMaxTurns;
     }
     catch { /* ignore */ }
     // Resolve the backend from THIS task's session state — jar batches are

@@ -406,6 +406,41 @@ test('jar-runner: ignores zero or negative default_manager_max_turns in settings
     }
 });
 
+test('jar-runner: ignores fractional default_manager_max_turns in settings', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const taskId = 'task-fractional-turns';
+        const taskDir = path.join(tmpRoot, 'jar', '2026-01-01', taskId);
+        fs.mkdirSync(taskDir, { recursive: true });
+        fs.writeFileSync(path.join(taskDir, 'meta.json'), JSON.stringify({
+            status: 'marinating',
+            repo_path: tmpRoot,
+        }, null, 2));
+
+        fs.writeFileSync(path.join(tmpRoot, 'pickle_settings.json'), JSON.stringify({
+            default_manager_max_turns: 0.25,
+        }));
+
+        const sessionDir = path.join(tmpRoot, 'sessions', taskId);
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: false,
+            step: 'prd',
+            iteration: 0,
+            working_dir: tmpRoot,
+            session_dir: sessionDir,
+        }, null, 2));
+
+        const result = run(tmpRoot);
+        const combined = result.stdout + result.stderr;
+
+        assert.match(combined, /MaxTurns[\s\S]*50/);
+        assert.ok(!combined.includes('0.25'), `Fractional max turns leaked into spawn path: ${combined.slice(0, 500)}`);
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
 test('jar-runner: recovers newer dead-writer settings tmp before launching task', () => {
     const tmpRoot = makeTmpRoot();
     try {
