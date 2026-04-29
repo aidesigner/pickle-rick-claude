@@ -63,8 +63,7 @@ async function runRemediatorForIteration(gateResult, sessionDir, workingDir, bac
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     fs.mkdirSync(gateDir, { recursive: true });
     const gateResultPath = path.join(gateDir, `gate_result_iter_${iso}.json`);
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    fs.writeFileSync(gateResultPath, JSON.stringify(gateResult, null, 2), 'utf-8');
+    writeStateFile(gateResultPath, gateResult);
     const briefLines = [];
     const briefCode = await spawnGateRemediatorMain({
         argv: ['--gate-result', gateResultPath, '--session-root', sessionDir, '--reason', 'per-iteration'],

@@ -5,7 +5,7 @@ import { runGate, filterByScope } from '../services/convergence-gate.js';
 import { spawnGateRemediatorMain } from './spawn-gate-remediator.js';
 import { readMicroverseState } from '../services/microverse-state.js';
 import { logActivity } from '../services/activity-logger.js';
-import { getExtensionRoot, isoCompactStamp, safeErrorMessage } from '../services/pickle-utils.js';
+import { getExtensionRoot, isoCompactStamp, safeErrorMessage, writeStateFile } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { buildWorkerInvocation, backendEnvOverrides, resolveBackend, } from '../services/backend-spawn.js';
 const VALID_SKILLS = new Set(['szechuan', 'anatomy-park']);
@@ -168,7 +168,7 @@ export async function finalizeGateMain(opts) {
         }
         const gateResultPath = path.join(gateDir, `gate_result_cycle_${iso()}.json`);
         const inScopeResult = { ...result, failures: inScope };
-        writeFile(gateResultPath, JSON.stringify(inScopeResult, null, 2));
+        writeStateFile(gateResultPath, inScopeResult);
         const briefLines = [];
         let briefCode;
         try {

@@ -275,4 +275,46 @@ describe('error conditions', () => {
 
         fs.rmSync(sessionRoot, { recursive: true, force: true });
     });
+
+    test('strict gate result handoff bypasses injected plain writer and reaches brief prep as JSON', async () => {
+        const sessionRoot = makeTmpDir();
+        const failure = makeFailure('/tmp/wd/src/foo.ts');
+        let gateRuns = 0;
+        let briefSawResult = false;
+
+        const code = await finalizeGateMain({
+            argv: [sessionRoot, 'anatomy-park'],
+            env: {},
+            readMicroverseStateFn: () => ({ status: 'iterating', allowed_paths: undefined }),
+            readStateForWorkingDirFn: () => ({ workingDir: '/tmp/wd', backend: 'claude' }),
+            loadSettingsFn: () => ({ szechuan_max_remediation_cycles: 2, anatomy_park_max_remediation_cycles: 2, remediator_timeout_s: 60 }),
+            mkdirSyncFn: (p) => fs.mkdirSync(p, { recursive: true }),
+            writeFileFn: (p, data) => {
+                assert.ok(!path.basename(p).startsWith('gate_result_cycle_'), 'gate-result handoff must not use the injectable plain writer');
+                fs.writeFileSync(p, data, 'utf-8');
+            },
+            logActivityFn: () => {},
+            isoFn: () => '2026-01-01T00-00-00Z',
+            runGateFn: async () => {
+                gateRuns += 1;
+                return gateRuns === 1 ? makeGateResult('red', [failure]) : makeGateResult('green');
+            },
+            spawnGateRemediatorMainFn: async (briefOpts) => {
+                const gateResultPath = briefOpts.argv[briefOpts.argv.indexOf('--gate-result') + 1];
+                const raw = JSON.parse(fs.readFileSync(gateResultPath, 'utf-8'));
+                assert.equal(raw.status, 'red');
+                assert.equal(raw.failures.length, 1);
+                briefSawResult = true;
+                briefOpts.stdout?.('BRIEF_PATH=/tmp/brief.md');
+                return 0;
+            },
+            spawnRemediatorFn: () => {},
+            stdout: () => {},
+            stderr: () => {},
+        });
+
+        assert.equal(code, 0);
+        assert.equal(briefSawResult, true);
+        fs.rmSync(sessionRoot, { recursive: true, force: true });
+    });
 });

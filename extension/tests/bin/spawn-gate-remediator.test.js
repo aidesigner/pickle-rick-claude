@@ -170,6 +170,37 @@ describe('spawn-gate-remediator', () => {
     fs.rmSync(tmpDir, { recursive: true });
   });
 
+  test('gate-result reader promotes newer dead tmp snapshot before brief generation', async () => {
+    const tmpDir = makeTmpDir();
+    const grPath = path.join(tmpDir, 'gate-result.json');
+    const tmpPath = `${grPath}.tmp.99999999`;
+    fs.writeFileSync(grPath, '{', 'utf-8');
+    fs.writeFileSync(tmpPath, JSON.stringify(makeGateResult()), 'utf-8');
+    const baseTime = new Date('2026-01-01T00:00:00Z');
+    const tmpTime = new Date('2026-01-01T00:00:10Z');
+    fs.utimesSync(grPath, baseTime, baseTime);
+    fs.utimesSync(tmpPath, tmpTime, tmpTime);
+
+    const sessionRoot = path.join(tmpDir, 'session');
+    fs.mkdirSync(sessionRoot, { recursive: true });
+
+    const stdoutLines = [];
+    const code = await spawnGateRemediatorMain({
+      argv: ['--gate-result', grPath, '--session-root', sessionRoot, '--reason', 'strict'],
+      isoOverride: '2026-01-01T00-00-00Z',
+      extensionClaudeMdContent: '## Trap Doors\nNone.',
+      stdout: (m) => stdoutLines.push(m),
+      stderr: () => {},
+    });
+
+    assert.equal(code, 0);
+    assert.ok(stdoutLines.some(l => l.startsWith('BRIEF_PATH=')), 'brief path must be emitted after tmp promotion');
+    assert.equal(JSON.parse(fs.readFileSync(grPath, 'utf-8')).status, 'red');
+    assert.equal(fs.existsSync(tmpPath), false, 'promoted tmp must be renamed over base gate result');
+
+    fs.rmSync(tmpDir, { recursive: true });
+  });
+
   test('gate-result with invalid status enum → exit 1', async () => {
     const tmpDir = makeTmpDir();
     const grPath = path.join(tmpDir, 'gate-result.json');

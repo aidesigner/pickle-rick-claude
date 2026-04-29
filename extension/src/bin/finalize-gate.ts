@@ -5,7 +5,7 @@ import { runGate, filterByScope, type RunGateOpts } from '../services/convergenc
 import { spawnGateRemediatorMain } from './spawn-gate-remediator.js';
 import { readMicroverseState } from '../services/microverse-state.js';
 import { logActivity } from '../services/activity-logger.js';
-import { getExtensionRoot, isoCompactStamp, safeErrorMessage } from '../services/pickle-utils.js';
+import { getExtensionRoot, isoCompactStamp, safeErrorMessage, writeStateFile } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import {
   buildWorkerInvocation,
@@ -232,7 +232,7 @@ export async function finalizeGateMain(opts: FinalizeGateOpts): Promise<number> 
 
     const gateResultPath = path.join(gateDir, `gate_result_cycle_${iso()}.json`);
     const inScopeResult: GateResult = { ...result, failures: inScope };
-    writeFile(gateResultPath, JSON.stringify(inScopeResult, null, 2));
+    writeStateFile(gateResultPath, inScopeResult);
 
     const briefLines: string[] = [];
     let briefCode: number;

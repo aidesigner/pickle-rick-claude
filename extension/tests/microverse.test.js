@@ -129,6 +129,14 @@ test('compareMetric handles zero tolerance (exact match required)', () => {
     assert.equal(compareMetric(49, 50, 0), 'regressed');
 });
 
+test('per-iteration gate remediation publishes gate result via atomic state writer', () => {
+    const srcPath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../src/bin/microverse-runner.ts');
+    const src = fs.readFileSync(srcPath, 'utf-8');
+    assert.match(src, /const gateResultPath = path\.join\(gateDir, `gate_result_iter_/);
+    assert.match(src, /writeStateFile\(gateResultPath, gateResult\)/);
+    assert.doesNotMatch(src, /fs\.writeFileSync\(gateResultPath/);
+});
+
 // --- direction='lower' tests ---
 
 test('compareMetric direction=lower: score drop below tolerance → improved', () => {

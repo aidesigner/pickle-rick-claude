@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { isoCompactStamp, safeErrorMessage } from '../services/pickle-utils.js';
+import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import type { GateResult, GateFailure } from '../types/index.js';
 
 const USAGE = 'Usage: spawn-gate-remediator --gate-result <path> --session-root <path> --reason strict|per-iteration';
@@ -155,6 +156,7 @@ export async function spawnGateRemediatorMain(opts: SpawnGateRemediatorOpts): Pr
     stderr = (msg: string) => process.stderr.write(msg + '\n'),
   } = opts;
 
+  const hasInjectedReadFile = typeof opts.readFileFn === 'function';
   const readFile = opts.readFileFn ?? ((p: string, enc: 'utf-8') => fs.readFileSync(p, enc));
   const writeFile = opts.writeFileFn ?? ((p: string, data: string, enc: 'utf-8') => fs.writeFileSync(p, data, enc));
   const mkdirSync = opts.mkdirSyncFn ?? ((p: string, o: { recursive: boolean }) => fs.mkdirSync(p, o));
@@ -179,7 +181,12 @@ export async function spawnGateRemediatorMain(opts: SpawnGateRemediatorOpts): Pr
 
   let gateResult: GateResult;
   try {
-    const raw = JSON.parse(readFile(gateResultPath, 'utf-8'));
+    const raw = !hasInjectedReadFile
+      ? readRecoverableJsonObject(gateResultPath)
+      : JSON.parse(readFile(gateResultPath, 'utf-8'));
+    if (raw === null) {
+      throw new Error('gate-result JSON is missing, malformed, or not an object');
+    }
     if (!isGateResult(raw)) {
       stderr(`gate-result JSON at ${gateResultPath} is not a valid GateResult`);
       return 1;

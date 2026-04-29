@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { isoCompactStamp, safeErrorMessage } from '../services/pickle-utils.js';
+import { readRecoverableJsonObject } from '../services/microverse-state.js';
 const USAGE = 'Usage: spawn-gate-remediator --gate-result <path> --session-root <path> --reason strict|per-iteration';
 const LOCKFILE_NAME = 'remediator.lockfile';
 const MAX_FILE_BYTES = 50_000;
@@ -111,6 +112,7 @@ The abort file must contain: reason, affected file:line, what fix was requested,
 // eslint-disable-next-line complexity, max-lines-per-function -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 export async function spawnGateRemediatorMain(opts) {
     const { argv, isoOverride, extensionClaudeMdContent, stdout = (msg) => process.stdout.write(msg + '\n'), stderr = (msg) => process.stderr.write(msg + '\n'), } = opts;
+    const hasInjectedReadFile = typeof opts.readFileFn === 'function';
     const readFile = opts.readFileFn ?? ((p, enc) => fs.readFileSync(p, enc));
     const writeFile = opts.writeFileFn ?? ((p, data, enc) => fs.writeFileSync(p, data, enc));
     const mkdirSync = opts.mkdirSyncFn ?? ((p, o) => fs.mkdirSync(p, o));
@@ -131,7 +133,12 @@ export async function spawnGateRemediatorMain(opts) {
     }
     let gateResult;
     try {
-        const raw = JSON.parse(readFile(gateResultPath, 'utf-8'));
+        const raw = !hasInjectedReadFile
+            ? readRecoverableJsonObject(gateResultPath)
+            : JSON.parse(readFile(gateResultPath, 'utf-8'));
+        if (raw === null) {
+            throw new Error('gate-result JSON is missing, malformed, or not an object');
+        }
         if (!isGateResult(raw)) {
             stderr(`gate-result JSON at ${gateResultPath} is not a valid GateResult`);
             return 1;
