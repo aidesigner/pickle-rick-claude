@@ -28,6 +28,11 @@ function makeInactiveSession() {
     return dir;
 }
 
+function makeExecutableNodeScript(filePath, source) {
+    fs.writeFileSync(filePath, `#!/usr/bin/env node\n${source}`);
+    fs.chmodSync(filePath, 0o755);
+}
+
 test('IterationOutcome: inactive early-return produces all four fields', async () => {
     const dir = makeInactiveSession();
     try {
@@ -123,6 +128,57 @@ test('IterationOutcome: runIteration honors a higher-iteration inactive orphan t
         assert.equal(outcome.exitCode, null);
         assert.equal(outcome.wallSeconds, 0);
     } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('IterationOutcome: fractional mux max-turn settings fall back before spawning manager', async () => {
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-outcome-turns-')));
+    const oldPath = process.env.PATH;
+    const oldBackend = process.env.PICKLE_BACKEND;
+    try {
+        fs.mkdirSync(path.join(dir, 'templates'), { recursive: true });
+        fs.writeFileSync(path.join(dir, 'templates', 'pickle.md'), '# Pickle\n\n$ARGUMENTS\n');
+        fs.writeFileSync(path.join(dir, 'pickle_settings.json'), JSON.stringify({
+            default_tmux_max_turns: 1.5,
+            default_manager_max_turns: 2.25,
+        }));
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({
+            active: true,
+            step: 'implement',
+            iteration: 0,
+            max_iterations: 5,
+            worker_timeout_seconds: 1200,
+            original_prompt: 'test fractional max turns',
+            working_dir: dir,
+            backend: 'claude',
+        }));
+
+        const fakeBin = path.join(dir, 'fake-bin');
+        fs.mkdirSync(fakeBin, { recursive: true });
+        const argsPath = path.join(dir, 'claude-args.json');
+        makeExecutableNodeScript(path.join(fakeBin, 'claude'), `
+const fs = require('node:fs');
+fs.writeFileSync(process.env.CLAUDE_ARGS_PATH, JSON.stringify(process.argv.slice(2)));
+console.log('<promise>TASK_COMPLETED</promise>');
+`);
+        process.env.PATH = `${fakeBin}${path.delimiter}${oldPath ?? ''}`;
+        process.env.PICKLE_BACKEND = 'claude';
+        process.env.CLAUDE_ARGS_PATH = argsPath;
+
+        const outcome = await runIteration(dir, 1, dir, '');
+        assert.equal(outcome.exitCode, 0);
+
+        const args = JSON.parse(fs.readFileSync(argsPath, 'utf-8'));
+        const idx = args.indexOf('--max-turns');
+        assert.notEqual(idx, -1, `expected --max-turns in ${JSON.stringify(args)}`);
+        assert.equal(args[idx + 1], String(Defaults.MANAGER_MAX_TURNS));
+    } finally {
+        if (oldPath === undefined) delete process.env.PATH;
+        else process.env.PATH = oldPath;
+        if (oldBackend === undefined) delete process.env.PICKLE_BACKEND;
+        else process.env.PICKLE_BACKEND = oldBackend;
+        delete process.env.CLAUDE_ARGS_PATH;
         fs.rmSync(dir, { recursive: true, force: true });
     }
 });

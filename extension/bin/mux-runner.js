@@ -355,6 +355,10 @@ function loadSettingsBag(extensionRoot, site) {
     }
     return {};
 }
+function positiveIntegerOrNull(value) {
+    const parsed = Number(value);
+    return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
 /**
  * Transitions a session from ticket-execution mode to Meeseeks review mode.
  * Pure function — returns a new state object without side effects.
@@ -623,12 +627,9 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, mees
         }
     }
     let maxTurns = Defaults.MANAGER_MAX_TURNS;
-    if (typeof settings.default_tmux_max_turns === 'number' && settings.default_tmux_max_turns > 0) {
-        maxTurns = settings.default_tmux_max_turns;
-    }
-    else if (typeof settings.default_manager_max_turns === 'number' && settings.default_manager_max_turns > 0) {
-        maxTurns = settings.default_manager_max_turns;
-    }
+    maxTurns = positiveIntegerOrNull(settings.default_tmux_max_turns)
+        ?? positiveIntegerOrNull(settings.default_manager_max_turns)
+        ?? maxTurns;
     const logFile = path.join(sessionDir, `tmux_iteration_${iterationNum}.log`);
     const backend = resolveBackend(state);
     // meeseeks review passes run on a cheaper model (default: sonnet on claude).
