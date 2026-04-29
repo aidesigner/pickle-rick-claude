@@ -148,6 +148,60 @@ test('cancelSession: removes cwd entry from sessions map after cancel', () => {
     }
 });
 
+test('cancelSession: promotes newer dead current_sessions tmp before removing cwd entry', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const cwdDir = path.join(tmpRoot, 'repo');
+        const otherCwd = path.join(tmpRoot, 'other-repo');
+        const sessionDir = path.join(tmpRoot, 'sessions', 'cancelled-session');
+        const otherSessionDir = path.join(tmpRoot, 'sessions', 'other-session');
+        fs.mkdirSync(cwdDir, { recursive: true });
+        fs.mkdirSync(otherCwd, { recursive: true });
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.mkdirSync(otherSessionDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({
+                active: true,
+                working_dir: cwdDir,
+                session_dir: sessionDir,
+                step: 'implement',
+                iteration: 2,
+                original_prompt: 'cancel recovered map session',
+            }, null, 2)
+        );
+        fs.writeFileSync(
+            path.join(otherSessionDir, 'state.json'),
+            JSON.stringify({
+                active: true,
+                working_dir: otherCwd,
+                session_dir: otherSessionDir,
+                step: 'research',
+                iteration: 1,
+                original_prompt: 'preserve other session',
+            }, null, 2)
+        );
+        const mapPath = path.join(tmpRoot, 'current_sessions.json');
+        fs.writeFileSync(mapPath, JSON.stringify({ [cwdDir]: sessionDir }, null, 2));
+        const tmpMapPath = `${mapPath}.tmp.99999999`;
+        fs.writeFileSync(tmpMapPath, JSON.stringify({
+            [cwdDir]: sessionDir,
+            [otherCwd]: otherSessionDir,
+        }, null, 2));
+        const newer = new Date(Date.now() + 1000);
+        fs.utimesSync(tmpMapPath, newer, newer);
+
+        runCancelSubprocess(tmpRoot, cwdDir);
+
+        const map = readSessionsMap(tmpRoot);
+        assert.equal(map[cwdDir], undefined, 'cancelled cwd must be removed from recovered map');
+        assert.equal(map[otherCwd], otherSessionDir, 'newer tmp map entries must be preserved');
+        assert.equal(fs.existsSync(tmpMapPath), false, 'dead tmp map should be promoted before rewrite');
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
 // --- Already inactive: refuse to masquerade as a live loop ---
 
 test('cancelSession: already-inactive mapped session reports no active loop and stays inactive', () => {

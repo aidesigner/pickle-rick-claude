@@ -4,6 +4,7 @@ import * as path from 'path';
 import { printMinimalPanel, getDataRoot, withRetryLock, findSessionPathForCwd, safeErrorMessage } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { LockError } from '../types/index.js';
+import { readRecoverableJsonObject } from '../services/recoverable-json.js';
 
 const sm = new StateManager();
 
@@ -49,7 +50,7 @@ export function cancelSession(cwd: string) {
       // Remove stale entry from the sessions map
       let freshMap: Record<string, unknown> = {};
       try {
-        freshMap = JSON.parse(fs.readFileSync(SESSIONS_MAP, 'utf-8'));
+        freshMap = (readRecoverableJsonObject(SESSIONS_MAP) || {}) as Record<string, unknown>;
       } catch { /* ignore */ }
       delete freshMap[cwd];
       const tmpMap = SESSIONS_MAP + `.tmp.${process.pid}`;
