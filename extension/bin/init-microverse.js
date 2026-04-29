@@ -14,7 +14,12 @@ function parseFlag(args, flag) {
     const idx = args.indexOf(flag);
     if (idx === -1 || idx + 1 >= args.length)
         return undefined;
-    return args[idx + 1];
+    const value = args[idx + 1];
+    if (!value || value.startsWith('--')) {
+        console.error(`${flag} requires a value`);
+        process.exit(1);
+    }
+    return value;
 }
 function parseConvergenceMode(raw) {
     if (raw == null)

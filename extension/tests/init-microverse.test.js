@@ -115,6 +115,19 @@ describe('init-microverse convergence flags', () => {
     assert.ok(result.stderr.includes('convergence_file must be a bare filename'));
   });
 
+  test('--convergence-file without a value exits before swallowing the next flag', () => {
+    const dir = makeTempDir();
+    try {
+      const metricJson = JSON.stringify({ type: 'none', description: 'n/a', validation: 'n/a', timeout_seconds: 60, tolerance: 0, direction: 'lower' });
+      const result = run([dir, '/some/target', '--convergence-mode', 'worker', '--convergence-file', '--metric-json', metricJson], true);
+      assert.equal(result.code, 1);
+      assert.ok(result.stderr.includes('--convergence-file requires a value'));
+      assert.equal(fs.existsSync(path.join(dir, 'microverse.json')), false);
+    } finally {
+      fs.rmSync(dir, { recursive: true });
+    }
+  });
+
   test('type: none without --convergence-mode worker exits with error', () => {
     const metricJson = JSON.stringify({ type: 'none', description: 'n/a', validation: 'n/a', timeout_seconds: 60, tolerance: 0, direction: 'lower' });
     const result = run([makeTempDir(), '/some/target', '--metric-json', metricJson], true);
