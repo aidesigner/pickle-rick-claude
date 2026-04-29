@@ -236,6 +236,48 @@ test('spawn-refinement-team: reads refinement settings from pickle_settings.json
     }
 });
 
+test('spawn-refinement-team: promotes newer dead tmp refinement settings before launch', () => {
+    const tmp = makeTmpDir();
+    const fakeExt = makeTmpDir('pickle-ext-');
+    const fakeBin = makeTmpDir('fake-bin-');
+    try {
+        const prd = path.join(tmp, 'prd.md');
+        fs.writeFileSync(prd, '# PRD\nContent');
+
+        const settingsPath = path.join(fakeExt, 'pickle_settings.json');
+        fs.writeFileSync(settingsPath, JSON.stringify({
+            default_refinement_cycles: 1,
+            default_refinement_max_turns: 10,
+            default_worker_timeout_seconds: 300,
+        }));
+        const tmpSettingsPath = `${settingsPath}.tmp.999999`;
+        fs.writeFileSync(tmpSettingsPath, JSON.stringify({
+            default_refinement_cycles: 2,
+            default_refinement_max_turns: 55,
+            default_worker_timeout_seconds: 777,
+        }));
+        const newer = new Date(Date.now() + 10_000);
+        fs.utimesSync(tmpSettingsPath, newer, newer);
+
+        fs.writeFileSync(path.join(fakeBin, 'claude'), '#!/bin/sh\nexit 1\n');
+        fs.chmodSync(path.join(fakeBin, 'claude'), 0o755);
+
+        const result = run(
+            ['--prd', prd, '--session-dir', tmp],
+            { EXTENSION_DIR: fakeExt, PATH: `${fakeBin}:${process.env.PATH}` }
+        );
+        const combined = result.stdout + result.stderr;
+        assert.ok(combined.includes('55/worker'), `Panel should show recovered max turns, got: ${combined.slice(0, 500)}`);
+        assert.ok(combined.includes('777s each'), `Panel should show recovered timeout, got: ${combined.slice(0, 500)}`);
+        assert.equal(JSON.parse(fs.readFileSync(settingsPath, 'utf-8')).default_refinement_max_turns, 55);
+        assert.equal(fs.existsSync(tmpSettingsPath), false, 'dead tmp settings should be promoted');
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+        fs.rmSync(fakeExt, { recursive: true, force: true });
+        fs.rmSync(fakeBin, { recursive: true, force: true });
+    }
+});
+
 // --- Timeout from state.json ---
 
 test('spawn-refinement-team: reads worker_timeout_seconds from state.json', () => {

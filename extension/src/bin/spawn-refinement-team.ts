@@ -13,6 +13,7 @@ import {
 import { StateManager } from '../services/state-manager.js';
 import { buildWorkerInvocation, SpawnInvocation } from '../services/backend-spawn.js';
 import { Backend, PromiseTokens, hasToken, Defaults } from '../types/index.js';
+import { readRecoverableJsonObject } from '../services/microverse-state.js';
 
 // PRD refinement is planning, not implementation. Codex is reserved for
 // implementation loops only — if the parent session opted into codex, we
@@ -487,7 +488,8 @@ export function loadRefinementSettings(settingsPath = path.join(getExtensionRoot
   if (!fs.existsSync(settingsPath)) return settings;
 
   try {
-    const loaded = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+    const loaded = readRecoverableJsonObject(settingsPath) as Record<string, unknown> | null;
+    if (!loaded) return settings;
     if (typeof loaded.default_refinement_cycles === 'number' && loaded.default_refinement_cycles > 0)
       settings.defaultCycles = loaded.default_refinement_cycles;
     if (typeof loaded.default_refinement_max_turns === 'number' && loaded.default_refinement_max_turns > 0)
