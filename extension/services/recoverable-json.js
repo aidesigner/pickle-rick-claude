@@ -35,9 +35,18 @@ function parseDeadTmp(tmpPath, baseMtimeMs) {
         catch { /* ignore invalid tmp cleanup failure */ }
         return null;
     }
-    const mtimeMs = fs.statSync(tmpPath).mtimeMs;
+    let mtimeMs;
+    try {
+        mtimeMs = fs.statSync(tmpPath).mtimeMs;
+    }
+    catch {
+        return null;
+    }
     if (mtimeMs <= baseMtimeMs) {
-        fs.unlinkSync(tmpPath);
+        try {
+            fs.unlinkSync(tmpPath);
+        }
+        catch { /* ignore stale tmp cleanup failure */ }
         return null;
     }
     return { parsed, mtimeMs };
@@ -50,7 +59,13 @@ export function readRecoverableJsonObject(filePath) {
     if (!entries)
         return base;
     const tmpPattern = new RegExp(`^${baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.tmp\\.(\\d+)(?:\\..+)?$`);
-    const baseMtimeMs = fs.existsSync(filePath) ? fs.statSync(filePath).mtimeMs : 0;
+    let baseMtimeMs = 0;
+    try {
+        baseMtimeMs = fs.existsSync(filePath) ? fs.statSync(filePath).mtimeMs : 0;
+    }
+    catch {
+        baseMtimeMs = 0;
+    }
     let winner = null;
     for (const entry of entries) {
         const match = entry.match(tmpPattern);

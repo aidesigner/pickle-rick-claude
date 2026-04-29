@@ -8,6 +8,7 @@ import {
   createMicroverseState,
   writeMicroverseState,
   readMicroverseState,
+  readRecoverableJsonObject,
 } from '../../services/microverse-state.js';
 
 const READ_MICROVERSE_BIN = path.resolve('bin/read-microverse.js');
@@ -93,5 +94,28 @@ test('read-microverse CLI promotes dead writer tmp before reading iteration_regr
     assert.equal(readMicroverseState(dir)?.iteration_regressions, 4);
   } finally {
     fs.rmSync(dir, { recursive: true });
+  }
+});
+
+test('readRecoverableJsonObject ignores stale tmp cleanup failures and returns the base object', () => {
+  const dir = makeTempDir();
+  const target = path.join(dir, 'cache.json');
+  const staleTmp = `${target}.tmp.999999`;
+  try {
+    fs.writeFileSync(target, JSON.stringify({ value: 'base' }));
+    fs.writeFileSync(staleTmp, JSON.stringify({ value: 'stale-tmp' }));
+    const oldTime = new Date(Date.now() - 10_000);
+    const newTime = new Date();
+    fs.utimesSync(staleTmp, oldTime, oldTime);
+    fs.utimesSync(target, newTime, newTime);
+    fs.chmodSync(dir, 0o555);
+
+    const recovered = readRecoverableJsonObject(target);
+
+    assert.deepEqual(recovered, { value: 'base' });
+    assert.equal(fs.existsSync(staleTmp), true, 'unremovable stale tmp should be left for a later cleanup');
+  } finally {
+    try { fs.chmodSync(dir, 0o755); } catch { /* ignore cleanup chmod failure */ }
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
