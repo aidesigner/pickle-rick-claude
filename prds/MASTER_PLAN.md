@@ -136,24 +136,104 @@ Pickle-pipeline was running `pickle → anatomy-park → szechuan-sauce`. Phase 
 
 ---
 
-## 3. Current state (verified on disk, 2026-04-29)
+## 2.2 Today's session — 2026-04-29 PM (Citadel + Hardening Bundle decomposed + LAUNCHED)
+
+**Headline**: refinement of `prds/citadel-hardening-bundle.md` completed (3 cycles × 3 analysts, all_success). Decomposed into **75 tickets** (1 parent + 74 children, orders 5..840). Pipeline launched in tmux session `pipeline-1204204c` on `--backend codex`. NEW-T3 already shipped at `585f71c` (anchor re-grounding); B-T1 (trap-door catalog hygiene) in flight.
+
+### Refinement output
+
+| Item | Value |
+|---|---|
+| Cycles requested / completed | 3 / 3 |
+| Analyst roles | requirements / codebase / risk-scope |
+| `refinement_manifest.json.all_success` | true |
+| Refinement artifacts | `<SESSION_ROOT>/refinement/analysis_{requirements,codebase,risk-scope}.md` |
+| Refinement summary | `<SESSION_ROOT>/refinement_summary.md` |
+
+### Decisions locked
+
+| Decision | Detail |
+|---|---|
+| **BMAD scope** | **Option B (in-scope)** — full BMAD-T01..T28 appendix included |
+| **Backend** | `codex` for implementation + review (refinement was claude per skill contract) |
+| **CAP bump** | `CODEX_MANAGER_RELAUNCH_CAP` raised 5 → 10 (committed `932ac54`); deployed at `~/.claude/pickle-rick/extension/types/index.js:61` |
+
+### Six refinement-derived corrections (folded into ticket queue)
+
+1. **Drop proposed A-T5** — would violate AC-WPR-04's "exactly once" rule. 3 existing `ensureMonitorWindow` call sites (`pipeline-runner.ts:1001`, `mux-runner.ts:1542`, `microverse-runner.ts:1512`) suffice.
+2. **AC-WPR-07 mode names** — source PRD says `'refine'`; `MonitorMode` union actually says `'refinement'`. Tickets must use `'refinement'`.
+3. **B-T2 must drive only public API** — `parseDeadTmp` / `parseJsonObjectFile` / `listEntries` are module-private. Drive `readRecoverableJsonObject` only.
+4. **Sequencing fix** — B-T1 (trap-door cleanup) MUST land before C-T0 (which amends the same trap-door entry). Ordered B-T1=10, C-T0=200.
+5. **AC-BUNDLE-03 cap scope** — `codex_manager_relaunch_count` cap is per-state-file, including child `microverse_*/state.json`.
+6. **B-T3 ordering** — order=20, gates citadel's audit-subskill spawn.
+
+### Six NEW refinement-derived tickets (NEW-T1..T6)
+
+| ID | Order | Title | Implements |
+|---|---|---|---|
+| NEW-T3 | 5 | Anchor re-grounding orchestrator step | AC-BUNDLE-15 |
+| NEW-T5 | 30 | codex-required frontmatter check in pipeline-runner | AC-BUNDLE-18 |
+| NEW-T1 | 250 | citadel-cross-phase-fixture authoring | AC-BUNDLE-02 |
+| NEW-T2 | 300 | v2→v3 state migration rollback path | AC-BUNDLE-16 |
+| NEW-T4 | 350 | Phase-ordered AC firing enforcement | AC-BUNDLE-15 |
+| NEW-T6 | 400 | Linear ticket integration (per-ticket lifecycle) | AC-BUNDLE-19 |
+
+### Five new bundle-level ACs (AC-BUNDLE-15..19)
+
+- **AC-BUNDLE-15** — ACs evaluated in 4 explicit phases (`pre-refinement` / `post-refinement` / `per-phase` / `bundle-end`); `evaluation_phase` field carried per-AC; phase-N failure halts before phase-N+1.
+- **AC-BUNDLE-16** — v3-on-v2 incompatibility produces recoverable, operator-actionable error.
+- **AC-BUNDLE-17** — no trap-door entry exceeds 1500 chars; every state.json field named in exactly one INVARIANT.
+- **AC-BUNDLE-18** — `pipeline-runner` reads bundle PRD frontmatter `backend: codex-required` at startup; non-codex invocation rejected with actionable error.
+- **AC-BUNDLE-19** — per-ticket Linear creation/transitions via Linear MCP; bundle-end emits Linear comments linking session log.
+
+### Pipeline launch (commands of record)
+
+```bash
+SESSION_ROOT=/Users/gregorydickson/.local/share/pickle-rick/sessions/2026-04-29-1204204c
+node ~/.claude/pickle-rick/extension/bin/setup.js \
+  --tmux --resume "$SESSION_ROOT" \
+  --max-iterations 500 --max-time 720 --worker-timeout 1200 \
+  --backend codex
+# pipeline.json written: phases [pickle, anatomy-park, szechuan-sauce], stall limits 3/5, max iters 100/50
+tmux new-session -d -s pipeline-1204204c -c "$SESSION_ROOT"
+tmux send-keys -t pipeline-1204204c "node ~/.claude/pickle-rick/extension/bin/pipeline-runner.js $SESSION_ROOT" C-m
+```
+
+### Live state at end of session
+
+| Field | Value |
+|---|---|
+| tmux session | `pipeline-1204204c` (2 windows: pipeline-runner + 4-pane monitor) |
+| Backend | codex |
+| Max iterations | 500 |
+| Max time | 720 min |
+| Step | research |
+| First ticket | `74d2bb64` (NEW-T3 — Done, commit `585f71c`) |
+| Current ticket | `9dd914da` (B-T1 — In Progress) |
+| Watcher panes | all 4 alive (`pane_current_command = node`) |
+
+---
+
+## 3. Current state (verified on disk, 2026-04-29 PM)
 
 | Item | Value |
 |---|---|
 | God-fn epic tickets | **T0–T19 all Done** (per §2.1) — 16 implementation + 4 hardening shipped on codex backend |
-| Working tree | 2 untracked PRD drafts: `deepseek-integration.md`, `large-tier-stall-recovery.md`. `forgecode-pickle-port.md` deleted (obsolete — DeepSeek PRD supersedes the third-backend story). `bmad-inspired-hardening.md` deleted (merged into `citadel.md`). No code-level dirt. |
-| Test suite | **3076/3076 pass** (verified 2026-04-29; 4 timing-sensitive tests bumped: scope-resolver-import-walks `HANG_TIMEOUT_MS` 750ms→2500ms, plumbus-frame-analyzer-hang-guard slack 10s→30s) |
-| `eslint src/ --max-warnings=-1` | 0 errors, 19 advisory warnings |
-| `tsc --noEmit` | clean |
-| Latest release (prose) | **v1.59.1** (codex isolation fix; the unblocker for the god-fn epic resume) |
-| Anatomy-park follow-ups | 59 trap-door fixes landed overnight; 3 small follow-ups queued in `prds/anatomy-park-followups.md` |
-| Phase-2 epic | 27 god-functions across 24 files queued in `prds/god-functions-remediation-phase-2.md` (T14 ratchet exposure) |
+| **Active pipeline** | **`pipeline-1204204c` (Citadel + Hardening Bundle, 75 tickets, codex backend)** — 1/74 children done so far (NEW-T3 at `585f71c`); B-T1 in flight |
+| Working tree | `extension/CLAUDE.md` modified by in-flight B-T1 (trap-door catalog hygiene). Untracked PRD drafts: `deepseek-integration.md`, `large-tier-stall-recovery.md`. |
+| Test suite | **3076/3076 pass** at session start (will drift during pipeline run; gate verifies at finalize-time per phase) |
+| `eslint src/ --max-warnings=-1` | 0 errors at session start |
+| `tsc --noEmit` | clean at session start |
+| Latest release (prose) | **v1.59.1** (codex isolation fix) |
+| CAP=10 deploy | `extension/src/types/index.ts:160` → 10 (committed `932ac54`, deployed at `~/.claude/pickle-rick/extension/types/index.js:61`). Mitigates RB6 (long-codex-run cap exhaustion). |
 
 ---
 
 ## 4. Resume strategy
 
-Original resume strategies (Options A–D) are obsolete; T0–T19 shipped on codex backend per §2.1.
+Original god-fn resume strategies (Options A–D) are obsolete; T0–T19 shipped on codex per §2.1.
+
+For the **active Citadel + Hardening Bundle pipeline**: if `pipeline-1204204c` exits before completion, resume with `node ~/.claude/pickle-rick/extension/bin/pipeline-runner.js $SESSION_ROOT` (the runner is idempotent on `state.step` / `state.current_ticket`). Watcher pane recovery during phase transitions is delivered by Section A tickets (A-T1..A-T4) earlier in the queue.
 
 ---
 
@@ -187,6 +267,48 @@ All tickets shipped via the 2026-04-28/29 codex run, see §2.1.
 Total minimum new tests from T1–T14: **49**. Hardening tickets added more as findings demanded.
 
 Per-ticket details: `~/.local/share/pickle-rick/sessions/2026-04-25-9152e64b/<hash>/linear_ticket_<hash>.md`.
+
+---
+
+## 5.1 Citadel + Hardening Bundle ticket queue (75 tickets, in execution order)
+
+Session: `~/.local/share/pickle-rick/sessions/2026-04-29-1204204c/`. Full per-ticket detail: `<SESSION_ROOT>/decomposition_manifest.json` (canonical) and `<SESSION_ROOT>/<hash>/linear_ticket_<hash>.md` per ticket. Compact format: each child ticket is ~30 lines and points to its source PRD §section; worker reads source at execution time.
+
+| Section | Range | Count | Source PRD |
+|---|---|---|---|
+| Head-of-queue (NEW-T3, B-T1, B-T3, NEW-T5) | 5..30 | 4 | mixed |
+| Section A — watcher-pane-recovery (T1..T4) | 40..70 | 4 | `prds/watcher-pane-recovery.md` |
+| Section B — anatomy-park-followups (B-T2 only here) | 80 | 1 | `prds/anatomy-park-followups.md` |
+| Section C core — citadel (T0..T17, T10.5/.7/.8/.9, T11.5/.7) | 200..320 | 19 | `prds/citadel.md` §Tasks |
+| NEW-T1, NEW-T2 (slot into core sequence) | 250, 300 | 2 | refined |
+| NEW-T4 | 350 | 1 | refined |
+| Section C cross-skill (T20, T13.5, T21, T22, T23) + NEW-T6 | 370..420 | 6 | `prds/citadel.md` §Cross-Skill Tasks |
+| Section D — BMAD appendix (BMAD-T01..T28) | 430..700 | 28 | `prds/citadel.md` §Appendix |
+| Wiring (W) | 800 | 1 | `prds/citadel.md` §How to Ship This |
+| Hardening (H1..H4) | 810..840 | 4 | `prds/citadel.md` §Implementation Guidance |
+| **Implementation total** | | **66** | |
+| Wiring + Hardening | | 5 | |
+| Parent + 3 head NEW already counted above (de-dup) | | — | |
+| **Grand total** | | **75** (1 parent + 74 children) | |
+
+### First 10 tickets (head of queue, ordered)
+
+| Order | Key | ID | Title | Status |
+|---|---|---|---|---|
+| 5 | NEW-T3 | `74d2bb64` | Anchor re-grounding orchestrator step | **Done** (`585f71c`) |
+| 10 | B-T1 | `9dd914da` | Trap-door catalog hygiene | **In Progress** |
+| 20 | B-T3 | `02f70776` | microverse-runner.ts codex-manager relaunch wiring | Todo |
+| 30 | NEW-T5 | `a1f185d9` | codex-required frontmatter check | Todo |
+| 40 | A-T1 | `34966885` | Pane-level dead-watcher detection + respawn helper | Todo |
+| 50 | A-T2 | (see manifest) | Wire restartDeadWatcherPanes into ensureMonitorWindow | Todo |
+| 60 | A-T3 | (see manifest) | Regression test ensure-monitor-window.test.js | Todo |
+| 70 | A-T4 | (see manifest) | Trap-door entry for restartDeadWatcherPanes | Todo |
+| 80 | B-T2 | (see manifest) | extension/tests/recoverable-json.test.js (≥6 cases) | Todo |
+| 200 | C-T0 | (see manifest) | Citadel: Session-state schema migration | Todo |
+
+### Bundle-level acceptance gates (AC-BUNDLE-01..04 + 15..19)
+
+Verified at finalize-time. Decomposition-time check satisfied for **AC-BUNDLE-04** (exactly 1 ticket implements `evaluateCodexManagerRelaunch` = B-T3); the rest fire during pipeline execution.
 
 ---
 
@@ -233,11 +355,35 @@ Codex backend exhibits a consistent class of failures we hit five times today. E
 ## 9. Quick reference
 
 ```
+=== Active pipeline (2026-04-29 PM) — Citadel + Hardening Bundle ===
+tmux session:            pipeline-1204204c
+Session root:            ~/.local/share/pickle-rick/sessions/2026-04-29-1204204c/
+Bundle PRD (committed):  prds/citadel-hardening-bundle.md (SHA dbbf476)
+Refinement manifest:     $SESSION_ROOT/refinement_manifest.json (all_success: true)
+Refinement summary:      $SESSION_ROOT/refinement_summary.md
+Refined PRD (session):   $SESSION_ROOT/prd_refined.md
+Decomposition manifest:  $SESSION_ROOT/decomposition_manifest.json (75 tickets)
+Per-ticket files:        $SESSION_ROOT/<hash>/linear_ticket_<hash>.md
+Pipeline config:         $SESSION_ROOT/pipeline.json (codex backend)
+First ticket (Done):     74d2bb64 (NEW-T3, commit 585f71c)
+Current ticket:          9dd914da (B-T1, In Progress)
+
+=== God-fn epic (shipped) ===
 Pipeline session dir:    ~/.local/share/pickle-rick/sessions/2026-04-25-9152e64b/   (T0/T1 era; superseded)
 Note:                    the post-T19 anatomy-park overnight run was a separate session — see §2.1
 Refined PRD (committed): prds/god-functions-remediation.md (SHA 1658d81)
-Refinement summary:      $SESSION_ROOT/refinement_summary.md
-Per-ticket files:        $SESSION_ROOT/<hash>/linear_ticket_<hash>.md
-Pipeline config:         $SESSION_ROOT/pipeline.json
+
+=== Releases ===
 Latest release:          v1.59.1 — https://github.com/gregorydickson/pickle-rick-claude/releases/tag/v1.59.1
+```
+
+### Live monitoring
+
+```bash
+tmux attach -t pipeline-1204204c                         # full-screen monitor
+tail -f $SESSION_ROOT/tmux-runner.log                    # orchestrator log
+ls -t $SESSION_ROOT/tmux_iteration_*.log | head -1 | xargs tail -f   # latest iteration
+git -C /Users/gregorydickson/loanlight/pickle-rick/pickle-rick-claude log --since='2026-04-29 14:33' --oneline   # commits since launch
+node ~/.claude/pickle-rick/extension/bin/metrics.js      # token/commit/LOC report
+tmux kill-session -t pipeline-1204204c                   # graceful shutdown (active=false → watchers self-terminate)
 ```
