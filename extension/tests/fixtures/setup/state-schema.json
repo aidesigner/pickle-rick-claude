@@ -1,5 +1,5 @@
 {
-  "source": "extension/src/bin/setup.ts:292-319",
+  "source": "extension/src/bin/setup.ts:createInitialState",
   "fields_in_order": [
     "active",
     "working_dir",
@@ -19,9 +19,11 @@
     "min_iterations",
     "command_template",
     "chain_meeseeks",
+    "schema_version",
     "backend",
     "teams_mode",
-    "max_parallel"
+    "max_parallel",
+    "start_commit"
   ],
   "sample_state": {
     "active": true,
@@ -42,8 +44,10 @@
     "min_iterations": 0,
     "command_template": "pickle.md",
     "chain_meeseeks": false,
+    "schema_version": 3,
     "backend": "claude",
     "teams_mode": false,
-    "max_parallel": 5
+    "max_parallel": 5,
+    "start_commit": "abc123"
   }
 }

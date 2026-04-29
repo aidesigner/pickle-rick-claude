@@ -16,6 +16,7 @@ interface LookupState {
   active?: unknown;
   working_dir?: unknown;
   started_at?: unknown;
+  state_mtime_ms?: number;
 }
 
 interface StateFileCandidate {
@@ -27,28 +28,29 @@ const MAX_FUTURE_RECENCY_DRIFT_MS = 5 * 60 * 1000;
 
 function readLookupState(stateFile: string): LookupState | null {
   try {
+    let stateMtimeMs = 0;
+    try { stateMtimeMs = fs.statSync(stateFile).mtimeMs; } catch { /* sm.read below handles missing file */ }
     const state = sm.read(stateFile);
-    return { active: state.active, working_dir: state.working_dir, started_at: state.started_at };
+    return {
+      active: state.active,
+      working_dir: state.working_dir,
+      started_at: state.started_at,
+      state_mtime_ms: stateMtimeMs,
+    };
   } catch {
     return null;
   }
 }
 
-function getStateFileRecencyMs(stateFile: string, state: LookupState): number {
-  let recencyMs = 0;
+function getStateFileRecencyMs(state: LookupState): number {
   if (typeof state.started_at === 'string') {
     const startedAtMs = new Date(state.started_at).getTime();
     const maxTrustedFutureMs = Date.now() + MAX_FUTURE_RECENCY_DRIFT_MS;
     if (Number.isFinite(startedAtMs) && startedAtMs <= maxTrustedFutureMs) {
-      recencyMs = startedAtMs;
+      return startedAtMs;
     }
   }
-  try {
-    recencyMs = Math.max(recencyMs, fs.statSync(stateFile).mtimeMs);
-  } catch {
-    // Keep the best signal we already have.
-  }
-  return recencyMs;
+  return state.state_mtime_ms ?? 0;
 }
 
 function preferNewerStateFile(
@@ -80,7 +82,7 @@ export function selectScannedStateFile(stateFiles: string[], cwd: string): strin
     if (!state || !sameWorkingDir(state.working_dir, cwd)) continue;
     const candidate = {
       stateFile,
-      recencyMs: getStateFileRecencyMs(stateFile, state),
+      recencyMs: getStateFileRecencyMs(state),
     };
     if (state.active === true) {
       activeMatch = preferNewerStateFile(activeMatch, candidate);

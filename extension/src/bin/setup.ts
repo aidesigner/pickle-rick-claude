@@ -4,7 +4,8 @@ import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
 import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd, formatLocalDateKey } from '../services/pickle-utils.js';
-import { State, Defaults, LockError, SessionMapEntry, Backend, BACKENDS } from '../types/index.js';
+import { getHeadSha } from '../services/git-utils.js';
+import { State, Defaults, LockError, SessionMapEntry, Backend, BACKENDS, STATE_MANAGER_DEFAULTS } from '../types/index.js';
 import { StateManager } from '../services/state-manager.js';
 import { logActivity, pruneActivity } from '../services/activity-logger.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
@@ -40,6 +41,7 @@ export interface SetupArgs {
   teamsMode: boolean;
   maxParallel: number;
   effort: EffortValue | undefined;
+  prdPath: string | undefined;
   task?: string;
   taskArgs: string[];
   explicitFlags: Set<string>;
@@ -99,6 +101,7 @@ function createSetupConfig(): SetupArgs {
     teamsMode: false,
     maxParallel: 5,
     effort: undefined,
+    prdPath: undefined,
     task: undefined,
     taskArgs: [],
     explicitFlags: new Set<string>(),
@@ -310,6 +313,47 @@ function parseCommandLine(config: SetupArgs, args: string[]) {
     i = handler(config, args, i);
   }
   config.task = config.taskArgs.join(' ').trim() || undefined;
+  config.prdPath = resolvePrdPath(config.taskArgs);
+}
+
+function isMarkdownPrd(candidate: string): boolean {
+  const base = path.basename(candidate).toLowerCase();
+  return base.endsWith('.md') && (base === 'prd.md' || candidate.toLowerCase().includes('prd'));
+}
+
+function resolveExistingPrdPath(candidate: string): string | undefined {
+  const cleaned = candidate.trim().replace(/^["'`(<]+|[)"'`,>]+$/g, '');
+  if (!cleaned || !isMarkdownPrd(cleaned)) return undefined;
+  const resolved = path.resolve(cleaned);
+  try {
+    return fs.statSync(resolved).isFile() ? resolved : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function resolvePrdPath(taskArgs: string[]): string | undefined {
+  for (const arg of taskArgs) {
+    const exact = resolveExistingPrdPath(arg);
+    if (exact) return exact;
+  }
+
+  for (const arg of taskArgs) {
+    for (const token of arg.split(/\s+/)) {
+      const resolved = resolveExistingPrdPath(token);
+      if (resolved) return resolved;
+    }
+  }
+
+  return resolveExistingPrdPath('prd.md') ?? resolveExistingPrdPath('PRD.md');
+}
+
+function resolveStartCommit(): string | undefined {
+  try {
+    return getHeadSha(process.cwd());
+  } catch {
+    return undefined;
+  }
 }
 
 function validateCommandLine(config: SetupArgs) {
@@ -425,7 +469,7 @@ function resolveTask(config: SetupArgs): string {
 }
 
 function createInitialState(config: SetupArgs, sessionPath: string, taskStr: string): State {
-  return {
+  const state: State = {
     active: !config.pausedMode && !config.tmuxMode,
     working_dir: process.cwd(),
     step: 'prd',
@@ -444,11 +488,18 @@ function createInitialState(config: SetupArgs, sessionPath: string, taskStr: str
     min_iterations: config.minIterations,
     command_template: config.commandTemplate,
     chain_meeseeks: config.chainMeeseeks,
+    schema_version: STATE_MANAGER_DEFAULTS.schemaVersion,
     backend: config.backend,
     teams_mode: config.teamsMode || undefined,
     max_parallel: config.teamsMode ? config.maxParallel : undefined,
     effort: config.effort,
   };
+
+  const startCommit = resolveStartCommit();
+  if (config.prdPath) state.prd_path = config.prdPath;
+  if (startCommit) state.start_commit = startCommit;
+
+  return state;
 }
 
 function createSession(config: SetupArgs, paths: SetupPaths, taskStr: string): SessionResult {

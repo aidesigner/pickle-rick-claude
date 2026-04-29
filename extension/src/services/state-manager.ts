@@ -59,6 +59,17 @@ function readFiniteIteration(state: { iteration?: unknown }): number | null {
   return Number.isFinite(iteration) ? iteration : null;
 }
 
+function writeMigrationStateFile(statePath: string, state: State): void {
+  const tmp = `${statePath}.migration.${process.pid}.${Date.now()}`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
+    fs.renameSync(tmp, statePath);
+  } catch (err) {
+    try { fs.unlinkSync(tmp); } catch { /* ignore cleanup failure */ }
+    throw err;
+  }
+}
+
 function isStateSnapshotNewer(
   currentState: { iteration?: unknown },
   currentMtimeMs: number,
@@ -142,12 +153,19 @@ export class StateManager {
     // --- Recovery protocol ---
     this.recoverOrphanTmpFiles(statePath, state);
 
-    // --- Schema migration ---
+    this.migrateSchema(statePath, state);
+
+    this.recoverStaleActiveFlag(statePath, state);
+
+    return state;
+  }
+
+  private migrateSchema(statePath: string, state: State): void {
     if (state.schema_version === undefined) {
       state.schema_version = 1;
       process.stderr.write(`[state-manager] schema_version missing in ${statePath} — migrating to 1\n`);
       // Best-effort persist migration — don't throw if write fails
-      try { writeStateFile(statePath, state); } catch { /* migration write failed, non-fatal */ }
+      try { writeMigrationStateFile(statePath, state); } catch { /* migration write failed, non-fatal */ }
     }
 
     if (state.schema_version > this.opts.schemaVersion) {
@@ -157,9 +175,11 @@ export class StateManager {
       );
     }
 
-    this.recoverStaleActiveFlag(statePath, state);
-
-    return state;
+    if (state.schema_version < this.opts.schemaVersion) {
+      state.schema_version = this.opts.schemaVersion;
+      process.stderr.write(`[state-manager] migrating ${statePath} to schema_version ${this.opts.schemaVersion}\n`);
+      try { writeMigrationStateFile(statePath, state); } catch { /* migration write failed, non-fatal */ }
+    }
   }
 
   // -----------------------------------------------------------------------

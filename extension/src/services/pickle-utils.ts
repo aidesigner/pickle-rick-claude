@@ -534,6 +534,7 @@ interface SessionLookupState {
   active?: unknown;
   working_dir?: unknown;
   started_at?: unknown;
+  state_mtime_ms?: number;
 }
 
 interface SessionLookupCandidate {
@@ -545,32 +546,30 @@ const MAX_FUTURE_RECENCY_DRIFT_MS = 5 * 60 * 1000;
 
 function readSessionLookupState(sessionPath: string): SessionLookupState | null {
   try {
-    const state = new StateManager().read(path.join(sessionPath, 'state.json'));
+    const statePath = path.join(sessionPath, 'state.json');
+    let stateMtimeMs = 0;
+    try { stateMtimeMs = fs.statSync(statePath).mtimeMs; } catch { /* missing state read below will fail */ }
+    const state = new StateManager().read(statePath);
     return {
       active: state.active,
       working_dir: state.working_dir,
       started_at: state.started_at,
+      state_mtime_ms: stateMtimeMs,
     };
   } catch {
     return null;
   }
 }
 
-function getSessionRecencyMs(sessionPath: string, state: SessionLookupState): number {
-  let recencyMs = 0;
+function getSessionRecencyMs(state: SessionLookupState): number {
   if (typeof state.started_at === 'string') {
     const startedAtMs = new Date(state.started_at).getTime();
     const maxTrustedFutureMs = Date.now() + MAX_FUTURE_RECENCY_DRIFT_MS;
     if (Number.isFinite(startedAtMs) && startedAtMs <= maxTrustedFutureMs) {
-      recencyMs = startedAtMs;
+      return startedAtMs;
     }
   }
-  try {
-    recencyMs = Math.max(recencyMs, fs.statSync(path.join(sessionPath, 'state.json')).mtimeMs);
-  } catch {
-    // Keep the best signal we already have.
-  }
-  return recencyMs;
+  return state.state_mtime_ms ?? 0;
 }
 
 function preferNewerSession(
@@ -598,7 +597,7 @@ function selectScannedSessionPath(
     if (!sameWorkingDir(state.working_dir, cwd)) continue;
     const candidate = {
       sessionPath,
-      recencyMs: getSessionRecencyMs(sessionPath, state),
+      recencyMs: getSessionRecencyMs(state),
     };
     if (state.active === true) {
       activeMatch = preferNewerSession(activeMatch, candidate);

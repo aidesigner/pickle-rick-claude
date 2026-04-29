@@ -44,6 +44,20 @@ function readFiniteIteration(state) {
     const iteration = Number(state.iteration);
     return Number.isFinite(iteration) ? iteration : null;
 }
+function writeMigrationStateFile(statePath, state) {
+    const tmp = `${statePath}.migration.${process.pid}.${Date.now()}`;
+    try {
+        fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
+        fs.renameSync(tmp, statePath);
+    }
+    catch (err) {
+        try {
+            fs.unlinkSync(tmp);
+        }
+        catch { /* ignore cleanup failure */ }
+        throw err;
+    }
+}
 function isStateSnapshotNewer(currentState, currentMtimeMs, candidateState, candidateMtimeMs) {
     const currentIteration = readFiniteIteration(currentState);
     const candidateIteration = readFiniteIteration(candidateState);
@@ -112,21 +126,31 @@ export class StateManager {
         }
         // --- Recovery protocol ---
         this.recoverOrphanTmpFiles(statePath, state);
-        // --- Schema migration ---
+        this.migrateSchema(statePath, state);
+        this.recoverStaleActiveFlag(statePath, state);
+        return state;
+    }
+    migrateSchema(statePath, state) {
         if (state.schema_version === undefined) {
             state.schema_version = 1;
             process.stderr.write(`[state-manager] schema_version missing in ${statePath} — migrating to 1\n`);
             // Best-effort persist migration — don't throw if write fails
             try {
-                writeStateFile(statePath, state);
+                writeMigrationStateFile(statePath, state);
             }
             catch { /* migration write failed, non-fatal */ }
         }
         if (state.schema_version > this.opts.schemaVersion) {
             throw new StateError('SCHEMA_MISMATCH', `State file schema_version ${state.schema_version} is newer than supported version ${this.opts.schemaVersion}`);
         }
-        this.recoverStaleActiveFlag(statePath, state);
-        return state;
+        if (state.schema_version < this.opts.schemaVersion) {
+            state.schema_version = this.opts.schemaVersion;
+            process.stderr.write(`[state-manager] migrating ${statePath} to schema_version ${this.opts.schemaVersion}\n`);
+            try {
+                writeMigrationStateFile(statePath, state);
+            }
+            catch { /* migration write failed, non-fatal */ }
+        }
     }
     // -----------------------------------------------------------------------
     // update — lock, read, mutate, write, unlock

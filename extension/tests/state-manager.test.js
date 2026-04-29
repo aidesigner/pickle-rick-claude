@@ -63,7 +63,7 @@ test('StateManager.read: reads valid state file', () => {
     const result = sm.read(sp);
     assert.equal(result.active, true);
     assert.equal(result.iteration, 1);
-    assert.equal(result.schema_version, 1);
+    assert.equal(result.schema_version, 3);
   });
 });
 
@@ -135,7 +135,7 @@ test('StateManager.read: throws CORRUPT for JSON null', () => {
 // read — schema migration
 // ---------------------------------------------------------------------------
 
-test('StateManager.read: migrates undefined schema_version to 1', () => {
+test('StateManager.read: migrates undefined schema_version to current schema', () => {
   withDir((dir) => {
     const sm = new StateManager();
     const sp = path.join(dir, 'state.json');
@@ -143,10 +143,10 @@ test('StateManager.read: migrates undefined schema_version to 1', () => {
     delete state.schema_version;
     fs.writeFileSync(sp, JSON.stringify(state, null, 2));
     const result = sm.read(sp);
-    assert.equal(result.schema_version, 1);
+    assert.equal(result.schema_version, 3);
     // Persisted to disk
     const onDisk = JSON.parse(fs.readFileSync(sp, 'utf-8'));
-    assert.equal(onDisk.schema_version, 1);
+    assert.equal(onDisk.schema_version, 3);
   });
 });
 
@@ -169,15 +169,19 @@ test('StateManager.read: throws SCHEMA_MISMATCH for future schema version', () =
   });
 });
 
-test('StateManager.read: tolerates past schema version (backward compat)', () => {
+test('StateManager.read: migrates past schema version to current schema', () => {
   withDir((dir) => {
-    // Binary understands version 2, state file is version 1 — safe rollback scenario
-    const sm = new StateManager({ schemaVersion: 2 });
+    const sm = new StateManager({ schemaVersion: 3 });
     const sp = path.join(dir, 'state.json');
-    writeStateFile(sp, makeState({ schema_version: 1 }));
-    // Should NOT throw — old state is readable by newer code
+    writeStateFile(sp, makeState({ schema_version: 2 }));
     const result = sm.read(sp);
-    assert.equal(result.schema_version, 1);
+    assert.equal(result.schema_version, 3);
+    assert.equal(result.prd_path, undefined);
+    assert.equal(result.start_commit, undefined);
+    const onDisk = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+    assert.equal(onDisk.schema_version, 3);
+    assert.equal('prd_path' in onDisk, false);
+    assert.equal('start_commit' in onDisk, false);
   });
 });
 
@@ -262,7 +266,7 @@ test('StateManager.read: promotes same-iteration orphan tmp before legacy schema
     const onDisk = JSON.parse(fs.readFileSync(sp, 'utf-8'));
     assert.equal(onDisk.active, false);
     assert.equal(onDisk.current_ticket, 'T-RECOVERED');
-    assert.equal(onDisk.schema_version, 1);
+    assert.equal(onDisk.schema_version, 3);
   });
 });
 
@@ -638,7 +642,7 @@ test('STATE_MANAGER_DEFAULTS: has expected values', () => {
   assert.equal(STATE_MANAGER_DEFAULTS.baseLockDelayMs, 100);
   assert.equal(STATE_MANAGER_DEFAULTS.lockJitter, true);
   assert.equal(STATE_MANAGER_DEFAULTS.staleLockTimeoutMs, 30_000);
-  assert.equal(STATE_MANAGER_DEFAULTS.schemaVersion, 2);
+  assert.equal(STATE_MANAGER_DEFAULTS.schemaVersion, 3);
 });
 
 // ---------------------------------------------------------------------------
@@ -652,7 +656,7 @@ test('StateManager: custom options override defaults', () => {
     writeStateFile(sp, makeState());
     // Should work with custom options
     const result = sm.read(sp);
-    assert.equal(result.schema_version, 1);
+    assert.equal(result.schema_version, 3);
   });
 });
 

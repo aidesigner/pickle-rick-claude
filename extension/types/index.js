@@ -11,7 +11,7 @@ export const STATE_MANAGER_DEFAULTS = {
     baseLockDelayMs: 100,
     lockJitter: true,
     staleLockTimeoutMs: 30_000,
-    schemaVersion: 2,
+    schemaVersion: 3,
 };
 export class StateError extends Error {
     code;

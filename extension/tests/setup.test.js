@@ -98,6 +98,34 @@ test('setup initializeNewSession: state field set matches schema fixture', () =>
     }
 });
 
+test('setup initializeNewSession: fresh PRD-backed state records prd_path and start_commit', () => {
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-citadel-data-'));
+    const prdPath = path.join(dataRoot, 'citadel-prd.md');
+    const previousDataRoot = process.env.PICKLE_DATA_ROOT;
+    process.env.PICKLE_DATA_ROOT = dataRoot;
+    fs.writeFileSync(prdPath, '# Citadel PRD\n');
+
+    try {
+        const args = parseArguments(['--tmux', '--task', prdPath]);
+        const session = initializeNewSession(args);
+        const persisted = JSON.parse(fs.readFileSync(path.join(session.sessionRoot, 'state.json'), 'utf-8'));
+        const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf-8' }).trim();
+
+        assert.equal(persisted.schema_version, 3);
+        assert.equal(persisted.prd_path, prdPath);
+        assert.equal(persisted.start_commit, head);
+        assert.equal(session.state.prd_path, prdPath);
+        assert.equal(session.state.start_commit, head);
+    } finally {
+        if (previousDataRoot === undefined) {
+            delete process.env.PICKLE_DATA_ROOT;
+        } else {
+            process.env.PICKLE_DATA_ROOT = previousDataRoot;
+        }
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
 test('setup initializeNewSession: session id uses local day, not UTC day', () => {
     const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-local-day-data-'));
     const previousDataRoot = process.env.PICKLE_DATA_ROOT;
