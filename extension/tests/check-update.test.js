@@ -190,6 +190,11 @@ describe('isCacheStale', () => {
         const fiveMinAgo = Math.floor(Date.now() / 1000) - 300;
         assert.equal(isCacheStale({ last_check_epoch: fiveMinAgo, latest_version: '', current_version: '' }, 24), false);
     });
+
+    test('future-dated cache is stale', () => {
+        const future = Math.floor(Date.now() / 1000) + 48 * 3600;
+        assert.equal(isCacheStale({ last_check_epoch: future, latest_version: '', current_version: '' }, 24), true);
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -241,6 +246,27 @@ describe('checkForUpdate', () => {
         writeCache({ last_check_epoch: now, latest_version: '1.7.0', current_version: '1.7.0' });
         const result = checkForUpdate();
         assert.equal(result.status, 'up-to-date');
+    });
+
+    test('future-dated cache does not suppress release discovery', () => {
+        const binDir = path.join(tmpDir, 'mock-bin');
+        fs.mkdirSync(binDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(binDir, 'gh'),
+            '#!/bin/sh\nif [ "$1" = "api" ]; then echo \'{"tag_name":"v2.0.0","assets":[]}\'; exit 0; fi\nexit 1\n',
+            { mode: 0o755 },
+        );
+        const origPath = process.env.PATH;
+        process.env.PATH = `${binDir}:${origPath}`;
+        try {
+            const future = Math.floor(Date.now() / 1000) + 48 * 3600;
+            writeCache({ last_check_epoch: future, latest_version: '1.7.0', current_version: '1.7.0' });
+            const result = checkForUpdate();
+            assert.equal(result.status, 'update-available');
+            assert.equal(result.latestVersion, '2.0.0');
+        } finally {
+            process.env.PATH = origPath;
+        }
     });
 
     test('force bypasses disabled setting', () => {

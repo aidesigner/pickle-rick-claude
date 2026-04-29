@@ -94,6 +94,7 @@ export function readSettings(): UpdateSettings {
 export function isCacheStale(cache: UpdateCheckCache, intervalHours: number): boolean {
   if (cache.last_check_epoch === 0) return true;
   const nowEpoch = Math.floor(Date.now() / 1000);
+  if (cache.last_check_epoch > nowEpoch) return true;
   const intervalSeconds = intervalHours * 3600;
   return (nowEpoch - cache.last_check_epoch) >= intervalSeconds;
 }

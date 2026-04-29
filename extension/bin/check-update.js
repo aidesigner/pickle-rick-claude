@@ -90,6 +90,8 @@ export function isCacheStale(cache, intervalHours) {
     if (cache.last_check_epoch === 0)
         return true;
     const nowEpoch = Math.floor(Date.now() / 1000);
+    if (cache.last_check_epoch > nowEpoch)
+        return true;
     const intervalSeconds = intervalHours * 3600;
     return (nowEpoch - cache.last_check_epoch) >= intervalSeconds;
 }
