@@ -247,13 +247,13 @@ export function readPipelineLifecycle(sessionDir: string): PipelineLifecycleStat
 
   const statusPath = path.join(sessionDir, 'pipeline-status.json');
   try {
-    const raw = JSON.parse(fs.readFileSync(statusPath, 'utf-8')) as { status?: unknown };
-    if (
+    const raw = readRecoverableJsonObject(statusPath) as { status?: unknown } | null;
+    if (raw && (
       raw.status === 'running' ||
       raw.status === 'completed' ||
       raw.status === 'failed' ||
       raw.status === 'cancelled'
-    ) {
+    )) {
       return raw.status;
     }
   } catch {

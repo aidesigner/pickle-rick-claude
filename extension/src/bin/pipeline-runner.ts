@@ -292,7 +292,10 @@ export function writePipelineStatus(
     total_phases: details.total_phases ?? 0,
     updated_at: new Date().toISOString(),
   };
-  fs.writeFileSync(path.join(sessionDir, 'pipeline-status.json'), JSON.stringify(payload, null, 2));
+  const statusPath = path.join(sessionDir, 'pipeline-status.json');
+  const tmpPath = `${statusPath}.tmp.${process.pid}`;
+  fs.writeFileSync(tmpPath, JSON.stringify(payload, null, 2));
+  fs.renameSync(tmpPath, statusPath);
 }
 
 // ---------------------------------------------------------------------------

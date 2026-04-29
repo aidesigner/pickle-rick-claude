@@ -472,6 +472,27 @@ test('readPipelineLifecycle: pipeline-status running wins', () => {
     fs.rmSync(dir, { recursive: true });
 });
 
+test('readPipelineLifecycle: promotes newer dead tmp pipeline-status before exit decisions', () => {
+    const dir = tmpDir();
+    try {
+        fs.writeFileSync(path.join(dir, 'pipeline.json'), JSON.stringify({ phases: ['pickle', 'anatomy-park'] }));
+        const statusPath = path.join(dir, 'pipeline-status.json');
+        const tmpPath = path.join(dir, 'pipeline-status.json.tmp.999999');
+        fs.writeFileSync(statusPath, JSON.stringify({ status: 'running' }));
+        fs.writeFileSync(tmpPath, JSON.stringify({ status: 'completed' }));
+        const now = Date.now() / 1000;
+        fs.utimesSync(statusPath, now - 10, now - 10);
+        fs.utimesSync(tmpPath, now, now);
+
+        assert.equal(readPipelineLifecycle(dir), 'completed');
+        assert.equal(shouldMonitorExit(dir, false), true);
+        assert.equal(JSON.parse(fs.readFileSync(statusPath, 'utf-8')).status, 'completed');
+        assert.equal(fs.existsSync(tmpPath), false);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
 test('readPipelineLifecycle: falls back to runner log when status file missing', () => {
     const dir = tmpDir();
     fs.writeFileSync(path.join(dir, 'pipeline.json'), JSON.stringify({ phases: ['pickle'] }));

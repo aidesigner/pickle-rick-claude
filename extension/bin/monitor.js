@@ -222,11 +222,11 @@ export function readPipelineLifecycle(sessionDir) {
         return 'none';
     const statusPath = path.join(sessionDir, 'pipeline-status.json');
     try {
-        const raw = JSON.parse(fs.readFileSync(statusPath, 'utf-8'));
-        if (raw.status === 'running' ||
+        const raw = readRecoverableJsonObject(statusPath);
+        if (raw && (raw.status === 'running' ||
             raw.status === 'completed' ||
             raw.status === 'failed' ||
-            raw.status === 'cancelled') {
+            raw.status === 'cancelled')) {
             return raw.status;
         }
     }
