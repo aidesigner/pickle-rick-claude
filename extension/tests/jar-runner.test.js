@@ -406,6 +406,58 @@ test('jar-runner: ignores zero or negative default_manager_max_turns in settings
     }
 });
 
+test('jar-runner: recovers newer dead-writer settings tmp before launching task', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const taskId = 'task-settings-tmp';
+        const taskDir = path.join(tmpRoot, 'jar', '2026-01-01', taskId);
+        fs.mkdirSync(taskDir, { recursive: true });
+        fs.writeFileSync(path.join(taskDir, 'meta.json'), JSON.stringify({
+            status: 'marinating',
+            repo_path: tmpRoot,
+        }, null, 2));
+
+        const settingsPath = path.join(tmpRoot, 'pickle_settings.json');
+        const tmpSettingsPath = `${settingsPath}.tmp.99999999`;
+        fs.writeFileSync(settingsPath, JSON.stringify({
+            default_manager_max_turns: 7,
+            default_worker_timeout_seconds: 11,
+        }));
+        fs.writeFileSync(tmpSettingsPath, JSON.stringify({
+            default_manager_max_turns: 19,
+            default_worker_timeout_seconds: 23,
+        }));
+        const stale = new Date('2026-01-01T00:00:00.000Z');
+        const newer = new Date('2026-01-01T00:00:01.000Z');
+        fs.utimesSync(settingsPath, stale, stale);
+        fs.utimesSync(tmpSettingsPath, newer, newer);
+
+        const sessionDir = path.join(tmpRoot, 'sessions', taskId);
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: false,
+            backend: 'codex',
+            step: 'prd',
+            iteration: 0,
+            working_dir: tmpRoot,
+            session_dir: sessionDir,
+        }, null, 2));
+
+        const result = run(tmpRoot);
+        const combined = result.stdout + result.stderr;
+
+        assert.match(combined, /MaxTurns[\s\S]*19/);
+        assert.match(combined, /Timeout[\s\S]*23s/);
+        assert.equal(fs.existsSync(tmpSettingsPath), false);
+        assert.deepEqual(JSON.parse(fs.readFileSync(settingsPath, 'utf-8')), {
+            default_manager_max_turns: 19,
+            default_worker_timeout_seconds: 23,
+        });
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
 // --- PRD path traversal (deep review pass 6) ---
 
 test('jar-runner: skips task when prd_path escapes task directory (path traversal)', () => {

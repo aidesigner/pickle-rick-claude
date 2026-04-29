@@ -24,8 +24,8 @@ export function loadJarTaskTimeout(extensionRoot: string, state: State): number 
   if (Number.isFinite(stateTimeout) && stateTimeout > 0) return stateTimeout;
 
   try {
-    const settings = JSON.parse(fs.readFileSync(path.join(extensionRoot, 'pickle_settings.json'), 'utf-8'));
-    const rawTimeout = Number(settings.default_worker_timeout_seconds);
+    const settings = readRecoverableJsonObject(path.join(extensionRoot, 'pickle_settings.json')) as Record<string, unknown> | null;
+    const rawTimeout = Number(settings?.default_worker_timeout_seconds);
     if (Number.isFinite(rawTimeout) && rawTimeout > 0) return rawTimeout;
   } catch { /* use default */ }
 
@@ -123,11 +123,11 @@ async function runTask(sessionDir: string, repoCwd: string, extensionRoot: strin
   } catch { /* use fallback */ }
 
   const settingsPath = path.join(extensionRoot, 'pickle_settings.json');
-  let managerMaxTurns = Defaults.MANAGER_MAX_TURNS;
+  let managerMaxTurns: number = Defaults.MANAGER_MAX_TURNS;
   try {
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-    if (typeof settings.default_manager_max_turns === 'number' && settings.default_manager_max_turns > 0)
+    const settings = readRecoverableJsonObject(settingsPath) as Record<string, unknown> | null;
+    if (typeof settings?.default_manager_max_turns === 'number' && settings.default_manager_max_turns > 0)
       managerMaxTurns = settings.default_manager_max_turns;
   } catch { /* ignore */ }
 
