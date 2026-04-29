@@ -244,6 +244,43 @@ test('stop-hook: TASK_COMPLETED → approve + active=false', () => {
   assert.equal(state.active, false);
 });
 
+test('stop-hook: recovered disabled auto-update settings suppress completion update spawn', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-update-settings-'));
+  const sessionDir = path.join(tmpDir, 'session');
+  const stateFile = path.join(sessionDir, 'state.json');
+  const settingsPath = path.join(tmpDir, 'pickle_settings.json');
+  const checkUpdateDir = path.join(tmpDir, 'extension', 'bin');
+  const checkUpdatePath = path.join(checkUpdateDir, 'check-update.js');
+  fs.mkdirSync(sessionDir, { recursive: true });
+  fs.mkdirSync(checkUpdateDir, { recursive: true });
+  fs.writeFileSync(stateFile, JSON.stringify(baseState({ session_dir: sessionDir })));
+  fs.writeFileSync(settingsPath, JSON.stringify({ auto_update_enabled: true }));
+  fs.writeFileSync(`${settingsPath}.tmp.99999999`, JSON.stringify({ auto_update_enabled: false }));
+  fs.writeFileSync(checkUpdatePath, 'process.exit(0);\n');
+  const older = new Date(Date.now() - 10_000);
+  const newer = new Date();
+  fs.utimesSync(settingsPath, older, older);
+  fs.utimesSync(`${settingsPath}.tmp.99999999`, newer, newer);
+
+  const env = { ...process.env, EXTENSION_DIR: tmpDir, FORCE_COLOR: '0', PICKLE_STATE_FILE: stateFile };
+  delete env.PICKLE_ROLE;
+
+  try {
+    const stdout = execFileSync(process.execPath, [STOP_HOOK], {
+      input: JSON.stringify({ last_assistant_message: '<promise>TASK_COMPLETED</promise>' }),
+      encoding: 'utf-8',
+      env,
+    });
+    assert.deepEqual(JSON.parse(stdout.trim()), { decision: 'approve' });
+    const debugLog = fs.readFileSync(path.join(tmpDir, 'debug.log'), 'utf-8');
+    assert.match(debugLog, /Auto-update disabled in settings, skipping/);
+    assert.doesNotMatch(debugLog, /Spawning detached check-update process/);
+    assert.equal(JSON.parse(fs.readFileSync(settingsPath, 'utf-8')).auto_update_enabled, false);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('stop-hook: EPIC_COMPLETED + tmux_mode → approve, active UNCHANGED (runner owns active)', () => {
   const { decision, state } = runHook({
     state: baseState({ tmux_mode: true }),

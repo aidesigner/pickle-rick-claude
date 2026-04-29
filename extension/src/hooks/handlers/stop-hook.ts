@@ -8,6 +8,7 @@ import { resolveStateFile, approve } from '../resolve-state.js';
 import { getExtensionRoot, getDataRoot, safeErrorMessage } from '../../services/pickle-utils.js';
 import { StateManager } from '../../services/state-manager.js';
 import { logActivity } from '../../services/activity-logger.js';
+import { readRecoverableJsonObject } from '../../services/microverse-state.js';
 
 const sm = new StateManager();
 
@@ -363,8 +364,8 @@ function maybeSpawnUpdateCheck(extensionDir: string, log: (msg: string) => void)
   }
   try {
     const settingsPath = path.join(extensionDir, 'pickle_settings.json');
-    const raw = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
-    if (raw.auto_update_enabled === false) {
+    const raw = readRecoverableJsonObject(settingsPath) as Record<string, unknown> | null;
+    if (raw?.auto_update_enabled === false) {
       log('Auto-update disabled in settings, skipping');
       return;
     }
