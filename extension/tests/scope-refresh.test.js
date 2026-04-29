@@ -192,7 +192,7 @@ test('refreshScope: promotes newer dead-writer scope.json tmp before recomputing
             allowed_paths: ['live.ts'],
         };
         const scopePath = path.join(session, 'scope.json');
-        const tmpPath = path.join(session, 'scope.json.tmp.999999');
+        const tmpPath = path.join(session, 'scope.json.tmp.99999999');
         fs.writeFileSync(scopePath, JSON.stringify(staleScope, null, 2));
         fs.writeFileSync(tmpPath, JSON.stringify(recoveredScope, null, 2));
         fs.utimesSync(scopePath, new Date('2026-04-01T00:00:00.000Z'), new Date('2026-04-01T00:00:00.000Z'));
@@ -203,6 +203,39 @@ test('refreshScope: promotes newer dead-writer scope.json tmp before recomputing
         assert.ok(refreshed);
         assert.deepStrictEqual(refreshed.allowed_paths, ['live.ts']);
         assert.equal(fs.existsSync(tmpPath), false, 'dead-writer tmp should be promoted or removed');
+        const persisted = JSON.parse(fs.readFileSync(scopePath, 'utf-8'));
+        assert.deepStrictEqual(persisted.allowed_paths, ['live.ts']);
+    } finally {
+        cleanup(repo, session);
+    }
+});
+
+test('refreshScope: recovers dead-writer scope.json tmp when base scope is missing', () => {
+    const repo = makeRepo();
+    const session = makeSession(repo);
+    try {
+        const head = git(['rev-parse', 'HEAD'], repo);
+        const recoveredScope = {
+            version: 1,
+            mode: 'paths',
+            strategy: 'strict',
+            base_ref: null,
+            base_sha: null,
+            head_sha: head,
+            allowed_paths: ['live.ts'],
+            resolved_at: new Date().toISOString(),
+            refresh_history: [],
+        };
+        const scopePath = path.join(session, 'scope.json');
+        const tmpPath = path.join(session, 'scope.json.tmp.99999999');
+        fs.writeFileSync(tmpPath, JSON.stringify(recoveredScope, null, 2));
+
+        const refreshed = refreshScope(session, 'anatomy-park', { repoRoot: repo });
+
+        assert.ok(refreshed);
+        assert.deepStrictEqual(refreshed.allowed_paths, ['live.ts']);
+        assert.equal(fs.existsSync(scopePath), true, 'dead-writer tmp should be promoted to scope.json');
+        assert.equal(fs.existsSync(tmpPath), false, 'dead-writer tmp should be removed after promotion');
         const persisted = JSON.parse(fs.readFileSync(scopePath, 'utf-8'));
         assert.deepStrictEqual(persisted.allowed_paths, ['live.ts']);
     } finally {

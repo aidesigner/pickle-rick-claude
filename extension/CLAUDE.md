@@ -5,7 +5,7 @@ Compiled TS → JS lives in `extension/services/`, `extension/bin/`, `extension/
 ## Trap Doors
 
 - `src/bin/council-publish.ts` — INVARIANT: every `execFileSync('gh', …)` passes `timeout`, threaded via `PublishOptions.ghTimeoutMs`. BREAKS: network hang stalls publish indefinitely. ENFORCE: hang-path tests using `__hang__` / `auth: 'hang'` / `hangOnCall` sentinels.
-- `src/services/scope-resolver.ts` — INVARIANT: importer walks time out; diff bases honor inline refs; refresh preserves target clamp and promotes newer dead `scope.json.tmp.<pid>`. BREAKS: hangs or wrong review scope. ENFORCE: `scope-one-hop-hang-guard.test.js`, `scope-pipeline.test.js`, `scope-refresh.test.js`.
+- `src/services/scope-resolver.ts` — INVARIANT: importer walks time out; diff refs/target clamp hold; refresh promotes dead tmp without base. BREAKS: hangs or wrong scope. ENFORCE: `scope-one-hop-hang-guard.test.js`, `scope-pipeline.test.js`, `scope-refresh.test.js`.
 - `src/bin/init-microverse.ts` — INVARIANT: `--allowed-paths-file` promotes newer dead `scope.json.tmp.<pid>` before storing `allowed_paths`. BREAKS: scoped runners persist stale review scope. ENFORCE: tmp-promotion allowed-paths test.
 - `src/bin/check-gate.ts` — INVARIANT: `--allowed-paths-file` promotes newer dead `scope.json.tmp.<pid>` before filtering gate failures. BREAKS: scoped gates classify stale paths. ENFORCE: tmp-promotion allowed-paths test.
 - `src/bin/plumbus-frame-analyzer.ts` — INVARIANT: every `spawnSync('bun', …)` in `parseDotViaBun` passes `timeout` (default `BUN_TIMEOUT_MS = 30_000`). BREAKS: wedged bun stalls generative-audit pipeline silently. ENFORCE: `plumbus-frame-analyzer-hang-guard.test.js`.

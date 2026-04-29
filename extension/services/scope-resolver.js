@@ -187,14 +187,14 @@ function computeAllowedFromDiff(baseSha, headSha, repoRoot) {
  * `phase === 'anatomy-park'` — the build phase produced no review surface.
  */
 export function refreshScope(sessionRoot, phase, opts = {}) {
-    const scopePath = path.join(sessionRoot, 'scope.json');
-    if (!fs.existsSync(scopePath))
-        return null;
     const statePath = path.join(sessionRoot, 'state.json');
     const sm = new StateManager();
     if (isPhaseAlreadyEntered(sm, statePath, phase))
         return null;
+    const scopePath = path.join(sessionRoot, 'scope.json');
     const scope = readScopeJson(scopePath);
+    if (!scope)
+        return null;
     const repoRoot = opts.repoRoot ?? resolveRepoRootFromState(sm, statePath);
     const log = opts.log ?? ((msg) => { process.stderr.write(`${msg}\n`); });
     const newHead = getHeadSha(repoRoot);
@@ -241,8 +241,15 @@ function isProcessAlive(pid) {
     }
 }
 function readScopeJson(scopePath) {
-    const base = JSON.parse(fs.readFileSync(scopePath, 'utf-8'));
-    const baseMtimeMs = fs.statSync(scopePath).mtimeMs;
+    let base = null;
+    let baseMtimeMs = 0;
+    try {
+        base = JSON.parse(fs.readFileSync(scopePath, 'utf-8'));
+        baseMtimeMs = fs.statSync(scopePath).mtimeMs;
+    }
+    catch {
+        // A killed initial writer may leave the only valid scope in a sibling tmp.
+    }
     const dir = path.dirname(scopePath);
     const baseName = path.basename(scopePath);
     const tmpPattern = new RegExp(`^${baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.tmp\\.(\\d+)$`);
