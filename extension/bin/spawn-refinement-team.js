@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawn } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, safeErrorMessage, } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { buildWorkerInvocation } from '../services/backend-spawn.js';
@@ -83,6 +83,80 @@ const WORKER_ROLES = [
     { id: 'codebase' },
     { id: 'risk-scope' },
 ];
+const CITATION_RE = /(?<![\w./-])((?:\.{1,2}\/)?(?:[\w.-]+\/)*[\w.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|yml|yaml|sh|py|css|scss|html)):(\d+)\b/g;
+export function extractAnchorCitations(prdContent) {
+    const citations = [];
+    const seen = new Set();
+    const lines = prdContent.split(/\r?\n/);
+    lines.forEach((line, index) => {
+        CITATION_RE.lastIndex = 0;
+        let match;
+        while ((match = CITATION_RE.exec(line)) !== null) {
+            const filePath = normalizeCitationPath(match[1]);
+            const rawLineNumber = Number(match[2]);
+            const lineNumber = Number.isFinite(rawLineNumber) ? rawLineNumber : 0;
+            if (!Number.isSafeInteger(lineNumber) || lineNumber <= 0)
+                continue;
+            const key = `${filePath}:${lineNumber}`;
+            if (seen.has(key))
+                continue;
+            seen.add(key);
+            citations.push({
+                sourceLine: index + 1,
+                filePath,
+                lineNumber,
+                raw: match[0],
+            });
+        }
+    });
+    return citations;
+}
+function normalizeCitationPath(filePath) {
+    return filePath.replace(/^\.\//, '').replace(/\\/g, '/');
+}
+function readHeadFile(workingDir, filePath) {
+    try {
+        return execFileSync('git', ['show', `HEAD:${filePath}`], {
+            cwd: workingDir,
+            encoding: 'utf-8',
+            stdio: ['ignore', 'pipe', 'ignore'],
+            maxBuffer: 20 * 1024 * 1024,
+        });
+    }
+    catch {
+        return undefined;
+    }
+}
+export function findStaleAnchorWarnings(prdContent, workingDir) {
+    return extractAnchorCitations(prdContent).flatMap((citation) => {
+        const headContent = readHeadFile(workingDir, citation.filePath);
+        if (headContent === undefined) {
+            return [{
+                    citation,
+                    reason: 'missing-file',
+                    detail: `not found at HEAD:${citation.filePath}`,
+                }];
+        }
+        const lineCount = headContent === '' ? 0 : headContent.split(/\r?\n/).length;
+        if (citation.lineNumber > lineCount) {
+            return [{
+                    citation,
+                    reason: 'line-out-of-range',
+                    detail: `line ${citation.lineNumber} exceeds HEAD line count ${lineCount}`,
+                }];
+        }
+        return [];
+    });
+}
+export function emitStaleAnchorWarnings(warnings) {
+    if (warnings.length === 0)
+        return;
+    process.stderr.write(`[pickle-rick] stale-anchor warning: ${warnings.length} PRD citation(s) no longer resolve against HEAD.\n`);
+    for (const warning of warnings) {
+        const { citation } = warning;
+        process.stderr.write(`[pickle-rick] stale-anchor ${citation.raw} (PRD line ${citation.sourceLine}): ${warning.detail}\n`);
+    }
+}
 export function buildWorkerPrompt(roleId, prdContent, outputFile, workingDir, cycle, previousAnalyses, portalContext) {
     const persona = `You are Pickle Rick — hyper-competent, arrogant, ruthlessly thorough.
 *Belch.* You are FORBIDDEN from being a Jerry. Jerries write vague analysis. You write SPECIFIC, ACTIONABLE findings with evidence.
@@ -570,6 +644,7 @@ export async function orchestrateCycles(args, settings, prd) {
     ensureRefinementDir(refinementDir);
     registerShutdownHandlers();
     printDeploymentPanel(args, refinementDir, runtime.cycles, runtime.maxTurns, runtime.timeout, runtime.sessionEffort);
+    emitStaleAnchorWarnings(findStaleAnchorWarnings(prd, runtime.workingDir));
     const allCycleResults = [];
     const portalContext = detectPortalContext(args.sessionDir);
     for (let cycle = 1; cycle <= runtime.cycles; cycle++) {

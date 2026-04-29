@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawn } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
 import {
   printMinimalPanel,
   Style,
@@ -149,6 +149,99 @@ export interface RefinementManifest {
     cycle: number;
   }[];
   completed_at: string;
+}
+
+export interface AnchorCitation {
+  sourceLine: number;
+  filePath: string;
+  lineNumber: number;
+  raw: string;
+}
+
+export interface StaleAnchorWarning {
+  citation: AnchorCitation;
+  reason: 'missing-file' | 'line-out-of-range';
+  detail: string;
+}
+
+const CITATION_RE = /(?<![\w./-])((?:\.{1,2}\/)?(?:[\w.-]+\/)*[\w.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|yml|yaml|sh|py|css|scss|html)):(\d+)\b/g;
+
+export function extractAnchorCitations(prdContent: string): AnchorCitation[] {
+  const citations: AnchorCitation[] = [];
+  const seen = new Set<string>();
+  const lines = prdContent.split(/\r?\n/);
+  lines.forEach((line, index) => {
+    CITATION_RE.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = CITATION_RE.exec(line)) !== null) {
+      const filePath = normalizeCitationPath(match[1]);
+      const rawLineNumber = Number(match[2]);
+      const lineNumber = Number.isFinite(rawLineNumber) ? rawLineNumber : 0;
+      if (!Number.isSafeInteger(lineNumber) || lineNumber <= 0) continue;
+      const key = `${filePath}:${lineNumber}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      citations.push({
+        sourceLine: index + 1,
+        filePath,
+        lineNumber,
+        raw: match[0],
+      });
+    }
+  });
+  return citations;
+}
+
+function normalizeCitationPath(filePath: string): string {
+  return filePath.replace(/^\.\//, '').replace(/\\/g, '/');
+}
+
+function readHeadFile(workingDir: string, filePath: string): string | undefined {
+  try {
+    return execFileSync('git', ['show', `HEAD:${filePath}`], {
+      cwd: workingDir,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      maxBuffer: 20 * 1024 * 1024,
+    });
+  } catch {
+    return undefined;
+  }
+}
+
+export function findStaleAnchorWarnings(prdContent: string, workingDir: string): StaleAnchorWarning[] {
+  return extractAnchorCitations(prdContent).flatMap((citation): StaleAnchorWarning[] => {
+    const headContent = readHeadFile(workingDir, citation.filePath);
+    if (headContent === undefined) {
+      return [{
+        citation,
+        reason: 'missing-file' as const,
+        detail: `not found at HEAD:${citation.filePath}`,
+      }];
+    }
+
+    const lineCount = headContent === '' ? 0 : headContent.split(/\r?\n/).length;
+    if (citation.lineNumber > lineCount) {
+      return [{
+        citation,
+        reason: 'line-out-of-range' as const,
+        detail: `line ${citation.lineNumber} exceeds HEAD line count ${lineCount}`,
+      }];
+    }
+
+    return [];
+  });
+}
+
+export function emitStaleAnchorWarnings(warnings: StaleAnchorWarning[]): void {
+  if (warnings.length === 0) return;
+  process.stderr.write(`[pickle-rick] stale-anchor warning: ${warnings.length} PRD citation(s) no longer resolve against HEAD.\n`);
+  for (const warning of warnings) {
+    const { citation } = warning;
+    process.stderr.write(
+      `[pickle-rick] stale-anchor ${citation.raw} (PRD line ${citation.sourceLine}): ${warning.detail}\n`
+    );
+  }
 }
 
 export function buildWorkerPrompt(
@@ -705,6 +798,7 @@ export async function orchestrateCycles(
   ensureRefinementDir(refinementDir);
   registerShutdownHandlers();
   printDeploymentPanel(args, refinementDir, runtime.cycles, runtime.maxTurns, runtime.timeout, runtime.sessionEffort);
+  emitStaleAnchorWarnings(findStaleAnchorWarnings(prd, runtime.workingDir));
 
   const allCycleResults: WorkerResult[][] = [];
   const portalContext = detectPortalContext(args.sessionDir);

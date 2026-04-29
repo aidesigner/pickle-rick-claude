@@ -9,8 +9,12 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.resolve(__dirname, '../bin/spawn-refinement-team.js');
 
-// Import buildWorkerPrompt for direct unit testing
-const { buildWorkerPrompt } = await import('../bin/spawn-refinement-team.js');
+// Import exported helpers for direct unit testing
+const {
+    buildWorkerPrompt,
+    extractAnchorCitations,
+    findStaleAnchorWarnings,
+} = await import('../bin/spawn-refinement-team.js');
 
 function run(args, env = {}) {
     // 10s → 45s: budget for system load when run alongside concurrent
@@ -40,6 +44,81 @@ process.exit(0);
 `);
     fs.chmodSync(claudePath, 0o755);
 }
+
+function git(repoDir, args) {
+    const result = spawnSync('git', args, {
+        cwd: repoDir,
+        encoding: 'utf-8',
+        env: {
+            ...process.env,
+            GIT_AUTHOR_NAME: 'Pickle Test',
+            GIT_AUTHOR_EMAIL: 'pickle@example.test',
+            GIT_COMMITTER_NAME: 'Pickle Test',
+            GIT_COMMITTER_EMAIL: 'pickle@example.test',
+        },
+    });
+    assert.equal(result.status, 0, `git ${args.join(' ')} failed: ${result.stderr || result.stdout}`);
+}
+
+function makeGitRepo(prefix = 'pickle-anchor-repo-') {
+    const repo = makeTmpDir(prefix);
+    git(repo, ['init']);
+    return repo;
+}
+
+// --- Anchor re-grounding ---
+
+test('spawn-refinement-team: extracts file:line anchors from PRD text', () => {
+    const citations = extractAnchorCitations([
+        'Use extension/src/bin/spawn-refinement-team.ts:697 before fan-out.',
+        'Also check `./extension/tests/spawn-refinement-team.test.js:13`.',
+        'Ignore URLs like https://example.test/file.ts:10 and non-source names note.txt:4.',
+        'Deduplicate extension/src/bin/spawn-refinement-team.ts:697.',
+    ].join('\n'));
+
+    assert.deepEqual(
+        citations.map((citation) => ({
+            sourceLine: citation.sourceLine,
+            filePath: citation.filePath,
+            lineNumber: citation.lineNumber,
+        })),
+        [
+            { sourceLine: 1, filePath: 'extension/src/bin/spawn-refinement-team.ts', lineNumber: 697 },
+            { sourceLine: 2, filePath: 'extension/tests/spawn-refinement-team.test.js', lineNumber: 13 },
+        ]
+    );
+});
+
+test('spawn-refinement-team: resolves PRD anchors against HEAD and reports stale targets', () => {
+    const repo = makeGitRepo();
+    try {
+        fs.mkdirSync(path.join(repo, 'src'), { recursive: true });
+        fs.writeFileSync(path.join(repo, 'src', 'ok.ts'), 'one\ntwo\nthree\n');
+        fs.writeFileSync(path.join(repo, 'src', 'short.ts'), 'only\n');
+        git(repo, ['add', '.']);
+        git(repo, ['commit', '-m', 'seed anchors']);
+
+        const prd = [
+            'Fresh src/ok.ts:2',
+            'Out of range src/short.ts:5',
+            'Missing src/missing.ts:1',
+        ].join('\n');
+
+        const warnings = findStaleAnchorWarnings(prd, repo);
+        assert.deepEqual(
+            warnings.map((warning) => ({
+                raw: warning.citation.raw,
+                reason: warning.reason,
+            })),
+            [
+                { raw: 'src/short.ts:5', reason: 'line-out-of-range' },
+                { raw: 'src/missing.ts:1', reason: 'missing-file' },
+            ]
+        );
+    } finally {
+        fs.rmSync(repo, { recursive: true, force: true });
+    }
+});
 
 // --- CLI arg validation ---
 
@@ -479,6 +558,53 @@ test('spawn-refinement-team: recovered working_dir controls worker cwd and codeb
     } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
         fs.rmSync(fakeBin, { recursive: true, force: true });
+    }
+});
+
+test('spawn-refinement-team: emits stale-anchor warnings before refinement workers finish', () => {
+    const tmp = makeTmpDir();
+    const fakeBin = makeTmpDir('fake-bin-');
+    const repo = makeGitRepo();
+    try {
+        const sessionDir = path.join(tmp, 'session');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        fs.writeFileSync(path.join(repo, 'tracked.ts'), 'one\n');
+        git(repo, ['add', '.']);
+        git(repo, ['commit', '-m', 'tracked source']);
+
+        const prd = path.join(sessionDir, 'prd.md');
+        fs.writeFileSync(prd, '# PRD\n\nUse tracked.ts:9 and missing.ts:1\n');
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            working_dir: repo,
+            worker_timeout_seconds: 30,
+            iteration: 1,
+            schema_version: 1,
+        }));
+
+        const logPath = path.join(tmp, 'refinement-worker.json');
+        writeRefinementLogger(fakeBin, logPath);
+
+        const result = spawnSync(
+            process.execPath,
+            [BIN, '--prd', prd, '--session-dir', sessionDir, '--cycles', '1', '--max-turns', '5', '--timeout', '5'],
+            {
+                cwd: tmp,
+                env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH}` },
+                encoding: 'utf-8',
+                timeout: 45000,
+            }
+        );
+
+        assert.equal(result.status, 0, `expected success, got: ${(result.stdout || '') + (result.stderr || '')}`);
+        assert.match(result.stderr, /stale-anchor warning: 2 PRD citation\(s\) no longer resolve against HEAD/);
+        assert.match(result.stderr, /stale-anchor tracked\.ts:9 \(PRD line 3\): line 9 exceeds HEAD line count/);
+        assert.match(result.stderr, /stale-anchor missing\.ts:1 \(PRD line 3\): not found at HEAD:missing\.ts/);
+        assert.ok(fs.existsSync(logPath), 'refinement workers should still run after stale-anchor warnings');
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+        fs.rmSync(fakeBin, { recursive: true, force: true });
+        fs.rmSync(repo, { recursive: true, force: true });
     }
 });
 
