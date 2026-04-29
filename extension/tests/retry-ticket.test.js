@@ -5,6 +5,20 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { retryTicket } from '../bin/retry-ticket.js';
 
+function captureRetryOutput(fn) {
+    const originalLog = console.log;
+    const lines = [];
+    console.log = (...args) => {
+        lines.push(args.join(' '));
+    };
+    try {
+        fn();
+    } finally {
+        console.log = originalLog;
+    }
+    return lines.join('\n');
+}
+
 // --- Input validation ---
 
 test('retryTicket: rejects path traversal ticketId', () => {
@@ -372,5 +386,55 @@ test('retryTicket: resolved session path wins over stale state.session_dir', () 
         fs.rmSync(tmpExtDir, { recursive: true, force: true });
         fs.rmSync(liveSessionDir, { recursive: true, force: true });
         fs.rmSync(staleSessionDir, { recursive: true, force: true });
+    }
+});
+
+test('retryTicket: malformed worker timeout falls back to spawn-morty-compatible default', () => {
+    const tmpExtDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-retry-ext-')));
+    const sessionDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-session-')));
+    const fakeCwd = path.join(tmpExtDir, 'repo');
+    const saved = process.env.EXTENSION_DIR;
+    process.env.EXTENSION_DIR = tmpExtDir;
+
+    try {
+        const ticketId = 'fractional-timeout-ticket';
+        const ticketDir = path.join(sessionDir, ticketId);
+        fs.mkdirSync(fakeCwd, { recursive: true });
+        fs.mkdirSync(ticketDir, { recursive: true });
+
+        fs.writeFileSync(
+            path.join(ticketDir, `linear_ticket_${ticketId}.md`),
+            `---\nid: ${ticketId}\ntitle: Test\nstatus: Done\norder: 10\n---\n`
+        );
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({
+                active: false,
+                working_dir: fakeCwd,
+                step: 'implement',
+                iteration: 2,
+                session_dir: sessionDir,
+                original_prompt: 'retry malformed timeout',
+                worker_timeout_seconds: '0.5',
+            })
+        );
+        fs.writeFileSync(
+            path.join(tmpExtDir, 'current_sessions.json'),
+            JSON.stringify({ [fakeCwd]: sessionDir })
+        );
+
+        const output = captureRetryOutput(() => retryTicket(ticketId, fakeCwd));
+
+        assert.match(output, /spawn-morty\.js/);
+        assert.match(output, /--timeout 1200\b/);
+        assert.doesNotMatch(output, /--timeout 0\.5\b/);
+    } finally {
+        if (saved === undefined) {
+            delete process.env.EXTENSION_DIR;
+        } else {
+            process.env.EXTENSION_DIR = saved;
+        }
+        fs.rmSync(tmpExtDir, { recursive: true, force: true });
+        fs.rmSync(sessionDir, { recursive: true, force: true });
     }
 });

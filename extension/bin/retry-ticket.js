@@ -5,6 +5,16 @@ import { getExtensionRoot, extractFrontmatter, updateState, safeErrorMessage, fi
 import { StateManager } from '../services/state-manager.js';
 import { Defaults } from '../types/index.js';
 const sm = new StateManager();
+function positiveIntegerOrDefault(value, fallback) {
+    if (typeof value === 'number') {
+        return Number.isSafeInteger(value) && value > 0 ? value : fallback;
+    }
+    if (typeof value !== 'string' || !/^[1-9]\d*$/.test(value)) {
+        return fallback;
+    }
+    const parsed = Number(value);
+    return Number.isSafeInteger(parsed) ? parsed : fallback;
+}
 // eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 export function retryTicket(ticketId, cwd) {
     // Validate ticketId to prevent path traversal
@@ -76,8 +86,7 @@ export function retryTicket(ticketId, cwd) {
     catch {
         throw new Error(`state.json became unreadable after update in ${sessionPath}`);
     }
-    const rawTimeout = Number(finalState.worker_timeout_seconds);
-    const timeout = Number.isFinite(rawTimeout) && rawTimeout > 0 ? rawTimeout : Defaults.WORKER_TIMEOUT_SECONDS;
+    const timeout = positiveIntegerOrDefault(finalState.worker_timeout_seconds, Defaults.WORKER_TIMEOUT_SECONDS);
     // Shell-safe escaping: single-quote escaping + collapse newlines to spaces
     const safePrompt = (finalState.original_prompt || '')
         .replace(/[\r\n]+/g, ' ')
