@@ -877,6 +877,63 @@ test('spawn-morty P2: heuristic OFF (default) — large tier on codex stays code
     }
 });
 
+test('spawn-morty P2: recovers disabled routing heuristic from newer dead settings tmp', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        writeSettings(tmpDir, true);
+        fs.writeFileSync(
+            path.join(tmpDir, 'pickle_settings.json.tmp.999999'),
+            JSON.stringify({ enable_backend_routing_heuristic: false })
+        );
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketDir = path.join(sessionDir, 'ticket-routing-recovered-off');
+        fs.mkdirSync(ticketDir, { recursive: true });
+        const ticketFile = writeTicketFile(ticketDir, {
+            id: 'ticket-routing-recovered-off',
+            title: 'Refactor tokenizer',
+            complexity_tier: 'large',
+        });
+
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            backend: 'codex',
+            iteration: 1,
+            schema_version: 1,
+        }));
+
+        const shimDir = path.join(tmpDir, 'bin');
+        const shimLog = path.join(tmpDir, 'codex-routing-recovered-off.json');
+        writeCodexShim(shimDir, shimLog);
+
+        const result = spawnSync(process.execPath, [SPAWN_MORTY_BIN,
+            'do thing',
+            '--ticket-id', 'ticket-routing-recovered-off',
+            '--ticket-path', ticketDir,
+            '--ticket-file', ticketFile,
+            '--timeout', '30',
+        ], {
+            env: {
+                ...process.env,
+                EXTENSION_DIR: tmpDir,
+                PATH: `${shimDir}${path.delimiter}${process.env.PATH || ''}`,
+                PICKLE_BACKEND: '',
+            },
+            encoding: 'utf-8',
+            timeout: 45000,
+        });
+
+        const combined = result.stdout + result.stderr;
+        assert.equal(result.status, 1);
+        assert.ok(fs.existsSync(shimLog), 'codex shim should run when recovered heuristic is OFF');
+        assert.ok(!combined.includes('backend routed: codex → claude'),
+            `no routing override expected from stale enabled base, got: ${combined}`);
+        assert.equal(fs.existsSync(path.join(tmpDir, 'pickle_settings.json.tmp.999999')), false,
+            'dead settings tmp should be promoted and removed');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 test('spawn-morty P2: heuristic ON — large tier flips codex → claude', () => {
     const tmpDir = makeTmpDir();
     try {

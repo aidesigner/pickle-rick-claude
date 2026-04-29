@@ -18,6 +18,7 @@ import { updateTicketStatus } from '../services/git-utils.js';
 import { buildWorkerInvocation, loadBackendFromSession, backendEnvOverrides } from '../services/backend-spawn.js';
 import { scrubForbiddenWorkerTokens } from '../services/promise-tokens.js';
 import { StateManager } from '../services/state-manager.js';
+import { readRecoverableJsonObject } from '../services/microverse-state.js';
 
 const TIER_MODEL_MAP: Record<string, string> = {
   trivial: 'haiku',
@@ -289,8 +290,8 @@ function readTicketInfo(ticketFilePath: string | null): ReturnType<typeof parseT
 function routeBackend(sessionRoot: string, ticketInfo: ReturnType<typeof parseTicketFrontmatter> | null): Backend {
   let backend = loadBackendFromSession(sessionRoot);
   try {
-    const settings = JSON.parse(fs.readFileSync(path.join(getExtensionRoot(), 'pickle_settings.json'), 'utf-8'));
-    if (settings.enable_backend_routing_heuristic !== true || backend !== 'codex') return backend;
+    const settings = readRecoverableJsonObject(path.join(getExtensionRoot(), 'pickle_settings.json')) as Record<string, unknown> | null;
+    if (settings?.enable_backend_routing_heuristic !== true || backend !== 'codex') return backend;
     const routedReason = ticketInfo?.complexity_tier === 'large'
       ? 'complexity_tier=large'
       : ticketInfo?.title && /\b(UI|Wire|Audit)\b/i.test(ticketInfo.title) ? `title-signal:${ticketInfo.title}` : null;
