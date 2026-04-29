@@ -250,6 +250,29 @@ test('spawn-morty: --timeout with custom value is accepted (no validation error)
     }
 });
 
+test('spawn-morty: --timeout rejects suffixed and missing values before worker spawn', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        for (const timeoutArgs of [['30junk'], ['3.5'], []]) {
+            const result = run([
+                'implement the thing',
+                '--ticket-id', 'ticket-timeout-validation',
+                '--ticket-path', tmpDir,
+                '--timeout',
+                ...timeoutArgs,
+            ], { PATH: '/nonexistent' });
+            assert.equal(result.status, 1, `should reject --timeout ${timeoutArgs[0] ?? '<missing>'}`);
+            assert.match(result.stderr, /--timeout requires a positive integer/);
+            assert.ok(
+                !result.stderr.includes('Failed to spawn'),
+                'validation should fail before worker spawn',
+            );
+        }
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 // ---------------------------------------------------------------------------
 // --review flag (meso-review enforcement)
 // ---------------------------------------------------------------------------

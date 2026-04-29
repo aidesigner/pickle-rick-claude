@@ -88,8 +88,16 @@ function requireFlagValue(args: string[], index: number): string {
 
 function parseTimeoutArg(argv: string[]): number {
   const timeoutIndex = argv.indexOf('--timeout');
-  const rawTimeout = timeoutIndex !== -1 ? parseInt(argv[timeoutIndex + 1], 10) : NaN;
-  return !isNaN(rawTimeout) && rawTimeout > 0 ? rawTimeout : Defaults.WORKER_TIMEOUT_SECONDS;
+  if (timeoutIndex === -1) return Defaults.WORKER_TIMEOUT_SECONDS;
+  const rawTimeout = argv[timeoutIndex + 1];
+  if (!rawTimeout || !/^[1-9]\d*$/.test(rawTimeout)) {
+    die(`Error: --timeout requires a positive integer, got: ${rawTimeout ?? 'missing'}`);
+  }
+  const parsed = Number(rawTimeout);
+  if (!Number.isSafeInteger(parsed)) {
+    die(`Error: --timeout requires a positive integer, got: ${rawTimeout}`);
+  }
+  return parsed;
 }
 
 function parseOutputFormatArg(argv: string[]): string {
