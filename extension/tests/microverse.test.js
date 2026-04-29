@@ -439,12 +439,12 @@ test('runIteration is exported from mux-runner', () => {
 
 // --- microverse-runner tests ---
 
-import { measureMetric, measureLlmMetric, extractScore, buildJudgePrompt, buildMicroverseHandoff, deactivateRunnerState, handleRateLimit, main, _deps, readRunnerState, stageAutoCommitPaths } from '../bin/microverse-runner.js';
+import { measureMetric, measureLlmMetric, extractScore, buildJudgePrompt, buildMicroverseHandoff, deactivateRunnerState, handleRateLimit, main, _deps, readRunnerState, stageAutoCommitPaths, executeMainLoop } from '../bin/microverse-runner.js';
 import { resetToSha } from '../services/git-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { writeStateFile } from '../services/pickle-utils.js';
 import { resolveBackend } from '../services/backend-spawn.js';
-import { LockError } from '../types/index.js';
+import { Defaults, LockError } from '../types/index.js';
 
 const MICROVERSE_RUNNER_BIN = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
@@ -484,6 +484,121 @@ function createSessionDir(workingDir, mvOverrides = {}) {
     };
     fs.writeFileSync(path.join(dir, 'microverse.json'), JSON.stringify(mvState, null, 2));
     return { dir, state, mvState };
+}
+
+function writeMicroverseRelaunchTicket(sessionDir, id, status, order = 1) {
+    const ticketDir = path.join(sessionDir, id);
+    fs.mkdirSync(ticketDir, { recursive: true });
+    fs.writeFileSync(path.join(ticketDir, `linear_ticket_${id}.md`), [
+        '---',
+        `id: ${id}`,
+        `title: ${id}`,
+        `status: "${status}"`,
+        `order: ${order}`,
+        '---',
+        '',
+    ].join('\n'));
+}
+
+function readMicroverseRelaunchEvents(dataRoot) {
+    const activityDir = path.join(dataRoot, 'activity');
+    if (!fs.existsSync(activityDir)) return [];
+    const events = [];
+    for (const entry of fs.readdirSync(activityDir)) {
+        if (!entry.endsWith('.jsonl')) continue;
+        for (const line of fs.readFileSync(path.join(activityDir, entry), 'utf-8').split('\n')) {
+            if (!line.trim()) continue;
+            try { events.push(JSON.parse(line)); } catch { /* ignore malformed fixture lines */ }
+        }
+    }
+    return events.filter(event => event.event === 'codex_manager_relaunch');
+}
+
+async function withMicroverseLoopDeps(overrides, fn) {
+    const original = {
+        runIteration: _deps.runIteration,
+        sleep: _deps.sleep,
+        getHeadSha: _deps.getHeadSha,
+        isWorkingTreeDirty: _deps.isWorkingTreeDirty,
+    };
+    _deps.runIteration = overrides.runIteration ?? original.runIteration;
+    _deps.sleep = overrides.sleep ?? (async () => {});
+    _deps.getHeadSha = overrides.getHeadSha ?? (() => 'abc123'.padEnd(40, '0'));
+    _deps.isWorkingTreeDirty = overrides.isWorkingTreeDirty ?? (() => false);
+    try {
+        return await fn();
+    } finally {
+        _deps.runIteration = original.runIteration;
+        _deps.sleep = original.sleep;
+        _deps.getHeadSha = original.getHeadSha;
+        _deps.isWorkingTreeDirty = original.isWorkingTreeDirty;
+    }
+}
+
+async function runMicroverseRelaunchScenario({ backend, priorRelaunchCount = 0, tickets }) {
+    const workingDir = createTempGitRepo();
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mv-relaunch-data-'));
+    const previousDataRoot = process.env.PICKLE_DATA_ROOT;
+    const session = createSessionDir(workingDir);
+    const statePath = path.join(session.dir, 'state.json');
+    const state = {
+        ...session.state,
+        backend,
+        codex_manager_relaunch_count: priorRelaunchCount,
+    };
+    fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+    for (const ticket of tickets) {
+        writeMicroverseRelaunchTicket(session.dir, ticket.id, ticket.status, ticket.order);
+    }
+    const logs = [];
+    const ctx = {
+        sessionDir: session.dir,
+        extensionRoot: path.resolve('.'),
+        statePath,
+        workingDir,
+        startTime: Date.now(),
+        initialIteration: 0,
+        enableFailureClassification: false,
+        cgSettings: {
+            enabled_convergence_files: [],
+            regression_warning_threshold: 5,
+            remediator_timeout_s: 600,
+            baseline_max_age_iterations: 30,
+            baseline_max_age_seconds: 14_400,
+        },
+        rateLimitWaitMinutes: 0,
+        maxRateLimitRetries: 0,
+        log: (msg) => logs.push(msg),
+        currentRunnerState: state,
+        iteration: 0,
+        consecutiveRateLimits: 0,
+    };
+
+    try {
+        process.env.PICKLE_DATA_ROOT = dataRoot;
+        let calls = 0;
+        const result = await withMicroverseLoopDeps({
+            runIteration: async () => {
+                calls += 1;
+                return calls === 1
+                    ? { completion: 'error', timedOut: true, exitCode: null, wallSeconds: Defaults.MAX_ITERATION_SECONDS }
+                    : { completion: 'inactive', timedOut: false, exitCode: 0, wallSeconds: 1 };
+            },
+        }, () => executeMainLoop(session.mvState, ctx));
+        return {
+            result,
+            calls,
+            logs,
+            persisted: JSON.parse(fs.readFileSync(statePath, 'utf-8')),
+            relaunchEvents: readMicroverseRelaunchEvents(dataRoot),
+        };
+    } finally {
+        if (previousDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = previousDataRoot;
+        fs.rmSync(session.dir, { recursive: true, force: true });
+        fs.rmSync(workingDir, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
 }
 
 test('readRunnerState promotes orphan tmp state before microverse control-flow reads', () => {
@@ -1085,6 +1200,57 @@ test('handleRateLimit persists API reset metadata and emits wait activity', asyn
         fs.rmSync(dir, { recursive: true, force: true });
         fs.rmSync(dataRoot, { recursive: true, force: true });
     }
+});
+
+test('microverse-runner relaunches codex manager subprocess below cap', async () => {
+    const outcome = await runMicroverseRelaunchScenario({
+        backend: 'codex',
+        priorRelaunchCount: 0,
+        tickets: [
+            { id: 'mv-done', status: 'Done', order: 1 },
+            { id: 'mv-pending', status: 'Todo', order: 2 },
+        ],
+    });
+
+    assert.equal(outcome.calls, 2, 'second iteration proves the outer loop relaunched');
+    assert.equal(outcome.persisted.codex_manager_relaunch_count, 1);
+    assert.equal(outcome.persisted.active, true, 'relaunch path must not deactivate the session');
+    assert.equal(outcome.relaunchEvents.length, 1);
+    assert.equal(outcome.relaunchEvents[0].iteration, 1);
+    assert.equal(outcome.result.exitReason, 'stopped');
+    assert.ok(
+        outcome.logs.some(msg => msg.includes('relaunching') && msg.includes(`1/${Defaults.CODEX_MANAGER_RELAUNCH_CAP}`)),
+        `expected relaunch log, got ${JSON.stringify(outcome.logs)}`,
+    );
+});
+
+test('microverse-runner honors codex manager relaunch cap', async () => {
+    const outcome = await runMicroverseRelaunchScenario({
+        backend: 'codex',
+        priorRelaunchCount: Defaults.CODEX_MANAGER_RELAUNCH_CAP,
+        tickets: [
+            { id: 'mv-pending', status: 'Todo', order: 1 },
+        ],
+    });
+
+    assert.equal(outcome.calls, 1, 'at cap should break instead of starting another iteration');
+    assert.equal(outcome.persisted.codex_manager_relaunch_count, Defaults.CODEX_MANAGER_RELAUNCH_CAP);
+    assert.equal(outcome.relaunchEvents.length, 0);
+    assert.equal(outcome.result.exitReason, 'error');
+});
+
+test('microverse-runner leaves claude subprocess errors terminal', async () => {
+    const outcome = await runMicroverseRelaunchScenario({
+        backend: 'claude',
+        tickets: [
+            { id: 'mv-pending', status: 'Todo', order: 1 },
+        ],
+    });
+
+    assert.equal(outcome.calls, 1, 'claude backend must not relaunch');
+    assert.equal(outcome.persisted.codex_manager_relaunch_count, 0);
+    assert.equal(outcome.relaunchEvents.length, 0);
+    assert.equal(outcome.result.exitReason, 'error');
 });
 
 // --- Pre-iteration SHA ---

@@ -6,10 +6,10 @@ import { Defaults } from '../types/index.js';
 import { resolveBackend, buildJudgeInvocation, buildWorkerInvocation, backendEnvOverrides, } from '../services/backend-spawn.js';
 import { readMicroverseState, readRecoverableJsonObject, writeMicroverseState, recordIteration as stateRecordIteration, recordStall, recordFailedApproach, isConverged, compareMetric, classifyFailure, } from '../services/microverse-state.js';
 import { getHeadSha, resetToSha, isWorkingTreeDirty } from '../services/git-utils.js';
-import { writeStateFile, getExtensionRoot, isoCompactStamp, sleep, Style, formatTime, formatLocalDateKey, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, } from '../services/pickle-utils.js';
+import { writeStateFile, getExtensionRoot, isoCompactStamp, sleep, Style, formatTime, formatLocalDateKey, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, collectTickets, } from '../services/pickle-utils.js';
 import { StateManager, safeDeactivate } from '../services/state-manager.js';
 const sm = new StateManager();
-import { runIteration, loadRateLimitSettings, classifyIterationExit, computeRateLimitAction, killCurrentChild, } from './mux-runner.js';
+import { runIteration, loadRateLimitSettings, classifyIterationExit, computeRateLimitAction, killCurrentChild, evaluateCodexManagerRelaunch, recordCodexManagerRelaunch, } from './mux-runner.js';
 import { logActivity } from '../services/activity-logger.js';
 import { assertBaselineFresh, BaselineMissingError, BaselineStaleError, runGate } from '../services/convergence-gate.js';
 import { spawnGateRemediatorMain } from './spawn-gate-remediator.js';
@@ -1103,6 +1103,20 @@ async function handleIterationOutcome(state, baseline, ctx, outcome) {
     if (exitResult.type === 'success')
         ctx.consecutiveRateLimits = 0;
     if (outcome.completion === 'error') {
+        let postState = ctx.currentRunnerState;
+        try {
+            postState = readRunnerState(ctx.statePath);
+        }
+        catch { /* fall back to current runner state */ }
+        const decision = evaluateCodexManagerRelaunch(postState, collectTickets(ctx.sessionDir), null);
+        if (decision.shouldRelaunch) {
+            ctx.log(`Codex manager subprocess errored with ${decision.pendingCount} ticket(s) still pending — ` +
+                `relaunching (count ${decision.nextRelaunchCount}/${Defaults.CODEX_MANAGER_RELAUNCH_CAP}).`);
+            recordCodexManagerRelaunch(ctx.statePath, ctx.sessionDir, decision, ctx.iteration, ctx.log);
+            ctx.currentRunnerState = postState;
+            await _deps.sleep(1000);
+            return 'continue';
+        }
         ctx.log('Subprocess error. Exiting loop.');
         return 'error';
     }

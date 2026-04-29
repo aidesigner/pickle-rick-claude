@@ -33,6 +33,7 @@ import {
   printMinimalPanel,
   safeErrorMessage,
   ensureMonitorWindow,
+  collectTickets,
 } from '../services/pickle-utils.js';
 import { StateManager, safeDeactivate } from '../services/state-manager.js';
 
@@ -43,6 +44,8 @@ import {
   classifyIterationExit,
   computeRateLimitAction,
   killCurrentChild,
+  evaluateCodexManagerRelaunch,
+  recordCodexManagerRelaunch,
 } from './mux-runner.js';
 import { logActivity } from '../services/activity-logger.js';
 import { assertBaselineFresh, BaselineMissingError, BaselineStaleError, runGate } from '../services/convergence-gate.js';
@@ -1464,7 +1467,27 @@ async function handleIterationOutcome(
   const rateLimitExit = await handleRateLimitExit(state, ctx, exitResult);
   if (rateLimitExit) return rateLimitExit;
   if (exitResult.type === 'success') ctx.consecutiveRateLimits = 0;
-  if (outcome.completion === 'error') { ctx.log('Subprocess error. Exiting loop.'); return 'error'; }
+  if (outcome.completion === 'error') {
+    let postState = ctx.currentRunnerState;
+    try { postState = readRunnerState(ctx.statePath); } catch { /* fall back to current runner state */ }
+    const decision = evaluateCodexManagerRelaunch(
+      postState,
+      collectTickets(ctx.sessionDir),
+      null,
+    );
+    if (decision.shouldRelaunch) {
+      ctx.log(
+        `Codex manager subprocess errored with ${decision.pendingCount} ticket(s) still pending — ` +
+        `relaunching (count ${decision.nextRelaunchCount}/${Defaults.CODEX_MANAGER_RELAUNCH_CAP}).`,
+      );
+      recordCodexManagerRelaunch(ctx.statePath, ctx.sessionDir, decision, ctx.iteration, ctx.log);
+      ctx.currentRunnerState = postState;
+      await _deps.sleep(1000);
+      return 'continue';
+    }
+    ctx.log('Subprocess error. Exiting loop.');
+    return 'error';
+  }
   if (outcome.completion === 'inactive') { ctx.log('Session deactivated. Exiting loop.'); return 'stopped'; }
   if (state.convergence_mode === 'worker') return await handleWorkerMode(state, ctx) ?? 'continue';
   return await handleMetricMode(state, baseline, ctx);
