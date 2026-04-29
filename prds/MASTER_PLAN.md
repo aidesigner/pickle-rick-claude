@@ -1,7 +1,7 @@
 # MASTER_PLAN — God Function Remediation
 
-**Last updated**: 2026-04-28 (post convergence-toolchain-gates v1.58.0 release)
-**Status**: God-fn epic T0 complete; T1 still paused, stashed for later resume. Convergence-toolchain-gates **shipped v1.58.0** — full 3-phase pipeline (build + anatomy-park + szechuan-sauce) on codex backend, 25 tickets + 78 anatomy-park findings + szechuan god-fn decomposition, all gates green, 2889/2889 tests pass. Cronenberg meta-router shipped earlier as v1.57.0. Stall-recovery PRD still drafted, not started.
+**Last updated**: 2026-04-29 (post god-fn epic + anatomy-park overnight)
+**Status**: **God-fn epic SHIPPED end-to-end on codex** — T0–T19 (16 implementation + 4 hardening) all Done; anatomy-park overnight added 59 trap-door fixes on top. Convergence-toolchain-gates v1.58.0 still summarized below. Queued PRDs: `anatomy-park-followups`, `god-functions-remediation-phase-2`, `watcher-pane-recovery`, `large-tier-stall-recovery`, `deepseek-integration`, `citadel` (now absorbing BMAD).
 
 ---
 
@@ -15,8 +15,7 @@
 | `prds/convergence-toolchain-gates.md` | **Shipped v1.58.0** (2026-04-28) — full 3-phase pipeline: 25 atomic tickets (gate primitive + finalize-gate orchestrator + remediator brief-prep + skill prompt updates + LOA-618 fixture) → anatomy-park surfaced 78 cross-cutting bugs, all fixed (incl. metrics worktree/nested-repo, runner ownership pid stamps, orphan-tmp recovery, hook fallback routing) → szechuan-sauce decomposed god-fns. Phase 1 ran on claude (rate-limited at 5h), phases 2/3 ran on codex (5–10× faster). 122 commits, +19,597/-1,921 LOC. iteration_regressions counter held at 0 throughout — gate didn't false-flag itself. | tag `v1.58.0` |
 | `prds/large-tier-stall-recovery.md` | Draft (2026-04-27) — 3 atomic tickets (tier-aware circuit-breaker budget, worker resume detection, e2e verification). Targets god-fn T1 codex stall. **NOT started.** Planned v1.57.0 release tag was claimed by cronenberg — retarget to v1.58.0 when picked up. | uncommitted |
 | `prds/deepseek-integration.md` | Draft (2026-04-27) — third backend `'deepseek'` riding `claude` CLI via DeepSeek's Anthropic-compat shim; honest identity in state/logs/metrics; ~230 LOC. **NOT started.** | uncommitted |
-| `prds/bmad-inspired-hardening.md` | Draft (user authored, 2026-04-2x) — BMAD-inspired hardening practices for the engineering loop. **NOT started.** | uncommitted |
-| `prds/citadel.md` | Draft (2026-04-27) — new `/citadel` command (post-implementation conformance audit: PRD ↔ implementation invariants, AC coverage, sibling guard parity, rule-set invariants, trap-door enforcement) **plus** matched cross-skill updates to `/pickle-refine-prd` (T20 AC-shape collapse-or-justify), anatomy-park (T21 phase-2.5 pattern-replay sweep + `pattern_shape` schema), and szechuan-sauce (T22 diff-hygiene gate, T23 trap-door-as-test sweep). Driven by LOA-618 post-mortem: 7 issues that reached code review, 6 of which now have a primary owner + safety net. Reviewed by 5-agent team and rescoped twice (Venn-overlap model: anatomy-park ∩ citadel ∩ szechuan-sauce, slight overlap intentional). 16 core tasks (T0–T16) + 4 cross-skill tasks (T20–T23) + cronenberg integration (T13.5). 17 ACs (`AC-CIT-01..17`). **NOT started.** | uncommitted |
+| `prds/citadel.md` | Draft (2026-04-27, BMAD-merged 2026-04-29) — new `/citadel` command (post-implementation conformance audit: PRD ↔ implementation invariants, AC coverage, sibling guard parity, rule-set invariants, trap-door enforcement) **plus** matched cross-skill updates to `/pickle-refine-prd`, anatomy-park, szechuan-sauce, and cronenberg. Driven by LOA-618 post-mortem. **Absorbed `bmad-inspired-hardening.md`** on 2026-04-29: conformance overlap folded into core (new T17 + AC-CIT-18); remaining BMAD capabilities (`/pickle-readiness`, `/pickle-archaeology`, phase-specialized Morty subagents, `/pickle-correct-course`, `/pickle-debate`, schema migration v2→v3, codex-format pin, hang guards, full risk register R5/R9/R12/R13/R16/R20–R33) preserved verbatim in Appendix. 18 ACs (`AC-CIT-01..18`) + 16 core tasks (T0–T16) + 4 cross-skill (T20–T23) + cronenberg (T13.5) + ~28 BMAD-T## appendix tasks. **NOT started.** | uncommitted (citadel + 3 PRDs landed earlier) |
 | `prds/god-functions-remediation-phase-2.md` | Draft (2026-04-28) — follow-up epic for the 27 pre-existing god-functions across 24 files exposed by T14's ESLint ratchet (Phase 1 closer). Each function has a scoped `// eslint-disable-next-line` carve-out from commit `7bf3263`; this epic refactors them and removes the carve-outs. Worst offender: `runGate` in `convergence-gate.ts` (cyclomatic 65, 305 lines). 6 ACs, ~20 atomic tickets sketched. **NOT started.** | committed in this branch |
 | `prds/watcher-pane-recovery.md` | Draft (2026-04-28) — single-fix PRD for monitor-window watcher panes that exit on `state.active: false` and don't respawn when mux-runner relaunch brings the session back live. Discovered during the god-fn epic codex run; only `monitor.js` (dashboard) survived a relaunch, the other three watcher panes stayed at `zsh` prompts. 7 ACs, 4 atomic tickets. **NOT started.** | committed in this branch |
 | `prds/anatomy-park-followups.md` | Draft (2026-04-29) — 3 small follow-ups identified by the 5-agent review of the 59-commit anatomy-park overnight run: (T1) trap-door catalog hygiene — split 3 oversized entries (pickle-utils.ts at 4042 chars), standardize ENFORCE clauses to test filenames; (T2) `recoverable-json.test.js` — add dedicated unit tests for the extracted module (currently only via state-manager + caller tests); (T3) extend codex-manager relaunch (`bf4a002`) to `microverse-runner.ts` — anatomy-park hit the same 4h subprocess-error wall that mux-runner now handles. 12 ACs, 3 atomic tickets. **NOT started.** | committed in this branch |
@@ -133,97 +132,55 @@ Pickle-pipeline was running `pickle → anatomy-park → szechuan-sauce`. Phase 
 
 ---
 
-## 3. Current state (verified on disk, 2026-04-27 13:21Z)
+## 3. Current state (verified on disk, 2026-04-29)
 
 | Item | Value |
 |---|---|
-| Session root | `~/.local/share/pickle-rick/sessions/2026-04-25-9152e64b/` |
-| `state.json: active` | `false` |
-| `state.json: step` | `research` |
-| `state.json: current_ticket` | `f068af3f` (T1) |
-| `state.json: command_template` | `pickle.md` ✅ (v1.56.0 fix held) |
-| `state.json: false_epic_completed_count` | `18` (proof v1.56.4 fired and recovered) |
-| `pipeline-status.json` | `failed` (circuit-breaker exit; not relaunch-blocking) |
-| `pipeline-cancel` sentinel | absent |
-| Working tree | 5 untracked PRD drafts (`bmad-inspired-hardening`, `citadel`, `convergence-toolchain-gates`, `deepseek-integration`, `large-tier-stall-recovery`) + this `MASTER_PLAN.md` modification. No code-level dirt. |
-| Source tree | T0 deliverables committed; no in-flight T1 edits |
-| tmux | `pipeline-9152e64b` is dead. |
-| Tickets done | 1 of 20 (T0 / `6f3e3f01`) |
-| Tickets in progress | 0 (T1 reset to Todo) |
-| Tickets pending | 19 |
-
-T1 has research/plan artifacts on disk from the failed run (5 worker-session logs, plan/research markdown). Resuming T1 will reuse those if the prompt instructs, or restart fresh if cleared.
+| God-fn epic tickets | **T0–T19 all Done** (per §2.1) — 16 implementation + 4 hardening shipped on codex backend |
+| Working tree | 2 untracked PRD drafts: `deepseek-integration.md`, `large-tier-stall-recovery.md`. `forgecode-pickle-port.md` deleted (obsolete — DeepSeek PRD supersedes the third-backend story). `bmad-inspired-hardening.md` deleted (merged into `citadel.md`). No code-level dirt. |
+| Test suite | **3076/3076 pass** (verified 2026-04-29; 4 timing-sensitive tests bumped: scope-resolver-import-walks `HANG_TIMEOUT_MS` 750ms→2500ms, plumbus-frame-analyzer-hang-guard slack 10s→30s) |
+| `eslint src/ --max-warnings=-1` | 0 errors, 19 advisory warnings |
+| `tsc --noEmit` | clean |
+| Latest release (prose) | **v1.59.1** (codex isolation fix; the unblocker for the god-fn epic resume) |
+| Anatomy-park follow-ups | 59 trap-door fixes landed overnight; 3 small follow-ups queued in `prds/anatomy-park-followups.md` |
+| Phase-2 epic | 27 god-functions across 24 files queued in `prds/god-functions-remediation-phase-2.md` (T14 ratchet exposure) |
 
 ---
 
 ## 4. Resume strategy
 
-### Option A: hand-execute T1 with claude backend (recommended)
-
-T1 is mechanical extraction (split `_emitDot` into 6 topology helpers + 2 inline post-passes per the refined PRD). Codex stalled on it because of complexity, not capability gaps. Claude with full file context will burn through it cleanly in 30–60 minutes.
-
-```bash
-# Edit state.json directly OR launch /pickle on T1's ticket file with --backend claude
-SESSION_ROOT=~/.local/share/pickle-rick/sessions/2026-04-25-9152e64b
-# Switch backend for one ticket
-node "$HOME/.claude/pickle-rick/extension/bin/update-state.js" backend claude "$SESSION_ROOT"
-node "$HOME/.claude/pickle-rick/extension/bin/update-state.js" start_time_epoch "$(date +%s)" "$SESSION_ROOT"
-node "$HOME/.claude/pickle-rick/extension/bin/update-state.js" iteration 0 "$SESSION_ROOT"
-node "$HOME/.claude/pickle-rick/extension/bin/update-state.js" current_ticket f068af3f "$SESSION_ROOT"
-rm -f "$SESSION_ROOT/pipeline-cancel"
-
-tmux new-session -d -s pipeline-9152e64b -c /Users/gregorydickson/loanlight/pickle-rick/pickle-rick-claude
-tmux send-keys -t pipeline-9152e64b:0 \
-  "node \$HOME/.claude/pickle-rick/extension/bin/pipeline-runner.js $SESSION_ROOT; read" Enter
-tmux attach -t pipeline-9152e64b
-```
-
-After T1 lands, switch `state.backend` back to `codex` for T2+ if desired — most remaining tickets are smaller-scope splits where codex performed acceptably.
-
-### Option B: bump circuit-breaker budget for large-tier tickets, retry codex on T1
-
-Currently 5 iterations × ~10 min = 50 min before stall. T1 needs more. Code change in `mux-runner.ts` to read `linear_ticket_*.md` frontmatter `complexity_tier` and use a tier-keyed budget (`large` = 12, `medium` = 6, `small` = 4). Modest scope, would land as v1.56.5. Then retry codex.
-
-### Option C: pure hand-execution for T1 by user (no agent)
-
-T1 is the kind of work a senior dev does in 90 minutes. The refined PRD has the helper signatures spelled out. If the agent loops are getting tedious, this is the fastest path to "T1 done, resume codex on T2."
-
-Whichever option, **T1's research/plan artifacts at `$SESSION_ROOT/f068af3f/` are good context** — codex did real analysis there even if it didn't commit code. Worth reading before starting.
-
-### Option D: full restart from T0 (NOT recommended)
-
-T0 is committed. There's nothing to redo there. The session is genuinely past T0.
+Original resume strategies (Options A–D) are obsolete; T0–T19 shipped on codex backend per §2.1.
 
 ---
 
 ## 5. The 20 tickets (in execution order)
 
+All tickets shipped via the 2026-04-28/29 codex run, see §2.1.
+
 | Order | ID | Title | Tier | Min new tests | Status |
 |---|---|---|---|---|---|
 | 10 | `6f3e3f01` | T0 — Pre-refactor scaffolding **[GATE]** | medium | 0 | **Done** ✅ |
-| 20 | `f068af3f` | T1 — Split `_emitDot` (6 topology helpers, 2 post-passes inline) | large | 8 | Todo (research/plan staged) |
-| 30 | `53caa9a4` | T2 — Split `mux-runner main` (outer loop only) | large | 4 | Todo |
-| 40 | `2b4b0501` | T3 — Split `microverse-runner main` | large | 3 | Todo |
-| 50 | `626cd1d5` | T4 — Split `spawn-morty main` | large | 4 | Todo |
-| 60 | `5059df9a` | T5 — Split `stop-hook main` (8 token detectors) | large | 9 | Todo |
-| 70 | `16efc5dc` | T6 — Split `spawn-refinement-team main` | medium | 1 | Todo |
-| 80 | `7aa55af1` | T7 — Split `pipeline-runner main` (PhaseConfig dispatch) | medium | 1 | Todo |
-| 90 | `f5ac5de1` | T8 — Split `setup main` | medium | 3 | Todo |
-| 100 | `a6c9c59b` | T9 — Split `jar-runner main` | medium | 5 | Todo |
-| 110 | `e54eebf6` | T10 — Split `build()` | small | 3 | Todo |
-| 120 | `e2e6e1cc` | T11 — Split `fromSpec()` | small | 2 | Todo |
-| 130 | `189df244` | T12 — Split `ensureMonitorWindow` **[TRAP DOOR]** | small | 2 | Todo |
-| 140 | `bdfb528b` | T13 — Split `findImporters` **[TRAP DOOR]** | small | 4 | Todo |
-| 150 | `5fa8759a` | T14 — Epic closer (ESLint→error, single 1.55.0 bump, smoke) | trivial | 0 | Todo |
-| 160 | `e5e73494` | T15 — Wire (Library variant) | medium | 0 | Todo |
-| 170 | `24cd1805` | Harden — code quality of refactor diff | large | varies | Todo |
-| 180 | `9dbd0bfd` | Audit — data flow integrity | large | varies | Todo |
-| 190 | `d6e98b45` | Harden — test quality | large | varies | Todo |
-| 200 | `7be94584` | Audit — cross-reference consistency | medium | 0 | Todo |
+| 20 | `f068af3f` | T1 — Split `_emitDot` (6 topology helpers, 2 post-passes inline) | large | 8 | **Done** ✅ |
+| 30 | `53caa9a4` | T2 — Split `mux-runner main` (outer loop only) | large | 4 | **Done** ✅ |
+| 40 | `2b4b0501` | T3 — Split `microverse-runner main` | large | 3 | **Done** ✅ |
+| 50 | `626cd1d5` | T4 — Split `spawn-morty main` | large | 4 | **Done** ✅ |
+| 60 | `5059df9a` | T5 — Split `stop-hook main` (8 token detectors) | large | 9 | **Done** ✅ |
+| 70 | `16efc5dc` | T6 — Split `spawn-refinement-team main` | medium | 1 | **Done** ✅ |
+| 80 | `7aa55af1` | T7 — Split `pipeline-runner main` (PhaseConfig dispatch) | medium | 1 | **Done** ✅ |
+| 90 | `f5ac5de1` | T8 — Split `setup main` | medium | 3 | **Done** ✅ |
+| 100 | `a6c9c59b` | T9 — Split `jar-runner main` | medium | 5 | **Done** ✅ |
+| 110 | `e54eebf6` | T10 — Split `build()` | small | 3 | **Done** ✅ |
+| 120 | `e2e6e1cc` | T11 — Split `fromSpec()` | small | 2 | **Done** ✅ |
+| 130 | `189df244` | T12 — Split `ensureMonitorWindow` **[TRAP DOOR]** | small | 2 | **Done** ✅ |
+| 140 | `bdfb528b` | T13 — Split `findImporters` **[TRAP DOOR]** | small | 4 | **Done** ✅ |
+| 150 | `5fa8759a` | T14 — Epic closer (ESLint→error, single bump, smoke) | trivial | 0 | **Done** ✅ |
+| 160 | `e5e73494` | T15 — Wire (Library variant) | medium | 0 | **Done** ✅ |
+| 170 | `24cd1805` | T16 — Harden — code quality of refactor diff | large | varies | **Done** ✅ |
+| 180 | `9dbd0bfd` | T17 — Audit — data flow integrity | large | varies | **Done** ✅ |
+| 190 | `d6e98b45` | T18 — Harden — test quality | large | varies | **Done** ✅ |
+| 200 | `7be94584` | T19 — Audit — cross-reference consistency | medium | 0 | **Done** ✅ |
 
-T14's planned bump target (`1.54.2 → 1.55.0`) is now obsolete — we've already shipped `1.55.0` for an unrelated agent-teams feature (commit `a4662df`), `1.56.4` for this session's PRC fixes, and `1.57.0` for the cronenberg meta-router (commit `711f92c`). Reset T14's bump to whatever the current latest is at the time T14 lands.
-
-Total minimum new tests from T1–T14: **49**. Hardening tickets add more as findings demand.
+Total minimum new tests from T1–T14: **49**. Hardening tickets added more as findings demanded.
 
 Per-ticket details: `~/.local/share/pickle-rick/sessions/2026-04-25-9152e64b/<hash>/linear_ticket_<hash>.md`.
 
@@ -248,12 +205,12 @@ These apply to every PR in the epic — keep them in mind during code review:
 
 ---
 
-## 7. Open questions / pre-implementation gates
+## 7. Open questions / pre-implementation gates (resolved)
 
-- **Reviewer assignment** — refined PRD §11 requires a named reviewer with ≤24h SLA. Not assigned yet. Decide before T1 lands.
-- **Branch strategy** — refined PRD §6 originally called for `refactor/god-fn-epic` branch with single bump at T14. We've already landed multiple commits to `main` directly (release line v1.56.0–v1.56.4). Decide: continue on main per-PR, or carve out a feature branch from current HEAD for T1+? Either works.
-- **Backend choice for T1** — see Resume Strategy §4 above. Default recommendation: claude for T1, codex for T2+.
-- **Codex large-tier circuit-breaker tuning** — if pursuing Option B in §4, this is the implementation work.
+- **Reviewer assignment** — N/A — codex backend ran autonomously.
+- **Branch strategy** — Continued on main per-PR; resolved by execution.
+- **Backend choice for T1** — Codex shipped T1 in 14 min (post v1.59.1 fixes).
+- **Codex large-tier circuit-breaker tuning** — Pursued separately as `prds/large-tier-stall-recovery.md`.
 
 ---
 
@@ -272,13 +229,11 @@ Codex backend exhibits a consistent class of failures we hit five times today. E
 ## 9. Quick reference
 
 ```
-Pipeline session dir:    ~/.local/share/pickle-rick/sessions/2026-04-25-9152e64b/
+Pipeline session dir:    ~/.local/share/pickle-rick/sessions/2026-04-25-9152e64b/   (T0/T1 era; superseded)
+Note:                    the post-T19 anatomy-park overnight run was a separate session — see §2.1
 Refined PRD (committed): prds/god-functions-remediation.md (SHA 1658d81)
 Refinement summary:      $SESSION_ROOT/refinement_summary.md
 Per-ticket files:        $SESSION_ROOT/<hash>/linear_ticket_<hash>.md
-T1 staged research:      $SESSION_ROOT/f068af3f/research_2026-04-26.md
-T1 staged plan:          $SESSION_ROOT/f068af3f/plan_2026-04-26.md
 Pipeline config:         $SESSION_ROOT/pipeline.json
-Cancel signal (rm to resume): $SESSION_ROOT/pipeline-cancel (currently absent)
-Latest release:          v1.57.0 — https://github.com/gregorydickson/pickle-rick-claude/releases/tag/v1.57.0
+Latest release:          v1.59.1 — https://github.com/gregorydickson/pickle-rick-claude/releases/tag/v1.59.1
 ```
