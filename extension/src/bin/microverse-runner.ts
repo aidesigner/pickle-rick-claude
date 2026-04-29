@@ -152,7 +152,7 @@ export function loadConvergenceGateSettings(extRoot: string): {
   }
 }
 
-async function runRemediatorForIteration(
+export async function runRemediatorForIteration(
   gateResult: GateResult,
   sessionDir: string,
   workingDir: string,
@@ -208,14 +208,22 @@ async function runRemediatorForIteration(
   try {
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     const resultFiles = fs.readdirSync(gateDir)
-      .filter(f => f.startsWith('remediation_') && f.endsWith('_result.json'))
-      .map(f => ({ name: f, mtime: fs.statSync(path.join(gateDir, f)).mtimeMs }))
+      .map(f => {
+        const match = f.match(/^(remediation_.+_result\.json)(?:\.tmp\.\d+(?:\..+)?)?$/);
+        if (!match) return null;
+        return { name: match[1], mtime: fs.statSync(path.join(gateDir, f)).mtimeMs };
+      })
+      .filter((f): f is { name: string; mtime: number } => f !== null)
       .filter(({ mtime }) => mtime >= startMs)
       .sort((a, b) => b.mtime - a.mtime);
 
     if (resultFiles.length === 0) return { success: false };
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-    const resultRaw = JSON.parse(fs.readFileSync(path.join(gateDir, resultFiles[0].name), 'utf-8'));
+    const resultRaw = readRecoverableJsonObject(path.join(gateDir, resultFiles[0].name)) as {
+      aborted?: boolean;
+      failures_out?: number;
+    } | null;
+    if (!resultRaw) return { success: false };
     return { success: resultRaw.aborted !== true && resultRaw.failures_out === 0 };
   } catch {
     return { success: false };

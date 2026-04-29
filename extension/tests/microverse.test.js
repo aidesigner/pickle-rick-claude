@@ -17,6 +17,7 @@ import {
     writeMicroverseState,
     readMicroverseState,
 } from '../services/microverse-state.js';
+import { runRemediatorForIteration } from '../bin/microverse-runner.js';
 
 function createTempGitRepo() {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-microverse-'));
@@ -135,6 +136,69 @@ test('per-iteration gate remediation publishes gate result via atomic state writ
     assert.match(src, /const gateResultPath = path\.join\(gateDir, `gate_result_iter_/);
     assert.match(src, /writeStateFile\(gateResultPath, gateResult\)/);
     assert.doesNotMatch(src, /fs\.writeFileSync\(gateResultPath/);
+});
+
+test('per-iteration gate remediation recovers orphan tmp result before classifying success', async () => {
+    const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-remediation-result-'));
+    const workingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-remediation-work-'));
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-remediation-bin-'));
+    const fakeClaudePath = path.join(binDir, 'claude');
+    const oldPath = process.env.PATH;
+    const gateDir = path.join(sessionDir, 'gate');
+
+    try {
+        fs.writeFileSync(
+            fakeClaudePath,
+            [
+                '#!/usr/bin/env node',
+                "const fs = require('node:fs');",
+                "const path = require('node:path');",
+                `const gateDir = ${JSON.stringify(gateDir)};`,
+                "fs.mkdirSync(gateDir, { recursive: true });",
+                "const resultPath = path.join(gateDir, `remediation_${Date.now()}_result.json.tmp.99999999`);",
+                "fs.writeFileSync(resultPath, JSON.stringify({ aborted: false, failures_out: 0 }), 'utf-8');",
+                '',
+            ].join('\n'),
+            { mode: 0o755 },
+        );
+        process.env.PATH = `${binDir}${path.delimiter}${oldPath ?? ''}`;
+
+        const result = await runRemediatorForIteration(
+            {
+                status: 'red',
+                failures: [{
+                    check: 'tests',
+                    file: path.join(workingDir, 'broken.test.js'),
+                    line: 1,
+                    ruleOrCode: 'simulated',
+                    message: 'simulated failure',
+                    severity: 'error',
+                    occurrence_index: 0,
+                }],
+                baseline_used: false,
+                allowed_paths_used: false,
+                elapsed_ms: 1,
+                total_raw_failure_count: 1,
+                new_failures_vs_baseline: 1,
+            },
+            sessionDir,
+            workingDir,
+            'claude',
+            5,
+        );
+
+        assert.deepEqual(result, { success: true });
+        assert.equal(
+            fs.readdirSync(gateDir).some((name) => /^remediation_.+_result\.json$/.test(name)),
+            true,
+            'orphan tmp result should be promoted to the canonical result path',
+        );
+    } finally {
+        process.env.PATH = oldPath;
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+        fs.rmSync(workingDir, { recursive: true, force: true });
+        fs.rmSync(binDir, { recursive: true, force: true });
+    }
 });
 
 // --- direction='lower' tests ---
