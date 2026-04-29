@@ -82,9 +82,13 @@ Rick prints a `tmux attach` command — open a second terminal to watch the live
 
 Sit back. Rick handles the rest.
 
+> **Mode choice** — `/pickle` for short epics (1–7 iterations, full keyboard access); `/pickle-tmux` for long epics (8+) where each iteration spawns a fresh Claude subprocess with a clean context window.
+
+> **Worker-spawn mechanism** — `/pickle --teams` swaps the per-ticket `claude -p` subprocess for a harness-native subagent on a team (`TeamCreate` + `Agent` + `TaskUpdate`). Same 8-phase lifecycle, same artifact contract, no token-sniffing log heuristics — cleaner completion signals and stricter artifact validation. Claude backend only; the default subprocess path is required for the codex backend and for everything that runs through `mux-runner` (`/pickle-tmux`, `/pickle-zellij`, `/pickle-microverse`, `/pickle-pipeline`). See [Agent Teams Mode](#agent-teams) below.
+
 > **Backend choice** — append `--backend codex` (or export `PICKLE_BACKEND=codex`) to route worker/manager spawns through `codex exec` instead of `claude`. See [Codex backend](#codex-backend) below for precedence and examples.
 
-> **Worker-spawn mechanism** — `/pickle --teams` swaps the per-ticket `claude -p` subprocess for a harness-native subagent on a team (`TeamCreate` + `Agent` + `TaskUpdate`). Same 8-phase lifecycle, same artifact contract, no token-sniffing log heuristics. Claude backend only. See [Agent Teams Mode](#agent-teams) below.
+> **If things go wrong** — `"Stop hook error"` in the Claude Code UI is normal: every `decision: block` from the stop hook is labelled that way. The loop is working. If a single ticket fails, run `/pickle-retry <ticket-id>` instead of restarting the whole epic.
 
 ### Step 4 (Optional): Metric-Driven Refinement
 
@@ -411,19 +415,6 @@ Most flags are command-scoped. The table groups them by command family — flags
 | `--no-followups` | `/cronenberg` | Skip the cleanup chain regardless of signals |
 | `--no-refine` | `/cronenberg` | Force-skip the refinement pre-pass even when signals say it should run |
 | `--refine` | `/cronenberg` | Force-include the refinement pre-pass even when signals would skip it |
-
-### Tips
-
-- **`/pickle` vs `/pickle-tmux`** — `/pickle` for short epics (1–7 iterations, full keyboard access); `/pickle-tmux` for long epics (8+) where each iteration spawns a fresh Claude subprocess with a clean context window.
-- **`/pickle` vs `/pickle --teams`** — both run the same 8-phase lifecycle. Default (no flag) spawns `claude -p` subprocesses per ticket; `--teams` spawns harness-native subagents on a team. Use teams when you want cleaner completion signals (`TaskUpdate` instead of token sniffing) and stricter artifact validation. Use the default when you need the codex backend, are running through `mux-runner` (`/pickle-tmux` / `/pickle-zellij` / `/pickle-microverse` / `/pickle-pipeline`), or just want byte-for-byte v1.54 behavior.
-- **"Stop hook error" is normal** — Claude Code labels every `decision: block` from the stop hook as "Stop hook error" in the UI. Not an error — the loop is working.
-- **Recovering from a failed Morty** — `/pickle-retry <ticket-id>` instead of restarting the whole epic.
-
-### Settings & migration
-
-`pickle_settings.json` keys, defaults, the convergence-gate block, and the 1.48 → 1.49 council settings migration live in [`internals.md`](internals.md#settings-pickle_settingsjson).
-
----
 
 ## Tool Deep Dives
 
