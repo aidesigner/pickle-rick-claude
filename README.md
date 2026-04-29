@@ -8,15 +8,7 @@ Pickle Rick is a complete agentic engineering toolbelt built on the [Ralph Wiggu
 
 New to PRDs? See the **[PRD Writing Guide](PRD_GUIDE.md)** for developers or the **[Product Manager's Guide](PM_GUIDE.md)** for PMs defining and refining requirements. For internals, see [Architecture](architecture.md). For what's coming next, see the [Feature Roadmap](roadmap.md).
 
-> **New in v1.51+: Codex backend.** `--backend codex` routes workers through `codex exec` (GPT-5.4) on `/pickle`, `/pickle-tmux`, `/pickle-microverse`, `/anatomy-park`, `/szechuan-sauce`. `/council-of-ricks` runs Codex in Phase C by default (`--no-codex` to disable).
-
-> **New in v1.55+: Agent Teams mode.** `/pickle --teams` spawns workers as harness-native `morty-implementer` subagents (Claude backend only). Spec: [`prds/pickle-agent-teams.md`](prds/pickle-agent-teams.md).
-
-> **New in v1.56+: Pipeline resume hardening.** `prds/` and `docs/` are excluded from clean-tree pre-flight (override via `pipeline.json.ignore_dirty_paths`). The pickle phase pins its own `command_template` on entry — resumed pipelines no longer misroute to a stale phase prompt.
-
-> **New in v1.57+: `/cronenberg`.** Explicit meta-router that picks the right pickle metaphor + cleanup chain for your task. Never auto-triggers.
-
-> **New in v1.58+: Convergence Toolchain Gates.** `/szechuan-sauce` and `/anatomy-park` cannot declare convergence until typecheck + lint + tests are green. A new `morty-gate-remediator` subagent handles mechanical autofix (prettier/eslint + a small set of hand-fix classes) inside a snapshot-and-revert envelope. Kill-switch: `PICKLE_GATE_DISABLED=1`. See [Convergence Gate](#convergence-gate) below.
+> **Recently released** — **v1.58** Convergence Toolchain Gates ([details](#convergence-gate)) · **v1.57** `/cronenberg` meta-router · **v1.56** pipeline resume hardening · **v1.55** Agent Teams mode (`/pickle --teams`) · **v1.51** Codex backend (`--backend codex`).
 
 ---
 
