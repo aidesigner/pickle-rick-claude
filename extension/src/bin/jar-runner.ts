@@ -21,12 +21,12 @@ let activeTaskProc: import('child_process').ChildProcess | null = null;
 export function loadJarTaskTimeout(extensionRoot: string, state: State): number {
   // Use worker_timeout_seconds from state if set, else fall back to settings, else default
   const stateTimeout = Number(state.worker_timeout_seconds);
-  if (Number.isFinite(stateTimeout) && stateTimeout > 0) return stateTimeout;
+  if (Number.isInteger(stateTimeout) && stateTimeout > 0) return stateTimeout;
 
   try {
     const settings = readRecoverableJsonObject(path.join(extensionRoot, 'pickle_settings.json')) as Record<string, unknown> | null;
     const rawTimeout = Number(settings?.default_worker_timeout_seconds);
-    if (Number.isFinite(rawTimeout) && rawTimeout > 0) return rawTimeout;
+    if (Number.isInteger(rawTimeout) && rawTimeout > 0) return rawTimeout;
   } catch { /* use default */ }
 
   return Defaults.WORKER_TIMEOUT_SECONDS;

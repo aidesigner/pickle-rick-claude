@@ -18,12 +18,12 @@ let activeTaskProc = null;
 export function loadJarTaskTimeout(extensionRoot, state) {
     // Use worker_timeout_seconds from state if set, else fall back to settings, else default
     const stateTimeout = Number(state.worker_timeout_seconds);
-    if (Number.isFinite(stateTimeout) && stateTimeout > 0)
+    if (Number.isInteger(stateTimeout) && stateTimeout > 0)
         return stateTimeout;
     try {
         const settings = readRecoverableJsonObject(path.join(extensionRoot, 'pickle_settings.json'));
         const rawTimeout = Number(settings?.default_worker_timeout_seconds);
-        if (Number.isFinite(rawTimeout) && rawTimeout > 0)
+        if (Number.isInteger(rawTimeout) && rawTimeout > 0)
             return rawTimeout;
     }
     catch { /* use default */ }

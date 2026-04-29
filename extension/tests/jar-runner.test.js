@@ -853,6 +853,42 @@ test('loadJarTaskTimeout: ignores NaN state timeout and uses settings', () => {
     }
 });
 
+test('loadJarTaskTimeout: ignores fractional state timeout and uses settings', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        fs.writeFileSync(path.join(tmpRoot, 'pickle_settings.json'), JSON.stringify({
+            default_worker_timeout_seconds: 500,
+        }));
+        const timeout = loadJarTaskTimeout(tmpRoot, {
+            active: true, working_dir: '/tmp', step: 'prd', iteration: 0,
+            max_iterations: 10, max_time_minutes: 60, worker_timeout_seconds: 0.25,
+            start_time_epoch: 0, completion_promise: null, original_prompt: '',
+            current_ticket: null, history: [], started_at: '', session_dir: '',
+        });
+        assert.equal(timeout, 500);
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('loadJarTaskTimeout: ignores fractional settings timeout and uses default', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        fs.writeFileSync(path.join(tmpRoot, 'pickle_settings.json'), JSON.stringify({
+            default_worker_timeout_seconds: 0.25,
+        }));
+        const timeout = loadJarTaskTimeout(tmpRoot, {
+            active: true, working_dir: '/tmp', step: 'prd', iteration: 0,
+            max_iterations: 10, max_time_minutes: 60, worker_timeout_seconds: 0,
+            start_time_epoch: 0, completion_promise: null, original_prompt: '',
+            current_ticket: null, history: [], started_at: '', session_dir: '',
+        });
+        assert.equal(timeout, 1200);
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
 test('loadJarTaskTimeout: ignores negative state timeout', () => {
     const tmpRoot = makeTmpRoot();
     try {
