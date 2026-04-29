@@ -212,6 +212,67 @@ exit 0
     };
 }
 
+function makeInjectedMonitorFakes(opts = {}) {
+    const tmpRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-monitor-injected-')));
+    const sessionDir = path.join(tmpRoot, 'session');
+    const extRoot = path.join(tmpRoot, 'ext');
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.mkdirSync(path.join(extRoot, 'extension', 'bin'), { recursive: true });
+    fs.mkdirSync(path.join(extRoot, 'extension', 'scripts'), { recursive: true });
+    fs.writeFileSync(
+        path.join(extRoot, 'extension', 'scripts', 'tmux-monitor.sh'),
+        '#!/bin/sh\nexit 0\n',
+    );
+    fs.writeFileSync(
+        path.join(sessionDir, 'state.json'),
+        JSON.stringify({ active: opts.active ?? true, command_template: opts.commandTemplate || null }),
+    );
+
+    const sessionName = opts.sessionName || 'pickle-injected';
+    const monitorExists = opts.monitorExists ?? true;
+    const monitorMode = opts.monitorMode || opts.mode || 'pickle';
+    const paneCommands = opts.paneCommands || { 1: 'node', 2: 'node', 3: 'node' };
+    const calls = [];
+    const spawnSyncFn = (command, args = []) => {
+        calls.push({ command, args: [...args] });
+        if (command !== 'tmux') return { status: 0, stdout: '', stderr: '' };
+        if (args[0] === 'display-message' && args[1] === '-p' && args[2] === '#S') {
+            return { status: 0, stdout: `${sessionName}\n`, stderr: '' };
+        }
+        if (args[0] === 'display-message' && args[1] === '-p' && args[2] === '-t') {
+            const target = args[3] || '';
+            const pane = Number(target.split('.').at(-1));
+            return { status: 0, stdout: `${paneCommands[pane] || ''}\n`, stderr: '' };
+        }
+        if (args[0] === 'list-windows') {
+            return { status: 0, stdout: monitorExists ? 'monitor\n' : 'runner\n', stderr: '' };
+        }
+        if (args[0] === 'show-option') {
+            return { status: 0, stdout: `${monitorMode}\n`, stderr: '' };
+        }
+        return { status: 0, stdout: '', stderr: '' };
+    };
+
+    return {
+        tmpRoot,
+        sessionDir,
+        extRoot,
+        calls,
+        cleanup() {
+            fs.rmSync(tmpRoot, { recursive: true, force: true });
+        },
+        readRunnerLog() {
+            const logPath = path.join(sessionDir, 'mux-runner.log');
+            return fs.existsSync(logPath) ? fs.readFileSync(logPath, 'utf-8') : '';
+        },
+        spawnSyncFn,
+    };
+}
+
+function tmuxCalls(f, subcommand) {
+    return f.calls.filter(call => call.command === 'tmux' && call.args[0] === subcommand);
+}
+
 test('ensureMonitorWindow: skipped when not inside tmux', () => {
     const f = makeFakes({});
     try {
@@ -245,6 +306,102 @@ test('ensureMonitorWindow: creates monitor when window does not exist', () => {
         assert.match(calls, /tmux list-windows -t pickle-abc12345/);
         // bash invocation carries the script path, session name, session dir, mode
         assert.match(calls, /bash .+tmux-monitor\.sh pickle-abc12345 .+session pickle/);
+    } finally {
+        f.cleanup();
+    }
+});
+
+test('ensureMonitorWindow: existing monitor respawns dead watcher panes with injected spawn capture', () => {
+    const cases = [
+        {
+            mode: 'pickle',
+            commandTemplate: null,
+            pane2: /monitor\.2 node .+morty-watcher\.js .+session Enter/,
+        },
+        {
+            mode: 'refinement',
+            commandTemplate: null,
+            pane2: /monitor\.2 node .+refinement-watcher\.js .+session Enter/,
+        },
+        {
+            mode: undefined,
+            monitorMode: 'meeseeks',
+            commandTemplate: 'meeseeks.md',
+            pane2: /monitor\.2 tail -F .+session\/mux-runner\.log Enter/,
+        },
+    ];
+
+    for (const { mode, monitorMode, commandTemplate, pane2 } of cases) {
+        const f = makeInjectedMonitorFakes({
+            sessionName: `${monitorMode || mode}-dead`,
+            mode,
+            monitorMode,
+            commandTemplate,
+            paneCommands: { 1: 'zsh', 2: 'bash', 3: 'fish' },
+        });
+        try {
+            const result = ensureMonitorWindow({
+                sessionDir: f.sessionDir,
+                extensionRoot: f.extRoot,
+                inTmux: true,
+                mode,
+                spawnSyncFn: f.spawnSyncFn,
+            });
+
+            assert.equal(result.status, 'exists');
+            const sendKeys = tmuxCalls(f, 'send-keys');
+            assert.equal(sendKeys.length, 3);
+            assert.match(sendKeys[0].args.join(' '), /monitor\.1 node .+log-watcher\.js .+session Enter/);
+            assert.match(sendKeys[1].args.join(' '), pane2);
+            assert.match(sendKeys[2].args.join(' '), /monitor\.3 node .+raw-morty\.js .+session Enter/);
+            assert.equal(tmuxCalls(f, 'display-message').filter(call => call.args.includes('#{pane_current_command}')).length, 3);
+            assert.doesNotMatch(f.readRunnerLog(), /failed to respawn/);
+        } finally {
+            f.cleanup();
+        }
+    }
+});
+
+test('ensureMonitorWindow: existing monitor with all watcher panes alive is a no-op', () => {
+    const f = makeInjectedMonitorFakes({
+        sessionName: 'pickle-alive',
+        paneCommands: { 1: 'node', 2: 'node', 3: 'node' },
+    });
+    try {
+        const result = ensureMonitorWindow({
+            sessionDir: f.sessionDir,
+            extensionRoot: f.extRoot,
+            inTmux: true,
+            spawnSyncFn: f.spawnSyncFn,
+        });
+
+        assert.equal(result.status, 'exists');
+        assert.equal(tmuxCalls(f, 'send-keys').length, 0);
+        assert.equal(tmuxCalls(f, 'display-message').filter(call => call.args.includes('#{pane_current_command}')).length, 3);
+        assert.equal(f.readRunnerLog(), '');
+    } finally {
+        f.cleanup();
+    }
+});
+
+test('ensureMonitorWindow: inactive existing monitor skips watcher respawn', () => {
+    const f = makeInjectedMonitorFakes({
+        active: false,
+        sessionName: 'pickle-inactive',
+        paneCommands: { 1: 'zsh', 2: 'bash', 3: 'fish' },
+    });
+    try {
+        const result = ensureMonitorWindow({
+            sessionDir: f.sessionDir,
+            extensionRoot: f.extRoot,
+            inTmux: true,
+            spawnSyncFn: f.spawnSyncFn,
+        });
+
+        assert.equal(result.status, 'exists');
+        assert.equal(tmuxCalls(f, 'send-keys').length, 0);
+        assert.equal(tmuxCalls(f, 'display-message').filter(call => call.args.includes('#{pane_current_command}')).length, 0);
+        assert.equal(f.readRunnerLog(), '');
     } finally {
         f.cleanup();
     }

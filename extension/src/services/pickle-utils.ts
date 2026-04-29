@@ -898,6 +898,8 @@ export interface EnsureMonitorWindowOptions {
   extensionRoot?: string;
   /** Force a specific mode; if omitted, inferred from state.json.command_template. */
   mode?: MonitorMode;
+  /** Test override: inject process spawns for tmux/bash calls. */
+  spawnSyncFn?: typeof spawnSync;
   /** Test override: if false, skip even when process.env.TMUX is set. */
   inTmux?: boolean;
   /** Test override: tmux binary name (default: "tmux"). */
@@ -925,10 +927,11 @@ export function restartDeadWatcherPanes(
   sessionDir: string,
   extensionRoot: string,
   mode: MonitorMode,
+  spawnSyncFn: typeof spawnSync = spawnSync,
 ): void {
   if (isSessionInactive(sessionDir)) return;
 
-  const sessionName = readCurrentTmuxSessionName();
+  const sessionName = readCurrentTmuxSessionName(spawnSyncFn);
   if (!sessionName) {
     appendWatcherRestartLog(sessionDir, 'restartDeadWatcherPanes WARN: unable to resolve tmux session name');
     return;
@@ -936,7 +939,7 @@ export function restartDeadWatcherPanes(
 
   for (const watcher of watcherPaneCommands(sessionDir, extensionRoot, mode)) {
     const target = `${sessionName}:monitor.${watcher.pane}`;
-    const currentCommand = readPaneCurrentCommand(target);
+    const currentCommand = readPaneCurrentCommand(target, spawnSyncFn);
     if (currentCommand === null) {
       appendWatcherRestartLog(
         sessionDir,
@@ -950,7 +953,7 @@ export function restartDeadWatcherPanes(
       sessionDir,
       `restartDeadWatcherPanes WARN: pane ${watcher.pane} command '${currentCommand || '(empty)'}' is not node`,
     );
-    const result = spawnSync('tmux', ['send-keys', '-t', target, watcher.command, 'Enter'], {
+    const result = spawnSyncFn('tmux', ['send-keys', '-t', target, watcher.command, 'Enter'], {
       encoding: 'utf-8',
       timeout: 5_000,
     });
@@ -978,8 +981,8 @@ function isSessionInactive(sessionDir: string): boolean {
   }
 }
 
-function readCurrentTmuxSessionName(): string | null {
-  const result = spawnSync('tmux', ['display-message', '-p', '#S'], {
+function readCurrentTmuxSessionName(spawnSyncFn: typeof spawnSync): string | null {
+  const result = spawnSyncFn('tmux', ['display-message', '-p', '#S'], {
     encoding: 'utf-8',
     timeout: 5_000,
   });
@@ -988,8 +991,8 @@ function readCurrentTmuxSessionName(): string | null {
   return sessionName || null;
 }
 
-function readPaneCurrentCommand(target: string): string | null {
-  const result = spawnSync('tmux', ['display-message', '-p', '-t', target, '#{pane_current_command}'], {
+function readPaneCurrentCommand(target: string, spawnSyncFn: typeof spawnSync): string | null {
+  const result = spawnSyncFn('tmux', ['display-message', '-p', '-t', target, '#{pane_current_command}'], {
     encoding: 'utf-8',
     timeout: 5_000,
   });
@@ -1081,6 +1084,7 @@ export function ensureMonitorWindow(opts: EnsureMonitorWindowOptions): EnsureMon
     log,
     tmuxBin: opts.tmuxBin || 'tmux',
     bashBin: opts.bashBin || 'bash',
+    spawnSyncFn: opts.spawnSyncFn || spawnSync,
     mode: opts.mode || inferMonitorMode(opts.sessionDir),
   };
   try {
@@ -1106,6 +1110,7 @@ interface MonitorWindowContext {
   log: (msg: string) => void;
   tmuxBin: string;
   bashBin: string;
+  spawnSyncFn: typeof spawnSync;
   mode: MonitorMode;
   outcome?: EnsureMonitorWindowResult;
 }
@@ -1118,10 +1123,10 @@ function currentMonitorWindowContext(): MonitorWindowContext {
 }
 
 function getSessionName(): string | null {
-  const { log, tmuxBin } = currentMonitorWindowContext();
+  const { log, spawnSyncFn, tmuxBin } = currentMonitorWindowContext();
   // Resolve session name via tmux itself — the TMUX env var alone only proves
   // we're inside *some* tmux, not which session owns this pane.
-  const displayName = spawnSync(tmuxBin, ['display-message', '-p', '#S'], {
+  const displayName = spawnSyncFn(tmuxBin, ['display-message', '-p', '#S'], {
     encoding: 'utf-8',
     timeout: 5_000,
   });
@@ -1141,13 +1146,13 @@ function getSessionName(): string | null {
 }
 
 function checkAndRecreateWindow(sessionName: string): { recreate: boolean } {
-  const { log, mode, opts, tmuxBin } = currentMonitorWindowContext();
+  const { log, mode, opts, spawnSyncFn, tmuxBin } = currentMonitorWindowContext();
   const target = `${sessionName}:monitor`;
 
   // Compatibility guard — a "monitor" window from a previous command (e.g.
   // anatomy-park then council) has the wrong layout. Check the window's
   // `@pickle_monitor_mode` user-option and recreate on mismatch.
-  const listWindows = spawnSync(tmuxBin, ['list-windows', '-t', sessionName, '-F', '#W'], {
+  const listWindows = spawnSyncFn(tmuxBin, ['list-windows', '-t', sessionName, '-F', '#W'], {
     encoding: 'utf-8',
     timeout: 5_000,
   });
@@ -1155,10 +1160,10 @@ function checkAndRecreateWindow(sessionName: string): { recreate: boolean } {
   const names = (listWindows.stdout || '').split('\n').map(s => s.trim());
   if (!names.includes('monitor')) return { recreate: false };
 
-  const existingMode = readWindowMode(tmuxBin, target);
+  const existingMode = readWindowMode(tmuxBin, target, spawnSyncFn);
   if (monitorModesCompatible(existingMode, mode)) {
     log(`ensureMonitorWindow: monitor window already exists on ${sessionName} (mode=${mode})`);
-    restartDeadWatcherPanes(opts.sessionDir, opts.extensionRoot || getExtensionRoot(), mode);
+    restartDeadWatcherPanes(opts.sessionDir, opts.extensionRoot || getExtensionRoot(), mode, spawnSyncFn);
     activeMonitorWindowContext!.outcome = { status: 'exists' };
     return { recreate: false };
   }
@@ -1167,7 +1172,7 @@ function checkAndRecreateWindow(sessionName: string): { recreate: boolean } {
     `ensureMonitorWindow: mode mismatch on ${sessionName} ` +
     `(existing=${existingMode || 'unset'}, want=${mode}) — killing stale window`,
   );
-  const kill = spawnSync(tmuxBin, ['kill-window', '-t', target], {
+  const kill = spawnSyncFn(tmuxBin, ['kill-window', '-t', target], {
     encoding: 'utf-8',
     timeout: 5_000,
   });
@@ -1181,7 +1186,7 @@ function checkAndRecreateWindow(sessionName: string): { recreate: boolean } {
 }
 
 function createMonitorWindow(sessionName: string): void {
-  const { bashBin, log, mode, opts, tmuxBin } = currentMonitorWindowContext();
+  const { bashBin, log, mode, opts, spawnSyncFn, tmuxBin } = currentMonitorWindowContext();
   const target = `${sessionName}:monitor`;
   const extensionRoot = opts.extensionRoot || getExtensionRoot();
   const script = path.join(extensionRoot, 'extension', 'scripts', 'tmux-monitor.sh');
@@ -1191,7 +1196,7 @@ function createMonitorWindow(sessionName: string): void {
     return;
   }
 
-  const result = spawnSync(bashBin, [script, sessionName, opts.sessionDir, mode], {
+  const result = spawnSyncFn(bashBin, [script, sessionName, opts.sessionDir, mode], {
     encoding: 'utf-8',
     timeout: 10_000,
   });
@@ -1204,7 +1209,7 @@ function createMonitorWindow(sessionName: string): void {
 
   // Stamp the mode on the freshly-created window so the next invocation can
   // detect compatibility. Non-fatal if it fails — we log and move on.
-  const setOpt = spawnSync(
+  const setOpt = spawnSyncFn(
     tmuxBin,
     ['set-option', '-w', '-t', target, '@pickle_monitor_mode', mode],
     { encoding: 'utf-8', timeout: 5_000 },
@@ -1216,8 +1221,8 @@ function createMonitorWindow(sessionName: string): void {
 }
 
 /** Reads the monitor window's stamped mode via tmux user-option, or null. */
-function readWindowMode(tmuxBin: string, target: string): string | null {
-  const show = spawnSync(
+function readWindowMode(tmuxBin: string, target: string, spawnSyncFn: typeof spawnSync): string | null {
+  const show = spawnSyncFn(
     tmuxBin,
     ['show-option', '-w', '-qv', '-t', target, '@pickle_monitor_mode'],
     { encoding: 'utf-8', timeout: 5_000 },
