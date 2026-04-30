@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
+import { findMissingPrefixes } from '../services/artifact-validation.js';
 import { ARTIFACT_PREFIXES } from '../types/index.js';
 const USAGE = 'Usage: node validate-teams-ticket.js --ticket-path <dir> [--role <implementation|review>]';
 const VALID_ROLES = ['implementation', 'review'];
@@ -38,11 +39,6 @@ export function parseArgs(argv) {
     }
     return { ticketPath, role };
 }
-/** Returns the prefixes from ARTIFACT_PREFIXES[role] that did NOT match any file. */
-export function findMissingPrefixes(files, role) {
-    const prefixes = ARTIFACT_PREFIXES[role];
-    return prefixes.filter(p => !files.some(f => f === `${p}.md` || f.startsWith(`${p}_`)));
-}
 export async function main(argv = process.argv.slice(2)) {
     let parsed;
     try {
@@ -68,7 +64,7 @@ export async function main(argv = process.argv.slice(2)) {
     // Stricter than `hasLifecycleArtifact` (any-of) because teams mode lacks the
     // WORKER_DONE token + log-size signals that the legacy spawn-morty path uses
     // — the artifact set is the only completion proof, so we hold the bar high.
-    const missing = findMissingPrefixes(files, role);
+    const missing = findMissingPrefixes(files, ARTIFACT_PREFIXES[role]);
     if (missing.length === 0) {
         process.exit(0);
     }
