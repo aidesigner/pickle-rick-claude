@@ -104,6 +104,33 @@ describe('auditAcShape', () => {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  test('detects repeated predicates across plain handler targets', () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-ac-shape-'));
+    try {
+      const prdPath = path.join(tmp, 'handler-prd.md');
+      fs.writeFileSync(prdPath, [
+        '# Handler PRD',
+        '',
+        '## Acceptance Criteria',
+        '',
+        '**AC-HND-01**: Retry lockouts are enforced.',
+        '- handler retryRun rejects requests when retry_lock_enabled is off.',
+        '- handler cancelRun rejects requests when retry_lock_enabled is off.',
+        '- handler overrideRun rejects requests when retry_lock_enabled is off.',
+        '',
+      ].join('\n'));
+
+      const report = auditAcShape({ prdPath });
+
+      assert.equal(report.decisionsRequired.length, 1);
+      assert.equal(report.decisionsRequired[0].acId, 'AC-HND-01');
+      assert.deepEqual(report.decisionsRequired[0].distinctTargets, ['cancelRun', 'overrideRun', 'retryRun']);
+      assert.match(report.decisionsRequired[0].message, /enumerates 3 distinct targets/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('runCitadelAudit AC-CIT-12 behavior', () => {

@@ -171,6 +171,7 @@ function extractTarget(content: string): string | undefined {
 function normalizePredicate(content: string): string {
   return content
     .replace(ENDPOINT_PATTERN, ' ')
+    .replace(/\b(?:handler|method|endpoint|route)\s+`?[A-Za-z_]\w*`?/gi, ' ')
     .replace(/`[^`]*`/g, ' ')
     .replace(/\b(?:GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\b/gi, ' ')
     .replace(/\/[A-Za-z0-9_{}:[\]/.-]+/g, ' ')
