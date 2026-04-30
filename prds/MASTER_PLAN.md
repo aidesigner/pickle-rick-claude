@@ -24,7 +24,8 @@
 | `prds/tool-error-retry-tracking.md` | Draft (2026-03-31) — intra-session tool-failure tracking with escalating pivot guidance, inspired by OMC Ralph mode. **NOT started.** No source impl. Lower priority than current bundle. | committed earlier (`e9e9666`) |
 | `prds/smart-iteration-handoff.md` | Refined draft — reduce wasted iterations 30%+ in microverse / 20%+ in tmux via smarter handoff intelligence. **NOT started.** No source impl. Lower priority than current bundle. | committed earlier (`e9e9666`) |
 | Cronenberg meta-router skill | **Shipped v1.57.0** (2026-04-27) — explicit-invocation `/cronenberg` skill with deterministic decision matrix + tmux-detach-safe followup chaining. No PRD; designed inline. | `711f92c` |
-| `prds/state-schema-version-ordering-incident.md` | **Hot-fix deployed** (2026-04-29 PM) — incident PRD: Citadel + Hardening Bundle pipeline ran C-T0 (schema migration, `order: 200`) before NEW-T2 (v2→v3 rollback safety net, `order: 300`). C-T0 stamped `state.json.schema_version: 3` while deployed `StateManager` capped at v2 → every read threw `SCHEMA_MISMATCH`, monitor and all 4 watcher panes wedged. Hot-patched deployed `STATE_MANAGER_DEFAULTS.schemaVersion: 2 → 3`, force-killed wedged `monitor.js`, relaunched watchers. 8 ACs (AC-SSV-01..08) — first 3 verified, F1–F5 forward fixes pending. | uncommitted (this branch) |
+| `prds/state-schema-version-ordering-incident.md` | **Hot-fix deployed** (2026-04-29 PM) — incident PRD: Citadel + Hardening Bundle pipeline ran C-T0 (schema migration, `order: 200`) before NEW-T2 (v2→v3 rollback safety net, `order: 300`). C-T0 stamped `state.json.schema_version: 3` while deployed `StateManager` capped at v2 → every read threw `SCHEMA_MISMATCH`, monitor and all 4 watcher panes wedged. Hot-patched deployed `STATE_MANAGER_DEFAULTS.schemaVersion: 2 → 3`, force-killed wedged `monitor.js`, relaunched watchers. **Recurring**: deployed file reverts to v2 every ~hour because cross-skill workers (T20–T23) per citadel PRD instruction run `bash install.sh` mid-run, and rsync's atomic-write replaces the inode (chflags uchg lock survives 0 cycles). Watchdog auto-fixes each tick. 8 ACs (AC-SSV-01..08) — first 3 verified, F1–F5 forward fixes pending. | committed `5cacfea` |
+| `prds/large-pipeline-time-budget-undersized.md` | **Bug PRD** (2026-04-30) — surfaced live during `pipeline-1204204c` run. Two bugs: (B1) `default_max_time_minutes: 720` is undersized for any pipeline above ~25 tickets — current 75-ticket bundle observes 3.34 tickets/hour on codex, needs ~22.5h for phase 1 alone; (B2) `max_time_minutes` enforcement is leaky — pipeline at 881m elapsed against 720m wall, still shipping tickets. Causes: (B1) launch path doesn't read `decomposition_manifest.json` ticket count + apply throughput-baseline formula; (B2) cap-check fires per-iteration but codex-manager-relaunch resets the "past cap" state, plus schema-mismatch exceptions silently swallow cap-check reads, plus reconstructed `start_time_epoch` carries original launch timestamp instead of resetting. 8 ACs (AC-LPB-01..08), 5 forward fixes (F1 manifest-aware default, F2 hard cap-gate in relaunch, F3 epoch reset on reconstruction, F4 monitor "EXCEEDED" indicator, F5 pickle-pipeline.md Step 0.5 sizing prompt). | uncommitted (this branch) |
 
 The refined PRD includes: corrected line ranges, T0 prelude + T14 closer, goal-level 200 LOC carve-outs, 8-token enumeration, T1 post-pass invariants, T7 dry-run replacement (test seam, NO `--dry-run`), T2 scope clarification (`runIteration` already extracted), per-ticket frontmatter, fixture lockdown protocol, helper-signature spec rule, trap-door preservation, and a 17-row Risks table.
 
@@ -223,9 +224,24 @@ The pipeline blew through faster than expected: 13 tickets shipped in ~2.5h (NEW
 
 **Forward fixes** (F1–F5) tracked in `prds/state-schema-version-ordering-incident.md`: lower NEW-T2's order; teach pipeline-runner to honor `links: depends_on` as a hard sort fence; make `StateManager.read()` emit actionable `bash install.sh` error on schema mismatch; harden `monitor.js` SIGINT against stdout backpressure; add CI parity check for deployed-vs-source schemaVersion.
 
+### Mid-run incident #2 (2026-04-30 ~03:00 UTC onward) — undersized time budget + leaky enforcement
+
+Pipeline crossed the configured `max_time_minutes: 720` wall at iter 25 (~705m elapsed) and kept running. By iter 36 it was at 881 min elapsed (161 min over) and still shipping tickets at 3.34/hour. **Two bugs surfaced** (full PRD: `prds/large-pipeline-time-budget-undersized.md`):
+
+- **B1 (sizing)**: 720m default is undersized for any pipeline above ~25 tickets. Current bundle (75 tickets) needs ~22.5h on codex backend just for phase 1 (`pickle`). Launch path doesn't read `decomposition_manifest.json` ticket count to recommend a budget. User has to guess at launch.
+- **B2 (enforcement)**: `max_time_minutes` cap-check exists in mux-runner but is leaky. Codex-manager-relaunch resets the "past cap" state every 4h. Schema-mismatch exceptions during cap-check silently swallow. Reconstructed sessions inherit the original `start_time_epoch` rather than resetting, accumulating elapsed time across crashes.
+
+**Net effect**: Bug 2 is masking Bug 1 — pipeline keeps running past the wall instead of dying. The user gets a complete run, but the safety primitive doesn't work. Forward fixes F1–F5 in the linked PRD: manifest-aware default at launch, hard cap-gate in codex-manager-relaunch, `start_time_epoch` reset on reconstruction, monitor "EXCEEDED" indicator, `pickle-pipeline.md` Step 0.5 sizing prompt.
+
+### Mid-run incident #3 (2026-04-30 ~00:30 UTC onward) — recurring schema-version reversion every ~hour
+
+After the first hot-fix at 23:53 UTC, deployed `STATE_MANAGER_DEFAULTS.schemaVersion` reverted from `3` back to `2` four more times over the next 8 hours, on a roughly hourly cadence. Each reversion wedged fresh-process state reads (existing watchers/hooks held in-memory v3 caches and stayed alive). Watchdog cron `614355bb` auto-fixed each occurrence per its whitelist (c) — bump deployed v2→v3, restart all 4 watchers, log FIXED in `${SESSION}/watchdog.log`.
+
+**Mechanism**: cross-skill workers (T20–T23) explicitly run `bash install.sh` per the citadel PRD §"Cross-skill commit hygiene" instruction. install.sh's rsync uses atomic-write (write-tmp + rename-over), creating a NEW inode for `types/index.js`. The new inode inherits flags from the SOURCE file (none), not from the deletion-replaced destination. **chflags uchg lock survives 0 rsync cycles.** This means defense-in-depth via filesystem flags is theatre; the real fix is making source TS / source compiled JS canonically v3 (already done) AND making install.sh aware of in-flight pipeline schema constraints (F2/F3 in the schema-ordering PRD).
+
 ---
 
-## 3. Current state (verified on disk, 2026-04-29 PM)
+## 3. Current state (verified on disk, 2026-04-30 AM)
 
 | Item | Value |
 |---|---|
