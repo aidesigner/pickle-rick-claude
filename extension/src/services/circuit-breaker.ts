@@ -53,6 +53,9 @@ export interface CircuitTransition {
   reason: string;
 }
 
+const CONSTRAINT_DISCOVERY_PATTERN = /\b(constraint|invariant|assumption|requirement|contract|blocked by|discovered)\b/i;
+const CORRECT_COURSE_SUGGESTION = 'Suggested recovery: run /pickle-correct-course "<discovery>"';
+
 // ---------------------------------------------------------------------------
 // Module state
 // ---------------------------------------------------------------------------
@@ -171,7 +174,6 @@ export function loadSettings(extensionRoot: string): CircuitBreakerConfig {
   return config;
 }
 
-// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 export function initCircuitBreaker(
   sessionDir: string,
   _settings: CircuitBreakerConfig
@@ -308,6 +310,17 @@ export function normalizeErrorSignature(errorLine: string): string {
   return s;
 }
 
+export function isConstraintDiscoverySignature(signature: string | null): boolean {
+  return typeof signature === 'string' && CONSTRAINT_DISCOVERY_PATTERN.test(signature);
+}
+
+function noProgressReason(count: number, signature: string | null): string {
+  const base = `No progress in ${count} iterations`;
+  return isConstraintDiscoverySignature(signature)
+    ? `${base}. ${CORRECT_COURSE_SUGGESTION}`
+    : base;
+}
+
 function updateErrorTracking(
   newState: CircuitBreakerState,
   priorSignature: string | null,
@@ -357,7 +370,7 @@ export function recordIterationResult(
       `Same error repeated ${newState.consecutive_same_error} times`, iteration);
   } else if (newState.consecutive_no_progress >= settings.noProgressThreshold) {
     transition(newState, 'OPEN',
-      `No progress in ${newState.consecutive_no_progress} iterations`, iteration);
+      noProgressReason(newState.consecutive_no_progress, newState.last_error_signature), iteration);
   } else if (newState.consecutive_no_progress >= settings.halfOpenAfter
              && newState.state === 'CLOSED') {
     transition(newState, 'HALF_OPEN',

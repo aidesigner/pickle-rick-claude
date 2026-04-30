@@ -197,6 +197,55 @@ test('applyCourseCorrectionRestructure kills, adds, bumps tickets_version, and w
   });
 });
 
+test('applyCourseCorrectionRestructure branch b keeps current_ticket unchanged', () => {
+  withDir((sessionDir) => {
+    writeTicket(sessionDir, 'keep123');
+    writeTicket(sessionDir, 'kill123');
+    writeState(sessionDir, { current_ticket: 'keep123', tickets_version: 2 });
+
+    const result = applyCourseCorrectionRestructure({
+      sessionRoot: sessionDir,
+      proposalPath: path.join(sessionDir, 'change_proposal_2026-04-30T12-30-00Z.md'),
+      restartTicketId: null,
+      killedTicketIds: ['kill123'],
+      now: '2026-04-30T12:30:00.000Z',
+    });
+
+    const state = readState(sessionDir);
+    assert.equal(result.branch, 'b');
+    assert.equal(state.current_ticket, 'keep123');
+    assert.equal(state.activity.some(entry => entry.event === 'course_corrected' && entry.branch === 'b'), true);
+  });
+});
+
+test('applyCourseCorrectionRestructure branch c redirects current_ticket to newly added ticket', () => {
+  withDir((sessionDir) => {
+    writeTicket(sessionDir, 'keep123');
+    writeState(sessionDir, { current_ticket: 'new123', tickets_version: 2, activity: [] });
+
+    const result = applyCourseCorrectionRestructure({
+      sessionRoot: sessionDir,
+      proposalPath: path.join(sessionDir, 'change_proposal_2026-04-30T12-45-00Z.md'),
+      restartTicketId: null,
+      addedTickets: [{
+        ticketId: 'new123',
+        frontmatter: { title: 'New Current' },
+        body: '# New Current\n',
+      }],
+      now: '2026-04-30T12:45:00.000Z',
+    });
+
+    const state = readState(sessionDir);
+    const redirect = state.activity.find(entry => entry.event === 'current_ticket_redirected_to_new');
+    assert.equal(result.branch, 'c');
+    assert.equal(state.current_ticket, 'new123');
+    assert.equal(redirect.from_ticket_id, 'new123');
+    assert.equal(redirect.to_ticket_id, 'new123');
+    assert.equal(redirect.ticket_id, 'new123');
+    assert.equal(state.activity.some(entry => entry.event === 'course_corrected' && entry.branch === 'c'), true);
+  });
+});
+
 test('applyCourseCorrectionRestructure replays reverse ledger on partial failure', () => {
   withDir((sessionDir) => {
     const killed = writeTicket(sessionDir, 'kill123');

@@ -9,6 +9,7 @@ import type { Backend } from '../types/index.js';
 
 const MAX_DISCOVERY_LENGTH = 2_000;
 const DEFAULT_MODEL = 'sonnet';
+const SECTION_HEADING_PATTERN = /^#{2,3}\s+(.+?)\s*$/gm;
 const CORRECTOR_SYSTEM_PROMPT = [
   'You are morty-course-corrector.',
   'Use only read-only analysis. Do not edit files, write files, execute shell commands, or mutate session state.',
@@ -38,6 +39,19 @@ export interface CorrectCourseRunResult {
   backend: Backend;
   invocation?: SpawnInvocation;
   recovery?: RecoverCourseCorrectionResult;
+}
+
+export interface CourseCorrectionProposalValidationInput {
+  sessionRoot: string;
+  proposalContent: string;
+  discoveryStatement: string;
+  killedTicketIds?: string[];
+}
+
+export interface CourseCorrectionProposalValidationResult {
+  passed: boolean;
+  referencedTicketIds: string[];
+  failures: string[];
 }
 
 interface CorrectCoursePlan {
@@ -144,6 +158,88 @@ export function buildCorrectCourseBrief(args: CorrectCourseArgs, createdAt: Date
     '5. Confidence Metadata',
     '',
   ].join('\n');
+}
+
+function normalizeHeading(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function readSection(markdown: string, heading: string): string {
+  const matches = [...markdown.matchAll(SECTION_HEADING_PATTERN)];
+  const target = normalizeHeading(heading);
+  for (let index = 0; index < matches.length; index += 1) {
+    const match = matches[index];
+    if (normalizeHeading(match[1]) !== target) continue;
+    const start = match.index === undefined ? 0 : match.index + match[0].length;
+    const next = matches[index + 1];
+    const end = next?.index ?? markdown.length;
+    return markdown.slice(start, end).trim();
+  }
+  return '';
+}
+
+function collectSessionTicketIds(sessionRoot: string): Set<string> {
+  const ids = new Set<string>();
+  if (!fs.existsSync(sessionRoot)) return ids;
+  for (const entry of fs.readdirSync(sessionRoot, { withFileTypes: true })) {
+    if (entry.isDirectory()) ids.add(entry.name);
+  }
+  return ids;
+}
+
+function extractTicketReferences(impactMap: string): string[] {
+  const refs = new Set<string>();
+  const patterns = [
+    /\bticket(?:_id| id)?\s*[:=]\s*`?([A-Za-z0-9][A-Za-z0-9_-]{2,})`?/gi,
+    /\b(?:kept|killed|added|modified|affected|restart)\s*[- ]?ticket\s*[:=]\s*`?([A-Za-z0-9][A-Za-z0-9_-]{2,})`?/gi,
+    /`([A-Za-z0-9][A-Za-z0-9_-]{2,})`/g,
+  ];
+  for (const pattern of patterns) {
+    for (const match of impactMap.matchAll(pattern)) {
+      refs.add(match[1]);
+    }
+  }
+  return [...refs].sort();
+}
+
+function restartPointIsDocumentedNull(restartPoint: string): boolean {
+  return /\bnull\b/i.test(restartPoint) && /\b(reason|because|documented)\b/i.test(restartPoint);
+}
+
+export function validateCourseCorrectionProposal(
+  input: CourseCorrectionProposalValidationInput,
+): CourseCorrectionProposalValidationResult {
+  const killedSet = new Set(input.killedTicketIds ?? []);
+  const currentTicketIds = collectSessionTicketIds(input.sessionRoot);
+  const impactMap = readSection(input.proposalContent, 'Impact Map');
+  const discoverySummary = readSection(input.proposalContent, 'Discovery Summary');
+  const restartPoint = readSection(input.proposalContent, 'Restart Point');
+  const referencedTicketIds = extractTicketReferences(impactMap);
+  const failures: string[] = [];
+
+  if (referencedTicketIds.length === 0) {
+    failures.push('impact_map must enumerate at least one ticket');
+  }
+
+  const unresolved = referencedTicketIds.filter(ticketId => !currentTicketIds.has(ticketId) && !killedSet.has(ticketId));
+  if (unresolved.length > 0) {
+    failures.push(`impact_map references unresolved ticket ids: ${unresolved.join(', ')}`);
+  }
+
+  const discovery = input.discoveryStatement.trim();
+  const hasVerbatimDiscovery = discovery.length > 0 && discoverySummary.includes(discovery);
+  const hasDocumentedDerivation = /\b(derived from|derivation|documented derivation)\b/i.test(discoverySummary);
+  if (!hasVerbatimDiscovery && !hasDocumentedDerivation) {
+    failures.push('discovery_summary must contain the user statement verbatim or document derivation');
+  }
+
+  const restartRefs = extractTicketReferences(restartPoint);
+  const restartResolves = restartRefs.some(ticketId => currentTicketIds.has(ticketId));
+  if (!restartResolves && !restartPointIsDocumentedNull(restartPoint)) {
+    failures.push('restart_point must resolve to a current ticket id or null with documented reason');
+  }
+
+  return { passed: failures.length === 0, referencedTicketIds, failures };
 }
 
 function planCorrectCourse(args: CorrectCourseArgs, now: Date): CorrectCoursePlan {

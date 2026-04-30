@@ -12,6 +12,7 @@ import {
     countFilesChanged,
     detectProgress,
     extractErrorSignature,
+    isConstraintDiscoverySignature,
     normalizeErrorSignature,
     recordIterationResult,
     resetCircuitBreaker,
@@ -457,6 +458,24 @@ test('recordIterationResult: HALF_OPEN → OPEN after noProgressThreshold', () =
     state = recordIterationResult(state, { hasProgress: false, errorSignature: null }, 6, settings);
     assert.equal(state.state, 'OPEN');
     assert.equal(state.consecutive_no_progress, 5);
+});
+
+test('recordIterationResult: no-progress constraint discovery opens with correct-course suggestion', () => {
+    const settings = makeSettings({ noProgressThreshold: 3, halfOpenAfter: 2 });
+    let state = makeFreshState({
+        state: 'HALF_OPEN',
+        consecutive_no_progress: 2,
+        last_error_signature: 'blocked by newly discovered contract constraint',
+    });
+    state = recordIterationResult(state, {
+        hasProgress: false,
+        errorSignature: 'blocked by newly discovered contract constraint',
+    }, 4, settings);
+
+    assert.equal(isConstraintDiscoverySignature(state.last_error_signature), true);
+    assert.equal(state.state, 'OPEN');
+    assert.match(state.reason, /No progress in 3 iterations/);
+    assert.match(state.reason, /\/pickle-correct-course "<discovery>"/);
 });
 
 test('recordIterationResult: CLOSED → OPEN on sameErrorThreshold', () => {

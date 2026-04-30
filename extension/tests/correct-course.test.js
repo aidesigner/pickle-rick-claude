@@ -4,7 +4,13 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { buildCorrectCourseBrief, parseArgs, runCorrectCourse, validateDiscovery } from '../bin/correct-course.js';
+import {
+  buildCorrectCourseBrief,
+  parseArgs,
+  runCorrectCourse,
+  validateCourseCorrectionProposal,
+  validateDiscovery,
+} from '../bin/correct-course.js';
 
 function tmpSession(backend = 'codex') {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'correct-course-')));
@@ -193,6 +199,173 @@ test('buildCorrectCourseBrief documents proposal-only manager boundary', () => {
 
   assert.match(brief, /The corrector produces proposal content only/);
   assert.match(brief, /the manager performs any later apply, ledger, ticket, or state changes/);
+});
+
+function proposalMarkdown({
+  discovery = 'New constraint found',
+  impact = '- ticket_id: `abc123`',
+  restart = 'ticket_id: `abc123`',
+} = {}) {
+  return [
+    '# Proposal',
+    '',
+    '## Discovery Summary',
+    '',
+    discovery,
+    '',
+    '## Impact Map',
+    '',
+    impact,
+    '',
+    '## Artifact Diffs',
+    '',
+    'None.',
+    '',
+    '## Restart Point',
+    '',
+    restart,
+    '',
+    '## Confidence Metadata',
+    '',
+    'Structural predicates only.',
+    '',
+  ].join('\n');
+}
+
+test('validateCourseCorrectionProposal passes when all four structural predicates hold', () => {
+  const sessionDir = tmpSession('codex');
+  try {
+    fs.mkdirSync(path.join(sessionDir, 'abc123'));
+    const result = validateCourseCorrectionProposal({
+      sessionRoot: sessionDir,
+      proposalContent: proposalMarkdown(),
+      discoveryStatement: 'New constraint found',
+    });
+
+    assert.equal(result.passed, true);
+    assert.deepEqual(result.failures, []);
+    assert.deepEqual(result.referencedTicketIds, ['abc123']);
+  } finally {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('validateCourseCorrectionProposal fails when impact map enumerates no tickets', () => {
+  const sessionDir = tmpSession('codex');
+  try {
+    const result = validateCourseCorrectionProposal({
+      sessionRoot: sessionDir,
+      proposalContent: proposalMarkdown({ impact: 'No affected tickets.' }),
+      discoveryStatement: 'New constraint found',
+    });
+
+    assert.equal(result.passed, false);
+    assert.match(result.failures.join('\n'), /impact_map must enumerate at least one ticket/);
+  } finally {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('validateCourseCorrectionProposal fails when a referenced ticket does not resolve', () => {
+  const sessionDir = tmpSession('codex');
+  try {
+    const result = validateCourseCorrectionProposal({
+      sessionRoot: sessionDir,
+      proposalContent: proposalMarkdown({ impact: '- ticket_id: `missing123`' }),
+      discoveryStatement: 'New constraint found',
+    });
+
+    assert.equal(result.passed, false);
+    assert.match(result.failures.join('\n'), /unresolved ticket ids: missing123/);
+  } finally {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('validateCourseCorrectionProposal allows referenced tickets in killed set', () => {
+  const sessionDir = tmpSession('codex');
+  try {
+    fs.mkdirSync(path.join(sessionDir, 'abc123'));
+    const result = validateCourseCorrectionProposal({
+      sessionRoot: sessionDir,
+      proposalContent: proposalMarkdown({
+        impact: ['- ticket_id: `abc123`', '- killed ticket: `dead123`'].join('\n'),
+      }),
+      discoveryStatement: 'New constraint found',
+      killedTicketIds: ['dead123'],
+    });
+
+    assert.equal(result.passed, true);
+    assert.deepEqual(result.referencedTicketIds, ['abc123', 'dead123']);
+  } finally {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('validateCourseCorrectionProposal fails when discovery summary lacks verbatim statement or derivation', () => {
+  const sessionDir = tmpSession('codex');
+  try {
+    fs.mkdirSync(path.join(sessionDir, 'abc123'));
+    const result = validateCourseCorrectionProposal({
+      sessionRoot: sessionDir,
+      proposalContent: proposalMarkdown({ discovery: 'Generic summary only.' }),
+      discoveryStatement: 'New constraint found',
+    });
+
+    assert.equal(result.passed, false);
+    assert.match(result.failures.join('\n'), /discovery_summary/);
+  } finally {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('validateCourseCorrectionProposal accepts documented discovery derivation', () => {
+  const sessionDir = tmpSession('codex');
+  try {
+    fs.mkdirSync(path.join(sessionDir, 'abc123'));
+    const result = validateCourseCorrectionProposal({
+      sessionRoot: sessionDir,
+      proposalContent: proposalMarkdown({ discovery: 'Derived from operator logs and ticket diffs.' }),
+      discoveryStatement: 'New constraint found',
+    });
+
+    assert.equal(result.passed, true);
+  } finally {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('validateCourseCorrectionProposal fails when restart point is neither current ticket nor documented null', () => {
+  const sessionDir = tmpSession('codex');
+  try {
+    fs.mkdirSync(path.join(sessionDir, 'abc123'));
+    const result = validateCourseCorrectionProposal({
+      sessionRoot: sessionDir,
+      proposalContent: proposalMarkdown({ restart: 'ticket_id: `missing123`' }),
+      discoveryStatement: 'New constraint found',
+    });
+
+    assert.equal(result.passed, false);
+    assert.match(result.failures.join('\n'), /restart_point/);
+  } finally {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('validateCourseCorrectionProposal accepts null restart point with documented reason', () => {
+  const sessionDir = tmpSession('codex');
+  try {
+    fs.mkdirSync(path.join(sessionDir, 'abc123'));
+    const result = validateCourseCorrectionProposal({
+      sessionRoot: sessionDir,
+      proposalContent: proposalMarkdown({ restart: 'null because all surviving tickets need re-pick.' }),
+      discoveryStatement: 'New constraint found',
+    });
+
+    assert.equal(result.passed, true);
+  } finally {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
 });
 
 test('correct-course --recover-from-ledger executes reverse recovery', () => {

@@ -2,6 +2,8 @@ import * as path from 'path';
 import { runCmd, writeStateFile, safeErrorMessage } from './pickle-utils.js';
 import { StateManager } from './state-manager.js';
 import { readRecoverableJsonObject } from './microverse-state.js';
+const CONSTRAINT_DISCOVERY_PATTERN = /\b(constraint|invariant|assumption|requirement|contract|blocked by|discovered)\b/i;
+const CORRECT_COURSE_SUGGESTION = 'Suggested recovery: run /pickle-correct-course "<discovery>"';
 // ---------------------------------------------------------------------------
 // Module state
 // ---------------------------------------------------------------------------
@@ -110,7 +112,6 @@ export function loadSettings(extensionRoot) {
         config.halfOpenAfter = 1;
     return config;
 }
-// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 export function initCircuitBreaker(sessionDir, _settings) {
     try {
         const raw = readCircuitBreakerState(sessionDir);
@@ -219,6 +220,15 @@ export function normalizeErrorSignature(errorLine) {
         s = s.slice(0, 200);
     return s;
 }
+export function isConstraintDiscoverySignature(signature) {
+    return typeof signature === 'string' && CONSTRAINT_DISCOVERY_PATTERN.test(signature);
+}
+function noProgressReason(count, signature) {
+    const base = `No progress in ${count} iterations`;
+    return isConstraintDiscoverySignature(signature)
+        ? `${base}. ${CORRECT_COURSE_SUGGESTION}`
+        : base;
+}
 function updateErrorTracking(newState, priorSignature, currentSignature) {
     if (currentSignature === null) {
         newState.consecutive_same_error = 0;
@@ -256,7 +266,7 @@ export function recordIterationResult(state, result, iteration, settings) {
         transition(newState, 'OPEN', `Same error repeated ${newState.consecutive_same_error} times`, iteration);
     }
     else if (newState.consecutive_no_progress >= settings.noProgressThreshold) {
-        transition(newState, 'OPEN', `No progress in ${newState.consecutive_no_progress} iterations`, iteration);
+        transition(newState, 'OPEN', noProgressReason(newState.consecutive_no_progress, newState.last_error_signature), iteration);
     }
     else if (newState.consecutive_no_progress >= settings.halfOpenAfter
         && newState.state === 'CLOSED') {

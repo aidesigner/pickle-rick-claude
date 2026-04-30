@@ -381,6 +381,12 @@ function resolveCurrentTicketBranch(state: State, killedSet: Set<string>, addedS
   return 'b';
 }
 
+function resolveAddedCurrentTicket(state: State, addedSet: Set<string>): string | null {
+  const current = state.current_ticket;
+  if (current && addedSet.has(current)) return current;
+  return null;
+}
+
 function appendActivity(state: State, entry: ActivityLogEntry): void {
   const existing = Array.isArray(state.activity) ? state.activity : [];
   state.activity = [...existing, entry];
@@ -615,10 +621,15 @@ export function applyCourseCorrectionRestructure(
       }
 
       if (branch === 'a') state.current_ticket = input.restartTicketId ?? null;
-      if (branch === 'c' && state.current_ticket) {
+      if (branch === 'c') {
+        const previousTicket = state.current_ticket;
+        const redirectedTicket = resolveAddedCurrentTicket(state, addedSet);
+        state.current_ticket = redirectedTicket;
         appendActivity(state, {
           event: 'current_ticket_redirected_to_new',
-          ticket_id: state.current_ticket,
+          from_ticket_id: previousTicket,
+          to_ticket_id: redirectedTicket,
+          ticket_id: redirectedTicket,
           timestamp: nowIso,
         });
       }
