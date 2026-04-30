@@ -212,6 +212,7 @@ Settings live under `~/.claude/pickle-rick/pickle_settings.json:bmad_hardening`.
 - `/help-pickle` lists skills and primary flags.
 - `/pickle-status --config` prints resolved configuration for the current session, including provenance.
 - `/pickle-readiness --history` shows readiness cycle log.
+- Calibration drift gates are `npm run calibrate:readiness`, `npm run calibrate:correct-course`, and `npm run calibrate:archaeology` from `extension/`; run `node bin/calibrate.js <suite> --write` only when intentionally recalibrating after the documented baseline trigger changes.
 - This guide mirrors the source configuration table.
 
 ### Hang Guards
