@@ -77,7 +77,7 @@ export const Defaults = {
 // ---------------------------------------------------------------------------
 // Lifecycle Steps
 // ---------------------------------------------------------------------------
-export const VALID_STEPS = ['prd', 'breakdown', 'research', 'plan', 'implement', 'refactor', 'review'];
+export const VALID_STEPS = ['prd', 'breakdown', 'research', 'plan', 'implement', 'refactor', 'review', 'completed'];
 // ---------------------------------------------------------------------------
 // Promise Tokens
 // ---------------------------------------------------------------------------
@@ -161,6 +161,12 @@ export const VALID_ACTIVITY_EVENTS = [
     'debate_round_truncated',
     'session_reconstructed_epoch_reset',
     'cap_check_failed_schema_mismatch',
+    'course_corrected',
+    'course_correct_apply_failed',
+    'course_correct_recovered',
+    'current_ticket_redirected_to_new',
+    'readiness_delta_requested',
+    'halt',
 ];
 // ---------------------------------------------------------------------------
 // DOT Builder Types

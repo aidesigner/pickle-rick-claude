@@ -172,6 +172,10 @@ test('mux-runner: takes ownership of inactive session then respects max_iteratio
         // Final state should be inactive again (set by the max_iterations guard)
         const finalState = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
         assert.equal(finalState.active, false, 'Session should be inactive after max iterations');
+        // finalizeTerminalState invariants: step='completed', current_ticket null, exit_reason='limit'
+        assert.equal(finalState.step, 'completed', 'max_iterations terminal exit must set step=completed');
+        assert.equal(finalState.current_ticket, null, 'max_iterations terminal exit must clear current_ticket');
+        assert.equal(finalState.exit_reason, 'limit', 'max_iterations exit_reason must be "limit"');
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }

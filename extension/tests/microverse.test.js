@@ -2143,3 +2143,68 @@ test('backward compat: state without convergence_mode uses metric path', () => {
     assert.ok(handoff.includes('Validation:'), 'metric mode includes validation');
     assert.ok(handoff.includes('Direction:'), 'metric mode includes direction');
 });
+
+// ---------------------------------------------------------------------------
+// finalizeMicroverseRun: clean-success exits land finalizeTerminalState
+// invariants on state.json (active=false, step='completed', current_ticket=null,
+// iteration reconciled, exit_reason set). Forensic paths use safeDeactivate +
+// recordExitReason instead.
+// ---------------------------------------------------------------------------
+
+test('microverse finalize success path lands finalizeTerminalState invariants', async () => {
+    const { finalizeTerminalState } = await import('../services/state-manager.js');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mv-finalize-'));
+    try {
+        const statePath = path.join(dir, 'state.json');
+        fs.writeFileSync(statePath, JSON.stringify({
+            active: true, working_dir: dir, step: 'implement',
+            iteration: 4, max_iterations: 50, max_time_minutes: 720,
+            worker_timeout_seconds: 1200, start_time_epoch: 500,
+            completion_promise: null, original_prompt: 'microverse converged',
+            current_ticket: 'M-2', history: [], started_at: new Date().toISOString(),
+            session_dir: dir, schema_version: 3,
+        }));
+        // Mirror finalizeMicroverseRun's success path.
+        finalizeTerminalState(statePath, {
+            step: 'completed',
+            runnerIteration: 9,
+            exitReason: 'converged',
+        });
+        const persisted = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(persisted.active, false);
+        assert.equal(persisted.step, 'completed');
+        assert.equal(persisted.current_ticket, null);
+        assert.equal(persisted.iteration, 9);
+        assert.equal(persisted.exit_reason, 'converged');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('microverse forensic shutdown stamps signal exit_reason without clearing step/current_ticket', async () => {
+    const { recordExitReason, safeDeactivate } = await import('../services/state-manager.js');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mv-signal-'));
+    try {
+        const statePath = path.join(dir, 'state.json');
+        fs.writeFileSync(statePath, JSON.stringify({
+            active: true, working_dir: dir, step: 'implement',
+            iteration: 4, max_iterations: 50, max_time_minutes: 720,
+            worker_timeout_seconds: 1200, start_time_epoch: 500,
+            completion_promise: null, original_prompt: 'microverse signal',
+            current_ticket: 'M-3', history: [], started_at: new Date().toISOString(),
+            session_dir: dir, schema_version: 3,
+        }));
+        // Mirror microverse-runner's shutdown signal handler order.
+        recordExitReason(statePath, 'signal');
+        safeDeactivate(statePath);
+        const persisted = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(persisted.active, false);
+        assert.equal(persisted.exit_reason, 'signal');
+        // Forensic invariants — step + current_ticket survive.
+        assert.equal(persisted.step, 'implement');
+        assert.equal(persisted.current_ticket, 'M-3');
+        assert.equal(persisted.iteration, 4, 'forensic path does not reconcile iteration');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});

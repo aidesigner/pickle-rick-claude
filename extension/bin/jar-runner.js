@@ -5,7 +5,7 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { spawn } from 'child_process';
 import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, writeStateFile, safeErrorMessage } from '../services/pickle-utils.js';
-import { StateManager, safeDeactivate } from '../services/state-manager.js';
+import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason } from '../services/state-manager.js';
 import { Defaults } from '../types/index.js';
 import { logActivity } from '../services/activity-logger.js';
 import { buildManagerInvocation, resolveBackend, backendEnvOverrides } from '../services/backend-spawn.js';
@@ -298,6 +298,19 @@ function deactivateTaskSession(sessionDir) {
     }
     catch { /* best-effort */ }
 }
+/**
+ * Terminal-success finalize for jar tasks: marks step='completed', clears
+ * current_ticket, stamps exit_reason. Use only when the task ran to a clean
+ * end (`result.ok === true`); use `deactivateTaskSession` for failed/aborted
+ * tasks so step/ticket forensics survive.
+ */
+function finalizeTaskSession(sessionDir, exitReason) {
+    try {
+        const taskStatePath = path.join(sessionDir, 'state.json');
+        finalizeTerminalState(taskStatePath, { step: 'completed', exitReason });
+    }
+    catch { /* best-effort */ }
+}
 function countRemainingQueuedBackendTasks(tasks, currentIndex, sessionsRoot, backend) {
     let count = 0;
     for (const task of tasks.slice(currentIndex + 1)) {
@@ -334,7 +347,9 @@ function installShutdownHandlers() {
     const handleShutdownSignal = (signal) => {
         console.error(`\n${Style.YELLOW}⚠️  Received ${signal} — deactivating current task session${Style.RESET}`);
         if (activeTaskSessionDir) {
-            safeDeactivate(path.join(activeTaskSessionDir, 'state.json'));
+            const sp = path.join(activeTaskSessionDir, 'state.json');
+            recordExitReason(sp, 'signal');
+            safeDeactivate(sp);
         }
         if (activeTaskProc && !activeTaskProc.killed) {
             activeTaskProc.kill('SIGTERM');
@@ -359,8 +374,11 @@ async function processJarTask(task, currentIndex, tasks, sessionsRoot, extension
         console.error(`${Style.RED}⚠️  runTask error for ${task.taskId}: ${msg}${Style.RESET}`);
         result = { ok: false, backend: 'claude' };
     }
-    deactivateTaskSession(execution.sessionDir);
     if (result.enoent) {
+        // Backend CLI missing — preserve task state for future retry. Forensic
+        // path: record reason without finalizing step/current_ticket.
+        recordExitReason(path.join(execution.sessionDir, 'state.json'), 'enoent');
+        deactivateTaskSession(execution.sessionDir);
         console.log(`\n${Style.YELLOW}⏸️  Task ${task.taskId} skipped (backend ${result.backend} CLI missing) — status left as '${task.meta.status}' for future retry${Style.RESET}`);
         const { skippedTasks } = handleTaskEnoent(result, tasks.map(item => item.meta), task.taskId);
         const skipped = result.backend === 'codex'
@@ -373,10 +391,14 @@ async function processJarTask(task, currentIndex, tasks, sessionsRoot, extension
         return { succeededDelta: 0, failedDelta: 0, stop: false };
     }
     if (result.ok) {
+        finalizeTaskSession(execution.sessionDir, 'success');
         markTaskConsumed(task.meta);
         console.log(`\n${Style.GREEN}✅ Task ${task.taskId} complete${Style.RESET}`);
         return { succeededDelta: 1, failedDelta: 0, stop: false };
     }
+    // Failed task: forensic path — preserve step/current_ticket for postmortem.
+    recordExitReason(path.join(execution.sessionDir, 'state.json'), 'task_failed');
+    deactivateTaskSession(execution.sessionDir);
     skipTaskWithReason(task.meta, 'task-failed');
     console.log(`\n${Style.RED}❌ Task ${task.taskId} failed${Style.RESET}`);
     return { succeededDelta: 0, failedDelta: 1, stop: false };

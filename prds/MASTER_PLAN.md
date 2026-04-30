@@ -1,10 +1,12 @@
 # MASTER_PLAN — Pickle Rick Engineering Lifecycle
 
-**Last updated**: 2026-04-30 PM (Citadel + Hardening Bundle phase 1 SHIPPED; F6 deploy-reversion cure released as v1.62.0)
+**Last updated**: 2026-04-30 (v1.62.2 — terminal-state finalization split across all four loop runners)
 
 ## 🔔 NEXT PRIORITY WORK
 
 **`prds/anatomy-park-finalizer-history-crash.md`** — pipeline-blocking. `microverse-runner.js:writeFinalReport` derefs `mvState.convergence.history` unconditionally; worker-managed convergence (anatomy-park, szechuan-sauce) doesn't populate that shape, so any successful convergence crashes the finalizer, and `markMicroverseFatalError` overwrites the success marker. Three sibling call sites need the same audit. 8 ACs, 6 forward fixes. Was previously stacked behind `schema-version-deploy-reversion-rca` but that's now shipped (v1.62.0), so this is unblocked.
+
+**Just shipped (v1.62.2):** terminal-state finalization audit across all four loop runners (mux/microverse/pipeline/jar). Original bug: clean-success exits called bare `safeDeactivate(statePath)` which only flips `active=false`, leaving `step='research'`, `current_ticket=stale`, `iteration` desynced — outside observers couldn't distinguish "exited cleanly" from "hung mid-research." Audit found 8 more sites + one real correctness leak: `pipeline-runner.ts` top-level fatal catch never deactivated, stranding `active: true` forever on crash. New helpers `finalizeTerminalState({step:'completed', runnerIteration, exitReason})` for clean-success/limit paths and `recordExitReason(reason)` for forensic paths (signal/error/circuit_open/stall/timeout/fatal) that must preserve last-known step/current_ticket. New optional `exit_reason?: string \| null` field on `State`; `'completed'` added to `Step` union and `VALID_STEPS`. `history` field kept (setup-only writer; `pickle-utils.buildHandoffSummary` reads it as new-vs-resume heuristic). Trap-doors in extension/CLAUDE.md split into clean-success vs forensic invariants for all four runners. 26 files, 3404/3404 tests pass, eslint clean.
 
 **Status**: Citadel + Hardening Bundle phase 1 (pickle, codex backend) SHIPPED 2026-04-30 PM — **75/75 tickets Done** in 424m. Phases 2–3 (anatomy-park, szechuan-sauce) skipped on a stale `pipeline-cancel` marker left by an earlier SIGHUP'd run; tracked separately as a pipeline-runner cleanup bug. F6 deploy-reversion cure SHIPPED as `v1.62.0` — release published, install.sh deployed (schemaVersion=3, parity assertion live, kill-switch on performUpgrade). Soak observation (AC-RVN-11) and self-propagation negative test (AC-RVN-12) pending. Predecessor: god-fn epic SHIPPED end-to-end on codex (T0–T19) + anatomy-park overnight (59 trap-door fixes). Other queued PRDs: `god-functions-remediation-phase-2`, `large-tier-stall-recovery`, `deepseek-integration`.
 
@@ -29,13 +31,37 @@
 | `prds/tool-error-retry-tracking.md` | Draft (2026-03-31) — intra-session tool-failure tracking with escalating pivot guidance, inspired by OMC Ralph mode. **NOT started.** No source impl. Lower priority than current bundle. | committed earlier (`e9e9666`) |
 | `prds/smart-iteration-handoff.md` | Refined draft — reduce wasted iterations 30%+ in microverse / 20%+ in tmux via smarter handoff intelligence. **NOT started.** No source impl. Lower priority than current bundle. | committed earlier (`e9e9666`) |
 | Cronenberg meta-router skill | **Shipped v1.57.0** (2026-04-27) — explicit-invocation `/cronenberg` skill with deterministic decision matrix + tmux-detach-safe followup chaining. No PRD; designed inline. | `711f92c` |
-| `prds/state-schema-version-ordering-incident.md` | **Hot-fix deployed** (2026-04-29 PM) — incident PRD: Citadel + Hardening Bundle pipeline ran C-T0 (schema migration, `order: 200`) before NEW-T2 (v2→v3 rollback safety net, `order: 300`). C-T0 stamped `state.json.schema_version: 3` while deployed `StateManager` capped at v2 → every read threw `SCHEMA_MISMATCH`, monitor and all 4 watcher panes wedged. Hot-patched deployed `STATE_MANAGER_DEFAULTS.schemaVersion: 2 → 3`, force-killed wedged `monitor.js`, relaunched watchers. **Recurring**: deployed file reverts to v2 every ~hour because cross-skill workers (T20–T23) per citadel PRD instruction run `bash install.sh` mid-run, and rsync's atomic-write replaces the inode (chflags uchg lock survives 0 cycles). Watchdog auto-fixes each tick. 8 ACs (AC-SSV-01..08) — first 3 verified, F1–F5 forward fixes pending. | committed `5cacfea` |
-| `prds/large-pipeline-time-budget-undersized.md` | **Bug PRD** (2026-04-30) — surfaced live during `pipeline-1204204c` run. Two bugs: (B1) `default_max_time_minutes: 720` is undersized for any pipeline above ~25 tickets — current 75-ticket bundle observes 3.34 tickets/hour on codex, needs ~22.5h for phase 1 alone; (B2) `max_time_minutes` enforcement is leaky — pipeline at 881m elapsed against 720m wall, still shipping tickets. Causes: (B1) launch path doesn't read `decomposition_manifest.json` ticket count + apply throughput-baseline formula; (B2) cap-check fires per-iteration but codex-manager-relaunch resets the "past cap" state, plus schema-mismatch exceptions silently swallow cap-check reads, plus reconstructed `start_time_epoch` carries original launch timestamp instead of resetting. 8 ACs (AC-LPB-01..08), 5 forward fixes (F1 manifest-aware default, F2 hard cap-gate in relaunch, F3 epoch reset on reconstruction, F4 monitor "EXCEEDED" indicator, F5 pickle-pipeline.md Step 0.5 sizing prompt). | committed `ebdcf81` |
+| `prds/state-schema-version-ordering-incident.md` | **Shipped v1.62.0/v1.62.1** (2026-04-30) — AC-SSV-05 topo-sort (`2319cee`), AC-SSV-07 monitor watchdog (`643caa5`), AC-SSV-08 deploy/source parity assertion (`9f39b7f`). Residual: AC-SSV-04 NEW-T2 lowered, AC-SSV-06 actionable schema-mismatch error. | committed `5cacfea`, shipped via `2319cee`/`643caa5`/`9f39b7f` |
+| `prds/large-pipeline-time-budget-undersized.md` | **Shipped v1.62.1** (2026-04-30) — AC-LPB-01,02,05,08 (`2319cee`, pickle-utils topo-sort + setup launch sizing + epoch reset + throughput config + Step 0.5); AC-LPB-03,04 (`202ac7b`, mux-runner time_limit cap-gate + schema-mismatch escalation); AC-LPB-06 (`643caa5`, monitor EXCEEDED indicator). | committed `ebdcf81`, shipped via `2319cee`/`202ac7b`/`643caa5` |
+| BMAD wave (T04–T27 across Citadel bundle) | **Shipped v1.62.x** (2026-04-29..30) — state schema v3 (`b17a882`); readiness gate + history (T04, `e9c3317`/`55af9e6`/`6bd28b2`); project-type classifier (`bf7398d`); phase personas + agent-md overlay + spawn-morty injection (T11/T12/T14/T15, `ab2ddce`/`0be3556`/`1c9acf0`/`eec3af6`/`6717ed9`); transaction-ticket-ops + course-correction ledger + recovery (T17, `e04eab0`/`3e6ee69`/`6cb3119`); structural confidence (T20, `847bd82`); debate persona generator + brief + solo-strict gating + continuation caps (T21/T24, `7def5d6`/`1347fb2`/`9a76e88`/`788e586`); hang guards (T25, `8295cd8`); calibration drift governance (T27, `9ea019b`); flag interaction matrix test (`5d74a1d`); codex version smoke (`acafc7d`). Tracked under `prds/citadel.md` Appendix; no per-task PRD rows. Residual gaps tracked as follow-ups (see Section "Residual BMAD Follow-Ups" below). | committed across 22+ commits |
 | `prds/schema-version-deploy-reversion-rca.md` | **Shipped v1.62.0** (2026-04-30 PM) — F1+F2+F3+F4 in HEAD plus the version bump break the propagating-revert loop because `gh release latest` no longer returns the v1.60.1 tarball. F7 lockdown skipped — F6 went straight in. Deploy verified: schemaVersion=3, `assertSchemaVersionDeployParity` live, `performUpgrade` kill-switch armed. AC-RVN-09 ✅, AC-RVN-10 skipped, AC-RVN-11/12 pending 24h soak. | committed `a11dc6d`, released `v1.62.0` |
 | **`prds/anatomy-park-finalizer-history-crash.md`** ⭐ **NEXT PRIORITY WORK** | **Bug PRD** (2026-04-30) — surfaced live during `pipeline-a5e02f01` over `loanlight-api-income-agent-ux` income-agent UX fixes (13/13 pickle tickets shipped; phase 2 anatomy-park converged with 0 confident findings on 2 iterations). **Successful worker-managed convergence followed by FATAL `Cannot read properties of undefined (reading 'history')` in `microverse-runner.js:writeFinalReport`.** The finalizer reads `mvState.convergence.history` unconditionally; worker-managed convergence (anatomy-park, szechuan-sauce) doesn't populate that shape (`init-microverse.js --convergence-mode worker`). The throw triggers `markMicroverseFatalError` which **overwrites the just-written success marker** in `microverse.json` (`exit_reason: 'converged'` → `'error'`); only `anatomy-park.json` retains the truth. `pipeline-runner` sees exit 1, aborts subsequent phases. Three other call sites in microverse-runner.js (lines 571 buildMicroverseHandoff, 598 getBestScore, 874 last-accepted lookup) need the same audit. 8 ACs (AC-APH-01..08), 6 forward fixes (F1 defensive `?? []` guards in writeFinalReport, F2 same in buildMicroverseHandoff, F3 getBestScore returns null for worker mode, F4 audit + guard last-accepted, F5 markMicroverseFatalError preserves successful exit_reason + writes sibling `microverse-finalizer-error.json`, F6 long-term `convergence_mode` discriminated union on MicroverseSessionState). Operator workaround: trim `pipeline.json` `phases` to drop the completed phase, re-run `pipeline-runner` against same session. **Unblocked** — `schema-version-deploy-reversion-rca` shipped, no more hot-fix reverts. | committed `a11dc6d` |
 The refined PRD includes: corrected line ranges, T0 prelude + T14 closer, goal-level 200 LOC carve-outs, 8-token enumeration, T1 post-pass invariants, T7 dry-run replacement (test seam, NO `--dry-run`), T2 scope clarification (`runIteration` already extracted), per-ticket frontmatter, fixture lockdown protocol, helper-signature spec rule, trap-door preservation, and a 17-row Risks table.
 
 Pre-refinement preserved at `~/.local/share/pickle-rick/sessions/2026-04-25-9152e64b/prd.md`.
+
+---
+
+## 1.1 Residual BMAD Follow-Ups (post-validation, 2026-04-30)
+
+Surfaced by the agent-team validation pass against `prds/citadel.md` BMAD appendix. Functional core is shipped + tested; these are gaps from the spec.
+
+| Gap | Severity | Notes |
+|---|---|---|
+| `--skip-readiness <reason>` CLI flag (P0.6) not implemented in `check-readiness.ts` | High | `readiness_skipped` event also unwired; PRD requires both |
+| `verify` step missing from `VALID_STEPS` in `src/types/index.ts:251` while present in `data/phase-personas.json` | High | `morty-phase-verifier` works under teams-mode (skill orchestrator) but is dead under subprocess path (`spawn-morty.ts` reads `state.step`); decide: add `verify` to lifecycle or rename the persona |
+| Slash-command files missing: `pickle-readiness.md`, `pickle-archaeology.md`, `pickle-correct-course.md` | High | Referenced in `prds/citadel.md:966-968`; only `pickle-debate.md` shipped. Bin scripts work via `node bin/<x>.js`; UX gap only |
+| `correct-course.ts` proposal validator does not assert `artifact_diffs` and `confidence_metadata` artifact prefixes (P3.4) | Medium | Currently checks 3 of 5 mandated sections |
+| `--repo-root` not repeatable (P0.11) | Medium | Multi-repo workspaces only get one repo's readiness output |
+| `complexity_tier_default` field in `phase-personas.json` not consumed by source | Medium | Schema-only; tier→model precedence rule from P2.5 not enforced |
+| Filename drift: code writes `readiness_<date>.md`; PRD says `readiness_escalation_<date>.md` (P0.5) | Low | Either rename code or PRD |
+| AC-SSV-04 (NEW-T2 lowered), AC-SSV-06 (actionable schema-mismatch error) not verifiably shipped | Low | `tests/integration/state-schema-version-rollback.test.js` referenced but doesn't exist |
+| Behavioral phase-personas baseline test triplet missing (`tests/behavioral/phase-personas/{harness,quality-vs-baseline,baseline.json}`) | Medium | `R23` mitigation requires baseline-before-flip; CI cannot enforce yet |
+| Integration tests missing: `phase-persona-dispatch`, `archaeology-injection`, `readiness-gate` | Medium | Unit coverage exists; end-to-end coverage does not |
+| Pre-existing `pickle_settings.json` deploy drift (`default_max_iterations` 500 vs 100, `default_tmux_max_turns` 200 vs 400) | Low | `install.sh` is partially-leaky for `pickle_settings.json` — additive-only on this file |
+| Cosmetic: AC-LPB-06 PRD says `⚠️ EXCEEDED`; code emits plain `EXCEEDED` | Low | Tests assert the token, not the glyph |
+
+Fixed in this validation pass: 6 emitted-but-unenumerated activity events (`course_corrected`, `course_correct_apply_failed`, `course_correct_recovered`, `current_ticket_redirected_to_new`, `readiness_delta_requested`, `halt`) now in `VALID_ACTIVITY_EVENTS`; regression test in `tests/types-gate-events.test.js`.
 
 ---
 
@@ -244,6 +270,53 @@ Pipeline crossed the configured `max_time_minutes: 720` wall at iter 25 (~705m e
 After the first hot-fix at 23:53 UTC, deployed `STATE_MANAGER_DEFAULTS.schemaVersion` reverted from `3` back to `2` four more times over the next 8 hours, on a roughly hourly cadence. Each reversion wedged fresh-process state reads (existing watchers/hooks held in-memory v3 caches and stayed alive). Watchdog cron `614355bb` auto-fixed each occurrence per its whitelist (c) — bump deployed v2→v3, restart all 4 watchers, log FIXED in `${SESSION}/watchdog.log`.
 
 **Mechanism**: cross-skill workers (T20–T23) explicitly run `bash install.sh` per the citadel PRD §"Cross-skill commit hygiene" instruction. install.sh's rsync uses atomic-write (write-tmp + rename-over), creating a NEW inode for `types/index.js`. The new inode inherits flags from the SOURCE file (none), not from the deletion-replaced destination. **chflags uchg lock survives 0 rsync cycles.** This means defense-in-depth via filesystem flags is theatre; the real fix is making source TS / source compiled JS canonically v3 (already done) AND making install.sh aware of in-flight pipeline schema constraints (F2/F3 in the schema-ordering PRD).
+
+---
+
+## 2.3 Today's session — 2026-04-30 (post-v1.62.1 agent-team validation pass)
+
+**Headline**: 4-parallel-agent validation pass against 50 commits over the prior ~3 days. Functional core verified; 6 emitted-but-unenumerated activity events fixed; 3 stale PRD status headers corrected; bug-PRD priority order locked.
+
+### Validation team
+
+- **Agent A** — BMAD T04→T27 (state schema v3, phase personas, debate, calibration drift, course-correct ledger, txn ticket ops). Verdict: functional core ships; 12 PRD-spec gaps catalogued (see §1.1).
+- **Agent B** — v1.62.x features (AC-SSV-05/07, AC-LPB-01..06,08). Verdict: all 9 ACs traced to impl + test, TS↔JS in sync.
+- **Agent C** — schema-version-deploy-reversion F1-F4, archaeology, install symlink, project-type classifier, promotions. Verdict: all clean; no remaining hardcoded `/Users/` paths; archaeology dual-path confirmed.
+- **Agent D** — MASTER_PLAN ↔ commits coherence, PRD status drift, test quality. Verdict: tests solid (3390 pass / 0 fail / 0 skipped); MASTER_PLAN was stale at v1.62.0; 2 PRD status headers wrong.
+
+### Fixes landed this session (uncommitted at write-time)
+
+- `extension/src/types/index.ts` — added 6 emitted-but-unenumerated activity events (`course_corrected`, `course_correct_apply_failed`, `course_correct_recovered`, `current_ticket_redirected_to_new`, `readiness_delta_requested`, `halt`) → enum length 52 → 58. These were emitted from `services/transaction-ticket-ops.ts` and `bin/mux-runner.ts:executeTimeoutHalt` via direct `state.activity[]` appends, bypassing `logActivity()` and the typed enum.
+- `extension/types/index.js` — recompiled.
+- `extension/tests/activity-logger.test.js` — count assertion bumped 52 → 58, entries documented with provenance comments.
+- `extension/tests/types-gate-events.test.js` — added 2 BMAD parity tests (`bmad-events: transaction-ticket-ops + correct-course events…`, `bmad-events: halt event…`).
+- `prds/state-schema-version-ordering-incident.md` — header now SHIPPED via v1.62.0/v1.62.1 with per-AC commit refs.
+- `prds/large-pipeline-time-budget-undersized.md` — header now SHIPPED via v1.62.1 with per-AC commit refs.
+- `prds/MASTER_PLAN.md` — bumped to v1.62.1; rewrote SSV/LPB rows; added BMAD wave row; added §1.1 Residual BMAD Follow-Ups; added §2.3 (this section).
+
+Final gate: `tsc` clean, ESLint 0 errors / 1 intentionally-suppressed warning at `monitor.ts:558`, **3392 tests pass / 0 fail / 0 skipped** (was 3390 pre-session, +2 BMAD parity tests). Run time 197s.
+
+### Bug-PRD priority order (locked this session)
+
+| Tier | PRD | Why |
+|---|---|---|
+| **P0 — production-blocking** | `anatomy-park-finalizer-history-crash.md` (12 ACs, 6 forward fixes) | Already 🔔 NEXT PRIORITY in MASTER_PLAN. Crashes any pipeline that runs anatomy-park or szechuan-sauce on successful worker-managed convergence; `markMicroverseFatalError` overwrites the success marker. |
+| **P1** | `microverse-runner-stall-resilience.md` (5 ACs) | Iteration handoff loses "what was fixed / what to do next" between workers — wastes iterations across microverse, anatomy-park, szechuan-sauce. Small PRD, high ROI. |
+| **P1** | Residual BMAD §1.1 HIGH bundle | `--skip-readiness <reason>` flag, `verify` step missing from VALID_STEPS, 3 missing slash commands (`pickle-readiness`, `pickle-archaeology`, `pickle-correct-course`). Documented in citadel.md but unimplemented. Bundle PRD recommended over piecemeal. |
+| **P2** | `multi-repo-task-state-drift.md` | Multi-repo flows only — high impact when triggered. |
+| **P2** | `large-tier-stall-recovery.md` (3 tickets) | Codex stall on large tickets (god-fn T1 reproduction). |
+| **P2** | `watcher-pane-recovery.md` (9 ACs, 4 tickets) | tmux UX — watcher panes don't respawn after relaunch. |
+| **P3** | `anatomy-park-followups.md` (12 ACs, 3 tickets) | Trap-door catalog hygiene + recoverable-json tests + microverse codex-relaunch. |
+| **P3** | Residual SSV/LPB/RVN follow-ups | AC-SSV-04 (NEW-T2 lowered), AC-SSV-06 (actionable schema-mismatch error), AC-LPB-07 (manifest-aware default), AC-RVN-11 (24h soak), AC-RVN-12 (self-propagation negative test). |
+| **P4 (refactor, not bug)** | `god-functions-remediation-phase-2.md` (27 god-fns, 6 ACs) | Remove ESLint carve-outs from Phase 1. |
+
+### Local install state
+
+v1.62.1 installed at `~/.claude/pickle-rick/extension/`; source ↔ deployed parity confirmed (schemaVersion=3, package version 1.62.1). gh release `v1.62.1` is latest. **Local tags lag** — `git tag --sort=-creatordate` shows v1.56.1 as highest because v1.57.0..v1.62.1 were created via `gh release create` and tags weren't fetched. Run `git fetch --tags` to sync.
+
+**Pre-existing deploy drift** (not regressed this session, not a new issue): `pickle_settings.json` `default_max_iterations` (source 500, deployed 100) and `default_tmux_max_turns` (source 200, deployed 400) — `install.sh` rsync is partially-leaky on this file (additive-only on settings).
+
+**Note**: this session's enum + PRD fixes are uncommitted at write-time. Need: commit → `bash install.sh` → optional 1.62.1 → 1.62.2 patch bump per `extension/CLAUDE.md` semver if shipped as a release.
 
 ---
 

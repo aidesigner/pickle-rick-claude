@@ -18,7 +18,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync, spawn } from 'child_process';
 import { BACKENDS } from '../types/index.js';
-import { StateManager, safeDeactivate, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
+import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { backendEnvOverrides, isBackend } from '../services/backend-spawn.js';
 import { getExtensionRoot, Style, formatTime, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, displayMacNotification, writeStateFile, } from '../services/pickle-utils.js';
 import { isWorkingTreeDirty } from '../services/git-utils.js';
@@ -1084,6 +1084,7 @@ export function installShutdownHandlers(runtime, counters, cancelMarker) {
         catch { /* best effort */ }
         if (activeChild && !activeChild.killed)
             activeChild.kill('SIGTERM');
+        recordExitReason(runtime.statePath, 'signal');
         safeDeactivate(runtime.statePath);
         logActivity({ event: 'session_end', source: 'pickle', session: path.basename(runtime.sessionDir), mode: 'tmux' });
         process.exit(1);
@@ -1122,7 +1123,11 @@ function logPhaseStart(runtime, phase, index) {
 }
 function finalizePipeline(runtime, counters, cancelMarker, startTime) {
     const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
-    safeDeactivate(runtime.statePath);
+    const pipelineFailed = (counters.completed + counters.skipped) < runtime.config.phases.length;
+    finalizeTerminalState(runtime.statePath, {
+        step: 'completed',
+        exitReason: pipelineFailed ? 'failed' : 'completed',
+    });
     const phasesSummary = counters.skipped > 0
         ? `${counters.completed}/${runtime.config.phases.length} (${counters.skipped} skipped)`
         : `${counters.completed}/${runtime.config.phases.length}`;
@@ -1149,7 +1154,6 @@ function finalizePipeline(runtime, counters, cancelMarker, startTime) {
     catch { /* may not exist */ }
     // Explicit exit code so callers can detect pipeline failure.
     // Skipped phases (e.g. no subsystems for anatomy-park) are not failures.
-    const pipelineFailed = (counters.completed + counters.skipped) < runtime.config.phases.length;
     writePipelineStatus(runtime.sessionDir, pipelineFailed ? 'failed' : 'completed', {
         current_phase: null,
         completed_phases: counters.completed,
@@ -1262,6 +1266,12 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'pipeline-runner.js') 
             writePipelineStatus(sessionDir, 'failed');
         }
         catch { /* best effort */ }
+        const fatalStatePath = path.join(sessionDir, 'state.json');
+        try {
+            recordExitReason(fatalStatePath, 'fatal');
+            safeDeactivate(fatalStatePath);
+        }
+        catch { /* best effort — never block fatal exit on state write */ }
         const msg = safeErrorMessage(err);
         console.error(`${Style.RED}[FATAL] ${msg}${Style.RESET}`);
         process.exit(1);

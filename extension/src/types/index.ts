@@ -64,6 +64,14 @@ export interface State {
   flags?: StateFlags;
   readiness?: ReadinessState;
   codex_version_seen?: string | null;
+  /**
+   * Terminal-exit forensic marker. Set by finalize/forensic helpers in the
+   * runners (mux/microverse/pipeline/jar). Values: 'success', 'limit',
+   * 'circuit_open', 'stall', 'fatal', 'signal', plus microverse-specific
+   * reasons ('converged', 'rate_limit_exhausted', etc.). Outside observers
+   * use this to distinguish a clean exit from a forensic halt.
+   */
+  exit_reason?: string | null;
 }
 
 /**
@@ -248,7 +256,7 @@ export const Defaults = {
 // Lifecycle Steps
 // ---------------------------------------------------------------------------
 
-export const VALID_STEPS = ['prd', 'breakdown', 'research', 'plan', 'implement', 'refactor', 'review'] as const;
+export const VALID_STEPS = ['prd', 'breakdown', 'research', 'plan', 'implement', 'refactor', 'review', 'completed'] as const;
 export type Step = typeof VALID_STEPS[number];
 
 // ---------------------------------------------------------------------------
@@ -349,6 +357,12 @@ export const VALID_ACTIVITY_EVENTS = [
   'debate_round_truncated',
   'session_reconstructed_epoch_reset',
   'cap_check_failed_schema_mismatch',
+  'course_corrected',
+  'course_correct_apply_failed',
+  'course_correct_recovered',
+  'current_ticket_redirected_to_new',
+  'readiness_delta_requested',
+  'halt',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];

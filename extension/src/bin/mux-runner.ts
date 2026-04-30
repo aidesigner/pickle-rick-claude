@@ -5,7 +5,7 @@ import * as os from 'os';
 import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, type TicketInfo } from '../services/pickle-utils.js';
 import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact, type Backend, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole } from '../types/index.js';
-import { StateManager, safeDeactivate, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
+import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, resetCircuitBreaker, type CircuitBreakerConfig, type CircuitBreakerState } from '../services/circuit-breaker.js';
 import { buildManagerInvocation, resolveBackend, backendEnvOverrides } from '../services/backend-spawn.js';
@@ -984,6 +984,7 @@ export function executeTimeoutHalt(ctx: TimeoutHaltContext): void {
     message: 'Ticket timed out on 2 consecutive attempts.',
     state_path: statePath,
   }));
+  recordExitReason(statePath, 'timeout_repeat');
   safeDeactivate(statePath);
 }
 
@@ -1045,6 +1046,19 @@ function ctxDeactivate(ctx: LoopContext): void {
   (ctx.deactivate || safeDeactivate)(ctx.statePath);
 }
 
+function ctxFinalize(ctx: LoopContext, exitReason: string): void {
+  if (ctx.deactivate) {
+    // Test seam: caller injected a deactivate hook — preserve old contract.
+    ctx.deactivate(ctx.statePath);
+    return;
+  }
+  finalizeTerminalState(ctx.statePath, {
+    step: 'completed',
+    runnerIteration: ctx.iteration,
+    exitReason,
+  });
+}
+
 function writeLoopState(ctx: LoopContext, targetPath: string, value: unknown): void {
   (ctx.writeState || writeStateFile)(targetPath, value as object);
 }
@@ -1081,6 +1095,7 @@ export function validateStartupState(state: State, statePath: string): void {
 export function setupSignalHandlers(statePath: string, log: (msg: string) => void): void {
   const handleShutdownSignal = (signal: string) => {
     log(`Received ${signal} — deactivating session`);
+    recordExitReason(statePath, 'signal');
     safeDeactivate(statePath);
     if (currentChildProc && !currentChildProc.killed) currentChildProc.kill('SIGTERM');
     logActivity({ event: 'session_end', source: 'pickle', session: path.basename(path.dirname(statePath)), mode: 'tmux' });
@@ -1477,7 +1492,7 @@ function processTaskCompleted(state: State, ctx: LoopContext): LoopAction {
     return { kind: 'continue', resetStall: true };
   }
   ctx.log('Task completed. Exiting loop.');
-  ctxDeactivate(ctx);
+  ctxFinalize(ctx, 'success');
   return { kind: 'break', reason: 'success' };
 }
 
@@ -1485,6 +1500,7 @@ function processReviewClean(ctx: LoopContext): LoopAction {
   let curState: State;
   try { curState = ctxReadState(ctx); } catch (err) {
     ctx.log(`ERROR: Cannot read state.json after review_clean: ${safeErrorMessage(err)}. Treating as completed.`);
+    ctxFinalize(ctx, 'success');
     return { kind: 'break', reason: 'success' };
   }
   const minIter = Number.isFinite(Number(curState.min_iterations)) ? Number(curState.min_iterations) : 0;
@@ -1494,7 +1510,7 @@ function processReviewClean(ctx: LoopContext): LoopAction {
     return { kind: 'noop' };
   }
   ctx.log('Review clean. Exiting loop.');
-  ctxDeactivate(ctx);
+  ctxFinalize(ctx, 'success');
   return { kind: 'break', reason: 'success' };
 }
 
@@ -1547,6 +1563,7 @@ async function runMuxRunnerMain() {
   // remain orphaned with active: true when the tmux pane is closed.
   const handleShutdownSignal = (signal: string) => {
     log(`Received ${signal} — deactivating session`);
+    recordExitReason(statePath, 'signal');
     safeDeactivate(statePath);
     if (currentChildProc && !currentChildProc.killed) {
       currentChildProc.kill('SIGTERM');
@@ -1680,7 +1697,7 @@ async function runMuxRunnerMain() {
     const curIter = Number.isFinite(rawCurIter) ? rawCurIter : 0;
     if (maxIter > 0 && curIter >= maxIter) {
       log(`Max iterations reached (${curIter}/${maxIter}). Exiting.`);
-      safeDeactivate(statePath);
+      finalizeTerminalState(statePath, { step: 'completed', runnerIteration: iteration, exitReason: 'limit' });
       exitReason = 'limit';
       break;
     }
@@ -1692,7 +1709,7 @@ async function runMuxRunnerMain() {
     const elapsed = startEpoch > 0 ? Math.max(0, Math.floor(Date.now() / 1000) - startEpoch) : 0;
     if (maxTimeMins > 0 && startEpoch > 0 && elapsed >= maxTimeMins * 60) {
       log(`Time limit reached (${elapsed}s). Exiting.`);
-      safeDeactivate(statePath);
+      finalizeTerminalState(statePath, { step: 'completed', runnerIteration: iteration, exitReason: 'limit' });
       exitReason = 'limit';
       break;
     }
@@ -1700,6 +1717,7 @@ async function runMuxRunnerMain() {
     // Circuit breaker gate: if CB is OPEN, exit immediately
     if (cbEnabled && cbState && !canExecute(cbState)) {
       log(`Circuit breaker OPEN: ${cbState.reason}. Exiting.`);
+      recordExitReason(statePath, 'circuit_open');
       safeDeactivate(statePath);
       exitReason = 'circuit_open';
       break;
@@ -1711,6 +1729,7 @@ async function runMuxRunnerMain() {
         stallCount++;
         if (stallCount >= 2) { // Stall threshold only consulted when !cbEnabled; CB-enabled sessions use CB's own progress threshold
           log(`WARNING: state.iteration has not advanced in 2 outer-loop iterations (stuck at ${state.iteration}). Exiting to avoid wasted API calls.`);
+          recordExitReason(statePath, 'stall');
           safeDeactivate(statePath);
           exitReason = 'stall';
           break;
@@ -1737,6 +1756,7 @@ async function runMuxRunnerMain() {
       });
       if (readinessStatus !== 0) {
         log(`READINESS HALT: check-readiness exited ${readinessStatus}; no manager spawn attempted`);
+        recordExitReason(statePath, 'readiness_halt');
         safeDeactivate(statePath);
         exitReason = 'error';
         break;
@@ -1860,6 +1880,7 @@ async function runMuxRunnerMain() {
         exitReason = 'rate_limit_exhausted';
         logActivity({ event: 'rate_limit_exhausted', source: 'pickle',
           session: path.basename(sessionDir), error: `max retries (${maxRateLimitRetries}) exceeded, no resetsAt available` });
+        recordExitReason(statePath, 'rate_limit_exhausted');
         safeDeactivate(statePath);
         break;
       }
@@ -1891,7 +1912,11 @@ async function runMuxRunnerMain() {
       if (maxMins > 0 && epoch > 0) {
         const elapsed = Math.floor(Date.now() / 1000) - epoch;
         const remaining = (maxMins * 60) - elapsed;
-        if (remaining <= 0) { exitReason = 'limit'; safeDeactivate(statePath); break; }
+        if (remaining <= 0) {
+          exitReason = 'limit';
+          finalizeTerminalState(statePath, { step: 'completed', runnerIteration: iteration, exitReason: 'limit' });
+          break;
+        }
         actualWaitMs = Math.min(actualWaitMs, remaining * 1000);
       }
 
@@ -1909,7 +1934,20 @@ async function runMuxRunnerMain() {
         }
       }
       if (isHaltExit(exitReason)) {
-        safeDeactivate(statePath); break;
+        // 'limit' is a clean-success terminal exit (budget consumed) and gets
+        // finalizeTerminalState. Other halt reasons (currently only 'cancelled'
+        // is reachable here from the sleep loop; 'timeout_repeat' is also
+        // included in the union for parity with failure-bucket sites elsewhere
+        // in this file, even though it actually exits earlier via
+        // executeTimeoutHalt) preserve step/current_ticket for postmortem.
+        const halt = exitReason as ExitReason;
+        if (halt === 'limit') {
+          finalizeTerminalState(statePath, { step: 'completed', runnerIteration: iteration, exitReason: 'limit' });
+        } else if (halt === 'cancelled' || halt === 'timeout_repeat') {
+          recordExitReason(statePath, halt);
+          safeDeactivate(statePath);
+        }
+        break;
       }
 
       // Wake: cleanup + handoff
@@ -2024,6 +2062,7 @@ async function runMuxRunnerMain() {
       if (prevCBState !== 'OPEN' && cbState.state === 'OPEN') {
         logActivity({ event: 'circuit_open', source: 'pickle', session: path.basename(sessionDir), error: cbState.reason });
         log(`Circuit breaker tripped: ${cbState.reason}`);
+        recordExitReason(statePath, 'circuit_open');
         safeDeactivate(statePath);
         exitReason = 'circuit_open';
         break;
@@ -2074,6 +2113,7 @@ async function runMuxRunnerMain() {
           ticket: decision.ticket,
           error: `${PromiseTokens.EPIC_COMPLETED} hallucinated ${decision.nextCount}× on ticket ${decision.ticket} (done ${decision.doneCount}/${decision.totalCount})`,
         });
+        recordExitReason(statePath, 'manager_persistent_hallucination');
         safeDeactivate(statePath);
         exitReason = 'manager_persistent_hallucination';
         break;
@@ -2161,7 +2201,7 @@ async function runMuxRunnerMain() {
         continue;
       }
       log('Task completed. Exiting loop.');
-      safeDeactivate(statePath);
+      finalizeTerminalState(statePath, { step: 'completed', runnerIteration: iteration, exitReason: 'success' });
       exitReason = 'success';
       break;
     } else if (result === 'review_clean') {
@@ -2172,6 +2212,7 @@ async function runMuxRunnerMain() {
       } catch (err) {
         const msg = safeErrorMessage(err);
         log(`ERROR: Cannot read state.json after review_clean: ${msg}. Treating as completed.`);
+        finalizeTerminalState(statePath, { step: 'completed', runnerIteration: iteration, exitReason: 'success' });
         exitReason = 'success';
         break;
       }
@@ -2183,7 +2224,7 @@ async function runMuxRunnerMain() {
         log(`Clean pass at iteration ${curIterNow}, but min_iterations=${minIter}. Continuing.`);
       } else {
         log('Review clean. Exiting loop.');
-        safeDeactivate(statePath);
+        finalizeTerminalState(statePath, { step: 'completed', runnerIteration: iteration, exitReason: 'success' });
         exitReason = 'success';
         break;
       }
@@ -2217,6 +2258,7 @@ async function runMuxRunnerMain() {
         continue;
       }
       log('Subprocess error. Exiting loop.');
+      recordExitReason(statePath, 'error');
       safeDeactivate(statePath);
       exitReason = 'error';
       break;

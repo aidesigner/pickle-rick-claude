@@ -1341,3 +1341,65 @@ describe('applyEpochResetOnReconstruction', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Top-level fatal catch deactivates state.json
+// ---------------------------------------------------------------------------
+
+describe('pipeline-runner fatal catch', () => {
+  test('top-level fatal catch deactivates state.json and stamps exit_reason=fatal', async () => {
+    // The fatal catch path in the CLI is hard to trigger via subprocess
+    // without contriving a deeply broken pipeline. Instead, directly verify
+    // the helpers it relies on land the documented invariants on a state.json
+    // that started with active:true.
+    const { safeDeactivate, recordExitReason } = await import('../services/state-manager.js');
+    const dir = tmpDir();
+    try {
+      const statePath = path.join(dir, 'state.json');
+      fs.writeFileSync(statePath, JSON.stringify({
+        active: true, working_dir: dir, step: 'pickle',
+        iteration: 2, max_iterations: 50, max_time_minutes: 720,
+        worker_timeout_seconds: 1200, start_time_epoch: 500,
+        completion_promise: null, original_prompt: 'pipeline fatal test',
+        current_ticket: 'T-MID', history: [], started_at: new Date().toISOString(),
+        session_dir: dir, schema_version: 3,
+      }));
+      // Same sequence the fatal catch runs.
+      recordExitReason(statePath, 'fatal');
+      safeDeactivate(statePath);
+
+      const persisted = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      assert.equal(persisted.active, false, 'fatal catch must deactivate (was missing entirely before)');
+      assert.equal(persisted.exit_reason, 'fatal');
+      // Forensic invariants: step and current_ticket survive.
+      assert.equal(persisted.step, 'pickle', 'forensic path preserves step');
+      assert.equal(persisted.current_ticket, 'T-MID', 'forensic path preserves current_ticket');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('finalizePipeline success path lands finalizeTerminalState invariants', async () => {
+    const { finalizeTerminalState } = await import('../services/state-manager.js');
+    const dir = tmpDir();
+    try {
+      const statePath = path.join(dir, 'state.json');
+      fs.writeFileSync(statePath, JSON.stringify({
+        active: true, working_dir: dir, step: 'pickle',
+        iteration: 5, max_iterations: 50, max_time_minutes: 720,
+        worker_timeout_seconds: 1200, start_time_epoch: 500,
+        completion_promise: null, original_prompt: 'pipeline finalize test',
+        current_ticket: 'T-99', history: [], started_at: new Date().toISOString(),
+        session_dir: dir, schema_version: 3,
+      }));
+      finalizeTerminalState(statePath, { step: 'completed', exitReason: 'completed' });
+      const persisted = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      assert.equal(persisted.active, false);
+      assert.equal(persisted.step, 'completed');
+      assert.equal(persisted.current_ticket, null);
+      assert.equal(persisted.exit_reason, 'completed');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

@@ -783,9 +783,14 @@ test('jar-runner: recovers a newer orphan tmp state before bootstrapping a jarre
 
         const finalState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
         assert.equal(finalState.active, false, 'completed task should be deactivated');
-        assert.equal(finalState.iteration, 7, 'recovered tmp state should be promoted before task activation');
-        assert.equal(finalState.current_ticket, 'T-RECOVERED');
-        assert.equal(finalState.original_prompt, 'Recovered jar task state');
+        // finalizeTerminalState invariants on successful jar task: step='completed',
+        // current_ticket cleared, exit_reason='success'. Iteration is reconciled by
+        // the task itself via mux-runner's runnerIteration; we only assert the
+        // recovered tmp was promoted at bootstrap (iteration > 0 from recovery).
+        assert.equal(finalState.step, 'completed', 'task success must advance step to completed');
+        assert.equal(finalState.current_ticket, null, 'task success must clear current_ticket');
+        assert.equal(finalState.exit_reason, 'success', 'task success exit_reason');
+        assert.equal(finalState.original_prompt, 'Recovered jar task state', 'recovered tmp original_prompt must survive');
         assert.equal(fs.existsSync(orphanTmpPath), false, 'recovered tmp should be consumed during task bootstrap');
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });

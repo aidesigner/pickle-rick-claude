@@ -584,6 +584,36 @@ export function safeDeactivate(statePath) {
     forceWriteMutate(statePath, s => { s.active = false; }, () => ({ active: false }));
 }
 /**
+ * Finalize a terminal-success exit: deactivate, set step='completed',
+ * null current_ticket, reconcile iteration to the runner's outer-loop count,
+ * stamp exit_reason for forensics. Never throws — terminal paths must not
+ * fail on logging. Use for clean-success exits (EPIC_COMPLETED, review_clean,
+ * max_iterations limit, max_time limit, microverse converged/stopped, jar
+ * task success). Use safeDeactivate for forensic paths (circuit_open, stall,
+ * crash) where preserving step/current_ticket matters.
+ */
+export function finalizeTerminalState(statePath, opts = {}) {
+    forceWriteMutate(statePath, s => {
+        s.active = false;
+        if (opts.step)
+            s.step = opts.step;
+        s.current_ticket = null;
+        if (typeof opts.runnerIteration === 'number' && Number.isFinite(opts.runnerIteration)) {
+            s.iteration = opts.runnerIteration;
+        }
+        if (opts.exitReason)
+            s.exit_reason = opts.exitReason;
+    }, () => ({ active: false, step: opts.step ?? 'completed', current_ticket: null }));
+}
+/**
+ * Stamp `exit_reason` without touching other fields — for forensic paths
+ * (circuit_open, stall, fatal, signal) that must preserve last-known step
+ * and current_ticket for postmortem inspection. Never throws.
+ */
+export function recordExitReason(statePath, exitReason) {
+    forceWriteMutate(statePath, s => { s.exit_reason = exitReason; }, null);
+}
+/**
  * Append a single activity entry to `state.json.activity` (creating the array if missing).
  * Best-effort: primary path uses locked sm.update; on lock failure falls back to
  * read-modify-forceWrite. Never throws — halt paths must not fail on logging.

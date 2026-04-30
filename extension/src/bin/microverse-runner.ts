@@ -35,7 +35,7 @@ import {
   ensureMonitorWindow,
   collectTickets,
 } from '../services/pickle-utils.js';
-import { StateManager, safeDeactivate, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
+import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 
 const sm = new StateManager();
 import {
@@ -1073,6 +1073,7 @@ function installShutdownHandlers(sessionDir: string, statePath: string, log: (ms
   const handleShutdownSignal = (signal: string) => {
     log(`Received ${signal} — deactivating session`);
     killCurrentChild();
+    recordExitReason(statePath, 'signal');
     deactivateRunnerState(statePath);
     const finalMv = readMicroverseState(sessionDir);
     if (finalMv) {
@@ -1642,9 +1643,13 @@ function finalizeMicroverseRun(sessionDir: string, ctx: RunContext, outcome: Exi
   writeMicroverseState(sessionDir, outcome.state);
 
   try {
-    sm.update(ctx.statePath, s => { s.active = false; });
+    finalizeTerminalState(ctx.statePath, {
+      step: 'completed',
+      runnerIteration: ctx.iteration,
+      exitReason: outcome.exitReason,
+    });
   } catch (err) {
-    log(`sm.update failed at finalize path, falling back to safeDeactivate: ${safeErrorMessage(err)}`);
+    log(`finalizeTerminalState failed at finalize path, falling back to safeDeactivate: ${safeErrorMessage(err)}`);
     deactivateRunnerState(ctx.statePath);
   }
 
@@ -1711,6 +1716,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'microverse-runner.js'
   main(sessionDir).catch((err) => {
     const msg = safeErrorMessage(err);
     console.error(`${Style.RED}[FATAL] ${msg}${Style.RESET}`);
+    recordExitReason(path.join(sessionDir, 'state.json'), 'fatal');
     deactivateRunnerState(path.join(sessionDir, 'state.json'));
     try {
       markMicroverseFatalError(sessionDir);

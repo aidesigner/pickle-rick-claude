@@ -5,7 +5,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { StateManager, writeActivityEntry, safeDeactivate, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
+import { StateManager, writeActivityEntry, safeDeactivate, finalizeTerminalState, recordExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import {
   StateError,
   LockError,
@@ -878,6 +878,117 @@ test('safeDeactivate: fallback preserves crash-recovered tmp state before deacti
     assert.equal(recovered.command_template, 'council-of-ricks.md');
     assert.equal(recovered.active, false);
     assert.equal(fs.existsSync(tmpFile), false, 'recovered tmp should be consumed');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// finalizeTerminalState — clean-success exit finalize
+// ---------------------------------------------------------------------------
+
+test('finalizeTerminalState: deactivates, sets step=completed, nulls current_ticket, reconciles iteration, stamps exit_reason', () => {
+  withDir((dir) => {
+    const sp = path.join(dir, 'state.json');
+    writeStateFile(sp, makeState({
+      active: true,
+      step: 'research',
+      iteration: 4,
+      current_ticket: 'T-99',
+    }));
+    finalizeTerminalState(sp, { step: 'completed', runnerIteration: 7, exitReason: 'success' });
+    const read = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+    assert.equal(read.active, false);
+    assert.equal(read.step, 'completed');
+    assert.equal(read.current_ticket, null);
+    assert.equal(read.iteration, 7);
+    assert.equal(read.exit_reason, 'success');
+  });
+});
+
+test('finalizeTerminalState: never throws on missing state.json (seeds fallback)', () => {
+  withDir((dir) => {
+    const sp = path.join(dir, 'state.json');
+    assert.doesNotThrow(() => finalizeTerminalState(sp, { step: 'completed', exitReason: 'limit' }));
+    const read = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+    assert.equal(read.active, false);
+    assert.equal(read.step, 'completed');
+    assert.equal(read.current_ticket, null);
+  });
+});
+
+test('finalizeTerminalState: preserves crash-recovered tmp state before finalizing', () => {
+  withDir((dir) => {
+    const sp = path.join(dir, 'state.json');
+    writeStateFile(sp, makeState({ iteration: 1, current_ticket: 'T-BASE' }));
+    const tmpFile = `${sp}.tmp.99999998`;
+    fs.writeFileSync(tmpFile, JSON.stringify(makeState({
+      iteration: 2,
+      current_ticket: 'T-RECOVERED',
+      command_template: 'pickle.md',
+    })));
+
+    const originalUpdate = StateManager.prototype.update;
+    StateManager.prototype.update = () => {
+      throw new LockError('forced fallback');
+    };
+
+    try {
+      finalizeTerminalState(sp, { step: 'completed', runnerIteration: 5, exitReason: 'success' });
+    } finally {
+      StateManager.prototype.update = originalUpdate;
+    }
+
+    const recovered = new StateManager().read(sp);
+    assert.equal(recovered.command_template, 'pickle.md', 'fallback must preserve recovered fields');
+    assert.equal(recovered.active, false);
+    assert.equal(recovered.step, 'completed');
+    assert.equal(recovered.current_ticket, null);
+    assert.equal(recovered.iteration, 5);
+    assert.equal(recovered.exit_reason, 'success');
+    assert.equal(fs.existsSync(tmpFile), false, 'recovered tmp should be consumed');
+  });
+});
+
+test('finalizeTerminalState: ignores non-finite runnerIteration', () => {
+  withDir((dir) => {
+    const sp = path.join(dir, 'state.json');
+    writeStateFile(sp, makeState({ iteration: 3 }));
+    finalizeTerminalState(sp, { step: 'completed', runnerIteration: NaN, exitReason: 'limit' });
+    const read = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+    assert.equal(read.iteration, 3, 'NaN runnerIteration must not corrupt iteration');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// recordExitReason — forensic stamp without disturbing other fields
+// ---------------------------------------------------------------------------
+
+test('recordExitReason: writes exit_reason without changing step/current_ticket/iteration', () => {
+  withDir((dir) => {
+    const sp = path.join(dir, 'state.json');
+    writeStateFile(sp, makeState({
+      active: true,
+      step: 'research',
+      iteration: 4,
+      current_ticket: 'T-99',
+    }));
+    recordExitReason(sp, 'circuit_open');
+    const read = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+    // Only exit_reason changed — caller is responsible for safeDeactivate
+    assert.equal(read.step, 'research');
+    assert.equal(read.iteration, 4);
+    assert.equal(read.current_ticket, 'T-99');
+    assert.equal(read.exit_reason, 'circuit_open');
+    // Note: active not touched by recordExitReason — caller pairs with safeDeactivate
+    assert.equal(read.active, true);
+  });
+});
+
+test('recordExitReason: never throws on missing state.json (no-op when no fallback factory)', () => {
+  withDir((dir) => {
+    const sp = path.join(dir, 'state.json');
+    assert.doesNotThrow(() => recordExitReason(sp, 'fatal'));
+    // No file should be created (recordExitReason has no fallback factory).
+    assert.equal(fs.existsSync(sp), false);
   });
 });
 

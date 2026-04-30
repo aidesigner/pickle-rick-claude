@@ -352,6 +352,80 @@ function readActivityEvents(dataRoot) {
     return events;
 }
 
+test('processCompletionBranch: task_completed + all Done → break with success + finalizeTerminalState invariants', async () => {
+    const session = makeRelaunchSession({
+        backend: 'claude',
+        tickets: [
+            { id: 't-1', status: 'Done', order: 1 },
+            { id: 't-2', status: 'Done', order: 2 },
+        ],
+    });
+    // Set step='research' + current_ticket so we can prove they get reconciled.
+    const initialState = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
+    initialState.step = 'research';
+    initialState.current_ticket = 't-2';
+    initialState.iteration = 5;
+    fs.writeFileSync(session.statePath, JSON.stringify(initialState, null, 2));
+
+    try {
+        await withDataRoot(session.dataRoot, async () => {
+            const { ctx } = makeBranchCtx(session, { iteration: 8 });
+            const action = await processCompletionBranch(
+                JSON.parse(fs.readFileSync(session.statePath, 'utf-8')),
+                'task_completed',
+                ctx,
+            );
+            assert.equal(action.kind, 'break');
+            assert.equal(action.reason, 'success');
+
+            const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
+            assert.equal(persisted.active, false, 'active must be false after EPIC_COMPLETED success');
+            assert.equal(persisted.step, 'completed', 'step must advance to completed');
+            assert.equal(persisted.current_ticket, null, 'current_ticket must be cleared');
+            assert.equal(persisted.iteration, 8, 'iteration must reconcile to runner ctx.iteration');
+            assert.equal(persisted.exit_reason, 'success');
+        });
+    } finally {
+        fs.rmSync(session.sessionDir, { recursive: true, force: true });
+        fs.rmSync(session.dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('processCompletionBranch: review_clean → break with success + finalizeTerminalState invariants', async () => {
+    const session = makeRelaunchSession({
+        backend: 'claude',
+        tickets: [{ id: 't-1', status: 'Done', order: 1 }],
+    });
+    const initialState = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
+    initialState.step = 'review';
+    initialState.current_ticket = 't-1';
+    initialState.min_iterations = 0;
+    fs.writeFileSync(session.statePath, JSON.stringify(initialState, null, 2));
+
+    try {
+        await withDataRoot(session.dataRoot, async () => {
+            const { ctx } = makeBranchCtx(session, { iteration: 6 });
+            const action = await processCompletionBranch(
+                JSON.parse(fs.readFileSync(session.statePath, 'utf-8')),
+                'review_clean',
+                ctx,
+            );
+            assert.equal(action.kind, 'break');
+            assert.equal(action.reason, 'success');
+
+            const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
+            assert.equal(persisted.active, false);
+            assert.equal(persisted.step, 'completed');
+            assert.equal(persisted.current_ticket, null);
+            assert.equal(persisted.iteration, 6);
+            assert.equal(persisted.exit_reason, 'success');
+        });
+    } finally {
+        fs.rmSync(session.sessionDir, { recursive: true, force: true });
+        fs.rmSync(session.dataRoot, { recursive: true, force: true });
+    }
+});
+
 test('processCompletionBranch: codex + error + pending tickets + below cap → relaunch action', async () => {
     const session = makeRelaunchSession({
         backend: 'codex',

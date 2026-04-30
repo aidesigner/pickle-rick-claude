@@ -7,7 +7,7 @@ import { resolveBackend, buildJudgeInvocation, buildWorkerInvocation, backendEnv
 import { readMicroverseState, readRecoverableJsonObject, writeMicroverseState, recordIteration as stateRecordIteration, recordStall, recordFailedApproach, isConverged, compareMetric, classifyFailure, } from '../services/microverse-state.js';
 import { getHeadSha, resetToSha, isWorkingTreeDirty } from '../services/git-utils.js';
 import { writeStateFile, getExtensionRoot, isoCompactStamp, sleep, Style, formatTime, formatLocalDateKey, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, collectTickets, } from '../services/pickle-utils.js';
-import { StateManager, safeDeactivate, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
+import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 const sm = new StateManager();
 import { runIteration, loadRateLimitSettings, classifyIterationExit, computeRateLimitAction, killCurrentChild, evaluateCodexManagerRelaunch, recordCodexManagerRelaunch, } from './mux-runner.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -750,6 +750,7 @@ function installShutdownHandlers(sessionDir, statePath, log) {
     const handleShutdownSignal = (signal) => {
         log(`Received ${signal} — deactivating session`);
         killCurrentChild();
+        recordExitReason(statePath, 'signal');
         deactivateRunnerState(statePath);
         const finalMv = readMicroverseState(sessionDir);
         if (finalMv) {
@@ -1259,10 +1260,14 @@ function finalizeMicroverseRun(sessionDir, ctx, outcome, log) {
     outcome.state.exit_reason = outcome.exitReason;
     writeMicroverseState(sessionDir, outcome.state);
     try {
-        sm.update(ctx.statePath, s => { s.active = false; });
+        finalizeTerminalState(ctx.statePath, {
+            step: 'completed',
+            runnerIteration: ctx.iteration,
+            exitReason: outcome.exitReason,
+        });
     }
     catch (err) {
-        log(`sm.update failed at finalize path, falling back to safeDeactivate: ${safeErrorMessage(err)}`);
+        log(`finalizeTerminalState failed at finalize path, falling back to safeDeactivate: ${safeErrorMessage(err)}`);
         deactivateRunnerState(ctx.statePath);
     }
     writeFinalReport(sessionDir, outcome.state, outcome.exitReason, outcome.iterations, outcome.elapsedSeconds);
@@ -1323,6 +1328,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'microverse-runner.js'
     main(sessionDir).catch((err) => {
         const msg = safeErrorMessage(err);
         console.error(`${Style.RED}[FATAL] ${msg}${Style.RESET}`);
+        recordExitReason(path.join(sessionDir, 'state.json'), 'fatal');
         deactivateRunnerState(path.join(sessionDir, 'state.json'));
         try {
             markMicroverseFatalError(sessionDir);
