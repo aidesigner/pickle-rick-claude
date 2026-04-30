@@ -12,10 +12,14 @@ import {
     buildTicketLines,
     readPipelineLifecycle,
     shouldMonitorExit,
+    renderElapsedField,
+    writeWithWatchdog,
+    MONITOR_STDOUT_WATCHDOG_MS,
 } from '../bin/monitor.js';
 import { getHeight } from '../services/pickle-utils.js';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
+import { Writable } from 'node:stream';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MONITOR_BIN = path.resolve(__dirname, '../bin/monitor.js');
@@ -660,6 +664,115 @@ test('monitor CLI promotes dead writer circuit breaker tmp before rendering stat
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
+});
+
+// --- AC-LPB-06: EXCEEDED indicator on Elapsed field ---
+
+test('renderElapsedField: elapsed under budget shows no EXCEEDED', () => {
+    // 500m elapsed, 720m max → under budget
+    const out = stripAnsi(renderElapsedField(500 * 60, 720));
+    assert.ok(!out.includes('EXCEEDED'), `expected no EXCEEDED suffix, got: ${out}`);
+    assert.ok(out.includes('500m'), `expected formatted elapsed, got: ${out}`);
+    assert.ok(out.includes('/ 720m'), `expected ceiling label, got: ${out}`);
+});
+
+test('renderElapsedField: elapsed over budget shows EXCEEDED', () => {
+    // 1000m elapsed, 720m max → over budget
+    const raw = renderElapsedField(1000 * 60, 720);
+    const out = stripAnsi(raw);
+    assert.ok(out.includes('EXCEEDED'), `expected EXCEEDED suffix, got: ${out}`);
+    assert.ok(out.includes('1000m'), `expected formatted elapsed, got: ${out}`);
+    assert.ok(out.includes('/ 720m'), `expected ceiling label, got: ${out}`);
+    // Bold-red ANSI sequence (MX.ERR = '\x1b[1;31m') must be present in raw
+    assert.ok(raw.includes('\x1b[1;31m'), 'EXCEEDED must use bold-red highlight');
+});
+
+test('renderElapsedField: elapsed exactly at budget does not show EXCEEDED', () => {
+    // 720m elapsed, 720m max → at boundary, not strictly over
+    const out = stripAnsi(renderElapsedField(720 * 60, 720));
+    assert.ok(!out.includes('EXCEEDED'), `expected no EXCEEDED at boundary, got: ${out}`);
+});
+
+test('renderElapsedField: no max shows raw elapsed without EXCEEDED', () => {
+    const out = stripAnsi(renderElapsedField(1000 * 60, 0));
+    assert.ok(!out.includes('EXCEEDED'), `expected no EXCEEDED when no max, got: ${out}`);
+    assert.ok(!out.includes('/'), `expected no ceiling label when no max, got: ${out}`);
+});
+
+// --- AC-SSV-07: stdout watchdog ---
+
+test('MONITOR_STDOUT_WATCHDOG_MS: positive integer suitable for tmux pane redraws', () => {
+    assert.ok(Number.isInteger(MONITOR_STDOUT_WATCHDOG_MS));
+    assert.ok(MONITOR_STDOUT_WATCHDOG_MS > 0);
+    assert.ok(MONITOR_STDOUT_WATCHDOG_MS <= 10_000, 'watchdog should not exceed 10s');
+});
+
+test('writeWithWatchdog: resolves quickly on a healthy sink', async () => {
+    let received = '';
+    const sink = new Writable({
+        write(chunk, _enc, cb) {
+            received += chunk.toString();
+            cb();
+        },
+    });
+    const start = Date.now();
+    await writeWithWatchdog(sink, 'hello pickle\n', 500);
+    const elapsed = Date.now() - start;
+    assert.equal(received, 'hello pickle\n');
+    assert.ok(elapsed < 200, `healthy write should resolve fast, took ${elapsed}ms`);
+});
+
+test('writeWithWatchdog: rejects with backpressure error when sink never drains', async () => {
+    // Wedged sink: write callback never fires, drain never emitted.
+    // Mimics a tmux pane whose scrollback is frozen and whose pipe buffer
+    // is full — the synchronous syscall would block forever.
+    const wedged = {
+        _drainListeners: [],
+        write(_chunk, _cb) {
+            // Returning false signals backpressure; we deliberately never
+            // emit 'drain' or invoke the callback.
+            return false;
+        },
+        once(event, listener) {
+            if (event === 'drain') this._drainListeners.push(listener);
+            // 'error' / 'close' are intentionally swallowed.
+            return this;
+        },
+    };
+    const watchdogMs = 200;
+    const grace = 500;
+    const start = Date.now();
+    let err;
+    try {
+        await writeWithWatchdog(wedged, 'wedged\n', watchdogMs);
+    } catch (e) {
+        err = e;
+    }
+    const elapsed = Date.now() - start;
+    assert.ok(err, 'writeWithWatchdog must reject when sink never drains');
+    assert.ok(/watchdog/i.test(err.message), `expected watchdog error, got: ${err.message}`);
+    assert.ok(/wedged|backpressure|drain/i.test(err.message), `expected pane wedge hint, got: ${err.message}`);
+    assert.ok(
+        elapsed >= watchdogMs && elapsed <= watchdogMs + grace,
+        `should reject within ${watchdogMs}+${grace}ms, took ${elapsed}ms`,
+    );
+});
+
+test('writeWithWatchdog: surfaces sink error', async () => {
+    const exploding = {
+        write(_chunk, _cb) {
+            throw new Error('boom');
+        },
+        once() { return this; },
+    };
+    let err;
+    try {
+        await writeWithWatchdog(exploding, 'x', 500);
+    } catch (e) {
+        err = e;
+    }
+    assert.ok(err, 'should reject on synchronous throw');
+    assert.match(err.message, /boom/);
 });
 
 test('monitor CLI promotes dead writer rate limit tmp before rendering countdown', () => {
