@@ -286,11 +286,27 @@ tmux send-keys chain at line 205) AFTER principles converge. Do not collapse the
 4. If no violations found: print "The sauce is obtained." and exit cleanly
 5. After fixing and committing, **update** `gap_analysis.md`: remove the fixed violation, add any new violations introduced by the fix, update the summary counts, and re-check the contract map for new mismatches (Override 2 step 6). Preserve the `## Contract Map` and `## Contract Mismatches` sections — never overwrite them. This is mandatory — stale gap analysis misleads future iterations.
 
-### Override 4: Migration Hygiene (Conditional)
+### Override 4: Diff Hygiene
+
+Before the first scoring pass, inspect the active diff for added files (`status: 'A'`). Use the shared rule source at `extension/src/services/citadel/diff-hygiene.ts` as the canonical allowlist reference: `ROOT_MARKDOWN_ALLOWLIST`, `ENV_FILE_ALLOWLIST`, and `LARGE_FILE_BYTES`.
+
+Include these hygiene checks in every review pass alongside the standard principles scan:
+
+1. **Orphan planning docs (P1)**: Any top-level `*.md` file not in `ROOT_MARKDOWN_ALLOWLIST` is a P1 hygiene finding: "orphan planning doc — move to `docs/` or `prds/` or delete".
+
+2. **Secret leak risk (P0)**: Any new `.env*` file not in `ENV_FILE_ALLOWLIST` is a P0 hygiene finding.
+
+3. **Root scratch artifacts (P1)**: Any new top-level `*.txt`, `*.log`, `*.tmp`, `scratch*`, `notes*`, `WIP*`, or `tmp*` file is a P1 hygiene finding.
+
+4. **Binary leak risk (P2)**: Any new file larger than `LARGE_FILE_BYTES` that is not gitignored is a P2 hygiene finding.
+
+All diff-hygiene findings MUST include `category: 'hygiene'` in `szechuan-sauce.json` so Citadel's T10.9 diff-shape gate can dedupe the same-diff finding instead of double-counting it. A diff that adds root `notes.md` produces a P1 finding with `category: 'hygiene'`.
+
+### Override 5: Migration Hygiene (Conditional)
 
 Before the first scoring pass, check if the target directory contains a Drizzle migration journal at `db/migrations/meta/_journal.json` (relative to target root). If it does NOT exist, skip this override entirely.
 
-If the journal exists, include these four checks in every review pass alongside the standard principles scan. Score findings as HIGH (P1) or MEDIUM (P2) as noted. All Override 4 findings must carry a confidence score per the rubric in `szechuan-sauce-principles.md` and drop below 80 before being scored. Do NOT duplicate mechanical checks (timestamp ordering, file↔journal parity) — those are handled by the CI lint script at `scripts/validate-migrations.ts`.
+If the journal exists, include these four checks in every review pass alongside the standard principles scan. Score findings as HIGH (P1) or MEDIUM (P2) as noted. All Override 5 findings must carry a confidence score per the rubric in `szechuan-sauce-principles.md` and drop below 80 before being scored. Do NOT duplicate mechanical checks (timestamp ordering, file↔journal parity) — those are handled by the CI lint script at `scripts/validate-migrations.ts`.
 
 1. **CHECK Constraint Drift** (HIGH — P1): For each CHECK constraint in migration SQL files under `db/migrations/`, find the corresponding TypeScript enum, union, or type in the codebase. Flag any value present in code but missing from the constraint (INSERT will fail at runtime), or present in the constraint but absent from code (dead value).
 
@@ -302,7 +318,7 @@ If the journal exists, include these four checks in every review pass alongside 
 
 When fixing migration hygiene violations, use this commit prefix: `szechuan-sauce: Migration Hygiene — <description>`
 
-### Override 5: Commit Message Format
+### Override 6: Commit Message Format
 
 All commits follow: `szechuan-sauce: <principle> — <description>`
 

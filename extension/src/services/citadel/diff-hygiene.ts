@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { DiffSummary, ChangedFileSummary } from './diff-walker.js';
 
 export type DiffHygieneSeverity = 'Critical' | 'High' | 'Medium';
+export type SzechuanDiffHygienePriority = 'P0' | 'P1' | 'P2';
 export type DiffHygieneRule =
   | 'root-markdown-orphan'
   | 'root-scratch-artifact'
@@ -19,6 +20,7 @@ export const ROOT_MARKDOWN_ALLOWLIST = new Set([
 ]);
 
 export const LARGE_FILE_BYTES = 1024 * 1024;
+export const ENV_FILE_ALLOWLIST = new Set(['.env.example']);
 
 export interface DiffHygieneFinding {
   id: string;
@@ -36,6 +38,26 @@ export interface DiffHygieneReport {
     added_files_scanned: number;
     findings: number;
     suppressed_by_szechuan: number;
+  };
+}
+
+export interface SzechuanDiffHygieneFinding {
+  id: string;
+  priority: SzechuanDiffHygienePriority;
+  severity: SzechuanDiffHygienePriority;
+  message: string;
+  rule: DiffHygieneRule;
+  file: string;
+  size_bytes?: number;
+  category: 'hygiene';
+  principle: 'Diff Hygiene';
+}
+
+export interface SzechuanDiffHygieneReport {
+  findings: SzechuanDiffHygieneFinding[];
+  summary: {
+    added_files_scanned: number;
+    findings: number;
   };
 }
 
@@ -89,30 +111,65 @@ export function auditDiffHygiene(
   };
 }
 
+export function auditSzechuanDiffHygiene(diff: DiffSummary): SzechuanDiffHygieneReport {
+  const addedFiles = diff.changedFiles.filter((file) => file.status === 'A');
+  const findings = addedFiles.flatMap((file) => szechuanFindingsForAddedFile(diff.repoRoot, file));
+
+  findings.sort((a, b) => a.file.localeCompare(b.file) || a.rule.localeCompare(b.rule));
+  return {
+    findings,
+    summary: {
+      added_files_scanned: addedFiles.length,
+      findings: findings.length,
+    },
+  };
+}
+
+interface RuleMatch {
+  file: string;
+  rule: DiffHygieneRule;
+  sizeBytes?: number;
+}
+
 function findingsForAddedFile(repoRoot: string, file: ChangedFileSummary): DiffHygieneFinding[] {
+  return ruleMatchesForAddedFile(repoRoot, file)
+    .map((match) => makeFinding(match.file, match.rule, citadelSeverityForRule(match.rule), match.sizeBytes));
+}
+
+function szechuanFindingsForAddedFile(repoRoot: string, file: ChangedFileSummary): SzechuanDiffHygieneFinding[] {
+  return ruleMatchesForAddedFile(repoRoot, file)
+    .map((match) => makeSzechuanFinding(
+      match.file,
+      match.rule,
+      szechuanPriorityForRule(match.rule),
+      match.sizeBytes,
+    ));
+}
+
+function ruleMatchesForAddedFile(repoRoot: string, file: ChangedFileSummary): RuleMatch[] {
   const normalized = toPosixPath(file.path);
   const basename = path.posix.basename(normalized);
-  const findings: DiffHygieneFinding[] = [];
+  const matches: RuleMatch[] = [];
 
   if (isEnvFile(basename)) {
-    findings.push(makeFinding(file.path, 'env-file', 'Critical'));
+    matches.push({ file: file.path, rule: 'env-file' });
   }
 
   if (isTopLevel(normalized)) {
     if (isDisallowedRootMarkdown(basename)) {
-      findings.push(makeFinding(file.path, 'root-markdown-orphan', 'Medium'));
+      matches.push({ file: file.path, rule: 'root-markdown-orphan' });
     }
     if (isRootScratchArtifact(basename)) {
-      findings.push(makeFinding(file.path, 'root-scratch-artifact', 'Medium'));
+      matches.push({ file: file.path, rule: 'root-scratch-artifact' });
     }
   }
 
   const size = fileSize(repoRoot, file.path);
   if (size > LARGE_FILE_BYTES && !isGitIgnored(repoRoot, file.path)) {
-    findings.push(makeFinding(file.path, 'large-unignored-file', 'High', size));
+    matches.push({ file: file.path, rule: 'large-unignored-file', sizeBytes: size });
   }
 
-  return findings;
+  return matches;
 }
 
 function makeFinding(
@@ -132,6 +189,25 @@ function makeFinding(
   };
 }
 
+function makeSzechuanFinding(
+  file: string,
+  rule: DiffHygieneRule,
+  priority: SzechuanDiffHygienePriority,
+  sizeBytes?: number,
+): SzechuanDiffHygieneFinding {
+  return {
+    id: `szechuan-diff-hygiene-${slug(rule)}-${slug(file)}`,
+    priority,
+    severity: priority,
+    message: szechuanMessageForRule(rule, file, sizeBytes),
+    rule,
+    file,
+    size_bytes: sizeBytes,
+    category: 'hygiene',
+    principle: 'Diff Hygiene',
+  };
+}
+
 function messageForRule(rule: DiffHygieneRule, file: string, sizeBytes: number | undefined): string {
   switch (rule) {
     case 'root-markdown-orphan':
@@ -142,6 +218,43 @@ function messageForRule(rule: DiffHygieneRule, file: string, sizeBytes: number |
       return `Environment file ${file} must not be committed unless it is .env.example.`;
     case 'large-unignored-file':
       return `Large added file ${file} is ${sizeBytes ?? 0} bytes and is not gitignored.`;
+  }
+}
+
+function szechuanMessageForRule(rule: DiffHygieneRule, file: string, sizeBytes: number | undefined): string {
+  switch (rule) {
+    case 'root-markdown-orphan':
+      return `orphan planning doc ${file} was added at repo root; move it to docs/ or prds/ or delete it.`;
+    case 'root-scratch-artifact':
+      return `Top-level scratch artifact ${file} was added; move it under an owned docs/prds path or delete it.`;
+    case 'env-file':
+      return `Secret leak risk: ${file} must not be committed unless it is .env.example.`;
+    case 'large-unignored-file':
+      return `Binary leak risk: ${file} is ${sizeBytes ?? 0} bytes and is not gitignored.`;
+  }
+}
+
+function citadelSeverityForRule(rule: DiffHygieneRule): DiffHygieneSeverity {
+  switch (rule) {
+    case 'env-file':
+      return 'Critical';
+    case 'large-unignored-file':
+      return 'High';
+    case 'root-markdown-orphan':
+    case 'root-scratch-artifact':
+      return 'Medium';
+  }
+}
+
+function szechuanPriorityForRule(rule: DiffHygieneRule): SzechuanDiffHygienePriority {
+  switch (rule) {
+    case 'env-file':
+      return 'P0';
+    case 'root-markdown-orphan':
+    case 'root-scratch-artifact':
+      return 'P1';
+    case 'large-unignored-file':
+      return 'P2';
   }
 }
 
@@ -162,7 +275,7 @@ function isRootScratchArtifact(basename: string): boolean {
 }
 
 function isEnvFile(basename: string): boolean {
-  return basename.startsWith('.env') && basename !== '.env.example';
+  return basename.startsWith('.env') && !ENV_FILE_ALLOWLIST.has(basename);
 }
 
 function fileSize(repoRoot: string, filePath: string): number {

@@ -5,7 +5,13 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { runCitadelAudit } from '../services/citadel/audit-runner.js';
-import { auditDiffHygiene } from '../services/citadel/diff-hygiene.js';
+import {
+  auditDiffHygiene,
+  auditSzechuanDiffHygiene,
+  ENV_FILE_ALLOWLIST,
+  LARGE_FILE_BYTES,
+  ROOT_MARKDOWN_ALLOWLIST,
+} from '../services/citadel/diff-hygiene.js';
 
 function git(repoRoot, args) {
   return execFileSync('git', args, { cwd: repoRoot, encoding: 'utf-8' }).trim();
@@ -51,6 +57,41 @@ async function runAudit(repoRoot, base, sessionDir) {
 }
 
 describe('citadel diff hygiene', () => {
+  test('exports shared diff-hygiene allowlist constants', () => {
+    assert.deepEqual(
+      [...ROOT_MARKDOWN_ALLOWLIST].sort(),
+      ['AGENTS.md', 'CHANGELOG.md', 'CLAUDE.md', 'LICENSE.md', 'README.md'],
+    );
+    assert.deepEqual([...ENV_FILE_ALLOWLIST], ['.env.example']);
+    assert.equal(LARGE_FILE_BYTES, 1024 * 1024);
+    assert.equal(ROOT_MARKDOWN_ALLOWLIST.has('notes.md'), false);
+  });
+
+  test('reports root notes.md as a P1 szechuan hygiene finding', () => {
+    const report = auditSzechuanDiffHygiene({
+      range: 'base..HEAD',
+      base: 'base',
+      head: 'HEAD',
+      repoRoot: process.cwd(),
+      claudeFiles: [],
+      changedFiles: [{
+        path: 'notes.md',
+        status: 'A',
+        kind: 'production',
+        changedLines: [{ start: 1, end: 1 }],
+        blame: [],
+      }],
+    });
+
+    const finding = report.findings.find((candidate) => candidate.file === 'notes.md');
+    assert.ok(finding, 'expected root notes.md to produce a hygiene finding');
+    assert.equal(finding.priority, 'P1');
+    assert.equal(finding.severity, 'P1');
+    assert.equal(finding.category, 'hygiene');
+    assert.equal(finding.principle, 'Diff Hygiene');
+    assert.ok(finding.message.includes('orphan planning doc'));
+  });
+
   test('reports T10.9 added-file hygiene findings and allowlist exceptions', async () => {
     const { repoRoot, base } = createRepo();
     try {

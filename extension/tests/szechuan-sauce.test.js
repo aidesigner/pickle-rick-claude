@@ -54,6 +54,16 @@ test('szechuan-sauce.md Worker Mode defines szechuan-specific overrides', () => 
     assert.ok(content.includes('szechuan-sauce:'), 'should define commit message format');
 });
 
+test('szechuan-sauce.md defines diff-hygiene gate output contract', () => {
+    const content = readCommand();
+    assert.ok(content.includes('### Override 4: Diff Hygiene'), 'missing diff hygiene override');
+    assert.ok(content.includes('ROOT_MARKDOWN_ALLOWLIST'), 'should reference shared markdown allowlist');
+    assert.ok(content.includes('ENV_FILE_ALLOWLIST'), 'should reference env allowlist');
+    assert.ok(content.includes('LARGE_FILE_BYTES'), 'should reference large-file threshold');
+    assert.ok(content.includes("category: 'hygiene'"), 'hygiene findings must be category-tagged');
+    assert.ok(content.includes('root `notes.md` produces a P1 finding'), 'notes.md P1 contract must be explicit');
+});
+
 test('szechuan-sauce.md Setup Mode steps are sequentially numbered', () => {
     const content = readCommand();
     // Extract setup section
