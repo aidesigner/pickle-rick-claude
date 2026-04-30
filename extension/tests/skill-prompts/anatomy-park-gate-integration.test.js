@@ -45,6 +45,39 @@ test('anatomy-park all 4 gate message variants are present', () => {
     }
 });
 
+test('anatomy-park documents phase-2.5 pattern replay sweep', () => {
+    const content = readCommand();
+    const replayIdx = content.indexOf('#### PHASE 2.5: PATTERN REPLAY SWEEP');
+    const phase2Idx = content.indexOf('#### PHASE 2: FIX');
+    const phase3Idx = content.indexOf('#### PHASE 3: VERIFY');
+
+    assert.ok(replayIdx > phase2Idx, 'Phase 2.5 must appear after Phase 2');
+    assert.ok(replayIdx < phase3Idx, 'Phase 2.5 must appear before Phase 3');
+    assert.ok(
+        content.includes('severity: CRITICAL') && content.includes('category: pattern'),
+        'Phase 2.5 must trigger on CRITICAL pattern findings'
+    );
+    assert.ok(
+        content.includes('Re-grep or re-walk the full diff scope'),
+        'Phase 2.5 must replay the structural shape across the diff scope'
+    );
+});
+
+test('anatomy-park replay findings and trap doors carry pattern metadata', () => {
+    const content = readCommand();
+    const required = [
+        'phase: "discovery" | "replay"',
+        'original_finding_id',
+        'phase: "replay"',
+        'pattern_shape',
+        'PATTERN_SHAPE:',
+    ];
+
+    for (const token of required) {
+        assert.ok(content.includes(token), `Missing anatomy-park replay metadata: ${token}`);
+    }
+});
+
 test('anatomy-park persona prose unchanged', () => {
     const content = readCommand();
     const expected = 'Ladies and gentlemen, Anatomy Park is CLOSED. Every organ accounted for. No casualties. Well... minimal casualties.';

@@ -109,13 +109,32 @@ Write subsystem rotation state to `${SESSION_ROOT}/anatomy-park.json`:
   "consecutive_clean": {},
   "stall_counts": {},
   "stall_limit": STALL_LIMIT,
-  "findings_history": {},
-  "trap_doors_added": [],
+  "findings_history": {
+    "services": [
+      {
+        "id": "services-001",
+        "severity": "CRITICAL",
+        "category": "pattern",
+        "phase": "discovery",
+        "title": "example structural finding",
+        "original_finding_id": null
+      }
+    ]
+  },
+  "trap_doors_added": [
+    {
+      "subsystem": "services",
+      "file": "example.ts",
+      "description": "example trap door",
+      "pattern_shape": "grep:example"
+    }
+  ],
   "trap_doors_committed": []
 }
 ```
 
-- `trap_doors_added`: all identified trap doors (subsystem, file, description)
+- `findings_history`: findings by subsystem; each finding may carry `phase: "discovery" | "replay"` and `original_finding_id` when replay finds another match of a discovery pattern
+- `trap_doors_added`: all identified trap doors (subsystem, file, description, pattern_shape)
 - `trap_doors_committed`: subset of `trap_doors_added` that have been written to CLAUDE.md and committed
 
 Compute `RUNNER_STALL_LIMIT` = number of discovered subsystems * 10. With worker-managed convergence, the runner defers to `anatomy-park.json` for the convergence signal. The stall limit serves as a hard ceiling — if the worker fails to converge or exit, the runner terminates after this many consecutive no-progress iterations.
@@ -156,8 +175,8 @@ TARGET_ABSOLUTE_PATH
 1. Select next subsystem from rotation
 2. Phase 1: Read-only review — trace data flows, rate all findings
 3. Phase 2: Fix the single highest-severity finding + write regression test
-4. Phase 3: Read-only self-review of the diff, revert if broken
-5. Catalog trap doors in subsystem CLAUDE.md
+4. Phase 2.5: Replay CRITICAL pattern findings across the full diff scope, then catalog trap doors
+5. Phase 3: Read-only self-review of the diff, revert if broken
 6. Rotate to next subsystem
 
 ## Convergence Model
@@ -240,7 +259,7 @@ Apply the `## False Positives — Do NOT Flag` exclusion list before assigning c
 
 ### Override 2: Three-Phase Protocol
 
-Each iteration consists of three phases. Do NOT skip or combine phases.
+Each iteration consists of three primary phases plus the mandatory Phase 2.5 replay sweep after a fix. Do NOT skip or combine phases.
 
 #### PHASE 1: REVIEW (read-only — do NOT edit any files)
 
@@ -271,6 +290,9 @@ For the current subsystem, trace the COMPLETE data flow. Read every file. For ea
 ## Files reviewed: [list]
 
 ### Finding 1 — [CRITICAL/HIGH, conf=<score>]: [title]
+**ID:** [stable finding id]
+**Category:** [pattern/data-flow/invariant/other]
+**Phase:** discovery
 **Data flow:** [file:line] → [file:line] → [file:line]
 **Bug:** [what goes wrong]
 **Scenario:** [concrete input that triggers it]
@@ -290,12 +312,35 @@ Pick the **single highest-severity finding** from Phase 1 (CRITICAL before HIGH)
    - Exercise the actual data flow (not just the function in isolation)
    - Use realistic inputs (valid UUIDs, real date strings, representative data)
    - Assert on the specific behavior that was broken
-3. **Write trap doors** (if any were identified in Phase 1) to `CLAUDE.md` in the subsystem directory NOW, before committing. Include them in the same commit as the fix. See Override 3 for format and merge rules.
+3. **Draft trap doors** (if any were identified in Phase 1) with `pattern_shape`, but do not write them yet. Phase 2.5 may add replay findings before the catalog is written. See Override 3 for format and merge rules.
 4. **Run the full test suite** for all affected packages.
 5. If any test fails, determine whether:
    - Your fix changed correct behavior → update the test
    - Your fix introduced a regression → revert and re-approach
    - The test was already broken → note it, don't mask it
+
+#### PHASE 2.5: PATTERN REPLAY SWEEP
+
+Run this after Phase 2 tests pass and before trap-door cataloging.
+
+For every Phase 2 finding with `severity: CRITICAL` AND `category: pattern`:
+
+1. **Articulate the structural shape** in deterministic terms:
+   - File shape: path/glob and neighboring declarations that define the risky pattern
+   - AST shape: node kind, call expression, decorator, exported symbol, or schema edge
+   - Grep shape: exact regex or ripgrep command that finds candidates
+2. **Re-grep or re-walk the full diff scope** for additional matches of that shape. Use the active scope when `${SESSION_ROOT}/scope.json` exists; otherwise use the branch diff scope under review.
+3. **Verify mitigation** for every additional match. A mitigation must be an actual guard, validation, regression test, or type-level impossibility tied to the matched code path.
+4. **Emit unguarded additional matches** as new CRITICAL findings in `anatomy-park.json` with:
+   - `category: "pattern"`
+   - `phase: "replay"`
+   - `original_finding_id: "<discovery finding id>"`
+   - `pattern_shape: "<regex, file shape, or AST description>"`
+   - evidence lines for the replay match and the missing mitigation
+
+The original Phase 2 finding remains `phase: "discovery"`. Example: `createUpdatedRun` is the discovery finding; an unguarded `retryChildExtraction` match of the same rollback/race shape is emitted as a replay finding.
+
+After replay completes, write trap doors to subsystem `CLAUDE.md` before committing. Every new trap-door entry MUST include `PATTERN_SHAPE: <regex or AST/file-shape description>` so future anatomy-park and citadel runs can replay it deterministically. Include the trap doors in the same commit as the fix so the runner's revert is all-or-nothing.
 
 #### PHASE 3: VERIFY (read-only — do NOT edit any files)
 
@@ -338,10 +383,10 @@ During Phase 1, identify trap doors when:
 - A finding is structural (not a typo — it's a design constraint that will break again if forgotten)
 - The review reveals an invariant that isn't enforced by types or tests
 
-**Always** record trap doors to `anatomy-park.json` field `trap_doors_added` (with subsystem name and description).
+**Always** record trap doors to `anatomy-park.json` field `trap_doors_added` (with subsystem name, file, description, and `pattern_shape`).
 
 **When to write to CLAUDE.md:**
-- **Fix iteration (Phase 2 exists):** Write trap doors to subsystem `CLAUDE.md` as part of the Phase 2 commit — step 3 of Phase 2. They go in the same commit as the fix so the runner's revert is all-or-nothing.
+- **Fix iteration (Phase 2 exists):** Write trap doors to subsystem `CLAUDE.md` after Phase 2.5 replay completes. They go in the same commit as the fix so the runner's revert is all-or-nothing.
 - **Clean pass (no Phase 2):** Do NOT write to `CLAUDE.md`. Only record to `anatomy-park.json`. Clean passes must produce zero commits — any dirty tree confuses the runner.
 - **Convergence (all subsystems done):** Before exiting, check `anatomy-park.json` for any trap doors recorded on clean passes that were never written to `CLAUDE.md`. Write them all now in a single commit: `anatomy-park: catalog [N] trap doors from clean passes`. This gives the runner a final commit to measure.
 
@@ -350,22 +395,22 @@ During Phase 1, identify trap doors when:
 ```markdown
 ## Trap Doors
 
-- `filename.ts` — INVARIANT: <constraint>. BREAKS: <failure mode>. ENFORCE: <guard or test name>.
+- `filename.ts` — INVARIANT: <constraint>. BREAKS: <failure mode>. ENFORCE: <guard or test name>. PATTERN_SHAPE: <regex or AST/file-shape description>.
 ```
 
-**Token budget:** ≤ 40 words per entry. Three labeled fields, one line each. Agent readability beats prose.
+**Token budget:** ≤ 50 words per entry. Four labeled fields, one line each. Agent readability beats prose.
 
 **Forbidden in entries:**
 - Commit SHAs or "N prior commits missed this" narrative — that's `git log` territory
 - Cross-references to other trap doors ("same class as X above")
-- Multi-sentence rationale or examples — keep it to the three labels
+- Multi-sentence rationale or examples — keep it to the four labels
 - Restating what the code already shows (function signatures, imports)
 
 **Merge rules:**
 - One line per file. Multiple traps for the same file go on the same line separated by `;`
 - If the `## Trap Doors` section already exists, merge — don't duplicate entries
 - If an existing trap door is now enforced by a type or test you added, remove it
-- If an entry exceeds 40 words, rewrite it before committing
+- If an entry exceeds 50 words, rewrite it before committing
 
 ### Override 4: Commit Message Format
 
@@ -385,8 +430,8 @@ After each iteration, update `${SESSION_ROOT}/anatomy-park.json`:
 - `consecutive_clean[subsystem]` = (zero findings ? previous + 1 : 0)
 - `stall_counts[subsystem]` = (reverted ? previous + 1 : 0)
 - `findings_history[subsystem]` = append current findings summary
-- `trap_doors_added` = append any new trap doors identified in Phase 1
-- `trap_doors_committed` = append any trap doors written to CLAUDE.md in this iteration (Phase 2 step 3)
+- `trap_doors_added` = append any new trap doors identified in Phase 1 or replayed in Phase 2.5, including `pattern_shape`
+- `trap_doors_committed` = append any trap doors written to CLAUDE.md in this iteration (after Phase 2.5 replay)
 - Advance `current_index` to next non-converged subsystem (wrapping around)
 
 ### Standard Protocol
