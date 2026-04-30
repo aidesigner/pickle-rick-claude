@@ -613,8 +613,8 @@ export async function runGate(opts: RunGateOpts): Promise<GateResult> {
       const now = new Date().toISOString();
       const iso = now.replace(/[:.]/g, '-');
       const gateDir = path.join(opts.workingDir, 'gate');
-      fs.mkdirSync(gateDir, { recursive: true });
-      fs.writeFileSync(
+      await fs.promises.mkdir(gateDir, { recursive: true });
+      await fs.promises.writeFile(
         path.join(gateDir, `workingdir_drift_${iso}.md`),
         `# Working Directory Drift\n\nDetected at: ${now}\n\nExpected HEAD: ${opts.expected_head ?? '(any)'}\nCurrent HEAD: ${currentHead}\nExpected branch: ${opts.expected_branch ?? '(any)'}\nCurrent branch: ${currentBranch}\n`
       );
@@ -672,13 +672,10 @@ export async function runGate(opts: RunGateOpts): Promise<GateResult> {
       if (check === 'tests' && (projectType === 'pnpm' || projectType === 'npm' || projectType === 'yarn')) {
         const pkgJsonPath = path.join(dir, 'package.json');
         let scriptContent = '';
-        if (fs.existsSync(pkgJsonPath)) {
-          try {
-            scriptContent = (
-              JSON.parse(fs.readFileSync(pkgJsonPath, 'utf-8')) as { scripts?: { test?: string } }
-            ).scripts?.test ?? '';
-          } catch { /* */ }
-        }
+        try {
+          const raw = await fs.promises.readFile(pkgJsonPath, 'utf-8');
+          scriptContent = (JSON.parse(raw) as { scripts?: { test?: string } }).scripts?.test ?? '';
+        } catch { /* file absent or unreadable — leave scriptContent empty */ }
         if (UNSAFE_TEST_SCRIPT_REGEX.test(scriptContent)) {
           emit('gate_unsafe_test_command_blocked', { script: scriptContent });
           continue;
@@ -738,7 +735,8 @@ export async function runGate(opts: RunGateOpts): Promise<GateResult> {
       return finalize(await withLock(lockKey, { timeout_ms: lockMs }, async () => {
         emit('gate_lock_acquired', { lock_key: lockKey });
 
-        if (!fs.existsSync(opts.baselinePath!)) {
+        const baselineExists = await fs.promises.access(opts.baselinePath!).then(() => true, () => false);
+        if (!baselineExists) {
           const baseline: GateBaselineFile = {
             schema_version: 1,
             captured_at: new Date().toISOString(),
@@ -748,7 +746,7 @@ export async function runGate(opts: RunGateOpts): Promise<GateResult> {
             checks: opts.checks,
             failures: withIndices,
           };
-          fs.mkdirSync(path.dirname(opts.baselinePath!), { recursive: true });
+          await fs.promises.mkdir(path.dirname(opts.baselinePath!), { recursive: true });
           writeStateFile(opts.baselinePath!, baseline);
           emit('gate_baseline_captured', { path: opts.baselinePath, failure_count: withIndices.length });
           emit('gate_preexisting_tests_baselined', { failure_count: withIndices.length });
@@ -804,8 +802,8 @@ export async function runGate(opts: RunGateOpts): Promise<GateResult> {
     const now = new Date().toISOString();
     const iso = now.replace(/[:.]/g, '-');
     const gateDir = path.join(opts.workingDir, 'gate');
-    fs.mkdirSync(gateDir, { recursive: true });
-    fs.writeFileSync(
+    await fs.promises.mkdir(gateDir, { recursive: true });
+    await fs.promises.writeFile(
       path.join(gateDir, `known_flake_failures_${iso}.md`),
       `# Known Flake Failures\n\nCaptured: ${now}\n\n${flakeFailures.map(f => `- \`${f.file}\` [${f.check}]: ${f.message.slice(0, 200)}`).join('\n')}\n`
     );
