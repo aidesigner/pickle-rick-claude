@@ -4,8 +4,9 @@
  *
  * Phases (in order):
  *   1. pickle       → mux-runner.js        (build/implement)
- *   2. anatomy-park → microverse-runner.js  (deep subsystem review)
- *   3. szechuan-sauce → microverse-runner.js (principle-driven deslopping)
+ *   2. citadel      → in-process audit     (pipeline risk gate)
+ *   3. anatomy-park → microverse-runner.js  (deep subsystem review)
+ *   4. szechuan-sauce → microverse-runner.js (principle-driven deslopping)
  *
  * Each phase runs as a child process. Between phases the runner resets
  * state.json, creates required config files, and spawns the next runner.
@@ -24,6 +25,7 @@ import { isWorkingTreeDirty } from '../services/git-utils.js';
 import { logActivity } from '../services/activity-logger.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { resolveScope, refreshScope, filterBySubsystem, ScopeError, } from '../services/scope-resolver.js';
+import { runCitadelAudit } from '../services/citadel/audit-runner.js';
 const sm = new StateManager();
 const DEFAULT_IGNORE_DIRTY_PATHS = ['prds', 'docs'];
 const CODEX_REQUIRED_BACKEND = 'codex-required';
@@ -45,7 +47,7 @@ export function parsePipelineConfig(raw) {
         ? rawIgnore
         : [...DEFAULT_IGNORE_DIRTY_PATHS];
     return {
-        phases: Array.isArray(raw.phases) ? raw.phases : [],
+        phases: normalizePipelinePhases(raw.phases),
         target: raw.target || '',
         szechuan_domain: raw.szechuan_domain,
         szechuan_focus: raw.szechuan_focus,
@@ -53,9 +55,23 @@ export function parsePipelineConfig(raw) {
         szechuan_stall_limit: parsePositiveInteger(raw.szechuan_stall_limit, 5),
         anatomy_max_iterations: parsePositiveInteger(raw.anatomy_max_iterations, 100),
         szechuan_max_iterations: parsePositiveInteger(raw.szechuan_max_iterations, 50),
+        citadel_strict: raw.citadel_strict === true || raw.strict === true,
         backend,
         ignore_dirty_paths,
     };
+}
+function normalizePipelinePhases(rawPhases) {
+    if (!Array.isArray(rawPhases))
+        return [];
+    const phases = [...rawPhases];
+    if (phases.includes('citadel'))
+        return phases;
+    const pickleIndex = phases.indexOf('pickle');
+    const anatomyIndex = phases.indexOf('anatomy-park');
+    if (pickleIndex !== -1 && anatomyIndex !== -1 && pickleIndex < anatomyIndex) {
+        phases.splice(pickleIndex + 1, 0, 'citadel');
+    }
+    return phases;
 }
 /**
  * Resolve the effective backend and the source of that value.
@@ -307,6 +323,76 @@ export function cleanPhaseArtifacts(sessionDir, phase) {
         catch { /* best effort */ }
     }
 }
+export function readCitadelReport(sessionDir) {
+    const reportPath = path.join(sessionDir, 'citadel_report.json');
+    if (!fs.existsSync(reportPath))
+        return null;
+    try {
+        const parsed = JSON.parse(fs.readFileSync(reportPath, 'utf-8'));
+        if (!isCitadelReport(parsed))
+            return null;
+        return parsed;
+    }
+    catch {
+        return null;
+    }
+}
+function isCitadelReport(value) {
+    if (!value || typeof value !== 'object')
+        return false;
+    const record = value;
+    return Array.isArray(record.findings)
+        && typeof record.summary === 'object'
+        && record.summary !== null
+        && (typeof record.exitCode === 'number' || typeof record.exit_code === 'number');
+}
+function findingText(finding) {
+    const citation = typeof finding.file === 'string'
+        ? `${finding.file}:${typeof finding.line === 'number' ? finding.line : 0}`
+        : undefined;
+    const message = typeof finding.message === 'string' ? finding.message : finding.id;
+    return citation
+        ? `- [${finding.severity}] ${finding.id} ${citation} - ${message}`
+        : `- [${finding.severity}] ${finding.id} - ${message}`;
+}
+function isUnguardedTrapDoorFinding(finding) {
+    const id = finding.id.toLowerCase();
+    const message = typeof finding.message === 'string' ? finding.message.toLowerCase() : '';
+    return id.includes('trap-door') || message.includes('unguarded trap door');
+}
+function isDivergenceFinding(finding) {
+    const id = finding.id.toLowerCase();
+    const source = typeof finding.source === 'string' ? finding.source.toLowerCase() : '';
+    return id.includes('divergence') || source.includes('divergence');
+}
+function buildCitadelAnatomyContext(report) {
+    if (!report)
+        return [];
+    const trapDoors = report.findings.filter(isUnguardedTrapDoorFinding);
+    return [
+        '',
+        '## Citadel Report',
+        `Read: ${path.basename('citadel_report.json')}`,
+        trapDoors.length > 0
+            ? 'Prioritize these unguarded trap-door findings during catalog review:'
+            : 'No unguarded trap-door findings were reported by Citadel.',
+        ...trapDoors.map(findingText),
+    ];
+}
+function buildCitadelSzechuanContext(report) {
+    if (!report)
+        return [];
+    const divergences = report.findings.filter(isDivergenceFinding);
+    return [
+        '',
+        '## Citadel Report',
+        `Read: ${path.basename('citadel_report.json')}`,
+        divergences.length > 0
+            ? 'Treat these divergence findings as known Citadel inputs; do not double-count intentional divergence:'
+            : 'No divergence findings were reported by Citadel.',
+        ...divergences.map(findingText),
+    ];
+}
 /**
  * Pickle phase entry: pin command_template and scrub stale phase configs.
  *
@@ -460,7 +546,7 @@ function readWorkingDirFromState(sessionDir, fallback) {
 // ---------------------------------------------------------------------------
 // Phase Setup: Anatomy Park
 // ---------------------------------------------------------------------------
-function buildAnatomyPrd(target, subsystems, stallLimit, runnerStallLimit) {
+function buildAnatomyPrd(target, subsystems, stallLimit, runnerStallLimit, citadelReport) {
     return [
         '# Anatomy Park: Deep Subsystem Review',
         '',
@@ -492,6 +578,7 @@ function buildAnatomyPrd(target, subsystems, stallLimit, runnerStallLimit) {
         '- Phase 1 and Phase 3 are READ-ONLY',
         '- Revert on regression, defer to next iteration',
         `- Skip subsystem after ${stallLimit} consecutive failed fixes`,
+        ...buildCitadelAnatomyContext(citadelReport),
     ].join('\n');
 }
 function resolveAnatomySubsystems(target, scope, log) {
@@ -545,6 +632,9 @@ export function setupAnatomyPark(sessionDir, target, stallLimit, extensionRoot, 
     const subsystems = resolveAnatomySubsystems(target, effectiveScope, log);
     if (!subsystems)
         return false;
+    const citadelReport = readCitadelReport(sessionDir);
+    if (citadelReport)
+        log(`anatomy-park: read citadel_report.json with ${citadelReport.findings.length} finding(s)`);
     writeAnatomyConfig(sessionDir, subsystems, stallLimit);
     const runnerStallLimit = subsystems.length * 10;
     const metricJson = JSON.stringify({
@@ -571,7 +661,7 @@ export function setupAnatomyPark(sessionDir, target, stallLimit, extensionRoot, 
         return false;
     }
     archiveFile(sessionDir, 'prd.md', 'pickle');
-    fs.writeFileSync(path.join(sessionDir, 'prd.md'), buildAnatomyPrd(target, subsystems, stallLimit, runnerStallLimit));
+    fs.writeFileSync(path.join(sessionDir, 'prd.md'), buildAnatomyPrd(target, subsystems, stallLimit, runnerStallLimit, citadelReport));
     log('Anatomy Park setup complete');
     return true;
 }
@@ -603,7 +693,7 @@ function buildSzechuanJudgeContext(sessionDir, principlesPath, extensionRoot, do
     fs.writeFileSync(contextPath, parts.join('\n\n'));
     return contextPath;
 }
-function buildSzechuanPrd(target, stallLimit, principlesPath, extensionRoot, domain, focus) {
+function buildSzechuanPrd(target, stallLimit, principlesPath, extensionRoot, domain, focus, citadelReport) {
     const prdParts = [
         '# Szechuan Sauce: Iterative Deslopping',
         '',
@@ -620,12 +710,15 @@ function buildSzechuanPrd(target, stallLimit, principlesPath, extensionRoot, dom
         prdParts.push(`Read: ${path.join(extensionRoot, `szechuan-sauce-${domain}-principles.md`)}`);
     if (focus)
         prdParts.push('', '## Focus', focus);
-    prdParts.push('', '## Key Metric', '- **Type**: llm (LLM judge scoring)', '- **Direction**: lower', '- **Convergence Target**: 0', `- **Stall Limit**: ${stallLimit}`, '', '## Process', '### Iteration 1: Contract Discovery + Gap Analysis', '1. Extract all exports from target files', '2. Grep the entire codebase for importers — build contract map', '3. Flag cross-module mismatches as P1', '4. Catalog all violations into gap_analysis.md', '', '### Each subsequent iteration', '1. Read the principles reference and target code', '2. Identify the highest-priority violation (P0 > P1 > P2 > P3 > P4)', '3. Fix it — one logical change per iteration', '4. Run tests — ensure green', '5. Commit', '', '## Rules', '- One fix per iteration (atomic, revertible)', '- Never repeat a failed approach', '- P0 before P1 before P2 before P3 before P4');
+    prdParts.push('', '## Key Metric', '- **Type**: llm (LLM judge scoring)', '- **Direction**: lower', '- **Convergence Target**: 0', `- **Stall Limit**: ${stallLimit}`, '', '## Process', '### Iteration 1: Contract Discovery + Gap Analysis', '1. Extract all exports from target files', '2. Grep the entire codebase for importers — build contract map', '3. Flag cross-module mismatches as P1', '4. Catalog all violations into gap_analysis.md', '', '### Each subsequent iteration', '1. Read the principles reference and target code', '2. Identify the highest-priority violation (P0 > P1 > P2 > P3 > P4)', '3. Fix it — one logical change per iteration', '4. Run tests — ensure green', '5. Commit', '', '## Rules', '- One fix per iteration (atomic, revertible)', '- Never repeat a failed approach', '- P0 before P1 before P2 before P3 before P4', ...buildCitadelSzechuanContext(citadelReport));
     return prdParts.join('\n');
 }
 export function setupSzechuanSauce(sessionDir, target, stallLimit, extensionRoot, domain, focus, log, scope) {
     const principlesPath = path.join(extensionRoot, 'szechuan-sauce-principles.md');
     const judgeContextArg = buildSzechuanJudgeContext(sessionDir, principlesPath, extensionRoot, domain, focus, log);
+    const citadelReport = readCitadelReport(sessionDir);
+    if (citadelReport)
+        log(`szechuan-sauce: read citadel_report.json with ${citadelReport.findings.length} finding(s)`);
     const effectiveAllowedPaths = scope?.allowedPaths?.length
         ? scope.allowedPaths
         : readPersistedAllowedPaths(sessionDir);
@@ -653,11 +746,11 @@ export function setupSzechuanSauce(sessionDir, target, stallLimit, extensionRoot
         return false;
     }
     archiveFile(sessionDir, 'prd.md', 'anatomy-park');
-    fs.writeFileSync(path.join(sessionDir, 'prd.md'), buildSzechuanPrd(target, stallLimit, principlesPath, extensionRoot, domain, focus));
+    fs.writeFileSync(path.join(sessionDir, 'prd.md'), buildSzechuanPrd(target, stallLimit, principlesPath, extensionRoot, domain, focus, citadelReport));
     log('Szechuan Sauce setup complete');
     return true;
 }
-const PHASE_NAMES = ['pickle', 'anatomy-park', 'szechuan-sauce'];
+const PHASE_NAMES = ['pickle', 'citadel', 'anatomy-park', 'szechuan-sauce'];
 function isPhaseName(phase) {
     return typeof phase === 'string' && PHASE_NAMES.includes(phase);
 }
@@ -672,9 +765,18 @@ export function setupPhase(phase, config) {
             throwOnEmptyScope: false,
             preSpawnStateMutation: (s) => { s.chain_meeseeks = false; },
         },
+        citadel: {
+            name: 'citadel',
+            prevPhase: 'pickle',
+            runnerScript: null,
+            setup: null,
+            refreshScope: false,
+            throwOnEmptyScope: false,
+            preSpawnStateMutation: null,
+        },
         'anatomy-park': {
             name: 'anatomy-park',
-            prevPhase: 'pickle',
+            prevPhase: 'citadel',
             runnerScript: 'microverse-runner.js',
             setup: (args) => setupAnatomyPark(args.sessionDir, args.target, config.anatomy_stall_limit, args.extensionRoot, args.log, args.scope ? { allowedPaths: args.scope.allowed_paths, repoRoot: args.workingDir } : undefined),
             refreshScope: true,
@@ -697,16 +799,61 @@ export function setupPhase(phase, config) {
 export async function executePhaseRunner(phaseConfig, env) {
     if (!phaseRunnerContext)
         throw new Error('phase runner context not initialized');
+    if (!phaseConfig.runnerScript)
+        throw new Error(`phase ${phaseConfig.name} does not use a child runner`);
     const exitCode = await runSpawnRunner('node', [
         path.join(phaseRunnerContext.extensionRoot, 'extension', 'bin', phaseConfig.runnerScript),
         phaseRunnerContext.sessionDir,
     ], env);
     return { exitCode };
 }
+async function executeCitadelPhase(runtime) {
+    const state = sm.read(runtime.statePath);
+    if (!state.prd_path || !state.start_commit) {
+        runtime.log('citadel: missing state.prd_path or state.start_commit — failing phase');
+        return { exitCode: 1 };
+    }
+    const reportPath = path.join(runtime.sessionDir, 'citadel_report.json');
+    const result = await runCitadelAudit({
+        prdPath: state.prd_path,
+        diffRange: `${state.start_commit}..HEAD`,
+        repoRoot: runtime.workingDir,
+        sessionDir: runtime.sessionDir,
+        reportPath,
+        strict: runtime.config.citadel_strict,
+    });
+    runtime.log(`citadel: wrote ${reportPath} with ${result.findings.length} finding(s), exit ${result.exitCode}`);
+    return { exitCode: result.exitCode };
+}
+const SEVERITY_RANK = {
+    Critical: 0,
+    High: 1,
+    Medium: 2,
+    Low: 3,
+};
+function findingMeetsThreshold(finding, threshold) {
+    return SEVERITY_RANK[finding.severity] <= SEVERITY_RANK[threshold];
+}
+function shouldHaltAfterPhase(phase, exitCode, runtime) {
+    if (exitCode === 0)
+        return false;
+    if (phase !== 'citadel')
+        return true;
+    const report = readCitadelReport(runtime.sessionDir);
+    if (!report)
+        return true;
+    const threshold = runtime.config.citadel_strict ? 'High' : 'Critical';
+    const shouldHalt = report.findings.some(finding => findingMeetsThreshold(finding, threshold));
+    if (!shouldHalt) {
+        runtime.log(`citadel: non-zero audit result did not meet ${threshold} halt threshold — continuing`);
+    }
+    return shouldHalt;
+}
 export async function postPhaseCleanup(phase, sessionDir) {
     const prevPhaseByPhase = {
         pickle: null,
-        'anatomy-park': 'pickle',
+        citadel: 'pickle',
+        'anatomy-park': 'citadel',
         'szechuan-sauce': 'anatomy-park',
     };
     const prevPhase = prevPhaseByPhase[phase];
@@ -783,6 +930,8 @@ async function runConfiguredPhase(runtime, phaseConfig, counters) {
     }) : true;
     if (!setupOk)
         return { skipped: true, exitCode: null };
+    if (phaseConfig.name === 'citadel')
+        return { skipped: false, exitCode: (await executeCitadelPhase(runtime)).exitCode };
     return { skipped: false, exitCode: (await executePhaseRunner(phaseConfig, runtime.phaseEnv)).exitCode };
 }
 function createPipelineLog(sessionDir) {
@@ -995,7 +1144,7 @@ export async function main(sessionDir, opts = {}) {
             }
             const exitCode = result.exitCode ?? 1;
             log(`Phase ${rawPhase} exited with code ${exitCode}`);
-            if (exitCode !== 0) {
+            if (shouldHaltAfterPhase(rawPhase, exitCode, runtime)) {
                 log(`Phase ${rawPhase} failed (exit ${exitCode}) — stopping pipeline`);
                 break;
             }

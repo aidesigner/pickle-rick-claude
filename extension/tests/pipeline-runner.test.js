@@ -509,14 +509,28 @@ describe('parsePipelineConfig', () => {
       szechuan_domain: 'financial',
       szechuan_focus: 'error handling',
     });
-    assert.deepEqual(config.phases, ['pickle', 'anatomy-park', 'szechuan-sauce']);
+    assert.deepEqual(config.phases, ['pickle', 'citadel', 'anatomy-park', 'szechuan-sauce']);
     assert.equal(config.target, '/tmp/project');
     assert.equal(config.anatomy_stall_limit, 5);
     assert.equal(config.szechuan_stall_limit, 8);
     assert.equal(config.anatomy_max_iterations, 200);
     assert.equal(config.szechuan_max_iterations, 75);
+    assert.equal(config.citadel_strict, false);
     assert.equal(config.szechuan_domain, 'financial');
     assert.equal(config.szechuan_focus, 'error handling');
+  });
+
+  test('preserves explicit citadel phase without duplicating it', () => {
+    const config = parsePipelineConfig({
+      phases: ['pickle', 'citadel', 'anatomy-park', 'szechuan-sauce'],
+      target: '/tmp/project',
+    });
+    assert.deepEqual(config.phases, ['pickle', 'citadel', 'anatomy-park', 'szechuan-sauce']);
+  });
+
+  test('parses citadel strict flag', () => {
+    const config = parsePipelineConfig({ phases: [], target: '', citadel_strict: true });
+    assert.equal(config.citadel_strict, true);
   });
 
   test('defaults numeric fields when missing', () => {
