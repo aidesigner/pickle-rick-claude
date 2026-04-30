@@ -1,5 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { StateManager } from './state-manager.js';
 function isWithinRoot(targetPath, rootPath) {
     const relative = path.relative(path.resolve(rootPath), path.resolve(targetPath));
     return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
@@ -124,6 +125,18 @@ function resolveLedgerEntries(parsed) {
         return parsed;
     return parsed.entries ?? parsed.actions ?? parsed.steps ?? [];
 }
+function parseLedgerContent(raw) {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0)
+        return [];
+    if (trimmed.startsWith('[') || (trimmed.startsWith('{') && !trimmed.includes('\n'))) {
+        return resolveLedgerEntries(JSON.parse(trimmed));
+    }
+    return trimmed
+        .split(/\r?\n/)
+        .filter(line => line.trim().length > 0)
+        .map(line => JSON.parse(line));
+}
 function resolveLedgerPath(sessionRoot, entryPath) {
     const targetPath = path.isAbsolute(entryPath) ? entryPath : path.join(sessionRoot, entryPath);
     return assertWithinRoot(targetPath, sessionRoot);
@@ -150,8 +163,7 @@ function removeEmptyParents(startDir, stopDir) {
     }
 }
 export function replayReverseLedger(ledgerPath, sessionRoot) {
-    const parsed = JSON.parse(fs.readFileSync(ledgerPath, 'utf-8'));
-    const entries = resolveLedgerEntries(parsed);
+    const entries = parseLedgerContent(fs.readFileSync(ledgerPath, 'utf-8'));
     const restored = [];
     for (const entry of [...entries].reverse()) {
         const targetPath = resolveLedgerPath(sessionRoot, entry.path);
@@ -167,4 +179,159 @@ export function replayReverseLedger(ledgerPath, sessionRoot) {
         restored.push({ path: targetPath, content: priorContent });
     }
     return restored;
+}
+function timestampForLedger(now) {
+    if (now instanceof Date)
+        return now.toISOString();
+    if (typeof now === 'string')
+        return now;
+    return new Date().toISOString();
+}
+function proposalApplyLedgerPath(sessionRoot, proposalPath) {
+    const base = path.basename(proposalPath).replace(/\.md$/i, '');
+    return path.join(sessionRoot, `${base}_apply.log`);
+}
+function acquireFileLock(lockFile) {
+    const fd = fs.openSync(lockFile, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY);
+    fs.writeSync(fd, JSON.stringify({ pid: process.pid, ts: Date.now() }));
+    fs.closeSync(fd);
+    return () => {
+        try {
+            fs.unlinkSync(lockFile);
+        }
+        catch { /* already released */ }
+    };
+}
+function appendApplyLedger(ledgerPath, entry) {
+    fs.mkdirSync(path.dirname(ledgerPath), { recursive: true });
+    fs.appendFileSync(ledgerPath, `${JSON.stringify(entry)}\n`, 'utf-8');
+}
+function collectTicketDirectoryIds(sessionRoot) {
+    return fs
+        .readdirSync(sessionRoot, { withFileTypes: true })
+        .filter(entry => entry.isDirectory())
+        .map(entry => entry.name)
+        .sort();
+}
+function resolveCurrentTicketBranch(state, killedSet, addedSet) {
+    const current = state.current_ticket;
+    if (current && killedSet.has(current))
+        return 'a';
+    if (current && addedSet.has(current))
+        return 'c';
+    return 'b';
+}
+function appendActivity(state, entry) {
+    const existing = Array.isArray(state.activity) ? state.activity : [];
+    state.activity = [...existing, entry];
+}
+function applyPlannedWrite(ledgerPath, step, operation, ticketId, file, nowIso) {
+    assertWithinRoot(file.path, path.dirname(ledgerPath));
+    const existed = fs.existsSync(file.path);
+    const beforeContent = existed ? fs.readFileSync(file.path, 'utf-8') : null;
+    const action = existed ? 'write' : 'create';
+    appendApplyLedger(ledgerPath, {
+        step,
+        action,
+        operation,
+        ticket_id: ticketId,
+        path: file.path,
+        status: 'started',
+        recovery_class: existed ? 'restore-previous-content' : 'delete-created',
+        beforeContent,
+        previousContent: beforeContent,
+        createdAt: nowIso,
+    });
+    fs.mkdirSync(path.dirname(file.path), { recursive: true });
+    fs.writeFileSync(file.path, file.content, 'utf-8');
+    appendApplyLedger(ledgerPath, {
+        step,
+        action,
+        operation,
+        ticket_id: ticketId,
+        path: file.path,
+        status: 'applied',
+        recovery_class: existed ? 'restore-previous-content' : 'delete-created',
+        beforeContent,
+        previousContent: beforeContent,
+        createdAt: nowIso,
+    });
+}
+export function applyCourseCorrectionRestructure(input) {
+    const sessionRoot = path.resolve(input.sessionRoot);
+    const statePath = path.join(sessionRoot, 'state.json');
+    const ledgerPath = assertWithinRoot(input.ledgerPath ? path.resolve(input.ledgerPath) : proposalApplyLedgerPath(sessionRoot, input.proposalPath), sessionRoot);
+    const nowIso = timestampForLedger(input.now);
+    const killedTicketIds = input.killedTicketIds ?? [];
+    const addedTickets = input.addedTickets ?? [];
+    const killedSet = new Set(killedTicketIds);
+    const addedSet = new Set(addedTickets.map(ticket => ticket.ticketId));
+    const stateManager = input.stateManager ?? new StateManager();
+    let branch = 'b';
+    let ticketsVersion = 0;
+    let appliedSteps = 0;
+    const releaseRestructureLock = acquireFileLock(path.join(sessionRoot, 'restructure.lock'));
+    try {
+        stateManager.transaction([statePath], ([state]) => {
+            const beforeTickets = collectTicketDirectoryIds(sessionRoot);
+            branch = resolveCurrentTicketBranch(state, killedSet, addedSet);
+            for (const ticketId of killedTicketIds) {
+                appliedSteps += 1;
+                const planned = updateTicketStatusInTransaction(ticketId, 'Killed', sessionRoot, { now: nowIso });
+                applyPlannedWrite(ledgerPath, appliedSteps, 'kill_ticket', ticketId, planned, nowIso);
+            }
+            for (const ticket of addedTickets) {
+                const plan = materializeNewTicket({ ...ticket, sessionRoot });
+                for (const file of plan.files) {
+                    appliedSteps += 1;
+                    applyPlannedWrite(ledgerPath, appliedSteps, 'add_ticket', ticket.ticketId, file, nowIso);
+                }
+            }
+            if (branch === 'a')
+                state.current_ticket = input.restartTicketId ?? null;
+            if (branch === 'c' && state.current_ticket) {
+                appendActivity(state, {
+                    event: 'current_ticket_redirected_to_new',
+                    ticket_id: state.current_ticket,
+                    timestamp: nowIso,
+                });
+            }
+            const currentVersion = typeof state.tickets_version === 'number' && Number.isFinite(state.tickets_version)
+                ? state.tickets_version
+                : 0;
+            ticketsVersion = currentVersion + 1;
+            state.tickets_version = ticketsVersion;
+            state.last_course_correction = {
+                proposal_path: input.proposalPath,
+                applied_iso: nowIso,
+                restart_ticket_id: input.restartTicketId,
+                before_count: beforeTickets.length,
+                after_count: collectTicketDirectoryIds(sessionRoot).length,
+            };
+            appendActivity(state, {
+                event: 'course_corrected',
+                timestamp: nowIso,
+                proposal_path: input.proposalPath,
+                killed_ticket_ids: killedTicketIds,
+                added_ticket_ids: [...addedSet],
+                branch,
+                tickets_version: ticketsVersion,
+            });
+            appendActivity(state, {
+                event: 'readiness_delta_requested',
+                timestamp: nowIso,
+                reason: 'course_corrected',
+                tickets_version: ticketsVersion,
+            });
+        });
+        return { ledgerPath, branch, ticketsVersion, appliedSteps };
+    }
+    catch (error) {
+        if (fs.existsSync(ledgerPath))
+            replayReverseLedger(ledgerPath, sessionRoot);
+        throw error;
+    }
+    finally {
+        releaseRestructureLock();
+    }
 }

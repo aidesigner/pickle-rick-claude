@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
+  applyCourseCorrectionRestructure,
   materializeNewTicket,
   replayReverseLedger,
   updateTicketStatusInTransaction,
@@ -39,6 +40,44 @@ function writeTicket(sessionDir, ticketId, status = 'Todo') {
   ].join('\n');
   fs.writeFileSync(ticketPath, content);
   return { ticketDir, ticketPath, content };
+}
+
+function writeState(sessionDir, overrides = {}) {
+  const state = {
+    active: true,
+    working_dir: sessionDir,
+    step: 'implement',
+    iteration: 1,
+    max_iterations: 3,
+    max_time_minutes: 30,
+    worker_timeout_seconds: 1200,
+    start_time_epoch: 1,
+    completion_promise: null,
+    original_prompt: 'test',
+    current_ticket: null,
+    history: [],
+    started_at: '2026-04-30T00:00:00.000Z',
+    session_dir: sessionDir,
+    schema_version: 3,
+    tickets_version: 0,
+    last_course_correction: null,
+    activity: [],
+    ...overrides,
+  };
+  fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify(state, null, 2));
+  return state;
+}
+
+function readState(sessionDir) {
+  return JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+}
+
+function readJsonl(filePath) {
+  return fs.readFileSync(filePath, 'utf-8')
+    .trim()
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map(line => JSON.parse(line));
 }
 
 test('updateTicketStatusInTransaction returns a planned write without mutating the ticket file', () => {
@@ -114,6 +153,99 @@ test('replayReverseLedger rejects paths outside the session root', () => {
       () => replayReverseLedger(ledgerPath, sessionDir),
       /Path escapes ticket transaction root/,
     );
+  });
+});
+
+test('applyCourseCorrectionRestructure kills, adds, bumps tickets_version, and writes apply ledger', () => {
+  withDir((sessionDir) => {
+    const killed = writeTicket(sessionDir, 'kill123');
+    writeState(sessionDir, { current_ticket: 'kill123', tickets_version: 4 });
+    const proposalPath = path.join(sessionDir, 'change_proposal_2026-04-30T12-00-00Z.md');
+
+    const result = applyCourseCorrectionRestructure({
+      sessionRoot: sessionDir,
+      proposalPath,
+      restartTicketId: 'new123',
+      killedTicketIds: ['kill123'],
+      addedTickets: [{
+        ticketId: 'new123',
+        frontmatter: { title: 'Replacement' },
+        body: '# Replacement\n',
+      }],
+      now: '2026-04-30T12:00:00.000Z',
+    });
+
+    const state = readState(sessionDir);
+    const killedContent = fs.readFileSync(killed.ticketPath, 'utf-8');
+    const newTicketPath = path.join(sessionDir, 'new123', 'linear_ticket_new123.md');
+    const ledger = readJsonl(result.ledgerPath);
+
+    assert.equal(result.branch, 'a');
+    assert.equal(result.ticketsVersion, 5);
+    assert.equal(state.current_ticket, 'new123');
+    assert.equal(state.tickets_version, 5);
+    assert.equal(state.last_course_correction.restart_ticket_id, 'new123');
+    assert.match(killedContent, /^status: "Killed"$/m);
+    assert.equal(fs.existsSync(newTicketPath), true);
+    assert.match(fs.readFileSync(newTicketPath, 'utf-8'), /^title: "Replacement"$/m);
+    assert.equal(path.basename(result.ledgerPath), 'change_proposal_2026-04-30T12-00-00Z_apply.log');
+    assert.equal(ledger.some(entry => entry.operation === 'kill_ticket' && entry.status === 'applied'), true);
+    assert.equal(ledger.some(entry => entry.operation === 'add_ticket' && entry.status === 'applied'), true);
+    assert.equal(state.activity.some(entry => entry.event === 'course_corrected' && entry.branch === 'a'), true);
+    assert.equal(state.activity.some(entry => entry.event === 'readiness_delta_requested'), true);
+  });
+});
+
+test('applyCourseCorrectionRestructure replays reverse ledger on partial failure', () => {
+  withDir((sessionDir) => {
+    const killed = writeTicket(sessionDir, 'kill123');
+    writeState(sessionDir, { current_ticket: 'keep123', tickets_version: 1 });
+    const badDirPath = path.join(sessionDir, 'bad123');
+    fs.mkdirSync(badDirPath);
+
+    assert.throws(
+      () => applyCourseCorrectionRestructure({
+        sessionRoot: sessionDir,
+        proposalPath: path.join(sessionDir, 'change_proposal_2026-04-30T13-00-00Z.md'),
+        restartTicketId: null,
+        killedTicketIds: ['kill123'],
+        addedTickets: [{
+          ticketId: 'bad123',
+          files: [{ path: badDirPath, content: 'cannot write over directory' }],
+        }],
+        now: '2026-04-30T13:00:00.000Z',
+      }),
+      /EISDIR|illegal operation on a directory|is a directory/,
+    );
+
+    const state = readState(sessionDir);
+    assert.equal(fs.readFileSync(killed.ticketPath, 'utf-8'), killed.content);
+    assert.equal(state.tickets_version, 1);
+    assert.equal(state.activity.length, 0);
+  });
+});
+
+test('applyCourseCorrectionRestructure refuses to run while restructure lock exists', () => {
+  withDir((sessionDir) => {
+    const ticket = writeTicket(sessionDir, 'kill123');
+    writeState(sessionDir, { current_ticket: 'kill123' });
+    const lockPath = path.join(sessionDir, 'restructure.lock');
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: 999999, ts: Date.now() }));
+
+    assert.throws(
+      () => applyCourseCorrectionRestructure({
+        sessionRoot: sessionDir,
+        proposalPath: path.join(sessionDir, 'change_proposal_2026-04-30T14-00-00Z.md'),
+        restartTicketId: null,
+        killedTicketIds: ['kill123'],
+        now: '2026-04-30T14:00:00.000Z',
+      }),
+      /EEXIST/,
+    );
+
+    assert.equal(fs.readFileSync(ticket.ticketPath, 'utf-8'), ticket.content);
+    assert.equal(readState(sessionDir).tickets_version, 0);
+    fs.rmSync(lockPath, { force: true });
   });
 });
 
