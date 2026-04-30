@@ -624,6 +624,54 @@ test('mux-runner: rejects command_template with forward slash', () => {
     }
 });
 
+test('mux-runner: runs readiness gate at iteration 0 before manager spawn', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = path.join(tmpRoot, 'session');
+        const ticketDir = path.join(sessionDir, 'bad001');
+        fs.mkdirSync(ticketDir, { recursive: true });
+        fs.writeFileSync(path.join(ticketDir, 'linear_ticket_bad001.md'), [
+            '---',
+            'id: bad001',
+            'key: BAD-1',
+            'ac_ids: []',
+            '---',
+            '',
+            '# Ticket',
+            '',
+            '## Acceptance Criteria',
+            '- [ ] The workflow should feel intuitive.',
+            '',
+        ].join('\n'));
+        fs.writeFileSync(path.join(sessionDir, 'decomposition_manifest.json'), JSON.stringify({
+            tickets: [{ id: 'bad001', key: 'BAD-1' }],
+        }, null, 2));
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            step: 'research',
+            iteration: 0,
+            max_iterations: 5,
+            worker_timeout_seconds: 1200,
+            original_prompt: 'test readiness gate',
+            working_dir: tmpRoot,
+            command_template: 'pickle.md',
+        }, null, 2));
+
+        const result = run(path.resolve(__dirname, '../..'), [sessionDir]);
+        const runnerLog = fs.readFileSync(path.join(sessionDir, 'mux-runner.log'), 'utf-8');
+        const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+
+        assert.equal(result.status, 1);
+        assert.equal(state.active, false);
+        assert.match(result.stdout, /"status":"fail"/);
+        assert.match(result.stderr + runnerLog, /READINESS HALT/);
+        assert.doesNotMatch(runnerLog, /Run Pickle Iteration/);
+        assert.ok(fs.readdirSync(sessionDir).some((file) => /^readiness_\d{4}-\d{2}-\d{2}/.test(file)));
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
 // F20: unknown template rejected (not present in extensionRoot/templates or ~/.claude/commands)
 test('mux-runner: rejects command_template not found in any directory', () => {
     const tmpRoot = makeTmpRoot();

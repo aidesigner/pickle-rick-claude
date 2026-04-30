@@ -147,6 +147,7 @@ When `state.teams_mode === true`. Claude backend only (setup.js rejects codex+te
 1. Derive a session id once: `SESSION_ID = path.basename(${SESSION_ROOT})`.
 2. **TeamCreate**: `team_name = "pickle-${SESSION_ID}"`, `description` = `original_prompt` truncated to ~80 chars.
 3. **TaskCreate per ticket**: for each non-Done ticket in `order` order, create one task with `subject` = ticket title, `description` = `Implement ticket ${TICKET_ID} — see ${SESSION_ROOT}/${TICKET_ID}/linear_ticket_${TICKET_ID}.md`, and metadata `{ ticket_id: <id> }`. Capture the returned task IDs and keep a local mapping `{ticket_id → team_task_id}`.
+4. **Readiness gate BEFORE first Agent call**: run `node "${EXTENSION_ROOT}/extension/bin/check-readiness.js" --session-dir "${SESSION_ROOT}" --repo-root "$(node -e 'const fs=require("fs"); const state=JSON.parse(fs.readFileSync(process.argv[1],"utf-8")); console.log(state.working_dir || process.cwd())' "${SESSION_ROOT}/state.json")"`. Nonzero exit halts before any `Agent` call. If stdout reports `"delta":true`, surface the readiness report path as the post-correction delta-mode halt banner.
 
 **v1 dispatches every ticket to `morty-implementer`**. Review-group / hardening tickets that the legacy mode would route to a review worker fall through to `morty-implementer` in v1; wiring up `morty-reviewer` dispatch is a follow-up (see PRD Not-in-scope).
 

@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, type TicketInfo } from '../services/pickle-utils.js';
 import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact, type Backend, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole } from '../types/index.js';
 import { StateManager, safeDeactivate, writeActivityEntry, writeTimeoutStub } from '../services/state-manager.js';
@@ -866,6 +866,35 @@ export function commitPendingProbe(input: CommitPendingProbeInput): CommitPendin
   return 'fired';
 }
 
+export interface MuxReadinessGateInput {
+  sessionDir: string;
+  repoRoot: string;
+  extensionRoot: string;
+  log: (msg: string) => void;
+}
+
+export function runMuxReadinessGate(input: MuxReadinessGateInput): number {
+  const localBinPath = path.join(input.extensionRoot, 'extension', 'bin', 'check-readiness.js');
+  const installedBinPath = path.join(input.extensionRoot, 'bin', 'check-readiness.js');
+  const binPath = fs.existsSync(localBinPath) ? localBinPath : installedBinPath;
+  if (!fs.existsSync(binPath)) {
+    input.log(`readiness gate skipped: ${binPath} not found`);
+    return 0;
+  }
+  const result = spawnSync(process.execPath, [
+    binPath,
+    '--session-dir', input.sessionDir,
+    '--repo-root', input.repoRoot,
+  ], {
+    cwd: input.repoRoot,
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  return result.status ?? 1;
+}
+
 /**
  * Best-effort append of a one-line marker to `pipeline-runner.log` in the
  * session directory. The pipeline-runner owns that file when it spawns
@@ -1566,6 +1595,7 @@ async function runMuxRunnerMain() {
   const rawProbeThreshold = Number(probeSettings.commit_pending_probe_threshold);
   const commitPendingProbeThreshold =
     Number.isFinite(rawProbeThreshold) && rawProbeThreshold > 0 ? rawProbeThreshold : 2;
+  let readinessGateChecked = false;
 
   while (true) {
     let state: State;
@@ -1636,6 +1666,22 @@ async function runMuxRunnerMain() {
     if (previousTicket === null) previousTicket = preTicket;
     log(`--- Iteration ${iteration} (state.iteration=${state.iteration}) ---`);
     logActivity({ event: 'iteration_start', source: 'pickle', session: path.basename(sessionDir), iteration });
+
+    if (!readinessGateChecked && curIter === 0) {
+      readinessGateChecked = true;
+      const readinessStatus = runMuxReadinessGate({
+        sessionDir,
+        repoRoot: state.working_dir || process.cwd(),
+        extensionRoot,
+        log,
+      });
+      if (readinessStatus !== 0) {
+        log(`READINESS HALT: check-readiness exited ${readinessStatus}; no manager spawn attempted`);
+        safeDeactivate(statePath);
+        exitReason = 'error';
+        break;
+      }
+    }
 
     // Multi-repo advisory check (once, on first iteration)
     if (iteration === 1) {
