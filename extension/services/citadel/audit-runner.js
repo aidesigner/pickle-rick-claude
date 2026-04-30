@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { withLock } from '../state-manager.js';
+import { auditAcShape } from './ac-shape-audit.js';
 import { auditSiblingAuthPreconditions } from './sibling-auth-audit.js';
 import { auditFrontendPropDrift } from './frontend-prop-drift-audit.js';
 import { walkDiff } from './diff-walker.js';
@@ -21,11 +22,16 @@ export function buildCitadelAuditReport(options) {
     const diff = walkDiff(options.diffRange, { repoRoot });
     const siblingAuth = auditSiblingAuthPreconditions(diff);
     const frontendPropDrift = auditFrontendPropDrift(diff);
-    const findings = [...siblingAuth.findings, ...frontendPropDrift.findings];
+    const acShape = auditAcShape({
+        prdPath: path.resolve(repoRoot, options.prdPath),
+        sessionDir: options.sessionDir,
+    });
+    const findings = [...siblingAuth.findings, ...frontendPropDrift.findings, ...acShape.findings];
     const critical = findings.filter((finding) => finding.severity === 'Critical').length;
     const high = findings.filter((finding) => finding.severity === 'High').length;
     const medium = findings.filter((finding) => finding.severity === 'Medium').length;
-    const blockingFindings = critical + (options.strict ? high : 0);
+    const strictDecisionFindings = options.strict ? acShape.decisionsRequired.length : 0;
+    const blockingFindings = critical + (options.strict ? high : 0) + strictDecisionFindings;
     return {
         schema_version: '1.0',
         prd_path: path.resolve(repoRoot, options.prdPath),
@@ -34,12 +40,15 @@ export function buildCitadelAuditReport(options) {
         sections: {
             sibling_auth_preconditions: siblingAuth,
             frontend_prop_drift: frontendPropDrift,
+            ac_shape: acShape,
         },
+        decision_required: acShape.decisionsRequired,
         summary: {
             findings: findings.length,
             critical,
             high,
             medium,
+            decision_required: acShape.decisionsRequired.length,
         },
     };
 }

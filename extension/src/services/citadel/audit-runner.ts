@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { withLock } from '../state-manager.js';
+import { auditAcShape, AcShapeAuditReport } from './ac-shape-audit.js';
 import { auditSiblingAuthPreconditions, SiblingAuthAuditReport } from './sibling-auth-audit.js';
 import { auditFrontendPropDrift, FrontendPropDriftReport } from './frontend-prop-drift-audit.js';
 import { walkDiff } from './diff-walker.js';
@@ -22,12 +23,15 @@ export interface CitadelAuditReport {
   sections: {
     sibling_auth_preconditions: SiblingAuthAuditReport;
     frontend_prop_drift: FrontendPropDriftReport;
+    ac_shape: AcShapeAuditReport;
   };
+  decision_required: AcShapeAuditReport['decisionsRequired'];
   summary: {
     findings: number;
     critical: number;
     high: number;
     medium: number;
+    decision_required: number;
   };
 }
 
@@ -49,11 +53,16 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
   const diff = walkDiff(options.diffRange, { repoRoot });
   const siblingAuth = auditSiblingAuthPreconditions(diff);
   const frontendPropDrift = auditFrontendPropDrift(diff);
-  const findings = [...siblingAuth.findings, ...frontendPropDrift.findings];
+  const acShape = auditAcShape({
+    prdPath: path.resolve(repoRoot, options.prdPath),
+    sessionDir: options.sessionDir,
+  });
+  const findings = [...siblingAuth.findings, ...frontendPropDrift.findings, ...acShape.findings];
   const critical = findings.filter((finding) => finding.severity === 'Critical').length;
   const high = findings.filter((finding) => finding.severity === 'High').length;
   const medium = findings.filter((finding) => finding.severity === 'Medium').length;
-  const blockingFindings = critical + (options.strict ? high : 0);
+  const strictDecisionFindings = options.strict ? acShape.decisionsRequired.length : 0;
+  const blockingFindings = critical + (options.strict ? high : 0) + strictDecisionFindings;
 
   return {
     schema_version: '1.0',
@@ -63,12 +72,15 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
     sections: {
       sibling_auth_preconditions: siblingAuth,
       frontend_prop_drift: frontendPropDrift,
+      ac_shape: acShape,
     },
+    decision_required: acShape.decisionsRequired,
     summary: {
       findings: findings.length,
       critical,
       high,
       medium,
+      decision_required: acShape.decisionsRequired.length,
     },
   };
 }
