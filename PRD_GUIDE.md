@@ -150,3 +150,4 @@ Five sections. Refinement fills the gaps.
 | `/pickle-refine-prd --run <path>` | Ready to let it rip |
 | `/pickle <task>` | Small/clear task, one shot |
 | `/pickle-tmux --resume <session>` | Picking up where you left off |
+| `/citadel --prd <path>` | Post-implementation conformance audit against the PRD |

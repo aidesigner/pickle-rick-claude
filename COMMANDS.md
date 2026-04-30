@@ -15,7 +15,8 @@ All Pickle Rick slash commands and their flags. For workflow narrative and tool 
 | `/pickle-microverse` † | Metric convergence loop. `--metric` for numeric, `--goal` for LLM judge |
 | `/szechuan-sauce [target]` † | Principle-driven deslopping. `--dry-run`, `--focus`, `--domain` |
 | `/anatomy-park` † | Three-phase deep subsystem review with trap door cataloging |
-| `/pickle-pipeline "task"` † | Full lifecycle: pickle-tmux → anatomy-park → szechuan-sauce in one tmux session |
+| `/citadel --prd <path>` | Post-implementation conformance audit against PRD acceptance criteria, branch diff, and trap doors |
+| `/pickle-pipeline "task"` † | Full lifecycle: pickle-tmux → citadel → anatomy-park → szechuan-sauce in one tmux session |
 | `/cronenberg "task"` | Meta-router — deterministic decision matrix picks the right metaphor + cleanup chain, and decides whether to run `/pickle-refine-prd` first based on PRD shape signals. Executes by default; `--dry-run` to preview only. Forwards all non-cronenberg flags through |
 | `/plumbus <file.dot>` | Iterative DAG shaping on a single `.dot` file. `--dry-run`, `--focus`, `--no-validator` |
 | `/council-of-ricks` | Graphite PR stack review — szechuan principles + anatomy data-flow tracing + Codex adversarial challenge. Directives only, never fixes code. `--no-codex` to disable, `--gitnexus` for graph queries |
@@ -81,6 +82,11 @@ Most flags are command-scoped. The table groups them by command family — flags
 | `--szechuan-stall-limit <N>` | `/pickle-pipeline` | Szechuan Sauce stall limit (default: 5) |
 | `--szechuan-domain <name>` | `/pickle-pipeline` | Domain-specific principles for Szechuan phase |
 | `--szechuan-focus "<text>"` | `/pickle-pipeline` | Focus directive for Szechuan phase |
+| `--prd <path>` | `/citadel` | PRD to audit against. Required unless pipeline session state provides `state.prd_path` |
+| `--diff <base..head>` | `/citadel` | Diff range to audit. Defaults to `state.start_commit..HEAD` when available |
+| `--strict` | `/citadel` | Exit non-zero on High findings as well as Critical findings |
+| `--report <path>` | `/citadel` | JSON report destination. Pipeline invocations write `<session>/citadel_report.json` |
+| `--print-stubs` | `/citadel` | Print `node:test` skeletons for unguarded trap doors without modifying files |
 | `--dry-run` | `/szechuan-sauce`, `/plumbus` | Catalog violations without fixing |
 | `--focus "<text>"` | `/szechuan-sauce`, `/plumbus` | Direct review toward specific concern |
 | `--domain <name>` | `/szechuan-sauce` | Domain-specific principles (e.g., financial) |

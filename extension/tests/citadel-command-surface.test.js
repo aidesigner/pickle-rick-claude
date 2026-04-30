@@ -6,15 +6,23 @@ import { fileURLToPath } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const repoRoot = path.resolve(__dirname, '../..');
 const commandsDir = path.resolve(__dirname, '../../.claude/commands');
 
 function readCommand(filename) {
   return fs.readFileSync(path.join(commandsDir, filename), 'utf8');
 }
 
+function readRepoFile(filename) {
+  return fs.readFileSync(path.join(repoRoot, filename), 'utf8');
+}
+
 const citadel = readCommand('citadel.md');
 const helpPickle = readCommand('help-pickle.md');
 const cronenberg = readCommand('cronenberg.md');
+const readme = readRepoFile('README.md');
+const commandReference = readRepoFile('COMMANDS.md');
+const prdGuide = readRepoFile('PRD_GUIDE.md');
 
 describe('citadel command surface', () => {
   test('citadel slash command exists and documents primary flags', () => {
@@ -48,5 +56,27 @@ describe('citadel command surface', () => {
     assert.match(step4, /chosen metaphor is `\/pickle-pipeline`/);
     assert.match(step4, /chains citadel \+ anatomy-park \+ szechuan-sauce internally/);
     assert.match(step4, /followups would duplicate/);
+  });
+
+  test('command reference documents citadel and its flags', () => {
+    assert.match(commandReference, /\| `\/citadel --prd <path>` \|/);
+    for (const flag of ['--prd <path>', '--diff <base..head>', '--strict', '--report <path>', '--print-stubs']) {
+      assert.match(commandReference, new RegExp(flag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    }
+  });
+
+  test('README documents citadel pipeline order, reports, and cronenberg routing', () => {
+    assert.match(readme, /build → citadel → anatomy-park → szechuan-sauce/);
+    assert.match(readme, /`schema: "1\.0"`/);
+    assert.match(readme, /<session>\/citadel_report\.json/);
+
+    const citadelRouteIndex = readme.indexOf('| `CITADEL_RISK`');
+    const anatomyRouteIndex = readme.indexOf('| `SUBSYSTEM_TOUCHES ≥ 2` | `/anatomy-park` |');
+    assert.ok(citadelRouteIndex > 0, 'README missing CITADEL_RISK followup row');
+    assert.ok(anatomyRouteIndex > citadelRouteIndex, 'README must list citadel before anatomy-park');
+  });
+
+  test('PRD guide lists citadel as post-implementation conformance audit', () => {
+    assert.match(prdGuide, /\| `\/citadel --prd <path>` \| Post-implementation conformance audit/);
   });
 });
