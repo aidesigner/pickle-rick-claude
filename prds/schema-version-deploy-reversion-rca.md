@@ -1,10 +1,10 @@
 # PRD: Deploy-Reversion of `types/index.js` — Root Cause Analysis + Fix
 
-**Status**: Bug PRD with active root-cause investigation. **Next priority work item** after current Citadel + Hardening Bundle pipeline completes (or independently if pipeline finishes first).
+**Status**: Bug PRD — F1–F4 fix attempted (commits `4af5b6a`, `a670639`, `f75b2e3`), did NOT hold in production. Reversion mechanism is broader than `types/index.js` and survives F1 + F2 + F3. Investigation continues. **Still next priority work** after pipeline completion.
 **Author**: Pickle Rick + agent team (h1-tsc-cache / h2-source-mutation / h3-timeline)
 **Project**: `pickle-rick-claude` — Claude Code extension
 **Repo**: `https://github.com/gregorydickson/pickle-rick-claude` — branch `main`
-**Origin**: live during the Citadel + Hardening Bundle pipeline run (`pipeline-1204204c`, session `2026-04-29-1204204c`). Watchdog cron `614355bb` recorded **5 deploy-reversions in 8 hours**, all on `~/.claude/pickle-rick/extension/types/index.js` flipping `STATE_MANAGER_DEFAULTS.schemaVersion: 3 → 2`. Each reversion wedges fresh-process `StateManager.read()` calls; existing in-memory watchers survive on cached v3.
+**Origin**: live during the Citadel + Hardening Bundle pipeline run (`pipeline-1204204c`, session `2026-04-29-1204204c`). Watchdog cron `614355bb` recorded **5 deploy-reversions in 8 hours** before the F1–F4 fix, **3 more reversions in 3 hours after the fix shipped** — bug recurs unchanged on the same `~/.claude/pickle-rick/extension/types/index.js` (flips schemaVersion `3 → 2`) AND now on `extension/services/state-manager.js` (loses `assertSchemaVersionDeployParity` export entirely). Each reversion wedges fresh-process `StateManager.read()` calls; existing in-memory mux-runner survives on cached v3.
 
 ---
 
@@ -274,3 +274,120 @@ While the current bundle ships, the watchdog cron auto-fixes hourly. After the b
 4. Future pipelines will hit the same wall on Day 1, before the watchdog cron is even configured.
 
 This bug must be fixed before the next large pipeline run, OR the runs must launch with explicit awareness that hourly schema reversions will occur until fixed. F1+F2+F3+F4 should ship as a single PR within 1-2 days of bundle completion.
+
+---
+
+## Update 2026-04-30 PM — F1-F4 attempted, did NOT hold
+
+### Outcome
+
+F1–F4 implemented, reviewed, deployed (commits `4af5b6a`, `a670639`, `f75b2e3`). 14-minute soak after deploy with **zero reversions**. Pipeline resumed at iter 38 / 51 done. **Within 4 hours, deploy reverted to v1.60.1 anyway**, this time wholesale (state-manager.js, types/index.js, check-update.js all reverted; stop-hook.js content unchanged but tarball mtime preserved). Watchdog cron `d45a5ee4` (post-fix mode) logged 3 consecutive WARN events at `:42` past the hour for hours 1, 2, 3 post-resume. Pipeline kept progressing on mux-runner's cached v3 → 49 iter / 62 done before the user stopped the watchdog cron.
+
+### What got proved
+
+| Hypothesis | Status | Evidence |
+|---|---|---|
+| H1 — tsc incremental cache | **Ruled out** | `.tsbuildinfo` doesn't exist; tsc skips because compiled JS mtime > source TS mtime, but compiled IS v3 |
+| H2 — workers mutating source TS | **Ruled out** | No `writeFileSync` to source TS in any test or worker log |
+| H3 — git stash/checkout/worktree | **Ruled out** | No `pop`/`checkout`/`reset --hard`/`restore` in any worker log; git reflog clean |
+| Sibling pickle-rick repos as source | **Ruled out** | 7 sibling dirs scanned (`pickle-rick-codex`, `-hermes`, `-skills`, `-forgecode`, `~/.codex/pickle-rick`, etc.); none have `extension/types/index.js`, all have different install.sh targets — they CANNOT be redeploying to `~/.claude/pickle-rick/` |
+| Stub install.sh inside deployed dir | **Ruled out** | 324-byte stub at `~/.claude/pickle-rick/install.sh` (Apr 4 mtime) only does `chmod +x bin/sync-schema.js` — harmless |
+| F1 (`performUpgrade` kill-switch) | **Insufficient** | Even with kill-switch, deploy reverted within hours |
+| F2 (install.sh flock) | **Insufficient** | Reversions persist; install.sh races weren't the trigger |
+| F3 (install.sh schemaVersion parity check) | **Insufficient** | install.sh runs cleanly (passes parity check post-tsc) but deploy still reverts later |
+| F4 (state-manager startup self-check) | **Survives via mux-runner cached v3** | Function works when called, but when DEPLOYED state-manager loses the export, fresh processes can't even run the check. Self-policing fix has no teeth when the police are also reverted. |
+
+### Strong remaining hypothesis (post F1–F4)
+
+**H8 — `check-update.js` from a v1.60.1 cache, with SELF-PROPAGATING reversion**
+
+Sequence:
+
+1. Initial state: deployed has F1 kill-switch in `check-update.js`.
+2. Some trigger spawns `check-update.js` (stop-hook from any Claude Code session, even those firing in `loanlight-api-income-agent-ux` — the deployed dir is shared across all projects).
+3. The spawned check-update reads the kill-switch, returns "up-to-date" → safe.
+4. **BUT** check-update.js was previously DOWNLOADED (before the fix) to a temp dir like `/var/folders/.../pickle-update-*/`. The tarball still contains the ORIGINAL v1.60.1 install.sh + extension/.
+5. Either: (a) a stale check-update process from before the fix is still running detached and triggers `extractAndInstall()` periodically, OR (b) some path in our code re-uses an existing extracted dir.
+6. v1.60.1 install.sh runs from the temp dir → rsync `temp/extension/` → `~/.claude/pickle-rick/extension/` → wholesale revert.
+7. Now deployed has v1.60.1 check-update.js (no F1 kill-switch).
+8. Next stop-hook fires → check-update.js (v1.60.1) doesn't honor kill-switch → fetches latest release (still v1.60.1, since we haven't tagged a v1.61.0) → re-installs.
+9. **Self-propagating**: every revert removes the fix that would prevent the next revert.
+
+**This is consistent with all observed evidence**: deployed mtimes preserved at original tarball mtime (`Apr 29 08:15:40`), wholesale dir reversion, paired install.sh backups (cached re-install). It also explains why my F4 self-check has no effect — by the time it fires, the deployed code that would call it is already gone.
+
+### What we did NOT find
+
+- A v1.60.1 git checkout anywhere on the system that could redeploy
+- A LaunchAgent / cron / launchd plist scheduling the reversion
+- Time Machine snapshot restoration
+- A worker explicitly calling `bash install.sh` on the deployed install.sh stub
+
+### What this means for the forward fix
+
+F1–F4 was a **one-off heal**. To stop the self-propagation, the fix needs to be:
+
+- **Released as a new version (v1.61.0+)**. Once `gh release latest` returns v1.61.0, `extractAndInstall()` would download THAT, not v1.60.1. The propagating loop terminates because the cached tarball gets replaced with a fixed one.
+- **Combined with manual cleanup**: delete `/var/folders/*/pickle-update-*` temp dirs once before the release (they can persist between runs).
+- **Plus a defense-in-depth**: F1 (`performUpgrade` kill-switch) needs to be in the released v1.61.0 itself, not just main HEAD — so that even if a v1.60.x tarball lingers in cache, the upgrade path it triggers runs the kill-switch from the NEWLY-INSTALLED v1.61.0 code. Currently F1 only stops download from the version that already has F1 — chicken-and-egg.
+
+### New forward fix: F6 — Release a fresh tag with the fix bundled
+
+1. Bump `extension/package.json` from `1.60.1` to `1.61.0`.
+2. `gh release create v1.61.0 --target main` (with the F1–F5 + typescript-symlink commits in HEAD).
+3. Manually clear cached tarballs: `rm -rf /var/folders/*/pickle-update-* /tmp/pickle-update-*`.
+4. Verify next install.sh deploys v1.61.0 content.
+5. Watchdog re-armed temporarily; expect zero reversions across 6+ hours.
+
+This is the only way to break the self-propagating loop without continuously hot-patching deployed code.
+
+### New forward fix: F7 — Stop spawning check-update entirely until v1.61.0 ships
+
+Until v1.61.0 ships, edit deployed `extension/hooks/handlers/stop-hook.js` to early-return from `maybeSpawnUpdateCheck` regardless of settings:
+
+```js
+function maybeSpawnUpdateCheck(_extensionDir, log) {
+  log('check-update spawn disabled (post-incident lockdown — see schema-version-deploy-reversion-rca PRD)');
+  return;
+}
+```
+
+Defense in depth — even if a stale check-update is still running from before, no NEW check-update gets spawned. Reverts are confined to whatever's already in flight.
+
+This edit will itself be reverted on next reversion cycle. So F7 only buys a few hours; F6 (release) is the durable fix.
+
+### Live data points captured
+
+| Time UTC | Iteration | Tickets | Schema | Notes |
+|---|---|---|---|---|
+| 2026-04-30T09:54Z | 37 | 51/75 | v3 | Pipeline paused for fix |
+| 2026-04-30T10:38Z | 38 | 51/75 | v3 | Resumed post-deploy |
+| 2026-04-30T11:43Z | 42 | 55/75 | **v2** | First post-fix WARN |
+| 2026-04-30T12:42Z | 45 | 58/75 | v2 | 2nd WARN |
+| 2026-04-30T13:42Z | 49 | 62/75 | v2 | 3rd WARN |
+| 2026-04-30T14:00Z | _user stopped watchdog cron_ | | | |
+
+Pipeline progress remains 3-4 tickets/hour despite reverted deploy — running mux-runner has v3 in memory and is unaffected. Risk surfaces only on fresh-process state reads (hooks fail-open by design, so no user-visible impact in practice).
+
+### Updated AC
+
+- **AC-RVN-09** F6 ships: a v1.61.0+ tag is published with F1+F2+F3+F4 in HEAD. `gh release latest` returns v1.61.0+. Cached tarballs in `/var/folders/*/pickle-update-*` are cleared at release time.
+- **AC-RVN-10** F7 is applied as a temporary lockdown: deployed `stop-hook.js`'s `maybeSpawnUpdateCheck` early-returns until v1.61.0 ships. Documented in CLAUDE.md trap-door catalog as a known temporary measure.
+- **AC-RVN-11** Soak after F6: deployed `types/index.js` AND `services/state-manager.js` stay at v3 across 24 hours of mixed traffic (multiple Claude Code sessions, multiple cross-skill workers running install.sh).
+- **AC-RVN-12** Self-propagation broken: a deliberately corrupted deployed `check-update.js` (mtime back to v1.60.1) does NOT trigger an install when stop-hook fires, even from another Claude Code project session.
+
+### Files Likely Touched (post-update)
+
+```
+extension/package.json                                # version bump 1.60.1 → 1.61.0
+extension/src/hooks/handlers/stop-hook.ts             # F7 temporary lockdown
+extension/CLAUDE.md                                   # F7 documentation in trap-door catalog
+prds/MASTER_PLAN.md                                   # update next-priority callout to "F6 release"
+```
+
+### Operator notes (current state)
+
+- Watchdog cron `d45a5ee4` cancelled by user at 2026-04-30T14:00Z.
+- Pipeline still running, projected ~3–4 hours to phase 1 completion.
+- Source repo has F1–F4 + typescript-symlink fixes intact at HEAD `1347fb2`.
+- No further hot-patching needed during pipeline run — mux-runner cached v3 is sufficient.
+- Bug remains UNFIXED in deployed runtime; will re-surface for fresh processes after pipeline ends.
