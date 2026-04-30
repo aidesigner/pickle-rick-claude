@@ -11,9 +11,12 @@ const BIN = path.resolve(__dirname, '../bin/spawn-refinement-team.js');
 
 // Import exported helpers for direct unit testing
 const {
+    buildRefinementManifest,
     buildWorkerPrompt,
+    evaluateAcShapeEnforcement,
     extractAnchorCitations,
     findStaleAnchorWarnings,
+    parseAcShapeSection,
 } = await import('../bin/spawn-refinement-team.js');
 
 function run(args, env = {}) {
@@ -719,6 +722,10 @@ test('spawn-refinement-team: manifest has cycles_requested, cycles_completed, an
         assert.strictEqual(manifest.cycles_completed, 1, 'cycles_completed should be 1');
         assert.strictEqual(manifest.max_turns_per_worker, 15, 'max_turns_per_worker should match --max-turns');
         assert.ok(Array.isArray(manifest.workers), 'manifest.workers should be an array');
+        assert.ok(Array.isArray(manifest.ac_shape_smells), 'manifest.ac_shape_smells should be an array');
+        assert.ok(Array.isArray(manifest.tickets), 'manifest.tickets should be an array');
+        assert.strictEqual(manifest.ac_shape_smells.length, 0, 'no-smell runs should keep working');
+        assert.strictEqual(manifest.tickets.length, 0, 'no-smell runs should not invent tickets');
         assert.strictEqual(manifest.workers.length, 3, 'should have 3 worker results');
         for (const w of manifest.workers) {
             assert.ok('cycle' in w, 'each worker should have a cycle field');
@@ -728,6 +735,160 @@ test('spawn-refinement-team: manifest has cycles_requested, cycles_completed, an
         assert.ok('all_success' in manifest, 'manifest should have all_success');
         assert.ok('prd_path' in manifest, 'manifest should have prd_path');
         assert.ok('completed_at' in manifest, 'manifest should have completed_at');
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+        fs.rmSync(fakeBin, { recursive: true, force: true });
+    }
+});
+
+test('spawn-refinement-team: parses ac_shape_smells section from worker analysis', () => {
+    const parsed = parseAcShapeSection(`
+# PRD Analysis
+
+## ac_shape_smells
+\`\`\`json
+{
+  "ac_shape_smells": [
+    {
+      "ac_id": "AC-1",
+      "headline": "Handlers validate permissions",
+      "targets": ["getA", "getB", "getC"],
+      "repeated_predicate": "validates permissions",
+      "ticket_ids": ["T1", "T2"]
+    }
+  ],
+  "tickets": [
+    {
+      "id": "T1",
+      "title": "getA validates permissions",
+      "source_ac_ids": ["AC-1"],
+      "justification": "// JUSTIFICATION: getA uses separate storage."
+    }
+  ]
+}
+\`\`\`
+
+## Specific Recommendations
+`, 'requirements', '/tmp/analysis.md');
+
+    assert.strictEqual(parsed.acShapeSmells.length, 1);
+    assert.strictEqual(parsed.acShapeSmells[0].source_worker, 'requirements');
+    assert.deepEqual(parsed.acShapeSmells[0].targets, ['getA', 'getB', 'getC']);
+    assert.strictEqual(parsed.tickets.length, 1);
+    assert.strictEqual(parsed.tickets[0].justification, '// JUSTIFICATION: getA uses separate storage.');
+});
+
+test('spawn-refinement-team: ac-shape enforcement accepts one parametrized ticket', () => {
+    const violations = evaluateAcShapeEnforcement({
+        ac_shape_smells: [{ ac_id: 'AC-1', ticket_ids: ['T1'] }],
+        tickets: [{
+            id: 'T1',
+            title: 'All handlers validate permissions',
+            source_ac_ids: ['AC-1'],
+            acceptance_test: 'describe.each([["getA"], ["getB"], ["getC"]]) validates permissions',
+        }],
+    });
+
+    assert.deepEqual(violations, []);
+});
+
+test('spawn-refinement-team: ac-shape enforcement rejects unjustified multi-ticket fanout', () => {
+    const violations = evaluateAcShapeEnforcement({
+        ac_shape_smells: [{ ac_id: 'AC-1' }],
+        tickets: [
+            { id: 'T1', title: 'getA validates permissions', source_ac_ids: ['AC-1'] },
+            { id: 'T2', title: 'getB validates permissions', source_ac_ids: ['AC-1'] },
+        ],
+    });
+
+    assert.strictEqual(violations.length, 1);
+    assert.strictEqual(violations[0].ac_id, 'AC-1');
+    assert.deepEqual(violations[0].ticket_ids, ['T1', 'T2']);
+});
+
+test('spawn-refinement-team: manifest aggregates ac_shape_smells and tickets from worker files', () => {
+    const tmp = makeTmpDir();
+    try {
+        const refinementDir = path.join(tmp, 'refinement');
+        fs.mkdirSync(refinementDir);
+        fs.writeFileSync(path.join(refinementDir, 'analysis_requirements.md'), `
+## ac_shape_smells
+\`\`\`json
+{
+  "ac_shape_smells": [{ "ac_id": "AC-1", "ticket_ids": ["T1"] }],
+  "tickets": [{
+    "id": "T1",
+    "title": "All handlers validate permissions",
+    "source_ac_ids": ["AC-1"],
+    "acceptance_test": "describe.each([[\\"getA\\"], [\\"getB\\"], [\\"getC\\"]])"
+  }]
+}
+\`\`\`
+`);
+
+        const manifest = buildRefinementManifest(
+            { prdPath: path.join(tmp, 'prd.md'), sessionDir: tmp },
+            {
+                refinementDir,
+                cyclesRequested: 1,
+                maxTurns: 15,
+                allCycleResults: [[]],
+                finalResults: [
+                    { roleId: 'requirements', success: true, logPath: path.join(refinementDir, 'worker_requirements_c1.log'), cycle: 1, exitCode: 0 },
+                ],
+                allSuccess: true,
+            }
+        );
+
+        assert.strictEqual(manifest.ac_shape_smells.length, 1);
+        assert.strictEqual(manifest.tickets.length, 1);
+        assert.deepEqual(evaluateAcShapeEnforcement(manifest), []);
+    } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+    }
+});
+
+test('spawn-refinement-team: exits 2 when worker emits unjustified ac-shape fanout', () => {
+    const tmp = makeTmpDir();
+    const fakeBin = makeTmpDir('fake-bin-');
+    try {
+        const prd = path.join(tmp, 'prd.md');
+        fs.writeFileSync(prd, '# PRD\nContent');
+        fs.writeFileSync(path.join(fakeBin, 'claude'), `#!/usr/bin/env node
+const fs = require('fs');
+const idx = process.argv.indexOf('-p');
+const prompt = idx === -1 ? '' : process.argv[idx + 1];
+const match = /Write ALL findings to this file: (.+)/.exec(prompt);
+if (!match) process.exit(1);
+fs.writeFileSync(match[1], \`
+## ac_shape_smells
+\\\`\\\`\\\`json
+{
+  "ac_shape_smells": [{ "ac_id": "AC-1" }],
+  "tickets": [
+    { "id": "T1", "title": "getA validates permissions", "source_ac_ids": ["AC-1"] },
+    { "id": "T2", "title": "getB validates permissions", "source_ac_ids": ["AC-1"] }
+  ]
+}
+\\\`\\\`\\\`
+\`);
+process.stdout.write('<promise>ANALYSIS_DONE</promise>\\n');
+process.exit(0);
+`);
+        fs.chmodSync(path.join(fakeBin, 'claude'), 0o755);
+
+        const result = run(
+            ['--prd', prd, '--session-dir', tmp, '--cycles', '1', '--max-turns', '15', '--timeout', '5'],
+            { PATH: `${fakeBin}:${process.env.PATH}` }
+        );
+
+        assert.strictEqual(result.status, 2);
+        assert.match(result.stderr, /AC-shape collapse-or-justify gate failed/);
+
+        const manifest = JSON.parse(fs.readFileSync(path.join(tmp, 'refinement_manifest.json'), 'utf-8'));
+        assert.ok(manifest.ac_shape_smells.length >= 1);
+        assert.ok(manifest.tickets.length >= 2);
+        assert.ok('justification' in manifest.tickets[0] === false);
     } finally {
         fs.rmSync(tmp, { recursive: true, force: true });
         fs.rmSync(fakeBin, { recursive: true, force: true });

@@ -99,6 +99,14 @@ tmux kill-session -t "refine-${REFINE_HASH}" 2>/dev/null || true
 ## Step 5: Audit Reports
 Read `${SESSION_ROOT}/refinement_manifest.json`. Warn on failed workers, continue with available `analysis_*.md` + original PRD.
 
+If `spawn-refinement-team.js` exits `2` with an AC-shape collapse-or-justify failure, stop and fix the PRD/ticket shape before continuing:
+- Rewrite the smelly AC as one invariant-shaped acceptance criterion using a universal quantifier such as "all", "every", or "for any"; then rerun refinement.
+- Or keep the multi-ticket decomposition only when every split ticket has a manifest `justification` value containing a `// JUSTIFICATION:` block explaining why collapse is wrong.
+
+The manifest now carries:
+- `ac_shape_smells`: analyst-detected ACs whose shape looks like endpoint/handler/method enumeration.
+- `tickets[].justification?`: required when a smelly AC intentionally fans out into multiple tickets.
+
 ## Step 6: Synthesize Refined PRD
 Write `${SESSION_ROOT}/prd_refined.md`. Rules:
 1. Preserve structure, additive over rewriting
@@ -171,6 +179,10 @@ links:
 - [ ] [Project-specific checks]
 ## Exit State / ## NOT in Scope
 ```
+
+When decomposing an AC listed in `refinement_manifest.json#ac_shape_smells`, produce exactly one of:
+- One parametrized ticket with a universal-quantifier title and an acceptance test that uses `describe.each([...])` over the enumerated cases.
+- Multiple tickets where each matching manifest entry includes `justification: "// JUSTIFICATION: ..."` with a concrete reason the work cannot be collapsed.
 
 ### 7d: Create Wiring Ticket
 

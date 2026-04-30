@@ -79,6 +79,47 @@ export function buildRefinementEnv(base = process.env) {
 }
 // Tracks all active worker subprocesses so the signal handler can kill them.
 const activeWorkerProcs = new Set();
+const AC_SHAPE_PROMPT_SECTION = `## AC-Shape Smell Pass
+
+Before finalizing your analysis, inspect every acceptance criterion for endpoint-enumeration shape:
+- The AC headline lacks a universal quantifier: "all", "every", or "for any".
+- The AC body has 3 or more bullets naming distinct endpoints, handlers, or methods.
+- Those bullets repeat the same predicate.
+
+For every matching AC, either collapse the decomposition to one parametrized ticket or justify why multiple tickets are necessary.
+
+Emit a machine-readable section exactly named \`## ac_shape_smells\`. If no smells exist, emit empty arrays. The JSON shape is:
+\`\`\`json
+{
+  "ac_shape_smells": [
+    {
+      "ac_id": "AC-EXAMPLE-01",
+      "headline": "Original AC headline",
+      "evidence": ["bullet or PRD reference"],
+      "targets": ["endpointOrHandlerA", "endpointOrHandlerB", "endpointOrHandlerC"],
+      "repeated_predicate": "same predicate repeated across targets",
+      "ticket_ids": ["ticket-id-if-known"]
+    }
+  ],
+  "tickets": [
+    {
+      "id": "ticket-id",
+      "title": "All handlers enforce the shared invariant",
+      "source_ac_ids": ["AC-EXAMPLE-01"],
+      "acceptance_test": "describe.each([...]) covers every enumerated target",
+      "justification": "// JUSTIFICATION: Required only when this smelly AC intentionally fans out into multiple tickets."
+    }
+  ]
+}
+\`\`\``;
+const TICKET_COMPLEXITY_PROMPT_SECTION = `## Ticket Complexity Classification
+
+For each ticket, assign a complexity_tier in the frontmatter:
+- trivial: Single-file text change, no logic, no tests needed (prompt edits, config tweaks)
+- small: 1-2 files, straightforward logic, type-only or minimal tests
+- medium: 2-4 files, moderate logic, requires unit tests
+- large: 4+ files, complex integration, multiple test files, cross-cutting concerns
+`;
 const WORKER_ROLES = [
     { id: 'requirements' },
     { id: 'codebase' },
@@ -262,15 +303,9 @@ ${content}
     const cycleNote = cycle > 1
         ? `\n**THIS IS CYCLE ${cycle}** — you are deepening a previous analysis. Your output should be MORE SPECIFIC, MORE EVIDENCE-BACKED, and CROSS-REFERENCED with other analysts' findings.\n`
         : '';
-    const tierClassification = `## Ticket Complexity Classification
+    const outputInstructions = `${TICKET_COMPLEXITY_PROMPT_SECTION}
+${AC_SHAPE_PROMPT_SECTION}
 
-For each ticket, assign a complexity_tier in the frontmatter:
-- trivial: Single-file text change, no logic, no tests needed (prompt edits, config tweaks)
-- small: 1-2 files, straightforward logic, type-only or minimal tests
-- medium: 2-4 files, moderate logic, requires unit tests
-- large: 4+ files, complex integration, multiple test files, cross-cutting concerns
-`;
-    const outputInstructions = `${tierClassification}
 ## Your Output
 
 Write ALL findings to this file: ${outputFile}
@@ -295,6 +330,11 @@ Use this EXACT structure:
 
 ## Minor Issues (P2 — Nice to Fix)
 - [Brief description]
+
+## ac_shape_smells
+\`\`\`json
+{ "ac_shape_smells": [], "tickets": [] }
+\`\`\`
 
 ## Specific Recommendations
 [Concrete, actionable suggestions. For P0 gaps, provide example language the PRD author can paste in.]${cycle > 1 ? `
@@ -729,7 +769,165 @@ function printCycleSummary(results, cycles, cycle) {
 function printCompletionPanel(finalResults, allSuccess) {
     printMinimalPanel('Refinement Team Complete', Object.fromEntries(finalResults.map((r) => [r.roleId, r.success ? '✅ analysis written' : '❌ failed — check log'])), allSuccess ? 'GREEN' : 'YELLOW', '🥒');
 }
-function buildRefinementManifest(args, results) {
+const AC_SHAPE_SECTION_RE = /^##+\s+ac_shape_smells\s*$/im;
+const UNIVERSAL_QUANTIFIER_RE = /\b(?:all|every|for any|each)\b/i;
+const JUSTIFICATION_RE = /\/\/\s*JUSTIFICATION:/i;
+const DESCRIBE_EACH_RE = /describe\.each\s*\(\s*\[/s;
+function asString(value) {
+    return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+function asStringArray(value) {
+    if (!Array.isArray(value))
+        return [];
+    return value.filter((item) => typeof item === 'string' && item.trim() !== '');
+}
+function normalizeAcShapeSmell(value, source_worker, source_file) {
+    if (typeof value !== 'object' || value === null)
+        return undefined;
+    const record = value;
+    const ac_id = asString(record.ac_id);
+    if (!ac_id)
+        return undefined;
+    return {
+        ac_id,
+        headline: asString(record.headline),
+        evidence: asStringArray(record.evidence),
+        targets: asStringArray(record.targets),
+        repeated_predicate: asString(record.repeated_predicate),
+        ticket_ids: asStringArray(record.ticket_ids),
+        source_worker,
+        source_file,
+    };
+}
+function normalizeTicketEntry(value, source_worker, source_file) {
+    if (typeof value !== 'object' || value === null)
+        return undefined;
+    const record = value;
+    const id = asString(record.id);
+    const title = asString(record.title);
+    if (!id || !title)
+        return undefined;
+    return {
+        id,
+        title,
+        source_ac_ids: asStringArray(record.source_ac_ids),
+        acceptance_test: asString(record.acceptance_test),
+        justification: asString(record.justification),
+        source_worker,
+        source_file,
+    };
+}
+function extractAcShapeJson(content) {
+    const sectionMatch = AC_SHAPE_SECTION_RE.exec(content);
+    if (!sectionMatch)
+        return undefined;
+    const afterHeading = content.slice(sectionMatch.index + sectionMatch[0].length);
+    const nextHeading = afterHeading.search(/\n##+\s+/);
+    const section = nextHeading === -1 ? afterHeading : afterHeading.slice(0, nextHeading);
+    const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(section);
+    const jsonText = fenced ? fenced[1] : section.trim();
+    if (!jsonText)
+        return undefined;
+    try {
+        return JSON.parse(jsonText);
+    }
+    catch {
+        return undefined;
+    }
+}
+export function parseAcShapeSection(content, source_worker, source_file) {
+    const parsed = extractAcShapeJson(content);
+    if (typeof parsed !== 'object' || parsed === null)
+        return { acShapeSmells: [], tickets: [] };
+    const record = parsed;
+    return {
+        acShapeSmells: Array.isArray(record.ac_shape_smells)
+            ? record.ac_shape_smells
+                .map((item) => normalizeAcShapeSmell(item, source_worker, source_file))
+                .filter((item) => item !== undefined)
+            : [],
+        tickets: Array.isArray(record.tickets)
+            ? record.tickets
+                .map((item) => normalizeTicketEntry(item, source_worker, source_file))
+                .filter((item) => item !== undefined)
+            : [],
+    };
+}
+function collectAcShapeData(results) {
+    const acShapeSmells = [];
+    const tickets = [];
+    for (const result of results.finalResults) {
+        const outputFile = path.join(results.refinementDir, `analysis_${result.roleId}.md`);
+        if (!fs.existsSync(outputFile))
+            continue;
+        const parsed = parseAcShapeSection(fs.readFileSync(outputFile, 'utf-8'), result.roleId, outputFile);
+        acShapeSmells.push(...parsed.acShapeSmells);
+        tickets.push(...parsed.tickets);
+    }
+    return { acShapeSmells, tickets };
+}
+function ticketsForSmell(smell, tickets) {
+    const explicitIds = new Set((smell.ticket_ids ?? []).filter((id) => id.trim() !== ''));
+    return tickets.filter((ticket) => {
+        if (explicitIds.size > 0 && explicitIds.has(ticket.id))
+            return true;
+        return ticket.source_ac_ids.includes(smell.ac_id);
+    });
+}
+function hasJustificationBlock(ticket) {
+    return ticket.justification !== undefined && JUSTIFICATION_RE.test(ticket.justification);
+}
+function isParametrizedTicket(ticket) {
+    return UNIVERSAL_QUANTIFIER_RE.test(ticket.title) && DESCRIBE_EACH_RE.test(ticket.acceptance_test ?? '');
+}
+export function evaluateAcShapeEnforcement(manifest) {
+    const violations = [];
+    for (const smell of manifest.ac_shape_smells) {
+        const matchingTickets = ticketsForSmell(smell, manifest.tickets);
+        if (matchingTickets.length === 0) {
+            violations.push({
+                ac_id: smell.ac_id,
+                reason: 'tagged as an AC-shape smell but no matching ticket entries were emitted',
+                ticket_ids: [],
+            });
+            continue;
+        }
+        if (matchingTickets.length === 1) {
+            const [ticket] = matchingTickets;
+            if (!isParametrizedTicket(ticket)) {
+                violations.push({
+                    ac_id: smell.ac_id,
+                    reason: 'single-ticket collapse lacks a universal-quantifier title or describe.each([...]) acceptance test',
+                    ticket_ids: [ticket.id],
+                });
+            }
+            continue;
+        }
+        const unjustified = matchingTickets.filter((ticket) => !hasJustificationBlock(ticket));
+        if (unjustified.length > 0) {
+            violations.push({
+                ac_id: smell.ac_id,
+                reason: 'multi-ticket decomposition lacks // JUSTIFICATION: blocks on every matching ticket',
+                ticket_ids: unjustified.map((ticket) => ticket.id),
+            });
+        }
+    }
+    return violations;
+}
+function runAcShapeEnforcement(manifest) {
+    const violations = evaluateAcShapeEnforcement(manifest);
+    if (violations.length === 0)
+        return 0;
+    process.stderr.write('[pickle-rick] AC-shape collapse-or-justify gate failed.\n');
+    process.stderr.write('[pickle-rick] Rewrite each AC as one invariant-shaped acceptance criterion, or add // JUSTIFICATION: blocks to every intentionally split ticket.\n');
+    for (const violation of violations) {
+        const tickets = violation.ticket_ids.length > 0 ? ` tickets=${violation.ticket_ids.join(',')}` : '';
+        process.stderr.write(`[pickle-rick] ${violation.ac_id}: ${violation.reason}${tickets}\n`);
+    }
+    return 2;
+}
+export function buildRefinementManifest(args, results) {
+    const shapeData = collectAcShapeData(results);
     return {
         prd_path: args.prdPath,
         refinement_dir: results.refinementDir,
@@ -737,6 +935,8 @@ function buildRefinementManifest(args, results) {
         cycles_requested: results.cyclesRequested,
         cycles_completed: results.allCycleResults.length,
         max_turns_per_worker: results.maxTurns,
+        ac_shape_smells: shapeData.acShapeSmells,
+        tickets: shapeData.tickets,
         workers: results.finalResults.map((r) => {
             const outputFile = path.join(results.refinementDir, `analysis_${r.roleId}.md`);
             return {
@@ -771,7 +971,11 @@ async function main() {
     const prdContent = await fs.promises.readFile(args.prdPath, 'utf-8');
     const cycleResults = await orchestrateCycles(args, settings, prdContent);
     const manifestPath = path.join(args.sessionDir, 'refinement_manifest.json');
-    await writeManifestAtomic(manifestPath, buildRefinementManifest(args, cycleResults));
+    const manifest = buildRefinementManifest(args, cycleResults);
+    await writeManifestAtomic(manifestPath, manifest);
+    const acShapeStatus = runAcShapeEnforcement(manifest);
+    if (acShapeStatus !== 0)
+        process.exit(acShapeStatus);
     const runtime = resolveRuntime(args, settings);
     const postRefinementGate = runAcPhaseGate({
         sessionDir: args.sessionDir,
