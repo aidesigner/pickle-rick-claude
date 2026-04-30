@@ -150,6 +150,8 @@ export const VALID_ACTIVITY_EVENTS = [
     'commit_pending_probe_fired',
     'codex_manager_relaunch',
     'readiness_failed_post_correction',
+    'archaeology_complete',
+    'archaeology_skipped',
 ];
 // ---------------------------------------------------------------------------
 // DOT Builder Types

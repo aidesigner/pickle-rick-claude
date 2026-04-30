@@ -337,6 +337,8 @@ export const VALID_ACTIVITY_EVENTS = [
   'commit_pending_probe_fired',
   'codex_manager_relaunch',
   'readiness_failed_post_correction',
+  'archaeology_complete',
+  'archaeology_skipped',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];
@@ -386,11 +388,17 @@ export interface ActivityEvent {
   commit_hash?: string;
   commit_message?: string;
   duration_min?: number;
+  duration_ms?: number;
   error?: string;
   iteration?: number;
   exit_type?: IterationExitType;
   original_prompt?: string;
   model?: string;
+  backend?: Backend;
+  project_type?: string;
+  bytes_out_utf8?: number;
+  tokens_in_estimated?: number;
+  tokens_out_estimated?: number;
   gate_payload?: Record<string, unknown>;
 }
 
