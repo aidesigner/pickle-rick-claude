@@ -6,6 +6,7 @@ import { auditSiblingAuthPreconditions } from './sibling-auth-audit.js';
 import { auditFrontendPropDrift } from './frontend-prop-drift-audit.js';
 import { walkDiff } from './diff-walker.js';
 import { auditRuleSetInvariants } from './rule-set-invariant-audit.js';
+import { auditDiffHygiene } from './diff-hygiene.js';
 export async function runCitadelAudit(options) {
     const report = buildCitadelAuditReport(options);
     if (!options.sessionDir && !options.reportPath)
@@ -31,12 +32,18 @@ export function buildCitadelAuditReport(options) {
     });
     const ruleSetInvariants = auditRuleSetInvariants(diff, { repoRoot, prdMarkdown });
     const crossPhase = readCrossPhaseFindings(options.sessionDir);
+    const crossPhaseReport = {
+        findings: crossPhase.findings,
+        summary: crossPhase.summary,
+    };
+    const diffHygiene = auditDiffHygiene(diff, { szechuanFindings: crossPhase.szechuan_findings });
     const findings = uniqueFindings([
         ...siblingAuth.findings.map((finding) => withFindingSource(finding, 'sibling_auth_preconditions')),
         ...frontendPropDrift.findings.map((finding) => withFindingSource(finding, 'frontend_prop_drift')),
         ...acShape.findings.map((finding) => withFindingSource(finding, 'ac_shape')),
         ...ruleSetInvariants.findings.map((finding) => withFindingSource(finding, 'rule_set_invariants')),
-        ...crossPhase.findings,
+        ...diffHygiene.findings.map((finding) => withFindingSource(finding, 'diff_hygiene')),
+        ...crossPhaseReport.findings,
     ]);
     const critical = findings.filter((finding) => finding.severity === 'Critical').length;
     const high = findings.filter((finding) => finding.severity === 'High').length;
@@ -54,7 +61,8 @@ export function buildCitadelAuditReport(options) {
             frontend_prop_drift: frontendPropDrift,
             ac_shape: acShape,
             rule_set_invariants: ruleSetInvariants,
-            cross_phase: crossPhase,
+            diff_hygiene: diffHygiene,
+            cross_phase: crossPhaseReport,
         },
         findings,
         decision_required: acShape.decisionsRequired,
@@ -91,6 +99,7 @@ function readCrossPhaseFindings(sessionDir) {
             duplicate_ids_renamed: 0,
             anatomy_park_missing: anatomyArtifact.missing,
         },
+        szechuan_findings: szechuanFindings.findings,
     };
 }
 function readPhaseFindings(sessionDir, source, sourceFile) {

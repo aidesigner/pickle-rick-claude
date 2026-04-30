@@ -6,6 +6,7 @@ import { auditSiblingAuthPreconditions, SiblingAuthAuditReport } from './sibling
 import { auditFrontendPropDrift, FrontendPropDriftReport } from './frontend-prop-drift-audit.js';
 import { walkDiff } from './diff-walker.js';
 import { auditRuleSetInvariants, RuleSetInvariantReport } from './rule-set-invariant-audit.js';
+import { auditDiffHygiene, DiffHygieneReport } from './diff-hygiene.js';
 
 type CitadelSeverity = 'Critical' | 'High' | 'Medium' | 'Low';
 
@@ -33,6 +34,10 @@ export interface CrossPhaseFindingsReport {
   };
 }
 
+interface CrossPhaseReadResult extends CrossPhaseFindingsReport {
+  szechuan_findings: CrossPhaseFinding[];
+}
+
 export interface CitadelAuditOptions {
   prdPath: string;
   diffRange: string;
@@ -52,6 +57,7 @@ export interface CitadelAuditReport {
     frontend_prop_drift: FrontendPropDriftReport;
     ac_shape: AcShapeAuditReport;
     rule_set_invariants: RuleSetInvariantReport;
+    diff_hygiene: DiffHygieneReport;
     cross_phase: CrossPhaseFindingsReport;
   };
   findings: FindingLike[];
@@ -92,12 +98,18 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
   });
   const ruleSetInvariants = auditRuleSetInvariants(diff, { repoRoot, prdMarkdown });
   const crossPhase = readCrossPhaseFindings(options.sessionDir);
+  const crossPhaseReport: CrossPhaseFindingsReport = {
+    findings: crossPhase.findings,
+    summary: crossPhase.summary,
+  };
+  const diffHygiene = auditDiffHygiene(diff, { szechuanFindings: crossPhase.szechuan_findings });
   const findings = uniqueFindings([
     ...siblingAuth.findings.map((finding) => withFindingSource(finding, 'sibling_auth_preconditions')),
     ...frontendPropDrift.findings.map((finding) => withFindingSource(finding, 'frontend_prop_drift')),
     ...acShape.findings.map((finding) => withFindingSource(finding, 'ac_shape')),
     ...ruleSetInvariants.findings.map((finding) => withFindingSource(finding, 'rule_set_invariants')),
-    ...crossPhase.findings,
+    ...diffHygiene.findings.map((finding) => withFindingSource(finding, 'diff_hygiene')),
+    ...crossPhaseReport.findings,
   ]);
   const critical = findings.filter((finding) => finding.severity === 'Critical').length;
   const high = findings.filter((finding) => finding.severity === 'High').length;
@@ -116,7 +128,8 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
       frontend_prop_drift: frontendPropDrift,
       ac_shape: acShape,
       rule_set_invariants: ruleSetInvariants,
-      cross_phase: crossPhase,
+      diff_hygiene: diffHygiene,
+      cross_phase: crossPhaseReport,
     },
     findings,
     decision_required: acShape.decisionsRequired,
@@ -135,7 +148,7 @@ function stableJson(value: CitadelAuditReport): string {
   return JSON.stringify(value, null, 2);
 }
 
-function readCrossPhaseFindings(sessionDir: string | undefined): CrossPhaseFindingsReport {
+function readCrossPhaseFindings(sessionDir: string | undefined): CrossPhaseReadResult {
   const anatomyArtifact = readPhaseFindings(sessionDir, 'anatomy-park', 'anatomy-park.json');
   const anatomyFindings = anatomyArtifact.findings;
   const szechuanFindings = readPhaseFindings(sessionDir, 'szechuan-sauce', 'szechuan-sauce.json');
@@ -156,6 +169,7 @@ function readCrossPhaseFindings(sessionDir: string | undefined): CrossPhaseFindi
       duplicate_ids_renamed: 0,
       anatomy_park_missing: anatomyArtifact.missing,
     },
+    szechuan_findings: szechuanFindings.findings,
   };
 }
 
