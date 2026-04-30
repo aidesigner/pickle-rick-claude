@@ -91,3 +91,45 @@ Compiled TS → JS lives in `extension/services/`, `extension/bin/`, `extension/
 - `src/services/convergence-gate.ts` — INVARIANT: baseline JSON reads recover dead tmp, baseline captures write atomically, and scope matching keeps workspace/package failures in-scope. BREAKS: stale baselines false-green regressions or gates crash. ENFORCE: extension/tests/services/convergence-gate-baseline.test.js, extension/tests/services/convergence-gate-workspaces.test.js.
 - `tests/test-registration-hygiene.test.js` — INVARIANT: recursive test discovery requires an explicit allowlist for skipped nested tests. BREAKS: new nested tests silently miss npm test. ENFORCE: extension/tests/test-registration-hygiene.test.js.
 - `src/lib/engine-keys-registry.ts` — INVARIANT: registry JSON fields are runtime-validated string arrays. BREAKS: frame analyzer crashes or misclassifies context keys. ENFORCE: extension/tests/engine-keys-registry.test.js.
+
+## state.json Field Invariants
+
+- INVARIANT: `active` is the session liveness flag; owners set it deliberately and recovery demotes dead owners. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `working_dir` is the canonical project directory and must come from recovered state before dispatch. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `step` advances only through lifecycle transitions understood by runners and status. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `iteration` is the current manager-loop counter and remains a finite integer. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `max_iterations` is a positive integer budget for manager loops. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `max_time_minutes` is a positive integer wall-clock budget. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `worker_timeout_seconds` is a positive integer worker budget. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `start_time_epoch` is the numeric epoch used for elapsed-time gates. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `completion_promise` is nullable completion evidence and is never used as the sole state authority. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `original_prompt` preserves the launch request for worker prompts and reports. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `current_ticket` is the nullable ticket pointer and changes only through ticket lifecycle operations. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `history` is append-only lifecycle trace data. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `started_at` is the session start timestamp and remains parseable for recency ranking. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `session_dir` is the canonical session path written at setup. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `tmux_mode` records whether the session is controlled by tmux orchestration. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `min_iterations` is an optional non-negative lower bound for convergence. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `command_template` is the optional manager command replay template. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `chain_meeseeks` is an optional boolean follow-up review flag. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `schema_version` matches the current state schema after migration. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `prd_path` is the optional PRD path consumed by pipeline and citadel phases. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `start_commit` is the optional base commit consumed by diff-based phases. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `pid` is the owning process id when a runner claims liveness. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `consecutive_short_responses` counts degenerate manager replies and resets on substantive output. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `phases_entered` is a monotonically extending phase-refresh ledger. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `activity` stores append-only per-session activity records. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `backend` is the worker implementation backend and falls back only through documented precedence. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `teams_mode` gates harness-team spawning and defaults off. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `max_parallel` is the optional positive worker concurrency cap. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `false_epic_completed_count` tracks repeated false completion claims for one ticket. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `false_epic_completed_ticket` ties false completion counts to the ticket that produced them. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `effort` is the optional codex reasoning-effort value. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `codex_manager_relaunch_count` is capped per state file by defaults. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `archaeology` is nullable project-context metadata. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `tickets_version` increments when course correction changes ticket state. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `last_course_correction` stores nullable metadata for the latest applied correction. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `phase_personas_active` records whether phase-persona prompts are active. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `flags` stores optional persisted runtime feature flags. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `readiness` stores optional readiness-gate state and cycle history. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `codex_version_seen` stores nullable codex version smoke-check evidence. ENFORCE: extension/tests/state-field-invariants.test.js.

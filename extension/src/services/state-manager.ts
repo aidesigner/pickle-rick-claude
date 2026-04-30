@@ -738,9 +738,11 @@ export async function withLock<T>(
 
   for (;;) {
     try {
-      const fd = fs.openSync(lp, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY);
-      fs.writeSync(fd, JSON.stringify({ pid: process.pid, ts: Date.now() }));
-      fs.closeSync(fd);
+      await fs.promises.writeFile(
+        lp,
+        JSON.stringify({ pid: process.pid, ts: Date.now() }),
+        { flag: 'wx' },
+      );
       const waited = Date.now() - start;
       opts.onAcquire?.(waited);
       break;
@@ -762,6 +764,6 @@ export async function withLock<T>(
   try {
     return await fn();
   } finally {
-    try { fs.unlinkSync(lp); } catch { /* already gone — harmless */ }
+    try { await fs.promises.unlink(lp); } catch { /* already gone — harmless */ }
   }
 }
