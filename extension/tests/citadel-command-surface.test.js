@@ -89,7 +89,7 @@ describe('citadel command surface', () => {
   test('pickle teams mode runs readiness before first Agent call', () => {
     const phaseStart = pickle.indexOf('## Phase 3.B');
     const readinessIndex = pickle.indexOf('check-readiness.js', phaseStart);
-    const spawnIndex = pickle.indexOf('2. **Spawn**: call `Agent`', phaseStart);
+    const spawnIndex = pickle.indexOf('3. **Spawn**: make six distinct sequential `Agent` calls', phaseStart);
 
     assert.ok(phaseStart >= 0, 'missing Phase 3.B section');
     assert.ok(readinessIndex > phaseStart, 'missing Phase 3.B readiness command');

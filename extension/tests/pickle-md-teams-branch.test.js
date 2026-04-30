@@ -19,8 +19,44 @@ test('pickle.md: references TeamCreate, TeamDelete, and Agent primitives', () =>
     assert.match(text, /\bAgent\b/, 'should mention the Agent tool');
 });
 
-test('pickle.md: references morty-implementer subagent', () => {
-    assert.match(text, /morty-implementer/, 'should spawn morty-implementer subagent');
+test('pickle.md: dispatches all six phase subagents', () => {
+    for (const subagent of [
+        'morty-phase-researcher',
+        'morty-phase-planner',
+        'morty-phase-implementer',
+        'morty-phase-verifier',
+        'morty-phase-reviewer',
+        'morty-phase-simplifier',
+    ]) {
+        assert.match(text, new RegExp(subagent), `should spawn ${subagent}`);
+    }
+});
+
+test('pickle.md: preflights phase persona config and installed agent files', () => {
+    const phaseStart = text.indexOf('## Phase 3.B');
+    const preflight = text.indexOf('**Phase dispatch preflight**', phaseStart);
+    const spawn = text.indexOf('3. **Spawn**: make six distinct sequential `Agent` calls', phaseStart);
+
+    assert.ok(preflight > phaseStart, 'should include phase dispatch preflight');
+    assert.ok(spawn > preflight, 'preflight should happen before phase Agent calls');
+    assert.match(text.slice(preflight, spawn), /phase-personas\.json/);
+    assert.match(text.slice(preflight, spawn), /version >= 1/);
+    assert.match(text.slice(preflight, spawn), /~\/\.claude\/agents\/\.pickle-managed\/<subagent_type>\.md/);
+    assert.match(text.slice(preflight, spawn), /phase_dispatch_preflight_failed/);
+    assert.match(text.slice(preflight, spawn), /bash install\.sh && \/pickle-retry T<id>/);
+});
+
+test('pickle.md: phase Agent calls are ordered before validation', () => {
+    const phaseStart = text.indexOf('## Phase 3.B');
+    const validate = text.indexOf('validate-teams-ticket', phaseStart);
+    let cursor = phaseStart;
+
+    for (const phase of ['research', 'plan', 'implement', 'verify', 'review', 'refactor']) {
+        const index = text.indexOf(`\`${phase}\` \u2192`, cursor);
+        assert.ok(index > cursor, `${phase} phase dispatch should appear in order`);
+        assert.ok(index < validate, `${phase} phase dispatch should appear before validation`);
+        cursor = index;
+    }
 });
 
 test('pickle.md: drives completion via TaskUpdate notifications', () => {
