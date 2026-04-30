@@ -126,6 +126,27 @@ test('setup initializeNewSession: fresh PRD-backed state records prd_path and st
     }
 });
 
+test('setup CLI: fresh tmux PRD session persists prd_path and start_commit in state.json', () => {
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-citadel-cli-data-'));
+    const prdPath = path.join(dataRoot, 'citadel-prd.md');
+    fs.writeFileSync(prdPath, '# Citadel PRD\n');
+
+    try {
+        const output = runSetupWithEnv(['--tmux', '--task', prdPath], { PICKLE_DATA_ROOT: dataRoot });
+        const match = output.match(/SESSION_ROOT=(.+)/);
+        assert.ok(match, `SESSION_ROOT not found in output:\n${output}`);
+
+        const sessionRoot = match[1].trim();
+        const persisted = JSON.parse(fs.readFileSync(path.join(sessionRoot, 'state.json'), 'utf-8'));
+        const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf-8' }).trim();
+
+        assert.equal(persisted.prd_path, prdPath);
+        assert.equal(persisted.start_commit, head);
+    } finally {
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
 test('setup initializeNewSession: session id uses local day, not UTC day', () => {
     const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-local-day-data-'));
     const previousDataRoot = process.env.PICKLE_DATA_ROOT;
