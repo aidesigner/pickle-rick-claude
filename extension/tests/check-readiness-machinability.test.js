@@ -46,6 +46,19 @@ function runReadiness(sessionDir, repoRoot, env = {}) {
     });
 }
 
+function runHistory(sessionDir, last) {
+    const args = [
+        BIN,
+        '--session-dir', sessionDir,
+        '--history',
+    ];
+    if (last !== undefined) args.push('--last', String(last));
+    return spawnSync(process.execPath, args, {
+        encoding: 'utf-8',
+        timeout: 10000,
+    });
+}
+
 function readinessFiles(sessionDir) {
     return fs.readdirSync(sessionDir).filter((file) => /^readiness_/.test(file)).sort();
 }
@@ -54,6 +67,12 @@ test('check-readiness: prose-only AC exits 2, suggests gaps, writes readiness re
     const sessionDir = tmpDir();
     try {
         writeTicket(sessionDir, 'aaa111', ['The UI must be intuitive.']);
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            readiness: {
+                cycle_history: [],
+            },
+        }));
         const result = runReadiness(sessionDir, process.cwd());
         assert.equal(result.status, 2);
         const files = readinessFiles(sessionDir);
@@ -61,6 +80,11 @@ test('check-readiness: prose-only AC exits 2, suggests gaps, writes readiness re
         const report = fs.readFileSync(path.join(sessionDir, files[0]), 'utf-8');
         assert.match(report, /suggested_analyst: gaps/);
         assert.match(report, /must be intuitive/i);
+        const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+        assert.equal(state.readiness.cycle_history.length, 1);
+        assert.equal(state.readiness.cycle_history[0].cycle, 1);
+        assert.equal(state.readiness.cycle_history[0].status, 'failed');
+        assert.equal(state.readiness.cycle_history[0].suggested_analyst, 'gaps');
     } finally {
         fs.rmSync(sessionDir, { recursive: true, force: true });
     }
@@ -98,6 +122,55 @@ test('check-readiness: fourth failed cycle writes escalation report', () => {
         const result = runReadiness(sessionDir, process.cwd());
         assert.equal(result.status, 2);
         assert.ok(readinessFiles(sessionDir).some((file) => file.startsWith('readiness_escalation_')));
+        const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+        assert.equal(state.readiness.cycle_history.length, 3);
+    } finally {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+});
+
+test('check-readiness: --history prints readiness cycle table', () => {
+    const sessionDir = tmpDir();
+    try {
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            readiness: {
+                cycle_history: [
+                    {
+                        cycle: 1,
+                        status: 'failed',
+                        suggested_analyst: 'gaps',
+                        user_action: 'recycled',
+                        timestamp: '2026-04-29T12:00:00.000Z',
+                    },
+                ],
+            },
+        }));
+        const result = runHistory(sessionDir);
+        assert.equal(result.status, 0);
+        assert.match(result.stdout, /\| Cycle \| Status \| Suggested analyst \| User action \| Timestamp \|/);
+        assert.match(result.stdout, /\| 1 \| failed \| gaps \| recycled \| 2026-04-29T12:00:00\.000Z \|/);
+    } finally {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+});
+
+test('check-readiness: --history --last limits printed rows', () => {
+    const sessionDir = tmpDir();
+    try {
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            readiness: {
+                cycle_history: [
+                    { cycle: 1, status: 'failed', suggested_analyst: 'gaps', user_action: null, timestamp: '2026-04-29T12:00:00.000Z' },
+                    { cycle: 2, status: 'failed', suggested_analyst: 'codebase', user_action: null, timestamp: '2026-04-29T13:00:00.000Z' },
+                ],
+            },
+        }));
+        const result = runHistory(sessionDir, 1);
+        assert.equal(result.status, 0);
+        assert.doesNotMatch(result.stdout, /\| 1 \| failed \| gaps /);
+        assert.match(result.stdout, /\| 2 \| failed \| codebase /);
     } finally {
         fs.rmSync(sessionDir, { recursive: true, force: true });
     }

@@ -7,22 +7,35 @@ import { logActivity } from '../services/activity-logger.js';
 import { listLinearTicketFiles } from '../services/artifact-validation.js';
 import { computeOneHop } from '../services/scope-resolver.js';
 import { formatLocalDateKey, safeErrorMessage } from '../services/pickle-utils.js';
+import { StateManager } from '../services/state-manager.js';
 const SNAPSHOT_FILE = 'readiness_snapshot.json';
+const READINESS_MAX_RECYCLE_CYCLES = 3;
+const DEFAULT_HISTORY_LIMIT = 10;
 const MACHINE_HINT_RE = /\b(\d+(?:\.\d+)?%?|exit\s+\d+|<\s*\d+|>\s*\d+|<=\s*\d+|>=\s*\d+|under\s+\d+|within\s+\d+|exact(?:ly)?|regex|matches?|JSON|field|file exists|writes?|emits?|test|describe\.each|node --test|npm test|tsc|eslint|table|input\/output)\b/i;
 const PURE_PROSE_RE = /\b(must|should)\s+(?:be|feel)\s+(?:intuitive|performant|fast|easy|simple|clear|usable|nice|good|robust|reliable)\b/i;
 const PATH_RE = /\b(?:[\w.-]+\/)+[\w.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|yml|yaml|sh|py|css|scss|html)\b/g;
 const SYMBOL_RE = /\b[A-Z][A-Za-z0-9]*(?:\.[A-Za-z_$][\w$]*)+\b|\b[A-Za-z_$][\w$]*\(\)/g;
 function usage() {
-    console.error('Usage: node check-readiness.js --session-dir <dir> [--repo-root <dir>] [--manifest <file>] [--machinability-only] [--contract-only]');
+    console.error('Usage: node check-readiness.js --session-dir <dir> [--repo-root <dir>] [--manifest <file>] [--machinability-only] [--contract-only] [--history [--last N]]');
     process.exit(1);
 }
 function parseArgs(argv) {
     const sessionIndex = argv.indexOf('--session-dir');
     const repoIndex = argv.indexOf('--repo-root');
     const manifestIndex = argv.indexOf('--manifest');
+    const lastIndex = argv.indexOf('--last');
     const sessionDir = sessionIndex >= 0 ? argv[sessionIndex + 1] : undefined;
     if (!sessionDir || sessionDir.startsWith('--'))
         usage();
+    let last = DEFAULT_HISTORY_LIMIT;
+    if (lastIndex >= 0) {
+        const rawLast = argv[lastIndex + 1];
+        if (!rawLast || rawLast.startsWith('--'))
+            usage();
+        last = Number.parseInt(rawLast, 10);
+        if (!Number.isInteger(last) || last < 1)
+            usage();
+    }
     const repoRoot = repoIndex >= 0 && argv[repoIndex + 1] && !argv[repoIndex + 1].startsWith('--')
         ? argv[repoIndex + 1]
         : process.cwd();
@@ -35,6 +48,8 @@ function parseArgs(argv) {
         manifest,
         machinabilityOnly: argv.includes('--machinability-only'),
         contractOnly: argv.includes('--contract-only'),
+        history: argv.includes('--history'),
+        last,
     };
 }
 export function extractAcceptanceCriteria(content) {
@@ -334,10 +349,50 @@ function readState(sessionDir) {
         return {};
     }
 }
+function writeState(sessionDir, state) {
+    const statePath = path.join(sessionDir, 'state.json');
+    if (!fs.existsSync(statePath))
+        return;
+    const sm = new StateManager();
+    sm.update(statePath, (current) => {
+        Object.assign(current, state);
+    });
+}
+function readinessCycleHistory(state) {
+    const history = state.readiness?.cycle_history;
+    if (!Array.isArray(history))
+        return [];
+    return history.filter(isRecord).map((entry, index) => ({
+        cycle: typeof entry.cycle === 'number' && Number.isFinite(entry.cycle) ? entry.cycle : index + 1,
+        status: typeof entry.status === 'string' ? entry.status : '',
+        suggested_analyst: typeof entry.suggested_analyst === 'string' ? entry.suggested_analyst : null,
+        user_action: typeof entry.user_action === 'string' ? entry.user_action : null,
+        timestamp: typeof entry.timestamp === 'string' ? entry.timestamp : '',
+    }));
+}
 function readinessCycleCount(sessionDir, state) {
     if (Array.isArray(state.readiness?.cycle_history))
         return state.readiness.cycle_history.length;
     return fs.readdirSync(sessionDir).filter((file) => /^readiness_\d{4}-\d{2}-\d{2}/.test(file)).length;
+}
+function appendReadinessCycle(sessionDir, state, findings, escalated) {
+    if (escalated)
+        return;
+    const existing = readinessCycleHistory(state);
+    if (existing.length >= READINESS_MAX_RECYCLE_CYCLES)
+        return;
+    const next = {
+        cycle: existing.length + 1,
+        status: 'failed',
+        suggested_analyst: findings[0]?.analyst ?? null,
+        user_action: null,
+        timestamp: new Date().toISOString(),
+    };
+    state.readiness = {
+        ...(isRecord(state.readiness) ? state.readiness : {}),
+        cycle_history: [...existing, next].slice(0, READINESS_MAX_RECYCLE_CYCLES),
+    };
+    writeState(sessionDir, state);
 }
 function hashFile(file) {
     return createHash('sha256').update(fs.readFileSync(file)).digest('hex');
@@ -442,8 +497,9 @@ export function runReadiness(args) {
         writeSnapshot(args.sessionDir, listLinearTicketFiles(args.sessionDir), ticketsVersion);
         return { exitCode: 0, findings, delta: selected.delta, elapsed_ms: Date.now() - started };
     }
-    const escalation = readinessCycleCount(args.sessionDir, state) >= 3;
+    const escalation = readinessCycleCount(args.sessionDir, state) >= READINESS_MAX_RECYCLE_CYCLES;
     const reportPath = writeReport(args.sessionDir, tickets, findings, escalation);
+    appendReadinessCycle(args.sessionDir, state, findings, escalation);
     if (selected.delta) {
         logActivity({
             event: 'readiness_failed_post_correction',
@@ -454,9 +510,29 @@ export function runReadiness(args) {
     }
     return { exitCode: 2, findings, reportPath, delta: selected.delta, elapsed_ms: Date.now() - started };
 }
+export function runHistory(args) {
+    const history = readinessCycleHistory(readState(args.sessionDir)).slice(-args.last);
+    const rows = history.map((entry) => [
+        entry.cycle,
+        entry.status || '',
+        entry.suggested_analyst ?? '',
+        entry.user_action ?? '',
+        entry.timestamp || '',
+    ]);
+    return [
+        '| Cycle | Status | Suggested analyst | User action | Timestamp |',
+        '|---:|---|---|---|---|',
+        ...(rows.length > 0 ? rows.map((row) => `| ${row.join(' | ')} |`) : ['|  |  |  |  |  |']),
+        '',
+    ].join('\n');
+}
 function main() {
     const args = parseArgs(process.argv.slice(2));
     try {
+        if (args.history) {
+            process.stdout.write(runHistory(args));
+            process.exit(0);
+        }
         const result = runReadiness(args);
         process.stdout.write(`${JSON.stringify({
             status: result.exitCode === 0 ? 'pass' : 'fail',
