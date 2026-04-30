@@ -70,6 +70,20 @@ function writeMigrationStateFile(statePath: string, state: State): void {
   }
 }
 
+const V3_STATE_SHAPE_MARKERS = [
+  'prd_path',
+  'start_commit',
+  'backend',
+  'teams_mode',
+  'max_parallel',
+  'effort',
+  'codex_manager_relaunch_count',
+] as const;
+
+function presentV3StateShapeMarkers(state: object): string[] {
+  return V3_STATE_SHAPE_MARKERS.filter(field => Object.prototype.hasOwnProperty.call(state, field));
+}
+
 function isStateSnapshotNewer(
   currentState: { iteration?: unknown },
   currentMtimeMs: number,
@@ -150,6 +164,8 @@ export class StateManager {
       );
     }
 
+    this.assertReadableMissingSchemaShape(statePath, state);
+
     // --- Recovery protocol ---
     this.recoverOrphanTmpFiles(statePath, state);
 
@@ -158,6 +174,20 @@ export class StateManager {
     this.recoverStaleActiveFlag(statePath, state);
 
     return state;
+  }
+
+  private assertReadableMissingSchemaShape(statePath: string, state: State): void {
+    if (state.schema_version !== undefined || this.opts.schemaVersion >= 3) return;
+
+    const markers = presentV3StateShapeMarkers(state);
+    if (markers.length === 0) return;
+
+    throw new StateError(
+      'SCHEMA_MISMATCH',
+      `State file ${statePath} appears to use schema v3 fields (${markers.join(', ')}) but is missing schema_version; ` +
+      `this deployment supports schema_version ${this.opts.schemaVersion}. ` +
+      'Recover by running a current Pickle Rick runtime or restoring a pre-v3 state backup.',
+    );
   }
 
   private migrateSchema(statePath: string, state: State): void {

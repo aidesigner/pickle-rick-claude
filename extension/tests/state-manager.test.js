@@ -169,6 +169,39 @@ test('StateManager.read: throws SCHEMA_MISMATCH for future schema version', () =
   });
 });
 
+test('StateManager.read: v3-shaped missing schema fails recoverably on v2-aware deployment', () => {
+  withDir((dir) => {
+    const sm = new StateManager({ schemaVersion: 2 });
+    const sp = path.join(dir, 'state.json');
+    const state = makeState({
+      prd_path: path.join(dir, 'prd.md'),
+      start_commit: 'abc123',
+    });
+    delete state.schema_version;
+    fs.writeFileSync(sp, JSON.stringify(state, null, 2));
+
+    const tmpFile = `${sp}.tmp.99999999`;
+    fs.writeFileSync(tmpFile, JSON.stringify(makeState({ iteration: 10, schema_version: 2 })));
+
+    try {
+      sm.read(sp);
+      assert.fail('should have thrown');
+    } catch (err) {
+      assert.ok(err instanceof StateError);
+      assert.equal(err.code, 'SCHEMA_MISMATCH');
+      assert.match(err.message, /schema v3 fields/);
+      assert.match(err.message, /prd_path/);
+      assert.match(err.message, /start_commit/);
+      assert.match(err.message, /supports schema_version 2/);
+      assert.match(err.message, /Recover by running a current Pickle Rick runtime or restoring a pre-v3 state backup/);
+    }
+
+    const onDisk = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+    assert.equal(onDisk.schema_version, undefined, 'v2-aware read must not stamp schema_version on v3-shaped state');
+    assert.equal(fs.existsSync(tmpFile), true, 'v3-shaped base must fail before tmp recovery mutates siblings');
+  });
+});
+
 test('StateManager.read: migrates past schema version to current schema', () => {
   withDir((dir) => {
     const sm = new StateManager({ schemaVersion: 3 });
