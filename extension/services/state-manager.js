@@ -31,7 +31,7 @@ export class SchemaVersionDeployDriftError extends StateError {
         super('SCHEMA_DEPLOY_DRIFT', `[state-manager] FATAL: deployed STATE_MANAGER_DEFAULTS.schemaVersion=${deployedVersion} ` +
             `does not match LATEST_SCHEMA_VERSION=${sourceVersion}. ` +
             `This usually means a stale deploy. ` +
-            `Fix: cd /Users/gregorydickson/loanlight/pickle-rick/pickle-rick-claude && bash install.sh`);
+            `Fix: from your pickle-rick-claude source repo, run: bash install.sh`);
         this.name = 'SchemaVersionDeployDriftError';
         this.deployedVersion = deployedVersion;
         this.sourceVersion = sourceVersion;

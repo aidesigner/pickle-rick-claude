@@ -5,7 +5,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { StateManager, writeActivityEntry, safeDeactivate, assertSchemaVersionDeployParity } from '../services/state-manager.js';
+import { StateManager, writeActivityEntry, safeDeactivate, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import {
   StateError,
   LockError,
@@ -890,6 +890,16 @@ test('assertSchemaVersionDeployParity: returns normally when versions match', ()
   // the function in the current process must be a no-op (no throw, no exit).
   assert.equal(STATE_MANAGER_DEFAULTS.schemaVersion, LATEST_SCHEMA_VERSION);
   assert.doesNotThrow(() => assertSchemaVersionDeployParity());
+});
+
+test('SchemaVersionDeployDriftError: message contains no absolute or home-relative path', () => {
+  const err = new SchemaVersionDeployDriftError(2, 3);
+  // Must not ship any user-specific absolute path or home-dir shorthand.
+  assert.doesNotMatch(err.message, /\/Users\//, 'message must not contain /Users/');
+  assert.doesNotMatch(err.message, /~\//, 'message must not contain ~/');
+  assert.doesNotMatch(err.message, /\$HOME/, 'message must not contain $HOME');
+  // The portable guidance must still be present.
+  assert.match(err.message, /bash install\.sh/);
 });
 
 test('assertSchemaVersionDeployParity: exits 1 with actionable stderr on drift', () => {
