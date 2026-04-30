@@ -133,9 +133,11 @@ describe('runCitadelAudit frontend_prop_drift section', () => {
       const persisted = JSON.parse(fs.readFileSync(path.join(sessionDir, 'citadel_report.json'), 'utf-8'));
 
       assert.equal(report.exit_code, 1);
-      assert.equal(report.summary.findings, 1);
+      assert.equal(report.summary.findings, 2);
       assert.equal(report.summary.high, 1);
+      assert.equal(report.summary.low, 1);
       assert.equal(report.sections.frontend_prop_drift.findings.length, 1);
+      assert.equal(report.sections.cross_phase.findings[0].id, 'anatomy-park:missing');
       assert.equal(persisted.sections.frontend_prop_drift.findings[0].undeclaredProps[0], 'comparisonData');
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true });

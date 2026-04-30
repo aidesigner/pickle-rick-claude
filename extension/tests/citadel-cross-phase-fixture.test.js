@@ -47,7 +47,7 @@ function copyFixture(sessionDir) {
 }
 
 describe('citadel cross-phase fixture', () => {
-  test('merges anatomy-park and szechuan-sauce findings with unique top-level ids', async () => {
+  test('merges anatomy-park and szechuan-sauce findings without double-counting duplicate ids', async () => {
     const { repoRoot, base } = makeRepo();
     const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-cross-phase-session-'));
     try {
@@ -61,13 +61,15 @@ describe('citadel cross-phase fixture', () => {
       });
 
       const ids = report.findings.map((finding) => finding.id);
-      assert.equal(report.sections.cross_phase.findings.length, 5);
+      assert.equal(report.sections.cross_phase.findings.length, 4);
       assert.equal(new Set(ids).size, ids.length);
       assert.equal(report.sections.cross_phase.summary.anatomy_park, 3);
       assert.equal(report.sections.cross_phase.summary.szechuan_sauce, 2);
-      assert.equal(report.sections.cross_phase.summary.duplicate_ids_renamed, 1);
-      assert.ok(ids.includes('cross-phase-shared-id'));
-      assert.ok(ids.includes('szechuan-sauce:cross-phase-shared-id'));
+      assert.equal(report.sections.cross_phase.summary.duplicate_ids_deduped, 1);
+      assert.equal(report.sections.cross_phase.summary.duplicate_ids_renamed, 0);
+      assert.equal(report.sections.cross_phase.summary.anatomy_park_missing, false);
+      assert.equal(ids.filter((id) => id === 'cross-phase-shared-id').length, 1);
+      assert.ok(!ids.includes('szechuan-sauce:cross-phase-shared-id'));
       assert.equal(report.summary.critical, 1);
       assert.equal(report.summary.low, 1);
     } finally {
@@ -87,9 +89,15 @@ describe('citadel cross-phase fixture', () => {
         sessionDir,
       });
 
-      assert.deepEqual(report.sections.cross_phase.findings, []);
+      assert.equal(report.sections.cross_phase.findings.length, 1);
+      assert.equal(report.sections.cross_phase.findings[0].id, 'anatomy-park:missing');
+      assert.equal(report.sections.cross_phase.findings[0].severity, 'Low');
+      assert.equal(report.sections.cross_phase.summary.anatomy_park, 0);
+      assert.equal(report.sections.cross_phase.summary.szechuan_sauce, 0);
+      assert.equal(report.sections.cross_phase.summary.duplicate_ids_deduped, 0);
       assert.equal(report.sections.cross_phase.summary.duplicate_ids_renamed, 0);
-      assert.equal(report.findings.length, 0);
+      assert.equal(report.sections.cross_phase.summary.anatomy_park_missing, true);
+      assert.equal(report.findings.length, 1);
       assert.equal(report.exit_code, 0);
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true });

@@ -66,34 +66,43 @@ function stableJson(value) {
     return JSON.stringify(value, null, 2);
 }
 function readCrossPhaseFindings(sessionDir) {
-    const anatomyFindings = readPhaseFindings(sessionDir, 'anatomy-park', 'anatomy-park.json');
+    const anatomyArtifact = readPhaseFindings(sessionDir, 'anatomy-park', 'anatomy-park.json');
+    const anatomyFindings = anatomyArtifact.findings;
     const szechuanFindings = readPhaseFindings(sessionDir, 'szechuan-sauce', 'szechuan-sauce.json');
-    const findings = uniqueFindings([...anatomyFindings, ...szechuanFindings]);
+    const merged = dedupeCrossPhaseFindings([
+        ...anatomyFindings,
+        ...szechuanFindings.findings,
+    ]);
+    const findings = anatomyArtifact.missing
+        ? [missingAnatomyParkFinding(), ...merged.findings]
+        : merged.findings;
     return {
         findings,
         summary: {
-            anatomy_park: findings.filter((finding) => finding.source === 'anatomy-park').length,
-            szechuan_sauce: findings.filter((finding) => finding.source === 'szechuan-sauce').length,
-            duplicate_ids_renamed: findings.filter((finding) => finding.id !== finding.original_id).length,
+            anatomy_park: anatomyFindings.length,
+            szechuan_sauce: szechuanFindings.findings.length,
+            duplicate_ids_deduped: merged.duplicates,
+            duplicate_ids_renamed: 0,
+            anatomy_park_missing: anatomyArtifact.missing,
         },
     };
 }
 function readPhaseFindings(sessionDir, source, sourceFile) {
     if (!sessionDir)
-        return [];
+        return { findings: [], missing: sourceFile === 'anatomy-park.json' };
     const artifactPath = path.join(sessionDir, sourceFile);
     if (!existsSync(artifactPath))
-        return [];
+        return { findings: [], missing: sourceFile === 'anatomy-park.json' };
     let parsed;
     try {
         parsed = JSON.parse(readFileSync(artifactPath, 'utf-8'));
     }
     catch {
-        return [];
+        return { findings: [], missing: false };
     }
     if (!isRecord(parsed) || !Array.isArray(parsed.findings))
-        return [];
-    return parsed.findings.flatMap((finding) => {
+        return { findings: [], missing: false };
+    const findings = parsed.findings.flatMap((finding) => {
         if (!isRecord(finding) || typeof finding.id !== 'string' || !isSeverity(finding.severity))
             return [];
         return [{
@@ -105,6 +114,31 @@ function readPhaseFindings(sessionDir, source, sourceFile) {
                 source_file: sourceFile,
             }];
     });
+    return { findings, missing: false };
+}
+function missingAnatomyParkFinding() {
+    return {
+        id: 'anatomy-park:missing',
+        original_id: 'anatomy-park:missing',
+        severity: 'Low',
+        source: 'anatomy-park',
+        source_file: 'anatomy-park.json',
+        message: 'anatomy-park.json is absent; skipping Citadel pattern-replay safety-net input.',
+    };
+}
+function dedupeCrossPhaseFindings(findings) {
+    const seen = new Set();
+    const deduped = [];
+    let duplicates = 0;
+    for (const finding of findings) {
+        if (seen.has(finding.original_id)) {
+            duplicates += 1;
+            continue;
+        }
+        seen.add(finding.original_id);
+        deduped.push(finding);
+    }
+    return { findings: deduped, duplicates };
 }
 function uniqueFindings(findings) {
     const seen = new Set();
