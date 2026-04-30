@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { withLock } from '../state-manager.js';
 import { auditSiblingAuthPreconditions } from './sibling-auth-audit.js';
+import { auditFrontendPropDrift } from './frontend-prop-drift-audit.js';
 import { walkDiff } from './diff-walker.js';
 export async function runCitadelAudit(options) {
     const report = buildCitadelAuditReport(options);
@@ -19,9 +20,11 @@ export function buildCitadelAuditReport(options) {
     const repoRoot = path.resolve(options.repoRoot ?? process.cwd());
     const diff = walkDiff(options.diffRange, { repoRoot });
     const siblingAuth = auditSiblingAuthPreconditions(diff);
-    const critical = siblingAuth.findings.filter((finding) => finding.severity === 'Critical').length;
-    const high = siblingAuth.findings.filter((finding) => finding.severity === 'High').length;
-    const medium = siblingAuth.findings.filter((finding) => finding.severity === 'Medium').length;
+    const frontendPropDrift = auditFrontendPropDrift(diff);
+    const findings = [...siblingAuth.findings, ...frontendPropDrift.findings];
+    const critical = findings.filter((finding) => finding.severity === 'Critical').length;
+    const high = findings.filter((finding) => finding.severity === 'High').length;
+    const medium = findings.filter((finding) => finding.severity === 'Medium').length;
     const blockingFindings = critical + (options.strict ? high : 0);
     return {
         schema_version: '1.0',
@@ -30,9 +33,10 @@ export function buildCitadelAuditReport(options) {
         exit_code: blockingFindings > 0 ? 1 : 0,
         sections: {
             sibling_auth_preconditions: siblingAuth,
+            frontend_prop_drift: frontendPropDrift,
         },
         summary: {
-            findings: siblingAuth.findings.length,
+            findings: findings.length,
             critical,
             high,
             medium,

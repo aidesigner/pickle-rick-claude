@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { withLock } from '../state-manager.js';
 import { auditSiblingAuthPreconditions, SiblingAuthAuditReport } from './sibling-auth-audit.js';
+import { auditFrontendPropDrift, FrontendPropDriftReport } from './frontend-prop-drift-audit.js';
 import { walkDiff } from './diff-walker.js';
 
 export interface CitadelAuditOptions {
@@ -20,6 +21,7 @@ export interface CitadelAuditReport {
   exit_code: number;
   sections: {
     sibling_auth_preconditions: SiblingAuthAuditReport;
+    frontend_prop_drift: FrontendPropDriftReport;
   };
   summary: {
     findings: number;
@@ -46,9 +48,11 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
   const repoRoot = path.resolve(options.repoRoot ?? process.cwd());
   const diff = walkDiff(options.diffRange, { repoRoot });
   const siblingAuth = auditSiblingAuthPreconditions(diff);
-  const critical = siblingAuth.findings.filter((finding) => finding.severity === 'Critical').length;
-  const high = siblingAuth.findings.filter((finding) => finding.severity === 'High').length;
-  const medium = siblingAuth.findings.filter((finding) => finding.severity === 'Medium').length;
+  const frontendPropDrift = auditFrontendPropDrift(diff);
+  const findings = [...siblingAuth.findings, ...frontendPropDrift.findings];
+  const critical = findings.filter((finding) => finding.severity === 'Critical').length;
+  const high = findings.filter((finding) => finding.severity === 'High').length;
+  const medium = findings.filter((finding) => finding.severity === 'Medium').length;
   const blockingFindings = critical + (options.strict ? high : 0);
 
   return {
@@ -58,9 +62,10 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
     exit_code: blockingFindings > 0 ? 1 : 0,
     sections: {
       sibling_auth_preconditions: siblingAuth,
+      frontend_prop_drift: frontendPropDrift,
     },
     summary: {
-      findings: siblingAuth.findings.length,
+      findings: findings.length,
       critical,
       high,
       medium,
