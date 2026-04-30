@@ -5,6 +5,7 @@ import { auditAcShape, AcShapeAuditReport } from './ac-shape-audit.js';
 import { auditSiblingAuthPreconditions, SiblingAuthAuditReport } from './sibling-auth-audit.js';
 import { auditFrontendPropDrift, FrontendPropDriftReport } from './frontend-prop-drift-audit.js';
 import { walkDiff } from './diff-walker.js';
+import { auditRuleSetInvariants, RuleSetInvariantReport } from './rule-set-invariant-audit.js';
 
 type CitadelSeverity = 'Critical' | 'High' | 'Medium' | 'Low';
 
@@ -50,6 +51,7 @@ export interface CitadelAuditReport {
     sibling_auth_preconditions: SiblingAuthAuditReport;
     frontend_prop_drift: FrontendPropDriftReport;
     ac_shape: AcShapeAuditReport;
+    rule_set_invariants: RuleSetInvariantReport;
     cross_phase: CrossPhaseFindingsReport;
   };
   findings: FindingLike[];
@@ -79,18 +81,22 @@ export async function runCitadelAudit(options: CitadelAuditOptions): Promise<Cit
 
 export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAuditReport {
   const repoRoot = path.resolve(options.repoRoot ?? process.cwd());
+  const prdPath = path.resolve(repoRoot, options.prdPath);
+  const prdMarkdown = readFileSync(prdPath, 'utf-8');
   const diff = walkDiff(options.diffRange, { repoRoot });
   const siblingAuth = auditSiblingAuthPreconditions(diff);
   const frontendPropDrift = auditFrontendPropDrift(diff);
   const acShape = auditAcShape({
-    prdPath: path.resolve(repoRoot, options.prdPath),
+    prdPath,
     sessionDir: options.sessionDir,
   });
+  const ruleSetInvariants = auditRuleSetInvariants(diff, { repoRoot, prdMarkdown });
   const crossPhase = readCrossPhaseFindings(options.sessionDir);
   const findings = uniqueFindings([
     ...siblingAuth.findings.map((finding) => withFindingSource(finding, 'sibling_auth_preconditions')),
     ...frontendPropDrift.findings.map((finding) => withFindingSource(finding, 'frontend_prop_drift')),
     ...acShape.findings.map((finding) => withFindingSource(finding, 'ac_shape')),
+    ...ruleSetInvariants.findings.map((finding) => withFindingSource(finding, 'rule_set_invariants')),
     ...crossPhase.findings,
   ]);
   const critical = findings.filter((finding) => finding.severity === 'Critical').length;
@@ -102,13 +108,14 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
 
   return {
     schema_version: '1.0',
-    prd_path: path.resolve(repoRoot, options.prdPath),
+    prd_path: prdPath,
     diff_range: options.diffRange,
     exit_code: blockingFindings > 0 ? 1 : 0,
     sections: {
       sibling_auth_preconditions: siblingAuth,
       frontend_prop_drift: frontendPropDrift,
       ac_shape: acShape,
+      rule_set_invariants: ruleSetInvariants,
       cross_phase: crossPhase,
     },
     findings,
