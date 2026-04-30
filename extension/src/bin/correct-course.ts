@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildJudgeInvocation, resolveBackendFromStateFile, type SpawnInvocation } from '../services/backend-spawn.js';
 import { isoCompactStamp } from '../services/pickle-utils.js';
+import { recoverCourseCorrectionFromLedger, type RecoverCourseCorrectionResult } from '../services/transaction-ticket-ops.js';
 import type { Backend } from '../types/index.js';
 
 const MAX_DISCOVERY_LENGTH = 2_000;
@@ -23,6 +24,7 @@ export interface CorrectCourseArgs {
   force: boolean;
   recoverFromLedger: boolean;
   recover: boolean;
+  ledgerPath?: string;
 }
 
 export interface CorrectCourseRunOptions {
@@ -32,9 +34,10 @@ export interface CorrectCourseRunOptions {
 
 export interface CorrectCourseRunResult {
   exitCode: number;
-  briefPath: string;
+  briefPath?: string;
   backend: Backend;
-  invocation: SpawnInvocation;
+  invocation?: SpawnInvocation;
+  recovery?: RecoverCourseCorrectionResult;
 }
 
 interface CorrectCoursePlan {
@@ -45,7 +48,7 @@ interface CorrectCoursePlan {
 }
 
 function usage(): never {
-  process.stderr.write('Usage: node correct-course.js "<discovery>" --session-dir <dir> [--repo-root <dir>] [--dry-run] [--auto-apply] [--force] [--recover-from-ledger] [--recover]\n');
+  process.stderr.write('Usage: node correct-course.js "<discovery>" --session-dir <dir> [--repo-root <dir>] [--dry-run] [--auto-apply] [--force] [--recover-from-ledger] [--recover] [--ledger <path>]\n');
   process.exit(1);
 }
 
@@ -54,7 +57,9 @@ export function parseArgs(argv: string[]): CorrectCourseArgs {
   if (!sessionDir) usage();
   const repoRoot = readFlag(argv, '--repo-root') ?? process.cwd();
   const discovery = readDiscovery(argv);
-  validateDiscovery(discovery);
+  const recoverFromLedger = argv.includes('--recover-from-ledger');
+  const recover = argv.includes('--recover');
+  if (!recoverFromLedger && !recover) validateDiscovery(discovery);
   return {
     sessionDir: path.resolve(sessionDir),
     repoRoot: path.resolve(repoRoot),
@@ -62,8 +67,9 @@ export function parseArgs(argv: string[]): CorrectCourseArgs {
     dryRun: argv.includes('--dry-run'),
     autoApply: argv.includes('--auto-apply'),
     force: argv.includes('--force'),
-    recoverFromLedger: argv.includes('--recover-from-ledger'),
-    recover: argv.includes('--recover'),
+    recoverFromLedger,
+    recover,
+    ledgerPath: readFlag(argv, '--ledger'),
   };
 }
 
@@ -89,7 +95,7 @@ function readDiscovery(argv: string[]): string {
 }
 
 function flagTakesValue(flag: string): boolean {
-  return flag === '--session-dir' || flag === '--repo-root';
+  return flag === '--session-dir' || flag === '--repo-root' || flag === '--ledger';
 }
 
 export function validateDiscovery(discovery: string): void {
@@ -156,6 +162,28 @@ function planCorrectCourse(args: CorrectCourseArgs, now: Date): CorrectCoursePla
 export function runCorrectCourse(input: CorrectCourseArgs, opts: CorrectCourseRunOptions = {}): CorrectCourseRunResult {
   const now = opts.now ?? (() => new Date());
   const out = opts.stdout ?? ((message: string) => process.stdout.write(`${message}\n`));
+  const backend = resolveBackendFromStateFile(path.join(input.sessionDir, 'state.json'));
+
+  if (input.recoverFromLedger || input.recover) {
+    if (input.recoverFromLedger && input.recover) {
+      throw new Error('Choose either --recover-from-ledger or --recover, not both.');
+    }
+    if (input.recover && !input.force) {
+      throw new Error('--recover requires --force.');
+    }
+    const recovery = recoverCourseCorrectionFromLedger({
+      sessionRoot: input.sessionDir,
+      ledgerPath: input.ledgerPath,
+      mode: input.recoverFromLedger ? 'reverse' : 'forward',
+      force: input.force,
+      now: now(),
+    });
+    out(`RECOVERY_LEDGER=${recovery.ledgerPath}`);
+    out(`RECOVERY_MODE=${recovery.mode}`);
+    out(`RECOVERED_STEPS=${recovery.recoveredSteps.join(',')}`);
+    return { exitCode: 0, backend, recovery };
+  }
+
   const plan = planCorrectCourse(input, now());
 
   if (input.dryRun) {

@@ -4,6 +4,7 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildJudgeInvocation, resolveBackendFromStateFile } from '../services/backend-spawn.js';
 import { isoCompactStamp } from '../services/pickle-utils.js';
+import { recoverCourseCorrectionFromLedger } from '../services/transaction-ticket-ops.js';
 const MAX_DISCOVERY_LENGTH = 2_000;
 const DEFAULT_MODEL = 'sonnet';
 const CORRECTOR_SYSTEM_PROMPT = [
@@ -12,7 +13,7 @@ const CORRECTOR_SYSTEM_PROMPT = [
     'Return proposal markdown only.',
 ].join(' ');
 function usage() {
-    process.stderr.write('Usage: node correct-course.js "<discovery>" --session-dir <dir> [--repo-root <dir>] [--dry-run] [--auto-apply] [--force] [--recover-from-ledger] [--recover]\n');
+    process.stderr.write('Usage: node correct-course.js "<discovery>" --session-dir <dir> [--repo-root <dir>] [--dry-run] [--auto-apply] [--force] [--recover-from-ledger] [--recover] [--ledger <path>]\n');
     process.exit(1);
 }
 export function parseArgs(argv) {
@@ -21,7 +22,10 @@ export function parseArgs(argv) {
         usage();
     const repoRoot = readFlag(argv, '--repo-root') ?? process.cwd();
     const discovery = readDiscovery(argv);
-    validateDiscovery(discovery);
+    const recoverFromLedger = argv.includes('--recover-from-ledger');
+    const recover = argv.includes('--recover');
+    if (!recoverFromLedger && !recover)
+        validateDiscovery(discovery);
     return {
         sessionDir: path.resolve(sessionDir),
         repoRoot: path.resolve(repoRoot),
@@ -29,8 +33,9 @@ export function parseArgs(argv) {
         dryRun: argv.includes('--dry-run'),
         autoApply: argv.includes('--auto-apply'),
         force: argv.includes('--force'),
-        recoverFromLedger: argv.includes('--recover-from-ledger'),
-        recover: argv.includes('--recover'),
+        recoverFromLedger,
+        recover,
+        ledgerPath: readFlag(argv, '--ledger'),
     };
 }
 function readFlag(argv, flag) {
@@ -56,7 +61,7 @@ function readDiscovery(argv) {
     return values.join(' ').trim();
 }
 function flagTakesValue(flag) {
-    return flag === '--session-dir' || flag === '--repo-root';
+    return flag === '--session-dir' || flag === '--repo-root' || flag === '--ledger';
 }
 export function validateDiscovery(discovery) {
     if (discovery.trim().length === 0) {
@@ -119,6 +124,26 @@ function planCorrectCourse(args, now) {
 export function runCorrectCourse(input, opts = {}) {
     const now = opts.now ?? (() => new Date());
     const out = opts.stdout ?? ((message) => process.stdout.write(`${message}\n`));
+    const backend = resolveBackendFromStateFile(path.join(input.sessionDir, 'state.json'));
+    if (input.recoverFromLedger || input.recover) {
+        if (input.recoverFromLedger && input.recover) {
+            throw new Error('Choose either --recover-from-ledger or --recover, not both.');
+        }
+        if (input.recover && !input.force) {
+            throw new Error('--recover requires --force.');
+        }
+        const recovery = recoverCourseCorrectionFromLedger({
+            sessionRoot: input.sessionDir,
+            ledgerPath: input.ledgerPath,
+            mode: input.recoverFromLedger ? 'reverse' : 'forward',
+            force: input.force,
+            now: now(),
+        });
+        out(`RECOVERY_LEDGER=${recovery.ledgerPath}`);
+        out(`RECOVERY_MODE=${recovery.mode}`);
+        out(`RECOVERED_STEPS=${recovery.recoveredSteps.join(',')}`);
+        return { exitCode: 0, backend, recovery };
+    }
     const plan = planCorrectCourse(input, now());
     if (input.dryRun) {
         out(JSON.stringify({

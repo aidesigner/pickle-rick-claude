@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import {
   applyCourseCorrectionRestructure,
   materializeNewTicket,
+  recoverCourseCorrectionFromLedger,
   replayReverseLedger,
   updateTicketStatusInTransaction,
 } from '../services/transaction-ticket-ops.js';
@@ -222,6 +223,121 @@ test('applyCourseCorrectionRestructure replays reverse ledger on partial failure
     assert.equal(fs.readFileSync(killed.ticketPath, 'utf-8'), killed.content);
     assert.equal(state.tickets_version, 1);
     assert.equal(state.activity.length, 0);
+  });
+});
+
+test('recoverCourseCorrectionFromLedger reverse-replays applied steps and records recovery activity', () => {
+  withDir((sessionDir) => {
+    const ticket = writeTicket(sessionDir, 'abc123', 'Killed');
+    writeState(sessionDir, { activity: [] });
+    const ledgerPath = path.join(sessionDir, 'change_proposal_2026-04-30T15-00-00Z_apply.log');
+    fs.writeFileSync(ledgerPath, [
+      JSON.stringify({
+        step: 1,
+        action: 'write',
+        operation: 'kill_ticket',
+        ticket_id: 'abc123',
+        path: ticket.ticketPath,
+        status: 'applied',
+        recovery_class: 'restore-previous-content',
+        beforeContent: ticket.content,
+        previousContent: ticket.content,
+        afterContent: fs.readFileSync(ticket.ticketPath, 'utf-8'),
+        createdAt: '2026-04-30T15:00:00.000Z',
+      }),
+      '',
+    ].join('\n'));
+
+    const result = recoverCourseCorrectionFromLedger({
+      sessionRoot: sessionDir,
+      ledgerPath,
+      mode: 'reverse',
+      now: '2026-04-30T15:05:00.000Z',
+    });
+
+    assert.deepEqual(result.recoveredSteps, [1]);
+    assert.equal(result.lastSuccessfulStep, 1);
+    assert.equal(fs.readFileSync(ticket.ticketPath, 'utf-8'), ticket.content);
+    const state = readState(sessionDir);
+    assert.equal(state.activity.some(entry => entry.event === 'course_correct_recovered' && entry.mode === 'reverse'), true);
+  });
+});
+
+test('recoverCourseCorrectionFromLedger forward-replays ledger only with force', () => {
+  withDir((sessionDir) => {
+    const ticket = writeTicket(sessionDir, 'abc123', 'Todo');
+    writeState(sessionDir, { activity: [] });
+    const nextContent = ticket.content.replace('status: "Todo"', 'status: "Killed"');
+    const ledgerPath = path.join(sessionDir, 'change_proposal_2026-04-30T16-00-00Z_apply.log');
+    fs.writeFileSync(ledgerPath, [
+      JSON.stringify({
+        step: 1,
+        action: 'write',
+        operation: 'kill_ticket',
+        ticket_id: 'abc123',
+        path: ticket.ticketPath,
+        status: 'failed',
+        recovery_class: 'restore-previous-content',
+        beforeContent: ticket.content,
+        previousContent: ticket.content,
+        afterContent: nextContent,
+        createdAt: '2026-04-30T16:00:00.000Z',
+      }),
+      '',
+    ].join('\n'));
+
+    assert.throws(
+      () => recoverCourseCorrectionFromLedger({ sessionRoot: sessionDir, ledgerPath, mode: 'forward' }),
+      /--recover requires --force/,
+    );
+
+    const result = recoverCourseCorrectionFromLedger({
+      sessionRoot: sessionDir,
+      ledgerPath,
+      mode: 'forward',
+      force: true,
+      now: '2026-04-30T16:05:00.000Z',
+    });
+
+    assert.deepEqual(result.recoveredSteps, [1]);
+    assert.match(fs.readFileSync(ticket.ticketPath, 'utf-8'), /^status: "Killed"$/m);
+    const state = readState(sessionDir);
+    assert.equal(state.activity.some(entry => entry.event === 'course_correct_recovered' && entry.mode === 'forward'), true);
+  });
+});
+
+test('applyCourseCorrectionRestructure auto-apply failure writes HALT file and activity', () => {
+  withDir((sessionDir) => {
+    writeTicket(sessionDir, 'kill123');
+    writeState(sessionDir, { current_ticket: 'keep123', tickets_version: 1, activity: [] });
+    const badDirPath = path.join(sessionDir, 'bad123');
+    fs.mkdirSync(badDirPath);
+
+    assert.throws(
+      () => applyCourseCorrectionRestructure({
+        sessionRoot: sessionDir,
+        proposalPath: path.join(sessionDir, 'change_proposal_2026-04-30T17-00-00Z.md'),
+        restartTicketId: null,
+        killedTicketIds: ['kill123'],
+        addedTickets: [{
+          ticketId: 'bad123',
+          files: [{ path: badDirPath, content: 'cannot write over directory' }],
+        }],
+        now: '2026-04-30T17:00:00.000Z',
+        autoApply: true,
+      }),
+      /EISDIR|illegal operation on a directory|is a directory/,
+    );
+
+    const haltPath = path.join(sessionDir, 'HALT_2026-04-30T17-00-00Z.md');
+    assert.equal(fs.existsSync(haltPath), true);
+    const halt = fs.readFileSync(haltPath, 'utf-8');
+    assert.match(halt, /Failed step: 2/);
+    assert.match(halt, /--recover-from-ledger/);
+    assert.match(halt, /--recover --force/);
+    assert.match(halt, /--reset-current-ticket/);
+    const state = readState(sessionDir);
+    assert.equal(state.activity.some(entry => entry.event === 'course_correct_apply_failed' && entry.failed_step === 2), true);
   });
 });
 

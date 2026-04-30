@@ -137,6 +137,18 @@ function parseLedgerContent(raw) {
         .filter(line => line.trim().length > 0)
         .map(line => JSON.parse(line));
 }
+function parseApplyLedgerContent(raw) {
+    const trimmed = raw.trim();
+    if (trimmed.length === 0)
+        return [];
+    const parsed = trimmed.startsWith('[')
+        ? JSON.parse(trimmed)
+        : trimmed
+            .split(/\r?\n/)
+            .filter(line => line.trim().length > 0)
+            .map(line => JSON.parse(line));
+    return parsed.filter(entry => Number.isInteger(entry.step) && typeof entry.path === 'string');
+}
 function resolveLedgerPath(sessionRoot, entryPath) {
     const targetPath = path.isAbsolute(entryPath) ? entryPath : path.join(sessionRoot, entryPath);
     return assertWithinRoot(targetPath, sessionRoot);
@@ -170,7 +182,7 @@ export function replayReverseLedger(ledgerPath, sessionRoot) {
         const priorContent = restoreContent(entry);
         if (priorContent === undefined || priorContent === null) {
             if (fs.existsSync(targetPath))
-                fs.rmSync(targetPath, { force: true });
+                fs.rmSync(targetPath, { force: true, recursive: true });
             removeEmptyParents(path.dirname(targetPath), sessionRoot);
             continue;
         }
@@ -191,6 +203,19 @@ function proposalApplyLedgerPath(sessionRoot, proposalPath) {
     const base = path.basename(proposalPath).replace(/\.md$/i, '');
     return path.join(sessionRoot, `${base}_apply.log`);
 }
+function latestApplyLedgerPath(sessionRoot) {
+    const ledgers = fs
+        .readdirSync(sessionRoot, { withFileTypes: true })
+        .filter(entry => entry.isFile() && /^change_proposal_.*_apply\.log$/.test(entry.name))
+        .map(entry => {
+        const filePath = path.join(sessionRoot, entry.name);
+        return { filePath, mtimeMs: fs.statSync(filePath).mtimeMs };
+    })
+        .sort((a, b) => b.mtimeMs - a.mtimeMs || b.filePath.localeCompare(a.filePath));
+    if (ledgers.length === 0)
+        throw new Error(`No course-correction apply ledger found in ${sessionRoot}`);
+    return ledgers[0].filePath;
+}
 function acquireFileLock(lockFile) {
     const fd = fs.openSync(lockFile, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY);
     fs.writeSync(fd, JSON.stringify({ pid: process.pid, ts: Date.now() }));
@@ -205,6 +230,9 @@ function acquireFileLock(lockFile) {
 function appendApplyLedger(ledgerPath, entry) {
     fs.mkdirSync(path.dirname(ledgerPath), { recursive: true });
     fs.appendFileSync(ledgerPath, `${JSON.stringify(entry)}\n`, 'utf-8');
+}
+function safeErrorMessage(error) {
+    return error instanceof Error ? error.message : String(error);
 }
 function collectTicketDirectoryIds(sessionRoot) {
     return fs
@@ -228,7 +256,15 @@ function appendActivity(state, entry) {
 function applyPlannedWrite(ledgerPath, step, operation, ticketId, file, nowIso) {
     assertWithinRoot(file.path, path.dirname(ledgerPath));
     const existed = fs.existsSync(file.path);
-    const beforeContent = existed ? fs.readFileSync(file.path, 'utf-8') : null;
+    let beforeContent = null;
+    if (existed) {
+        try {
+            beforeContent = fs.readFileSync(file.path, 'utf-8');
+        }
+        catch {
+            beforeContent = null;
+        }
+    }
     const action = existed ? 'write' : 'create';
     appendApplyLedger(ledgerPath, {
         step,
@@ -240,10 +276,32 @@ function applyPlannedWrite(ledgerPath, step, operation, ticketId, file, nowIso) 
         recovery_class: existed ? 'restore-previous-content' : 'delete-created',
         beforeContent,
         previousContent: beforeContent,
+        afterContent: file.content,
+        content: file.content,
         createdAt: nowIso,
     });
-    fs.mkdirSync(path.dirname(file.path), { recursive: true });
-    fs.writeFileSync(file.path, file.content, 'utf-8');
+    try {
+        fs.mkdirSync(path.dirname(file.path), { recursive: true });
+        fs.writeFileSync(file.path, file.content, 'utf-8');
+    }
+    catch (error) {
+        appendApplyLedger(ledgerPath, {
+            step,
+            action,
+            operation,
+            ticket_id: ticketId,
+            path: file.path,
+            status: 'failed',
+            recovery_class: existed ? 'restore-previous-content' : 'delete-created',
+            beforeContent,
+            previousContent: beforeContent,
+            afterContent: file.content,
+            content: file.content,
+            error: safeErrorMessage(error),
+            createdAt: nowIso,
+        });
+        throw error;
+    }
     appendApplyLedger(ledgerPath, {
         step,
         action,
@@ -254,8 +312,123 @@ function applyPlannedWrite(ledgerPath, step, operation, ticketId, file, nowIso) 
         recovery_class: existed ? 'restore-previous-content' : 'delete-created',
         beforeContent,
         previousContent: beforeContent,
+        afterContent: file.content,
+        content: file.content,
         createdAt: nowIso,
     });
+}
+function writeHaltFile(sessionRoot, ledgerPath, failedStep, cause, nowIso) {
+    const haltPath = path.join(sessionRoot, `HALT_${isoSafeStamp(nowIso)}.md`);
+    const content = [
+        '# Course Correction Apply Halted',
+        '',
+        `Failed step: ${failedStep}`,
+        `Cause: ${cause}`,
+        `Ledger path: ${ledgerPath}`,
+        '',
+        '## Recovery Options',
+        '',
+        '1. Run `/pickle-correct-course --recover-from-ledger` to replay-reverse the partial apply.',
+        '2. Run `/pickle-correct-course --recover --force` to forward-replay the ledger after fixing a transient cause.',
+        '3. Run `/pickle-status --reset-current-ticket` to abandon this correction and force ticket selection.',
+        '',
+        '## If You Do Nothing',
+        '',
+        'The runner remains halted at the next iteration boundary until an operator chooses a recovery option.',
+        '',
+    ].join('\n');
+    fs.writeFileSync(haltPath, content, 'utf-8');
+    return haltPath;
+}
+function isoSafeStamp(nowIso) {
+    return nowIso.replace(/\.\d{3}Z$/, 'Z').replace(/:/g, '-');
+}
+function appendStateActivity(sessionRoot, stateManager, entry) {
+    const statePath = path.join(sessionRoot, 'state.json');
+    if (!fs.existsSync(statePath))
+        return;
+    stateManager.update(statePath, (state) => {
+        appendActivity(state, entry);
+    });
+}
+function lastSuccessfulStep(entries) {
+    return entries.reduce((max, entry) => entry.status === 'applied' ? Math.max(max, entry.step) : max, 0);
+}
+function reverseAppliedEntries(entries, sessionRoot, throughStep) {
+    const reversedSteps = [];
+    for (const entry of entries.filter(item => item.status === 'applied' && item.step <= throughStep).reverse()) {
+        const targetPath = resolveLedgerPath(sessionRoot, entry.path);
+        const priorContent = restoreContent(entry);
+        if (priorContent === undefined || priorContent === null) {
+            if (fs.existsSync(targetPath))
+                fs.rmSync(targetPath, { force: true, recursive: true });
+            removeEmptyParents(path.dirname(targetPath), sessionRoot);
+        }
+        else {
+            fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+            fs.writeFileSync(targetPath, priorContent, 'utf-8');
+        }
+        reversedSteps.push(entry.step);
+    }
+    return reversedSteps;
+}
+function selectForwardEntries(entries) {
+    const byStep = new Map();
+    for (const entry of entries) {
+        if (entry.status === 'started' || entry.status === 'applied' || entry.status === 'failed') {
+            byStep.set(entry.step, entry);
+        }
+    }
+    return [...byStep.values()].sort((a, b) => a.step - b.step);
+}
+function forwardReplayEntries(entries, sessionRoot) {
+    const replayedSteps = [];
+    for (const entry of selectForwardEntries(entries)) {
+        const nextContent = entry.afterContent ?? entry.content;
+        if (nextContent === undefined) {
+            throw new Error(`Ledger step ${entry.step} is missing replay content`);
+        }
+        const targetPath = resolveLedgerPath(sessionRoot, entry.path);
+        fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+        fs.writeFileSync(targetPath, nextContent, 'utf-8');
+        replayedSteps.push(entry.step);
+    }
+    return replayedSteps;
+}
+export function recoverCourseCorrectionFromLedger(input) {
+    const sessionRoot = path.resolve(input.sessionRoot);
+    const ledgerPath = assertWithinRoot(input.ledgerPath ? path.resolve(input.ledgerPath) : latestApplyLedgerPath(sessionRoot), sessionRoot);
+    const nowIso = timestampForLedger(input.now);
+    const stateManager = input.stateManager ?? new StateManager();
+    const releaseRestructureLock = acquireFileLock(path.join(sessionRoot, 'restructure.lock'));
+    try {
+        const entries = parseApplyLedgerContent(fs.readFileSync(ledgerPath, 'utf-8'));
+        const lastStep = lastSuccessfulStep(entries);
+        if (input.mode === 'forward' && !input.force) {
+            throw new Error('--recover requires --force for forward ledger replay');
+        }
+        const recoveredSteps = input.mode === 'reverse'
+            ? reverseAppliedEntries(entries, sessionRoot, lastStep)
+            : forwardReplayEntries(entries, sessionRoot);
+        appendStateActivity(sessionRoot, stateManager, {
+            event: 'course_correct_recovered',
+            timestamp: nowIso,
+            mode: input.mode,
+            ledger_path: ledgerPath,
+            last_successful_step: lastStep,
+            recovered_steps: recoveredSteps,
+        });
+        return { ledgerPath, mode: input.mode, lastSuccessfulStep: lastStep, recoveredSteps };
+    }
+    finally {
+        releaseRestructureLock();
+    }
+}
+function latestFailedEntry(ledgerPath) {
+    if (!fs.existsSync(ledgerPath))
+        return undefined;
+    const entries = parseApplyLedgerContent(fs.readFileSync(ledgerPath, 'utf-8'));
+    return entries.filter(entry => entry.status === 'failed').at(-1);
 }
 export function applyCourseCorrectionRestructure(input) {
     const sessionRoot = path.resolve(input.sessionRoot);
@@ -329,6 +502,18 @@ export function applyCourseCorrectionRestructure(input) {
     catch (error) {
         if (fs.existsSync(ledgerPath))
             replayReverseLedger(ledgerPath, sessionRoot);
+        const failedEntry = latestFailedEntry(ledgerPath);
+        if (input.autoApply && failedEntry) {
+            const haltPath = writeHaltFile(sessionRoot, ledgerPath, failedEntry.step, failedEntry.error ?? safeErrorMessage(error), nowIso);
+            appendStateActivity(sessionRoot, stateManager, {
+                event: 'course_correct_apply_failed',
+                timestamp: nowIso,
+                failed_step: failedEntry.step,
+                cause: failedEntry.error ?? safeErrorMessage(error),
+                ledger_path: ledgerPath,
+                halt_path: haltPath,
+            });
+        }
         throw error;
     }
     finally {
