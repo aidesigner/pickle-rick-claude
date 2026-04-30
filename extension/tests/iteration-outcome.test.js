@@ -563,3 +563,109 @@ test('recordCodexManagerRelaunch: persists counter and emits activity event', ()
         fs.rmSync(session.dataRoot, { recursive: true, force: true });
     }
 });
+
+// ---------------------------------------------------------------------------
+// AC-LPB-03: hard wall-clock cap-gate inside evaluateCodexManagerRelaunch.
+// Relaunching after the time budget is exhausted only burns API turns the
+// user already opted out of. The cap-gate must run BEFORE every other
+// decision branch (CB OPEN, no_pending, cap_exceeded), so the budget cannot
+// be papered over by any of them.
+// ---------------------------------------------------------------------------
+test('evaluateCodexManagerRelaunch returns time_limit when elapsed > max_time_minutes', () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    // Started 10 minutes ago, budget is 5 minutes → elapsed exceeds budget.
+    const codexState = {
+        backend: 'codex',
+        codex_manager_relaunch_count: 0,
+        start_time_epoch: nowSec - 600,
+        max_time_minutes: 5,
+    };
+    const pending = [
+        { id: 't1', status: 'Todo', title: '', order: 1, type: null, working_dir: null, completed_at: null, skipped_at: null },
+    ];
+    const decision = evaluateCodexManagerRelaunch(codexState, pending, null);
+    assert.equal(decision.shouldRelaunch, false);
+    assert.equal(decision.reason, 'time_limit');
+    assert.equal(decision.pendingCount, 0,
+        'time_limit short-circuits before counting pending tickets');
+});
+
+test('evaluateCodexManagerRelaunch returns time_limit before circuit_open / cap_exceeded', () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    // Budget exhausted AND CB OPEN AND cap exceeded — time_limit must win
+    // because it runs first.
+    const codexState = {
+        backend: 'codex',
+        codex_manager_relaunch_count: Defaults.CODEX_MANAGER_RELAUNCH_CAP,
+        start_time_epoch: nowSec - 86_400,  // 24h ago
+        max_time_minutes: 60,
+    };
+    const pending = [
+        { id: 't1', status: 'Todo', title: '', order: 1, type: null, working_dir: null, completed_at: null, skipped_at: null },
+    ];
+    const decision = evaluateCodexManagerRelaunch(codexState, pending, { state: 'OPEN' });
+    assert.equal(decision.shouldRelaunch, false);
+    assert.equal(decision.reason, 'time_limit',
+        'time_limit must short-circuit ahead of circuit_open and cap_exceeded');
+});
+
+test('evaluateCodexManagerRelaunch returns existing reason when within budget', () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    // Plenty of budget left → cap-gate must NOT fire; eligible decision wins.
+    const codexState = {
+        backend: 'codex',
+        codex_manager_relaunch_count: 0,
+        start_time_epoch: nowSec - 60,  // 1 min ago
+        max_time_minutes: 720,           // 12h budget
+    };
+    const pending = [
+        { id: 't1', status: 'Todo', title: '', order: 1, type: null, working_dir: null, completed_at: null, skipped_at: null },
+    ];
+    const eligible = evaluateCodexManagerRelaunch(codexState, pending, null);
+    assert.equal(eligible.shouldRelaunch, true);
+    assert.equal(eligible.reason, 'eligible');
+
+    // Within budget but not codex → still falls through to not_codex.
+    const claudeState = { ...codexState, backend: 'claude' };
+    const notCodex = evaluateCodexManagerRelaunch(claudeState, pending, null);
+    assert.equal(notCodex.reason, 'not_codex');
+
+    // Within budget but no pending → no_pending.
+    const allDone = pending.map(t => ({ ...t, status: 'Done' }));
+    const noPending = evaluateCodexManagerRelaunch(codexState, allDone, null);
+    assert.equal(noPending.reason, 'no_pending');
+
+    // Within budget but cap exceeded → cap_exceeded.
+    const cappedState = { ...codexState, codex_manager_relaunch_count: Defaults.CODEX_MANAGER_RELAUNCH_CAP };
+    const capped = evaluateCodexManagerRelaunch(cappedState, pending, null);
+    assert.equal(capped.reason, 'cap_exceeded');
+
+    // Within budget but CB OPEN → circuit_open.
+    const cbOpen = evaluateCodexManagerRelaunch(codexState, pending, { state: 'OPEN' });
+    assert.equal(cbOpen.reason, 'circuit_open');
+});
+
+test('evaluateCodexManagerRelaunch ignores time_limit when max_time_minutes is missing or zero', () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const pending = [
+        { id: 't1', status: 'Todo', title: '', order: 1, type: null, working_dir: null, completed_at: null, skipped_at: null },
+    ];
+
+    // No max_time_minutes set → no time gate, eligible.
+    const noBudget = evaluateCodexManagerRelaunch(
+        { backend: 'codex', codex_manager_relaunch_count: 0, start_time_epoch: nowSec - 86_400 },
+        pending,
+        null,
+    );
+    assert.equal(noBudget.reason, 'eligible',
+        'no max_time_minutes → time gate inert, eligible falls through');
+
+    // No start_time_epoch → cannot compute elapsed, skip the gate.
+    const noEpoch = evaluateCodexManagerRelaunch(
+        { backend: 'codex', codex_manager_relaunch_count: 0, max_time_minutes: 1 },
+        pending,
+        null,
+    );
+    assert.equal(noEpoch.reason, 'eligible',
+        'no start_time_epoch → time gate inert, eligible falls through');
+});
