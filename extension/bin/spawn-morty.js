@@ -23,6 +23,18 @@ export function tierToModel(tier) {
         return 'sonnet';
     return TIER_MODEL_MAP[tier] ?? 'sonnet';
 }
+function readProjectContextBlock(sessionRoot) {
+    try {
+        const projectContextPath = path.join(sessionRoot, 'project-context.md');
+        if (!fs.existsSync(projectContextPath))
+            return '';
+        const projectContext = fs.readFileSync(projectContextPath, 'utf-8').trim();
+        return projectContext ? `\n\n## Project Context\n${projectContext}` : '';
+    }
+    catch {
+        return '';
+    }
+}
 function die(message) {
     console.error(message);
     process.exit(1);
@@ -121,6 +133,7 @@ export function buildWorkerPrompt(opts) {
             ? `# **REVIEW REQUEST**\n${ticket.task}\n\nYou are a Review Worker. Review the preceding implementation tickets for correctness, architecture, and code quality.`
             : `# **TASK REQUEST**\n${ticket.task}\n\nYou are a Morty Worker (Pickle Rick's assistant). Implement the request above.`;
     }
+    workerPrompt += readProjectContextBlock(ticket.sessionRoot);
     workerPrompt += `\n\n# TARGET TICKET CONTENT\n${ticket.ticketContent || 'N/A'}`;
     workerPrompt += `\n\n# EXECUTION CONTEXT\n- SESSION_ROOT: ${ticket.sessionRoot}\n- TICKET_ID: ${ticket.ticketId}\n- TICKET_DIR: ${ticket.ticketPath}`;
     workerPrompt +=

@@ -75,6 +75,17 @@ export function tierToModel(tier: string | undefined): string {
   return TIER_MODEL_MAP[tier] ?? 'sonnet';
 }
 
+function readProjectContextBlock(sessionRoot: string): string {
+  try {
+    const projectContextPath = path.join(sessionRoot, 'project-context.md');
+    if (!fs.existsSync(projectContextPath)) return '';
+    const projectContext = fs.readFileSync(projectContextPath, 'utf-8').trim();
+    return projectContext ? `\n\n## Project Context\n${projectContext}` : '';
+  } catch {
+    return '';
+  }
+}
+
 function die(message: string): never {
   console.error(message);
   process.exit(1);
@@ -184,6 +195,7 @@ export function buildWorkerPrompt(opts: { ticket: TicketSpec; model: string; rep
       : `# **TASK REQUEST**\n${ticket.task}\n\nYou are a Morty Worker (Pickle Rick's assistant). Implement the request above.`;
   }
 
+  workerPrompt += readProjectContextBlock(ticket.sessionRoot);
   workerPrompt += `\n\n# TARGET TICKET CONTENT\n${ticket.ticketContent || 'N/A'}`;
   workerPrompt += `\n\n# EXECUTION CONTEXT\n- SESSION_ROOT: ${ticket.sessionRoot}\n- TICKET_ID: ${ticket.ticketId}\n- TICKET_DIR: ${ticket.ticketPath}`;
   workerPrompt +=

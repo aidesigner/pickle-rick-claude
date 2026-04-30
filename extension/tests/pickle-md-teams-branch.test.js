@@ -31,6 +31,18 @@ test('pickle.md: invokes validate-teams-ticket validator', () => {
     assert.match(text, /validate-teams-ticket/, 'should invoke the validator CLI');
 });
 
+test('pickle.md: teams brief injects project context before lifecycle guidance', () => {
+    const phaseStart = text.indexOf('## Phase 3.B');
+    const contextPath = text.indexOf('${SESSION_ROOT}/project-context.md', phaseStart);
+    const contextBlock = text.indexOf('## Project Context', phaseStart);
+    const placement = text.indexOf('before the phase instructions / 8-phase lifecycle guidance', phaseStart);
+
+    assert.ok(phaseStart >= 0, 'should include Phase 3.B');
+    assert.ok(contextPath > phaseStart, 'teams brief should reference project-context.md');
+    assert.ok(contextBlock > contextPath, 'teams brief should name the Project Context block');
+    assert.ok(placement > contextBlock, 'teams brief should require placement before lifecycle guidance');
+});
+
 test('pickle.md: legacy spawn-morty.js path remains for non-teams mode', () => {
     assert.match(text, /spawn-morty\.js/, 'legacy spawn-morty.js path should remain');
 });

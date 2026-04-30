@@ -55,6 +55,24 @@ test('buildWorkerPrompt: omits GitNexus instructions when .gitnexus is a file', 
   }
 });
 
+test('buildWorkerPrompt: injects project context before ticket content when available', () => {
+  const repoRoot = makeTmpDir();
+  try {
+    fs.writeFileSync(path.join(repoRoot, 'project-context.md'), 'Architecture\n- Existing shape');
+    const prompt = buildWorkerPrompt({ ticket: baseTicket(repoRoot), model: 'sonnet', repoRoot });
+
+    const contextIndex = prompt.indexOf('## Project Context\nArchitecture\n- Existing shape');
+    const ticketIndex = prompt.indexOf('# TARGET TICKET CONTENT');
+    const executionIndex = prompt.indexOf('# EXECUTION CONTEXT');
+
+    assert.ok(contextIndex > -1, 'should include project context block');
+    assert.ok(contextIndex < ticketIndex, 'project context should precede target ticket content');
+    assert.ok(ticketIndex < executionIndex, 'target ticket content should precede execution context');
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test('resolveEffectiveTimeout: clamps configured timeout to remaining wall-clock budget', () => {
   const startEpoch = 1_700_000_000;
   const nowMs = (startEpoch + 555) * 1000;
