@@ -9,8 +9,39 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { STATE_MANAGER_DEFAULTS, StateError, LockError, TransactionError, SchemaVersionMismatchError, } from '../types/index.js';
+import { STATE_MANAGER_DEFAULTS, LATEST_SCHEMA_VERSION, StateError, LockError, TransactionError, SchemaVersionMismatchError, } from '../types/index.js';
 import { writeStateFile, safeErrorMessage } from './pickle-utils.js';
+// ---------------------------------------------------------------------------
+// Deploy-parity self-check
+// ---------------------------------------------------------------------------
+/**
+ * Fail fast at CLI entry when the deployed `STATE_MANAGER_DEFAULTS.schemaVersion`
+ * has drifted from the source-of-truth `LATEST_SCHEMA_VERSION`. A mismatch means
+ * a stale `~/.claude/pickle-rick/extension/types/index.js` is loaded (e.g.
+ * after editing source without running `bash install.sh`).
+ *
+ * MUST NOT be invoked from hooks — they fail-open to avoid bricking sessions.
+ * Call from CLI entry points only (setup, mux-runner, pipeline-runner,
+ * microverse-runner). On mismatch, writes actionable stderr and `process.exit(1)`.
+ */
+export class SchemaVersionDeployDriftError extends StateError {
+    deployedVersion;
+    sourceVersion;
+    constructor(deployedVersion, sourceVersion) {
+        super('SCHEMA_DEPLOY_DRIFT', `[state-manager] FATAL: deployed STATE_MANAGER_DEFAULTS.schemaVersion=${deployedVersion} ` +
+            `does not match LATEST_SCHEMA_VERSION=${sourceVersion}. ` +
+            `This usually means a stale deploy. ` +
+            `Fix: cd /Users/gregorydickson/loanlight/pickle-rick/pickle-rick-claude && bash install.sh`);
+        this.name = 'SchemaVersionDeployDriftError';
+        this.deployedVersion = deployedVersion;
+        this.sourceVersion = sourceVersion;
+    }
+}
+export function assertSchemaVersionDeployParity() {
+    if (STATE_MANAGER_DEFAULTS.schemaVersion !== LATEST_SCHEMA_VERSION) {
+        throw new SchemaVersionDeployDriftError(STATE_MANAGER_DEFAULTS.schemaVersion, LATEST_SCHEMA_VERSION);
+    }
+}
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

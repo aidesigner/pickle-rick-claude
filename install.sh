@@ -9,6 +9,37 @@ SETTINGS_FILE="$HOME/.claude/settings.json"
 # by the shell when Claude Code executes the hook command. Do NOT expand it at install time.
 HOOK_CMD_LITERAL='node $HOME/.claude/pickle-rick/extension/hooks/dispatch.js stop-hook'
 
+# --- LOCK (Forward Fix F2: serialize concurrent install.sh invocations) ---
+# Cross-skill workers can run install.sh simultaneously, racing on settings.json
+# backup + jq-merge and producing paired backups seconds apart. Acquire an
+# exclusive lock for the lifetime of the script.
+mkdir -p "$EXTENSION_ROOT"
+LOCKFILE="$EXTENSION_ROOT/.install.lock"
+if command -v flock >/dev/null 2>&1; then
+  exec 9>"$LOCKFILE"
+  if ! flock -x -n 9; then
+    echo "⏳ Another install.sh is running; waiting for lock..."
+    flock -x 9
+  fi
+else
+  # Portable fallback for systems without flock(1) (e.g. stock macOS):
+  # mkdir is atomic on POSIX filesystems, so it doubles as a lock primitive.
+  LOCKDIR="$EXTENSION_ROOT/.install.lock.d"
+  while ! mkdir "$LOCKDIR" 2>/dev/null; do
+    echo "⏳ Another install.sh is running; waiting..."
+    sleep 1
+  done
+  trap 'rmdir "$LOCKDIR"' EXIT
+fi
+
+# --- DRY RUN ---
+# Test hook: exits cleanly after lock acquisition so concurrent-invocation
+# tests can verify serialization without performing any deploy actions.
+if [ "${1:-}" = "--dry-run" ]; then
+  echo "dry run, skipping"
+  exit 0
+fi
+
 echo "🥒 Installing Pickle Rick for Claude Code..."
 
 # --- VALIDATION ---
@@ -36,6 +67,18 @@ if [ "$INSTALL_MODE" = "git" ]; then
   (cd "$SCRIPT_DIR/extension" && npm install --no-fund --no-audit)
   echo "🔨 Compiling TypeScript..."
   (cd "$SCRIPT_DIR/extension" && npx tsc)
+  # Sanity check: compiled JS schemaVersion must match source TS
+  SOURCE_VERSION=$(grep -oE 'schemaVersion: [0-9]+' "$SCRIPT_DIR/extension/src/types/index.ts" | head -1 | awk '{print $2}')
+  COMPILED_VERSION=$(grep -oE 'schemaVersion: [0-9]+' "$SCRIPT_DIR/extension/types/index.js" | head -1 | awk '{print $2}')
+  if [ -z "$SOURCE_VERSION" ] || [ -z "$COMPILED_VERSION" ]; then
+    echo "❌ Could not extract schemaVersion from source or compiled types/index. Refusing to deploy." >&2
+    exit 1
+  fi
+  if [ "$SOURCE_VERSION" != "$COMPILED_VERSION" ]; then
+    echo "❌ Compiled JS schemaVersion ($COMPILED_VERSION) does not match source TS ($SOURCE_VERSION)." >&2
+    echo "   Likely cause: stale tsc build cache. Try: rm extension/types/index.js && bash install.sh" >&2
+    exit 1
+  fi
 else
   echo "[install.sh] Skipping compilation (pre-built tarball)" >&2
 fi

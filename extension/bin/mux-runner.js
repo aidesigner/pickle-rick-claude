@@ -5,7 +5,7 @@ import * as os from 'os';
 import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification } from '../services/pickle-utils.js';
 import { PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact } from '../types/index.js';
-import { StateManager, safeDeactivate, writeActivityEntry, writeTimeoutStub } from '../services/state-manager.js';
+import { StateManager, safeDeactivate, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, resetCircuitBreaker } from '../services/circuit-breaker.js';
 import { buildManagerInvocation, resolveBackend, backendEnvOverrides } from '../services/backend-spawn.js';
@@ -1257,6 +1257,16 @@ function processReviewClean(ctx) {
     return { kind: 'break', reason: 'success' };
 }
 async function main() {
+    try {
+        assertSchemaVersionDeployParity();
+    }
+    catch (err) {
+        if (err instanceof SchemaVersionDeployDriftError) {
+            process.stderr.write(`${err.message}\n`);
+            process.exit(1);
+        }
+        throw err;
+    }
     await runMuxRunnerMain();
 }
 // eslint-disable-next-line max-lines-per-function, complexity -- legacy loop retained while extracted helpers are tested independently

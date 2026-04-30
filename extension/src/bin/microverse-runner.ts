@@ -35,7 +35,7 @@ import {
   ensureMonitorWindow,
   collectTickets,
 } from '../services/pickle-utils.js';
-import { StateManager, safeDeactivate } from '../services/state-manager.js';
+import { StateManager, safeDeactivate, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 
 const sm = new StateManager();
 import {
@@ -1677,6 +1677,15 @@ function microverseExitCode(exitReason: ExitReason): number {
 }
 
 export async function main(sessionDir: string): Promise<void> {
+  try {
+    assertSchemaVersionDeployParity();
+  } catch (err) {
+    if (err instanceof SchemaVersionDeployDriftError) {
+      process.stderr.write(`${err.message}\n`);
+      process.exit(1);
+    }
+    throw err;
+  }
   const { currentMv, ctx, log } = initializeMicroverseRun(sessionDir);
   const outcome = await runMicroversePhases(currentMv, ctx, log);
   finalizeMicroverseRun(sessionDir, ctx, outcome, log);

@@ -238,8 +238,23 @@ export function extractAndInstall(tarballPath: string): UpgradeResult {
   }
 }
 
-export function performUpgrade(from: string, to: string, tag: string): UpgradeResult {
+export interface PerformUpgradeOptions {
+  force?: boolean;
+}
+
+export function performUpgrade(
+  from: string,
+  to: string,
+  tag: string,
+  options?: PerformUpgradeOptions,
+): UpgradeResult {
   try {
+    const settings = readSettings();
+    if (!settings.auto_update_enabled && !options?.force) {
+      log('Auto-update disabled in settings; refusing performUpgrade');
+      return { success: false, error: 'Auto-update disabled in pickle_settings.json' };
+    }
+
     log(`Starting upgrade: ${from} → ${to} (${tag})`);
 
     const tarballPath = downloadRelease(tag);
@@ -314,7 +329,7 @@ export function checkForUpdate(options?: CheckForUpdateOptions): UpdateResult {
 
     if (compareSemver(currentVersion, latestVersion) < 0) {
       log(`Update available: ${currentVersion} → ${latestVersion}`);
-      const upgrade = performUpgrade(currentVersion, latestVersion, release.tagName);
+      const upgrade = performUpgrade(currentVersion, latestVersion, release.tagName, { force: options?.force });
       if (upgrade.success) {
         return { status: 'up-to-date', currentVersion: latestVersion, latestVersion };
       }
@@ -331,6 +346,7 @@ export function checkForUpdate(options?: CheckForUpdateOptions): UpdateResult {
 }
 
 if (process.argv[1] && path.basename(process.argv[1]) === 'check-update.js') {
+  const force = process.argv.includes('--force');
   if (process.argv.includes('--upgrade')) {
     const current = getCurrentVersion();
     const release = getLatestRelease();
@@ -342,12 +358,12 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'check-update.js') {
     if (!latest || compareSemver(current, latest) >= 0) {
       console.log(JSON.stringify({ status: 'up-to-date', currentVersion: current }));
     } else {
-      const upgrade = performUpgrade(current, latest, release.tagName);
+      const upgrade = performUpgrade(current, latest, release.tagName, { force });
       console.log(JSON.stringify(upgrade, null, 2));
       process.exit(upgrade.success ? 0 : 1);
     }
   } else {
-    const result = checkForUpdate({ force: process.argv.includes('--force') });
+    const result = checkForUpdate({ force });
     console.log(JSON.stringify(result, null, 2));
   }
 }

@@ -6,7 +6,7 @@ import * as crypto from 'crypto';
 import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd, formatLocalDateKey } from '../services/pickle-utils.js';
 import { getHeadSha } from '../services/git-utils.js';
 import { Defaults, LockError, BACKENDS, STATE_MANAGER_DEFAULTS } from '../types/index.js';
-import { StateManager } from '../services/state-manager.js';
+import { StateManager, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { logActivity, pruneActivity } from '../services/activity-logger.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 const sm = new StateManager();
@@ -541,6 +541,16 @@ ${Style.YELLOW}⚠️  STRICT EXIT CONDITION ACTIVE${Style.RESET}`);
     }
 }
 async function main() {
+    try {
+        assertSchemaVersionDeployParity();
+    }
+    catch (err) {
+        if (err instanceof SchemaVersionDeployDriftError) {
+            process.stderr.write(`${err.message}\n`);
+            process.exit(1);
+        }
+        throw err;
+    }
     const paths = buildSetupPaths();
     ensureCoreDirectories(paths);
     pruneOldSessions(paths.sessionsRoot);

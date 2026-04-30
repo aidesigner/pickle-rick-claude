@@ -7,7 +7,7 @@ import { resolveBackend, buildJudgeInvocation, buildWorkerInvocation, backendEnv
 import { readMicroverseState, readRecoverableJsonObject, writeMicroverseState, recordIteration as stateRecordIteration, recordStall, recordFailedApproach, isConverged, compareMetric, classifyFailure, } from '../services/microverse-state.js';
 import { getHeadSha, resetToSha, isWorkingTreeDirty } from '../services/git-utils.js';
 import { writeStateFile, getExtensionRoot, isoCompactStamp, sleep, Style, formatTime, formatLocalDateKey, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, collectTickets, } from '../services/pickle-utils.js';
-import { StateManager, safeDeactivate } from '../services/state-manager.js';
+import { StateManager, safeDeactivate, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 const sm = new StateManager();
 import { runIteration, loadRateLimitSettings, classifyIterationExit, computeRateLimitAction, killCurrentChild, evaluateCodexManagerRelaunch, recordCodexManagerRelaunch, } from './mux-runner.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -1288,6 +1288,16 @@ function microverseExitCode(exitReason) {
     return successfulReasons.includes(exitReason) ? 0 : 1;
 }
 export async function main(sessionDir) {
+    try {
+        assertSchemaVersionDeployParity();
+    }
+    catch (err) {
+        if (err instanceof SchemaVersionDeployDriftError) {
+            process.stderr.write(`${err.message}\n`);
+            process.exit(1);
+        }
+        throw err;
+    }
     const { currentMv, ctx, log } = initializeMicroverseRun(sessionDir);
     const outcome = await runMicroversePhases(currentMv, ctx, log);
     finalizeMicroverseRun(sessionDir, ctx, outcome, log);

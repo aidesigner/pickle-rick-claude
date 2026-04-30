@@ -1,15 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { StateManager, writeActivityEntry, safeDeactivate } from '../services/state-manager.js';
+import { fileURLToPath } from 'node:url';
+import { StateManager, writeActivityEntry, safeDeactivate, assertSchemaVersionDeployParity } from '../services/state-manager.js';
 import {
   StateError,
   LockError,
   TransactionError,
   SchemaVersionMismatchError,
   STATE_MANAGER_DEFAULTS,
+  LATEST_SCHEMA_VERSION,
 } from '../types/index.js';
 import { writeStateFile } from '../services/pickle-utils.js';
 
@@ -842,4 +845,51 @@ test('safeDeactivate: fallback preserves crash-recovered tmp state before deacti
     assert.equal(recovered.active, false);
     assert.equal(fs.existsSync(tmpFile), false, 'recovered tmp should be consumed');
   });
+});
+
+// ---------------------------------------------------------------------------
+// assertSchemaVersionDeployParity — fail-fast deploy drift guard
+// ---------------------------------------------------------------------------
+
+test('assertSchemaVersionDeployParity: returns normally when versions match', () => {
+  // The shipped state-manager and types/index agree by construction; calling
+  // the function in the current process must be a no-op (no throw, no exit).
+  assert.equal(STATE_MANAGER_DEFAULTS.schemaVersion, LATEST_SCHEMA_VERSION);
+  assert.doesNotThrow(() => assertSchemaVersionDeployParity());
+});
+
+test('assertSchemaVersionDeployParity: exits 1 with actionable stderr on drift', () => {
+  // Spawn a subprocess that imports state-manager.js with monkey-patched
+  // STATE_MANAGER_DEFAULTS so we can simulate stale-deploy drift without
+  // mutating the real module for the rest of the suite.
+  const __filename = fileURLToPath(import.meta.url);
+  const testsDir = path.dirname(__filename);
+  const stateManagerUrl = new URL('../services/state-manager.js', import.meta.url).href;
+  const typesUrl = new URL('../types/index.js', import.meta.url).href;
+
+  const driver = `
+    import { STATE_MANAGER_DEFAULTS } from ${JSON.stringify(typesUrl)};
+    // Simulate stale-deploy drift: deployed defaults stuck at 3 while a newer
+    // LATEST_SCHEMA_VERSION (4) is what the parity check expects.
+    STATE_MANAGER_DEFAULTS.schemaVersion = 3;
+    const sm = await import(${JSON.stringify(stateManagerUrl)});
+    // Override the bound LATEST_SCHEMA_VERSION the function compares against
+    // by re-defining the module's view via a local replacement check. Since
+    // the function reads LATEST_SCHEMA_VERSION via closure on its imported
+    // binding, we instead force the inverse: bump defaults above the latest.
+    STATE_MANAGER_DEFAULTS.schemaVersion = 999;
+    sm.assertSchemaVersionDeployParity();
+    // Should never reach here.
+    process.exit(0);
+  `;
+
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', driver], {
+    cwd: testsDir,
+    encoding: 'utf-8',
+    timeout: 30_000,
+  });
+
+  assert.equal(result.status, 1, `expected exit 1, got ${result.status}; stderr=${result.stderr}`);
+  assert.match(result.stderr, /stale deploy/);
+  assert.match(result.stderr, /bash install\.sh/);
 });

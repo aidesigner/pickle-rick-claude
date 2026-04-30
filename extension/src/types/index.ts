@@ -158,7 +158,10 @@ export const STATE_MANAGER_DEFAULTS: StateManagerOptions = {
   schemaVersion: 3,
 };
 
-export type StateErrorCode = 'MISSING' | 'CORRUPT' | 'SCHEMA_MISMATCH' | 'LOCK_FAILED' | 'WRITE_FAILED';
+/** Latest schema_version that this code knows how to write/read. Must match the latest migration target in state-manager.ts. */
+export const LATEST_SCHEMA_VERSION = 3;
+
+export type StateErrorCode = 'MISSING' | 'CORRUPT' | 'SCHEMA_MISMATCH' | 'SCHEMA_DEPLOY_DRIFT' | 'LOCK_FAILED' | 'WRITE_FAILED';
 
 export class StateError extends Error {
   readonly code: StateErrorCode;

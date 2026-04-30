@@ -18,7 +18,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync, spawn } from 'child_process';
 import { BACKENDS } from '../types/index.js';
-import { StateManager, safeDeactivate } from '../services/state-manager.js';
+import { StateManager, safeDeactivate, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { backendEnvOverrides, isBackend } from '../services/backend-spawn.js';
 import { getExtensionRoot, Style, formatTime, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, displayMacNotification, writeStateFile, } from '../services/pickle-utils.js';
 import { isWorkingTreeDirty } from '../services/git-utils.js';
@@ -1120,6 +1120,16 @@ function finalizePipeline(runtime, counters, cancelMarker, startTime) {
     process.exit(pipelineFailed ? 1 : 0);
 }
 export async function main(sessionDir, opts = {}) {
+    try {
+        assertSchemaVersionDeployParity();
+    }
+    catch (err) {
+        if (err instanceof SchemaVersionDeployDriftError) {
+            process.stderr.write(`${err.message}\n`);
+            process.exit(1);
+        }
+        throw err;
+    }
     const log = createPipelineLog(sessionDir);
     log('pipeline-runner started');
     const runtime = loadPipelineRuntime(sessionDir, opts, log);

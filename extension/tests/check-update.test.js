@@ -542,6 +542,86 @@ describe('performUpgrade', () => {
             performUpgrade('1.0.0', '999.0.0', 'v999.0.0');
         });
     });
+
+    test('refuses upgrade when auto_update_enabled=false and does not download', () => {
+        fs.writeFileSync(
+            path.join(tmpDir, 'pickle_settings.json'),
+            JSON.stringify({ auto_update_enabled: false }),
+        );
+        // Mock gh that records every call — we expect zero calls.
+        const binDir = path.join(tmpDir, 'mock-bin');
+        const callsPath = path.join(tmpDir, 'gh-calls.txt');
+        fs.mkdirSync(binDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(binDir, 'gh'),
+            `#!/bin/sh\necho called >> ${JSON.stringify(callsPath)}\nexit 0\n`,
+            { mode: 0o755 },
+        );
+        const origPath = process.env.PATH;
+        process.env.PATH = `${binDir}:${origPath}`;
+        try {
+            const result = performUpgrade('1.0.0', '2.0.0', 'v2.0.0');
+            assert.equal(result.success, false);
+            assert.match(result.error, /disabled/i);
+            assert.equal(fs.existsSync(callsPath), false, 'must not invoke gh when kill-switch is on');
+        } finally {
+            process.env.PATH = origPath;
+        }
+    });
+
+    test('proceeds past kill-switch when auto_update_enabled=true (download mocked)', () => {
+        fs.writeFileSync(
+            path.join(tmpDir, 'pickle_settings.json'),
+            JSON.stringify({ auto_update_enabled: true }),
+        );
+        // Mock gh release download to fail cleanly so we don't hit the network.
+        // The kill-switch must NOT short-circuit this — failure must come from download path.
+        const binDir = path.join(tmpDir, 'mock-bin');
+        const callsPath = path.join(tmpDir, 'gh-calls.txt');
+        fs.mkdirSync(binDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(binDir, 'gh'),
+            `#!/bin/sh\necho called >> ${JSON.stringify(callsPath)}\nexit 1\n`,
+            { mode: 0o755 },
+        );
+        const origPath = process.env.PATH;
+        process.env.PATH = `${binDir}:${origPath}`;
+        try {
+            const result = performUpgrade('1.0.0', '2.0.0', 'v2.0.0');
+            assert.equal(result.success, false);
+            // Must be the download error, not the kill-switch error.
+            assert.match(result.error, /download/i);
+            assert.ok(fs.existsSync(callsPath), 'gh must be invoked when kill-switch is off');
+        } finally {
+            process.env.PATH = origPath;
+        }
+    });
+
+    test('force option overrides kill-switch and proceeds to download', () => {
+        fs.writeFileSync(
+            path.join(tmpDir, 'pickle_settings.json'),
+            JSON.stringify({ auto_update_enabled: false }),
+        );
+        const binDir = path.join(tmpDir, 'mock-bin');
+        const callsPath = path.join(tmpDir, 'gh-calls.txt');
+        fs.mkdirSync(binDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(binDir, 'gh'),
+            `#!/bin/sh\necho called >> ${JSON.stringify(callsPath)}\nexit 1\n`,
+            { mode: 0o755 },
+        );
+        const origPath = process.env.PATH;
+        process.env.PATH = `${binDir}:${origPath}`;
+        try {
+            const result = performUpgrade('1.0.0', '2.0.0', 'v2.0.0', { force: true });
+            assert.equal(result.success, false);
+            // Failure must be from download path, not kill-switch.
+            assert.match(result.error, /download/i);
+            assert.ok(fs.existsSync(callsPath), '--force must bypass kill-switch and call gh');
+        } finally {
+            process.env.PATH = origPath;
+        }
+    });
 });
 
 // ---------------------------------------------------------------------------

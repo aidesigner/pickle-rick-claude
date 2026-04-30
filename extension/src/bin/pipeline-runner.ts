@@ -21,7 +21,7 @@ import * as path from 'path';
 import { execFileSync, spawn, type ChildProcess } from 'child_process';
 import type { Backend, State } from '../types/index.js';
 import { BACKENDS } from '../types/index.js';
-import { StateManager, safeDeactivate } from '../services/state-manager.js';
+import { StateManager, safeDeactivate, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { backendEnvOverrides, isBackend } from '../services/backend-spawn.js';
 import {
   getExtensionRoot,
@@ -1380,6 +1380,15 @@ function finalizePipeline(
 }
 
 export async function main(sessionDir: string, opts: MainOpts = {}): Promise<void> {
+  try {
+    assertSchemaVersionDeployParity();
+  } catch (err) {
+    if (err instanceof SchemaVersionDeployDriftError) {
+      process.stderr.write(`${err.message}\n`);
+      process.exit(1);
+    }
+    throw err;
+  }
   const log = createPipelineLog(sessionDir);
   log('pipeline-runner started');
   const runtime = loadPipelineRuntime(sessionDir, opts, log);

@@ -236,8 +236,13 @@ export function extractAndInstall(tarballPath) {
         }
     }
 }
-export function performUpgrade(from, to, tag) {
+export function performUpgrade(from, to, tag, options) {
     try {
+        const settings = readSettings();
+        if (!settings.auto_update_enabled && !options?.force) {
+            log('Auto-update disabled in settings; refusing performUpgrade');
+            return { success: false, error: 'Auto-update disabled in pickle_settings.json' };
+        }
         log(`Starting upgrade: ${from} → ${to} (${tag})`);
         const tarballPath = downloadRelease(tag);
         if (!tarballPath) {
@@ -297,7 +302,7 @@ export function checkForUpdate(options) {
         });
         if (compareSemver(currentVersion, latestVersion) < 0) {
             log(`Update available: ${currentVersion} → ${latestVersion}`);
-            const upgrade = performUpgrade(currentVersion, latestVersion, release.tagName);
+            const upgrade = performUpgrade(currentVersion, latestVersion, release.tagName, { force: options?.force });
             if (upgrade.success) {
                 return { status: 'up-to-date', currentVersion: latestVersion, latestVersion };
             }
@@ -313,6 +318,7 @@ export function checkForUpdate(options) {
     }
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'check-update.js') {
+    const force = process.argv.includes('--force');
     if (process.argv.includes('--upgrade')) {
         const current = getCurrentVersion();
         const release = getLatestRelease();
@@ -325,13 +331,13 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'check-update.js') {
             console.log(JSON.stringify({ status: 'up-to-date', currentVersion: current }));
         }
         else {
-            const upgrade = performUpgrade(current, latest, release.tagName);
+            const upgrade = performUpgrade(current, latest, release.tagName, { force });
             console.log(JSON.stringify(upgrade, null, 2));
             process.exit(upgrade.success ? 0 : 1);
         }
     }
     else {
-        const result = checkForUpdate({ force: process.argv.includes('--force') });
+        const result = checkForUpdate({ force });
         console.log(JSON.stringify(result, null, 2));
     }
 }
