@@ -16,3 +16,4 @@ extension/.tmp/
 .claude/todos/
 # .claude/commands/ and .claude/skills/ are tracked — they're the product
 /scripts/
+activity/
