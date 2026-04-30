@@ -151,3 +151,74 @@ Five sections. Refinement fills the gaps.
 | `/pickle <task>` | Small/clear task, one shot |
 | `/pickle-tmux --resume <session>` | Picking up where you left off |
 | `/citadel --prd <path>` | Post-implementation conformance audit against the PRD |
+
+---
+
+## Configuration Reference
+
+Every user-facing BMAD hardening knob lives in one of these surfaces. Anything else is out-of-spec.
+
+### CLI Flags
+
+| Skill | Flag | Type | Default | Description |
+|:------|:-----|:-----|:--------|:------------|
+| `/pickle-readiness` | `--skip-readiness "<reason>"` | string <=200 chars | none | Bypass gate; reason required and logged |
+| `/pickle-readiness` | `--repo-root <path>` | repeatable path | `process.cwd()` | Multi-repo workspace targeting |
+| `/pickle-readiness` | `--history [--last N]` | int | 10 | Show readiness cycle history |
+| `/pickle-archaeology` | `--refresh` | bool | false | Force re-archaeology |
+| `/pickle-archaeology` | `--no-archaeology` | bool | false | Disable injection for session |
+| `/pickle-archaeology` | `--project-type <category>` | enum | auto | Override classifier |
+| `/pickle-correct-course` | `--auto-apply` | bool | false | Skip approval prompt |
+| `/pickle-correct-course` | `--force` | bool | false | Override low-confidence gate; structural predicates still apply |
+| `/pickle-correct-course` | `--dry-run` | bool | false | Emit proposal without apply |
+| `/pickle-correct-course` | `--recover-from-ledger` | bool | false | Replay-reverse partial apply |
+| `/pickle-correct-course` | `--recover --force` | bool | false | Forward-replay partial apply |
+| `/pickle-debate` | `--solo` | bool | auto on codex | Sequential single-context debate |
+| `/pickle-debate` | `--strict-teams` | bool | false | Disable codex auto-promote; persisted in `state.json.flags.strict_teams` |
+| `/pickle-debate` | `--continue [--personas <subset>]` | bool/csv | off | Continue prior debate; fenced against round-one `tickets_version` |
+| `/pickle-debate` | `--n <count>` | int 2..6 | 4 | Number of personas |
+| `/pickle-debate` | `--personas <csv>` | csv | r,a,i,s | Persona selection |
+| `/pickle-debate` | `--accept-stale` | bool | false | Round-N override after `tickets_version` changes |
+
+### Environment Variables
+
+| Variable | Type | Default | Effect |
+|:---------|:-----|:--------|:-------|
+| `PICKLE_PHASE_PERSONAS` | `on|off` | `off` | P2 dispatcher kill-switch until behavioral baseline is checked in |
+| `PICKLE_ARCHAEOLOGY_AUTO_REFRESH` | `on|off` | `on` | P1 auto-trigger kill-switch |
+| `BEHAVIORAL` | `0|1` | `0` | Gate behavioral tests |
+| `CI` | `0|1` | `0` | Suppress confirmation prompts; strict budget |
+
+### Settings
+
+Settings live under `~/.claude/pickle-rick/pickle_settings.json:bmad_hardening`.
+
+| Key | Type | Default | Used by |
+|:----|:-----|:--------|:--------|
+| `archaeology_refresh_threshold_pct` | int 0-100 | 10 | P1 auto-refresh |
+| `debate_max_rounds` | int 1-10 | 5 | P4 multi-round cap |
+| `debate_codex_solo_max_rounds` | int 1-5 | 2 | P4 codex solo cap |
+| `debate_min_rounds_confirm` | int 1-10 | 3 | P4 multi-round confirmation |
+| `readiness_skip_reasons_max_len` | int | 200 | P0 readiness bypass |
+| `readiness_max_recycle_cycles` | int | 3 | P0 recycle cap |
+| `phase_personas_enabled` | bool | false | P2 dispatcher |
+| `phase_personas.model_override` | object | `{}` | P2 model overrides |
+| `behavioral_test_max_usd_per_test` | float | 0.50 | Behavioral framework |
+| `behavioral_test_max_wall_s` | int | 120 | Behavioral framework |
+| `calibration.drift_threshold_pct` | int | 5 | Calibration drift gate |
+
+### Discoverability
+
+- `/help-pickle` lists skills and primary flags.
+- `/pickle-status --config` prints resolved configuration for the current session, including provenance.
+- `/pickle-readiness --history` shows readiness cycle log.
+- This guide mirrors the source configuration table.
+
+### Hang Guards
+
+| Const | Default | Used by |
+|:------|:--------|:--------|
+| `READINESS_GREP_TIMEOUT_MS` | `30_000` ms | P0 contract resolution through `scope-resolver.computeOneHop()` |
+| `ARCHAEOLOGY_WORKER_TIMEOUT_S` | `600` s | P1 worker spawn through `buildWorkerInvocation()` |
+| `CORRECTOR_TIMEOUT_S` | `300` s | P3 corrector path through `buildJudgeInvocation()`; current bin is brief-prep only |
+| `DEBATER_TIMEOUT_S` | `240` s | P4 per-persona path; current bin is brief-prep only |

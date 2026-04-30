@@ -31,9 +31,21 @@
   "enable_model_tiers": true,
   "enable_backend_routing_heuristic": false,
   "bmad_hardening": {
+    "archaeology_refresh_threshold_pct": 10,
     "debate_max_rounds": 5,
     "debate_codex_solo_max_rounds": 2,
-    "debate_min_rounds_confirm": 3
+    "debate_min_rounds_confirm": 3,
+    "readiness_skip_reasons_max_len": 200,
+    "readiness_max_recycle_cycles": 3,
+    "phase_personas_enabled": false,
+    "phase_personas": {
+      "model_override": {}
+    },
+    "behavioral_test_max_usd_per_test": 0.5,
+    "behavioral_test_max_wall_s": 120,
+    "calibration": {
+      "drift_threshold_pct": 5
+    }
   },
   "commit_pending_probe_threshold": 2,
   "convergence_gate": {

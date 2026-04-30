@@ -22,6 +22,7 @@ const REQUIRED_SECTIONS = [
 ] as const;
 
 const DEFAULT_MODEL = 'sonnet';
+const ARCHAEOLOGY_WORKER_TIMEOUT_S = 600;
 
 export interface ArchaeologyArgs {
   sessionDir: string;
@@ -340,6 +341,7 @@ function runWorker(invocation: SpawnInvocation, spawnFn: typeof spawnSync): Spaw
   return spawnFn(invocation.cmd, invocation.args, {
     encoding: 'utf8',
     maxBuffer: 20 * 1024 * 1024,
+    timeout: ARCHAEOLOGY_WORKER_TIMEOUT_S * 1000,
   }) as SpawnSyncReturns<string>;
 }
 

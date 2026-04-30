@@ -19,6 +19,7 @@ const REQUIRED_SECTIONS = [
     'Data Model',
 ];
 const DEFAULT_MODEL = 'sonnet';
+const ARCHAEOLOGY_WORKER_TIMEOUT_S = 600;
 function usage() {
     process.stderr.write('Usage: node archaeology.js --session-dir <dir> [--repo-root <dir>] [--extension-root <dir>] [--project-type <category>] [--refresh] [--force] [--no-archaeology] [--dry-run]\n');
     process.exit(1);
@@ -260,6 +261,7 @@ function runWorker(invocation, spawnFn) {
     return spawnFn(invocation.cmd, invocation.args, {
         encoding: 'utf8',
         maxBuffer: 20 * 1024 * 1024,
+        timeout: ARCHAEOLOGY_WORKER_TIMEOUT_S * 1000,
     });
 }
 function recordActivity(sessionDir, sm, logActivityFn, payload, archaeology) {
