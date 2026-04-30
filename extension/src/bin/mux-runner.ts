@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, type TicketInfo } from '../services/pickle-utils.js';
-import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact, type Backend, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole } from '../types/index.js';
+import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact, type Backend, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole, type ActivityEventType } from '../types/index.js';
 import { StateManager, safeDeactivate, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, resetCircuitBreaker, type CircuitBreakerConfig, type CircuitBreakerState } from '../services/circuit-breaker.js';
@@ -1091,6 +1091,41 @@ export function setupSignalHandlers(statePath: string, log: (msg: string) => voi
   process.on('SIGHUP', () => handleShutdownSignal('SIGHUP'));
 }
 
+/**
+ * AC-LPB-04: classify a `StateManager.read()` failure on the per-iteration
+ * cap-check read.
+ *
+ * `SCHEMA_MISMATCH` is a recoverable concurrent-writer race — a fresh read
+ * on the next outer-loop turn will see the migrated state. Emit an
+ * escalation activity event so the user can act if it persists, surface the
+ * failure to `mux-runner.log` for visibility, then signal `'continue'` so
+ * the caller retries instead of exiting (which would strand pending work).
+ *
+ * Every other StateError code (MISSING, CORRUPT, LOCK_FAILED, …) is
+ * terminal — return `'exit_error'` so the legacy code path runs.
+ */
+export type CapCheckReadDecision = 'continue' | 'exit_error';
+export function classifyCapCheckReadError(
+  err: unknown,
+  sessionDir: string,
+  log: (msg: string) => void,
+): CapCheckReadDecision {
+  const msg = safeErrorMessage(err);
+  const code = err && typeof err === 'object' ? (err as { code?: string }).code : undefined;
+  if (code === 'SCHEMA_MISMATCH') {
+    log(`WARN: state.json schema mismatch on cap-check read: ${msg}. Retrying next iteration.`);
+    logActivity({
+      event: 'cap_check_failed_schema_mismatch' as ActivityEventType,
+      source: 'pickle',
+      session: path.basename(sessionDir),
+      error: msg,
+    });
+    return 'continue';
+  }
+  log(`ERROR: Cannot read state.json: ${msg}. Exiting loop.`);
+  return 'exit_error';
+}
+
 export function shouldExitMainLoop(state: State, ctx: LoopContext): { exit: true; reason: ExitReason } | { exit: false } {
   if (state.active !== true) {
     ctx.log('Session inactive. Exiting.');
@@ -1300,7 +1335,7 @@ export interface CodexRelaunchDecision {
   shouldRelaunch: boolean;
   pendingCount: number;
   nextRelaunchCount: number;
-  reason: 'eligible' | 'not_codex' | 'no_pending' | 'cap_exceeded' | 'circuit_open';
+  reason: 'eligible' | 'not_codex' | 'no_pending' | 'cap_exceeded' | 'circuit_open' | 'time_limit';
 }
 
 export function evaluateCodexManagerRelaunch(
@@ -1311,6 +1346,19 @@ export function evaluateCodexManagerRelaunch(
   const backend = resolveBackend(state);
   if (backend !== 'codex') {
     return { shouldRelaunch: false, pendingCount: 0, nextRelaunchCount: 0, reason: 'not_codex' };
+  }
+  // AC-LPB-03: Hard wall-clock cap — relaunching after the time budget is
+  // exhausted only burns API turns the user already opted out of. Mirror the
+  // cap-gate in shouldExitForLimits() so codex relaunches honor the same
+  // budget as the main loop. Runs BEFORE every other decision branch so the
+  // budget cannot be papered over by pending tickets or a closed CB.
+  const startEpoch = Number.isFinite(Number(state.start_time_epoch)) ? Number(state.start_time_epoch) : 0;
+  const maxTimeMins = Number.isFinite(Number(state.max_time_minutes)) ? Number(state.max_time_minutes) : 0;
+  if (maxTimeMins > 0 && startEpoch > 0) {
+    const elapsedSec = Math.max(0, Math.floor(Date.now() / 1000) - startEpoch);
+    if (elapsedSec > maxTimeMins * 60) {
+      return { shouldRelaunch: false, pendingCount: 0, nextRelaunchCount: 0, reason: 'time_limit' };
+    }
   }
   // Tripped circuit breaker → real backend failure, do not paper over it.
   if (cbState && cbState.state === 'OPEN') {
@@ -1611,8 +1659,11 @@ async function runMuxRunnerMain() {
     try {
       state = readRunnerState(statePath);
     } catch (err) {
-      const msg = safeErrorMessage(err);
-      log(`ERROR: Cannot read state.json: ${msg}. Exiting loop.`);
+      const decision = classifyCapCheckReadError(err, sessionDir, log);
+      if (decision === 'continue') {
+        await sleep(1000);
+        continue;
+      }
       exitReason = 'error';
       break;
     }

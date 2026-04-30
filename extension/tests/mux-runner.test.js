@@ -2524,3 +2524,122 @@ test('evaluateCodexManagerRelaunch (mux-runner): smoke test for exported helper'
     assert.equal(typeof DefaultsForRelaunch.CODEX_MANAGER_RELAUNCH_CAP, 'number');
     assert.ok(DefaultsForRelaunch.CODEX_MANAGER_RELAUNCH_CAP >= 1);
 });
+
+// ---------------------------------------------------------------------------
+// AC-LPB-04: SCHEMA_MISMATCH on cap-check read emits an escalation event
+// instead of silently retrying. The error must surface so the user can act,
+// but the loop must not crash (which would lose progress on every retryable
+// concurrent-write race).
+// ---------------------------------------------------------------------------
+import { classifyCapCheckReadError } from '../bin/mux-runner.js';
+
+function makeSchemaMismatchSession() {
+    const sessionDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mux-schema-')));
+    const dataRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mux-schema-data-')));
+    return { sessionDir, dataRoot };
+}
+
+function readSchemaActivityEvents(dataRoot) {
+    const activityDir = path.join(dataRoot, 'activity');
+    if (!fs.existsSync(activityDir)) return [];
+    const events = [];
+    for (const entry of fs.readdirSync(activityDir)) {
+        if (!entry.endsWith('.jsonl')) continue;
+        const content = fs.readFileSync(path.join(activityDir, entry), 'utf-8');
+        for (const line of content.split('\n')) {
+            if (!line.trim()) continue;
+            try { events.push(JSON.parse(line)); } catch { /* ignore */ }
+        }
+    }
+    return events;
+}
+
+function withSchemaDataRoot(dataRoot, fn) {
+    const prev = process.env.PICKLE_DATA_ROOT;
+    process.env.PICKLE_DATA_ROOT = dataRoot;
+    try { return fn(); }
+    finally {
+        if (prev === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = prev;
+    }
+}
+
+test('classifyCapCheckReadError: SCHEMA_MISMATCH emits cap_check_failed_schema_mismatch and continues', () => {
+    const session = makeSchemaMismatchSession();
+    try {
+        withSchemaDataRoot(session.dataRoot, () => {
+            const logs = [];
+            // Mimic StateError shape — code is the discriminator.
+            const err = Object.assign(new Error(
+                'State file schema_version 999 is newer than supported version 3',
+            ), { code: 'SCHEMA_MISMATCH', name: 'StateError' });
+
+            const decision = classifyCapCheckReadError(err, session.sessionDir, (m) => logs.push(m));
+            assert.equal(decision, 'continue',
+                'SCHEMA_MISMATCH must continue the loop, not exit');
+
+            // Activity event surfaced with the right shape.
+            const events = readSchemaActivityEvents(session.dataRoot);
+            const escalation = events.find(e => e.event === 'cap_check_failed_schema_mismatch');
+            assert.ok(escalation, `expected cap_check_failed_schema_mismatch event, got: ${events.map(e => e.event).join(', ')}`);
+            assert.equal(escalation.source, 'pickle');
+            assert.equal(escalation.session, path.basename(session.sessionDir));
+            assert.ok(typeof escalation.error === 'string' && /schema/i.test(escalation.error),
+                `expected schema-mentioning error, got: ${escalation.error}`);
+
+            // Visibility: surfaced to runner log too.
+            assert.ok(
+                logs.some(line => /schema mismatch/i.test(line)),
+                `expected schema-mismatch line in runner logs, got: ${logs.join(' | ')}`,
+            );
+        });
+    } finally {
+        fs.rmSync(session.sessionDir, { recursive: true, force: true });
+        fs.rmSync(session.dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('classifyCapCheckReadError: non-SCHEMA_MISMATCH errors return exit_error and emit no event', () => {
+    const session = makeSchemaMismatchSession();
+    try {
+        withSchemaDataRoot(session.dataRoot, () => {
+            for (const code of ['CORRUPT', 'MISSING', 'LOCK_FAILED', undefined]) {
+                const err = Object.assign(new Error(`simulated ${code ?? 'plain'} failure`), code ? { code } : {});
+                const logs = [];
+                const decision = classifyCapCheckReadError(err, session.sessionDir, (m) => logs.push(m));
+                assert.equal(decision, 'exit_error',
+                    `non-SCHEMA_MISMATCH error (code=${code}) must exit with error`);
+                assert.ok(
+                    logs.some(line => /Cannot read state\.json/.test(line)),
+                    `expected legacy 'Cannot read state.json' log for code=${code}, got: ${logs.join(' | ')}`,
+                );
+            }
+            const events = readSchemaActivityEvents(session.dataRoot);
+            const escalation = events.find(e => e.event === 'cap_check_failed_schema_mismatch');
+            assert.equal(escalation, undefined,
+                'non-SCHEMA_MISMATCH errors must NOT emit cap_check_failed_schema_mismatch');
+        });
+    } finally {
+        fs.rmSync(session.sessionDir, { recursive: true, force: true });
+        fs.rmSync(session.dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('classifyCapCheckReadError: non-Error thrown values default to exit_error', () => {
+    const session = makeSchemaMismatchSession();
+    try {
+        withSchemaDataRoot(session.dataRoot, () => {
+            const logs = [];
+            // Defensive: a thrown string/number/null should not crash the
+            // runner — fall through to legacy exit-error.
+            const decision = classifyCapCheckReadError('plain string error', session.sessionDir, (m) => logs.push(m));
+            assert.equal(decision, 'exit_error');
+            const events = readSchemaActivityEvents(session.dataRoot);
+            assert.equal(events.find(e => e.event === 'cap_check_failed_schema_mismatch'), undefined,
+                'plain non-Error throws must not emit the escalation event');
+        });
+    } finally {
+        fs.rmSync(session.sessionDir, { recursive: true, force: true });
+        fs.rmSync(session.dataRoot, { recursive: true, force: true });
+    }
+});
