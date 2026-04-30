@@ -150,6 +150,68 @@ describe('buildAcCoverageScorecard', () => {
       fs.rmSync(repoRoot, { recursive: true, force: true });
     }
   });
+
+  test('uses optional LLM entity mappings when keyword anchors miss implementation symbols', () => {
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'citadel-ac-scorecard-'));
+    try {
+      writeFile(
+        repoRoot,
+        'src/routes.ts',
+        [
+          'export function enforceLoa618RetryChildExtraction() {',
+          '  return true;',
+          '}',
+          '',
+        ].join('\n'),
+      );
+      writeFile(
+        repoRoot,
+        'tests/routes.test.ts',
+        [
+          'import { enforceLoa618RetryChildExtraction } from "../src/routes";',
+          '',
+          'test("regression keeps LOA-618 route locked", () => {',
+          '  assert.equal(enforceLoa618RetryChildExtraction(), true);',
+          '});',
+          '',
+        ].join('\n'),
+      );
+
+      const acceptanceCriteria = [
+        {
+          id: 'AC-CIT-99',
+          line: 21,
+          text: '- **AC-CIT-99**: Coverage captures the semantic regression.',
+        },
+      ];
+      const diff = diffSummary(repoRoot, [
+        changedFile('src/routes.ts', 'production'),
+        changedFile('tests/routes.test.ts', 'test'),
+      ]);
+
+      const keywordOnly = buildAcCoverageScorecard(acceptanceCriteria, diff);
+      assert.equal(keywordOnly.rows[0].implemented, false);
+      assert.equal(keywordOnly.findings[0].severity, 'Critical');
+
+      const assisted = buildAcCoverageScorecard(acceptanceCriteria, diff, {
+        llmEntityMappings: [
+          {
+            acId: 'AC-CIT-99',
+            expectedSymbols: ['enforceLoa618RetryChildExtraction'],
+          },
+        ],
+      });
+
+      assert.equal(assisted.rows[0].implemented, true);
+      assert.equal(assisted.rows[0].tested, true);
+      assert.deepEqual(assisted.findings, []);
+      assert.equal(assisted.rows[0].implementationEvidence[0].matchType, 'llm_entity');
+      assert.equal(assisted.rows[0].implementationEvidence[0].match, 'enforceLoa618RetryChildExtraction');
+      assert.equal(assisted.rows[0].testEvidence[0].matchType, 'symbol');
+    } finally {
+      fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('extractKeywordAnchors', () => {

@@ -3,7 +3,7 @@ import * as path from 'node:path';
 import { AcceptanceCriterion } from './prd-parser.js';
 import { ChangedFileSummary, DiffSummary } from './diff-walker.js';
 
-export type CoverageMatchType = 'ac_id' | 'keyword_anchor' | 'symbol';
+export type CoverageMatchType = 'ac_id' | 'keyword_anchor' | 'symbol' | 'llm_entity';
 export type CoverageSeverity = 'Critical' | 'High';
 
 export interface CoverageEvidence {
@@ -52,6 +52,13 @@ export interface AcCoverageScorecard {
 export interface BuildAcCoverageScorecardOptions {
   repoRoot?: string;
   maxEvidencePerKind?: number;
+  llmEntityMappings?: readonly LlmEntityMapping[];
+}
+
+export interface LlmEntityMapping {
+  acId: string;
+  expectedSymbols?: readonly string[];
+  expectedCallSites?: readonly string[];
 }
 
 interface LoadedChangedFile {
@@ -110,9 +117,10 @@ export function buildAcCoverageScorecard(
   const files = loadChangedFiles(diff.changedFiles, repoRoot);
   const productionFiles = files.filter((file) => file.summary.kind === 'production');
   const testFiles = files.filter((file) => file.summary.kind === 'test');
+  const llmEntityMappings = normalizeLlmEntityMappings(options.llmEntityMappings ?? []);
 
   const rows = acceptanceCriteria.map((criterion) =>
-    buildRow(criterion, productionFiles, testFiles, maxEvidencePerKind),
+    buildRow(criterion, productionFiles, testFiles, maxEvidencePerKind, llmEntityMappings.get(criterion.id) ?? []),
   );
   const findings = rows.flatMap(buildFindings);
 
@@ -155,16 +163,23 @@ function buildRow(
   productionFiles: LoadedChangedFile[],
   testFiles: LoadedChangedFile[],
   maxEvidencePerKind: number,
+  llmEntities: string[],
 ): AcCoverageRow {
   const keywordAnchors = extractKeywordAnchors(criterion.text);
-  const implementationEvidence = findProductionEvidence(criterion, keywordAnchors, productionFiles, maxEvidencePerKind);
+  const implementationEvidence = findProductionEvidence(
+    criterion,
+    keywordAnchors,
+    llmEntities,
+    productionFiles,
+    maxEvidencePerKind,
+  );
   const implementationSymbols = uniqueSortedStrings(
     implementationEvidence.map((evidence) => evidence.symbol).filter((symbol): symbol is string => Boolean(symbol)),
   );
   const testEvidence = findTestEvidence(
     criterion,
     keywordAnchors,
-    implementationSymbols,
+    uniqueSortedStrings([...implementationSymbols, ...llmEntities]),
     testFiles,
     maxEvidencePerKind,
   );
@@ -185,6 +200,7 @@ function buildRow(
 function findProductionEvidence(
   criterion: AcceptanceCriterion,
   keywordAnchors: string[],
+  llmEntities: string[],
   files: LoadedChangedFile[],
   maxEvidence: number,
 ): CoverageEvidence[] {
@@ -193,6 +209,11 @@ function findProductionEvidence(
     scanLines(file, (line, lineNumber) => {
       if (line.includes(criterion.id)) {
         evidence.push(toEvidence(file.summary.path, lineNumber, line, 'ac_id', criterion.id, extractSymbolName(line)));
+        return;
+      }
+      const matchedEntity = llmEntities.find((entity) => line.includes(entity));
+      if (matchedEntity) {
+        evidence.push(toEvidence(file.summary.path, lineNumber, line, 'llm_entity', matchedEntity, matchedEntity));
         return;
       }
       const symbol = extractSymbolName(line);
@@ -337,4 +358,17 @@ function escapeTableCell(value: string): string {
 
 function uniqueSortedStrings(values: string[]): string[] {
   return [...new Set(values)].sort((a, b) => a.localeCompare(b));
+}
+
+function normalizeLlmEntityMappings(mappings: readonly LlmEntityMapping[]): Map<string, string[]> {
+  const byAcId = new Map<string, string[]>();
+  for (const mapping of mappings) {
+    const entities = [
+      ...(mapping.expectedSymbols ?? []),
+      ...(mapping.expectedCallSites ?? []),
+    ].map((entity) => entity.trim()).filter(Boolean);
+    if (entities.length === 0) continue;
+    byAcId.set(mapping.acId, uniqueSortedStrings([...(byAcId.get(mapping.acId) ?? []), ...entities]));
+  }
+  return byAcId;
 }

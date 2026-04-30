@@ -45,7 +45,8 @@ export function buildAcCoverageScorecard(acceptanceCriteria, diff, options = {})
     const files = loadChangedFiles(diff.changedFiles, repoRoot);
     const productionFiles = files.filter((file) => file.summary.kind === 'production');
     const testFiles = files.filter((file) => file.summary.kind === 'test');
-    const rows = acceptanceCriteria.map((criterion) => buildRow(criterion, productionFiles, testFiles, maxEvidencePerKind));
+    const llmEntityMappings = normalizeLlmEntityMappings(options.llmEntityMappings ?? []);
+    const rows = acceptanceCriteria.map((criterion) => buildRow(criterion, productionFiles, testFiles, maxEvidencePerKind, llmEntityMappings.get(criterion.id) ?? []));
     const findings = rows.flatMap(buildFindings);
     return {
         rows,
@@ -76,11 +77,11 @@ export function extractKeywordAnchors(text) {
         .filter((word) => word.length >= 4 && !COMMON_WORDS.has(word));
     return uniqueSortedStrings(anchors);
 }
-function buildRow(criterion, productionFiles, testFiles, maxEvidencePerKind) {
+function buildRow(criterion, productionFiles, testFiles, maxEvidencePerKind, llmEntities) {
     const keywordAnchors = extractKeywordAnchors(criterion.text);
-    const implementationEvidence = findProductionEvidence(criterion, keywordAnchors, productionFiles, maxEvidencePerKind);
+    const implementationEvidence = findProductionEvidence(criterion, keywordAnchors, llmEntities, productionFiles, maxEvidencePerKind);
     const implementationSymbols = uniqueSortedStrings(implementationEvidence.map((evidence) => evidence.symbol).filter((symbol) => Boolean(symbol)));
-    const testEvidence = findTestEvidence(criterion, keywordAnchors, implementationSymbols, testFiles, maxEvidencePerKind);
+    const testEvidence = findTestEvidence(criterion, keywordAnchors, uniqueSortedStrings([...implementationSymbols, ...llmEntities]), testFiles, maxEvidencePerKind);
     return {
         id: criterion.id,
         implemented: implementationEvidence.length > 0,
@@ -93,12 +94,17 @@ function buildRow(criterion, productionFiles, testFiles, maxEvidencePerKind) {
         testEvidence,
     };
 }
-function findProductionEvidence(criterion, keywordAnchors, files, maxEvidence) {
+function findProductionEvidence(criterion, keywordAnchors, llmEntities, files, maxEvidence) {
     const evidence = [];
     for (const file of files) {
         scanLines(file, (line, lineNumber) => {
             if (line.includes(criterion.id)) {
                 evidence.push(toEvidence(file.summary.path, lineNumber, line, 'ac_id', criterion.id, extractSymbolName(line)));
+                return;
+            }
+            const matchedEntity = llmEntities.find((entity) => line.includes(entity));
+            if (matchedEntity) {
+                evidence.push(toEvidence(file.summary.path, lineNumber, line, 'llm_entity', matchedEntity, matchedEntity));
                 return;
             }
             const symbol = extractSymbolName(line);
@@ -224,4 +230,17 @@ function escapeTableCell(value) {
 }
 function uniqueSortedStrings(values) {
     return [...new Set(values)].sort((a, b) => a.localeCompare(b));
+}
+function normalizeLlmEntityMappings(mappings) {
+    const byAcId = new Map();
+    for (const mapping of mappings) {
+        const entities = [
+            ...(mapping.expectedSymbols ?? []),
+            ...(mapping.expectedCallSites ?? []),
+        ].map((entity) => entity.trim()).filter(Boolean);
+        if (entities.length === 0)
+            continue;
+        byAcId.set(mapping.acId, uniqueSortedStrings([...(byAcId.get(mapping.acId) ?? []), ...entities]));
+    }
+    return byAcId;
 }
