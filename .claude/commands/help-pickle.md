@@ -8,6 +8,7 @@ Summarize the available commands for the user:
 - `/pickle-zellij <prompt>`: Context-clearing Zellij mode — fresh subprocess per iteration via KDL layouts. Same as /pickle-tmux but for Zellij users. Requires Zellij >= 0.40.0
 - `/pickle-prd <prompt>`: Interactive PRD drafting, then resume with `/pickle --resume`
 - `/pickle-refine-prd [path]`: Refine PRD via 3 parallel Morty analysts, decompose into atomic tickets. Resume with `/pickle --resume` or `/pickle-tmux --resume`
+- `/pickle-debate "<question>"`: Multi-agent decision debate. Flags: `--personas r,a,i,s`, `--n <2-6>`, `--solo`, `--strict-teams`, `--continue`, `--accept-stale`
 - `/pickle-dot [path | inline PRD]`: Convert PRD to strongdm/attractor-compatible DOT digraph
 - `/citadel --prd <path>`: Post-implementation conformance audit against PRD acceptance criteria, branch diff, and trap doors. Flags: `--diff <base..head>`, `--strict`, `--report <path>`, `--print-stubs`
 - `/szechuan-sauce [target]`: Principle-driven code quality review (iterative deslopping). Flags: `--domain <name>`, `--focus "<text>"`, `--dry-run`, `--max-iterations`, `--stall-limit`
