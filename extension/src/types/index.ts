@@ -345,6 +345,8 @@ export const VALID_ACTIVITY_EVENTS = [
   'phase_personas_disabled_seen',
   'debate_solo_auto',
   'debate_user_declined_auto_promote',
+  'debate_invalidated_by_correction',
+  'debate_round_truncated',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];
@@ -405,6 +407,10 @@ export interface ActivityEvent {
   bytes_out_utf8?: number;
   tokens_in_estimated?: number;
   tokens_out_estimated?: number;
+  round?: number;
+  expected_tickets_version?: number;
+  actual_tickets_version?: number;
+  bytes_dropped?: number;
   gate_payload?: Record<string, unknown>;
 }
 

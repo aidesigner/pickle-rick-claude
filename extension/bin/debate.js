@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { loadAgentMd } from '../services/agent-md-loader.js';
 import { logActivity } from '../services/activity-logger.js';
 import { resolveBackend } from '../services/backend-spawn.js';
-import { isoCompactStamp } from '../services/pickle-utils.js';
+import { getExtensionRoot, isoCompactStamp } from '../services/pickle-utils.js';
+import { readRecoverableJsonObject } from '../services/recoverable-json.js';
 import { StateManager } from '../services/state-manager.js';
 import { DEBATE_PERSONAS } from './generate-debate-personas.js';
 const DEFAULT_PERSONAS = ['researcher', 'architect', 'implementer', 'skeptic'];
@@ -16,8 +17,14 @@ const RESPONSE_WORD_CAP = 800;
 const REQUIRED_TOOLS = ['Read', 'Glob', 'Grep'];
 const AUTO_PROMOTE_BANNER = '[debate] codex backend detected — auto-promoting to --solo (use --strict-teams to require parallel subagents and fail-fast on codex). Sequential debate starting; estimated cost: $0.40, est. wall-clock: 90s. Continue? [Y/n]';
 const STRICT_TEAMS_CODEX_ERROR = 'debate: --strict-teams requires claude backend; current: codex; remove --strict-teams to allow auto-promote, or switch backend';
+const PRIOR_CONTEXT_BYTE_CAP = 12_000;
+const DEFAULT_DEBATE_SETTINGS = {
+    debateMaxRounds: 5,
+    debateCodexSoloMaxRounds: 2,
+    debateMinRoundsConfirm: 3,
+};
 function usage() {
-    process.stderr.write('Usage: node debate.js "<question>" --session-dir <dir> [--repo-root <dir>] [--personas r,a,i,s] [--n <2-6>] [--solo] [--strict-teams] [--no-strict-teams] [--continue] [--accept-stale] [--dry-run]\n');
+    process.stderr.write('Usage: node debate.js "<question>" --session-dir <dir> [--repo-root <dir>] [--personas r,a,i,s] [--n <2-6>] [--solo] [--strict-teams] [--no-strict-teams] [--continue] [--confirm-multi-round] [--accept-stale] [--dry-run]\n');
     process.exit(1);
 }
 export function parseArgs(argv) {
@@ -39,6 +46,7 @@ export function parseArgs(argv) {
         strictTeams: argv.includes('--strict-teams'),
         noStrictTeams: argv.includes('--no-strict-teams'),
         continueDebate: argv.includes('--continue'),
+        confirmMultiRound: argv.includes('--confirm-multi-round'),
         acceptStale: argv.includes('--accept-stale'),
         dryRun: argv.includes('--dry-run'),
         agentsDir: readFlag(argv, '--agents-dir'),
@@ -118,6 +126,26 @@ function resolvePersonas(csv, n) {
     }
     return personas;
 }
+function boundedInt(value, min, max, fallback) {
+    if (typeof value !== 'number' || !Number.isInteger(value))
+        return fallback;
+    if (value < min || value > max)
+        return fallback;
+    return value;
+}
+function loadDebateSettings(extensionRoot, overrides) {
+    const settingsPath = path.join(extensionRoot, 'pickle_settings.json');
+    const raw = readRecoverableJsonObject(settingsPath);
+    const hardening = raw?.bmad_hardening;
+    const bag = hardening && typeof hardening === 'object' && !Array.isArray(hardening)
+        ? hardening
+        : {};
+    return {
+        debateMaxRounds: overrides?.debateMaxRounds ?? boundedInt(bag.debate_max_rounds, 1, 10, DEFAULT_DEBATE_SETTINGS.debateMaxRounds),
+        debateCodexSoloMaxRounds: overrides?.debateCodexSoloMaxRounds ?? boundedInt(bag.debate_codex_solo_max_rounds, 1, 5, DEFAULT_DEBATE_SETTINGS.debateCodexSoloMaxRounds),
+        debateMinRoundsConfirm: overrides?.debateMinRoundsConfirm ?? boundedInt(bag.debate_min_rounds_confirm, 1, 10, DEFAULT_DEBATE_SETTINGS.debateMinRoundsConfirm),
+    };
+}
 function validateDebateAgents(args) {
     return args.personas.map((persona) => {
         const agentName = `morty-debater-${persona}`;
@@ -133,7 +161,26 @@ function validateDebateAgents(args) {
         return { persona, agentName, sourcePath: loaded.path };
     });
 }
-export function buildDebateBrief(args, createdAt, agents = validateDebateAgents(args), mode = args.solo ? 'solo' : 'teams') {
+function renderPriorContext(prepared) {
+    if (!prepared)
+        return [];
+    const lines = [
+        '## Round Context',
+        '',
+        `- round: ${prepared.round}`,
+        `- round1_tickets_version: ${prepared.round1TicketsVersion}`,
+        `- prior_briefs: ${prepared.previousBriefPaths.length}`,
+        `- prior_context_truncated_bytes: ${prepared.truncatedBytes}`,
+    ];
+    if (prepared.newPersonas.length > 0) {
+        lines.push(`- New round-${prepared.round} personas: ${prepared.newPersonas.join(', ')} weren't in round 1, read for context.`);
+    }
+    if (prepared.priorContext) {
+        lines.push('', '### Prior Debate Context', '', prepared.priorContext);
+    }
+    return [...lines, ''];
+}
+export function buildDebateBrief(args, createdAt, agents = validateDebateAgents(args), mode = args.solo ? 'solo' : 'teams', prepared) {
     validateQuestion(args.question);
     const personaRows = agents.map((agent) => `- ${agent.persona}: ${agent.agentName} (${agent.sourcePath})`);
     const personaTitles = args.personas
@@ -157,9 +204,12 @@ export function buildDebateBrief(args, createdAt, agents = validateDebateAgents(
         `- strict_teams: ${args.strictTeams}`,
         `- no_strict_teams: ${args.noStrictTeams}`,
         `- continue: ${args.continueDebate}`,
+        `- confirm_multi_round: ${args.confirmMultiRound}`,
         `- accept_stale: ${args.acceptStale}`,
+        `- round: ${prepared?.round ?? 1}`,
         `- n: ${args.n}`,
         '',
+        ...renderPriorContext(prepared),
         '## Persona Agents',
         '',
         ...personaRows,
@@ -192,6 +242,199 @@ function persistStrictTeamsFlag(statePath, stateManager) {
     stateManager.update(statePath, (state) => {
         state.flags ??= {};
         state.flags.strict_teams = true;
+    });
+}
+function readTicketsVersion(state) {
+    return typeof state?.tickets_version === 'number' && Number.isFinite(state.tickets_version)
+        ? state.tickets_version
+        : 0;
+}
+function isDebateStateFlag(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value))
+        return false;
+    const record = value;
+    return typeof record.question === 'string'
+        && typeof record.round === 'number'
+        && Number.isInteger(record.round)
+        && typeof record.round1_tickets_version === 'number'
+        && Number.isInteger(record.round1_tickets_version)
+        && Array.isArray(record.round1_personas)
+        && record.round1_personas.every((item) => typeof item === 'string')
+        && Array.isArray(record.brief_paths)
+        && record.brief_paths.every((item) => typeof item === 'string')
+        && typeof record.last_generated_at === 'string';
+}
+function readDebateFlag(state) {
+    const value = state?.flags?.debate;
+    return isDebateStateFlag(value) ? value : null;
+}
+function listDebateResultFiles(sessionDir) {
+    let entries;
+    try {
+        entries = fs.readdirSync(sessionDir);
+    }
+    catch {
+        return [];
+    }
+    return entries
+        .filter((entry) => /^debate_.*\.md$/.test(entry) && !entry.endsWith('_brief.md'))
+        .sort()
+        .reverse()
+        .map((entry) => path.join(sessionDir, entry));
+}
+function readPriorContext(sessionDir, previousBriefPaths) {
+    const candidates = [...listDebateResultFiles(sessionDir), ...previousBriefPaths.slice().reverse()];
+    const seen = new Set();
+    let remaining = PRIOR_CONTEXT_BYTE_CAP;
+    let truncatedBytes = 0;
+    const chunks = [];
+    for (const filePath of candidates) {
+        if (seen.has(filePath))
+            continue;
+        seen.add(filePath);
+        let content;
+        try {
+            content = fs.readFileSync(filePath, 'utf8');
+        }
+        catch {
+            continue;
+        }
+        const header = `--- ${filePath} ---\n`;
+        const block = `${header}${content.trim()}\n`;
+        const bytes = Buffer.byteLength(block, 'utf8');
+        if (remaining <= 0) {
+            truncatedBytes += bytes;
+            continue;
+        }
+        if (bytes <= remaining) {
+            chunks.push(block);
+            remaining -= bytes;
+            continue;
+        }
+        const slice = Buffer.from(block, 'utf8').subarray(0, remaining).toString('utf8');
+        chunks.push(slice);
+        truncatedBytes += bytes - Buffer.byteLength(slice, 'utf8');
+        remaining = 0;
+    }
+    return { text: chunks.join('\n').trim(), truncatedBytes };
+}
+function debateRoundError(exitCode, error) {
+    return { exitCode, error };
+}
+function rejectMissingPrior(args, prior) {
+    if (!args.continueDebate || prior)
+        return null;
+    return debateRoundError(1, 'debate: --continue requires prior debate state in state.json.flags.debate.');
+}
+function rejectRoundLimit(round, settings) {
+    if (round <= settings.debateMaxRounds)
+        return null;
+    return debateRoundError(1, `debate: round ${round} exceeds debate_max_rounds=${settings.debateMaxRounds}.`);
+}
+function rejectMissingRoundConfirmation(args, round, settings) {
+    if (round < settings.debateMinRoundsConfirm || args.confirmMultiRound)
+        return null;
+    return debateRoundError(1, `debate: round ${round} requires --continue --confirm-multi-round.`);
+}
+function rejectStaleTicketsVersion(args, round, currentTicketsVersion, round1TicketsVersion, emitActivity) {
+    if (!args.continueDebate || args.acceptStale || currentTicketsVersion === round1TicketsVersion)
+        return null;
+    emitActivity({
+        event: 'debate_invalidated_by_correction',
+        source: 'pickle',
+        session: path.basename(args.sessionDir),
+        expected_tickets_version: round1TicketsVersion,
+        actual_tickets_version: currentTicketsVersion,
+        round,
+    });
+    return debateRoundError(1, `debate: tickets_version changed from ${round1TicketsVersion} to ${currentTicketsVersion}; rerun with --accept-stale to continue anyway.`);
+}
+function rejectCodexSoloRoundCap(backend, mode, round, settings) {
+    const soloLike = mode === 'solo' || mode === 'solo (auto)';
+    if (backend !== 'codex' || !soloLike || round <= settings.debateCodexSoloMaxRounds)
+        return null;
+    return debateRoundError(7, `debate: codex solo supports at most ${settings.debateCodexSoloMaxRounds} rounds; round ${round} requires claude teams backend or a smaller debate.`);
+}
+function logPriorContextTruncation(args, round, truncatedBytes, emitActivity) {
+    if (truncatedBytes <= 0)
+        return;
+    emitActivity({
+        event: 'debate_round_truncated',
+        source: 'pickle',
+        session: path.basename(args.sessionDir),
+        round,
+        bytes_dropped: truncatedBytes,
+    });
+}
+function loadPreparedPriorContext(args, previousBriefPaths, round, emitActivity) {
+    if (!args.continueDebate)
+        return { text: '', truncatedBytes: 0 };
+    const priorContext = readPriorContext(args.sessionDir, previousBriefPaths);
+    logPriorContextTruncation(args, round, priorContext.truncatedBytes, emitActivity);
+    return priorContext;
+}
+function prepareDebateRound(args, state, mode, backend, settings, emitActivity) {
+    const currentTicketsVersion = readTicketsVersion(state);
+    const prior = readDebateFlag(state);
+    const round = args.continueDebate ? (prior?.round ?? 0) + 1 : 1;
+    const missingPrior = rejectMissingPrior(args, prior);
+    if (missingPrior)
+        return missingPrior;
+    const capError = rejectRoundLimit(round, settings)
+        ?? rejectMissingRoundConfirmation(args, round, settings)
+        ?? rejectCodexSoloRoundCap(backend, mode, round, settings);
+    if (capError)
+        return capError;
+    const round1TicketsVersion = prior?.round1_tickets_version ?? currentTicketsVersion;
+    const staleError = rejectStaleTicketsVersion(args, round, currentTicketsVersion, round1TicketsVersion, emitActivity);
+    if (staleError)
+        return staleError;
+    const previousBriefPaths = prior?.brief_paths ?? [];
+    const priorContext = loadPreparedPriorContext(args, previousBriefPaths, round, emitActivity);
+    const round1Personas = new Set(prior?.round1_personas ?? args.personas);
+    return {
+        round,
+        round1TicketsVersion,
+        newPersonas: args.personas.filter((persona) => !round1Personas.has(persona)),
+        priorContext: priorContext.text,
+        truncatedBytes: priorContext.truncatedBytes,
+        previousBriefPaths,
+    };
+}
+function writeDebateBrief(args, briefPath, brief, prepared, stateInfo, stateManager, createdAt, out) {
+    fs.mkdirSync(path.dirname(briefPath), { recursive: true });
+    fs.writeFileSync(briefPath, brief, 'utf8');
+    if (stateInfo.state) {
+        persistDebateRound(stateInfo.statePath, stateManager, args, prepared, briefPath, createdAt);
+    }
+    out(`BRIEF_PATH=${briefPath}`);
+}
+function finishResolvedPreflight(input, resolved, opts, err) {
+    if (resolved.backend === 'codex' && resolved.args.strictTeams) {
+        err(STRICT_TEAMS_CODEX_ERROR);
+        return { exitCode: 7, briefPath: '', brief: '', mode: resolved.mode };
+    }
+    if (resolved.declinedAutoPromote) {
+        opts.logActivityFn?.({ event: 'debate_user_declined_auto_promote', source: 'pickle', session: path.basename(input.sessionDir) });
+        return { exitCode: 1, briefPath: '', brief: '', mode: resolved.mode };
+    }
+    if (resolved.mode === 'solo (auto)') {
+        (opts.logActivityFn ?? logActivity)({ event: 'debate_solo_auto', source: 'pickle', session: path.basename(input.sessionDir), mode: resolved.mode });
+    }
+    return null;
+}
+function persistDebateRound(statePath, stateManager, args, prepared, briefPath, generatedAt) {
+    stateManager.update(statePath, (state) => {
+        state.flags ??= {};
+        const prior = readDebateFlag(state);
+        state.flags.debate = {
+            question: args.question,
+            round: prepared.round,
+            round1_tickets_version: prepared.round1TicketsVersion,
+            round1_personas: prior?.round1_personas ?? args.personas,
+            brief_paths: [...prepared.previousBriefPaths, briefPath],
+            last_generated_at: generatedAt.toISOString(),
+        };
     });
 }
 function defaultConfirmAutoPromote(banner) {
@@ -234,22 +477,22 @@ export function runDebate(input, opts = {}) {
     const now = opts.now ?? (() => new Date());
     const out = opts.stdout ?? ((message) => process.stdout.write(`${message}\n`));
     const err = opts.stderr ?? ((message) => process.stderr.write(`${message}\n`));
+    const stateManager = opts.stateManager ?? new StateManager();
     const resolved = resolveDebateRun(input, opts, out);
-    if (resolved.backend === 'codex' && resolved.args.strictTeams) {
-        err(STRICT_TEAMS_CODEX_ERROR);
-        return { exitCode: 7, briefPath: '', brief: '', mode: resolved.mode };
-    }
-    if (resolved.declinedAutoPromote) {
-        opts.logActivityFn?.({ event: 'debate_user_declined_auto_promote', source: 'pickle', session: path.basename(input.sessionDir) });
-        return { exitCode: 1, briefPath: '', brief: '', mode: resolved.mode };
-    }
-    if (resolved.mode === 'solo (auto)') {
-        (opts.logActivityFn ?? logActivity)({ event: 'debate_solo_auto', source: 'pickle', session: path.basename(input.sessionDir), mode: resolved.mode });
-    }
+    const preflightResult = finishResolvedPreflight(input, resolved, opts, err);
+    if (preflightResult)
+        return preflightResult;
     const createdAt = now();
     const briefPath = path.join(input.sessionDir, `debate_${isoCompactStamp(createdAt)}_brief.md`);
+    const stateInfo = loadDebateState(input.sessionDir, stateManager);
+    const settings = loadDebateSettings(opts.extensionRoot ?? getExtensionRoot(), opts.settings);
+    const prepared = prepareDebateRound(resolved.args, stateInfo.state, resolved.mode, resolved.backend, settings, opts.logActivityFn ?? logActivity);
+    if ('error' in prepared) {
+        err(prepared.error);
+        return { exitCode: prepared.exitCode, briefPath: '', brief: '', mode: resolved.mode };
+    }
     const agents = validateDebateAgents(resolved.args);
-    const brief = buildDebateBrief(resolved.args, createdAt, agents, resolved.mode);
+    const brief = buildDebateBrief(resolved.args, createdAt, agents, resolved.mode, prepared);
     if (resolved.args.dryRun) {
         out(JSON.stringify({
             brief_path: briefPath,
@@ -259,9 +502,7 @@ export function runDebate(input, opts = {}) {
         }, null, 2));
         return { exitCode: 0, briefPath, brief, mode: resolved.mode };
     }
-    fs.mkdirSync(path.dirname(briefPath), { recursive: true });
-    fs.writeFileSync(briefPath, brief, 'utf8');
-    out(`BRIEF_PATH=${briefPath}`);
+    writeDebateBrief(resolved.args, briefPath, brief, prepared, stateInfo, stateManager, createdAt, out);
     return { exitCode: 0, briefPath, brief, mode: resolved.mode };
 }
 export function main(argv = process.argv.slice(2)) {

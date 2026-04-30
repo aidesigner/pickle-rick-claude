@@ -30,6 +30,11 @@
   "enable_config_protection": true,
   "enable_model_tiers": true,
   "enable_backend_routing_heuristic": false,
+  "bmad_hardening": {
+    "debate_max_rounds": 5,
+    "debate_codex_solo_max_rounds": 2,
+    "debate_min_rounds_confirm": 3
+  },
   "commit_pending_probe_threshold": 2,
   "convergence_gate": {
     "commands": {},

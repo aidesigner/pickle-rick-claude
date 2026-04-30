@@ -4,7 +4,7 @@ Run a Pickle Rick debate for a decision question.
 
 Usage:
 
-`/pickle-debate "<question>" [--personas r,a,i,s] [--n 4] [--solo] [--strict-teams] [--no-strict-teams] [--continue] [--accept-stale]`
+`/pickle-debate "<question>" [--personas r,a,i,s] [--n 4] [--solo] [--strict-teams] [--no-strict-teams] [--continue] [--confirm-multi-round] [--accept-stale]`
 
 ## Contract
 
@@ -55,3 +55,11 @@ When `--solo` is set, do not create a team. Roleplay the selected personas seque
 On codex backend, when neither `--solo` nor `--strict-teams` is set, the helper auto-promotes to solo mode after printing the codex cost banner. Treat brief mode `solo (auto)` the same as explicit solo mode.
 
 `--strict-teams` persists in `state.json.flags.strict_teams` for resumed sessions. `--no-strict-teams` overrides that persisted preference for the current invocation only.
+
+## Continuation Rounds
+
+When `--continue` is set, the helper fences entry against the round-1 `tickets_version` snapshot stored in `state.json.flags.debate`. If tickets changed, stop unless `--accept-stale` is present.
+
+Round 3 and later require `--continue --confirm-multi-round`. Codex solo mode is capped at 2 rounds; switch to claude teams mode for deeper debates.
+
+Use prior debate context from the helper brief. New personas added after round 1 receive the full round-1 priors with the note that they were not in round 1 and should read for context.

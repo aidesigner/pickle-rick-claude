@@ -29,6 +29,7 @@ function baseArgs(sessionDir = '/tmp/session') {
     strictTeams: false,
     noStrictTeams: false,
     continueDebate: false,
+    confirmMultiRound: false,
     acceptStale: false,
     dryRun: false,
     agentsDir: AGENTS_DIR,
@@ -69,6 +70,7 @@ test('debate parseArgs resolves question, flags, count, and personas', () => {
     '--strict-teams',
     '--no-strict-teams',
     '--continue',
+    '--confirm-multi-round',
     '--accept-stale',
     '--agents-dir', AGENTS_DIR,
   ]);
@@ -82,6 +84,7 @@ test('debate parseArgs resolves question, flags, count, and personas', () => {
   assert.equal(args.strictTeams, true);
   assert.equal(args.noStrictTeams, true);
   assert.equal(args.continueDebate, true);
+  assert.equal(args.confirmMultiRound, true);
   assert.equal(args.acceptStale, true);
   assert.equal(args.agentsDir, AGENTS_DIR);
 });
@@ -285,6 +288,206 @@ test('debate records declined codex auto-promote without writing a brief', () =>
     assert.equal(result.briefPath, '');
     assert.deepEqual(events.map((event) => event.event), ['debate_user_declined_auto_promote']);
     assert.equal(fs.existsSync(path.join(sessionDir, 'debate_2026-04-30T13-05-00Z_brief.md')), false);
+  } finally {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('debate first round persists round-1 tickets_version metadata', () => {
+  const sessionDir = tmpSession();
+  try {
+    writeState(sessionDir, { backend: 'claude', tickets_version: 4, flags: {} });
+    const result = runDebate(baseArgs(sessionDir), {
+      stdout: () => {},
+      now: () => new Date('2026-04-30T13:06:00.000Z'),
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.match(result.brief, /- round: 1/);
+    const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf8'));
+    assert.equal(state.flags.debate.round, 1);
+    assert.equal(state.flags.debate.round1_tickets_version, 4);
+    assert.deepEqual(state.flags.debate.round1_personas, ['researcher', 'architect', 'implementer', 'skeptic']);
+    assert.deepEqual(state.flags.debate.brief_paths, [result.briefPath]);
+  } finally {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('debate continue halts when tickets_version changed without accept-stale', () => {
+  const sessionDir = tmpSession();
+  try {
+    writeState(sessionDir, {
+      backend: 'claude',
+      tickets_version: 6,
+      flags: {
+        debate: {
+          question: 'Postgres or DuckDB?',
+          round: 1,
+          round1_tickets_version: 5,
+          round1_personas: ['researcher', 'architect'],
+          brief_paths: [],
+          last_generated_at: '2026-04-30T13:00:00.000Z',
+        },
+      },
+    });
+    const stderr = [];
+    const events = [];
+    const result = runDebate({ ...baseArgs(sessionDir), continueDebate: true }, {
+      stdout: () => {},
+      stderr: (line) => stderr.push(line),
+      logActivityFn: (event) => events.push(event),
+      now: () => new Date('2026-04-30T13:07:00.000Z'),
+    });
+
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.briefPath, '');
+    assert.match(stderr[0], /tickets_version changed from 5 to 6/);
+    assert.deepEqual(events.map((event) => event.event), ['debate_invalidated_by_correction']);
+  } finally {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('debate continue accepts stale override and notes new personas', () => {
+  const sessionDir = tmpSession();
+  try {
+    writeState(sessionDir, {
+      backend: 'claude',
+      tickets_version: 6,
+      flags: {
+        debate: {
+          question: 'Postgres or DuckDB?',
+          round: 1,
+          round1_tickets_version: 5,
+          round1_personas: ['researcher', 'architect'],
+          brief_paths: [],
+          last_generated_at: '2026-04-30T13:00:00.000Z',
+        },
+      },
+    });
+    const result = runDebate({
+      ...baseArgs(sessionDir),
+      personas: ['researcher', 'skeptic'],
+      n: 2,
+      continueDebate: true,
+      acceptStale: true,
+    }, {
+      stdout: () => {},
+      now: () => new Date('2026-04-30T13:08:00.000Z'),
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.match(result.brief, /- round: 2/);
+    assert.match(result.brief, /skeptic weren't in round 1, read for context/);
+    const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf8'));
+    assert.equal(state.flags.debate.round, 2);
+    assert.equal(state.flags.debate.round1_tickets_version, 5);
+  } finally {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('debate rejects round 3 without explicit multi-round confirmation', () => {
+  const sessionDir = tmpSession();
+  try {
+    writeState(sessionDir, {
+      backend: 'claude',
+      tickets_version: 1,
+      flags: {
+        debate: {
+          question: 'Postgres or DuckDB?',
+          round: 2,
+          round1_tickets_version: 1,
+          round1_personas: ['researcher', 'architect'],
+          brief_paths: [],
+          last_generated_at: '2026-04-30T13:00:00.000Z',
+        },
+      },
+    });
+    const stderr = [];
+    const result = runDebate({ ...baseArgs(sessionDir), continueDebate: true }, {
+      stdout: () => {},
+      stderr: (line) => stderr.push(line),
+      now: () => new Date('2026-04-30T13:09:00.000Z'),
+    });
+
+    assert.equal(result.exitCode, 1);
+    assert.match(stderr[0], /requires --continue --confirm-multi-round/);
+  } finally {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('debate codex solo rejects round 3 even with multi-round confirmation', () => {
+  const sessionDir = tmpSession();
+  try {
+    writeState(sessionDir, {
+      backend: 'codex',
+      tickets_version: 1,
+      flags: {
+        debate: {
+          question: 'Postgres or DuckDB?',
+          round: 2,
+          round1_tickets_version: 1,
+          round1_personas: ['researcher', 'architect'],
+          brief_paths: [],
+          last_generated_at: '2026-04-30T13:00:00.000Z',
+        },
+      },
+    });
+    const stderr = [];
+    const result = runDebate({
+      ...baseArgs(sessionDir),
+      solo: true,
+      continueDebate: true,
+      confirmMultiRound: true,
+    }, {
+      stdout: () => {},
+      stderr: (line) => stderr.push(line),
+      now: () => new Date('2026-04-30T13:10:00.000Z'),
+    });
+
+    assert.equal(result.exitCode, 7);
+    assert.match(stderr[0], /codex solo supports at most 2 rounds/);
+    assert.match(stderr[0], /claude teams backend/);
+  } finally {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('debate continue truncates prior context latest-first and logs bytes dropped', () => {
+  const sessionDir = tmpSession();
+  try {
+    const priorBrief = path.join(sessionDir, 'debate_2026-04-30T13-00-00Z_brief.md');
+    fs.writeFileSync(priorBrief, `${'old brief '.repeat(3000)}\n`, 'utf8');
+    fs.writeFileSync(path.join(sessionDir, 'debate_2026-04-30T13-01-00Z.md'), `${'latest result '.repeat(3000)}\n`, 'utf8');
+    writeState(sessionDir, {
+      backend: 'claude',
+      tickets_version: 1,
+      flags: {
+        debate: {
+          question: 'Postgres or DuckDB?',
+          round: 1,
+          round1_tickets_version: 1,
+          round1_personas: ['researcher', 'architect'],
+          brief_paths: [priorBrief],
+          last_generated_at: '2026-04-30T13:00:00.000Z',
+        },
+      },
+    });
+    const events = [];
+    const result = runDebate({ ...baseArgs(sessionDir), continueDebate: true }, {
+      stdout: () => {},
+      logActivityFn: (event) => events.push(event),
+      now: () => new Date('2026-04-30T13:11:00.000Z'),
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.match(result.brief, /### Prior Debate Context/);
+    assert.match(result.brief, /debate_2026-04-30T13-01-00Z\.md/);
+    assert.match(result.brief, /prior_context_truncated_bytes: [1-9]/);
+    assert.deepEqual(events.map((event) => event.event), ['debate_round_truncated']);
   } finally {
     fs.rmSync(sessionDir, { recursive: true, force: true });
   }
