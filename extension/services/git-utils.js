@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { runCmd, extractFrontmatter, formatLocalDateKey } from './pickle-utils.js';
+import { syncLinearTicketStatus } from './linear-integration.js';
 export function runGit(cmd, cwd, check = true) {
     return runCmd(['git', ...cmd], { cwd, check });
 }
@@ -118,6 +119,7 @@ export function updateTicketStatus(ticketId, newStatus, sessionDir) {
     if (statusReplaced) {
         console.log(`Successfully updated ticket ${ticketId} to status "${newStatus}"`);
     }
+    syncLinearTicketStatus(sessionDir, ticketId, newStatus);
 }
 export function getHeadSha(cwd) {
     return runGit(['rev-parse', 'HEAD'], cwd).trim();
