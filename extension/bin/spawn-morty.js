@@ -10,6 +10,7 @@ import { buildWorkerInvocation, loadBackendFromSession, backendEnvOverrides } fr
 import { scrubForbiddenWorkerTokens } from '../services/promise-tokens.js';
 import { StateManager } from '../services/state-manager.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
+import { loadAgentMd } from '../services/agent-md-loader.js';
 const TIER_MODEL_MAP = {
     trivial: 'haiku',
     small: 'sonnet',
@@ -18,10 +19,72 @@ const TIER_MODEL_MAP = {
 };
 const sm = new StateManager();
 const MIN_TIMEOUT_SECONDS = 30;
+const VALID_AGENT_MODELS = new Set(['sonnet', 'opus', 'haiku']);
 export function tierToModel(tier) {
     if (!tier)
         return 'sonnet';
     return TIER_MODEL_MAP[tier] ?? 'sonnet';
+}
+function isAgentModel(value) {
+    return typeof value === 'string' && VALID_AGENT_MODELS.has(value);
+}
+function readBasePersona(extensionRoot) {
+    try {
+        const personaPath = path.join(extensionRoot, 'persona.md');
+        if (!fs.existsSync(personaPath))
+            return '';
+        return fs.readFileSync(personaPath, 'utf-8').trim();
+    }
+    catch {
+        return '';
+    }
+}
+function readPhasePersonaEntry(sessionRoot, extensionRoot) {
+    try {
+        const state = readRecoverableJsonObject(path.join(sessionRoot, 'state.json'));
+        const step = state?.step;
+        if (!step)
+            return null;
+        const configPath = path.join(extensionRoot, 'extension', 'data', 'phase-personas.json');
+        const config = readRecoverableJsonObject(configPath);
+        const rawEntry = config?.[step];
+        if (!rawEntry || typeof rawEntry !== 'object')
+            return null;
+        const entry = rawEntry;
+        const subagentType = entry.subagent_type;
+        if (typeof subagentType !== 'string' || !subagentType.trim())
+            return null;
+        return {
+            subagent_type: subagentType,
+            ...(isAgentModel(entry.model) ? { model: entry.model } : {}),
+        };
+    }
+    catch {
+        return null;
+    }
+}
+function readActivePersonaBlock(opts) {
+    try {
+        const entry = readPhasePersonaEntry(opts.sessionRoot, opts.extensionRoot);
+        if (!entry)
+            return '';
+        const agent = loadAgentMd(entry.subagent_type, { agentsDir: opts.agentsDir });
+        if (!agent)
+            return '';
+        const parts = [readBasePersona(opts.extensionRoot), agent.body.trim()].filter(Boolean);
+        return parts.length > 0 ? `\n\n## Active Persona\n${parts.join('\n\n')}` : '';
+    }
+    catch {
+        return '';
+    }
+}
+export function resolvePhasePersonaModel(sessionRoot, extensionRoot) {
+    return readPhasePersonaEntry(sessionRoot, extensionRoot)?.model;
+}
+export function resolveWorkerModelFromTierAndPersona(ticketTier, personaModel) {
+    if (ticketTier)
+        return tierToModel(ticketTier);
+    return personaModel ?? 'sonnet';
 }
 function readProjectContextBlock(sessionRoot) {
     try {
@@ -133,6 +196,7 @@ export function resolveEffectiveTimeout(configuredTimeoutSec, parentState, wallC
 }
 export function buildWorkerPrompt(opts) {
     const { ticket } = opts;
+    const extensionRoot = opts.extensionRoot ?? getExtensionRoot();
     const promptFilename = ticket.isReviewTicket ? 'send-to-morty-review.md' : 'send-to-morty.md';
     const mortyPromptPath = path.join(os.homedir(), '.claude', 'commands', promptFilename);
     let workerPrompt;
@@ -144,6 +208,11 @@ export function buildWorkerPrompt(opts) {
             ? `# **REVIEW REQUEST**\n${ticket.task}\n\nYou are a Review Worker. Review the preceding implementation tickets for correctness, architecture, and code quality.`
             : `# **TASK REQUEST**\n${ticket.task}\n\nYou are a Morty Worker (Pickle Rick's assistant). Implement the request above.`;
     }
+    workerPrompt += readActivePersonaBlock({
+        sessionRoot: ticket.sessionRoot,
+        extensionRoot,
+        agentsDir: opts.agentsDir,
+    });
     workerPrompt += readProjectContextBlock(ticket.sessionRoot);
     workerPrompt += `\n\n# TARGET TICKET CONTENT\n${ticket.ticketContent || 'N/A'}`;
     workerPrompt += `\n\n# EXECUTION CONTEXT\n- SESSION_ROOT: ${ticket.sessionRoot}\n- TICKET_ID: ${ticket.ticketId}\n- TICKET_DIR: ${ticket.ticketPath}`;
@@ -267,7 +336,7 @@ function routeBackend(sessionRoot, ticketInfo) {
     catch { /* settings missing or unreadable: no override */ }
     return backend;
 }
-function resolveWorkerModel(backend, extensionRoot, ticketInfo) {
+function resolveWorkerModel(backend, extensionRoot, sessionRoot, ticketInfo) {
     if (backend !== 'claude')
         return undefined;
     let enableComplexityTiers = true;
@@ -278,7 +347,10 @@ function resolveWorkerModel(backend, extensionRoot, ticketInfo) {
     }
     catch { /* default true */ }
     try {
-        return enableComplexityTiers ? tierToModel(ticketInfo?.complexity_tier) : 'sonnet';
+        const personaModel = resolvePhasePersonaModel(sessionRoot, extensionRoot);
+        return enableComplexityTiers
+            ? resolveWorkerModelFromTierAndPersona(ticketInfo?.complexity_tier, personaModel)
+            : 'sonnet';
     }
     catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -470,7 +542,7 @@ async function main() {
     const backend = routeBackend(parsed.sessionRoot, ticketInfo);
     const args = { ...parsed, backend };
     const extensionRoot = getExtensionRoot();
-    const model = resolveWorkerModel(backend, extensionRoot, ticketInfo);
+    const model = resolveWorkerModel(backend, extensionRoot, parsed.sessionRoot, ticketInfo);
     printMinimalPanel(args.isReviewTicket ? 'Spawning Review Worker' : 'Spawning Morty Worker', { Request: args.ticket, Ticket: args.ticketId, Type: args.isReviewTicket ? 'review' : 'implementation', Format: args.outputFormat, Backend: backend, Timeout: `${effectiveTimeout}s (Req: ${args.timeout}s)`, PID: process.pid }, args.isReviewTicket ? 'MAGENTA' : 'CYAN', '🥒');
     const prompt = buildWorkerPrompt({
         ticket: { task: args.ticket, ticketContent: args.ticketContent, ticketId: args.ticketId, ticketPath: args.ticketPath, sessionRoot: args.sessionRoot, backend, isReviewTicket: args.isReviewTicket },

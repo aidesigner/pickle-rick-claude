@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { buildWorkerPrompt, resolveEffectiveTimeout } from '../bin/spawn-morty.js';
+import {
+  buildWorkerPrompt,
+  resolveEffectiveTimeout,
+  resolveWorkerModelFromTierAndPersona,
+} from '../bin/spawn-morty.js';
 
 const GITNEXUS_MARKER = '# GITNEXUS CODE INTELLIGENCE (auto-detected)';
 
@@ -21,6 +25,35 @@ function baseTicket(repoRoot) {
     backend: 'claude',
     isReviewTicket: false,
   };
+}
+
+function writePhasePersonaFixture(extensionRoot, agentsDir, step = 'implement') {
+  fs.mkdirSync(path.join(extensionRoot, 'extension', 'data'), { recursive: true });
+  fs.mkdirSync(agentsDir, { recursive: true });
+  fs.writeFileSync(path.join(extensionRoot, 'persona.md'), 'Base Rick voice.');
+  fs.writeFileSync(path.join(extensionRoot, 'extension', 'data', 'phase-personas.json'), JSON.stringify({
+    version: 1,
+    [step]: {
+      subagent_type: 'morty-phase-implementer',
+      complexity_tier_default: 'large',
+      model: 'opus',
+    },
+  }, null, 2));
+  fs.writeFileSync(path.join(agentsDir, 'morty-phase-implementer.md'), [
+    '---',
+    'name: morty-phase-implementer',
+    'description: Implementer',
+    'tools: Read, Edit, Write, Bash, Glob, Grep',
+    'model: opus',
+    'role: phase-implementer',
+    'identity: Apply the plan.',
+    'communication_style: terse',
+    'principles[]: ["Do the work."]',
+    '---',
+    '',
+    'Phase implementer specialization.',
+    '',
+  ].join('\n'));
 }
 
 test('buildWorkerPrompt: injects GitNexus instructions when .gitnexus is a directory', () => {
@@ -73,6 +106,68 @@ test('buildWorkerPrompt: injects project context before ticket content when avai
   }
 });
 
+test('buildWorkerPrompt: injects active persona between template and project context', () => {
+  const repoRoot = makeTmpDir();
+  const extensionRoot = makeTmpDir('pickle-spawn-morty-extension-');
+  const agentsDir = makeTmpDir('pickle-spawn-morty-agents-');
+  try {
+    writePhasePersonaFixture(extensionRoot, agentsDir);
+    fs.writeFileSync(path.join(repoRoot, 'state.json'), JSON.stringify({ step: 'implement' }, null, 2));
+    fs.writeFileSync(path.join(repoRoot, 'project-context.md'), 'Architecture\n- Existing shape');
+    const prompt = buildWorkerPrompt({
+      ticket: baseTicket(repoRoot),
+      model: 'opus',
+      repoRoot,
+      extensionRoot,
+      agentsDir,
+    });
+
+    const templateIndex = prompt.indexOf('implement helper tests');
+    const personaIndex = prompt.indexOf('## Active Persona\nBase Rick voice.');
+    const phaseIndex = prompt.indexOf('Phase implementer specialization.');
+    const contextIndex = prompt.indexOf('## Project Context\nArchitecture\n- Existing shape');
+    const ticketIndex = prompt.indexOf('# TARGET TICKET CONTENT');
+    const executionIndex = prompt.indexOf('# EXECUTION CONTEXT');
+    const tailIndex = prompt.indexOf('**IMPORTANT**: You are a localized worker.');
+
+    assert.ok(templateIndex > -1, 'should include template body');
+    assert.ok(personaIndex > templateIndex, 'active persona should follow template body');
+    assert.ok(phaseIndex > personaIndex, 'phase body should be inside active persona block');
+    assert.ok(contextIndex > phaseIndex, 'project context should follow active persona');
+    assert.ok(ticketIndex > contextIndex, 'target ticket content should follow project context');
+    assert.ok(executionIndex > ticketIndex, 'execution context should follow target ticket content');
+    assert.ok(tailIndex > executionIndex, 'localized-worker tail should follow execution context');
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+    fs.rmSync(extensionRoot, { recursive: true, force: true });
+    fs.rmSync(agentsDir, { recursive: true, force: true });
+  }
+});
+
+test('buildWorkerPrompt: omits active persona when phase mapping is absent', () => {
+  const repoRoot = makeTmpDir();
+  const extensionRoot = makeTmpDir('pickle-spawn-morty-extension-');
+  const agentsDir = makeTmpDir('pickle-spawn-morty-agents-');
+  try {
+    writePhasePersonaFixture(extensionRoot, agentsDir, 'research');
+    fs.writeFileSync(path.join(repoRoot, 'state.json'), JSON.stringify({ step: 'implement' }, null, 2));
+    const prompt = buildWorkerPrompt({
+      ticket: baseTicket(repoRoot),
+      model: 'sonnet',
+      repoRoot,
+      extensionRoot,
+      agentsDir,
+    });
+
+    assert.equal(prompt.includes('## Active Persona'), false);
+    assert.equal(prompt.includes('Phase implementer specialization.'), false);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+    fs.rmSync(extensionRoot, { recursive: true, force: true });
+    fs.rmSync(agentsDir, { recursive: true, force: true });
+  }
+});
+
 test('buildWorkerPrompt: omits project context when session disables archaeology', () => {
   const repoRoot = makeTmpDir();
   try {
@@ -98,4 +193,10 @@ test('resolveEffectiveTimeout: clamps configured timeout to remaining wall-clock
   };
 
   assert.equal(resolveEffectiveTimeout(300, state, nowMs), 45);
+});
+
+test('resolveWorkerModelFromTierAndPersona: ticket tier precedes persona default', () => {
+  assert.equal(resolveWorkerModelFromTierAndPersona('large', 'sonnet'), 'opus');
+  assert.equal(resolveWorkerModelFromTierAndPersona(undefined, 'opus'), 'opus');
+  assert.equal(resolveWorkerModelFromTierAndPersona(undefined, undefined), 'sonnet');
 });
