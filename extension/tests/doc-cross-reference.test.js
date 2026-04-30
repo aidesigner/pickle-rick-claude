@@ -11,6 +11,25 @@ function readDoc(relPath) {
   return readFileSync(path.join(PROJECT_ROOT, relPath), 'utf8');
 }
 
+function readLines(relPath) {
+  return readDoc(relPath).split('\n');
+}
+
+function findBundleTicketRow(ticketKey) {
+  const escapedTicketKey = ticketKey.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const rowPattern = new RegExp(`^\\| \\d+ \\| ${escapedTicketKey} \\|`);
+  const rows = readLines('prds/citadel-hardening-bundle.md')
+    .filter((line) => rowPattern.test(line));
+  assert.equal(rows.length, 1, `${ticketKey} must appear exactly once in bundle implementation table`);
+  return rows[0];
+}
+
+function findBundleRowsMatching(pattern) {
+  return readLines('prds/citadel-hardening-bundle.md')
+    .filter((line) => line.startsWith('|'))
+    .filter((line) => pattern.test(line));
+}
+
 const CANONICAL_FRAME_NAMES = [
   'Frame 1: Context Key Lifecycle Trace',
   'Frame 2: Success/Failure Symmetry',
@@ -105,4 +124,52 @@ test('CLAUDE.md documents extension/data/ convention', () => {
     content.includes('extension/data'),
     'CLAUDE.md: missing extension/data/ convention',
   );
+});
+
+test('AC-BUNDLE-04: refined ticket queue has exactly one microverse relaunch implementation ticket', () => {
+  const microverseRelaunchRows = findBundleRowsMatching(/microverse-runner\.ts codex-manager relaunch wiring/);
+
+  assert.deepEqual(
+    microverseRelaunchRows,
+    [
+      '| 20 | B-T3 | 02f70776 | `prds/anatomy-park-followups.md` | Atomic Tickets > T3 | microverse-runner.ts codex-manager relaunch wiring | AC-APF-C1, AC-APF-C2, AC-APF-C3, AC-APF-C4, AC-APF-C5, AC-APF-C6 |',
+    ],
+  );
+
+  const h4Row = findBundleTicketRow('H4');
+  assert.match(h4Row, /AC-BUNDLE-04, AC-BUNDLE-17, AC-BUNDLE-19/);
+});
+
+test('AC-BUNDLE-17: trap-door ticket rows and enforcement surfaces stay cross-referenced', () => {
+  const bT1Row = findBundleTicketRow('B-T1');
+  const aT4Row = findBundleTicketRow('A-T4');
+  const h4Row = findBundleTicketRow('H4');
+  const claude = readDoc('extension/CLAUDE.md');
+  const invariantTests = readDoc('extension/tests/state-field-invariants.test.js');
+
+  assert.match(bT1Row, /AC-APF-A1, AC-APF-A2, AC-APF-A3, AC-APF-A4/);
+  assert.match(aT4Row, /AC-BUNDLE-17/);
+  assert.match(h4Row, /AC-BUNDLE-17/);
+  assert.match(claude, /src\/services\/pickle-utils\.ts` \(restartDeadWatcherPanes\).*extension\/tests\/ensure-monitor-window\.test\.js/);
+  assert.match(invariantTests, /AC-BUNDLE-17: trap-door entries stay under 1500 chars/);
+  assert.match(invariantTests, /AC-BUNDLE-17: every State field has exactly one field invariant/);
+});
+
+test('AC-BUNDLE-19: Linear integration ticket rows, code, and tests stay cross-referenced', () => {
+  const newT6Row = findBundleTicketRow('NEW-T6');
+  const h4Row = findBundleTicketRow('H4');
+  const implementation = readDoc('extension/src/services/linear-integration.ts');
+  const gitUtils = readDoc('extension/src/services/git-utils.ts');
+  const pipelineRunner = readDoc('extension/src/bin/pipeline-runner.ts');
+  const tests = readDoc('extension/tests/linear-integration.test.js');
+
+  assert.match(newT6Row, /New Refinement-Derived Tickets > NEW-T6 .* AC-BUNDLE-19/);
+  assert.match(h4Row, /AC-BUNDLE-19/);
+  assert.match(gitUtils, /syncLinearTicketStatus\(sessionDir, ticketId, newStatus\)/);
+  assert.match(implementation, /action: 'createTicket'/);
+  assert.match(implementation, /action: 'transitionTicket'/);
+  assert.match(implementation, /action: 'commentTicket'/);
+  assert.match(pipelineRunner, /emitBundleLinearComments\(runtime\.sessionDir, path\.join\(runtime\.sessionDir, 'pipeline-runner\.log'\)\)/);
+  assert.match(tests, /creates a Linear ticket once and mirrors transitions/);
+  assert.match(tests, /comments once per Linear-backed ticket with session log link/);
 });
