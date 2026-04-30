@@ -230,6 +230,12 @@ describe('citadel pipeline regression smoke', () => {
       assert.equal(report.summary.critical, fixture.expected.maxCriticalFindings);
       assert.equal(report.summary.high, fixture.expected.maxHighFindings);
       assert.ok(report.summary.low < fixture.expected.maxLowFindingsExclusive);
+      const anatomyPrd = fs.readFileSync(path.join(run.sessionDir, 'prd-anatomy-park.md'), 'utf-8');
+      const szechuanPrd = fs.readFileSync(path.join(run.sessionDir, 'prd.md'), 'utf-8');
+      for (const prd of [anatomyPrd, szechuanPrd]) {
+        assert.match(prd, /## Citadel Report/);
+        assert.match(prd, /Read: citadel_report\.json/);
+      }
     } finally {
       cleanup(run);
     }
