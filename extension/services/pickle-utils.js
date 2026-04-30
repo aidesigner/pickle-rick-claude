@@ -6,6 +6,7 @@ import { StringDecoder } from 'string_decoder';
 import { VALID_STEPS, LockError } from '../types/index.js';
 import { StateManager } from './state-manager.js';
 import { readRecoverableJsonObject } from './recoverable-json.js';
+import { updateTicketStatusInTransaction } from './transaction-ticket-ops.js';
 /** Extracts a string message from any thrown value. Never throws. */
 export function safeErrorMessage(err) {
     return err instanceof Error ? err.message : String(err);
@@ -203,21 +204,6 @@ export function extractFrontmatter(content) {
     const end = content[rawEnd] === '\n' ? rawEnd + 1 : content[rawEnd] === '\r' && content[rawEnd + 1] === '\n' ? rawEnd + 2 : rawEnd;
     return { body: content.slice(openLen, closeIdx), start: 0, end };
 }
-function setFrontmatterField(content, field, value) {
-    const fm = extractFrontmatter(content);
-    if (!fm)
-        return content;
-    const existingField = new RegExp(`^${field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:\\s*.*$`, 'm');
-    if (existingField.test(fm.body)) {
-        return content.replace(existingField, `${field}: "${value}"`);
-    }
-    const closingNewline = content.lastIndexOf('\n---', fm.end - 1);
-    if (closingNewline === -1)
-        return content;
-    const insertPoint = closingNewline + 1;
-    const newLine = `${field}: "${value}"\n`;
-    return content.slice(0, insertPoint) + newLine + content.slice(insertPoint);
-}
 export function clearTicketResolutionTimestamps(content) {
     const fm = extractFrontmatter(content);
     if (!fm)
@@ -266,19 +252,8 @@ export function parseTicketFrontmatter(filePath) {
  */
 export function markTicketDone(sessionDir, ticketId) {
     try {
-        const ticketDir = path.join(sessionDir, ticketId);
-        const files = fs.readdirSync(ticketDir);
-        const ticketFile = files.find(f => f.startsWith('linear_ticket_') && f.endsWith('.md'));
-        if (!ticketFile)
-            return false;
-        const filePath = path.join(ticketDir, ticketFile);
-        const content = fs.readFileSync(filePath, 'utf-8');
-        // Replace status line in frontmatter (handles quoted/unquoted values)
-        const updated = content.replace(/^(status:\s*).*$/m, '$1"Done"');
-        if (updated === content)
-            return false;
-        const withTimestamp = setFrontmatterField(updated, 'completed_at', new Date().toISOString());
-        fs.writeFileSync(filePath, withTimestamp);
+        const planned = updateTicketStatusInTransaction(ticketId, 'Done', sessionDir);
+        fs.writeFileSync(planned.path, planned.content);
         return true;
     }
     catch {
@@ -287,18 +262,8 @@ export function markTicketDone(sessionDir, ticketId) {
 }
 export function markTicketSkipped(sessionDir, ticketId) {
     try {
-        const ticketDir = path.join(sessionDir, ticketId);
-        const files = fs.readdirSync(ticketDir);
-        const ticketFile = files.find(f => f.startsWith('linear_ticket_') && f.endsWith('.md'));
-        if (!ticketFile)
-            return false;
-        const filePath = path.join(ticketDir, ticketFile);
-        const content = fs.readFileSync(filePath, 'utf-8');
-        const updated = content.replace(/^(status:\s*).*$/m, '$1"Skipped"');
-        if (updated === content)
-            return false;
-        const withTimestamp = setFrontmatterField(updated, 'skipped_at', new Date().toISOString());
-        fs.writeFileSync(filePath, withTimestamp);
+        const planned = updateTicketStatusInTransaction(ticketId, 'Skipped', sessionDir);
+        fs.writeFileSync(planned.path, planned.content);
         return true;
     }
     catch {
