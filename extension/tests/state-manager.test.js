@@ -218,6 +218,40 @@ test('StateManager.read: v3-shaped missing schema fails recoverably on v2-aware 
   });
 });
 
+test('StateManager.read: any v3 marker without schema fails recoverably on v2-aware deployment', () => {
+  const cases = [
+    ['tickets_version', { tickets_version: 1 }],
+    ['phase_personas_active', { phase_personas_active: true }],
+    ['flags', { flags: { strict_teams: true } }],
+    ['readiness', { readiness: { cycle_history: [] } }],
+    ['codex_version_seen', { codex_version_seen: '0.42.0' }],
+  ];
+
+  for (const [marker, override] of cases) {
+    withDir((dir) => {
+      const sm = new StateManager({ schemaVersion: 2 });
+      const sp = path.join(dir, 'state.json');
+      const state = makeState(override);
+      delete state.schema_version;
+      fs.writeFileSync(sp, JSON.stringify(state, null, 2));
+
+      try {
+        sm.read(sp);
+        assert.fail(`should have thrown for ${marker}`);
+      } catch (err) {
+        assert.ok(err instanceof StateError);
+        assert.equal(err.code, 'SCHEMA_MISMATCH');
+        assert.match(err.message, /schema v3 fields/);
+        assert.match(err.message, new RegExp(String(marker)));
+        assert.match(err.message, /supports schema_version 2/);
+      }
+
+      const onDisk = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+      assert.equal(onDisk.schema_version, undefined, `${marker} read must not stamp schema_version`);
+    });
+  }
+});
+
 test('StateManager.read: migrates past schema version to current schema', () => {
   withDir((dir) => {
     const sm = new StateManager({ schemaVersion: 3 });

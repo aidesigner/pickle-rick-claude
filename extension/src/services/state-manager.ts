@@ -115,6 +115,13 @@ function writeMigrationStateFile(statePath: string, state: State): void {
 const V3_STATE_SHAPE_MARKERS = [
   'prd_path',
   'start_commit',
+  'archaeology',
+  'tickets_version',
+  'last_course_correction',
+  'phase_personas_active',
+  'flags',
+  'readiness',
+  'codex_version_seen',
   'backend',
   'teams_mode',
   'max_parallel',

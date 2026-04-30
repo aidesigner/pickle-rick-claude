@@ -484,6 +484,42 @@ test('ensureMonitorWindow: phase re-entry performs a fresh recovery sweep with m
     }
 });
 
+test('ensureMonitorWindow: same-mode refinement monitor respawns only refinement watcher pane', () => {
+    const f = makeFakes({
+        sessionName: 'refinement-same-mode',
+        paneCommands: { 1: 'node', 2: 'zsh', 3: 'node' },
+    });
+    fs.writeFileSync(f.markerPath, '1');
+    fs.writeFileSync(f.modeMarkerPath, 'refinement');
+    try {
+        let result;
+        f.withPath(() => {
+            result = ensureMonitorWindow({
+                sessionDir: f.sessionDir,
+                extensionRoot: f.extRoot,
+                inTmux: true,
+                tmuxBin: f.tmuxBin,
+                bashBin: f.bashBin,
+                mode: 'refinement',
+            });
+        });
+
+        assert.equal(result.status, 'exists');
+        const calls = f.readCalls();
+        assert.equal((calls.match(/tmux send-keys/g) || []).length, 1);
+        assert.match(
+            calls,
+            /tmux send-keys -t refinement-same-mode:monitor\.2 node .+refinement-watcher\.js .+session Enter/,
+        );
+        assert.doesNotMatch(calls, /morty-watcher\.js/);
+        assert.doesNotMatch(calls, /tail -F .+mux-runner\.log/);
+        assert.doesNotMatch(calls, /tmux kill-window/);
+        assert.doesNotMatch(calls, /bash .+tmux-monitor\.sh/);
+    } finally {
+        f.cleanup();
+    }
+});
+
 test('ensureMonitorWindow: runner call sites remain limited to pipeline, mux, and microverse', () => {
     const files = [
         path.resolve(__dirname, '../src/bin/pipeline-runner.ts'),

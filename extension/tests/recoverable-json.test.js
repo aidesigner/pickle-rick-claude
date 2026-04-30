@@ -114,6 +114,40 @@ test('readRecoverableJsonObject promotes a newer dead tmp when the base file is 
   });
 });
 
+test('readRecoverableJsonObject deletes stale dead tmp files without replacing the base file', () => {
+  withTempDir((dir) => {
+    const target = path.join(dir, 'cache.json');
+    const staleTmp = `${target}.tmp.${DEAD_PID}`;
+    writeJson(target, { source: 'base' });
+    writeJson(staleTmp, { source: 'stale-tmp' });
+    setMtime(target, BASE_TIME + 2_000);
+    setMtime(staleTmp, BASE_TIME + 1_000);
+
+    const recovered = readRecoverableJsonObject(target);
+
+    assert.deepEqual(recovered, { source: 'base' });
+    assert.deepEqual(JSON.parse(fs.readFileSync(target, 'utf8')), { source: 'base' });
+    assert.equal(fs.existsSync(staleTmp), false);
+  });
+});
+
+test('readRecoverableJsonObject deletes invalid dead tmp files without replacing the base file', () => {
+  withTempDir((dir) => {
+    const target = path.join(dir, 'cache.json');
+    const invalidTmp = `${target}.tmp.${DEAD_PID}`;
+    writeJson(target, { source: 'base' });
+    fs.writeFileSync(invalidTmp, JSON.stringify(['not', 'an', 'object']));
+    setMtime(target, BASE_TIME);
+    setMtime(invalidTmp, BASE_TIME + 1_000);
+
+    const recovered = readRecoverableJsonObject(target);
+
+    assert.deepEqual(recovered, { source: 'base' });
+    assert.deepEqual(JSON.parse(fs.readFileSync(target, 'utf8')), { source: 'base' });
+    assert.equal(fs.existsSync(invalidTmp), false);
+  });
+});
+
 test('readRecoverableJsonObject promotes the highest-mtime tmp from multiple competing dead writers', () => {
   withTempDir((dir) => {
     const target = path.join(dir, 'cache.json');
