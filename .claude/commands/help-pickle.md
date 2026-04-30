@@ -9,6 +9,7 @@ Summarize the available commands for the user:
 - `/pickle-prd <prompt>`: Interactive PRD drafting, then resume with `/pickle --resume`
 - `/pickle-refine-prd [path]`: Refine PRD via 3 parallel Morty analysts, decompose into atomic tickets. Resume with `/pickle --resume` or `/pickle-tmux --resume`
 - `/pickle-dot [path | inline PRD]`: Convert PRD to strongdm/attractor-compatible DOT digraph
+- `/citadel --prd <path>`: Post-implementation conformance audit against PRD acceptance criteria, branch diff, and trap doors. Flags: `--diff <base..head>`, `--strict`, `--report <path>`, `--print-stubs`
 - `/szechuan-sauce [target]`: Principle-driven code quality review (iterative deslopping). Flags: `--domain <name>`, `--focus "<text>"`, `--dry-run`, `--max-iterations`, `--stall-limit`
 - `/anatomy-park [target]`: Deep subsystem review — trace data flows, fix bugs, catalog trap doors. Flags: `--dry-run`, `--max-iterations`, `--stall-limit`
 - ~~/meeseeks~~: **DEPRECATED** — use `/szechuan-sauce` or `/anatomy-park`

@@ -8,7 +8,7 @@ Mutate a request into the correct pipeline shape. Deterministic — same signals
 User explicitly types `/cronenberg`. Never auto-trigger; persona's existing Routing rules are unchanged.
 
 ## When NOT to invoke
-- User already named a skill (`/pickle`, `/pickle-tmux`, `/pickle-pipeline`, `/pickle-microverse`, `/council-of-ricks`, `/anatomy-park`, `/szechuan-sauce`) — use that directly.
+- User already named a skill (`/pickle`, `/pickle-tmux`, `/pickle-pipeline`, `/pickle-microverse`, `/council-of-ricks`, `/citadel`, `/anatomy-park`, `/szechuan-sauce`) — use that directly.
 - One-liner / typo / single-file fix → just do it.
 - Pure question → answer directly.
 
@@ -37,6 +37,7 @@ If `FORWARD` has no task description AND no PRD detected in Step 2 → print `"C
 | `ALREADY_REFINED` | `prd_refined.md` or `refinement_manifest.json` exists in cwd OR most recent session |
 | `AC_SHAPE_SMELL` | PRD body contains an AC heading whose body has ≥3 bullets each naming a distinct endpoint/handler/method, all repeating the same predicate, with no universal quantifier ("all", "every", "for any") in the AC headline. (Cheap regex pass over the PRD; same heuristic citadel T11.7 uses.) |
 | `MACHINE_UNCHECKABLE_AC` | PRD body has any AC bullet that names no concrete artifact: no API path, no status code, no enum value, no symbol identifier, no numeric threshold, no file path. Pure prose ACs cannot be verified by citadel. |
+| `CITADEL_RISK` | True when (`PRD_PRESENT` AND `TICKET_COUNT ≥ 3`) OR TASK mentions "conformance", "acceptance criteria", "spec compliance", or "audit against PRD" OR (`SUBSYSTEM_TOUCHES ≥ 2` AND `PRD_PRESENT`). |
 | `REFINE_NEEDED` | See Step 2.5 — composite decision over the signals above |
 
 ## Step 2.5: Refine Decision (analyze, don't default)
@@ -71,12 +72,13 @@ Record the trigger reason (e.g. `"refine: AC_SHAPE_SMELL"`, `"refine: TICKET_COU
 
 ## Step 4: Pick Followups
 
-Skip all followups if any of: `--no-followups` was passed, OR chosen metaphor is `/pickle-pipeline` (chains anatomy-park + szechuan-sauce internally — followups would duplicate), OR chosen metaphor is `/pickle-microverse` or `/council-of-ricks` (their work is orthogonal to cleanup).
+Skip all followups if any of: `--no-followups` was passed, OR chosen metaphor is `/pickle-pipeline` (chains citadel + anatomy-park + szechuan-sauce internally — followups would duplicate), OR chosen metaphor is `/pickle-microverse` or `/council-of-ricks` (their work is orthogonal to cleanup).
 
 Otherwise append in order:
 
 | If | → |
 |---|---|
+| `CITADEL_RISK` | `/citadel --prd <prd_path>` |
 | `SUBSYSTEM_TOUCHES ≥ 2` | `/anatomy-park` |
 | Expected diff ≥ 500 LOC OR ≥ 10 files OR TASK mentions "cleanup / deslop / refactor sweep" | `/szechuan-sauce` |
 
@@ -88,7 +90,7 @@ Hardening tickets are produced upstream by `/pickle-refine-prd`; followups only 
 Cronenberg — request mutated.
 
 Task: <TASK or "(driven by PRD)">
-Signals: PRD=<y/n> refined=<y/n> tickets=<N> multi-stage=<y/n> metric=<y/n> stack=<y/n> subsystems=<N> interactive=<y/n> ac-smell=<y/n> uncheckable-ac=<y/n>
+Signals: PRD=<y/n> refined=<y/n> tickets=<N> multi-stage=<y/n> metric=<y/n> stack=<y/n> subsystems=<N> interactive=<y/n> ac-smell=<y/n> uncheckable-ac=<y/n> citadel-risk=<y/n>
 Refine decision: <REFINE_NEEDED y/n> (<reason — e.g. "TICKET_COUNT≥3", "ALREADY_REFINED", "AC_SHAPE_SMELL", "user --no-refine">)
 
 Plan:
