@@ -73,6 +73,22 @@ test('buildWorkerPrompt: injects project context before ticket content when avai
   }
 });
 
+test('buildWorkerPrompt: omits project context when session disables archaeology', () => {
+  const repoRoot = makeTmpDir();
+  try {
+    fs.writeFileSync(path.join(repoRoot, 'project-context.md'), 'Architecture\n- Existing shape');
+    fs.writeFileSync(path.join(repoRoot, 'state.json'), JSON.stringify({
+      flags: { no_archaeology: true },
+    }, null, 2));
+    const prompt = buildWorkerPrompt({ ticket: baseTicket(repoRoot), model: 'sonnet', repoRoot });
+
+    assert.equal(prompt.includes('## Project Context'), false);
+    assert.equal(prompt.includes('- Existing shape'), false);
+  } finally {
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
+});
+
 test('resolveEffectiveTimeout: clamps configured timeout to remaining wall-clock budget', () => {
   const startEpoch = 1_700_000_000;
   const nowMs = (startEpoch + 555) * 1000;

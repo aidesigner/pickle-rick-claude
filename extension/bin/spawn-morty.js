@@ -25,6 +25,8 @@ export function tierToModel(tier) {
 }
 function readProjectContextBlock(sessionRoot) {
     try {
+        if (isArchaeologyDisabled(sessionRoot))
+            return '';
         const projectContextPath = path.join(sessionRoot, 'project-context.md');
         if (!fs.existsSync(projectContextPath))
             return '';
@@ -33,6 +35,15 @@ function readProjectContextBlock(sessionRoot) {
     }
     catch {
         return '';
+    }
+}
+function isArchaeologyDisabled(sessionRoot) {
+    try {
+        const state = readRecoverableJsonObject(path.join(sessionRoot, 'state.json'));
+        return state?.flags?.no_archaeology === true;
+    }
+    catch {
+        return false;
     }
 }
 function die(message) {

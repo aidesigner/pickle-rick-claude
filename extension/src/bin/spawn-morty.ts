@@ -77,12 +77,22 @@ export function tierToModel(tier: string | undefined): string {
 
 function readProjectContextBlock(sessionRoot: string): string {
   try {
+    if (isArchaeologyDisabled(sessionRoot)) return '';
     const projectContextPath = path.join(sessionRoot, 'project-context.md');
     if (!fs.existsSync(projectContextPath)) return '';
     const projectContext = fs.readFileSync(projectContextPath, 'utf-8').trim();
     return projectContext ? `\n\n## Project Context\n${projectContext}` : '';
   } catch {
     return '';
+  }
+}
+
+function isArchaeologyDisabled(sessionRoot: string): boolean {
+  try {
+    const state = readRecoverableJsonObject(path.join(sessionRoot, 'state.json')) as State | null;
+    return state?.flags?.no_archaeology === true;
+  } catch {
+    return false;
   }
 }
 

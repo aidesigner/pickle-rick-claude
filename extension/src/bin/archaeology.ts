@@ -9,6 +9,7 @@ import { logActivity } from '../services/activity-logger.js';
 import { classifyProjectType, PROJECT_TYPE_CATEGORIES, type ProjectTypeCategory, type ProjectTypeClassification } from '../services/project-type-classifier.js';
 import { getExtensionRoot, safeErrorMessage } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
+import { readRecoverableJsonObject } from '../services/recoverable-json.js';
 import type { ActivityEventType, Backend, State } from '../types/index.js';
 
 const REQUIRED_SECTIONS = [
@@ -29,6 +30,7 @@ export interface ArchaeologyArgs {
   projectType?: ProjectTypeCategory;
   dryRun: boolean;
   force: boolean;
+  noArchaeology: boolean;
 }
 
 export interface ArchaeologyRunOptions {
@@ -71,7 +73,7 @@ interface ArchaeologyActivityPayload {
 }
 
 function usage(): never {
-  process.stderr.write('Usage: node archaeology.js --session-dir <dir> [--repo-root <dir>] [--extension-root <dir>] [--project-type <category>] [--force] [--dry-run]\n');
+  process.stderr.write('Usage: node archaeology.js --session-dir <dir> [--repo-root <dir>] [--extension-root <dir>] [--project-type <category>] [--refresh] [--force] [--no-archaeology] [--dry-run]\n');
   process.exit(1);
 }
 
@@ -88,7 +90,8 @@ export function parseArgs(argv: string[]): ArchaeologyArgs {
     extensionRoot: path.resolve(extensionRoot),
     projectType,
     dryRun: argv.includes('--dry-run'),
-    force: argv.includes('--force'),
+    force: argv.includes('--force') || argv.includes('--refresh'),
+    noArchaeology: argv.includes('--no-archaeology'),
   };
 }
 
@@ -174,12 +177,17 @@ function planArchaeology(args: ArchaeologyArgs): ArchaeologyPlan {
 export function runArchaeology(input: ArchaeologyArgs, opts: ArchaeologyRunOptions = {}): ArchaeologyRunResult {
   const plan = planArchaeology(input);
   const out = opts.stdout ?? ((message: string) => process.stdout.write(`${message}\n`));
+  const stateManager = opts.stateManager ?? new StateManager();
 
   if (input.dryRun) {
     return completeDryRun(plan, out);
   }
 
-  if (fs.existsSync(plan.contextPath) && !input.force) {
+  if (input.noArchaeology) {
+    return completeDisabled(plan, stateManager, opts);
+  }
+
+  if (fs.existsSync(plan.contextPath) && !shouldRefreshExistingContext(plan, stateManager)) {
     out(`[archaeology] already exists — written: ${plan.contextPath}`);
     return { exitCode: 0, contextPath: plan.contextPath, invocation: plan.invocation, projectType: plan.classification.category, backend: plan.backend };
   }
@@ -193,6 +201,72 @@ export function runArchaeology(input: ArchaeologyArgs, opts: ArchaeologyRunOptio
   }
 
   return completeSuccess(plan, result.stdout, durationMs, opts);
+}
+
+function completeDisabled(
+  plan: ArchaeologyPlan,
+  sm: StateManager,
+  opts: ArchaeologyRunOptions,
+): ArchaeologyRunResult {
+  const out = opts.stdout ?? ((message: string) => process.stdout.write(`${message}\n`));
+  const now = opts.now ?? (() => new Date());
+  try {
+    if (fs.existsSync(plan.contextPath)) fs.unlinkSync(plan.contextPath);
+  } catch {
+    // Best-effort cleanup. The state flag still suppresses prompt injection.
+  }
+  recordActivity(plan.args.sessionDir, sm, opts.logActivityFn ?? logActivity, {
+    event: 'archaeology_skipped',
+    ts: now().toISOString(),
+    project_type: plan.classification.category,
+    backend: plan.backend,
+    error: 'disabled by --no-archaeology',
+  });
+  setNoArchaeologyFlag(plan.args.sessionDir, sm);
+  out(`[archaeology] disabled — injection suppressed for session: ${plan.args.sessionDir}`);
+  return { exitCode: 0, contextPath: plan.contextPath, invocation: plan.invocation, projectType: plan.classification.category, backend: plan.backend };
+}
+
+function shouldRefreshExistingContext(plan: ArchaeologyPlan, sm: StateManager): boolean {
+  if (plan.args.force) return true;
+  if (process.env.PICKLE_ARCHAEOLOGY_AUTO_REFRESH === 'off') return false;
+  const previous = readPreviousFileCount(plan.args.sessionDir, sm);
+  if (!Number.isFinite(previous) || previous <= 0) return false;
+  const current = countProjectFiles(plan.args.repoRoot);
+  const deltaPct = Math.abs(current - previous) / previous * 100;
+  return deltaPct >= loadRefreshThresholdPct(plan.args.extensionRoot);
+}
+
+function readPreviousFileCount(sessionDir: string, sm: StateManager): number {
+  try {
+    return Number(sm.read(path.join(sessionDir, 'state.json')).archaeology?.file_count);
+  } catch {
+    return NaN;
+  }
+}
+
+function loadRefreshThresholdPct(extensionRoot: string): number {
+  const settings = readRecoverableJsonObject(path.join(extensionRoot, 'pickle_settings.json')) as Record<string, unknown> | null;
+  const hardening = settings?.bmad_hardening;
+  const raw = hardening && typeof hardening === 'object'
+    ? (hardening as Record<string, unknown>).archaeology_refresh_threshold_pct
+    : undefined;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 100) return 10;
+  return parsed;
+}
+
+function setNoArchaeologyFlag(sessionDir: string, sm: StateManager): void {
+  try {
+    sm.update(path.join(sessionDir, 'state.json'), (state) => {
+      state.flags ??= {};
+      state.flags.no_archaeology = true;
+      state.archaeology = null;
+    });
+  } catch {
+    // Prompt injection checks the flag best-effort; archaeology disable should
+    // not make the caller fail if state persistence is unavailable.
+  }
 }
 
 function completeDryRun(plan: ArchaeologyPlan, out: (message: string) => void): ArchaeologyRunResult {
