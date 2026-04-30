@@ -5,13 +5,13 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-// 750ms → 2500ms: under 4-way test concurrency on macOS, subprocess spawn
-// overhead alone can exceed 750ms, racing against rg/grep timeout fallback
-// chain and producing flaky "expected ['a.ts','b.ts'], got ['a.ts']" deep-equal
-// failures plus elapsed-budget overruns. The actual hang detection is bounded
-// by findImportersTimeoutMs inside the SUT — this constant is just the
-// per-subprocess kill budget; raising it gives the spawn pipeline breathing room.
-const HANG_TIMEOUT_MS = 2_500;
+// 750ms → 2500ms → 5000ms: under heavy full-suite concurrency (3340 tests, 222
+// suites), the SUT's findImportersTimeoutMs needs enough wall-clock to actually
+// fire the SIGKILL on a hanging shim and execute the grep fallback. 2500ms was
+// occasionally tight enough that the fallback ran but the SUT still returned
+// only the seed file. The HANG_SCRIPT sleeps 60s so any value < 60_000 still
+// validates the timeout-bound contract — bumping just absorbs scheduler jitter.
+const HANG_TIMEOUT_MS = 5_000;
 
 const FAIL_SCRIPT = (code) => `#!/bin/sh
 exit ${code}
@@ -63,7 +63,7 @@ process.stdout.write(JSON.stringify({ result, warnings }));
                 ...process.env,
                 PATH: shimDir,
             },
-            timeout: HANG_TIMEOUT_MS + 2_500,
+            timeout: HANG_TIMEOUT_MS + 7_500,
         });
 
         assert.equal(result.status, 0, result.stderr || result.stdout);
@@ -91,7 +91,7 @@ function warningCategoryCount(warnings, category) {
 }
 
 function assertFinishedWithin(elapsed, label) {
-    assert.ok(elapsed < HANG_TIMEOUT_MS + 2_000, `${label} took ${elapsed}ms`);
+    assert.ok(elapsed < HANG_TIMEOUT_MS + 5_000, `${label} took ${elapsed}ms`);
 }
 
 function runInRepo(scripts) {
