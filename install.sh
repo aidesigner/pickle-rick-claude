@@ -103,6 +103,18 @@ rsync -a --delete --delete-excluded \
   --exclude='tsconfig.json' \
   --exclude='package-lock.json' \
   "$SCRIPT_DIR/extension/" "$EXTENSION_ROOT/extension/"
+
+# --- RUNTIME DEPS ---
+# Some compiled JS modules (e.g. citadel/frontend-prop-drift-audit.js) import
+# packages from extension/node_modules at module-load. Since rsync excludes
+# node_modules, symlink the specific runtime deps the deployed code needs.
+# Recreated each install.sh run because --delete-excluded above blows them away.
+mkdir -p "$EXTENSION_ROOT/extension/node_modules"
+for dep in typescript; do
+  if [ -d "$SCRIPT_DIR/extension/node_modules/$dep" ]; then
+    ln -sfn "$SCRIPT_DIR/extension/node_modules/$dep" "$EXTENSION_ROOT/extension/node_modules/$dep"
+  fi
+done
 # Merge pickle_settings: repo defaults as base, user values overlaid (preserves customizations)
 if [ -f "$EXTENSION_ROOT/pickle_settings.json" ]; then
   TMPFILE="$(mktemp)"
