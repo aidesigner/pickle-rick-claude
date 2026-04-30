@@ -18,7 +18,6 @@ function positiveIntegerOrDefault(value: unknown, fallback: number): number {
   return Number.isSafeInteger(parsed) ? parsed : fallback;
 }
 
-// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 export function retryTicket(ticketId: string, cwd: string): void {
   // Validate ticketId to prevent path traversal
   if (!/^[a-zA-Z0-9_-]+$/.test(ticketId)) {

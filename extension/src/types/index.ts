@@ -342,6 +342,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'readiness_failed_post_correction',
   'archaeology_complete',
   'archaeology_skipped',
+  'phase_personas_disabled_seen',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];

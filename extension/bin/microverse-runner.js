@@ -114,7 +114,6 @@ export async function runRemediatorForIteration(gateResult, sessionDir, workingD
             .sort((a, b) => b.mtime - a.mtime);
         if (resultFiles.length === 0)
             return { success: false };
-        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         const resultRaw = readRecoverableJsonObject(path.join(gateDir, resultFiles[0].name));
         if (!resultRaw)
             return { success: false };
@@ -1293,7 +1292,7 @@ export async function main(sessionDir) {
     }
     catch (err) {
         if (err instanceof SchemaVersionDeployDriftError) {
-            process.stderr.write(`${err.message}\n`);
+            process.stderr.write(`${safeErrorMessage(err)}\n`);
             process.exit(1);
         }
         throw err;

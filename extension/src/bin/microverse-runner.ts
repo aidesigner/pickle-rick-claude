@@ -228,7 +228,6 @@ export async function runRemediatorForIteration(
       .sort((a, b) => b.mtime - a.mtime);
 
     if (resultFiles.length === 0) return { success: false };
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     const resultRaw = readRecoverableJsonObject(path.join(gateDir, resultFiles[0].name)) as {
       aborted?: boolean;
       failures_out?: number;
@@ -1681,7 +1680,7 @@ export async function main(sessionDir: string): Promise<void> {
     assertSchemaVersionDeployParity();
   } catch (err) {
     if (err instanceof SchemaVersionDeployDriftError) {
-      process.stderr.write(`${err.message}\n`);
+      process.stderr.write(`${safeErrorMessage(err)}\n`);
       process.exit(1);
     }
     throw err;

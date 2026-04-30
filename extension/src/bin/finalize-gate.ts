@@ -49,7 +49,6 @@ function loadFinalizeGateSettings(extRoot: string): FinalizeGateSettings {
     remediator_timeout_s: 600,
   };
   try {
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking read at startup
     const raw = readRecoverableJsonObject(path.join(extRoot, 'pickle_settings.json')) as Record<string, unknown> | null;
     if (!raw) return defaults;
     const cg = raw.convergence_gate as Record<string, unknown> | undefined;
@@ -179,7 +178,6 @@ export async function finalizeGateMain(opts: FinalizeGateOpts): Promise<number> 
   const mkdir = opts.mkdirSyncFn ?? ((p: string) => fs.mkdirSync(p, { recursive: true }));
   const writeFile = opts.writeFileFn ?? ((p: string, data: string) => fs.writeFileSync(p, data, 'utf-8'));
 
-  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   mkdir(gateDir);
 
   const runGateFn = opts.runGateFn ?? runGate;
@@ -332,7 +330,6 @@ function defaultSpawnRemediator(
   args: string[],
   spawnOpts: { cwd: string; timeout: number; env: NodeJS.ProcessEnv }
 ): void {
-  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking subprocess (single attempt, bounded by timeout)
   execFileSync(cmd, args, {
     cwd: spawnOpts.cwd,
     timeout: spawnOpts.timeout,

@@ -17,7 +17,7 @@ import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact, type Backend, 
 import { updateTicketStatus } from '../services/git-utils.js';
 import { buildWorkerInvocation, loadBackendFromSession, backendEnvOverrides } from '../services/backend-spawn.js';
 import { scrubForbiddenWorkerTokens } from '../services/promise-tokens.js';
-import { StateManager } from '../services/state-manager.js';
+import { StateManager, writeActivityEntry } from '../services/state-manager.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { loadAgentMd, type AgentModel } from '../services/agent-md-loader.js';
 
@@ -94,6 +94,8 @@ type PhasePersonaEntry = {
   model?: AgentModel;
 };
 
+const PHASE_PERSONAS_DISABLED_MESSAGE = '[phase-personas] feature available but disabled (calibration in progress); enable with: pickle settings set bmad_hardening.phase_personas_enabled true OR PICKLE_PHASE_PERSONAS=on';
+
 function readBasePersona(extensionRoot: string): string {
   try {
     const personaPath = path.join(extensionRoot, 'persona.md');
@@ -125,6 +127,45 @@ function readPhasePersonaEntry(sessionRoot: string, extensionRoot: string): Phas
   }
 }
 
+function readBmadHardeningSettings(extensionRoot: string): Record<string, unknown> | null {
+  try {
+    const settings = readRecoverableJsonObject(path.join(extensionRoot, 'pickle_settings.json')) as Record<string, unknown> | null;
+    const hardening = settings?.bmad_hardening;
+    return hardening && typeof hardening === 'object' && !Array.isArray(hardening)
+      ? hardening as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function isPhasePersonasEnabled(extensionRoot: string): boolean {
+  const envValue = process.env.PICKLE_PHASE_PERSONAS;
+  if (envValue === 'on') return true;
+  if (envValue === 'off') return false;
+  const hardening = readBmadHardeningSettings(extensionRoot);
+  return hardening?.phase_personas_enabled === true;
+}
+
+function hasSeenDisabledPhasePersonas(sessionRoot: string): boolean {
+  try {
+    const state = readRecoverableJsonObject(path.join(sessionRoot, 'state.json')) as State | null;
+    return Array.isArray(state?.activity)
+      && state.activity.some((entry) => entry.event === 'phase_personas_disabled_seen');
+  } catch {
+    return false;
+  }
+}
+
+function recordPhasePersonasDisabledSeen(sessionRoot: string): void {
+  if (hasSeenDisabledPhasePersonas(sessionRoot)) return;
+  console.log(PHASE_PERSONAS_DISABLED_MESSAGE);
+  writeActivityEntry(path.join(sessionRoot, 'state.json'), {
+    event: 'phase_personas_disabled_seen',
+    ts: new Date().toISOString(),
+  });
+}
+
 function readActivePersonaBlock(opts: {
   sessionRoot: string;
   extensionRoot: string;
@@ -133,6 +174,10 @@ function readActivePersonaBlock(opts: {
   try {
     const entry = readPhasePersonaEntry(opts.sessionRoot, opts.extensionRoot);
     if (!entry) return '';
+    if (!isPhasePersonasEnabled(opts.extensionRoot)) {
+      recordPhasePersonasDisabledSeen(opts.sessionRoot);
+      return '';
+    }
     const agent = loadAgentMd(entry.subagent_type, { agentsDir: opts.agentsDir });
     if (!agent) return '';
     const parts = [readBasePersona(opts.extensionRoot), agent.body.trim()].filter(Boolean);
@@ -143,6 +188,7 @@ function readActivePersonaBlock(opts: {
 }
 
 export function resolvePhasePersonaModel(sessionRoot: string, extensionRoot: string): AgentModel | undefined {
+  if (!isPhasePersonasEnabled(extensionRoot)) return undefined;
   return readPhasePersonaEntry(sessionRoot, extensionRoot)?.model;
 }
 

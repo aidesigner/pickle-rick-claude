@@ -1125,7 +1125,7 @@ export async function main(sessionDir, opts = {}) {
     }
     catch (err) {
         if (err instanceof SchemaVersionDeployDriftError) {
-            process.stderr.write(`${err.message}\n`);
+            process.stderr.write(`${safeErrorMessage(err)}\n`);
             process.exit(1);
         }
         throw err;

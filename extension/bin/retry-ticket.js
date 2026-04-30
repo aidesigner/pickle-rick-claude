@@ -15,7 +15,6 @@ function positiveIntegerOrDefault(value, fallback) {
     const parsed = Number(value);
     return Number.isSafeInteger(parsed) ? parsed : fallback;
 }
-// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
 export function retryTicket(ticketId, cwd) {
     // Validate ticketId to prevent path traversal
     if (!/^[a-zA-Z0-9_-]+$/.test(ticketId)) {

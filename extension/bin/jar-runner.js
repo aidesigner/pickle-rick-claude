@@ -88,7 +88,6 @@ async function runTask(sessionDir, repoCwd, extensionRoot) {
     const settingsPath = path.join(extensionRoot, 'pickle_settings.json');
     let managerMaxTurns = Defaults.MANAGER_MAX_TURNS;
     try {
-        // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         const settings = readRecoverableJsonObject(settingsPath);
         const settingsMaxTurns = positiveIntegerOrNull(settings?.default_manager_max_turns);
         if (settingsMaxTurns !== null)
