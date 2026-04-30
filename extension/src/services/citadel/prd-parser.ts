@@ -36,12 +36,21 @@ export interface StatusCodeRow {
   text: string;
 }
 
+export interface TransitionAuditRow {
+  transition: string;
+  auditAction: string;
+  expectedCallSite?: string;
+  line: number;
+  text: string;
+}
+
 export interface ParsedPrd {
   decisions: Decision[];
   acceptanceCriteria: AcceptanceCriterion[];
   endpoints: Endpoint[];
   allowlistEntries: AllowlistEntry[];
   statusCodeRows: StatusCodeRow[];
+  transitionAuditRows: TransitionAuditRow[];
 }
 
 type Seen = Set<string>;
@@ -50,6 +59,13 @@ type TableContext = 'valid_actions' | 'lender_feature_flags' | 'enum_values' | '
 interface ScanState {
   tableContext: TableContext;
   currentEndpoint?: Endpoint;
+  transitionTable?: TransitionTableColumns;
+}
+
+interface TransitionTableColumns {
+  transition: number;
+  audit: number;
+  expectedCallSite?: number;
 }
 
 const AC_ID_PATTERN = /\bAC-[A-Z0-9]+(?:-[A-Z0-9]+)*(?:-\d+)?\b/g;
@@ -69,6 +85,7 @@ export function parsePrdMarkdown(markdown: string): ParsedPrd {
     endpoints: [],
     allowlistEntries: [],
     statusCodeRows: [],
+    transitionAuditRows: [],
   };
   const seen = {
     decisions: new Set<string>(),
@@ -76,6 +93,7 @@ export function parsePrdMarkdown(markdown: string): ParsedPrd {
     endpoints: new Set<string>(),
     allowlistEntries: new Set<string>(),
     statusCodeRows: new Set<string>(),
+    transitionAuditRows: new Set<string>(),
   };
   const state: ScanState = { tableContext: undefined };
 
@@ -100,6 +118,7 @@ function scanLine(
   scanEndpoint(line, lineNumber, result, seen.endpoints, state);
   scanAllowlistEntries(line, lineNumber, result.allowlistEntries, seen.allowlistEntries, state.tableContext);
   scanStatusCodeRow(line, lineNumber, result.statusCodeRows, seen.statusCodeRows, state);
+  scanTransitionAuditRow(line, lineNumber, result.transitionAuditRows, seen.transitionAuditRows, state);
 }
 
 function updateContext(line: string, state: ScanState): void {
@@ -246,6 +265,61 @@ function scanStatusCodeRow(
     line: lineNumber,
     text: line.trim(),
   });
+}
+
+function scanTransitionAuditRow(
+  line: string,
+  lineNumber: number,
+  rows: TransitionAuditRow[],
+  seen: Seen,
+  state: ScanState,
+): void {
+  const cells = tableCells(line);
+  if (cells.length === 0) {
+    state.transitionTable = undefined;
+    return;
+  }
+  const header = transitionTableHeader(cells);
+  if (header) {
+    state.transitionTable = header;
+    return;
+  }
+  if (isSeparatorRow(cells)) return;
+  if (looksLikeHeader(...cells)) {
+    state.transitionTable = undefined;
+    return;
+  }
+  if (!state.transitionTable) return;
+
+  const transition = cells[state.transitionTable.transition];
+  const auditAction = cells[state.transitionTable.audit];
+  if (!transition || !auditAction) return;
+
+  const expectedCallSite =
+    state.transitionTable.expectedCallSite === undefined ? undefined : cells[state.transitionTable.expectedCallSite];
+  const key = `${transition}|${auditAction}|${lineNumber}`;
+  if (seen.has(key)) return;
+  seen.add(key);
+  rows.push({
+    transition,
+    auditAction,
+    expectedCallSite: expectedCallSite || undefined,
+    line: lineNumber,
+    text: line.trim(),
+  });
+}
+
+function transitionTableHeader(cells: string[]): TransitionTableColumns | undefined {
+  const normalized = cells.map((cell) => cleanCell(cell).toLowerCase());
+  const transition = normalized.findIndex((cell) => cell === 'transition');
+  const audit = normalized.findIndex((cell) => cell === 'audit');
+  if (transition === -1 || audit === -1) return undefined;
+  const expectedCallSite = normalized.findIndex((cell) => /^(expected\s+)?call\s*site$/.test(cell));
+  return {
+    transition,
+    audit,
+    expectedCallSite: expectedCallSite === -1 ? undefined : expectedCallSite,
+  };
 }
 
 function statusCodeFromCells(cells: string[]): number | undefined {

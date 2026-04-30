@@ -14,6 +14,7 @@ export function parsePrdMarkdown(markdown) {
         endpoints: [],
         allowlistEntries: [],
         statusCodeRows: [],
+        transitionAuditRows: [],
     };
     const seen = {
         decisions: new Set(),
@@ -21,6 +22,7 @@ export function parsePrdMarkdown(markdown) {
         endpoints: new Set(),
         allowlistEntries: new Set(),
         statusCodeRows: new Set(),
+        transitionAuditRows: new Set(),
     };
     const state = { tableContext: undefined };
     markdown.split(/\r?\n/).forEach((line, index) => {
@@ -36,6 +38,7 @@ function scanLine(line, lineNumber, result, seen, state) {
     scanEndpoint(line, lineNumber, result, seen.endpoints, state);
     scanAllowlistEntries(line, lineNumber, result.allowlistEntries, seen.allowlistEntries, state.tableContext);
     scanStatusCodeRow(line, lineNumber, result.statusCodeRows, seen.statusCodeRows, state);
+    scanTransitionAuditRow(line, lineNumber, result.transitionAuditRows, seen.transitionAuditRows, state);
 }
 function updateContext(line, state) {
     const normalized = line.toLowerCase();
@@ -152,6 +155,55 @@ function scanStatusCodeRow(line, lineNumber, rows, seen, state) {
         line: lineNumber,
         text: line.trim(),
     });
+}
+function scanTransitionAuditRow(line, lineNumber, rows, seen, state) {
+    const cells = tableCells(line);
+    if (cells.length === 0) {
+        state.transitionTable = undefined;
+        return;
+    }
+    const header = transitionTableHeader(cells);
+    if (header) {
+        state.transitionTable = header;
+        return;
+    }
+    if (isSeparatorRow(cells))
+        return;
+    if (looksLikeHeader(...cells)) {
+        state.transitionTable = undefined;
+        return;
+    }
+    if (!state.transitionTable)
+        return;
+    const transition = cells[state.transitionTable.transition];
+    const auditAction = cells[state.transitionTable.audit];
+    if (!transition || !auditAction)
+        return;
+    const expectedCallSite = state.transitionTable.expectedCallSite === undefined ? undefined : cells[state.transitionTable.expectedCallSite];
+    const key = `${transition}|${auditAction}|${lineNumber}`;
+    if (seen.has(key))
+        return;
+    seen.add(key);
+    rows.push({
+        transition,
+        auditAction,
+        expectedCallSite: expectedCallSite || undefined,
+        line: lineNumber,
+        text: line.trim(),
+    });
+}
+function transitionTableHeader(cells) {
+    const normalized = cells.map((cell) => cleanCell(cell).toLowerCase());
+    const transition = normalized.findIndex((cell) => cell === 'transition');
+    const audit = normalized.findIndex((cell) => cell === 'audit');
+    if (transition === -1 || audit === -1)
+        return undefined;
+    const expectedCallSite = normalized.findIndex((cell) => /^(expected\s+)?call\s*site$/.test(cell));
+    return {
+        transition,
+        audit,
+        expectedCallSite: expectedCallSite === -1 ? undefined : expectedCallSite,
+    };
 }
 function statusCodeFromCells(cells) {
     if (cells.length === 0 || isSeparatorRow(cells) || looksLikeHeader(...cells))
