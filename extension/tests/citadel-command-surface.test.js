@@ -48,6 +48,11 @@ describe('citadel command surface', () => {
     assert.ok(anatomyRouteIndex > citadelRouteIndex, 'citadel must run before anatomy-park');
   });
 
+  test('cronenberg plan prints the conformance signal label', () => {
+    assert.match(cronenberg, /Signals: .*conformance=<y\/n>/);
+    assert.doesNotMatch(cronenberg, /citadel-risk=<y\/n>/);
+  });
+
   test('cronenberg preserves pickle-pipeline duplicate-followup suppression', () => {
     const step4Start = cronenberg.indexOf('## Step 4: Pick Followups');
     const step5Start = cronenberg.indexOf('## Step 5: Print Plan');

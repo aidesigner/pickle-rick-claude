@@ -90,7 +90,7 @@ Hardening tickets are produced upstream by `/pickle-refine-prd`; followups only 
 Cronenberg — request mutated.
 
 Task: <TASK or "(driven by PRD)">
-Signals: PRD=<y/n> refined=<y/n> tickets=<N> multi-stage=<y/n> metric=<y/n> stack=<y/n> subsystems=<N> interactive=<y/n> ac-smell=<y/n> uncheckable-ac=<y/n> citadel-risk=<y/n>
+Signals: PRD=<y/n> refined=<y/n> tickets=<N> multi-stage=<y/n> metric=<y/n> stack=<y/n> subsystems=<N> interactive=<y/n> ac-smell=<y/n> uncheckable-ac=<y/n> conformance=<y/n>
 Refine decision: <REFINE_NEEDED y/n> (<reason — e.g. "TICKET_COUNT≥3", "ALREADY_REFINED", "AC_SHAPE_SMELL", "user --no-refine">)
 
 Plan:
