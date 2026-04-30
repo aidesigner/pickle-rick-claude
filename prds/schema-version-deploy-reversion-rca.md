@@ -1,6 +1,6 @@
 # PRD: Deploy-Reversion of `types/index.js` — Root Cause Analysis + Fix
 
-**Status**: Bug PRD — F1–F4 fix attempted (commits `4af5b6a`, `a670639`, `f75b2e3`), did NOT hold in production. Reversion mechanism is broader than `types/index.js` and survives F1 + F2 + F3. Investigation continues. **Still next priority work** after pipeline completion.
+**Status**: **Shipped 2026-04-30 PM** via F6 (release `v1.62.0`). F1–F4 in HEAD plus the version bump break the propagating-revert loop because `gh release latest` no longer returns the v1.60.1 tarball. F7 (temporary lockdown) was not needed — F6 went straight in. Soak observation (AC-RVN-11) and self-propagation negative test (AC-RVN-12) are still open as 24-hour follow-ups; raise a new bug PRD if they regress.
 **Author**: Pickle Rick + agent team (h1-tsc-cache / h2-source-mutation / h3-timeline)
 **Project**: `pickle-rick-claude` — Claude Code extension
 **Repo**: `https://github.com/gregorydickson/pickle-rick-claude` — branch `main`
@@ -391,3 +391,27 @@ prds/MASTER_PLAN.md                                   # update next-priority cal
 - Source repo has F1–F4 + typescript-symlink fixes intact at HEAD `1347fb2`.
 - No further hot-patching needed during pipeline run — mux-runner cached v3 is sufficient.
 - Bug remains UNFIXED in deployed runtime; will re-surface for fresh processes after pipeline ends.
+
+---
+
+## Update 2026-04-30 PM — F6 shipped
+
+**Release**: `v1.62.0` published — https://github.com/gregorydickson/pickle-rick-claude/releases/tag/v1.62.0
+
+**Why v1.62.0 not v1.61.0**: pipeline workers had already bumped `extension/package.json` to 1.62.0 across the 75-ticket bundle. Tagging v1.62.0 is the cleanest path; bumping again would rewrite history.
+
+**What was done**:
+1. Lint + test gate from `extension/`: `tsc --noEmit` + `eslint src/` (0 errors, 8 advisory warnings) + `tsc` + `npm test` (3340/3340 pass, after a small flake-budget bump in `tests/scope-resolver-import-walks.test.js` — HANG_TIMEOUT_MS 2500ms → 5000ms, see commit `0390916`).
+2. Cleaned working tree: 3 commits (gitignore stray `current_sessions.json`, test-budget bump, 3 new bug PRDs + master plan).
+3. `git push origin main` (78 commits forward).
+4. `gh release create v1.62.0 --target main --generate-notes`.
+5. Cached tarballs check: none in `/var/folders/*/pickle-update-*` (already auto-cleaned by macOS).
+6. `bash install.sh` from source repo. Deploy verified clean: `types/index.js` schemaVersion=3, `LATEST_SCHEMA_VERSION=3`; `state-manager.js` has `SchemaVersionDeployDriftError` + `assertSchemaVersionDeployParity`; `check-update.js` performUpgrade kill-switch on lines 242 + 277; deployed `package.json` 1.62.0; install.sh parity check (source TS = deployed JS = 3) passed inline.
+
+**AC status**:
+- **AC-RVN-09 (F6 ships)**: ✅ v1.62.0 published; F1+F2+F3+F4 in HEAD `a11dc6d`; `gh release view --json tagName` returns `v1.62.0`; cached tarball directory empty.
+- **AC-RVN-10 (F7 temporary lockdown)**: ⏭️ skipped — F6 went straight in, F7 lockdown not needed.
+- **AC-RVN-11 (24h soak)**: ⏳ open. Re-verify deployed `types/index.js` and `services/state-manager.js` stay at v3 for 24h. Raise a new bug PRD if it regresses.
+- **AC-RVN-12 (self-propagation broken)**: ⏳ open. Manually corrupt deployed `check-update.js` to v1.60.1 mtime, fire stop-hook, observe no install. Optional — F6 should make this moot, but worth a probe.
+
+**Watchdog**: cron `d45a5ee4` remains cancelled. Re-arming is unnecessary — F6 cures the underlying loop.
