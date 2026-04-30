@@ -7,6 +7,7 @@ import { auditFrontendPropDrift } from './frontend-prop-drift-audit.js';
 import { walkDiff } from './diff-walker.js';
 import { auditRuleSetInvariants } from './rule-set-invariant-audit.js';
 import { auditDiffHygiene } from './diff-hygiene.js';
+import { reconcileDivergences } from './divergence-reconciliation.js';
 export async function runCitadelAudit(options) {
     const report = buildCitadelAuditReport(options);
     if (!options.sessionDir && !options.reportPath)
@@ -37,6 +38,11 @@ export function buildCitadelAuditReport(options) {
         summary: crossPhase.summary,
     };
     const diffHygiene = auditDiffHygiene(diff, { szechuanFindings: crossPhase.szechuan_findings });
+    const divergenceReconciliation = reconcileDivergences(diff);
+    const decisionRequired = [
+        ...acShape.decisionsRequired,
+        ...divergenceReconciliation.decisionsRequired,
+    ];
     const findings = uniqueFindings([
         ...siblingAuth.findings.map((finding) => withFindingSource(finding, 'sibling_auth_preconditions')),
         ...frontendPropDrift.findings.map((finding) => withFindingSource(finding, 'frontend_prop_drift')),
@@ -49,7 +55,7 @@ export function buildCitadelAuditReport(options) {
     const high = findings.filter((finding) => finding.severity === 'High').length;
     const medium = findings.filter((finding) => finding.severity === 'Medium').length;
     const low = findings.filter((finding) => finding.severity === 'Low').length;
-    const strictDecisionFindings = options.strict ? acShape.decisionsRequired.length : 0;
+    const strictDecisionFindings = options.strict ? decisionRequired.length : 0;
     const blockingFindings = critical + (options.strict ? high : 0) + strictDecisionFindings;
     return {
         schema_version: '1.0',
@@ -62,17 +68,18 @@ export function buildCitadelAuditReport(options) {
             ac_shape: acShape,
             rule_set_invariants: ruleSetInvariants,
             diff_hygiene: diffHygiene,
+            divergence_reconciliation: divergenceReconciliation,
             cross_phase: crossPhaseReport,
         },
         findings,
-        decision_required: acShape.decisionsRequired,
+        decision_required: decisionRequired,
         summary: {
             findings: findings.length,
             critical,
             high,
             medium,
             low,
-            decision_required: acShape.decisionsRequired.length,
+            decision_required: decisionRequired.length,
         },
     };
 }

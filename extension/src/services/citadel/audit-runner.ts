@@ -7,6 +7,7 @@ import { auditFrontendPropDrift, FrontendPropDriftReport } from './frontend-prop
 import { walkDiff } from './diff-walker.js';
 import { auditRuleSetInvariants, RuleSetInvariantReport } from './rule-set-invariant-audit.js';
 import { auditDiffHygiene, DiffHygieneReport } from './diff-hygiene.js';
+import { reconcileDivergences, DivergenceReconciliationReport, DivergenceDecisionRequired } from './divergence-reconciliation.js';
 
 type CitadelSeverity = 'Critical' | 'High' | 'Medium' | 'Low';
 
@@ -16,6 +17,8 @@ interface FindingLike {
   message?: string;
   [key: string]: unknown;
 }
+
+type DecisionRequired = AcShapeAuditReport['decisionsRequired'][number] | DivergenceDecisionRequired;
 
 export interface CrossPhaseFinding extends FindingLike {
   source: 'anatomy-park' | 'szechuan-sauce';
@@ -58,10 +61,11 @@ export interface CitadelAuditReport {
     ac_shape: AcShapeAuditReport;
     rule_set_invariants: RuleSetInvariantReport;
     diff_hygiene: DiffHygieneReport;
+    divergence_reconciliation: DivergenceReconciliationReport;
     cross_phase: CrossPhaseFindingsReport;
   };
   findings: FindingLike[];
-  decision_required: AcShapeAuditReport['decisionsRequired'];
+  decision_required: DecisionRequired[];
   summary: {
     findings: number;
     critical: number;
@@ -103,6 +107,11 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
     summary: crossPhase.summary,
   };
   const diffHygiene = auditDiffHygiene(diff, { szechuanFindings: crossPhase.szechuan_findings });
+  const divergenceReconciliation = reconcileDivergences(diff);
+  const decisionRequired: DecisionRequired[] = [
+    ...acShape.decisionsRequired,
+    ...divergenceReconciliation.decisionsRequired,
+  ];
   const findings = uniqueFindings([
     ...siblingAuth.findings.map((finding) => withFindingSource(finding, 'sibling_auth_preconditions')),
     ...frontendPropDrift.findings.map((finding) => withFindingSource(finding, 'frontend_prop_drift')),
@@ -115,7 +124,7 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
   const high = findings.filter((finding) => finding.severity === 'High').length;
   const medium = findings.filter((finding) => finding.severity === 'Medium').length;
   const low = findings.filter((finding) => finding.severity === 'Low').length;
-  const strictDecisionFindings = options.strict ? acShape.decisionsRequired.length : 0;
+  const strictDecisionFindings = options.strict ? decisionRequired.length : 0;
   const blockingFindings = critical + (options.strict ? high : 0) + strictDecisionFindings;
 
   return {
@@ -129,17 +138,18 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
       ac_shape: acShape,
       rule_set_invariants: ruleSetInvariants,
       diff_hygiene: diffHygiene,
+      divergence_reconciliation: divergenceReconciliation,
       cross_phase: crossPhaseReport,
     },
     findings,
-    decision_required: acShape.decisionsRequired,
+    decision_required: decisionRequired,
     summary: {
       findings: findings.length,
       critical,
       high,
       medium,
       low,
-      decision_required: acShape.decisionsRequired.length,
+      decision_required: decisionRequired.length,
     },
   };
 }
