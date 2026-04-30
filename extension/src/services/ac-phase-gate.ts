@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
+import { auditCodexManagerRelaunchCaps } from './bundle-state-integrity.js';
 import { safeErrorMessage } from './pickle-utils.js';
 
 export const AC_PHASE_MANIFEST = 'ac-phase-manifest.json';
@@ -96,7 +97,21 @@ function shouldEvaluate(criterion: AcPhaseCriterion, evaluationPhase: AcEvaluati
   return !criterion.phase || criterion.phase === pipelinePhase;
 }
 
-function runCriterion(criterion: AcPhaseCriterion, cwd: string): AcPhaseGateFailure | null {
+function runBuiltinCriterion(criterion: AcPhaseCriterion, sessionDir: string): AcPhaseGateFailure | null {
+  if (criterion.id !== 'AC-BUNDLE-03') return null;
+
+  const result = auditCodexManagerRelaunchCaps(sessionDir);
+  if (result.violations.length === 0) return null;
+
+  const reason = result.violations
+    .map((violation) => `${path.relative(sessionDir, violation.statePath) || 'state.json'}: ${violation.reason}`)
+    .join('; ');
+  return { id: criterion.id, reason };
+}
+
+function runCriterion(criterion: AcPhaseCriterion, cwd: string, sessionDir: string): AcPhaseGateFailure | null {
+  const builtinFailure = runBuiltinCriterion(criterion, sessionDir);
+  if (builtinFailure) return builtinFailure;
   if (!criterion.command) return null;
   const expected = criterion.expected_exit_code ?? 0;
   const commandCwd = criterion.cwd ?? cwd;
@@ -146,7 +161,7 @@ export function runAcPhaseGate(opts: RunAcPhaseGateOpts): AcPhaseGateResult {
       continue;
     }
     evaluated.push(criterion.id);
-    const failure = runCriterion(criterion, opts.cwd ?? process.cwd());
+    const failure = runCriterion(criterion, opts.cwd ?? process.cwd(), opts.sessionDir);
     if (failure) failures.push(failure);
   }
 

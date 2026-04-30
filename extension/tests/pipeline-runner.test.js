@@ -20,6 +20,7 @@ import {
 } from '../bin/pipeline-runner.js';
 import { backendEnvOverrides } from '../services/backend-spawn.js';
 import { AC_PHASE_MANIFEST, runAcPhaseGate } from '../services/ac-phase-gate.js';
+import { Defaults } from '../types/index.js';
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-pipeline-'));
@@ -112,6 +113,73 @@ describe('phase-ordered AC gate', () => {
     assert.equal(result.status, 'fail');
     assert.equal(result.failures[0].id, 'AC-MISSING-PHASE');
     assert.match(result.failures[0].reason, /evaluation_phase/);
+  });
+
+  test('AC-BUNDLE-03 passes when root and microverse relaunch counters are within cap', () => {
+    const dir = tmpDir();
+    const childDir = path.join(dir, 'microverse_alpha');
+    const ignoredDir = path.join(dir, 'not_microverse');
+    fs.mkdirSync(childDir);
+    fs.mkdirSync(ignoredDir);
+    fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ codex_manager_relaunch_count: Defaults.CODEX_MANAGER_RELAUNCH_CAP }));
+    fs.writeFileSync(path.join(childDir, 'state.json'), JSON.stringify({ codex_manager_relaunch_count: 1 }));
+    fs.writeFileSync(path.join(ignoredDir, 'state.json'), JSON.stringify({ codex_manager_relaunch_count: Defaults.CODEX_MANAGER_RELAUNCH_CAP + 1 }));
+    fs.writeFileSync(path.join(dir, AC_PHASE_MANIFEST), JSON.stringify({
+      acceptance_criteria: [{ id: 'AC-BUNDLE-03', evaluation_phase: 'bundle-end' }],
+    }));
+
+    const result = runAcPhaseGate({
+      sessionDir: dir,
+      evaluationPhase: 'bundle-end',
+      cwd: dir,
+    });
+
+    assert.equal(result.status, 'pass');
+    assert.deepEqual(result.evaluated, ['AC-BUNDLE-03']);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('AC-BUNDLE-03 fails when root state relaunch counter exceeds cap', () => {
+    const dir = tmpDir();
+    fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ codex_manager_relaunch_count: Defaults.CODEX_MANAGER_RELAUNCH_CAP + 1 }));
+    fs.writeFileSync(path.join(dir, AC_PHASE_MANIFEST), JSON.stringify({
+      acceptance_criteria: [{ id: 'AC-BUNDLE-03', evaluation_phase: 'bundle-end' }],
+    }));
+
+    const result = runAcPhaseGate({
+      sessionDir: dir,
+      evaluationPhase: 'bundle-end',
+      cwd: dir,
+    });
+
+    assert.equal(result.status, 'fail');
+    assert.equal(result.failures[0].id, 'AC-BUNDLE-03');
+    assert.match(result.failures[0].reason, /state\.json/);
+    assert.match(result.failures[0].reason, /exceeds cap/);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('AC-BUNDLE-03 fails when a child microverse state relaunch counter exceeds cap', () => {
+    const dir = tmpDir();
+    const childDir = path.join(dir, 'microverse_citadel');
+    fs.mkdirSync(childDir);
+    fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ codex_manager_relaunch_count: 0 }));
+    fs.writeFileSync(path.join(childDir, 'state.json'), JSON.stringify({ codex_manager_relaunch_count: Defaults.CODEX_MANAGER_RELAUNCH_CAP + 1 }));
+    fs.writeFileSync(path.join(dir, AC_PHASE_MANIFEST), JSON.stringify({
+      acceptance_criteria: [{ id: 'AC-BUNDLE-03', evaluation_phase: 'bundle-end' }],
+    }));
+
+    const result = runAcPhaseGate({
+      sessionDir: dir,
+      evaluationPhase: 'bundle-end',
+      cwd: dir,
+    });
+
+    assert.equal(result.status, 'fail');
+    assert.equal(result.failures[0].id, 'AC-BUNDLE-03');
+    assert.match(result.failures[0].reason, /microverse_citadel\/state\.json/);
+    assert.match(result.failures[0].reason, /exceeds cap/);
+    fs.rmSync(dir, { recursive: true, force: true });
   });
 });
 
