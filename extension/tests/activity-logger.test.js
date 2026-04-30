@@ -56,7 +56,7 @@ function withBrokenCanadianDateLocale(fn) {
 
 // --- VALID_ACTIVITY_EVENTS ---
 
-test('VALID_ACTIVITY_EVENTS contains all 50 expected event types', () => {
+test('VALID_ACTIVITY_EVENTS contains all 51 expected event types', () => {
     const expected = [
         'session_start', 'session_end', 'ticket_completed', 'epic_completed',
         'meeseeks_pass', 'commit', 'research', 'bug_fix', 'feature',
@@ -84,8 +84,11 @@ test('VALID_ACTIVITY_EVENTS contains all 50 expected event types', () => {
         'debate_user_declined_auto_promote',
         'debate_invalidated_by_correction',
         'debate_round_truncated',
+        // AC-LPB-05: pipeline-runner / setup.ts emit on session reconstruction
+        // so monitor/standup can distinguish fresh launches from resumed runs.
+        'session_reconstructed_epoch_reset',
     ];
-    assert.equal(VALID_ACTIVITY_EVENTS.length, 50);
+    assert.equal(VALID_ACTIVITY_EVENTS.length, 51);
     for (const e of expected) {
         assert.ok(VALID_ACTIVITY_EVENTS.includes(e), `Missing event type: ${e}`);
     }
