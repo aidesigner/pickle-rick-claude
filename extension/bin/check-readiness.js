@@ -80,8 +80,15 @@ export function extractContractReferences(content) {
         .filter((ref) => !refs.has(`${ref}()`))
         .sort();
 }
-function resolvePathRef(ref, repoRoot) {
-    return fs.existsSync(path.resolve(repoRoot, ref));
+function resolvePathRef(ref, repoRoot, ticketFile, sessionDir) {
+    if (path.isAbsolute(ref) && fs.existsSync(ref))
+        return true;
+    const bases = [
+        repoRoot,
+        ticketFile ? path.dirname(ticketFile) : undefined,
+        sessionDir,
+    ].filter((base) => typeof base === 'string');
+    return bases.some((base) => fs.existsSync(path.resolve(base, ref)));
 }
 function gitTrackedFiles(repoRoot) {
     const result = spawnSync('git', ['ls-files'], { cwd: repoRoot, encoding: 'utf-8' });
@@ -133,7 +140,9 @@ export function findReadinessFindings(ticketFile, repoRoot, opts) {
     }
     if (opts.checkContracts) {
         for (const ref of extractContractReferences(content)) {
-            const resolved = ref.includes('/') ? resolvePathRef(ref, repoRoot) : resolveSymbolRef(ref, repoRoot);
+            if (ref.includes('/'))
+                continue;
+            const resolved = resolveSymbolRef(ref, repoRoot);
             if (!resolved) {
                 findings.push({
                     ticket: ticketFile,
@@ -146,6 +155,173 @@ export function findReadinessFindings(ticketFile, repoRoot, opts) {
         }
     }
     return findings;
+}
+function parseFrontmatter(content) {
+    const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
+    return match ? match[1] : '';
+}
+function readScalar(frontmatter, key) {
+    const match = new RegExp(`^${key}:\\s*(.+?)\\s*$`, 'm').exec(frontmatter);
+    if (!match)
+        return undefined;
+    const value = match[1].trim();
+    if (value === '[]')
+        return undefined;
+    return value.replace(/^['"]|['"]$/g, '');
+}
+function readStringArray(frontmatter, key) {
+    const inline = new RegExp(`^${key}:\\s*\\[(.*?)\\]\\s*$`, 'm').exec(frontmatter);
+    if (inline) {
+        return inline[1].split(',').map((part) => part.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean);
+    }
+    const lines = frontmatter.split(/\r?\n/);
+    const index = lines.findIndex((line) => new RegExp(`^${key}:\\s*$`).test(line));
+    if (index < 0)
+        return [];
+    const values = [];
+    for (let i = index + 1; i < lines.length; i += 1) {
+        const match = /^\s+-\s+(.+?)\s*$/.exec(lines[i]);
+        if (!match)
+            break;
+        values.push(match[1].replace(/^['"]|['"]$/g, ''));
+    }
+    return values;
+}
+function dependencyRefs(content, frontmatter) {
+    const refs = new Map();
+    for (const dep of [...readStringArray(frontmatter, 'depends_on'), ...readStringArray(frontmatter, 'dependencies')]) {
+        const external = /\bexternal\b/i.test(dep) || dep.startsWith('external:');
+        refs.set(dep.replace(/^external:/, '').trim(), external);
+    }
+    for (const match of content.matchAll(/title:\s*["']?Depends on:\s*([^"'\n]+)["']?/gi)) {
+        const raw = match[1].trim();
+        const ref = raw.split(/\s+[—-]\s+|\s+\(/)[0]?.trim();
+        if (!ref)
+            continue;
+        refs.set(ref, /\bexternal\b/i.test(raw));
+    }
+    return [...refs].map(([ref, external]) => ({ ref, external }));
+}
+function ticketInfo(ticketFile) {
+    const content = fs.readFileSync(ticketFile, 'utf-8');
+    const frontmatter = parseFrontmatter(content);
+    const id = readScalar(frontmatter, 'id') ?? path.basename(path.dirname(ticketFile));
+    const acIds = [
+        ...readStringArray(frontmatter, 'ac_ids'),
+        ...extractAcceptanceCriteria(content)
+            .flatMap((ac) => [...ac.matchAll(/\b(?:AC-[A-Z0-9-]+|P\d+\.\d+|R\d+|T\d+)\b/g)].map((match) => match[0])),
+    ];
+    return {
+        file: ticketFile,
+        id,
+        key: readScalar(frontmatter, 'key'),
+        sourcePrd: readScalar(frontmatter, 'source_prd'),
+        sourceSection: readScalar(frontmatter, 'source_section'),
+        acIds: [...new Set(acIds)].sort(),
+        dependencies: dependencyRefs(content, frontmatter),
+    };
+}
+function readJsonFile(file) {
+    if (!file || !fs.existsSync(file))
+        return undefined;
+    try {
+        return JSON.parse(fs.readFileSync(file, 'utf-8'));
+    }
+    catch {
+        return undefined;
+    }
+}
+function isRecord(value) {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+function stringArray(value) {
+    if (!Array.isArray(value))
+        return [];
+    return value.filter((item) => typeof item === 'string' && item.length > 0);
+}
+function manifestTickets(manifest) {
+    if (!isRecord(manifest) || !Array.isArray(manifest.tickets))
+        return [];
+    return manifest.tickets.filter(isRecord);
+}
+function manifestRequirementIds(manifest) {
+    if (!isRecord(manifest))
+        return [];
+    const ids = new Set();
+    for (const req of stringArray(manifest.requirements))
+        ids.add(req);
+    if (isRecord(manifest.prd_requirements)) {
+        for (const value of Object.values(manifest.prd_requirements)) {
+            for (const req of stringArray(value))
+                ids.add(req);
+        }
+    }
+    for (const ticket of manifestTickets(manifest)) {
+        for (const req of stringArray(ticket.requirements))
+            ids.add(req);
+    }
+    return [...ids].sort();
+}
+function manifestRefs(manifest, tickets) {
+    const refs = new Set(tickets.flatMap((ticket) => [ticket.id, ticket.key].filter((value) => Boolean(value))));
+    for (const ticket of manifestTickets(manifest)) {
+        if (typeof ticket.id === 'string')
+            refs.add(ticket.id);
+        if (typeof ticket.key === 'string')
+            refs.add(ticket.key);
+    }
+    return refs;
+}
+function ticketRequirementIds(manifest, tickets) {
+    const ids = new Set(tickets.flatMap((ticket) => ticket.acIds));
+    for (const ticket of manifestTickets(manifest)) {
+        for (const ac of stringArray(ticket.ac_ids))
+            ids.add(ac);
+        for (const req of stringArray(ticket.requirements))
+            ids.add(req);
+    }
+    return ids;
+}
+function findPrdMapFindings(tickets, manifest) {
+    const mapped = ticketRequirementIds(manifest, tickets);
+    return manifestRequirementIds(manifest)
+        .filter((requirement) => !mapped.has(requirement))
+        .map((requirement) => ({
+        ticket: 'manifest',
+        kind: 'prd_map',
+        analyst: 'gaps',
+        message: 'PRD requirement is not mapped to any ticket',
+        detail: requirement,
+    }));
+}
+function findPathFindings(ticket, repoRoot, sessionDir) {
+    const content = fs.readFileSync(ticket.file, 'utf-8');
+    const refs = new Set();
+    for (const match of content.matchAll(PATH_RE))
+        refs.add(match[0]);
+    return [...refs].sort()
+        .filter((ref) => !resolvePathRef(ref, repoRoot, ticket.file, sessionDir))
+        .map((ref) => ({
+        ticket: ticket.file,
+        kind: 'file_path',
+        analyst: 'codebase',
+        message: 'Referenced ticket file path does not resolve',
+        detail: ref,
+    }));
+}
+function findDependencyFindings(ticket, refs) {
+    return ticket.dependencies
+        .filter((dep) => !dep.external && !refs.has(dep.ref))
+        .map((dep) => ({
+        ticket: ticket.file,
+        kind: 'dependency',
+        analyst: 'risk',
+        message: 'Ticket dependency is not in the manifest and is not marked external',
+        detail: dep.ref,
+    }));
+}
+function displayTicketRef(sessionDir, ticket) {
+    return path.isAbsolute(ticket) ? path.relative(sessionDir, ticket) : ticket;
 }
 function readState(sessionDir) {
     const statePath = path.join(sessionDir, 'state.json');
@@ -201,18 +377,42 @@ function selectTicketFiles(sessionDir, state) {
         delta: true,
     };
 }
-function writeReport(sessionDir, findings, escalation) {
+function writeReport(sessionDir, tickets, findings, escalation) {
     const date = formatLocalDateKey(new Date());
     const filename = escalation ? `readiness_escalation_${date}.md` : `readiness_${date}.md`;
     const reportPath = path.join(sessionDir, filename);
+    const prdMapRows = tickets.map((ticket) => `| ${ticket.id} | ${ticket.key ?? ''} | ${ticket.sourcePrd ?? ''} | ${ticket.sourceSection ?? ''} | ${ticket.acIds.join(', ')} |`);
+    const acRows = tickets.flatMap((ticket) => extractAcceptanceCriteria(fs.readFileSync(ticket.file, 'utf-8')).map((ac) => `| ${path.relative(sessionDir, ticket.file)} | ${isMachineCheckable(ac) ? 'PASS' : 'FAIL'} | ${ac.replace(/\|/g, '\\|')} |`));
+    const contractRows = findings
+        .filter((finding) => finding.kind === 'contract')
+        .map((finding) => `| ${displayTicketRef(sessionDir, finding.ticket)} | FAIL | ${finding.detail} | ${finding.analyst} |`);
     const lines = [
         `# ${escalation ? 'Readiness Escalation' : 'Readiness Failure'}`,
         '',
         `Date: ${date}`,
         '',
+        '## PRD-ticket map',
+        '',
+        '| Ticket | Key | Source PRD | Source section | Mapped requirements |',
+        '|---|---|---|---|---|',
+        ...prdMapRows,
+        ...findings.filter((finding) => finding.kind === 'prd_map').map((finding) => `| manifest |  |  |  | MISSING: ${finding.detail} |`),
+        '',
+        '## AC verifiability matrix',
+        '',
+        '| Ticket | Status | Criterion |',
+        '|---|---|---|',
+        ...acRows,
+        '',
+        '## Contract resolution table',
+        '',
+        '| Ticket | Status | Reference | Suggested analyst |',
+        '|---|---|---|---|',
+        ...(contractRows.length > 0 ? contractRows : ['| all | PASS |  |  |']),
+        '',
         '## Findings',
         ...findings.map((finding) => [
-            `- **${finding.kind}** in \`${path.relative(sessionDir, finding.ticket)}\``,
+            `- **${finding.kind}** in \`${displayTicketRef(sessionDir, finding.ticket)}\``,
             `  - suggested_analyst: ${finding.analyst}`,
             `  - ${finding.message}: \`${finding.detail}\``,
         ].join('\n')),
@@ -222,18 +422,28 @@ function writeReport(sessionDir, findings, escalation) {
     return reportPath;
 }
 export function runReadiness(args) {
+    const started = Date.now();
     const state = readState(args.sessionDir);
     const selected = selectTicketFiles(args.sessionDir, state);
     const checkMachinability = args.machinabilityOnly || !args.contractOnly;
     const checkContracts = args.contractOnly || !args.machinabilityOnly;
-    const findings = selected.files.flatMap((file) => findReadinessFindings(file, args.repoRoot, { checkMachinability, checkContracts }));
+    const tickets = selected.files.map(ticketInfo);
+    const manifestPath = args.manifest ? path.resolve(args.sessionDir, args.manifest) : path.join(args.sessionDir, 'decomposition_manifest.json');
+    const manifest = readJsonFile(fs.existsSync(manifestPath) ? manifestPath : args.manifest);
+    const refs = manifestRefs(manifest, tickets);
+    const findings = [
+        ...findPrdMapFindings(tickets, manifest),
+        ...tickets.flatMap((ticket) => findPathFindings(ticket, args.repoRoot, args.sessionDir)),
+        ...tickets.flatMap((ticket) => findDependencyFindings(ticket, refs)),
+        ...selected.files.flatMap((file) => findReadinessFindings(file, args.repoRoot, { checkMachinability, checkContracts })),
+    ];
     const ticketsVersion = getTicketsVersion(state);
     if (findings.length === 0) {
         writeSnapshot(args.sessionDir, listLinearTicketFiles(args.sessionDir), ticketsVersion);
-        return { exitCode: 0, findings, delta: selected.delta };
+        return { exitCode: 0, findings, delta: selected.delta, elapsed_ms: Date.now() - started };
     }
     const escalation = readinessCycleCount(args.sessionDir, state) >= 3;
-    const reportPath = writeReport(args.sessionDir, findings, escalation);
+    const reportPath = writeReport(args.sessionDir, tickets, findings, escalation);
     if (selected.delta) {
         logActivity({
             event: 'readiness_failed_post_correction',
@@ -242,17 +452,30 @@ export function runReadiness(args) {
             gate_payload: { findings: findings.length, report: reportPath },
         });
     }
-    return { exitCode: 2, findings, reportPath, delta: selected.delta };
+    return { exitCode: 2, findings, reportPath, delta: selected.delta, elapsed_ms: Date.now() - started };
 }
 function main() {
     const args = parseArgs(process.argv.slice(2));
     try {
         const result = runReadiness(args);
+        process.stdout.write(`${JSON.stringify({
+            status: result.exitCode === 0 ? 'pass' : 'fail',
+            findings: result.findings,
+            elapsed_ms: result.elapsed_ms,
+            report: result.reportPath,
+            delta: result.delta,
+        })}\n`);
         if (result.reportPath)
             process.stderr.write(`readiness failed: ${result.reportPath}\n`);
         process.exit(result.exitCode);
     }
     catch (err) {
+        process.stdout.write(`${JSON.stringify({
+            status: 'error',
+            findings: [],
+            elapsed_ms: 0,
+            error: safeErrorMessage(err),
+        })}\n`);
         process.stderr.write(`check-readiness failed: ${safeErrorMessage(err)}\n`);
         process.exit(1);
     }
