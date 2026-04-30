@@ -54,3 +54,31 @@ test('szechuan-sauce worker-internal print unchanged', () => {
         'worker-internal print must NOT include gate messaging'
     );
 });
+
+test('szechuan-sauce trap-door sweep pins AC-CIT-17 missing negative spec behavior', () => {
+    const content = readCommand();
+    const start = content.indexOf('### Override 5: Trap-Door-as-Test Enforcement');
+    const end = content.indexOf('### Override 6:', start);
+    assert.ok(start !== -1, 'trap-door enforcement override must exist');
+    assert.ok(end !== -1, 'trap-door enforcement override must be followed by Override 6');
+
+    const section = content.slice(start, end);
+    assert.ok(section.includes('AC-CIT-17 fixture behavior'), 'AC-CIT-17 fixture behavior must be explicit');
+    assert.ok(section.includes('S3-key structural trap door'), 'S3-key fixture class must be named');
+    assert.ok(section.includes('receiving-side validation spec is missing'), 'missing negative validation spec condition must be named');
+    assert.ok(section.includes('P0 `trap door documented but not enforced` finding'), 'missing test must produce P0 exact-message finding');
+});
+
+test('szechuan-sauce trap-door findings carry Citadel T6 dedupe fields unchanged', () => {
+    const content = readCommand();
+    const start = content.indexOf('### Override 5: Trap-Door-as-Test Enforcement');
+    const end = content.indexOf('### Override 6:', start);
+    assert.ok(start !== -1, 'trap-door enforcement override must exist');
+    assert.ok(end !== -1, 'trap-door enforcement override must be followed by Override 6');
+
+    const section = content.slice(start, end);
+    assert.ok(section.includes('claude_md_file'), 'finding must include claude_md_file');
+    assert.ok(section.includes('bullet_text'), 'finding must include bullet_text');
+    assert.ok(section.includes('(claude_md_file, bullet_text)'), 'dedupe tuple must be documented');
+    assert.ok(section.includes('Do not alter either field for display formatting'), 'dedupe fields must remain stable');
+});

@@ -302,11 +302,30 @@ Include these hygiene checks in every review pass alongside the standard princip
 
 All diff-hygiene findings MUST include `category: 'hygiene'` in `szechuan-sauce.json` so Citadel's T10.9 diff-shape gate can dedupe the same-diff finding instead of double-counting it. A diff that adds root `notes.md` produces a P1 finding with `category: 'hygiene'`.
 
-### Override 5: Migration Hygiene (Conditional)
+### Override 5: Trap-Door-as-Test Enforcement
+
+Before the first scoring pass, inspect the active git diff for added trap-door bullets in every `CLAUDE.md` file:
+
+1. **Read added trap-door bullets from git diff**: Use `git diff -- CLAUDE.md '**/CLAUDE.md'` and inspect only added bullet lines. A trap-door bullet is an added Markdown list item that documents an `INVARIANT:` and includes either `pattern_shape` or `PATTERN_SHAPE`.
+
+2. **Extract the replay shape**: For each added bullet, preserve:
+   - `claude_md_file`: the `CLAUDE.md` path from the diff
+   - `bullet_text`: the exact added bullet text after removing only the leading diff `+`
+   - `pattern_shape`: the value following `pattern_shape:` or `PATTERN_SHAPE:`
+
+3. **Require a negative spec test in the same diff**: Search added or modified spec/test files in the active diff (`*.test.*`, `*.spec.*`, files under `test/` or `tests/`). At least one changed spec must contain a test body that exercises the negative case described by `pattern_shape`: input violating the pattern is rejected, throws, fails validation, or otherwise asserts the guarded behavior does not pass.
+
+4. **Emit P0 when documentation is not enforcement**: If no corresponding negative spec test exists, record a P0 finding with the exact message `trap door documented but not enforced`. The finding must include `category: 'trap-door-enforcement'`, `claude_md_file`, `bullet_text`, `pattern_shape`, and the missing-test rationale.
+
+5. **Coordinate with Citadel T6**: Citadel T6 handles AC-cited trap doors and szechuan-sauce handles the un-cited remainder. Both may report the same trap door; Citadel dedupes by the tuple `(claude_md_file, bullet_text)`. Do not alter either field for display formatting.
+
+AC-CIT-17 fixture behavior: if the LOA-618-style S3-key structural trap door is added to `CLAUDE.md` with `pattern_shape` but the receiving-side validation spec is missing, this override produces a P0 `trap door documented but not enforced` finding. If Citadel T6 also reports that same bullet, the shared `(claude_md_file, bullet_text)` tuple lets Citadel dedupe the duplicate.
+
+### Override 6: Migration Hygiene (Conditional)
 
 Before the first scoring pass, check if the target directory contains a Drizzle migration journal at `db/migrations/meta/_journal.json` (relative to target root). If it does NOT exist, skip this override entirely.
 
-If the journal exists, include these four checks in every review pass alongside the standard principles scan. Score findings as HIGH (P1) or MEDIUM (P2) as noted. All Override 5 findings must carry a confidence score per the rubric in `szechuan-sauce-principles.md` and drop below 80 before being scored. Do NOT duplicate mechanical checks (timestamp ordering, file↔journal parity) — those are handled by the CI lint script at `scripts/validate-migrations.ts`.
+If the journal exists, include these four checks in every review pass alongside the standard principles scan. Score findings as HIGH (P1) or MEDIUM (P2) as noted. All Override 6 findings must carry a confidence score per the rubric in `szechuan-sauce-principles.md` and drop below 80 before being scored. Do NOT duplicate mechanical checks (timestamp ordering, file↔journal parity) — those are handled by the CI lint script at `scripts/validate-migrations.ts`.
 
 1. **CHECK Constraint Drift** (HIGH — P1): For each CHECK constraint in migration SQL files under `db/migrations/`, find the corresponding TypeScript enum, union, or type in the codebase. Flag any value present in code but missing from the constraint (INSERT will fail at runtime), or present in the constraint but absent from code (dead value).
 
@@ -318,7 +337,7 @@ If the journal exists, include these four checks in every review pass alongside 
 
 When fixing migration hygiene violations, use this commit prefix: `szechuan-sauce: Migration Hygiene — <description>`
 
-### Override 6: Commit Message Format
+### Override 7: Commit Message Format
 
 All commits follow: `szechuan-sauce: <principle> — <description>`
 

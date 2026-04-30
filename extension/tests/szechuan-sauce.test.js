@@ -64,6 +64,18 @@ test('szechuan-sauce.md defines diff-hygiene gate output contract', () => {
     assert.ok(content.includes('root `notes.md` produces a P1 finding'), 'notes.md P1 contract must be explicit');
 });
 
+test('szechuan-sauce.md defines trap-door-as-test enforcement contract', () => {
+    const content = readCommand();
+    assert.ok(content.includes('### Override 5: Trap-Door-as-Test Enforcement'), 'missing trap-door enforcement override');
+    assert.ok(content.includes("git diff -- CLAUDE.md '**/CLAUDE.md'"), 'should read CLAUDE.md bullets from git diff');
+    assert.ok(content.includes('pattern_shape') && content.includes('PATTERN_SHAPE'), 'should require pattern shape metadata');
+    assert.ok(content.includes('negative spec test'), 'should require negative spec coverage');
+    assert.ok(content.includes('trap door documented but not enforced'), 'should define exact P0 finding message');
+    assert.ok(content.includes("category: 'trap-door-enforcement'"), 'should tag trap-door findings');
+    assert.ok(content.includes('claude_md_file') && content.includes('bullet_text'), 'should expose dedupe fields');
+    assert.ok(content.includes('(claude_md_file, bullet_text)'), 'should document Citadel T6 dedupe tuple');
+});
+
 test('szechuan-sauce.md Setup Mode steps are sequentially numbered', () => {
     const content = readCommand();
     // Extract setup section
