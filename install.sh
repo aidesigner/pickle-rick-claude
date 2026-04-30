@@ -175,13 +175,43 @@ if [ -d "$SCRIPT_DIR/templates" ]; then
 fi
 
 # --- AGENTS ---
-# Subagent definitions for /pickle --teams (morty-implementer, morty-reviewer).
-# rsync into the user's agents dir; no --delete to preserve user-defined agents.
+# Subagent definitions for /pickle --teams.
+# Canonical Pickle agents install under .pickle-managed so top-level files remain user overrides.
+# No --delete: preserve locally-added managed agents from newer/experimental installs.
 AGENTS_DIR="$HOME/.claude/agents"
+MANAGED_AGENTS_DIR="$AGENTS_DIR/.pickle-managed"
+file_size() {
+  stat -f '%z' "$1" 2>/dev/null || stat -c '%s' "$1"
+}
+file_mtime() {
+  stat -f '%m' "$1" 2>/dev/null || stat -c '%Y' "$1"
+}
+same_size_and_mtime() {
+  [ "$(file_size "$1")" = "$(file_size "$2")" ] && [ "$(file_mtime "$1")" = "$(file_mtime "$2")" ]
+}
 if [ -d "$SCRIPT_DIR/.claude/agents" ]; then
-  mkdir -p "$AGENTS_DIR"
-  rsync -a "$SCRIPT_DIR/.claude/agents/" "$AGENTS_DIR/"
-  echo "✅ Agent definitions installed to $AGENTS_DIR/"
+  mkdir -p "$AGENTS_DIR" "$MANAGED_AGENTS_DIR"
+  for src_agent in "$SCRIPT_DIR"/.claude/agents/*.md; do
+    [ -e "$src_agent" ] || continue
+    agent_file="$(basename "$src_agent")"
+    legacy_agent="$AGENTS_DIR/$agent_file"
+    managed_agent="$MANAGED_AGENTS_DIR/$agent_file"
+    if [ -f "$legacy_agent" ]; then
+      if same_size_and_mtime "$legacy_agent" "$src_agent"; then
+        if [ -e "$managed_agent" ]; then
+          rm -f "$legacy_agent"
+          echo "ℹ️  Removed legacy duplicate agent $legacy_agent; managed copy already exists."
+        else
+          mv "$legacy_agent" "$managed_agent"
+          echo "ℹ️  Migrated legacy Pickle agent $agent_file to $MANAGED_AGENTS_DIR/"
+        fi
+      else
+        echo "⚠️  Legacy agent conflict preserved at $legacy_agent; canonical Pickle copy installs to $MANAGED_AGENTS_DIR/$agent_file"
+      fi
+    fi
+  done
+  rsync -a "$SCRIPT_DIR/.claude/agents/" "$MANAGED_AGENTS_DIR/"
+  echo "✅ Agent definitions installed to $MANAGED_AGENTS_DIR/"
 fi
 
 # --- COMMANDS ---
