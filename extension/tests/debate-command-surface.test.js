@@ -45,7 +45,7 @@ test('help-pickle lists pickle-debate and its flags', () => {
   const help = readCommand('help-pickle.md');
 
   assert.match(help, /\/pickle-debate "<question>"/);
-  for (const flag of ['--personas r,a,i,s', '--n <2-6>', '--solo', '--strict-teams', '--continue', '--accept-stale']) {
+  for (const flag of ['--personas r,a,i,s', '--n <2-6>', '--solo', '--strict-teams', '--no-strict-teams', '--continue', '--accept-stale']) {
     assert.match(help, new RegExp(flag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
 });

@@ -4,7 +4,7 @@ Run a Pickle Rick debate for a decision question.
 
 Usage:
 
-`/pickle-debate "<question>" [--personas r,a,i,s] [--n 4] [--solo] [--strict-teams] [--continue] [--accept-stale]`
+`/pickle-debate "<question>" [--personas r,a,i,s] [--n 4] [--solo] [--strict-teams] [--no-strict-teams] [--continue] [--accept-stale]`
 
 ## Contract
 
@@ -51,3 +51,7 @@ Usage:
 ## Solo Mode
 
 When `--solo` is set, do not create a team. Roleplay the selected personas sequentially in the current context using the same section format and response caps.
+
+On codex backend, when neither `--solo` nor `--strict-teams` is set, the helper auto-promotes to solo mode after printing the codex cost banner. Treat brief mode `solo (auto)` the same as explicit solo mode.
+
+`--strict-teams` persists in `state.json.flags.strict_teams` for resumed sessions. `--no-strict-teams` overrides that persisted preference for the current invocation only.

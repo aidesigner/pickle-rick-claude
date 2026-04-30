@@ -3,7 +3,11 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadAgentMd } from '../services/agent-md-loader.js';
+import { logActivity } from '../services/activity-logger.js';
+import { resolveBackend } from '../services/backend-spawn.js';
 import { isoCompactStamp } from '../services/pickle-utils.js';
+import { StateManager } from '../services/state-manager.js';
+import type { Backend, State } from '../types/index.js';
 import { DEBATE_PERSONAS, type DebatePersonaName } from './generate-debate-personas.js';
 
 const DEFAULT_PERSONAS: DebatePersonaName[] = ['researcher', 'architect', 'implementer', 'skeptic'];
@@ -12,6 +16,8 @@ const MAX_PERSONA_COUNT = 6;
 const SHARED_CONTEXT_WORD_CAP = 600;
 const RESPONSE_WORD_CAP = 800;
 const REQUIRED_TOOLS = ['Read', 'Glob', 'Grep'];
+const AUTO_PROMOTE_BANNER = '[debate] codex backend detected — auto-promoting to --solo (use --strict-teams to require parallel subagents and fail-fast on codex). Sequential debate starting; estimated cost: $0.40, est. wall-clock: 90s. Continue? [Y/n]';
+const STRICT_TEAMS_CODEX_ERROR = 'debate: --strict-teams requires claude backend; current: codex; remove --strict-teams to allow auto-promote, or switch backend';
 
 export interface DebateArgs {
   sessionDir: string;
@@ -21,6 +27,7 @@ export interface DebateArgs {
   n: number;
   solo: boolean;
   strictTeams: boolean;
+  noStrictTeams: boolean;
   continueDebate: boolean;
   acceptStale: boolean;
   dryRun: boolean;
@@ -29,13 +36,32 @@ export interface DebateArgs {
 
 export interface DebateRunOptions {
   stdout?: (message: string) => void;
+  stderr?: (message: string) => void;
   now?: () => Date;
+  stateManager?: StateManager;
+  logActivityFn?: typeof logActivity;
+  confirmAutoPromote?: (banner: string) => boolean;
 }
 
 export interface DebateRunResult {
   exitCode: number;
   briefPath: string;
   brief: string;
+  mode: DebateMode;
+}
+
+type DebateMode = 'teams' | 'solo' | 'solo (auto)';
+
+interface ResolvedDebateRun {
+  args: DebateArgs;
+  backend: Backend;
+  mode: DebateMode;
+  declinedAutoPromote: boolean;
+}
+
+interface LoadedDebateState {
+  state: State | null;
+  statePath: string;
 }
 
 interface ValidatedDebateAgent {
@@ -45,7 +71,7 @@ interface ValidatedDebateAgent {
 }
 
 function usage(): never {
-  process.stderr.write('Usage: node debate.js "<question>" --session-dir <dir> [--repo-root <dir>] [--personas r,a,i,s] [--n <2-6>] [--solo] [--strict-teams] [--continue] [--accept-stale] [--dry-run]\n');
+  process.stderr.write('Usage: node debate.js "<question>" --session-dir <dir> [--repo-root <dir>] [--personas r,a,i,s] [--n <2-6>] [--solo] [--strict-teams] [--no-strict-teams] [--continue] [--accept-stale] [--dry-run]\n');
   process.exit(1);
 }
 
@@ -67,6 +93,7 @@ export function parseArgs(argv: string[]): DebateArgs {
     n,
     solo: argv.includes('--solo'),
     strictTeams: argv.includes('--strict-teams'),
+    noStrictTeams: argv.includes('--no-strict-teams'),
     continueDebate: argv.includes('--continue'),
     acceptStale: argv.includes('--accept-stale'),
     dryRun: argv.includes('--dry-run'),
@@ -164,7 +191,7 @@ function validateDebateAgents(args: DebateArgs): ValidatedDebateAgent[] {
   });
 }
 
-export function buildDebateBrief(args: DebateArgs, createdAt: Date, agents = validateDebateAgents(args)): string {
+export function buildDebateBrief(args: DebateArgs, createdAt: Date, agents = validateDebateAgents(args), mode: DebateMode = args.solo ? 'solo' : 'teams'): string {
   validateQuestion(args.question);
   const personaRows = agents.map((agent) => `- ${agent.persona}: ${agent.agentName} (${agent.sourcePath})`);
   const personaTitles = args.personas
@@ -184,8 +211,10 @@ export function buildDebateBrief(args: DebateArgs, createdAt: Date, agents = val
     '',
     '## Mode Flags',
     '',
+    `- mode: ${mode}`,
     `- solo: ${args.solo}`,
     `- strict_teams: ${args.strictTeams}`,
+    `- no_strict_teams: ${args.noStrictTeams}`,
     `- continue: ${args.continueDebate}`,
     `- accept_stale: ${args.acceptStale}`,
     `- n: ${args.n}`,
@@ -210,27 +239,97 @@ export function buildDebateBrief(args: DebateArgs, createdAt: Date, agents = val
   ].join('\n');
 }
 
+function loadDebateState(sessionDir: string, stateManager: StateManager): LoadedDebateState {
+  const statePath = path.join(sessionDir, 'state.json');
+  try {
+    return { state: stateManager.read(statePath), statePath };
+  } catch {
+    return { state: null, statePath };
+  }
+}
+
+function persistStrictTeamsFlag(statePath: string, stateManager: StateManager): void {
+  stateManager.update(statePath, (state) => {
+    state.flags ??= {};
+    state.flags.strict_teams = true;
+  });
+}
+
+function defaultConfirmAutoPromote(banner: string): boolean {
+  void banner;
+  if (process.stdin.isTTY) return true;
+  try {
+    const answer = fs.readFileSync(0, 'utf8').trim().toLowerCase();
+    return answer === '' || answer.startsWith('y');
+  } catch {
+    return true;
+  }
+}
+
+function resolveDebateRun(input: DebateArgs, opts: DebateRunOptions, out: (message: string) => void): ResolvedDebateRun {
+  const stateManager = opts.stateManager ?? new StateManager();
+  const { state, statePath } = loadDebateState(input.sessionDir, stateManager);
+  const backend = resolveBackend(state);
+  const inheritedStrictTeams = state?.flags?.strict_teams === true;
+  const strictTeams = input.noStrictTeams ? false : input.strictTeams || inheritedStrictTeams;
+  const args = { ...input, strictTeams };
+
+  if (input.strictTeams && state) {
+    persistStrictTeamsFlag(statePath, stateManager);
+  }
+
+  if (backend === 'codex' && strictTeams) {
+    return { args, backend, mode: 'teams', declinedAutoPromote: false };
+  }
+
+  if (backend === 'codex' && !args.solo) {
+    const confirm = opts.confirmAutoPromote ?? defaultConfirmAutoPromote;
+    out(AUTO_PROMOTE_BANNER);
+    const accepted = confirm(AUTO_PROMOTE_BANNER);
+    if (!accepted) return { args, backend, mode: 'teams', declinedAutoPromote: true };
+    const autoArgs = { ...args, solo: true };
+    return { args: autoArgs, backend, mode: 'solo (auto)', declinedAutoPromote: false };
+  }
+
+  return { args, backend, mode: args.solo ? 'solo' : 'teams', declinedAutoPromote: false };
+}
+
 export function runDebate(input: DebateArgs, opts: DebateRunOptions = {}): DebateRunResult {
   const now = opts.now ?? (() => new Date());
   const out = opts.stdout ?? ((message: string) => process.stdout.write(`${message}\n`));
+  const err = opts.stderr ?? ((message: string) => process.stderr.write(`${message}\n`));
+  const resolved = resolveDebateRun(input, opts, out);
+  if (resolved.backend === 'codex' && resolved.args.strictTeams) {
+    err(STRICT_TEAMS_CODEX_ERROR);
+    return { exitCode: 7, briefPath: '', brief: '', mode: resolved.mode };
+  }
+  if (resolved.declinedAutoPromote) {
+    opts.logActivityFn?.({ event: 'debate_user_declined_auto_promote', source: 'pickle', session: path.basename(input.sessionDir) });
+    return { exitCode: 1, briefPath: '', brief: '', mode: resolved.mode };
+  }
+  if (resolved.mode === 'solo (auto)') {
+    (opts.logActivityFn ?? logActivity)({ event: 'debate_solo_auto', source: 'pickle', session: path.basename(input.sessionDir), mode: resolved.mode });
+  }
+
   const createdAt = now();
   const briefPath = path.join(input.sessionDir, `debate_${isoCompactStamp(createdAt)}_brief.md`);
-  const agents = validateDebateAgents(input);
-  const brief = buildDebateBrief(input, createdAt, agents);
+  const agents = validateDebateAgents(resolved.args);
+  const brief = buildDebateBrief(resolved.args, createdAt, agents, resolved.mode);
 
-  if (input.dryRun) {
+  if (resolved.args.dryRun) {
     out(JSON.stringify({
       brief_path: briefPath,
-      personas: input.personas,
+      personas: resolved.args.personas,
+      mode: resolved.mode,
       brief,
     }, null, 2));
-    return { exitCode: 0, briefPath, brief };
+    return { exitCode: 0, briefPath, brief, mode: resolved.mode };
   }
 
   fs.mkdirSync(path.dirname(briefPath), { recursive: true });
   fs.writeFileSync(briefPath, brief, 'utf8');
   out(`BRIEF_PATH=${briefPath}`);
-  return { exitCode: 0, briefPath, brief };
+  return { exitCode: 0, briefPath, brief, mode: resolved.mode };
 }
 
 export function main(argv = process.argv.slice(2)): void {

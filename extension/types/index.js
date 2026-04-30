@@ -155,6 +155,8 @@ export const VALID_ACTIVITY_EVENTS = [
     'archaeology_complete',
     'archaeology_skipped',
     'phase_personas_disabled_seen',
+    'debate_solo_auto',
+    'debate_user_declined_auto_promote',
 ];
 // ---------------------------------------------------------------------------
 // DOT Builder Types
