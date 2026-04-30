@@ -92,10 +92,9 @@ function gitTrackedFiles(repoRoot) {
 function resolveSymbolRef(ref, repoRoot) {
     const normalized = ref.replace(/\(\)$/, '');
     const parts = normalized.split('.').filter(Boolean);
-    const symbol = parts[parts.length - 1];
-    if (!symbol)
+    if (parts.length === 0)
         return false;
-    const tracked = gitTrackedFiles(repoRoot).filter((file) => /\.(?:ts|tsx|js|jsx|mjs|cjs)$/.test(file));
+    const tracked = gitTrackedFiles(repoRoot).filter((file) => /\.(?:ts|tsx|js|jsx|mjs|cjs)$/.test(file) && !/(^|\/)tests?\//.test(file));
     const partPatterns = parts.map((part) => new RegExp(`\\b${part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`));
     const candidates = tracked.filter((file) => {
         try {
