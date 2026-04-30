@@ -160,6 +160,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'debate_invalidated_by_correction',
     'debate_round_truncated',
     'session_reconstructed_epoch_reset',
+    'cap_check_failed_schema_mismatch',
 ];
 // ---------------------------------------------------------------------------
 // DOT Builder Types

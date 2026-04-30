@@ -7,6 +7,104 @@ import { readMicroverseState, readRecoverableJsonObject } from '../services/micr
 import { readCircuitBreakerState } from '../services/circuit-breaker.js';
 const sm = new StateManager();
 /**
+ * Watchdog timeout for stdout writes. When `process.stdout.write()` reports
+ * backpressure (returns `false`) and the kernel buffer never drains within
+ * this window, the monitor exits with a clear stderr message rather than
+ * blocking forever in a synchronous write. Without this guard a wedged
+ * tmux pane (scrollback frozen, pipe buffer full) prevents Node from
+ * servicing SIGINT, so `Ctrl-C` cannot kill the monitor.
+ *
+ * AC-SSV-07: 2000ms is long enough to ride out routine pane redraws on
+ * busy machines but short enough that a wedged pane is detected before
+ * the user reaches for `kill -9`.
+ */
+export const MONITOR_STDOUT_WATCHDOG_MS = 2000;
+/**
+ * Write `chunk` to `sink`, returning a promise that resolves once the
+ * write has flushed (or the kernel has reported drain when backpressure
+ * was applied). Rejects with a backpressure error if neither the
+ * write callback nor a `drain` event arrives within `watchdogMs`.
+ *
+ * AC-SSV-07: synchronous `process.stdout.write` blocks indefinitely
+ * when the underlying pipe buffer is full and the consumer (the tmux
+ * pane) is wedged. `setTimeout` cannot fire while Node is parked in a
+ * blocking syscall, so we drive the write through the async callback
+ * path and arm the timer alongside it. If the timer wins, we surface
+ * the wedge instead of joining it.
+ */
+export function writeWithWatchdog(sink, chunk, watchdogMs = MONITOR_STDOUT_WATCHDOG_MS) {
+    return new Promise((resolve, reject) => {
+        let settled = false;
+        const finish = (err) => {
+            if (settled)
+                return;
+            settled = true;
+            clearTimeout(timer);
+            if (err)
+                reject(err);
+            else
+                resolve();
+        };
+        const timer = setTimeout(() => {
+            finish(new Error(`monitor stdout watchdog: no drain within ${watchdogMs}ms (pane wedged?)`));
+        }, watchdogMs);
+        // Allow the process to exit if the watchdog timer is the only
+        // remaining handle (e.g., during shutdown).
+        if (typeof timer.unref === 'function') {
+            timer.unref();
+        }
+        let okSync;
+        try {
+            // The write callback fires once data has been flushed (or errored).
+            // It alone is enough to resolve us in the healthy path; the drain
+            // listener is a belt-and-braces fallback for sinks that signal
+            // completion only via 'drain'.
+            okSync = sink.write(chunk, (err) => {
+                if (err)
+                    finish(err);
+                else
+                    finish();
+            });
+        }
+        catch (err) {
+            finish(err instanceof Error ? err : new Error(String(err)));
+            return;
+        }
+        if (!okSync) {
+            // Kernel buffer is full — wait for drain or the watchdog.
+            sink.once('drain', () => finish());
+            sink.once('error', (err) => {
+                finish(err instanceof Error ? err : new Error(String(err)));
+            });
+        }
+    });
+}
+/**
+ * Render the `Elapsed` field value. When `maxTimeMin > 0` and the
+ * elapsed wall clock has already overrun the budget, append a bold-red
+ * ` EXCEEDED` suffix so operators notice that the run is past its
+ * configured time-box.
+ *
+ * AC-LPB-06: large-pipeline budgets that were undersized at launch
+ * still keep running, but the monitor must visibly flag that the
+ * configured ceiling has been crossed instead of silently rendering
+ * `1000m / 720m` as if it were normal.
+ *
+ * Exported for unit testing.
+ */
+export function renderElapsedField(elapsedSec, maxTimeMin) {
+    const safeElapsed = Math.max(0, Math.floor(elapsedSec));
+    const base = formatTime(safeElapsed);
+    if (!(maxTimeMin > 0)) {
+        return `${MX.GREEN}${base}${MX.R}`;
+    }
+    const withCeiling = `${base} / ${maxTimeMin}m`;
+    const exceeded = safeElapsed / 60 > maxTimeMin;
+    if (!exceeded)
+        return `${MX.GREEN}${withCeiling}${MX.R}`;
+    return `${MX.GREEN}${withCeiling}${MX.R} ${MX.ERR}EXCEEDED${MX.R}`;
+}
+/**
  * Extracts a short readable summary from a stream-json log line.
  * Returns the original line (sans ANSI) if it's not valid JSON.
  */
@@ -266,7 +364,7 @@ function countRows(segments) {
     return n;
 }
 // eslint-disable-next-line complexity, max-lines-per-function -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
-function render(sessionDir) {
+async function render(sessionDir, sink = process.stdout) {
     // If the session directory itself is gone, signal exit (not just "waiting")
     if (!fs.existsSync(sessionDir))
         return false;
@@ -276,7 +374,7 @@ function render(sessionDir) {
         state = sm.read(statePath);
     }
     catch {
-        process.stdout.write(`\x1b[2J\x1b[H${MX.DIM}Awaiting signal...${MX.R}\n`);
+        await writeWithWatchdog(sink, `\x1b[2J\x1b[H${MX.DIM}Awaiting signal...${MX.R}\n`);
         return true;
     }
     const width = getWidth();
@@ -289,9 +387,6 @@ function render(sessionDir) {
     const iterStr = maxIter > 0
         ? `${state.iteration} / ${state.max_iterations}`
         : `${state.iteration}`;
-    const timeStr = maxTime > 0
-        ? `${formatTime(elapsed)} / ${state.max_time_minutes}m`
-        : formatTime(elapsed);
     const workDir = state.working_dir || '';
     const project = workDir ? path.basename(workDir) : 'unknown';
     const task = state.original_prompt || '';
@@ -301,7 +396,7 @@ function render(sessionDir) {
         ['Task', `${MX.GREEN}${taskDisplay}${MX.R}`],
         ['Phase', `${MX.CYAN}${state.step || 'unknown'}${MX.R}`],
         ['Iteration', `${MX.GREEN}${iterStr}${MX.R}`],
-        ['Elapsed', `${MX.GREEN}${timeStr}${MX.R}`],
+        ['Elapsed', renderElapsedField(elapsed, maxTime)],
         ['Current', formatCurrentField(state.current_ticket, tickets, width)],
         ['Active', state.active === true ? `${MX.BRIGHT}▣ ONLINE${MX.R}` : `${MX.ERR}▢ OFFLINE${MX.R}`],
     ];
@@ -408,7 +503,7 @@ function render(sessionDir) {
     }
     out.push(...recentOut);
     out.push(footer);
-    process.stdout.write(out.join(''));
+    await writeWithWatchdog(sink, out.join(''));
     return state.active === true;
 }
 async function main() {
@@ -419,16 +514,52 @@ async function main() {
         process.exit(1);
     }
     process.on('SIGINT', () => {
-        process.stdout.write(`\x1b[2J\x1b[H${MX.DIM}Monitor detached.${MX.R}\n`);
-        process.exit(0);
+        // AC-SSV-07: never block on stdout in the signal handler. If the pane
+        // is wedged a synchronous write would prevent the exit. Try the
+        // detach banner asynchronously, but exit unconditionally either way
+        // so Ctrl-C always wins.
+        try {
+            process.stdout.write(`\x1b[2J\x1b[H${MX.DIM}Monitor detached.${MX.R}\n`, () => {
+                process.exit(0);
+            });
+        }
+        catch { /* fall through */ }
+        setTimeout(() => process.exit(0), 50).unref();
     });
+    // AC-SSV-07: render() awaits writeWithWatchdog internally, so a wedged
+    // stdout surfaces here as a rejected promise rather than a blocked
+    // iteration. We exit with status 2 + a clear stderr message instead of
+    // joining the wedge — kill -9 should never be required.
     while (true) {
-        const active = render(sessionDir);
+        let active;
+        try {
+            active = await render(sessionDir);
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            process.stderr.write(`[monitor] ${msg}\n`);
+            process.exit(2);
+        }
         if (!active) {
             await sleep(3000);
-            const stillInactive = !render(sessionDir);
+            let stillInactive;
+            try {
+                stillInactive = !(await render(sessionDir));
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                process.stderr.write(`[monitor] ${msg}\n`);
+                process.exit(2);
+            }
             if (stillInactive && shouldMonitorExit(sessionDir, false)) {
-                process.stdout.write(`\n${MX.BRIGHT}◤ SESSION COMPLETE ◢${MX.R}\n`);
+                try {
+                    await writeWithWatchdog(process.stdout, `\n${MX.BRIGHT}◤ SESSION COMPLETE ◢${MX.R}\n`);
+                }
+                catch (err) {
+                    const msg = err instanceof Error ? err.message : String(err);
+                    process.stderr.write(`[monitor] ${msg}\n`);
+                    process.exit(2);
+                }
                 break;
             }
         }
