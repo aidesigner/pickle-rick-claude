@@ -61,8 +61,10 @@ describe('citadel cross-phase fixture', () => {
       });
 
       const ids = report.findings.map((finding) => finding.id);
+      const severities = report.findings.map((finding) => finding.severity);
       assert.equal(report.sections.cross_phase.findings.length, 4);
       assert.equal(new Set(ids).size, ids.length);
+      assert.deepEqual(severities, ['Critical', 'High', 'Medium', 'Low']);
       assert.equal(report.sections.cross_phase.summary.anatomy_park, 3);
       assert.equal(report.sections.cross_phase.summary.szechuan_sauce, 2);
       assert.equal(report.sections.cross_phase.summary.duplicate_ids_deduped, 1);
@@ -72,6 +74,10 @@ describe('citadel cross-phase fixture', () => {
       assert.ok(!ids.includes('szechuan-sauce:cross-phase-shared-id'));
       assert.equal(report.summary.critical, 1);
       assert.equal(report.summary.low, 1);
+      assert.equal(report.exitCode, 1);
+      assert.equal(report.json.schema, '1.0');
+      assert.equal(report.json.findings[0].severity, 'Critical');
+      assert.match(report.markdown, /Conformance audit: 4 findings \(CRITICAL=1, HIGH=1, MEDIUM=1, LOW=1\)/);
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true });
       fs.rmSync(sessionDir, { recursive: true, force: true });
@@ -99,6 +105,7 @@ describe('citadel cross-phase fixture', () => {
       assert.equal(report.sections.cross_phase.summary.anatomy_park_missing, true);
       assert.equal(report.findings.length, 1);
       assert.equal(report.exit_code, 0);
+      assert.equal(report.exitCode, 0);
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true });
       fs.rmSync(sessionDir, { recursive: true, force: true });

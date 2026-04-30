@@ -8,6 +8,7 @@ import { walkDiff } from './diff-walker.js';
 import { auditRuleSetInvariants } from './rule-set-invariant-audit.js';
 import { auditDiffHygiene } from './diff-hygiene.js';
 import { reconcileDivergences } from './divergence-reconciliation.js';
+import { Reporter } from './reporter.js';
 export async function runCitadelAudit(options) {
     const report = buildCitadelAuditReport(options);
     if (!options.sessionDir && !options.reportPath)
@@ -16,7 +17,7 @@ export async function runCitadelAudit(options) {
     const lockKey = `citadel:${path.resolve(options.sessionDir ?? path.dirname(reportPath))}`;
     await withLock(lockKey, {}, async () => {
         mkdirSync(path.dirname(reportPath), { recursive: true });
-        writeFileSync(reportPath, `${stableJson(report)}\n`, 'utf-8');
+        writeFileSync(reportPath, `${stableJson(report.json)}\n`, 'utf-8');
     });
     return report;
 }
@@ -51,37 +52,24 @@ export function buildCitadelAuditReport(options) {
         ...diffHygiene.findings.map((finding) => withFindingSource(finding, 'diff_hygiene')),
         ...crossPhaseReport.findings,
     ]);
-    const critical = findings.filter((finding) => finding.severity === 'Critical').length;
-    const high = findings.filter((finding) => finding.severity === 'High').length;
-    const medium = findings.filter((finding) => finding.severity === 'Medium').length;
-    const low = findings.filter((finding) => finding.severity === 'Low').length;
-    const strictDecisionFindings = options.strict ? decisionRequired.length : 0;
-    const blockingFindings = critical + (options.strict ? high : 0) + strictDecisionFindings;
-    return {
-        schema_version: '1.0',
-        prd_path: prdPath,
-        diff_range: options.diffRange,
-        exit_code: blockingFindings > 0 ? 1 : 0,
-        sections: {
-            sibling_auth_preconditions: siblingAuth,
-            frontend_prop_drift: frontendPropDrift,
-            ac_shape: acShape,
-            rule_set_invariants: ruleSetInvariants,
-            diff_hygiene: diffHygiene,
-            divergence_reconciliation: divergenceReconciliation,
-            cross_phase: crossPhaseReport,
-        },
-        findings,
-        decision_required: decisionRequired,
-        summary: {
-            findings: findings.length,
-            critical,
-            high,
-            medium,
-            low,
-            decision_required: decisionRequired.length,
-        },
+    const sections = {
+        sibling_auth_preconditions: siblingAuth,
+        frontend_prop_drift: frontendPropDrift,
+        ac_shape: acShape,
+        rule_set_invariants: ruleSetInvariants,
+        diff_hygiene: diffHygiene,
+        divergence_reconciliation: divergenceReconciliation,
+        cross_phase: crossPhaseReport,
     };
+    const reporter = new Reporter();
+    return reporter.build({
+        prdPath,
+        diffRange: options.diffRange,
+        sections,
+        findings,
+        decisions: decisionRequired,
+        strict: options.strict,
+    });
 }
 function stableJson(value) {
     return JSON.stringify(value, null, 2);

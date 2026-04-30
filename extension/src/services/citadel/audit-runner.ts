@@ -2,16 +2,15 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { withLock } from '../state-manager.js';
 import { auditAcShape, AcShapeAuditReport } from './ac-shape-audit.js';
-import { auditSiblingAuthPreconditions, SiblingAuthAuditReport } from './sibling-auth-audit.js';
-import { auditFrontendPropDrift, FrontendPropDriftReport } from './frontend-prop-drift-audit.js';
+import { auditSiblingAuthPreconditions } from './sibling-auth-audit.js';
+import { auditFrontendPropDrift } from './frontend-prop-drift-audit.js';
 import { walkDiff } from './diff-walker.js';
-import { auditRuleSetInvariants, RuleSetInvariantReport } from './rule-set-invariant-audit.js';
-import { auditDiffHygiene, DiffHygieneReport } from './diff-hygiene.js';
-import { reconcileDivergences, DivergenceReconciliationReport, DivergenceDecisionRequired } from './divergence-reconciliation.js';
+import { auditRuleSetInvariants } from './rule-set-invariant-audit.js';
+import { auditDiffHygiene } from './diff-hygiene.js';
+import { reconcileDivergences, DivergenceDecisionRequired } from './divergence-reconciliation.js';
+import { CitadelFinding, CitadelJsonReport, CitadelRunResult, CitadelSeverity, Reporter } from './reporter.js';
 
-type CitadelSeverity = 'Critical' | 'High' | 'Medium' | 'Low';
-
-interface FindingLike {
+interface FindingLike extends CitadelFinding {
   id: string;
   severity: CitadelSeverity;
   message?: string;
@@ -50,33 +49,9 @@ export interface CitadelAuditOptions {
   strict?: boolean;
 }
 
-export interface CitadelAuditReport {
-  schema_version: '1.0';
-  prd_path: string;
-  diff_range: string;
-  exit_code: number;
-  sections: {
-    sibling_auth_preconditions: SiblingAuthAuditReport;
-    frontend_prop_drift: FrontendPropDriftReport;
-    ac_shape: AcShapeAuditReport;
-    rule_set_invariants: RuleSetInvariantReport;
-    diff_hygiene: DiffHygieneReport;
-    divergence_reconciliation: DivergenceReconciliationReport;
-    cross_phase: CrossPhaseFindingsReport;
-  };
-  findings: FindingLike[];
-  decision_required: DecisionRequired[];
-  summary: {
-    findings: number;
-    critical: number;
-    high: number;
-    medium: number;
-    low: number;
-    decision_required: number;
-  };
-}
+export type CitadelAuditReport = CitadelRunResult;
 
-export async function runCitadelAudit(options: CitadelAuditOptions): Promise<CitadelAuditReport> {
+export async function runCitadelAudit(options: CitadelAuditOptions): Promise<CitadelRunResult> {
   const report = buildCitadelAuditReport(options);
   if (!options.sessionDir && !options.reportPath) return report;
 
@@ -84,7 +59,7 @@ export async function runCitadelAudit(options: CitadelAuditOptions): Promise<Cit
   const lockKey = `citadel:${path.resolve(options.sessionDir ?? path.dirname(reportPath))}`;
   await withLock(lockKey, {}, async () => {
     mkdirSync(path.dirname(reportPath), { recursive: true });
-    writeFileSync(reportPath, `${stableJson(report)}\n`, 'utf-8');
+    writeFileSync(reportPath, `${stableJson(report.json)}\n`, 'utf-8');
   });
   return report;
 }
@@ -120,41 +95,27 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
     ...diffHygiene.findings.map((finding) => withFindingSource(finding, 'diff_hygiene')),
     ...crossPhaseReport.findings,
   ]);
-  const critical = findings.filter((finding) => finding.severity === 'Critical').length;
-  const high = findings.filter((finding) => finding.severity === 'High').length;
-  const medium = findings.filter((finding) => finding.severity === 'Medium').length;
-  const low = findings.filter((finding) => finding.severity === 'Low').length;
-  const strictDecisionFindings = options.strict ? decisionRequired.length : 0;
-  const blockingFindings = critical + (options.strict ? high : 0) + strictDecisionFindings;
-
-  return {
-    schema_version: '1.0',
-    prd_path: prdPath,
-    diff_range: options.diffRange,
-    exit_code: blockingFindings > 0 ? 1 : 0,
-    sections: {
-      sibling_auth_preconditions: siblingAuth,
-      frontend_prop_drift: frontendPropDrift,
-      ac_shape: acShape,
-      rule_set_invariants: ruleSetInvariants,
-      diff_hygiene: diffHygiene,
-      divergence_reconciliation: divergenceReconciliation,
-      cross_phase: crossPhaseReport,
-    },
-    findings,
-    decision_required: decisionRequired,
-    summary: {
-      findings: findings.length,
-      critical,
-      high,
-      medium,
-      low,
-      decision_required: decisionRequired.length,
-    },
+  const sections = {
+    sibling_auth_preconditions: siblingAuth,
+    frontend_prop_drift: frontendPropDrift,
+    ac_shape: acShape,
+    rule_set_invariants: ruleSetInvariants,
+    diff_hygiene: diffHygiene,
+    divergence_reconciliation: divergenceReconciliation,
+    cross_phase: crossPhaseReport,
   };
+  const reporter = new Reporter();
+  return reporter.build({
+    prdPath,
+    diffRange: options.diffRange,
+    sections,
+    findings,
+    decisions: decisionRequired,
+    strict: options.strict,
+  }) as CitadelAuditReport;
 }
 
-function stableJson(value: CitadelAuditReport): string {
+function stableJson(value: CitadelJsonReport): string {
   return JSON.stringify(value, null, 2);
 }
 

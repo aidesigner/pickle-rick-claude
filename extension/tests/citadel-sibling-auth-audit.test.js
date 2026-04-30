@@ -196,9 +196,11 @@ describe('runCitadelAudit AC-CIT-10 behavior', () => {
       ]);
       const persisted = JSON.parse(fs.readFileSync(path.join(sessionDir, 'citadel_report.json'), 'utf-8'));
 
+      assert.equal(persisted.schema, '1.0');
       assert.equal(first.exit_code, second.exit_code);
       assert.equal(persisted.schema_version, '1.0');
       assert.equal(persisted.summary.findings, first.summary.findings);
+      assert.equal(persisted.exitCode, first.exitCode);
     } finally {
       fs.rmSync(repoRoot, { recursive: true, force: true });
       fs.rmSync(sessionDir, { recursive: true, force: true });
