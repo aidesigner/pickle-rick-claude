@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { execFileSync, spawn } from 'child_process';
+import { execFileSync, spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, safeErrorMessage, } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { buildWorkerInvocation } from '../services/backend-spawn.js';
@@ -83,6 +83,28 @@ const WORKER_ROLES = [
     { id: 'codebase' },
     { id: 'risk-scope' },
 ];
+export function runReadinessGate(sessionDir, workingDir, manifestPath) {
+    const binPath = path.join(getExtensionRoot(), 'bin', 'check-readiness.js');
+    if (!fs.existsSync(binPath))
+        return 0;
+    const result = spawnSync(process.execPath, [
+        binPath,
+        '--session-dir', sessionDir,
+        '--repo-root', workingDir,
+        '--manifest', manifestPath,
+        '--machinability-only',
+        '--contract-only',
+    ], {
+        cwd: workingDir,
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    if (result.stdout)
+        process.stdout.write(result.stdout);
+    if (result.stderr)
+        process.stderr.write(result.stderr);
+    return result.status ?? 1;
+}
 const CITATION_RE = /(?<![\w./-])((?:\.{1,2}\/)?(?:[\w.-]+\/)*[\w.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|yml|yaml|sh|py|css|scss|html)):(\d+)\b/g;
 export function extractAnchorCitations(prdContent) {
     const citations = [];
@@ -739,6 +761,10 @@ async function main() {
     const cycleResults = await orchestrateCycles(args, settings, prdContent);
     const manifestPath = path.join(args.sessionDir, 'refinement_manifest.json');
     await writeManifestAtomic(manifestPath, buildRefinementManifest(args, cycleResults));
+    const runtime = resolveRuntime(args, settings);
+    const readinessStatus = runReadinessGate(args.sessionDir, runtime.workingDir, manifestPath);
+    if (readinessStatus !== 0)
+        process.exit(readinessStatus);
     if (!cycleResults.allSuccess) {
         const failed = cycleResults.finalResults.filter((r) => !r.success).map((r) => r.roleId);
         console.log(`${Style.YELLOW}⚠️  Workers failed: ${failed.join(', ')}. Synthesis will proceed with available analyses.${Style.RESET}`);

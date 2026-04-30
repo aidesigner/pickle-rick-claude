@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { execFileSync, spawn } from 'child_process';
+import { execFileSync, spawn, spawnSync } from 'child_process';
 import {
   printMinimalPanel,
   Style,
@@ -149,6 +149,26 @@ export interface RefinementManifest {
     cycle: number;
   }[];
   completed_at: string;
+}
+
+export function runReadinessGate(sessionDir: string, workingDir: string, manifestPath: string): number {
+  const binPath = path.join(getExtensionRoot(), 'bin', 'check-readiness.js');
+  if (!fs.existsSync(binPath)) return 0;
+  const result = spawnSync(process.execPath, [
+    binPath,
+    '--session-dir', sessionDir,
+    '--repo-root', workingDir,
+    '--manifest', manifestPath,
+    '--machinability-only',
+    '--contract-only',
+  ], {
+    cwd: workingDir,
+    encoding: 'utf-8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  return result.status ?? 1;
 }
 
 export interface AnchorCitation {
@@ -906,6 +926,9 @@ async function main() {
   const cycleResults = await orchestrateCycles(args, settings, prdContent);
   const manifestPath = path.join(args.sessionDir, 'refinement_manifest.json');
   await writeManifestAtomic(manifestPath, buildRefinementManifest(args, cycleResults));
+  const runtime = resolveRuntime(args, settings);
+  const readinessStatus = runReadinessGate(args.sessionDir, runtime.workingDir, manifestPath);
+  if (readinessStatus !== 0) process.exit(readinessStatus);
 
   if (!cycleResults.allSuccess) {
     const failed = cycleResults.finalResults.filter((r) => !r.success).map((r) => r.roleId);

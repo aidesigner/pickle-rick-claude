@@ -257,6 +257,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'gate_out_of_scope_failures_present',
   'commit_pending_probe_fired',
   'codex_manager_relaunch',
+  'readiness_failed_post_correction',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];
