@@ -7,6 +7,7 @@ import { StateManager } from '../services/state-manager.js';
 import { buildWorkerInvocation } from '../services/backend-spawn.js';
 import { PromiseTokens, hasToken, Defaults } from '../types/index.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
+import { runAcPhaseGate } from '../services/ac-phase-gate.js';
 // PRD refinement is planning, not implementation. Codex is reserved for
 // implementation loops only — if the parent session opted into codex, we
 // still force claude here so analysis stays on the Claude model family.
@@ -666,6 +667,16 @@ export async function orchestrateCycles(args, settings, prd) {
     ensureRefinementDir(refinementDir);
     registerShutdownHandlers();
     printDeploymentPanel(args, refinementDir, runtime.cycles, runtime.maxTurns, runtime.timeout, runtime.sessionEffort);
+    const preRefinementGate = runAcPhaseGate({
+        sessionDir: args.sessionDir,
+        evaluationPhase: 'pre-refinement',
+        cwd: runtime.workingDir,
+        stdout: (msg) => console.log(msg),
+        stderr: (msg) => console.error(msg),
+    });
+    if (preRefinementGate.status !== 'pass') {
+        throw new Error('pre-refinement AC phase gate failed');
+    }
     emitStaleAnchorWarnings(findStaleAnchorWarnings(prd, runtime.workingDir));
     const allCycleResults = [];
     const portalContext = detectPortalContext(args.sessionDir);
@@ -762,6 +773,15 @@ async function main() {
     const manifestPath = path.join(args.sessionDir, 'refinement_manifest.json');
     await writeManifestAtomic(manifestPath, buildRefinementManifest(args, cycleResults));
     const runtime = resolveRuntime(args, settings);
+    const postRefinementGate = runAcPhaseGate({
+        sessionDir: args.sessionDir,
+        evaluationPhase: 'post-refinement',
+        cwd: runtime.workingDir,
+        stdout: (msg) => console.log(msg),
+        stderr: (msg) => console.error(msg),
+    });
+    if (postRefinementGate.status !== 'pass')
+        process.exit(2);
     const readinessStatus = runReadinessGate(args.sessionDir, runtime.workingDir, manifestPath);
     if (readinessStatus !== 0)
         process.exit(readinessStatus);

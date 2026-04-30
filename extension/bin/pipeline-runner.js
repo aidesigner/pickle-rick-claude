@@ -24,6 +24,7 @@ import { getExtensionRoot, Style, formatTime, printMinimalPanel, safeErrorMessag
 import { isWorkingTreeDirty } from '../services/git-utils.js';
 import { logActivity } from '../services/activity-logger.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
+import { runAcPhaseGate } from '../services/ac-phase-gate.js';
 import { resolveScope, refreshScope, filterBySubsystem, ScopeError, } from '../services/scope-resolver.js';
 import { runCitadelAudit } from '../services/citadel/audit-runner.js';
 const sm = new StateManager();
@@ -1146,6 +1147,18 @@ export async function main(sessionDir, opts = {}) {
             log(`Phase ${rawPhase} exited with code ${exitCode}`);
             if (shouldHaltAfterPhase(rawPhase, exitCode, runtime)) {
                 log(`Phase ${rawPhase} failed (exit ${exitCode}) — stopping pipeline`);
+                break;
+            }
+            const acGate = runAcPhaseGate({
+                sessionDir: runtime.sessionDir,
+                evaluationPhase: 'per-phase',
+                pipelinePhase: rawPhase,
+                cwd: runtime.workingDir,
+                stdout: (msg) => log(msg),
+                stderr: (msg) => log(msg),
+            });
+            if (acGate.status !== 'pass') {
+                log(`Phase ${rawPhase} AC gate failed — stopping pipeline`);
                 break;
             }
             counters.completed++;

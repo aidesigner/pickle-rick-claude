@@ -19,6 +19,7 @@ import {
   installShutdownHandlers,
 } from '../bin/pipeline-runner.js';
 import { backendEnvOverrides } from '../services/backend-spawn.js';
+import { AC_PHASE_MANIFEST, runAcPhaseGate } from '../services/ac-phase-gate.js';
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-pipeline-'));
@@ -60,6 +61,57 @@ describe('isTestFile', () => {
 
   test('rejects empty string', () => {
     assert.ok(!isTestFile(''));
+  });
+});
+
+describe('phase-ordered AC gate', () => {
+  test('runs only ACs scheduled for the current pipeline phase', () => {
+    const dir = tmpDir();
+    const marker = path.join(dir, 'marker.txt');
+    fs.writeFileSync(path.join(dir, AC_PHASE_MANIFEST), JSON.stringify({
+      acceptance_criteria: [
+        {
+          id: 'AC-PICKLE',
+          evaluation_phase: 'per-phase',
+          phase: 'pickle',
+          command: [process.execPath, '-e', `require('fs').appendFileSync(${JSON.stringify(marker)}, 'pickle\\n')`],
+        },
+        {
+          id: 'AC-LATER',
+          evaluation_phase: 'bundle-end',
+          command: [process.execPath, '-e', 'process.exit(1)'],
+        },
+      ],
+    }));
+
+    const result = runAcPhaseGate({
+      sessionDir: dir,
+      evaluationPhase: 'per-phase',
+      pipelinePhase: 'pickle',
+      cwd: dir,
+    });
+
+    assert.equal(result.status, 'pass');
+    assert.deepEqual(result.evaluated, ['AC-PICKLE']);
+    assert.ok(result.skipped.includes('AC-LATER'));
+    assert.equal(fs.readFileSync(marker, 'utf-8'), 'pickle\n');
+  });
+
+  test('fails a present AC manifest when any AC lacks evaluation_phase', () => {
+    const dir = tmpDir();
+    fs.writeFileSync(path.join(dir, AC_PHASE_MANIFEST), JSON.stringify({
+      acceptance_criteria: [{ id: 'AC-MISSING-PHASE' }],
+    }));
+
+    const result = runAcPhaseGate({
+      sessionDir: dir,
+      evaluationPhase: 'pre-refinement',
+      cwd: dir,
+    });
+
+    assert.equal(result.status, 'fail');
+    assert.equal(result.failures[0].id, 'AC-MISSING-PHASE');
+    assert.match(result.failures[0].reason, /evaluation_phase/);
   });
 });
 

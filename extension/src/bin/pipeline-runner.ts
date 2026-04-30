@@ -36,6 +36,7 @@ import {
 import { isWorkingTreeDirty } from '../services/git-utils.js';
 import { logActivity } from '../services/activity-logger.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
+import { runAcPhaseGate } from '../services/ac-phase-gate.js';
 import {
   resolveScope,
   refreshScope,
@@ -1407,6 +1408,18 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
       log(`Phase ${rawPhase} exited with code ${exitCode}`);
       if (shouldHaltAfterPhase(rawPhase, exitCode, runtime)) {
         log(`Phase ${rawPhase} failed (exit ${exitCode}) — stopping pipeline`);
+        break;
+      }
+      const acGate = runAcPhaseGate({
+        sessionDir: runtime.sessionDir,
+        evaluationPhase: 'per-phase',
+        pipelinePhase: rawPhase,
+        cwd: runtime.workingDir,
+        stdout: (msg) => log(msg),
+        stderr: (msg) => log(msg),
+      });
+      if (acGate.status !== 'pass') {
+        log(`Phase ${rawPhase} AC gate failed — stopping pipeline`);
         break;
       }
       counters.completed++;

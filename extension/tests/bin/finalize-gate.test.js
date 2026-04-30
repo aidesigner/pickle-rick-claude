@@ -4,6 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { finalizeGateMain } from '../../bin/finalize-gate.js';
+import { AC_PHASE_MANIFEST } from '../../services/ac-phase-gate.js';
 
 function makeTmpDir() {
     return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'fg-test-')));
@@ -117,6 +118,33 @@ describe('PICKLE_GATE_DISABLED', () => {
 // ---------------------------------------------------------------------------
 
 describe('green gate', () => {
+    test('phase-ordered AC bundle-end failure halts before strict gate', async () => {
+        const sessionRoot = makeTmpDir();
+        fs.writeFileSync(path.join(sessionRoot, AC_PHASE_MANIFEST), JSON.stringify({
+            acceptance_criteria: [
+                {
+                    id: 'AC-BUNDLE-END',
+                    evaluation_phase: 'bundle-end',
+                    command: [process.execPath, '-e', 'process.exit(1)'],
+                },
+                {
+                    id: 'AC-PER-PHASE',
+                    evaluation_phase: 'per-phase',
+                    command: [process.execPath, '-e', 'process.exit(1)'],
+                },
+            ],
+        }));
+        let gateCalled = false;
+        const code = await finalizeGateMain({
+            argv: [sessionRoot, 'szechuan'],
+            ...baseDeps(sessionRoot),
+            runGateFn: async () => { gateCalled = true; return makeGateResult('green'); },
+        });
+
+        assert.equal(code, 2);
+        assert.equal(gateCalled, false);
+    });
+
     test('green on cycle 1 → exit 0 without calling remediator', async () => {
         const sessionRoot = makeTmpDir();
         fs.mkdirSync(path.join(sessionRoot, 'gate'), { recursive: true });

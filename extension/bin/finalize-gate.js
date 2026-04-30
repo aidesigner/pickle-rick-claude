@@ -7,6 +7,7 @@ import { readMicroverseState, readRecoverableJsonObject } from '../services/micr
 import { logActivity } from '../services/activity-logger.js';
 import { getExtensionRoot, isoCompactStamp, safeErrorMessage, writeStateFile } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
+import { runAcPhaseGate } from '../services/ac-phase-gate.js';
 import { buildWorkerInvocation, backendEnvOverrides, resolveBackend, } from '../services/backend-spawn.js';
 const VALID_SKILLS = new Set(['szechuan', 'anatomy-park']);
 const sm = new StateManager();
@@ -134,6 +135,15 @@ export async function finalizeGateMain(opts) {
     const runGateFn = opts.runGateFn ?? runGate;
     const spawnBriefPrep = opts.spawnGateRemediatorMainFn ?? spawnGateRemediatorMain;
     const spawnRemediator = opts.spawnRemediatorFn ?? defaultSpawnRemediator;
+    const bundleEndGate = runAcPhaseGate({
+        sessionDir: sessionRoot,
+        evaluationPhase: 'bundle-end',
+        cwd: workingDir,
+        stdout: out,
+        stderr: err,
+    });
+    if (bundleEndGate.status !== 'pass')
+        return 2;
     let lastResult;
     for (let cycle = 0; cycle < cap; cycle++) {
         out(`[finalize-gate] cycle ${cycle + 1}/${cap} — running strict gate`);
