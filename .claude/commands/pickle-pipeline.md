@@ -56,6 +56,32 @@ Pipeline phases (pickle, anatomy-park, szechuan-sauce) honor whatever `--backend
 
 **0e — Continue.** Strip `--refine`/`--no-refine` from `$ARGUMENTS` so they aren't reparsed as TASK content. The `SESSION_ROOT` and `SESSION_INITIALIZED=true` markers from 0c carry forward — Step 3 will use `setup.js --resume "${SESSION_ROOT}" --tmux ...` instead of creating a new session, preserving `prd_refined.md` and the ticket directories.
 
+## Step 0.5: Sizing Check (AC-LPB-08)
+
+Only runs when `SESSION_INITIALIZED=true` and `${SESSION_ROOT}/decomposition_manifest.json` exists. Skip otherwise.
+
+**0.5a — Count tickets and compute expected wall.**
+
+```
+TICKET_COUNT=$(jq '.tickets | length' "${SESSION_ROOT}/decomposition_manifest.json" 2>/dev/null || echo 0)
+BACKEND="${BACKEND:-claude}"  # whatever was resolved in Step 0
+THROUGHPUT=$(jq -r ".throughput_baselines[\"${BACKEND}\"] // 5.0" "$HOME/.claude/pickle-rick/pickle_settings.json")
+EXPECTED_MIN=$(awk "BEGIN { print int((${TICKET_COUNT} / ${THROUGHPUT}) * 60 + 0.999) }")
+RECOMMENDED_MIN=$(awk "BEGIN { print int(${EXPECTED_MIN} * 1.25 + 0.999) }")
+```
+
+**0.5b — Decide.** Let `MAX_TIME` be the value from `--max-time` if passed, else `default_max_time_minutes` from `pickle_settings.json` (720).
+
+- If `MAX_TIME == 0` (unlimited) → skip the rest of Step 0.5.
+- If `MAX_TIME >= EXPECTED_MIN * 0.8` → log `"sizing-check: ok (max_time=${MAX_TIME}m vs expected=${EXPECTED_MIN}m for ${TICKET_COUNT} tickets at ${THROUGHPUT} t/h)"` and continue.
+- If `MAX_TIME < EXPECTED_MIN * 0.5` (gap >2×) AND `$ARGUMENTS` lacks `--acknowledge-undersized` → **block**: print
+  `"--max-time=${MAX_TIME}m is severely undersized for ${TICKET_COUNT} tickets at ${THROUGHPUT} t/h on ${BACKEND} (estimate ${EXPECTED_MIN}m). Pass --max-time=${RECOMMENDED_MIN} or add --acknowledge-undersized to override."`
+  Stop. Do NOT launch tmux.
+- Otherwise (undersized but within 2× gap, or `--acknowledge-undersized` set) → suggest the recommended value:
+  `"sizing-check: --max-time=${MAX_TIME}m is below recommended ${RECOMMENDED_MIN}m. setup.js will print the same warning to stderr. Continuing."`
+
+**0.5c — Forward `--acknowledge-undersized`.** If the flag is in `$ARGUMENTS`, append it to the `setup.js` invocation in Step 3 so the launch-path warning is silenced for the actual setup call.
+
 ## Step 1: Check tmux
 Run `tmux -V`. If missing: "Install tmux: `brew install tmux`." Stop.
 

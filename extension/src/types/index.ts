@@ -347,6 +347,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'debate_user_declined_auto_promote',
   'debate_invalidated_by_correction',
   'debate_round_truncated',
+  'session_reconstructed_epoch_reset',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];
@@ -412,6 +413,11 @@ export interface ActivityEvent {
   actual_tickets_version?: number;
   bytes_dropped?: number;
   gate_payload?: Record<string, unknown>;
+  // AC-LPB-05: emitted by setup.ts/pipeline-runner.ts on session reconstruction
+  // (resume) so monitor/standup consumers can distinguish a fresh launch from a
+  // resumed run and reason about wall-clock budgets correctly.
+  original_epoch?: number;
+  new_epoch?: number;
 }
 
 // ---------------------------------------------------------------------------

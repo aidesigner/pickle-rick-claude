@@ -214,6 +214,36 @@ export function clearTicketResolutionTimestamps(content) {
         .join('\n');
     return content.slice(0, fm.start) + `---\n${filteredBody}\n---\n` + content.slice(fm.end);
 }
+/**
+ * Read a string-array field from a YAML-ish frontmatter body. Supports both
+ * inline `field: [a, b]` and block list:
+ *   field:
+ *     - a
+ *     - b
+ * Mirrors the extractor in `check-readiness.ts:dependencyRefs`.
+ */
+function readFrontmatterStringArray(body, key) {
+    const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const inline = new RegExp(`^${escaped}:\\s*\\[(.*?)\\]\\s*$`, 'm').exec(body);
+    if (inline) {
+        return inline[1]
+            .split(',')
+            .map((part) => part.trim().replace(/^['"]|['"]$/g, ''))
+            .filter(Boolean);
+    }
+    const lines = body.split(/\r?\n/);
+    const index = lines.findIndex((line) => new RegExp(`^${escaped}:\\s*$`).test(line));
+    if (index < 0)
+        return [];
+    const values = [];
+    for (let i = index + 1; i < lines.length; i += 1) {
+        const match = /^\s+-\s+(.+?)\s*$/.exec(lines[i]);
+        if (!match)
+            break;
+        values.push(match[1].replace(/^['"]|['"]$/g, ''));
+    }
+    return values;
+}
 export function parseTicketFrontmatter(filePath) {
     try {
         const content = fs.readFileSync(filePath, 'utf8');
@@ -230,6 +260,21 @@ export function parseTicketFrontmatter(filePath) {
         const complexity_tier = tierRaw && validTiers.includes(tierRaw)
             ? tierRaw
             : 'medium';
+        // AC-SSV-05: collect both `depends_on` and the legacy `dependencies` alias,
+        // strip optional `external:` prefix, dedupe. These edges feed topoSortTickets.
+        const rawDeps = [
+            ...readFrontmatterStringArray(fm.body, 'depends_on'),
+            ...readFrontmatterStringArray(fm.body, 'dependencies'),
+        ];
+        const seen = new Set();
+        const depends_on = [];
+        for (const dep of rawDeps) {
+            const cleaned = dep.replace(/^external:\s*/i, '').trim();
+            if (!cleaned || seen.has(cleaned))
+                continue;
+            seen.add(cleaned);
+            depends_on.push(cleaned);
+        }
         return {
             id: get('id'),
             title: get('title'),
@@ -240,6 +285,7 @@ export function parseTicketFrontmatter(filePath) {
             completed_at: get('completed_at'),
             skipped_at: get('skipped_at'),
             complexity_tier,
+            depends_on,
         };
     }
     catch {
@@ -270,6 +316,81 @@ export function markTicketSkipped(sessionDir, ticketId) {
         return false;
     }
 }
+/**
+ * Build the dependency graph (indegree + reverse edges) for topoSortTickets.
+ * Extracted purely to keep the main function under cyclomatic-complexity 15.
+ */
+function buildTicketDepGraph(tickets) {
+    const byId = new Map();
+    tickets.forEach((t, index) => {
+        if (t.id)
+            byId.set(t.id, index);
+    });
+    const indegree = new Map();
+    const edges = new Map();
+    for (let i = 0; i < tickets.length; i++) {
+        indegree.set(i, 0);
+        edges.set(i, []);
+    }
+    for (let i = 0; i < tickets.length; i++) {
+        for (const depId of tickets[i].depends_on) {
+            const depIdx = byId.get(depId);
+            if (depIdx === undefined)
+                continue; // external/unknown dep — ignore for ordering
+            edges.get(depIdx).push(i);
+            indegree.set(i, (indegree.get(i) || 0) + 1);
+        }
+    }
+    return { indegree, edges };
+}
+/**
+ * Topologically sort tickets so that any ticket whose ID appears in another
+ * ticket's `depends_on` list comes BEFORE the dependent ticket. Ties (no
+ * incoming-edge difference) break on the numeric `order` field, then on
+ * stable insertion index. Throws on cycle detection with both/all member IDs
+ * in the message.
+ *
+ * Implementation: Kahn's algorithm with a ready-queue re-sorted by
+ * `(order, originalIndex)` for deterministic output.
+ *
+ * AC-SSV-05: replaces the prior pure-numeric sort that allowed C-T0 (order 200)
+ * to run before NEW-T2 (order 300) when NEW-T2 depended on C-T0, even when the
+ * caller supplied them in dependent-first form.
+ */
+export function topoSortTickets(tickets) {
+    if (tickets.length <= 1)
+        return [...tickets];
+    const { indegree, edges } = buildTicketDepGraph(tickets);
+    const compare = (a, b) => {
+        const oa = tickets[a].order;
+        const ob = tickets[b].order;
+        return oa !== ob ? oa - ob : a - b;
+    };
+    const ready = [];
+    for (let i = 0; i < tickets.length; i++) {
+        if ((indegree.get(i) || 0) === 0)
+            ready.push(i);
+    }
+    ready.sort(compare);
+    const out = [];
+    while (ready.length > 0) {
+        const i = ready.shift();
+        out.push(tickets[i]);
+        for (const next of edges.get(i)) {
+            const nextDeg = (indegree.get(next) || 0) - 1;
+            indegree.set(next, nextDeg);
+            if (nextDeg === 0) {
+                ready.push(next);
+                ready.sort(compare);
+            }
+        }
+    }
+    if (out.length !== tickets.length) {
+        const stuck = tickets.filter((_, i) => (indegree.get(i) || 0) > 0).map((t) => t.id || '<unknown>');
+        throw new Error(`Ticket dependency cycle detected: ${stuck.join(' → ')} → ${stuck[0] || '<unknown>'}`);
+    }
+    return out;
+}
 export function collectTickets(sessionDir) {
     try {
         const entries = fs.readdirSync(sessionDir, { withFileTypes: true });
@@ -292,7 +413,7 @@ export function collectTickets(sessionDir) {
                 /* skip */
             }
         }
-        return tickets.sort((a, b) => a.order - b.order);
+        return topoSortTickets(tickets);
     }
     catch {
         return [];

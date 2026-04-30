@@ -396,6 +396,10 @@ test('collectTickets: returns tickets sorted by order', () => {
         assert.equal(tickets.length, 2);
         assert.equal(tickets[0].id, 'bbb');  // order 10 comes first
         assert.equal(tickets[1].id, 'aaa');  // order 20 comes second
+        // AC-SSV-05: backward-compatible — no depends_on means topo sort
+        // degenerates to pure-order sort, and depends_on defaults to [].
+        assert.deepEqual(tickets[0].depends_on, []);
+        assert.deepEqual(tickets[1].depends_on, []);
     } finally {
         fs.rmSync(dir, { recursive: true });
     }

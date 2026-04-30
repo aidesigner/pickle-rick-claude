@@ -5,7 +5,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { parseArguments, initializeNewSession } from '../bin/setup.js';
+import { parseArguments, initializeNewSession, evaluateLaunchSizing, countManifestTickets } from '../bin/setup.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SETUP = path.resolve(__dirname, '../bin/setup.js');
@@ -981,6 +981,178 @@ test('setup: ignores fractional numeric settings and backend budgets', () => {
     } finally {
         codexEnv.cleanup();
         fs.rmSync(extRoot, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// AC-LPB-01: launch-path warning when --max-time is undersized
+// ---------------------------------------------------------------------------
+
+test('AC-LPB-01: countManifestTickets reads ticket count from decomposition_manifest.json', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-sizing-'));
+    try {
+        fs.writeFileSync(
+            path.join(dir, 'decomposition_manifest.json'),
+            JSON.stringify({ tickets: [{ id: 'a' }, { id: 'b' }, { id: 'c' }] }),
+        );
+        assert.equal(countManifestTickets(dir), 3);
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('AC-LPB-01: countManifestTickets returns 0 for missing or malformed manifest', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-sizing-'));
+    try {
+        assert.equal(countManifestTickets(dir), 0); // missing
+        fs.writeFileSync(path.join(dir, 'decomposition_manifest.json'), 'not json');
+        assert.equal(countManifestTickets(dir), 0); // malformed
+        fs.writeFileSync(path.join(dir, 'decomposition_manifest.json'), '{"tickets": "not-an-array"}');
+        assert.equal(countManifestTickets(dir), 0); // wrong shape
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('AC-LPB-01: evaluateLaunchSizing warns when --max-time undersized for ticket count', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-sizing-'));
+    try {
+        // 50 tickets at 5 t/h (claude default) → 600 minutes expected.
+        // --max-time 60 < 600*0.8=480 → warning required.
+        fs.writeFileSync(
+            path.join(dir, 'decomposition_manifest.json'),
+            JSON.stringify({ tickets: new Array(50).fill(0).map((_, i) => ({ id: `t${i}` })) }),
+        );
+        const config = parseArguments(['--max-time', '60', '--task', 'sizing-warning-test']);
+        const captured = [];
+        const result = evaluateLaunchSizing(dir, config, (msg) => captured.push(msg));
+        assert.ok(result, 'sizing check should return a result');
+        assert.equal(result.warned, true);
+        assert.equal(result.ticketCount, 50);
+        const text = captured.join('');
+        assert.match(text, /--max-time=60m may be undersized for 50 tickets/);
+        assert.match(text, /at 5 t\/h on claude/);
+        assert.match(text, /Pass --acknowledge-undersized to proceed/);
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('AC-LPB-01: --acknowledge-undersized silences the warning but launch still proceeds', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-sizing-'));
+    try {
+        fs.writeFileSync(
+            path.join(dir, 'decomposition_manifest.json'),
+            JSON.stringify({ tickets: new Array(50).fill(0).map((_, i) => ({ id: `t${i}` })) }),
+        );
+        const config = parseArguments(['--max-time', '60', '--acknowledge-undersized', '--task', 'ack-test']);
+        const captured = [];
+        const result = evaluateLaunchSizing(dir, config, (msg) => captured.push(msg));
+        assert.ok(result, 'should still return a result so callers can log');
+        assert.equal(result.warned, false);
+        assert.equal(captured.length, 0, 'no warning should be emitted when acknowledged');
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('AC-LPB-01: max-time=0 (unlimited) skips sizing check', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-sizing-'));
+    try {
+        fs.writeFileSync(
+            path.join(dir, 'decomposition_manifest.json'),
+            JSON.stringify({ tickets: new Array(100).fill(0).map((_, i) => ({ id: `t${i}` })) }),
+        );
+        const config = parseArguments(['--max-time', '0', '--task', 'unlimited-test']);
+        const captured = [];
+        const result = evaluateLaunchSizing(dir, config, (msg) => captured.push(msg));
+        assert.equal(result, null, 'unlimited time should bypass sizing check');
+        assert.equal(captured.length, 0);
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('AC-LPB-01: well-sized --max-time produces no warning', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-sizing-'));
+    try {
+        // 5 tickets at 5 t/h → 60m expected. --max-time 90 ≥ 60*0.8=48 → ok.
+        fs.writeFileSync(
+            path.join(dir, 'decomposition_manifest.json'),
+            JSON.stringify({ tickets: new Array(5).fill(0).map((_, i) => ({ id: `t${i}` })) }),
+        );
+        const config = parseArguments(['--max-time', '90', '--task', 'well-sized-test']);
+        const captured = [];
+        const result = evaluateLaunchSizing(dir, config, (msg) => captured.push(msg));
+        assert.equal(result, null, 'well-sized config should return null');
+        assert.equal(captured.length, 0);
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('AC-LPB-01: codex backend uses lower throughput baseline', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-sizing-'));
+    try {
+        fs.writeFileSync(
+            path.join(dir, 'decomposition_manifest.json'),
+            JSON.stringify({ tickets: new Array(7).fill(0).map((_, i) => ({ id: `t${i}` })) }),
+        );
+        // 7 tickets / 3.5 t/h = 2h → 120m expected. --max-time 30 < 120*0.8=96 → warn.
+        const config = parseArguments(['--max-time', '30', '--backend', 'codex', '--task', 'codex-sizing']);
+        const captured = [];
+        const result = evaluateLaunchSizing(dir, config, (msg) => captured.push(msg));
+        assert.ok(result?.warned);
+        assert.equal(result.backend, 'codex');
+        assert.equal(result.throughput, 3.5);
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// AC-LPB-05: start_time_epoch resets on session reconstruction
+// ---------------------------------------------------------------------------
+
+test('AC-LPB-05: --resume resets start_time_epoch to current time and emits activity event', () => {
+    // Fresh session at a known epoch
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-epoch-reset-'));
+    const previousDataRoot = process.env.PICKLE_DATA_ROOT;
+    process.env.PICKLE_DATA_ROOT = dataRoot;
+    try {
+        const sessionPath = runSetup(['--task', 'epoch-reset-test']);
+        const statePath = path.join(sessionPath, 'state.json');
+        // Forcibly back-date start_time_epoch (simulating a long-running pre-crash session)
+        const stale = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        const staleEpoch = Math.floor(Date.now() / 1000) - 86400; // 1 day ago
+        stale.start_time_epoch = staleEpoch;
+        fs.writeFileSync(statePath, JSON.stringify(stale, null, 2));
+
+        // Resume
+        const before = Math.floor(Date.now() / 1000);
+        runSetup(['--resume', sessionPath]);
+        const after = Math.floor(Date.now() / 1000);
+
+        const resumed = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.notEqual(resumed.start_time_epoch, staleEpoch, 'epoch must be reset on resume');
+        assert.ok(
+            resumed.start_time_epoch >= before - 5 && resumed.start_time_epoch <= after + 5,
+            `epoch ${resumed.start_time_epoch} should be within resume window [${before}, ${after}]`,
+        );
+
+        // Activity event written to today's JSONL
+        const activityDir = path.join(dataRoot, 'activity');
+        const files = fs.existsSync(activityDir) ? fs.readdirSync(activityDir).filter((f) => f.endsWith('.jsonl')) : [];
+        const allLines = files.flatMap((f) => fs.readFileSync(path.join(activityDir, f), 'utf-8').split(/\r?\n/).filter(Boolean));
+        const events = allLines.map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+        const reset = events.find((e) => e.event === 'session_reconstructed_epoch_reset');
+        assert.ok(reset, 'session_reconstructed_epoch_reset event must be emitted');
+        assert.equal(reset.original_epoch, staleEpoch);
+        assert.equal(reset.new_epoch, resumed.start_time_epoch);
+    } finally {
+        if (previousDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = previousDataRoot;
         fs.rmSync(dataRoot, { recursive: true, force: true });
     }
 });

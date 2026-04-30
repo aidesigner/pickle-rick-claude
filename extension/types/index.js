@@ -159,6 +159,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'debate_user_declined_auto_promote',
     'debate_invalidated_by_correction',
     'debate_round_truncated',
+    'session_reconstructed_epoch_reset',
 ];
 // ---------------------------------------------------------------------------
 // DOT Builder Types

@@ -13,6 +13,13 @@ import { logActivity, pruneActivity } from '../services/activity-logger.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 const sm = new StateManager();
 const VALID_EFFORTS = ['low', 'medium', 'high'];
+// AC-LPB-01: hard-coded fallback throughput baselines used when
+// pickle_settings.json is missing or doesn't declare `throughput_baselines`.
+const DEFAULT_THROUGHPUT_BASELINES = {
+    claude: 5.0,
+    codex: 3.5,
+    deepseek: 4.0,
+};
 function die(message) {
     console.error(`${Style.RED}❌ Error: ${message}${Style.RESET}`);
     process.exit(1);
@@ -60,6 +67,8 @@ function createSetupConfig() {
         explicitFlags: new Set(),
         startEpoch: Math.floor(Date.now() / 1000),
         iterationBudgetPerBackend: null,
+        throughputBaselines: null,
+        acknowledgeUndersized: false,
     };
 }
 function applyPositiveIntegerSetting(settings, key, apply) {
@@ -79,6 +88,76 @@ function readIterationBudgetPerBackend(settings) {
         }
     }
     return Object.keys(map).length > 0 ? map : null;
+}
+/**
+ * AC-LPB-02: parse `throughput_baselines` from pickle_settings.json. Values
+ * are tickets/hour (positive finite numbers). Backend keys are arbitrary
+ * strings (claude/codex/deepseek/…) so this stays open for new backends.
+ */
+function readThroughputBaselines(settings) {
+    const raw = settings.throughput_baselines;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw))
+        return null;
+    const map = {};
+    for (const [key, value] of Object.entries(raw)) {
+        if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+            map[key] = value;
+        }
+    }
+    return Object.keys(map).length > 0 ? map : null;
+}
+/**
+ * AC-LPB-01: count tickets in the session's decomposition_manifest.json. Returns
+ * 0 when the manifest is missing or malformed — caller treats 0 as "no sizing
+ * data, skip the warning".
+ */
+export function countManifestTickets(sessionDir) {
+    const manifestPath = path.join(sessionDir, 'decomposition_manifest.json');
+    if (!fs.existsSync(manifestPath))
+        return 0;
+    try {
+        const parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
+        if (parsed && typeof parsed === 'object' && Array.isArray(parsed.tickets)) {
+            return parsed.tickets.length;
+        }
+    }
+    catch {
+        /* malformed — treat as no data */
+    }
+    return 0;
+}
+/**
+ * AC-LPB-01: warn when `--max-time` is undersized for the planned ticket count
+ * given the backend's throughput baseline. Always returns; never blocks launch.
+ *
+ *   expected_minutes = (ticket_count / throughput) * 60
+ *   warn iff max_time > 0 AND max_time < expected * 0.8
+ *
+ * --acknowledge-undersized silences the warning (CI use). Both the warning
+ * header and the recommended budget are computed here so the message wording
+ * stays in sync with the threshold logic.
+ */
+export function evaluateLaunchSizing(sessionDir, config, emit = (msg) => process.stderr.write(msg)) {
+    const ticketCount = countManifestTickets(sessionDir);
+    if (ticketCount <= 0)
+        return null;
+    if (!config.timeLimit || config.timeLimit <= 0)
+        return null; // 0/unlimited — no sizing concern
+    const baselines = config.throughputBaselines ?? DEFAULT_THROUGHPUT_BASELINES;
+    const backend = config.backend || 'claude';
+    const throughput = baselines[backend] ?? DEFAULT_THROUGHPUT_BASELINES[backend] ?? DEFAULT_THROUGHPUT_BASELINES.claude;
+    const expectedMinutes = Math.ceil((ticketCount / throughput) * 60);
+    const recommendedMinutes = Math.ceil(expectedMinutes * 1.25);
+    const undersized = config.timeLimit < expectedMinutes * 0.8;
+    if (!undersized)
+        return null;
+    if (config.acknowledgeUndersized) {
+        return { warned: false, ticketCount, expectedMinutes, recommendedMinutes, throughput, backend };
+    }
+    emit(`⚠️  --max-time=${config.timeLimit}m may be undersized for ${ticketCount} tickets at ${throughput} t/h on ${backend}\n` +
+        `   Estimated wall: ${expectedMinutes}m. Consider --max-time=${recommendedMinutes}m.\n` +
+        `   Pass --acknowledge-undersized to proceed.\n`);
+    return { warned: true, ticketCount, expectedMinutes, recommendedMinutes, throughput, backend };
 }
 function updateSessionMap(sessionsMap, cwd, sessionPath) {
     withRetryLock(sessionsMap + '.lock', () => {
@@ -124,6 +203,7 @@ function loadSettings(config, rootDir) {
         applyPositiveIntegerSetting(settings, 'default_max_time_minutes', value => { config.timeLimit = value; });
         applyPositiveIntegerSetting(settings, 'default_worker_timeout_seconds', value => { config.workerTimeout = value; });
         config.iterationBudgetPerBackend = readIterationBudgetPerBackend(settings);
+        config.throughputBaselines = readThroughputBaselines(settings);
     }
     catch (err) {
         const msg = safeErrorMessage(err);
@@ -344,6 +424,11 @@ const ARG_HANDLERS = {
         config.explicitFlags.add('effort');
         return index + 1;
     },
+    '--acknowledge-undersized': (config, _args, index) => {
+        config.acknowledgeUndersized = true;
+        config.explicitFlags.add('acknowledge-undersized');
+        return index;
+    },
     '-s': (_config, args, index) => (args[index + 1] && !args[index + 1].startsWith('--') ? index + 1 : index),
     '--session-id': (_config, args, index) => (args[index + 1] && !args[index + 1].startsWith('--') ? index + 1 : index),
 };
@@ -425,6 +510,14 @@ function applyResumeConfig(s, config, fullSessionPath, codexVersionSeen) {
         s.iteration = 0;
         s.start_time_epoch = config.startEpoch;
     }
+    // AC-LPB-05: when a session is reconstructed (resumed from crash/pause),
+    // start_time_epoch must reset to the resume time so the wall-clock cap-check
+    // doesn't subtract from a stale launch baseline. The reset is intentional
+    // even without --reset because resume IS reconstruction. The activity event
+    // is emitted by the caller (resumeSession) so we can compare original vs new.
+    if (!config.resetMode) {
+        s.start_time_epoch = config.startEpoch;
+    }
     applyResumeLimitConfig(s, config);
     applyResumeModeConfig(s, config);
     if (codexVersionSeen)
@@ -502,6 +595,9 @@ function resumeSession(config) {
     let state;
     const resumeBackend = config.explicitFlags.has('backend') ? config.backend : preState?.backend;
     const codexVersionSeen = resolveCodexVersionForSetup(resumeBackend);
+    // AC-LPB-05: capture the pre-resume epoch so we can emit the
+    // session_reconstructed_epoch_reset activity event with both timestamps.
+    const originalEpoch = typeof preState?.start_time_epoch === 'number' ? preState.start_time_epoch : null;
     try {
         state = sm.update(statePath, s => {
             applyResumeConfig(s, config, fullSessionPath, codexVersionSeen);
@@ -509,6 +605,21 @@ function resumeSession(config) {
     }
     catch {
         die(`state.json is missing or corrupt in ${fullSessionPath}`);
+    }
+    // AC-LPB-05: emit activity event so monitor/standup/metrics consumers can
+    // distinguish a fresh launch from a reconstructed-after-crash run. Best-effort —
+    // a logging failure should not abort an otherwise-valid resume.
+    if (originalEpoch !== null && state.start_time_epoch !== originalEpoch) {
+        try {
+            logActivity({
+                event: 'session_reconstructed_epoch_reset',
+                source: 'pickle',
+                session: path.basename(fullSessionPath),
+                original_epoch: originalEpoch,
+                new_epoch: state.start_time_epoch,
+            });
+        }
+        catch { /* ignore — telemetry should not block resume */ }
     }
     syncConfigFromState(config, state);
     return {
@@ -654,6 +765,13 @@ async function main() {
     const session = args.resumeMode
         ? handleResumeSession(args)
         : initializeNewSession(args);
+    // AC-LPB-01: warn (don't block) when --max-time is undersized for the planned
+    // ticket count. Runs after session resolution so we can read the manifest from
+    // the actual session dir. Best-effort; never throws.
+    try {
+        evaluateLaunchSizing(session.sessionRoot, args);
+    }
+    catch { /* sizing is advisory */ }
     try {
         updateSessionMap(paths.sessionsMap, process.cwd(), session.sessionRoot);
     }

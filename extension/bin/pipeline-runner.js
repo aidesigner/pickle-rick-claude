@@ -283,6 +283,40 @@ export function resetStateForPhase(statePath, template, maxIterations) {
         s.tmux_mode = true;
     });
 }
+/**
+ * AC-LPB-05: when pipeline-runner re-attaches to a session that already has
+ * prior progress (iteration > 0 OR phases_entered non-empty), this is a
+ * reconstruction — reset start_time_epoch so wall-clock cap-checks measure
+ * from the resume time, not the original launch. Emits a telemetry event
+ * (`session_reconstructed_epoch_reset`) for monitor/standup consumers. Fresh
+ * launches (iteration === 0 and no phases entered) keep the setup-supplied
+ * epoch and this helper is a no-op.
+ *
+ * Mutates the passed `state` in place AND writes through StateManager so
+ * subsequent reads see the new epoch. Returns the {originalEpoch, newEpoch}
+ * pair when a reset happened, otherwise null.
+ */
+export function applyEpochResetOnReconstruction(state, statePath, sessionDir) {
+    const isReconstruction = (typeof state.iteration === 'number' && state.iteration > 0) ||
+        (Array.isArray(state.phases_entered) && state.phases_entered.length > 0);
+    if (!isReconstruction)
+        return null;
+    const originalEpoch = typeof state.start_time_epoch === 'number' ? state.start_time_epoch : null;
+    const newEpoch = Math.floor(Date.now() / 1000);
+    sm.update(statePath, (s) => { s.start_time_epoch = newEpoch; });
+    state.start_time_epoch = newEpoch;
+    try {
+        logActivity({
+            event: 'session_reconstructed_epoch_reset',
+            source: 'pickle',
+            session: path.basename(sessionDir),
+            original_epoch: originalEpoch ?? undefined,
+            new_epoch: newEpoch,
+        });
+    }
+    catch { /* telemetry best-effort */ }
+    return { originalEpoch, newEpoch };
+}
 function archiveFile(sessionDir, filename, phase) {
     const src = path.join(sessionDir, filename);
     if (!fs.existsSync(src))
@@ -982,6 +1016,11 @@ function loadPipelineRuntime(sessionDir, opts, log) {
         throw new Error(`Cannot read state.json: ${safeErrorMessage(err)}`);
     }
     const workingDir = state.working_dir || process.cwd();
+    // AC-LPB-05: detect reconstruction and reset start_time_epoch.
+    const reset = applyEpochResetOnReconstruction(state, statePath, sessionDir);
+    if (reset) {
+        log(`reconstruction detected (iteration=${state.iteration ?? 0}) — start_time_epoch reset ${reset.originalEpoch ?? '?'} → ${reset.newEpoch}`);
+    }
     // Backend resolution — see resolveBackendWithSource. Capture source BEFORE
     // any state write so the log reflects the actual resolution path.
     const { backend, source } = resolveBackendWithSource(state, config.backend, process.env.PICKLE_BACKEND);

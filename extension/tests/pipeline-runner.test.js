@@ -17,6 +17,7 @@ import {
   assertCodexRequiredBackend,
   enterPicklePhase,
   installShutdownHandlers,
+  applyEpochResetOnReconstruction,
 } from '../bin/pipeline-runner.js';
 import { backendEnvOverrides } from '../services/backend-spawn.js';
 import { AC_PHASE_MANIFEST, runAcPhaseGate } from '../services/ac-phase-gate.js';
@@ -1234,6 +1235,106 @@ describe('pipeline shutdown', () => {
     } finally {
       cleanup();
       process.exit = oldExit;
+      if (oldDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+      else process.env.PICKLE_DATA_ROOT = oldDataRoot;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-LPB-05: applyEpochResetOnReconstruction
+// ---------------------------------------------------------------------------
+
+describe('applyEpochResetOnReconstruction', () => {
+  test('resets start_time_epoch when iteration > 0 (reconstruction)', () => {
+    const dir = tmpDir();
+    const oldDataRoot = process.env.PICKLE_DATA_ROOT;
+    process.env.PICKLE_DATA_ROOT = dir;
+    try {
+      const statePath = path.join(dir, 'state.json');
+      const staleEpoch = 1000;
+      fs.writeFileSync(statePath, JSON.stringify({
+        active: false, working_dir: dir, step: 'implement',
+        iteration: 7, max_iterations: 50, max_time_minutes: 720,
+        worker_timeout_seconds: 1200, start_time_epoch: staleEpoch,
+        completion_promise: null, original_prompt: 'epoch test',
+        current_ticket: null, history: [], started_at: new Date().toISOString(),
+        session_dir: dir, schema_version: 3,
+      }));
+      const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+
+      const result = applyEpochResetOnReconstruction(state, statePath, dir);
+      assert.ok(result, 'reconstruction should return a non-null result');
+      assert.equal(result.originalEpoch, staleEpoch);
+      const persisted = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      assert.notEqual(persisted.start_time_epoch, staleEpoch);
+      assert.equal(persisted.start_time_epoch, result.newEpoch);
+
+      // Activity event written
+      const activityDir = path.join(dir, 'activity');
+      const files = fs.existsSync(activityDir) ? fs.readdirSync(activityDir).filter((f) => f.endsWith('.jsonl')) : [];
+      const lines = files.flatMap((f) => fs.readFileSync(path.join(activityDir, f), 'utf-8').split(/\r?\n/).filter(Boolean));
+      const events = lines.map((l) => JSON.parse(l));
+      const reset = events.find((e) => e.event === 'session_reconstructed_epoch_reset');
+      assert.ok(reset, 'reset event must be emitted');
+      assert.equal(reset.original_epoch, staleEpoch);
+      assert.equal(reset.new_epoch, result.newEpoch);
+    } finally {
+      if (oldDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+      else process.env.PICKLE_DATA_ROOT = oldDataRoot;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('no-op for fresh launch (iteration === 0 and no phases_entered)', () => {
+    const dir = tmpDir();
+    const oldDataRoot = process.env.PICKLE_DATA_ROOT;
+    process.env.PICKLE_DATA_ROOT = dir;
+    try {
+      const statePath = path.join(dir, 'state.json');
+      const freshEpoch = 1000;
+      fs.writeFileSync(statePath, JSON.stringify({
+        active: false, working_dir: dir, step: 'prd',
+        iteration: 0, max_iterations: 50, max_time_minutes: 720,
+        worker_timeout_seconds: 1200, start_time_epoch: freshEpoch,
+        completion_promise: null, original_prompt: 'fresh test',
+        current_ticket: null, history: [], started_at: new Date().toISOString(),
+        session_dir: dir, schema_version: 3,
+      }));
+      const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+
+      const result = applyEpochResetOnReconstruction(state, statePath, dir);
+      assert.equal(result, null, 'fresh launch must not reset epoch');
+      const persisted = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      assert.equal(persisted.start_time_epoch, freshEpoch, 'fresh epoch preserved');
+    } finally {
+      if (oldDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+      else process.env.PICKLE_DATA_ROOT = oldDataRoot;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('treats non-empty phases_entered as reconstruction even when iteration is 0', () => {
+    const dir = tmpDir();
+    const oldDataRoot = process.env.PICKLE_DATA_ROOT;
+    process.env.PICKLE_DATA_ROOT = dir;
+    try {
+      const statePath = path.join(dir, 'state.json');
+      fs.writeFileSync(statePath, JSON.stringify({
+        active: false, working_dir: dir, step: 'review',
+        iteration: 0, max_iterations: 50, max_time_minutes: 720,
+        worker_timeout_seconds: 1200, start_time_epoch: 500,
+        completion_promise: null, original_prompt: 'phase test',
+        current_ticket: null, history: [], started_at: new Date().toISOString(),
+        session_dir: dir, schema_version: 3,
+        phases_entered: ['pickle'],
+      }));
+      const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      const result = applyEpochResetOnReconstruction(state, statePath, dir);
+      assert.ok(result);
+      assert.equal(result.originalEpoch, 500);
+    } finally {
       if (oldDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
       else process.env.PICKLE_DATA_ROOT = oldDataRoot;
       fs.rmSync(dir, { recursive: true, force: true });
