@@ -2,16 +2,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import * as os from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SETUP = path.resolve(__dirname, '../bin/setup.js');
+const REPO_ROOT = path.resolve(__dirname, '../..');
 
-function runSetup(args) {
+function runSetup(args, extraEnv = {}) {
     const output = execFileSync(process.execPath, [SETUP, ...args], {
         encoding: 'utf-8',
-        env: { ...process.env, FORCE_COLOR: '0' },
+        env: { ...process.env, FORCE_COLOR: '0', ...extraEnv },
     });
     const match = output.match(/SESSION_ROOT=(.+)/);
     if (!match) throw new Error(`SESSION_ROOT not found in output:\n${output}`);
@@ -28,6 +30,17 @@ function runSetupExpectFail(args) {
 
 function cleanup(sessionPath) {
     try { fs.rmSync(sessionPath, { recursive: true, force: true }); } catch { /* ignore */ }
+}
+
+function makeCodexSmokeEnv() {
+    const shimDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-teams-codex-bin-'));
+    const shimPath = path.join(shimDir, 'codex');
+    fs.writeFileSync(shimPath, '#!/bin/sh\necho "codex 0.42.1"\n');
+    fs.chmodSync(shimPath, 0o755);
+    return {
+        env: { EXTENSION_DIR: REPO_ROOT, PATH: `${shimDir}${path.delimiter}${process.env.PATH ?? ''}` },
+        cleanup: () => fs.rmSync(shimDir, { recursive: true, force: true }),
+    };
 }
 
 test('setup --teams: writes teams_mode=true to state.json', () => {
@@ -100,7 +113,8 @@ test('setup --teams --resume: preserves teams_mode and max_parallel', () => {
 // Regression: P0-1 — codex/teams conflict must fire across resume in BOTH directions.
 
 test('setup --resume + --teams against codex session: rejects, leaves state unchanged', () => {
-    const sessionPath = runSetup(['--backend', 'codex', '--task', 'codex-base']);
+    const codexEnv = makeCodexSmokeEnv();
+    const sessionPath = runSetup(['--backend', 'codex', '--task', 'codex-base'], codexEnv.env);
     try {
         const statePath = path.join(sessionPath, 'state.json');
         const before = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
@@ -113,7 +127,10 @@ test('setup --resume + --teams against codex session: rejects, leaves state unch
         const after = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
         assert.equal(after.backend, 'codex', 'backend should remain codex');
         assert.ok(!after.teams_mode, 'teams_mode must NOT be set on a codex session');
-    } finally { cleanup(sessionPath); }
+    } finally {
+        codexEnv.cleanup();
+        cleanup(sessionPath);
+    }
 });
 
 test('setup --resume + --backend codex against teams session: rejects, leaves state unchanged', () => {

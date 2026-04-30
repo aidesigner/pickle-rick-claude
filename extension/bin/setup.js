@@ -3,6 +3,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as crypto from 'crypto';
+import { execFileSync } from 'child_process';
+import { fileURLToPath } from 'url';
 import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd, formatLocalDateKey } from '../services/pickle-utils.js';
 import { getHeadSha } from '../services/git-utils.js';
 import { Defaults, LockError, BACKENDS, STATE_MANAGER_DEFAULTS } from '../types/index.js';
@@ -127,6 +129,86 @@ function loadSettings(config, rootDir) {
         const msg = safeErrorMessage(err);
         console.error(`Warning: could not parse pickle_settings.json — using defaults: ${msg}`);
     }
+}
+function parseCodexVersion(output) {
+    const match = output.match(/\b(\d+)\.(\d+)\.(\d+)(?:[-+][0-9A-Za-z.-]+)?\b/);
+    if (!match)
+        return null;
+    const rawMajor = Number(match[1]);
+    const rawMinor = Number(match[2]);
+    const rawPatch = Number(match[3]);
+    const major = Number.isFinite(rawMajor) ? rawMajor : -1;
+    const minor = Number.isFinite(rawMinor) ? rawMinor : -1;
+    const patch = Number.isFinite(rawPatch) ? rawPatch : -1;
+    if (!Number.isInteger(major) || !Number.isInteger(minor) || !Number.isInteger(patch))
+        return null;
+    return { major, minor, patch, version: `${match[1]}.${match[2]}.${match[3]}` };
+}
+function compareVersion(left, right) {
+    if (left.major !== right.major)
+        return left.major - right.major;
+    if (left.minor !== right.minor)
+        return left.minor - right.minor;
+    return left.patch - right.patch;
+}
+function caretUpperBound(minimum) {
+    if (minimum.major > 0)
+        return { major: minimum.major + 1, minor: 0, patch: 0, version: `${minimum.major + 1}.0.0` };
+    if (minimum.minor > 0)
+        return { major: 0, minor: minimum.minor + 1, patch: 0, version: `0.${minimum.minor + 1}.0` };
+    return { major: 0, minor: 0, patch: minimum.patch + 1, version: `0.0.${minimum.patch + 1}` };
+}
+export function codexVersionSatisfiesRange(versionOutput, range) {
+    const actual = parseCodexVersion(versionOutput);
+    if (!actual)
+        return false;
+    const caret = range.match(/^\^(\d+\.\d+\.\d+)$/);
+    if (!caret)
+        return actual.version === range;
+    const minimum = parseCodexVersion(caret[1]);
+    if (!minimum)
+        return false;
+    return compareVersion(actual, minimum) >= 0 && compareVersion(actual, caretUpperBound(minimum)) < 0;
+}
+function readCodexEngineRange(extensionRoot) {
+    const configuredPath = path.join(extensionRoot, 'extension', 'package.json');
+    const packageJsonPath = fs.existsSync(configuredPath)
+        ? configuredPath
+        : path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../package.json');
+    let packageJson;
+    try {
+        packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf-8'));
+    }
+    catch (err) {
+        die(`Could not read extension/package.json for codex backend smoke check: ${safeErrorMessage(err)}`);
+    }
+    const range = packageJson.engines?.codex;
+    if (typeof range !== 'string' || range.trim() === '') {
+        die('extension/package.json is missing engines.codex for codex backend smoke check');
+    }
+    return range.trim();
+}
+function readCodexVersion() {
+    try {
+        return execFileSync('codex', ['--version'], {
+            encoding: 'utf-8',
+            stdio: ['ignore', 'pipe', 'pipe'],
+            timeout: 10_000,
+        }).trim();
+    }
+    catch (err) {
+        die(`codex --version failed during codex backend smoke check: ${safeErrorMessage(err)}`);
+    }
+}
+export function resolveCodexVersionForSetup(backend, extensionRoot = getExtensionRoot()) {
+    if ((backend || 'claude') !== 'codex')
+        return null;
+    const versionOutput = readCodexVersion();
+    const range = readCodexEngineRange(extensionRoot);
+    if (!codexVersionSatisfiesRange(versionOutput, range)) {
+        die(`codex version mismatch: codex --version returned "${versionOutput}", expected engines.codex "${range}"`);
+    }
+    return versionOutput;
 }
 /**
  * Apply the per-backend iteration budget AFTER CLI parsing, so we know which
@@ -337,6 +419,46 @@ function validateResumeCompatibility(preState, config) {
         die('--teams is incompatible with --backend codex (claude backend only). Resume would create a conflicting state — refusing to continue.');
     }
 }
+function applyResumeConfig(s, config, fullSessionPath, codexVersionSeen) {
+    s.active = !config.pausedMode;
+    if (config.resetMode) {
+        s.iteration = 0;
+        s.start_time_epoch = config.startEpoch;
+    }
+    applyResumeLimitConfig(s, config);
+    applyResumeModeConfig(s, config);
+    if (codexVersionSeen)
+        s.codex_version_seen = codexVersionSeen;
+    s.session_dir = fullSessionPath;
+}
+function applyResumeLimitConfig(s, config) {
+    if (config.explicitFlags.has('max-iterations'))
+        s.max_iterations = config.loopLimit;
+    if (config.explicitFlags.has('max-time'))
+        s.max_time_minutes = config.timeLimit;
+    if (config.explicitFlags.has('worker-timeout'))
+        s.worker_timeout_seconds = config.workerTimeout;
+    if (config.promiseToken)
+        s.completion_promise = config.promiseToken;
+    if (config.explicitFlags.has('min-iterations'))
+        s.min_iterations = config.minIterations;
+}
+function applyResumeModeConfig(s, config) {
+    if (config.explicitFlags.has('command-template'))
+        s.command_template = config.commandTemplate;
+    if (config.tmuxMode)
+        s.tmux_mode = true;
+    if (config.chainMeeseeks)
+        s.chain_meeseeks = true;
+    if (config.explicitFlags.has('backend') && config.backend)
+        s.backend = config.backend;
+    if (config.explicitFlags.has('teams'))
+        s.teams_mode = config.teamsMode;
+    if (config.explicitFlags.has('max-parallel'))
+        s.max_parallel = config.maxParallel;
+    if (config.explicitFlags.has('effort'))
+        s.effort = config.effort;
+}
 function syncConfigFromState(config, state) {
     const rawLoopLimit = Number(state.max_iterations);
     config.loopLimit = Number.isFinite(rawLoopLimit) ? rawLoopLimit : config.loopLimit;
@@ -378,38 +500,11 @@ function resumeSession(config) {
     if (preState)
         validateResumeCompatibility(preState, config);
     let state;
+    const resumeBackend = config.explicitFlags.has('backend') ? config.backend : preState?.backend;
+    const codexVersionSeen = resolveCodexVersionForSetup(resumeBackend);
     try {
         state = sm.update(statePath, s => {
-            s.active = !config.pausedMode;
-            if (config.resetMode) {
-                s.iteration = 0;
-                s.start_time_epoch = config.startEpoch;
-            }
-            if (config.explicitFlags.has('max-iterations'))
-                s.max_iterations = config.loopLimit;
-            if (config.explicitFlags.has('max-time'))
-                s.max_time_minutes = config.timeLimit;
-            if (config.explicitFlags.has('worker-timeout'))
-                s.worker_timeout_seconds = config.workerTimeout;
-            if (config.promiseToken)
-                s.completion_promise = config.promiseToken;
-            if (config.explicitFlags.has('min-iterations'))
-                s.min_iterations = config.minIterations;
-            if (config.explicitFlags.has('command-template'))
-                s.command_template = config.commandTemplate;
-            if (config.tmuxMode)
-                s.tmux_mode = true;
-            if (config.chainMeeseeks)
-                s.chain_meeseeks = true;
-            if (config.explicitFlags.has('backend') && config.backend)
-                s.backend = config.backend;
-            if (config.explicitFlags.has('teams'))
-                s.teams_mode = config.teamsMode;
-            if (config.explicitFlags.has('max-parallel'))
-                s.max_parallel = config.maxParallel;
-            if (config.explicitFlags.has('effort'))
-                s.effort = config.effort;
-            s.session_dir = fullSessionPath;
+            applyResumeConfig(s, config, fullSessionPath, codexVersionSeen);
         });
     }
     catch {
@@ -432,6 +527,7 @@ function resolveTask(config) {
     return taskStr;
 }
 function createInitialState(config, sessionPath, taskStr) {
+    const codexVersionSeen = resolveCodexVersionForSetup(config.backend);
     const state = {
         active: !config.pausedMode && !config.tmuxMode,
         working_dir: process.cwd(),
@@ -462,7 +558,7 @@ function createInitialState(config, sessionPath, taskStr) {
         phase_personas_active: false,
         flags: {},
         readiness: { cycle_history: [] },
-        codex_version_seen: null,
+        codex_version_seen: codexVersionSeen,
     };
     const startCommit = resolveStartCommit();
     if (config.prdPath)

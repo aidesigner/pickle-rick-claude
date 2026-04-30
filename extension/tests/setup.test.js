@@ -826,15 +826,27 @@ function makeExtensionRootWithSettings(settings) {
     return extRoot;
 }
 
+function makeCodexSmokeEnv(extraEnv) {
+    const shimDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-codex-bin-'));
+    const shimPath = path.join(shimDir, 'codex');
+    fs.writeFileSync(shimPath, '#!/bin/sh\necho "codex 0.42.1"\n');
+    fs.chmodSync(shimPath, 0o755);
+    return {
+        env: { ...extraEnv, PATH: `${shimDir}${path.delimiter}${process.env.PATH ?? ''}` },
+        cleanup: () => fs.rmSync(shimDir, { recursive: true, force: true }),
+    };
+}
+
 test('setup: iteration_budget_per_backend.codex honored when --backend codex', () => {
     const extRoot = makeExtensionRootWithSettings({
         default_max_iterations: 100,
         iteration_budget_per_backend: { claude: 100, codex: 80 },
     });
     const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-budget-data-'));
+    const codexEnv = makeCodexSmokeEnv({ EXTENSION_DIR: extRoot, PICKLE_DATA_ROOT: dataRoot });
     const output = runSetupWithEnv(
         ['--backend', 'codex', '--task', 'codex-budget-test'],
-        { EXTENSION_DIR: extRoot, PICKLE_DATA_ROOT: dataRoot }
+        codexEnv.env
     );
     const sessionPath = output.match(/SESSION_ROOT=(.+)/)[1].trim();
     try {
@@ -842,6 +854,7 @@ test('setup: iteration_budget_per_backend.codex honored when --backend codex', (
         assert.equal(state.max_iterations, 80, 'codex backend must pick up codex per-backend budget');
         assert.equal(state.backend, 'codex');
     } finally {
+        codexEnv.cleanup();
         fs.rmSync(extRoot, { recursive: true, force: true });
         fs.rmSync(dataRoot, { recursive: true, force: true });
     }
@@ -861,9 +874,10 @@ test('setup: promotes newer dead-writer pickle_settings tmp before applying back
     fs.utimesSync(`${settingsPath}.tmp.99999999`, newer, newer);
 
     const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-budget-data-'));
+    const codexEnv = makeCodexSmokeEnv({ EXTENSION_DIR: extRoot, PICKLE_DATA_ROOT: dataRoot });
     const output = runSetupWithEnv(
         ['--backend', 'codex', '--task', 'codex-budget-tmp-test'],
-        { EXTENSION_DIR: extRoot, PICKLE_DATA_ROOT: dataRoot }
+        codexEnv.env
     );
     const sessionPath = output.match(/SESSION_ROOT=(.+)/)[1].trim();
     try {
@@ -875,6 +889,7 @@ test('setup: promotes newer dead-writer pickle_settings tmp before applying back
         });
         assert.equal(fs.existsSync(`${settingsPath}.tmp.99999999`), false);
     } finally {
+        codexEnv.cleanup();
         fs.rmSync(extRoot, { recursive: true, force: true });
         fs.rmSync(dataRoot, { recursive: true, force: true });
     }
@@ -906,15 +921,17 @@ test('setup: falls back to default_max_iterations when iteration_budget_per_back
         // no iteration_budget_per_backend field at all
     });
     const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-budget-data-'));
+    const codexEnv = makeCodexSmokeEnv({ EXTENSION_DIR: extRoot, PICKLE_DATA_ROOT: dataRoot });
     const output = runSetupWithEnv(
         ['--backend', 'codex', '--task', 'budget-fallback-test'],
-        { EXTENSION_DIR: extRoot, PICKLE_DATA_ROOT: dataRoot }
+        codexEnv.env
     );
     const sessionPath = output.match(/SESSION_ROOT=(.+)/)[1].trim();
     try {
         const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
         assert.equal(state.max_iterations, 250, 'absent per-backend map must fall through to default_max_iterations');
     } finally {
+        codexEnv.cleanup();
         fs.rmSync(extRoot, { recursive: true, force: true });
         fs.rmSync(dataRoot, { recursive: true, force: true });
     }
@@ -926,15 +943,17 @@ test('setup: falls back to default_max_iterations when backend missing from per-
         iteration_budget_per_backend: { claude: 100 }, // no codex entry
     });
     const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-budget-data-'));
+    const codexEnv = makeCodexSmokeEnv({ EXTENSION_DIR: extRoot, PICKLE_DATA_ROOT: dataRoot });
     const output = runSetupWithEnv(
         ['--backend', 'codex', '--task', 'budget-missing-key-test'],
-        { EXTENSION_DIR: extRoot, PICKLE_DATA_ROOT: dataRoot }
+        codexEnv.env
     );
     const sessionPath = output.match(/SESSION_ROOT=(.+)/)[1].trim();
     try {
         const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
         assert.equal(state.max_iterations, 250, 'codex backend with no codex key must fall through to default_max_iterations');
     } finally {
+        codexEnv.cleanup();
         fs.rmSync(extRoot, { recursive: true, force: true });
         fs.rmSync(dataRoot, { recursive: true, force: true });
     }
@@ -948,9 +967,10 @@ test('setup: ignores fractional numeric settings and backend budgets', () => {
         iteration_budget_per_backend: { claude: 100, codex: 80.5 },
     });
     const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-budget-data-'));
+    const codexEnv = makeCodexSmokeEnv({ EXTENSION_DIR: extRoot, PICKLE_DATA_ROOT: dataRoot });
     const output = runSetupWithEnv(
         ['--backend', 'codex', '--task', 'fractional-budget-test'],
-        { EXTENSION_DIR: extRoot, PICKLE_DATA_ROOT: dataRoot }
+        codexEnv.env
     );
     const sessionPath = output.match(/SESSION_ROOT=(.+)/)[1].trim();
     try {
@@ -959,6 +979,7 @@ test('setup: ignores fractional numeric settings and backend budgets', () => {
         assert.equal(state.max_time_minutes, 720, 'fractional max_time must fall back to defaults');
         assert.equal(state.worker_timeout_seconds, 1200, 'fractional worker timeout must fall back to defaults');
     } finally {
+        codexEnv.cleanup();
         fs.rmSync(extRoot, { recursive: true, force: true });
         fs.rmSync(dataRoot, { recursive: true, force: true });
     }
