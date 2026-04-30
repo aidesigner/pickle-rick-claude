@@ -8,6 +8,7 @@ import {
   StateError,
   LockError,
   TransactionError,
+  SchemaVersionMismatchError,
   STATE_MANAGER_DEFAULTS,
 } from '../types/index.js';
 import { writeStateFile } from '../services/pickle-utils.js';
@@ -48,6 +49,16 @@ function withDir(fn) {
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+}
+
+function assertV3Defaults(state) {
+  assert.equal(state.archaeology, null);
+  assert.equal(state.tickets_version, 0);
+  assert.equal(state.last_course_correction, null);
+  assert.equal(state.phase_personas_active, false);
+  assert.deepEqual(state.flags, {});
+  assert.deepEqual(state.readiness, { cycle_history: [] });
+  assert.equal(state.codex_version_seen, null);
 }
 
 // ---------------------------------------------------------------------------
@@ -144,9 +155,11 @@ test('StateManager.read: migrates undefined schema_version to current schema', (
     fs.writeFileSync(sp, JSON.stringify(state, null, 2));
     const result = sm.read(sp);
     assert.equal(result.schema_version, 3);
+    assertV3Defaults(result);
     // Persisted to disk
     const onDisk = JSON.parse(fs.readFileSync(sp, 'utf-8'));
     assert.equal(onDisk.schema_version, 3);
+    assertV3Defaults(onDisk);
   });
 });
 
@@ -209,12 +222,40 @@ test('StateManager.read: migrates past schema version to current schema', () => 
     writeStateFile(sp, makeState({ schema_version: 2 }));
     const result = sm.read(sp);
     assert.equal(result.schema_version, 3);
+    assertV3Defaults(result);
     assert.equal(result.prd_path, undefined);
     assert.equal(result.start_commit, undefined);
     const onDisk = JSON.parse(fs.readFileSync(sp, 'utf-8'));
     assert.equal(onDisk.schema_version, 3);
+    assertV3Defaults(onDisk);
     assert.equal('prd_path' in onDisk, false);
     assert.equal('start_commit' in onDisk, false);
+  });
+});
+
+test('StateManager.read: preserves existing v3 values while hydrating missing defaults', () => {
+  withDir((dir) => {
+    const sm = new StateManager({ schemaVersion: 3 });
+    const sp = path.join(dir, 'state.json');
+    writeStateFile(sp, makeState({
+      schema_version: 2,
+      tickets_version: 7,
+      phase_personas_active: true,
+      flags: { strict_teams: true, custom: 'yes' },
+      readiness: { cycle_history: [{ cycle: 1, status: 'pass', suggested_analyst: null, user_action: null, timestamp: '2026-04-30T00:00:00Z' }] },
+      codex_version_seen: '0.42.0',
+    }));
+
+    const result = sm.read(sp);
+
+    assert.equal(result.schema_version, 3);
+    assert.equal(result.tickets_version, 7);
+    assert.equal(result.phase_personas_active, true);
+    assert.deepEqual(result.flags, { strict_teams: true, custom: 'yes' });
+    assert.equal(result.readiness.cycle_history.length, 1);
+    assert.equal(result.codex_version_seen, '0.42.0');
+    assert.equal(result.archaeology, null);
+    assert.equal(result.last_course_correction, null);
   });
 });
 
@@ -582,6 +623,32 @@ test('StateManager.transaction: releases locks on failure', () => {
     } catch { /* expected */ }
 
     assert.equal(fs.existsSync(`${sp1}.lock`), false, 'lock should be released');
+  });
+});
+
+test('StateManager.transaction: refuses write when on-disk schema advances after read', () => {
+  withDir((dir) => {
+    const sm = new StateManager({ schemaVersion: 3 });
+    const sp = path.join(dir, 'state.json');
+    writeStateFile(sp, makeState({ schema_version: 3, iteration: 1 }));
+
+    assert.throws(
+      () => sm.transaction([sp], (states) => {
+        states[0].iteration = 2;
+        fs.writeFileSync(sp, JSON.stringify(makeState({ schema_version: 4, iteration: 99 }), null, 2));
+      }),
+      (err) => {
+        assert.ok(err instanceof SchemaVersionMismatchError);
+        assert.equal(err.code, 'SCHEMA_MISMATCH');
+        assert.equal(err.onDiskVersion, 4);
+        assert.equal(err.cachedVersion, 3);
+        return true;
+      },
+    );
+
+    const onDisk = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+    assert.equal(onDisk.schema_version, 4);
+    assert.equal(onDisk.iteration, 99);
   });
 });
 

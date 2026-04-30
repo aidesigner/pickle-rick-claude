@@ -39,6 +39,18 @@ export class TransactionError extends StateError {
         this.rollbackErrors = rollbackErrors;
     }
 }
+export class SchemaVersionMismatchError extends StateError {
+    statePath;
+    onDiskVersion;
+    cachedVersion;
+    constructor(statePath, onDiskVersion, cachedVersion) {
+        super('SCHEMA_MISMATCH', `State file ${statePath} schema_version ${onDiskVersion} is newer than transaction snapshot schema_version ${cachedVersion}`);
+        this.name = 'SchemaVersionMismatchError';
+        this.statePath = statePath;
+        this.onDiskVersion = onDiskVersion;
+        this.cachedVersion = cachedVersion;
+    }
+}
 // ---------------------------------------------------------------------------
 // Default Configuration Values
 // ---------------------------------------------------------------------------

@@ -18,6 +18,7 @@ import {
   StateError,
   LockError,
   TransactionError,
+  SchemaVersionMismatchError,
 } from '../types/index.js';
 import { writeStateFile, safeErrorMessage } from './pickle-utils.js';
 
@@ -82,6 +83,28 @@ const V3_STATE_SHAPE_MARKERS = [
 
 function presentV3StateShapeMarkers(state: object): string[] {
   return V3_STATE_SHAPE_MARKERS.filter(field => Object.prototype.hasOwnProperty.call(state, field));
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeV3StateDefaults(state: State): void {
+  state.archaeology ??= null;
+  if (typeof state.tickets_version !== 'number' || !Number.isFinite(state.tickets_version)) {
+    state.tickets_version = 0;
+  }
+  state.last_course_correction ??= null;
+  if (typeof state.phase_personas_active !== 'boolean') state.phase_personas_active = false;
+  if (!isRecord(state.flags)) state.flags = {};
+
+  if (!isRecord(state.readiness)) {
+    state.readiness = { cycle_history: [] };
+  } else if (!Array.isArray(state.readiness.cycle_history)) {
+    state.readiness.cycle_history = [];
+  }
+
+  if (typeof state.codex_version_seen !== 'string') state.codex_version_seen = null;
 }
 
 function isStateSnapshotNewer(
@@ -195,6 +218,7 @@ export class StateManager {
       state.schema_version = 1;
       process.stderr.write(`[state-manager] schema_version missing in ${statePath} — migrating to 1\n`);
       // Best-effort persist migration — don't throw if write fails
+      if (this.opts.schemaVersion >= 3) normalizeV3StateDefaults(state);
       try { writeMigrationStateFile(statePath, state); } catch { /* migration write failed, non-fatal */ }
     }
 
@@ -207,8 +231,11 @@ export class StateManager {
 
     if (state.schema_version < this.opts.schemaVersion) {
       state.schema_version = this.opts.schemaVersion;
+      if (this.opts.schemaVersion >= 3) normalizeV3StateDefaults(state);
       process.stderr.write(`[state-manager] migrating ${statePath} to schema_version ${this.opts.schemaVersion}\n`);
       try { writeMigrationStateFile(statePath, state); } catch { /* migration write failed, non-fatal */ }
+    } else if (state.schema_version >= 3) {
+      normalizeV3StateDefaults(state);
     }
   }
 
@@ -238,8 +265,9 @@ export class StateManager {
 
     try {
       const states = sorted.map(p => this.read(p));
+      const snapshotSchemaVersions = states.map(state => state.schema_version ?? 1);
       mutator(states);
-      this.writeAllWithRollback(sorted, states);
+      this.writeAllWithRollback(sorted, states, snapshotSchemaVersions);
       return paths.map(p => states[sorted.indexOf(p)]);
     } finally {
       for (const p of lockedPaths) this.releaseLock(p);
@@ -260,15 +288,17 @@ export class StateManager {
     }
   }
 
-  private writeAllWithRollback(sorted: string[], states: State[]): void {
+  private writeAllWithRollback(sorted: string[], states: State[], snapshotSchemaVersions: number[]): void {
     const originals = sorted.map(p => ({ path: p, backup: fs.readFileSync(p, 'utf-8') }));
     const written: string[] = [];
     try {
       for (let i = 0; i < sorted.length; i++) {
+        this.assertOnDiskSchemaNotNewer(sorted[i], snapshotSchemaVersions[i]);
         writeStateFile(sorted[i], states[i]);
         written.push(sorted[i]);
       }
     } catch (writeErr) {
+      if (writeErr instanceof SchemaVersionMismatchError) throw writeErr;
       const rollbackErrors: Error[] = [];
       for (const wp of written) {
         const orig = originals.find(o => o.path === wp);
@@ -281,6 +311,19 @@ export class StateManager {
       }
       throw new TransactionError(`Transaction write failed: ${safeErrorMessage(writeErr)}`, rollbackErrors);
     }
+  }
+
+  private assertOnDiskSchemaNotNewer(statePath: string, cachedVersion: number): void {
+    let onDisk: { schema_version?: unknown };
+    try {
+      onDisk = JSON.parse(fs.readFileSync(statePath, 'utf-8')) as { schema_version?: unknown };
+    } catch {
+      return;
+    }
+
+    const onDiskVersion = Number(onDisk.schema_version ?? 1);
+    if (!Number.isFinite(onDiskVersion) || onDiskVersion <= cachedVersion) return;
+    throw new SchemaVersionMismatchError(statePath, onDiskVersion, cachedVersion);
   }
 
   // -----------------------------------------------------------------------

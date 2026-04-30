@@ -456,6 +456,13 @@ function createInitialState(config, sessionPath, taskStr) {
         teams_mode: config.teamsMode || undefined,
         max_parallel: config.teamsMode ? config.maxParallel : undefined,
         effort: config.effort,
+        archaeology: null,
+        tickets_version: 0,
+        last_course_correction: null,
+        phase_personas_active: false,
+        flags: {},
+        readiness: { cycle_history: [] },
+        codex_version_seen: null,
     };
     const startCommit = resolveStartCommit();
     if (config.prdPath)

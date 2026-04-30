@@ -23,6 +23,13 @@
     "backend",
     "teams_mode",
     "max_parallel",
+    "archaeology",
+    "tickets_version",
+    "last_course_correction",
+    "phase_personas_active",
+    "flags",
+    "readiness",
+    "codex_version_seen",
     "start_commit"
   ],
   "sample_state": {
@@ -48,6 +55,15 @@
     "backend": "claude",
     "teams_mode": false,
     "max_parallel": 5,
+    "archaeology": null,
+    "tickets_version": 0,
+    "last_course_correction": null,
+    "phase_personas_active": false,
+    "flags": {},
+    "readiness": {
+      "cycle_history": []
+    },
+    "codex_version_seen": null,
     "start_commit": "abc123"
   }
 }

@@ -57,6 +57,13 @@ export interface State {
    * this — its iterations are per-ticket spawns.
    */
   codex_manager_relaunch_count?: number;
+  archaeology?: ProjectContext | null;
+  tickets_version?: number;
+  last_course_correction?: CourseCorrectionRecord | null;
+  phase_personas_active?: boolean;
+  flags?: StateFlags;
+  readiness?: ReadinessState;
+  codex_version_seen?: string | null;
 }
 
 /**
@@ -70,6 +77,61 @@ export const FALSE_EPIC_THRESHOLD = 3;
 export type Backend = 'claude' | 'codex';
 
 export const BACKENDS: readonly Backend[] = ['claude', 'codex'] as const;
+
+export interface ProjectContext {
+  project_context_path: string;
+  last_run_iso: string;
+  file_count: number;
+  project_type: string;
+}
+
+export interface CourseCorrectionRecord {
+  proposal_path: string;
+  applied_iso: string;
+  restart_ticket_id: string | null;
+  before_count: number;
+  after_count: number;
+}
+
+export interface StateFlags {
+  strict_teams?: boolean;
+  [key: string]: unknown;
+}
+
+export interface ReadinessCycleHistoryEntry {
+  cycle: number;
+  status: string;
+  suggested_analyst: string | null;
+  user_action: string | null;
+  timestamp: string;
+}
+
+export interface ReadinessState {
+  cycle_history: ReadinessCycleHistoryEntry[];
+  [key: string]: unknown;
+}
+
+export interface PhasePersona {
+  phase: string;
+  subagent_type: string;
+  model?: string;
+  [key: string]: unknown;
+}
+
+export interface ChangeProposal {
+  proposal_path: string;
+  restart_ticket_id: string | null;
+  before_count: number;
+  after_count: number;
+  [key: string]: unknown;
+}
+
+export interface DebateRound {
+  round: number;
+  participants: string[];
+  result_path?: string;
+  [key: string]: unknown;
+}
 
 export interface ActivityLogEntry {
   event: string;
@@ -124,6 +186,23 @@ export class TransactionError extends StateError {
     super('WRITE_FAILED', message);
     this.name = 'TransactionError';
     this.rollbackErrors = rollbackErrors;
+  }
+}
+
+export class SchemaVersionMismatchError extends StateError {
+  readonly statePath: string;
+  readonly onDiskVersion: number;
+  readonly cachedVersion: number;
+
+  constructor(statePath: string, onDiskVersion: number, cachedVersion: number) {
+    super(
+      'SCHEMA_MISMATCH',
+      `State file ${statePath} schema_version ${onDiskVersion} is newer than transaction snapshot schema_version ${cachedVersion}`,
+    );
+    this.name = 'SchemaVersionMismatchError';
+    this.statePath = statePath;
+    this.onDiskVersion = onDiskVersion;
+    this.cachedVersion = cachedVersion;
   }
 }
 
