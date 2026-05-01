@@ -13,7 +13,7 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 | # | PRD | Status | Next action |
 |---|---|---|---|
-| 1 | [`prds/pipeline-state-desync-and-pane-respawn-tmpdir.md`](pipeline-state-desync-and-pane-respawn-tmpdir.md) | **In flight (P1)** — `/pickle-pipeline --backend codex` running on session `2026-05-01-c9595747`, currently on Phase 1/4 PICKLE | Watch session; pipeline-runner advances pickle → citadel → anatomy-park → szechuan-sauce |
+| 1 | [`prds/pipeline-state-desync-and-pane-respawn-tmpdir.md`](pipeline-state-desync-and-pane-respawn-tmpdir.md) | **In flight (P1)** — `/pickle-pipeline --backend codex` on session `2026-05-01-c9595747`. Pickle ✓ (3 iter, 41m, ticket `bf46297b` Done — likely PSD-T0). Citadel ✓ (1 finding). **Anatomy-park running since 19:07** (Phase 3/4). Bugs 1+3 from the PRD reproducing live during the run (state.iteration desync, panes 1+3 dying at phase transition) — validates scope. | Watch anatomy-park convergence; szechuan-sauce next |
 | 2 | [`prds/hermes-integration.md`](hermes-integration.md) | **Ready (P2)** — research complete (`prds/hermes-research.md`), 30 Qs answered, 4 open Qs resolved | `/pickle-refine-prd` → bundle into next overnight run |
 | 3 | [`prds/multi-repo-task-state-drift.md`](multi-repo-task-state-drift.md) | **Refined draft** — high impact when triggered (multi-repo flows only) | Pick up after hermes; needs scoping decision |
 | 4 | [`prds/god-functions-remediation-phase-2.md`](god-functions-remediation-phase-2.md) | **Draft** — 27 carve-outs from Phase 1 to remove; worst offender `runGate` (cyclomatic 65) | Refactor epic; bundle behind hermes |
