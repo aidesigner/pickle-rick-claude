@@ -5,6 +5,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { compatibleCodexVersion, codexVersionLine } from './__helpers__/codex-shim.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SETUP = path.resolve(__dirname, '../bin/setup.js');
@@ -35,7 +36,7 @@ function cleanup(sessionPath) {
 function makeCodexSmokeEnv() {
     const shimDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-teams-codex-bin-'));
     const shimPath = path.join(shimDir, 'codex');
-    fs.writeFileSync(shimPath, '#!/bin/sh\necho "codex 0.42.1"\n');
+    fs.writeFileSync(shimPath, `#!/bin/sh\necho "${codexVersionLine(compatibleCodexVersion())}"\n`);
     fs.chmodSync(shimPath, 0o755);
     return {
         env: { EXTENSION_DIR: REPO_ROOT, PATH: `${shimDir}${path.delimiter}${process.env.PATH ?? ''}` },
