@@ -1,6 +1,6 @@
 # MASTER_PLAN — Pickle Rick Engineering Lifecycle
 
-**Last updated**: 2026-05-01 PM (loop-runner-relaunch SHIPPED via session `21605b33`; ac-phase-gate timeout SHIPPED standalone; pipeline-state-desync PRD IN FLIGHT on session `c9595747`; **NEW P1** `anatomy-park-runner-undefined-description-crash.md` logged from `loanlight-api` session `a78affa6`)
+**Last updated**: 2026-05-01 PM (**v1.66.0 SHIPPED** — gate-baseline + state-desync T0..T5 + loop-runner + ac-phase-gate; **3 P1s bundled** into `p1-bug-bundle-2026-05-01-pm.md` — IN FLIGHT next)
 
 This file is **operational** — it tells the next coding agent what to work on. Historical narrative lives in:
 - `docs/codex-prompt-design-notes.md` — codex-backend prompt-design lessons (FM-1..FM-4, literalism, scope confusion)
@@ -13,15 +13,13 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 | # | PRD | Status | Next action |
 |---|---|---|---|
-| 1 | [`prds/anatomy-park-gate-baseline-missing.md`](anatomy-park-gate-baseline-missing.md) ⭐ **P1** — blocks all `/pickle-pipeline` runs | **Draft** — 100% reproducible failure (2 consecutive runs `21605b33` + `c9595747` both exit 1 at anatomy-park iter 2). Gap-analysis log claims baseline initialized but `gate/` dir doesn't exist on disk; strict-mode fallback exits within ~1 sec with no recovery. 8 ACs, 9 atomic tickets, ~425 LOC. | `/pickle-pipeline --backend codex --skip-anatomy` to ship this fix without hitting itself; OR run as `/pickle-tmux` (no anatomy-park) |
-| 1b | [`prds/anatomy-park-runner-undefined-description-crash.md`](anatomy-park-runner-undefined-description-crash.md) ⭐ **NEW P1** — second anatomy-park failure mode | **Draft** — observed once on `loanlight-api` session `a78affa6` running DSCR-v1 hardening PRD. After 1 clean pass on `packages` subsystem, iter 3 crashes inside `microverse-runner.ts` with `Cannot read properties of undefined (reading 'description')`. Suspected site `mvState.key_metric.description` at lines 1063/1188 — anatomy-park has no `key_metric` (microverse-only field). 6 ACs, ~150–250 LOC. Distinct from gate-baseline P1 (different iter, different stack, `gate/` exists). Halts pipeline → szechuan-sauce never ran on that session. | After gate-baseline ships, run together with `--skip-szechuan` first to isolate; OR run `/pickle-tmux` directly against this PRD |
-| 2 | [`prds/pipeline-state-desync-and-pane-respawn-tmpdir.md`](pipeline-state-desync-and-pane-respawn-tmpdir.md) | **Partially shipped on `c9595747`** — pickle ✓ shipped 5 of 11 tickets (PSD-T0..T5) in 4 commits `86581ce..8316dc0`. Anatomy-park failed → szechuan-sauce never ran → PSD-T6..T10 (fixture migration, ESLint rule, integration test, trap-door catalog, closer) NOT shipped. | Re-run with `--skip-anatomy` after the gate-baseline PRD lands, OR ship remaining tickets manually |
-| 3 | (was here) — current pipeline c9595747 ended `failed` at 19:22:07 | — | — |
-| 2 | [`prds/hermes-integration.md`](hermes-integration.md) | **Ready (P2)** — research complete (`prds/hermes-research.md`), 30 Qs answered, 4 open Qs resolved | `/pickle-refine-prd` → bundle into next overnight run |
-| 3 | [`prds/multi-repo-task-state-drift.md`](multi-repo-task-state-drift.md) | **Refined draft** — high impact when triggered (multi-repo flows only) | Pick up after hermes; needs scoping decision |
-| 4 | [`prds/god-functions-remediation-phase-2.md`](god-functions-remediation-phase-2.md) | **Draft** — 27 carve-outs from Phase 1 to remove; worst offender `runGate` (cyclomatic 65) | Refactor epic; bundle behind hermes |
-| 5 | [`prds/deepseek-integration.md`](deepseek-integration.md) | **Draft** — third backend via Anthropic-compat shim (~230 LOC) | Lower priority than hermes (rides claude CLI) |
-| 6 | (proposed) `prds/package-json-deploy-parity-gap.md` | **Not yet drafted** — `engines.codex` source/deploy drift caught only by smoke check; AC-RVN-08 parity assertion does not cover `package.json` | Draft as P3 follow-up alongside hermes |
+| 1 | [`prds/p1-bug-bundle-2026-05-01-pm.md`](p1-bug-bundle-2026-05-01-pm.md) ⭐ **P1 BUNDLE — IN FLIGHT NEXT** | **Draft (manifest)** — composes 3 source P1s into one `/pickle-pipeline --backend codex` run. Section A: anatomy-park-runner-undefined-description-crash (5 ACs, ~150-250 LOC). Section B: szechuan-sauce-codex-judge-model-mismatch (5 ACs, ~200-300 LOC). Section C: pipeline-state-desync TAIL — PSD-T6..T10 (5 tickets, ~250 LOC) closing the v1.66.0 npm-test workaround. ~16 atomic tickets, ~600-800 LOC. Refinement orders C → A → B. | `/pickle-pipeline --backend codex` on the bundle; bundle's own anatomy-park + szechuan phases will validate sections A and B on their own diff |
+| 2 | [`prds/anatomy-park-gate-baseline-missing.md`](anatomy-park-gate-baseline-missing.md) | **SHIPPED v1.66.0** — 9 atomic tickets converged in 91m on session `bfa25a4b`; gate-baseline write-verify, recapture-before-strict-mode, strict-red through stall-limit, integration test all landed | — |
+| 3 | [`prds/hermes-integration.md`](hermes-integration.md) | **Ready (P2)** — research complete, 30 Qs answered, 4 open Qs resolved | `/pickle-refine-prd` → next overnight bundle |
+| 4 | [`prds/multi-repo-task-state-drift.md`](multi-repo-task-state-drift.md) | **Refined draft** — high impact when triggered (multi-repo flows only) | Pick up after hermes; needs scoping decision |
+| 5 | [`prds/god-functions-remediation-phase-2.md`](god-functions-remediation-phase-2.md) | **Draft** — 27 carve-outs from Phase 1 to remove; worst offender `runGate` (cyclomatic 65) | Refactor epic; bundle behind hermes |
+| 6 | [`prds/deepseek-integration.md`](deepseek-integration.md) | **Draft** — third backend via Anthropic-compat shim (~230 LOC) | Lower priority than hermes (rides claude CLI) |
+| 7 | (proposed) `prds/package-json-deploy-parity-gap.md` | **Not yet drafted** — `engines.codex` source/deploy drift caught only by smoke check; AC-RVN-08 parity assertion does not cover `package.json` | Draft as P3 follow-up alongside hermes |
 
 **Residuals** (not their own queue slot, will be swept opportunistically):
 - AC-SSV-04, AC-SSV-06, AC-LPB-07, AC-RVN-11 (24h soak), AC-RVN-12 (self-propagation negative test) — see [`state-schema-version-ordering-incident.md`](state-schema-version-ordering-incident.md), [`large-pipeline-time-budget-undersized.md`](large-pipeline-time-budget-undersized.md), [`schema-version-deploy-reversion-rca.md`](schema-version-deploy-reversion-rca.md).
@@ -37,9 +35,10 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 | Path | Status | Notes |
 |---|---|---|
-| `anatomy-park-gate-baseline-missing.md` | **Draft (P1)** | 100% failure at anatomy-park iter 2; 8 ACs, 9 atomic tickets, ~425 LOC; blocks all `/pickle-pipeline` runs through anatomy-park phase |
-| `anatomy-park-runner-undefined-description-crash.md` | **Draft (P1)** ⭐ NEW | Iter-3 crash inside `microverse-runner.ts` accessing `mvState.key_metric.description` (microverse-only field) when running anatomy-park; observed once on `loanlight-api` session `a78affa6`; 6 ACs, ~150–250 LOC; halts pipeline → blocks szechuan-sauce |
-| `pipeline-state-desync-and-pane-respawn-tmpdir.md` | **Partially shipped (P1)** | 5 of 11 tickets shipped (PSD-T0..T5) on `c9595747`; remaining 6 tickets (T6..T10) deferred — run with `--skip-anatomy` after gate-baseline PRD lands |
+| `p1-bug-bundle-2026-05-01-pm.md` | **Manifest (P1)** ⭐ NEW — IN FLIGHT NEXT | Composes 3 source P1s; ~16 atomic tickets; ~600-800 LOC; backend: codex-required |
+| `anatomy-park-runner-undefined-description-crash.md` | **In bundle (P1)** | Section A of the bundle. AC-APRC-01..05 mandatory + 06 optional. Source PRD stays canonical |
+| `szechuan-sauce-codex-judge-model-mismatch.md` | **In bundle (P1)** | Section B of the bundle. AC-SCJM-01..05 mandatory + 06 optional. Source PRD stays canonical |
+| `pipeline-state-desync-and-pane-respawn-tmpdir.md` | **In bundle (P1)** | Section C TAIL. PSD-T6..T10 remaining (T0..T5 SHIPPED v1.66.0) |
 | `hermes-integration.md` + `hermes-research.md` | **Ready (P2)** | Fourth backend `'hermes'`; 12 FRs + 5 NFRs + ~20 new tests |
 | `multi-repo-task-state-drift.md` | **Refined draft** | T1-T4 partially shipped pre-v1.63.0; remainder TBD |
 | `god-functions-remediation-phase-2.md` | **Draft** | 27 god-fns × ~20 tickets to remove ESLint carve-outs |
