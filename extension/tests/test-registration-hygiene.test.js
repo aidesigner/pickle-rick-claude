@@ -13,6 +13,7 @@ const UNREGISTERED_TEST_ALLOWLIST = new Set([
   'tests/bin/spawn-gate-remediator.test.js',
   'tests/integration/anatomy-park-baseline-gate.test.js',
   'tests/integration/anatomy-park-scoped-final-gate.test.js',
+  'tests/integration/anatomy-park-stall-limit.test.js',
   'tests/integration/concurrent-gate-remediation.test.js',
   'tests/integration/extension-wiring.test.js',
   'tests/integration/gate-cycle-escalation.test.js',
