@@ -77,7 +77,10 @@ export const Defaults = {
 // ---------------------------------------------------------------------------
 // Lifecycle Steps
 // ---------------------------------------------------------------------------
-export const VALID_STEPS = ['prd', 'breakdown', 'research', 'plan', 'implement', 'refactor', 'review', 'completed'];
+export const VALID_STEPS = [
+    'prd', 'breakdown', 'research', 'plan', 'implement', 'refactor', 'review', 'completed',
+    'pickle', 'citadel', 'anatomy-park', 'szechuan-sauce',
+];
 // ---------------------------------------------------------------------------
 // Promise Tokens
 // ---------------------------------------------------------------------------
@@ -167,6 +170,8 @@ export const VALID_ACTIVITY_EVENTS = [
     'course_correct_recovered',
     'current_ticket_redirected_to_new',
     'readiness_delta_requested',
+    'phase_transition',
+    'extension_dir_fallback',
     'halt',
 ];
 export var PipelineRunnerExitCode;

@@ -56,7 +56,7 @@ function withBrokenCanadianDateLocale(fn) {
 
 // --- VALID_ACTIVITY_EVENTS ---
 
-test('VALID_ACTIVITY_EVENTS contains all 59 expected event types', () => {
+test('VALID_ACTIVITY_EVENTS contains all 61 expected event types', () => {
     const expected = [
         'session_start', 'session_end', 'ticket_completed', 'epic_completed',
         'meeseeks_pass', 'commit', 'research', 'bug_fix', 'feature',
@@ -101,11 +101,14 @@ test('VALID_ACTIVITY_EVENTS contains all 59 expected event types', () => {
         'course_correct_recovered',
         'current_ticket_redirected_to_new',
         'readiness_delta_requested',
+        // Pipeline lifecycle and fallback observability events.
+        'phase_transition',
+        'extension_dir_fallback',
         // mux-runner executeTimeoutHalt emits this to state.activity[] before
         // safeDeactivate so /pickle-status surfaces the timeout-repeat halt.
         'halt',
     ];
-    assert.equal(VALID_ACTIVITY_EVENTS.length, 59);
+    assert.equal(VALID_ACTIVITY_EVENTS.length, 61);
     for (const e of expected) {
         assert.ok(VALID_ACTIVITY_EVENTS.includes(e), `Missing event type: ${e}`);
     }

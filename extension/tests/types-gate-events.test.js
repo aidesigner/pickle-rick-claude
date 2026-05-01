@@ -76,6 +76,11 @@ const BMAD_TXN_TICKET_OPS_EVENTS = [
 
 const HALT_EVENTS = ['halt'];
 
+const PIPELINE_OBSERVABILITY_EVENTS = [
+  'phase_transition',
+  'extension_dir_fallback',
+];
+
 test('bmad-events: transaction-ticket-ops + correct-course events are in VALID_ACTIVITY_EVENTS', () => {
   // Per prds/citadel.md:1012, every emitted event MUST appear in VALID_ACTIVITY_EVENTS.
   // These are emitted from src/services/transaction-ticket-ops.ts via state.activity[]
@@ -91,5 +96,12 @@ test('bmad-events: halt event is in VALID_ACTIVITY_EVENTS', () => {
   const set = new Set(VALID_ACTIVITY_EVENTS);
   for (const name of HALT_EVENTS) {
     assert.ok(set.has(name), `Halt event missing from VALID_ACTIVITY_EVENTS: ${name}`);
+  }
+});
+
+test('pipeline-events: lifecycle/fallback observability events are in VALID_ACTIVITY_EVENTS', () => {
+  const set = new Set(VALID_ACTIVITY_EVENTS);
+  for (const name of PIPELINE_OBSERVABILITY_EVENTS) {
+    assert.ok(set.has(name), `Pipeline event missing from VALID_ACTIVITY_EVENTS: ${name}`);
   }
 });

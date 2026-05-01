@@ -86,6 +86,17 @@ test('updateState: valid step "refactor" is accepted', () => {
     });
 });
 
+test('updateState: pipeline lifecycle steps are accepted', () => {
+    const pipelineSteps = ['pickle', 'citadel', 'anatomy-park', 'szechuan-sauce'];
+    for (const step of pipelineSteps) {
+        withTempSession({ active: true, step: 'prd', iteration: 0 }, (dir) => {
+            assert.doesNotThrow(() => updateState('step', step, dir));
+            const state = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf-8'));
+            assert.equal(state.step, step);
+        });
+    }
+});
+
 test('updateState: invalid step throws with helpful message', () => {
     withTempSession({ active: true, step: 'prd', iteration: 0 }, (dir) => {
         assert.throws(
