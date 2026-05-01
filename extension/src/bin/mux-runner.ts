@@ -11,7 +11,15 @@ import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractEr
 import { buildManagerInvocation, resolveBackend, backendEnvOverrides } from '../services/backend-spawn.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { extractAssistantContent } from '../services/classifier-utils.js';
+import {
+  evaluateCodexManagerRelaunch,
+  recordCodexManagerRelaunch,
+} from '../services/codex-manager-relaunch.js';
 export { extractAssistantContent } from '../services/classifier-utils.js';
+export {
+  evaluateCodexManagerRelaunch,
+  recordCodexManagerRelaunch,
+} from '../services/codex-manager-relaunch.js';
 
 const sm = new StateManager();
 
@@ -1335,107 +1343,6 @@ function readPostIterationState(state: State, ctx: LoopContext): State {
   } catch {
     return state;
   }
-}
-
-/**
- * Codex tmux_mode runs ONE long-lived manager subprocess that internally
- * loops across many tickets. The 4h `Defaults.MAX_ITERATION_SECONDS`
- * hang-guard SIGTERMs that subprocess and resolves the iteration with
- * `{ completion: 'error', timedOut: true }`. The legacy error branch
- * unconditionally deactivates the session, stranding any tickets that
- * the manager had not yet picked up.
- *
- * This helper computes whether mux-runner should relaunch the codex
- * manager (next outer-loop iteration spawns a fresh subprocess that
- * resumes the remaining ticket queue) instead of exiting.
- *
- * Conditions (ALL must hold):
- *   - backend === 'codex' (claude is per-ticket; an error there is terminal)
- *   - tickets remain (Todo or In Progress, status normalized lower-case
- *     and quote-stripped to match the rest of the file)
- *   - relaunch counter is below `Defaults.CODEX_MANAGER_RELAUNCH_CAP`
- *   - circuit breaker is not OPEN (a tripped CB is the real failure mode
- *     and must surface; relaunch cannot heal it)
- */
-export interface CodexRelaunchDecision {
-  shouldRelaunch: boolean;
-  pendingCount: number;
-  nextRelaunchCount: number;
-  reason: 'eligible' | 'not_codex' | 'no_pending' | 'cap_exceeded' | 'circuit_open' | 'time_limit';
-}
-
-export function evaluateCodexManagerRelaunch(
-  state: State,
-  tickets: readonly TicketInfo[],
-  cbState: CircuitBreakerState | null,
-): CodexRelaunchDecision {
-  const backend = resolveBackend(state);
-  if (backend !== 'codex') {
-    return { shouldRelaunch: false, pendingCount: 0, nextRelaunchCount: 0, reason: 'not_codex' };
-  }
-  // AC-LPB-03: Hard wall-clock cap — relaunching after the time budget is
-  // exhausted only burns API turns the user already opted out of. Mirror the
-  // cap-gate in shouldExitForLimits() so codex relaunches honor the same
-  // budget as the main loop. Runs BEFORE every other decision branch so the
-  // budget cannot be papered over by pending tickets or a closed CB.
-  const startEpoch = Number.isFinite(Number(state.start_time_epoch)) ? Number(state.start_time_epoch) : 0;
-  const maxTimeMins = Number.isFinite(Number(state.max_time_minutes)) ? Number(state.max_time_minutes) : 0;
-  if (maxTimeMins > 0 && startEpoch > 0) {
-    const elapsedSec = Math.max(0, Math.floor(Date.now() / 1000) - startEpoch);
-    if (elapsedSec > maxTimeMins * 60) {
-      return { shouldRelaunch: false, pendingCount: 0, nextRelaunchCount: 0, reason: 'time_limit' };
-    }
-  }
-  // Tripped circuit breaker → real backend failure, do not paper over it.
-  if (cbState && cbState.state === 'OPEN') {
-    return { shouldRelaunch: false, pendingCount: 0, nextRelaunchCount: 0, reason: 'circuit_open' };
-  }
-  const norm = (s: string | null): string =>
-    (s || '').toLowerCase().replace(/["']/g, '').trim();
-  const pending = tickets.filter(t => {
-    if (!t.id) return false;
-    const s = norm(t.status);
-    return s !== 'done' && s !== 'skipped';
-  });
-  if (pending.length === 0) {
-    return { shouldRelaunch: false, pendingCount: 0, nextRelaunchCount: 0, reason: 'no_pending' };
-  }
-  const prior = Number(state.codex_manager_relaunch_count) || 0;
-  const cap = Defaults.CODEX_MANAGER_RELAUNCH_CAP;
-  if (prior >= cap) {
-    return { shouldRelaunch: false, pendingCount: pending.length, nextRelaunchCount: prior, reason: 'cap_exceeded' };
-  }
-  return { shouldRelaunch: true, pendingCount: pending.length, nextRelaunchCount: prior + 1, reason: 'eligible' };
-}
-
-/**
- * Persists the codex-manager relaunch decision: bumps
- * `state.codex_manager_relaunch_count` via the StateManager so concurrent
- * readers see the update, and emits a `codex_manager_relaunch` activity
- * event so standup/metrics surface it. Best-effort — caller already
- * decided to relaunch; a state-write failure logs a warning but still
- * lets the next iteration spawn a fresh manager.
- */
-export function recordCodexManagerRelaunch(
-  statePath: string,
-  sessionDir: string,
-  decision: CodexRelaunchDecision,
-  iteration: number,
-  log: (msg: string) => void,
-): void {
-  try {
-    sm.update(statePath, s => {
-      s.codex_manager_relaunch_count = decision.nextRelaunchCount;
-    });
-  } catch (err) {
-    log(`WARN: failed to persist codex_manager_relaunch_count: ${safeErrorMessage(err)}`);
-  }
-  logActivity({
-    event: 'codex_manager_relaunch',
-    source: 'pickle',
-    session: path.basename(sessionDir),
-    iteration,
-  });
 }
 
 export async function processCompletionBranch(state: State, result: IterationOutcome['completion'], ctx: LoopContext): Promise<LoopAction> {
