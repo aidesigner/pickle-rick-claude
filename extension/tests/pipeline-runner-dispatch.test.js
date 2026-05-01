@@ -178,6 +178,17 @@ function readLines(filePath) {
   return fs.readFileSync(filePath, 'utf-8').split(/\r?\n/);
 }
 
+function readActivityEvents(dataRoot) {
+  const activityDir = path.join(dataRoot, 'activity');
+  if (!fs.existsSync(activityDir)) return [];
+  return fs.readdirSync(activityDir)
+    .filter((file) => file.endsWith('.jsonl'))
+    .flatMap((file) => fs.readFileSync(path.join(activityDir, file), 'utf-8')
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line)));
+}
+
 function assertSectionBody(lines, heading, body) {
   const index = lines.indexOf(heading);
   assert.notEqual(index, -1);
@@ -253,6 +264,60 @@ describe('pipeline phase config dispatch', () => {
       assert.equal(state.command_template, 'pickle.md');
     } finally {
       cleanup([repo, sessionDir]);
+    }
+  });
+
+  test('main persists canonical phase transitions before phase execution', async () => {
+    const dataRoot = tmpDir('pipeline-dispatch-data-');
+    const originalDataRoot = process.env.PICKLE_DATA_ROOT;
+    process.env.PICKLE_DATA_ROOT = dataRoot;
+    const { repo, sessionDir } = makeSession(
+      ['pickle', 'anatomy-park', 'szechuan-sauce'],
+      {},
+      { step: 'implement', exit_reason: 'fatal' },
+    );
+    const fixture = writeCitadelHighFixture(repo, sessionDir);
+    updateState(sessionDir, { prd_path: fixture.prdPath, start_commit: fixture.startCommit });
+    const expectedChildSteps = ['pickle', 'anatomy-park', 'szechuan-sauce'];
+    const childSteps = [];
+    __setSpawnRunnerForTests(async () => {
+      const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+      const expectedStep = expectedChildSteps[childSteps.length];
+      assert.equal(state.step, expectedStep);
+      childSteps.push(state.step);
+      return 0;
+    });
+    try {
+      await expectMainExit(sessionDir, 0);
+      assert.deepEqual(childSteps, expectedChildSteps);
+
+      const status = JSON.parse(fs.readFileSync(path.join(sessionDir, 'pipeline-status.json'), 'utf-8'));
+      assert.equal(status.status, 'completed');
+      assert.equal(status.current_phase, null);
+      assert.equal(status.completed_phases, 4);
+      assert.equal(status.total_phases, 4);
+
+      const transitions = readActivityEvents(dataRoot).filter((event) => event.event === 'phase_transition');
+      assert.deepEqual(transitions.map((event) => event.next_phase), [
+        'pickle',
+        'citadel',
+        'anatomy-park',
+        'szechuan-sauce',
+      ]);
+      assert.equal(transitions[0].session, path.basename(sessionDir));
+      assert.equal(transitions[0].previous_phase, 'implement');
+      assert.equal(transitions[0].previous_exit_reason, 'fatal');
+      assert.equal(transitions[1].previous_phase, 'pickle');
+      assert.equal(transitions[1].next_phase, 'citadel');
+      assert.equal(transitions[2].previous_phase, 'citadel');
+      assert.equal(transitions[3].previous_phase, 'anatomy-park');
+    } finally {
+      if (originalDataRoot === undefined) {
+        delete process.env.PICKLE_DATA_ROOT;
+      } else {
+        process.env.PICKLE_DATA_ROOT = originalDataRoot;
+      }
+      cleanup([repo, sessionDir, dataRoot]);
     }
   });
 

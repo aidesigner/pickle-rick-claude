@@ -442,9 +442,10 @@ function buildCitadelSzechuanContext(report) {
  *      in the session dir from a previous run. A worker that scans the session
  *      dir might infer wrong context even with the right template. Remove them.
  *
- * Intentionally does NOT touch current_ticket / step / iteration /
- * start_time_epoch — pickle is the only phase that resumes mid-flight, and
- * those pointers must survive an interrupted run.
+ * Intentionally does NOT touch current_ticket / iteration / start_time_epoch —
+ * pickle is the only phase that resumes mid-flight, and those pointers must
+ * survive an interrupted run. The outer phase transition helper stamps
+ * state.step to the active pipeline phase after this entry prep.
  */
 export function enterPicklePhase(sessionDir, statePath, backend) {
     // Fix A — pin command_template. Stale value from a previous anatomy-park or
@@ -896,12 +897,27 @@ export async function postPhaseCleanup(phase, sessionDir) {
     if (prevPhase)
         cleanPhaseArtifacts(sessionDir, prevPhase);
 }
+function persistPhaseTransition(runtime, phaseConfig, previousState) {
+    sm.update(runtime.statePath, s => { s.step = phaseConfig.name; });
+    try {
+        logActivity({
+            event: 'phase_transition',
+            source: 'pickle',
+            session: path.basename(runtime.sessionDir),
+            previous_phase: previousState.step,
+            next_phase: phaseConfig.name,
+            previous_exit_reason: previousState.exit_reason ?? null,
+        });
+    }
+    catch { /* telemetry best-effort */ }
+}
 function restampBackendIfNeeded(statePath, backend) {
     const cur = sm.read(statePath);
     if (cur.backend !== backend)
         sm.update(statePath, s => { s.backend = backend; });
 }
 function preparePhaseState(phaseConfig, runtime) {
+    const previousState = sm.read(runtime.statePath);
     const resetByPhase = {
         'anatomy-park': {
             template: 'anatomy-park.md',
@@ -923,6 +939,7 @@ function preparePhaseState(phaseConfig, runtime) {
     if (phaseConfig.preSpawnStateMutation) {
         sm.update(runtime.statePath, phaseConfig.preSpawnStateMutation);
     }
+    persistPhaseTransition(runtime, phaseConfig, previousState);
 }
 function refreshPhaseScope(phaseConfig, runtime, counters) {
     if (!phaseConfig.refreshScope)

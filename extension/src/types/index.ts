@@ -455,6 +455,9 @@ export interface ActivityEvent {
   // resumed run and reason about wall-clock budgets correctly.
   original_epoch?: number;
   new_epoch?: number;
+  previous_phase?: string | null;
+  next_phase?: string;
+  previous_exit_reason?: string | null;
 }
 
 // ---------------------------------------------------------------------------

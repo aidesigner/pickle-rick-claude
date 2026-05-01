@@ -535,9 +535,10 @@ function buildCitadelSzechuanContext(report: CitadelJsonReport | null): string[]
  *      in the session dir from a previous run. A worker that scans the session
  *      dir might infer wrong context even with the right template. Remove them.
  *
- * Intentionally does NOT touch current_ticket / step / iteration /
- * start_time_epoch — pickle is the only phase that resumes mid-flight, and
- * those pointers must survive an interrupted run.
+ * Intentionally does NOT touch current_ticket / iteration / start_time_epoch —
+ * pickle is the only phase that resumes mid-flight, and those pointers must
+ * survive an interrupted run. The outer phase transition helper stamps
+ * state.step to the active pipeline phase after this entry prep.
  */
 export function enterPicklePhase(
   sessionDir: string,
@@ -1128,12 +1129,31 @@ export async function postPhaseCleanup(phase: PhaseName, sessionDir: string): Pr
   if (prevPhase) cleanPhaseArtifacts(sessionDir, prevPhase);
 }
 
+function persistPhaseTransition(
+  runtime: PipelineRuntime,
+  phaseConfig: PhaseConfig,
+  previousState: State,
+): void {
+  sm.update(runtime.statePath, s => { s.step = phaseConfig.name; });
+  try {
+    logActivity({
+      event: 'phase_transition',
+      source: 'pickle',
+      session: path.basename(runtime.sessionDir),
+      previous_phase: previousState.step,
+      next_phase: phaseConfig.name,
+      previous_exit_reason: previousState.exit_reason ?? null,
+    });
+  } catch { /* telemetry best-effort */ }
+}
+
 function restampBackendIfNeeded(statePath: string, backend: Backend): void {
   const cur = sm.read(statePath);
   if (cur.backend !== backend) sm.update(statePath, s => { s.backend = backend; });
 }
 
 function preparePhaseState(phaseConfig: PhaseConfig, runtime: PipelineRuntime): void {
+  const previousState = sm.read(runtime.statePath);
   const resetByPhase: Partial<Record<PhaseName, { template: string; maxIterations: number }>> = {
     'anatomy-park': {
       template: 'anatomy-park.md',
@@ -1154,6 +1174,7 @@ function preparePhaseState(phaseConfig: PhaseConfig, runtime: PipelineRuntime): 
   if (phaseConfig.preSpawnStateMutation) {
     sm.update(runtime.statePath, phaseConfig.preSpawnStateMutation);
   }
+  persistPhaseTransition(runtime, phaseConfig, previousState);
 }
 
 function refreshPhaseScope(
