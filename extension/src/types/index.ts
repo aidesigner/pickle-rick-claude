@@ -553,6 +553,7 @@ export interface MicroverseSessionState {
   approach_exhaustion_fired: boolean;
   iteration_regressions?: number;
   gate_regression_threshold_warning_emitted?: boolean;
+  consecutive_amnesiac_exits?: number;
 }
 
 // ---------------------------------------------------------------------------

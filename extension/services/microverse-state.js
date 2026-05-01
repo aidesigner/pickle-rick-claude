@@ -85,6 +85,7 @@ export function recordIteration(state, entry, classification) {
         : state.convergence.stall_counter + 1;
     return {
         ...state,
+        consecutive_amnesiac_exits: 0,
         convergence: {
             ...state.convergence,
             history,
@@ -100,10 +101,25 @@ export function recordIteration(state, entry, classification) {
 export function recordStall(state) {
     return {
         ...state,
+        consecutive_amnesiac_exits: 0,
         convergence: {
             ...state.convergence,
             stall_counter: state.convergence.stall_counter + 1,
         },
+    };
+}
+export function recordAmnesiacExit(state) {
+    return {
+        ...state,
+        consecutive_amnesiac_exits: (state.consecutive_amnesiac_exits ?? 0) + 1,
+    };
+}
+export function clearAmnesiacExits(state) {
+    if ((state.consecutive_amnesiac_exits ?? 0) === 0)
+        return state;
+    return {
+        ...state,
+        consecutive_amnesiac_exits: 0,
     };
 }
 export function recordFailedApproach(state, description) {

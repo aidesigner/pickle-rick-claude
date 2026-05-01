@@ -16,6 +16,8 @@ import {
   writeMicroverseState,
   recordIteration as stateRecordIteration,
   recordStall,
+  recordAmnesiacExit,
+  clearAmnesiacExits,
   recordFailedApproach,
   isConverged,
   compareMetric,
@@ -63,6 +65,7 @@ export type IterationClassification =
   | { kind: 'improved'; metric: MetricSnapshot }
   | { kind: 'regressed'; rollback: true }
   | { kind: 'unchanged' };
+export type NoCommitExitClassification = 'clean_pass' | 'stall' | 'amnesiac';
 
 export interface ExitOutcome {
   state: MicroverseState;
@@ -621,6 +624,44 @@ const RECOVERY_TEMPLATES: Record<FailureClass, string> = {
   no_progress: 'No commits or score change. The current approach may be stuck. Try a fundamentally different strategy.',
 };
 
+function firstJsonResultLine(content: string): Record<string, unknown> | null {
+  const resultLines = content
+    .split('\n')
+    .filter((line) => line.includes('"type"') && line.includes('"result"'));
+  for (let i = resultLines.length - 1; i >= 0; i--) {
+    try {
+      const parsed = JSON.parse(resultLines[i]) as Record<string, unknown>;
+      if (parsed.type === 'result') return parsed;
+    } catch {
+      // Ignore non-JSON log lines that happen to contain result-like text.
+    }
+  }
+  return null;
+}
+
+export function classifyNoCommitExit(iterLogFile: string): NoCommitExitClassification {
+  let content = '';
+  try {
+    content = fs.readFileSync(iterLogFile, 'utf-8');
+  } catch {
+    return 'stall';
+  }
+
+  const result = firstJsonResultLine(content);
+  const output = String(result?.result ?? content).toLowerCase();
+  const turns = typeof result?.num_turns === 'number' ? result.num_turns : null;
+  if (turns !== null && turns < 5) return 'amnesiac';
+  if (
+    output.includes('clean') ||
+    output.includes('no violations') ||
+    output.includes('nothing to fix') ||
+    output.includes('sauce is obtained')
+  ) {
+    return 'clean_pass';
+  }
+  return 'stall';
+}
+
 /**
  * Write recovery guidance to TASK_NOTES.md. Rotates previous recovery text
  * into ## Dead Ends and inserts new guidance in ## Next with <!-- recovery --> delimiters.
@@ -729,6 +770,34 @@ export function buildJudgePrompt(
   return parts.join('\n');
 }
 
+function baselineShaForRecentChanges(mvState: MicroverseSessionState): string | null {
+  const history = mvState.convergence?.history ?? [];
+  const firstPreSha = history.find((entry) => entry.pre_iteration_sha.trim().length > 0)?.pre_iteration_sha;
+  return firstPreSha ?? null;
+}
+
+function readRecentChangesForHandoff(mvState: MicroverseSessionState, workingDir: string): string | null {
+  const baselineSha = baselineShaForRecentChanges(mvState);
+  if (!baselineSha) return null;
+  try {
+    const output = _deps.execFileSync('git', [
+      'log',
+      '--oneline',
+      '--stat',
+      `${baselineSha}..HEAD`,
+      '--max-count=5',
+    ], {
+      cwd: workingDir,
+      encoding: 'utf-8',
+      timeout: 10_000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    return output.length > 0 ? output : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Extract a numeric score from LLM output. Tries last line first,
  * then scans backwards for any line that is just a number.
@@ -818,6 +887,7 @@ export function buildMicroverseHandoff(
     if (mvState.gap_analysis_path) {
       parts.push(`## Gap Analysis`);
       parts.push(`See: ${mvState.gap_analysis_path}`);
+      parts.push(`Read gap_analysis.md — items marked Fixed are done, skip them.`);
       parts.push('');
     }
 
@@ -857,6 +927,7 @@ export function buildMicroverseHandoff(
   if (mvState.gap_analysis_path) {
     parts.push(`## Gap Analysis`);
     parts.push(`See: ${mvState.gap_analysis_path}`);
+    parts.push(`Read gap_analysis.md — items marked Fixed are done, skip them.`);
     parts.push('');
   }
 
@@ -867,6 +938,13 @@ export function buildMicroverseHandoff(
     for (const entry of recent) {
       parts.push(`- Iter ${entry.iteration}: score=${entry.score} action=${entry.action} — ${entry.description}`);
     }
+    parts.push('');
+  }
+
+  const recentChanges = readRecentChangesForHandoff(mvState, workingDir);
+  if (recentChanges) {
+    parts.push('## Recent Changes');
+    parts.push(recentChanges);
     parts.push('');
   }
 
@@ -1261,6 +1339,19 @@ export async function measureAndClassifyIteration(
   replaceMicroverseState(state, stateRecordIteration(state, entry, classification));
   writeMicroverseState(ctx.sessionDir, state);
 
+  if (entry.action === 'accept' && ctx.postIterSha) {
+    try {
+      appendGapAnalysisFixedBlock({
+        gapAnalysisPath: state.gap_analysis_path,
+        workingDir: ctx.workingDir,
+        iteration: ctx.iteration,
+        commitSha: ctx.postIterSha,
+      });
+    } catch (err) {
+      ctx.log(`WARNING: Could not append gap analysis fixed block: ${safeErrorMessage(err)}`);
+    }
+  }
+
   if (ctx.enableFailureClassification) {
     recordFailureClassification(state, metricResult, entry, ctx);
   }
@@ -1293,6 +1384,54 @@ function recordFailureClassification(
   }
 }
 
+function gitOutput(workingDir: string, args: string[]): string {
+  return _deps.execFileSync('git', args, {
+    cwd: workingDir,
+    encoding: 'utf-8',
+    timeout: 10_000,
+    stdio: ['pipe', 'pipe', 'pipe'],
+  }).trim();
+}
+
+export function appendGapAnalysisFixedBlock(opts: {
+  gapAnalysisPath: string;
+  workingDir: string;
+  iteration: number;
+  commitSha: string;
+}): void {
+  if (!opts.gapAnalysisPath) return;
+  const commitMessage = gitOutput(opts.workingDir, ['log', '-1', '--format=%s', opts.commitSha]);
+  const files = gitOutput(opts.workingDir, ['diff-tree', '--no-commit-id', '--name-only', '-r', opts.commitSha])
+    .split('\n')
+    .map((file) => file.trim())
+    .filter(Boolean);
+  const filesText = files.length > 0 ? files.join(', ') : '(none)';
+  const block = [
+    '',
+    `## Iteration ${opts.iteration} — Fixed`,
+    `- Commit: ${opts.commitSha.slice(0, 12)} ${commitMessage}`,
+    `- Files: ${filesText}`,
+    '',
+  ].join('\n');
+  fs.appendFileSync(opts.gapAnalysisPath, block);
+}
+
+export function resetGapAnalysisForAmnesiacBreaker(state: MicroverseState, sessionDir: string): MicroverseState {
+  const gapAnalysisPath = state.gap_analysis_path || path.join(sessionDir, 'gap_analysis.md');
+  fs.writeFileSync(gapAnalysisPath, [
+    '# Gap Analysis',
+    '',
+    'Reset after 2 consecutive amnesiac no-commit exits. Re-survey the current codebase before choosing the next fix.',
+    '',
+  ].join('\n'));
+  return {
+    ...state,
+    status: 'gap_analysis',
+    gap_analysis_path: gapAnalysisPath,
+    consecutive_amnesiac_exits: 0,
+  };
+}
+
 function currentExitForFailureHistory(state: MicroverseState, ctx: RunContext): ExitReason | null {
   const last = state.failure_history[state.failure_history.length - 1];
   if (!last) return null;
@@ -1315,10 +1454,30 @@ function currentExitForFailureHistory(state: MicroverseState, ctx: RunContext): 
   return null;
 }
 
-async function handleNoCommitStall(
+export async function handleNoCommitStall(
   state: MicroverseState,
   ctx: RunContext,
+  iterLogFile: string,
 ): Promise<ExitReason | null> {
+  const noCommitClass = classifyNoCommitExit(iterLogFile);
+  if (noCommitClass === 'clean_pass') {
+    ctx.log('No commits made — worker reported clean pass; treating as convergence');
+    const clearedState = clearAmnesiacExits(state);
+    if (clearedState !== state) replaceMicroverseState(state, clearedState);
+    writeMicroverseState(ctx.sessionDir, state);
+    return 'converged';
+  }
+  if (noCommitClass === 'amnesiac') {
+    replaceMicroverseState(state, recordAmnesiacExit(state));
+    ctx.log(`No commits made — amnesiac exit (${state.consecutive_amnesiac_exits ?? 0}/2); not counting as stall`);
+    if ((state.consecutive_amnesiac_exits ?? 0) >= 2) {
+      ctx.log('2 consecutive amnesiac exits — resetting gap analysis for fresh survey');
+      replaceMicroverseState(state, resetGapAnalysisForAmnesiacBreaker(state, ctx.sessionDir));
+    }
+    writeMicroverseState(ctx.sessionDir, state);
+    await _deps.sleep(1000);
+    return null;
+  }
   ctx.log('No commits made — stall (no rollback)');
   replaceMicroverseState(state, recordStall(state));
   writeMicroverseState(ctx.sessionDir, state);
@@ -1454,10 +1613,11 @@ async function handleMetricMode(
   state: MicroverseState,
   baseline: MetricSnapshot,
   ctx: RunContext,
+  iterLogFile: string,
 ): Promise<ExitReason | 'continue' | null> {
   ctx.postIterSha = _deps.getHeadSha(ctx.workingDir);
   if (ctx.postIterSha === ctx.preIterSha) autoRescueDirtyTree(ctx);
-  if (ctx.postIterSha === ctx.preIterSha) return await handleNoCommitStall(state, ctx) ?? 'continue';
+  if (ctx.postIterSha === ctx.preIterSha) return await handleNoCommitStall(state, ctx, iterLogFile) ?? 'continue';
 
   const classification = await measureAndClassifyIteration(state, baseline, ctx);
   const failureExit = currentExitForFailureHistory(state, ctx);
@@ -1508,7 +1668,7 @@ async function handleIterationOutcome(
   }
   if (outcome.completion === 'inactive') { ctx.log('Session deactivated. Exiting loop.'); return 'stopped'; }
   if (state.convergence_mode === 'worker') return await handleWorkerMode(state, ctx) ?? 'continue';
-  return await handleMetricMode(state, baseline, ctx);
+  return await handleMetricMode(state, baseline, ctx, iterLogFile);
 }
 
 export async function executeMainLoop(
@@ -1516,11 +1676,16 @@ export async function executeMainLoop(
   ctx: RunContext,
 ): Promise<ExitOutcome> {
   let exitReason: ExitReason = 'error';
-  const baseline = { raw: '', score: state.baseline_score };
+  let baseline = { raw: '', score: state.baseline_score };
   sm.update(ctx.statePath, s => { s.worker_timeout_seconds = 0; });
   ctx.log('Worker timeout disabled — session time limit is the only gate');
 
-  while (state.status === 'iterating') {
+  while (state.status === 'iterating' || state.status === 'gap_analysis') {
+    if (state.status === 'gap_analysis') {
+      const result = await executeGapAnalysis(state, ctx);
+      baseline = result.baseline;
+      continue;
+    }
     const loopExit = readLoopExit(ctx);
     if (loopExit) { exitReason = loopExit; break; }
     await prepareIteration(state, ctx);

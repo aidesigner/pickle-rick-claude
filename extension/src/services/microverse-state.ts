@@ -93,6 +93,7 @@ export function recordIteration(
 
   return {
     ...state,
+    consecutive_amnesiac_exits: 0,
     convergence: {
       ...state.convergence,
       history,
@@ -109,10 +110,26 @@ export function recordIteration(
 export function recordStall(state: MicroverseSessionState): MicroverseSessionState {
   return {
     ...state,
+    consecutive_amnesiac_exits: 0,
     convergence: {
       ...state.convergence,
       stall_counter: state.convergence.stall_counter + 1,
     },
+  };
+}
+
+export function recordAmnesiacExit(state: MicroverseSessionState): MicroverseSessionState {
+  return {
+    ...state,
+    consecutive_amnesiac_exits: (state.consecutive_amnesiac_exits ?? 0) + 1,
+  };
+}
+
+export function clearAmnesiacExits(state: MicroverseSessionState): MicroverseSessionState {
+  if ((state.consecutive_amnesiac_exits ?? 0) === 0) return state;
+  return {
+    ...state,
+    consecutive_amnesiac_exits: 0,
   };
 }
 
