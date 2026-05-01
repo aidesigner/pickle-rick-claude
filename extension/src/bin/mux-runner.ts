@@ -871,6 +871,12 @@ export interface MuxReadinessGateInput {
   repoRoot: string;
   extensionRoot: string;
   log: (msg: string) => void;
+  /**
+   * BMAD residual P0.6: when set, mux-runner forwards `--skip-readiness <reason>`
+   * to check-readiness, bypassing validation and emitting a `readiness_skipped`
+   * activity event for audit. Wired from `state.flags.skip_readiness_reason`.
+   */
+  skipReason?: string;
 }
 
 export function runMuxReadinessGate(input: MuxReadinessGateInput): number {
@@ -881,11 +887,16 @@ export function runMuxReadinessGate(input: MuxReadinessGateInput): number {
     input.log(`readiness gate skipped: ${binPath} not found`);
     return 0;
   }
-  const result = spawnSync(process.execPath, [
+  const args = [
     binPath,
     '--session-dir', input.sessionDir,
     '--repo-root', input.repoRoot,
-  ], {
+  ];
+  if (typeof input.skipReason === 'string' && input.skipReason.length > 0) {
+    args.push('--skip-readiness', input.skipReason);
+    input.log(`readiness gate skipped via state.flags.skip_readiness_reason: ${input.skipReason}`);
+  }
+  const result = spawnSync(process.execPath, args, {
     cwd: input.repoRoot,
     encoding: 'utf-8',
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -1748,11 +1759,14 @@ async function runMuxRunnerMain() {
 
     if (!readinessGateChecked && curIter === 0) {
       readinessGateChecked = true;
+      const skipReasonRaw = state.flags?.skip_readiness_reason;
+      const skipReason = typeof skipReasonRaw === 'string' && skipReasonRaw.length > 0 ? skipReasonRaw : undefined;
       const readinessStatus = runMuxReadinessGate({
         sessionDir,
         repoRoot: state.working_dir || process.cwd(),
         extensionRoot,
         log,
+        skipReason,
       });
       if (readinessStatus !== 0) {
         log(`READINESS HALT: check-readiness exited ${readinessStatus}; no manager spawn attempted`);

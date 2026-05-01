@@ -103,6 +103,14 @@ export interface CourseCorrectionRecord {
 
 export interface StateFlags {
   strict_teams?: boolean;
+  /**
+   * If set, mux-runner forwards `--skip-readiness <reason>` to check-readiness
+   * on iter 0 of every pickle phase, bypassing the readiness gate. The reason
+   * is recorded as a `readiness_skipped` activity event for audit. Used when a
+   * bundle has already been validated by the refinement team or other
+   * out-of-band review.
+   */
+  skip_readiness_reason?: string;
   [key: string]: unknown;
 }
 
@@ -348,6 +356,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'commit_pending_probe_fired',
   'codex_manager_relaunch',
   'readiness_failed_post_correction',
+  'readiness_skipped',
   'archaeology_complete',
   'archaeology_skipped',
   'phase_personas_disabled_seen',
