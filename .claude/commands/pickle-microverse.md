@@ -112,12 +112,22 @@ sleep 1
 ```
 Print attach command: `tmux attach -t <name>`
 
-5. Launch runner:
+5. Launch runner — write a script file and `tmux send-keys` only the path. Inline `;`-chained commands in `send-keys` are silently mis-parsed under zsh; the runner never starts and you get an empty session with no monitor window. The script-file form has zero escaping surface.
 ```bash
-tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/microverse-runner.js ${SESSION_ROOT}; echo ''; echo 'Microverse runner finished.  Ctrl+B 1 → monitor  |  Ctrl+B D → detach'; read" Enter
+cat > "${SESSION_ROOT}/launch.sh" <<'LAUNCH_EOF'
+#!/bin/bash
+SESSION_ROOT="$1"
+node "$HOME/.claude/pickle-rick/extension/bin/microverse-runner.js" "$SESSION_ROOT"
+echo ""
+echo "Microverse runner finished.  Ctrl+B 1 → monitor  |  Ctrl+B D → detach"
+read -r _
+LAUNCH_EOF
+chmod +x "${SESSION_ROOT}/launch.sh"
+
+tmux send-keys -t <name>:0 "bash '${SESSION_ROOT}/launch.sh' '${SESSION_ROOT}'" Enter
 ```
 
-6. Launch monitor: microverse-runner auto-creates the 4-pane monitor window on startup — no manual invocation needed.
+6. Launch monitor: microverse-runner auto-creates the 4-pane monitor window on startup — no manual invocation needed. Verify before reporting: after `sleep 5`, `tmux list-windows -t <name>` MUST show two windows (`0: bash` running launch.sh, `1: monitor` with 4 node panes).
 
 7. Report: session name, `tmux attach -t <name>`, window layout (monitor: Ctrl+B 1; runner: Ctrl+B 0), cancel: `cd <working_dir> && /eat-pickle`, emergency: `tmux kill-session -t <name>`, state path.
 

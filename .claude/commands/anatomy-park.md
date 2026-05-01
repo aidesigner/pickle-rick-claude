@@ -196,18 +196,37 @@ Clean passes (zero findings, no code commits) are expected and do not indicate s
 ### Step 9: Launch
 
 Session name: `anatomy-park-<hash>` from SESSION_ROOT basename.
+
+Write the launch sequence to a script file and `tmux send-keys` only the path. Inline multi-line `if/elif/fi` chains in `send-keys` are silently mis-parsed under zsh — the runner never starts and you get an empty session with no monitor window. The script-file form has zero escaping surface.
+
 ```bash
+cat > "${SESSION_ROOT}/launch.sh" <<'LAUNCH_EOF'
+#!/bin/bash
+SESSION_ROOT="$1"
+node "$HOME/.claude/pickle-rick/extension/bin/microverse-runner.js" "$SESSION_ROOT"
+node "$HOME/.claude/pickle-rick/extension/bin/finalize-gate.js" "$SESSION_ROOT" anatomy-park
+GATE_RC=$?
+REGRESSIONS=$(node "$HOME/.claude/pickle-rick/extension/bin/read-microverse.js" "$SESSION_ROOT" iteration_regressions 2>/dev/null || echo 0)
+echo ""
+if [ "$PICKLE_GATE_DISABLED" = "1" ]; then
+    echo "Anatomy Park is closed. All organs accounted for. Gate skipped (PICKLE_GATE_DISABLED=1)."
+elif [ "$GATE_RC" -eq 0 ] && [ "$REGRESSIONS" -eq 0 ]; then
+    echo "Anatomy Park is closed. All organs accounted for. Gate green. No regressions during loop."
+elif [ "$GATE_RC" -eq 0 ]; then
+    echo "Anatomy Park is closed. All organs accounted for. Gate green. $REGRESSIONS regression flags during loop, all cleared by final gate."
+else
+    echo "Park closed but gate exhausted remediation cycles — see $SESSION_ROOT/gate/escalation_*.md"
+fi
+read -r _
+LAUNCH_EOF
+chmod +x "${SESSION_ROOT}/launch.sh"
+
 tmux new-session -d -s <name> -c <working_dir>
 sleep 1
-tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/microverse-runner.js ${SESSION_ROOT} && \
-  node $HOME/.claude/pickle-rick/extension/bin/finalize-gate.js ${SESSION_ROOT} anatomy-park; \
-  RC=$?; \
-  REGRESSIONS=\$(node $HOME/.claude/pickle-rick/extension/bin/read-microverse.js ${SESSION_ROOT} iteration_regressions); \
-  if [ \"\$PICKLE_GATE_DISABLED\" = \"1\" ]; then echo ''; echo 'Anatomy Park is closed. All organs accounted for. Gate skipped (PICKLE_GATE_DISABLED=1).'; \
-  elif [ \$RC -eq 0 ] && [ \$REGRESSIONS -eq 0 ]; then echo ''; echo 'Anatomy Park is closed. All organs accounted for. Gate green. No regressions during loop.'; \
-  elif [ \$RC -eq 0 ]; then echo ''; echo 'Anatomy Park is closed. All organs accounted for. Gate green. \$REGRESSIONS regression flags during loop, all cleared by final gate.'; \
-  else echo ''; echo 'Park closed but gate exhausted remediation cycles — see ${SESSION_ROOT}/gate/escalation_*.md'; fi; read" Enter
+tmux send-keys -t <name>:0 "bash '${SESSION_ROOT}/launch.sh' '${SESSION_ROOT}'" Enter
 ```
+
+Verify before reporting: after `sleep 5`, `tmux list-windows -t <name>` MUST show two windows (`0: bash` running launch.sh, `1: monitor` with 4 node panes). If only window 0 exists, the runner failed to start — read `${SESSION_ROOT}/microverse-runner.log` (if present) and the pane buffer (`tmux capture-pane -p -t <name>:0`).
 
 microverse-runner auto-creates the 4-pane monitor window on startup — no manual invocation needed.
 

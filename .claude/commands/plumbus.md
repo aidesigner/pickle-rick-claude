@@ -204,13 +204,28 @@ Violations matching this focus are elevated by one priority level. When tied, fi
 ### Step 10: Launch
 
 Session name: `plumbus-<hash>` from SESSION_ROOT basename.
+
+Write the launch sequence to a script file and `tmux send-keys` only the path. Inline `;`-chained commands in `send-keys` are silently mis-parsed under zsh; the runner never starts and you get an empty session with no monitor window. The script-file form has zero escaping surface.
+
 ```bash
+cat > "${SESSION_ROOT}/launch.sh" <<'LAUNCH_EOF'
+#!/bin/bash
+SESSION_ROOT="$1"
+node "$HOME/.claude/pickle-rick/extension/bin/microverse-runner.js" "$SESSION_ROOT"
+echo ""
+echo "That... is a plumbus."
+read -r _
+LAUNCH_EOF
+chmod +x "${SESSION_ROOT}/launch.sh"
+
 tmux new-session -d -s <name> -c <working_dir>
 sleep 1
-tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/microverse-runner.js ${SESSION_ROOT}; echo ''; echo 'That... is a plumbus.'; read" Enter
+tmux send-keys -t <name>:0 "bash '${SESSION_ROOT}/launch.sh' '${SESSION_ROOT}'" Enter
 ```
 
 microverse-runner auto-creates the 4-pane monitor window on startup — no manual invocation needed.
+
+Verify before reporting: after `sleep 5`, `tmux list-windows -t <name>` MUST show two windows (`0: bash` running launch.sh, `1: monitor` with 4 node panes). If only window 0 exists, the runner failed to start — read `${SESSION_ROOT}/microverse-runner.log` (if present) and the pane buffer (`tmux capture-pane -p -t <name>:0`).
 
 ### Step 11: Report
 
