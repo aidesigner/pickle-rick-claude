@@ -1359,35 +1359,10 @@ async function runMuxRunnerMain() {
         process.stderr.write(line);
     };
     log('mux-runner started');
-    // Auto-spawn the 4-pane monitor window. Previously each pickle skill prompt
-    // (pickle-tmux, pickle-pipeline, pickle-refine-prd, …) ended with a manual
-    // `bash tmux-monitor.sh …` step that the agent sometimes dropped silently.
-    // Owning it here makes it unskippable. No-op when not inside tmux.
-    try {
-        const result = ensureMonitorWindow({ sessionDir, extensionRoot, log });
-        log(`ensureMonitorWindow: ${result.status}${result.reason ? ` (${result.reason})` : ''}`);
-    }
-    catch (err) {
-        log(`ensureMonitorWindow: threw (ignored): ${safeErrorMessage(err)}`);
-    }
-    // Graceful shutdown: deactivate session on SIGTERM/SIGINT so it doesn't
-    // remain orphaned with active: true when the tmux pane is closed.
-    const handleShutdownSignal = (signal) => {
-        log(`Received ${signal} — deactivating session`);
-        recordExitReason(statePath, 'signal');
-        safeDeactivate(statePath);
-        if (currentChildProc && !currentChildProc.killed) {
-            currentChildProc.kill('SIGTERM');
-        }
-        logActivity({ event: 'session_end', source: 'pickle', session: path.basename(sessionDir), mode: 'tmux' });
-        process.exit(0);
-    };
-    process.on('SIGTERM', () => handleShutdownSignal('SIGTERM'));
-    process.on('SIGINT', () => handleShutdownSignal('SIGINT'));
-    process.on('SIGHUP', () => handleShutdownSignal('SIGHUP'));
     // Take ownership: setup.js writes active: false in tmux mode so the main
     // Claude window's stop hook is released immediately. We set active: true here
-    // before entering the loop so workers and state readers see a live session.
+    // before monitor recovery and before entering the loop so workers and state
+    // readers see a live session.
     let ownerState;
     try {
         ownerState = readRunnerState(statePath);
@@ -1437,6 +1412,32 @@ async function runMuxRunnerMain() {
             ? 'Session ownership refreshed (pid updated)'
             : 'Session ownership taken (active: false → true)');
     }
+    // Auto-spawn the 4-pane monitor window. Previously each pickle skill prompt
+    // (pickle-tmux, pickle-pipeline, pickle-refine-prd, …) ended with a manual
+    // `bash tmux-monitor.sh …` step that the agent sometimes dropped silently.
+    // Owning it here makes it unskippable. No-op when not inside tmux.
+    try {
+        const result = ensureMonitorWindow({ sessionDir, extensionRoot, log });
+        log(`ensureMonitorWindow: ${result.status}${result.reason ? ` (${result.reason})` : ''}`);
+    }
+    catch (err) {
+        log(`ensureMonitorWindow: threw (ignored): ${safeErrorMessage(err)}`);
+    }
+    // Graceful shutdown: deactivate session on SIGTERM/SIGINT so it doesn't
+    // remain orphaned with active: true when the tmux pane is closed.
+    const handleShutdownSignal = (signal) => {
+        log(`Received ${signal} — deactivating session`);
+        recordExitReason(statePath, 'signal');
+        safeDeactivate(statePath);
+        if (currentChildProc && !currentChildProc.killed) {
+            currentChildProc.kill('SIGTERM');
+        }
+        logActivity({ event: 'session_end', source: 'pickle', session: path.basename(sessionDir), mode: 'tmux' });
+        process.exit(0);
+    };
+    process.on('SIGTERM', () => handleShutdownSignal('SIGTERM'));
+    process.on('SIGINT', () => handleShutdownSignal('SIGINT'));
+    process.on('SIGHUP', () => handleShutdownSignal('SIGHUP'));
     // Clean up stale rate_limit_wait.json from a previous crashed session
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     try {
