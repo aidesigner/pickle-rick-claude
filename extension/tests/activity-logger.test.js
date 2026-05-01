@@ -56,7 +56,7 @@ function withBrokenCanadianDateLocale(fn) {
 
 // --- VALID_ACTIVITY_EVENTS ---
 
-test('VALID_ACTIVITY_EVENTS contains all 52 expected event types', () => {
+test('VALID_ACTIVITY_EVENTS contains all 58 expected event types', () => {
     const expected = [
         'session_start', 'session_end', 'ticket_completed', 'epic_completed',
         'meeseeks_pass', 'commit', 'research', 'bug_fix', 'feature',
@@ -91,8 +91,18 @@ test('VALID_ACTIVITY_EVENTS contains all 52 expected event types', () => {
         // recoverably and surfaces it as an activity event so monitor/standup
         // can flag the deploy-drift class of failures.
         'cap_check_failed_schema_mismatch',
+        // BMAD T17: transaction-ticket-ops emits these directly into
+        // state.activity[] when applying course corrections.
+        'course_corrected',
+        'course_correct_apply_failed',
+        'course_correct_recovered',
+        'current_ticket_redirected_to_new',
+        'readiness_delta_requested',
+        // mux-runner executeTimeoutHalt emits this to state.activity[] before
+        // safeDeactivate so /pickle-status surfaces the timeout-repeat halt.
+        'halt',
     ];
-    assert.equal(VALID_ACTIVITY_EVENTS.length, 52);
+    assert.equal(VALID_ACTIVITY_EVENTS.length, 58);
     for (const e of expected) {
         assert.ok(VALID_ACTIVITY_EVENTS.includes(e), `Missing event type: ${e}`);
     }

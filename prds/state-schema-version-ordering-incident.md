@@ -1,6 +1,6 @@
 # PRD: State Schema-Version Ordering Incident + Fix
 
-**Status**: Hot-fix deployed (2026-04-29 PM) — root-cause fixes pending
+**Status**: SHIPPED via v1.62.0 + v1.62.1 (2026-04-30) — AC-SSV-05 (topo-sort by `depends_on` in pipeline-runner) shipped via `2319cee`; AC-SSV-07 (monitor stdout backpressure watchdog + EXCEEDED indicator) shipped via `643caa5`; AC-SSV-08 (deploy/source schema-version parity test + `assertSchemaVersionDeployParity`) shipped via `9f39b7f`. AC-SSV-04 (NEW-T2 lowered) and AC-SSV-06 (actionable schema-mismatch error) not yet verifiably shipped — track as residual follow-up.
 **Author**: Pickle Rick
 **Project**: `pickle-rick-claude` — Claude Code extension
 **Repo**: `https://github.com/gregorydickson/pickle-rick-claude` — branch `main`

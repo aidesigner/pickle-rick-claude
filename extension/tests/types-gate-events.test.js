@@ -65,3 +65,31 @@ test('GATE_REMEDIATION_EVENT_NAMES: all 3 remediation events are in VALID_ACTIVI
     assert.ok(set.has(name), `Remediation event missing from VALID_ACTIVITY_EVENTS: ${name}`);
   }
 });
+
+const BMAD_TXN_TICKET_OPS_EVENTS = [
+  'course_corrected',
+  'course_correct_apply_failed',
+  'course_correct_recovered',
+  'current_ticket_redirected_to_new',
+  'readiness_delta_requested',
+];
+
+const HALT_EVENTS = ['halt'];
+
+test('bmad-events: transaction-ticket-ops + correct-course events are in VALID_ACTIVITY_EVENTS', () => {
+  // Per prds/citadel.md:1012, every emitted event MUST appear in VALID_ACTIVITY_EVENTS.
+  // These are emitted from src/services/transaction-ticket-ops.ts via state.activity[]
+  // (bypassing logActivity()) and would otherwise be invisible to the type system.
+  const set = new Set(VALID_ACTIVITY_EVENTS);
+  for (const name of BMAD_TXN_TICKET_OPS_EVENTS) {
+    assert.ok(set.has(name), `BMAD txn event missing from VALID_ACTIVITY_EVENTS: ${name}`);
+  }
+});
+
+test('bmad-events: halt event is in VALID_ACTIVITY_EVENTS', () => {
+  // Emitted from src/bin/mux-runner.ts:executeTimeoutHalt via writeActivityEntry.
+  const set = new Set(VALID_ACTIVITY_EVENTS);
+  for (const name of HALT_EVENTS) {
+    assert.ok(set.has(name), `Halt event missing from VALID_ACTIVITY_EVENTS: ${name}`);
+  }
+});
