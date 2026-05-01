@@ -125,6 +125,67 @@ export async function runRemediatorForIteration(gateResult, sessionDir, workingD
     }
 }
 const PER_ITERATION_GATE_CHECKS = ['typecheck', 'lint', 'tests'];
+function getGitRestoreArgs(workingDir) {
+    const headSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: workingDir, encoding: 'utf-8' }).trim();
+    try {
+        const branch = execFileSync('git', ['symbolic-ref', '--quiet', '--short', 'HEAD'], {
+            cwd: workingDir,
+            encoding: 'utf-8',
+        }).trim();
+        if (branch)
+            return ['checkout', '--quiet', branch];
+    }
+    catch {
+        // Detached HEAD: restore by exact commit SHA.
+    }
+    return ['checkout', '--quiet', headSha];
+}
+async function withCleanTemporaryCheckout(workingDir, sha, fn) {
+    if (isWorkingTreeDirty(workingDir)) {
+        throw new Error('working tree is dirty; refusing baseline recapture checkout');
+    }
+    const restoreArgs = getGitRestoreArgs(workingDir);
+    execFileSync('git', ['checkout', '--quiet', sha], { cwd: workingDir, stdio: 'pipe' });
+    try {
+        return await fn();
+    }
+    finally {
+        execFileSync('git', restoreArgs, { cwd: workingDir, stdio: 'pipe' });
+    }
+}
+async function capturePerIterationGateBaseline(opts) {
+    const result = await opts.deps.runGateFn({
+        workingDir: opts.workingDir,
+        mode: 'baseline',
+        scope: 'full',
+        baselinePath: opts.baselinePath,
+        allowedPaths: opts.currentMv.allowed_paths,
+        checks: [...PER_ITERATION_GATE_CHECKS],
+        onEvent: (event, data) => opts.deps.logActivityFn({
+            event: event,
+            source: 'pickle',
+            session: path.basename(opts.sessionDir),
+            gate_payload: data,
+        }),
+    });
+    if (!(await pathExists(opts.baselinePath))) {
+        opts.log(opts.failureMessage);
+        if (opts.failureEvent) {
+            opts.deps.logActivityFn({
+                event: opts.failureEvent,
+                source: 'pickle',
+                session: path.basename(opts.sessionDir),
+                gate_payload: {
+                    path: opts.baselinePath,
+                    status: result.status,
+                    total_raw_failure_count: result.total_raw_failure_count,
+                },
+            });
+        }
+        throw new Error(opts.failureMessage);
+    }
+    opts.log(opts.successMessage(result));
+}
 function resolvePerIterationGateDeps(opts) {
     return {
         runGateFn: opts._deps?.runGateFn ?? runGate,
@@ -136,16 +197,37 @@ function resolvePerIterationGateDeps(opts) {
     };
 }
 async function runChangedPerIterationGate(opts) {
-    if (opts.gateMode === 'strict') {
+    let gateMode = opts.gateMode;
+    if (gateMode === 'strict') {
+        try {
+            opts.log('[anatomy-park] per-iteration gate baseline missing after commit — attempting one recapture from pre-iteration tree');
+            await withCleanTemporaryCheckout(opts.workingDir, opts.preIterSha, () => capturePerIterationGateBaseline({
+                currentMv: opts.currentMv,
+                workingDir: opts.workingDir,
+                sessionDir: opts.sessionDir,
+                baselinePath: opts.baselinePath,
+                log: opts.log,
+                deps: opts.deps,
+                failureMessage: `[anatomy-park] per-iteration gate baseline recapture failed - expected baseline at ${opts.baselinePath}`,
+                successMessage: (result) => `[anatomy-park] recaptured per-iteration gate baseline ` +
+                    `(captured ${result.total_raw_failure_count} pre-existing failure(s))`,
+            }));
+            gateMode = 'baseline';
+        }
+        catch (err) {
+            opts.log(`[anatomy-park] per-iteration gate baseline recapture failed (${safeErrorMessage(err)})`);
+        }
+    }
+    if (gateMode === 'strict') {
         opts.log('[anatomy-park] per-iteration gate baseline missing after commit — ' +
             'falling back to strict mode for this iteration');
     }
     const result = await opts.deps.runGateFn({
         workingDir: opts.workingDir,
-        mode: opts.gateMode,
+        mode: gateMode,
         scope: 'changed',
         since: opts.preIterSha,
-        baselinePath: opts.gateMode === 'baseline' ? opts.baselinePath : undefined,
+        baselinePath: gateMode === 'baseline' ? opts.baselinePath : undefined,
         allowedPaths: opts.currentMv.allowed_paths,
         checks: [...PER_ITERATION_GATE_CHECKS],
     });
@@ -208,39 +290,21 @@ export async function ensurePerIterationGateBaseline(opts) {
             return;
         }
     }
-    const runGateFn = _deps?.runGateFn ?? runGate;
-    const logActivityFn = _deps?.logActivityFn ?? logActivity;
-    const result = await runGateFn({
+    await capturePerIterationGateBaseline({
+        currentMv,
         workingDir,
-        mode: 'baseline',
-        scope: 'full',
+        sessionDir,
         baselinePath,
-        allowedPaths: currentMv.allowed_paths,
-        checks: [...PER_ITERATION_GATE_CHECKS],
-        onEvent: (event, data) => logActivityFn({
-            event: event,
-            source: 'pickle',
-            session: path.basename(sessionDir),
-            gate_payload: data,
-        }),
+        log,
+        deps: {
+            runGateFn: _deps?.runGateFn ?? runGate,
+            logActivityFn: _deps?.logActivityFn ?? logActivity,
+        },
+        failureEvent: 'gate_baseline_init_failed',
+        failureMessage: `[anatomy-park] per-iteration gate baseline initialization failed - expected baseline at ${baselinePath}`,
+        successMessage: (result) => `[anatomy-park] initialized per-iteration gate baseline ` +
+            `(captured ${result.total_raw_failure_count} pre-existing failure(s))`,
     });
-    if (!(await pathExists(baselinePath))) {
-        const message = `[anatomy-park] per-iteration gate baseline initialization failed - expected baseline at ${baselinePath}`;
-        log(message);
-        logActivityFn({
-            event: 'gate_baseline_init_failed',
-            source: 'pickle',
-            session: path.basename(sessionDir),
-            gate_payload: {
-                path: baselinePath,
-                status: result.status,
-                total_raw_failure_count: result.total_raw_failure_count,
-            },
-        });
-        throw new Error(message);
-    }
-    log(`[anatomy-park] initialized per-iteration gate baseline ` +
-        `(captured ${result.total_raw_failure_count} pre-existing failure(s))`);
 }
 export async function runPerIterationGateHook(opts) {
     const { preIterSha, workingDir, sessionDir, enabledFiles, regressionWarningThreshold, backend, remediatorTimeoutS, log, _deps, } = opts;

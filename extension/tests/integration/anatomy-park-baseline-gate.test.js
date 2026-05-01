@@ -387,6 +387,81 @@ test('bootstrap baseline: green gate result without baseline file is diagnosed a
   );
 });
 
+test('AC-GBM-B2: missing per-iteration baseline is recaptured once before strict mode', async () => {
+  const workingDir = makeGitRepo('ap-gate-recapture-repo-');
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-gate-recapture-session-'));
+  writeGateFixtureRepo(workingDir);
+  commitAll(workingDir, 'initial clean state');
+
+  const preIterSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: workingDir, encoding: 'utf-8' }).trim();
+  fs.writeFileSync(path.join(workingDir, 'trigger-lint.txt'), 'trigger\n');
+  commitAll(workingDir, 'iteration introduces lint regression');
+  const postIterSha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: workingDir, encoding: 'utf-8' }).trim();
+  const baselinePath = path.join(sessionDir, 'gate', 'baseline.json');
+  const calls = [];
+  const logs = [];
+
+  const mv = await runPerIterationGateHook({
+    ...BASE_OPTS,
+    currentMv: makeMv(),
+    preIterSha,
+    workingDir,
+    sessionDir,
+    log: (msg) => logs.push(msg),
+    _deps: {
+      getHeadShaFn: () => postIterSha,
+      runGateFn: async (opts) => {
+        calls.push({
+          mode: opts.mode,
+          scope: opts.scope,
+          baselinePath: opts.baselinePath,
+          head: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: workingDir, encoding: 'utf-8' }).trim(),
+        });
+        if (opts.mode === 'baseline' && opts.scope === 'full') {
+          fs.mkdirSync(path.dirname(opts.baselinePath), { recursive: true });
+          fs.writeFileSync(opts.baselinePath, JSON.stringify({
+            schema_version: 1,
+            captured_at: new Date().toISOString(),
+            working_dir: workingDir,
+            project_type: 'npm',
+            checks: ['typecheck', 'lint', 'tests'],
+            failures: [],
+          }, null, 2));
+          return makeGateResult('green', 0);
+        }
+        assert.equal(opts.mode, 'baseline', 'successful recapture must make changed gate run in baseline mode');
+        assert.equal(opts.scope, 'changed');
+        assert.equal(opts.baselinePath, baselinePath);
+        return makeGateResult('green', 0);
+      },
+      runRemediatorFn: async () => { assert.fail('remediator must not run when recaptured baseline gate is green'); },
+      writeMicroverseStateFn: () => {},
+      logActivityFn: () => {},
+    },
+  });
+
+  assert.equal(mv.iteration_regressions, 0);
+  assert.equal(calls.length, 2, `expected one recapture and one changed gate, got: ${JSON.stringify(calls)}`);
+  assert.deepEqual(
+    calls.map((call) => ({ mode: call.mode, scope: call.scope })),
+    [
+      { mode: 'baseline', scope: 'full' },
+      { mode: 'baseline', scope: 'changed' },
+    ],
+  );
+  assert.equal(calls[0].head, preIterSha, 'recapture must run against the pre-iteration tree');
+  assert.equal(calls[1].head, postIterSha, 'changed gate must run after restoring the post-iteration tree');
+  assert.ok(fs.existsSync(baselinePath), 'recapture must create the missing baseline file');
+  assert.ok(
+    !calls.some((call) => call.mode === 'strict'),
+    `successful recapture must avoid strict mode, got: ${JSON.stringify(calls)}`,
+  );
+  assert.ok(
+    logs.some((msg) => msg.includes('recaptured per-iteration gate baseline')),
+    `expected recapture success log, got: ${JSON.stringify(logs)}`,
+  );
+});
+
 test('bootstrap baseline: first post-bootstrap test regression is flagged instead of false-greening the iteration', async () => {
   const workingDir = makeGitRepo('ap-gate-test-repo-');
   const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-gate-test-session-'));
