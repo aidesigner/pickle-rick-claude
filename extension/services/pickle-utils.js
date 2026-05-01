@@ -972,6 +972,11 @@ function watcherPaneCommands(sessionDir, extensionRoot, mode) {
     const paneTwo = watcherPaneTwoCommand(sessionDir, binRoot, mode);
     return [
         {
+            pane: 0,
+            name: 'monitor.js',
+            command: `node ${path.join(binRoot, 'monitor.js')} ${sessionDir}`,
+        },
+        {
             pane: 1,
             name: 'log-watcher.js',
             command: `node ${path.join(binRoot, 'log-watcher.js')} ${sessionDir}`,

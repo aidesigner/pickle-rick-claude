@@ -54,8 +54,8 @@ function makeFakes(opts) {
     const markerPath = path.join(tmpRoot, '.monitor-exists');
     const modeMarkerPath = path.join(tmpRoot, '.monitor-mode');
     const killMarkerPath = path.join(tmpRoot, '.monitor-killed');
-    const paneCommands = opts.paneCommands || { 1: 'node', 2: 'node', 3: 'node' };
-    for (const pane of [1, 2, 3]) {
+    const paneCommands = opts.paneCommands || { 0: 'node', 1: 'node', 2: 'node', 3: 'node' };
+    for (const pane of [0, 1, 2, 3]) {
         fs.writeFileSync(path.join(tmpRoot, `.pane-${pane}`), paneCommands[pane] || '');
     }
     fs.writeFileSync(
@@ -65,6 +65,7 @@ echo "tmux $*" >> "${callsLog}"
 case "$1" in
   display-message)
     case "$*" in
+      *monitor.0*pane_current_command*) cat "${path.join(tmpRoot, '.pane-0')}" ;;
       *monitor.1*pane_current_command*) cat "${path.join(tmpRoot, '.pane-1')}" ;;
       *monitor.2*pane_current_command*) cat "${path.join(tmpRoot, '.pane-2')}" ;;
       *monitor.3*pane_current_command*) cat "${path.join(tmpRoot, '.pane-3')}" ;;
@@ -161,8 +162,8 @@ function makeWatcherFakes(opts = {}) {
     const extRoot = path.join(tmpRoot, 'ext');
     fs.mkdirSync(path.join(extRoot, 'extension', 'bin'), { recursive: true });
 
-    const paneCommands = opts.paneCommands || { 1: 'zsh', 2: 'bash', 3: 'fish' };
-    for (const pane of [1, 2, 3]) {
+    const paneCommands = opts.paneCommands || { 0: 'zsh', 1: 'zsh', 2: 'bash', 3: 'fish' };
+    for (const pane of [0, 1, 2, 3]) {
         fs.writeFileSync(path.join(tmpRoot, `.pane-${pane}`), paneCommands[pane] || '');
     }
 
@@ -173,6 +174,7 @@ function makeWatcherFakes(opts = {}) {
 echo "tmux $*" >> "${callsLog}"
 if [ "$1" = "display-message" ]; then
   case "$*" in
+    *monitor.0*pane_current_command*) cat "${path.join(tmpRoot, '.pane-0')}" ;;
     *monitor.1*pane_current_command*) cat "${path.join(tmpRoot, '.pane-1')}" ;;
     *monitor.2*pane_current_command*) cat "${path.join(tmpRoot, '.pane-2')}" ;;
     *monitor.3*pane_current_command*) cat "${path.join(tmpRoot, '.pane-3')}" ;;
@@ -231,7 +233,7 @@ function makeInjectedMonitorFakes(opts = {}) {
     const sessionName = opts.sessionName || 'pickle-injected';
     const monitorExists = opts.monitorExists ?? true;
     const monitorMode = opts.monitorMode || opts.mode || 'pickle';
-    const paneCommands = opts.paneCommands || { 1: 'node', 2: 'node', 3: 'node' };
+    const paneCommands = opts.paneCommands || { 0: 'node', 1: 'node', 2: 'node', 3: 'node' };
     const calls = [];
     const spawnSyncFn = (command, args = []) => {
         calls.push({ command, args: [...args] });
@@ -311,7 +313,7 @@ test('ensureMonitorWindow: creates monitor when window does not exist', () => {
     }
 });
 
-test('ensureMonitorWindow: existing monitor respawns dead watcher panes with injected spawn capture', () => {
+test('ensureMonitorWindow: existing monitor respawns dead monitor and watcher panes with injected spawn capture', () => {
     const cases = [
         {
             mode: 'pickle',
@@ -337,7 +339,7 @@ test('ensureMonitorWindow: existing monitor respawns dead watcher panes with inj
             mode,
             monitorMode,
             commandTemplate,
-            paneCommands: { 1: 'zsh', 2: 'bash', 3: 'fish' },
+            paneCommands: { 0: 'zsh', 1: 'zsh', 2: 'bash', 3: 'fish' },
         });
         try {
             const result = ensureMonitorWindow({
@@ -350,11 +352,12 @@ test('ensureMonitorWindow: existing monitor respawns dead watcher panes with inj
 
             assert.equal(result.status, 'exists');
             const sendKeys = tmuxCalls(f, 'send-keys');
-            assert.equal(sendKeys.length, 3);
-            assert.match(sendKeys[0].args.join(' '), /monitor\.1 node .+log-watcher\.js .+session Enter/);
-            assert.match(sendKeys[1].args.join(' '), pane2);
-            assert.match(sendKeys[2].args.join(' '), /monitor\.3 node .+raw-morty\.js .+session Enter/);
-            assert.equal(tmuxCalls(f, 'display-message').filter(call => call.args.includes('#{pane_current_command}')).length, 3);
+            assert.equal(sendKeys.length, 4);
+            assert.match(sendKeys[0].args.join(' '), /monitor\.0 node .+monitor\.js .+session Enter/);
+            assert.match(sendKeys[1].args.join(' '), /monitor\.1 node .+log-watcher\.js .+session Enter/);
+            assert.match(sendKeys[2].args.join(' '), pane2);
+            assert.match(sendKeys[3].args.join(' '), /monitor\.3 node .+raw-morty\.js .+session Enter/);
+            assert.equal(tmuxCalls(f, 'display-message').filter(call => call.args.includes('#{pane_current_command}')).length, 4);
             assert.doesNotMatch(f.readRunnerLog(), /failed to respawn/);
         } finally {
             f.cleanup();
@@ -362,10 +365,10 @@ test('ensureMonitorWindow: existing monitor respawns dead watcher panes with inj
     }
 });
 
-test('ensureMonitorWindow: existing monitor with all watcher panes alive is a no-op', () => {
+test('ensureMonitorWindow: existing monitor with all monitor panes alive is a no-op', () => {
     const f = makeInjectedMonitorFakes({
         sessionName: 'pickle-alive',
-        paneCommands: { 1: 'node', 2: 'node', 3: 'node' },
+        paneCommands: { 0: 'node', 1: 'node', 2: 'node', 3: 'node' },
     });
     try {
         const result = ensureMonitorWindow({
@@ -377,7 +380,7 @@ test('ensureMonitorWindow: existing monitor with all watcher panes alive is a no
 
         assert.equal(result.status, 'exists');
         assert.equal(tmuxCalls(f, 'send-keys').length, 0);
-        assert.equal(tmuxCalls(f, 'display-message').filter(call => call.args.includes('#{pane_current_command}')).length, 3);
+        assert.equal(tmuxCalls(f, 'display-message').filter(call => call.args.includes('#{pane_current_command}')).length, 4);
         assert.equal(f.readRunnerLog(), '');
     } finally {
         f.cleanup();
@@ -388,7 +391,7 @@ test('ensureMonitorWindow: inactive existing monitor skips watcher respawn', () 
     const f = makeInjectedMonitorFakes({
         active: false,
         sessionName: 'pickle-inactive',
-        paneCommands: { 1: 'zsh', 2: 'bash', 3: 'fish' },
+        paneCommands: { 0: 'zsh', 1: 'zsh', 2: 'bash', 3: 'fish' },
     });
     try {
         const result = ensureMonitorWindow({
@@ -410,7 +413,7 @@ test('ensureMonitorWindow: inactive existing monitor skips watcher respawn', () 
 test('ensureMonitorWindow: existing monitor window runs exactly one pane-recovery sweep', () => {
     const f = makeFakes({
         sessionName: 'pickle-abc12345',
-        paneCommands: { 1: 'zsh', 2: 'node', 3: 'bash' },
+        paneCommands: { 0: 'node', 1: 'zsh', 2: 'node', 3: 'bash' },
     });
     // Simulate existing monitor window stamped with the same mode we'll infer.
     fs.writeFileSync(f.markerPath, '1');
@@ -430,6 +433,7 @@ test('ensureMonitorWindow: existing monitor window runs exactly one pane-recover
         const calls = f.readCalls();
         assert.match(calls, /tmux list-windows/);
         assert.match(calls, /tmux show-option/, 'should read stamped mode');
+        assert.match(calls, /tmux display-message -p -t pickle-abc12345:monitor\.0 #\{pane_current_command\}/);
         assert.match(calls, /tmux display-message -p -t pickle-abc12345:monitor\.1 #\{pane_current_command\}/);
         assert.match(calls, /tmux display-message -p -t pickle-abc12345:monitor\.2 #\{pane_current_command\}/);
         assert.match(calls, /tmux display-message -p -t pickle-abc12345:monitor\.3 #\{pane_current_command\}/);
@@ -456,7 +460,7 @@ test('ensureMonitorWindow: phase re-entry performs a fresh recovery sweep with m
         const f = makeFakes({
             sessionName: `${mode}-phase`,
             commandTemplate,
-            paneCommands: { 1: 'node', 2: 'zsh', 3: 'node' },
+            paneCommands: { 0: 'node', 1: 'node', 2: 'zsh', 3: 'node' },
         });
         fs.writeFileSync(f.markerPath, '1');
         fs.writeFileSync(f.modeMarkerPath, mode);
@@ -475,7 +479,7 @@ test('ensureMonitorWindow: phase re-entry performs a fresh recovery sweep with m
             assert.equal(result.status, 'exists');
             const calls = f.readCalls();
             assert.match(calls, paneTwoPattern);
-            assert.equal((calls.match(/tmux display-message -p -t/g) || []).length, 3);
+            assert.equal((calls.match(/tmux display-message -p -t/g) || []).length, 4);
             assert.equal((calls.match(/tmux send-keys/g) || []).length, 1);
             assert.doesNotMatch(calls, /bash .+tmux-monitor\.sh/);
         } finally {
@@ -487,7 +491,7 @@ test('ensureMonitorWindow: phase re-entry performs a fresh recovery sweep with m
 test('ensureMonitorWindow: same-mode refinement monitor respawns only refinement watcher pane', () => {
     const f = makeFakes({
         sessionName: 'refinement-same-mode',
-        paneCommands: { 1: 'node', 2: 'zsh', 3: 'node' },
+        paneCommands: { 0: 'node', 1: 'node', 2: 'zsh', 3: 'node' },
     });
     fs.writeFileSync(f.markerPath, '1');
     fs.writeFileSync(f.modeMarkerPath, 'refinement');
@@ -534,17 +538,20 @@ test('ensureMonitorWindow: runner call sites remain limited to pipeline, mux, an
     assert.deepEqual(counts, [1, 1, 1]);
 });
 
-test('restartDeadWatcherPanes: respawns dead pickle watcher panes 1, 2, and 3', () => {
-    const f = makeWatcherFakes({ sessionName: 'pickle-dead', paneCommands: { 1: 'zsh', 2: 'bash', 3: 'fish' } });
+test('restartDeadWatcherPanes: respawns dead pickle monitor and watcher panes 0, 1, 2, and 3', () => {
+    const f = makeWatcherFakes({ sessionName: 'pickle-dead', paneCommands: { 0: 'zsh', 1: 'zsh', 2: 'bash', 3: 'fish' } });
     try {
         f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, 'pickle'));
 
         const calls = f.readCalls();
         assert.match(calls, /tmux display-message -p #S/);
+        assert.match(calls, /tmux display-message -p -t pickle-dead:monitor\.0 #\{pane_current_command\}/);
+        assert.match(calls, /tmux send-keys -t pickle-dead:monitor\.0 node .+monitor\.js .+session Enter/);
         assert.match(calls, /tmux display-message -p -t pickle-dead:monitor\.1 #\{pane_current_command\}/);
         assert.match(calls, /tmux send-keys -t pickle-dead:monitor\.1 node .+log-watcher\.js .+session Enter/);
         assert.match(calls, /tmux send-keys -t pickle-dead:monitor\.2 node .+morty-watcher\.js .+session Enter/);
         assert.match(calls, /tmux send-keys -t pickle-dead:monitor\.3 node .+raw-morty\.js .+session Enter/);
+        assert.match(f.readRunnerLog(), /restartDeadWatcherPanes: respawned monitor\.js in pane 0/);
         assert.match(f.readRunnerLog(), /restartDeadWatcherPanes: respawned log-watcher\.js in pane 1/);
         assert.match(f.readRunnerLog(), /restartDeadWatcherPanes: respawned morty-watcher\.js in pane 2/);
         assert.match(f.readRunnerLog(), /restartDeadWatcherPanes: respawned raw-morty\.js in pane 3/);
@@ -553,12 +560,13 @@ test('restartDeadWatcherPanes: respawns dead pickle watcher panes 1, 2, and 3', 
     }
 });
 
-test('restartDeadWatcherPanes: all watcher panes already running node is a no-op', () => {
-    const f = makeWatcherFakes({ paneCommands: { 1: 'node', 2: 'node', 3: 'node' } });
+test('restartDeadWatcherPanes: all monitor panes already running node is a no-op', () => {
+    const f = makeWatcherFakes({ paneCommands: { 0: 'node', 1: 'node', 2: 'node', 3: 'node' } });
     try {
         f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, 'pickle'));
 
         const calls = f.readCalls();
+        assert.match(calls, /tmux display-message -p -t pickle-watch:monitor\.0 #\{pane_current_command\}/);
         assert.match(calls, /tmux display-message -p -t pickle-watch:monitor\.1 #\{pane_current_command\}/);
         assert.doesNotMatch(calls, /tmux send-keys/);
         assert.equal(f.readRunnerLog(), '');
@@ -568,7 +576,7 @@ test('restartDeadWatcherPanes: all watcher panes already running node is a no-op
 });
 
 test('restartDeadWatcherPanes: inactive session skips pane probing and respawn', () => {
-    const f = makeWatcherFakes({ active: false, paneCommands: { 1: 'zsh', 2: 'bash', 3: 'fish' } });
+    const f = makeWatcherFakes({ active: false, paneCommands: { 0: 'zsh', 1: 'zsh', 2: 'bash', 3: 'fish' } });
     try {
         f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, 'pickle'));
 
@@ -580,7 +588,7 @@ test('restartDeadWatcherPanes: inactive session skips pane probing and respawn',
 });
 
 test('restartDeadWatcherPanes: non-node long-running command is treated as dead and logged as warn', () => {
-    const f = makeWatcherFakes({ paneCommands: { 1: 'node', 2: 'vim', 3: 'node' } });
+    const f = makeWatcherFakes({ paneCommands: { 0: 'node', 1: 'node', 2: 'vim', 3: 'node' } });
     try {
         f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, 'pickle'));
 
@@ -604,7 +612,7 @@ test('restartDeadWatcherPanes: mode-specific pane 2 command uses refinement and 
     for (const [mode, paneTwoPattern] of cases) {
         const f = makeWatcherFakes({
             sessionName: `${mode}-watch`,
-            paneCommands: { 1: 'node', 2: 'zsh', 3: 'node' },
+            paneCommands: { 0: 'node', 1: 'node', 2: 'zsh', 3: 'node' },
         });
         try {
             f.withPath(() => restartDeadWatcherPanes(f.sessionDir, f.extRoot, mode));
@@ -629,11 +637,11 @@ test('restartDeadWatcherPanes: trap-door entry documents T3 regressions and size
     assert.match(entry, /INVARIANT:/);
     assert.match(
         entry,
-        /BREAKS: monitor window has stale watcher panes for the rest of the pipeline lifetime; user has to manually relaunch each watcher\./,
+        /BREAKS: monitor window has stale monitor or watcher panes for the rest of the pipeline lifetime; user has to manually relaunch each pane\./,
     );
     assert.match(entry, /ENFORCE:/);
-    assert.match(entry, /restartDeadWatcherPanes: respawns dead pickle watcher panes 1, 2, and 3/);
-    assert.match(entry, /restartDeadWatcherPanes: all watcher panes already running node is a no-op/);
+    assert.match(entry, /restartDeadWatcherPanes: respawns dead pickle monitor and watcher panes 0, 1, 2, and 3/);
+    assert.match(entry, /restartDeadWatcherPanes: all monitor panes already running node is a no-op/);
     assert.match(entry, /restartDeadWatcherPanes: inactive session skips pane probing and respawn/);
 });
 

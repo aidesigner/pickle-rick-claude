@@ -975,10 +975,10 @@ export function updateState(key: string, value: string, sessionDir: string): voi
  */
 export type MonitorMode = 'pickle' | 'meeseeks' | 'council' | 'refinement';
 
-type WatcherPane = 1 | 2 | 3;
+type MonitorPane = 0 | 1 | 2 | 3;
 
 interface WatcherPaneCommand {
-  pane: WatcherPane;
+  pane: MonitorPane;
   name: string;
   command: string;
 }
@@ -1100,6 +1100,11 @@ function watcherPaneCommands(sessionDir: string, extensionRoot: string, mode: Mo
   const paneTwo = watcherPaneTwoCommand(sessionDir, binRoot, mode);
 
   return [
+    {
+      pane: 0,
+      name: 'monitor.js',
+      command: `node ${path.join(binRoot, 'monitor.js')} ${sessionDir}`,
+    },
     {
       pane: 1,
       name: 'log-watcher.js',
