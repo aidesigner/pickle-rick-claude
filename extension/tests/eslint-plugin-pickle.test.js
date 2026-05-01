@@ -203,6 +203,30 @@ describe('pickle/no-unsafe-error-cast', () => {
   });
 });
 
+// ─── no-bare-convergence-history ─────────────────────────────────────────────
+
+describe('pickle/no-bare-convergence-history', () => {
+  it('requires optional chaining or asserted metric convergence before history access', () => {
+    ruleTester.run('no-bare-convergence-history', pickle.rules['no-bare-convergence-history'], {
+      valid: [
+        { code: `const history = state.convergence?.history ?? [];` },
+        { code: `const metricConv = assertMetricConvergence(state, 'helper'); const history = metricConv.history;` },
+        { code: `const history = state.other.history;` },
+      ],
+      invalid: [
+        {
+          code: `const history = state.convergence.history;`,
+          errors: [{ messageId: 'requireGuard' }],
+        },
+        {
+          code: `const scores = mvState.convergence.history.map(h => h.score);`,
+          errors: [{ messageId: 'requireGuard' }],
+        },
+      ],
+    });
+  });
+});
+
 // ─── no-gemini-path ──────────────────────────────────────────────────────────
 
 describe('pickle/no-gemini-path', () => {

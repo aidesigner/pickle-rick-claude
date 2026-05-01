@@ -550,6 +550,7 @@ export function buildMicroverseHandoff(mvState, iteration, workingDir, sessionDi
         parts.push('Make targeted changes and commit.');
         return parts.join('\n');
     }
+    const metricConv = assertMetricConvergence(mvState, 'buildMicroverseHandoff');
     const dir = mvState.key_metric.direction ?? 'higher';
     const parts = [
         `# Microverse Iteration ${iteration}`,
@@ -559,7 +560,7 @@ export function buildMicroverseHandoff(mvState, iteration, workingDir, sessionDi
         `- Type: ${mvState.key_metric.type}`,
         `- Direction: ${dir} (${dir === 'lower' ? 'lower is better' : 'higher is better'})`,
         `- Baseline score: ${mvState.baseline_score}`,
-        `- Current stall counter: ${mvState.convergence.stall_counter}/${mvState.convergence.stall_limit}`,
+        `- Current stall counter: ${metricConv.stall_counter}/${metricConv.stall_limit}`,
         '',
     ];
     if (mvState.gap_analysis_path) {
@@ -567,7 +568,7 @@ export function buildMicroverseHandoff(mvState, iteration, workingDir, sessionDi
         parts.push(`See: ${mvState.gap_analysis_path}`);
         parts.push('');
     }
-    const history = mvState.convergence.history;
+    const history = metricConv.history;
     if (history.length > 0) {
         parts.push('## Recent Metric History');
         const recent = history.slice(-5);
@@ -592,9 +593,17 @@ export function buildMicroverseHandoff(mvState, iteration, workingDir, sessionDi
     parts.push(`${dir === 'lower' ? 'Focus on reducing the metric.' : 'Focus on improving the metric.'} Make targeted changes and commit.`);
     return parts.join('\n');
 }
-function getBestScore(mvState) {
+function assertMetricConvergence(mvState, helper) {
+    if (!mvState.convergence) {
+        throw new Error(`${helper} called in worker mode without metric convergence state`);
+    }
+    return mvState.convergence;
+}
+export function getBestScore(mvState) {
+    if (!mvState.convergence)
+        return null;
     const bestFn = (mvState.key_metric.direction ?? 'higher') === 'lower' ? Math.min : Math.max;
-    const accepted = mvState.convergence.history.filter(h => h.action === 'accept').map(h => h.score);
+    const accepted = mvState.convergence?.history.filter(h => h.action === 'accept').map(h => h.score) ?? [];
     if (accepted.length === 0)
         return mvState.baseline_score;
     return bestFn(...accepted, mvState.baseline_score);
@@ -631,10 +640,11 @@ export function buildEfficiencySection(history, totalIterations) {
     return `\n## Efficiency\n\n- **Wasted iterations**: ${wasted} / ${totalIterations} (${pct}%)\n`;
 }
 export function writeFinalReport(sessionDir, mvState, exitReason, iterations, elapsedSeconds) {
-    const history = mvState.convergence.history;
+    const history = mvState.convergence?.history ?? [];
     const accepted = history.filter(h => h.action === 'accept').length;
     const reverted = history.filter(h => h.action === 'revert').length;
     const bestScore = getBestScore(mvState);
+    const convergenceMode = mvState.convergence_mode ?? (mvState.convergence ? 'metric' : 'worker');
     const report = [
         `# Microverse Final Report`,
         '',
@@ -644,6 +654,7 @@ export function writeFinalReport(sessionDir, mvState, exitReason, iterations, el
         `- **Metric**: ${mvState.key_metric.description}`,
         `- **Baseline Score**: ${mvState.baseline_score}`,
         `- **Best Score**: ${bestScore}`,
+        `- **Convergence Mode**: ${convergenceMode}`,
         `- **Accepted**: ${accepted}`,
         `- **Reverted**: ${reverted}`,
         `- **Failed Approaches**: ${mvState.failed_approaches.length}`,
@@ -696,7 +707,7 @@ function measureCurrentMetric(state, ctx, backend) {
         return measureMetric(state.key_metric.validation, state.key_metric.timeout_seconds, ctx.workingDir);
     }
     if (state.key_metric.type === 'llm') {
-        return measureLlmMetric(state.key_metric.validation, state.key_metric.timeout_seconds, ctx.workingDir, state.key_metric.judge_model, state.convergence.history, state.prd_path, state.judge_context_path, backend);
+        return measureLlmMetric(state.key_metric.validation, state.key_metric.timeout_seconds, ctx.workingDir, state.key_metric.judge_model, state.convergence?.history ?? [], state.prd_path, state.judge_context_path, backend);
     }
     return null;
 }
@@ -871,7 +882,8 @@ export async function measureAndClassifyIteration(state, baseline, ctx) {
         return { kind: 'unchanged' };
     }
     ctx.log(`Metric: ${metricResult.score} (raw: ${metricResult.raw})`);
-    const lastAccepted = [...state.convergence.history].reverse().find(h => h.action === 'accept');
+    const metricConv = assertMetricConvergence(state, 'measureAndClassifyIteration');
+    const lastAccepted = [...metricConv.history].reverse().find(h => h.action === 'accept');
     if (baseline.score === 0 && state.baseline_score === 0 && !lastAccepted) {
         state.baseline_score = metricResult.score;
         ctx.log(`Late baseline adopted: ${metricResult.score} (initial measurement failed)`);
@@ -1307,17 +1319,28 @@ export async function main(sessionDir) {
     finalizeMicroverseRun(sessionDir, ctx, outcome, log);
     process.exit(microverseExitCode(outcome.exitReason));
 }
-function markMicroverseFatalError(sessionDir) {
+export function markMicroverseFatalError(sessionDir) {
     const mvPath = path.join(sessionDir, 'microverse.json');
     if (!fs.existsSync(mvPath))
-        return;
+        return null;
     const recovered = readRecoverableJsonObject(mvPath);
     if (!recovered)
-        return;
+        return null;
     const mv = recovered;
+    const successfulReasons = new Set(['converged', 'completed', 'success']);
+    if (typeof mv.exit_reason === 'string' && successfulReasons.has(mv.exit_reason)) {
+        sm.forceWrite(path.join(sessionDir, 'microverse-finalizer-error.json'), {
+            status: 'stopped',
+            exit_reason: 'error',
+            preserved_exit_reason: mv.exit_reason,
+            recorded_at: new Date().toISOString(),
+        });
+        return 'preserved';
+    }
     mv.status = 'stopped';
     mv.exit_reason = 'error';
     sm.forceWrite(mvPath, mv);
+    return 'overwritten';
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'microverse-runner.js') {
     const sessionDir = process.argv[2];

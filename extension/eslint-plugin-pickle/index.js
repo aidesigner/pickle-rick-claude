@@ -139,6 +139,15 @@ function isInstanceofErrorCheck(test, paramName) {
   return false;
 }
 
+function isBareConvergenceHistoryAccess(node) {
+  if (node.computed || node.optional) return false;
+  if (node.property.type !== 'Identifier' || node.property.name !== 'history') return false;
+  const object = node.object;
+  if (object.type !== 'MemberExpression') return false;
+  if (object.computed || object.optional) return false;
+  return object.property.type === 'Identifier' && object.property.name === 'convergence';
+}
+
 // ─── Rules ──────────────────────────────────────────────────────────────────
 
 /** Check if a node is a call to `writeStateFile` (bare identifier) */
@@ -351,6 +360,29 @@ const noUnsafeErrorCast = {
             messageId: 'requireGuard',
             data: { prop: node.property.name, name: paramName },
           });
+        }
+      },
+    };
+  },
+};
+
+const noBareConvergenceHistory = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description: 'Disallow direct .convergence.history reads; worker convergence may omit metric history',
+    },
+    messages: {
+      requireGuard:
+        'Use optional chaining or an explicit metric-mode assertion before reading convergence history.',
+    },
+    schema: [],
+  },
+  create(context) {
+    return {
+      MemberExpression(node) {
+        if (isBareConvergenceHistoryAccess(node)) {
+          context.report({ node, messageId: 'requireGuard' });
         }
       },
     };
@@ -778,6 +810,7 @@ const plugin = {
     'cli-guard-basename': cliGuardBasename,
     'hook-decision-values': hookDecisionValues,
     'no-unsafe-error-cast': noUnsafeErrorCast,
+    'no-bare-convergence-history': noBareConvergenceHistory,
     'no-gemini-path': noGeminiPath,
     'no-deployed-file-edit': noDeployedFileEdit,
     'require-number-validation': requireNumberValidation,
