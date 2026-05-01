@@ -1,6 +1,6 @@
 # MASTER_PLAN — Pickle Rick Engineering Lifecycle
 
-**Last updated**: 2026-05-01 PM (loop-runner-relaunch SHIPPED via session `21605b33`; ac-phase-gate timeout SHIPPED standalone; pipeline-state-desync PRD IN FLIGHT on session `c9595747`)
+**Last updated**: 2026-05-01 PM (loop-runner-relaunch SHIPPED via session `21605b33`; ac-phase-gate timeout SHIPPED standalone; pipeline-state-desync PRD IN FLIGHT on session `c9595747`; **NEW P1** `anatomy-park-runner-undefined-description-crash.md` logged from `loanlight-api` session `a78affa6`)
 
 This file is **operational** — it tells the next coding agent what to work on. Historical narrative lives in:
 - `docs/codex-prompt-design-notes.md` — codex-backend prompt-design lessons (FM-1..FM-4, literalism, scope confusion)
@@ -13,7 +13,8 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 | # | PRD | Status | Next action |
 |---|---|---|---|
-| 1 | [`prds/anatomy-park-gate-baseline-missing.md`](anatomy-park-gate-baseline-missing.md) ⭐ **NEW P1** — blocks all `/pickle-pipeline` runs | **Draft** — 100% reproducible failure (2 consecutive runs `21605b33` + `c9595747` both exit 1 at anatomy-park iter 2). Gap-analysis log claims baseline initialized but `gate/` dir doesn't exist on disk; strict-mode fallback exits within ~1 sec with no recovery. 8 ACs, 9 atomic tickets, ~425 LOC. | `/pickle-pipeline --backend codex --skip-anatomy` to ship this fix without hitting itself; OR run as `/pickle-tmux` (no anatomy-park) |
+| 1 | [`prds/anatomy-park-gate-baseline-missing.md`](anatomy-park-gate-baseline-missing.md) ⭐ **P1** — blocks all `/pickle-pipeline` runs | **Draft** — 100% reproducible failure (2 consecutive runs `21605b33` + `c9595747` both exit 1 at anatomy-park iter 2). Gap-analysis log claims baseline initialized but `gate/` dir doesn't exist on disk; strict-mode fallback exits within ~1 sec with no recovery. 8 ACs, 9 atomic tickets, ~425 LOC. | `/pickle-pipeline --backend codex --skip-anatomy` to ship this fix without hitting itself; OR run as `/pickle-tmux` (no anatomy-park) |
+| 1b | [`prds/anatomy-park-runner-undefined-description-crash.md`](anatomy-park-runner-undefined-description-crash.md) ⭐ **NEW P1** — second anatomy-park failure mode | **Draft** — observed once on `loanlight-api` session `a78affa6` running DSCR-v1 hardening PRD. After 1 clean pass on `packages` subsystem, iter 3 crashes inside `microverse-runner.ts` with `Cannot read properties of undefined (reading 'description')`. Suspected site `mvState.key_metric.description` at lines 1063/1188 — anatomy-park has no `key_metric` (microverse-only field). 6 ACs, ~150–250 LOC. Distinct from gate-baseline P1 (different iter, different stack, `gate/` exists). Halts pipeline → szechuan-sauce never ran on that session. | After gate-baseline ships, run together with `--skip-szechuan` first to isolate; OR run `/pickle-tmux` directly against this PRD |
 | 2 | [`prds/pipeline-state-desync-and-pane-respawn-tmpdir.md`](pipeline-state-desync-and-pane-respawn-tmpdir.md) | **Partially shipped on `c9595747`** — pickle ✓ shipped 5 of 11 tickets (PSD-T0..T5) in 4 commits `86581ce..8316dc0`. Anatomy-park failed → szechuan-sauce never ran → PSD-T6..T10 (fixture migration, ESLint rule, integration test, trap-door catalog, closer) NOT shipped. | Re-run with `--skip-anatomy` after the gate-baseline PRD lands, OR ship remaining tickets manually |
 | 3 | (was here) — current pipeline c9595747 ended `failed` at 19:22:07 | — | — |
 | 2 | [`prds/hermes-integration.md`](hermes-integration.md) | **Ready (P2)** — research complete (`prds/hermes-research.md`), 30 Qs answered, 4 open Qs resolved | `/pickle-refine-prd` → bundle into next overnight run |
@@ -36,7 +37,8 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 | Path | Status | Notes |
 |---|---|---|
-| `anatomy-park-gate-baseline-missing.md` | **Draft (P1)** ⭐ NEW | 100% failure at anatomy-park iter 2; 8 ACs, 9 atomic tickets, ~425 LOC; blocks all `/pickle-pipeline` runs through anatomy-park phase |
+| `anatomy-park-gate-baseline-missing.md` | **Draft (P1)** | 100% failure at anatomy-park iter 2; 8 ACs, 9 atomic tickets, ~425 LOC; blocks all `/pickle-pipeline` runs through anatomy-park phase |
+| `anatomy-park-runner-undefined-description-crash.md` | **Draft (P1)** ⭐ NEW | Iter-3 crash inside `microverse-runner.ts` accessing `mvState.key_metric.description` (microverse-only field) when running anatomy-park; observed once on `loanlight-api` session `a78affa6`; 6 ACs, ~150–250 LOC; halts pipeline → blocks szechuan-sauce |
 | `pipeline-state-desync-and-pane-respawn-tmpdir.md` | **Partially shipped (P1)** | 5 of 11 tickets shipped (PSD-T0..T5) on `c9595747`; remaining 6 tickets (T6..T10) deferred — run with `--skip-anatomy` after gate-baseline PRD lands |
 | `hermes-integration.md` + `hermes-research.md` | **Ready (P2)** | Fourth backend `'hermes'`; 12 FRs + 5 NFRs + ~20 new tests |
 | `multi-repo-task-state-drift.md` | **Refined draft** | T1-T4 partially shipped pre-v1.63.0; remainder TBD |
