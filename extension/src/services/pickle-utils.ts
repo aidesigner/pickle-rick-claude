@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { StringDecoder } from 'string_decoder';
-import { State, VALID_STEPS, LockError, SessionMapEntry } from '../types/index.js';
+import { State, VALID_STEPS, LockError, SessionMapEntry, type ActivityEvent } from '../types/index.js';
 import { StateManager } from './state-manager.js';
 import { readRecoverableJsonObject } from './recoverable-json.js';
 import { updateTicketStatusInTransaction } from './transaction-ticket-ops.js';
@@ -116,6 +116,12 @@ export function formatLocalDateKey(d: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+const CANONICAL_EXTENSION_ROOT = path.join(os.homedir(), '.claude/pickle-rick');
+const EXTENSION_ROOT_SENTINEL = path.join('extension', 'bin', 'log-watcher.js');
+const TEST_ALLOW_MISSING_EXTENSION_SENTINEL = 'PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL';
+
+let extensionDirFallbackEmitted = false;
+
 interface ShellError extends Error {
   stderr?: Buffer | string;
   stdout?: Buffer | string;
@@ -176,7 +182,70 @@ export function runCmd(
  * The name is historical — it predates the `extension/` subdirectory layout.
  */
 export function getExtensionRoot(): string {
-  return process.env.EXTENSION_DIR || path.join(os.homedir(), '.claude/pickle-rick');
+  return resolveExtensionRoot(process.env.EXTENSION_DIR);
+}
+
+function resolveExtensionRoot(requestedRoot: string | undefined): string {
+  if (!requestedRoot) return CANONICAL_EXTENSION_ROOT;
+  if (extensionRootSentinelExists(requestedRoot)) return requestedRoot;
+  if (allowsMissingExtensionSentinelForTests()) return requestedRoot;
+
+  emitExtensionDirFallbackOnce(
+    requestedRoot,
+    CANONICAL_EXTENSION_ROOT,
+    `missing sentinel ${path.join(requestedRoot, EXTENSION_ROOT_SENTINEL)}`,
+  );
+  return CANONICAL_EXTENSION_ROOT;
+}
+
+function extensionRootSentinelExists(extensionRoot: string): boolean {
+  return fs.existsSync(path.join(extensionRoot, EXTENSION_ROOT_SENTINEL));
+}
+
+function allowsMissingExtensionSentinelForTests(): boolean {
+  return process.env.NODE_ENV === 'test' && process.env[TEST_ALLOW_MISSING_EXTENSION_SENTINEL] === '1';
+}
+
+function emitExtensionDirFallbackOnce(requestedPath: string, fallbackPath: string, reason: string): void {
+  if (extensionDirFallbackEmitted) return;
+  extensionDirFallbackEmitted = true;
+
+  process.stderr.write(
+    `[pickle-rick] EXTENSION_DIR fallback: requested=${requestedPath} fallback=${fallbackPath} reason=${reason}\n`,
+  );
+  writeExtensionDirFallbackActivity(requestedPath, fallbackPath, reason);
+}
+
+function writeExtensionDirFallbackActivity(requestedPath: string, fallbackPath: string, reason: string): void {
+  try {
+    const ts = new Date();
+    const activityDir = path.join(getCanonicalActivityDataRoot(), 'activity');
+    fs.mkdirSync(activityDir, { recursive: true });
+    const event: ActivityEvent = {
+      ts: ts.toISOString(),
+      event: 'extension_dir_fallback',
+      source: 'pickle',
+      requested_path: requestedPath,
+      fallback_path: fallbackPath,
+      reason,
+    };
+    fs.appendFileSync(path.join(activityDir, `${formatLocalDateKey(ts)}.jsonl`), `${JSON.stringify(event)}\n`, {
+      mode: 0o600,
+    });
+  } catch (err) {
+    process.stderr.write(`[pickle-rick] Failed to log extension_dir_fallback: ${safeErrorMessage(err)}\n`);
+  }
+}
+
+function getCanonicalActivityDataRoot(): string {
+  if (process.env.PICKLE_DATA_ROOT) return process.env.PICKLE_DATA_ROOT;
+  if (process.env.PICKLE_DATA_DIR) return process.env.PICKLE_DATA_DIR;
+  return path.join(os.homedir(), '.local/share/pickle-rick');
+}
+
+/** Test helper: resets process-level fallback emission guard. */
+export function _resetExtensionDirFallbackForTests(): void {
+  extensionDirFallbackEmitted = false;
 }
 
 /**
@@ -1263,7 +1332,7 @@ function checkAndRecreateWindow(sessionName: string): { recreate: boolean } {
   const existingMode = readWindowMode(tmuxBin, target, spawnSyncFn);
   if (monitorModesCompatible(existingMode, mode)) {
     log(`ensureMonitorWindow: monitor window already exists on ${sessionName} (mode=${mode})`);
-    restartDeadWatcherPanes(opts.sessionDir, opts.extensionRoot || getExtensionRoot(), mode, spawnSyncFn);
+    restartDeadWatcherPanes(opts.sessionDir, resolveMonitorExtensionRoot(opts), mode, spawnSyncFn);
     activeMonitorWindowContext!.outcome = { status: 'exists' };
     return { recreate: false };
   }
@@ -1288,7 +1357,7 @@ function checkAndRecreateWindow(sessionName: string): { recreate: boolean } {
 function createMonitorWindow(sessionName: string): void {
   const { bashBin, log, mode, opts, spawnSyncFn, tmuxBin } = currentMonitorWindowContext();
   const target = `${sessionName}:monitor`;
-  const extensionRoot = opts.extensionRoot || getExtensionRoot();
+  const extensionRoot = resolveMonitorExtensionRoot(opts);
   const script = path.join(extensionRoot, 'extension', 'scripts', 'tmux-monitor.sh');
   if (!fs.existsSync(script)) {
     log(`ensureMonitorWindow: tmux-monitor.sh missing at ${script}`);
@@ -1318,6 +1387,10 @@ function createMonitorWindow(sessionName: string): void {
     const err = (setOpt.stderr || '').toString().trim();
     log(`ensureMonitorWindow: set-option @pickle_monitor_mode failed (non-fatal): ${err}`);
   }
+}
+
+function resolveMonitorExtensionRoot(opts: EnsureMonitorWindowOptions): string {
+  return opts.extensionRoot ? resolveExtensionRoot(opts.extensionRoot) : getExtensionRoot();
 }
 
 /** Reads the monitor window's stamped mode via tmux user-option, or null. */

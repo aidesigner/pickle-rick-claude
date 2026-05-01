@@ -10,6 +10,7 @@ import {
     inferMonitorMode,
     monitorModesCompatible,
     restartDeadWatcherPanes,
+    _resetExtensionDirFallbackForTests,
 } from '../services/pickle-utils.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -38,6 +39,8 @@ function makeFakes(opts) {
     // records its argv to the calls log.
     const extRoot = path.join(tmpRoot, 'ext');
     fs.mkdirSync(path.join(extRoot, 'extension', 'scripts'), { recursive: true });
+    fs.mkdirSync(path.join(extRoot, 'extension', 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(extRoot, 'extension', 'bin', 'log-watcher.js'), '// sentinel\n');
     fs.writeFileSync(
         path.join(extRoot, 'extension', 'scripts', 'tmux-monitor.sh'),
         '#!/bin/sh\necho "real script would run" >&2\nexit 0\n',
@@ -161,6 +164,7 @@ function makeWatcherFakes(opts = {}) {
 
     const extRoot = path.join(tmpRoot, 'ext');
     fs.mkdirSync(path.join(extRoot, 'extension', 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(extRoot, 'extension', 'bin', 'log-watcher.js'), '// sentinel\n');
 
     const paneCommands = opts.paneCommands || { 0: 'zsh', 1: 'zsh', 2: 'bash', 3: 'fish' };
     for (const pane of [0, 1, 2, 3]) {
@@ -221,6 +225,7 @@ function makeInjectedMonitorFakes(opts = {}) {
     fs.mkdirSync(sessionDir, { recursive: true });
     fs.mkdirSync(path.join(extRoot, 'extension', 'bin'), { recursive: true });
     fs.mkdirSync(path.join(extRoot, 'extension', 'scripts'), { recursive: true });
+    fs.writeFileSync(path.join(extRoot, 'extension', 'bin', 'log-watcher.js'), '// sentinel\n');
     fs.writeFileSync(
         path.join(extRoot, 'extension', 'scripts', 'tmux-monitor.sh'),
         '#!/bin/sh\nexit 0\n',
@@ -362,6 +367,47 @@ test('ensureMonitorWindow: existing monitor respawns dead monitor and watcher pa
         } finally {
             f.cleanup();
         }
+    }
+});
+
+test('ensureMonitorWindow: stale EXTENSION_DIR falls back before watcher pane respawn', () => {
+    const f = makeInjectedMonitorFakes({
+        sessionName: 'pickle-fallback',
+        paneCommands: { 0: 'node', 1: 'zsh', 2: 'node', 3: 'node' },
+    });
+    const invalidRoot = path.join(f.tmpRoot, 'deleted-ext');
+    const dataRoot = path.join(f.tmpRoot, 'data');
+    const savedExt = process.env.EXTENSION_DIR;
+    const savedData = process.env.PICKLE_DATA_ROOT;
+    const savedWrite = process.stderr.write;
+    try {
+        process.env.EXTENSION_DIR = invalidRoot;
+        process.env.PICKLE_DATA_ROOT = dataRoot;
+        process.stderr.write = () => true;
+        _resetExtensionDirFallbackForTests();
+
+        const result = ensureMonitorWindow({
+            sessionDir: f.sessionDir,
+            inTmux: true,
+            spawnSyncFn: f.spawnSyncFn,
+        });
+
+        assert.equal(result.status, 'exists');
+        const sendKeys = tmuxCalls(f, 'send-keys');
+        assert.equal(sendKeys.length, 1);
+        assert.match(
+            sendKeys[0].args.join(' '),
+            /monitor\.1 node .+\.claude\/pickle-rick\/extension\/bin\/log-watcher\.js .+session Enter/,
+        );
+        assert.doesNotMatch(sendKeys[0].args.join(' '), /deleted-ext/);
+    } finally {
+        process.stderr.write = savedWrite;
+        if (savedExt === undefined) delete process.env.EXTENSION_DIR;
+        else process.env.EXTENSION_DIR = savedExt;
+        if (savedData === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = savedData;
+        _resetExtensionDirFallbackForTests();
+        f.cleanup();
     }
 });
 
@@ -536,6 +582,31 @@ test('ensureMonitorWindow: runner call sites remain limited to pipeline, mux, an
     });
 
     assert.deepEqual(counts, [1, 1, 1]);
+});
+
+test('extension root trap-door: production script resolution does not read process.env.EXTENSION_DIR outside helper', () => {
+    const srcRoot = path.resolve(__dirname, '../src');
+    const allowed = new Set([
+        path.join(srcRoot, 'services', 'pickle-utils.ts'),
+        path.join(srcRoot, 'hooks', 'dispatch.ts'),
+    ]);
+    const offenders = [];
+    const scan = (dir) => {
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+            const fullPath = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+                scan(fullPath);
+                continue;
+            }
+            if (!entry.isFile() || !entry.name.endsWith('.ts')) continue;
+            if (allowed.has(fullPath)) continue;
+            const source = fs.readFileSync(fullPath, 'utf-8');
+            if (source.includes('process.env.EXTENSION_DIR')) offenders.push(path.relative(srcRoot, fullPath));
+        }
+    };
+
+    scan(srcRoot);
+    assert.deepEqual(offenders, []);
 });
 
 test('restartDeadWatcherPanes: respawns dead pickle monitor and watcher panes 0, 1, 2, and 3', () => {

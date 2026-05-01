@@ -15,6 +15,7 @@ import {
     pruneOldSessions,
     extractFrontmatter,
     getExtensionRoot,
+    _resetExtensionDirFallbackForTests,
     getDataRoot,
     markTicketDone,
     markTicketSkipped,
@@ -42,15 +43,107 @@ test('safeErrorMessage: coerces undefined to string', () => {
 
 // --- getExtensionRoot ---
 
-test('getExtensionRoot: uses EXTENSION_DIR env if set', () => {
+function withCleanExtensionEnv(fn) {
     const saved = process.env.EXTENSION_DIR;
+    const savedDataRoot = process.env.PICKLE_DATA_ROOT;
+    const savedNodeEnv = process.env.NODE_ENV;
+    const savedAllow = process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL;
     try {
-        process.env.EXTENSION_DIR = '/custom/path';
-        assert.equal(getExtensionRoot(), '/custom/path');
+        delete process.env.EXTENSION_DIR;
+        delete process.env.PICKLE_DATA_ROOT;
+        delete process.env.NODE_ENV;
+        delete process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL;
+        _resetExtensionDirFallbackForTests();
+        fn();
     } finally {
         if (saved === undefined) delete process.env.EXTENSION_DIR;
         else process.env.EXTENSION_DIR = saved;
+        if (savedDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = savedDataRoot;
+        if (savedNodeEnv === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = savedNodeEnv;
+        if (savedAllow === undefined) delete process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL;
+        else process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL = savedAllow;
+        _resetExtensionDirFallbackForTests();
     }
+}
+
+function makeExtensionRootWithSentinel() {
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-ext-root-')));
+    fs.mkdirSync(path.join(root, 'extension', 'bin'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'extension', 'bin', 'log-watcher.js'), '// sentinel\n');
+    return root;
+}
+
+function readActivityEvents(dataRoot) {
+    const activityDir = path.join(dataRoot, 'activity');
+    if (!fs.existsSync(activityDir)) return [];
+    return fs.readdirSync(activityDir)
+        .filter(file => file.endsWith('.jsonl'))
+        .flatMap(file => fs.readFileSync(path.join(activityDir, file), 'utf-8')
+            .split(/\r?\n/)
+            .filter(Boolean)
+            .map(line => JSON.parse(line)));
+}
+
+test('getExtensionRoot: uses EXTENSION_DIR only when log-watcher sentinel exists', () => {
+    withCleanExtensionEnv(() => {
+        const extRoot = makeExtensionRootWithSentinel();
+        try {
+            process.env.EXTENSION_DIR = extRoot;
+            assert.equal(getExtensionRoot(), extRoot);
+        } finally {
+            fs.rmSync(extRoot, { recursive: true, force: true });
+        }
+    });
+});
+
+test('getExtensionRoot: invalid EXTENSION_DIR falls back and logs once', () => {
+    withCleanExtensionEnv(() => {
+        const extRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-invalid-ext-')));
+        const dataRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-fallback-data-')));
+        const stderr = [];
+        const savedWrite = process.stderr.write;
+        process.env.EXTENSION_DIR = extRoot;
+        process.env.PICKLE_DATA_ROOT = dataRoot;
+        process.stderr.write = (chunk) => {
+            stderr.push(String(chunk));
+            return true;
+        };
+        try {
+            const fallback = path.join(os.homedir(), '.claude/pickle-rick');
+            assert.equal(getExtensionRoot(), fallback);
+            assert.equal(getExtensionRoot(), fallback);
+
+            const warnings = stderr.filter(line => line.includes('EXTENSION_DIR fallback'));
+            assert.equal(warnings.length, 1);
+            assert.match(warnings[0], /missing sentinel/);
+
+            const events = readActivityEvents(dataRoot).filter(event => event.event === 'extension_dir_fallback');
+            assert.equal(events.length, 1);
+            assert.equal(events[0].requested_path, extRoot);
+            assert.equal(events[0].fallback_path, fallback);
+            assert.match(events[0].reason, /missing sentinel/);
+        } finally {
+            process.stderr.write = savedWrite;
+            fs.rmSync(extRoot, { recursive: true, force: true });
+            fs.rmSync(dataRoot, { recursive: true, force: true });
+        }
+    });
+});
+
+test('getExtensionRoot: explicit test override can use temp root without sentinel', () => {
+    withCleanExtensionEnv(() => {
+        const extRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-ext-')));
+        try {
+            process.env.EXTENSION_DIR = extRoot;
+            process.env.NODE_ENV = 'test';
+            process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL = '1';
+            assert.equal(getExtensionRoot(), extRoot);
+        } finally {
+            fs.rmSync(extRoot, { recursive: true, force: true });
+        }
+    });
 });
 
 test('getExtensionRoot: defaults to ~/.claude/pickle-rick', () => {

@@ -28,6 +28,11 @@ function run(args) {
 
 // --- Startup validation ---
 
+test('log-watcher: compiled bin is the extension root sentinel', () => {
+    assert.equal(fs.existsSync(LOG_WATCHER_BIN), true);
+    assert.equal(path.basename(LOG_WATCHER_BIN), 'log-watcher.js');
+});
+
 test('log-watcher: no args → exit 1, stderr includes Usage', () => {
     const result = run([]);
     assert.equal(result.status, 1, 'should exit with code 1');

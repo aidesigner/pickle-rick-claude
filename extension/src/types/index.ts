@@ -458,6 +458,9 @@ export interface ActivityEvent {
   previous_phase?: string | null;
   next_phase?: string;
   previous_exit_reason?: string | null;
+  requested_path?: string;
+  fallback_path?: string;
+  reason?: string;
 }
 
 // ---------------------------------------------------------------------------
