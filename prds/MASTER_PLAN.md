@@ -4,9 +4,9 @@
 
 ## 🔔 NEXT PRIORITY WORK
 
-**Active**: v1.63.0 overnight bundle (`prds/overnight-bug-bundle.md`) at session `2026-04-30-bc104e78` — **9/10 tickets Done** in 109m on codex. T9 (`1a984379` OBB-symbol-audit) In Progress. APH P0 finalizer fix already shipped in this bundle as T1. When T9 closes, anatomy-park + szechuan-sauce phases follow.
+**Active**: none. Branch is clean at `v1.64.0` (released 2026-05-01). v1.63.0 overnight bundle SHIPPED (T1-T9 all Done; anatomy-park phase converged clean in 2 iterations on session `2026-05-01-9ccab218` — 0 confident findings, 8 candidates dropped at conf<80; szechuan-sauce phase pending operator decision). v1.64.0 added skill-launcher script-file fix, pickle-standup MCP cross-reference + 5 gap closures, codex test-shim engines-derived, and lint-debt cleanup (8 ESLint errors → 0).
 
-**Queued post-v1.63.0** (in priority order):
+**Queued post-v1.64.0** (in priority order):
 
 1. **`prds/loop-runner-relaunch-status-bugs.md`** ⭐ NEW — three compounding bugs in `mux-runner.ts` startup ordering surfaced live during v1.63.0 relaunch debug (2026-05-01 ~09:35 CDT). Bug A: `ensureMonitorWindow()` called BEFORE `Session ownership taken` flips `active: false→true`, so AC-WPR-03 skips the watcher respawn. Bug B: `monitor.js` pane 0 has no recovery path — WPR explicitly scoped it out as a non-goal but readiness-halt killed it yesterday. Bug C: `state.exit_reason` not cleared on session reactivation — yesterday's `"fatal"` persists into today's run, lying to state-readers. Reproducer: kill any session mid-research → relaunch → all 4 panes dead + `exit_reason` stale + loop is actually fine. 5 ACs across 3 bugs, 5 atomic tickets, ~400-500 LOC.
 
@@ -50,9 +50,9 @@
 | BMAD wave (T04–T27 across Citadel bundle) | **Shipped v1.62.x** (2026-04-29..30) — state schema v3 (`b17a882`); readiness gate + history (T04, `e9c3317`/`55af9e6`/`6bd28b2`); project-type classifier (`bf7398d`); phase personas + agent-md overlay + spawn-morty injection (T11/T12/T14/T15, `ab2ddce`/`0be3556`/`1c9acf0`/`eec3af6`/`6717ed9`); transaction-ticket-ops + course-correction ledger + recovery (T17, `e04eab0`/`3e6ee69`/`6cb3119`); structural confidence (T20, `847bd82`); debate persona generator + brief + solo-strict gating + continuation caps (T21/T24, `7def5d6`/`1347fb2`/`9a76e88`/`788e586`); hang guards (T25, `8295cd8`); calibration drift governance (T27, `9ea019b`); flag interaction matrix test (`5d74a1d`); codex version smoke (`acafc7d`). Tracked under `prds/citadel.md` Appendix; no per-task PRD rows. Residual gaps tracked as follow-ups (see Section "Residual BMAD Follow-Ups" below). | committed across 22+ commits |
 | `prds/schema-version-deploy-reversion-rca.md` | **Shipped v1.62.0** (2026-04-30 PM) — F1+F2+F3+F4 in HEAD plus the version bump break the propagating-revert loop because `gh release latest` no longer returns the v1.60.1 tarball. F7 lockdown skipped — F6 went straight in. Deploy verified: schemaVersion=3, `assertSchemaVersionDeployParity` live, `performUpgrade` kill-switch armed. AC-RVN-09 ✅, AC-RVN-10 skipped, AC-RVN-11/12 pending 24h soak. | committed `a11dc6d`, released `v1.62.0` |
 | `prds/anatomy-park-finalizer-history-crash.md` | **Shipped v1.63.0** (2026-05-01) — landed as T1 of overnight bug bundle. All 5 bare `.convergence.history` sites guarded or assert-on-worker-mode; `markMicroverseFatalError` preserves successful exit_reason; eslint rule `no-bare-convergence-history` registered; 2 new test files (microverse-runner-finalizer.test.js, pipeline-runner-anatomy-park.test.js). F6 convergence_mode field already shipped pre-bundle. F7 (init-microverse plumbing) deferred. | committed `aba4cd4` (T1 of session `2026-04-30-bc104e78`) |
-| **`prds/overnight-bug-bundle.md`** ⭐ **ACTIVE — v1.63.0 in flight** | **Bundle manifest** (2026-04-30, refined 2026-05-01) — composes 6 source PRDs trimmed by refinement-team grep audit (5 of 6 sub-bundles partially or fully shipped in v1.62.x). Refined to 9 atomic tickets covering APH residual + APF-C codex-manager-relaunch extraction + LTS T-A tier budget + LTS T-B Resume Detection + MRS stall resilience + APF-A catalog hygiene + 3 refiner-derived corrections (test-floor-aggregator, trap-door-conformance lint, symbol-audit). **9/10 tickets Done** in 107m on codex backend at time of writing; T9 (1a984379 OBB-symbol-audit) In Progress. anatomy-park + szechuan-sauce phases follow. Bundle uses `--skip-readiness` flag for one-shot bypass of phantom-symbol findings on NEW files/contracts (BMAD residual P0.6 shipped same release). | committed `c07c757` (manifest), `e529ab6` (v1.63.0 bump), 8 ticket commits |
-| **`prds/loop-runner-relaunch-status-bugs.md`** ⭐ NEW (P1) | **Bug PRD** (2026-05-01) — 3 compounding bugs in mux-runner startup ordering surfaced live during v1.63.0 relaunch debug. Bug A: `ensureMonitorWindow()` called BEFORE `Session ownership taken` flips `active: true`, so AC-WPR-03 skips watcher respawn. Bug B: `monitor.js` pane 0 has no recovery path (WPR explicitly scoped pane 0 out as a non-goal; empirically false — readiness halt killed it). Bug C: `state.exit_reason` not cleared on session reactivation — leftover `"fatal"` lies to state-readers. 12 ACs across 3 bugs (LRR-A1..A3, LRR-B1..B3, LRR-C1..C5, LRR-D1..D3), 5 atomic tickets (LRR-T1..T5), ~400-500 LOC. Reproducer: kill session mid-research → relaunch → all 4 panes dead + exit_reason stale + loop fine. Operator workaround documented in §"Operator workaround". **Slot for next overnight bundle after v1.63.0.** | uncommitted (this branch) |
-| **`prds/hermes-integration.md`** (P2) | **Draft** (2026-05-01) — fourth backend `'hermes'` via first-party `hermes chat -q` CLI. Mirrors codex pattern (own binary), not deepseek (env shim). FR-11 generalizes the just-shipped `evaluateCodexManagerRelaunch` (T2 of v1.63.0 bundle) into backend-aware `evaluateManagerRelaunch`. 12 FRs + 5 NFRs + ~20 new tests + ~600-700 LOC total. **30 hermes-behavior research questions** catalogued in §Research Questions across 6 categories (process lifecycle, output format, CLI flags, config & env, concurrency & sandbox, failure modes, comparison vs codex) — must answer before implementation. 4 high-level Open Questions block design finalization (session-timeout wall, read-only judge mode, manager_relaunch field rename, activity event naming). Session context preserved in §"Session Context (for resuming after `/clear`)". **Slot for next overnight bundle (could stack with loop-runner-relaunch-status-bugs).** | uncommitted (this branch) |
+| `prds/overnight-bug-bundle.md` | **Shipped v1.63.0** (2026-05-01) — bundle manifest composing APH residual finalizer fix (T1) + codex-manager-relaunch extraction (T2) + tier-aware circuit-breaker budget (T3) + send-to-morty Resume Detection (T4) + microverse stall resilience (T5) + trap-door catalog hygiene (T6) + bundle test floor aggregator (T7) + trap-door conformance lint (T8) + refinement symbol audit (T9). 9/9 tickets Done on codex backend at session `2026-04-30-bc104e78` (109m). Anatomy-park phase verified clean on session `2026-05-01-9ccab218` (2 iterations, 0 confident findings, all 8 candidates dropped at conf<80). | committed `c07c757` (manifest), 9 ticket commits, anatomy-park audit clean |
+| **`prds/loop-runner-relaunch-status-bugs.md`** ⭐ **P1 — slot for next pickle-pipeline test cycle** | **Bug PRD** (2026-05-01) — 3 compounding bugs in mux-runner startup ordering surfaced live during v1.63.0 relaunch debug. Bug A: `ensureMonitorWindow()` called BEFORE `Session ownership taken` flips `active: true`, so AC-WPR-03 skips watcher respawn. Bug B: `monitor.js` pane 0 has no recovery path (WPR explicitly scoped pane 0 out as a non-goal; empirically false — readiness halt killed it). Bug C: `state.exit_reason` not cleared on session reactivation — leftover `"fatal"` lies to state-readers. 12 ACs across 3 bugs (LRR-A1..A3, LRR-B1..B3, LRR-C1..C5, LRR-D1..D3), 5 atomic tickets (LRR-T1..T5), ~400-500 LOC. Reproducer: kill session mid-research → relaunch → all 4 panes dead + exit_reason stale + loop fine. Operator workaround documented in §"Operator workaround". **Recommended end-to-end test of v1.64.0 work** because it touches `mux-runner.ts`, `monitor.ts`, `ensureMonitorWindow`, and the launcher contract that v1.64.0 just refactored. | uncommitted (this branch) |
+| **`prds/hermes-integration.md`** + **`prds/hermes-research.md`** (P2) | **Ready** (2026-05-01, research complete) — fourth backend `'hermes'` via first-party `hermes chat -q` CLI. All 30 research questions answered against Hermes Agent v0.12.0 (2026.4.30) → captured in `prds/hermes-research.md`. 4 high-level Open Questions resolved: (1) no session-timeout wall in headless `-q` so FR-11's hermes branch is a no-op; (2) no `--readonly` flag, judge variant restricts toolsets + uses `--ignore-rules --ignore-user-config`; (3) schema stays v3 with `manager_relaunch_count` aliased; (4) `manager_relaunch` event with `gate_payload.backend`, deprecate `codex_manager_relaunch` for one minor cycle. New risks R9 (exit-0-on-API-error class), R10 (SQLite contention under concurrent jar-batch), R11 (terminal tool runs in hidden shell, not tmux pane). FR-3/FR-6/FR-7/FR-10/FR-11 updated. Next step: `/pickle-refine-prd` to decompose into atomic tickets, then bundle into next overnight run. | committed `314cc47` |
 The refined PRD includes: corrected line ranges, T0 prelude + T14 closer, goal-level 200 LOC carve-outs, 8-token enumeration, T1 post-pass invariants, T7 dry-run replacement (test seam, NO `--dry-run`), T2 scope clarification (`runIteration` already extracted), per-ticket frontmatter, fixture lockdown protocol, helper-signature spec rule, trap-door preservation, and a 17-row Risks table.
 
 Pre-refinement preserved at `~/.local/share/pickle-rick/sessions/2026-04-25-9152e64b/prd.md`.
@@ -313,7 +313,47 @@ After the first hot-fix at 23:53 UTC, deployed `STATE_MANAGER_DEFAULTS.schemaVer
 
 Final gate: `tsc` clean, ESLint 0 errors / 1 intentionally-suppressed warning at `monitor.ts:558`, **3392 tests pass / 0 fail / 0 skipped** (was 3390 pre-session, +2 BMAD parity tests). Run time 197s.
 
-### Bug-PRD priority order (post-v1.63.0, updated 2026-05-01)
+## 2.4 Today's session — 2026-05-01 (v1.64.0 ship + hermes research close-out)
+
+**Headline**: post-v1.63.0 cleanup pass surfaced four follow-up issues, all fixed and shipped under v1.64.0. Hermes integration PRD moved Draft → Ready after answering all 30 research questions empirically. Anatomy-park run on the v1.63.0 + v1.64.0 diff converged clean with 0 confident findings.
+
+### What surfaced live during today's run
+
+1. **`/pickle-standup` had 5 gaps** — open-PR query missing (multi-ticket PRs like #1235 invisible to standup); PR-merge jargon leaking into Y/T lines; epic grouping under one PR not collapsing repetitive lines; drift-footer for in-flight PRs missing; helper output included internal `pickle-process-outcome-*` 0m churn that should never have surfaced.
+2. **Skill launcher contract was brittle under zsh** — `/anatomy-park`, `/szechuan-sauce`, `/pickle-microverse`, `/plumbus` all used multi-line `if/elif/fi` heredocs in `tmux send-keys` that zsh silently mis-parsed, leaving an idle bash pane and no monitor window. Confirmed live in session `2026-05-01-9ccab218`.
+3. **Codex test shim was rotting** — hardcoded `codex 0.42.1` in 3 test files clashed with `engines.codex "^0.125.0"`, breaking 7 setup tests as soon as the engine pin moved past 0.42.x. Looked like a real failure of yesterday's anatomy-park run; was actually a stale fixture.
+4. **Pre-existing lint debt was 8 errors** that v1.63.0 work introduced and the release gate hadn't seen yet (5× `pickle/no-bare-convergence-history`, 1× `no-useless-assignment`, 1× `pickle/require-number-validation`, 2× `complexity` on microverse-runner functions).
+5. **Hermes PRD had open questions** — drafted yesterday with 30 research Qs unanswered. User produced empirical answers from probing Hermes Agent v0.12.0; we resolved all 4 open design questions and updated FRs.
+
+### Releases shipped this session
+
+| Version | Description |
+|---|---|
+| `v1.64.0` | pickle-standup MCP cross-reference + 5-gap closure (open-PR query, product-voice lint, epic grouping, drift footer, helper-noise drop list); skill launcher script-file fix across 4 skills; codex shim engines-derived; lint debt cleared (8 errors → 0); 2 complexity violations deferred to god-functions-phase-2 rows 28-29 |
+
+### Commits landed (chronological)
+
+- `795b1ad` docs(pickle-standup): close 5 gaps surfaced on 2026-05-01 run
+- `ac60b6b` test(codex-shim): derive shim version from engines.codex
+- `505f957` fix(skills): launch microverse-runner via script file, not inline send-keys
+- `314cc47` docs(prds): hermes-integration — answer 30 research Qs, resolve 4 open Qs
+- `ef9e55c` chore: bump version to 1.64.0
+
+### Final gate
+
+- `tsc --noEmit`: clean
+- `eslint src/ --max-warnings=-1`: 0 errors, 1 advisory warning
+- `npm test`: 3464/3464 pass / 0 fail / 0 skipped
+- Anatomy-park audit on diff since `c07c7577`: converged clean in 2 iterations, 0 confident findings (all 8 candidates dropped at conf<80 per szechuan-sauce-principles.md)
+- v1.64.0 release published; install.sh deployed; deployed package version matches source
+
+### Next pickle-pipeline test cycle
+
+`prds/loop-runner-relaunch-status-bugs.md` is the recommended end-to-end exercise of v1.64.0 work — see Bug-PRD priority order below. It touches `mux-runner.ts`, `monitor.ts`, `ensureMonitorWindow`, and the launcher contract this session refactored. Small bounded scope (5 atomic tickets, ~400-500 LOC), drafted but uncommitted. Stack with `prds/hermes-integration.md` for an overnight bundle if a wider sweep is wanted.
+
+---
+
+### Bug-PRD priority order (post-v1.64.0, updated 2026-05-01)
 
 | Tier | PRD | Why |
 |---|---|---|
