@@ -959,6 +959,10 @@ export function updateState(key: string, value: string, sessionDir: string): voi
     } else {
       (state as unknown as Record<string, unknown>)[key] = value;
     }
+    if (key === 'current_ticket') {
+      delete state.current_ticket_tier;
+      delete state.current_ticket_budget;
+    }
   });
   console.log(`Successfully updated ${key} to ${value} in ${statePath}`);
 }

@@ -935,6 +935,96 @@ export type ExitReason = 'success' | 'cancelled' | 'error' | 'limit' | 'stall' |
 const isHaltExit = (r: ExitReason): boolean => r === 'cancelled' || r === 'limit' || r === 'timeout_repeat';
 const isFailureExit = (r: ExitReason): boolean => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination';
 
+const CIRCUIT_BREAKER_TIER_BUDGETS = {
+  trivial: 3,
+  small: 4,
+  medium: 5,
+  large: 12,
+} as const;
+
+type CircuitBreakerTier = keyof typeof CIRCUIT_BREAKER_TIER_BUDGETS;
+
+export interface CircuitBreakerBudget {
+  tier: string;
+  budget: number;
+}
+
+function isCircuitBreakerTier(value: string): value is CircuitBreakerTier {
+  return Object.prototype.hasOwnProperty.call(CIRCUIT_BREAKER_TIER_BUDGETS, value);
+}
+
+function defaultCircuitBreakerBudget(): CircuitBreakerBudget {
+  return { tier: 'medium', budget: CIRCUIT_BREAKER_TIER_BUDGETS.medium };
+}
+
+function parseTicketComplexityTier(content: string): CircuitBreakerTier | null {
+  const lines = content.split(/\r?\n/);
+  if (lines[0]?.trim() !== '---') return null;
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line === '---') return null;
+    const match = /^complexity_tier:\s*["']?([A-Za-z_-]+)["']?\s*$/.exec(line);
+    if (!match) continue;
+    const tier = match[1].toLowerCase();
+    return isCircuitBreakerTier(tier) ? tier : null;
+  }
+  return null;
+}
+
+export function getCircuitBreakerBudget(state: State, sessionDir: string): CircuitBreakerBudget {
+  const cachedTier = typeof state.current_ticket_tier === 'string'
+    ? state.current_ticket_tier.toLowerCase()
+    : '';
+  const cachedBudget = Number(state.current_ticket_budget);
+  if (isCircuitBreakerTier(cachedTier) && cachedBudget === CIRCUIT_BREAKER_TIER_BUDGETS[cachedTier]) {
+    return { tier: cachedTier, budget: cachedBudget };
+  }
+
+  const ticket = typeof state.current_ticket === 'string' && state.current_ticket.length > 0
+    ? state.current_ticket
+    : null;
+  if (!ticket) {
+    const fallback = defaultCircuitBreakerBudget();
+    state.current_ticket_tier = fallback.tier;
+    state.current_ticket_budget = fallback.budget;
+    return fallback;
+  }
+
+  const ticketPath = path.join(sessionDir, ticket, `linear_ticket_${ticket}.md`);
+  let budget = defaultCircuitBreakerBudget();
+  try {
+    const tier = parseTicketComplexityTier(fs.readFileSync(ticketPath, 'utf-8'));
+    if (tier) budget = { tier, budget: CIRCUIT_BREAKER_TIER_BUDGETS[tier] };
+  } catch {
+    budget = defaultCircuitBreakerBudget();
+  }
+
+  state.current_ticket_tier = budget.tier;
+  state.current_ticket_budget = budget.budget;
+  return budget;
+}
+
+function settingsWithCircuitBreakerBudget(settings: CircuitBreakerConfig, budget: number): CircuitBreakerConfig {
+  return {
+    ...settings,
+    noProgressThreshold: budget,
+    halfOpenAfter: Math.min(settings.halfOpenAfter, Math.max(1, budget - 1)),
+  };
+}
+
+function formatCircuitBreakerTripReason(reason: string, budget: CircuitBreakerBudget): string {
+  const match = /^No progress in (\d+) iterations(?:\..*)?$/.exec(reason);
+  if (!match) return reason;
+  return `No progress in ${match[1]} iterations (tier: ${budget.tier}, budget: ${budget.budget})`;
+}
+
+function clearCircuitBreakerBudgetCacheOnTicketChange(state: State, previousTicket: string | null): void {
+  if (previousTicket !== null && previousTicket !== state.current_ticket) {
+    delete state.current_ticket_tier;
+    delete state.current_ticket_budget;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Per-ticket timeout counter (FR-B3/B4/B12/B14) — non-persisted loop state
 // ---------------------------------------------------------------------------
@@ -1305,15 +1395,21 @@ function recordCircuitBreakerOutcome(state: State, result: IterationOutcome['com
   if (!ctx.cbEnabled || !ctx.cbState || !ctx.cbSettings || result === 'error' || result === 'inactive') return { kind: 'noop', cbState: ctx.cbState };
   const errorSig = readCircuitBreakerErrorSignature(ctx);
   const postIterState = readPostIterationState(state, ctx);
+  clearCircuitBreakerBudgetCacheOnTicketChange(postIterState, ctx.cbState.last_known_ticket);
   const progress = detectProgress(
     postIterState.working_dir || process.cwd(), ctx.cbState.last_known_head, ctx.cbState.last_known_step,
     postIterState.step, ctx.cbState.last_known_ticket, postIterState.current_ticket,
   );
+  const budget = getCircuitBreakerBudget(postIterState, ctx.sessionDir);
+  const cbSettings = settingsWithCircuitBreakerBudget(ctx.cbSettings, budget.budget);
   const prevCBState = ctx.cbState.state;
-  const cbState = recordIterationResult(ctx.cbState, { hasProgress: progress.hasProgress, errorSignature: errorSig }, ctx.iteration, ctx.cbSettings);
+  const cbState = recordIterationResult(ctx.cbState, { hasProgress: progress.hasProgress, errorSignature: errorSig }, ctx.iteration, cbSettings);
   cbState.last_known_head = progress.currentHead;
   cbState.last_known_step = postIterState.step;
   cbState.last_known_ticket = postIterState.current_ticket;
+  if (prevCBState !== 'OPEN' && cbState.state === 'OPEN') {
+    cbState.reason = formatCircuitBreakerTripReason(cbState.reason, budget);
+  }
   if (ctx.cbPath) writeLoopState(ctx, ctx.cbPath, cbState);
   if (prevCBState !== 'OPEN' && cbState.state === 'OPEN') {
     logActivity({ event: 'circuit_open', source: 'pickle', session: path.basename(ctx.sessionDir), error: cbState.reason });
@@ -1936,6 +2032,7 @@ async function runMuxRunnerMain() {
       // Write CB state inside sm.update to keep circuit_breaker.json in sync with state.json iteration
       try {
         sm.update(statePath, s => {
+          clearCircuitBreakerBudgetCacheOnTicketChange(s, cbState!.last_known_ticket);
           const progress = detectProgress(
             s.working_dir || process.cwd(),
             cbState!.last_known_head,
@@ -1944,16 +2041,21 @@ async function runMuxRunnerMain() {
             cbState!.last_known_ticket,
             s.current_ticket
           );
+          const budget = getCircuitBreakerBudget(s, sessionDir);
+          const dynamicCbSettings = settingsWithCircuitBreakerBudget(cbSettings, budget.budget);
           prevCBState = cbState!.state;
           cbState = recordIterationResult(
             cbState!,
             { hasProgress: progress.hasProgress, errorSignature: errorSig },
             iteration,
-            cbSettings
+            dynamicCbSettings
           );
           cbState.last_known_head = progress.currentHead;
           cbState.last_known_step = s.step;
           cbState.last_known_ticket = s.current_ticket;
+          if (prevCBState !== 'OPEN' && cbState.state === 'OPEN') {
+            cbState.reason = formatCircuitBreakerTripReason(cbState.reason, budget);
+          }
           writeStateFile(cbPath, cbState);
         });
       } catch {
@@ -1962,21 +2064,27 @@ async function runMuxRunnerMain() {
         try {
           postIterState = readRunnerState(statePath);
         } catch { /* use last known state */ }
+        clearCircuitBreakerBudgetCacheOnTicketChange(postIterState, cbState.last_known_ticket);
         const progress = detectProgress(
           postIterState.working_dir || process.cwd(),
           cbState.last_known_head, cbState.last_known_step, postIterState.step,
           cbState.last_known_ticket, postIterState.current_ticket
         );
+        const budget = getCircuitBreakerBudget(postIterState, sessionDir);
+        const dynamicCbSettings = settingsWithCircuitBreakerBudget(cbSettings, budget.budget);
         prevCBState = cbState.state;
         cbState = recordIterationResult(
           cbState,
           { hasProgress: progress.hasProgress, errorSignature: errorSig },
           iteration,
-          cbSettings
+          dynamicCbSettings
         );
         cbState.last_known_head = progress.currentHead;
         cbState.last_known_step = postIterState.step;
         cbState.last_known_ticket = postIterState.current_ticket;
+        if (prevCBState !== 'OPEN' && cbState.state === 'OPEN') {
+          cbState.reason = formatCircuitBreakerTripReason(cbState.reason, budget);
+        }
         writeStateFile(cbPath, cbState);
       }
 

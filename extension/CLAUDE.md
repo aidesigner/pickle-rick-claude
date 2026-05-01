@@ -109,6 +109,8 @@ Compiled TS → JS lives in `extension/services/`, `extension/bin/`, `extension/
 - INVARIANT: `completion_promise` is nullable completion evidence and is never used as the sole state authority. ENFORCE: extension/tests/state-field-invariants.test.js.
 - INVARIANT: `original_prompt` preserves the launch request for worker prompts and reports. ENFORCE: extension/tests/state-field-invariants.test.js.
 - INVARIANT: `current_ticket` is the nullable ticket pointer and changes only through ticket lifecycle operations. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `current_ticket_tier` is the optional mux-runner cache for the active ticket complexity tier and must be refreshed when the ticket changes. ENFORCE: extension/tests/state-field-invariants.test.js, extension/tests/mux-runner-circuit-breaker.test.js.
+- INVARIANT: `current_ticket_budget` is the optional mux-runner cache for the active ticket no-progress circuit-breaker budget and must match `current_ticket_tier`. ENFORCE: extension/tests/state-field-invariants.test.js, extension/tests/mux-runner-circuit-breaker.test.js.
 - INVARIANT: `history` is the lifecycle trace seed written only by `setup.ts` (empty array on init); runners do NOT append. Read by `pickle-utils.ts:buildHandoffSummary` as the new-vs-resume heuristic. ENFORCE: extension/tests/state-field-invariants.test.js, extension/tests/pickle-utils.test.js.
 - INVARIANT: `started_at` is the session start timestamp and remains parseable for recency ranking. ENFORCE: extension/tests/state-field-invariants.test.js.
 - INVARIANT: `session_dir` is the canonical session path written at setup. ENFORCE: extension/tests/state-field-invariants.test.js.

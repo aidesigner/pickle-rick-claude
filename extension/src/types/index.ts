@@ -10,6 +10,8 @@ export interface State {
   completion_promise: string | null;
   original_prompt: string;
   current_ticket: string | null;
+  current_ticket_tier?: string;
+  current_ticket_budget?: number;
   history: Array<{ step: Step; ticket?: string; timestamp: string }>;
   started_at: string;
   session_dir: string;

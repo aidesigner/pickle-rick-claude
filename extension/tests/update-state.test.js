@@ -41,6 +41,21 @@ test('updateState: sets current_ticket', () => {
     });
 });
 
+test('updateState: changing current_ticket clears circuit-breaker budget cache', () => {
+    withTempSession({
+        active: true,
+        current_ticket: 'old123',
+        current_ticket_tier: 'large',
+        current_ticket_budget: 12,
+    }, (dir) => {
+        updateState('current_ticket', 'new123', dir);
+        const state = JSON.parse(fs.readFileSync(path.join(dir, 'state.json'), 'utf-8'));
+        assert.equal(state.current_ticket, 'new123');
+        assert.equal(state.current_ticket_tier, undefined);
+        assert.equal(state.current_ticket_budget, undefined);
+    });
+});
+
 test('updateState: throws when state.json missing', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-test-'));
     try {

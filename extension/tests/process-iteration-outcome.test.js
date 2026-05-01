@@ -365,7 +365,7 @@ test('processIterationOutcome: CB OPEN trip exits circuit_open', async () => {
     writeState(session, state);
     const { context } = ctx(session, {
       cbEnabled: true,
-      cbState: cbState({ last_known_head: head }),
+      cbState: cbState({ last_known_head: head, consecutive_no_progress: 4 }),
       cbSettings: { enabled: true, noProgressThreshold: 1, sameErrorThreshold: 5, halfOpenAfter: 2 },
       cbPath: path.join(session.dir, 'circuit_breaker.json'),
     });

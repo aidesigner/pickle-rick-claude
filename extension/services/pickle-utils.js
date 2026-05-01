@@ -886,6 +886,10 @@ export function updateState(key, value, sessionDir) {
         else {
             state[key] = value;
         }
+        if (key === 'current_ticket') {
+            delete state.current_ticket_tier;
+            delete state.current_ticket_budget;
+        }
     });
     console.log(`Successfully updated ${key} to ${value} in ${statePath}`);
 }
