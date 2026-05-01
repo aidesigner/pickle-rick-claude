@@ -681,6 +681,28 @@ export function recordExitReason(statePath: string, exitReason: string): void {
   );
 }
 
+export interface ClearExitReasonOpts {
+  resetStep?: boolean;
+  resetCurrentTicket?: boolean;
+}
+
+/**
+ * Clear forensic exit markers without disturbing unrelated state fields.
+ * By default only `exit_reason` is cleared; callers may also reset the
+ * phase/ticket markers when reactivating or transitioning a session.
+ */
+export function clearExitReason(statePath: string, opts: ClearExitReasonOpts = {}): void {
+  forceWriteMutate(
+    statePath,
+    s => {
+      s.exit_reason = null;
+      if (opts.resetStep) s.step = null as unknown as State['step'];
+      if (opts.resetCurrentTicket) s.current_ticket = null;
+    },
+    null,
+  );
+}
+
 /**
  * Append a single activity entry to `state.json.activity` (creating the array if missing).
  * Best-effort: primary path uses locked sm.update; on lock failure falls back to

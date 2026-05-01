@@ -5,7 +5,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { StateManager, writeActivityEntry, safeDeactivate, finalizeTerminalState, recordExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
+import { StateManager, writeActivityEntry, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import {
   StateError,
   LockError,
@@ -989,6 +989,56 @@ test('recordExitReason: never throws on missing state.json (no-op when no fallba
     assert.doesNotThrow(() => recordExitReason(sp, 'fatal'));
     // No file should be created (recordExitReason has no fallback factory).
     assert.equal(fs.existsSync(sp), false);
+  });
+});
+
+test('clearExitReason: clears only exit_reason by default', () => {
+  withDir((dir) => {
+    const sp = path.join(dir, 'state.json');
+    writeStateFile(sp, makeState({
+      active: true,
+      step: 'implement',
+      iteration: 4,
+      current_ticket: 'T-99',
+      exit_reason: 'signal',
+      command_template: 'pickle.md',
+    }));
+
+    clearExitReason(sp);
+
+    const read = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+    assert.equal(read.exit_reason, null);
+    assert.equal(read.step, 'implement');
+    assert.equal(read.current_ticket, 'T-99');
+    assert.equal(read.iteration, 4);
+    assert.equal(read.active, true);
+    assert.equal(read.command_template, 'pickle.md');
+  });
+});
+
+test('clearExitReason: optionally resets step and current_ticket while preserving unrelated fields', () => {
+  withDir((dir) => {
+    const sp = path.join(dir, 'state.json');
+    writeStateFile(sp, makeState({
+      active: true,
+      step: 'review',
+      iteration: 8,
+      current_ticket: 'T-100',
+      exit_reason: 'circuit_open',
+      command_template: 'pickle-pipeline.md',
+      backend: 'codex',
+    }));
+
+    clearExitReason(sp, { resetStep: true, resetCurrentTicket: true });
+
+    const read = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+    assert.equal(read.exit_reason, null);
+    assert.equal(read.step, null);
+    assert.equal(read.current_ticket, null);
+    assert.equal(read.iteration, 8);
+    assert.equal(read.active, true);
+    assert.equal(read.command_template, 'pickle-pipeline.md');
+    assert.equal(read.backend, 'codex');
   });
 });
 

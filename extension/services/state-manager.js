@@ -614,6 +614,20 @@ export function recordExitReason(statePath, exitReason) {
     forceWriteMutate(statePath, s => { s.exit_reason = exitReason; }, null);
 }
 /**
+ * Clear forensic exit markers without disturbing unrelated state fields.
+ * By default only `exit_reason` is cleared; callers may also reset the
+ * phase/ticket markers when reactivating or transitioning a session.
+ */
+export function clearExitReason(statePath, opts = {}) {
+    forceWriteMutate(statePath, s => {
+        s.exit_reason = null;
+        if (opts.resetStep)
+            s.step = null;
+        if (opts.resetCurrentTicket)
+            s.current_ticket = null;
+    }, null);
+}
+/**
  * Append a single activity entry to `state.json.activity` (creating the array if missing).
  * Best-effort: primary path uses locked sm.update; on lock failure falls back to
  * read-modify-forceWrite. Never throws — halt paths must not fail on logging.
