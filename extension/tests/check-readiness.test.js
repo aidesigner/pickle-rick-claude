@@ -43,11 +43,44 @@ function writeManifest(sessionDir, body) {
     return manifestPath;
 }
 
+function makeState(sessionDir, overrides = {}) {
+    return {
+        active: false,
+        working_dir: process.cwd(),
+        step: 'research',
+        iteration: 1,
+        max_iterations: 10,
+        max_time_minutes: 30,
+        worker_timeout_seconds: 60,
+        start_time_epoch: Date.now(),
+        completion_promise: null,
+        original_prompt: 'readiness fixture',
+        current_ticket: null,
+        history: [],
+        started_at: new Date().toISOString(),
+        session_dir: sessionDir,
+        schema_version: 3,
+        readiness: { cycle_history: [] },
+        ...overrides,
+    };
+}
+
 function runReadiness(sessionDir, repoRoot = process.cwd()) {
     return spawnSync(process.execPath, [
         BIN,
         '--session-dir', sessionDir,
         '--repo-root', repoRoot,
+    ], {
+        encoding: 'utf-8',
+        timeout: 10000,
+    });
+}
+
+function runReadinessHistory(sessionDir) {
+    return spawnSync(process.execPath, [
+        BIN,
+        '--session-dir', sessionDir,
+        '--history',
     ], {
         encoding: 'utf-8',
         timeout: 10000,
@@ -130,4 +163,32 @@ test('check-readiness: aligned fixture exits 0 with structured JSON stdout', () 
     assert.equal(out.status, 'pass');
     assert.deepEqual(out.findings, []);
     assert.equal(typeof out.elapsed_ms, 'number');
+}));
+
+test('check-readiness: history reads recover dead-writer state tmp snapshots', () => runFixture((sessionDir) => {
+    const statePath = path.join(sessionDir, 'state.json');
+    fs.writeFileSync(statePath, JSON.stringify(makeState(sessionDir, {
+        iteration: 1,
+        readiness: {
+            cycle_history: [
+                { cycle: 1, status: 'failed', suggested_analyst: 'gaps', user_action: null, timestamp: '2026-04-30T01:00:00.000Z' },
+            ],
+        },
+    }), null, 2));
+
+    const tmpPath = `${statePath}.tmp.99999999`;
+    fs.writeFileSync(tmpPath, JSON.stringify(makeState(sessionDir, {
+        iteration: 2,
+        readiness: {
+            cycle_history: [
+                { cycle: 1, status: 'failed', suggested_analyst: 'gaps', user_action: null, timestamp: '2026-04-30T01:00:00.000Z' },
+                { cycle: 2, status: 'failed', suggested_analyst: 'codebase', user_action: null, timestamp: '2026-04-30T02:00:00.000Z' },
+            ],
+        },
+    }), null, 2));
+
+    const result = runReadinessHistory(sessionDir);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /\| 2 \| failed \| codebase \|/);
+    assert.equal(fs.existsSync(tmpPath), false, 'StateManager.read should consume the dead-writer tmp snapshot');
 }));
