@@ -20,7 +20,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync, spawn, type ChildProcess } from 'child_process';
 import type { Backend, State } from '../types/index.js';
-import { BACKENDS } from '../types/index.js';
+import { BACKENDS, PipelineRunnerExitCode } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { backendEnvOverrides, isBackend } from '../services/backend-spawn.js';
 import {
@@ -1424,7 +1424,7 @@ function finalizePipeline(
     skipped_phases: counters.skipped,
     total_phases: runtime.config.phases.length,
   });
-  process.exit(pipelineFailed ? 1 : 0);
+  process.exit(pipelineFailed ? PipelineRunnerExitCode.Failure : PipelineRunnerExitCode.Success);
 }
 
 export async function main(sessionDir: string, opts: MainOpts = {}): Promise<void> {

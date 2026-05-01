@@ -17,7 +17,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync, spawn } from 'child_process';
-import { BACKENDS } from '../types/index.js';
+import { BACKENDS, PipelineRunnerExitCode } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { backendEnvOverrides, isBackend } from '../services/backend-spawn.js';
 import { getExtensionRoot, Style, formatTime, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, displayMacNotification, writeStateFile, } from '../services/pickle-utils.js';
@@ -1160,7 +1160,7 @@ function finalizePipeline(runtime, counters, cancelMarker, startTime) {
         skipped_phases: counters.skipped,
         total_phases: runtime.config.phases.length,
     });
-    process.exit(pipelineFailed ? 1 : 0);
+    process.exit(pipelineFailed ? PipelineRunnerExitCode.Failure : PipelineRunnerExitCode.Success);
 }
 export async function main(sessionDir, opts = {}) {
     try {

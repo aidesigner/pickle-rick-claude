@@ -169,6 +169,12 @@ export const VALID_ACTIVITY_EVENTS = [
     'readiness_delta_requested',
     'halt',
 ];
+export var PipelineRunnerExitCode;
+(function (PipelineRunnerExitCode) {
+    PipelineRunnerExitCode[PipelineRunnerExitCode["Success"] = 0] = "Success";
+    PipelineRunnerExitCode[PipelineRunnerExitCode["Failure"] = 1] = "Failure";
+    PipelineRunnerExitCode[PipelineRunnerExitCode["AuditFailure"] = 2] = "AuditFailure";
+})(PipelineRunnerExitCode || (PipelineRunnerExitCode = {}));
 // ---------------------------------------------------------------------------
 // DOT Builder Types
 // ---------------------------------------------------------------------------

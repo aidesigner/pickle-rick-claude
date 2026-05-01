@@ -378,6 +378,12 @@ export const VALID_ACTIVITY_EVENTS = [
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];
 
+export enum PipelineRunnerExitCode {
+  Success = 0,
+  Failure = 1,
+  AuditFailure = 2,
+}
+
 export type IterationExitType = 'success' | 'error' | 'api_limit' | 'inactive' | 'timeout';
 
 export interface RateLimitInfo {

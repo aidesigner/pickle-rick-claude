@@ -12,7 +12,7 @@ import {
 } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { buildWorkerInvocation, SpawnInvocation } from '../services/backend-spawn.js';
-import { Backend, PromiseTokens, hasToken, Defaults } from '../types/index.js';
+import { Backend, PromiseTokens, hasToken, Defaults, VALID_ACTIVITY_EVENTS, PipelineRunnerExitCode } from '../types/index.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { runAcPhaseGate } from '../services/ac-phase-gate.js';
 
@@ -216,6 +216,32 @@ export interface RefinementManifest {
     cycle: number;
   }[];
   completed_at: string;
+}
+
+export type SymbolAuditCategory = 'activity_event' | 'exit_code' | 'new_file' | 'helper_sentinel';
+
+export interface SymbolAuditFinding {
+  category: SymbolAuditCategory;
+  symbol: string;
+  sourceLine: number;
+  reason: string;
+}
+
+export interface SymbolAuditReference {
+  symbol: string;
+  sourceLine: number;
+  evidence: string;
+  status: 'pass' | 'fail';
+  reason?: string;
+}
+
+export interface SymbolAuditReport {
+  ok: boolean;
+  activityEvents: SymbolAuditReference[];
+  exitCodes: SymbolAuditReference[];
+  newFiles: SymbolAuditReference[];
+  helperSentinels: SymbolAuditReference[];
+  findings: SymbolAuditFinding[];
 }
 
 export function runReadinessGate(sessionDir: string, workingDir: string, manifestPath: string): number {
@@ -1129,6 +1155,278 @@ function runAcShapeEnforcement(manifest: RefinementManifest): number {
   return 2;
 }
 
+const QUOTED_SYMBOL_RE = /[`'"]([A-Za-z][A-Za-z0-9_.-]*)[`'"]/g;
+const SOURCE_FILE_RE = /\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|yml|yaml|sh|py|css|scss|html)$/;
+const SKIP_SOURCE_DIRS = new Set(['.git', 'node_modules', 'dist', 'coverage', '.turbo', '.next']);
+
+function lineRefs(content: string): { line: string; sourceLine: number }[] {
+  return content.split(/\r?\n/).map((line, index) => ({ line, sourceLine: index + 1 }));
+}
+
+function sectionByHeading(content: string, headingPattern: RegExp): { content: string; startLine: number } | undefined {
+  const lines = content.split(/\r?\n/);
+  const start = lines.findIndex((line) => /^#{1,6}\s+/.test(line) && headingPattern.test(line));
+  if (start === -1) return undefined;
+  let end = lines.length;
+  for (let i = start + 1; i < lines.length; i++) {
+    if (/^#{1,6}\s+/.test(lines[i])) {
+      end = i;
+      break;
+    }
+  }
+  return { content: lines.slice(start + 1, end).join('\n'), startLine: start + 2 };
+}
+
+function quotedSymbols(line: string): string[] {
+  const symbols: string[] = [];
+  QUOTED_SYMBOL_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = QUOTED_SYMBOL_RE.exec(line)) !== null) {
+    symbols.push(match[1]);
+  }
+  return symbols;
+}
+
+function uniqueReferences(refs: SymbolAuditReference[]): SymbolAuditReference[] {
+  const seen = new Set<string>();
+  return refs.filter((ref) => {
+    const key = `${ref.symbol}:${ref.sourceLine}:${ref.evidence}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function collectActivityEventReferences(prdContent: string): SymbolAuditReference[] {
+  const valid = new Set<string>(VALID_ACTIVITY_EVENTS);
+  const refs: SymbolAuditReference[] = [];
+  for (const { line, sourceLine } of lineRefs(prdContent)) {
+    if (!/\b(?:activity[-_\s]?events?|event_type|logActivity|VALID_ACTIVITY_EVENTS)\b/i.test(line)) continue;
+    for (const symbol of quotedSymbols(line).filter((s) => /^[a-z][a-z0-9_]*$/.test(s))) {
+      const status = valid.has(symbol) ? 'pass' : 'fail';
+      refs.push({
+        symbol,
+        sourceLine,
+        evidence: line.trim(),
+        status,
+        ...(status === 'fail' ? { reason: 'not present in VALID_ACTIVITY_EVENTS' } : {}),
+      });
+    }
+  }
+  return uniqueReferences(refs);
+}
+
+function pipelineExitCodeMembers(): { names: Set<string>; values: Set<string> } {
+  const names = new Set<string>();
+  const values = new Set<string>();
+  for (const [key, value] of Object.entries(PipelineRunnerExitCode)) {
+    if (/^\d+$/.test(key)) continue;
+    names.add(key);
+    if (typeof value === 'number') values.add(String(value));
+  }
+  return { names, values };
+}
+
+function collectExitCodeReferences(prdContent: string): SymbolAuditReference[] {
+  const { names, values } = pipelineExitCodeMembers();
+  const refs: SymbolAuditReference[] = [];
+  for (const { line, sourceLine } of lineRefs(prdContent)) {
+    if (!/\b(?:exit[-_\s]?codes?|PipelineRunnerExitCode|process\.exit)\b/i.test(line)) continue;
+    const symbols = new Set<string>();
+    for (const symbol of quotedSymbols(line)) symbols.add(symbol.replace(/^PipelineRunnerExitCode\./, ''));
+    for (const match of line.matchAll(/\bPipelineRunnerExitCode\.([A-Za-z][A-Za-z0-9_]*)\b/g)) symbols.add(match[1]);
+    for (const match of line.matchAll(/\bexit[-_\s]?codes?\s*[:=]?\s*(\d+)\b/gi)) symbols.add(match[1]);
+    for (const symbol of symbols) {
+      if (!/^(?:[A-Za-z][A-Za-z0-9_]*|\d+)$/.test(symbol)) continue;
+      const status = names.has(symbol) || values.has(symbol) ? 'pass' : 'fail';
+      refs.push({
+        symbol,
+        sourceLine,
+        evidence: line.trim(),
+        status,
+        ...(status === 'fail' ? { reason: 'not present in PipelineRunnerExitCode' } : {}),
+      });
+    }
+  }
+  return uniqueReferences(refs);
+}
+
+function collectNewFileReferences(prdContent: string, manifest: Pick<RefinementManifest, 'tickets'>): SymbolAuditReference[] {
+  const filesSection = sectionByHeading(prdContent, /\bfiles\s+touched\b/i);
+  if (!filesSection) return [];
+  const manifestText = JSON.stringify(manifest.tickets);
+  const refs: SymbolAuditReference[] = [];
+  for (const { line, sourceLine } of lineRefs(filesSection.content)) {
+    if (!/\bNEW\b/i.test(line)) continue;
+    for (const match of line.matchAll(/(?:^|[\s`'":])((?:\.{1,2}\/)?(?:[\w.-]+\/)+[\w.-]+\.[A-Za-z0-9]+)\b/g)) {
+      const filePath = normalizeCitationPath(match[1]);
+      const escaped = filePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pathMentions = prdContent.match(new RegExp(escaped, 'g'))?.length ?? 0;
+      const hasTicket = pathMentions > 1 || manifestText.includes(filePath);
+      refs.push({
+        symbol: filePath,
+        sourceLine: filesSection.startLine + sourceLine - 1,
+        evidence: line.trim(),
+        status: hasTicket ? 'pass' : 'fail',
+        ...(hasTicket ? {} : { reason: 'NEW file path is not referenced by any decomposition ticket' }),
+      });
+    }
+  }
+  return uniqueReferences(refs);
+}
+
+function sourceRoots(workingDir: string): string[] {
+  const roots = [path.join(workingDir, 'src'), path.join(workingDir, 'extension', 'src')]
+    .filter((root) => fs.existsSync(root) && fs.statSync(root).isDirectory());
+  return roots.length > 0 ? roots : [workingDir];
+}
+
+function hasSourceHit(symbol: string, workingDir: string): boolean {
+  const stack = sourceRoots(workingDir);
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        if (!SKIP_SOURCE_DIRS.has(entry.name)) stack.push(fullPath);
+        continue;
+      }
+      if (!entry.isFile() || !SOURCE_FILE_RE.test(entry.name)) continue;
+      try {
+        if (fs.readFileSync(fullPath, 'utf-8').includes(symbol)) return true;
+      } catch {
+        continue;
+      }
+    }
+  }
+  return false;
+}
+
+function collectHelperSentinelReferences(prdContent: string, workingDir: string): SymbolAuditReference[] {
+  const refs: SymbolAuditReference[] = [];
+  for (const { line, sourceLine } of lineRefs(prdContent)) {
+    if (!/\b(?:helpers?|sentinels?)\b/i.test(line)) continue;
+    const candidates = quotedSymbols(line).filter((symbol) => /^[A-Za-z_$][A-Za-z0-9_$.-]*$/.test(symbol));
+    for (const symbol of candidates) {
+      const grounded = hasSourceHit(symbol, workingDir);
+      refs.push({
+        symbol,
+        sourceLine,
+        evidence: line.trim(),
+        status: grounded ? 'pass' : 'fail',
+        ...(grounded ? {} : { reason: 'no source-tree hit found' }),
+      });
+    }
+  }
+  return uniqueReferences(refs);
+}
+
+function findingsFrom(category: SymbolAuditCategory, refs: SymbolAuditReference[]): SymbolAuditFinding[] {
+  return refs
+    .filter((ref) => ref.status === 'fail')
+    .map((ref) => ({
+      category,
+      symbol: ref.symbol,
+      sourceLine: ref.sourceLine,
+      reason: ref.reason ?? 'symbol audit failed',
+    }));
+}
+
+export function evaluateSymbolAudit(
+  prdContent: string,
+  workingDir: string,
+  manifest: Pick<RefinementManifest, 'tickets'>
+): SymbolAuditReport {
+  const activityEvents = collectActivityEventReferences(prdContent);
+  const exitCodes = collectExitCodeReferences(prdContent);
+  const newFiles = collectNewFileReferences(prdContent, manifest);
+  const helperSentinels = collectHelperSentinelReferences(prdContent, workingDir);
+  const findings = [
+    ...findingsFrom('activity_event', activityEvents),
+    ...findingsFrom('exit_code', exitCodes),
+    ...findingsFrom('new_file', newFiles),
+    ...findingsFrom('helper_sentinel', helperSentinels),
+  ];
+  return {
+    ok: findings.length === 0,
+    activityEvents,
+    exitCodes,
+    newFiles,
+    helperSentinels,
+    findings,
+  };
+}
+
+function renderSymbolRows(refs: SymbolAuditReference[]): string[] {
+  if (refs.length === 0) return ['| _none_ | - | - | - |'];
+  return refs.map((ref) => `| \`${ref.symbol}\` | ${ref.status.toUpperCase()} | ${ref.sourceLine} | ${ref.reason ?? 'grounded'} |`);
+}
+
+export function renderSymbolAuditMarkdown(report: SymbolAuditReport): string {
+  const lines = [
+    '# Symbol Audit',
+    '',
+    `Status: ${report.ok ? 'PASS' : 'FAIL'}`,
+    '',
+    '## Activity Events',
+    '| Symbol | Status | PRD Line | Detail |',
+    '|---|---:|---:|---|',
+    ...renderSymbolRows(report.activityEvents),
+    '',
+    '## Exit Codes',
+    '| Symbol | Status | PRD Line | Detail |',
+    '|---|---:|---:|---|',
+    ...renderSymbolRows(report.exitCodes),
+    '',
+    '## NEW Files',
+    '| Symbol | Status | PRD Line | Detail |',
+    '|---|---:|---:|---|',
+    ...renderSymbolRows(report.newFiles),
+    '',
+    '## Helpers And Sentinels',
+    '| Symbol | Status | PRD Line | Detail |',
+    '|---|---:|---:|---|',
+    ...renderSymbolRows(report.helperSentinels),
+    '',
+  ];
+  if (report.findings.length > 0) {
+    lines.push('## Findings', '');
+    for (const finding of report.findings) {
+      lines.push(`- ${finding.category}: \`${finding.symbol}\` at PRD line ${finding.sourceLine} - ${finding.reason}`);
+    }
+    lines.push('');
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+export async function writeSymbolAudit(
+  refinementDir: string,
+  prdContent: string,
+  workingDir: string,
+  manifest: Pick<RefinementManifest, 'tickets'>
+): Promise<SymbolAuditReport> {
+  const report = evaluateSymbolAudit(prdContent, workingDir, manifest);
+  const auditPath = path.join(refinementDir, 'symbol_audit.md');
+  await fs.promises.writeFile(auditPath, renderSymbolAuditMarkdown(report));
+  return report;
+}
+
+function runSymbolAuditEnforcement(report: SymbolAuditReport): number {
+  if (report.ok) return PipelineRunnerExitCode.Success;
+  process.stderr.write(`[pickle-rick] symbol audit failed: ${report.findings.length} phantom symbol(s).\n`);
+  for (const finding of report.findings) {
+    process.stderr.write(`[pickle-rick] ${finding.category} ${finding.symbol} (PRD line ${finding.sourceLine}): ${finding.reason}\n`);
+  }
+  return PipelineRunnerExitCode.AuditFailure;
+}
+
 export function buildRefinementManifest(args: RefinementArgs, results: CycleResults): RefinementManifest {
   const shapeData = collectAcShapeData(results);
   return {
@@ -1174,9 +1472,12 @@ async function main() {
   const manifestPath = path.join(args.sessionDir, 'refinement_manifest.json');
   const manifest = buildRefinementManifest(args, cycleResults);
   await writeManifestAtomic(manifestPath, manifest);
+  const runtime = resolveRuntime(args, settings);
+  const symbolAudit = await writeSymbolAudit(cycleResults.refinementDir, prdContent, runtime.workingDir, manifest);
+  const symbolAuditStatus = runSymbolAuditEnforcement(symbolAudit);
+  if (symbolAuditStatus !== 0) process.exit(symbolAuditStatus);
   const acShapeStatus = runAcShapeEnforcement(manifest);
   if (acShapeStatus !== 0) process.exit(acShapeStatus);
-  const runtime = resolveRuntime(args, settings);
   const postRefinementGate = runAcPhaseGate({
     sessionDir: args.sessionDir,
     evaluationPhase: 'post-refinement',
