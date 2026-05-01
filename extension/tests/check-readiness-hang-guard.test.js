@@ -12,3 +12,10 @@ test('check-readiness contract resolution passes explicit one-hop timeout', () =
 
   assert.match(source, /computeOneHop\([^;]+findImportersTimeoutMs:\s*30_000[^;]+\)/s);
 });
+
+test('check-readiness tracked-file discovery passes explicit git timeout', () => {
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /const GIT_LS_FILES_TIMEOUT_MS = 30_000;/);
+  assert.match(source, /spawnSync\('git', \['ls-files'\], \{[^}]+timeout:\s*GIT_LS_FILES_TIMEOUT_MS[^}]+\}\)/s);
+});

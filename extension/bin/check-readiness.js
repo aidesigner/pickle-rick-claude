@@ -16,6 +16,7 @@ const MACHINE_HINT_RE = /\b(\d+(?:\.\d+)?%?|exit\s+\d+|<\s*\d+|>\s*\d+|<=\s*\d+|
 const PURE_PROSE_RE = /\b(must|should)\s+(?:be|feel)\s+(?:intuitive|performant|fast|easy|simple|clear|usable|nice|good|robust|reliable)\b/i;
 const PATH_RE = /\b(?:[\w.-]+\/)+[\w.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|yml|yaml|sh|py|css|scss|html)\b/g;
 const SYMBOL_RE = /\b[A-Z][A-Za-z0-9]*(?:\.[A-Za-z_$][\w$]*)+\b|\b[A-Za-z_$][\w$]*\(\)/g;
+const GIT_LS_FILES_TIMEOUT_MS = 30_000;
 function usage() {
     console.error('Usage: node check-readiness.js --session-dir <dir> [--repo-root <dir>] [--manifest <file>] [--machinability-only] [--contract-only] [--history [--last N]] [--skip-readiness <reason>]');
     process.exit(1);
@@ -122,7 +123,11 @@ function resolvePathRef(ref, repoRoot, ticketFile, sessionDir) {
     return bases.some((base) => fs.existsSync(path.resolve(base, ref)));
 }
 function gitTrackedFiles(repoRoot) {
-    const result = spawnSync('git', ['ls-files'], { cwd: repoRoot, encoding: 'utf-8' });
+    const result = spawnSync('git', ['ls-files'], {
+        cwd: repoRoot,
+        encoding: 'utf-8',
+        timeout: GIT_LS_FILES_TIMEOUT_MS,
+    });
     if (result.status !== 0)
         return [];
     return result.stdout.split('\n').filter(Boolean);
