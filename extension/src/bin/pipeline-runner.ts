@@ -21,7 +21,7 @@ import * as path from 'path';
 import { execFileSync, spawn, type ChildProcess } from 'child_process';
 import type { Backend, State } from '../types/index.js';
 import { BACKENDS, PipelineRunnerExitCode } from '../types/index.js';
-import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
+import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { backendEnvOverrides, isBackend } from '../services/backend-spawn.js';
 import {
   getExtensionRoot,
@@ -368,6 +368,7 @@ export function writePipelineStatus(
 // ---------------------------------------------------------------------------
 
 export function resetStateForPhase(statePath: string, template: string, maxIterations: number): void {
+  clearExitReason(statePath, { resetStep: true });
   sm.update(statePath, (s: State) => {
     // Set inactive — the runner takes ownership and activates on start.
     s.active = false;
@@ -376,7 +377,6 @@ export function resetStateForPhase(statePath: string, template: string, maxItera
     s.start_time_epoch = Math.floor(Date.now() / 1000);
     s.max_iterations = maxIterations;
     s.command_template = template;
-    s.step = 'review';
     s.chain_meeseeks = false;
     s.tmux_mode = true;
   });

@@ -18,7 +18,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync, spawn } from 'child_process';
 import { BACKENDS, PipelineRunnerExitCode } from '../types/index.js';
-import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
+import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { backendEnvOverrides, isBackend } from '../services/backend-spawn.js';
 import { getExtensionRoot, Style, formatTime, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, displayMacNotification, writeStateFile, } from '../services/pickle-utils.js';
 import { isWorkingTreeDirty } from '../services/git-utils.js';
@@ -270,6 +270,7 @@ export function writePipelineStatus(sessionDir, status, details = {}) {
 // State Transitions
 // ---------------------------------------------------------------------------
 export function resetStateForPhase(statePath, template, maxIterations) {
+    clearExitReason(statePath, { resetStep: true });
     sm.update(statePath, (s) => {
         // Set inactive — the runner takes ownership and activates on start.
         s.active = false;
@@ -278,7 +279,6 @@ export function resetStateForPhase(statePath, template, maxIterations) {
         s.start_time_epoch = Math.floor(Date.now() / 1000);
         s.max_iterations = maxIterations;
         s.command_template = template;
-        s.step = 'review';
         s.chain_meeseeks = false;
         s.tmux_mode = true;
     });

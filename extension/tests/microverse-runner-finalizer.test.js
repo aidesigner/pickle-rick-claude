@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import {
   buildMicroverseHandoff,
+  ensureRunnerStateActive,
   getBestScore,
   markMicroverseFatalError,
   measureAndClassifyIteration,
@@ -116,6 +117,43 @@ test('markMicroverseFatalError preserves a successful exit reason and writes sib
     const sibling = JSON.parse(fs.readFileSync(path.join(sessionDir, 'microverse-finalizer-error.json'), 'utf-8'));
     assert.equal(sibling.exit_reason, 'error');
     assert.equal(sibling.preserved_exit_reason, 'converged');
+  } finally {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
+
+test('ensureRunnerStateActive clears stale exit reason and current ticket on ownership claim', () => {
+  const sessionDir = tmpDir();
+  const statePath = path.join(sessionDir, 'state.json');
+  try {
+    fs.writeFileSync(statePath, JSON.stringify({
+      active: false,
+      working_dir: sessionDir,
+      step: 'review',
+      iteration: 7,
+      max_iterations: 50,
+      max_time_minutes: 720,
+      worker_timeout_seconds: 1200,
+      start_time_epoch: 500,
+      completion_promise: null,
+      original_prompt: 'microverse ownership test',
+      current_ticket: 'STALE-1',
+      history: [],
+      started_at: new Date().toISOString(),
+      session_dir: sessionDir,
+      schema_version: 3,
+      exit_reason: 'fatal',
+    }, null, 2));
+
+    ensureRunnerStateActive(statePath);
+
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    assert.equal(state.exit_reason, null);
+    assert.equal(state.current_ticket, null);
+    assert.equal(state.active, true);
+    assert.equal(state.tmux_mode, true);
+    assert.equal(state.command_template, 'microverse.md');
+    assert.equal(state.pid, process.pid);
   } finally {
     fs.rmSync(sessionDir, { recursive: true, force: true });
   }

@@ -7,7 +7,7 @@ import { resolveBackend, buildJudgeInvocation, buildWorkerInvocation, backendEnv
 import { readMicroverseState, readRecoverableJsonObject, writeMicroverseState, recordIteration as stateRecordIteration, recordStall, recordAmnesiacExit, clearAmnesiacExits, recordFailedApproach, isConverged, compareMetric, classifyFailure, } from '../services/microverse-state.js';
 import { getHeadSha, resetToSha, isWorkingTreeDirty } from '../services/git-utils.js';
 import { writeStateFile, getExtensionRoot, isoCompactStamp, sleep, Style, formatTime, formatLocalDateKey, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, collectTickets, } from '../services/pickle-utils.js';
-import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
+import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 const sm = new StateManager();
 import { runIteration, loadRateLimitSettings, classifyIterationExit, computeRateLimitAction, killCurrentChild, } from './mux-runner.js';
 import { evaluateCodexManagerRelaunch, recordCodexManagerRelaunch, } from '../services/codex-manager-relaunch.js';
@@ -851,7 +851,8 @@ function installShutdownHandlers(sessionDir, statePath, log) {
     process.on('SIGINT', () => handleShutdownSignal('SIGINT'));
     process.on('SIGHUP', () => handleShutdownSignal('SIGHUP'));
 }
-function ensureRunnerStateActive(statePath) {
+export function ensureRunnerStateActive(statePath) {
+    clearExitReason(statePath, { resetCurrentTicket: true });
     sm.update(statePath, s => {
         s.tmux_mode = true;
         if (!s.command_template)

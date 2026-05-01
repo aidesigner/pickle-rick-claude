@@ -37,7 +37,7 @@ import {
   ensureMonitorWindow,
   collectTickets,
 } from '../services/pickle-utils.js';
-import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
+import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 
 const sm = new StateManager();
 import {
@@ -1185,7 +1185,8 @@ function installShutdownHandlers(sessionDir: string, statePath: string, log: (ms
   process.on('SIGHUP', () => handleShutdownSignal('SIGHUP'));
 }
 
-function ensureRunnerStateActive(statePath: string): void {
+export function ensureRunnerStateActive(statePath: string): void {
+  clearExitReason(statePath, { resetCurrentTicket: true });
   sm.update(statePath, s => {
     s.tmux_mode = true;
     if (!s.command_template) s.command_template = 'microverse.md';

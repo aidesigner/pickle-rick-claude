@@ -524,6 +524,7 @@ describe('resetStateForPhase', () => {
       session_dir: dir,
       tmux_mode: true,
       chain_meeseeks: true,
+      exit_reason: 'fatal',
     }));
 
     resetStateForPhase(statePath, 'anatomy-park.md', 100);
@@ -534,12 +535,45 @@ describe('resetStateForPhase', () => {
     assert.equal(state.current_ticket, null);
     assert.equal(state.max_iterations, 100);
     assert.equal(state.command_template, 'anatomy-park.md');
-    assert.equal(state.step, 'review');
+    assert.equal(state.step, null);
+    assert.equal(state.exit_reason, null);
     assert.equal(state.chain_meeseeks, false);
     assert.equal(state.tmux_mode, true);
     // Preserved fields
     assert.equal(state.working_dir, '/tmp');
     assert.equal(state.original_prompt, 'test');
+    fs.rmSync(dir, { recursive: true });
+  });
+
+  test('clears stale phase forensic markers before next phase runner starts', () => {
+    const dir = tmpDir();
+    const statePath = path.join(dir, 'state.json');
+    fs.writeFileSync(statePath, JSON.stringify({
+      active: false,
+      working_dir: '/project',
+      step: 'review',
+      iteration: 3,
+      max_iterations: 100,
+      max_time_minutes: 720,
+      worker_timeout_seconds: 1200,
+      start_time_epoch: 1000,
+      completion_promise: null,
+      original_prompt: 'test',
+      current_ticket: 'T-STALE',
+      history: [],
+      started_at: new Date().toISOString(),
+      session_dir: dir,
+      exit_reason: 'completed',
+    }));
+
+    resetStateForPhase(statePath, 'szechuan-sauce.md', 50);
+
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    assert.equal(state.exit_reason, null);
+    assert.equal(state.step, null);
+    assert.equal(state.current_ticket, null);
+    assert.equal(state.command_template, 'szechuan-sauce.md');
+    assert.equal(state.active, false);
     fs.rmSync(dir, { recursive: true });
   });
 
