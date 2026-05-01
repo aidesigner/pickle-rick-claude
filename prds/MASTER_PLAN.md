@@ -13,7 +13,9 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 | # | PRD | Status | Next action |
 |---|---|---|---|
-| 1 | [`prds/pipeline-state-desync-and-pane-respawn-tmpdir.md`](pipeline-state-desync-and-pane-respawn-tmpdir.md) | **In flight (P1)** — `/pickle-pipeline --backend codex` on session `2026-05-01-c9595747`. Pickle ✓ (3 iter, 41m, ticket `bf46297b` Done — likely PSD-T0). Citadel ✓ (1 finding). **Anatomy-park running since 19:07** (Phase 3/4). Bugs 1+3 from the PRD reproducing live during the run (state.iteration desync, panes 1+3 dying at phase transition) — validates scope. | Watch anatomy-park convergence; szechuan-sauce next |
+| 1 | [`prds/anatomy-park-gate-baseline-missing.md`](anatomy-park-gate-baseline-missing.md) ⭐ **NEW P1** — blocks all `/pickle-pipeline` runs | **Draft** — 100% reproducible failure (2 consecutive runs `21605b33` + `c9595747` both exit 1 at anatomy-park iter 2). Gap-analysis log claims baseline initialized but `gate/` dir doesn't exist on disk; strict-mode fallback exits within ~1 sec with no recovery. 8 ACs, 9 atomic tickets, ~425 LOC. | `/pickle-pipeline --backend codex --skip-anatomy` to ship this fix without hitting itself; OR run as `/pickle-tmux` (no anatomy-park) |
+| 2 | [`prds/pipeline-state-desync-and-pane-respawn-tmpdir.md`](pipeline-state-desync-and-pane-respawn-tmpdir.md) | **Partially shipped on `c9595747`** — pickle ✓ shipped 5 of 11 tickets (PSD-T0..T5) in 4 commits `86581ce..8316dc0`. Anatomy-park failed → szechuan-sauce never ran → PSD-T6..T10 (fixture migration, ESLint rule, integration test, trap-door catalog, closer) NOT shipped. | Re-run with `--skip-anatomy` after the gate-baseline PRD lands, OR ship remaining tickets manually |
+| 3 | (was here) — current pipeline c9595747 ended `failed` at 19:22:07 | — | — |
 | 2 | [`prds/hermes-integration.md`](hermes-integration.md) | **Ready (P2)** — research complete (`prds/hermes-research.md`), 30 Qs answered, 4 open Qs resolved | `/pickle-refine-prd` → bundle into next overnight run |
 | 3 | [`prds/multi-repo-task-state-drift.md`](multi-repo-task-state-drift.md) | **Refined draft** — high impact when triggered (multi-repo flows only) | Pick up after hermes; needs scoping decision |
 | 4 | [`prds/god-functions-remediation-phase-2.md`](god-functions-remediation-phase-2.md) | **Draft** — 27 carve-outs from Phase 1 to remove; worst offender `runGate` (cyclomatic 65) | Refactor epic; bundle behind hermes |
@@ -22,8 +24,8 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 **Residuals** (not their own queue slot, will be swept opportunistically):
 - AC-SSV-04, AC-SSV-06, AC-LPB-07, AC-RVN-11 (24h soak), AC-RVN-12 (self-propagation negative test) — see [`state-schema-version-ordering-incident.md`](state-schema-version-ordering-incident.md), [`large-pipeline-time-budget-undersized.md`](large-pipeline-time-budget-undersized.md), [`schema-version-deploy-reversion-rca.md`](schema-version-deploy-reversion-rca.md).
-- **`check-readiness.ts` snapshot tmp recovery** — anatomy-park found this HIGH-confidence on session `21605b33` and trap-doored it (`extension/CLAUDE.md`, line 12), but no fix commit landed because anatomy-park exited at iter 2.
-- **Anatomy-park gate-baseline missing-after-commit** — session `21605b33` failed at iter 2 with "per-iteration gate baseline missing after commit — falling back to strict mode for this iteration" → exit 1. Class: microverse-runner gate-baseline lifecycle bug. Worth its own mini-PRD if it recurs on session `c9595747`.
+- **`check-readiness.ts` snapshot tmp recovery** — anatomy-park found this HIGH-confidence on session `21605b33` and trap-doored it (`extension/CLAUDE.md`, line 12), but no fix commit landed because anatomy-park exited at iter 2. Independently fixed by anatomy-park on session `c9595747` (commit `97a57c2`).
+- ~~**Anatomy-park gate-baseline missing-after-commit**~~ — promoted to P1 **`prds/anatomy-park-gate-baseline-missing.md`** (queue slot #1) after recurring on session `c9595747`. Was a residual on the prior MASTER_PLAN; recurrence proves it's a hard 100% failure mode.
 - Citadel post-validation gaps — see [`citadel.md`](citadel.md) `## Post-Validation Gaps`.
 
 ---
@@ -34,7 +36,8 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 | Path | Status | Notes |
 |---|---|---|
-| `pipeline-state-desync-and-pane-respawn-tmpdir.md` | **In flight (P1)** | 3 bugs (state-iteration sync, pipeline phase-step, EXTENSION_DIR tmpdir respawn); 11 ACs, 11 atomic tickets, ~550 LOC; backend: codex-required |
+| `anatomy-park-gate-baseline-missing.md` | **Draft (P1)** ⭐ NEW | 100% failure at anatomy-park iter 2; 8 ACs, 9 atomic tickets, ~425 LOC; blocks all `/pickle-pipeline` runs through anatomy-park phase |
+| `pipeline-state-desync-and-pane-respawn-tmpdir.md` | **Partially shipped (P1)** | 5 of 11 tickets shipped (PSD-T0..T5) on `c9595747`; remaining 6 tickets (T6..T10) deferred — run with `--skip-anatomy` after gate-baseline PRD lands |
 | `hermes-integration.md` + `hermes-research.md` | **Ready (P2)** | Fourth backend `'hermes'`; 12 FRs + 5 NFRs + ~20 new tests |
 | `multi-repo-task-state-drift.md` | **Refined draft** | T1-T4 partially shipped pre-v1.63.0; remainder TBD |
 | `god-functions-remediation-phase-2.md` | **Draft** | 27 god-fns × ~20 tickets to remove ESLint carve-outs |
@@ -106,9 +109,9 @@ This file is **operational** — it tells the next coding agent what to work on.
 |---|---|
 | Latest release | **v1.64.0** (v1.65.0 staged, uncommitted) |
 | Branch state | `main`, ~11 commits ahead of `origin/main` (loop-runner shipped + ac-phase-gate fix + doc rationalization + new PRD) |
-| Active pipeline session | `2026-05-01-c9595747` running `pipeline-state-desync-and-pane-respawn-tmpdir.md` on `/pickle-pipeline --backend codex`, currently Phase 1/4 PICKLE |
-| Tmux session | `pipeline-c9595747` (window 0: pipeline-runner; window 1 monitor: 4 panes alive on `node`) |
-| Previous session | `2026-05-01-21605b33` ended `failed` at 18:17:58 (anatomy-park exit 1 on iter 2 gate-baseline issue); session terminated, tmux killed |
+| Active pipeline session | **none** — `c9595747` ended `failed` at 19:22:07 (anatomy-park exit 1 at iter 2, same gate-baseline bug as `21605b33`) |
+| Tmux session | `pipeline-c9595747` panes are zsh now; safe to kill |
+| Pickle phase result | `c9595747` shipped 4 commits / 5 tickets (PSD-T0..T5) of pipeline-state-desync PRD before pipeline failed in anatomy-park |
 | Codex backend | production-grade (75-ticket Citadel bundle + 9-ticket overnight bundle + 5-ticket loop-runner bundle all shipped autonomously) |
 | `CODEX_MANAGER_RELAUNCH_CAP` | 10 (raised from 5; `extension/src/types/index.ts`) |
 | `engines.codex` pin | `^0.128.0` (source = deployed; install.sh sync ran 2026-05-01 PM) |
