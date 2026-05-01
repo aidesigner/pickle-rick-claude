@@ -178,13 +178,27 @@ Print attach command immediately: `tmux attach -t <name>`
 
 ## Step 6: Launch Runner
 
+Write the launch sequence to a script file and `tmux send-keys` only the path. Inline `;`-chained commands in `send-keys` are silently mis-parsed under zsh; the runner never starts and you get an empty session with no monitor window. The script-file form has zero escaping surface (matches the pattern used by `/anatomy-park`, `/szechuan-sauce`, `/pickle-microverse`, `/plumbus`).
+
 ```bash
-tmux send-keys -t <name>:0 "node $HOME/.claude/pickle-rick/extension/bin/pipeline-runner.js <SESSION_ROOT>; echo ''; echo 'Pipeline finished. Ctrl+B 1 → monitor | Ctrl+B D → detach'; read" Enter
+cat > "${SESSION_ROOT}/launch.sh" <<'LAUNCH_EOF'
+#!/bin/bash
+SESSION_ROOT="$1"
+node "$HOME/.claude/pickle-rick/extension/bin/pipeline-runner.js" "$SESSION_ROOT"
+echo ""
+echo "Pipeline finished. Ctrl+B 1 → monitor | Ctrl+B D → detach"
+read -r _
+LAUNCH_EOF
+chmod +x "${SESSION_ROOT}/launch.sh"
+
+tmux send-keys -t <name>:0 "bash '${SESSION_ROOT}/launch.sh' '${SESSION_ROOT}'" Enter
 ```
 
 ## Step 7: Monitor (4-pane)
 
 pipeline-runner auto-creates the 4-pane monitor window on startup — no manual invocation needed.
+
+Verify before reporting: after `sleep 5`, `tmux list-windows -t <name>` MUST show two windows (`0: bash` running launch.sh, `1: monitor` with 4 node panes). If only window 0 exists, the runner failed to start — read `${SESSION_ROOT}/pipeline-runner.log` (if present) and the pane buffer (`tmux capture-pane -p -t <name>:0`).
 
 ## Step 8: Report
 
