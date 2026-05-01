@@ -1,6 +1,12 @@
 # PRD: Loop-Runner Relaunch Status Bugs (3 compounding)
 
-**Status**: Bug PRD (2026-05-01) — surfaced live during v1.63.0 overnight bundle relaunch into session `2026-04-30-bc104e78`. Three distinct bugs in `mux-runner.ts` + `pickle-utils.ts` cause "monitor looks dead + state lies about exit" after Agent C's relaunch into a session whose previous run had failed.
+**Status**: **SHIPPED** (2026-05-01) — 6 commits across 5 atomic tickets (LRR-T1..T5 + closer) on session `2026-05-01-21605b33` via `/pickle-pipeline --backend codex`.
+
+Commits (chronological): `087930e` clear-exit-reason helper · `80f5c2a` claim mux-runner ownership before monitor recovery (Bug A) · `e4ca4bd` recover dead monitor pane zero (Bug B) · `2013e2a` clear stale exit reasons on relaunch (Bug C) · `00a0dc8` fix phase-marker reset transitions · `67a2ca0` document relaunch-recovery invariants. Pickle phase exited clean (3 iterations, 41m). Citadel phase exited clean (1 finding). **Anatomy-park phase failed at iter 2** with "gate baseline missing after commit, falling back to strict mode" → exit 1; szechuan-sauce phase 4/4 never ran. The 2 anatomy-park findings (ac-phase-gate command-timeout HIGH, check-readiness-snapshot recovery HIGH) were trap-doored to `extension/CLAUDE.md` but no fix commits landed in that pipeline. The ac-phase-gate finding was independently fixed by commit `d5270c0`; check-readiness-snapshot recovery remains open as a P3 residual.
+
+Three compounding bugs in `mux-runner.ts` + `pickle-utils.ts` caused "monitor looks dead + state lies about exit" after relaunch; all three closed by the shipped tickets.
+
+**Original problem statement** (2026-05-01) — surfaced live during v1.63.0 overnight bundle relaunch into session `2026-04-30-bc104e78`.
 **Author**: Pickle Rick
 **Project**: `pickle-rick-claude` — Claude Code extension
 **Repo**: `https://github.com/gregorydickson/pickle-rick-claude` — branch `main`
