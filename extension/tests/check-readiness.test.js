@@ -5,6 +5,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.resolve(__dirname, '../bin/check-readiness.js');
@@ -191,4 +192,44 @@ test('check-readiness: history reads recover dead-writer state tmp snapshots', (
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /\| 2 \| failed \| codebase \|/);
     assert.equal(fs.existsSync(tmpPath), false, 'StateManager.read should consume the dead-writer tmp snapshot');
+}));
+
+test('check-readiness: post-correction delta recovers dead-writer snapshot tmp', () => runFixture((sessionDir) => {
+    const statePath = path.join(sessionDir, 'state.json');
+    const unchanged = writeTicket(sessionDir, 'unchanged', {
+        key: 'UNCHANGED-1',
+        ac: 'The workflow should feel intuitive.',
+    });
+    const changed = writeTicket(sessionDir, 'changed', {
+        key: 'CHANGED-1',
+        ac: 'Command exits 0 exactly.',
+    });
+    writeManifest(sessionDir, {
+        tickets: [
+            { id: 'unchanged', key: 'UNCHANGED-1' },
+            { id: 'changed', key: 'CHANGED-1' },
+        ],
+    });
+
+    const hashes = Object.fromEntries([unchanged, changed].map((file) => [
+        path.relative(sessionDir, file),
+        createHash('sha256').update(fs.readFileSync(file)).digest('hex'),
+    ]));
+    const snapshotPath = path.join(sessionDir, 'readiness_snapshot.json');
+    fs.writeFileSync(snapshotPath, '{not valid json');
+    fs.writeFileSync(`${snapshotPath}.tmp.99999999`, JSON.stringify({ ticketsVersion: 1, hashes }, null, 2));
+    fs.writeFileSync(statePath, JSON.stringify(makeState(sessionDir, {
+        tickets_version: 2,
+        activity: [{ event: 'course_corrected' }],
+    }), null, 2));
+    fs.writeFileSync(changed, fs.readFileSync(changed, 'utf8').replace('Command exits 0 exactly.', 'The workflow should feel intuitive.'));
+
+    const result = runReadiness(sessionDir);
+
+    assert.equal(result.status, 2, result.stderr);
+    const out = JSON.parse(result.stdout);
+    assert.equal(out.status, 'fail');
+    assert.equal(out.delta, true);
+    assert.deepEqual(out.findings.map((finding) => path.basename(path.dirname(finding.ticket))), ['changed']);
+    assert.equal(fs.existsSync(`${snapshotPath}.tmp.99999999`), false, 'dead-writer snapshot tmp should be promoted');
 }));

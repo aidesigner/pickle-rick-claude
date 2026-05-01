@@ -6,8 +6,9 @@ import { spawnSync } from 'child_process';
 import { logActivity } from '../services/activity-logger.js';
 import { listLinearTicketFiles } from '../services/artifact-validation.js';
 import { computeOneHop } from '../services/scope-resolver.js';
-import { formatLocalDateKey, safeErrorMessage } from '../services/pickle-utils.js';
+import { formatLocalDateKey, safeErrorMessage, writeStateFile } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
+import { readRecoverableJsonObject } from '../services/recoverable-json.js';
 import type { ReadinessCycleHistoryEntry } from '../types/index.js';
 
 export interface ReadinessArgs {
@@ -463,7 +464,7 @@ function readSnapshot(sessionDir: string): TicketSnapshot | undefined {
   const file = path.join(sessionDir, SNAPSHOT_FILE);
   if (!fs.existsSync(file)) return undefined;
   try {
-    const parsed = JSON.parse(fs.readFileSync(file, 'utf-8')) as TicketSnapshot;
+    const parsed = readRecoverableJsonObject(file) as TicketSnapshot | null;
     return parsed && typeof parsed.hashes === 'object' ? parsed : undefined;
   } catch {
     return undefined;
@@ -475,7 +476,7 @@ function writeSnapshot(sessionDir: string, ticketFiles: string[], ticketsVersion
     ticketsVersion,
     hashes: Object.fromEntries(ticketFiles.map((file) => [path.relative(sessionDir, file), hashFile(file)])),
   };
-  fs.writeFileSync(path.join(sessionDir, SNAPSHOT_FILE), JSON.stringify(snapshot, null, 2));
+  writeStateFile(path.join(sessionDir, SNAPSHOT_FILE), snapshot);
 }
 
 function getTicketsVersion(state: ReadinessStateShape): number | undefined {

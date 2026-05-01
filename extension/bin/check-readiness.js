@@ -6,8 +6,9 @@ import { spawnSync } from 'child_process';
 import { logActivity } from '../services/activity-logger.js';
 import { listLinearTicketFiles } from '../services/artifact-validation.js';
 import { computeOneHop } from '../services/scope-resolver.js';
-import { formatLocalDateKey, safeErrorMessage } from '../services/pickle-utils.js';
+import { formatLocalDateKey, safeErrorMessage, writeStateFile } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
+import { readRecoverableJsonObject } from '../services/recoverable-json.js';
 const SNAPSHOT_FILE = 'readiness_snapshot.json';
 const READINESS_MAX_RECYCLE_CYCLES = 3;
 const DEFAULT_HISTORY_LIMIT = 10;
@@ -417,7 +418,7 @@ function readSnapshot(sessionDir) {
     if (!fs.existsSync(file))
         return undefined;
     try {
-        const parsed = JSON.parse(fs.readFileSync(file, 'utf-8'));
+        const parsed = readRecoverableJsonObject(file);
         return parsed && typeof parsed.hashes === 'object' ? parsed : undefined;
     }
     catch {
@@ -429,7 +430,7 @@ function writeSnapshot(sessionDir, ticketFiles, ticketsVersion) {
         ticketsVersion,
         hashes: Object.fromEntries(ticketFiles.map((file) => [path.relative(sessionDir, file), hashFile(file)])),
     };
-    fs.writeFileSync(path.join(sessionDir, SNAPSHOT_FILE), JSON.stringify(snapshot, null, 2));
+    writeStateFile(path.join(sessionDir, SNAPSHOT_FILE), snapshot);
 }
 function getTicketsVersion(state) {
     return typeof state.tickets_version === 'number' ? state.tickets_version : undefined;
