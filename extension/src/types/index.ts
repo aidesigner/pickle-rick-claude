@@ -358,6 +358,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'gate_diff_scope_fallback',
   'gate_preexisting_tests_baselined',
   'iteration_left_regression',
+  'strict_mode_red',
   'gate_regression_threshold_warning',
   'gate_out_of_scope_failures_present',
   'commit_pending_probe_fired',

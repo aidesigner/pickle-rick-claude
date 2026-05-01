@@ -406,15 +406,49 @@ async function runChangedPerIterationGate(opts: {
     return opts.currentMv;
   }
 
-  const nextMv = {
+  const gatePayload = {
+    mode: gateMode,
+    scope: 'changed',
+    since: opts.preIterSha,
+    failures_in: result.failures.length,
+    total_raw_failure_count: result.total_raw_failure_count,
+    new_failures_vs_baseline: result.new_failures_vs_baseline,
+    baseline_used: result.baseline_used,
+    allowed_paths_used: result.allowed_paths_used,
+    elapsed_ms: result.elapsed_ms,
+    failures: result.failures.slice(0, 10).map((failure) => ({
+      check: failure.check,
+      file: failure.file,
+      line: failure.line,
+      ruleOrCode: failure.ruleOrCode,
+      message: failure.message,
+      severity: failure.severity,
+      occurrence_index: failure.occurrence_index,
+    })),
+  };
+  let nextMv: MicroverseSessionState = {
     ...opts.currentMv,
     iteration_regressions: (opts.currentMv.iteration_regressions ?? 0) + 1,
   };
+  if (gateMode === 'strict') {
+    nextMv = recordStall(nextMv);
+    opts.deps.logActivityFn({
+      event: 'strict_mode_red',
+      source: 'pickle',
+      session: path.basename(opts.sessionDir),
+      gate_payload: {
+        ...gatePayload,
+        stall_counter: nextMv.convergence.stall_counter,
+        stall_limit: nextMv.convergence.stall_limit,
+      },
+    });
+  }
   opts.deps.writeMicroverseStateFn(opts.sessionDir, nextMv);
   opts.deps.logActivityFn({
     event: 'iteration_left_regression',
     source: 'pickle',
-    gate_payload: { failures_in: result.failures.length },
+    session: path.basename(opts.sessionDir),
+    gate_payload: gatePayload,
   });
   return nextMv;
 }
@@ -712,6 +746,7 @@ export function measureMetric(
 export const _deps = {
   execFileSync: execFileSync as typeof execFileSync,
   runIteration: runIteration as typeof runIteration,
+  runWorkerManagedIteration: handleWorkerManagedIteration as typeof handleWorkerManagedIteration,
   getHeadSha: getHeadSha as typeof getHeadSha,
   resetToSha: resetToSha as typeof resetToSha,
   isWorkingTreeDirty: isWorkingTreeDirty as typeof isWorkingTreeDirty,
@@ -1616,7 +1651,7 @@ async function handleWorkerMode(
   state: MicroverseState,
   ctx: RunContext,
 ): Promise<ExitReason | null> {
-  const workerResult = await handleWorkerManagedIteration({
+  const workerResult = await _deps.runWorkerManagedIteration({
     currentMv: state,
     preIterSha: ctx.preIterSha ?? '',
     workingDir: ctx.workingDir,
@@ -1632,6 +1667,13 @@ async function handleWorkerMode(
   if (workerResult.converged) {
     ctx.log(`Converged (worker-managed: ${workerResult.reason})`);
     return 'converged';
+  }
+  if (state.convergence.stall_counter >= state.convergence.stall_limit) {
+    ctx.log(
+      `Worker-managed stall limit exhausted ` +
+      `(${state.convergence.stall_counter}/${state.convergence.stall_limit})`,
+    );
+    return 'error';
   }
   await _deps.sleep(1000);
   return null;

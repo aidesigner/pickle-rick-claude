@@ -17,11 +17,12 @@ const GATE_EVENTS = [
   'gate_diff_scope_fallback',
   'gate_preexisting_tests_baselined',
   'iteration_left_regression',
+  'strict_mode_red',
   'gate_regression_threshold_warning',
   'gate_out_of_scope_failures_present',
 ];
 
-test('gate-events: all 15 gate/iteration event names are in VALID_ACTIVITY_EVENTS', () => {
+test('gate-events: all 16 gate/iteration event names are in VALID_ACTIVITY_EVENTS', () => {
   const set = new Set(VALID_ACTIVITY_EVENTS);
   for (const name of GATE_EVENTS) {
     assert.ok(set.has(name), `Missing event: ${name}`);
