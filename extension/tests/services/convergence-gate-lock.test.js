@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createHash } from 'node:crypto';
-import { runGate } from '../../services/convergence-gate.js';
+import { BaselineWriteFailedError, runGate } from '../../services/convergence-gate.js';
 import { withLock } from '../../services/state-manager.js';
 
 function sleep(ms) {
@@ -71,10 +71,10 @@ test('runGate lock: concurrent baseline calls serialize', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Lock timeout: external holder holds the gate lock → runGate returns GATE_LOCK_TIMEOUT
+// Lock timeout: external holder holds the gate lock → runGate throws baseline write failure
 // ---------------------------------------------------------------------------
 
-test('runGate lock: baseline lock timeout → red with GATE_LOCK_TIMEOUT', async () => {
+test('runGate lock: baseline lock timeout → BaselineWriteFailedError', async () => {
   const dir = makeTmpDir();
   const baselineDir = makeTmpDir();
   const baselinePath = path.join(baselineDir, 'gate', 'baseline.json');
@@ -90,30 +90,26 @@ test('runGate lock: baseline lock timeout → red with GATE_LOCK_TIMEOUT', async
     // Give holder time to acquire
     await sleep(30);
 
-    const result = await runGate({
-      workingDir: dir,
-      mode: 'baseline',
-      scope: 'full',
-      checks: [],
-      baselinePath,
-      _timeouts: { lockMs: LOCK_TIMEOUT_MS },
-    });
+    await assert.rejects(
+      runGate({
+        workingDir: dir,
+        mode: 'baseline',
+        scope: 'full',
+        checks: [],
+        baselinePath,
+        _timeouts: { lockMs: LOCK_TIMEOUT_MS },
+      }),
+      (err) => {
+        assert.ok(err instanceof BaselineWriteFailedError, `expected BaselineWriteFailedError, got ${err?.constructor?.name}`);
+        assert.equal(err.kind, 'BASELINE_WRITE_FAILED');
+        assert.equal(err.baselinePath, baselinePath);
+        assert.match(err.message, /withLock timeout/);
+        assert.ok(err.cause instanceof Error);
+        return true;
+      },
+    );
 
     await holder;
-
-    assert.equal(result.status, 'red', `Expected red, got: ${result.status}`);
-    const lf = result.failures.find(f => f.ruleOrCode === 'GATE_LOCK_TIMEOUT');
-    assert.ok(lf, `Expected GATE_LOCK_TIMEOUT failure, got: ${JSON.stringify(result.failures)}`);
-    assert.equal(lf.file, '<lock-timeout>');
-    // Regression guard (harden ticket): the synthetic lock-timeout failure's `check` field
-    // must carry one of the GateFailure union values — not a sentinel like 'gate' that
-    // breaks downstream `f.check === 'tests'` consumers.
-    assert.ok(
-      ['typecheck', 'lint', 'tests'].includes(lf.check),
-      `Expected lf.check ∈ {typecheck,lint,tests}, got: ${lf.check}`
-    );
-    assert.equal(result.baseline_used, false);
-    assert.equal(result.new_failures_vs_baseline, 0);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
     fs.rmSync(baselineDir, { recursive: true, force: true });

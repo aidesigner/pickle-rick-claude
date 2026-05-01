@@ -3,7 +3,12 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { assignOccurrenceIndices, runGate, subtractBaseline } from '../../services/convergence-gate.js';
+import {
+  assignOccurrenceIndices,
+  BaselineWriteFailedError,
+  runGate,
+  subtractBaseline,
+} from '../../services/convergence-gate.js';
 
 function makeFailure(file, ruleOrCode, line, occurrence_index = 0) {
   return { check: 'lint', file, line, ruleOrCode, message: 'test', severity: 'error', occurrence_index };
@@ -100,6 +105,34 @@ test('runGate baseline: emits disk diagnostics and leaves baseline on disk', asy
     assert.ok(
       events.some(e => e.event === 'gate_baseline_captured'),
       `expected baseline capture event, got ${JSON.stringify(events)}`,
+    );
+  } finally {
+    fs.rmSync(workingDir, { recursive: true, force: true });
+  }
+});
+
+test('runGate baseline: filesystem persistence failure throws BaselineWriteFailedError', async () => {
+  const workingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-baseline-fs-fail-'));
+  try {
+    fs.writeFileSync(path.join(workingDir, 'package.json'), JSON.stringify({ name: 'fixture', private: true }, null, 2));
+    const blockedParent = path.join(workingDir, 'session');
+    fs.writeFileSync(blockedParent, 'not a directory');
+
+    await assert.rejects(
+      runGate({
+        workingDir,
+        mode: 'baseline',
+        scope: 'full',
+        checks: [],
+        baselinePath: path.join(blockedParent, 'gate', 'baseline.json'),
+      }),
+      (err) => {
+        assert.ok(err instanceof BaselineWriteFailedError, `expected BaselineWriteFailedError, got ${err?.constructor?.name}`);
+        assert.equal(err.kind, 'BASELINE_WRITE_FAILED');
+        assert.match(err.message, /Failed to persist baseline/);
+        assert.ok(err.cause instanceof Error);
+        return true;
+      },
     );
   } finally {
     fs.rmSync(workingDir, { recursive: true, force: true });

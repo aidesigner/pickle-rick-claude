@@ -53,6 +53,28 @@ export class BaselineStaleError extends GateError {
   }
 }
 
+export class BaselineWriteFailedError extends GateError {
+  readonly baselinePath: string;
+  readonly cause?: unknown;
+
+  constructor(baselinePath: string, message?: string, cause?: unknown) {
+    super('BASELINE_WRITE_FAILED', message ?? `Failed to persist baseline at ${baselinePath}`);
+    this.name = 'BaselineWriteFailedError';
+    this.baselinePath = baselinePath;
+    if (cause !== undefined) this.cause = cause;
+  }
+}
+
+function baselineWriteFailed(baselinePath: string, err: unknown): BaselineWriteFailedError {
+  if (err instanceof BaselineWriteFailedError) return err;
+  const message = err instanceof Error ? err.message : String(err);
+  return new BaselineWriteFailedError(
+    baselinePath,
+    `Failed to persist baseline at ${baselinePath}: ${message}`,
+    err,
+  );
+}
+
 /** Event names emitted by the remediator layer after runGate. Exported for remediator callers. */
 export const GATE_REMEDIATION_EVENT_NAMES: readonly ActivityEventType[] = [
   'gate_remediation_complete',
@@ -748,6 +770,7 @@ export async function runGate(opts: RunGateOpts): Promise<GateResult> {
   const { real: realFailures, flake: flakeFailures } = applyFlakeFilter(allFailures, opts.workingDir, flakeGlobs);
 
   if (opts.mode === 'baseline' && opts.baselinePath) {
+    const baselinePath = opts.baselinePath;
     const withIndices = assignOccurrenceIndices(realFailures);
     const lockKey = `gate-${createHash('sha256').update(opts.workingDir).digest('hex')}`;
     const lockMs = opts._timeouts?.lockMs ?? GATE_LOCK_TIMEOUT_MS;
@@ -756,27 +779,35 @@ export async function runGate(opts: RunGateOpts): Promise<GateResult> {
       return finalize(await withLock(lockKey, { timeout_ms: lockMs }, async () => {
         emit('gate_lock_acquired', { lock_key: lockKey });
 
-        const preWriteStatus = await inspectBaselinePath(opts.baselinePath!);
+        const preWriteStatus = await inspectBaselinePath(baselinePath);
         emit('gate_baseline_disk_check', { phase: 'pre_write', ...preWriteStatus });
         const baselineExists = preWriteStatus.exists === true;
         if (!baselineExists) {
-          const baseline: GateBaselineFile = {
-            schema_version: 1,
-            captured_at: new Date().toISOString(),
-            working_dir: opts.workingDir,
-            // 'bun' and other low-confidence types are filtered by !cmdMap above, so this cast is safe
-            project_type: projectType as GateBaselineFile['project_type'],
-            checks: opts.checks,
-            failures: withIndices,
-          };
-          await fs.promises.mkdir(path.dirname(opts.baselinePath!), { recursive: true });
-          writeStateFile(opts.baselinePath!, baseline);
-          const postWriteStatus = await inspectBaselinePath(opts.baselinePath!);
-          emit('gate_baseline_disk_check', { phase: 'post_write', ...postWriteStatus });
-          if (postWriteStatus.exists !== true) {
-            throw new GateError('BASELINE_WRITE_MISSING', `Baseline write reported success but file is missing at ${opts.baselinePath}`);
+          try {
+            const baseline: GateBaselineFile = {
+              schema_version: 1,
+              captured_at: new Date().toISOString(),
+              working_dir: opts.workingDir,
+              // 'bun' and other low-confidence types are filtered by !cmdMap above, so this cast is safe
+              project_type: projectType as GateBaselineFile['project_type'],
+              checks: opts.checks,
+              failures: withIndices,
+            };
+            await fs.promises.mkdir(path.dirname(baselinePath), { recursive: true });
+            writeStateFile(baselinePath, baseline);
+            await fs.promises.access(baselinePath);
+            const postWriteStatus = await inspectBaselinePath(baselinePath);
+            emit('gate_baseline_disk_check', { phase: 'post_write', ...postWriteStatus });
+            if (postWriteStatus.exists !== true) {
+              throw new BaselineWriteFailedError(
+                baselinePath,
+                `Baseline write reported success but file is missing at ${baselinePath}`,
+              );
+            }
+          } catch (err) {
+            throw baselineWriteFailed(baselinePath, err);
           }
-          emit('gate_baseline_captured', { path: opts.baselinePath, failure_count: withIndices.length });
+          emit('gate_baseline_captured', { path: baselinePath, failure_count: withIndices.length });
           emit('gate_preexisting_tests_baselined', { failure_count: withIndices.length });
           return {
             status: 'green' as const,
@@ -788,7 +819,7 @@ export async function runGate(opts: RunGateOpts): Promise<GateResult> {
             new_failures_vs_baseline: 0,
           };
         }
-        const baseline = loadBaselineFile(opts.baselinePath!);
+        const baseline = loadBaselineFile(baselinePath);
         const newFailures = subtractBaseline(withIndices, baseline);
         return {
           status: newFailures.length === 0 ? 'green' as const : 'red' as const,
@@ -803,24 +834,7 @@ export async function runGate(opts: RunGateOpts): Promise<GateResult> {
     } catch (err) {
       if (err instanceof LockError) {
         emit('gate_lock_timeout', { lock_key: lockKey, waited_ms: err.waited_ms ?? lockMs });
-        const lockTimeoutResult: GateResult = {
-          status: 'red',
-          failures: [{
-            check: 'tests',
-            file: '<lock-timeout>',
-            line: 0,
-            ruleOrCode: 'GATE_LOCK_TIMEOUT',
-            message: `baseline lock timeout after ${err.waited_ms ?? lockMs}ms`,
-            severity: 'error',
-            occurrence_index: 0,
-          }],
-          baseline_used: false,
-          allowed_paths_used: allowedPathsUsed,
-          elapsed_ms: Date.now() - start,
-          total_raw_failure_count: 0,
-          new_failures_vs_baseline: 0,
-        };
-        return finalize(lockTimeoutResult);
+        throw baselineWriteFailed(baselinePath, err);
       }
       throw err;
     }
