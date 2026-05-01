@@ -805,11 +805,14 @@ function assertMetricConvergence(mvState, helper) {
 export function getBestScore(mvState) {
     if (!mvState.convergence)
         return null;
-    const bestFn = (mvState.key_metric.direction ?? 'higher') === 'lower' ? Math.min : Math.max;
+    const bestFn = (mvState.key_metric?.direction ?? 'higher') === 'lower' ? Math.min : Math.max;
     const accepted = mvState.convergence?.history.filter(h => h.action === 'accept').map(h => h.score) ?? [];
     if (accepted.length === 0)
         return mvState.baseline_score;
     return bestFn(...accepted, mvState.baseline_score);
+}
+function metricDescriptionForFinalReport(mvState) {
+    return mvState.key_metric?.description ?? 'Worker-managed convergence';
 }
 export function buildFailureDistribution(failureHistory) {
     if (failureHistory.length === 0) {
@@ -854,7 +857,7 @@ export function writeFinalReport(sessionDir, mvState, exitReason, iterations, el
         `- **Exit Reason**: ${exitReason}`,
         `- **Iterations**: ${iterations}`,
         `- **Elapsed**: ${formatTime(elapsedSeconds)}`,
-        `- **Metric**: ${mvState.key_metric.description}`,
+        `- **Metric**: ${metricDescriptionForFinalReport(mvState)}`,
         `- **Baseline Score**: ${mvState.baseline_score}`,
         `- **Best Score**: ${bestScore}`,
         `- **Convergence Mode**: ${convergenceMode}`,

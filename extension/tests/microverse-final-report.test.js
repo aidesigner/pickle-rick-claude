@@ -173,3 +173,35 @@ test('writeFinalReport uses local-day filename at UTC boundary', () => {
     fs.rmSync(sessionDir, { recursive: true, force: true });
   }
 });
+
+test('writeFinalReport handles worker-managed state without key metric', () => {
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mv-report-worker-'));
+  try {
+    writeFinalReport(
+      sessionDir,
+      {
+        status: 'iterating',
+        prd_path: '/tmp/prd.md',
+        convergence_mode: 'worker',
+        convergence_file: 'worker-convergence.json',
+        convergence: { stall_limit: 3, stall_counter: 0, history: [] },
+        gap_analysis_path: '',
+        failed_approaches: [],
+        failure_history: [],
+        baseline_score: 0,
+      },
+      'converged',
+      1,
+      5,
+    );
+
+    const memoryDir = path.join(sessionDir, 'memory');
+    const reports = fs.readdirSync(memoryDir).filter((file) => file.startsWith('microverse_report_'));
+    assert.equal(reports.length, 1);
+    const report = fs.readFileSync(path.join(memoryDir, reports[0]), 'utf8');
+    assert.ok(report.includes('- **Metric**: Worker-managed convergence'));
+    assert.ok(report.includes('- **Convergence Mode**: worker'));
+  } finally {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});

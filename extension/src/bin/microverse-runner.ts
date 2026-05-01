@@ -1124,10 +1124,14 @@ function assertMetricConvergence(
 
 export function getBestScore(mvState: MicroverseSessionState): number | null {
   if (!mvState.convergence) return null;
-  const bestFn = (mvState.key_metric.direction ?? 'higher') === 'lower' ? Math.min : Math.max;
+  const bestFn = (mvState.key_metric?.direction ?? 'higher') === 'lower' ? Math.min : Math.max;
   const accepted = mvState.convergence?.history.filter(h => h.action === 'accept').map(h => h.score) ?? [];
   if (accepted.length === 0) return mvState.baseline_score;
   return bestFn(...accepted, mvState.baseline_score);
+}
+
+function metricDescriptionForFinalReport(mvState: MicroverseSessionState): string {
+  return mvState.key_metric?.description ?? 'Worker-managed convergence';
 }
 
 export function buildFailureDistribution(failureHistory: { failure_class: string }[]): string {
@@ -1185,7 +1189,7 @@ export function writeFinalReport(
     `- **Exit Reason**: ${exitReason}`,
     `- **Iterations**: ${iterations}`,
     `- **Elapsed**: ${formatTime(elapsedSeconds)}`,
-    `- **Metric**: ${mvState.key_metric.description}`,
+    `- **Metric**: ${metricDescriptionForFinalReport(mvState)}`,
     `- **Baseline Score**: ${mvState.baseline_score}`,
     `- **Best Score**: ${bestScore}`,
     `- **Convergence Mode**: ${convergenceMode}`,
