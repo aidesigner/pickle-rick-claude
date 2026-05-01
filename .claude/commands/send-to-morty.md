@@ -15,7 +15,9 @@ Extract `${SESSION_ROOT}`, `${TICKET_ID}`, `${TICKET_DIR}`.
 | Files in `${TICKET_DIR}` | Enter at step |
 |---|---|
 | (none, or `research_*.md` missing) | 1 (Research) |
+| `research_*.md` exists; no `research_review.md` | 2 (Research Review) |
 | `research_*.md` exists; `research_review.md` says `APPROVED`; no `plan_*.md` | 3 (Plan) |
+| `plan_*.md` exists; no `plan_review.md` | 4 (Plan Review) |
 | `plan_*.md` exists; `plan_review.md` says `APPROVED`; no implementation diff | 5 (Implement) |
 | Implementation diff exists; no `conformance_*.md` | 6 (Conformance) |
 | `conformance_*.md` says `ALL_PASS`; no `code_review_*.md` | 7 (Code Review) |

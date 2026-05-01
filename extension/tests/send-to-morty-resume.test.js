@@ -114,6 +114,14 @@ test('send-to-morty resume: empty dir first writes research artifact', () => {
     }
 });
 
+test('send-to-morty resume prompt routes completed research without review to Research Review', () => {
+    const morty = readCommand(MORTY_COMMAND);
+    assert.match(
+        morty,
+        /\| `research_\*\.md` exists; no `research_review\.md` \| 2 \(Research Review\) \|/
+    );
+});
+
 test('send-to-morty resume: approved research first writes plan artifact', () => {
     const fixture = makeTmpTicket();
     try {
@@ -126,6 +134,14 @@ test('send-to-morty resume: approved research first writes plan artifact', () =>
     } finally {
         fs.rmSync(fixture.root, { recursive: true, force: true });
     }
+});
+
+test('send-to-morty resume prompt routes completed plan without review to Plan Review', () => {
+    const morty = readCommand(MORTY_COMMAND);
+    assert.match(
+        morty,
+        /\| `plan_\*\.md` exists; no `plan_review\.md` \| 4 \(Plan Review\) \|/
+    );
 });
 
 test('send-to-morty resume: approved research and plan first write project source', () => {
