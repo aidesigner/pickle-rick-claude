@@ -26,22 +26,31 @@ mcp__plugin_linear_linear__list_issues
 
 For each returned issue, capture: `identifier` (`LOA-NNN`), `title`, `state.name`, `completedAt`, `gitBranchName`, `updatedAt`.
 
-### Step 3: Pull merged PRs (parallel with Step 2)
+### Step 3: Pull PRs — merged AND open (parallel with Step 2)
+
+Run BOTH queries. Open PRs are not optional — a major work stream often lives on an open PR for days, and a merged-only query misses it entirely.
 
 ```bash
+# Merged in window
 gh pr list --author "@me" --state merged --search "merged:>=$(date -v-{N}d +%Y-%m-%d)" --json number,title,headRefName,mergedAt --limit 30
+
+# Open AND updated in window (catches in-flight epics)
+gh pr list --author "@me" --state open    --search "updated:>=$(date -v-{N}d +%Y-%m-%d)" --json number,title,headRefName,updatedAt --limit 30
 ```
 
-(Run this in each loanlight repo directory the helper output references — typically `loanlight-api`, `loanlight-integrations`, `loanlight-app`. Skip `pickle-rick-claude` for the standup proper; its activity is internal churn.)
+(Run both in each loanlight repo directory the helper output references — typically `loanlight-api`, `loanlight-integrations`, `loanlight-app`. Skip `pickle-rick-claude` for the standup proper; its activity is internal churn.)
 
 ### Step 4: Join — Linear-first algorithm
 
 For each Linear issue from Step 2, find its activity in priority order:
 1. **Branch match**: any commit/session in the helper output with `branch === issue.gitBranchName` (strongest)
-2. **PR title/headRef match**: any merged PR whose title or `headRefName` contains `issue.identifier`
-3. **Commit-subject match**: any commit subject containing `issue.identifier`
+2. **Merged PR title/headRef match**: any merged PR (Step 3, merged set) whose title or `headRefName` contains `issue.identifier`
+3. **Open PR title/headRef match**: any open in-window PR (Step 3, open set) whose title or `headRefName` contains `issue.identifier` → **Y:** match with `(in flight, PR #NNN)` suffix
+4. **Commit-subject match**: any commit subject containing `issue.identifier`
 
 A ticket with at least one match → goes in **Y:**. A ticket with no match but with `state in (Todo, In Progress)` → goes in **T:**.
+
+Tickets matched via merged PRs keep current behavior (no parenthetical needed unless drift). Tickets matched only via an open PR get the `(in flight, PR #NNN)` suffix so the team knows the work is shipped-to-PR but not yet merged.
 
 Anything in helper output that doesn't map to a Linear ticket → drop, unless the user asked for raw output.
 
@@ -63,13 +72,36 @@ T:
 1. Lead each line with the Linear ticket ID. Em-dash separator preferred (` — `), but hyphen or no separator are both acceptable.
 2. One short sentence per ticket. User-impact language (what changed for a user / admin / operator), not internal component names.
 3. NO `**[project-tag]**` prefix. NO bold. NO timestamp header (`Gregory Dickson [8:14 AM]`). NO date range header.
-4. Skip internal Pickle Rick churn (anatomy-park trap doors, szechuan decompositions, gate plumbing, microverse internals) — these don't belong in the team standup. They surface only if the user explicitly asks for `--raw` or "full output".
+4. Skip internal Pickle Rick churn — these don't belong in the team standup. They surface only if the user explicitly asks for `--raw` or "full output". Explicit drop list (events/sessions to filter from helper output before mental processing):
+   - `gate_out_of_scope_failures_present`
+   - `gate_skipped`
+   - `pickle-process-outcome-*` sessions (any duration, including 0m)
+   - anatomy-park trap-door logs and szechuan decomposition entries
+   - microverse iteration/rollback events
+   - meeseeks pass summaries
+   - any session with 0m duration whose name starts with `pickle-`, `gate-`, `anatomy-`, `szechuan-`, `meeseeks-`, or `microverse-`
 5. **Y:** = tickets with shipped activity in the window (commits/PRs/sessions matched). Use the Linear `state` to disambiguate done vs. in-flight.
 6. **T:** = concrete next tickets (Todo / In Progress, assigned to user, recently updated). 3-6 items max — pick the ones most likely to be worked next.
 7. Drift signal: if a ticket's code clearly shipped but the Linear status is still Todo/In Progress, mention it in the Y: line ("LOA-656 — UI Unit Details + Income Approach cards shipped (Linear still Todo)") so the user can update Linear.
 8. **Translate jargon before writing.** If a PR title is jargon (matches `/szechuan|anatomy-park|trap door|microverse|plumbus|meeseeks|pickle|morty|council of ricks/i`, is shorter than 25 chars, or is a bare kebab-slug), run `gh pr view <N> --json title,body` and rewrite in user-impact language.
 9. Teammate PRs (`## Teammate PRs merged` from the helper) are informational only. Never attribute to the user. Default: omit. If notable, append one footer line after **T:**: `Team shipped: <one-liner each, with author>`.
 10. If the user asks for raw / full output, print the helper output verbatim instead of this format.
+11. **Product-voice self-check (final lint pass).** After drafting each Y/T line, re-read it as if you were a non-engineer stakeholder. Reject and rewrite any line that contains:
+    - file/component names (`*.tsx`, `*.spec.ts`, `FooBar.module.css`)
+    - tooling/process jargon: `prettier`, `lint`, `eslint`, `IDOR`, `throttle`, `decorator`, `--fix`, `--no-verify`, `tsc`
+    - PR-merge phrasing: `via #NNN merge`, `landed on PR`, `merged in`, `cherry-picked`
+    - any technical noun without a paired user-/admin-/operator-impact verb
+    Each line must describe the change a human consumer of the product notices. Examples:
+    - ❌ "Combination rules fix landed via #1219 merge"
+    - ✅ "Compound (AND/OR) custom rules now save and evaluate correctly — wizard no longer silently fails to advance"
+    - ❌ "Fixed IDOR in throttle decorator (audit.controller.spec.ts)"
+    - ✅ "Closed an auth bypass on audit endpoints — users can no longer trigger another lender's audits"
+12. **Epic grouping.** When 3+ tickets share the same Linear project AND all matched via the same PR (merged or open), collapse them under one parent line: `LOA-X / LOA-Y / LOA-Z — <project user-impact summary> (PR #NNN in flight)` (or `(shipped via PR #NNN)` for merged). Default stays per-ticket; group only when 3+ tickets would otherwise produce repetitive lines. Order ticket IDs by ascending number.
+13. **Open-PR drift footer.** After **T:**, if any user-authored open in-window PR carries tickets still in `Todo` or `In Progress` (i.e. not yet `In Review` / `Done`) in Linear, append a single footer line:
+    ```
+    Drift signal: LOA-### / LOA-### — In Progress in Linear but shipped on PR #NNN; flip when ready.
+    ```
+    One footer line per open PR with drift. This is distinct from Rule 7 (which handles merged-but-not-closed drift inline on the Y: line). Skip the footer entirely when no open PR has Linear drift.
 
 ### Example
 
@@ -77,12 +109,16 @@ T:
 Y:
  LOA-618 — Appraisal Comparison hardened and rebased, PR reviewed/fixed/merged.
  LOA-697 — Fixed appraisal images.
- LOA-656 — 1025 Appraisal Extraction started.
+ LOA-652 / LOA-656 / LOA-661 — 1025 Appraisal Extraction Support: extractor pulls subject + comp data into the audit screen for reviewers (PR #1217 in flight).
 
 T:
  LOA-692 — Migrate CLAUDE.md → AGENTS.md, point Claude at the agents files (infra)
  LOA-701 — Reducto bounding boxes to show field locations in doc viewer
  LOA-708 — Max Rules 100 on new client onboarding issue.
+ LOA-721 — Compound (AND/OR) custom rules wizard fix.
+ LOA-722 — Onboarding rule-count cap regression.
+
+Drift signal: LOA-721 / LOA-722 — In Progress in Linear but shipped on PR #1219; flip when ready.
 ```
 
 ### Common usage
