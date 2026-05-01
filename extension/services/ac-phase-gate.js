@@ -4,6 +4,7 @@ import { spawnSync } from 'child_process';
 import { auditCodexManagerRelaunchCaps } from './bundle-state-integrity.js';
 import { safeErrorMessage } from './pickle-utils.js';
 export const AC_PHASE_MANIFEST = 'ac-phase-manifest.json';
+const DEFAULT_COMMAND_TIMEOUT_MS = 30 * 60 * 1000;
 const VALID_EVALUATION_PHASES = new Set([
     'pre-refinement',
     'post-refinement',
@@ -25,6 +26,15 @@ function readManifestArray(manifestPath) {
     }
     return criteria;
 }
+function normalizeOptionalIntegerField(raw, key, id, reason, allowZero) {
+    const value = raw[key];
+    if (value === undefined)
+        return undefined;
+    if (typeof value !== 'number' || !Number.isInteger(value) || (!allowZero && value <= 0)) {
+        return { id, reason };
+    }
+    return value;
+}
 function normalizeCriterion(raw, index) {
     if (!isRecord(raw))
         return { id: `#${index + 1}`, reason: 'criterion must be an object' };
@@ -37,10 +47,12 @@ function normalizeCriterion(raw, index) {
     if (command !== undefined && typeof command !== 'string' && (!Array.isArray(command) || command.length === 0 || !command.every((part) => typeof part === 'string'))) {
         return { id, reason: 'command must be a string or string array' };
     }
-    const expectedExitCode = raw.expected_exit_code;
-    if (expectedExitCode !== undefined && (typeof expectedExitCode !== 'number' || !Number.isInteger(expectedExitCode))) {
-        return { id, reason: 'expected_exit_code must be an integer' };
-    }
+    const expectedExitCode = normalizeOptionalIntegerField(raw, 'expected_exit_code', id, 'expected_exit_code must be an integer', true);
+    if (isFailure(expectedExitCode))
+        return expectedExitCode;
+    const timeoutMs = normalizeOptionalIntegerField(raw, 'timeout_ms', id, 'timeout_ms must be a positive integer', false);
+    if (isFailure(timeoutMs))
+        return timeoutMs;
     return {
         id,
         evaluation_phase: evaluationPhase,
@@ -48,10 +60,11 @@ function normalizeCriterion(raw, index) {
         cwd: typeof raw.cwd === 'string' ? raw.cwd : undefined,
         phase: typeof raw.phase === 'string' ? raw.phase : undefined,
         expected_exit_code: expectedExitCode,
+        timeout_ms: timeoutMs,
     };
 }
 function isFailure(value) {
-    return 'reason' in value;
+    return isRecord(value) && typeof value.reason === 'string';
 }
 function shouldEvaluate(criterion, evaluationPhase, pipelinePhase) {
     if (criterion.evaluation_phase !== evaluationPhase)
@@ -79,9 +92,10 @@ function runCriterion(criterion, cwd, sessionDir) {
         return null;
     const expected = criterion.expected_exit_code ?? 0;
     const commandCwd = criterion.cwd ?? cwd;
+    const timeout = criterion.timeout_ms ?? DEFAULT_COMMAND_TIMEOUT_MS;
     const result = Array.isArray(criterion.command)
-        ? spawnSync(criterion.command[0], criterion.command.slice(1), { cwd: commandCwd, encoding: 'utf-8' })
-        : spawnSync(criterion.command, { cwd: commandCwd, encoding: 'utf-8', shell: true });
+        ? spawnSync(criterion.command[0], criterion.command.slice(1), { cwd: commandCwd, encoding: 'utf-8', timeout })
+        : spawnSync(criterion.command, { cwd: commandCwd, encoding: 'utf-8', shell: true, timeout });
     if (result.error) {
         return { id: criterion.id, reason: safeErrorMessage(result.error) };
     }

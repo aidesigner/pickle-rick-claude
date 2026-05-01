@@ -116,6 +116,61 @@ describe('phase-ordered AC gate', () => {
     assert.match(result.failures[0].reason, /evaluation_phase/);
   });
 
+  test('times out AC manifest commands instead of wedging the phase gate', () => {
+    const dir = tmpDir();
+    fs.writeFileSync(path.join(dir, AC_PHASE_MANIFEST), JSON.stringify({
+      acceptance_criteria: [
+        {
+          id: 'AC-HANG',
+          evaluation_phase: 'per-phase',
+          phase: 'pickle',
+          command: [process.execPath, '-e', 'setTimeout(() => {}, 10_000)'],
+          timeout_ms: 50,
+        },
+      ],
+    }));
+
+    const result = runAcPhaseGate({
+      sessionDir: dir,
+      evaluationPhase: 'per-phase',
+      pipelinePhase: 'pickle',
+      cwd: dir,
+    });
+
+    assert.equal(result.status, 'fail');
+    assert.deepEqual(result.evaluated, ['AC-HANG']);
+    assert.equal(result.failures[0].id, 'AC-HANG');
+    assert.match(result.failures[0].reason, /timed out|ETIMEDOUT|SIGTERM/i);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('rejects non-positive AC command timeouts', () => {
+    const dir = tmpDir();
+    fs.writeFileSync(path.join(dir, AC_PHASE_MANIFEST), JSON.stringify({
+      acceptance_criteria: [
+        {
+          id: 'AC-BAD-TIMEOUT',
+          evaluation_phase: 'per-phase',
+          phase: 'pickle',
+          command: [process.execPath, '-e', 'process.exit(0)'],
+          timeout_ms: 0,
+        },
+      ],
+    }));
+
+    const result = runAcPhaseGate({
+      sessionDir: dir,
+      evaluationPhase: 'per-phase',
+      pipelinePhase: 'pickle',
+      cwd: dir,
+    });
+
+    assert.equal(result.status, 'fail');
+    assert.equal(result.failures[0].id, 'AC-BAD-TIMEOUT');
+    assert.match(result.failures[0].reason, /timeout_ms/);
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
   test('AC-BUNDLE-03 passes when root and microverse relaunch counters are within cap', () => {
     const dir = tmpDir();
     const childDir = path.join(dir, 'microverse_alpha');

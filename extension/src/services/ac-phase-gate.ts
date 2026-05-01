@@ -5,6 +5,7 @@ import { auditCodexManagerRelaunchCaps } from './bundle-state-integrity.js';
 import { safeErrorMessage } from './pickle-utils.js';
 
 export const AC_PHASE_MANIFEST = 'ac-phase-manifest.json';
+const DEFAULT_COMMAND_TIMEOUT_MS = 30 * 60 * 1000;
 
 export type AcEvaluationPhase = 'pre-refinement' | 'post-refinement' | 'per-phase' | 'bundle-end';
 
@@ -22,6 +23,7 @@ export interface AcPhaseCriterion {
   cwd?: string;
   phase?: string;
   expected_exit_code?: number;
+  timeout_ms?: number;
 }
 
 export interface AcPhaseGateFailure {
@@ -62,6 +64,21 @@ function readManifestArray(manifestPath: string): unknown[] {
   return criteria;
 }
 
+function normalizeOptionalIntegerField(
+  raw: Record<string, unknown>,
+  key: 'expected_exit_code' | 'timeout_ms',
+  id: string,
+  reason: string,
+  allowZero: boolean
+): number | undefined | AcPhaseGateFailure {
+  const value = raw[key];
+  if (value === undefined) return undefined;
+  if (typeof value !== 'number' || !Number.isInteger(value) || (!allowZero && value <= 0)) {
+    return { id, reason };
+  }
+  return value;
+}
+
 function normalizeCriterion(raw: unknown, index: number): AcPhaseCriterion | AcPhaseGateFailure {
   if (!isRecord(raw)) return { id: `#${index + 1}`, reason: 'criterion must be an object' };
   const id = typeof raw.id === 'string' && raw.id.trim().length > 0 ? raw.id : `#${index + 1}`;
@@ -73,22 +90,23 @@ function normalizeCriterion(raw: unknown, index: number): AcPhaseCriterion | AcP
   if (command !== undefined && typeof command !== 'string' && (!Array.isArray(command) || command.length === 0 || !command.every((part) => typeof part === 'string'))) {
     return { id, reason: 'command must be a string or string array' };
   }
-  const expectedExitCode = raw.expected_exit_code;
-  if (expectedExitCode !== undefined && (typeof expectedExitCode !== 'number' || !Number.isInteger(expectedExitCode))) {
-    return { id, reason: 'expected_exit_code must be an integer' };
-  }
+  const expectedExitCode = normalizeOptionalIntegerField(raw, 'expected_exit_code', id, 'expected_exit_code must be an integer', true);
+  if (isFailure(expectedExitCode)) return expectedExitCode;
+  const timeoutMs = normalizeOptionalIntegerField(raw, 'timeout_ms', id, 'timeout_ms must be a positive integer', false);
+  if (isFailure(timeoutMs)) return timeoutMs;
   return {
     id,
     evaluation_phase: evaluationPhase as AcEvaluationPhase,
     command: command as string | string[] | undefined,
     cwd: typeof raw.cwd === 'string' ? raw.cwd : undefined,
     phase: typeof raw.phase === 'string' ? raw.phase : undefined,
-    expected_exit_code: expectedExitCode as number | undefined,
+    expected_exit_code: expectedExitCode,
+    timeout_ms: timeoutMs,
   };
 }
 
-function isFailure(value: AcPhaseCriterion | AcPhaseGateFailure): value is AcPhaseGateFailure {
-  return 'reason' in value;
+function isFailure(value: unknown): value is AcPhaseGateFailure {
+  return isRecord(value) && typeof value.reason === 'string';
 }
 
 function shouldEvaluate(criterion: AcPhaseCriterion, evaluationPhase: AcEvaluationPhase, pipelinePhase: string | undefined): boolean {
@@ -115,9 +133,10 @@ function runCriterion(criterion: AcPhaseCriterion, cwd: string, sessionDir: stri
   if (!criterion.command) return null;
   const expected = criterion.expected_exit_code ?? 0;
   const commandCwd = criterion.cwd ?? cwd;
+  const timeout = criterion.timeout_ms ?? DEFAULT_COMMAND_TIMEOUT_MS;
   const result = Array.isArray(criterion.command)
-    ? spawnSync(criterion.command[0], criterion.command.slice(1), { cwd: commandCwd, encoding: 'utf-8' })
-    : spawnSync(criterion.command, { cwd: commandCwd, encoding: 'utf-8', shell: true });
+    ? spawnSync(criterion.command[0], criterion.command.slice(1), { cwd: commandCwd, encoding: 'utf-8', timeout })
+    : spawnSync(criterion.command, { cwd: commandCwd, encoding: 'utf-8', shell: true, timeout });
   if (result.error) {
     return { id: criterion.id, reason: safeErrorMessage(result.error) };
   }
