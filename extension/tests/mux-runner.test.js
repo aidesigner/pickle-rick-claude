@@ -1779,6 +1779,73 @@ test('iteration events: iteration number matches across start and end', () => {
     assert.equal(starts[0].iteration, ends[0].iteration, 'Start and end should have same iteration number');
 });
 
+test('mux-runner: persists iteration, picked ticket, and lifecycle step before manager spawn', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = path.join(tmpRoot, 'session');
+        fs.mkdirSync(sessionDir, { recursive: true });
+
+        const templatesDir = path.join(tmpRoot, 'templates');
+        fs.mkdirSync(templatesDir, { recursive: true });
+        fs.writeFileSync(path.join(templatesDir, 'pickle.md'), 'placeholder');
+
+        const ticketId = 'ticket-state-1';
+        const ticketDir = path.join(sessionDir, ticketId);
+        fs.mkdirSync(ticketDir, { recursive: true });
+        fs.writeFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`), [
+            '---',
+            `id: ${ticketId}`,
+            'title: State coherence',
+            'status: Todo',
+            'order: 1',
+            '---',
+            '# Ticket',
+            '',
+        ].join('\n'));
+
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            step: 'implement',
+            iteration: 0,
+            max_iterations: 100,
+            max_time_minutes: 720,
+            worker_timeout_seconds: 1200,
+            original_prompt: 'test mux lifecycle state',
+            working_dir: tmpRoot,
+            current_ticket: null,
+            history: [],
+            started_at: new Date().toISOString(),
+            session_dir: sessionDir,
+        }, null, 2));
+
+        const pathDirs = (process.env.PATH || '').split(':').filter(d => {
+            try { return !fs.existsSync(path.join(d, 'claude')); } catch { return true; }
+        });
+
+        const result = spawnSync(process.execPath, [TMUX_RUNNER_BIN, sessionDir], {
+            env: {
+                ...process.env,
+                EXTENSION_DIR: tmpRoot,
+                PATH: pathDirs.join(':'),
+                PICKLE_BACKEND: 'claude',
+            },
+            encoding: 'utf-8',
+            timeout: 60000,
+        });
+
+        assert.equal(result.status, 1, `Expected backend spawn failure exit. stderr:\n${result.stderr}`);
+
+        const finalState = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+        assert.equal(finalState.iteration, 1, 'outer-loop iteration must be persisted before manager spawn');
+        assert.equal(finalState.current_ticket, ticketId, 'first pending ticket must be persisted when picked');
+        assert.equal(finalState.step, 'research', 'new picked ticket with no artifacts starts at research');
+        assert.equal(finalState.active, false, 'spawn failure still deactivates through existing error path');
+        assert.equal(finalState.exit_reason, 'error', 'spawn failure records existing error exit reason');
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
 // --- stripSetupSection ---
 
 test('stripSetupSection: strips "## SETUP MODE" through "## REVIEW PASS MODE"', () => {

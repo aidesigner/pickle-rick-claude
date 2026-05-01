@@ -126,6 +126,65 @@ export function detectMultiRepo(sessionDir) {
         .filter((d) => d !== null && d !== undefined));
     return dirs.size >= 2 ? [...dirs] : null;
 }
+const MUX_LIFECYCLE_ORDER = {
+    research: 0,
+    plan: 1,
+    implement: 2,
+    review: 3,
+};
+function normalizeTicketStatus(status) {
+    return (status || '').toLowerCase().replace(/["']/g, '').trim();
+}
+function isPendingMuxTicket(ticket) {
+    const status = normalizeTicketStatus(ticket.status);
+    return !!ticket.id && status !== 'done' && status !== 'skipped';
+}
+function findNextPendingTicketId(sessionDir) {
+    return collectTickets(sessionDir).find(isPendingMuxTicket)?.id ?? null;
+}
+function hasArtifact(files, prefix) {
+    return files.some(file => file.startsWith(prefix) && file.endsWith('.md'));
+}
+function inferTicketLifecycleStep(sessionDir, ticketId, fallback) {
+    if (!ticketId)
+        return fallback === 'review' ? 'review' : 'research';
+    let files;
+    try {
+        files = fs.readdirSync(path.join(sessionDir, ticketId));
+    }
+    catch {
+        return 'research';
+    }
+    if (hasArtifact(files, 'conformance_') || hasArtifact(files, 'code_review_'))
+        return 'review';
+    if (hasArtifact(files, 'plan_'))
+        return 'implement';
+    if (hasArtifact(files, 'research_'))
+        return 'plan';
+    return 'research';
+}
+function maxLifecycleStep(current, next) {
+    if (current in MUX_LIFECYCLE_ORDER) {
+        const currentLifecycle = current;
+        return MUX_LIFECYCLE_ORDER[currentLifecycle] > MUX_LIFECYCLE_ORDER[next] ? currentLifecycle : next;
+    }
+    return next;
+}
+function updateMuxLifecycleState(statePath, patch) {
+    return sm.update(statePath, s => {
+        if (patch.iteration !== undefined)
+            s.iteration = patch.iteration;
+        const ticketChanged = patch.currentTicket !== undefined && s.current_ticket !== patch.currentTicket;
+        if (patch.currentTicket !== undefined && s.current_ticket !== patch.currentTicket) {
+            s.current_ticket = patch.currentTicket;
+            delete s.current_ticket_tier;
+            delete s.current_ticket_budget;
+        }
+        if (patch.step !== undefined) {
+            s.step = ticketChanged ? patch.step : maxLifecycleStep(s.step, patch.step);
+        }
+    });
+}
 /**
  * Returns tickets that are still pending (not Done, not Skipped) excluding
  * `currentTicket`. Used to fail-loud when the model emits EPIC_COMPLETED but
@@ -1539,7 +1598,14 @@ async function runMuxRunnerMain() {
             lastStateIteration = curIter;
         }
         iteration++;
-        const preTicket = state.current_ticket || null;
+        const templateName = state.command_template || 'pickle.md';
+        const preTicket = templateName === 'meeseeks.md'
+            ? null
+            : (state.current_ticket || findNextPendingTicketId(sessionDir));
+        const preStep = templateName === 'meeseeks.md'
+            ? 'review'
+            : inferTicketLifecycleStep(sessionDir, preTicket, state.step);
+        state = updateMuxLifecycleState(statePath, { iteration, currentTicket: preTicket, step: preStep });
         if (previousTicket === null)
             previousTicket = preTicket;
         log(`--- Iteration ${iteration} (state.iteration=${state.iteration}) ---`);
@@ -1572,7 +1638,6 @@ async function runMuxRunnerMain() {
             }
         }
         // Resolve meeseeks model per-pass based on tier mapping
-        const templateName = state.command_template || 'pickle.md';
         if (templateName === 'meeseeks.md')
             meeseeksPassCount++;
         const meeseeksModel = loadMeeseeksModel(extensionRoot, meeseeksPassCount);
@@ -1654,7 +1719,9 @@ async function runMuxRunnerMain() {
                     }
                 }
             }
-            previousTicket = postTicket;
+            const postStep = inferTicketLifecycleStep(sessionDir, postTicket, postState.step);
+            const lifecycleState = updateMuxLifecycleState(statePath, { currentTicket: postTicket, step: postStep });
+            previousTicket = lifecycleState.current_ticket || null;
         }
         catch { /* state read failed — skip transition check */ }
         // --- Rate limit classification (MUST run before CB to prevent CB poisoning) ---
@@ -1922,6 +1989,7 @@ async function runMuxRunnerMain() {
                     ticket: curState.current_ticket || undefined,
                     error: `${PromiseTokens.EPIC_COMPLETED} with ${decision.totalCount - decision.doneCount} pending — ${tag}`,
                 });
+                let recoveredCurrentTicket = curState.current_ticket || null;
                 if (decision.kind === 'recover_advance' && curState.current_ticket) {
                     // current_ticket is already Done — close it out so the next
                     // iteration picks the next non-Done ticket. Counter persists at the
@@ -1930,11 +1998,20 @@ async function runMuxRunnerMain() {
                     if (markTicketDone(sessionDir, curState.current_ticket)) {
                         log(`Marked ticket ${curState.current_ticket} as Done (recover_advance)`);
                     }
+                    recoveredCurrentTicket = findNextPendingTicketId(sessionDir);
                 }
                 try {
                     sm.update(statePath, s => {
                         s.false_epic_completed_count = decision.nextCount;
                         s.false_epic_completed_ticket = curState.current_ticket || null;
+                        const priorTicket = s.current_ticket;
+                        if (s.current_ticket !== recoveredCurrentTicket) {
+                            s.current_ticket = recoveredCurrentTicket;
+                            delete s.current_ticket_tier;
+                            delete s.current_ticket_budget;
+                        }
+                        const recoveredStep = inferTicketLifecycleStep(sessionDir, recoveredCurrentTicket, s.step);
+                        s.step = priorTicket !== recoveredCurrentTicket ? recoveredStep : maxLifecycleStep(s.step, recoveredStep);
                     });
                 }
                 catch (err) {

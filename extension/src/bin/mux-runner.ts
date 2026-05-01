@@ -4,7 +4,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, type TicketInfo } from '../services/pickle-utils.js';
-import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact, type Backend, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole } from '../types/index.js';
+import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact, type Backend, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole, type Step } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, resetCircuitBreaker, type CircuitBreakerConfig, type CircuitBreakerState } from '../services/circuit-breaker.js';
@@ -148,6 +148,74 @@ export function detectMultiRepo(sessionDir: string): string[] | null {
       .filter((d): d is string => d !== null && d !== undefined)
   );
   return dirs.size >= 2 ? [...dirs] : null;
+}
+
+type MuxLifecycleStep = Extract<Step, 'research' | 'plan' | 'implement' | 'review'>;
+
+const MUX_LIFECYCLE_ORDER: Record<MuxLifecycleStep, number> = {
+  research: 0,
+  plan: 1,
+  implement: 2,
+  review: 3,
+};
+
+function normalizeTicketStatus(status: string | null): string {
+  return (status || '').toLowerCase().replace(/["']/g, '').trim();
+}
+
+function isPendingMuxTicket(ticket: TicketInfo): boolean {
+  const status = normalizeTicketStatus(ticket.status);
+  return !!ticket.id && status !== 'done' && status !== 'skipped';
+}
+
+function findNextPendingTicketId(sessionDir: string): string | null {
+  return collectTickets(sessionDir).find(isPendingMuxTicket)?.id ?? null;
+}
+
+function hasArtifact(files: readonly string[], prefix: string): boolean {
+  return files.some(file => file.startsWith(prefix) && file.endsWith('.md'));
+}
+
+function inferTicketLifecycleStep(sessionDir: string, ticketId: string | null, fallback: Step): MuxLifecycleStep {
+  if (!ticketId) return fallback === 'review' ? 'review' : 'research';
+
+  let files: string[];
+  try {
+    files = fs.readdirSync(path.join(sessionDir, ticketId));
+  } catch {
+    return 'research';
+  }
+
+  if (hasArtifact(files, 'conformance_') || hasArtifact(files, 'code_review_')) return 'review';
+  if (hasArtifact(files, 'plan_')) return 'implement';
+  if (hasArtifact(files, 'research_')) return 'plan';
+  return 'research';
+}
+
+function maxLifecycleStep(current: Step, next: MuxLifecycleStep): MuxLifecycleStep {
+  if (current in MUX_LIFECYCLE_ORDER) {
+    const currentLifecycle = current as MuxLifecycleStep;
+    return MUX_LIFECYCLE_ORDER[currentLifecycle] > MUX_LIFECYCLE_ORDER[next] ? currentLifecycle : next;
+  }
+  return next;
+}
+
+function updateMuxLifecycleState(
+  statePath: string,
+  patch: { iteration?: number; currentTicket?: string | null; step?: MuxLifecycleStep },
+): State {
+  return sm.update(statePath, s => {
+    if (patch.iteration !== undefined) s.iteration = patch.iteration;
+    const ticketChanged = patch.currentTicket !== undefined && s.current_ticket !== patch.currentTicket;
+    if (patch.currentTicket !== undefined && s.current_ticket !== patch.currentTicket) {
+      s.current_ticket = patch.currentTicket;
+      delete s.current_ticket_tier;
+      delete s.current_ticket_budget;
+    }
+    if (patch.step !== undefined) {
+      s.step = ticketChanged ? patch.step : maxLifecycleStep(s.step, patch.step);
+    }
+  });
 }
 
 /**
@@ -1758,7 +1826,14 @@ async function runMuxRunnerMain() {
     }
 
     iteration++;
-    const preTicket = state.current_ticket || null;
+    const templateName = state.command_template || 'pickle.md';
+    const preTicket = templateName === 'meeseeks.md'
+      ? null
+      : (state.current_ticket || findNextPendingTicketId(sessionDir));
+    const preStep = templateName === 'meeseeks.md'
+      ? 'review'
+      : inferTicketLifecycleStep(sessionDir, preTicket, state.step);
+    state = updateMuxLifecycleState(statePath, { iteration, currentTicket: preTicket, step: preStep });
     if (previousTicket === null) previousTicket = preTicket;
     log(`--- Iteration ${iteration} (state.iteration=${state.iteration}) ---`);
     logActivity({ event: 'iteration_start', source: 'pickle', session: path.basename(sessionDir), iteration });
@@ -1793,7 +1868,6 @@ async function runMuxRunnerMain() {
     }
 
     // Resolve meeseeks model per-pass based on tier mapping
-    const templateName = state.command_template || 'pickle.md';
     if (templateName === 'meeseeks.md') meeseeksPassCount++;
     const meeseeksModel = loadMeeseeksModel(extensionRoot, meeseeksPassCount);
     if (templateName === 'meeseeks.md') {
@@ -1875,7 +1949,9 @@ async function runMuxRunnerMain() {
           }
         }
       }
-      previousTicket = postTicket;
+      const postStep = inferTicketLifecycleStep(sessionDir, postTicket, postState.step);
+      const lifecycleState = updateMuxLifecycleState(statePath, { currentTicket: postTicket, step: postStep });
+      previousTicket = lifecycleState.current_ticket || null;
     } catch { /* state read failed — skip transition check */ }
 
     // --- Rate limit classification (MUST run before CB to prevent CB poisoning) ---
@@ -2164,6 +2240,7 @@ async function runMuxRunnerMain() {
           error: `${PromiseTokens.EPIC_COMPLETED} with ${decision.totalCount - decision.doneCount} pending — ${tag}`,
         });
 
+        let recoveredCurrentTicket = curState.current_ticket || null;
         if (decision.kind === 'recover_advance' && curState.current_ticket) {
           // current_ticket is already Done — close it out so the next
           // iteration picks the next non-Done ticket. Counter persists at the
@@ -2172,12 +2249,21 @@ async function runMuxRunnerMain() {
           if (markTicketDone(sessionDir, curState.current_ticket)) {
             log(`Marked ticket ${curState.current_ticket} as Done (recover_advance)`);
           }
+          recoveredCurrentTicket = findNextPendingTicketId(sessionDir);
         }
 
         try {
           sm.update(statePath, s => {
             s.false_epic_completed_count = decision.nextCount;
             s.false_epic_completed_ticket = curState.current_ticket || null;
+            const priorTicket = s.current_ticket;
+            if (s.current_ticket !== recoveredCurrentTicket) {
+              s.current_ticket = recoveredCurrentTicket;
+              delete s.current_ticket_tier;
+              delete s.current_ticket_budget;
+            }
+            const recoveredStep = inferTicketLifecycleStep(sessionDir, recoveredCurrentTicket, s.step);
+            s.step = priorTicket !== recoveredCurrentTicket ? recoveredStep : maxLifecycleStep(s.step, recoveredStep);
           });
         } catch (err) { log(`WARN: failed to persist false_epic counter: ${safeErrorMessage(err)}`); }
 
