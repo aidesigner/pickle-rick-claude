@@ -12,6 +12,49 @@ function getLinearCommand() {
     const command = process.env.PICKLE_LINEAR_COMMAND?.trim();
     return command ? command : undefined;
 }
+function splitLinearCommand(command) {
+    const tokens = [];
+    let current = '';
+    let quote = null;
+    for (let i = 0; i < command.length; i++) {
+        const ch = command[i];
+        if (quote) {
+            if (ch === quote) {
+                quote = null;
+            }
+            else if (ch === '\\' && i + 1 < command.length) {
+                current += command[++i];
+            }
+            else {
+                current += ch;
+            }
+            continue;
+        }
+        if (ch === '"' || ch === "'") {
+            quote = ch;
+        }
+        else if (/\s/.test(ch)) {
+            if (current) {
+                tokens.push(current);
+                current = '';
+            }
+        }
+        else if (ch === '\\' && i + 1 < command.length) {
+            current += command[++i];
+        }
+        else {
+            current += ch;
+        }
+    }
+    if (quote)
+        throw new Error('PICKLE_LINEAR_COMMAND has an unterminated quote');
+    if (current)
+        tokens.push(current);
+    const bin = tokens.shift();
+    if (!bin)
+        throw new Error('PICKLE_LINEAR_COMMAND is empty');
+    return { bin, args: tokens };
+}
 function findTicketFile(sessionDir, ticketId) {
     const ticketPath = path.join(sessionDir, ticketId, `linear_ticket_${ticketId}.md`);
     if (fs.existsSync(ticketPath))
@@ -65,7 +108,8 @@ function callBridge(payload) {
     const command = getLinearCommand();
     if (!command)
         return null;
-    const output = execFileSync(command, [], {
+    const invocation = splitLinearCommand(command);
+    const output = execFileSync(invocation.bin, invocation.args, {
         input: JSON.stringify(payload),
         encoding: 'utf-8',
         timeout: 30_000,

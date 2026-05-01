@@ -84,6 +84,27 @@ test('syncLinearTicketStatus creates a Linear ticket once and mirrors transition
   }
 });
 
+test('syncLinearTicketStatus passes payloads through bridge commands with arguments', () => {
+  const dir = tmpDir();
+  const eventsPath = path.join(dir, 'events.jsonl');
+  const bridge = writeBridgeScript(dir, eventsPath);
+  const ticketPath = writeTicket(dir, 'arg1');
+  const command = `${JSON.stringify(process.execPath)} ${JSON.stringify(bridge)}`;
+
+  try {
+    withLinearCommand(command, () => {
+      syncLinearTicketStatus(dir, 'arg1', 'In Progress');
+    });
+
+    const events = readEvents(eventsPath);
+    assert.deepEqual(events.map(event => event.action), ['createTicket', 'transitionTicket']);
+    assert.equal(events[0].ticket.id, 'arg1');
+    assert.match(fs.readFileSync(ticketPath, 'utf-8'), /^linear_issue_id: "lin-arg1"$/m);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('syncLinearTicketStatus is a no-op when the local Linear bridge is not configured', () => {
   const dir = tmpDir();
   const ticketPath = writeTicket(dir, 'noop1');

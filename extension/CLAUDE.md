@@ -98,6 +98,7 @@ Compiled TS → JS lives in `extension/services/`, `extension/bin/`, `extension/
 - `tests/test-registration-hygiene.test.js` — INVARIANT: recursive test discovery requires an explicit allowlist for skipped nested tests. BREAKS: new nested tests silently miss npm test. ENFORCE: extension/tests/test-registration-hygiene.test.js.
 - `.claude/commands/send-to-morty.md` — INVARIANT: resume table includes artifact-exists/no-review rows before approved-review rows. BREAKS: resumed workers redo completed artifacts instead of reviewing them. ENFORCE: extension/tests/send-to-morty-resume.test.js. PATTERN_SHAPE: Markdown table rows matching `exists; no .*_review.md`.
 - `src/lib/engine-keys-registry.ts` — INVARIANT: registry JSON fields are runtime-validated string arrays. BREAKS: frame analyzer crashes or misclassifies context keys. ENFORCE: extension/tests/engine-keys-registry.test.js.
+- `src/services/linear-integration.ts` — INVARIANT: PICKLE_LINEAR_COMMAND is parsed into executable plus argv without shell. BREAKS: configured local bridge commands with arguments never receive ticket lifecycle payloads. ENFORCE: extension/tests/linear-integration.test.js. PATTERN_SHAPE: `PICKLE_LINEAR_COMMAND|execFileSync(invocation.bin, invocation.args`.
 
 ## state.json Field Invariants
 
