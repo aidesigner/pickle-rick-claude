@@ -348,6 +348,45 @@ test('bootstrap baseline: first post-bootstrap lint regression is flagged instea
   );
 });
 
+test('bootstrap baseline: green gate result without baseline file is diagnosed and rejected', async () => {
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-gate-missing-baseline-session-'));
+  const logs = [];
+  const events = [];
+
+  await assert.rejects(
+    () => ensurePerIterationGateBaseline({
+      currentMv: makeMv(),
+      workingDir: '/tmp/test-wd',
+      sessionDir,
+      enabledFiles: ['anatomy-park.json'],
+      log: (msg) => logs.push(msg),
+      _deps: {
+        runGateFn: async () => makeGateResult('green', 0),
+        logActivityFn: (event) => events.push(event),
+      },
+    }),
+    /baseline initialization failed/,
+  );
+
+  assert.equal(
+    fs.existsSync(path.join(sessionDir, 'gate', 'baseline.json')),
+    false,
+    'diagnostic failure must not fabricate a baseline file',
+  );
+  assert.ok(
+    logs.some((msg) => msg.includes('baseline initialization failed')),
+    `expected actionable failure log, got ${JSON.stringify(logs)}`,
+  );
+  assert.ok(
+    !logs.some((msg) => msg.includes('initialized per-iteration gate baseline')),
+    `success log must not fire without a baseline file, got ${JSON.stringify(logs)}`,
+  );
+  assert.ok(
+    events.some((event) => event.event === 'gate_baseline_init_failed'),
+    `expected gate_baseline_init_failed event, got ${JSON.stringify(events)}`,
+  );
+});
+
 test('bootstrap baseline: first post-bootstrap test regression is flagged instead of false-greening the iteration', async () => {
   const workingDir = makeGitRepo('ap-gate-test-repo-');
   const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-gate-test-session-'));

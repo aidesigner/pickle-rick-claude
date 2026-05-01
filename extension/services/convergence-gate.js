@@ -108,6 +108,27 @@ function loadBaselineFile(baselinePath) {
     }
     return raw;
 }
+async function inspectBaselinePath(baselinePath) {
+    try {
+        const stat = await fs.promises.stat(baselinePath);
+        return {
+            path: baselinePath,
+            exists: true,
+            size_bytes: stat.size,
+            mtime_ms: stat.mtimeMs,
+        };
+    }
+    catch (err) {
+        const code = typeof err === 'object' && err !== null && 'code' in err
+            ? String(err.code)
+            : undefined;
+        return {
+            path: baselinePath,
+            exists: false,
+            ...(code ? { error_code: code } : {}),
+        };
+    }
+}
 export function subtractBaseline(current, baseline) {
     const baselineSet = new Set(baseline.failures.map(buildFingerprint));
     return current.filter(f => !baselineSet.has(buildFingerprint(f)));
@@ -640,7 +661,9 @@ export async function runGate(opts) {
         try {
             return finalize(await withLock(lockKey, { timeout_ms: lockMs }, async () => {
                 emit('gate_lock_acquired', { lock_key: lockKey });
-                const baselineExists = await fs.promises.access(opts.baselinePath).then(() => true, () => false);
+                const preWriteStatus = await inspectBaselinePath(opts.baselinePath);
+                emit('gate_baseline_disk_check', { phase: 'pre_write', ...preWriteStatus });
+                const baselineExists = preWriteStatus.exists === true;
                 if (!baselineExists) {
                     const baseline = {
                         schema_version: 1,
@@ -653,6 +676,11 @@ export async function runGate(opts) {
                     };
                     await fs.promises.mkdir(path.dirname(opts.baselinePath), { recursive: true });
                     writeStateFile(opts.baselinePath, baseline);
+                    const postWriteStatus = await inspectBaselinePath(opts.baselinePath);
+                    emit('gate_baseline_disk_check', { phase: 'post_write', ...postWriteStatus });
+                    if (postWriteStatus.exists !== true) {
+                        throw new GateError('BASELINE_WRITE_MISSING', `Baseline write reported success but file is missing at ${opts.baselinePath}`);
+                    }
                     emit('gate_baseline_captured', { path: opts.baselinePath, failure_count: withIndices.length });
                     emit('gate_preexisting_tests_baselined', { failure_count: withIndices.length });
                     return {

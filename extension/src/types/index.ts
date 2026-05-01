@@ -344,6 +344,8 @@ export const VALID_ACTIVITY_EVENTS = [
   'manager_false_epic_completed',
   'manager_persistent_hallucination',
   'gate_baseline_captured',
+  'gate_baseline_disk_check',
+  'gate_baseline_init_failed',
   'gate_run_complete',
   'gate_skipped',
   'gate_unsafe_test_command_blocked',

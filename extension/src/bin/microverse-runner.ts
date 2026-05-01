@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { State, Defaults } from '../types/index.js';
-import type { Backend, MicroverseSessionState, MicroverseHistoryEntry, FailureClass, GateResult } from '../types/index.js';
+import type { ActivityEventType, Backend, MicroverseSessionState, MicroverseHistoryEntry, FailureClass, GateResult } from '../types/index.js';
 import {
   resolveBackend,
   buildJudgeInvocation,
@@ -350,7 +350,7 @@ export async function ensurePerIterationGateBaseline(opts: {
   currentIteration?: number;
   baselineMaxAgeIterations?: number;
   baselineMaxAgeSeconds?: number;
-  _deps?: Pick<PerIterationGateDeps, 'runGateFn'>;
+  _deps?: Pick<PerIterationGateDeps, 'runGateFn' | 'logActivityFn'>;
 }): Promise<void> {
   const {
     currentMv,
@@ -392,6 +392,7 @@ export async function ensurePerIterationGateBaseline(opts: {
   }
 
   const runGateFn = _deps?.runGateFn ?? runGate;
+  const logActivityFn = _deps?.logActivityFn ?? logActivity;
   const result = await runGateFn({
     workingDir,
     mode: 'baseline',
@@ -399,7 +400,28 @@ export async function ensurePerIterationGateBaseline(opts: {
     baselinePath,
     allowedPaths: currentMv.allowed_paths,
     checks: [...PER_ITERATION_GATE_CHECKS],
+    onEvent: (event, data) => logActivityFn({
+      event: event as ActivityEventType,
+      source: 'pickle',
+      session: path.basename(sessionDir),
+      gate_payload: data,
+    }),
   });
+  if (!(await pathExists(baselinePath))) {
+    const message = `[anatomy-park] per-iteration gate baseline initialization failed - expected baseline at ${baselinePath}`;
+    log(message);
+    logActivityFn({
+      event: 'gate_baseline_init_failed',
+      source: 'pickle',
+      session: path.basename(sessionDir),
+      gate_payload: {
+        path: baselinePath,
+        status: result.status,
+        total_raw_failure_count: result.total_raw_failure_count,
+      },
+    });
+    throw new Error(message);
+  }
   log(
     `[anatomy-park] initialized per-iteration gate baseline ` +
       `(captured ${result.total_raw_failure_count} pre-existing failure(s))`,

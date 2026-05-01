@@ -1,6 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { assignOccurrenceIndices, subtractBaseline } from '../../services/convergence-gate.js';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { assignOccurrenceIndices, runGate, subtractBaseline } from '../../services/convergence-gate.js';
 
 function makeFailure(file, ruleOrCode, line, occurrence_index = 0) {
   return { check: 'lint', file, line, ruleOrCode, message: 'test', severity: 'error', occurrence_index };
@@ -66,4 +69,39 @@ test('subtractBaseline: subtract is order-independent', () => {
   const result = subtractBaseline(current, baseline);
   assert.equal(result.length, 1, 'only the new failure remains');
   assert.equal(result[0].file, 'c.ts');
+});
+
+test('runGate baseline: emits disk diagnostics and leaves baseline on disk', async () => {
+  const workingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cg-baseline-disk-'));
+  const events = [];
+  try {
+    fs.writeFileSync(path.join(workingDir, 'package.json'), JSON.stringify({ name: 'fixture', private: true }, null, 2));
+    const baselinePath = path.join(workingDir, 'session', 'gate', 'baseline.json');
+
+    const result = await runGate({
+      workingDir,
+      mode: 'baseline',
+      scope: 'full',
+      checks: [],
+      baselinePath,
+      onEvent: (event, data) => events.push({ event, data }),
+    });
+
+    assert.equal(result.status, 'green');
+    assert.equal(fs.existsSync(baselinePath), true, 'baseline file must remain on disk after green baseline capture');
+    assert.ok(
+      events.some(e => e.event === 'gate_baseline_disk_check' && e.data.phase === 'pre_write' && e.data.exists === false),
+      `expected missing pre-write diagnostic, got ${JSON.stringify(events)}`,
+    );
+    assert.ok(
+      events.some(e => e.event === 'gate_baseline_disk_check' && e.data.phase === 'post_write' && e.data.exists === true),
+      `expected present post-write diagnostic, got ${JSON.stringify(events)}`,
+    );
+    assert.ok(
+      events.some(e => e.event === 'gate_baseline_captured'),
+      `expected baseline capture event, got ${JSON.stringify(events)}`,
+    );
+  } finally {
+    fs.rmSync(workingDir, { recursive: true, force: true });
+  }
 });
