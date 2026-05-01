@@ -51,8 +51,12 @@ The 27 functions, ordered by severity (highest complexity first). Each row point
 | 25 | `bin/status.ts` | 10 | `showStatus` | 16 | — | LOW |
 | 26 | `lib/tarjan-scc.ts` | 145 | `buildCycles` | 16 | — | LOW |
 | 27 | `scripts/check-scope-schema-parity.ts` | 9 | `deepEqual` | 16 | — | LOW |
+| 28 | `bin/microverse-runner.ts` | 870 | `buildMicroverseHandoff` | 16 | — | LOW |
+| 29 | `bin/microverse-runner.ts` | 1290 | `measureAndClassifyIteration` | 17 | — | LOW |
 
-Total: 27 functions, 24 files, ~3,500–5,000 LOC of touched code (estimated based on average function size).
+Total: 29 functions, 24 files, ~3,500–5,000 LOC of touched code (estimated based on average function size).
+
+Rows 28-29 added 2026-05-01 — surfaced by the v1.64.0 release-gate run. Both functions grew past the cyclomatic ceiling during the v1.63.0 overnight bundle (commits `c5cdb6e` codex-relaunch extraction and `53948c0` stall-resilience routing). Defer to phase-2 — they ride along with the existing microverse-runner extraction work in T10–T19's medium/low grouping.
 
 ---
 

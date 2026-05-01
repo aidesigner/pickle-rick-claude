@@ -185,7 +185,7 @@ export function sparkline(values: number[]): string {
 export function renderMicroverseTrend(mv: MicroverseSessionState, width: number): string[] {
   const out: string[] = [];
   const sep = matrixSeparator(width);
-  const history = mv.convergence.history;
+  const history = mv.convergence?.history ?? [];
   const direction = mv.key_metric.direction ?? 'higher';
   const targetLabel = mv.convergence_target != null ? String(mv.convergence_target) : '—';
 

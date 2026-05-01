@@ -640,7 +640,7 @@ function firstJsonResultLine(content: string): Record<string, unknown> | null {
 }
 
 export function classifyNoCommitExit(iterLogFile: string): NoCommitExitClassification {
-  let content = '';
+  let content: string;
   try {
     content = fs.readFileSync(iterLogFile, 'utf-8');
   } catch {
@@ -867,6 +867,7 @@ export function measureLlmMetric(
   }
 }
 
+// eslint-disable-next-line complexity -- deferred to god-functions-phase-2 row 28; cyclomatic 16 vs ceiling 15
 export function buildMicroverseHandoff(
   mvState: MicroverseSessionState,
   iteration: number,
@@ -1287,6 +1288,7 @@ export async function handleRateLimit(
   }
 }
 
+// eslint-disable-next-line complexity -- deferred to god-functions-phase-2 row 29; cyclomatic 17 vs ceiling 15
 export async function measureAndClassifyIteration(
   state: MicroverseState,
   baseline: MetricSnapshot,

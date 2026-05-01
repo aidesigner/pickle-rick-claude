@@ -398,7 +398,7 @@ function firstJsonResultLine(content) {
     return null;
 }
 export function classifyNoCommitExit(iterLogFile) {
-    let content = '';
+    let content;
     try {
         content = fs.readFileSync(iterLogFile, 'utf-8');
     }
@@ -584,6 +584,7 @@ export function measureLlmMetric(goal, timeoutSeconds, cwd, judgeModel, history,
         return null;
     }
 }
+// eslint-disable-next-line complexity -- deferred to god-functions-phase-2 row 28; cyclomatic 16 vs ceiling 15
 export function buildMicroverseHandoff(mvState, iteration, workingDir, sessionDir) {
     // Worker-managed convergence: skip metric context entirely
     if (mvState.convergence_mode === 'worker') {
@@ -941,6 +942,7 @@ export async function handleRateLimit(_state, ctx, signal, waitMetadata = {}) {
         logActivity({ event: 'rate_limit_resume', source: 'pickle', session: path.basename(ctx.sessionDir) });
     }
 }
+// eslint-disable-next-line complexity -- deferred to god-functions-phase-2 row 29; cyclomatic 17 vs ceiling 15
 export async function measureAndClassifyIteration(state, baseline, ctx) {
     const backend = resolveBackend(ctx.currentRunnerState);
     let metricResult = measureCurrentMetric(state, ctx, backend);

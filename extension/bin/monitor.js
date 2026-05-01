@@ -169,7 +169,7 @@ export function sparkline(values) {
 export function renderMicroverseTrend(mv, width) {
     const out = [];
     const sep = matrixSeparator(width);
-    const history = mv.convergence.history;
+    const history = mv.convergence?.history ?? [];
     const direction = mv.key_metric.direction ?? 'higher';
     const targetLabel = mv.convergence_target != null ? String(mv.convergence_target) : '—';
     out.push(`\n${sep}\n${MX.BRIGHT}Metric Trend${MX.R} ${MX.DIM}(${direction} is better, target: ${targetLabel})${MX.R}\n`);

@@ -80,9 +80,9 @@ export function recordIteration(
   entry: MicroverseHistoryEntry,
   classification?: 'improved' | 'held' | 'regressed'
 ): MicroverseSessionState {
-  const history = [...state.convergence.history, entry];
+  const history = [...(state.convergence?.history ?? []), entry];
   if (!classification) {
-    const lastAccepted = [...state.convergence.history].reverse().find(h => h.action === 'accept');
+    const lastAccepted = [...(state.convergence?.history ?? [])].reverse().find(h => h.action === 'accept');
     const previousScore = lastAccepted ? lastAccepted.score : state.baseline_score;
     classification = compareMetric(entry.score, previousScore, state.key_metric.tolerance, state.key_metric.direction);
   }
@@ -160,7 +160,7 @@ export function classifyFailure(
   if (metricResult === null) return 'tool_failure';
 
   // Check if this iteration improved
-  const history = mvState.convergence.history;
+  const history = mvState.convergence?.history ?? [];
   const lastAccepted = [...history].reverse().find(h => h.action === 'accept');
   const previousScore = lastAccepted ? lastAccepted.score : mvState.baseline_score;
   const classification = compareMetric(
@@ -204,7 +204,7 @@ export function isConverged(state: MicroverseSessionState): boolean {
   // Early exit: if a convergence_target is set and score has reached (or passed) it, we're done.
   // Direction-aware: for 'lower', score <= target; for 'higher', score >= target.
   if (state.convergence_target != null) {
-    const lastAccepted = [...state.convergence.history].reverse().find(h => h.action === 'accept');
+    const lastAccepted = [...(state.convergence?.history ?? [])].reverse().find(h => h.action === 'accept');
     const currentScore = lastAccepted ? lastAccepted.score : state.baseline_score;
     const direction = state.key_metric.direction ?? 'higher';
     if (direction === 'lower'

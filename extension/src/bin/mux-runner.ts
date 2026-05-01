@@ -975,7 +975,8 @@ export function getCircuitBreakerBudget(state: State, sessionDir: string): Circu
   const cachedTier = typeof state.current_ticket_tier === 'string'
     ? state.current_ticket_tier.toLowerCase()
     : '';
-  const cachedBudget = Number(state.current_ticket_budget);
+  const rawCachedBudget = Number(state.current_ticket_budget);
+  const cachedBudget = Number.isFinite(rawCachedBudget) ? rawCachedBudget : 0;
   if (isCircuitBreakerTier(cachedTier) && cachedBudget === CIRCUIT_BREAKER_TIER_BUDGETS[cachedTier]) {
     return { tier: cachedTier, budget: cachedBudget };
   }
