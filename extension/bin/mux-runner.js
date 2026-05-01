@@ -796,11 +796,16 @@ export function runMuxReadinessGate(input) {
         input.log(`readiness gate skipped: ${binPath} not found`);
         return 0;
     }
-    const result = spawnSync(process.execPath, [
+    const args = [
         binPath,
         '--session-dir', input.sessionDir,
         '--repo-root', input.repoRoot,
-    ], {
+    ];
+    if (typeof input.skipReason === 'string' && input.skipReason.length > 0) {
+        args.push('--skip-readiness', input.skipReason);
+        input.log(`readiness gate skipped via state.flags.skip_readiness_reason: ${input.skipReason}`);
+    }
+    const result = spawnSync(process.execPath, args, {
         cwd: input.repoRoot,
         encoding: 'utf-8',
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -1515,11 +1520,14 @@ async function runMuxRunnerMain() {
         logActivity({ event: 'iteration_start', source: 'pickle', session: path.basename(sessionDir), iteration });
         if (!readinessGateChecked && curIter === 0) {
             readinessGateChecked = true;
+            const skipReasonRaw = state.flags?.skip_readiness_reason;
+            const skipReason = typeof skipReasonRaw === 'string' && skipReasonRaw.length > 0 ? skipReasonRaw : undefined;
             const readinessStatus = runMuxReadinessGate({
                 sessionDir,
                 repoRoot: state.working_dir || process.cwd(),
                 extensionRoot,
                 log,
+                skipReason,
             });
             if (readinessStatus !== 0) {
                 log(`READINESS HALT: check-readiness exited ${readinessStatus}; no manager spawn attempted`);

@@ -16,40 +16,55 @@ const PURE_PROSE_RE = /\b(must|should)\s+(?:be|feel)\s+(?:intuitive|performant|f
 const PATH_RE = /\b(?:[\w.-]+\/)+[\w.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|yml|yaml|sh|py|css|scss|html)\b/g;
 const SYMBOL_RE = /\b[A-Z][A-Za-z0-9]*(?:\.[A-Za-z_$][\w$]*)+\b|\b[A-Za-z_$][\w$]*\(\)/g;
 function usage() {
-    console.error('Usage: node check-readiness.js --session-dir <dir> [--repo-root <dir>] [--manifest <file>] [--machinability-only] [--contract-only] [--history [--last N]]');
+    console.error('Usage: node check-readiness.js --session-dir <dir> [--repo-root <dir>] [--manifest <file>] [--machinability-only] [--contract-only] [--history [--last N]] [--skip-readiness <reason>]');
     process.exit(1);
 }
-function parseArgs(argv) {
-    const sessionIndex = argv.indexOf('--session-dir');
-    const repoIndex = argv.indexOf('--repo-root');
-    const manifestIndex = argv.indexOf('--manifest');
-    const lastIndex = argv.indexOf('--last');
-    const sessionDir = sessionIndex >= 0 ? argv[sessionIndex + 1] : undefined;
-    if (!sessionDir || sessionDir.startsWith('--'))
-        usage();
-    let last = DEFAULT_HISTORY_LIMIT;
-    if (lastIndex >= 0) {
-        const rawLast = argv[lastIndex + 1];
-        if (!rawLast || rawLast.startsWith('--'))
-            usage();
-        last = Number.parseInt(rawLast, 10);
-        if (!Number.isInteger(last) || last < 1)
-            usage();
+const SKIP_USAGE_MSG = '--skip-readiness requires a reason argument (e.g. --skip-readiness "bundle pre-validated by refinement team")';
+const SKIP_USAGE_EXIT_CODE = 64;
+function parseSkipReadiness(argv) {
+    const skipIndex = argv.indexOf('--skip-readiness');
+    if (skipIndex < 0)
+        return undefined;
+    const raw = argv[skipIndex + 1];
+    if (raw === undefined || raw.startsWith('--') || raw.trim() === '') {
+        process.stderr.write(`${SKIP_USAGE_MSG}\n`);
+        process.exit(SKIP_USAGE_EXIT_CODE);
     }
-    const repoRoot = repoIndex >= 0 && argv[repoIndex + 1] && !argv[repoIndex + 1].startsWith('--')
-        ? argv[repoIndex + 1]
-        : process.cwd();
-    const manifest = manifestIndex >= 0 && argv[manifestIndex + 1] && !argv[manifestIndex + 1].startsWith('--')
-        ? argv[manifestIndex + 1]
-        : undefined;
+    return raw;
+}
+function parseLast(argv) {
+    const lastIndex = argv.indexOf('--last');
+    if (lastIndex < 0)
+        return DEFAULT_HISTORY_LIMIT;
+    const rawLast = argv[lastIndex + 1];
+    if (!rawLast || rawLast.startsWith('--'))
+        usage();
+    const last = Number.parseInt(rawLast, 10);
+    if (!Number.isInteger(last) || last < 1)
+        usage();
+    return last;
+}
+function parseValueFlag(argv, flag) {
+    const idx = argv.indexOf(flag);
+    if (idx < 0)
+        return undefined;
+    const value = argv[idx + 1];
+    return value && !value.startsWith('--') ? value : undefined;
+}
+export function parseArgs(argv) {
+    const sessionDir = parseValueFlag(argv, '--session-dir');
+    if (!sessionDir)
+        usage();
+    const repoRoot = parseValueFlag(argv, '--repo-root') ?? process.cwd();
     return {
         sessionDir: path.resolve(sessionDir),
         repoRoot: path.resolve(repoRoot),
-        manifest,
+        manifest: parseValueFlag(argv, '--manifest'),
         machinabilityOnly: argv.includes('--machinability-only'),
         contractOnly: argv.includes('--contract-only'),
         history: argv.includes('--history'),
-        last,
+        last: parseLast(argv),
+        skipReadiness: parseSkipReadiness(argv),
     };
 }
 export function extractAcceptanceCriteria(content) {
@@ -531,6 +546,17 @@ function main() {
     try {
         if (args.history) {
             process.stdout.write(runHistory(args));
+            process.exit(0);
+        }
+        if (args.skipReadiness !== undefined) {
+            const reason = args.skipReadiness;
+            logActivity({
+                event: 'readiness_skipped',
+                source: 'pickle',
+                session: path.basename(args.sessionDir),
+                gate_payload: { reason, timestamp: new Date().toISOString() },
+            });
+            process.stdout.write(`${JSON.stringify({ status: 'skipped', reason, elapsed_ms: 0 })}\n`);
             process.exit(0);
         }
         const result = runReadiness(args);

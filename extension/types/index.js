@@ -152,6 +152,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'commit_pending_probe_fired',
     'codex_manager_relaunch',
     'readiness_failed_post_correction',
+    'readiness_skipped',
     'archaeology_complete',
     'archaeology_skipped',
     'phase_personas_disabled_seen',
