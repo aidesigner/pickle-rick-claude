@@ -379,10 +379,12 @@ test('ensureMonitorWindow: stale EXTENSION_DIR falls back before watcher pane re
     const dataRoot = path.join(f.tmpRoot, 'data');
     const savedExt = process.env.EXTENSION_DIR;
     const savedData = process.env.PICKLE_DATA_ROOT;
+    const savedAllow = process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL;
     const savedWrite = process.stderr.write;
     try {
         process.env.EXTENSION_DIR = invalidRoot;
         process.env.PICKLE_DATA_ROOT = dataRoot;
+        delete process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL;
         process.stderr.write = () => true;
         _resetExtensionDirFallbackForTests();
 
@@ -406,6 +408,8 @@ test('ensureMonitorWindow: stale EXTENSION_DIR falls back before watcher pane re
         else process.env.EXTENSION_DIR = savedExt;
         if (savedData === undefined) delete process.env.PICKLE_DATA_ROOT;
         else process.env.PICKLE_DATA_ROOT = savedData;
+        if (savedAllow === undefined) delete process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL;
+        else process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL = savedAllow;
         _resetExtensionDirFallbackForTests();
         f.cleanup();
     }
