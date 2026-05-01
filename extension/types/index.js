@@ -140,6 +140,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'gate_baseline_captured',
     'gate_baseline_disk_check',
     'gate_baseline_init_failed',
+    'baseline_recapture_failed',
     'gate_run_complete',
     'gate_skipped',
     'gate_unsafe_test_command_blocked',

@@ -208,6 +208,7 @@ async function runChangedPerIterationGate(opts) {
                 baselinePath: opts.baselinePath,
                 log: opts.log,
                 deps: opts.deps,
+                failureEvent: 'baseline_recapture_failed',
                 failureMessage: `[anatomy-park] per-iteration gate baseline recapture failed - expected baseline at ${opts.baselinePath}`,
                 successMessage: (result) => `[anatomy-park] recaptured per-iteration gate baseline ` +
                     `(captured ${result.total_raw_failure_count} pre-existing failure(s))`,
@@ -230,6 +231,12 @@ async function runChangedPerIterationGate(opts) {
         baselinePath: gateMode === 'baseline' ? opts.baselinePath : undefined,
         allowedPaths: opts.currentMv.allowed_paths,
         checks: [...PER_ITERATION_GATE_CHECKS],
+        onEvent: (event, data) => opts.deps.logActivityFn({
+            event: event,
+            source: 'pickle',
+            session: path.basename(opts.sessionDir),
+            gate_payload: data,
+        }),
     });
     if (result.status !== 'red' || result.failures.length === 0) {
         return opts.currentMv;

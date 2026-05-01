@@ -5,6 +5,9 @@ import { GATE_REMEDIATION_EVENT_NAMES } from '../services/convergence-gate.js';
 
 const GATE_EVENTS = [
   'gate_baseline_captured',
+  'gate_baseline_disk_check',
+  'gate_baseline_init_failed',
+  'baseline_recapture_failed',
   'gate_run_complete',
   'gate_skipped',
   'gate_unsafe_test_command_blocked',
@@ -22,7 +25,7 @@ const GATE_EVENTS = [
   'gate_out_of_scope_failures_present',
 ];
 
-test('gate-events: all 16 gate/iteration event names are in VALID_ACTIVITY_EVENTS', () => {
+test('gate-events: all gate/iteration event names are in VALID_ACTIVITY_EVENTS', () => {
   const set = new Set(VALID_ACTIVITY_EVENTS);
   for (const name of GATE_EVENTS) {
     assert.ok(set.has(name), `Missing event: ${name}`);
