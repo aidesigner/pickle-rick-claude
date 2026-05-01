@@ -8,7 +8,7 @@ import { fileURLToPath } from 'url';
 import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd, formatLocalDateKey } from '../services/pickle-utils.js';
 import { getHeadSha } from '../services/git-utils.js';
 import { State, Defaults, LockError, SessionMapEntry, Backend, BACKENDS, STATE_MANAGER_DEFAULTS } from '../types/index.js';
-import { StateManager, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
+import { StateManager, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { logActivity, pruneActivity } from '../services/activity-logger.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 
@@ -670,6 +670,10 @@ function resumeSession(config: SetupArgs): SessionResult {
     state = sm.update(statePath, s => {
       applyResumeConfig(s, config, fullSessionPath, codexVersionSeen);
     });
+    if (state.active === true) {
+      clearExitReason(statePath);
+      state = sm.read(statePath);
+    }
   } catch {
     die(`state.json is missing or corrupt in ${fullSessionPath}`);
   }

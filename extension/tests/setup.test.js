@@ -235,6 +235,30 @@ test('setup: --resume preserves stored limits when no explicit flags given', () 
     }
 });
 
+test('setup: --resume clears stale exit_reason while preserving unrelated state', () => {
+    const sessionPath = runSetup(['--max-iterations', '20', '--task', 'resume-exit-reason-test']);
+    try {
+        const statePath = path.join(sessionPath, 'state.json');
+        const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        state.active = false;
+        state.exit_reason = 'fatal';
+        state.iteration = 3;
+        state.current_ticket = 'ticket-123';
+        fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+
+        runSetup(['--resume', sessionPath]);
+
+        const resumed = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(resumed.active, true, 'resume without --paused must reactivate the session');
+        assert.equal(resumed.exit_reason, null, 'resume must clear stale terminal exit_reason');
+        assert.equal(resumed.iteration, 3, 'resume must preserve unrelated iteration');
+        assert.equal(resumed.current_ticket, 'ticket-123', 'resume must preserve unrelated current ticket');
+        assert.equal(resumed.max_iterations, 20, 'resume must preserve stored limits');
+    } finally {
+        cleanup(sessionPath);
+    }
+});
+
 // ---------------------------------------------------------------------------
 // --min-iterations and --command-template flags (meeseeks support)
 // ---------------------------------------------------------------------------

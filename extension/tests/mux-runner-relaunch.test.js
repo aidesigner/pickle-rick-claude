@@ -46,7 +46,7 @@ function buildSession(tmpRoot) {
     const shimDir = path.join(tmpRoot, 'bin');
     fs.mkdirSync(shimDir, { recursive: true });
     const callsLog = path.join(tmpRoot, 'tmux-calls.log');
-    const observedActiveLog = path.join(tmpRoot, 'observed-active.log');
+    const observedStateLog = path.join(tmpRoot, 'observed-state.log');
     const statePath = path.join(sessionDir, 'state.json');
     const fakeTmux = path.join(shimDir, 'tmux');
     fs.writeFileSync(
@@ -57,7 +57,7 @@ case "$1" in
   display-message)
     case "$*" in
       *pane_current_command*)
-        node -e "const fs=require('fs'); const s=JSON.parse(fs.readFileSync(process.argv[1],'utf8')); fs.appendFileSync(process.argv[2], String(s.active) + '\\n');" "${statePath}" "${observedActiveLog}"
+        node -e "const fs=require('fs'); const s=JSON.parse(fs.readFileSync(process.argv[1],'utf8')); fs.appendFileSync(process.argv[2], JSON.stringify({active:s.active, exit_reason:s.exit_reason ?? null}) + '\\n');" "${statePath}" "${observedStateLog}"
         echo zsh
         ;;
       *)
@@ -79,13 +79,13 @@ exit 0
     );
     fs.chmodSync(fakeTmux, 0o755);
 
-    return { extDir, sessionDir, shimDir, observedActiveLog };
+    return { extDir, sessionDir, shimDir, observedStateLog };
 }
 
 test('mux-runner relaunch claims ownership before monitor recovery sees session state', () => {
     const tmpRoot = makeTmpRoot();
     try {
-        const { extDir, sessionDir, shimDir, observedActiveLog } = buildSession(tmpRoot);
+        const { extDir, sessionDir, shimDir, observedStateLog } = buildSession(tmpRoot);
 
         const result = spawnSync(process.execPath, [MUX_RUNNER_BIN, sessionDir], {
             env: {
@@ -110,8 +110,11 @@ test('mux-runner relaunch claims ownership before monitor recovery sees session 
             `Expected ownership before monitor recovery. Got:\n${runnerLog}`,
         );
 
-        const observed = fs.readFileSync(observedActiveLog, 'utf-8').trim().split('\n');
-        assert.deepEqual(observed, ['true', 'true', 'true']);
+        const observed = fs.readFileSync(observedStateLog, 'utf-8').trim().split('\n').map(line => JSON.parse(line));
+        assert.ok(observed.length > 0, 'monitor recovery should observe relaunched state');
+        for (const state of observed) {
+            assert.deepEqual(state, { active: true, exit_reason: null });
+        }
 
         const finalState = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
         assert.equal(finalState.active, false, 'loop ceiling should still deactivate terminal state');
