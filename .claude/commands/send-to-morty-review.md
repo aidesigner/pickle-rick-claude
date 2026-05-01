@@ -10,6 +10,19 @@ node "$HOME/.claude/pickle-rick/extension/bin/worker-setup.js" $ARGUMENTS
 ```
 Extract `${SESSION_ROOT}`, `${TICKET_ID}`, `${TICKET_DIR}`.
 
+## Resume Detection (run BEFORE Phase 1)
+
+| Files in `${TICKET_DIR}` | Enter at phase |
+|---|---|
+| (none, or `review_scope.md` missing) | 1 (Scope Discovery) |
+| `review_scope.md` exists; no `spec_conformance.md` | 2 (Spec Conformance) |
+| `spec_conformance.md` says `CONFORMANT`; no `review_findings.md` | 3 (Focused Review) |
+| `review_findings.md` exists; no Simplify pass evidence | 4 (Simplify) |
+
+Stale-review guard: if a review file's mtime is older than the ticket file's `updated:` frontmatter date, treat as stale and re-do that phase from scratch.
+
+Rejected reviews (`NON-CONFORMANT`, `NEEDS REVISION`, or `REJECTED`): re-do the failed phase from scratch.
+
 ## Lifecycle — ONE REVIEW, phases 1→4, then `<promise>I AM DONE</promise>`
 
 ### Phase 1: Scope Discovery

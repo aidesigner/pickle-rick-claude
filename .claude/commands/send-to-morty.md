@@ -10,6 +10,21 @@ node "$HOME/.claude/pickle-rick/extension/bin/worker-setup.js" $ARGUMENTS
 ```
 Extract `${SESSION_ROOT}`, `${TICKET_ID}`, `${TICKET_DIR}`.
 
+## Resume Detection (run BEFORE Step 1)
+
+| Files in `${TICKET_DIR}` | Enter at step |
+|---|---|
+| (none, or `research_*.md` missing) | 1 (Research) |
+| `research_*.md` exists; `research_review.md` says `APPROVED`; no `plan_*.md` | 3 (Plan) |
+| `plan_*.md` exists; `plan_review.md` says `APPROVED`; no implementation diff | 5 (Implement) |
+| Implementation diff exists; no `conformance_*.md` | 6 (Conformance) |
+| `conformance_*.md` says `ALL_PASS`; no `code_review_*.md` | 7 (Code Review) |
+| `code_review_*.md` says `PASS`; no Simplify pass evidence | 8 (Simplify) |
+
+Stale-review guard: if a review file's mtime is older than the ticket file's `updated:` frontmatter date, treat as stale and re-do that phase from scratch.
+
+Rejected reviews (`NEEDS REVISION` or `REJECTED`): re-do the failed phase from scratch.
+
 ## Session Knowledge Transfer
 
 At the start of your work:
