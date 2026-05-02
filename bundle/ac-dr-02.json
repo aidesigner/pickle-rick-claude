@@ -1,0 +1,15 @@
+{
+  "ac_id": "AC-DR-02",
+  "pass": false,
+  "checked_at": "2026-05-02T21:56:11.386Z",
+  "checker": "verify-recapture-fired",
+  "checker_version": "1",
+  "evidence": {
+    "state_path": "/Users/gregorydickson/.local/share/pickle-rick/sessions/2026-05-02-ad240987/state.json",
+    "activity_count": 1,
+    "anatomy_windows": [],
+    "matched_event": null
+  },
+  "failure_reason": "phase-window-missing",
+  "remediation_hint": "Ensure anatomy-park records baseline_recapture_attempted at iteration 1 inside its phase window."
+}
