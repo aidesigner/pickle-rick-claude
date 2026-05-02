@@ -1,0 +1,29 @@
+{
+  "ac_id": "AC-DR-04d",
+  "pass": true,
+  "checked_at": "2026-05-02T18:35:00-05:00",
+  "checker": "manual-rca-followup",
+  "checker_version": "8c0553f",
+  "evidence": {
+    "report": "bundle/section-a-rca-followup.md",
+    "chosen_hypothesis": "B",
+    "terminal_state": "INCONCLUSIVE on exact process identity; B selected and C ruled out for current source path",
+    "key_citations": [
+      "pickle_settings.json:28",
+      "/Users/gregorydickson/.claude/pickle-rick/pickle_settings.json:39",
+      "extension/src/hooks/handlers/stop-hook.ts:366-370",
+      "extension/src/bin/check-update.ts:310-313",
+      "extension/src/bin/check-update.ts:377-380",
+      "/Users/gregorydickson/.claude/pickle-rick/extension/package.json:3",
+      "extension/package.json:3",
+      "prds/p2-bundle-deploy-reversion-and-gate-baseline-diagnostic.md:30-34",
+      "prds/p2-bundle-deploy-reversion-and-gate-baseline-diagnostic.md:46-50",
+      "/Users/gregorydickson/.claude/pickle-rick/debug.log:901003",
+      "/Users/gregorydickson/.claude/pickle-rick/debug.log:901423",
+      "/Users/gregorydickson/.claude/pickle-rick/debug.log:878062-878063",
+      "/Users/gregorydickson/.claude/pickle-rick/extension/bin/check-update.js:239-251"
+    ]
+  },
+  "failure_reason": null,
+  "remediation_hint": null
+}
