@@ -5,7 +5,20 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const CLAUDE_PATH = path.resolve(__dirname, '..', 'CLAUDE.md');
 const PKG_PATH = path.resolve(__dirname, '..', 'package.json');
+
+const REQUIRED_TRAP_DOOR_ENTRY_SUBSTRINGS = [
+  '`src/bin/mux-runner.ts` (state-iteration write)',
+  'ENFORCE: extension/tests/mux-runner-state-iteration.test.js',
+  'PATTERN_SHAPE: `state.iteration = iteration`',
+  '`src/bin/pipeline-runner.ts` (phase-step write)',
+  'ENFORCE: extension/tests/pipeline-runner-state-step.test.js',
+  "PATTERN_SHAPE: `state.step = '<phase>'`",
+  '`src/services/pickle-utils.ts` (getExtensionRoot validation)',
+  'ENFORCE: extension/tests/get-extension-root-fallback.test.js',
+  'PATTERN_SHAPE: `extensionRootSentinelExists`',
+];
 
 const UNREGISTERED_TEST_ALLOWLIST = new Set([
   'tests/bin/check-gate.test.js',
@@ -51,4 +64,12 @@ test('no test file is silently unregistered', () => {
     [],
     `Unregistered test files (add to package.json scripts.test): ${missing.join(', ')}`,
   );
+});
+
+test('PSD-T9 trap-door catalog entries are present', () => {
+  const claude = readFileSync(CLAUDE_PATH, 'utf8');
+
+  for (const expected of REQUIRED_TRAP_DOOR_ENTRY_SUBSTRINGS) {
+    assert.ok(claude.includes(expected), `missing CLAUDE.md trap-door text: ${expected}`);
+  }
 });
