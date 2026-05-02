@@ -648,7 +648,7 @@ describe('install.sh active-session guard', () => {
     }
   });
 
-  test('real install.sh contains active-session refusal and bypass audit schema', () => {
+  test('real install.sh contains active-session refusal and downgrade audit schema', () => {
     const src = readFileSync(INSTALL_SH, 'utf8');
     assert.ok(src.includes('--override-active'), 'install.sh must parse --override-active');
     assert.ok(src.includes('--closer-context'), 'install.sh must parse --closer-context');
@@ -657,10 +657,10 @@ describe('install.sh active-session guard', () => {
       'install.sh must contain the active-session refusal contract',
     );
     assert.ok(
-      src.includes('INSTALL_BYPASS_ACTIVE_SESSION'),
-      'install.sh must write the active-session bypass audit event',
+      src.includes('--arg event "DOWNGRADE"'),
+      'install.sh must write the downgrade audit event',
     );
-    assert.ok(src.includes('deploy-audit.log'), 'install.sh must append bypass evidence to deploy-audit.log');
+    assert.ok(src.includes('deploy-audit.log'), 'install.sh must append downgrade evidence to deploy-audit.log');
   });
 });
 

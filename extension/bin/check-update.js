@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
-import { getExtensionRoot, safeErrorMessage } from '../services/pickle-utils.js';
+import { getDataRoot, getExtensionRoot, safeErrorMessage } from '../services/pickle-utils.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 const CACHE_FILE = 'update-check.json';
 const SETTINGS_FILE = 'pickle_settings.json';
@@ -291,6 +291,89 @@ export function extractAndInstall(tarballPath, preExtractedDir) {
         }
     }
 }
+function findActiveSession() {
+    const sessionsRoot = path.join(getDataRoot(), 'sessions');
+    let sessionDirs;
+    try {
+        sessionDirs = fs.readdirSync(sessionsRoot);
+    }
+    catch {
+        return null;
+    }
+    for (const sessionDir of sessionDirs) {
+        const statePath = path.join(sessionsRoot, sessionDir, 'state.json');
+        try {
+            const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+            if (state.active === true) {
+                return {
+                    id: typeof state.session_id === 'string' && state.session_id ? state.session_id : sessionDir,
+                };
+            }
+        }
+        catch {
+            continue;
+        }
+    }
+    return null;
+}
+function auditLogPath() {
+    return path.join(os.homedir(), '.claude', 'pickle-rick', 'deploy-audit.log');
+}
+function appendDowngradeAudit(srcVersion, depVersion, options, sessionId) {
+    const filePath = auditLogPath();
+    const existed = fs.existsSync(filePath);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    const entry = {
+        event: 'DOWNGRADE',
+        src_version: srcVersion,
+        dep_version: depVersion,
+        ts: new Date().toISOString(),
+        operator: process.env.USER || process.env.LOGNAME || '',
+        invocation: process.argv.join(' '),
+        session_id: sessionId,
+        override_active: options.overrideActive === true,
+        no_confirm: options.noConfirm === true,
+        closer_context: options.closerContext === true,
+    };
+    fs.appendFileSync(filePath, `${JSON.stringify(entry)}\n`, { mode: 0o600 });
+    if (!existed) {
+        fs.chmodSync(filePath, 0o600);
+    }
+}
+function confirmDowngrade(srcVersion, depVersion) {
+    process.stderr.write(`Downgrade ${depVersion} → ${srcVersion} — proceed? [y/N] `);
+    try {
+        const chunks = [];
+        const buffer = Buffer.alloc(1);
+        while (chunks.length < 1024) {
+            const bytesRead = fs.readSync(0, buffer, 0, 1, null);
+            if (bytesRead === 0)
+                break;
+            const char = buffer.toString('utf-8', 0, bytesRead);
+            if (char === '\n' || char === '\r')
+                break;
+            chunks.push(char);
+        }
+        const answer = chunks.join('').trim();
+        return answer === 'y' || answer === 'Y';
+    }
+    catch {
+        return false;
+    }
+}
+function evaluateDowngradeUx(srcVersion, depVersion, options) {
+    const activeSession = findActiveSession();
+    if (activeSession && options.overrideActive !== true && options.closerContext !== true) {
+        const error = `REFUSE: active session ${activeSession.id} — kill the pipeline first or pass --override-active`;
+        process.stderr.write(`${error}\n`);
+        return { success: false, error, exitCode: 2 };
+    }
+    if (options.noConfirm !== true && !confirmDowngrade(srcVersion, depVersion)) {
+        return { success: true, aborted: true };
+    }
+    appendDowngradeAudit(srcVersion, depVersion, options, activeSession?.id ?? null);
+    return null;
+}
 export function performUpgrade(from, to, tag, options) {
     try {
         const settings = readSettings();
@@ -307,9 +390,16 @@ export function performUpgrade(from, to, tag, options) {
         try {
             inspected = extractReleaseForInspection(tarballPath);
             const currentVersion = getCurrentVersion();
-            if (compareSemver(inspected.version, currentVersion) < 0 && options?.allowDowngrade !== true) {
-                cleanupDownloadedRelease(tarballPath, inspected.extractDir);
-                throw new BlockedDowngradeError(inspected.version, currentVersion);
+            if (compareSemver(inspected.version, currentVersion) < 0) {
+                if (options?.allowDowngrade !== true) {
+                    cleanupDownloadedRelease(tarballPath, inspected.extractDir);
+                    throw new BlockedDowngradeError(inspected.version, currentVersion);
+                }
+                const downgradeUxResult = evaluateDowngradeUx(inspected.version, currentVersion, options);
+                if (downgradeUxResult) {
+                    cleanupDownloadedRelease(tarballPath, inspected.extractDir);
+                    return downgradeUxResult;
+                }
             }
         }
         catch (err) {
@@ -394,9 +484,44 @@ export function checkForUpdate(options) {
         return { ...errorResult, error: msg };
     }
 }
+function parseCliArgs(args) {
+    const parsed = { upgrade: false };
+    for (const arg of args) {
+        switch (arg) {
+            case '--force':
+                parsed.force = true;
+                break;
+            case '--upgrade':
+                parsed.upgrade = true;
+                break;
+            case '--allow-downgrade':
+                parsed.allowDowngrade = true;
+                break;
+            case '--override-active':
+                parsed.overrideActive = true;
+                break;
+            case '--no-confirm':
+                parsed.noConfirm = true;
+                break;
+            case '--closer-context':
+                parsed.closerContext = true;
+                break;
+            default:
+                throw new Error(`Unknown flag: ${arg}`);
+        }
+    }
+    return parsed;
+}
 if (process.argv[1] && path.basename(process.argv[1]) === 'check-update.js') {
-    const force = process.argv.includes('--force');
-    if (process.argv.includes('--upgrade')) {
+    let cliOptions;
+    try {
+        cliOptions = parseCliArgs(process.argv.slice(2));
+    }
+    catch (err) {
+        console.error(safeErrorMessage(err));
+        process.exit(1);
+    }
+    if (cliOptions.upgrade) {
         const current = getCurrentVersion();
         const release = getLatestRelease();
         if (!release) {
@@ -408,13 +533,13 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'check-update.js') {
             console.log(JSON.stringify({ status: 'up-to-date', currentVersion: current }));
         }
         else {
-            const upgrade = performUpgrade(current, latest, release.tagName, { force });
+            const upgrade = performUpgrade(current, latest, release.tagName, cliOptions);
             console.log(JSON.stringify(upgrade, null, 2));
-            process.exit(upgrade.success ? 0 : 1);
+            process.exit(upgrade.success ? 0 : upgrade.exitCode ?? 1);
         }
     }
     else {
-        const result = checkForUpdate({ force });
+        const result = checkForUpdate({ force: cliOptions.force });
         console.log(JSON.stringify(result, null, 2));
     }
 }

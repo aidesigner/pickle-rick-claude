@@ -699,7 +699,7 @@ cp ${JSON.stringify(tarball)} "$dest/pickle-release.tar.gz"
         writeDeployedPackage('1.67.0');
         mockDownloadRelease(makeReleaseTarball('1.64.0'));
 
-        const result = performUpgrade('1.67.0', '1.66.0', 'v1.66.0', { allowDowngrade: true });
+        const result = performUpgrade('1.67.0', '1.66.0', 'v1.66.0', { allowDowngrade: true, noConfirm: true });
 
         assert.equal(result.success, true);
         assert.equal(fs.readFileSync(path.join(tmpDir, 'install-marker.txt'), 'utf-8'), 'installed');

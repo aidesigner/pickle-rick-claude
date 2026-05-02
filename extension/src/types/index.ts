@@ -518,6 +518,8 @@ export interface UpdateResult {
 export interface UpgradeResult {
   success: boolean;
   error?: string;
+  exitCode?: number;
+  aborted?: boolean;
 }
 
 // ---------------------------------------------------------------------------

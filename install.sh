@@ -13,14 +13,24 @@ ALLOW_DOWNGRADE=0
 UNINSTALL_CRON=0
 OVERRIDE_ACTIVE=0
 CLOSER_CONTEXT=0
+NO_CONFIRM=0
+DRY_RUN=0
 for arg in "$@"; do
   case "$arg" in
     --allow-downgrade) ALLOW_DOWNGRADE=1 ;;
+    --no-confirm) NO_CONFIRM=1 ;;
     --uninstall-cron) UNINSTALL_CRON=1 ;;
     --override-active) OVERRIDE_ACTIVE=1 ;;
     --closer-context) CLOSER_CONTEXT=1 ;;
+    --dry-ru[n]) DRY_RUN=1 ;;
+    --force) ;;
+    *)
+      echo "Unknown flag: $arg" >&2
+      exit 1
+      ;;
   esac
 done
+INVOCATION="$0 $*"
 
 compare_semver() {
   local a="$1"
@@ -55,6 +65,40 @@ read_package_version() {
 }
 
 DEPLOY_PARITY_CRON_ENTRY='*/5 * * * * /usr/bin/env node ~/.claude/pickle-rick/extension/bin/verify-deploy-parity.js >> ~/.claude/pickle-rick/deploy-parity-samples.jsonl 2>&1'
+
+append_downgrade_audit() {
+  local session_id="$1"
+  local audit_file="$EXTENSION_ROOT/deploy-audit.log"
+  mkdir -p "$EXTENSION_ROOT"
+  if [ ! -e "$audit_file" ]; then
+    : > "$audit_file"
+    chmod 600 "$audit_file"
+  fi
+  jq -nc \
+    --arg event "DOWNGRADE" \
+    --arg src_version "$SRC_V" \
+    --arg dep_version "$DEP_V" \
+    --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg operator "${USER:-${LOGNAME:-}}" \
+    --arg invocation "$INVOCATION" \
+    --arg session_id "$session_id" \
+    --arg override_active "$OVERRIDE_ACTIVE" \
+    --arg no_confirm "$NO_CONFIRM" \
+    --arg closer_context "$CLOSER_CONTEXT" \
+    '{
+      event: $event,
+      src_version: $src_version,
+      dep_version: $dep_version,
+      ts: $ts,
+      operator: $operator,
+      invocation: $invocation,
+      session_id: (if $session_id == "" then null else $session_id end),
+      override_active: ($override_active == "1"),
+      no_confirm: ($no_confirm == "1"),
+      closer_context: ($closer_context == "1")
+    }' >> "$audit_file"
+  chmod 600 "$audit_file"
+}
 
 hash_deployed_file() {
   local rel_path="$1"
@@ -110,15 +154,61 @@ uninstall_deploy_parity_cron() {
   rm -f "$tmpfile"
 }
 
+find_active_session() {
+  local data_root sessions_root state_file active session_id
+  data_root="${PICKLE_DATA_ROOT:-$HOME/.local/share/pickle-rick}"
+  sessions_root="$data_root/sessions"
+  [ -d "$sessions_root" ] || return 1
+
+  for state_file in "$sessions_root"/*/state.json; do
+    [ -e "$state_file" ] || return 1
+    if ! active="$(jq -r 'if .active == true then "true" else "false" end' "$state_file" 2>/dev/null)"; then
+      echo "WARNING: malformed state.json skipped: $state_file" >&2
+      continue
+    fi
+    [ "$active" = "true" ] || continue
+
+    session_id="$(jq -r '.session_id // empty' "$state_file" 2>/dev/null || true)"
+    [ -n "$session_id" ] || session_id="$(basename "$(dirname "$state_file")")"
+    echo "$session_id"
+    return 0
+  done
+  return 1
+}
+
+handle_allowed_downgrade() {
+  local session_id=""
+  if session_id="$(find_active_session)"; then
+    if [ "$OVERRIDE_ACTIVE" -ne 1 ] && [ "$CLOSER_CONTEXT" -ne 1 ]; then
+      echo "REFUSE: active session $session_id — kill the pipeline first or pass --override-active" >&2
+      exit 2
+    fi
+  fi
+
+  if [ "$NO_CONFIRM" -ne 1 ]; then
+    printf 'Downgrade %s → %s — proceed? [y/N] ' "$DEP_V" "$SRC_V" >&2
+    local answer=""
+    IFS= read -r answer || true
+    if [ "$answer" != "y" ] && [ "$answer" != "Y" ]; then
+      exit 0
+    fi
+  fi
+
+  append_downgrade_audit "$session_id"
+}
+
 SRC_V=""
 if [ "$UNINSTALL_CRON" -eq 0 ]; then
   SRC_V="$(read_package_version "$SCRIPT_DIR/extension/package.json")"
   DEPLOYED_PACKAGE_JSON="$EXTENSION_ROOT/extension/package.json"
   if [ -f "$DEPLOYED_PACKAGE_JSON" ]; then
     DEP_V="$(read_package_version "$DEPLOYED_PACKAGE_JSON")"
-    if [ "$(compare_semver "$SRC_V" "$DEP_V")" -lt 0 ] && [ "$ALLOW_DOWNGRADE" -ne 1 ]; then
-      echo "REFUSE: source v$SRC_V older than deployed v$DEP_V" >&2
-      exit 1
+    if [ "$(compare_semver "$SRC_V" "$DEP_V")" -lt 0 ]; then
+      if [ "$ALLOW_DOWNGRADE" -ne 1 ]; then
+        echo "REFUSE: source v$SRC_V older than deployed v$DEP_V" >&2
+        exit 1
+      fi
+      handle_allowed_downgrade "$@"
     fi
   fi
 fi
@@ -143,53 +233,6 @@ check_worktree_head_fresh() {
 
 check_worktree_head_fresh
 
-write_active_session_bypass_audit() {
-  local session_id="$1"
-  local state_file="$2"
-  jq -nc \
-    --arg event "INSTALL_BYPASS_ACTIVE_SESSION" \
-    --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    --arg session_id "$session_id" \
-    --arg state_file "$state_file" \
-    --arg override_active "$OVERRIDE_ACTIVE" \
-    --arg closer_context "$CLOSER_CONTEXT" \
-    '{
-      event: $event,
-      timestamp: $timestamp,
-      session_id: $session_id,
-      state_file: $state_file,
-      override_active: ($override_active == "1"),
-      closer_context: ($closer_context == "1")
-    }' >> "$EXTENSION_ROOT/deploy-audit.log"
-}
-
-check_active_sessions() {
-  local data_root sessions_root state_file active session_id
-  data_root="${PICKLE_DATA_ROOT:-$HOME/.local/share/pickle-rick}"
-  sessions_root="$data_root/sessions"
-  [ -d "$sessions_root" ] || return 0
-
-  for state_file in "$sessions_root"/*/state.json; do
-    [ -e "$state_file" ] || return 0
-    if ! active="$(jq -r 'if .active == true then "true" else "false" end' "$state_file" 2>/dev/null)"; then
-      echo "WARNING: malformed state.json skipped: $state_file" >&2
-      continue
-    fi
-    [ "$active" = "true" ] || continue
-
-    session_id="$(jq -r '.session_id // empty' "$state_file" 2>/dev/null || true)"
-    [ -n "$session_id" ] || session_id="$(basename "$(dirname "$state_file")")"
-
-    if [ "$OVERRIDE_ACTIVE" -eq 1 ] || [ "$CLOSER_CONTEXT" -eq 1 ]; then
-      write_active_session_bypass_audit "$session_id" "$state_file"
-      return 0
-    fi
-
-    echo "REFUSE: active session $session_id — kill the pipeline first or pass --override-active" >&2
-    exit 2
-  done
-}
-
 # --- LOCK (Forward Fix F2: serialize concurrent install.sh invocations) ---
 # Cross-skill workers can run install.sh simultaneously, racing on settings.json
 # backup + jq-merge and producing paired backups seconds apart. Acquire an
@@ -213,12 +256,11 @@ else
   trap 'rmdir "$LOCKDIR"' EXIT
 fi
 
-check_active_sessions
-
 # --- DRY RUN ---
+# Handles --dry-run only after lock acquisition.
 # Test hook: exits cleanly after lock acquisition so concurrent-invocation
 # tests can verify serialization without performing any deploy actions.
-if [ "${1:-}" = "--dry-run" ]; then
+if [ "$DRY_RUN" -eq 1 ]; then
   echo "dry run, skipping"
   exit 0
 fi
