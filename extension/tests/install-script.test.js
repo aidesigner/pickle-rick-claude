@@ -61,6 +61,168 @@ function makeFixture({ sourceVersion, compiledVersion }) {
   return { dir, scriptPath };
 }
 
+function buildVersionGuardFixtureScript(scriptDir) {
+  return `#!/bin/bash
+set -euo pipefail
+SCRIPT_DIR="${scriptDir}"
+EXTENSION_ROOT="$HOME/.claude/pickle-rick"
+
+ALLOW_DOWNGRADE=0
+for arg in "$@"; do
+  case "$arg" in
+    --allow-downgrade) ALLOW_DOWNGRADE=1 ;;
+  esac
+done
+
+compare_semver() {
+  local a="$1"
+  local b="$2"
+  if [[ ! "$a" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]] || [[ ! "$b" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]]; then
+    echo "invalid semver comparison: '$a' vs '$b'" >&2
+    exit 1
+  fi
+  local a_major a_minor a_patch b_major b_minor b_patch
+  IFS=. read -r a_major a_minor a_patch <<< "$a"
+  IFS=. read -r b_major b_minor b_patch <<< "$b"
+  if (( 10#$a_major < 10#$b_major )); then echo -1; return; fi
+  if (( 10#$a_major > 10#$b_major )); then echo 1; return; fi
+  if (( 10#$a_minor < 10#$b_minor )); then echo -1; return; fi
+  if (( 10#$a_minor > 10#$b_minor )); then echo 1; return; fi
+  if (( 10#$a_patch < 10#$b_patch )); then echo -1; return; fi
+  if (( 10#$a_patch > 10#$b_patch )); then echo 1; return; fi
+  echo 0
+}
+
+read_package_version() {
+  local package_json="$1"
+  local version
+  version="$(jq -r '.version' "$package_json")"
+  if [ -z "$version" ] || [ "$version" = "null" ]; then
+    echo "Could not read version from $package_json" >&2
+    exit 1
+  fi
+  echo "$version"
+}
+
+SRC_V="$(read_package_version "$SCRIPT_DIR/extension/package.json")"
+DEPLOYED_PACKAGE_JSON="$EXTENSION_ROOT/extension/package.json"
+if [ -f "$DEPLOYED_PACKAGE_JSON" ]; then
+  DEP_V="$(read_package_version "$DEPLOYED_PACKAGE_JSON")"
+  if [ "$(compare_semver "$SRC_V" "$DEP_V")" -lt 0 ] && [ "$ALLOW_DOWNGRADE" -ne 1 ]; then
+    echo "REFUSE: source v$SRC_V older than deployed v$DEP_V" >&2
+    exit 1
+  fi
+fi
+
+if [ -d "$SCRIPT_DIR/.git" ]; then
+  INSTALL_MODE="git"
+else
+  INSTALL_MODE="tarball"
+fi
+echo "mode=$INSTALL_MODE"
+`;
+}
+
+function makeVersionGuardFixture({ sourceVersion, deployedVersion, gitMode }) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'install-version-guard-'));
+  const homeDir = path.join(dir, 'home');
+  const sourceExtension = path.join(dir, 'extension');
+  const deployedExtension = path.join(homeDir, '.claude', 'pickle-rick', 'extension');
+  mkdirSync(sourceExtension, { recursive: true });
+  mkdirSync(deployedExtension, { recursive: true });
+  if (gitMode) {
+    mkdirSync(path.join(dir, '.git'));
+  }
+  writeFileSync(path.join(sourceExtension, 'package.json'), JSON.stringify({ version: sourceVersion }));
+  writeFileSync(path.join(deployedExtension, 'package.json'), JSON.stringify({ version: deployedVersion }));
+  const scriptPath = path.join(dir, 'install.sh');
+  writeFileSync(scriptPath, buildVersionGuardFixtureScript(dir), { mode: 0o755 });
+  return { dir, homeDir, scriptPath };
+}
+
+function runVersionGuardFixture(fixture, args = []) {
+  return spawnSync('bash', [fixture.scriptPath, ...args], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: fixture.homeDir },
+  });
+}
+
+describe('install.sh source-vs-deployed package version guard', () => {
+  test('install-script.refuses-source-older git mode', () => {
+    const fixture = makeVersionGuardFixture({
+      sourceVersion: '1.62.0',
+      deployedVersion: '1.67.0',
+      gitMode: true,
+    });
+    try {
+      const result = runVersionGuardFixture(fixture);
+      assert.strictEqual(result.status, 1, `expected exit 1, got ${result.status}`);
+      assert.match(result.stderr, /REFUSE: source v1[.]62[.]0 older than deployed v1[.]67[.]0/);
+      assert.doesNotMatch(result.stdout, /mode=/, 'guard must run before INSTALL_MODE branch side effects');
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('install-script.refuses-source-older tarball mode', () => {
+    const fixture = makeVersionGuardFixture({
+      sourceVersion: '1.62.0',
+      deployedVersion: '1.67.0',
+      gitMode: false,
+    });
+    try {
+      const result = runVersionGuardFixture(fixture);
+      assert.strictEqual(result.status, 1, `expected exit 1, got ${result.status}`);
+      assert.match(result.stderr, /REFUSE: source v1[.]62[.]0 older than deployed v1[.]67[.]0/);
+      assert.doesNotMatch(result.stdout, /mode=/, 'guard must run before INSTALL_MODE branch side effects');
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('install-script.allow-downgrade permits older source', () => {
+    const fixture = makeVersionGuardFixture({
+      sourceVersion: '1.62.0',
+      deployedVersion: '1.67.0',
+      gitMode: false,
+    });
+    try {
+      const result = runVersionGuardFixture(fixture, ['--allow-downgrade']);
+      assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
+      assert.match(result.stdout, /mode=tarball/);
+      assert.equal(result.stderr, '');
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('install-script permits same source and deployed version', () => {
+    const fixture = makeVersionGuardFixture({
+      sourceVersion: '1.67.0',
+      deployedVersion: '1.67.0',
+      gitMode: true,
+    });
+    try {
+      const result = runVersionGuardFixture(fixture);
+      assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
+      assert.match(result.stdout, /mode=git/);
+      assert.equal(result.stderr, '');
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('real install.sh contains unconditional source-vs-deployed guard before mode detection', () => {
+    const src = readFileSync(INSTALL_SH, 'utf8');
+    const guardIdx = src.indexOf('REFUSE: source v$SRC_V older than deployed v$DEP_V');
+    const modeIdx = src.indexOf('# --- MODE DETECTION ---');
+    assert.match(src, /set -euo pipefail/, 'install.sh must use strict shell options');
+    assert.ok(guardIdx !== -1, 'install.sh must contain source-vs-deployed refusal');
+    assert.ok(modeIdx !== -1, 'install.sh must contain mode detection marker');
+    assert.ok(guardIdx < modeIdx, 'source-vs-deployed guard must run before INSTALL_MODE detection');
+  });
+});
+
 describe('install.sh schemaVersion parity check (F3)', () => {
   test('install.sh aborts if compiled JS schemaVersion differs from source TS', () => {
     const { dir, scriptPath } = makeFixture({ sourceVersion: 3, compiledVersion: 2 });

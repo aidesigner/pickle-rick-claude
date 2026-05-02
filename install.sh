@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXTENSION_ROOT="$HOME/.claude/pickle-rick"
@@ -8,6 +8,55 @@ SETTINGS_FILE="$HOME/.claude/settings.json"
 # IMPORTANT: $HOME is intentionally a literal here — it gets expanded at runtime
 # by the shell when Claude Code executes the hook command. Do NOT expand it at install time.
 HOOK_CMD_LITERAL='node $HOME/.claude/pickle-rick/extension/hooks/dispatch.js stop-hook'
+
+ALLOW_DOWNGRADE=0
+for arg in "$@"; do
+  case "$arg" in
+    --allow-downgrade) ALLOW_DOWNGRADE=1 ;;
+  esac
+done
+
+compare_semver() {
+  local a="$1"
+  local b="$2"
+  if [[ ! "$a" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]] || [[ ! "$b" =~ ^[0-9]+[.][0-9]+[.][0-9]+$ ]]; then
+    echo "❌ Invalid semver comparison: '$a' vs '$b'" >&2
+    exit 1
+  fi
+
+  local a_major a_minor a_patch b_major b_minor b_patch
+  IFS=. read -r a_major a_minor a_patch <<< "$a"
+  IFS=. read -r b_major b_minor b_patch <<< "$b"
+
+  if (( 10#$a_major < 10#$b_major )); then echo -1; return; fi
+  if (( 10#$a_major > 10#$b_major )); then echo 1; return; fi
+  if (( 10#$a_minor < 10#$b_minor )); then echo -1; return; fi
+  if (( 10#$a_minor > 10#$b_minor )); then echo 1; return; fi
+  if (( 10#$a_patch < 10#$b_patch )); then echo -1; return; fi
+  if (( 10#$a_patch > 10#$b_patch )); then echo 1; return; fi
+  echo 0
+}
+
+read_package_version() {
+  local package_json="$1"
+  local version
+  version="$(jq -r '.version' "$package_json")"
+  if [ -z "$version" ] || [ "$version" = "null" ]; then
+    echo "❌ Could not read version from $package_json" >&2
+    exit 1
+  fi
+  echo "$version"
+}
+
+SRC_V="$(read_package_version "$SCRIPT_DIR/extension/package.json")"
+DEPLOYED_PACKAGE_JSON="$EXTENSION_ROOT/extension/package.json"
+if [ -f "$DEPLOYED_PACKAGE_JSON" ]; then
+  DEP_V="$(read_package_version "$DEPLOYED_PACKAGE_JSON")"
+  if [ "$(compare_semver "$SRC_V" "$DEP_V")" -lt 0 ] && [ "$ALLOW_DOWNGRADE" -ne 1 ]; then
+    echo "REFUSE: source v$SRC_V older than deployed v$DEP_V" >&2
+    exit 1
+  fi
+fi
 
 # --- LOCK (Forward Fix F2: serialize concurrent install.sh invocations) ---
 # Cross-skill workers can run install.sh simultaneously, racing on settings.json
