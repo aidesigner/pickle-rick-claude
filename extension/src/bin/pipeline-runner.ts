@@ -764,14 +764,15 @@ function writeAnatomyConfig(
   subsystems: Array<{ name: string; fileCount: number }>,
   stallLimit: number,
 ): void {
+  const subsystemNames = subsystems.map(s => s.name);
   const apState = {
-    subsystems: subsystems.map(s => s.name),
+    subsystems: subsystemNames,
     current_index: 0,
-    pass_counts: {} as Record<string, number>,
-    consecutive_clean: {} as Record<string, number>,
-    stall_counts: {} as Record<string, number>,
+    pass_counts: Object.fromEntries(subsystemNames.map(name => [name, 0])) as Record<string, number>,
+    consecutive_clean: Object.fromEntries(subsystemNames.map(name => [name, 0])) as Record<string, number>,
+    stall_counts: Object.fromEntries(subsystemNames.map(name => [name, 0])) as Record<string, number>,
     stall_limit: stallLimit,
-    findings_history: {} as Record<string, unknown[]>,
+    findings_history: Object.fromEntries(subsystemNames.map(name => [name, []])) as Record<string, unknown[]>,
     trap_doors_added: [] as unknown[],
     trap_doors_committed: [] as unknown[],
   };

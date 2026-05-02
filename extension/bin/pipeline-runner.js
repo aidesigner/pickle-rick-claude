@@ -638,14 +638,15 @@ function resolveAnatomySubsystems(target, scope, log) {
     return filtered;
 }
 function writeAnatomyConfig(sessionDir, subsystems, stallLimit) {
+    const subsystemNames = subsystems.map(s => s.name);
     const apState = {
-        subsystems: subsystems.map(s => s.name),
+        subsystems: subsystemNames,
         current_index: 0,
-        pass_counts: {},
-        consecutive_clean: {},
-        stall_counts: {},
+        pass_counts: Object.fromEntries(subsystemNames.map(name => [name, 0])),
+        consecutive_clean: Object.fromEntries(subsystemNames.map(name => [name, 0])),
+        stall_counts: Object.fromEntries(subsystemNames.map(name => [name, 0])),
         stall_limit: stallLimit,
-        findings_history: {},
+        findings_history: Object.fromEntries(subsystemNames.map(name => [name, []])),
         trap_doors_added: [],
         trap_doors_committed: [],
     };

@@ -1,11 +1,11 @@
 {
   "subsystems": ["alpha", "beta", "gamma"],
   "current_index": 0,
-  "pass_counts": {},
-  "consecutive_clean": {},
-  "stall_counts": {},
+  "pass_counts": {"alpha": 0, "beta": 0, "gamma": 0},
+  "consecutive_clean": {"alpha": 0, "beta": 0, "gamma": 0},
+  "stall_counts": {"alpha": 0, "beta": 0, "gamma": 0},
   "stall_limit": 3,
-  "findings_history": {},
+  "findings_history": {"alpha": [], "beta": [], "gamma": []},
   "trap_doors_added": [],
   "trap_doors_committed": []
 }

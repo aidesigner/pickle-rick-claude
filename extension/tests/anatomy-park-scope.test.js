@@ -79,6 +79,10 @@ test('pipeline filter: 4 subsystems, scope covering 2 → anatomy-park.json has 
 
     const ap = readAnatomyPark(session);
     assert.deepStrictEqual(ap.subsystems, ['alpha', 'gamma']);
+    assert.deepStrictEqual(ap.pass_counts, { alpha: 0, gamma: 0 });
+    assert.deepStrictEqual(ap.consecutive_clean, { alpha: 0, gamma: 0 });
+    assert.deepStrictEqual(ap.stall_counts, { alpha: 0, gamma: 0 });
+    assert.deepStrictEqual(ap.findings_history, { alpha: [], gamma: [] });
   } finally {
     fs.rmSync(session, { recursive: true, force: true });
     fs.rmSync(target, { recursive: true, force: true });
