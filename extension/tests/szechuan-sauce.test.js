@@ -171,6 +171,7 @@ test('init-microverse uses LLM type and lower direction by default', () => {
         assert.ok(state, 'microverse.json should exist');
         assert.equal(state.key_metric.type, 'llm', 'default metric type should be llm');
         assert.equal(state.key_metric.direction, 'lower', 'default direction should be lower');
+        assert.equal(state.key_metric.judge_model, undefined, 'default metric must let backend choose its judge model');
     } finally {
         fs.rmSync(dir, { recursive: true });
     }

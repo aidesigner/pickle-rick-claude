@@ -8,7 +8,6 @@ const DEFAULT_METRIC = {
     timeout_seconds: 300,
     tolerance: 0,
     direction: 'lower',
-    judge_model: 'claude-sonnet-4-6',
 };
 function parseFlag(args, flag) {
     const idx = args.indexOf(flag);

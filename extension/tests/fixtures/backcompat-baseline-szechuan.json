@@ -6,8 +6,7 @@
     "type": "llm",
     "timeout_seconds": 300,
     "tolerance": 0,
-    "direction": "lower",
-    "judge_model": "claude-sonnet-4-6"
+    "direction": "lower"
   },
   "convergence": {
     "stall_limit": 5,
