@@ -896,9 +896,10 @@ export function buildJudgePrompt(
 
   parts.push('');
 
-  if (history && history.length > 0) {
+  const filteredHistory = history?.filter(Boolean) ?? [];
+  if (filteredHistory.length > 0) {
     parts.push('Previous iterations:');
-    for (const entry of history) {
+    for (const entry of filteredHistory) {
       parts.push(`- Iteration ${entry.iteration}: score=${entry.score} action=${entry.action} — ${entry.description}`);
     }
     parts.push('');
@@ -1076,7 +1077,7 @@ export function buildMicroverseHandoff(
     parts.push('');
   }
 
-  const history = metricConv.history;
+  const history = metricConv.history.filter(Boolean);
   if (history.length > 0) {
     parts.push('## Recent Metric History');
     const recent = history.slice(-5);
@@ -1177,7 +1178,7 @@ export function writeFinalReport(
   iterations: number,
   elapsedSeconds: number,
 ): void {
-  const history = mvState.convergence?.history ?? [];
+  const history = mvState.convergence?.history.filter(Boolean) ?? [];
   const accepted = history.filter(h => h.action === 'accept').length;
   const reverted = history.filter(h => h.action === 'revert').length;
   const bestScore = getBestScore(mvState);
@@ -1521,10 +1522,11 @@ function recordFailureClassification(
   try {
     const failureClass = classifyFailure(state, metricResult, ctx.preIterSha ?? '', ctx.postIterSha ?? '');
     if (!failureClass) return;
+    const description = entry?.description ?? '';
     state.failure_history.push({
       iteration: ctx.iteration,
       failure_class: failureClass,
-      description: entry.description,
+      description,
       timestamp: new Date().toISOString(),
     });
     injectRecoveryGuidance(ctx.sessionDir, failureClass, state);
