@@ -121,6 +121,17 @@ function readObservations(file) {
         .map((line) => JSON.parse(line));
 }
 
+function readActivityEvents(dataRoot) {
+    const activityDir = path.join(dataRoot, 'activity');
+    if (!fs.existsSync(activityDir)) return [];
+    return fs.readdirSync(activityDir)
+        .filter((name) => name.endsWith('.jsonl'))
+        .flatMap((name) => fs.readFileSync(path.join(activityDir, name), 'utf-8')
+            .split(/\r?\n/)
+            .filter(Boolean)
+            .map((line) => JSON.parse(line)));
+}
+
 function countRunnerIterations(runnerLog) {
     const matches = runnerLog.match(/--- Iteration \d+(?: \(state\.iteration=\d+\))? ---/g);
     return matches ? matches.length : 0;
@@ -138,6 +149,7 @@ test('pipeline state stays coherent across a three-iteration mux-runner fixture'
                 EXTENSION_DIR: extDir,
                 PATH: `${fakeBinDir}${path.delimiter}${process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin'}`,
                 PICKLE_BACKEND: 'claude',
+                PICKLE_DATA_ROOT: path.join(tmpRoot, 'pickle-data'),
                 TEST_STATE_PATH: statePath,
                 TEST_OBSERVATIONS_PATH: observationsPath,
             },
@@ -184,6 +196,19 @@ test('pipeline state stays coherent across a three-iteration mux-runner fixture'
         assert.equal(finalState.iteration, runnerIterationCount, 'state.iteration should match mux-runner.log iteration count');
         assert.equal(finalState.step, 'completed', 'terminal state should be completed');
         assert.equal(finalState.current_ticket, null, 'terminal state should clear current_ticket');
+
+        const iterationStartEvents = readActivityEvents(path.join(tmpRoot, 'pickle-data'))
+            .filter((entry) => entry.event === 'iteration_start');
+        assert.deepEqual(
+            iterationStartEvents.map((entry) => entry.iteration),
+            [1, 2, 3],
+            'activity log should contain one iteration_start event per runner iteration',
+        );
+        assert.equal(
+            iterationStartEvents.length,
+            runnerIterationCount,
+            'iteration_start activity count should match mux-runner.log iteration count',
+        );
 
         const phaseTransitions = (finalState.activity ?? []).filter((entry) => entry.event === 'phase_transition');
         assert.deepEqual(
