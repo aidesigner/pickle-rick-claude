@@ -103,13 +103,14 @@ function writeChildRunner(root) {
     `  return { completion: 'success', timedOut: false, exitCode: 0, wallSeconds: 1 };`,
     `};`,
     `runner._deps.runWorkerManagedIteration = async ({ currentMv, sessionDir: _sessionDir, iteration, log }) => {`,
-    `  const converged = iteration >= 2;`,
-    `  const reason = converged ? 'fixture clean pass 2/2' : 'fixture clean pass 1/2; continuing rotation';`,
+    `  const cleanPasses = Math.max(0, iteration - 1);`,
+    `  const converged = iteration >= 3;`,
+    `  const reason = converged ? 'fixture clean pass 2/2' : 'fixture clean pass ' + cleanPasses + '/2; continuing rotation';`,
     `  fs.writeFileSync(new URL('anatomy-park.json', 'file://' + _sessionDir + '/'), JSON.stringify({`,
     `    subsystems: ['fixture'],`,
     `    current_index: 0,`,
     `    pass_counts: { fixture: iteration },`,
-    `    consecutive_clean: { fixture: converged ? 2 : 1 },`,
+    `    consecutive_clean: { fixture: converged ? 2 : cleanPasses },`,
     `    stall_counts: { fixture: 0 },`,
     `    stall_limit: 3,`,
     `    converged,`,
@@ -160,12 +161,17 @@ test('anatomy-park microverse-runner completes without key_metric after worker c
 
     const combinedOutput = `${result.stdout}\n${result.stderr}`;
     assert.equal(result.status, 0, combinedOutput);
-    assert.match(combinedOutput, /worker convergence: not yet/);
+    assert.match(combinedOutput, /--- Iteration 1 ---/);
+    assert.match(combinedOutput, /--- Iteration 2 ---/);
+    assert.match(combinedOutput, /--- Iteration 3 ---/);
+    assert.equal((combinedOutput.match(/worker convergence: not yet/g) ?? []).length, 2, combinedOutput);
     assert.doesNotMatch(combinedOutput, /Cannot read properties of undefined \(reading 'description'\)/);
     assert.doesNotMatch(combinedOutput, /\[FATAL\]/);
 
     const finalMv = JSON.parse(fs.readFileSync(path.join(sessionDir, 'microverse.json'), 'utf-8'));
+    const finalRunnerState = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
     assert.equal(finalMv.exit_reason, 'converged');
+    assert.equal(finalRunnerState.iteration, 3);
     assert.equal(Object.hasOwn(finalMv, 'key_metric'), false, 'fixture must omit key_metric');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
