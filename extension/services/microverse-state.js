@@ -78,7 +78,6 @@ function readCommandTemplate(sessionDir) {
         throw err;
     }
 }
-// eslint-disable-next-line complexity -- central runtime contract validator; keeping checks local makes failures actionable.
 export function assertMicroverseStateShape(parsed, commandTemplate) {
     if (!isRecord(parsed)) {
         throw new Error('Invalid microverse state: root must be an object');

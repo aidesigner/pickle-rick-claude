@@ -89,7 +89,6 @@ function readCommandTemplate(sessionDir: string): string | undefined {
   }
 }
 
-// eslint-disable-next-line complexity -- central runtime contract validator; keeping checks local makes failures actionable.
 export function assertMicroverseStateShape(
   parsed: unknown,
   commandTemplate?: string

@@ -598,6 +598,43 @@ export async function runPerIterationGateHook(opts: {
   });
 }
 
+function validateWorkerConvergenceHistory(opts: {
+  currentMv: MicroverseSessionState;
+  minIterations?: number;
+  iteration: number;
+  sessionDir: string;
+  log: (msg: string) => void;
+  logActivityFn: typeof logActivity;
+}): { converged: false; reason: string; exitReason: ExitReason } | null {
+  const { currentMv, minIterations, iteration, sessionDir, log, logActivityFn } = opts;
+  const requiredHistoryLength = Math.max(1, Number(minIterations ?? 1));
+  const history = currentMv.convergence?.history?.filter(Boolean) ?? [];
+  const hasEnoughHistory = history.length >= requiredHistoryLength;
+  const hasScoredHistory = history.some(entry => entry.score !== null && entry.score !== undefined);
+
+  if (hasEnoughHistory && hasScoredHistory) return null;
+
+  const guardReason = `judge unreachable: convergence history length ${history.length}/${requiredHistoryLength}, scored=${hasScoredHistory}`;
+  log(`Iteration ${iteration} — ${guardReason}`);
+  logActivityFn({
+    event: 'judge_unreachable',
+    source: 'pickle',
+    session: path.basename(sessionDir),
+    iteration,
+    error: guardReason,
+    gate_payload: {
+      history_length: history.length,
+      min_iterations: requiredHistoryLength,
+      has_scored_history: hasScoredHistory,
+    },
+  });
+  return {
+    converged: false,
+    reason: guardReason,
+    exitReason: 'judge_unreachable',
+  };
+}
+
 export async function handleWorkerManagedIteration(opts: {
   currentMv: MicroverseSessionState;
   preIterSha: string;
@@ -672,32 +709,15 @@ export async function handleWorkerManagedIteration(opts: {
   }
 
   if (converged) {
-    const requiredHistoryLength = Math.max(1, Number(minIterations ?? 1));
-    const history = currentMv.convergence.history.filter(Boolean);
-    const hasEnoughHistory = history.length >= requiredHistoryLength;
-    const hasScoredHistory = history.some(entry => entry.score !== null && entry.score !== undefined);
-    if (!hasEnoughHistory || !hasScoredHistory) {
-      const guardReason = `judge unreachable: convergence history length ${history.length}/${requiredHistoryLength}, scored=${hasScoredHistory}`;
-      log(`Iteration ${iteration} — ${guardReason}`);
-      (_deps?.logActivityFn ?? logActivity)({
-        event: 'judge_unreachable',
-        source: 'pickle',
-        session: path.basename(sessionDir),
-        iteration,
-        error: guardReason,
-        gate_payload: {
-          history_length: history.length,
-          min_iterations: requiredHistoryLength,
-          has_scored_history: hasScoredHistory,
-        },
-      });
-      return {
-        currentMv,
-        converged: false,
-        reason: guardReason,
-        exitReason: 'judge_unreachable',
-      };
-    }
+    const guardResult = validateWorkerConvergenceHistory({
+      currentMv,
+      minIterations,
+      iteration,
+      sessionDir,
+      log,
+      logActivityFn: _deps?.logActivityFn ?? logActivity,
+    });
+    if (guardResult) return { currentMv, ...guardResult };
   }
 
   return { currentMv, converged, reason };
