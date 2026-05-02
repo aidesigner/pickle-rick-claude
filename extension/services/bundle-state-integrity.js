@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Defaults } from '../types/index.js';
 import { safeErrorMessage } from './pickle-utils.js';
+import { readRecoverableJsonObject } from './recoverable-json.js';
 function isRecord(value) {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -24,8 +25,10 @@ function statePathsForBundle(sessionDir) {
     return statePaths;
 }
 function readCount(statePath) {
-    const raw = fs.readFileSync(statePath, 'utf-8');
-    const parsed = JSON.parse(raw);
+    let parsed = readRecoverableJsonObject(statePath);
+    if (parsed === null) {
+        parsed = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    }
     if (!isRecord(parsed))
         return null;
     const value = parsed.codex_manager_relaunch_count;

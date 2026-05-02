@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Defaults } from '../types/index.js';
 import { safeErrorMessage } from './pickle-utils.js';
+import { readRecoverableJsonObject } from './recoverable-json.js';
 
 export interface RelaunchCapAuditViolation {
   statePath: string;
@@ -40,8 +41,10 @@ function statePathsForBundle(sessionDir: string): string[] {
 }
 
 function readCount(statePath: string): number | null {
-  const raw = fs.readFileSync(statePath, 'utf-8');
-  const parsed = JSON.parse(raw) as unknown;
+  let parsed: unknown = readRecoverableJsonObject(statePath);
+  if (parsed === null) {
+    parsed = JSON.parse(fs.readFileSync(statePath, 'utf-8')) as unknown;
+  }
   if (!isRecord(parsed)) return null;
   const value = parsed.codex_manager_relaunch_count;
   if (value === undefined || value === null) return 0;

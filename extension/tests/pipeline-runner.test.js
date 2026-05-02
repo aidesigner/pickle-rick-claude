@@ -67,6 +67,31 @@ describe('isTestFile', () => {
 });
 
 describe('phase-ordered AC gate', () => {
+  test('AC-BUNDLE-03 audits recovered relaunch counts from newer dead tmp state', () => {
+    const dir = tmpDir();
+    const statePath = path.join(dir, 'state.json');
+    const tmpStatePath = `${statePath}.tmp.999999`;
+    fs.writeFileSync(path.join(dir, AC_PHASE_MANIFEST), JSON.stringify({
+      acceptance_criteria: [
+        { id: 'AC-BUNDLE-03', evaluation_phase: 'bundle-end' },
+      ],
+    }));
+    fs.writeFileSync(statePath, JSON.stringify({ codex_manager_relaunch_count: 0 }));
+    fs.writeFileSync(tmpStatePath, JSON.stringify({ codex_manager_relaunch_count: Defaults.CODEX_MANAGER_RELAUNCH_CAP + 1 }));
+    const oldTime = new Date('2026-05-01T00:00:00.000Z');
+    const newTime = new Date('2026-05-01T00:00:01.000Z');
+    fs.utimesSync(statePath, oldTime, oldTime);
+    fs.utimesSync(tmpStatePath, newTime, newTime);
+
+    const result = runAcPhaseGate({ sessionDir: dir, evaluationPhase: 'bundle-end', cwd: dir });
+
+    assert.equal(result.status, 'fail');
+    assert.deepEqual(result.evaluated, ['AC-BUNDLE-03']);
+    assert.match(result.failures[0].reason, /codex_manager_relaunch_count/);
+    assert.equal(JSON.parse(fs.readFileSync(statePath, 'utf-8')).codex_manager_relaunch_count, Defaults.CODEX_MANAGER_RELAUNCH_CAP + 1);
+    assert.equal(fs.existsSync(tmpStatePath), false);
+  });
+
   test('runs only ACs scheduled for the current pipeline phase', () => {
     const dir = tmpDir();
     const marker = path.join(dir, 'marker.txt');
