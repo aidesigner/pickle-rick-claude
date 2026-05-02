@@ -18,6 +18,7 @@ import {
     downloadRelease,
     extractAndInstall,
     performUpgrade,
+    BlockedDowngradeError,
 } from '../bin/check-update.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -521,18 +522,69 @@ describe('extractAndInstall', () => {
 describe('performUpgrade', () => {
     let tmpDir;
     let origEnv;
+    let origPath;
 
     beforeEach(() => {
         tmpDir = makeTmpDir();
         origEnv = process.env.EXTENSION_DIR;
+        origPath = process.env.PATH;
         process.env.EXTENSION_DIR = tmpDir;
     });
 
     afterEach(() => {
         if (origEnv === undefined) delete process.env.EXTENSION_DIR;
         else process.env.EXTENSION_DIR = origEnv;
+        process.env.PATH = origPath;
         fs.rmSync(tmpDir, { recursive: true, force: true });
     });
+
+    function writeDeployedPackage(version) {
+        fs.mkdirSync(path.join(tmpDir, 'extension'), { recursive: true });
+        fs.writeFileSync(
+            path.join(tmpDir, 'extension', 'package.json'),
+            JSON.stringify({ version }),
+        );
+    }
+
+    function makeReleaseTarball(version) {
+        const contentRoot = path.join(tmpDir, `release-${version}`);
+        const packageRoot = path.join(contentRoot, 'pickle-rick-claude');
+        fs.mkdirSync(path.join(packageRoot, 'extension'), { recursive: true });
+        fs.writeFileSync(
+            path.join(packageRoot, 'extension', 'package.json'),
+            JSON.stringify({ version }),
+        );
+        fs.writeFileSync(
+            path.join(packageRoot, 'install.sh'),
+            '#!/bin/sh\nprintf installed > "$EXTENSION_DIR/install-marker.txt"\n',
+            { mode: 0o755 },
+        );
+        const tarball = path.join(tmpDir, `release-${version}.tar.gz`);
+        execFileSync('tar', ['czf', tarball, '-C', contentRoot, 'pickle-rick-claude']);
+        return tarball;
+    }
+
+    function mockDownloadRelease(tarball) {
+        const binDir = path.join(tmpDir, 'mock-bin');
+        fs.mkdirSync(binDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(binDir, 'gh'),
+            `#!/bin/sh
+dest=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-D" ]; then
+    shift
+    dest="$1"
+  fi
+  shift
+done
+mkdir -p "$dest"
+cp ${JSON.stringify(tarball)} "$dest/pickle-release.tar.gz"
+`,
+            { mode: 0o755 },
+        );
+        process.env.PATH = `${binDir}:${process.env.PATH}`;
+    }
 
     test('fails gracefully when download fails', () => {
         const result = performUpgrade('1.0.0', '999.0.0', 'v999.0.0');
@@ -624,6 +676,50 @@ describe('performUpgrade', () => {
         } finally {
             process.env.PATH = origPath;
         }
+    });
+
+    test('check-update.refuses-downgrade', () => {
+        writeDeployedPackage('1.67.0');
+        mockDownloadRelease(makeReleaseTarball('1.64.0'));
+
+        assert.throws(
+            () => performUpgrade('1.67.0', '1.66.0', 'v1.66.0'),
+            (error) => {
+                assert.ok(error instanceof BlockedDowngradeError);
+                assert.equal(error.candidate, '1.64.0');
+                assert.equal(error.current, '1.67.0');
+                return true;
+            },
+        );
+
+        assert.equal(fs.existsSync(path.join(tmpDir, 'install-marker.txt')), false);
+    });
+
+    test('check-update.allowDowngrade-bypass', () => {
+        writeDeployedPackage('1.67.0');
+        mockDownloadRelease(makeReleaseTarball('1.64.0'));
+
+        const result = performUpgrade('1.67.0', '1.66.0', 'v1.66.0', { allowDowngrade: true });
+
+        assert.equal(result.success, true);
+        assert.equal(fs.readFileSync(path.join(tmpDir, 'install-marker.txt'), 'utf-8'), 'installed');
+    });
+
+    test('check-update.force-does-not-bypass', () => {
+        writeDeployedPackage('1.67.0');
+        mockDownloadRelease(makeReleaseTarball('1.64.0'));
+
+        assert.throws(
+            () => performUpgrade('1.67.0', '1.66.0', 'v1.66.0', { force: true }),
+            (error) => {
+                assert.ok(error instanceof BlockedDowngradeError);
+                assert.equal(error.candidate, '1.64.0');
+                assert.equal(error.current, '1.67.0');
+                return true;
+            },
+        );
+
+        assert.equal(fs.existsSync(path.join(tmpDir, 'install-marker.txt')), false);
     });
 });
 

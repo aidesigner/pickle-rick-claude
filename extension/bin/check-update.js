@@ -37,6 +37,16 @@ export function compareSemver(a, b) {
     }
     return 0;
 }
+export class BlockedDowngradeError extends Error {
+    candidate;
+    current;
+    constructor(candidate, current) {
+        super(`Refusing to install downgrade candidate ${candidate} over current ${current}`);
+        this.name = 'BlockedDowngradeError';
+        this.candidate = candidate;
+        this.current = current;
+    }
+}
 function defaultCache() {
     return { last_check_epoch: 0, latest_version: '', current_version: '' };
 }
@@ -184,20 +194,65 @@ export function downloadRelease(tag) {
         return null;
     }
 }
-export function extractAndInstall(tarballPath) {
-    const tarballDir = path.dirname(tarballPath);
-    let extractDir = '';
+function cleanupDownloadedRelease(tarballPath, extractDir) {
     try {
-        extractDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-extract-')));
-        log(`Extracting ${tarballPath} to ${extractDir}`);
+        fs.rmSync(path.dirname(tarballPath), { recursive: true, force: true });
+    }
+    catch { /* best-effort */ }
+    if (extractDir) {
+        try {
+            fs.rmSync(extractDir, { recursive: true, force: true });
+        }
+        catch { /* best-effort */ }
+    }
+}
+function extractReleaseForInspection(tarballPath) {
+    const extractDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-extract-')));
+    try {
+        log(`Inspecting ${tarballPath} in ${extractDir}`);
         const tar = spawnSync('tar', ['xzf', tarballPath, '-C', extractDir, '--strip-components=1'], {
             encoding: 'utf-8',
             timeout: 30_000,
         });
         if (tar.status !== 0) {
             const msg = (tar.stderr || '').trim();
-            log(`tar extraction failed: ${msg}`);
-            return { success: false, error: `Extraction failed: ${msg}` };
+            throw new Error(`Extraction failed: ${msg}`);
+        }
+        const pkgPath = path.join(extractDir, 'extension', 'package.json');
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
+        if (typeof pkg.version !== 'string' || !parseVersion(pkg.version)) {
+            throw new Error('Release package.json has invalid version');
+        }
+        return { extractDir, version: pkg.version };
+    }
+    catch (err) {
+        try {
+            fs.rmSync(extractDir, { recursive: true, force: true });
+        }
+        catch { /* best-effort */ }
+        throw err;
+    }
+}
+export function extractAndInstall(tarballPath, preExtractedDir) {
+    const tarballDir = path.dirname(tarballPath);
+    let extractDir = '';
+    try {
+        if (preExtractedDir) {
+            extractDir = preExtractedDir;
+            log(`Installing pre-extracted release from ${extractDir}`);
+        }
+        else {
+            extractDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-extract-')));
+            log(`Extracting ${tarballPath} to ${extractDir}`);
+            const tar = spawnSync('tar', ['xzf', tarballPath, '-C', extractDir, '--strip-components=1'], {
+                encoding: 'utf-8',
+                timeout: 30_000,
+            });
+            if (tar.status !== 0) {
+                const msg = (tar.stderr || '').trim();
+                log(`tar extraction failed: ${msg}`);
+                return { success: false, error: `Extraction failed: ${msg}` };
+            }
         }
         const installScript = path.join(extractDir, 'install.sh');
         if (!fs.existsSync(installScript)) {
@@ -248,7 +303,25 @@ export function performUpgrade(from, to, tag, options) {
         if (!tarballPath) {
             return { success: false, error: 'Failed to download release' };
         }
-        const result = extractAndInstall(tarballPath);
+        let inspected;
+        try {
+            inspected = extractReleaseForInspection(tarballPath);
+            const currentVersion = getCurrentVersion();
+            if (compareSemver(inspected.version, currentVersion) < 0 && options?.allowDowngrade !== true) {
+                cleanupDownloadedRelease(tarballPath, inspected.extractDir);
+                throw new BlockedDowngradeError(inspected.version, currentVersion);
+            }
+        }
+        catch (err) {
+            if (err instanceof BlockedDowngradeError) {
+                throw err;
+            }
+            cleanupDownloadedRelease(tarballPath);
+            const msg = safeErrorMessage(err);
+            log(`Release inspection failed: ${msg}`);
+            return { success: false, error: msg };
+        }
+        const result = extractAndInstall(tarballPath, inspected.extractDir);
         if (!result.success) {
             return result;
         }
@@ -264,6 +337,10 @@ export function performUpgrade(from, to, tag, options) {
         return { success: true };
     }
     catch (err) {
+        if (err instanceof BlockedDowngradeError) {
+            log(`performUpgrade downgrade blocked: candidate=${err.candidate} current=${err.current}`);
+            throw err;
+        }
         const msg = safeErrorMessage(err);
         log(`performUpgrade error: ${msg}`);
         return { success: false, error: msg };
