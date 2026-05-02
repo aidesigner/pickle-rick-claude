@@ -132,6 +132,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'circuit_open', 'circuit_recovery',
     'iteration_start', 'iteration_end',
     'rate_limit_wait', 'rate_limit_resume', 'rate_limit_exhausted',
+    'judge_unreachable',
     'multi_repo_warning',
     'meeseeks_model_select',
     'pending_tickets_on_completion',

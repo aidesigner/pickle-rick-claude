@@ -56,7 +56,7 @@ function withBrokenCanadianDateLocale(fn) {
 
 // --- VALID_ACTIVITY_EVENTS ---
 
-test('VALID_ACTIVITY_EVENTS contains all 65 expected event types', () => {
+test('VALID_ACTIVITY_EVENTS contains all 66 expected event types', () => {
     const expected = [
         'session_start', 'session_end', 'ticket_completed', 'epic_completed',
         'meeseeks_pass', 'commit', 'research', 'bug_fix', 'feature',
@@ -64,6 +64,7 @@ test('VALID_ACTIVITY_EVENTS contains all 65 expected event types', () => {
         'circuit_open', 'circuit_recovery',
         'iteration_start', 'iteration_end',
         'rate_limit_wait', 'rate_limit_resume', 'rate_limit_exhausted',
+        'judge_unreachable',
         'multi_repo_warning', 'meeseeks_model_select',
         'pending_tickets_on_completion',
         'manager_false_epic_completed', 'manager_persistent_hallucination',
@@ -112,7 +113,7 @@ test('VALID_ACTIVITY_EVENTS contains all 65 expected event types', () => {
         // per-iteration gate baseline before strict-mode fallback.
         'baseline_recapture_failed',
     ];
-    assert.equal(VALID_ACTIVITY_EVENTS.length, 65);
+    assert.equal(VALID_ACTIVITY_EVENTS.length, 66);
     for (const e of expected) {
         assert.ok(VALID_ACTIVITY_EVENTS.includes(e), `Missing event type: ${e}`);
     }

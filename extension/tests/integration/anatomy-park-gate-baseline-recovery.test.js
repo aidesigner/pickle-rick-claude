@@ -130,7 +130,21 @@ test('AC-GBM-D1: Anatomy-park recaptures a missing baseline after commit before 
     const logs = [];
 
     const result = await handleWorkerManagedIteration({
-      currentMv: makeMv(),
+      currentMv: makeMv({
+        convergence: {
+          stall_limit: 3,
+          stall_counter: 0,
+          history: [{
+            iteration: 2,
+            score: 100,
+            action: 'accept',
+            description: 'scored worker convergence',
+            commit: postIterSha,
+            pre_iteration_sha: preIterSha,
+            timestamp: new Date().toISOString(),
+          }],
+        },
+      }),
       preIterSha,
       workingDir,
       sessionDir,

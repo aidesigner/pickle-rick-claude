@@ -55,7 +55,7 @@ import { logActivity } from '../services/activity-logger.js';
 import { assertBaselineFresh, BaselineMissingError, BaselineStaleError, runGate } from '../services/convergence-gate.js';
 import { spawnGateRemediatorMain } from './spawn-gate-remediator.js';
 
-type ExitReason = 'converged' | 'limit_reached' | 'stopped' | 'error' | 'rate_limit_exhausted' | 'approach_exhaustion' | 'no_progress';
+type ExitReason = 'converged' | 'limit_reached' | 'stopped' | 'error' | 'rate_limit_exhausted' | 'approach_exhaustion' | 'no_progress' | 'judge_unreachable';
 type MicroverseState = MicroverseSessionState;
 type FatalErrorMarkResult = 'overwritten' | 'preserved';
 type IterationRunOutcome = Awaited<ReturnType<typeof runIteration>>;
@@ -609,8 +609,9 @@ export async function handleWorkerManagedIteration(opts: {
   remediatorTimeoutS: number;
   log: (msg: string) => void;
   iteration: number;
+  minIterations?: number;
   _deps?: PerIterationGateDeps;
-}): Promise<{ currentMv: MicroverseSessionState; converged: boolean; reason: string }> {
+}): Promise<{ currentMv: MicroverseSessionState; converged: boolean; reason: string; exitReason?: ExitReason }> {
   const {
     preIterSha,
     workingDir,
@@ -621,6 +622,7 @@ export async function handleWorkerManagedIteration(opts: {
     remediatorTimeoutS,
     log,
     iteration,
+    minIterations,
     _deps,
   } = opts;
   let currentMv = opts.currentMv;
@@ -667,6 +669,35 @@ export async function handleWorkerManagedIteration(opts: {
       converged: false,
       reason: 'per-iteration gate left unresolved regressions',
     };
+  }
+
+  if (converged) {
+    const requiredHistoryLength = Math.max(1, Number(minIterations ?? 1));
+    const history = currentMv.convergence.history.filter(Boolean);
+    const hasEnoughHistory = history.length >= requiredHistoryLength;
+    const hasScoredHistory = history.some(entry => entry.score !== null && entry.score !== undefined);
+    if (!hasEnoughHistory || !hasScoredHistory) {
+      const guardReason = `judge unreachable: convergence history length ${history.length}/${requiredHistoryLength}, scored=${hasScoredHistory}`;
+      log(`Iteration ${iteration} — ${guardReason}`);
+      (_deps?.logActivityFn ?? logActivity)({
+        event: 'judge_unreachable',
+        source: 'pickle',
+        session: path.basename(sessionDir),
+        iteration,
+        error: guardReason,
+        gate_payload: {
+          history_length: history.length,
+          min_iterations: requiredHistoryLength,
+          has_scored_history: hasScoredHistory,
+        },
+      });
+      return {
+        currentMv,
+        converged: false,
+        reason: guardReason,
+        exitReason: 'judge_unreachable',
+      };
+    }
   }
 
   return { currentMv, converged, reason };
@@ -1675,8 +1706,12 @@ async function handleWorkerMode(
     remediatorTimeoutS: ctx.cgSettings.remediator_timeout_s,
     log: ctx.log,
     iteration: ctx.iteration,
+    minIterations: ctx.currentRunnerState.min_iterations,
   });
   replaceMicroverseState(state, workerResult.currentMv);
+  if (workerResult.exitReason) {
+    return workerResult.exitReason;
+  }
   if (workerResult.converged) {
     ctx.log(`Converged (worker-managed: ${workerResult.reason})`);
     return 'converged';

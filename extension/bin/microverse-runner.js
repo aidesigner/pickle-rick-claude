@@ -380,7 +380,7 @@ export async function runPerIterationGateHook(opts) {
     });
 }
 export async function handleWorkerManagedIteration(opts) {
-    const { preIterSha, workingDir, sessionDir, enabledFiles, regressionWarningThreshold, backend, remediatorTimeoutS, log, iteration, _deps, } = opts;
+    const { preIterSha, workingDir, sessionDir, enabledFiles, regressionWarningThreshold, backend, remediatorTimeoutS, log, iteration, minIterations, _deps, } = opts;
     let currentMv = opts.currentMv;
     let converged = false;
     let reason = 'no reason';
@@ -422,6 +422,34 @@ export async function handleWorkerManagedIteration(opts) {
             converged: false,
             reason: 'per-iteration gate left unresolved regressions',
         };
+    }
+    if (converged) {
+        const requiredHistoryLength = Math.max(1, Number(minIterations ?? 1));
+        const history = currentMv.convergence.history.filter(Boolean);
+        const hasEnoughHistory = history.length >= requiredHistoryLength;
+        const hasScoredHistory = history.some(entry => entry.score !== null && entry.score !== undefined);
+        if (!hasEnoughHistory || !hasScoredHistory) {
+            const guardReason = `judge unreachable: convergence history length ${history.length}/${requiredHistoryLength}, scored=${hasScoredHistory}`;
+            log(`Iteration ${iteration} — ${guardReason}`);
+            (_deps?.logActivityFn ?? logActivity)({
+                event: 'judge_unreachable',
+                source: 'pickle',
+                session: path.basename(sessionDir),
+                iteration,
+                error: guardReason,
+                gate_payload: {
+                    history_length: history.length,
+                    min_iterations: requiredHistoryLength,
+                    has_scored_history: hasScoredHistory,
+                },
+            });
+            return {
+                currentMv,
+                converged: false,
+                reason: guardReason,
+                exitReason: 'judge_unreachable',
+            };
+        }
     }
     return { currentMv, converged, reason };
 }
@@ -615,9 +643,10 @@ export function buildJudgePrompt(goal, cwd, history, prdPath, judgeContextPath) 
         parts.push('Examine the code at this path before scoring. If it is a directory, use Glob to find source files and Read to examine them.');
     }
     parts.push('');
-    if (history && history.length > 0) {
+    const filteredHistory = history?.filter(Boolean) ?? [];
+    if (filteredHistory.length > 0) {
         parts.push('Previous iterations:');
-        for (const entry of history) {
+        for (const entry of filteredHistory) {
             parts.push(`- Iteration ${entry.iteration}: score=${entry.score} action=${entry.action} — ${entry.description}`);
         }
         parts.push('');
@@ -765,7 +794,7 @@ export function buildMicroverseHandoff(mvState, iteration, workingDir, sessionDi
         parts.push(`Read gap_analysis.md — items marked Fixed are done, skip them.`);
         parts.push('');
     }
-    const history = metricConv.history;
+    const history = metricConv.history.filter(Boolean);
     if (history.length > 0) {
         parts.push('## Recent Metric History');
         const recent = history.slice(-5);
@@ -846,7 +875,7 @@ export function buildEfficiencySection(history, totalIterations) {
     return `\n## Efficiency\n\n- **Wasted iterations**: ${wasted} / ${totalIterations} (${pct}%)\n`;
 }
 export function writeFinalReport(sessionDir, mvState, exitReason, iterations, elapsedSeconds) {
-    const history = mvState.convergence?.history ?? [];
+    const history = mvState.convergence?.history.filter(Boolean) ?? [];
     const accepted = history.filter(h => h.action === 'accept').length;
     const reverted = history.filter(h => h.action === 'revert').length;
     const bestScore = getBestScore(mvState);
@@ -1143,10 +1172,11 @@ function recordFailureClassification(state, metricResult, entry, ctx) {
         const failureClass = classifyFailure(state, metricResult, ctx.preIterSha ?? '', ctx.postIterSha ?? '');
         if (!failureClass)
             return;
+        const description = entry?.description ?? '';
         state.failure_history.push({
             iteration: ctx.iteration,
             failure_class: failureClass,
-            description: entry.description,
+            description,
             timestamp: new Date().toISOString(),
         });
         injectRecoveryGuidance(ctx.sessionDir, failureClass, state);
@@ -1286,8 +1316,12 @@ async function handleWorkerMode(state, ctx) {
         remediatorTimeoutS: ctx.cgSettings.remediator_timeout_s,
         log: ctx.log,
         iteration: ctx.iteration,
+        minIterations: ctx.currentRunnerState.min_iterations,
     });
     replaceMicroverseState(state, workerResult.currentMv);
+    if (workerResult.exitReason) {
+        return workerResult.exitReason;
+    }
     if (workerResult.converged) {
         ctx.log(`Converged (worker-managed: ${workerResult.reason})`);
         return 'converged';

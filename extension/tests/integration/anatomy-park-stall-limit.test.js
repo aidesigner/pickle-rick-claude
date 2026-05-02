@@ -94,6 +94,89 @@ function makeRunnerState(sessionDir, workingDir) {
   };
 }
 
+test('SCJM-T4: worker convergence with empty history exits judge_unreachable', async () => {
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-judge-unreachable-empty-'));
+  fs.writeFileSync(
+    path.join(sessionDir, 'anatomy-park.json'),
+    JSON.stringify({ converged: true, reason: 'worker said done' }),
+  );
+  const events = [];
+
+  const result = await handleWorkerManagedIteration({
+    currentMv: makeMv(),
+    preIterSha: 'sha-before',
+    workingDir: sessionDir,
+    sessionDir,
+    enabledFiles: [],
+    regressionWarningThreshold: 5,
+    backend: 'claude',
+    remediatorTimeoutS: 1,
+    log: () => {},
+    iteration: 1,
+    minIterations: 1,
+    _deps: {
+      getHeadShaFn: () => 'sha-after',
+      runGateFn: async () => makeGateResult('green', 0),
+      runRemediatorFn: async () => ({ success: true }),
+      writeMicroverseStateFn: () => {},
+      logActivityFn: (event) => events.push(event),
+    },
+  });
+
+  assert.equal(result.converged, false);
+  assert.equal(result.exitReason, 'judge_unreachable');
+  assert.equal(events.some(event => event.event === 'judge_unreachable'), true);
+});
+
+test('SCJM-T4: worker convergence with scoreless history exits judge_unreachable', async () => {
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-judge-unreachable-scoreless-'));
+  fs.writeFileSync(
+    path.join(sessionDir, 'anatomy-park.json'),
+    JSON.stringify({ converged: true, reason: 'worker said done' }),
+  );
+  const state = makeMv({
+    convergence: {
+      stall_limit: 3,
+      stall_counter: 0,
+      history: [{
+        iteration: 1,
+        score: null,
+        action: 'accept',
+        description: 'score unavailable',
+        commit: 'abc123',
+        pre_iteration_sha: 'def456',
+        timestamp: new Date().toISOString(),
+      }],
+    },
+  });
+  const events = [];
+
+  const result = await handleWorkerManagedIteration({
+    currentMv: state,
+    preIterSha: 'sha-before',
+    workingDir: sessionDir,
+    sessionDir,
+    enabledFiles: [],
+    regressionWarningThreshold: 5,
+    backend: 'claude',
+    remediatorTimeoutS: 1,
+    log: () => {},
+    iteration: 1,
+    minIterations: 1,
+    _deps: {
+      getHeadShaFn: () => 'sha-after',
+      runGateFn: async () => makeGateResult('green', 0),
+      runRemediatorFn: async () => ({ success: true }),
+      writeMicroverseStateFn: () => {},
+      logActivityFn: (event) => events.push(event),
+    },
+  });
+
+  assert.equal(result.converged, false);
+  assert.equal(result.exitReason, 'judge_unreachable');
+  assert.equal(events.some(event => event.event === 'judge_unreachable'), true);
+});
+
 test('AC-GBM-C1: a single strict-mode red records stall/regression and continues', async () => {
   const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-stall-session-'));
   const { dir: workingDir, preIterSha } = makeGitRepo();
