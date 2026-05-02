@@ -227,6 +227,33 @@ describe('pickle/no-bare-convergence-history', () => {
   });
 });
 
+// ─── no-bare-extension-dir ────────────────────────────────────────────────────
+
+describe('pickle/no-bare-extension-dir', () => {
+  it('requires getExtensionRoot outside approved bootstrap files', () => {
+    ruleTester.run('no-bare-extension-dir', pickle.rules['no-bare-extension-dir'], {
+      valid: [
+        { code: `const root = getExtensionRoot();`, filename: 'src/bin/setup.ts' },
+        { code: `const nodeEnv = process.env.NODE_ENV;`, filename: 'src/bin/setup.ts' },
+        { code: `const root = process.env.EXTENSION_DIR;`, filename: 'src/services/pickle-utils.ts' },
+        { code: `const root = process.env.EXTENSION_DIR || fallback;`, filename: 'src/hooks/dispatch.ts' },
+      ],
+      invalid: [
+        {
+          code: `const root = process.env.EXTENSION_DIR;`,
+          filename: 'src/bin/setup.ts',
+          errors: [{ messageId: 'useHelper' }],
+        },
+        {
+          code: `const root = process.env.EXTENSION_DIR || getExtensionRoot();`,
+          filename: 'src/services/activity-logger.ts',
+          errors: [{ messageId: 'useHelper' }],
+        },
+      ],
+    });
+  });
+});
+
 // ─── no-gemini-path ──────────────────────────────────────────────────────────
 
 describe('pickle/no-gemini-path', () => {

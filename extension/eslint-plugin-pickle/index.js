@@ -6,6 +6,7 @@
  *   pickle/cli-guard-basename    — CLI guards must use path.basename(process.argv[1]) === '...'
  *   pickle/hook-decision-values  — hook decisions must be "approve" or "block", never "allow"
  *   pickle/no-unsafe-error-cast  — catch bindings require instanceof Error guard before .message/.stack/.code
+ *   pickle/no-bare-extension-dir — EXTENSION_DIR reads must go through getExtensionRoot()
  */
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -146,6 +147,17 @@ function isBareConvergenceHistoryAccess(node) {
   if (object.type !== 'MemberExpression') return false;
   if (object.computed || object.optional) return false;
   return object.property.type === 'Identifier' && object.property.name === 'convergence';
+}
+
+function isProcessEnvExtensionDir(node) {
+  if (node.computed || node.optional) return false;
+  if (node.property.type !== 'Identifier' || node.property.name !== 'EXTENSION_DIR') return false;
+
+  const object = node.object;
+  if (object.type !== 'MemberExpression') return false;
+  if (object.computed || object.optional) return false;
+  if (object.property.type !== 'Identifier' || object.property.name !== 'env') return false;
+  return object.object.type === 'Identifier' && object.object.name === 'process';
 }
 
 // ─── Rules ──────────────────────────────────────────────────────────────────
@@ -383,6 +395,32 @@ const noBareConvergenceHistory = {
       MemberExpression(node) {
         if (isBareConvergenceHistoryAccess(node)) {
           context.report({ node, messageId: 'requireGuard' });
+        }
+      },
+    };
+  },
+};
+
+const noBareExtensionDir = {
+  meta: {
+    type: 'problem',
+    docs: {
+      description: 'Disallow direct process.env.EXTENSION_DIR reads outside root-resolution bootstrap',
+    },
+    messages: {
+      useHelper: 'Use getExtensionRoot() instead of reading process.env.EXTENSION_DIR directly.',
+    },
+    schema: [],
+  },
+  create(context) {
+    const filename = context.filename || context.getFilename();
+    if (/[\\/]pickle-utils\.[tj]s$/.test(filename)) return {};
+    if (/[\\/]dispatch\.[tj]s$/.test(filename)) return {};
+
+    return {
+      MemberExpression(node) {
+        if (isProcessEnvExtensionDir(node)) {
+          context.report({ node, messageId: 'useHelper' });
         }
       },
     };
@@ -811,6 +849,7 @@ const plugin = {
     'hook-decision-values': hookDecisionValues,
     'no-unsafe-error-cast': noUnsafeErrorCast,
     'no-bare-convergence-history': noBareConvergenceHistory,
+    'no-bare-extension-dir': noBareExtensionDir,
     'no-gemini-path': noGeminiPath,
     'no-deployed-file-edit': noDeployedFileEdit,
     'require-number-validation': requireNumberValidation,

@@ -26,6 +26,7 @@ export default tseslint.config(
       'pickle/hook-decision-values': 'error',
       'pickle/no-unsafe-error-cast': 'error',
       'pickle/no-bare-convergence-history': 'error',
+      'pickle/no-bare-extension-dir': 'error',
       'pickle/no-gemini-path': 'error',
       'pickle/no-deployed-file-edit': 'error',
       'pickle/require-number-validation': 'error',
