@@ -416,6 +416,192 @@ function runDeployParityFixture(fixture, args = []) {
   });
 }
 
+function buildActiveSessionFixtureScript() {
+  return `#!/bin/bash
+set -euo pipefail
+EXTENSION_ROOT="$HOME/.claude/pickle-rick"
+OVERRIDE_ACTIVE=0
+CLOSER_CONTEXT=0
+for arg in "$@"; do
+  case "$arg" in
+    --override-active) OVERRIDE_ACTIVE=1 ;;
+    --closer-context) CLOSER_CONTEXT=1 ;;
+  esac
+done
+
+write_active_session_bypass_audit() {
+  local session_id="$1"
+  local state_file="$2"
+  jq -nc \
+    --arg event "INSTALL_BYPASS_ACTIVE_SESSION" \
+    --arg timestamp "2026-05-02T00:00:00Z" \
+    --arg session_id "$session_id" \
+    --arg state_file "$state_file" \
+    --arg override_active "$OVERRIDE_ACTIVE" \
+    --arg closer_context "$CLOSER_CONTEXT" \
+    '{
+      event: $event,
+      timestamp: $timestamp,
+      session_id: $session_id,
+      state_file: $state_file,
+      override_active: ($override_active == "1"),
+      closer_context: ($closer_context == "1")
+    }' >> "$EXTENSION_ROOT/deploy-audit.log"
+}
+
+check_active_sessions() {
+  local data_root sessions_root state_file active session_id
+  data_root="\${PICKLE_DATA_ROOT:-$HOME/.local/share/pickle-rick}"
+  sessions_root="$data_root/sessions"
+  [ -d "$sessions_root" ] || return 0
+
+  for state_file in "$sessions_root"/*/state.json; do
+    [ -e "$state_file" ] || return 0
+    if ! active="$(jq -r 'if .active == true then "true" else "false" end' "$state_file" 2>/dev/null)"; then
+      echo "WARNING: malformed state.json skipped: $state_file" >&2
+      continue
+    fi
+    [ "$active" = "true" ] || continue
+
+    session_id="$(jq -r '.session_id // empty' "$state_file" 2>/dev/null || true)"
+    [ -n "$session_id" ] || session_id="$(basename "$(dirname "$state_file")")"
+
+    if [ "$OVERRIDE_ACTIVE" -eq 1 ] || [ "$CLOSER_CONTEXT" -eq 1 ]; then
+      write_active_session_bypass_audit "$session_id" "$state_file"
+      return 0
+    fi
+
+    echo "REFUSE: active session $session_id — kill the pipeline first or pass --override-active" >&2
+    exit 2
+  done
+}
+
+mkdir -p "$EXTENSION_ROOT"
+check_active_sessions
+echo "ok"
+`;
+}
+
+function makeActiveSessionFixture({ stateContent, sessionDirName = 'session-active' }) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'install-active-session-'));
+  const homeDir = path.join(dir, 'home');
+  const runtimeRoot = path.join(homeDir, '.claude', 'pickle-rick');
+  const dataRoot = path.join(dir, 'data-root');
+  const sessionDir = path.join(dataRoot, 'sessions', sessionDirName);
+  mkdirSync(sessionDir, { recursive: true });
+  if (stateContent !== null) {
+    writeFileSync(path.join(sessionDir, 'state.json'), stateContent);
+  }
+  const scriptPath = path.join(dir, 'install.sh');
+  writeFileSync(scriptPath, buildActiveSessionFixtureScript(), { mode: 0o755 });
+  return {
+    dir,
+    homeDir,
+    runtimeRoot,
+    dataRoot,
+    sessionDir,
+    statePath: path.join(sessionDir, 'state.json'),
+    auditPath: path.join(runtimeRoot, 'deploy-audit.log'),
+    scriptPath,
+  };
+}
+
+function runActiveSessionFixture(fixture, args = []) {
+  return spawnSync('bash', [fixture.scriptPath, ...args], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: fixture.homeDir, PICKLE_DATA_ROOT: fixture.dataRoot },
+  });
+}
+
+function readAuditLine(fixture) {
+  return JSON.parse(readFileSync(fixture.auditPath, 'utf8').trim().split('\n')[0]);
+}
+
+describe('install.sh active-session guard', () => {
+  test('install-script.active-session-refused refuses when session is active', () => {
+    const fixture = makeActiveSessionFixture({
+      stateContent: JSON.stringify({ session_id: 'active-abc123', active: true }),
+    });
+    try {
+      const result = runActiveSessionFixture(fixture);
+      assert.strictEqual(result.status, 2, `expected exit 2, got ${result.status}`);
+      assert.match(
+        result.stderr,
+        /REFUSE: active session active-abc123 — kill the pipeline first or pass --override-active/,
+      );
+      assert.equal(existsSync(fixture.auditPath), false);
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('install-script.override-active bypasses active session and writes audit log', () => {
+    const fixture = makeActiveSessionFixture({
+      stateContent: JSON.stringify({ session_id: 'active-override', active: true }),
+    });
+    try {
+      const result = runActiveSessionFixture(fixture, ['--override-active']);
+      assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
+      assert.match(result.stdout, /ok/);
+      const audit = readAuditLine(fixture);
+      assert.equal(audit.event, 'INSTALL_BYPASS_ACTIVE_SESSION');
+      assert.equal(audit.session_id, 'active-override');
+      assert.equal(audit.override_active, true);
+      assert.equal(audit.closer_context, false);
+      assert.equal(audit.state_file, fixture.statePath);
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('install-script.closer-context-active bypasses active session and writes audit log', () => {
+    const fixture = makeActiveSessionFixture({
+      stateContent: JSON.stringify({ session_id: 'active-closer', active: true }),
+    });
+    try {
+      const result = runActiveSessionFixture(fixture, ['--closer-context']);
+      assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
+      assert.match(result.stdout, /ok/);
+      const audit = readAuditLine(fixture);
+      assert.equal(audit.event, 'INSTALL_BYPASS_ACTIVE_SESSION');
+      assert.equal(audit.session_id, 'active-closer');
+      assert.equal(audit.override_active, false);
+      assert.equal(audit.closer_context, true);
+      assert.equal(audit.state_file, fixture.statePath);
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('install-script.active-session-malformed-state skips malformed state json', () => {
+    const fixture = makeActiveSessionFixture({ stateContent: '{not valid json!!!' });
+    try {
+      const result = runActiveSessionFixture(fixture);
+      assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
+      assert.match(result.stdout, /ok/);
+      assert.match(result.stderr, /WARNING: malformed state[.]json skipped:/);
+      assert.equal(existsSync(fixture.auditPath), false);
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('real install.sh contains active-session refusal and bypass audit schema', () => {
+    const src = readFileSync(INSTALL_SH, 'utf8');
+    assert.ok(src.includes('--override-active'), 'install.sh must parse --override-active');
+    assert.ok(src.includes('--closer-context'), 'install.sh must parse --closer-context');
+    assert.ok(
+      src.includes('REFUSE: active session $session_id — kill the pipeline first or pass --override-active'),
+      'install.sh must contain the active-session refusal contract',
+    );
+    assert.ok(
+      src.includes('INSTALL_BYPASS_ACTIVE_SESSION'),
+      'install.sh must write the active-session bypass audit event',
+    );
+    assert.ok(src.includes('deploy-audit.log'), 'install.sh must append bypass evidence to deploy-audit.log');
+  });
+});
+
 describe('install.sh deploy parity sampler', () => {
   test('install-script.baseline-written writes deploy-baseline.json post-rsync', () => {
     const fixture = makeDeployParityFixture();

@@ -11,10 +11,14 @@ HOOK_CMD_LITERAL='node $HOME/.claude/pickle-rick/extension/hooks/dispatch.js sto
 
 ALLOW_DOWNGRADE=0
 UNINSTALL_CRON=0
+OVERRIDE_ACTIVE=0
+CLOSER_CONTEXT=0
 for arg in "$@"; do
   case "$arg" in
     --allow-downgrade) ALLOW_DOWNGRADE=1 ;;
     --uninstall-cron) UNINSTALL_CRON=1 ;;
+    --override-active) OVERRIDE_ACTIVE=1 ;;
+    --closer-context) CLOSER_CONTEXT=1 ;;
   esac
 done
 
@@ -139,6 +143,53 @@ check_worktree_head_fresh() {
 
 check_worktree_head_fresh
 
+write_active_session_bypass_audit() {
+  local session_id="$1"
+  local state_file="$2"
+  jq -nc \
+    --arg event "INSTALL_BYPASS_ACTIVE_SESSION" \
+    --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg session_id "$session_id" \
+    --arg state_file "$state_file" \
+    --arg override_active "$OVERRIDE_ACTIVE" \
+    --arg closer_context "$CLOSER_CONTEXT" \
+    '{
+      event: $event,
+      timestamp: $timestamp,
+      session_id: $session_id,
+      state_file: $state_file,
+      override_active: ($override_active == "1"),
+      closer_context: ($closer_context == "1")
+    }' >> "$EXTENSION_ROOT/deploy-audit.log"
+}
+
+check_active_sessions() {
+  local data_root sessions_root state_file active session_id
+  data_root="${PICKLE_DATA_ROOT:-$HOME/.local/share/pickle-rick}"
+  sessions_root="$data_root/sessions"
+  [ -d "$sessions_root" ] || return 0
+
+  for state_file in "$sessions_root"/*/state.json; do
+    [ -e "$state_file" ] || return 0
+    if ! active="$(jq -r 'if .active == true then "true" else "false" end' "$state_file" 2>/dev/null)"; then
+      echo "WARNING: malformed state.json skipped: $state_file" >&2
+      continue
+    fi
+    [ "$active" = "true" ] || continue
+
+    session_id="$(jq -r '.session_id // empty' "$state_file" 2>/dev/null || true)"
+    [ -n "$session_id" ] || session_id="$(basename "$(dirname "$state_file")")"
+
+    if [ "$OVERRIDE_ACTIVE" -eq 1 ] || [ "$CLOSER_CONTEXT" -eq 1 ]; then
+      write_active_session_bypass_audit "$session_id" "$state_file"
+      return 0
+    fi
+
+    echo "REFUSE: active session $session_id — kill the pipeline first or pass --override-active" >&2
+    exit 2
+  done
+}
+
 # --- LOCK (Forward Fix F2: serialize concurrent install.sh invocations) ---
 # Cross-skill workers can run install.sh simultaneously, racing on settings.json
 # backup + jq-merge and producing paired backups seconds apart. Acquire an
@@ -161,6 +212,8 @@ else
   done
   trap 'rmdir "$LOCKDIR"' EXIT
 fi
+
+check_active_sessions
 
 # --- DRY RUN ---
 # Test hook: exits cleanly after lock acquisition so concurrent-invocation
