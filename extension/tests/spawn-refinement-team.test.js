@@ -17,6 +17,7 @@ const {
     extractAnchorCitations,
     findStaleAnchorWarnings,
     parseAcShapeSection,
+    runReadinessGate,
 } = await import('../bin/spawn-refinement-team.js');
 
 function run(args, env = {}) {
@@ -41,6 +42,51 @@ function makeExtensionRoot(prefix = 'pickle-ext-') {
     fs.writeFileSync(path.join(sentinelDir, 'log-watcher.js'), '');
     return extensionRoot;
 }
+
+test('spawn-refinement-team: readiness gate resolves deployed extension/bin path', () => {
+    const sessionDir = makeTmpDir('pickle-refine-session-');
+    const workingDir = makeTmpDir('pickle-refine-work-');
+    const extensionRoot = makeExtensionRoot('pickle-refine-ext-');
+    const argvLog = path.join(sessionDir, 'readiness-argv.json');
+    const manifestPath = path.join(sessionDir, 'refinement_manifest.json');
+    const binPath = path.join(extensionRoot, 'extension', 'bin', 'check-readiness.js');
+    const savedExtensionDir = process.env.EXTENSION_DIR;
+    const savedNodeEnv = process.env.NODE_ENV;
+    const savedAllow = process.env.EXTENSION_DIR_TEST;
+    try {
+        fs.writeFileSync(manifestPath, JSON.stringify({ tickets: [] }));
+        fs.writeFileSync(binPath, `#!/usr/bin/env node
+const fs = require('fs');
+fs.writeFileSync(${JSON.stringify(argvLog)}, JSON.stringify(process.argv.slice(2)));
+process.exit(7);
+`);
+        fs.chmodSync(binPath, 0o755);
+        process.env.EXTENSION_DIR = extensionRoot;
+        delete process.env.NODE_ENV;
+        delete process.env.EXTENSION_DIR_TEST;
+
+        const status = runReadinessGate(sessionDir, workingDir, manifestPath);
+
+        assert.equal(status, 7);
+        assert.deepEqual(JSON.parse(fs.readFileSync(argvLog, 'utf-8')), [
+            '--session-dir', sessionDir,
+            '--repo-root', workingDir,
+            '--manifest', manifestPath,
+            '--machinability-only',
+            '--contract-only',
+        ]);
+    } finally {
+        if (savedExtensionDir === undefined) delete process.env.EXTENSION_DIR;
+        else process.env.EXTENSION_DIR = savedExtensionDir;
+        if (savedNodeEnv === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = savedNodeEnv;
+        if (savedAllow === undefined) delete process.env.EXTENSION_DIR_TEST;
+        else process.env.EXTENSION_DIR_TEST = savedAllow;
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+        fs.rmSync(workingDir, { recursive: true, force: true });
+        fs.rmSync(extensionRoot, { recursive: true, force: true });
+    }
+});
 
 function writeRefinementLogger(binDir, logPath) {
     const claudePath = path.join(binDir, 'claude');

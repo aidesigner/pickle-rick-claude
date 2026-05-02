@@ -126,7 +126,7 @@ const WORKER_ROLES = [
     { id: 'risk-scope' },
 ];
 export function runReadinessGate(sessionDir, workingDir, manifestPath) {
-    const binPath = path.join(getExtensionRoot(), 'bin', 'check-readiness.js');
+    const binPath = path.join(getExtensionRoot(), 'extension', 'bin', 'check-readiness.js');
     if (!fs.existsSync(binPath))
         return 0;
     const result = spawnSync(process.execPath, [
