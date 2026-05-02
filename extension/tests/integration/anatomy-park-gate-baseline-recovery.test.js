@@ -110,7 +110,7 @@ function writeConvergedAnatomyPark(sessionDir, reason = 'clean passes done') {
   }));
 }
 
-test('AC-GBM-D1: Anatomy-park recaptures a missing baseline after commit before final worker exit', async () => {
+test('microverse-runner.recapture-attempted microverse-runner.recapture-succeeded: Anatomy-park recaptures a missing baseline after commit before final worker exit', async () => {
   const workingDir = makeGitRepo('ap-baseline-recovery-ok-repo-');
   const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-baseline-recovery-ok-session-'));
 
@@ -199,6 +199,17 @@ test('AC-GBM-D1: Anatomy-park recaptures a missing baseline after commit before 
     assert.ok(events.some((event) => event.event === 'gate_baseline_disk_check' && event.gate_payload?.phase === 'post_write'));
     assert.ok(events.some((event) => event.event === 'gate_baseline_captured'));
     assert.ok(events.some((event) => event.event === 'gate_run_complete' && event.gate_payload?.status === 'green'));
+    const attemptedIndex = events.findIndex((event) => event.event === 'baseline_recapture_attempted');
+    const succeededIndex = events.findIndex((event) => event.event === 'baseline_recapture_succeeded');
+    assert.notEqual(attemptedIndex, -1, `expected baseline_recapture_attempted event, got ${JSON.stringify(events)}`);
+    assert.notEqual(succeededIndex, -1, `expected baseline_recapture_succeeded event, got ${JSON.stringify(events)}`);
+    assert.equal(events[attemptedIndex].iteration, 3);
+    assert.equal(events[succeededIndex].iteration, 3);
+    assert.ok(attemptedIndex < succeededIndex, 'baseline_recapture_attempted must precede baseline_recapture_succeeded');
+    assert.ok(
+      new Date(events[attemptedIndex].ts).getTime() < new Date(events[succeededIndex].ts).getTime(),
+      'baseline_recapture_attempted timestamp must precede baseline_recapture_succeeded',
+    );
     assert.ok(!events.some((event) => event.event === 'baseline_recapture_failed'));
     assert.ok(!events.some((event) => event.event === 'strict_mode_red'));
     assert.ok(

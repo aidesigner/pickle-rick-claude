@@ -56,7 +56,7 @@ function withBrokenCanadianDateLocale(fn) {
 
 // --- VALID_ACTIVITY_EVENTS ---
 
-test('VALID_ACTIVITY_EVENTS contains all 66 expected event types', () => {
+test('types.activity-events: VALID_ACTIVITY_EVENTS contains all 68 expected event types', () => {
     const expected = [
         'session_start', 'session_end', 'ticket_completed', 'epic_completed',
         'meeseeks_pass', 'commit', 'research', 'bug_fix', 'feature',
@@ -69,7 +69,9 @@ test('VALID_ACTIVITY_EVENTS contains all 66 expected event types', () => {
         'pending_tickets_on_completion',
         'manager_false_epic_completed', 'manager_persistent_hallucination',
         'gate_baseline_captured', 'gate_baseline_disk_check',
-        'gate_baseline_init_failed', 'gate_run_complete', 'gate_skipped',
+        'gate_baseline_init_failed',
+        'baseline_recapture_attempted', 'baseline_recapture_succeeded',
+        'gate_run_complete', 'gate_skipped',
         'gate_unsafe_test_command_blocked', 'gate_remediation_complete',
         'gate_remediation_aborted_unverified_production_change',
         'gate_autofix_reverted', 'gate_workingdir_drift_detected',
@@ -113,7 +115,7 @@ test('VALID_ACTIVITY_EVENTS contains all 66 expected event types', () => {
         // per-iteration gate baseline before strict-mode fallback.
         'baseline_recapture_failed',
     ];
-    assert.equal(VALID_ACTIVITY_EVENTS.length, 66);
+    assert.equal(VALID_ACTIVITY_EVENTS.length, 68);
     for (const e of expected) {
         assert.ok(VALID_ACTIVITY_EVENTS.includes(e), `Missing event type: ${e}`);
     }

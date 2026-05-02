@@ -354,6 +354,7 @@ async function runChangedPerIterationGate(opts: {
   sessionDir: string;
   baselinePath: string;
   gateMode: 'baseline' | 'strict';
+  iteration?: number;
   log: (msg: string) => void;
   deps: ResolvedPerIterationGateDeps;
 }): Promise<MicroverseSessionState> {
@@ -362,6 +363,14 @@ async function runChangedPerIterationGate(opts: {
   if (gateMode === 'strict') {
     try {
       opts.log('[anatomy-park] per-iteration gate baseline missing after commit — attempting one recapture from pre-iteration tree');
+      const attemptedAtMs = Date.now();
+      opts.deps.logActivityFn({
+        ts: new Date(attemptedAtMs).toISOString(),
+        event: 'baseline_recapture_attempted',
+        source: 'pickle',
+        session: path.basename(opts.sessionDir),
+        iteration: opts.iteration,
+      });
       await withCleanTemporaryCheckout(opts.workingDir, opts.preIterSha, () => capturePerIterationGateBaseline({
         currentMv: opts.currentMv,
         workingDir: opts.workingDir,
@@ -376,6 +385,14 @@ async function runChangedPerIterationGate(opts: {
           `(captured ${result.total_raw_failure_count} pre-existing failure(s))`,
       }));
       gateMode = 'baseline';
+      const succeededAtMs = Math.max(Date.now(), attemptedAtMs + 1);
+      opts.deps.logActivityFn({
+        ts: new Date(succeededAtMs).toISOString(),
+        event: 'baseline_recapture_succeeded',
+        source: 'pickle',
+        session: path.basename(opts.sessionDir),
+        iteration: opts.iteration,
+      });
     } catch (err) {
       opts.log(`[anatomy-park] per-iteration gate baseline recapture failed (${safeErrorMessage(err)})`);
     }
@@ -558,6 +575,7 @@ export async function runPerIterationGateHook(opts: {
   regressionWarningThreshold: number;
   backend: Backend;
   remediatorTimeoutS: number;
+  iteration?: number;
   log: (msg: string) => void;
   _deps?: PerIterationGateDeps;
 }): Promise<MicroverseSessionState> {
@@ -582,6 +600,7 @@ export async function runPerIterationGateHook(opts: {
       sessionDir,
       baselinePath,
       gateMode,
+      iteration: opts.iteration,
       log,
       deps,
     });
@@ -691,6 +710,7 @@ export async function handleWorkerManagedIteration(opts: {
     regressionWarningThreshold,
     backend,
     remediatorTimeoutS,
+    iteration,
     log,
     _deps,
   });
