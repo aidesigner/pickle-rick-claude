@@ -14,6 +14,10 @@ import { getSessionPath } from '../bin/get-session.js';
 function withExtensionDir(fn) {
     const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-gs-')));
     const saved = process.env.EXTENSION_DIR;
+    const savedNodeEnv = process.env.NODE_ENV;
+    const savedAllowMissingSentinel = process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL;
+    process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL = '1';
+    process.env.NODE_ENV = 'test';
     process.env.EXTENSION_DIR = tmpDir;
     try {
         return fn(tmpDir);
@@ -22,6 +26,16 @@ function withExtensionDir(fn) {
             delete process.env.EXTENSION_DIR;
         } else {
             process.env.EXTENSION_DIR = saved;
+        }
+        if (savedNodeEnv === undefined) {
+            delete process.env.NODE_ENV;
+        } else {
+            process.env.NODE_ENV = savedNodeEnv;
+        }
+        if (savedAllowMissingSentinel === undefined) {
+            delete process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL;
+        } else {
+            process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL = savedAllowMissingSentinel;
         }
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

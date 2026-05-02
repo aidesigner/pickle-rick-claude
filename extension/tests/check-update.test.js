@@ -28,6 +28,27 @@ function makeTmpDir() {
     return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'check-update-test-')));
 }
 
+function useMissingSentinelExtensionDir(tmpDir) {
+    const saved = {
+        extensionDir: process.env.EXTENSION_DIR,
+        nodeEnv: process.env.NODE_ENV,
+        allowMissingSentinel: process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL,
+    };
+    process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL = '1';
+    process.env.NODE_ENV = 'test';
+    process.env.EXTENSION_DIR = tmpDir;
+    return saved;
+}
+
+function restoreMissingSentinelExtensionDir(saved) {
+    if (saved.extensionDir === undefined) delete process.env.EXTENSION_DIR;
+    else process.env.EXTENSION_DIR = saved.extensionDir;
+    if (saved.nodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = saved.nodeEnv;
+    if (saved.allowMissingSentinel === undefined) delete process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL;
+    else process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL = saved.allowMissingSentinel;
+}
+
 // ---------------------------------------------------------------------------
 // parseVersion
 // ---------------------------------------------------------------------------
@@ -88,13 +109,11 @@ describe('readCache', () => {
 
     beforeEach(() => {
         tmpDir = makeTmpDir();
-        origEnv = process.env.EXTENSION_DIR;
-        process.env.EXTENSION_DIR = tmpDir;
+        origEnv = useMissingSentinelExtensionDir(tmpDir);
     });
 
     afterEach(() => {
-        if (origEnv === undefined) delete process.env.EXTENSION_DIR;
-        else process.env.EXTENSION_DIR = origEnv;
+        restoreMissingSentinelExtensionDir(origEnv);
         fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
@@ -207,13 +226,11 @@ describe('readSettings', () => {
 
     beforeEach(() => {
         tmpDir = makeTmpDir();
-        origEnv = process.env.EXTENSION_DIR;
-        process.env.EXTENSION_DIR = tmpDir;
+        origEnv = useMissingSentinelExtensionDir(tmpDir);
     });
 
     afterEach(() => {
-        if (origEnv === undefined) delete process.env.EXTENSION_DIR;
-        else process.env.EXTENSION_DIR = origEnv;
+        restoreMissingSentinelExtensionDir(origEnv);
         fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
@@ -359,8 +376,7 @@ describe('checkForUpdate', () => {
 
     beforeEach(() => {
         tmpDir = makeTmpDir();
-        origEnv = process.env.EXTENSION_DIR;
-        process.env.EXTENSION_DIR = tmpDir;
+        origEnv = useMissingSentinelExtensionDir(tmpDir);
         // Create a fake package.json so getCurrentVersion works
         fs.mkdirSync(path.join(tmpDir, 'extension'), { recursive: true });
         fs.writeFileSync(
@@ -370,8 +386,7 @@ describe('checkForUpdate', () => {
     });
 
     afterEach(() => {
-        if (origEnv === undefined) delete process.env.EXTENSION_DIR;
-        else process.env.EXTENSION_DIR = origEnv;
+        restoreMissingSentinelExtensionDir(origEnv);
         fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
@@ -450,13 +465,11 @@ describe('downloadRelease', () => {
 
     beforeEach(() => {
         tmpDir = makeTmpDir();
-        origEnv = process.env.EXTENSION_DIR;
-        process.env.EXTENSION_DIR = tmpDir;
+        origEnv = useMissingSentinelExtensionDir(tmpDir);
     });
 
     afterEach(() => {
-        if (origEnv === undefined) delete process.env.EXTENSION_DIR;
-        else process.env.EXTENSION_DIR = origEnv;
+        restoreMissingSentinelExtensionDir(origEnv);
         fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
@@ -487,13 +500,11 @@ describe('extractAndInstall', () => {
 
     beforeEach(() => {
         tmpDir = makeTmpDir();
-        origEnv = process.env.EXTENSION_DIR;
-        process.env.EXTENSION_DIR = tmpDir;
+        origEnv = useMissingSentinelExtensionDir(tmpDir);
     });
 
     afterEach(() => {
-        if (origEnv === undefined) delete process.env.EXTENSION_DIR;
-        else process.env.EXTENSION_DIR = origEnv;
+        restoreMissingSentinelExtensionDir(origEnv);
         fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
@@ -521,13 +532,11 @@ describe('performUpgrade', () => {
 
     beforeEach(() => {
         tmpDir = makeTmpDir();
-        origEnv = process.env.EXTENSION_DIR;
-        process.env.EXTENSION_DIR = tmpDir;
+        origEnv = useMissingSentinelExtensionDir(tmpDir);
     });
 
     afterEach(() => {
-        if (origEnv === undefined) delete process.env.EXTENSION_DIR;
-        else process.env.EXTENSION_DIR = origEnv;
+        restoreMissingSentinelExtensionDir(origEnv);
         fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
@@ -648,13 +657,11 @@ describe('logging', () => {
 
     beforeEach(() => {
         tmpDir = makeTmpDir();
-        origEnv = process.env.EXTENSION_DIR;
-        process.env.EXTENSION_DIR = tmpDir;
+        origEnv = useMissingSentinelExtensionDir(tmpDir);
     });
 
     afterEach(() => {
-        if (origEnv === undefined) delete process.env.EXTENSION_DIR;
-        else process.env.EXTENSION_DIR = origEnv;
+        restoreMissingSentinelExtensionDir(origEnv);
         fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
@@ -730,7 +737,13 @@ describe('detached spawn (stop-hook)', () => {
             fs.writeFileSync(full, content);
         }
 
-        const env = { ...process.env, EXTENSION_DIR: tmpDir, FORCE_COLOR: '0' };
+        const env = {
+            ...process.env,
+            EXTENSION_DIR: tmpDir,
+            FORCE_COLOR: '0',
+            NODE_ENV: 'test',
+            PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL: '1',
+        };
         delete env.PICKLE_ROLE;
         delete env.PICKLE_STATE_FILE;
         env.PICKLE_STATE_FILE = stateFile;
@@ -801,9 +814,8 @@ describe('integration with mock gh', () => {
 
     beforeEach(() => {
         tmpDir = makeTmpDir();
-        origEnv = process.env.EXTENSION_DIR;
+        origEnv = useMissingSentinelExtensionDir(tmpDir);
         origPath = process.env.PATH;
-        process.env.EXTENSION_DIR = tmpDir;
         fs.mkdirSync(path.join(tmpDir, 'extension'), { recursive: true });
         fs.writeFileSync(
             path.join(tmpDir, 'extension', 'package.json'),
@@ -812,8 +824,7 @@ describe('integration with mock gh', () => {
     });
 
     afterEach(() => {
-        if (origEnv === undefined) delete process.env.EXTENSION_DIR;
-        else process.env.EXTENSION_DIR = origEnv;
+        restoreMissingSentinelExtensionDir(origEnv);
         process.env.PATH = origPath;
         fs.rmSync(tmpDir, { recursive: true, force: true });
     });
@@ -895,13 +906,11 @@ describe('edge cases', () => {
 
     beforeEach(() => {
         tmpDir = makeTmpDir();
-        origEnv = process.env.EXTENSION_DIR;
-        process.env.EXTENSION_DIR = tmpDir;
+        origEnv = useMissingSentinelExtensionDir(tmpDir);
     });
 
     afterEach(() => {
-        if (origEnv === undefined) delete process.env.EXTENSION_DIR;
-        else process.env.EXTENSION_DIR = origEnv;
+        restoreMissingSentinelExtensionDir(origEnv);
         fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
