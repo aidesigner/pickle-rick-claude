@@ -192,6 +192,9 @@ export interface RefinementTicketManifestEntry {
   id: string;
   title: string;
   source_ac_ids: string[];
+  source_prd?: string;
+  source_section?: string;
+  mapped_requirements?: string[];
   acceptance_test?: string;
   justification?: string;
   source_worker?: RoleId;
@@ -1038,6 +1041,9 @@ function normalizeTicketEntry(value: unknown, source_worker: RoleId, source_file
     id,
     title,
     source_ac_ids: asStringArray(record.source_ac_ids),
+    source_prd: asString(record.source_prd),
+    source_section: asString(record.source_section),
+    mapped_requirements: asStringArray(record.mapped_requirements),
     acceptance_test: asString(record.acceptance_test),
     justification: asString(record.justification),
     source_worker,
@@ -1097,6 +1103,98 @@ function ticketsForSmell(smell: AcShapeSmell, tickets: RefinementTicketManifestE
   return tickets.filter((ticket) => {
     if (explicitIds.size > 0 && explicitIds.has(ticket.id)) return true;
     return ticket.source_ac_ids.includes(smell.ac_id);
+  });
+}
+
+function parseFrontmatter(content: string): string {
+  const match = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content);
+  return match ? match[1] : '';
+}
+
+function unquoteYamlish(value: string): string {
+  return value.trim().replace(/^['"]|['"]$/g, '');
+}
+
+function peerPrdDeferredPaths(frontmatter: string): string[] {
+  const lines = frontmatter.split(/\r?\n/);
+  const peerIndex = lines.findIndex((line) => /^peer_prds:\s*$/.test(line));
+  if (peerIndex < 0) return [];
+  const paths: string[] = [];
+  for (let i = peerIndex + 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (/^\S/.test(line)) break;
+    if (!/^\s+deferred:\s*$/.test(line)) continue;
+    for (let j = i + 1; j < lines.length; j += 1) {
+      const item = lines[j];
+      if (/^\s{2}\S/.test(item) && !/^\s{4,}-\s+/.test(item)) break;
+      const match = /^\s+-\s+(.+?)\s*(?:#.*)?$/.exec(item);
+      if (match) paths.push(unquoteYamlish(match[1]));
+    }
+    break;
+  }
+  return paths;
+}
+
+interface SourceRequirement {
+  sourcePrd: string;
+  sourceSection: string;
+  requirementId: string;
+}
+
+function resolvePeerPrdPath(parentPrdPath: string, peerPath: string): string | undefined {
+  if (path.isAbsolute(peerPath) && fs.existsSync(peerPath)) return peerPath;
+  const candidates = [
+    path.resolve(path.dirname(parentPrdPath), peerPath),
+    path.resolve(process.cwd(), peerPath),
+  ];
+  return candidates.find((candidate) => fs.existsSync(candidate));
+}
+
+function extractSourceRequirements(parentPrdPath: string): SourceRequirement[] {
+  if (!fs.existsSync(parentPrdPath)) return [];
+  const parentContent = fs.readFileSync(parentPrdPath, 'utf-8');
+  const peerPaths = peerPrdDeferredPaths(parseFrontmatter(parentContent));
+  const requirements: SourceRequirement[] = [];
+  for (const peerPath of peerPaths) {
+    const resolved = resolvePeerPrdPath(parentPrdPath, peerPath);
+    if (!resolved) continue;
+    const lines = fs.readFileSync(resolved, 'utf-8').split(/\r?\n/);
+    let section = '';
+    for (const line of lines) {
+      const heading = /^#{1,6}\s+(.+?)\s*$/.exec(line);
+      if (heading) section = heading[1].trim();
+      for (const match of line.matchAll(/\bAC-[A-Z0-9-]+\b/g)) {
+        requirements.push({ sourcePrd: peerPath, sourceSection: section, requirementId: match[0] });
+      }
+    }
+  }
+  return requirements;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.filter((value) => value.trim() !== ''))].sort();
+}
+
+export function enrichManifestTicketsFromSourcePrds(prdPath: string, tickets: RefinementTicketManifestEntry[]): RefinementTicketManifestEntry[] {
+  const byRequirement = new Map<string, SourceRequirement[]>();
+  for (const requirement of extractSourceRequirements(prdPath)) {
+    const existing = byRequirement.get(requirement.requirementId) ?? [];
+    existing.push(requirement);
+    byRequirement.set(requirement.requirementId, existing);
+  }
+  if (byRequirement.size === 0) return tickets;
+  return tickets.map((ticket) => {
+    const matches = ticket.source_ac_ids.flatMap((id) => byRequirement.get(id) ?? []);
+    if (matches.length === 0) return ticket;
+    const sourcePrds = uniqueStrings(matches.map((match) => match.sourcePrd));
+    const sourceSections = uniqueStrings(matches.map((match) => match.sourceSection));
+    const mapped = uniqueStrings([...ticket.source_ac_ids, ...(ticket.mapped_requirements ?? [])]);
+    return {
+      ...ticket,
+      source_prd: ticket.source_prd ?? sourcePrds.join(', '),
+      source_section: ticket.source_section ?? sourceSections.join(', '),
+      mapped_requirements: mapped,
+    };
   });
 }
 
@@ -1437,7 +1535,7 @@ export function buildRefinementManifest(args: RefinementArgs, results: CycleResu
     cycles_completed: results.allCycleResults.length,
     max_turns_per_worker: results.maxTurns,
     ac_shape_smells: shapeData.acShapeSmells,
-    tickets: shapeData.tickets,
+    tickets: enrichManifestTicketsFromSourcePrds(args.prdPath, shapeData.tickets),
     workers: results.finalResults.map((r) => {
       const outputFile = path.join(results.refinementDir, `analysis_${r.roleId}.md`);
       return {

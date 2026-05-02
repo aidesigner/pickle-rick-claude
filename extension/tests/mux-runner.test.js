@@ -644,7 +644,7 @@ test('mux-runner: runs readiness gate at iteration 0 before manager spawn', () =
             '# Ticket',
             '',
             '## Acceptance Criteria',
-            '- [ ] The workflow should feel intuitive.',
+            '- [ ] verify_pre: The workflow should feel intuitive.',
             '',
         ].join('\n'));
         fs.writeFileSync(path.join(sessionDir, 'decomposition_manifest.json'), JSON.stringify({

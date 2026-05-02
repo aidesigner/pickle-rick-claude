@@ -88,6 +88,9 @@ export function extractAcceptanceCriteria(content) {
     }
     return acs;
 }
+function acceptanceCriterionVerifyPhase(ac) {
+    return /\bverify_pre\b/i.test(ac) ? 'pre' : 'post';
+}
 export function isMachineCheckable(ac) {
     if (PURE_PROSE_RE.test(ac) && !MACHINE_HINT_RE.test(ac))
         return false;
@@ -163,6 +166,8 @@ export function findReadinessFindings(ticketFile, repoRoot, opts) {
     const findings = [];
     if (opts.checkMachinability) {
         for (const ac of extractAcceptanceCriteria(content)) {
+            if (acceptanceCriterionVerifyPhase(ac) === 'post')
+                continue;
             if (!isMachineCheckable(ac)) {
                 findings.push({
                     ticket: ticketFile,
@@ -223,6 +228,33 @@ function readStringArray(frontmatter, key) {
     }
     return values;
 }
+function unquoteYamlish(value) {
+    return value.trim().replace(/^['"]|['"]$/g, '');
+}
+function readNestedStringArray(frontmatter, parentKey, childKey) {
+    const lines = frontmatter.split(/\r?\n/);
+    const parentIndex = lines.findIndex((line) => new RegExp(`^${parentKey}:\\s*$`).test(line));
+    if (parentIndex < 0)
+        return [];
+    const values = [];
+    for (let i = parentIndex + 1; i < lines.length; i += 1) {
+        const line = lines[i];
+        if (/^\S/.test(line))
+            break;
+        if (!new RegExp(`^\\s+${childKey}:\\s*$`).test(line))
+            continue;
+        for (let j = i + 1; j < lines.length; j += 1) {
+            const item = lines[j];
+            if (/^\s{2}\S/.test(item) && !/^\s{4,}-\s+/.test(item))
+                break;
+            const match = /^\s+-\s+(.+?)\s*(?:#.*)?$/.exec(item);
+            if (match)
+                values.push(unquoteYamlish(match[1]));
+        }
+        break;
+    }
+    return values;
+}
 function dependencyRefs(content, frontmatter) {
     const refs = new Map();
     for (const dep of [...readStringArray(frontmatter, 'depends_on'), ...readStringArray(frontmatter, 'dependencies')]) {
@@ -253,6 +285,7 @@ function ticketInfo(ticketFile) {
         key: readScalar(frontmatter, 'key'),
         sourcePrd: readScalar(frontmatter, 'source_prd'),
         sourceSection: readScalar(frontmatter, 'source_section'),
+        mappedRequirements: readStringArray(frontmatter, 'mapped_requirements'),
         acIds: [...new Set(acIds)].sort(),
         dependencies: dependencyRefs(content, frontmatter),
     };
@@ -275,15 +308,101 @@ function stringArray(value) {
         return [];
     return value.filter((item) => typeof item === 'string' && item.length > 0);
 }
+function resolvePeerPrdPath(parentPrdPath, peerPath, repoRoot) {
+    if (path.isAbsolute(peerPath) && fs.existsSync(peerPath))
+        return peerPath;
+    const candidates = [
+        path.resolve(path.dirname(parentPrdPath), peerPath),
+        path.resolve(repoRoot, peerPath),
+    ];
+    return candidates.find((candidate) => fs.existsSync(candidate));
+}
+function sourceRequirementsFromParentPrd(parentPrdPath, repoRoot) {
+    if (!parentPrdPath || !fs.existsSync(parentPrdPath))
+        return [];
+    const parentContent = fs.readFileSync(parentPrdPath, 'utf-8');
+    const peerPaths = readNestedStringArray(parseFrontmatter(parentContent), 'peer_prds', 'deferred');
+    const requirements = [];
+    for (const peerPath of peerPaths) {
+        const resolved = resolvePeerPrdPath(parentPrdPath, peerPath, repoRoot);
+        if (!resolved)
+            continue;
+        const lines = fs.readFileSync(resolved, 'utf-8').split(/\r?\n/);
+        let section = '';
+        for (const line of lines) {
+            const heading = /^#{1,6}\s+(.+?)\s*$/.exec(line);
+            if (heading)
+                section = heading[1].trim();
+            for (const match of line.matchAll(/\bAC-[A-Z0-9-]+\b/g)) {
+                requirements.push({ sourcePrd: peerPath, sourceSection: section, requirementId: match[0] });
+            }
+        }
+    }
+    return requirements;
+}
+function uniqueStrings(values) {
+    return [...new Set(values.filter((value) => value.trim() !== ''))].sort();
+}
+function resolveManifestPrdPath(manifest, sessionDir, repoRoot) {
+    if (!isRecord(manifest) || typeof manifest.prd_path !== 'string' || manifest.prd_path.trim() === '')
+        return undefined;
+    const prdPath = manifest.prd_path;
+    if (path.isAbsolute(prdPath))
+        return prdPath;
+    const candidates = [
+        path.resolve(repoRoot, prdPath),
+        path.resolve(sessionDir, prdPath),
+    ];
+    return candidates.find((candidate) => fs.existsSync(candidate)) ?? candidates[0];
+}
 function manifestTickets(manifest) {
     if (!isRecord(manifest) || !Array.isArray(manifest.tickets))
         return [];
     return manifest.tickets.filter(isRecord);
 }
-function manifestRequirementIds(manifest) {
-    if (!isRecord(manifest))
-        return [];
+function manifestTicketFor(ticket, manifest) {
+    return manifestTickets(manifest).find((entry) => entry.id === ticket.id || entry.key === ticket.key);
+}
+function sourceRequirementIndex(requirements) {
+    const index = new Map();
+    for (const requirement of requirements) {
+        const existing = index.get(requirement.requirementId) ?? [];
+        existing.push(requirement);
+        index.set(requirement.requirementId, existing);
+    }
+    return index;
+}
+function enrichTickets(tickets, manifest, sourceRequirements) {
+    const byRequirement = sourceRequirementIndex(sourceRequirements);
+    return tickets.map((ticket) => {
+        const manifestTicket = manifestTicketFor(ticket, manifest);
+        const mappedRequirements = uniqueStrings([
+            ...ticket.mappedRequirements,
+            ...stringArray(manifestTicket?.mapped_requirements),
+            ...stringArray(manifestTicket?.requirements),
+            ...stringArray(manifestTicket?.ac_ids),
+        ]);
+        const acIds = uniqueStrings([...ticket.acIds, ...mappedRequirements]);
+        const matches = acIds.flatMap((id) => byRequirement.get(id) ?? []);
+        const sourcePrds = uniqueStrings(matches.map((match) => match.sourcePrd));
+        const sourceSections = uniqueStrings(matches.map((match) => match.sourceSection));
+        const inferredSourcePrd = sourcePrds.join(', ') || undefined;
+        const inferredSourceSection = sourceSections.join(', ') || undefined;
+        return {
+            ...ticket,
+            sourcePrd: ticket.sourcePrd ?? (typeof manifestTicket?.source_prd === 'string' ? manifestTicket.source_prd : undefined) ?? inferredSourcePrd,
+            sourceSection: ticket.sourceSection ?? (typeof manifestTicket?.source_section === 'string' ? manifestTicket.source_section : undefined) ?? inferredSourceSection,
+            mappedRequirements,
+            acIds,
+        };
+    });
+}
+function manifestRequirementIds(manifest, sourceRequirements = []) {
     const ids = new Set();
+    for (const req of sourceRequirements)
+        ids.add(req.requirementId);
+    if (!isRecord(manifest))
+        return [...ids].sort();
     for (const req of stringArray(manifest.requirements))
         ids.add(req);
     if (isRecord(manifest.prd_requirements)) {
@@ -309,7 +428,7 @@ function manifestRefs(manifest, tickets) {
     return refs;
 }
 function ticketRequirementIds(manifest, tickets) {
-    const ids = new Set(tickets.flatMap((ticket) => ticket.acIds));
+    const ids = new Set(tickets.flatMap((ticket) => [...ticket.acIds, ...ticket.mappedRequirements]));
     for (const ticket of manifestTickets(manifest)) {
         for (const ac of stringArray(ticket.ac_ids))
             ids.add(ac);
@@ -318,9 +437,9 @@ function ticketRequirementIds(manifest, tickets) {
     }
     return ids;
 }
-function findPrdMapFindings(tickets, manifest) {
+function findPrdMapFindings(tickets, manifest, sourceRequirements) {
     const mapped = ticketRequirementIds(manifest, tickets);
-    return manifestRequirementIds(manifest)
+    return manifestRequirementIds(manifest, sourceRequirements)
         .filter((requirement) => !mapped.has(requirement))
         .map((requirement) => ({
         ticket: 'manifest',
@@ -457,8 +576,11 @@ function writeReport(sessionDir, tickets, findings, escalation) {
     const date = formatLocalDateKey(new Date());
     const filename = escalation ? `readiness_escalation_${date}.md` : `readiness_${date}.md`;
     const reportPath = path.join(sessionDir, filename);
-    const prdMapRows = tickets.map((ticket) => `| ${ticket.id} | ${ticket.key ?? ''} | ${ticket.sourcePrd ?? ''} | ${ticket.sourceSection ?? ''} | ${ticket.acIds.join(', ')} |`);
-    const acRows = tickets.flatMap((ticket) => extractAcceptanceCriteria(fs.readFileSync(ticket.file, 'utf-8')).map((ac) => `| ${path.relative(sessionDir, ticket.file)} | ${isMachineCheckable(ac) ? 'PASS' : 'FAIL'} | ${ac.replace(/\|/g, '\\|')} |`));
+    const prdMapRows = tickets.map((ticket) => `| ${ticket.id} | ${ticket.key ?? ''} | ${ticket.sourcePrd ?? ''} | ${ticket.sourceSection ?? ''} | ${uniqueStrings([...ticket.acIds, ...ticket.mappedRequirements]).join(', ')} |`);
+    const acRows = tickets.flatMap((ticket) => extractAcceptanceCriteria(fs.readFileSync(ticket.file, 'utf-8')).map((ac) => {
+        const status = acceptanceCriterionVerifyPhase(ac) === 'post' ? 'SKIP_POST' : isMachineCheckable(ac) ? 'PASS' : 'FAIL';
+        return `| ${path.relative(sessionDir, ticket.file)} | ${status} | ${ac.replace(/\|/g, '\\|')} |`;
+    }));
     const contractRows = findings
         .filter((finding) => finding.kind === 'contract')
         .map((finding) => `| ${displayTicketRef(sessionDir, finding.ticket)} | FAIL | ${finding.detail} | ${finding.analyst} |`);
@@ -503,12 +625,13 @@ export function runReadiness(args) {
     const selected = selectTicketFiles(args.sessionDir, state);
     const checkMachinability = args.machinabilityOnly || !args.contractOnly;
     const checkContracts = args.contractOnly || !args.machinabilityOnly;
-    const tickets = selected.files.map(ticketInfo);
     const manifestPath = args.manifest ? path.resolve(args.sessionDir, args.manifest) : path.join(args.sessionDir, 'decomposition_manifest.json');
     const manifest = readJsonFile(fs.existsSync(manifestPath) ? manifestPath : args.manifest);
+    const sourceRequirements = sourceRequirementsFromParentPrd(resolveManifestPrdPath(manifest, args.sessionDir, args.repoRoot), args.repoRoot);
+    const tickets = enrichTickets(selected.files.map(ticketInfo), manifest, sourceRequirements);
     const refs = manifestRefs(manifest, tickets);
     const findings = [
-        ...findPrdMapFindings(tickets, manifest),
+        ...findPrdMapFindings(tickets, manifest, sourceRequirements),
         ...tickets.flatMap((ticket) => findPathFindings(ticket, args.repoRoot, args.sessionDir)),
         ...tickets.flatMap((ticket) => findDependencyFindings(ticket, refs)),
         ...selected.files.flatMap((file) => findReadinessFindings(file, args.repoRoot, { checkMachinability, checkContracts })),

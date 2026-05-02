@@ -66,7 +66,7 @@ function readinessFiles(sessionDir) {
 test('check-readiness: prose-only AC exits 2, suggests gaps, writes readiness report', () => {
     const sessionDir = tmpDir();
     try {
-        writeTicket(sessionDir, 'aaa111', ['The UI must be intuitive.']);
+        writeTicket(sessionDir, 'aaa111', ['verify_pre: The UI must be intuitive.']);
         fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
             active: true,
             readiness: {
@@ -112,7 +112,7 @@ test('check-readiness: unresolved contract exits 2 and suggests codebase', () =>
 test('check-readiness: fourth failed cycle writes escalation report', () => {
     const sessionDir = tmpDir();
     try {
-        writeTicket(sessionDir, 'ccc333', ['The workflow should feel intuitive.']);
+        writeTicket(sessionDir, 'ccc333', ['verify_pre: The workflow should feel intuitive.']);
         fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
             active: true,
             readiness: {
@@ -189,7 +189,7 @@ test('check-readiness: post-correction delta checks modified tickets and logs re
         }));
         assert.equal(runReadiness(sessionDir, process.cwd(), { EXTENSION_DIR: dataRoot }).status, 0);
 
-        writeTicket(sessionDir, 'eee555', ['The workflow should be intuitive.']);
+        writeTicket(sessionDir, 'eee555', ['verify_pre: The workflow should be intuitive.']);
         fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
             active: true,
             tickets_version: 2,

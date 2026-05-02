@@ -111,14 +111,25 @@ test('check-readiness: PRD requirement without ticket mapping fails independentl
     assert.ok(out.findings.some((finding) => finding.kind === 'prd_map' && finding.detail === 'REQ-1'));
 }));
 
-test('check-readiness: prose-only acceptance criterion fails independently', () => runFixture((sessionDir) => {
-    writeTicket(sessionDir, 'ac0001', { ac: 'The workflow should feel intuitive.' });
+test('check-readiness: prose-only verify_pre acceptance criterion fails independently', () => runFixture((sessionDir) => {
+    writeTicket(sessionDir, 'ac0001', { ac: 'verify_pre: The workflow should feel intuitive.' });
     writeManifest(sessionDir, { tickets: [{ id: 'ac0001', key: 'AC-1' }] });
 
     const result = runReadiness(sessionDir);
     assert.equal(result.status, 2);
     const out = JSON.parse(result.stdout);
     assert.ok(out.findings.some((finding) => finding.kind === 'machinability'));
+}));
+
+test('check-readiness: acceptance criteria default to verify_post and skip readiness machinability', () => runFixture((sessionDir) => {
+    writeTicket(sessionDir, 'acpost', { ac: 'The workflow should feel intuitive.' });
+    writeManifest(sessionDir, { tickets: [{ id: 'acpost', key: 'AC-POST' }] });
+
+    const result = runReadiness(sessionDir);
+    assert.equal(result.status, 0, result.stderr);
+    const out = JSON.parse(result.stdout);
+    assert.equal(out.status, 'pass');
+    assert.deepEqual(out.findings, []);
 }));
 
 test('check-readiness: missing file path fails independently', () => runFixture((sessionDir) => {
@@ -222,7 +233,7 @@ test('check-readiness: post-correction delta recovers dead-writer snapshot tmp',
         tickets_version: 2,
         activity: [{ event: 'course_corrected' }],
     }), null, 2));
-    fs.writeFileSync(changed, fs.readFileSync(changed, 'utf8').replace('Command exits 0 exactly.', 'The workflow should feel intuitive.'));
+    fs.writeFileSync(changed, fs.readFileSync(changed, 'utf8').replace('Command exits 0 exactly.', 'verify_pre: The workflow should feel intuitive.'));
 
     const result = runReadiness(sessionDir);
 
