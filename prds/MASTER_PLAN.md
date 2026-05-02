@@ -13,7 +13,8 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 | # | PRD | Status | Next action |
 |---|---|---|---|
-| 1 | [`prds/p1-bug-bundle-2026-05-01-pm.md`](p1-bug-bundle-2026-05-01-pm.md) ⭐ **P1 BUNDLE — IN FLIGHT NEXT** | **Draft (manifest)** — composes 3 source P1s into one `/pickle-pipeline --backend codex` run. Section A: anatomy-park-runner-undefined-description-crash (5 ACs, ~150-250 LOC). Section B: szechuan-sauce-codex-judge-model-mismatch (5 ACs, ~200-300 LOC). Section C: pipeline-state-desync TAIL — PSD-T6..T10 (5 tickets, ~250 LOC) closing the v1.66.0 npm-test workaround. ~16 atomic tickets, ~600-800 LOC. Refinement orders C → A → B. | `/pickle-pipeline --backend codex` on the bundle; bundle's own anatomy-park + szechuan phases will validate sections A and B on their own diff |
+| 1 | [`prds/p1-bug-bundle-2026-05-01-pm.md`](p1-bug-bundle-2026-05-01-pm.md) ⭐ **P1 BUNDLE — IN FLIGHT** | **Refined + running** — session `2026-05-01-325ccb80`, pipeline-325ccb80, Phase 1/4 PICKLE since 01:26 UTC after readiness-halt-then-resume with `state.flags.skip_readiness_reason` set. 20 tickets on disk (1 parent + 15 impl + 4 hardening + 1 closer). Refinement narrowed Section B to one-line fix at `init-microverse.ts:13`. | Watch convergence; expect ~3-4h on codex backend |
+| 1b | [`prds/readiness-gate-manifest-prd-bundle-mismatch.md`](readiness-gate-manifest-prd-bundle-mismatch.md) ⭐ **NEW P2** — readiness gate doesn't handle manifest/bundle PRDs | **Draft** — surfaced live during bundle launch on `325ccb80` (readiness halted at 00:26:55). 3 related bugs: (1) ticket frontmatter has no `source_prd`/`source_section` slot for cross-PRD attribution; (2) check-readiness fails ACs whose verify command checks post-fix state; (3) manifest PRDs' `peer_prds` frontmatter isn't walked by the gate. 7 ACs, 9 atomic tickets, ~430 LOC. Workaround: `state.flags.skip_readiness_reason` (BMAD P0.6). | Schedule for next overnight bundle alongside hermes |
 | 2 | [`prds/anatomy-park-gate-baseline-missing.md`](anatomy-park-gate-baseline-missing.md) | **SHIPPED v1.66.0** — 9 atomic tickets converged in 91m on session `bfa25a4b`; gate-baseline write-verify, recapture-before-strict-mode, strict-red through stall-limit, integration test all landed | — |
 | 3 | [`prds/hermes-integration.md`](hermes-integration.md) | **Ready (P2)** — research complete, 30 Qs answered, 4 open Qs resolved | `/pickle-refine-prd` → next overnight bundle |
 | 4 | [`prds/multi-repo-task-state-drift.md`](multi-repo-task-state-drift.md) | **Refined draft** — high impact when triggered (multi-repo flows only) | Pick up after hermes; needs scoping decision |
@@ -35,7 +36,8 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 | Path | Status | Notes |
 |---|---|---|
-| `p1-bug-bundle-2026-05-01-pm.md` | **Manifest (P1)** ⭐ NEW — IN FLIGHT NEXT | Composes 3 source P1s; ~16 atomic tickets; ~600-800 LOC; backend: codex-required |
+| `p1-bug-bundle-2026-05-01-pm.md` | **Manifest (P1) — IN FLIGHT** | Refined; 20 tickets on disk; running on session `325ccb80` Phase 1/4 PICKLE since 01:26 UTC |
+| `readiness-gate-manifest-prd-bundle-mismatch.md` | **Draft (P2)** ⭐ NEW | 3 bugs in readiness gate ↔ ticket-frontmatter ↔ skill-template chain when refining manifest PRDs; 7 ACs, 9 atomic tickets, ~430 LOC |
 | `anatomy-park-runner-undefined-description-crash.md` | **In bundle (P1)** | Section A of the bundle. AC-APRC-01..05 mandatory + 06 optional. Source PRD stays canonical |
 | `szechuan-sauce-codex-judge-model-mismatch.md` | **In bundle (P1)** | Section B of the bundle. AC-SCJM-01..05 mandatory + 06 optional. Source PRD stays canonical |
 | `pipeline-state-desync-and-pane-respawn-tmpdir.md` | **In bundle (P1)** | Section C TAIL. PSD-T6..T10 remaining (T0..T5 SHIPPED v1.66.0) |
