@@ -13,7 +13,7 @@ const REQUIRED_TRAP_DOOR_ENTRY_SUBSTRINGS = [
   'ENFORCE: extension/tests/mux-runner-state-iteration.test.js',
   'PATTERN_SHAPE: `state.iteration = iteration`',
   '`src/bin/pipeline-runner.ts` (phase-step write)',
-  'ENFORCE: extension/tests/pipeline-runner-state-step.test.js',
+  'ENFORCE: extension/tests/integration/pipeline-state-coherence.test.js',
   "PATTERN_SHAPE: `state.step = '<phase>'`",
   '`src/services/pickle-utils.ts` (getExtensionRoot validation)',
   'ENFORCE: extension/tests/get-extension-root-fallback.test.js',
