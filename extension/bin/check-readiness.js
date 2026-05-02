@@ -115,12 +115,20 @@ export function extractContractReferences(content) {
         .filter((ref) => !refs.has(`${ref}()`))
         .sort();
 }
-function resolvePathRef(ref, repoRoot, ticketFile, sessionDir) {
+function resolvePathRef(ref, repoRoot, ticket, sessionDir) {
     if (path.isAbsolute(ref) && fs.existsSync(ref))
         return true;
+    let workingDir;
+    if (ticket.workingDir) {
+        workingDir = path.isAbsolute(ticket.workingDir)
+            ? ticket.workingDir
+            : path.resolve(repoRoot, ticket.workingDir);
+    }
     const bases = [
+        workingDir,
         repoRoot,
-        ticketFile ? path.dirname(ticketFile) : undefined,
+        path.join(repoRoot, 'extension'),
+        path.dirname(ticket.file),
         sessionDir,
     ].filter((base) => typeof base === 'string');
     return bases.some((base) => fs.existsSync(path.resolve(base, ref)));
@@ -283,6 +291,7 @@ function ticketInfo(ticketFile) {
         file: ticketFile,
         id,
         key: readScalar(frontmatter, 'key'),
+        workingDir: readScalar(frontmatter, 'working_dir'),
         sourcePrd: readScalar(frontmatter, 'source_prd'),
         sourceSection: readScalar(frontmatter, 'source_section'),
         mappedRequirements: readStringArray(frontmatter, 'mapped_requirements'),
@@ -455,7 +464,7 @@ function findPathFindings(ticket, repoRoot, sessionDir) {
     for (const match of content.matchAll(PATH_RE))
         refs.add(match[0]);
     return [...refs].sort()
-        .filter((ref) => !resolvePathRef(ref, repoRoot, ticket.file, sessionDir))
+        .filter((ref) => !resolvePathRef(ref, repoRoot, ticket, sessionDir))
         .map((ref) => ({
         ticket: ticket.file,
         kind: 'file_path',
@@ -679,12 +688,21 @@ function main() {
         }
         if (args.skipReadiness !== undefined) {
             const reason = args.skipReadiness;
+            const timestamp = new Date().toISOString();
             logActivity({
                 event: 'readiness_skipped',
                 source: 'pickle',
                 session: path.basename(args.sessionDir),
-                gate_payload: { reason, timestamp: new Date().toISOString() },
+                gate_payload: { reason, timestamp },
             });
+            if (/manifest-bundle/i.test(reason)) {
+                logActivity({
+                    event: 'readiness_skipped_for_manifest',
+                    source: 'pickle',
+                    session: path.basename(args.sessionDir),
+                    gate_payload: { reason, timestamp },
+                });
+            }
             process.stdout.write(`${JSON.stringify({ status: 'skipped', reason, elapsed_ms: 0 })}\n`);
             process.exit(0);
         }

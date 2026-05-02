@@ -56,7 +56,7 @@ function withBrokenCanadianDateLocale(fn) {
 
 // --- VALID_ACTIVITY_EVENTS ---
 
-test('types.activity-events: VALID_ACTIVITY_EVENTS contains all 68 expected event types', () => {
+test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event types', () => {
     const expected = [
         'session_start', 'session_end', 'ticket_completed', 'epic_completed',
         'meeseeks_pass', 'commit', 'research', 'bug_fix', 'feature',
@@ -84,6 +84,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all 68 expected even
         // BMAD residual P0.6: check-readiness --skip-readiness emits this when
         // the gate is bypassed via state.flags.skip_readiness_reason.
         'readiness_skipped',
+        'readiness_skipped_for_manifest',
         'archaeology_complete',
         'archaeology_skipped',
         'phase_personas_disabled_seen',
@@ -115,7 +116,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all 68 expected even
         // per-iteration gate baseline before strict-mode fallback.
         'baseline_recapture_failed',
     ];
-    assert.equal(VALID_ACTIVITY_EVENTS.length, 68);
+    assert.equal(VALID_ACTIVITY_EVENTS.length, 70);
     for (const e of expected) {
         assert.ok(VALID_ACTIVITY_EVENTS.includes(e), `Missing event type: ${e}`);
     }

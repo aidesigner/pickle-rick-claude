@@ -20,11 +20,13 @@ function writeTicket(sessionDir, id, options = {}) {
     const ticketPath = path.join(ticketDir, `linear_ticket_${id}.md`);
     const acIds = options.acIds ? `[${options.acIds.join(', ')}]` : '[]';
     const deps = options.dependencies ? `dependencies: [${options.dependencies.join(', ')}]\n` : '';
+    const workingDir = options.workingDir ? `working_dir: ${options.workingDir}\n` : '';
     fs.writeFileSync(ticketPath, [
         '---',
         `id: ${id}`,
         `key: ${options.key ?? id}`,
         `ac_ids: ${acIds}`,
+        workingDir.trimEnd(),
         deps.trimEnd(),
         '---',
         '',
@@ -140,6 +142,45 @@ test('check-readiness: missing file path fails independently', () => runFixture(
     assert.equal(result.status, 2);
     const out = JSON.parse(result.stdout);
     assert.ok(out.findings.some((finding) => finding.kind === 'file_path' && finding.detail === 'missing/path-contract.ts'));
+}));
+
+test('check-readiness: file path resolver accepts paths relative to ticket working_dir', () => runFixture((sessionDir) => {
+    const repoRoot = tmpDir('pickle-readiness-repo-');
+    try {
+        fs.mkdirSync(path.join(repoRoot, 'packages/app/src'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'packages/app/src/path-contract.ts'), 'export const ok = true;\n');
+        writeTicket(sessionDir, 'pathwd', {
+            workingDir: 'packages/app',
+            extra: '## Files\n\n- `src/path-contract.ts`\n',
+        });
+        writeManifest(sessionDir, { tickets: [{ id: 'pathwd', key: 'PATH-WD' }] });
+
+        const result = runReadiness(sessionDir, repoRoot);
+        assert.equal(result.status, 0, result.stderr);
+        const out = JSON.parse(result.stdout);
+        assert.equal(out.status, 'pass');
+        assert.deepEqual(out.findings, []);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
+}));
+
+test('check-readiness: file path resolver accepts extension-root fallback paths', () => runFixture((sessionDir) => {
+    const repoRoot = tmpDir('pickle-readiness-repo-');
+    try {
+        fs.mkdirSync(path.join(repoRoot, 'extension/tests'), { recursive: true });
+        fs.writeFileSync(path.join(repoRoot, 'extension/tests/path-contract.test.js'), 'export {};\n');
+        writeTicket(sessionDir, 'pathext', { extra: '## Files\n\n- `tests/path-contract.test.js`\n' });
+        writeManifest(sessionDir, { tickets: [{ id: 'pathext', key: 'PATH-EXT' }] });
+
+        const result = runReadiness(sessionDir, repoRoot);
+        assert.equal(result.status, 0, result.stderr);
+        const out = JSON.parse(result.stdout);
+        assert.equal(out.status, 'pass');
+        assert.deepEqual(out.findings, []);
+    } finally {
+        fs.rmSync(repoRoot, { recursive: true, force: true });
+    }
 }));
 
 test('check-readiness: missing contract fails independently', () => runFixture((sessionDir) => {

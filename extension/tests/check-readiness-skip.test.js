@@ -120,6 +120,57 @@ test('check-readiness: --skip-readiness skips PRD-map validation entirely (would
     }
 });
 
+test('check-readiness: manifest-bundle skip reason emits manifest-specific audit event', () => {
+    const sessionDir = tmpDir();
+    const dataRoot = tmpDir('pickle-data-skip-');
+    try {
+        const reason = 'manifest-bundle prevalidated by source PRD map';
+        const result = spawnSync(process.execPath, [
+            BIN,
+            '--session-dir', sessionDir,
+            '--skip-readiness', reason,
+        ], {
+            encoding: 'utf-8',
+            timeout: 10_000,
+            env: { ...process.env, PICKLE_DATA_ROOT: dataRoot },
+        });
+        assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+        const events = readActivityLines(dataRoot);
+        const generic = events.find((e) => e.event === 'readiness_skipped');
+        const manifest = events.find((e) => e.event === 'readiness_skipped_for_manifest');
+        assert.ok(generic, `expected readiness_skipped event, got: ${JSON.stringify(events)}`);
+        assert.ok(manifest, `expected readiness_skipped_for_manifest event, got: ${JSON.stringify(events)}`);
+        assert.equal(manifest.gate_payload?.reason, reason);
+        assert.equal(manifest.gate_payload?.timestamp, generic.gate_payload?.timestamp);
+    } finally {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('check-readiness: ordinary skip reason does not emit manifest-specific audit event', () => {
+    const sessionDir = tmpDir();
+    const dataRoot = tmpDir('pickle-data-skip-');
+    try {
+        const result = spawnSync(process.execPath, [
+            BIN,
+            '--session-dir', sessionDir,
+            '--skip-readiness', 'pre-validated by refinement team',
+        ], {
+            encoding: 'utf-8',
+            timeout: 10_000,
+            env: { ...process.env, PICKLE_DATA_ROOT: dataRoot },
+        });
+        assert.equal(result.status, 0, `stderr: ${result.stderr}`);
+        const events = readActivityLines(dataRoot);
+        assert.ok(events.some((e) => e.event === 'readiness_skipped'), `expected generic skip event, got: ${JSON.stringify(events)}`);
+        assert.ok(!events.some((e) => e.event === 'readiness_skipped_for_manifest'), `unexpected manifest skip event: ${JSON.stringify(events)}`);
+    } finally {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
 // ---------------------------------------------------------------------------
 // mux-runner wiring: runMuxReadinessGate forwards `--skip-readiness <reason>`
 // when input.skipReason is set.
@@ -221,4 +272,3 @@ process.exit(0);
         fs.rmSync(extensionRoot, { recursive: true, force: true });
     }
 });
-

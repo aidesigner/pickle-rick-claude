@@ -369,6 +369,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'codex_manager_relaunch',
   'readiness_failed_post_correction',
   'readiness_skipped',
+  'readiness_skipped_for_manifest',
   'archaeology_complete',
   'archaeology_skipped',
   'phase_personas_disabled_seen',
