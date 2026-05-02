@@ -19,7 +19,13 @@ function makeTempDir() {
 
 const BASE_OPTS = {
   prdPath: '/tmp/test.md',
-  metric: { name: 'coverage', command: 'echo 80', tolerance: 1 },
+  metric: {
+    description: 'coverage',
+    validation: 'echo 80',
+    type: 'command',
+    timeout_seconds: 30,
+    tolerance: 1,
+  },
   stallLimit: 3,
 };
 
@@ -35,7 +41,14 @@ test('readMicroverseState defaults iteration_regressions to 0 and flag to false 
     const legacy = {
       status: 'iterating',
       prd_path: '/tmp/test.md',
-      key_metric: { name: 'coverage', command: 'echo 80', tolerance: 1, direction: 'higher' },
+      key_metric: {
+        description: 'coverage',
+        validation: 'echo 80',
+        type: 'command',
+        timeout_seconds: 30,
+        tolerance: 1,
+        direction: 'higher',
+      },
       convergence: { stall_limit: 3, stall_counter: 0, history: [] },
       gap_analysis_path: '',
       failed_approaches: [],

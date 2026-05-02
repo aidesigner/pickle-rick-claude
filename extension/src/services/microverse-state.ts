@@ -9,6 +9,141 @@ const sm = new StateManager();
 
 const MICROVERSE_FILE = 'microverse.json';
 
+const MICROVERSE_STATUSES = new Set(['gap_analysis', 'iterating', 'converged', 'stopped']);
+const METRIC_TYPES = new Set(['command', 'llm', 'none']);
+const METRIC_DIRECTIONS = new Set(['higher', 'lower']);
+const CONVERGENCE_MODES = new Set(['metric', 'worker']);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function requireString(value: unknown, field: string): string {
+  if (typeof value !== 'string') {
+    throw new Error(`Invalid microverse state: ${field} must be a string`);
+  }
+  return value;
+}
+
+function requireFiniteNumber(value: unknown, field: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(`Invalid microverse state: ${field} must be a finite number`);
+  }
+  return value;
+}
+
+function requireStringArray(value: unknown, field: string): string[] {
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== 'string')) {
+    throw new Error(`Invalid microverse state: ${field} must be an array of strings`);
+  }
+  return value;
+}
+
+function requireRecordArray(value: unknown, field: string): Record<string, unknown>[] {
+  if (!Array.isArray(value) || value.some((entry) => !isRecord(entry))) {
+    throw new Error(`Invalid microverse state: ${field} must be an array of objects`);
+  }
+  return value;
+}
+
+function assertOptionalBoolean(state: Record<string, unknown>, field: string): void {
+  if (state[field] !== undefined && typeof state[field] !== 'boolean') {
+    throw new Error(`Invalid microverse state: ${field} must be a boolean when present`);
+  }
+}
+
+function assertOptionalFiniteNumber(state: Record<string, unknown>, field: string): void {
+  if (state[field] !== undefined) requireFiniteNumber(state[field], field);
+}
+
+function assertOptionalString(state: Record<string, unknown>, field: string): void {
+  if (state[field] !== undefined) requireString(state[field], field);
+}
+
+function assertMicroverseMetricShape(value: unknown): void {
+  if (!isRecord(value)) {
+    throw new Error('Invalid microverse state: key_metric must be an object for microverse mode');
+  }
+  requireString(value.description, 'key_metric.description');
+  requireString(value.validation, 'key_metric.validation');
+  if (typeof value.type !== 'string' || !METRIC_TYPES.has(value.type)) {
+    throw new Error('Invalid microverse state: key_metric.type must be one of command, llm, or none');
+  }
+  requireFiniteNumber(value.timeout_seconds, 'key_metric.timeout_seconds');
+  requireFiniteNumber(value.tolerance, 'key_metric.tolerance');
+  if (value.direction !== undefined && (typeof value.direction !== 'string' || !METRIC_DIRECTIONS.has(value.direction))) {
+    throw new Error('Invalid microverse state: key_metric.direction must be higher or lower when present');
+  }
+  if (value.judge_model !== undefined && typeof value.judge_model !== 'string') {
+    throw new Error('Invalid microverse state: key_metric.judge_model must be a string when present');
+  }
+}
+
+function readCommandTemplate(sessionDir: string): string | undefined {
+  try {
+    const state = readRecoverableJsonObject(path.join(sessionDir, 'state.json')) as Record<string, unknown> | null;
+    return typeof state?.command_template === 'string' ? state.command_template : undefined;
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw err;
+  }
+}
+
+// eslint-disable-next-line complexity -- central runtime contract validator; keeping checks local makes failures actionable.
+export function assertMicroverseStateShape(
+  parsed: unknown,
+  commandTemplate?: string
+): MicroverseSessionState {
+  if (!isRecord(parsed)) {
+    throw new Error('Invalid microverse state: root must be an object');
+  }
+
+  if (typeof parsed.status !== 'string' || !MICROVERSE_STATUSES.has(parsed.status)) {
+    throw new Error('Invalid microverse state: status must be gap_analysis, iterating, converged, or stopped');
+  }
+  requireString(parsed.prd_path, 'prd_path');
+
+  const convergence = parsed.convergence;
+  if (!isRecord(convergence)) {
+    throw new Error('Invalid microverse state: convergence must be an object');
+  }
+  requireFiniteNumber(convergence.stall_limit, 'convergence.stall_limit');
+  requireFiniteNumber(convergence.stall_counter, 'convergence.stall_counter');
+  requireRecordArray(convergence.history, 'convergence.history');
+
+  requireString(parsed.gap_analysis_path, 'gap_analysis_path');
+  requireStringArray(parsed.failed_approaches, 'failed_approaches');
+  requireFiniteNumber(parsed.baseline_score, 'baseline_score');
+  requireRecordArray(parsed.failure_history, 'failure_history');
+  if (typeof parsed.approach_exhaustion_fired !== 'boolean') {
+    throw new Error('Invalid microverse state: approach_exhaustion_fired must be a boolean');
+  }
+
+  if (parsed.convergence_mode !== undefined && (typeof parsed.convergence_mode !== 'string' || !CONVERGENCE_MODES.has(parsed.convergence_mode))) {
+    throw new Error('Invalid microverse state: convergence_mode must be metric or worker when present');
+  }
+  assertOptionalString(parsed, 'convergence_file');
+  assertOptionalString(parsed, 'judge_context_path');
+  assertOptionalString(parsed, 'exit_reason');
+  assertOptionalString(parsed, 'stash_ref');
+  assertOptionalFiniteNumber(parsed, 'convergence_target');
+  assertOptionalFiniteNumber(parsed, 'iteration_regressions');
+  assertOptionalFiniteNumber(parsed, 'consecutive_amnesiac_exits');
+  assertOptionalBoolean(parsed, 'gate_regression_threshold_warning_emitted');
+  if (parsed.allowed_paths !== undefined) requireStringArray(parsed.allowed_paths, 'allowed_paths');
+
+  const anatomyParkWorkerMode = commandTemplate === 'anatomy-park.md' && parsed.convergence_mode === 'worker';
+  if (parsed.key_metric === undefined) {
+    if (!anatomyParkWorkerMode) {
+      throw new Error('Invalid microverse state: key_metric is required for microverse mode');
+    }
+  } else {
+    assertMicroverseMetricShape(parsed.key_metric);
+  }
+
+  return parsed as unknown as MicroverseSessionState;
+}
+
 export function compareMetric(
   current: number,
   previous: number,
@@ -228,13 +363,13 @@ export function readMicroverseState(
 ): MicroverseSessionState | null {
   const filePath = path.join(sessionDir, MICROVERSE_FILE);
   try {
-    const parsed = readRecoverableJsonObject(filePath) as MicroverseSessionState | null;
+    const parsed = readRecoverableJsonObject(filePath) as Record<string, unknown> | null;
     if (!parsed) return null;
     parsed.failure_history ??= [];
     parsed.approach_exhaustion_fired ??= false;
     parsed.iteration_regressions ??= 0;
     parsed.gate_regression_threshold_warning_emitted ??= false;
-    return parsed;
+    return assertMicroverseStateShape(parsed, readCommandTemplate(sessionDir));
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
     const msg = safeErrorMessage(err);
