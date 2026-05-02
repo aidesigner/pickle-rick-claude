@@ -1,7 +1,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, chmodSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -146,6 +146,107 @@ function runVersionGuardFixture(fixture, args = []) {
     env: { ...process.env, HOME: fixture.homeDir },
   });
 }
+
+function buildCacheHygieneFixtureScript(scriptDir) {
+  return `#!/bin/bash
+set -euo pipefail
+SCRIPT_DIR="${scriptDir}"
+EXTENSION_ROOT="$HOME/.claude/pickle-rick"
+
+read_package_version() {
+  local package_json="$1"
+  local version
+  version="$(jq -r '.version' "$package_json")"
+  if [ -z "$version" ] || [ "$version" = "null" ]; then
+    echo "Could not read version from $package_json" >&2
+    exit 1
+  fi
+  echo "$version"
+}
+
+mkdir -p "$EXTENSION_ROOT/extension"
+rsync -a --delete "$SCRIPT_DIR/extension/" "$EXTENSION_ROOT/extension/"
+
+DEPLOYED_V="$(read_package_version "$EXTENSION_ROOT/extension/package.json")"
+UPDATE_CACHE_FILE="$EXTENSION_ROOT/update-check.json"
+if [ -f "$UPDATE_CACHE_FILE" ]; then
+  CACHE_CURRENT_VERSION="$(jq -r '.current_version // ""' "$UPDATE_CACHE_FILE" 2>/dev/null || echo "")"
+  if [ "$CACHE_CURRENT_VERSION" = "1.0.0" ] || [ "$CACHE_CURRENT_VERSION" != "$DEPLOYED_V" ]; then
+    rm -f "$UPDATE_CACHE_FILE"
+    echo "[install.sh] Removed stale update cache: cached current_version=\${CACHE_CURRENT_VERSION:-<missing>} deployed=$DEPLOYED_V" >&2
+  fi
+fi
+`;
+}
+
+function makeCacheHygieneFixture({ sourceVersion, cacheVersion }) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'install-cache-hygiene-'));
+  const homeDir = path.join(dir, 'home');
+  const sourceExtension = path.join(dir, 'extension');
+  const runtimeRoot = path.join(homeDir, '.claude', 'pickle-rick');
+  mkdirSync(sourceExtension, { recursive: true });
+  mkdirSync(runtimeRoot, { recursive: true });
+  writeFileSync(path.join(sourceExtension, 'package.json'), JSON.stringify({ version: sourceVersion }));
+  writeFileSync(path.join(runtimeRoot, 'update-check.json'), JSON.stringify({
+    last_check_epoch: 1,
+    latest_version: cacheVersion,
+    current_version: cacheVersion,
+  }));
+  const scriptPath = path.join(dir, 'install.sh');
+  writeFileSync(scriptPath, buildCacheHygieneFixtureScript(dir), { mode: 0o755 });
+  return {
+    dir,
+    homeDir,
+    scriptPath,
+    cachePath: path.join(runtimeRoot, 'update-check.json'),
+  };
+}
+
+function runCacheHygieneFixture(fixture) {
+  return spawnSync('bash', [fixture.scriptPath], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: fixture.homeDir },
+  });
+}
+
+describe('install.sh update cache hygiene', () => {
+  test('install-script.cache-hygiene removes mismatched update cache', () => {
+    const fixture = makeCacheHygieneFixture({ sourceVersion: '1.68.0', cacheVersion: '1.65.0' });
+    try {
+      const result = runCacheHygieneFixture(fixture);
+      assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
+      assert.equal(existsSync(fixture.cachePath), false);
+      assert.match(result.stderr, /Removed stale update cache/);
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('install-script.cache-hygiene removes sentinel update cache', () => {
+    const fixture = makeCacheHygieneFixture({ sourceVersion: '1.68.0', cacheVersion: '1.0.0' });
+    try {
+      const result = runCacheHygieneFixture(fixture);
+      assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
+      assert.equal(existsSync(fixture.cachePath), false);
+      assert.match(result.stderr, /current_version=1[.]0[.]0/);
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('install-script.cache-hygiene keeps matching update cache', () => {
+    const fixture = makeCacheHygieneFixture({ sourceVersion: '1.68.0', cacheVersion: '1.68.0' });
+    try {
+      const result = runCacheHygieneFixture(fixture);
+      assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
+      assert.equal(existsSync(fixture.cachePath), true);
+      assert.equal(JSON.parse(readFileSync(fixture.cachePath, 'utf8')).current_version, '1.68.0');
+      assert.equal(result.stderr, '');
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('install.sh source-vs-deployed package version guard', () => {
   test('install-script.refuses-source-older git mode', () => {

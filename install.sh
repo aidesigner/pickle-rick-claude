@@ -153,6 +153,16 @@ rsync -a --delete --delete-excluded \
   --exclude='package-lock.json' \
   "$SCRIPT_DIR/extension/" "$EXTENSION_ROOT/extension/"
 
+DEPLOYED_V="$(read_package_version "$EXTENSION_ROOT/extension/package.json")"
+UPDATE_CACHE_FILE="$EXTENSION_ROOT/update-check.json"
+if [ -f "$UPDATE_CACHE_FILE" ]; then
+  CACHE_CURRENT_VERSION="$(jq -r '.current_version // ""' "$UPDATE_CACHE_FILE" 2>/dev/null || echo "")"
+  if [ "$CACHE_CURRENT_VERSION" = "1.0.0" ] || [ "$CACHE_CURRENT_VERSION" != "$DEPLOYED_V" ]; then
+    rm -f "$UPDATE_CACHE_FILE"
+    echo "[install.sh] Removed stale update cache: cached current_version=${CACHE_CURRENT_VERSION:-<missing>} deployed=$DEPLOYED_V" >&2
+  fi
+fi
+
 # --- RUNTIME DEPS ---
 # Some compiled JS modules (e.g. citadel/frontend-prop-drift-audit.js) import
 # packages from extension/node_modules at module-load. Since rsync excludes
