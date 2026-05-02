@@ -9,6 +9,12 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const HANDLER = path.resolve(__dirname, '../hooks/handlers/config-protection.js');
 
+function writeExtensionSentinel(extensionDir) {
+  const sentinelDir = path.join(extensionDir, 'extension', 'bin');
+  fs.mkdirSync(sentinelDir, { recursive: true });
+  fs.writeFileSync(path.join(sentinelDir, 'log-watcher.js'), '');
+}
+
 function baseState(overrides = {}) {
   return {
     active: true,
@@ -47,6 +53,7 @@ function runHandler(opts = {}) {
   } = opts;
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-'));
+  writeExtensionSentinel(tmpDir);
   const sessionDir = path.join(tmpDir, 'sessions', 'session');
   fs.mkdirSync(sessionDir, { recursive: true });
 
@@ -200,6 +207,7 @@ test('approves Read tool (not Write/Edit/Bash)', () => {
 
 test('approves protected config edits when disabled setting is in a newer orphan tmp', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-settings-tmp-'));
+  writeExtensionSentinel(tmpDir);
   const sessionDir = path.join(tmpDir, 'sessions', 'session');
   fs.mkdirSync(sessionDir, { recursive: true });
 
@@ -258,6 +266,7 @@ test('approves Write to .eslintrc.json when ticket has config_change: true', () 
 
 test('approves config_change override when resolved state.session_dir is stale', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-stale-session-dir-'));
+  writeExtensionSentinel(tmpDir);
   const liveSessionDir = path.join(tmpDir, 'sessions', 'live-session');
   const staleSessionDir = path.join(tmpDir, 'sessions', 'stale-session');
   fs.mkdirSync(liveSessionDir, { recursive: true });
@@ -352,6 +361,7 @@ test('blocks protected config edits when the sessions map is missing but a live 
 
 test('blocks protected config edits when PICKLE_STATE_FILE points to another cwd but a live same-cwd session exists', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-stale-env-'));
+  writeExtensionSentinel(tmpDir);
   const staleSessionDir = path.join(tmpDir, 'sessions', 'stale-session');
   const liveSessionDir = path.join(tmpDir, 'sessions', 'live-session');
   fs.mkdirSync(staleSessionDir, { recursive: true });

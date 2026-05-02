@@ -10,8 +10,15 @@ import { loadMeeseeksModel } from '../bin/mux-runner.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_PROTECTION_HANDLER = path.resolve(__dirname, '../hooks/handlers/config-protection.js');
 
+function writeExtensionSentinel(extensionRoot) {
+  const sentinelDir = path.join(extensionRoot, 'extension', 'bin');
+  fs.mkdirSync(sentinelDir, { recursive: true });
+  fs.writeFileSync(path.join(sentinelDir, 'log-watcher.js'), '');
+}
+
 function withTempRoot(settings, fn) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-ff-')));
+  writeExtensionSentinel(root);
   try {
     if (settings !== null) {
       fs.writeFileSync(path.join(root, 'pickle_settings.json'), JSON.stringify(settings));
@@ -53,6 +60,7 @@ function runConfigProtection(opts = {}) {
   } = opts;
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-ff-'));
+  writeExtensionSentinel(tmpDir);
   const sessionDir = path.join(tmpDir, 'session');
   fs.mkdirSync(sessionDir, { recursive: true });
 

@@ -36,6 +36,12 @@ function baseState(overrides = {}) {
   };
 }
 
+function writeExtensionSentinel(extensionDir) {
+  const sentinelDir = path.join(extensionDir, 'extension', 'bin');
+  fs.mkdirSync(sentinelDir, { recursive: true });
+  fs.writeFileSync(path.join(sentinelDir, 'log-watcher.js'), '');
+}
+
 /**
  * Run stop-hook.js as a subprocess.
  *
@@ -53,6 +59,7 @@ function runHook(opts = {}) {
   const { state = baseState(), response = '', role = undefined, setStateFileEnv = true } = opts;
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-'));
+  writeExtensionSentinel(tmpDir);
   const sessionDir = path.join(tmpDir, 'session');
   fs.mkdirSync(sessionDir);
   const stateFile = path.join(sessionDir, 'state.json');
@@ -93,6 +100,7 @@ function runHookRaw(opts = {}) {
   const { state = baseState(), stdin = '', setStateFileEnv = true } = opts;
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-raw-'));
+  writeExtensionSentinel(tmpDir);
   const sessionDir = path.join(tmpDir, 'session');
   fs.mkdirSync(sessionDir);
   const stateFile = path.join(sessionDir, 'state.json');
@@ -129,6 +137,7 @@ function runHookRaw(opts = {}) {
 
 test('stop-hook: no state file found → approve', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-'));
+  writeExtensionSentinel(tmpDir);
   try {
     const env = {
       ...process.env,
@@ -188,6 +197,7 @@ test('stop-hook: stale state (active:false + tmux_mode:true) → inactive path f
     // BEFORE the inactive check, masking a wrong-state-file resolution bug. The
     // inactive check must fire first so the decision reflects the actual state.
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-stale-'));
+    writeExtensionSentinel(tmpDir);
     const sessionDir = path.join(tmpDir, 'session');
     fs.mkdirSync(sessionDir);
     const stateFile = path.join(sessionDir, 'state.json');
@@ -246,6 +256,7 @@ test('stop-hook: TASK_COMPLETED → approve + active=false', () => {
 
 test('stop-hook: recovered disabled auto-update settings suppress completion update spawn', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-update-settings-'));
+  writeExtensionSentinel(tmpDir);
   const sessionDir = path.join(tmpDir, 'session');
   const stateFile = path.join(sessionDir, 'state.json');
   const settingsPath = path.join(tmpDir, 'pickle_settings.json');
@@ -628,6 +639,7 @@ test('resolve-state: loadActiveState returns null when active is string "true" (
 test('stop-hook: disabled marker file → approve immediately, state unchanged', () => {
   const state = baseState();
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-'));
+  writeExtensionSentinel(tmpDir);
   const sessionDir = path.join(tmpDir, 'session');
   fs.mkdirSync(sessionDir);
   const stateFile = path.join(sessionDir, 'state.json');
@@ -665,6 +677,7 @@ test('stop-hook: no disabled marker → hook processes normally (blocks active s
 
 test('stop-hook: corrupt state.json → approve (fail-open)', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ph-'));
+  writeExtensionSentinel(tmpDir);
   const sessionDir = path.join(tmpDir, 'session');
   fs.mkdirSync(sessionDir);
   const stateFile = path.join(sessionDir, 'state.json');

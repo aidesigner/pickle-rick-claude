@@ -17,7 +17,11 @@ const JAR_RUNNER_BIN = path.resolve(__dirname, '../bin/jar-runner.js');
  * ensuring paths match across the subprocess boundary.
  */
 function makeTmpRoot() {
-    return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-jar-runner-')));
+    const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-jar-runner-')));
+    const sentinelDir = path.join(root, 'extension', 'bin');
+    fs.mkdirSync(sentinelDir, { recursive: true });
+    fs.writeFileSync(path.join(sentinelDir, 'log-watcher.js'), '');
+    return root;
 }
 
 /**

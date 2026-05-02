@@ -32,6 +32,12 @@ function makeTmpDir(prefix = 'pickle-spawn-morty-') {
     return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
 
+function writeExtensionSentinel(extensionDir) {
+    const sentinelDir = path.join(extensionDir, 'extension', 'bin');
+    fs.mkdirSync(sentinelDir, { recursive: true });
+    fs.writeFileSync(path.join(sentinelDir, 'log-watcher.js'), '');
+}
+
 function writeCodexShim(shimDir, logPath) {
     fs.mkdirSync(shimDir, { recursive: true });
     const shimPath = path.join(shimDir, 'codex');
@@ -827,6 +833,7 @@ process.exit(0);
  */
 function writeSettings(extensionDir, enableRouting) {
     fs.mkdirSync(extensionDir, { recursive: true });
+    writeExtensionSentinel(extensionDir);
     fs.writeFileSync(
         path.join(extensionDir, 'pickle_settings.json'),
         JSON.stringify({ enable_backend_routing_heuristic: enableRouting })
@@ -961,6 +968,7 @@ test('spawn-morty P2: recovers disabled complexity tiers from newer dead setting
     const tmpDir = makeTmpDir();
     try {
         fs.mkdirSync(tmpDir, { recursive: true });
+        writeExtensionSentinel(tmpDir);
         fs.writeFileSync(
             path.join(tmpDir, 'pickle_settings.json'),
             JSON.stringify({ enable_complexity_tiers: true })

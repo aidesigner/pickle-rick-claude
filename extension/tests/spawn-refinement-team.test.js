@@ -34,6 +34,14 @@ function makeTmpDir(prefix = 'pickle-refine-') {
     return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
 
+function makeExtensionRoot(prefix = 'pickle-ext-') {
+    const extensionRoot = makeTmpDir(prefix);
+    const sentinelDir = path.join(extensionRoot, 'extension', 'bin');
+    fs.mkdirSync(sentinelDir, { recursive: true });
+    fs.writeFileSync(path.join(sentinelDir, 'log-watcher.js'), '');
+    return extensionRoot;
+}
+
 function writeRefinementLogger(binDir, logPath) {
     const claudePath = path.join(binDir, 'claude');
     fs.writeFileSync(claudePath, `#!/usr/bin/env node
@@ -354,7 +362,7 @@ test('spawn-refinement-team: --max-turns 40 is accepted (no validation error)', 
 
 test('spawn-refinement-team: reads refinement settings from pickle_settings.json', () => {
     const tmp = makeTmpDir();
-    const fakeExt = makeTmpDir('pickle-ext-');
+    const fakeExt = makeExtensionRoot();
     try {
         const prd = path.join(tmp, 'prd.md');
         fs.writeFileSync(prd, '# PRD\nContent');
@@ -385,7 +393,7 @@ test('spawn-refinement-team: reads refinement settings from pickle_settings.json
 
 test('spawn-refinement-team: promotes newer dead tmp refinement settings before launch', () => {
     const tmp = makeTmpDir();
-    const fakeExt = makeTmpDir('pickle-ext-');
+    const fakeExt = makeExtensionRoot();
     const fakeBin = makeTmpDir('fake-bin-');
     try {
         const prd = path.join(tmp, 'prd.md');

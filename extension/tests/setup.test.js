@@ -847,6 +847,9 @@ test('setup: --resume with explicit flag overrides stored limit', () => {
 
 function makeExtensionRootWithSettings(settings) {
     const extRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-budget-ext-'));
+    const sentinelDir = path.join(extRoot, 'extension', 'bin');
+    fs.mkdirSync(sentinelDir, { recursive: true });
+    fs.writeFileSync(path.join(sentinelDir, 'log-watcher.js'), '');
     fs.writeFileSync(path.join(extRoot, 'pickle_settings.json'), JSON.stringify(settings, null, 2));
     return extRoot;
 }
