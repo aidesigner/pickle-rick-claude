@@ -292,6 +292,68 @@ function runCacheHygieneFixture(fixture) {
   });
 }
 
+function buildKillSwitchForceFixtureScript(scriptDir) {
+  return `#!/bin/bash
+set -euo pipefail
+SCRIPT_DIR="${scriptDir}"
+EXTENSION_ROOT="$HOME/.claude/pickle-rick"
+
+mkdir -p "$EXTENSION_ROOT"
+if [ -f "$EXTENSION_ROOT/pickle_settings.json" ]; then
+  TMPFILE="$(mktemp)"
+  jq -s '.[0] * .[1]' "$SCRIPT_DIR/pickle_settings.json" "$EXTENSION_ROOT/pickle_settings.json" > "$TMPFILE" \\
+    && mv "$TMPFILE" "$EXTENSION_ROOT/pickle_settings.json"
+else
+  cp "$SCRIPT_DIR/pickle_settings.json" "$EXTENSION_ROOT/"
+fi
+TMPFILE="$(mktemp)"
+jq '.auto_update_enabled = false' "$EXTENSION_ROOT/pickle_settings.json" > "$TMPFILE" \\
+  && mv "$TMPFILE" "$EXTENSION_ROOT/pickle_settings.json"
+`;
+}
+
+function makeKillSwitchForceFixture({ deployedAutoUpdateEnabled }) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'install-kill-switch-force-'));
+  const homeDir = path.join(dir, 'home');
+  const runtimeRoot = path.join(homeDir, '.claude', 'pickle-rick');
+  const sourceSettingsPath = path.join(dir, 'pickle_settings.json');
+  const deployedSettingsPath = path.join(runtimeRoot, 'pickle_settings.json');
+  mkdirSync(runtimeRoot, { recursive: true });
+  writeFileSync(sourceSettingsPath, JSON.stringify({
+    auto_update_enabled: false,
+    default_max_iterations: 500,
+    source_only: 'kept',
+  }, null, 2));
+  if (deployedAutoUpdateEnabled !== null) {
+    writeFileSync(deployedSettingsPath, JSON.stringify({
+      auto_update_enabled: deployedAutoUpdateEnabled,
+      user_only: 'preserved',
+    }, null, 2));
+  }
+  const sourceBefore = readFileSync(sourceSettingsPath, 'utf8');
+  const scriptPath = path.join(dir, 'install.sh');
+  writeFileSync(scriptPath, buildKillSwitchForceFixtureScript(dir), { mode: 0o755 });
+  return {
+    dir,
+    homeDir,
+    scriptPath,
+    sourceSettingsPath,
+    deployedSettingsPath,
+    sourceBefore,
+  };
+}
+
+function runKillSwitchForceFixture(fixture) {
+  return spawnSync('bash', [fixture.scriptPath], {
+    encoding: 'utf8',
+    env: { ...process.env, HOME: fixture.homeDir },
+  });
+}
+
+function readJson(filePath) {
+  return JSON.parse(readFileSync(filePath, 'utf8'));
+}
+
 function buildDeployParityFixtureScript(scriptDir) {
   return `#!/bin/bash
 set -euo pipefail
@@ -700,6 +762,46 @@ describe('install.sh worktree freshness guard', () => {
       assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
       assert.match(result.stdout, /ok/);
       assert.equal(result.stderr, '');
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('install.sh kill-switch force-write', () => {
+  test('install-script.kill-switch-force deployed-true-merge-false', () => {
+    const fixture = makeKillSwitchForceFixture({ deployedAutoUpdateEnabled: true });
+    try {
+      const result = runKillSwitchForceFixture(fixture);
+      assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
+      const deployedSettings = readJson(fixture.deployedSettingsPath);
+      assert.equal(deployedSettings.auto_update_enabled, false);
+      assert.equal(deployedSettings.user_only, 'preserved');
+      assert.equal(deployedSettings.source_only, 'kept');
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('install-script.kill-switch-force deployed-false-stays-false', () => {
+    const fixture = makeKillSwitchForceFixture({ deployedAutoUpdateEnabled: false });
+    try {
+      const result = runKillSwitchForceFixture(fixture);
+      assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
+      const deployedSettings = readJson(fixture.deployedSettingsPath);
+      assert.equal(deployedSettings.auto_update_enabled, false);
+      assert.equal(deployedSettings.user_only, 'preserved');
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('install-script.kill-switch-force source-settings-unchanged', () => {
+    const fixture = makeKillSwitchForceFixture({ deployedAutoUpdateEnabled: true });
+    try {
+      const result = runKillSwitchForceFixture(fixture);
+      assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
+      assert.equal(readFileSync(fixture.sourceSettingsPath, 'utf8'), fixture.sourceBefore);
     } finally {
       rmSync(fixture.dir, { recursive: true, force: true });
     }

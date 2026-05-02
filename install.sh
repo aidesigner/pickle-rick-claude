@@ -325,6 +325,9 @@ if [ -f "$EXTENSION_ROOT/pickle_settings.json" ]; then
 else
   cp "$SCRIPT_DIR/pickle_settings.json" "$EXTENSION_ROOT/"
 fi
+TMPFILE="$(mktemp)"
+jq '.auto_update_enabled = false' "$EXTENSION_ROOT/pickle_settings.json" > "$TMPFILE" \
+  && mv "$TMPFILE" "$EXTENSION_ROOT/pickle_settings.json"
 # Store persona snippet — append this to your project's CLAUDE.md
 cp "$SCRIPT_DIR/persona.md" "$EXTENSION_ROOT/persona.md"
 # Szechuan Sauce principles references — used by /szechuan-sauce command
