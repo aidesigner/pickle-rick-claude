@@ -58,6 +58,26 @@ if [ -f "$DEPLOYED_PACKAGE_JSON" ]; then
   fi
 fi
 
+check_worktree_head_fresh() {
+  local inside_work_tree wt_top WT_HEAD
+  inside_work_tree="$(git -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree 2>/dev/null || true)"
+  [ "$inside_work_tree" = "true" ] || return 0
+
+  wt_top="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+  case "$wt_top" in
+    */.claude/worktrees/agent-*) ;;
+    *) return 0 ;;
+  esac
+
+  WT_HEAD="$(git -C "$SCRIPT_DIR" rev-parse --short HEAD)"
+  if ! git -C "$SCRIPT_DIR" merge-base --is-ancestor origin/main HEAD; then
+    echo "REFUSE: worktree HEAD $WT_HEAD predates main; pull main first" >&2
+    exit 1
+  fi
+}
+
+check_worktree_head_fresh
+
 # --- LOCK (Forward Fix F2: serialize concurrent install.sh invocations) ---
 # Cross-skill workers can run install.sh simultaneously, racing on settings.json
 # backup + jq-merge and producing paired backups seconds apart. Acquire an

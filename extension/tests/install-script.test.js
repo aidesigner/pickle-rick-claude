@@ -147,6 +147,89 @@ function runVersionGuardFixture(fixture, args = []) {
   });
 }
 
+function buildWorktreeGuardFixtureScript() {
+  return `#!/bin/bash
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+
+check_worktree_head_fresh() {
+  local inside_work_tree wt_top WT_HEAD
+  inside_work_tree="$(git -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree 2>/dev/null || true)"
+  [ "$inside_work_tree" = "true" ] || return 0
+
+  wt_top="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || true)"
+  case "$wt_top" in
+    */.claude/worktrees/agent-*) ;;
+    *) return 0 ;;
+  esac
+
+  WT_HEAD="$(git -C "$SCRIPT_DIR" rev-parse --short HEAD)"
+  if ! git -C "$SCRIPT_DIR" merge-base --is-ancestor origin/main HEAD; then
+    echo "REFUSE: worktree HEAD $WT_HEAD predates main; pull main first" >&2
+    exit 1
+  fi
+}
+
+check_worktree_head_fresh
+echo "ok"
+`;
+}
+
+function runGit(cwd, args) {
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  assert.strictEqual(
+    result.status,
+    0,
+    `git ${args.join(' ')} failed in ${cwd}\nstdout: ${result.stdout}\nstderr: ${result.stderr}`,
+  );
+  return result.stdout.trim();
+}
+
+function writeWorktreeGuardScript(dir) {
+  const scriptPath = path.join(dir, 'install.sh');
+  writeFileSync(scriptPath, buildWorktreeGuardFixtureScript(), { mode: 0o755 });
+  return scriptPath;
+}
+
+function makeWorktreeGuardFixture() {
+  const dir = mkdtempSync(path.join(tmpdir(), 'install-worktree-guard-'));
+  const repo = path.join(dir, 'repo');
+  mkdirSync(repo, { recursive: true });
+  runGit(repo, ['init']);
+  runGit(repo, ['checkout', '-b', 'main']);
+  runGit(repo, ['config', 'user.email', 'pickle-rick@example.invalid']);
+  runGit(repo, ['config', 'user.name', 'Pickle Rick Tests']);
+
+  writeFileSync(path.join(repo, 'tracked.txt'), 'old\n');
+  runGit(repo, ['add', 'tracked.txt']);
+  runGit(repo, ['commit', '-m', 'old']);
+  const oldHead = runGit(repo, ['rev-parse', 'HEAD']);
+
+  writeFileSync(path.join(repo, 'tracked.txt'), 'current\n');
+  runGit(repo, ['add', 'tracked.txt']);
+  runGit(repo, ['commit', '-m', 'current']);
+  const currentHead = runGit(repo, ['rev-parse', 'HEAD']);
+  runGit(repo, ['update-ref', 'refs/remotes/origin/main', currentHead]);
+
+  const worktreesDir = path.join(repo, '.claude', 'worktrees');
+  const staleWorktree = path.join(worktreesDir, 'agent-stale');
+  const currentWorktree = path.join(worktreesDir, 'agent-current');
+  runGit(repo, ['worktree', 'add', '--detach', staleWorktree, oldHead]);
+  runGit(repo, ['worktree', 'add', '--detach', currentWorktree, currentHead]);
+
+  return {
+    dir,
+    repo,
+    staleScript: writeWorktreeGuardScript(staleWorktree),
+    currentScript: writeWorktreeGuardScript(currentWorktree),
+    mainScript: writeWorktreeGuardScript(repo),
+  };
+}
+
+function runWorktreeGuardScript(scriptPath) {
+  return spawnSync('bash', [scriptPath], { encoding: 'utf8' });
+}
+
 function buildCacheHygieneFixtureScript(scriptDir) {
   return `#!/bin/bash
 set -euo pipefail
@@ -208,6 +291,44 @@ function runCacheHygieneFixture(fixture) {
     env: { ...process.env, HOME: fixture.homeDir },
   });
 }
+
+describe('install.sh worktree freshness guard', () => {
+  test('install-script.worktree-stale refuses stale agent worktree', () => {
+    const fixture = makeWorktreeGuardFixture();
+    try {
+      const result = runWorktreeGuardScript(fixture.staleScript);
+      assert.strictEqual(result.status, 1, `expected exit 1, got ${result.status}`);
+      assert.match(result.stderr, /REFUSE: worktree HEAD [0-9a-f]+ predates main; pull main first/);
+      assert.equal(result.stdout, '');
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('install-script.worktree-current permits current agent worktree', () => {
+    const fixture = makeWorktreeGuardFixture();
+    try {
+      const result = runWorktreeGuardScript(fixture.currentScript);
+      assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
+      assert.match(result.stdout, /ok/);
+      assert.equal(result.stderr, '');
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('install-script.worktree-main permits normal main checkout', () => {
+    const fixture = makeWorktreeGuardFixture();
+    try {
+      const result = runWorktreeGuardScript(fixture.mainScript);
+      assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
+      assert.match(result.stdout, /ok/);
+      assert.equal(result.stderr, '');
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('install.sh update cache hygiene', () => {
   test('install-script.cache-hygiene removes mismatched update cache', () => {
