@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { STATE_MANAGER_DEFAULTS, LATEST_SCHEMA_VERSION, StateError, LockError, TransactionError, SchemaVersionMismatchError, } from '../types/index.js';
+import { STATE_MANAGER_DEFAULTS, LATEST_SCHEMA_VERSION, StateError, LockError, TransactionError, SchemaVersionMismatchError, VALID_ACTIVITY_EVENTS, } from '../types/index.js';
 import { writeStateFile, safeErrorMessage } from './pickle-utils.js';
 // ---------------------------------------------------------------------------
 // Deploy-parity self-check
@@ -111,6 +111,33 @@ function presentV3StateShapeMarkers(state) {
 function isRecord(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
+export class InvalidActivityEventError extends Error {
+    event;
+    constructor(event) {
+        super(`Invalid activity event: ${event}`);
+        this.name = 'InvalidActivityEventError';
+        this.event = event;
+    }
+}
+function isValidActivityEvent(event) {
+    return VALID_ACTIVITY_EVENTS.includes(event);
+}
+function warnUnknownActivityEvents(state) {
+    if (!Array.isArray(state.activity))
+        return;
+    for (const entry of state.activity) {
+        if (!isRecord(entry) || typeof entry.event !== 'string')
+            continue;
+        if (isValidActivityEvent(entry.event))
+            continue;
+        process.stderr.write(`WARN: ignoring unknown activity event ${entry.event}\n`);
+    }
+}
+function assertValidActivityEvent(entry) {
+    if (!isValidActivityEvent(entry.event)) {
+        throw new InvalidActivityEventError(entry.event);
+    }
+}
 function normalizeV3StateDefaults(state) {
     state.archaeology ??= null;
     if (typeof state.tickets_version !== 'number' || !Number.isFinite(state.tickets_version)) {
@@ -201,6 +228,7 @@ export class StateManager {
         this.recoverOrphanTmpFiles(statePath, state);
         this.migrateSchema(statePath, state);
         this.recoverStaleActiveFlag(statePath, state);
+        warnUnknownActivityEvents(state);
         return state;
     }
     assertReadableMissingSchemaShape(statePath, state) {
@@ -629,10 +657,11 @@ export function clearExitReason(statePath, opts = {}) {
 }
 /**
  * Append a single activity entry to `state.json.activity` (creating the array if missing).
- * Best-effort: primary path uses locked sm.update; on lock failure falls back to
- * read-modify-forceWrite. Never throws — halt paths must not fail on logging.
+ * Best-effort after validation: primary path uses locked sm.update; on lock
+ * failure falls back to read-modify-forceWrite.
  */
 export function writeActivityEntry(statePath, entry) {
+    assertValidActivityEvent(entry);
     forceWriteMutate(statePath, s => {
         const existing = Array.isArray(s.activity) ? s.activity : [];
         s.activity = [...existing, entry];

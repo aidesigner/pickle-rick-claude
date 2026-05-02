@@ -20,6 +20,7 @@ import {
   LockError,
   TransactionError,
   SchemaVersionMismatchError,
+  VALID_ACTIVITY_EVENTS,
 } from '../types/index.js';
 import { writeStateFile, safeErrorMessage } from './pickle-utils.js';
 
@@ -137,6 +138,36 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+export class InvalidActivityEventError extends Error {
+  readonly event: string;
+
+  constructor(event: string) {
+    super(`Invalid activity event: ${event}`);
+    this.name = 'InvalidActivityEventError';
+    this.event = event;
+  }
+}
+
+function isValidActivityEvent(event: string): boolean {
+  return (VALID_ACTIVITY_EVENTS as readonly string[]).includes(event);
+}
+
+function warnUnknownActivityEvents(state: State): void {
+  if (!Array.isArray(state.activity)) return;
+
+  for (const entry of state.activity) {
+    if (!isRecord(entry) || typeof entry.event !== 'string') continue;
+    if (isValidActivityEvent(entry.event)) continue;
+    process.stderr.write(`WARN: ignoring unknown activity event ${entry.event}\n`);
+  }
+}
+
+function assertValidActivityEvent(entry: ActivityLogEntry): void {
+  if (!isValidActivityEvent(entry.event)) {
+    throw new InvalidActivityEventError(entry.event);
+  }
+}
+
 function normalizeV3StateDefaults(state: State): void {
   state.archaeology ??= null;
   if (typeof state.tickets_version !== 'number' || !Number.isFinite(state.tickets_version)) {
@@ -243,6 +274,8 @@ export class StateManager {
     this.migrateSchema(statePath, state);
 
     this.recoverStaleActiveFlag(statePath, state);
+
+    warnUnknownActivityEvents(state);
 
     return state;
   }
@@ -705,10 +738,12 @@ export function clearExitReason(statePath: string, opts: ClearExitReasonOpts = {
 
 /**
  * Append a single activity entry to `state.json.activity` (creating the array if missing).
- * Best-effort: primary path uses locked sm.update; on lock failure falls back to
- * read-modify-forceWrite. Never throws — halt paths must not fail on logging.
+ * Best-effort after validation: primary path uses locked sm.update; on lock
+ * failure falls back to read-modify-forceWrite.
  */
 export function writeActivityEntry(statePath: string, entry: ActivityLogEntry): void {
+  assertValidActivityEvent(entry);
+
   forceWriteMutate(
     statePath,
     s => {
