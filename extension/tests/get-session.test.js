@@ -15,8 +15,8 @@ function withExtensionDir(fn) {
     const tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-gs-')));
     const saved = process.env.EXTENSION_DIR;
     const savedNodeEnv = process.env.NODE_ENV;
-    const savedAllowMissingSentinel = process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL;
-    process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL = '1';
+    const savedAllowMissingSentinel = process.env.EXTENSION_DIR_TEST;
+    process.env.EXTENSION_DIR_TEST = '1';
     process.env.NODE_ENV = 'test';
     process.env.EXTENSION_DIR = tmpDir;
     try {
@@ -33,9 +33,9 @@ function withExtensionDir(fn) {
             process.env.NODE_ENV = savedNodeEnv;
         }
         if (savedAllowMissingSentinel === undefined) {
-            delete process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL;
+            delete process.env.EXTENSION_DIR_TEST;
         } else {
-            process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL = savedAllowMissingSentinel;
+            process.env.EXTENSION_DIR_TEST = savedAllowMissingSentinel;
         }
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

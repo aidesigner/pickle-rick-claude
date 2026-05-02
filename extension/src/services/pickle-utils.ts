@@ -118,7 +118,7 @@ export function formatLocalDateKey(d: Date): string {
 
 const CANONICAL_EXTENSION_ROOT = path.join(os.homedir(), '.claude/pickle-rick');
 const EXTENSION_ROOT_SENTINEL = path.join('extension', 'bin', 'log-watcher.js');
-const TEST_ALLOW_MISSING_EXTENSION_SENTINEL = 'PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL';
+const EXTENSION_DIR_TEST = 'EXTENSION_DIR_TEST';
 
 let extensionDirFallbackEmitted = false;
 
@@ -203,7 +203,7 @@ function extensionRootSentinelExists(extensionRoot: string): boolean {
 }
 
 function allowsMissingExtensionSentinelForTests(): boolean {
-  return process.env.NODE_ENV === 'test' && process.env[TEST_ALLOW_MISSING_EXTENSION_SENTINEL] === '1';
+  return process.env.NODE_ENV === 'test' && process.env[EXTENSION_DIR_TEST] === '1';
 }
 
 function emitExtensionDirFallbackOnce(requestedPath: string, fallbackPath: string, reason: string): void {

@@ -97,7 +97,7 @@ export function formatLocalDateKey(d) {
 }
 const CANONICAL_EXTENSION_ROOT = path.join(os.homedir(), '.claude/pickle-rick');
 const EXTENSION_ROOT_SENTINEL = path.join('extension', 'bin', 'log-watcher.js');
-const TEST_ALLOW_MISSING_EXTENSION_SENTINEL = 'PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL';
+const EXTENSION_DIR_TEST = 'EXTENSION_DIR_TEST';
 let extensionDirFallbackEmitted = false;
 // eslint-disable-next-line complexity -- command wrapper intentionally handles shell and argv forms plus checked/unchecked failures
 export function runCmd(cmd, options = {}) {
@@ -165,7 +165,7 @@ function extensionRootSentinelExists(extensionRoot) {
     return fs.existsSync(path.join(extensionRoot, EXTENSION_ROOT_SENTINEL));
 }
 function allowsMissingExtensionSentinelForTests() {
-    return process.env.NODE_ENV === 'test' && process.env[TEST_ALLOW_MISSING_EXTENSION_SENTINEL] === '1';
+    return process.env.NODE_ENV === 'test' && process.env[EXTENSION_DIR_TEST] === '1';
 }
 function emitExtensionDirFallbackOnce(requestedPath, fallbackPath, reason) {
     if (extensionDirFallbackEmitted)

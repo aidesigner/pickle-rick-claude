@@ -47,12 +47,12 @@ function withCleanExtensionEnv(fn) {
     const saved = process.env.EXTENSION_DIR;
     const savedDataRoot = process.env.PICKLE_DATA_ROOT;
     const savedNodeEnv = process.env.NODE_ENV;
-    const savedAllow = process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL;
+    const savedAllow = process.env.EXTENSION_DIR_TEST;
     try {
         delete process.env.EXTENSION_DIR;
         delete process.env.PICKLE_DATA_ROOT;
         delete process.env.NODE_ENV;
-        delete process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL;
+        delete process.env.EXTENSION_DIR_TEST;
         _resetExtensionDirFallbackForTests();
         fn();
     } finally {
@@ -62,8 +62,8 @@ function withCleanExtensionEnv(fn) {
         else process.env.PICKLE_DATA_ROOT = savedDataRoot;
         if (savedNodeEnv === undefined) delete process.env.NODE_ENV;
         else process.env.NODE_ENV = savedNodeEnv;
-        if (savedAllow === undefined) delete process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL;
-        else process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL = savedAllow;
+        if (savedAllow === undefined) delete process.env.EXTENSION_DIR_TEST;
+        else process.env.EXTENSION_DIR_TEST = savedAllow;
         _resetExtensionDirFallbackForTests();
     }
 }
@@ -138,7 +138,7 @@ test('getExtensionRoot: explicit test override can use temp root without sentine
         try {
             process.env.EXTENSION_DIR = extRoot;
             process.env.NODE_ENV = 'test';
-            process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL = '1';
+            process.env.EXTENSION_DIR_TEST = '1';
             assert.equal(getExtensionRoot(), extRoot);
         } finally {
             fs.rmSync(extRoot, { recursive: true, force: true });

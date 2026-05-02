@@ -738,7 +738,7 @@ describe('detached spawn (stop-hook)', () => {
             EXTENSION_DIR: tmpDir,
             FORCE_COLOR: '0',
             NODE_ENV: 'test',
-            PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL: '1',
+            EXTENSION_DIR_TEST: '1',
         };
         delete env.PICKLE_ROLE;
         delete env.PICKLE_STATE_FILE;

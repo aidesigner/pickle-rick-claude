@@ -15,8 +15,8 @@ function withTempActivityDir(fn) {
     fs.mkdirSync(activityDir, { recursive: true });
     const origEnv = process.env.EXTENSION_DIR;
     const origNodeEnv = process.env.NODE_ENV;
-    const origAllowMissingSentinel = process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL;
-    process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL = '1';
+    const origAllowMissingSentinel = process.env.EXTENSION_DIR_TEST;
+    process.env.EXTENSION_DIR_TEST = '1';
     process.env.NODE_ENV = 'test';
     process.env.EXTENSION_DIR = extRoot;
     try {
@@ -26,8 +26,8 @@ function withTempActivityDir(fn) {
         if (origEnv === undefined) delete process.env.EXTENSION_DIR;
         if (origNodeEnv === undefined) delete process.env.NODE_ENV;
         else process.env.NODE_ENV = origNodeEnv;
-        if (origAllowMissingSentinel === undefined) delete process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL;
-        else process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL = origAllowMissingSentinel;
+        if (origAllowMissingSentinel === undefined) delete process.env.EXTENSION_DIR_TEST;
+        else process.env.EXTENSION_DIR_TEST = origAllowMissingSentinel;
         fs.rmSync(extRoot, { recursive: true, force: true });
     }
 }
@@ -44,8 +44,8 @@ test('pruneActivity: does nothing when activity dir does not exist', () => {
     const extRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-prune-'));
     const origEnv = process.env.EXTENSION_DIR;
     const origNodeEnv = process.env.NODE_ENV;
-    const origAllowMissingSentinel = process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL;
-    process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL = '1';
+    const origAllowMissingSentinel = process.env.EXTENSION_DIR_TEST;
+    process.env.EXTENSION_DIR_TEST = '1';
     process.env.NODE_ENV = 'test';
     process.env.EXTENSION_DIR = extRoot;
     try {
@@ -57,8 +57,8 @@ test('pruneActivity: does nothing when activity dir does not exist', () => {
         if (origEnv === undefined) delete process.env.EXTENSION_DIR;
         if (origNodeEnv === undefined) delete process.env.NODE_ENV;
         else process.env.NODE_ENV = origNodeEnv;
-        if (origAllowMissingSentinel === undefined) delete process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL;
-        else process.env.PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL = origAllowMissingSentinel;
+        if (origAllowMissingSentinel === undefined) delete process.env.EXTENSION_DIR_TEST;
+        else process.env.EXTENSION_DIR_TEST = origAllowMissingSentinel;
         fs.rmSync(extRoot, { recursive: true, force: true });
     }
 });
@@ -219,7 +219,7 @@ test('CLI: runs standalone without error on empty activity dir', () => {
             encoding: 'utf-8',
             // 10s → 30s: budget for system load under concurrent test runs.
             timeout: 30000,
-            env: { ...process.env, EXTENSION_DIR: extRoot, NODE_ENV: 'test', PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL: '1' },
+            env: { ...process.env, EXTENSION_DIR: extRoot, NODE_ENV: 'test', EXTENSION_DIR_TEST: '1' },
         });
         assert.equal(result.status, 0, `stderr: ${result.stderr}`);
     } finally {
@@ -238,7 +238,7 @@ test('CLI: reports pruned count', () => {
             encoding: 'utf-8',
             // 10s → 30s: budget for system load under concurrent test runs.
             timeout: 30000,
-            env: { ...process.env, EXTENSION_DIR: extRoot, NODE_ENV: 'test', PICKLE_TEST_ALLOW_MISSING_EXTENSION_SENTINEL: '1' },
+            env: { ...process.env, EXTENSION_DIR: extRoot, NODE_ENV: 'test', EXTENSION_DIR_TEST: '1' },
         });
         assert.equal(result.status, 0, `stderr: ${result.stderr}`);
         assert.match(result.stdout, /Pruned 1 old activity file\./);
