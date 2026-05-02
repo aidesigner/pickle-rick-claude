@@ -18,6 +18,8 @@ import {
   enterPicklePhase,
   installShutdownHandlers,
   applyEpochResetOnReconstruction,
+  claimPipelineRunnerActive,
+  writeWatcherLivenessArtifact,
 } from '../bin/pipeline-runner.js';
 import { backendEnvOverrides } from '../services/backend-spawn.js';
 import { AC_PHASE_MANIFEST, runAcPhaseGate } from '../services/ac-phase-gate.js';
@@ -25,6 +27,29 @@ import { Defaults } from '../types/index.js';
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-pipeline-'));
+}
+
+function writeRelaunchClaimState(statePath, overrides = {}) {
+  const dir = path.dirname(statePath);
+  fs.writeFileSync(statePath, JSON.stringify({
+    active: false,
+    working_dir: dir,
+    step: 'completed',
+    iteration: 0,
+    max_iterations: 50,
+    max_time_minutes: 720,
+    worker_timeout_seconds: 1200,
+    start_time_epoch: 1000,
+    completion_promise: null,
+    original_prompt: 'pipeline relaunch claim test',
+    current_ticket: null,
+    history: [],
+    started_at: new Date().toISOString(),
+    session_dir: dir,
+    schema_version: 3,
+    exit_reason: 'failed',
+    ...overrides,
+  }, null, 2));
 }
 
 // ---------------------------------------------------------------------------
@@ -725,6 +750,105 @@ describe('resetStateForPhase', () => {
     assert.equal(state.chain_meeseeks, false);
     assert.equal(state.tmux_mode, true);
     fs.rmSync(dir, { recursive: true });
+  });
+});
+
+describe('pipeline-runner.relaunch-claim', () => {
+  test('claims active and clears stale failed exit_reason on relaunch startup', () => {
+    const dir = tmpDir();
+    try {
+      const statePath = path.join(dir, 'state.json');
+      writeRelaunchClaimState(statePath, {
+        active: false,
+        exit_reason: 'failed',
+        step: 'completed',
+        pid: 123,
+      });
+
+      const before = Date.now();
+      const claimed = claimPipelineRunnerActive(statePath);
+      const elapsed = Date.now() - before;
+      const persisted = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+
+      assert.equal(claimed.active, true);
+      assert.equal(persisted.active, true);
+      assert.equal(persisted.exit_reason, null);
+      assert.equal(persisted.pid, process.pid);
+      assert.ok(elapsed < 100, `state.active=true should be claimed within 100ms, got ${elapsed}ms`);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('phase boundary reclaims active after resetStateForPhase deactivates state', () => {
+    const dir = tmpDir();
+    try {
+      const statePath = path.join(dir, 'state.json');
+      writeRelaunchClaimState(statePath, {
+        active: true,
+        exit_reason: 'completed',
+        step: 'pickle',
+        iteration: 3,
+        current_ticket: 'T-1',
+      });
+
+      resetStateForPhase(statePath, 'anatomy-park.md', 100);
+      assert.equal(JSON.parse(fs.readFileSync(statePath, 'utf-8')).active, false);
+
+      const before = Date.now();
+      claimPipelineRunnerActive(statePath);
+      const elapsed = Date.now() - before;
+      const persisted = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+
+      assert.equal(persisted.active, true);
+      assert.equal(persisted.exit_reason, null);
+      assert.equal(persisted.pid, process.pid);
+      assert.ok(elapsed < 100, `phase boundary active claim should complete within 100ms, got ${elapsed}ms`);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('watchers stay alive proxy across three claimed iteration boundaries', () => {
+    const dir = tmpDir();
+    try {
+      const statePath = path.join(dir, 'state.json');
+      writeRelaunchClaimState(statePath);
+
+      for (let iteration = 1; iteration <= 3; iteration++) {
+        resetStateForPhase(statePath, iteration === 1 ? 'anatomy-park.md' : 'szechuan-sauce.md', 50);
+        claimPipelineRunnerActive(statePath);
+        const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        assert.equal(state.active, true);
+      }
+
+      fs.writeFileSync(path.join(dir, 'tmux-runner.log'), 'iteration 1\niteration 2\niteration 3\n');
+      writeWatcherLivenessArtifact(dir, 'pickle');
+      const artifact = JSON.parse(fs.readFileSync(path.join(dir, 'bundle/ac-dr-05.json'), 'utf-8'));
+      assert.equal(artifact.pass, true);
+      assert.equal(artifact.forbidden_literal_present, false);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('ac-dr-05-artifact records failure when watcher termination literal appears', () => {
+    const dir = tmpDir();
+    try {
+      fs.writeFileSync(path.join(dir, 'tmux-runner.log'), 'ok\n◤ FEED TERMINATED ◢\n');
+
+      writeWatcherLivenessArtifact(dir, 'pickle');
+
+      const artifactPath = path.join(dir, 'bundle/ac-dr-05.json');
+      const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf-8'));
+      assert.equal(artifact.id, 'AC-DR-05');
+      assert.equal(artifact.phase, 'pickle');
+      assert.equal(artifact.pass, false);
+      assert.deepEqual(artifact.checked_files, ['tmux-runner.log']);
+      assert.equal(artifact.forbidden_literal_present, true);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
@@ -1512,6 +1636,30 @@ describe('pipeline-runner fatal catch', () => {
       assert.equal(persisted.step, 'completed');
       assert.equal(persisted.current_ticket, null);
       assert.equal(persisted.exit_reason, 'completed');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('finalizePipeline failed path lands finalizeTerminalState invariants', async () => {
+    const { finalizeTerminalState } = await import('../services/state-manager.js');
+    const dir = tmpDir();
+    try {
+      const statePath = path.join(dir, 'state.json');
+      fs.writeFileSync(statePath, JSON.stringify({
+        active: true, working_dir: dir, step: 'pickle',
+        iteration: 5, max_iterations: 50, max_time_minutes: 720,
+        worker_timeout_seconds: 1200, start_time_epoch: 500,
+        completion_promise: null, original_prompt: 'pipeline finalize failed test',
+        current_ticket: 'T-100', history: [], started_at: new Date().toISOString(),
+        session_dir: dir, schema_version: 3,
+      }));
+      finalizeTerminalState(statePath, { step: 'completed', exitReason: 'failed' });
+      const persisted = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      assert.equal(persisted.active, false);
+      assert.equal(persisted.step, 'completed');
+      assert.equal(persisted.current_ticket, null);
+      assert.equal(persisted.exit_reason, 'failed');
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

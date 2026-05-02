@@ -73,6 +73,7 @@ interface PipelineConfig {
 
 const DEFAULT_IGNORE_DIRTY_PATHS: readonly string[] = ['prds', 'docs'];
 const CODEX_REQUIRED_BACKEND = 'codex-required';
+const WATCHER_TERMINATED_BANNER = '◤ FEED TERMINATED ◢';
 
 type PipelineStatusKind = 'running' | 'completed' | 'failed' | 'cancelled';
 
@@ -363,6 +364,30 @@ export function writePipelineStatus(
   fs.renameSync(tmpPath, statusPath);
 }
 
+export function writeWatcherLivenessArtifact(sessionDir: string, phase: PhaseName): void {
+  const bundleDir = path.join(sessionDir, 'bundle');
+  fs.mkdirSync(bundleDir, { recursive: true });
+  const checkedFiles = ['tmux-runner.log', 'pipeline-runner.log']
+    .map((file) => path.join(sessionDir, file))
+    .filter((file) => fs.existsSync(file));
+  const matches = checkedFiles.filter((file) => {
+    try {
+      return fs.readFileSync(file, 'utf-8').includes(WATCHER_TERMINATED_BANNER);
+    } catch {
+      return false;
+    }
+  });
+  writeStateFile(path.join(bundleDir, 'ac-dr-05.json'), {
+    id: 'AC-DR-05',
+    phase,
+    pass: matches.length === 0,
+    checked_files: checkedFiles.map((file) => path.relative(sessionDir, file)),
+    forbidden_literal_present: matches.length > 0,
+    forbidden_literal: WATCHER_TERMINATED_BANNER,
+    updated_at: new Date().toISOString(),
+  });
+}
+
 // ---------------------------------------------------------------------------
 // State Transitions
 // ---------------------------------------------------------------------------
@@ -379,6 +404,16 @@ export function resetStateForPhase(statePath: string, template: string, maxItera
     s.command_template = template;
     s.chain_meeseeks = false;
     s.tmux_mode = true;
+  });
+}
+
+export function claimPipelineRunnerActive(statePath: string): State {
+  return sm.update(statePath, (s: State) => {
+    s.active = true;
+    s.pid = process.pid;
+    if (s.exit_reason === 'failed' || s.exit_reason === 'completed') {
+      s.exit_reason = null;
+    }
   });
 }
 
@@ -1175,6 +1210,7 @@ function preparePhaseState(phaseConfig: PhaseConfig, runtime: PipelineRuntime): 
   if (phaseConfig.preSpawnStateMutation) {
     sm.update(runtime.statePath, phaseConfig.preSpawnStateMutation);
   }
+  claimPipelineRunnerActive(runtime.statePath);
   persistPhaseTransition(runtime, phaseConfig, previousState);
 }
 
@@ -1285,6 +1321,7 @@ function loadPipelineRuntime(sessionDir: string, opts: MainOpts, log: (msg: stri
   } catch (err) {
     throw new Error(`Cannot read state.json: ${safeErrorMessage(err)}`);
   }
+  state = claimPipelineRunnerActive(statePath);
   const workingDir = state.working_dir || process.cwd();
 
   // AC-LPB-05: detect reconstruction and reset start_time_epoch.
@@ -1499,6 +1536,7 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
         stdout: (msg) => log(msg),
         stderr: (msg) => log(msg),
       });
+      writeWatcherLivenessArtifact(runtime.sessionDir, rawPhase);
       if (acGate.status !== 'pass') {
         log(`Phase ${rawPhase} AC gate failed — stopping pipeline`);
         break;
