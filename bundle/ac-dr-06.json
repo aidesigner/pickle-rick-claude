@@ -1,0 +1,14 @@
+{
+  "ac_id": "AC-DR-06",
+  "pass": true,
+  "checked_at": "2026-05-02T00:00:00.000Z",
+  "checker": "tests/integration/readiness-bundle-prd.test.js",
+  "checker_version": "local",
+  "evidence": {
+    "bundle_prd": "prds/p2-bundle-deploy-reversion-and-gate-baseline-diagnostic.md",
+    "ticket_count": 22,
+    "skip_readiness": false
+  },
+  "failure_reason": null,
+  "remediation_hint": null
+}

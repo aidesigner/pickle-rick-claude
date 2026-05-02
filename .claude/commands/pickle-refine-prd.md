@@ -153,6 +153,9 @@ status: Todo
 priority: [High|Medium|Low]
 order: [N]
 working_dir: [path or omit]
+source_prd: [source PRD path for manifest/bundle decompositions; omit only when not applicable]
+source_section: [source heading/section for mapped requirements; omit only when not applicable]
+mapped_requirements: [AC-...]
 created: [Date]
 updated: [Date]
 links:
@@ -169,6 +172,8 @@ links:
 **Inputs**: [types] | **Outputs**: [types] | **Errors**: [shapes] | **Invariants**: [conditions]
 ## Acceptance Criteria
 - [ ] [Criterion] — Verify: `[command]` — Type: [test|typecheck|lint|curl|llm-conformance]
+- Use `verify_pre:` only for criteria that must be checked before implementation and are expected to pass at readiness time.
+- Default criteria are `verify_post` and are checked after implementation; omit the prefix unless a pre-flight check is intentional.
 ## Test Expectations
 | Criterion | Test File | Description | Assertion |
 |:---|:---|:---|:---|

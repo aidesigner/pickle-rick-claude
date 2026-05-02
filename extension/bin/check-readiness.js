@@ -285,7 +285,7 @@ function ticketInfo(ticketFile) {
     const acIds = [
         ...readStringArray(frontmatter, 'ac_ids'),
         ...extractAcceptanceCriteria(content)
-            .flatMap((ac) => [...ac.matchAll(/\b(?:AC-[A-Z0-9-]+|P\d+\.\d+|R\d+|T\d+)\b/g)].map((match) => match[0])),
+            .flatMap((ac) => [...ac.matchAll(/\b(?:AC-[A-Za-z0-9-]+|P\d+\.\d+|R\d+|T\d+)\b/g)].map((match) => match[0])),
     ];
     return {
         file: ticketFile,
@@ -326,26 +326,31 @@ function resolvePeerPrdPath(parentPrdPath, peerPath, repoRoot) {
     ];
     return candidates.find((candidate) => fs.existsSync(candidate));
 }
+function requirementsFromPrd(filePath, sourcePrd, idPattern = /\bAC-[A-Za-z0-9-]+\b/g) {
+    const requirements = [];
+    const lines = fs.readFileSync(filePath, 'utf-8').split(/\r?\n/);
+    let section = '';
+    for (const line of lines) {
+        const heading = /^#{1,6}\s+(.+?)\s*$/.exec(line);
+        if (heading)
+            section = heading[1].trim();
+        for (const match of line.matchAll(idPattern)) {
+            requirements.push({ sourcePrd, sourceSection: section, requirementId: match[0] });
+        }
+    }
+    return requirements;
+}
 function sourceRequirementsFromParentPrd(parentPrdPath, repoRoot) {
     if (!parentPrdPath || !fs.existsSync(parentPrdPath))
         return [];
     const parentContent = fs.readFileSync(parentPrdPath, 'utf-8');
     const peerPaths = readNestedStringArray(parseFrontmatter(parentContent), 'peer_prds', 'deferred');
-    const requirements = [];
+    const requirements = requirementsFromPrd(parentPrdPath, path.relative(repoRoot, parentPrdPath) || path.basename(parentPrdPath), /\bAC-DR-[A-Za-z0-9-]+\b/g);
     for (const peerPath of peerPaths) {
         const resolved = resolvePeerPrdPath(parentPrdPath, peerPath, repoRoot);
         if (!resolved)
             continue;
-        const lines = fs.readFileSync(resolved, 'utf-8').split(/\r?\n/);
-        let section = '';
-        for (const line of lines) {
-            const heading = /^#{1,6}\s+(.+?)\s*$/.exec(line);
-            if (heading)
-                section = heading[1].trim();
-            for (const match of line.matchAll(/\bAC-[A-Z0-9-]+\b/g)) {
-                requirements.push({ sourcePrd: peerPath, sourceSection: section, requirementId: match[0] });
-            }
-        }
+        requirements.push(...requirementsFromPrd(resolved, peerPath));
     }
     return requirements;
 }
