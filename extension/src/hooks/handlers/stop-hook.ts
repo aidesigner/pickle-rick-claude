@@ -362,16 +362,34 @@ function maybeSpawnUpdateCheck(extensionDir: string, log: (msg: string) => void)
     log('check-update.js not found, skipping update check');
     return;
   }
+  let settings: Record<string, unknown> | null = null;
   try {
     const settingsPath = path.join(extensionDir, 'pickle_settings.json');
-    const raw = readRecoverableJsonObject(settingsPath) as Record<string, unknown> | null;
-    if (raw?.auto_update_enabled === false) {
+    settings = readRecoverableJsonObject(settingsPath) as Record<string, unknown> | null;
+    if (settings?.auto_update_enabled === false) {
       log('Auto-update disabled in settings, skipping');
       return;
     }
   } catch {
     // Settings missing/corrupted — default to enabled
   }
+  const intervalHours = settings?.update_check_interval_hours;
+  const configuredSeconds = typeof intervalHours === 'number' && Number.isFinite(intervalHours) && intervalHours > 0
+    ? intervalHours * 36
+    : 60;
+  const spawnIntervalSeconds = Math.max(60, configuredSeconds);
+  const spawnEpochPath = path.join(extensionDir, 'last-check-spawn.epoch');
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  try {
+    const lastSpawnEpoch = Number(fs.readFileSync(spawnEpochPath, 'utf8').trim());
+    if (Number.isFinite(lastSpawnEpoch) && lastSpawnEpoch > 0 && nowEpoch - lastSpawnEpoch < spawnIntervalSeconds) {
+      log('check-update spawn skipped: rate-limited');
+      return;
+    }
+  } catch {
+    // Missing/unreadable spawn marker — allow this spawn.
+  }
+  try { fs.writeFileSync(spawnEpochPath, `${nowEpoch}\n`); } catch { /* ignore marker write failure */ }
   log('Spawning detached check-update process');
   const child = spawn('node', [checkUpdatePath], { detached: true, stdio: 'ignore' });
   child.on('error', (err) => {

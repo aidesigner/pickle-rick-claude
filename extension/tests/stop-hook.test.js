@@ -131,6 +131,54 @@ function runHookRaw(opts = {}) {
   }
 }
 
+function makeStopHookFixture(prefix = 'ph-rate-limit-') {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  writeExtensionSentinel(tmpDir);
+  const sessionDir = path.join(tmpDir, 'session');
+  const checkUpdateDir = path.join(tmpDir, 'extension', 'bin');
+  fs.mkdirSync(sessionDir, { recursive: true });
+  fs.mkdirSync(checkUpdateDir, { recursive: true });
+  fs.writeFileSync(path.join(checkUpdateDir, 'check-update.js'), 'process.exit(0);\n');
+  fs.writeFileSync(
+    path.join(tmpDir, 'current_sessions.json'),
+    JSON.stringify({ [process.cwd()]: sessionDir })
+  );
+  return {
+    tmpDir,
+    sessionDir,
+    stateFile: path.join(sessionDir, 'state.json'),
+    debugLogPath: path.join(tmpDir, 'debug.log'),
+    spawnEpochPath: path.join(tmpDir, 'last-check-spawn.epoch'),
+  };
+}
+
+function runHookInFixture(fixture, opts = {}) {
+  const {
+    state = baseState({
+      schema_version: 3,
+      completion_promise: 'DONE_FOR_RATE_LIMIT',
+      session_dir: fixture.sessionDir,
+    }),
+    response = '<promise>DONE_FOR_RATE_LIMIT</promise>',
+  } = opts;
+  fs.writeFileSync(fixture.stateFile, JSON.stringify(state));
+  const env = {
+    ...process.env,
+    EXTENSION_DIR: fixture.tmpDir,
+    FORCE_COLOR: '0',
+    PICKLE_STATE_FILE: fixture.stateFile,
+  };
+  delete env.PICKLE_ROLE;
+  execFileSync(process.execPath, [STOP_HOOK], {
+    input: JSON.stringify({ last_assistant_message: response }),
+    encoding: 'utf-8',
+    env,
+  });
+  return fs.existsSync(fixture.debugLogPath)
+    ? fs.readFileSync(fixture.debugLogPath, 'utf-8')
+    : '';
+}
+
 // ---------------------------------------------------------------------------
 // Bypass conditions — always approve, no state mutation
 // ---------------------------------------------------------------------------
@@ -289,6 +337,50 @@ test('stop-hook: recovered disabled auto-update settings suppress completion upd
     assert.equal(JSON.parse(fs.readFileSync(settingsPath, 'utf-8')).auto_update_enabled, false);
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('stop-hook.rate-limit first-spawn: fresh state spawns once', () => {
+  const fixture = makeStopHookFixture();
+  try {
+    const log = runHookInFixture(fixture);
+    assert.match(log, /Spawning detached check-update process/);
+    assert.ok(fs.existsSync(fixture.spawnEpochPath), 'spawn epoch file should be written');
+  } finally {
+    fs.rmSync(fixture.tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('stop-hook.rate-limit: 100 invocations in 30s produce no more than one spawn', () => {
+  const fixture = makeStopHookFixture();
+  try {
+    fs.writeFileSync(
+      path.join(fixture.tmpDir, 'pickle_settings.json'),
+      JSON.stringify({ update_check_interval_hours: 1 })
+    );
+    let log = '';
+    for (let i = 0; i < 100; i += 1) {
+      log = runHookInFixture(fixture);
+    }
+    const spawnCount = (log.match(/Spawning detached check-update process/g) || []).length;
+    assert.ok(spawnCount <= 1, `expected <=1 spawn, got ${spawnCount}`);
+    assert.match(log, /check-update spawn skipped: rate-limited/);
+  } finally {
+    fs.rmSync(fixture.tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('stop-hook.rate-limit epoch-write: spawn writes recent epoch file mtime', () => {
+  const fixture = makeStopHookFixture();
+  try {
+    const before = Date.now();
+    runHookInFixture(fixture);
+    const stat = fs.statSync(fixture.spawnEpochPath);
+    assert.ok(stat.mtimeMs >= before - 1000, `expected recent mtime, got ${stat.mtime.toISOString()}`);
+    const writtenEpoch = Number(fs.readFileSync(fixture.spawnEpochPath, 'utf-8').trim());
+    assert.ok(Number.isFinite(writtenEpoch), 'spawn epoch file should contain a finite epoch');
+  } finally {
+    fs.rmSync(fixture.tmpDir, { recursive: true, force: true });
   }
 });
 
