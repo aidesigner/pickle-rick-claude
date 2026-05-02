@@ -1,6 +1,8 @@
 # MASTER_PLAN — Pickle Rick Engineering Lifecycle
 
-**Last updated**: 2026-05-01 PM (**v1.66.0 SHIPPED** — gate-baseline + state-desync T0..T5 + loop-runner + ac-phase-gate; **3 P1s bundled** into `p1-bug-bundle-2026-05-01-pm.md` — IN FLIGHT next)
+**Last updated**: 2026-05-02 PM (**P1 bundle landed 20/20 tickets** including v1.67.0 closer commit `2c814e8`; pipeline failed at anatomy-park downstream of **deploy-reversion meta-bug** — deployed reverts v1.66.0 → v1.64.0 within ~30-60 min of install.sh; **NEW P0 bundle** `p2-bundle-deploy-reversion-and-gate-baseline-diagnostic.md` to fix the meta-bug; v1.67.0 NOT yet tagged on GitHub — pending lockdown)
+
+**Bootstrap for new sessions**: read `CONTEXT_2026-05-02.md` first.
 
 This file is **operational** — it tells the next coding agent what to work on. Historical narrative lives in:
 - `docs/codex-prompt-design-notes.md` — codex-backend prompt-design lessons (FM-1..FM-4, literalism, scope confusion)
@@ -13,15 +15,14 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 | # | PRD | Status | Next action |
 |---|---|---|---|
-| 1 | [`prds/p1-bug-bundle-2026-05-01-pm.md`](p1-bug-bundle-2026-05-01-pm.md) ⭐ **P1 BUNDLE — IN FLIGHT** | **Refined + running** — session `2026-05-01-325ccb80`, pipeline-325ccb80, Phase 1/4 PICKLE since 01:26 UTC after readiness-halt-then-resume with `state.flags.skip_readiness_reason` set. 20 tickets on disk (1 parent + 15 impl + 4 hardening + 1 closer). Refinement narrowed Section B to one-line fix at `init-microverse.ts:13`. | Watch convergence; expect ~3-4h on codex backend |
-| 1b | [`prds/readiness-gate-manifest-prd-bundle-mismatch.md`](readiness-gate-manifest-prd-bundle-mismatch.md) ⭐ **NEW P2** — readiness gate doesn't handle manifest/bundle PRDs | **Draft** — surfaced live during bundle launch on `325ccb80` (readiness halted at 00:26:55). 3 related bugs: (1) ticket frontmatter has no `source_prd`/`source_section` slot for cross-PRD attribution; (2) check-readiness fails ACs whose verify command checks post-fix state; (3) manifest PRDs' `peer_prds` frontmatter isn't walked by the gate. 7 ACs, 9 atomic tickets, ~430 LOC. Workaround: `state.flags.skip_readiness_reason` (BMAD P0.6). | Schedule for next overnight bundle alongside hermes |
-| 1c | [`prds/pipeline-runner-state-active-not-claimed-on-relaunch.md`](pipeline-runner-state-active-not-claimed-on-relaunch.md) ⭐ **NEW P3** — pipeline-runner doesn't flip `state.active=true` on relaunch | **Draft** — surfaced live during bundle session `325ccb80` after readiness-halt-then-relaunch. log-watcher and raw-morty self-terminate every ~30 min with `◤ FEED TERMINATED ◢` because pipeline-runner inherits `state.active=false` from the prior failed run and never claims active=true at startup. Sibling to LRR-T1 (mux-runner ownership) and LRR-T3 (exit_reason clear) but for the `active` field. 4 ACs, 5 atomic tickets, ~150 LOC. Workaround: 30-min watchdog cron `bcdd4a30` flips active=true on every tick. | P3 — bundle alongside hermes; ship together with readiness-gate manifest PRD |
-| 2 | [`prds/anatomy-park-gate-baseline-missing.md`](anatomy-park-gate-baseline-missing.md) | **SHIPPED v1.66.0** — 9 atomic tickets converged in 91m on session `bfa25a4b`; gate-baseline write-verify, recapture-before-strict-mode, strict-red through stall-limit, integration test all landed | — |
-| 3 | [`prds/hermes-integration.md`](hermes-integration.md) | **Ready (P2)** — research complete, 30 Qs answered, 4 open Qs resolved | `/pickle-refine-prd` → next overnight bundle |
-| 4 | [`prds/multi-repo-task-state-drift.md`](multi-repo-task-state-drift.md) | **Refined draft** — high impact when triggered (multi-repo flows only) | Pick up after hermes; needs scoping decision |
-| 5 | [`prds/god-functions-remediation-phase-2.md`](god-functions-remediation-phase-2.md) | **Draft** — 27 carve-outs from Phase 1 to remove; worst offender `runGate` (cyclomatic 65) | Refactor epic; bundle behind hermes |
-| 6 | [`prds/deepseek-integration.md`](deepseek-integration.md) | **Draft** — third backend via Anthropic-compat shim (~230 LOC) | Lower priority than hermes (rides claude CLI) |
-| 7 | (proposed) `prds/package-json-deploy-parity-gap.md` | **Not yet drafted** — `engines.codex` source/deploy drift caught only by smoke check; AC-RVN-08 parity assertion does not cover `package.json` | Draft as P3 follow-up alongside hermes |
+| 1 | [`prds/p2-bundle-deploy-reversion-and-gate-baseline-diagnostic.md`](p2-bundle-deploy-reversion-and-gate-baseline-diagnostic.md) ⭐ **NEW P0 BUNDLE** — meta-bug blocks every release | **Draft** — composes F7 lockdown from `schema-version-deploy-reversion-rca.md` (was deferred; **promoted to mandatory** after v1.66.0 → v1.64.0 reversion happened twice in 12h) + gate-baseline runtime diagnostic + `pipeline-runner-state-active-not-claimed-on-relaunch.md` (pulled from P3) + `readiness-gate-manifest-prd-bundle-mismatch.md` (pulled from P2). 7 bundle ACs (AC-DR-01..07), ~12-15 atomic tickets, ~800 LOC. Target v1.68.0. Pre-flight: verify deploy parity before launch. | `/pickle-refine-prd` → `/pickle-pipeline --backend codex` |
+| 2 | [`prds/p1-bug-bundle-2026-05-01-pm.md`](p1-bug-bundle-2026-05-01-pm.md) | **All 20 tickets DONE** — closer landed v1.67.0 commit `2c814e8`; pickle ✓ (15 impl + 4 hardening), citadel ✓; anatomy-park ✗ at iter 2 (deploy-reversion → gate-baseline recurred 4× total today). v1.67.0 **NOT tagged on GitHub** — held until P0 bundle ships F7 lockdown. | Tag + verify after P0 bundle ships |
+| 3 | [`prds/anatomy-park-gate-baseline-missing.md`](anatomy-park-gate-baseline-missing.md) | **SHIPPED v1.66.0** but invisible to runtime because of deploy-reversion. Source has recapture fix; deployed v1.64.0 doesn't. | Verified by P0 bundle's AC-DR-02 |
+| 4 | [`prds/hermes-integration.md`](hermes-integration.md) | **Ready (P2)** — research complete, 30 Qs answered | `/pickle-refine-prd` → next overnight bundle after P0 ships |
+| 5 | [`prds/multi-repo-task-state-drift.md`](multi-repo-task-state-drift.md) | **Refined draft** — high impact when triggered (multi-repo flows only) | Pick up after hermes |
+| 6 | [`prds/god-functions-remediation-phase-2.md`](god-functions-remediation-phase-2.md) | **Draft** — 27 carve-outs from Phase 1 to remove | Refactor epic; bundle behind hermes |
+| 7 | [`prds/deepseek-integration.md`](deepseek-integration.md) | **Draft** — third backend via Anthropic-compat shim | Lower priority than hermes |
+| 8 | (proposed) `prds/package-json-deploy-parity-gap.md` | **Not yet drafted** — engines.codex source/deploy drift; AC-RVN-08 doesn't cover package.json | Draft alongside hermes |
 
 **Residuals** (not their own queue slot, will be swept opportunistically):
 - AC-SSV-04, AC-SSV-06, AC-LPB-07, AC-RVN-11 (24h soak), AC-RVN-12 (self-propagation negative test) — see [`state-schema-version-ordering-incident.md`](state-schema-version-ordering-incident.md), [`large-pipeline-time-budget-undersized.md`](large-pipeline-time-budget-undersized.md), [`schema-version-deploy-reversion-rca.md`](schema-version-deploy-reversion-rca.md).
@@ -37,12 +38,13 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 | Path | Status | Notes |
 |---|---|---|
-| `p1-bug-bundle-2026-05-01-pm.md` | **Manifest (P1) — IN FLIGHT** | Refined; 20 tickets on disk; running on session `325ccb80` Phase 1/4 PICKLE since 01:26 UTC |
-| `readiness-gate-manifest-prd-bundle-mismatch.md` | **Draft (P2)** ⭐ NEW | 3 bugs in readiness gate ↔ ticket-frontmatter ↔ skill-template chain when refining manifest PRDs; 7 ACs, 9 atomic tickets, ~430 LOC |
-| `pipeline-runner-state-active-not-claimed-on-relaunch.md` | **Draft (P3)** ⭐ NEW | pipeline-runner doesn't flip state.active=true on relaunch; watchers correctly self-terminate per their liveness INVARIANT; 4 ACs, 5 atomic tickets, ~150 LOC |
-| `anatomy-park-runner-undefined-description-crash.md` | **In bundle (P1)** | Section A of the bundle. AC-APRC-01..05 mandatory + 06 optional. Source PRD stays canonical |
-| `szechuan-sauce-codex-judge-model-mismatch.md` | **In bundle (P1)** | Section B of the bundle. AC-SCJM-01..05 mandatory + 06 optional. Source PRD stays canonical |
-| `pipeline-state-desync-and-pane-respawn-tmpdir.md` | **In bundle (P1)** | Section C TAIL. PSD-T6..T10 remaining (T0..T5 SHIPPED v1.66.0) |
+| `p2-bundle-deploy-reversion-and-gate-baseline-diagnostic.md` | **Draft (P0) ⭐ NEW BUNDLE** | F7 lockdown + gate-baseline diagnostic + state.active claim + readiness manifest gate; ~12-15 tickets, ~800 LOC, target v1.68.0 |
+| `p1-bug-bundle-2026-05-01-pm.md` | **20/20 SHIPPED** (closer commit `2c814e8`, source v1.67.0) | Anatomy-park failed downstream of deploy-reversion. v1.67.0 untagged until P0 ships |
+| `readiness-gate-manifest-prd-bundle-mismatch.md` | **In P0 bundle** (Section D) | Pulled forward from P2 backlog into P0 bundle |
+| `pipeline-runner-state-active-not-claimed-on-relaunch.md` | **In P0 bundle** (Section C) | Pulled forward from P3 backlog into P0 bundle |
+| `anatomy-park-runner-undefined-description-crash.md` | **SHIPPED via P1 bundle** (commits `bddcb71`, `be5dacf`, `cee66e9`, `c8f14d7`, `17623ea`) | All 5 ACs Done; assertMicroverseStateShape + history guards landed |
+| `szechuan-sauce-codex-judge-model-mismatch.md` | **SHIPPED via P1 bundle** (commits `aa2336c`, `a590b97`, `f2d938b`, `0357d29`, `26cbf98`, `effe287`, `74f463d`) | All 5 ACs Done; one-line fix at init-microverse.ts:13 + judge_unreachable exit |
+| `pipeline-state-desync-and-pane-respawn-tmpdir.md` | **SHIPPED via P1 bundle** (commits `cde1175`, `9a9c9f5`, `145eaea`, `c82c181`, `f55f46c`, `47904e7`, `622cd53`, `674016b`) | T0..T5 in v1.66.0; T6..T10 in v1.67.0 closer commit |
 | `hermes-integration.md` + `hermes-research.md` | **Ready (P2)** | Fourth backend `'hermes'`; 12 FRs + 5 NFRs + ~20 new tests |
 | `multi-repo-task-state-drift.md` | **Refined draft** | T1-T4 partially shipped pre-v1.63.0; remainder TBD |
 | `god-functions-remediation-phase-2.md` | **Draft** | 27 god-fns × ~20 tickets to remove ESLint carve-outs |
@@ -81,7 +83,22 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 ---
 
-## 2. Recently Shipped (last 2 releases)
+## 2. Recently Shipped (last 3 releases)
+
+### Uncommitted (planned v1.67.0) — P1 bundle (anatomy-park crash + szechuan judge model + pipeline-state-desync tail)
+
+- **All 20 tickets DONE** on session `2026-05-01-325ccb80` over two pickle phases (initial 144m + retry). Closer commit `2c814e8` bumped 1.66.0 → 1.67.0.
+- Section A (anatomy-park-runner-undefined-description-crash): 5 ACs shipped (`be5dacf`, `bddcb71`, `cee66e9`, `c8f14d7`, `17623ea`). `assertMicroverseStateShape` runtime validator added; history-access guards; regression test.
+- Section B (szechuan-sauce-codex-judge-model-mismatch): 5 ACs shipped (`aa2336c`, `a590b97`, `f2d938b`, `0357d29`, `26cbf98`, `effe287`, `74f463d`). One-line fix at `init-microverse.ts:13`; convergence guard against empty history; new `judge_unreachable` exit reason.
+- Section C tail (pipeline-state-desync T6..T10): 5 tickets shipped (`47904e7`, `f55f46c`, `622cd53`, `674016b`, `c82c181`, `145eaea`, `9a9c9f5`, `cde1175`). EXTENSION_DIR opt-in renamed to EXTENSION_DIR_TEST; ESLint rule for bare reads; integration test; trap-door catalog.
+- Plus 4 hardening tickets (H1-H4: code quality, data flow, test quality, cross-reference) + 4 anatomy-park bonus commits during the failed phase.
+- **Why pipeline reported FAILED**: anatomy-park exited at iter 2 with the same gate-baseline-missing bug v1.66.0 was supposed to fix. Forensic finding: deployed extension was reverted v1.66.0 → v1.64.0 by auto-updater between install.sh and pipeline launch. **The deploy-reversion meta-bug masked all this work as if it were broken.** All 20 tickets ARE shipped in source; the pipeline phase verification failed because the runtime ran stale JS.
+- v1.67.0 **NOT yet tagged** on GitHub. Held until P0 bundle ships F7 lockdown.
+
+### v1.66.0 (2026-05-01) — anatomy-park gate-baseline missing-after-commit
+
+- 9 atomic tickets shipped in 91m on session `bfa25a4b`. Gate-baseline write-verify, recapture-before-strict-mode, strict-red routed through stall-limit, integration test, trap-door catalog. AC-RVN-08 deploy-parity assertion already in place — but reversion happens at the auto-updater, not at install.sh.
+- Tagged: `gh release create v1.66.0` on 2026-05-01 22:35 UTC. Latest on GitHub.
 
 ### Uncommitted (planned v1.65.0) — relaunch status hygiene + ac-phase-gate timeout
 
@@ -108,18 +125,23 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 ---
 
-## 3. Current State (verified 2026-05-01 PM)
+## 3. Current State (verified 2026-05-02 PM)
 
 | Item | Value |
 |---|---|
-| Latest release | **v1.64.0** (v1.65.0 staged, uncommitted) |
-| Branch state | `main`, ~11 commits ahead of `origin/main` (loop-runner shipped + ac-phase-gate fix + doc rationalization + new PRD) |
-| Active pipeline session | **none** — `c9595747` ended `failed` at 19:22:07 (anatomy-park exit 1 at iter 2, same gate-baseline bug as `21605b33`) |
-| Tmux session | `pipeline-c9595747` panes are zsh now; safe to kill |
-| Pickle phase result | `c9595747` shipped 4 commits / 5 tickets (PSD-T0..T5) of pipeline-state-desync PRD before pipeline failed in anatomy-park |
-| Codex backend | production-grade (75-ticket Citadel bundle + 9-ticket overnight bundle + 5-ticket loop-runner bundle all shipped autonomously) |
-| `CODEX_MANAGER_RELAUNCH_CAP` | 10 (raised from 5; `extension/src/types/index.ts`) |
-| `engines.codex` pin | `^0.128.0` (source = deployed; install.sh sync ran 2026-05-01 PM) |
+| Source version | **v1.67.0** (commit `2c814e8`) — P1 bundle closer |
+| Deployed version | **v1.64.0** ⚠️ REVERTED — auto-updater reverted from v1.66.0; needs `bash install.sh` AND P0 lockdown |
+| Latest release on GitHub | **v1.66.0** (v1.67.0 NOT tagged; held until P0 bundle ships F7 lockdown) |
+| Branch state | `main`, ~37 commits ahead of `origin/main` |
+| Working tree | CLEAN |
+| Active pipeline session | **none** — `325ccb80` ended `failed` at 14:25 UTC after anatomy-park gate-baseline (downstream of deploy-reversion) |
+| Bundle session retained | `~/.local/share/pickle-rick/sessions/2026-05-01-325ccb80/` — 20/20 tickets Done; useful for citadel post-validation |
+| Cron watchdogs | NONE — `bcdd4a30` and `2083193a` both cancelled |
+| Codex backend | production-grade |
+| `CODEX_MANAGER_RELAUNCH_CAP` | 10 |
+| `engines.codex` pin | `^0.128.0` (source); deployed shows `^0.125.0` (drift — install.sh sync needed) |
+| Today's bug logs | 3 new PRDs (P0/P2/P3); all in queue under P0 bundle |
+| Test suite | not re-run since v1.66.0 (3492/3492 then); pickle phases ran their gates inside |
 
 ---
 
