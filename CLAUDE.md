@@ -35,7 +35,7 @@ Extension path: `~/.claude/pickle-rick` (never `.gemini`)
 Semver `<Major>.<Minor>.<Patch>` in `extension/package.json`:
 **Major** = breaking (state schema, CLI args, hook contracts) | **Minor** = features (commands, flags, prompts) | **Patch** = fixes, refactors
 Bump → commit `chore: bump version to X.Y.Z` → `gh release create vX.Y.Z`
-Before creating a release, run the full lint and test gate from `extension/`: `npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npx tsc && npm test`. ESLint errors block release; warnings are advisory.
+Before creating a release, run the full lint and test gate from `extension/`: `npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npx tsc && npm run test:fast && npm run test:integration && RUN_EXPENSIVE_TESTS=1 npm run test:expensive`. Test failures block release, no exceptions.
 **All uncommitted changes MUST be committed and included before tagging a release.** No dirty working tree at release time — `git status` must be clean, compiled JS must match TS source.
 
 ## Architecture

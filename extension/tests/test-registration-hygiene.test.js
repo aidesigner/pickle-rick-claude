@@ -21,6 +21,9 @@ const REQUIRED_TRAP_DOOR_ENTRY_SUBSTRINGS = [
   '`src/services/pickle-utils.ts` (getExtensionRoot validation)',
   'ENFORCE: extension/tests/get-extension-root-fallback.test.js',
   'PATTERN_SHAPE: `extensionRootSentinelExists`',
+  '`.github/workflows/release.yml` (release gate parity)',
+  'the outer project\'s `CLAUDE.md` `## Versioning` section is the release gate source of truth',
+  'ENFORCE: extension/tests/release-gate-parity.test.js',
 ];
 
 const UNREGISTERED_TEST_ALLOWLIST = new Set([

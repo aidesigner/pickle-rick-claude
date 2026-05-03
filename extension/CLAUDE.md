@@ -109,6 +109,7 @@ Compiled TS → JS lives in `extension/services/`, `extension/bin/`, `extension/
 - `.claude/commands/send-to-morty.md` — INVARIANT: resume table includes artifact-exists/no-review rows before approved-review rows. BREAKS: resumed workers redo completed artifacts instead of reviewing them. ENFORCE: extension/tests/send-to-morty-resume.test.js. PATTERN_SHAPE: Markdown table rows matching `exists; no .*_review.md`.
 - `src/lib/engine-keys-registry.ts` — INVARIANT: registry JSON fields are runtime-validated string arrays. BREAKS: frame analyzer crashes or misclassifies context keys. ENFORCE: extension/tests/engine-keys-registry.test.js.
 - `src/services/linear-integration.ts` — INVARIANT: PICKLE_LINEAR_COMMAND is parsed into executable plus argv without shell. BREAKS: configured local bridge commands with arguments never receive ticket lifecycle payloads. ENFORCE: extension/tests/linear-integration.test.js. PATTERN_SHAPE: `PICKLE_LINEAR_COMMAND|execFileSync(invocation.bin, invocation.args`.
+- `.github/workflows/release.yml` (release gate parity) — INVARIANT: the outer project's `CLAUDE.md` `## Versioning` section is the release gate source of truth, and line 22 of `.github/workflows/release.yml` mirrors it. BREAKS: releases can ship through a workflow gate that drifted from documented policy. ENFORCE: extension/tests/release-gate-parity.test.js.
 
 ## state.json Field Invariants
 
