@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { resolveStateFile, loadActiveState, approve } from '../resolve-state.js';
-import { getExtensionRoot, getDataRoot, extractFrontmatter } from '../../services/pickle-utils.js';
+import { getExtensionRoot, getDataRoot } from '../../services/pickle-utils.js';
 import { readRecoverableJsonObject } from '../../services/microverse-state.js';
 
 interface PreToolUseInput {
@@ -15,6 +15,7 @@ interface PreToolUseInput {
 
 const PROTECTED_PATTERNS = [
   /^\.eslintrc(\..*)?$/,
+  /^eslint\.config\..+$/,
   /^\.prettierrc(\..*)?$/,
   /^biome\.json$/,
   /^tsconfig(\..*)?\.json$/,
@@ -35,23 +36,10 @@ function isBashTargetingConfig(command: string): boolean {
   return tokens.some(token => isProtectedFile(token));
 }
 
-function hasConfigChangeOverride(
-  sessionDir: string,
-  state: { current_ticket?: string | null },
-): boolean {
-  try {
-    if (!state.current_ticket) return false;
-    const ticketDir = path.join(sessionDir, state.current_ticket);
-    const files = fs.readdirSync(ticketDir);
-    const ticketFile = files.find(f => f.startsWith('linear_ticket_') && f.endsWith('.md'));
-    if (!ticketFile) return false;
-    const content = fs.readFileSync(path.join(ticketDir, ticketFile), 'utf8');
-    const fm = extractFrontmatter(content);
-    if (!fm) return false;
-    return /^config_change:\s*true$/m.test(fm.body);
-  } catch {
-    return false;
-  }
+const ALLOW_CONFIG_EDIT_FLAG = '--allow-config-edit';
+
+function hasAllowConfigEditFlag(args: string[]): boolean {
+  return args.includes(ALLOW_CONFIG_EDIT_FLAG);
 }
 
 function block(reason: string): void {
@@ -100,8 +88,7 @@ async function main() {
     return;
   }
 
-  const state = loadActiveState(stateFile);
-  if (!state) {
+  if (!loadActiveState(stateFile)) {
     approve();
     return;
   }
@@ -127,13 +114,12 @@ async function main() {
     return;
   }
 
-  // Check per-ticket override
-  if (hasConfigChangeOverride(path.dirname(stateFile), state)) {
+  if (hasAllowConfigEditFlag(process.argv.slice(2))) {
     approve();
     return;
   }
 
-  block(`Config file protected: ${targetedConfigFile}. Set config_change: true in ticket frontmatter to override.`);
+  block(`Config file protected: ${targetedConfigFile}. Pass ${ALLOW_CONFIG_EDIT_FLAG} to override.`);
 }
 
 main().catch((err) => {

@@ -50,6 +50,7 @@ function runHandler(opts = {}) {
     setStateFileEnv = withStateFile,
     persistState = true,
     configChange = false,
+    handlerArgs = [],
   } = opts;
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-'));
@@ -93,7 +94,7 @@ function runHandler(opts = {}) {
 
   const hookInput = JSON.stringify({ tool_name: toolName, tool_input: toolInput });
 
-  const stdout = execFileSync(process.execPath, [HANDLER], {
+  const stdout = execFileSync(process.execPath, [HANDLER, ...handlerArgs], {
     input: hookInput,
     encoding: 'utf-8',
     env,
@@ -108,6 +109,11 @@ function runHandler(opts = {}) {
 
 test('blocks Write to .eslintrc.json', () => {
   const result = runHandler({ toolName: 'Write', toolInput: { file_path: '/project/.eslintrc.json' } });
+  assert.equal(result.decision, 'block');
+});
+
+test('config-protect.eslintrc-blocked: blocks Edit to .eslintrc by default', () => {
+  const result = runHandler({ toolName: 'Edit', toolInput: { file_path: '/project/.eslintrc' } });
   assert.equal(result.decision, 'block');
 });
 
@@ -133,6 +139,11 @@ test('blocks Write to biome.json', () => {
 
 test('blocks Write to .prettierrc.json', () => {
   const result = runHandler({ toolName: 'Write', toolInput: { file_path: '/project/.prettierrc.json' } });
+  assert.equal(result.decision, 'block');
+});
+
+test('blocks Edit to eslint.config.js', () => {
+  const result = runHandler({ toolName: 'Edit', toolInput: { file_path: '/project/eslint.config.js' } });
   assert.equal(result.decision, 'block');
 });
 
@@ -252,19 +263,28 @@ test('approves protected config edits when disabled setting is in a newer orphan
 });
 
 // ---------------------------------------------------------------------------
-// Override case
+// Override cases
 // ---------------------------------------------------------------------------
 
-test('approves Write to .eslintrc.json when ticket has config_change: true', () => {
+test('blocks Write to .eslintrc.json even when ticket has config_change: true', () => {
   const result = runHandler({
     toolName: 'Write',
     toolInput: { file_path: '/project/.eslintrc.json' },
     configChange: true,
   });
+  assert.equal(result.decision, 'block');
+});
+
+test('config-protect.bypass: approves Write to .eslintrc.json with --allow-config-edit', () => {
+  const result = runHandler({
+    toolName: 'Write',
+    toolInput: { file_path: '/project/.eslintrc.json' },
+    handlerArgs: ['--allow-config-edit'],
+  });
   assert.equal(result.decision, 'approve');
 });
 
-test('approves config_change override when resolved state.session_dir is stale', () => {
+test('approves --allow-config-edit override when resolved state.session_dir is stale', () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cp-stale-session-dir-'));
   writeExtensionSentinel(tmpDir);
   const liveSessionDir = path.join(tmpDir, 'sessions', 'live-session');
@@ -301,7 +321,7 @@ test('approves config_change override when resolved state.session_dir is stale',
   };
 
   try {
-    const stdout = execFileSync(process.execPath, [HANDLER], {
+    const stdout = execFileSync(process.execPath, [HANDLER, '--allow-config-edit'], {
       input: JSON.stringify({
         tool_name: 'Write',
         tool_input: { file_path: '/project/.eslintrc.json' },
