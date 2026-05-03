@@ -259,6 +259,43 @@ test('buildWorkerInvocation(codex): drops missing add-dir entries (mirrors claud
     assert.equal(inv.args.includes('/definitely/does/not/exist/xyz456'), false);
 });
 
+// --- buildWorkerInvocation: hermes ---
+
+test('backend-spawn.hermes-worker: uses hermes chat query mode with quiet isolated flags', () => {
+    const inv = buildWorkerInvocation('hermes', {
+        prompt: 'hello hermes',
+        addDirs: [],
+    });
+    assert.equal(inv.cmd, 'hermes');
+    assert.equal(inv.backend, 'hermes');
+    assert.deepEqual(inv.args.slice(0, 4), ['chat', '-q', 'hello hermes', '-Q']);
+    assert.ok(inv.args.includes('--ignore-rules'));
+    assert.ok(inv.args.includes('--ignore-user-config'));
+});
+
+test('backend-spawn.hermes-worker: passes toolsets provider max-turns and model', () => {
+    const inv = buildWorkerInvocation('hermes', {
+        prompt: 'x',
+        addDirs: [],
+        toolsets: ['terminal', ' file ', 'code_execution'],
+        provider: 'anthropic',
+        maxTurns: 7,
+        model: 'anthropic/claude-sonnet-4',
+    });
+    const maxTurnsIdx = inv.args.indexOf('--max-turns');
+    const toolsetsIdx = inv.args.indexOf('--toolsets');
+    const providerIdx = inv.args.indexOf('--provider');
+    const modelIdx = inv.args.indexOf('-m');
+    assert.ok(maxTurnsIdx >= 0);
+    assert.equal(inv.args[maxTurnsIdx + 1], '7');
+    assert.ok(toolsetsIdx >= 0);
+    assert.equal(inv.args[toolsetsIdx + 1], 'terminal,file,code_execution');
+    assert.ok(providerIdx >= 0);
+    assert.equal(inv.args[providerIdx + 1], 'anthropic');
+    assert.ok(modelIdx >= 0);
+    assert.equal(inv.args[modelIdx + 1], 'anthropic/claude-sonnet-4');
+});
+
 // --- buildManagerInvocation ---
 
 test('buildManagerInvocation(claude): includes stream-json + max-turns + no-session-persistence', () => {

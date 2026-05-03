@@ -83,6 +83,7 @@ export type WorkerProcessContext = {
   mutableState: { finalized: boolean; timedOut: boolean };
   model?: string;
   effort?: 'low' | 'medium' | 'high';
+  hermesOptions?: HermesWorkerOptions;
 };
 
 export function tierToModel(tier: string | undefined): string {
@@ -504,6 +505,13 @@ type SessionRuntime = {
   sessionEffort?: 'low' | 'medium' | 'high';
 };
 
+type HermesWorkerOptions = {
+  toolsets?: string[];
+  provider?: string;
+  model?: string;
+  maxTurns?: number;
+};
+
 function readSessionRuntime(args: ParsedArgs): SessionRuntime {
   const parentStatePath = path.join(args.sessionRoot, 'state.json');
   const workerStatePath = path.join(args.ticketPath, 'state.json');
@@ -521,6 +529,30 @@ function readSessionRuntime(args: ParsedArgs): SessionRuntime {
   } catch {
     return { timeoutStatePath, workerStatePath, state: null, sessionWorkingDir: process.cwd() };
   }
+}
+
+function readStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items = value
+    .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    .map(item => item.trim());
+  return items.length > 0 ? items : undefined;
+}
+
+function readPositiveInteger(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) return undefined;
+  return value;
+}
+
+function readHermesWorkerOptions(state: State | null): HermesWorkerOptions {
+  const record = state as (State & Record<string, unknown>) | null;
+  if (!record) return {};
+  return {
+    toolsets: readStringArray(record.hermes_toolsets),
+    ...(typeof record.hermes_provider === 'string' && record.hermes_provider.trim() ? { provider: record.hermes_provider } : {}),
+    ...(typeof record.hermes_model === 'string' && record.hermes_model.trim() ? { model: record.hermes_model } : {}),
+    maxTurns: readPositiveInteger(record.hermes_max_turns) ?? readPositiveInteger(record.max_iterations),
+  };
 }
 
 function readTicketInfo(ticketFilePath: string | null): ReturnType<typeof parseTicketFrontmatter> | null {
@@ -630,6 +662,7 @@ export async function runWorkerProcess(ctx: WorkerProcessContext): Promise<{ exi
     model: ctx.model,
     outputFormat: args.outputFormat,
     effort: ctx.effort,
+    ...(args.backend === 'hermes' ? ctx.hermesOptions : {}),
   });
   try { updateTicketStatus(ticketId, 'In Progress', sessionRoot); } catch { /* best-effort */ }
   sessionLog.on('error', err => console.error(`${Style.RED}❌ Log stream error: ${safeErrorMessage(err)}${Style.RESET}`));
@@ -681,10 +714,23 @@ export async function runWorkerProcess(ctx: WorkerProcessContext): Promise<{ exi
     };
     proc.on('error', err => {
       clearLifecycleTimers();
-      sessionLog.end();
+      const errorCode = (err as NodeJS.ErrnoException).code;
+      if (args.backend === 'hermes' && errorCode === 'ENOENT') {
+        sessionLog.write(JSON.stringify({
+          event: 'hermes_binary_missing',
+          ts: new Date().toISOString(),
+          ticket: ticketId,
+          backend: args.backend,
+          command: invocation.cmd,
+        }) + '\n');
+        sessionLog.end(() => process.exit(127));
+      } else {
+        sessionLog.end();
+      }
       console.error(`${Style.RED}[pickle-rick] Failed to spawn '${invocation.cmd}' (backend=${args.backend}): ${safeErrorMessage(err)}${Style.RESET}`);
       try { updateTicketStatus(ticketId, 'Failed', sessionRoot); } catch { /* best-effort */ }
       printMinimalPanel('Worker Report', { status: 'spawn-error', validation: 'failed' }, 'RED', '🥒');
+      if (args.backend === 'hermes' && errorCode === 'ENOENT') return;
       process.exit(1);
     });
     proc.on('close', code => {
@@ -762,7 +808,7 @@ async function main() {
     sessionLogPath: args.sessionLogPath, sessionWorkingDir: runtime.sessionWorkingDir,
     timeoutStatePath: runtime.timeoutStatePath, workerStatePath: runtime.workerStatePath,
     effectiveTimeoutMs: effectiveTimeout * 1000, mutableState: { finalized: false, timedOut: false },
-    model, effort: runtime.sessionEffort,
+    model, effort: runtime.sessionEffort, hermesOptions: readHermesWorkerOptions(runtime.state),
   });
 }
 

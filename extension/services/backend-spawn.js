@@ -59,6 +59,8 @@ export function resolveBackendFromStateFile(statePath) {
 export function buildWorkerInvocation(backend, opts) {
     if (backend === 'codex')
         return buildCodexInvocation(opts.prompt, opts.addDirs, opts.model, opts.effort);
+    if (backend === 'hermes')
+        return buildHermesWorkerInvocation(opts);
     return buildClaudeWorkerInvocation(opts);
 }
 export function buildManagerInvocation(backend, opts) {
@@ -129,6 +131,26 @@ function buildCodexInvocation(prompt, addDirs, model, effort) {
         args.push('-c', `reasoning.effort=${effort}`);
     args.push('--', prompt);
     return { cmd: 'codex', args, backend: 'codex' };
+}
+function buildHermesWorkerInvocation(opts) {
+    const args = [
+        'chat',
+        '-q', opts.prompt,
+        '-Q',
+        '--ignore-rules',
+        '--ignore-user-config',
+    ];
+    if (typeof opts.maxTurns === 'number' && opts.maxTurns > 0) {
+        args.push('--max-turns', String(opts.maxTurns));
+    }
+    const toolset = opts.toolset?.trim() || opts.toolsets?.map(t => t.trim()).filter(Boolean).join(',');
+    if (toolset)
+        args.push('--toolsets', toolset);
+    if (opts.provider?.trim())
+        args.push('--provider', opts.provider.trim());
+    if (opts.model?.trim())
+        args.push('-m', opts.model.trim());
+    return { cmd: 'hermes', args, backend: 'hermes' };
 }
 /**
  * Build a read-only judge invocation.

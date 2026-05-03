@@ -54,6 +54,51 @@ process.exit(0);
     return shimPath;
 }
 
+function writeHermesShim(shimDir, logPath, ticketDir) {
+    fs.mkdirSync(shimDir, { recursive: true });
+    const shimPath = path.join(shimDir, 'hermes');
+    fs.writeFileSync(shimPath, `#!/usr/bin/env node
+const fs = require('fs');
+fs.writeFileSync(${JSON.stringify(logPath)}, JSON.stringify({
+  argv: process.argv.slice(2),
+  cwd: process.cwd(),
+  pickle_backend: process.env.PICKLE_BACKEND || null,
+  pickle_role: process.env.PICKLE_ROLE || null,
+}, null, 2));
+fs.writeFileSync(${JSON.stringify(path.join(ticketDir, 'conformance_2026-05-03.md'))}, 'ALL_PASS\\n');
+console.log('Hermes worker completed with enough output for validation. '.repeat(8));
+console.log('<promise>I AM DONE</promise>');
+process.exit(0);
+`);
+    fs.chmodSync(shimPath, 0o755);
+    return shimPath;
+}
+
+function makeHermesHarness(tmpDir, ticketId, state = {}) {
+    writeExtensionSentinel(tmpDir);
+    const sessionDir = path.join(tmpDir, 'session');
+    const ticketDir = path.join(sessionDir, ticketId);
+    const repoDir = path.join(tmpDir, 'repo');
+    fs.mkdirSync(ticketDir, { recursive: true });
+    fs.mkdirSync(repoDir, { recursive: true });
+    fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+        active: true,
+        backend: 'hermes',
+        working_dir: repoDir,
+        iteration: 1,
+        max_iterations: 5,
+        schema_version: 1,
+        ...state,
+    }));
+    return { sessionDir, ticketDir, repoDir };
+}
+
+function readWorkerLogFile(ticketDir) {
+    const workerLog = fs.readdirSync(ticketDir).find((name) => /^worker_session_\d+\.log$/.test(name));
+    assert.ok(workerLog, `expected worker_session log in ${ticketDir}`);
+    return fs.readFileSync(path.join(ticketDir, workerLog), 'utf-8');
+}
+
 function writeCodexSpawnHarness(tmpDir, ticketId) {
     writeExtensionSentinel(tmpDir);
     const sessionDir = path.join(tmpDir, 'session');
@@ -597,6 +642,102 @@ test('spawn-morty: recovers orphan tmp backend state before routing worker CLI',
         assert.ok(fs.existsSync(shimLog), 'codex shim should be invoked after backend recovery');
         const invocation = JSON.parse(fs.readFileSync(shimLog, 'utf-8'));
         assert.equal(invocation.pickle_backend, 'codex');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('spawn-morty.hermes: spawns hermes chat with toolsets and completes', () => {
+    const tmpDir = makeTmpDir();
+    const ticketId = 'ticket-hermes-worker';
+    try {
+        const harness = makeHermesHarness(tmpDir, ticketId, {
+            hermes_toolsets: ['terminal', 'file', 'code_execution'],
+            hermes_provider: 'anthropic',
+            hermes_model: 'anthropic/claude-sonnet-4',
+            hermes_max_turns: 9,
+        });
+        const shimDir = path.join(tmpDir, 'bin');
+        const shimLog = path.join(tmpDir, 'hermes-invocation.json');
+        writeHermesShim(shimDir, shimLog, harness.ticketDir);
+
+        const result = spawnSync(process.execPath, [SPAWN_MORTY_BIN,
+            'implement the hermes thing',
+            '--ticket-id', ticketId,
+            '--ticket-path', harness.ticketDir,
+            '--timeout', '30',
+        ], {
+            env: {
+                ...process.env,
+                EXTENSION_DIR: tmpDir,
+                PATH: `${shimDir}${path.delimiter}${process.env.PATH || ''}`,
+                PICKLE_BACKEND: '',
+            },
+            encoding: 'utf-8',
+            timeout: 45000,
+        });
+
+        assert.equal(result.status, 0, `expected successful hermes shim worker, got: ${result.stdout + result.stderr}`);
+        assert.ok(fs.existsSync(shimLog), 'hermes shim should be invoked');
+        const invocation = JSON.parse(fs.readFileSync(shimLog, 'utf-8'));
+        assert.equal(invocation.cwd, harness.repoDir);
+        assert.equal(invocation.pickle_backend, 'hermes');
+        assert.equal(invocation.pickle_role, 'worker');
+        assert.equal(invocation.argv[0], 'chat');
+        assert.equal(invocation.argv[1], '-q');
+        assert.match(invocation.argv[2], /implement the hermes thing/);
+        assert.equal(invocation.argv[3], '-Q');
+        assert.ok(invocation.argv.includes('--ignore-rules'));
+        assert.ok(invocation.argv.includes('--ignore-user-config'));
+        const toolsetsIdx = invocation.argv.indexOf('--toolsets');
+        const providerIdx = invocation.argv.indexOf('--provider');
+        const maxTurnsIdx = invocation.argv.indexOf('--max-turns');
+        const modelIdx = invocation.argv.indexOf('-m');
+        assert.equal(invocation.argv[toolsetsIdx + 1], 'terminal,file,code_execution');
+        assert.equal(invocation.argv[providerIdx + 1], 'anthropic');
+        assert.equal(invocation.argv[maxTurnsIdx + 1], '9');
+        assert.equal(invocation.argv[modelIdx + 1], 'anthropic/claude-sonnet-4');
+        const logContent = readWorkerLogFile(harness.ticketDir);
+        assert.match(logContent, /Hermes worker completed/);
+        assert.match(logContent, /<promise>I AM DONE<\/promise>/);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('spawn-morty.hermes-missing: missing binary exits 127 and logs event', () => {
+    const tmpDir = makeTmpDir();
+    const ticketId = 'ticket-hermes-missing';
+    try {
+        const harness = makeHermesHarness(tmpDir, ticketId);
+        const emptyPath = path.join(tmpDir, 'empty-bin');
+        fs.mkdirSync(emptyPath, { recursive: true });
+
+        const result = spawnSync(process.execPath, [SPAWN_MORTY_BIN,
+            'implement the hermes thing',
+            '--ticket-id', ticketId,
+            '--ticket-path', harness.ticketDir,
+            '--timeout', '30',
+        ], {
+            env: {
+                ...process.env,
+                EXTENSION_DIR: tmpDir,
+                PATH: emptyPath,
+                PICKLE_BACKEND: '',
+            },
+            encoding: 'utf-8',
+            timeout: 45000,
+        });
+
+        assert.equal(result.status, 127, `expected missing hermes binary exit 127, got: ${result.stdout + result.stderr}`);
+        const combined = result.stdout + result.stderr;
+        assert.match(combined, /spawn-error|failed/i);
+        const logContent = readWorkerLogFile(harness.ticketDir);
+        const event = JSON.parse(logContent.trim());
+        assert.equal(event.event, 'hermes_binary_missing');
+        assert.equal(event.ticket, ticketId);
+        assert.equal(event.backend, 'hermes');
+        assert.equal(event.command, 'hermes');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }

@@ -11,6 +11,10 @@ export interface WorkerInvocationOptions {
   model?: string;
   outputFormat?: string;
   effort?: ReasoningEffort;
+  toolset?: string;
+  toolsets?: string[];
+  provider?: string;
+  maxTurns?: number;
 }
 
 export interface ManagerInvocationOptions {
@@ -91,6 +95,7 @@ export function resolveBackendFromStateFile(statePath: string): Backend {
 
 export function buildWorkerInvocation(backend: Backend, opts: WorkerInvocationOptions): SpawnInvocation {
   if (backend === 'codex') return buildCodexInvocation(opts.prompt, opts.addDirs, opts.model, opts.effort);
+  if (backend === 'hermes') return buildHermesWorkerInvocation(opts);
   return buildClaudeWorkerInvocation(opts);
 }
 
@@ -155,6 +160,24 @@ function buildCodexInvocation(prompt: string, addDirs: string[], model?: string,
   if (effort) args.push('-c', `reasoning.effort=${effort}`);
   args.push('--', prompt);
   return { cmd: 'codex', args, backend: 'codex' };
+}
+
+function buildHermesWorkerInvocation(opts: WorkerInvocationOptions): SpawnInvocation {
+  const args: string[] = [
+    'chat',
+    '-q', opts.prompt,
+    '-Q',
+    '--ignore-rules',
+    '--ignore-user-config',
+  ];
+  if (typeof opts.maxTurns === 'number' && opts.maxTurns > 0) {
+    args.push('--max-turns', String(opts.maxTurns));
+  }
+  const toolset = opts.toolset?.trim() || opts.toolsets?.map(t => t.trim()).filter(Boolean).join(',');
+  if (toolset) args.push('--toolsets', toolset);
+  if (opts.provider?.trim()) args.push('--provider', opts.provider.trim());
+  if (opts.model?.trim()) args.push('-m', opts.model.trim());
+  return { cmd: 'hermes', args, backend: 'hermes' };
 }
 
 /**
