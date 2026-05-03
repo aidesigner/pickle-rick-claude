@@ -71,8 +71,8 @@ function buildNextState(input: PostToolUseFailureInput, existing: LastToolErrorS
   };
 }
 
-async function main(): Promise<void> {
-  let inputData = '';
+function main(): void {
+  let inputData: string;
   try {
     inputData = fs.readFileSync(0, 'utf8');
   } catch {
@@ -115,7 +115,9 @@ async function main(): Promise<void> {
   approve();
 }
 
-main().catch((err) => {
+try {
+  main();
+} catch (err) {
   log(`FATAL: ${safeErrorMessage(err)}`);
   approve();
-});
+}

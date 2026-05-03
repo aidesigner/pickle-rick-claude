@@ -9,6 +9,17 @@ const EXTENSION_DIR = process.env.EXTENSION_DIR || join(os.homedir(), '.claude/p
 const HANDLERS_DIR = join(EXTENSION_DIR, 'extension', 'hooks', 'handlers');
 const LOG_PATH = join(EXTENSION_DIR, 'debug.log');
 
+interface HookCommand {
+  scriptPath: string;
+  cmd: string;
+  cmdArgs: string[];
+}
+
+interface HandlerDecision {
+  decision: 'approve' | 'block';
+  [key: string]: unknown;
+}
+
 // Prevent EPIPE errors from crashing the dispatcher when Claude Code closes the pipe
 const handleEpipe = (err: NodeJS.ErrnoException) => {
   if (err.code === 'EPIPE') process.exit(0);
@@ -48,10 +59,7 @@ function findExecutable(name: string): string | null {
   return null;
 }
 
-// eslint-disable-next-line complexity, max-lines-per-function -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
-async function main() {
-  // Watchdog: if the hook hangs for any reason, approve and exit.
-  // This prevents Claude Code from deadlocking on a stuck handler.
+function armWatchdog(): void {
   const WATCHDOG_MS = Number(process.env.PICKLE_DISPATCH_TIMEOUT_MS) || 10_000;
   const watchdog = setTimeout(() => {
     log('Watchdog timeout — approving and exiting');
@@ -59,7 +67,9 @@ async function main() {
     process.exit(0);
   }, WATCHDOG_MS);
   watchdog.unref();
+}
 
+function readHookArgs(): { hookName: string; extraArgs: string[] } {
   const args = process.argv.slice(2);
   if (args.length < 1) {
     approve();
@@ -73,39 +83,39 @@ async function main() {
     process.exit(0);
   }
   log(`Dispatching hook: ${hookName} (cwd: ${process.cwd()})`);
-  const isWindows = process.platform === 'win32';
+  return { hookName, extraArgs };
+}
 
-  let scriptPath: string;
-  let cmd: string;
-  let cmdArgs: string[];
-
+function resolveHookCommand(hookName: string, extraArgs: string[]): HookCommand {
   const jsPath = join(HANDLERS_DIR, `${hookName}.js`);
   if (existsSync(jsPath)) {
-    scriptPath = jsPath;
-    cmd = 'node';
-    cmdArgs = [scriptPath, ...extraArgs];
-  } else if (isWindows) {
-    scriptPath = join(HANDLERS_DIR, `${hookName}.ps1`);
+    return { scriptPath: jsPath, cmd: 'node', cmdArgs: [jsPath, ...extraArgs] };
+  }
+
+  if (process.platform === 'win32') {
+    const scriptPath = join(HANDLERS_DIR, `${hookName}.ps1`);
     const exe = findExecutable('pwsh') || findExecutable('powershell');
     if (!exe) {
       logError('PowerShell not found.');
       approve();
       process.exit(0);
     }
-    cmd = exe;
-    cmdArgs = ['-ExecutionPolicy', 'Bypass', '-File', scriptPath, ...extraArgs];
-  } else {
-    scriptPath = join(HANDLERS_DIR, `${hookName}.sh`);
-    cmd = 'bash';
-    cmdArgs = [scriptPath, ...extraArgs];
+    return { scriptPath, cmd: exe, cmdArgs: ['-ExecutionPolicy', 'Bypass', '-File', scriptPath, ...extraArgs] };
   }
 
+  const scriptPath = join(HANDLERS_DIR, `${hookName}.sh`);
+  return { scriptPath, cmd: 'bash', cmdArgs: [scriptPath, ...extraArgs] };
+}
+
+function ensureScriptExists(scriptPath: string): void {
   if (!existsSync(scriptPath)) {
     logError(`Hook script not found: ${scriptPath}`);
     approve();
     process.exit(0);
   }
+}
 
+async function readInputData(): Promise<string> {
   let inputData = '';
   if (!process.stdin.isTTY) {
     try {
@@ -119,79 +129,78 @@ async function main() {
       log(`Error reading stdin: ${safeErrorMessage(e)}`);
     }
   }
+  return inputData;
+}
 
+function writeChildInput(child: ReturnType<typeof spawn>, inputData: string): void {
+  child.stdin?.on('error', (err: NodeJS.ErrnoException) => {
+    if (err.code === 'EPIPE') {
+      child.kill('SIGKILL');
+      return;
+    }
+    logError(`Child stdin error: ${safeErrorMessage(err)}`);
+  });
+
+  if (inputData) {
+    try {
+      child.stdin?.write(inputData);
+    } catch (err) {
+      if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'EPIPE') {
+        child.kill('SIGKILL');
+      } else {
+        throw err;
+      }
+    }
+  }
+  child.stdin?.end();
+}
+
+function parseHandlerDecision(stdout: string): HandlerDecision | null {
+  const lines = stdout.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const obj = JSON.parse(lines[i]) as HandlerDecision;
+      if (obj.decision === 'approve' || obj.decision === 'block') return obj;
+    } catch { /* not JSON, try previous line */ }
+  }
+  return null;
+}
+
+function handleChildClose(hookName: string, stdout: string, stderr: string, code: number | null): void {
+  if (stderr) process.stderr.write(stderr);
+  if (stderr.trim()) log(`Hook ${hookName} stderr: ${stderr.trim()}`);
+
+  if (!stdout.trim()) {
+    if (code !== 0 && code !== null) {
+      logError(`Hook ${hookName} exited with code ${code} and no output. stderr: ${stderr.trim() || '(none)'}`);
+    }
+    approve();
+    process.exit(code ?? 0);
+  }
+
+  const parsed = parseHandlerDecision(stdout);
+  if (parsed) {
+    console.log(JSON.stringify(parsed));
+  } else {
+    log(`Hook ${hookName} stdout contained no valid decision JSON — falling back to approve`);
+    approve();
+  }
+  process.exit(code ?? 0);
+}
+
+function runHookProcess(hookName: string, command: HookCommand, inputData: string): void {
   try {
-    const child = spawn(cmd, cmdArgs, {
+    const child = spawn(command.cmd, command.cmdArgs, {
       env: { ...process.env, EXTENSION_DIR },
       stdio: ['pipe', 'pipe', 'pipe'],
     });
-
-    child.stdin?.on('error', (err: NodeJS.ErrnoException) => {
-      if (err.code === 'EPIPE') {
-        child.kill('SIGKILL');
-        return;
-      }
-      logError(`Child stdin error: ${safeErrorMessage(err)}`);
-    });
-
-    if (inputData) {
-      try {
-        child.stdin?.write(inputData);
-      } catch (err) {
-        if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'EPIPE') {
-          child.kill('SIGKILL');
-        } else {
-          throw err;
-        }
-      }
-    }
-    child.stdin?.end();
-
     let stdout = '';
     let stderr = '';
 
+    writeChildInput(child, inputData);
     child.stdout?.on('data', (data) => (stdout += data.toString()));
     child.stderr?.on('data', (data) => (stderr += data.toString()));
-
-    child.on('close', (code) => {
-      if (stderr) process.stderr.write(stderr);
-
-      if (stderr.trim()) {
-        log(`Hook ${hookName} stderr: ${stderr.trim()}`);
-      }
-
-      if (!stdout.trim()) {
-        if (code !== 0 && code !== null) {
-          logError(`Hook ${hookName} exited with code ${code} and no output. stderr: ${stderr.trim() || '(none)'}`);
-        }
-        approve();
-      } else {
-        // Parse the LAST non-empty line as the decision JSON.
-        // Handlers may accidentally emit debug output before the decision;
-        // only the final line matters.
-        let parsed: { decision: string } | null = null;
-        const lines = stdout.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-        for (let i = lines.length - 1; i >= 0; i--) {
-          try {
-            const obj = JSON.parse(lines[i]);
-            if (obj.decision === 'approve' || obj.decision === 'block') {
-              parsed = obj;
-              break;
-            }
-          } catch { /* not JSON, try previous line */ }
-        }
-        if (!parsed && lines.length > 0) {
-          log(`Hook ${hookName} stdout contained no valid decision JSON — falling back to approve`);
-        }
-        if (parsed) {
-          console.log(JSON.stringify(parsed));
-        } else {
-          approve();
-        }
-      }
-      process.exit(code ?? 0);
-    });
-
+    child.on('close', (code) => handleChildClose(hookName, stdout, stderr, code));
     child.on('error', (err) => {
       logError(`Failed to start child process: ${safeErrorMessage(err)}`);
       approve();
@@ -202,6 +211,17 @@ async function main() {
     approve();
     process.exit(0);
   }
+}
+
+async function main() {
+  // Watchdog: if the hook hangs for any reason, approve and exit.
+  // This prevents Claude Code from deadlocking on a stuck handler.
+  armWatchdog();
+  const hookArgs = readHookArgs();
+  const command = resolveHookCommand(hookArgs.hookName, hookArgs.extraArgs);
+  ensureScriptExists(command.scriptPath);
+  const inputData = await readInputData();
+  runHookProcess(hookArgs.hookName, command, inputData);
 }
 
 main().catch((err) => {

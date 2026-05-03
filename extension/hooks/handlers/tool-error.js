@@ -65,8 +65,8 @@ function buildNextState(input, existing) {
         retry_count: retryCount,
     };
 }
-async function main() {
-    let inputData = '';
+function main() {
+    let inputData;
     try {
         inputData = fs.readFileSync(0, 'utf8');
     }
@@ -104,7 +104,10 @@ async function main() {
     }
     approve();
 }
-main().catch((err) => {
+try {
+    main();
+}
+catch (err) {
     log(`FATAL: ${safeErrorMessage(err)}`);
     approve();
-});
+}
