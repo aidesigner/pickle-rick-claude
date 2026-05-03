@@ -1,15 +1,14 @@
 {
   "ac_id": "AC-DR-02",
   "pass": false,
-  "checked_at": "2026-05-02T21:56:11.386Z",
+  "checked_at": "2026-05-03T02:57:04.286Z",
   "checker": "verify-recapture-fired",
   "checker_version": "1",
   "evidence": {
-    "state_path": "/Users/gregorydickson/.local/share/pickle-rick/sessions/2026-05-02-ad240987/state.json",
-    "activity_count": 1,
-    "anatomy_windows": [],
-    "matched_event": null
+    "state_path": "/var/folders/2w/j4nf5k_17ys16yzvmhcx0brh0000gn/T/verify-recapture-missing-N5XeD4/state.json",
+    "activity_count": null,
+    "anatomy_windows": []
   },
-  "failure_reason": "phase-window-missing",
+  "failure_reason": "state-missing",
   "remediation_hint": "Ensure anatomy-park records baseline_recapture_attempted at iteration 1 inside its phase window."
 }

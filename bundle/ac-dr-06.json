@@ -6,7 +6,7 @@
   "checker_version": "local",
   "evidence": {
     "bundle_prd": "prds/p2-bundle-deploy-reversion-and-gate-baseline-diagnostic.md",
-    "ticket_count": 22,
+    "ticket_count": 19,
     "skip_readiness": false
   },
   "failure_reason": null,

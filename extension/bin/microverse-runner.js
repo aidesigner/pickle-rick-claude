@@ -771,40 +771,46 @@ export function measureLlmMetric(goal, timeoutSeconds, cwd, judgeModel, history,
         return null;
     }
 }
-// eslint-disable-next-line complexity -- deferred to god-functions-phase-2 row 28; cyclomatic 16 vs ceiling 15
-export function buildMicroverseHandoff(mvState, iteration, workingDir, sessionDir) {
-    // Worker-managed convergence: skip metric context entirely
-    if (mvState.convergence_mode === 'worker') {
-        const parts = [
-            `# Microverse Iteration ${iteration}`,
-            '',
-            `## Convergence: Worker-Managed`,
-            `- Convergence file: \`${mvState.convergence_file}\``,
-            `- Write \`{"converged": true, "reason": "..."}\` to signal completion`,
-            '',
-        ];
-        if (mvState.gap_analysis_path) {
-            parts.push(`## Gap Analysis`);
-            parts.push(`See: ${mvState.gap_analysis_path}`);
-            parts.push(`Read gap_analysis.md — items marked Fixed are done, skip them.`);
-            parts.push('');
-        }
-        if (mvState.failed_approaches.length > 0) {
-            parts.push('## Failed Approaches (DO NOT RETRY)');
-            for (const approach of mvState.failed_approaches) {
-                parts.push(`- ${approach}`);
-            }
-            parts.push('');
-        }
-        if (sessionDir) {
-            parts.push(`## PRD: ${path.join(sessionDir, 'prd.md')}`);
-        }
-        parts.push(`## Target Path: ${mvState.prd_path}`);
-        parts.push(`## Working Directory: ${workingDir}`);
+function buildWorkerMicroverseHandoff(mvState, iteration, workingDir, sessionDir) {
+    const parts = [
+        `# Microverse Iteration ${iteration}`,
+        '',
+        `## Convergence: Worker-Managed`,
+        `- Convergence file: \`${mvState.convergence_file}\``,
+        `- Write \`{"converged": true, "reason": "..."}\` to signal completion`,
+        '',
+    ];
+    appendGapAnalysisHandoff(parts, mvState);
+    appendFailedApproachesHandoff(parts, mvState);
+    appendTargetHandoff(parts, mvState, workingDir, sessionDir);
+    parts.push('Make targeted changes and commit.');
+    return parts.join('\n');
+}
+function appendGapAnalysisHandoff(parts, mvState) {
+    if (mvState.gap_analysis_path) {
+        parts.push(`## Gap Analysis`);
+        parts.push(`See: ${mvState.gap_analysis_path}`);
+        parts.push(`Read gap_analysis.md — items marked Fixed are done, skip them.`);
         parts.push('');
-        parts.push('Make targeted changes and commit.');
-        return parts.join('\n');
     }
+}
+function appendFailedApproachesHandoff(parts, mvState) {
+    if (mvState.failed_approaches.length === 0)
+        return;
+    parts.push('## Failed Approaches (DO NOT RETRY)');
+    for (const approach of mvState.failed_approaches) {
+        parts.push(`- ${approach}`);
+    }
+    parts.push('');
+}
+function appendTargetHandoff(parts, mvState, workingDir, sessionDir) {
+    if (sessionDir)
+        parts.push(`## PRD: ${path.join(sessionDir, 'prd.md')}`);
+    parts.push(`## Target Path: ${mvState.prd_path}`);
+    parts.push(`## Working Directory: ${workingDir}`);
+    parts.push('');
+}
+function buildMetricMicroverseHandoff(mvState, iteration, workingDir, sessionDir) {
     const metricConv = assertMetricConvergence(mvState, 'buildMicroverseHandoff');
     const dir = mvState.key_metric.direction ?? 'higher';
     const parts = [
@@ -818,12 +824,7 @@ export function buildMicroverseHandoff(mvState, iteration, workingDir, sessionDi
         `- Current stall counter: ${metricConv.stall_counter}/${metricConv.stall_limit}`,
         '',
     ];
-    if (mvState.gap_analysis_path) {
-        parts.push(`## Gap Analysis`);
-        parts.push(`See: ${mvState.gap_analysis_path}`);
-        parts.push(`Read gap_analysis.md — items marked Fixed are done, skip them.`);
-        parts.push('');
-    }
+    appendGapAnalysisHandoff(parts, mvState);
     const history = metricConv.history.filter(Boolean);
     if (history.length > 0) {
         parts.push('## Recent Metric History');
@@ -839,21 +840,15 @@ export function buildMicroverseHandoff(mvState, iteration, workingDir, sessionDi
         parts.push(recentChanges);
         parts.push('');
     }
-    if (mvState.failed_approaches.length > 0) {
-        parts.push('## Failed Approaches (DO NOT RETRY)');
-        for (const approach of mvState.failed_approaches) {
-            parts.push(`- ${approach}`);
-        }
-        parts.push('');
-    }
-    if (sessionDir) {
-        parts.push(`## PRD: ${path.join(sessionDir, 'prd.md')}`);
-    }
-    parts.push(`## Target Path: ${mvState.prd_path}`);
-    parts.push(`## Working Directory: ${workingDir}`);
-    parts.push('');
+    appendFailedApproachesHandoff(parts, mvState);
+    appendTargetHandoff(parts, mvState, workingDir, sessionDir);
     parts.push(`${dir === 'lower' ? 'Focus on reducing the metric.' : 'Focus on improving the metric.'} Make targeted changes and commit.`);
     return parts.join('\n');
+}
+export function buildMicroverseHandoff(mvState, iteration, workingDir, sessionDir) {
+    return mvState.convergence_mode === 'worker'
+        ? buildWorkerMicroverseHandoff(mvState, iteration, workingDir, sessionDir)
+        : buildMetricMicroverseHandoff(mvState, iteration, workingDir, sessionDir);
 }
 function assertMetricConvergence(mvState, helper) {
     if (!mvState.convergence) {
@@ -1133,7 +1128,46 @@ export async function handleRateLimit(_state, ctx, signal, waitMetadata = {}) {
         logActivity({ event: 'rate_limit_resume', source: 'pickle', session: path.basename(ctx.sessionDir) });
     }
 }
-// eslint-disable-next-line complexity -- deferred to god-functions-phase-2 row 29; cyclomatic 17 vs ceiling 15
+function recordMetricMeasurementFailure(state, ctx) {
+    ctx.log('WARNING: Metric measurement failed twice — treating as stall (commit preserved)');
+    replaceMicroverseState(state, recordStall(state));
+    writeMicroverseState(ctx.sessionDir, state);
+    return { kind: 'unchanged' };
+}
+function adoptLateBaseline(state, baseline, metricResult, metricConv, ctx) {
+    const lastAccepted = [...metricConv.history].reverse().find(h => h.action === 'accept');
+    if (baseline.score === 0 && state.baseline_score === 0 && !lastAccepted) {
+        state.baseline_score = metricResult.score;
+        ctx.log(`Late baseline adopted: ${metricResult.score} (initial measurement failed)`);
+        writeMicroverseState(ctx.sessionDir, state);
+    }
+}
+function buildMetricHistoryEntry(state, metricResult, previousScore, classification, ctx) {
+    return {
+        iteration: ctx.iteration,
+        metric_value: metricResult.raw,
+        score: metricResult.score,
+        action: classification === 'regressed' ? 'revert' : 'accept',
+        description: `${classification}: ${metricResult.score} vs ${previousScore}`,
+        pre_iteration_sha: ctx.preIterSha ?? '',
+        timestamp: new Date().toISOString(),
+    };
+}
+function maybeAppendGapAnalysisFixed(state, entry, ctx) {
+    if (entry.action !== 'accept' || !ctx.postIterSha)
+        return;
+    try {
+        appendGapAnalysisFixedBlock({
+            gapAnalysisPath: state.gap_analysis_path,
+            workingDir: ctx.workingDir,
+            iteration: ctx.iteration,
+            commitSha: ctx.postIterSha,
+        });
+    }
+    catch (err) {
+        ctx.log(`WARNING: Could not append gap analysis fixed block: ${safeErrorMessage(err)}`);
+    }
+}
 export async function measureAndClassifyIteration(state, baseline, ctx) {
     const backend = resolveBackend(ctx.currentRunnerState);
     let metricResult = measureCurrentMetric(state, ctx, backend);
@@ -1143,31 +1177,16 @@ export async function measureAndClassifyIteration(state, baseline, ctx) {
         metricResult = measureCurrentMetric(state, ctx, backend);
     }
     if (!metricResult) {
-        ctx.log('WARNING: Metric measurement failed twice — treating as stall (commit preserved)');
-        replaceMicroverseState(state, recordStall(state));
-        writeMicroverseState(ctx.sessionDir, state);
-        return { kind: 'unchanged' };
+        return recordMetricMeasurementFailure(state, ctx);
     }
     ctx.log(`Metric: ${metricResult.score} (raw: ${metricResult.raw})`);
     const metricConv = assertMetricConvergence(state, 'measureAndClassifyIteration');
     const lastAccepted = [...metricConv.history].reverse().find(h => h.action === 'accept');
-    if (baseline.score === 0 && state.baseline_score === 0 && !lastAccepted) {
-        state.baseline_score = metricResult.score;
-        ctx.log(`Late baseline adopted: ${metricResult.score} (initial measurement failed)`);
-        writeMicroverseState(ctx.sessionDir, state);
-    }
+    adoptLateBaseline(state, baseline, metricResult, metricConv, ctx);
     const previousScore = lastAccepted ? lastAccepted.score : state.baseline_score;
     const classification = compareMetric(metricResult.score, previousScore, state.key_metric.tolerance, state.key_metric.direction);
     ctx.log(`Classification: ${classification} (previous=${previousScore}, tolerance=${state.key_metric.tolerance})`);
-    const entry = {
-        iteration: ctx.iteration,
-        metric_value: metricResult.raw,
-        score: metricResult.score,
-        action: classification === 'regressed' ? 'revert' : 'accept',
-        description: `${classification}: ${metricResult.score} vs ${previousScore}`,
-        pre_iteration_sha: ctx.preIterSha ?? '',
-        timestamp: new Date().toISOString(),
-    };
+    const entry = buildMetricHistoryEntry(state, metricResult, previousScore, classification, ctx);
     if (classification === 'regressed') {
         ctx.log(`Regression detected — rolling back to ${ctx.preIterSha}`);
         _deps.resetToSha(ctx.preIterSha ?? '', ctx.workingDir);
@@ -1175,19 +1194,7 @@ export async function measureAndClassifyIteration(state, baseline, ctx) {
     }
     replaceMicroverseState(state, stateRecordIteration(state, entry, classification));
     writeMicroverseState(ctx.sessionDir, state);
-    if (entry.action === 'accept' && ctx.postIterSha) {
-        try {
-            appendGapAnalysisFixedBlock({
-                gapAnalysisPath: state.gap_analysis_path,
-                workingDir: ctx.workingDir,
-                iteration: ctx.iteration,
-                commitSha: ctx.postIterSha,
-            });
-        }
-        catch (err) {
-            ctx.log(`WARNING: Could not append gap analysis fixed block: ${safeErrorMessage(err)}`);
-        }
-    }
+    maybeAppendGapAnalysisFixed(state, entry, ctx);
     if (ctx.enableFailureClassification) {
         recordFailureClassification(state, metricResult, entry, ctx);
     }
