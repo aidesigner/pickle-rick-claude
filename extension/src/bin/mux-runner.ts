@@ -1592,16 +1592,25 @@ export function validateStartupState(state: State, statePath: string): void {
 
 export function setupSignalHandlers(statePath: string, log: (msg: string) => void): void {
   const handleShutdownSignal = (signal: string) => {
+    const backend = readBackendForActivity(statePath);
     log(`Received ${signal} — deactivating session`);
     recordExitReason(statePath, 'signal');
     safeDeactivate(statePath);
     if (currentChildProc && !currentChildProc.killed) currentChildProc.kill('SIGTERM');
-    logActivity({ event: 'session_end', source: 'pickle', session: path.basename(path.dirname(statePath)), mode: 'tmux' });
+    logActivity({ event: 'session_end', source: 'pickle', session: path.basename(path.dirname(statePath)), mode: 'tmux', backend });
     process.exit(0);
   };
   process.on('SIGTERM', () => handleShutdownSignal('SIGTERM'));
   process.on('SIGINT', () => handleShutdownSignal('SIGINT'));
   process.on('SIGHUP', () => handleShutdownSignal('SIGHUP'));
+}
+
+function readBackendForActivity(statePath: string): Backend {
+  try {
+    return resolveBackend(readRunnerState(statePath));
+  } catch {
+    return resolveBackend(null);
+  }
 }
 
 /**
@@ -2028,13 +2037,14 @@ async function runMuxRunnerMain() {
   // Graceful shutdown: deactivate session on SIGTERM/SIGINT so it doesn't
   // remain orphaned with active: true when the tmux pane is closed.
   const handleShutdownSignal = (signal: string) => {
+    const backend = readBackendForActivity(statePath);
     log(`Received ${signal} — deactivating session`);
     recordExitReason(statePath, 'signal');
     safeDeactivate(statePath);
     if (currentChildProc && !currentChildProc.killed) {
       currentChildProc.kill('SIGTERM');
     }
-    logActivity({ event: 'session_end', source: 'pickle', session: path.basename(sessionDir), mode: 'tmux' });
+    logActivity({ event: 'session_end', source: 'pickle', session: path.basename(sessionDir), mode: 'tmux', backend });
     process.exit(0);
   };
   process.on('SIGTERM', () => handleShutdownSignal('SIGTERM'));
@@ -2179,7 +2189,7 @@ async function runMuxRunnerMain() {
       }
     }
     log(`--- Iteration ${iteration} (state.iteration=${state.iteration}) ---`);
-    logActivity({ event: 'iteration_start', source: 'pickle', session: path.basename(sessionDir), iteration });
+    logActivity({ event: 'iteration_start', source: 'pickle', session: path.basename(sessionDir), iteration, backend: resolveBackend(state) });
 
     if (!readinessGateChecked && curIter === 0) {
       readinessGateChecked = true;
@@ -2309,7 +2319,7 @@ async function runMuxRunnerMain() {
       wallSeconds: outcome.wallSeconds,
     });
     const exitType = exitResult.type;
-    logActivity({ event: 'iteration_end', source: 'pickle', session: path.basename(sessionDir), iteration, exit_type: exitType });
+    logActivity({ event: 'iteration_end', source: 'pickle', session: path.basename(sessionDir), iteration, exit_type: exitType, backend: resolveBackend(state) });
     emitMuxWastedIter({
       sessionDir,
       iteration,
@@ -2746,7 +2756,15 @@ async function runMuxRunnerMain() {
 
   const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
   const isFailedExit = isFailureExit(exitReason);
-  logActivity({ event: 'session_end', source: 'pickle', session: path.basename(sessionDir), duration_min: Math.round(totalElapsed / 60), mode: 'tmux', ...(isFailedExit ? { error: exitReason } : {}) });
+  logActivity({
+    event: 'session_end',
+    source: 'pickle',
+    session: path.basename(sessionDir),
+    duration_min: Math.round(totalElapsed / 60),
+    mode: 'tmux',
+    backend: readBackendForActivity(statePath),
+    ...(isFailedExit ? { error: exitReason } : {}),
+  });
   let finalStep = 'unknown';
   let finalActive = 'unknown';
   let finalMinIter = 0;

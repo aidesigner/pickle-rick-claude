@@ -1150,7 +1150,7 @@ export function installShutdownHandlers(runtime, counters, cancelMarker) {
             activeChild.kill('SIGTERM');
         recordExitReason(runtime.statePath, 'signal');
         safeDeactivate(runtime.statePath);
-        logActivity({ event: 'session_end', source: 'pickle', session: path.basename(runtime.sessionDir), mode: 'tmux' });
+        logActivity({ event: 'session_end', source: 'pickle', session: path.basename(runtime.sessionDir), mode: 'tmux', backend: runtime.backend });
         process.exit(1);
     };
     const handlers = {
@@ -1193,6 +1193,7 @@ function writeFinalPipelineActivity(runtime, totalElapsed, phasesSummary, pipeli
         session: path.basename(runtime.sessionDir),
         duration_min: Math.round(totalElapsed / 60),
         mode: 'tmux',
+        backend: runtime.backend,
     });
     displayMacNotification(pipelineFailed ? '🧪 Pipeline Stopped' : '🧪 Pipeline Complete', `${phasesSummary} phases, ${formatTime(totalElapsed)}`);
 }

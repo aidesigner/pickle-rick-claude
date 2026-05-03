@@ -6,8 +6,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { correctPhantomDoneTickets } from '../../bin/mux-runner.js';
+import { initializeNewSession, parseArguments } from '../../bin/setup.js';
 import { classifyFailure } from '../../services/microverse-state.js';
 import { backendEnvOverrides, buildWorkerInvocation } from '../../services/backend-spawn.js';
+import { buildReport, scanSessionFiles } from '../../services/metrics-utils.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXTENSION_ROOT = path.resolve(__dirname, '../..');
@@ -117,6 +119,63 @@ function writeTicket(sessionDir, ticketId, fields = '') {
     `---\nid: ${ticketId}\ntitle: Fixture\nstatus: "Done"\norder: 10\n${fields}---\n`,
   );
 }
+
+function readActivityEntries(dataRoot) {
+  const activityDir = path.join(dataRoot, 'activity');
+  const files = fs.readdirSync(activityDir).filter(file => file.endsWith('.jsonl'));
+  return files.flatMap(file =>
+    fs.readFileSync(path.join(activityDir, file), 'utf8')
+      .split('\n')
+      .filter(Boolean)
+      .map(line => JSON.parse(line)),
+  );
+}
+
+function assistantLine(timestamp, backend) {
+  return JSON.stringify({
+    type: 'assistant',
+    timestamp,
+    backend,
+    message: {
+      usage: {
+        input_tokens: 11,
+        output_tokens: 29,
+        cache_read_input_tokens: 0,
+        cache_creation_input_tokens: 0,
+      },
+    },
+  });
+}
+
+test('mega bundle Hermes identity carries through state, activity log, and metrics', () => {
+  const root = tmpRoot('mega-hermes-flow-');
+  const previousDataRoot = process.env.PICKLE_DATA_ROOT;
+  try {
+    process.env.PICKLE_DATA_ROOT = root;
+    const session = initializeNewSession(parseArguments(['--backend', 'hermes', '--task', 'hermes flow fixture']));
+    assert.equal(session.state.backend, 'hermes');
+
+    const activityEntries = readActivityEntries(root);
+    const start = activityEntries.find(entry => entry.event === 'session_start' && entry.session === path.basename(session.sessionRoot));
+    assert.ok(start, 'session_start activity entry must exist');
+    assert.equal(start.backend, session.state.backend);
+
+    const projectsRoot = path.join(root, 'projects');
+    const slug = 'hermes-flow-project';
+    const timestamp = '2026-05-03T12:00:00Z';
+    fs.mkdirSync(path.join(projectsRoot, slug), { recursive: true });
+    fs.writeFileSync(path.join(projectsRoot, slug, 'session.jsonl'), `${assistantLine(timestamp, start.backend)}\n`);
+
+    const scanned = scanSessionFiles(projectsRoot, '2026-05-03', '2026-05-03', path.join(root, 'metrics-cache.json'));
+    const report = buildReport(scanned, new Map(), '2026-05-03', '2026-05-03', 'daily');
+    assert.equal(report.tokens_per_backend.hermes.output, 29);
+    assert.equal(report.tokens_per_backend.claude.output, 0);
+  } finally {
+    if (previousDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+    else process.env.PICKLE_DATA_ROOT = previousDataRoot;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 function initGitRepo(dir) {
   fs.mkdirSync(dir, { recursive: true });

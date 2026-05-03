@@ -830,7 +830,14 @@ function createSession(config: SetupArgs, paths: SetupPaths, taskStr: string): S
   // eslint-disable-next-line pickle/no-raw-state-write -- initial creation: no existing state to lock against
   sm.forceWrite(path.join(fullSessionPath, 'state.json'), state);
   try { pruneActivity(); } catch { /* must not block session start */ }
-  logActivity({ event: 'session_start', source: 'pickle', session: sessionId, mode: config.tmuxMode ? 'tmux' : 'inline', original_prompt: taskStr });
+  logActivity({
+    event: 'session_start',
+    source: 'pickle',
+    session: sessionId,
+    mode: config.tmuxMode ? 'tmux' : 'inline',
+    original_prompt: taskStr,
+    backend: state.backend || 'claude',
+  });
 
   return { sessionRoot: fullSessionPath, state };
 }

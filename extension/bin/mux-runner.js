@@ -1353,17 +1353,26 @@ export function validateStartupState(state, statePath) {
 }
 export function setupSignalHandlers(statePath, log) {
     const handleShutdownSignal = (signal) => {
+        const backend = readBackendForActivity(statePath);
         log(`Received ${signal} — deactivating session`);
         recordExitReason(statePath, 'signal');
         safeDeactivate(statePath);
         if (currentChildProc && !currentChildProc.killed)
             currentChildProc.kill('SIGTERM');
-        logActivity({ event: 'session_end', source: 'pickle', session: path.basename(path.dirname(statePath)), mode: 'tmux' });
+        logActivity({ event: 'session_end', source: 'pickle', session: path.basename(path.dirname(statePath)), mode: 'tmux', backend });
         process.exit(0);
     };
     process.on('SIGTERM', () => handleShutdownSignal('SIGTERM'));
     process.on('SIGINT', () => handleShutdownSignal('SIGINT'));
     process.on('SIGHUP', () => handleShutdownSignal('SIGHUP'));
+}
+function readBackendForActivity(statePath) {
+    try {
+        return resolveBackend(readRunnerState(statePath));
+    }
+    catch {
+        return resolveBackend(null);
+    }
 }
 export function classifyCapCheckReadError(err, sessionDir, log) {
     const msg = safeErrorMessage(err);
@@ -1759,13 +1768,14 @@ async function runMuxRunnerMain() {
     // Graceful shutdown: deactivate session on SIGTERM/SIGINT so it doesn't
     // remain orphaned with active: true when the tmux pane is closed.
     const handleShutdownSignal = (signal) => {
+        const backend = readBackendForActivity(statePath);
         log(`Received ${signal} — deactivating session`);
         recordExitReason(statePath, 'signal');
         safeDeactivate(statePath);
         if (currentChildProc && !currentChildProc.killed) {
             currentChildProc.kill('SIGTERM');
         }
-        logActivity({ event: 'session_end', source: 'pickle', session: path.basename(sessionDir), mode: 'tmux' });
+        logActivity({ event: 'session_end', source: 'pickle', session: path.basename(sessionDir), mode: 'tmux', backend });
         process.exit(0);
     };
     process.on('SIGTERM', () => handleShutdownSignal('SIGTERM'));
@@ -1904,7 +1914,7 @@ async function runMuxRunnerMain() {
             }
         }
         log(`--- Iteration ${iteration} (state.iteration=${state.iteration}) ---`);
-        logActivity({ event: 'iteration_start', source: 'pickle', session: path.basename(sessionDir), iteration });
+        logActivity({ event: 'iteration_start', source: 'pickle', session: path.basename(sessionDir), iteration, backend: resolveBackend(state) });
         if (!readinessGateChecked && curIter === 0) {
             readinessGateChecked = true;
             const skipReasonRaw = state.flags?.skip_readiness_reason;
@@ -2030,7 +2040,7 @@ async function runMuxRunnerMain() {
             wallSeconds: outcome.wallSeconds,
         });
         const exitType = exitResult.type;
-        logActivity({ event: 'iteration_end', source: 'pickle', session: path.basename(sessionDir), iteration, exit_type: exitType });
+        logActivity({ event: 'iteration_end', source: 'pickle', session: path.basename(sessionDir), iteration, exit_type: exitType, backend: resolveBackend(state) });
         emitMuxWastedIter({
             sessionDir,
             iteration,
@@ -2453,7 +2463,15 @@ async function runMuxRunnerMain() {
     }
     const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
     const isFailedExit = isFailureExit(exitReason);
-    logActivity({ event: 'session_end', source: 'pickle', session: path.basename(sessionDir), duration_min: Math.round(totalElapsed / 60), mode: 'tmux', ...(isFailedExit ? { error: exitReason } : {}) });
+    logActivity({
+        event: 'session_end',
+        source: 'pickle',
+        session: path.basename(sessionDir),
+        duration_min: Math.round(totalElapsed / 60),
+        mode: 'tmux',
+        backend: readBackendForActivity(statePath),
+        ...(isFailedExit ? { error: exitReason } : {}),
+    });
     let finalStep = 'unknown';
     let finalActive = 'unknown';
     let finalMinIter = 0;

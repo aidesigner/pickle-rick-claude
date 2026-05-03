@@ -761,7 +761,14 @@ function createSession(config, paths, taskStr) {
         pruneActivity();
     }
     catch { /* must not block session start */ }
-    logActivity({ event: 'session_start', source: 'pickle', session: sessionId, mode: config.tmuxMode ? 'tmux' : 'inline', original_prompt: taskStr });
+    logActivity({
+        event: 'session_start',
+        source: 'pickle',
+        session: sessionId,
+        mode: config.tmuxMode ? 'tmux' : 'inline',
+        original_prompt: taskStr,
+        backend: state.backend || 'claude',
+    });
     return { sessionRoot: fullSessionPath, state };
 }
 function printActivationPanel(paths, config, fullSessionPath, currentIteration) {
