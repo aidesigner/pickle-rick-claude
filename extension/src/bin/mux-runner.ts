@@ -237,6 +237,37 @@ function findNextPendingTicketId(sessionDir: string): string | null {
   return collectTickets(sessionDir).find(isPendingMuxTicket)?.id ?? null;
 }
 
+export interface CorrectPhantomDoneTicketsInput {
+  sessionDir: string;
+  workingDir: string;
+  startCommit: string | null;
+  iteration: number;
+  log?: (msg: string) => void;
+}
+
+export function correctPhantomDoneTickets(input: CorrectPhantomDoneTicketsInput): number {
+  let corrected = 0;
+  for (const ticket of collectTickets(input.sessionDir)) {
+    if (!ticket.id || normalizedStatus(ticket.status) !== 'done') continue;
+
+    const workingDir = ticket.working_dir || input.workingDir || process.cwd();
+    if (hasCommitReferencingTicketSince(workingDir, ticket.id, input.startCommit)) continue;
+    if (!writeTicketStatus(input.sessionDir, ticket.id, 'Todo')) continue;
+
+    corrected++;
+    input.log?.(`Corrected phantom Done ticket ${ticket.id} back to Todo (no completion commit found)`);
+    logActivity({
+      event: 'ticket_phantom_done_corrected',
+      source: 'pickle',
+      session: path.basename(input.sessionDir),
+      ticket: ticket.id,
+      iteration: input.iteration,
+      reason: 'done_frontmatter_without_completion_commit',
+    });
+  }
+  return corrected;
+}
+
 function hasArtifact(files: readonly string[], prefix: string): boolean {
   return files.some(file => file.startsWith(prefix) && file.endsWith('.md'));
 }
@@ -2009,6 +2040,15 @@ async function runMuxRunnerMain() {
 
     iteration++;
     const templateName = state.command_template || 'pickle.md';
+    if (templateName !== 'meeseeks.md') {
+      correctPhantomDoneTickets({
+        sessionDir,
+        workingDir: state.working_dir || process.cwd(),
+        startCommit: state.start_commit || null,
+        iteration,
+        log,
+      });
+    }
     const preTicket = templateName === 'meeseeks.md'
       ? null
       : (state.current_ticket || findNextPendingTicketId(sessionDir));

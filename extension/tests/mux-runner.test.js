@@ -794,7 +794,7 @@ test('mux-runner: creates mux-runner.log in session directory', () => {
 
 // --- Completion classification (classifyCompletion) ---
 
-import { buildTmuxNotification, classifyCompletion, classifyTicketCompletion, applyAutoTicketCompletionValidation, extractAssistantContent, transitionToMeeseeks, loadRateLimitSettings, loadMeeseeksModel, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText, stripSetupSection, detectMultiRepo, writeHandoffAtomic } from '../bin/mux-runner.js';
+import { buildTmuxNotification, classifyCompletion, classifyTicketCompletion, applyAutoTicketCompletionValidation, correctPhantomDoneTickets, extractAssistantContent, transitionToMeeseeks, loadRateLimitSettings, loadMeeseeksModel, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText, stripSetupSection, detectMultiRepo, writeHandoffAtomic } from '../bin/mux-runner.js';
 
 test('classifyCompletion: TASK_COMPLETED returns continue (single ticket, loop continues)', () => {
     assert.equal(classifyCompletion('<promise>TASK_COMPLETED</promise>'), 'continue');
@@ -2105,6 +2105,24 @@ function writeAutoMarkTicket(sessionDir, ticketId, checked = true) {
     ].join('\n'));
 }
 
+function writeAutoMarkTicketWithStatus(sessionDir, ticketId, status, checked = true) {
+    const ticketDir = path.join(sessionDir, ticketId);
+    fs.mkdirSync(ticketDir, { recursive: true });
+    fs.writeFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`), [
+        '---',
+        `id: ${ticketId}`,
+        'title: Auto mark validation',
+        `status: ${status}`,
+        'order: 1',
+        '---',
+        '# Description',
+        '',
+        '## Acceptance Criteria',
+        `- [${checked ? 'x' : ' '}] criterion met`,
+        '',
+    ].join('\n'));
+}
+
 function readAutoMarkTicketStatus(sessionDir, ticketId) {
     const filePath = path.join(sessionDir, ticketId, `linear_ticket_${ticketId}.md`);
     const content = fs.readFileSync(filePath, 'utf-8');
@@ -2192,6 +2210,41 @@ test('auto-mark-done.activity-event: skip path emits ticket_auto_skip_no_evidenc
         assert.equal(event.ticket, ticketId);
         assert.equal(event.reason, 'no_commit_referencing_ticket_since_current_set');
         assert.equal(event.iteration, 7);
+    } finally {
+        if (prev === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = prev;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('phantom-done.correction: Done frontmatter with no completion commit is reset to Todo and emits event', () => {
+    const tmpDir = makeTmpRoot();
+    const dataRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-phantom-done-data-')));
+    const prev = process.env.PICKLE_DATA_ROOT;
+    try {
+        process.env.PICKLE_DATA_ROOT = dataRoot;
+        initGitRepo(tmpDir);
+        const startCommit = gitHead(tmpDir);
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketId = 'phantom-done-ticket';
+        writeAutoMarkTicketWithStatus(sessionDir, ticketId, 'Done', true);
+
+        const corrected = correctPhantomDoneTickets({
+            sessionDir,
+            workingDir: tmpDir,
+            startCommit,
+            iteration: 3,
+        });
+
+        assert.equal(corrected, 1);
+        assert.equal(readAutoMarkTicketStatus(sessionDir, ticketId), 'Todo');
+        const events = readRelaunchActivityEvents(dataRoot);
+        const event = events.find(e => e.event === 'ticket_phantom_done_corrected');
+        assert.ok(event, `Expected ticket_phantom_done_corrected event, got: ${JSON.stringify(events)}`);
+        assert.equal(event.ticket, ticketId);
+        assert.equal(event.iteration, 3);
+        assert.equal(event.reason, 'done_frontmatter_without_completion_commit');
     } finally {
         if (prev === undefined) delete process.env.PICKLE_DATA_ROOT;
         else process.env.PICKLE_DATA_ROOT = prev;

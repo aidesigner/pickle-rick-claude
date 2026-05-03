@@ -384,6 +384,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'course_correct_recovered',
   'current_ticket_redirected_to_new',
   'ticket_auto_skip_no_evidence',
+  'ticket_phantom_done_corrected',
   'ticket_state_desync_detected',
   'readiness_delta_requested',
   'phase_transition',
