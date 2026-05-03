@@ -1,0 +1,56 @@
+[
+  {
+    "section": "A",
+    "source_prd": "prds/p1-strip-excessive-defense-deploy-reversion.md",
+    "all_acs_green": true,
+    "evidence": {
+      "source": "refinement_manifest.json#ac_shape_smells",
+      "predicate": "All ACs from the referenced source PRD report green at bundle-end"
+    }
+  },
+  {
+    "section": "B",
+    "source_prd": "prds/multi-repo-task-state-drift.md",
+    "all_acs_green": true,
+    "evidence": {
+      "source": "refinement_manifest.json#ac_shape_smells",
+      "predicate": "All ACs from the referenced source PRD report green at bundle-end"
+    }
+  },
+  {
+    "section": "C",
+    "source_prd": "prds/tool-error-retry-tracking.md",
+    "all_acs_green": true,
+    "evidence": {
+      "source": "refinement_manifest.json#ac_shape_smells",
+      "predicate": "All ACs from the referenced source PRD report green at bundle-end"
+    }
+  },
+  {
+    "section": "D",
+    "source_prd": "prds/smart-iteration-handoff.md",
+    "all_acs_green": true,
+    "evidence": {
+      "source": "refinement_manifest.json#ac_shape_smells",
+      "predicate": "All ACs from the referenced source PRD report green at bundle-end"
+    }
+  },
+  {
+    "section": "E",
+    "source_prd": "prds/hermes-integration.md",
+    "all_acs_green": true,
+    "evidence": {
+      "source": "refinement_manifest.json#ac_shape_smells",
+      "predicate": "All ACs from the referenced source PRD report green at bundle-end"
+    }
+  },
+  {
+    "section": "F",
+    "source_prd": "prds/god-functions-remediation-phase-2.md",
+    "all_acs_green": true,
+    "evidence": {
+      "source": "refinement_manifest.json#ac_shape_smells",
+      "predicate": "All ACs from the referenced source PRD report green at bundle-end"
+    }
+  }
+]
