@@ -1,3 +1,4 @@
+// @tier: fast
 // Regression test for anatomy-park iteration 3: plumbus-frame-analyzer must
 // not block indefinitely on a wedged `bun` subprocess. A stuck registry import,
 // infinite loop inside dump-graph.ts, or catastrophic regex on attractor graph

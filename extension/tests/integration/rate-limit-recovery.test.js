@@ -1,3 +1,4 @@
+// @tier: integration
 /**
  * rate-limit-recovery.test.js — F24: Rate limit state machine integration tests.
  *

@@ -1,3 +1,4 @@
+// @tier: fast
 // Regression test for anatomy-park iteration 4: displayMacNotification must
 // not block indefinitely on a wedged `osascript` subprocess. A stuck macOS
 // Notification Center, deadlocked AppleEvent daemon, or saturated

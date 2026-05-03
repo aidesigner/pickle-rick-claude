@@ -1,3 +1,4 @@
+// @tier: fast
 /**
  * BDD Scenarios for Pickle-Dot Codegen Builder Auto-Patterns
  *

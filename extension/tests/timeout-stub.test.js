@@ -1,3 +1,4 @@
+// @tier: fast
 /**
  * FR-B8/B9 — writeTimeoutStub behavior:
  *   - Written when TASK_NOTES.md is absent

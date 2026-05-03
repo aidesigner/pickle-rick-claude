@@ -1,3 +1,4 @@
+// @tier: fast
 /**
  * FR-B12/B14 — executeTimeoutHalt side-effects:
  *   - writes state.json.activity halt entry

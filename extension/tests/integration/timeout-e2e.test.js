@@ -1,3 +1,4 @@
+// @tier: integration
 /**
  * timeout-e2e — E2E timeout happy path integration test.
  *

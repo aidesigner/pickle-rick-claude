@@ -1,3 +1,4 @@
+// @tier: fast
 /**
  * FR-B14 — Timeout-repeat halt MUST fire before circuit-breaker evaluation.
  * Tests:

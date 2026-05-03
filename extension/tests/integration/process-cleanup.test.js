@@ -1,3 +1,4 @@
+// @tier: integration
 /**
  * process-cleanup.test.js — F25: Process lifecycle integration tests.
  *

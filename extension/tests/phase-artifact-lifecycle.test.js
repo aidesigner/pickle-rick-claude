@@ -1,3 +1,4 @@
+// @tier: fast
 /**
  * FR-B16 — Intra-phase-only: timeout stub is scoped to the current phase.
  * On phase transition, cleanPhaseArtifacts archives TASK_NOTES.md to

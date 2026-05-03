@@ -1,3 +1,4 @@
+// @tier: integration
 /**
  * pipeline-e2e — E2E scope pipeline integration test.
  *

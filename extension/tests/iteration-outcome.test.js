@@ -1,3 +1,4 @@
+// @tier: fast
 // Tests for the IterationOutcome shape returned by runIteration (ticket ff3a5ae3).
 // Covers: shape contract, timing fields on the inactive early-return path, and
 // the documented completion-value union. The hang-guard and spawn-error resolve

@@ -1,3 +1,4 @@
+// @tier: integration
 /**
  * Integration test: gate cap escalation
  * Persistent failure through all cycles → exit 2 + escalation file.

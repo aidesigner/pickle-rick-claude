@@ -1,3 +1,4 @@
+// @tier: fast
 /**
  * AC-SSV-08 — deploy/source schema-version parity CI test.
  *

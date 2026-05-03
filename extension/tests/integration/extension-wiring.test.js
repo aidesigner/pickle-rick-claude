@@ -1,3 +1,4 @@
+// @tier: integration
 /**
  * Extension wiring integration test — verifies convergence-gate primitives are
  * fully deployed and wired end-to-end.

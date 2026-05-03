@@ -1,3 +1,4 @@
+// @tier: integration
 /**
  * Integration test: anatomy-park scoped final gate
  * OOS-only failures → OOS file written, remediator never called, exit 0.

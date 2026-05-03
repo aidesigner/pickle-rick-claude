@@ -1,3 +1,4 @@
+// @tier: fast
 // Regression coverage for the EPIC_COMPLETED recovery state machine in
 // mux-runner.ts (`evaluateEpicCompletion`). Replaces the v1.56.x fail-loud
 // behaviour that exited 1 on a single false EPIC_COMPLETED. The new

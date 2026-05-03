@@ -1,3 +1,4 @@
+// @tier: fast
 // Codex-backend coverage for jar-runner.
 //
 // Until now, jar-runner's codex routing was a trap-door: a task jarred with

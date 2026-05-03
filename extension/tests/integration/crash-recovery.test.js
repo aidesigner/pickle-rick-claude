@@ -1,3 +1,4 @@
+// @tier: integration
 /**
  * crash-recovery.test.js — Integration tests for StateManager crash-recovery protocols.
  *

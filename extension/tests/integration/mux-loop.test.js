@@ -1,3 +1,4 @@
+// @tier: integration
 /**
  * mux-loop.test.js — Mux-runner loop logic integration tests.
  *

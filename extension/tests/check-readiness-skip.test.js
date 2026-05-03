@@ -1,3 +1,4 @@
+// @tier: fast
 // BMAD residual P0.6 — `--skip-readiness <reason>` flag and mux-runner wiring.
 // Source: extension/src/bin/check-readiness.ts (parseArgs + main),
 // extension/src/bin/mux-runner.ts (runMuxReadinessGate skipReason forwarding).

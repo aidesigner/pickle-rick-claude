@@ -1,3 +1,4 @@
+// @tier: fast
 // Tests morty-gate-remediator.md prompt body for required P1.4 clauses + abort grammar.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

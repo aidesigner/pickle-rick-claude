@@ -1,3 +1,4 @@
+// @tier: fast
 // Hang-guard test for the backend-spawn consumer path. Same silent-hang class
 // as council-publish gh, scope-resolver rg/grep, plumbus-frame-analyzer bun,
 // and displayMacNotification osascript — a wedged `codex` (or `claude`) CLI

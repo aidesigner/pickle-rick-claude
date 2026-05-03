@@ -1,3 +1,4 @@
+// @tier: fast
 /**
  * FR-B5 — Stall guard threshold 3→2 (CB-disabled sessions only).
  * Behavioral test: disable circuit breaker, verify two consecutive non-advancing

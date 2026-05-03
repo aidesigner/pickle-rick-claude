@@ -1,3 +1,4 @@
+// @tier: fast
 /**
  * microverse-convergence.test.js
  *

@@ -1,3 +1,4 @@
+// @tier: fast
 // VENDORED FROM convergence-toolchain-gates PRD; DELETE WHEN bmad-inspired-hardening lands its agent-md-schema.test.js
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

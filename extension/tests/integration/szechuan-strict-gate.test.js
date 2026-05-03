@@ -1,3 +1,4 @@
+// @tier: integration
 /**
  * Integration test: szechuan strict gate cycle
  * 1 failure on cycle 0, remediator runs, gate green on cycle 1 → exit 0.

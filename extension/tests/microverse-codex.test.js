@@ -1,3 +1,4 @@
+// @tier: fast
 /**
  * microverse-codex.test.js
  *

@@ -1,3 +1,4 @@
+// @tier: fast
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { DotBuilder, BuildError } from '../services/dot-builder.js';

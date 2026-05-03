@@ -1,3 +1,4 @@
+// @tier: fast
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PromiseTokens, hasToken, wrapToken } from '../types/index.js';

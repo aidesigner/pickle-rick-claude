@@ -1,3 +1,4 @@
+// @tier: fast
 /**
  * FR-B3/B4 — applyTimeoutCounter: pure counter logic for per-ticket timeout halt.
  * Asserts increment-on-same-ticket, reset-on-ticket-change, reset-on-clean-completion,

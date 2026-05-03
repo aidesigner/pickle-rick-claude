@@ -1,3 +1,4 @@
+// @tier: fast
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { _parseConvergenceSpec, _parsePhases } from '../services/dot-builder.js';

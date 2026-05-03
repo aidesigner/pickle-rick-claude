@@ -1,3 +1,4 @@
+// @tier: integration
 /**
  * jar-batch.test.js — Integration tests for jar queue operations.
  *

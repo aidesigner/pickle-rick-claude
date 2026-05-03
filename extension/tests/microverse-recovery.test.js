@@ -1,3 +1,4 @@
+// @tier: fast
 /**
  * microverse-recovery.test.js
  *

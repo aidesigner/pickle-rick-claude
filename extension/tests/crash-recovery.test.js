@@ -1,3 +1,4 @@
+// @tier: fast
 /**
  * crash-recovery.test.js
  *

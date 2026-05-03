@@ -1,3 +1,4 @@
+// @tier: fast
 /**
  * jar-batch.test.js
  *

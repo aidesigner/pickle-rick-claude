@@ -1,3 +1,4 @@
+// @tier: fast
 // Verifies parity between ScopeErrorCode type definition and thrown codes in
 // scope-resolver.ts, and that command docs accurately reflect SCOPE_DRYRUN_CONFLICT
 // as a prompt-level message (not a ScopeError code).

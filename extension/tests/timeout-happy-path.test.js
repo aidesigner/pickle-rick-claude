@@ -1,3 +1,4 @@
+// @tier: fast
 /**
  * FR-B10 regression: fixture manager sleeps beyond worker_timeout_seconds,
  * writes an artifact, and completes without SIGTERM.

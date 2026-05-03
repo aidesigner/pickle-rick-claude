@@ -1,3 +1,4 @@
+// @tier: contract
 // Type contract tests — verify BuilderSpec, PhaseSpec, BuildError, Diagnostic,
 // BuildResult, DefenseMatrix, ValidationResult, BuildErrorCode, MicroverseOpts,
 // WorkspaceOpts, and StylesheetConfig match the PRD spec.

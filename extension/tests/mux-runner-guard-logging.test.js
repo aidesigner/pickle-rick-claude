@@ -1,3 +1,4 @@
+// @tier: fast
 /**
  * Verifies the EPIC_COMPLETED recovery state machine end-to-end. Runs
  * mux-runner.js as a subprocess with a fake `claude` that emits

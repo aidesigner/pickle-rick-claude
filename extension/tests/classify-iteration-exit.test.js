@@ -1,3 +1,4 @@
+// @tier: fast
 // Tests for classifyIterationExit timing param + timeout variant (ticket ff3a5ae3).
 // Rate-limit still wins over timeout; existing completion early returns
 // (inactive/error/success) still short-circuit before the timeout check.

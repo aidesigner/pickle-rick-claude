@@ -1,3 +1,4 @@
+// @tier: integration
 /**
  * concurrent-state.test.js — Real-concurrency integration tests for StateManager.
  *

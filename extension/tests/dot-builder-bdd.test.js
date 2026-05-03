@@ -1,3 +1,4 @@
+// @tier: fast
 // BDD scenarios for DotBuilder core API — failing tests (RED phase)
 // These tests verify behavioral correctness of the builder, not just type shapes.
 // They SHOULD FAIL until production code is written.

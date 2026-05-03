@@ -1,3 +1,4 @@
+// @tier: integration
 /**
  * microverse-convergence.test.js — Integration tests for microverse convergence state machine.
  *

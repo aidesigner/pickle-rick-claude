@@ -1,3 +1,4 @@
+// @tier: integration
 /**
  * LOA-618 fixture replay integration test (P3.4b).
  *

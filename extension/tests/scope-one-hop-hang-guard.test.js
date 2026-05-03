@@ -1,3 +1,4 @@
+// @tier: fast
 // Regression test for anatomy-park iteration 2: findImporters (invoked via
 // computeOneHop → resolveScope) must not block indefinitely on a wedged
 // ripgrep/grep subprocess. A FIFO pipe, stuck FUSE mount, or catastrophic
