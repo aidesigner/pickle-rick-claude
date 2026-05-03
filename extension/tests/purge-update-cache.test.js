@@ -16,7 +16,7 @@ function makeFixture() {
   const homeDir = path.join(dir, 'home');
   const tmpRoot = path.join(dir, 'tmp');
   const varFoldersRoot = path.join(dir, 'var-folders');
-  const runtimeRoot = path.join(homeDir, '.claude', 'pickle-rick');
+  const runtimeRoot = path.join(homeDir, '.codex', 'pickle-rick');
   const cachePath = path.join(runtimeRoot, 'update-check.json');
   const auditPath = path.join(runtimeRoot, 'deploy-audit.log');
   const tarballDir = path.join(tmpRoot, 'pickle-update-fixture');
@@ -87,6 +87,43 @@ describe('purge-update-cache.js', () => {
       assert.equal(existsSync(fixture.tarballDir), true);
       assert.equal(existsSync(fixture.auditPath), false);
       assert.match(result.stderr, /Would remove/);
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('honors PICKLE_DATA_ROOT for update cache and audit paths', () => {
+    const fixture = makeFixture();
+    const overrideRoot = path.join(fixture.dir, 'override-data-root');
+    const overrideCache = path.join(overrideRoot, 'update-check.json');
+    const overrideAudit = path.join(overrideRoot, 'deploy-audit.log');
+    try {
+      mkdirSync(overrideRoot, { recursive: true });
+      writeFileSync(overrideCache, JSON.stringify({
+        last_check_epoch: 2,
+        latest_version: '2.0.0',
+        current_version: '1.0.0',
+      }));
+      const result = spawnSync('node', [PURGE_SCRIPT], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          HOME: fixture.homeDir,
+          TMPDIR: fixture.tmpRoot,
+          PICKLE_DATA_ROOT: overrideRoot,
+          PICKLE_PURGE_VAR_FOLDERS_ROOT: fixture.varFoldersRoot,
+        },
+      });
+
+      assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
+      assert.equal(existsSync(overrideCache), false);
+      assert.equal(existsSync(fixture.cachePath), true);
+
+      const lines = readFileSync(overrideAudit, 'utf8').trim().split('\n');
+      assert.equal(lines.length, 1);
+      const audit = JSON.parse(lines[0]);
+      assert.equal(audit.event, 'CACHE_PURGE');
+      assert.ok(audit.removed_paths.includes(overrideCache));
     } finally {
       rmSync(fixture.dir, { recursive: true, force: true });
     }
