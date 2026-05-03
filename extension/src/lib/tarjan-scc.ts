@@ -95,75 +95,84 @@ function tarjanSCC(adj: Map<string, string[]>): string[][] {
   return sccs;
 }
 
-// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
+function hasIterateSignal(node: Record<string, unknown>): boolean {
+  const epsilon = node['convergence_epsilon'];
+  const until = node['until'];
+  return node['class'] === 'iterate' &&
+    typeof epsilon !== 'undefined' &&
+    epsilon !== null &&
+    Number(epsilon) > 0 &&
+    until !== undefined &&
+    until !== null &&
+    until !== '';
+}
+
+function hasModelLadderSignal(node: Record<string, unknown>): boolean {
+  return node['model_ladder'] !== undefined &&
+    node['model_ladder'] !== null &&
+    node['ladder_advance_on'] === 'rollback';
+}
+
+function hasFixAttemptHistorySignal(node: Record<string, unknown>): boolean {
+  const ctxKeys = node['context_keys'];
+  if (typeof ctxKeys !== 'string') return false;
+  const keys = ctxKeys.split(',').map(k => k.trim());
+  return keys.includes('__pool_findings__') ||
+    keys.includes('__fix_attempt_history') ||
+    keys.includes('__last_failure_output');
+}
+
+function findSignalNode(
+  sccNodes: string[],
+  nodeMap: Map<string, Record<string, unknown>>,
+  predicate: (node: Record<string, unknown>) => boolean,
+): boolean {
+  for (const id of sccNodes) {
+    const node = nodeMap.get(id);
+    if (node && predicate(node)) return true;
+  }
+  return false;
+}
+
 function detectConvergenceSignal(
   sccNodes: string[],
   nodeMap: Map<string, Record<string, unknown>>,
 ): CycleRow['convergence_signal'] {
-  for (const id of sccNodes) {
-    const node = nodeMap.get(id);
-    if (!node) continue;
-
-    const cls = node['class'];
-    const epsilon = node['convergence_epsilon'];
-    const until = node['until'];
-    if (
-      cls === 'iterate' &&
-      typeof epsilon !== 'undefined' && epsilon !== null && Number(epsilon) > 0 &&
-      until !== undefined && until !== null && until !== ''
-    ) {
-      return 'iterate';
-    }
-  }
-
-  for (const id of sccNodes) {
-    const node = nodeMap.get(id);
-    if (!node) continue;
-    if (node['model_ladder'] !== undefined && node['model_ladder'] !== null && node['ladder_advance_on'] === 'rollback') {
-      return 'model_ladder';
-    }
-  }
-
-  for (const id of sccNodes) {
-    const node = nodeMap.get(id);
-    if (!node) continue;
-    const ctxKeys = node['context_keys'];
-    if (typeof ctxKeys === 'string') {
-      const keys = ctxKeys.split(',').map(k => k.trim());
-      if (
-        keys.includes('__pool_findings__') ||
-        keys.includes('__fix_attempt_history') ||
-        keys.includes('__last_failure_output')
-      ) {
-        return 'fix_attempt_history';
-      }
-    }
-  }
-
+  if (findSignalNode(sccNodes, nodeMap, hasIterateSignal)) return 'iterate';
+  if (findSignalNode(sccNodes, nodeMap, hasModelLadderSignal)) return 'model_ladder';
+  if (findSignalNode(sccNodes, nodeMap, hasFixAttemptHistorySignal)) return 'fix_attempt_history';
   return null;
 }
 
-// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
-export function buildCycles(graph: Graph): CycleRow[] {
-  const adj = buildAdjacency(graph);
-  const rawSccs = tarjanSCC(adj);
-
+function buildNodeMap(graph: Graph): Map<string, Record<string, unknown>> {
   const nodeMap = new Map<string, Record<string, unknown>>();
   for (const node of graph.nodes) {
     const id = nodeId(node);
     if (id !== null) nodeMap.set(id, node);
   }
+  return nodeMap;
+}
 
+function edgeEndpoint(edge: Record<string, unknown>, primary: 'source' | 'target', fallback: 'from' | 'to'): string | null {
+  return (typeof edge[primary] === 'string' ? edge[primary] : null) ??
+    (typeof edge[fallback] === 'string' ? edge[fallback] : null);
+}
+
+function collectSelfLoopNodes(graph: Graph): Set<string> {
   const selfLoopNodes = new Set<string>();
   for (const edge of graph.edges) {
-    const src =
-      (typeof edge['source'] === 'string' ? edge['source'] : null) ??
-      (typeof edge['from'] === 'string' ? edge['from'] : null);
-    const tgt =
-      (typeof edge['target'] === 'string' ? edge['target'] : null) ??
-      (typeof edge['to'] === 'string' ? edge['to'] : null);
+    const src = edgeEndpoint(edge, 'source', 'from');
+    const tgt = edgeEndpoint(edge, 'target', 'to');
     if (src && tgt && src === tgt) selfLoopNodes.add(src);
   }
+  return selfLoopNodes;
+}
+
+export function buildCycles(graph: Graph): CycleRow[] {
+  const adj = buildAdjacency(graph);
+  const rawSccs = tarjanSCC(adj);
+  const nodeMap = buildNodeMap(graph);
+  const selfLoopNodes = collectSelfLoopNodes(graph);
 
   const rows: CycleRow[] = [];
 

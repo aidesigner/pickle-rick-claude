@@ -13,64 +13,83 @@ function parseKeys(raw: string): string[] {
     .filter(Boolean);
 }
 
-// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
-export function buildContextKeyMatrix(graph: Graph, registry: EngineKeysRegistry): ContextKeyRow[] {
-  const writers = new Map<string, Set<string>>();
-  const readers = new Map<string, Set<string>>();
+type KeyMap = Map<string, Set<string>>;
 
-  function addWriter(key: string, nodeId: string): void {
-    if (!writers.has(key)) writers.set(key, new Set());
-    writers.get(key)!.add(nodeId);
+function addKeyRef(map: KeyMap, key: string, nodeId: string): void {
+  if (!map.has(key)) map.set(key, new Set());
+  map.get(key)!.add(nodeId);
+}
+
+function collectNodeContextAttrs(node: Record<string, unknown>, id: string, writers: KeyMap): void {
+  for (const attr of ['context_on_success', 'context_on_failure'] as const) {
+    const raw = node[attr];
+    if (typeof raw !== 'string') continue;
+    for (const key of parseKeys(raw)) addKeyRef(writers, key, id);
   }
+}
 
-  function addReader(key: string, nodeId: string): void {
-    if (!readers.has(key)) readers.set(key, new Set());
-    readers.get(key)!.add(nodeId);
+function collectNodeContextKeys(node: Record<string, unknown>, id: string, readers: KeyMap): void {
+  const ctxKeys = node['context_keys'];
+  if (typeof ctxKeys !== 'string') return;
+  for (const key of ctxKeys.split(',').map(k => k.trim()).filter(Boolean)) {
+    addKeyRef(readers, key, id);
   }
+}
 
+function collectNodeTextRefs(node: Record<string, unknown>, id: string, writers: KeyMap, readers: KeyMap): void {
+  for (const field of ['tool_command', 'prompt'] as const) {
+    const val = node[field];
+    if (typeof val !== 'string') continue;
+    for (const m of val.matchAll(TOOL_CMD_WRITE_RE)) addKeyRef(writers, m[1], id);
+    for (const m of val.matchAll(ATTRACTOR_CTX_READ_RE)) addKeyRef(readers, m[1], id);
+  }
+}
+
+function collectNodeRefs(graph: Graph, writers: KeyMap, readers: KeyMap): void {
   for (const node of graph.nodes) {
     const id = typeof node['id'] === 'string' ? node['id'] : null;
     if (!id) continue;
 
-    for (const attr of ['context_on_success', 'context_on_failure'] as const) {
-      const raw = node[attr];
-      if (typeof raw === 'string') {
-        for (const key of parseKeys(raw)) addWriter(key, id);
-      }
-    }
-
-    const ctxKeys = node['context_keys'];
-    if (typeof ctxKeys === 'string') {
-      for (const key of ctxKeys.split(',').map(k => k.trim()).filter(Boolean)) {
-        addReader(key, id);
-      }
-    }
-
-    for (const field of ['tool_command', 'prompt'] as const) {
-      const val = node[field];
-      if (typeof val !== 'string') continue;
-      for (const m of val.matchAll(TOOL_CMD_WRITE_RE)) addWriter(m[1], id);
-      for (const m of val.matchAll(ATTRACTOR_CTX_READ_RE)) addReader(m[1], id);
-    }
+    collectNodeContextAttrs(node, id, writers);
+    collectNodeContextKeys(node, id, readers);
+    collectNodeTextRefs(node, id, writers, readers);
   }
+}
 
+function edgeCondition(edge: Record<string, unknown>): string | null {
+  const attrsObj = typeof edge['attrs'] === 'object' && edge['attrs'] !== null
+    ? (edge['attrs'] as Record<string, unknown>)
+    : null;
+  const condition = attrsObj?.['condition'] ?? edge['condition'];
+  return typeof condition === 'string' ? condition : null;
+}
+
+function edgeTargetId(edge: Record<string, unknown>): string | null {
+  return (typeof edge['target'] === 'string' ? edge['target'] : null) ??
+    (typeof edge['to'] === 'string' ? edge['to'] : null);
+}
+
+function collectEdgeRefs(graph: Graph, readers: KeyMap): void {
   for (const edge of graph.edges) {
-    const attrsObj = typeof edge['attrs'] === 'object' && edge['attrs'] !== null
-      ? (edge['attrs'] as Record<string, unknown>)
-      : null;
-    const condition = (attrsObj?.['condition'] ?? edge['condition']);
-    if (typeof condition !== 'string') continue;
+    const condition = edgeCondition(edge);
+    if (!condition) continue;
 
     const match = CONDITION_RE.exec(condition);
     if (!match) continue;
     const key = match[1];
 
-    const targetId =
-      (typeof edge['target'] === 'string' ? edge['target'] : null) ??
-      (typeof edge['to'] === 'string' ? edge['to'] : null);
+    const targetId = edgeTargetId(edge);
     if (!targetId) continue;
-    addReader(key, targetId);
+    addKeyRef(readers, key, targetId);
   }
+}
+
+export function buildContextKeyMatrix(graph: Graph, registry: EngineKeysRegistry): ContextKeyRow[] {
+  const writers = new Map<string, Set<string>>();
+  const readers = new Map<string, Set<string>>();
+
+  collectNodeRefs(graph, writers, readers);
+  collectEdgeRefs(graph, readers);
 
   const allKeys = new Set([...writers.keys(), ...readers.keys()]);
   const rows: ContextKeyRow[] = [];

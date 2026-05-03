@@ -84,13 +84,15 @@ function collectObservedValues(graph: Graph): Map<string, Set<string>> {
   return observed;
 }
 
-// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
-export function buildDiamondRouting(graph: Graph): DiamondRoutingRow[] {
+function sourceId(edge: Record<string, unknown>): string | null {
+  return (typeof edge['source'] === 'string' ? edge['source'] : null) ??
+    (typeof edge['from'] === 'string' ? edge['from'] : null);
+}
+
+function collectConditionalOutgoingEdges(graph: Graph): Map<string, CondEdge[]> {
   const outgoing = new Map<string, CondEdge[]>();
   for (const edge of graph.edges) {
-    const src =
-      (typeof edge['source'] === 'string' ? edge['source'] : null) ??
-      (typeof edge['from'] === 'string' ? edge['from'] : null);
+    const src = sourceId(edge);
     if (!src) continue;
     const condStr = edgeCondition(edge);
     if (!condStr) continue;
@@ -99,9 +101,10 @@ export function buildDiamondRouting(graph: Graph): DiamondRoutingRow[] {
     if (!outgoing.has(src)) outgoing.set(src, []);
     outgoing.get(src)!.push({ id: edgeId(edge), condition: parsed });
   }
+  return outgoing;
+}
 
-  const observed = collectObservedValues(graph);
-
+function collectDiamondIds(graph: Graph, outgoing: Map<string, CondEdge[]>): Set<string> {
   const diamonds = new Set<string>();
   for (const node of graph.nodes) {
     const id = typeof node['id'] === 'string' ? node['id'] : null;
@@ -112,50 +115,67 @@ export function buildDiamondRouting(graph: Graph): DiamondRoutingRow[] {
       diamonds.add(id);
     }
   }
+  return diamonds;
+}
+
+function keySetsForEdges(edges: CondEdge[], observed: Map<string, Set<string>>): Array<[string, string[]]> {
+  const referencedKeys = [...new Set(edges.map(e => e.condition.key))].sort();
+  return referencedKeys.map(key => {
+    if (key === 'outcome') return [key, ['fail', 'success', 'unset']];
+    const obs = observed.get(key) ?? new Set<string>();
+    return [key, [...new Set([...obs, 'unset'])].sort()];
+  });
+}
+
+function buildTooComplexRow(diamond: string): DiamondRoutingRow {
+  return {
+    diamond,
+    covered_states: [],
+    stuck_states: [
+      { cell: {}, matchingEdges: [], note: 'diamond too complex to enumerate mechanically' },
+    ],
+  };
+}
+
+function buildDiamondRow(
+  diamond: string,
+  edges: CondEdge[],
+  observed: Map<string, Set<string>>,
+): DiamondRoutingRow {
+  const keySets = keySetsForEdges(edges, observed);
+  const totalCells = keySets.reduce((acc, [, vals]) => acc * vals.length, 1);
+  if (totalCells > CARTESIAN_CAP) return buildTooComplexRow(diamond);
+
+  const covered: DiamondRoutingRow['covered_states'] = [];
+  const stuck: DiamondRoutingRow['stuck_states'] = [];
+
+  for (const cell of cartesian(keySets)) {
+    const matching = edges
+      .filter(e => cell[e.condition.key] === e.condition.expectedValue)
+      .map(e => e.id)
+      .sort();
+    if (matching.length === 0) {
+      stuck.push({ cell, matchingEdges: [] });
+    } else {
+      covered.push({ cell, matchingEdges: matching });
+    }
+  }
+
+  return { diamond, covered_states: covered, stuck_states: stuck };
+}
+
+export function buildDiamondRouting(graph: Graph): DiamondRoutingRow[] {
+  const outgoing = collectConditionalOutgoingEdges(graph);
+
+  const observed = collectObservedValues(graph);
+  const diamonds = collectDiamondIds(graph, outgoing);
 
   const rows: DiamondRoutingRow[] = [];
 
   for (const diamond of [...diamonds].sort()) {
     const edges = outgoing.get(diamond);
     if (!edges || edges.length === 0) continue;
-
-    const referencedKeys = [...new Set(edges.map(e => e.condition.key))].sort();
-
-    const keySets: Array<[string, string[]]> = referencedKeys.map(key => {
-      if (key === 'outcome') return [key, ['fail', 'success', 'unset']];
-      const obs = observed.get(key) ?? new Set<string>();
-      return [key, [...new Set([...obs, 'unset'])].sort()];
-    });
-
-    const totalCells = keySets.reduce((acc, [, vals]) => acc * vals.length, 1);
-    if (totalCells > CARTESIAN_CAP) {
-      rows.push({
-        diamond,
-        covered_states: [],
-        stuck_states: [
-          { cell: {}, matchingEdges: [], note: 'diamond too complex to enumerate mechanically' },
-        ],
-      });
-      continue;
-    }
-
-    const cells = cartesian(keySets);
-    const covered: Array<{ cell: Record<string, string>; matchingEdges: string[] }> = [];
-    const stuck: Array<{ cell: Record<string, string>; matchingEdges: string[] }> = [];
-
-    for (const cell of cells) {
-      const matching = edges
-        .filter(e => cell[e.condition.key] === e.condition.expectedValue)
-        .map(e => e.id)
-        .sort();
-      if (matching.length === 0) {
-        stuck.push({ cell, matchingEdges: [] });
-      } else {
-        covered.push({ cell, matchingEdges: matching });
-      }
-    }
-
-    rows.push({ diamond, covered_states: covered, stuck_states: stuck });
+    rows.push(buildDiamondRow(diamond, edges, observed));
   }
 
   return rows;
