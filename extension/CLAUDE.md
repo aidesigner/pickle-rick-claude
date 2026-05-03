@@ -125,6 +125,9 @@ Compiled TS → JS lives in `extension/services/`, `extension/bin/`, `extension/
 - INVARIANT: `current_ticket` is the nullable ticket pointer and changes only through ticket lifecycle operations. ENFORCE: extension/tests/state-field-invariants.test.js.
 - INVARIANT: `current_ticket_tier` is the optional mux-runner cache for the active ticket complexity tier and must be refreshed when the ticket changes. ENFORCE: extension/tests/state-field-invariants.test.js, extension/tests/mux-runner-circuit-breaker.test.js.
 - INVARIANT: `current_ticket_budget` is the optional mux-runner cache for the active ticket no-progress circuit-breaker budget and must match `current_ticket_tier`. ENFORCE: extension/tests/state-field-invariants.test.js, extension/tests/mux-runner-circuit-breaker.test.js.
+- INVARIANT: `current_ticket_max_iterations` is the optional mux-runner per-ticket iteration ceiling derived from the active ticket tier and cleared when the ticket changes. ENFORCE: extension/tests/state-field-invariants.test.js, extension/tests/mux-runner-circuit-breaker.test.js.
+- INVARIANT: `current_ticket_worker_timeout_seconds` is the optional mux-runner per-ticket worker timeout derived from the active ticket tier and cleared when the ticket changes. ENFORCE: extension/tests/state-field-invariants.test.js, extension/tests/mux-runner-circuit-breaker.test.js.
+- INVARIANT: `current_ticket_budget_start_iteration` is the optional mux-runner iteration baseline for the active ticket tier budget and resets when the ticket changes. ENFORCE: extension/tests/state-field-invariants.test.js, extension/tests/mux-runner-circuit-breaker.test.js.
 - INVARIANT: `history` is the lifecycle trace seed written only by `setup.ts` (empty array on init); runners do NOT append. Read by `pickle-utils.ts:buildHandoffSummary` as the new-vs-resume heuristic. ENFORCE: extension/tests/state-field-invariants.test.js, extension/tests/pickle-utils.test.js.
 - INVARIANT: `started_at` is the session start timestamp and remains parseable for recency ranking. ENFORCE: extension/tests/state-field-invariants.test.js.
 - INVARIANT: `session_dir` is the canonical session path written at setup. ENFORCE: extension/tests/state-field-invariants.test.js.
@@ -146,6 +149,10 @@ Compiled TS → JS lives in `extension/services/`, `extension/bin/`, `extension/
 - INVARIANT: `false_epic_completed_ticket` ties false completion counts to the ticket that produced them. ENFORCE: extension/tests/state-field-invariants.test.js.
 - INVARIANT: `effort` is the optional codex reasoning-effort value. ENFORCE: extension/tests/state-field-invariants.test.js.
 - INVARIANT: `codex_manager_relaunch_count` is capped per state file by defaults. ENFORCE: extension/tests/state-field-invariants.test.js.
+- INVARIANT: `hermes_toolsets` is the optional Hermes CLI toolset list passed to worker and manager spawns. ENFORCE: extension/tests/state-field-invariants.test.js, extension/tests/hermes-spawn.test.js.
+- INVARIANT: `hermes_provider` is the optional Hermes provider override passed to worker and manager spawns. ENFORCE: extension/tests/state-field-invariants.test.js, extension/tests/hermes-spawn.test.js.
+- INVARIANT: `hermes_model` is the optional Hermes model override passed to worker and manager spawns. ENFORCE: extension/tests/state-field-invariants.test.js, extension/tests/hermes-spawn.test.js.
+- INVARIANT: `hermes_max_turns` is the optional positive Hermes max-turns override passed to worker and manager spawns. ENFORCE: extension/tests/state-field-invariants.test.js, extension/tests/hermes-spawn.test.js.
 - INVARIANT: `archaeology` is nullable project-context metadata. ENFORCE: extension/tests/state-field-invariants.test.js.
 - INVARIANT: `tickets_version` increments when course correction changes ticket state. ENFORCE: extension/tests/state-field-invariants.test.js.
 - INVARIANT: `last_course_correction` stores nullable metadata for the latest applied correction. ENFORCE: extension/tests/state-field-invariants.test.js.

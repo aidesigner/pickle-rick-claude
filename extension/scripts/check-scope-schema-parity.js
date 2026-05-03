@@ -4,35 +4,42 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { buildScopeV1Schema } from '../services/scope-resolver.js';
-// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
-function deepEqual(a, b) {
-    if (a === b)
-        return true;
-    if (a === null || b === null || typeof a !== 'object' || typeof b !== 'object')
+function isComparableObject(value) {
+    return value !== null && typeof value === 'object';
+}
+function arraysEqual(a, b) {
+    if (a.length !== b.length)
         return false;
-    if (Array.isArray(a) !== Array.isArray(b))
-        return false;
-    if (Array.isArray(a) && Array.isArray(b)) {
-        if (a.length !== b.length)
+    for (let i = 0; i < a.length; i++) {
+        if (!deepEqual(a[i], b[i]))
             return false;
-        for (let i = 0; i < a.length; i++)
-            if (!deepEqual(a[i], b[i]))
-                return false;
-        return true;
     }
-    const ao = a;
-    const bo = b;
-    const ak = Object.keys(ao).sort();
-    const bk = Object.keys(bo).sort();
+    return true;
+}
+function objectEntriesEqual(a, b) {
+    const ak = Object.keys(a).sort();
+    const bk = Object.keys(b).sort();
     if (ak.length !== bk.length)
         return false;
     for (let i = 0; i < ak.length; i++) {
         if (ak[i] !== bk[i])
             return false;
-        if (!deepEqual(ao[ak[i]], bo[bk[i]]))
+        if (!deepEqual(a[ak[i]], b[bk[i]]))
             return false;
     }
     return true;
+}
+function deepEqual(a, b) {
+    if (a === b)
+        return true;
+    if (!isComparableObject(a) || !isComparableObject(b))
+        return false;
+    if (Array.isArray(a) !== Array.isArray(b))
+        return false;
+    if (Array.isArray(a) && Array.isArray(b)) {
+        return arraysEqual(a, b);
+    }
+    return objectEntriesEqual(a, b);
 }
 export function runParityCheck(schemaPath) {
     const expected = buildScopeV1Schema();

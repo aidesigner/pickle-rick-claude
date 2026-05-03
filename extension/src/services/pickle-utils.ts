@@ -8,6 +8,8 @@ import { StateManager } from './state-manager.js';
 import { readRecoverableJsonObject } from './recoverable-json.js';
 import { updateTicketStatusInTransaction } from './transaction-ticket-ops.js';
 
+let stateWriteSeq = 0;
+
 /** Extracts a string message from any thrown value. Never throws. */
 export function safeErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -1067,7 +1069,8 @@ export function drainLog(logPath: string, offset: number): number {
  * Writes to a `.tmp` sibling first, then renames — prevents partial reads.
  */
 export function writeStateFile(filePath: string, state: State | object): void {
-  const tmp = `${filePath}.tmp.${process.pid}`;
+  stateWriteSeq = (stateWriteSeq + 1) % Number.MAX_SAFE_INTEGER;
+  const tmp = `${filePath}.tmp.${process.pid}.${Date.now()}.${stateWriteSeq}`;
   try {
     fs.writeFileSync(tmp, JSON.stringify(state, null, 2));
     fs.renameSync(tmp, filePath);

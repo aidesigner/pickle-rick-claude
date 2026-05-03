@@ -524,7 +524,7 @@ export class StateManager {
       return null;
     }
 
-    const tmpPattern = new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.tmp\\.(\\d+)$`);
+    const tmpPattern = new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.tmp\\.(\\d+)(?:\\..*)?$`);
     let winner: { tmpPath: string; state: State; mtimeMs: number } | null = null;
 
     for (const entry of entries) {
@@ -576,7 +576,7 @@ export class StateManager {
       return;
     }
 
-    const tmpPattern = new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.tmp\\.(\\d+)$`);
+    const tmpPattern = new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.tmp\\.(\\d+)(?:\\..*)?$`);
 
     for (const entry of entries) {
       const match = entry.match(tmpPattern);

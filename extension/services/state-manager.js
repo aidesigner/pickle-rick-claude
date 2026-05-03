@@ -475,7 +475,7 @@ export class StateManager {
         catch {
             return null;
         }
-        const tmpPattern = new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.tmp\\.(\\d+)$`);
+        const tmpPattern = new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.tmp\\.(\\d+)(?:\\..*)?$`);
         let winner = null;
         for (const entry of entries) {
             const match = entry.match(tmpPattern);
@@ -523,7 +523,7 @@ export class StateManager {
         catch {
             return;
         }
-        const tmpPattern = new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.tmp\\.(\\d+)$`);
+        const tmpPattern = new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.tmp\\.(\\d+)(?:\\..*)?$`);
         for (const entry of entries) {
             const match = entry.match(tmpPattern);
             if (!match)

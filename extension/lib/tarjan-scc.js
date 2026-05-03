@@ -76,64 +76,76 @@ function tarjanSCC(adj) {
     }
     return sccs;
 }
-// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
+function hasIterateSignal(node) {
+    const epsilon = node['convergence_epsilon'];
+    const until = node['until'];
+    return node['class'] === 'iterate' &&
+        typeof epsilon !== 'undefined' &&
+        epsilon !== null &&
+        Number(epsilon) > 0 &&
+        until !== undefined &&
+        until !== null &&
+        until !== '';
+}
+function hasModelLadderSignal(node) {
+    return node['model_ladder'] !== undefined &&
+        node['model_ladder'] !== null &&
+        node['ladder_advance_on'] === 'rollback';
+}
+function hasFixAttemptHistorySignal(node) {
+    const ctxKeys = node['context_keys'];
+    if (typeof ctxKeys !== 'string')
+        return false;
+    const keys = ctxKeys.split(',').map(k => k.trim());
+    return keys.includes('__pool_findings__') ||
+        keys.includes('__fix_attempt_history') ||
+        keys.includes('__last_failure_output');
+}
+function findSignalNode(sccNodes, nodeMap, predicate) {
+    for (const id of sccNodes) {
+        const node = nodeMap.get(id);
+        if (node && predicate(node))
+            return true;
+    }
+    return false;
+}
 function detectConvergenceSignal(sccNodes, nodeMap) {
-    for (const id of sccNodes) {
-        const node = nodeMap.get(id);
-        if (!node)
-            continue;
-        const cls = node['class'];
-        const epsilon = node['convergence_epsilon'];
-        const until = node['until'];
-        if (cls === 'iterate' &&
-            typeof epsilon !== 'undefined' && epsilon !== null && Number(epsilon) > 0 &&
-            until !== undefined && until !== null && until !== '') {
-            return 'iterate';
-        }
-    }
-    for (const id of sccNodes) {
-        const node = nodeMap.get(id);
-        if (!node)
-            continue;
-        if (node['model_ladder'] !== undefined && node['model_ladder'] !== null && node['ladder_advance_on'] === 'rollback') {
-            return 'model_ladder';
-        }
-    }
-    for (const id of sccNodes) {
-        const node = nodeMap.get(id);
-        if (!node)
-            continue;
-        const ctxKeys = node['context_keys'];
-        if (typeof ctxKeys === 'string') {
-            const keys = ctxKeys.split(',').map(k => k.trim());
-            if (keys.includes('__pool_findings__') ||
-                keys.includes('__fix_attempt_history') ||
-                keys.includes('__last_failure_output')) {
-                return 'fix_attempt_history';
-            }
-        }
-    }
+    if (findSignalNode(sccNodes, nodeMap, hasIterateSignal))
+        return 'iterate';
+    if (findSignalNode(sccNodes, nodeMap, hasModelLadderSignal))
+        return 'model_ladder';
+    if (findSignalNode(sccNodes, nodeMap, hasFixAttemptHistorySignal))
+        return 'fix_attempt_history';
     return null;
 }
-// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
-export function buildCycles(graph) {
-    const adj = buildAdjacency(graph);
-    const rawSccs = tarjanSCC(adj);
+function buildNodeMap(graph) {
     const nodeMap = new Map();
     for (const node of graph.nodes) {
         const id = nodeId(node);
         if (id !== null)
             nodeMap.set(id, node);
     }
+    return nodeMap;
+}
+function edgeEndpoint(edge, primary, fallback) {
+    return (typeof edge[primary] === 'string' ? edge[primary] : null) ??
+        (typeof edge[fallback] === 'string' ? edge[fallback] : null);
+}
+function collectSelfLoopNodes(graph) {
     const selfLoopNodes = new Set();
     for (const edge of graph.edges) {
-        const src = (typeof edge['source'] === 'string' ? edge['source'] : null) ??
-            (typeof edge['from'] === 'string' ? edge['from'] : null);
-        const tgt = (typeof edge['target'] === 'string' ? edge['target'] : null) ??
-            (typeof edge['to'] === 'string' ? edge['to'] : null);
+        const src = edgeEndpoint(edge, 'source', 'from');
+        const tgt = edgeEndpoint(edge, 'target', 'to');
         if (src && tgt && src === tgt)
             selfLoopNodes.add(src);
     }
+    return selfLoopNodes;
+}
+export function buildCycles(graph) {
+    const adj = buildAdjacency(graph);
+    const rawSccs = tarjanSCC(adj);
+    const nodeMap = buildNodeMap(graph);
+    const selfLoopNodes = collectSelfLoopNodes(graph);
     const rows = [];
     for (const scc of rawSccs) {
         const isTrivial = scc.length === 1 && !selfLoopNodes.has(scc[0]);

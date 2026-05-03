@@ -346,20 +346,33 @@ function updateMuxLifecycleState(
 }
 
 function readTicketBudgetForState(state: State, sessionDir: string): TicketTierBudget {
-  const cachedTier = typeof state.current_ticket_tier === 'string' ? state.current_ticket_tier : undefined;
-  if (cachedTier) return ticketTierBudget(cachedTier);
-
   const ticketId = typeof state.current_ticket === 'string' && state.current_ticket.length > 0
     ? state.current_ticket
     : null;
-  if (!ticketId) return ticketTierBudget(undefined);
+  if (!ticketId) return sessionRunnerBudget(state);
 
   const ticketPath = path.join(sessionDir, ticketId, `linear_ticket_${ticketId}.md`);
+  if (!fs.existsSync(ticketPath)) return sessionRunnerBudget(state);
+
+  const cachedTier = typeof state.current_ticket_tier === 'string' ? state.current_ticket_tier : undefined;
+  if (cachedTier) return ticketTierBudget(cachedTier);
   return ticketInfoBudgetFromPath(ticketPath);
 }
 
 function ticketInfoBudgetFromPath(ticketPath: string): TicketTierBudget {
   return ticketTierBudget(parseTicketFrontmatter(ticketPath)?.complexity_tier);
+}
+
+function sessionRunnerBudget(state: State): TicketTierBudget {
+  const max_iterations = Number(state.max_iterations);
+  const worker_timeout_seconds = Number(state.worker_timeout_seconds);
+  return {
+    tier: 'medium',
+    max_iterations: Number.isFinite(max_iterations) && max_iterations > 0 ? max_iterations : ticketTierBudget(undefined).max_iterations,
+    worker_timeout_seconds: Number.isFinite(worker_timeout_seconds) && worker_timeout_seconds > 0
+      ? worker_timeout_seconds
+      : ticketTierBudget(undefined).worker_timeout_seconds,
+  };
 }
 
 export function applyTicketTierBudget(state: State, sessionDir: string): TicketTierBudget {

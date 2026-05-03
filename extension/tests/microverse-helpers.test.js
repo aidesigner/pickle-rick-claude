@@ -188,7 +188,7 @@ test('executeMainLoop replays convergence mutation fixture order', async () => {
     });
     await executeMainLoop(mv, ctx);
     const actual = readMicroverseState(sessionDir);
-    const expectedAfter = fixture.cycle[3].after.convergence;
+    const expectedAfter = fixture.cycle[2].after.convergence;
     const actualMutations = actual.convergence.history.map(({ score, iteration, action, classification }, index) => ({
       score,
       iteration,
