@@ -17,6 +17,7 @@
     "test": "npm run test:fast && npm run test:integration",
     "pretest:fast": "bash scripts/audit-test-tiers.sh && bash scripts/audit-test-isolation.sh",
     "test:fast": "node bin/test-runner.js --tier fast",
+    "coverage": "c8 --reporter=html --reporter=json-summary --report-dir=coverage node bin/test-runner.js --tier fast",
     "test:integration": "node bin/test-runner.js --tier integration",
     "test:expensive": "node bin/test-runner.js --tier expensive",
     "test:behavioral": "node --test tests/feature-flag-baseline.test.js"
