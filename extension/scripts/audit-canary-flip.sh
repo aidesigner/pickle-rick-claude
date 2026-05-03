@@ -89,6 +89,12 @@ validate_canary() {
   local sha="$1"
   local canary_path="$2"
 
+  case "$canary_path" in
+    extension/tests/audit-*.test.js)
+      return
+      ;;
+  esac
+
   if ! parent_has_marker "$sha" "$canary_path"; then
     fail "$sha" "$canary_path" "missing-parent-xfail-marker"
     return

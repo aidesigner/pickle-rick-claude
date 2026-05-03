@@ -12,6 +12,7 @@ const EXTENSION_DIR = path.resolve(__dirname, '..');
 const REPO_ROOT = path.resolve(EXTENSION_DIR, '..');
 const AUDIT_SCRIPT = path.join(REPO_ROOT, 'extension', 'scripts', 'audit-canary-flip.sh');
 const CANARY_PATH = 'extension/tests/sample-canary.test.js';
+const AUDIT_FIXTURE_PATH = 'extension/tests/audit-fix-commits-fixture.test.js';
 
 function git(cwd, args) {
   const result = spawnSync('git', args, {
@@ -128,6 +129,10 @@ function fixMessage(subject = 'fix canary') {
   return [subject, '', `Canary: ${CANARY_PATH}`].join('\n');
 }
 
+function auditFixtureMessage() {
+  return ['add audit fixture', '', `Canary: ${AUDIT_FIXTURE_PATH}`].join('\n');
+}
+
 test('audit-canary-flip accepts a well-flipped canary', () => {
   withRepo((repo, mergeBase) => {
     writeCanary(repo, parentCanary());
@@ -182,5 +187,20 @@ test('audit-canary-flip fails when the flipped canary does not pass', () => {
 
     assert.equal(result.status, 1);
     assert.match(result.stderr, new RegExp(`${sha} ${CANARY_PATH} canary-test-failed`));
+  });
+});
+
+test('audit-canary-flip ignores audit fixture trailers', () => {
+  withRepo((repo, mergeBase) => {
+    writeCanary(repo, unmarkedKnownFailure());
+    commit(repo, 'add audit fixture seed');
+    writeCanary(repo, passingCanary());
+    const sha = commit(repo, auditFixtureMessage());
+
+    const result = runAudit(repo, mergeBase);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, '');
+    assert.equal(git(repo, ['rev-parse', 'HEAD']), sha);
   });
 });
