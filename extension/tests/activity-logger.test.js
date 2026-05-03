@@ -116,7 +116,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         // per-iteration gate baseline before strict-mode fallback.
         'baseline_recapture_failed',
     ];
-    assert.equal(VALID_ACTIVITY_EVENTS.length, 70);
+    assert.equal(VALID_ACTIVITY_EVENTS.length, 69);
     for (const e of expected) {
         assert.ok(VALID_ACTIVITY_EVENTS.includes(e), `Missing event type: ${e}`);
     }

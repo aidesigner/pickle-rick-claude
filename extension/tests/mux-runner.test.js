@@ -2603,12 +2603,6 @@ test('evaluateCodexManagerRelaunch (mux-runner): smoke test for exported helper'
 // concurrent-write race).
 // ---------------------------------------------------------------------------
 import { classifyCapCheckReadError } from '../bin/mux-runner.js';
-import {
-    captureDeploySnapshot,
-    checkDeployDrift,
-    haltForDeployDrift,
-    purgePoisonedUpdateCheckCache,
-} from '../bin/mux-runner.js';
 
 function makeSchemaMismatchSession() {
     const sessionDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mux-schema-')));
@@ -2718,105 +2712,5 @@ test('classifyCapCheckReadError: non-Error thrown values default to exit_error',
     } finally {
         fs.rmSync(session.sessionDir, { recursive: true, force: true });
         fs.rmSync(session.dataRoot, { recursive: true, force: true });
-    }
-});
-
-function makeDeployRoot(version = '1.0.0') {
-    const extensionRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mux-deploy-root-')));
-    fs.mkdirSync(path.join(extensionRoot, 'bin'), { recursive: true });
-    fs.mkdirSync(path.join(extensionRoot, 'services'), { recursive: true });
-    fs.mkdirSync(path.join(extensionRoot, 'types'), { recursive: true });
-    fs.writeFileSync(path.join(extensionRoot, 'package.json'), JSON.stringify({ version }, null, 2));
-    fs.writeFileSync(path.join(extensionRoot, 'bin/check-update.js'), 'export const checkUpdate = 1;\n');
-    fs.writeFileSync(path.join(extensionRoot, 'services/state-manager.js'), 'export const stateManager = 1;\n');
-    fs.writeFileSync(path.join(extensionRoot, 'types/index.js'), 'export const types = 1;\n');
-    return extensionRoot;
-}
-
-function makeDeployDriftSession() {
-    const sessionDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mux-drift-session-')));
-    const statePath = path.join(sessionDir, 'state.json');
-    fs.writeFileSync(statePath, JSON.stringify({
-        active: true,
-        step: 'implement',
-        iteration: 1,
-        max_iterations: 10,
-        worker_timeout_seconds: 1200,
-        original_prompt: 'drift test',
-        working_dir: sessionDir,
-        activity: [],
-    }, null, 2));
-    fs.mkdirSync(path.join(sessionDir, 'bundle'), { recursive: true });
-    fs.writeFileSync(path.join(sessionDir, 'bundle/ac-dr-04a.json'), JSON.stringify({ pass: true, detail: 'before' }, null, 2));
-    return { sessionDir, statePath };
-}
-
-function readStateActivity(statePath) {
-    return JSON.parse(fs.readFileSync(statePath, 'utf-8')).activity || [];
-}
-
-test('mux-runner.drift-halt-pkg: package drift halts and invalidates prior bundle artifacts', () => {
-    const extensionRoot = makeDeployRoot('1.0.0');
-    const session = makeDeployDriftSession();
-    try {
-        const baseline = captureDeploySnapshot(extensionRoot);
-        fs.writeFileSync(path.join(extensionRoot, 'package.json'), JSON.stringify({ version: '1.0.1' }, null, 2));
-
-        const check = checkDeployDrift(extensionRoot, baseline);
-        assert.equal(check.drifted, true, 'package version mutation must drift');
-        haltForDeployDrift(session.statePath, session.sessionDir, 2, check, () => {});
-
-        const finalState = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
-        assert.equal(finalState.active, false, 'drift halt must deactivate session');
-        assert.equal(finalState.exit_reason, 'deploy-drift-during-bundle-self-verification');
-        assert.ok(readStateActivity(session.statePath).some(e => e.event === 'deploy_drift_detected'),
-            'drift halt must write deploy_drift_detected to state activity');
-
-        const artifact = JSON.parse(fs.readFileSync(path.join(session.sessionDir, 'bundle/ac-dr-04a.json'), 'utf-8'));
-        assert.equal(artifact.pass, false);
-        assert.equal(artifact.invalidated_by, 'deploy-drift');
-    } finally {
-        fs.rmSync(extensionRoot, { recursive: true, force: true });
-        fs.rmSync(session.sessionDir, { recursive: true, force: true });
-    }
-});
-
-test('mux-runner.drift-halt-hash: content hash drift halts and records drift event', () => {
-    const extensionRoot = makeDeployRoot('1.0.0');
-    const session = makeDeployDriftSession();
-    try {
-        const baseline = captureDeploySnapshot(extensionRoot);
-        fs.appendFileSync(path.join(extensionRoot, 'services/state-manager.js'), 'export const changed = true;\n');
-
-        const check = checkDeployDrift(extensionRoot, baseline);
-        assert.equal(check.drifted, true, 'JS content mutation must drift');
-        assert.ok(check.reasons.some(r => r.includes('services/state-manager.js')), `expected state-manager drift reason, got ${check.reasons.join(', ')}`);
-        haltForDeployDrift(session.statePath, session.sessionDir, 3, check, () => {});
-
-        const finalState = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
-        assert.equal(finalState.active, false, 'hash drift halt must deactivate session');
-        const event = readStateActivity(session.statePath).find(e => e.event === 'deploy_drift_detected');
-        assert.ok(event, 'hash drift must write deploy_drift_detected activity');
-        assert.equal(event.failure_reason, 'deploy-drift-during-bundle-self-verification');
-    } finally {
-        fs.rmSync(extensionRoot, { recursive: true, force: true });
-        fs.rmSync(session.sessionDir, { recursive: true, force: true });
-    }
-});
-
-test('mux-runner drift startup: poisoned update-check.json is purged without reading current_version', () => {
-    const dataRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mux-drift-data-')));
-    try {
-        const cachePath = path.join(dataRoot, 'update-check.json');
-        fs.writeFileSync(cachePath, 'not json and not inspected');
-        const removed = purgePoisonedUpdateCheckCache(dataRoot, {
-            sourceVersion: '2.0.0',
-            deployedVersion: '1.0.0',
-            hashes: {},
-        }, '1.0.0');
-        assert.equal(removed, true);
-        assert.equal(fs.existsSync(cachePath), false, 'poisoned update-check cache must be removed');
-    } finally {
-        fs.rmSync(dataRoot, { recursive: true, force: true });
     }
 });

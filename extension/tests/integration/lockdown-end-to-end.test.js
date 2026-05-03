@@ -7,11 +7,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { verifyBundle, EXPECTED_BUNDLE_AC_IDS } from '../../../bin/verify-bundle.js';
-import {
-  ensureDeployBaseline,
-  checkDeployDrift,
-  haltForDeployDrift,
-} from '../../bin/mux-runner.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CHECK_UPDATE = path.resolve(__dirname, '../../bin/check-update.js');
@@ -234,48 +229,6 @@ fi
     assert.equal(baseline.content_hashes['check-update.js'], sha256(path.join(runtimeRoot, 'extension/bin/check-update.js')));
     assert.match(fs.readFileSync(crontabStore, 'utf8'), /verify-deploy-parity[.]js/);
     assert.equal(fs.existsSync(path.join(runtimeRoot, 'update-check.json')), false);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test('integration.mux-runner-drift-e2e reads installed baseline, halts, and invalidates artifacts', () => {
-  const root = tmpRoot('lockdown-mux-runner-drift-e2e-');
-  try {
-    const extensionRoot = path.join(root, 'extension');
-    const dataRoot = path.join(root, 'data-root');
-    const sessionDir = path.join(root, 'session');
-    const statePath = path.join(sessionDir, 'state.json');
-    makeDeployedExtension(extensionRoot, '1.68.0');
-    fs.mkdirSync(dataRoot, { recursive: true });
-    fs.mkdirSync(path.join(sessionDir, 'bundle'), { recursive: true });
-    writeJson(statePath, { active: true, step: 'implement', iteration: 2, activity: [] });
-    writeJson(path.join(sessionDir, 'bundle/ac-dr-04a.json'), bundleArtifact('AC-DR-04a'));
-    writeJson(path.join(dataRoot, 'deploy-baseline.json'), {
-      src_version: '1.68.0',
-      dep_version: '1.68.0',
-      content_hashes: {
-        'check-update.js': sha256(path.join(extensionRoot, 'bin/check-update.js')),
-        'state-manager.js': sha256(path.join(extensionRoot, 'services/state-manager.js')),
-        'types/index.js': sha256(path.join(extensionRoot, 'types/index.js')),
-      },
-    });
-
-    const baseline = ensureDeployBaseline(extensionRoot, dataRoot);
-    assert.equal(baseline.deployedVersion, '1.68.0');
-    assert.equal(typeof baseline.hashes['services/state-manager.js'], 'string');
-    fs.appendFileSync(path.join(extensionRoot, 'services/state-manager.js'), 'export const drift = true;\n');
-    const check = checkDeployDrift(extensionRoot, baseline);
-    assert.equal(check.drifted, true);
-    haltForDeployDrift(statePath, sessionDir, 2, check, () => {});
-
-    const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-    assert.equal(state.active, false);
-    assert.equal(state.exit_reason, 'deploy-drift-during-bundle-self-verification');
-    assert.ok(state.activity.some((entry) => entry.event === 'deploy_drift_detected'));
-    const artifact = JSON.parse(fs.readFileSync(path.join(sessionDir, 'bundle/ac-dr-04a.json'), 'utf8'));
-    assert.equal(artifact.pass, false);
-    assert.equal(artifact.invalidated_by, 'deploy-drift');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

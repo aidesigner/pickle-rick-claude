@@ -2,7 +2,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { createHash } from 'crypto';
 import { spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, type TicketInfo } from '../services/pickle-utils.js';
 import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact, type Backend, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole, type Step } from '../types/index.js';
@@ -25,180 +24,6 @@ export {
 const sm = new StateManager();
 
 let currentChildProc: import('child_process').ChildProcess | null = null;
-
-const DEPLOY_BASELINE_FILE = 'deploy-baseline.json';
-const UPDATE_CHECK_FILE = 'update-check.json';
-const DEPLOY_DRIFT_FAILURE_REASON = 'deploy-drift-during-bundle-self-verification';
-const DEPLOY_DRIFT_FILES = [
-  { key: 'package.json', relPath: 'package.json' },
-  { key: 'bin/check-update.js', relPath: 'bin/check-update.js' },
-  { key: 'services/state-manager.js', relPath: 'services/state-manager.js' },
-  { key: 'types/index.js', relPath: 'types/index.js' },
-] as const;
-
-export interface DeploySnapshot {
-  sourceVersion: string;
-  deployedVersion: string;
-  hashes: Record<string, string>;
-}
-
-export interface DeployDriftCheck {
-  drifted: boolean;
-  baseline: DeploySnapshot;
-  current: DeploySnapshot;
-  reasons: string[];
-}
-
-function readPackageVersion(packagePath: string): string {
-  const raw = fs.readFileSync(packagePath, 'utf-8');
-  const parsed = JSON.parse(raw) as { version?: unknown };
-  return typeof parsed.version === 'string' ? parsed.version : '';
-}
-
-function sha256File(filePath: string): string {
-  return createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
-}
-
-export function captureDeploySnapshot(extensionRoot: string, sourceVersion?: string): DeploySnapshot {
-  const packagePath = path.join(extensionRoot, 'package.json');
-  const deployedVersion = readPackageVersion(packagePath);
-  const hashes: Record<string, string> = {};
-  for (const file of DEPLOY_DRIFT_FILES) {
-    hashes[file.key] = sha256File(path.join(extensionRoot, file.relPath));
-  }
-  return {
-    sourceVersion: sourceVersion || deployedVersion,
-    deployedVersion,
-    hashes,
-  };
-}
-
-function normalizeDeploySnapshot(raw: unknown): DeploySnapshot | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const obj = raw as Record<string, unknown>;
-  const deployedVersion = firstStringField(obj, ['deployedVersion', 'dep_version', 'dep_v', 'DEP_V', 'version']);
-  const sourceVersion = firstStringField(obj, ['sourceVersion', 'src_version', 'src_v', 'SRC_V']) || deployedVersion;
-  const rawHashes = deploySnapshotHashSource(obj);
-  const hashes: Record<string, string> = {};
-  for (const file of DEPLOY_DRIFT_FILES) {
-    const value = deploySnapshotHashValue(rawHashes, file.key, file.relPath);
-    if (typeof value === 'string') hashes[file.key] = value;
-  }
-  return { sourceVersion, deployedVersion, hashes };
-}
-
-function firstStringField(obj: Record<string, unknown>, keys: string[]): string {
-  for (const key of keys) {
-    if (typeof obj[key] === 'string') return obj[key];
-  }
-  return '';
-}
-
-function deploySnapshotHashSource(obj: Record<string, unknown>): Record<string, unknown> {
-  if (obj.hashes && typeof obj.hashes === 'object') return obj.hashes as Record<string, unknown>;
-  if (obj.content_hashes && typeof obj.content_hashes === 'object') {
-    return obj.content_hashes as Record<string, unknown>;
-  }
-  return {};
-}
-
-function deploySnapshotHashValue(rawHashes: Record<string, unknown>, key: string, relPath: string): unknown {
-  const installedKey = key.replace(/^bin\//, '').replace(/^services\//, '');
-  return rawHashes[key] ?? rawHashes[relPath] ?? rawHashes[installedKey];
-}
-
-export function ensureDeployBaseline(extensionRoot: string, dataRoot: string): DeploySnapshot {
-  const baselinePath = path.join(dataRoot, DEPLOY_BASELINE_FILE);
-  try {
-    const raw = JSON.parse(fs.readFileSync(baselinePath, 'utf-8')) as unknown;
-    const baseline = normalizeDeploySnapshot(raw);
-    if (baseline) return baseline;
-  } catch {
-    // Missing or unreadable baseline falls through to first-run capture.
-  }
-  const snapshot = captureDeploySnapshot(extensionRoot);
-  fs.mkdirSync(dataRoot, { recursive: true });
-  writeStateFile(baselinePath, {
-    sourceVersion: snapshot.sourceVersion,
-    deployedVersion: snapshot.deployedVersion,
-    hashes: snapshot.hashes,
-  });
-  return snapshot;
-}
-
-export function purgePoisonedUpdateCheckCache(dataRoot: string, baseline: DeploySnapshot, deployedVersion: string): boolean {
-  if (baseline.sourceVersion === deployedVersion) return false;
-  const cachePath = path.join(dataRoot, UPDATE_CHECK_FILE);
-  try {
-    fs.unlinkSync(cachePath);
-    return true;
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
-    throw err;
-  }
-}
-
-export function checkDeployDrift(extensionRoot: string, baseline: DeploySnapshot): DeployDriftCheck {
-  const current = captureDeploySnapshot(extensionRoot, baseline.sourceVersion);
-  const reasons: string[] = [];
-  if (baseline.deployedVersion !== current.deployedVersion) {
-    reasons.push(`package.json version ${baseline.deployedVersion} -> ${current.deployedVersion}`);
-  }
-  for (const file of DEPLOY_DRIFT_FILES) {
-    if (baseline.hashes[file.key] !== current.hashes[file.key]) {
-      reasons.push(`${file.key} sha256 changed`);
-    }
-  }
-  return { drifted: reasons.length > 0, baseline, current, reasons };
-}
-
-export function invalidateDeployDriftArtifacts(sessionDir: string): string[] {
-  const bundleDir = path.join(sessionDir, 'bundle');
-  let entries: string[];
-  try {
-    entries = fs.readdirSync(bundleDir);
-  } catch {
-    return [];
-  }
-  const invalidated: string[] = [];
-  for (const entry of entries) {
-    if (!/^ac-dr-.*\.json$/.test(entry)) continue;
-    const artifactPath = path.join(bundleDir, entry);
-    try {
-      const raw = JSON.parse(fs.readFileSync(artifactPath, 'utf-8')) as Record<string, unknown>;
-      writeStateFile(artifactPath, { ...raw, pass: false, invalidated_by: 'deploy-drift' });
-      invalidated.push(artifactPath);
-    } catch {
-      writeStateFile(artifactPath, { pass: false, invalidated_by: 'deploy-drift' });
-      invalidated.push(artifactPath);
-    }
-  }
-  return invalidated;
-}
-
-export function haltForDeployDrift(
-  statePath: string,
-  sessionDir: string,
-  iteration: number,
-  check: DeployDriftCheck,
-  log: (msg: string) => void,
-): void {
-  const invalidated = invalidateDeployDriftArtifacts(sessionDir);
-  const event = {
-    event: 'deploy_drift_detected' as const,
-    source: 'pickle' as const,
-    session: path.basename(sessionDir),
-    iteration,
-    failure_reason: DEPLOY_DRIFT_FAILURE_REASON,
-    reasons: check.reasons,
-    invalidated_artifacts: invalidated.map(file => path.relative(sessionDir, file)),
-  };
-  writeActivityEntry(statePath, event);
-  logActivity(event);
-  log(`DEPLOY DRIFT HALT: ${check.reasons.join('; ') || 'deployed fingerprint changed'}`);
-  recordExitReason(statePath, DEPLOY_DRIFT_FAILURE_REASON);
-  safeDeactivate(statePath);
-}
 
 function readRunnerState(statePath: string): State {
   return sm.read(statePath);
@@ -1173,10 +998,10 @@ export function appendPipelineRunnerMarker(sessionDir: string, message: string):
   } catch { /* non-critical — the marker is also in mux-runner.log */ }
 }
 
-export type ExitReason = 'success' | 'cancelled' | 'error' | 'limit' | 'stall' | 'circuit_open' | 'rate_limit_exhausted' | 'timeout_repeat' | 'manager_persistent_hallucination' | typeof DEPLOY_DRIFT_FAILURE_REASON;
+export type ExitReason = 'success' | 'cancelled' | 'error' | 'limit' | 'stall' | 'circuit_open' | 'rate_limit_exhausted' | 'timeout_repeat' | 'manager_persistent_hallucination';
 
 const isHaltExit = (r: ExitReason): boolean => r === 'cancelled' || r === 'limit' || r === 'timeout_repeat';
-const isFailureExit = (r: ExitReason): boolean => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination' || r === DEPLOY_DRIFT_FAILURE_REASON;
+const isFailureExit = (r: ExitReason): boolean => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination';
 
 const CIRCUIT_BREAKER_TIER_BUDGETS = {
   trivial: 3,
@@ -1930,15 +1755,6 @@ async function runMuxRunnerMain() {
   const commitPendingProbeThreshold =
     Number.isFinite(rawProbeThreshold) && rawProbeThreshold > 0 ? rawProbeThreshold : 2;
   let readinessGateChecked = false;
-  const dataRoot = getDataRoot();
-  let deployBaseline: DeploySnapshot | null = null;
-  try {
-    deployBaseline = ensureDeployBaseline(extensionRoot, dataRoot);
-    purgePoisonedUpdateCheckCache(dataRoot, deployBaseline, captureDeploySnapshot(extensionRoot, deployBaseline.sourceVersion).deployedVersion);
-  } catch (err) {
-    log(`deploy drift guard disabled: ${safeErrorMessage(err)}`);
-  }
-
   while (true) {
     let state: State;
     try {
@@ -1957,15 +1773,6 @@ async function runMuxRunnerMain() {
       log('Session inactive. Exiting.');
       exitReason = 'cancelled';
       break;
-    }
-
-    if (deployBaseline) {
-      const preIterationDrift = checkDeployDrift(extensionRoot, deployBaseline);
-      if (preIterationDrift.drifted) {
-        haltForDeployDrift(statePath, sessionDir, iteration, preIterationDrift, log);
-        exitReason = DEPLOY_DRIFT_FAILURE_REASON;
-        break;
-      }
     }
 
     const rawMaxIter = Number(state.max_iterations);
@@ -2110,15 +1917,6 @@ async function runMuxRunnerMain() {
 
     const outcome = await runIteration(sessionDir, iteration, extensionRoot, meeseeksModel);
     const result = outcome.completion;
-
-    if (deployBaseline) {
-      const postIterationDrift = checkDeployDrift(extensionRoot, deployBaseline);
-      if (postIterationDrift.drifted) {
-        haltForDeployDrift(statePath, sessionDir, iteration, postIterationDrift, log);
-        exitReason = DEPLOY_DRIFT_FAILURE_REASON;
-        break;
-      }
-    }
 
     // Move iterLogFile computation BEFORE transition block (needed by classifyTicketCompletion)
     const iterLogFile = path.join(sessionDir, `tmux_iteration_${iteration}.log`);

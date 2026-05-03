@@ -180,7 +180,6 @@ export const VALID_ACTIVITY_EVENTS = [
     'readiness_delta_requested',
     'phase_transition',
     'extension_dir_fallback',
-    'deploy_drift_detected',
     'halt',
 ];
 export var PipelineRunnerExitCode;
