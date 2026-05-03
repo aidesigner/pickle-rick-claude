@@ -764,7 +764,7 @@ export function computeRateLimitAction(exitResult, consecutiveRateLimits, maxRet
     };
 }
 // eslint-disable-next-line max-lines-per-function, complexity -- ticket 53caa9a4 forbids modifying runIteration
-export async function runIteration(sessionDir, iterationNum, extensionRoot, meeseeksModel) {
+export async function runIteration(sessionDir, iterationNum, extensionRoot, qualityPassModel) {
     const statePath = path.join(sessionDir, 'state.json');
     let state;
     try {
@@ -844,10 +844,11 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, mees
         ?? maxTurns;
     const logFile = path.join(sessionDir, `tmux_iteration_${iterationNum}.log`);
     const backend = resolveBackend(state);
-    // meeseeks review passes run on a cheaper model (default: sonnet on claude).
-    // Codex exposes a different model vocabulary, so only apply the override for claude.
-    const iterationModel = templateName === 'meeseeks.md' && meeseeksModel && backend === 'claude'
-        ? meeseeksModel
+    const isQualityPassTemplate = templateName === 'meeseeks.md' || templateName === 'szechuan-sauce.md';
+    // Quality review passes can run on a selected Claude model. Codex exposes a
+    // different model vocabulary, so only apply the override for claude.
+    const iterationModel = isQualityPassTemplate && qualityPassModel && backend === 'claude'
+        ? qualityPassModel
         : undefined;
     const invocation = buildManagerInvocation(backend, {
         prompt: managerPrompt,

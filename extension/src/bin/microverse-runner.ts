@@ -178,6 +178,25 @@ export function loadConvergenceGateSettings(extRoot: string): {
   }
 }
 
+export function loadPassModelOverrides(extRoot: string): Record<string, string> {
+  try {
+    const raw = readRecoverableJsonObject(path.join(extRoot, 'pickle_settings.json')) as Record<string, unknown> | null;
+    const overrides = raw?.pass_model_overrides;
+    if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) return {};
+    return Object.fromEntries(
+      Object.entries(overrides as Record<string, unknown>)
+        .filter(([key, value]) => key.length > 0 && typeof value === 'string' && value.trim().length > 0)
+        .map(([key, value]) => [key, (value as string).trim()]),
+    ) as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+
+export function resolvePassModelOverride(overrides: Record<string, string>, pass: number): string | undefined {
+  return overrides[String(pass)];
+}
+
 export async function runRemediatorForIteration(
   gateResult: GateResult,
   sessionDir: string,
@@ -1493,7 +1512,13 @@ export async function executeGapAnalysis(
   );
   sm.update(ctx.statePath, s => { s.iteration = ctx.iteration; });
 
-  const outcome = await _deps.runIteration(ctx.sessionDir, ctx.iteration, ctx.extensionRoot, '');
+  const passModelOverrides = loadPassModelOverrides(ctx.extensionRoot);
+  const outcome = await _deps.runIteration(
+    ctx.sessionDir,
+    ctx.iteration,
+    ctx.extensionRoot,
+    resolvePassModelOverride(passModelOverrides, ctx.iteration) ?? '',
+  );
   if (outcome.completion === 'error' || outcome.completion === 'inactive') {
     ctx.log(`Gap analysis failed: ${outcome.completion}`);
     state.status = 'stopped';
@@ -2040,6 +2065,7 @@ export async function executeMainLoop(
 ): Promise<ExitOutcome> {
   let exitReason: ExitReason = 'error';
   let baseline = { raw: '', score: state.baseline_score };
+  const passModelOverrides = loadPassModelOverrides(ctx.extensionRoot);
   sm.update(ctx.statePath, s => { s.worker_timeout_seconds = 0; });
   ctx.log('Worker timeout disabled — session time limit is the only gate');
 
@@ -2052,7 +2078,12 @@ export async function executeMainLoop(
     const loopExit = readLoopExit(ctx);
     if (loopExit) { exitReason = loopExit; break; }
     await prepareIteration(state, ctx);
-    const outcome = await _deps.runIteration(ctx.sessionDir, ctx.iteration, ctx.extensionRoot, '');
+    const outcome = await _deps.runIteration(
+      ctx.sessionDir,
+      ctx.iteration,
+      ctx.extensionRoot,
+      resolvePassModelOverride(passModelOverrides, ctx.iteration) ?? '',
+    );
     const stepResult = await handleIterationOutcome(state, baseline, ctx, outcome);
     if (stepResult === 'continue') continue;
     if (stepResult) { exitReason = stepResult; break; }

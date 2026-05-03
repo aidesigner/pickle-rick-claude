@@ -543,6 +543,122 @@ async function withMicroverseLoopDeps(overrides, fn) {
     }
 }
 
+function makeMicroverseLoopContext(session, workingDir, extensionRoot, stateOverrides = {}) {
+    const statePath = path.join(session.dir, 'state.json');
+    const state = { ...session.state, ...stateOverrides };
+    fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+    return {
+        sessionDir: session.dir,
+        extensionRoot,
+        statePath,
+        workingDir,
+        startTime: Date.now(),
+        initialIteration: 0,
+        enableFailureClassification: false,
+        cgSettings: {
+            enabled_convergence_files: [],
+            regression_warning_threshold: 5,
+            remediator_timeout_s: 600,
+            baseline_max_age_iterations: 30,
+            baseline_max_age_seconds: 14_400,
+        },
+        rateLimitWaitMinutes: 0,
+        maxRateLimitRetries: 0,
+        log: () => {},
+        currentRunnerState: state,
+        iteration: 0,
+        consecutiveRateLimits: 0,
+    };
+}
+
+test('pass-model.override: microverse runner passes configured per-pass model to runIteration', async () => {
+    const workingDir = createTempGitRepo();
+    const extensionRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-pass-model-ext-'));
+    const session = createSessionDir(workingDir);
+    fs.writeFileSync(path.join(extensionRoot, 'pickle_settings.json'), JSON.stringify({
+        pass_model_overrides: { 1: 'claude-opus-4-6' },
+    }));
+    const ctx = makeMicroverseLoopContext(session, workingDir, extensionRoot);
+    const models = [];
+    try {
+        await withMicroverseLoopDeps({
+            runIteration: async (_sessionDir, _iteration, _extensionRoot, model) => {
+                models.push(model);
+                return { completion: 'inactive', timedOut: false, exitCode: 0, wallSeconds: 1 };
+            },
+        }, () => executeMainLoop(session.mvState, ctx));
+        assert.deepEqual(models, ['claude-opus-4-6']);
+    } finally {
+        fs.rmSync(session.dir, { recursive: true, force: true });
+        fs.rmSync(workingDir, { recursive: true, force: true });
+        fs.rmSync(extensionRoot, { recursive: true, force: true });
+    }
+});
+
+test('pass-model.default: microverse runner leaves model empty when current pass has no override', async () => {
+    const workingDir = createTempGitRepo();
+    const extensionRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-pass-model-ext-'));
+    const session = createSessionDir(workingDir);
+    fs.writeFileSync(path.join(extensionRoot, 'pickle_settings.json'), JSON.stringify({
+        pass_model_overrides: { 2: 'claude-opus-4-6' },
+    }));
+    const ctx = makeMicroverseLoopContext(session, workingDir, extensionRoot);
+    const models = [];
+    try {
+        await withMicroverseLoopDeps({
+            runIteration: async (_sessionDir, _iteration, _extensionRoot, model) => {
+                models.push(model);
+                return { completion: 'inactive', timedOut: false, exitCode: 0, wallSeconds: 1 };
+            },
+        }, () => executeMainLoop(session.mvState, ctx));
+        assert.deepEqual(models, ['']);
+    } finally {
+        fs.rmSync(session.dir, { recursive: true, force: true });
+        fs.rmSync(workingDir, { recursive: true, force: true });
+        fs.rmSync(extensionRoot, { recursive: true, force: true });
+    }
+});
+
+test('pass-model.override: szechuan quality pass spawn args contain --model X', async () => {
+    const workingDir = createTempGitRepo();
+    const extensionRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-pass-model-ext-'));
+    const fakeBin = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-pass-model-bin-'));
+    const session = createSessionDir(workingDir);
+    const capturePath = path.join(fakeBin, 'args.json');
+    const previousPath = process.env.PATH;
+    const previousCapture = process.env.PICKLE_CAPTURE_ARGS_PATH;
+    fs.mkdirSync(path.join(extensionRoot, 'templates'), { recursive: true });
+    fs.writeFileSync(path.join(extensionRoot, 'templates', 'szechuan-sauce.md'), 'quality pass $ARGUMENTS');
+    fs.writeFileSync(path.join(fakeBin, 'claude'), [
+        '#!/usr/bin/env node',
+        "const fs = require('node:fs');",
+        "fs.writeFileSync(process.env.PICKLE_CAPTURE_ARGS_PATH, JSON.stringify(process.argv.slice(2)));",
+    ].join('\n'));
+    fs.chmodSync(path.join(fakeBin, 'claude'), 0o755);
+    fs.writeFileSync(path.join(session.dir, 'state.json'), JSON.stringify({
+        ...session.state,
+        backend: 'claude',
+        command_template: 'szechuan-sauce.md',
+    }, null, 2));
+    try {
+        process.env.PATH = `${fakeBin}${path.delimiter}${previousPath ?? ''}`;
+        process.env.PICKLE_CAPTURE_ARGS_PATH = capturePath;
+        await runIteration(session.dir, 1, extensionRoot, 'claude-haiku-3-5');
+        const args = JSON.parse(fs.readFileSync(capturePath, 'utf-8'));
+        assert.ok(args.includes('--model'));
+        assert.ok(args.includes('claude-haiku-3-5'));
+    } finally {
+        if (previousPath === undefined) delete process.env.PATH;
+        else process.env.PATH = previousPath;
+        if (previousCapture === undefined) delete process.env.PICKLE_CAPTURE_ARGS_PATH;
+        else process.env.PICKLE_CAPTURE_ARGS_PATH = previousCapture;
+        fs.rmSync(session.dir, { recursive: true, force: true });
+        fs.rmSync(workingDir, { recursive: true, force: true });
+        fs.rmSync(extensionRoot, { recursive: true, force: true });
+        fs.rmSync(fakeBin, { recursive: true, force: true });
+    }
+});
+
 test('stall-classifier.category: recognizes worker_timeout from subprocess timeout outcome', () => {
     const result = classifyStall({
         outcome: { completion: 'error', timedOut: true, exitCode: null, wallSeconds: 600 },

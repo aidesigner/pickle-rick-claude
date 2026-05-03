@@ -56,6 +56,23 @@ export function loadConvergenceGateSettings(extRoot) {
         return defaults;
     }
 }
+export function loadPassModelOverrides(extRoot) {
+    try {
+        const raw = readRecoverableJsonObject(path.join(extRoot, 'pickle_settings.json'));
+        const overrides = raw?.pass_model_overrides;
+        if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides))
+            return {};
+        return Object.fromEntries(Object.entries(overrides)
+            .filter(([key, value]) => key.length > 0 && typeof value === 'string' && value.trim().length > 0)
+            .map(([key, value]) => [key, value.trim()]));
+    }
+    catch {
+        return {};
+    }
+}
+export function resolvePassModelOverride(overrides, pass) {
+    return overrides[String(pass)];
+}
 export async function runRemediatorForIteration(gateResult, sessionDir, workingDir, backend, remediatorTimeoutS) {
     const iso = isoCompactStamp();
     const gateDir = path.join(sessionDir, 'gate');
@@ -1090,7 +1107,8 @@ export async function executeGapAnalysis(state, ctx) {
     ctx.iteration++;
     writeHandoffFile(ctx.sessionDir, buildMicroverseHandoff(state, ctx.iteration, ctx.workingDir, ctx.sessionDir));
     sm.update(ctx.statePath, s => { s.iteration = ctx.iteration; });
-    const outcome = await _deps.runIteration(ctx.sessionDir, ctx.iteration, ctx.extensionRoot, '');
+    const passModelOverrides = loadPassModelOverrides(ctx.extensionRoot);
+    const outcome = await _deps.runIteration(ctx.sessionDir, ctx.iteration, ctx.extensionRoot, resolvePassModelOverride(passModelOverrides, ctx.iteration) ?? '');
     if (outcome.completion === 'error' || outcome.completion === 'inactive') {
         ctx.log(`Gap analysis failed: ${outcome.completion}`);
         state.status = 'stopped';
@@ -1571,6 +1589,7 @@ async function handleIterationOutcome(state, baseline, ctx, outcome) {
 export async function executeMainLoop(state, ctx) {
     let exitReason = 'error';
     let baseline = { raw: '', score: state.baseline_score };
+    const passModelOverrides = loadPassModelOverrides(ctx.extensionRoot);
     sm.update(ctx.statePath, s => { s.worker_timeout_seconds = 0; });
     ctx.log('Worker timeout disabled — session time limit is the only gate');
     while (state.status === 'iterating' || state.status === 'gap_analysis') {
@@ -1585,7 +1604,7 @@ export async function executeMainLoop(state, ctx) {
             break;
         }
         await prepareIteration(state, ctx);
-        const outcome = await _deps.runIteration(ctx.sessionDir, ctx.iteration, ctx.extensionRoot, '');
+        const outcome = await _deps.runIteration(ctx.sessionDir, ctx.iteration, ctx.extensionRoot, resolvePassModelOverride(passModelOverrides, ctx.iteration) ?? '');
         const stepResult = await handleIterationOutcome(state, baseline, ctx, outcome);
         if (stepResult === 'continue')
             continue;
