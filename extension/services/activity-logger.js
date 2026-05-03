@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { formatLocalDateKey, getDataRoot, safeErrorMessage } from './pickle-utils.js';
+import { isBackend } from './backend-spawn.js';
 export function getActivityDir() {
     return path.join(getDataRoot(), 'activity');
 }
@@ -24,11 +25,19 @@ function getActivityFilepath(activityDir, ts) {
         : formatLocalDateKey(new Date());
     return path.join(activityDir, `${date}.jsonl`);
 }
+function resolveActivityBackend(event) {
+    if (isBackend(event.backend))
+        return event.backend;
+    if (isBackend(process.env.PICKLE_BACKEND))
+        return process.env.PICKLE_BACKEND;
+    return undefined;
+}
 export function logActivity(event) {
     try {
         const activityDir = getActivityDir();
         fs.mkdirSync(activityDir, { recursive: true });
-        const fullEvent = { ts: new Date().toISOString(), ...event };
+        const backend = resolveActivityBackend(event);
+        const fullEvent = { ts: new Date().toISOString(), ...event, ...(backend ? { backend } : {}) };
         const filepath = getActivityFilepath(activityDir, fullEvent.ts);
         const line = JSON.stringify(fullEvent) + '\n';
         // Attempt primary write; retry once after retryDelayMs on failure

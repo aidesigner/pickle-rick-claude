@@ -4,6 +4,7 @@ import * as os from 'os';
 import { spawnSync } from 'child_process';
 import { formatLocalDateKey, safeErrorMessage } from './pickle-utils.js';
 import { readRecoverableJsonObject } from './microverse-state.js';
+import { BACKENDS, type Backend } from '../types/index.js';
 
 
 // ---------------------------------------------------------------------------
@@ -11,6 +12,15 @@ import { readRecoverableJsonObject } from './microverse-state.js';
 // ---------------------------------------------------------------------------
 
 export interface DailyTokens {
+  turns: number;
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_create: number;
+  tokens_per_backend?: Partial<Record<Backend, BackendTokenTotals>>;
+}
+
+export interface BackendTokenTotals {
   turns: number;
   input: number;
   output: number;
@@ -54,6 +64,7 @@ export interface MetricsReport {
   rows: MetricsRow[];
   projects: ProjectSummary[];
   totals: MetricsTotals;
+  tokens_per_backend: Record<Backend, BackendTokenTotals>;
 }
 
 export interface MetricsCache {
@@ -147,6 +158,7 @@ function getWorktreeBaseRef(repoPath: string): string | null {
 
 interface ParsedLine {
   timestamp: string;
+  backend: Backend;
   usage: { input: number; output: number; cache_read: number; cache_create: number };
 }
 
@@ -155,11 +167,13 @@ export function parseSessionLine(line: string): ParsedLine | null {
     const obj = JSON.parse(line);
     if (obj.type !== 'assistant') return null;
     const ts = obj.timestamp;
+    const backend = isBackend(obj.backend) ? obj.backend : 'claude';
     const usage = obj.message?.usage;
     if (typeof ts !== 'string' || !usage) return null;
     if (!Number.isFinite(new Date(ts).getTime())) return null;
     return {
       timestamp: ts,
+      backend,
       usage: {
         input: Number(usage.input_tokens) || 0,
         output: Number(usage.output_tokens) || 0,
@@ -177,7 +191,11 @@ export function parseSessionLine(line: string): ParsedLine | null {
 // ---------------------------------------------------------------------------
 
 const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB guard
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
+
+function isBackend(value: unknown): value is Backend {
+  return typeof value === 'string' && (BACKENDS as readonly string[]).includes(value);
+}
 
 function getMetricsTimeZone(): string {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown';
@@ -188,7 +206,7 @@ function emptyCache(): MetricsCache {
 }
 
 function emptyDailyTokens(): DailyTokens {
-  return { turns: 0, input: 0, output: 0, cache_read: 0, cache_create: 0 };
+  return { turns: 0, input: 0, output: 0, cache_read: 0, cache_create: 0, tokens_per_backend: emptyBackendTokenBuckets() };
 }
 
 function addTokens(target: DailyTokens, usage: ParsedLine['usage']): void {
@@ -197,6 +215,50 @@ function addTokens(target: DailyTokens, usage: ParsedLine['usage']): void {
   target.output += usage.output;
   target.cache_read += usage.cache_read;
   target.cache_create += usage.cache_create;
+}
+
+function emptyBackendTokenTotals(): BackendTokenTotals {
+  return { turns: 0, input: 0, output: 0, cache_read: 0, cache_create: 0 };
+}
+
+function emptyBackendTokenBuckets(): Record<Backend, BackendTokenTotals> {
+  return Object.fromEntries(BACKENDS.map((backend) => [backend, emptyBackendTokenTotals()])) as Record<Backend, BackendTokenTotals>;
+}
+
+function addBackendTokens(target: BackendTokenTotals, source: BackendTokenTotals): void {
+  target.turns += source.turns;
+  target.input += source.input;
+  target.output += source.output;
+  target.cache_read += source.cache_read;
+  target.cache_create += source.cache_create;
+}
+
+function addUsageToBackend(target: DailyTokens, backend: Backend, usage: ParsedLine['usage']): void {
+  target.tokens_per_backend ??= emptyBackendTokenBuckets();
+  target.tokens_per_backend[backend] ??= emptyBackendTokenTotals();
+  const bucket = target.tokens_per_backend[backend];
+  bucket.turns += 1;
+  bucket.input += usage.input;
+  bucket.output += usage.output;
+  bucket.cache_read += usage.cache_read;
+  bucket.cache_create += usage.cache_create;
+}
+
+function mergeDailyTokens(target: DailyTokens, source: DailyTokens): void {
+  target.turns += source.turns;
+  target.input += source.input;
+  target.output += source.output;
+  target.cache_read += source.cache_read;
+  target.cache_create += source.cache_create;
+
+  if (!source.tokens_per_backend) return;
+  target.tokens_per_backend ??= emptyBackendTokenBuckets();
+  for (const backend of BACKENDS) {
+    const backendTokens = source.tokens_per_backend[backend];
+    if (!backendTokens) continue;
+    target.tokens_per_backend[backend] ??= emptyBackendTokenTotals();
+    addBackendTokens(target.tokens_per_backend[backend], backendTokens);
+  }
 }
 
 function parseJsonlFile(filePath: string): Record<string, DailyTokens> {
@@ -210,6 +272,7 @@ function parseJsonlFile(filePath: string): Record<string, DailyTokens> {
     const date = formatLocalDateKey(new Date(parsed.timestamp));
     if (!result[date]) result[date] = emptyDailyTokens();
     addTokens(result[date], parsed.usage);
+    addUsageToBackend(result[date], parsed.backend, parsed.usage);
   }
   return result;
 }
@@ -301,11 +364,7 @@ export function scanSessionFiles(
         const dateMap = result.get(slug)!;
         if (!dateMap.has(date)) dateMap.set(date, emptyDailyTokens());
         const target = dateMap.get(date)!;
-        target.turns += tokens.turns;
-        target.input += tokens.input;
-        target.output += tokens.output;
-        target.cache_read += tokens.cache_read;
-        target.cache_create += tokens.cache_create;
+        mergeDailyTokens(target, tokens);
       }
     }
   }
@@ -408,6 +467,21 @@ function emptyTotals(): MetricsTotals {
   return { turns: 0, input: 0, output: 0, cache_read: 0, cache_create: 0, commits: 0, added: 0, removed: 0 };
 }
 
+function aggregateBackendTotals(tokens: Map<string, Map<string, DailyTokens>>): Record<Backend, BackendTokenTotals> {
+  const totals = emptyBackendTokenBuckets();
+  for (const dateMap of tokens.values()) {
+    for (const dt of dateMap.values()) {
+      if (!dt.tokens_per_backend) continue;
+      for (const backend of BACKENDS) {
+        const backendTokens = dt.tokens_per_backend[backend];
+        if (!backendTokens) continue;
+        addBackendTokens(totals[backend], backendTokens);
+      }
+    }
+  }
+  return totals;
+}
+
 export function buildReport(
   tokens: Map<string, Map<string, DailyTokens>>,
   loc: Map<string, Map<string, DailyLOC>>,
@@ -478,5 +552,5 @@ export function buildReport(
     totals.removed += p.totals.removed;
   }
 
-  return { since, until, grouping, rows, projects, totals };
+  return { since, until, grouping, rows, projects, totals, tokens_per_backend: aggregateBackendTotals(tokens) };
 }

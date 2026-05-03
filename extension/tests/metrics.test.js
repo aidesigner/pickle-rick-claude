@@ -78,8 +78,8 @@ function writeSessionLine(dir, slug, jsonlFilename, line) {
     fs.appendFileSync(path.join(slugDir, jsonlFilename), JSON.stringify(line) + '\n');
 }
 
-function makeAssistantLine(timestamp, input, output, cacheRead = 0, cacheCreate = 0) {
-    return {
+function makeAssistantLine(timestamp, input, output, cacheRead = 0, cacheCreate = 0, backend = undefined) {
+    const line = {
         type: 'assistant',
         timestamp,
         message: {
@@ -91,6 +91,8 @@ function makeAssistantLine(timestamp, input, output, cacheRead = 0, cacheCreate 
             },
         },
     };
+    if (backend !== undefined) line.backend = backend;
+    return line;
 }
 
 // ---------------------------------------------------------------------------
@@ -519,6 +521,45 @@ test('scanSessionFiles: filters out -private-var- slugs', () => {
         assert.ok(result.has('real-project'));
     } finally {
         fs.rmSync(root, { recursive: true, force: true });
+    }
+});
+
+test('metrics.hermes-bucket: mixed backend session reports separate backend totals and Hermes column', () => {
+    const { root, cacheFile: _ } = makeTempProjectsDir();
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-metrics-data-root-'));
+    const repoRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-metrics-repos-'));
+    try {
+        const today = formatLocalDateKey(new Date());
+        writeSessionLine(root, 'mixed-backend-project', 'session.jsonl',
+            makeAssistantLine(`${today}T10:00:00Z`, 100, 200, 0, 0, 'claude'));
+        writeSessionLine(root, 'mixed-backend-project', 'session.jsonl',
+            makeAssistantLine(`${today}T11:00:00Z`, 50, 800, 0, 0, 'hermes'));
+        writeSessionLine(root, 'mixed-backend-project', 'session.jsonl',
+            makeAssistantLine(`${today}T12:00:00Z`, 25, 300, 0, 0, 'codex'));
+
+        const jsonResult = runMetricsCli(['--days', '0', '--json'], {
+            CLAUDE_PROJECTS_DIR: root,
+            METRICS_REPO_ROOT: repoRoot,
+            PICKLE_DATA_ROOT: dataRoot,
+        });
+        assert.equal(jsonResult.status, 0, `stderr: ${jsonResult.stderr}`);
+        const report = JSON.parse(jsonResult.stdout);
+        assert.equal(report.totals.output, 1300);
+        assert.equal(report.tokens_per_backend.claude.output, 200);
+        assert.equal(report.tokens_per_backend.codex.output, 300);
+        assert.equal(report.tokens_per_backend.hermes.output, 800);
+
+        const tableResult = runMetricsCli(['--days', '0'], {
+            CLAUDE_PROJECTS_DIR: root,
+            METRICS_REPO_ROOT: repoRoot,
+            PICKLE_DATA_ROOT: dataRoot,
+        });
+        assert.equal(tableResult.status, 0, `stderr: ${tableResult.stderr}`);
+        assert.match(tableResult.stdout, /Hermes/);
+    } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+        fs.rmSync(repoRoot, { recursive: true, force: true });
     }
 });
 

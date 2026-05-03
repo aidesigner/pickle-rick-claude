@@ -275,6 +275,25 @@ test('logActivity: includes all provided optional fields', async () => {
     });
 });
 
+test('ndjson.hermes-tag: logActivity adds backend from PICKLE_BACKEND when caller omits it', async () => {
+    const logActivity = await getLogActivity();
+    const originalBackend = process.env.PICKLE_BACKEND;
+    process.env.PICKLE_BACKEND = 'hermes';
+    try {
+        withTempActivityDir((activityDir) => {
+            logActivity({ event: 'iteration_start', source: 'pickle', iteration: 1 });
+            const date = formatLocalDateKey(new Date());
+            const filepath = path.join(activityDir, `${date}.jsonl`);
+            const parsed = JSON.parse(fs.readFileSync(filepath, 'utf8').trim());
+            assert.equal(parsed.event, 'iteration_start');
+            assert.equal(parsed.backend, 'hermes');
+        });
+    } finally {
+        if (originalBackend === undefined) delete process.env.PICKLE_BACKEND;
+        else process.env.PICKLE_BACKEND = originalBackend;
+    }
+});
+
 // --- Iteration events and new fields ---
 
 test('logActivity: iteration_start event preserves iteration field', async () => {

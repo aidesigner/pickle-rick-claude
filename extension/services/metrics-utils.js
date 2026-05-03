@@ -4,6 +4,7 @@ import * as os from 'os';
 import { spawnSync } from 'child_process';
 import { formatLocalDateKey, safeErrorMessage } from './pickle-utils.js';
 import { readRecoverableJsonObject } from './microverse-state.js';
+import { BACKENDS } from '../types/index.js';
 // ---------------------------------------------------------------------------
 // Utility Functions
 // ---------------------------------------------------------------------------
@@ -87,6 +88,7 @@ export function parseSessionLine(line) {
         if (obj.type !== 'assistant')
             return null;
         const ts = obj.timestamp;
+        const backend = isBackend(obj.backend) ? obj.backend : 'claude';
         const usage = obj.message?.usage;
         if (typeof ts !== 'string' || !usage)
             return null;
@@ -94,6 +96,7 @@ export function parseSessionLine(line) {
             return null;
         return {
             timestamp: ts,
+            backend,
             usage: {
                 input: Number(usage.input_tokens) || 0,
                 output: Number(usage.output_tokens) || 0,
@@ -110,7 +113,10 @@ export function parseSessionLine(line) {
 // Session File Scanner with Incremental Cache
 // ---------------------------------------------------------------------------
 const MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB guard
-const CACHE_VERSION = 2;
+const CACHE_VERSION = 3;
+function isBackend(value) {
+    return typeof value === 'string' && BACKENDS.includes(value);
+}
 function getMetricsTimeZone() {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || 'unknown';
 }
@@ -118,7 +124,7 @@ function emptyCache() {
     return { version: CACHE_VERSION, time_zone: getMetricsTimeZone(), files: {} };
 }
 function emptyDailyTokens() {
-    return { turns: 0, input: 0, output: 0, cache_read: 0, cache_create: 0 };
+    return { turns: 0, input: 0, output: 0, cache_read: 0, cache_create: 0, tokens_per_backend: emptyBackendTokenBuckets() };
 }
 function addTokens(target, usage) {
     target.turns += 1;
@@ -126,6 +132,46 @@ function addTokens(target, usage) {
     target.output += usage.output;
     target.cache_read += usage.cache_read;
     target.cache_create += usage.cache_create;
+}
+function emptyBackendTokenTotals() {
+    return { turns: 0, input: 0, output: 0, cache_read: 0, cache_create: 0 };
+}
+function emptyBackendTokenBuckets() {
+    return Object.fromEntries(BACKENDS.map((backend) => [backend, emptyBackendTokenTotals()]));
+}
+function addBackendTokens(target, source) {
+    target.turns += source.turns;
+    target.input += source.input;
+    target.output += source.output;
+    target.cache_read += source.cache_read;
+    target.cache_create += source.cache_create;
+}
+function addUsageToBackend(target, backend, usage) {
+    target.tokens_per_backend ??= emptyBackendTokenBuckets();
+    target.tokens_per_backend[backend] ??= emptyBackendTokenTotals();
+    const bucket = target.tokens_per_backend[backend];
+    bucket.turns += 1;
+    bucket.input += usage.input;
+    bucket.output += usage.output;
+    bucket.cache_read += usage.cache_read;
+    bucket.cache_create += usage.cache_create;
+}
+function mergeDailyTokens(target, source) {
+    target.turns += source.turns;
+    target.input += source.input;
+    target.output += source.output;
+    target.cache_read += source.cache_read;
+    target.cache_create += source.cache_create;
+    if (!source.tokens_per_backend)
+        return;
+    target.tokens_per_backend ??= emptyBackendTokenBuckets();
+    for (const backend of BACKENDS) {
+        const backendTokens = source.tokens_per_backend[backend];
+        if (!backendTokens)
+            continue;
+        target.tokens_per_backend[backend] ??= emptyBackendTokenTotals();
+        addBackendTokens(target.tokens_per_backend[backend], backendTokens);
+    }
 }
 function parseJsonlFile(filePath) {
     const result = {};
@@ -141,6 +187,7 @@ function parseJsonlFile(filePath) {
         if (!result[date])
             result[date] = emptyDailyTokens();
         addTokens(result[date], parsed.usage);
+        addUsageToBackend(result[date], parsed.backend, parsed.usage);
     }
     return result;
 }
@@ -239,11 +286,7 @@ export function scanSessionFiles(projectsDir, since, until, cachePath) {
                 if (!dateMap.has(date))
                     dateMap.set(date, emptyDailyTokens());
                 const target = dateMap.get(date);
-                target.turns += tokens.turns;
-                target.input += tokens.input;
-                target.output += tokens.output;
-                target.cache_read += tokens.cache_read;
-                target.cache_create += tokens.cache_create;
+                mergeDailyTokens(target, tokens);
             }
         }
     }
@@ -338,6 +381,22 @@ export function scanGitRepos(repoRoot, since, until) {
 function emptyTotals() {
     return { turns: 0, input: 0, output: 0, cache_read: 0, cache_create: 0, commits: 0, added: 0, removed: 0 };
 }
+function aggregateBackendTotals(tokens) {
+    const totals = emptyBackendTokenBuckets();
+    for (const dateMap of tokens.values()) {
+        for (const dt of dateMap.values()) {
+            if (!dt.tokens_per_backend)
+                continue;
+            for (const backend of BACKENDS) {
+                const backendTokens = dt.tokens_per_backend[backend];
+                if (!backendTokens)
+                    continue;
+                addBackendTokens(totals[backend], backendTokens);
+            }
+        }
+    }
+    return totals;
+}
 export function buildReport(tokens, loc, since, until, grouping) {
     const dateSet = new Set();
     for (const dateMap of tokens.values()) {
@@ -402,5 +461,5 @@ export function buildReport(tokens, loc, since, until, grouping) {
         totals.added += p.totals.added;
         totals.removed += p.totals.removed;
     }
-    return { since, until, grouping, rows, projects, totals };
+    return { since, until, grouping, rows, projects, totals, tokens_per_backend: aggregateBackendTotals(tokens) };
 }

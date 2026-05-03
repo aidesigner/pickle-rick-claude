@@ -3,6 +3,7 @@ import * as path from 'path';
 import * as os from 'os';
 import { scanSessionFiles, scanGitRepos, buildReport, formatNumber, shortenSlug, } from '../services/metrics-utils.js';
 import { printMinimalPanel, Style, formatLocalDateKey, getDataRoot, } from '../services/pickle-utils.js';
+import { BACKENDS } from '../types/index.js';
 function parseExactLocalDate(dateStr) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr))
         return null;
@@ -119,6 +120,18 @@ function printTable(columns) {
         process.stdout.write(`  ${cells.join('   ')}\n`);
     }
 }
+function emptyBackendOutputs() {
+    return Object.fromEntries(BACKENDS.map((backend) => [backend, 0]));
+}
+function aggregateRowBackendOutputs(row) {
+    const outputs = emptyBackendOutputs();
+    for (const tokens of Object.values(row.projects)) {
+        for (const backend of BACKENDS) {
+            outputs[backend] += tokens.tokens_per_backend?.[backend]?.output ?? 0;
+        }
+    }
+    return outputs;
+}
 function printDailyTable(report) {
     printMinimalPanel(`Metrics — ${report.since} to ${report.until}`, {
         Projects: String(report.projects.length),
@@ -133,6 +146,9 @@ function printDailyTable(report) {
     const turns = [];
     const input = [];
     const output = [];
+    const claude = [];
+    const codex = [];
+    const hermes = [];
     const added = [];
     const removed = [];
     const net = [];
@@ -142,6 +158,10 @@ function printDailyTable(report) {
         turns.push(formatNumber(rowTotals.turns));
         input.push(formatNumber(rowTotals.input));
         output.push(formatNumber(rowTotals.output));
+        const backendOutputs = aggregateRowBackendOutputs(row);
+        claude.push(formatNumber(backendOutputs.claude));
+        codex.push(formatNumber(backendOutputs.codex));
+        hermes.push(formatNumber(backendOutputs.hermes));
         added.push('+' + formatNumber(rowTotals.added));
         removed.push('-' + formatNumber(rowTotals.removed));
         net.push(formatNumber(rowTotals.added - rowTotals.removed));
@@ -151,6 +171,9 @@ function printDailyTable(report) {
         { header: 'Turns', align: 'right', values: turns },
         { header: 'Input', align: 'right', values: input },
         { header: 'Output', align: 'right', values: output },
+        { header: 'Claude', align: 'right', values: claude },
+        { header: 'Codex', align: 'right', values: codex },
+        { header: 'Hermes', align: 'right', values: hermes },
         { header: '+Lines', align: 'right', values: added },
         { header: '-Lines', align: 'right', values: removed },
         { header: 'Net', align: 'right', values: net },
@@ -204,6 +227,7 @@ function buildWeekBuckets(report) {
                 label: formatWeekLabel(monday),
                 turns: 0,
                 output: 0,
+                backendOutput: emptyBackendOutputs(),
                 added: 0,
                 removed: 0,
                 projectOutput: new Map(),
@@ -211,8 +235,12 @@ function buildWeekBuckets(report) {
         }
         const bucket = buckets.get(key);
         const rowTotals = aggregateRow(row);
+        const backendOutputs = aggregateRowBackendOutputs(row);
         bucket.turns += rowTotals.turns;
         bucket.output += rowTotals.output;
+        for (const backend of BACKENDS) {
+            bucket.backendOutput[backend] += backendOutputs[backend];
+        }
         bucket.added += rowTotals.added;
         bucket.removed += rowTotals.removed;
         for (const [slug, tokens] of Object.entries(row.projects)) {
@@ -236,6 +264,9 @@ function printWeeklyTable(report) {
     const labels = [];
     const turns = [];
     const output = [];
+    const claude = [];
+    const codex = [];
+    const hermes = [];
     const added = [];
     const removed = [];
     const delta = [];
@@ -245,6 +276,9 @@ function printWeeklyTable(report) {
         labels.push(w.label);
         turns.push(formatNumber(w.turns));
         output.push(formatNumber(w.output));
+        claude.push(formatNumber(w.backendOutput.claude));
+        codex.push(formatNumber(w.backendOutput.codex));
+        hermes.push(formatNumber(w.backendOutput.hermes));
         added.push('+' + formatNumber(w.added));
         removed.push('-' + formatNumber(w.removed));
         if (i === 0) {
@@ -270,6 +304,9 @@ function printWeeklyTable(report) {
         { header: 'Week', align: 'left', values: labels },
         { header: 'Turns', align: 'right', values: turns },
         { header: 'Output', align: 'right', values: output },
+        { header: 'Claude', align: 'right', values: claude },
+        { header: 'Codex', align: 'right', values: codex },
+        { header: 'Hermes', align: 'right', values: hermes },
         { header: '+Lines', align: 'right', values: added },
         { header: '-Lines', align: 'right', values: removed },
         { header: 'Δ Output', align: 'right', values: delta },
