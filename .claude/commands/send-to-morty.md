@@ -31,7 +31,8 @@ Rejected reviews (`NEEDS REVISION` or `REJECTED`): re-do the failed phase from s
 
 At the start of your work:
 1. Read `TASK_NOTES.md` in your session directory if it exists
-2. Use the Dead Ends and Key Discoveries sections to avoid repeating failed approaches
+2. Read `${TICKET_DIR}/handoff_notes.md` if it exists; prior contents may also be prepended above this prompt
+3. Use the Dead Ends, Key Discoveries, and prior handoff notes to avoid repeating failed approaches
 
 Before you finish:
 1. Update (or create) `TASK_NOTES.md` in your session directory with these sections:
@@ -39,6 +40,12 @@ Before you finish:
    - `## Dead Ends` — Approaches that failed and why (be specific)
    - `## Key Discoveries` — Important findings about the codebase, constraints, or environment
    - `## Next` — What the next iteration should focus on
+2. Append, never overwrite, a concise 5-line entry to `${TICKET_DIR}/handoff_notes.md`:
+   - `## <ISO timestamp> iteration handoff`
+   - `Tried: <what you attempted>`
+   - `Failed: <what failed and why, or "none">`
+   - `Next focus: <specific file or test>`
+   - `Command: <next verification command to run>`
 
 ## Scope
 - **NEVER** modify `state.json`, `active`, or `completion_promise`

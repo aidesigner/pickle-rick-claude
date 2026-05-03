@@ -21,6 +21,7 @@ const sm = new StateManager();
 const MIN_TIMEOUT_SECONDS = 30;
 const VALID_AGENT_MODELS = new Set(['sonnet', 'opus', 'haiku']);
 const LAST_TOOL_ERROR_FILE = 'last-tool-error.json';
+const HANDOFF_NOTES_FILE = 'handoff_notes.md';
 const TOOL_RETRY_ANALYZE_THRESHOLD = 2;
 const TOOL_RETRY_STOP_THRESHOLD = 4;
 export function tierToModel(tier) {
@@ -213,6 +214,18 @@ Analyze and fix the root cause before retrying. Do not repeat the same tool call
     }
     return '';
 }
+function readHandoffNotesBlock(ticketPath) {
+    try {
+        const notesPath = path.join(ticketPath, HANDOFF_NOTES_FILE);
+        if (!fs.existsSync(notesPath))
+            return '';
+        const notes = fs.readFileSync(notesPath, 'utf-8').trim();
+        return notes ? `# PRIOR ITERATION HANDOFF\n${notes}\n\n` : '';
+    }
+    catch {
+        return '';
+    }
+}
 function isArchaeologyDisabled(sessionRoot) {
     try {
         const state = readRecoverableJsonObject(path.join(sessionRoot, 'state.json'));
@@ -311,6 +324,7 @@ export function buildWorkerPrompt(opts) {
     const { ticket } = opts;
     const extensionRoot = opts.extensionRoot ?? getExtensionRoot();
     const toolRetryGuidance = buildToolRetryGuidanceBlock(ticket);
+    const handoffNotes = readHandoffNotesBlock(ticket.ticketPath);
     const promptFilename = ticket.isReviewTicket ? 'send-to-morty-review.md' : 'send-to-morty.md';
     const mortyPromptPath = path.join(os.homedir(), '.claude', 'commands', promptFilename);
     let workerPrompt;
@@ -353,7 +367,7 @@ This repo has a GitNexus knowledge graph index. Use these MCP tools during Resea
 Prefer GitNexus tools over raw Grep/Glob for understanding call chains, dependencies, and execution flows.
 For simple file/string lookups, Grep/Glob are still fine.`;
     }
-    return `${toolRetryGuidance}${workerPrompt}`;
+    return `${toolRetryGuidance}${handoffNotes}${workerPrompt}`;
 }
 function hasGitNexusIndex(repoRoot) {
     try {

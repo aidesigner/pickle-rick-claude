@@ -81,6 +81,32 @@ function writeLastToolError(sessionDir, retryCount) {
     }));
 }
 
+function writeSuccessfulCodexShim(shimDir, logPath, ticketDir) {
+    fs.mkdirSync(shimDir, { recursive: true });
+    const shimPath = path.join(shimDir, 'codex');
+    fs.writeFileSync(shimPath, `#!/usr/bin/env node
+const fs = require('fs');
+fs.writeFileSync(${JSON.stringify(logPath)}, JSON.stringify({
+  argv: process.argv.slice(2),
+  cwd: process.cwd(),
+}, null, 2));
+fs.appendFileSync(${JSON.stringify(path.join(ticketDir, 'handoff_notes.md'))}, [
+  '## 2026-05-03T00:00:00.000Z iteration handoff',
+  'Tried: implemented handoff fixture',
+  'Failed: none',
+  'Next focus: tests/spawn-morty.test.js',
+  'Command: npm test -- --grep handoff.write',
+  ''
+].join('\\n'));
+fs.writeFileSync(${JSON.stringify(path.join(ticketDir, 'conformance_2026-05-03.md'))}, 'ALL_PASS\\n');
+console.log('Worker completed with handoff notes. '.repeat(10));
+console.log('<promise>I AM DONE</promise>');
+process.exit(0);
+`);
+    fs.chmodSync(shimPath, 0o755);
+    return shimPath;
+}
+
 function runCodexHarness(tmpDir, harness, ticketId) {
     return spawnSync(process.execPath, [SPAWN_MORTY_BIN,
         'implement the thing',
@@ -920,6 +946,62 @@ test('tool-retry.stop: retry_count=4 prepends STOP guidance and emits activity',
         assert.equal(event.ticket, ticketId);
         assert.equal(event.tool, 'Bash');
         assert.equal(event.retry_count, 4);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// Cross-iteration handoff notes
+// ---------------------------------------------------------------------------
+
+test('handoff.read: prior per-ticket handoff notes are prepended to next prompt', () => {
+    const tmpDir = makeTmpDir();
+    const ticketId = 'ticket-handoff-read';
+    try {
+        const harness = writeCodexSpawnHarness(tmpDir, ticketId);
+        fs.writeFileSync(path.join(harness.ticketDir, 'handoff_notes.md'), [
+            '## previous iteration',
+            'Tried: changed src/bin/spawn-morty.ts',
+            'Failed: prompt did not include handoff context',
+            'Next focus: tests/spawn-morty.test.js',
+            'Command: npm test -- --grep handoff.read',
+            '',
+        ].join('\n'));
+
+        const result = runCodexHarness(tmpDir, harness, ticketId);
+
+        assert.equal(result.status, 1, `expected validation failure after shim exit, got: ${result.stdout + result.stderr}`);
+        assert.ok(fs.existsSync(harness.shimLog), 'codex shim should be invoked');
+        const prompt = readCapturedCodexPrompt(harness.shimLog);
+        const handoffIndex = prompt.indexOf('# PRIOR ITERATION HANDOFF');
+        const taskIndex = prompt.indexOf('implement the thing');
+        assert.ok(handoffIndex === 0, 'handoff block should be the first prompt context when no tool retry guidance exists');
+        assert.ok(taskIndex > handoffIndex, 'task/template text should follow prior handoff context');
+        assert.match(prompt, /Failed: prompt did not include handoff context/);
+        assert.match(prompt, /Next focus: tests\/spawn-morty\.test\.js/);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('handoff.write: successful worker appends per-ticket handoff notes', () => {
+    const tmpDir = makeTmpDir();
+    const ticketId = 'ticket-handoff-write';
+    try {
+        const harness = writeCodexSpawnHarness(tmpDir, ticketId);
+        writeSuccessfulCodexShim(harness.shimDir, harness.shimLog, harness.ticketDir);
+
+        const result = runCodexHarness(tmpDir, harness, ticketId);
+
+        assert.equal(result.status, 0, `expected successful shim worker, got: ${result.stdout + result.stderr}`);
+        const handoffPath = path.join(harness.ticketDir, 'handoff_notes.md');
+        assert.ok(fs.existsSync(handoffPath), 'handoff_notes.md should exist after worker iteration');
+        const content = fs.readFileSync(handoffPath, 'utf-8');
+        assert.match(content, /Tried: implemented handoff fixture/);
+        assert.match(content, /Failed: none/);
+        assert.match(content, /Next focus: tests\/spawn-morty\.test\.js/);
+        assert.match(content, /Command: npm test -- --grep handoff\.write/);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
