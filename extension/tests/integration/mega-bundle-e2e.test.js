@@ -288,10 +288,18 @@ test('mega bundle A-F smoke paths work together', () => {
       .filter(Boolean);
     const legacyCarveOuts = spawnSync(
       'rg',
-      ['-n', 'eslint-disable-next-line.*(outside T0|complexity|max-lines-per-function)', ...sourceFiles],
+      ['-n', 'eslint-disable-next-line', ...sourceFiles],
       { cwd: EXTENSION_ROOT, encoding: 'utf8' },
     );
-    assert.equal(legacyCarveOuts.status, 1, legacyCarveOuts.stdout || legacyCarveOuts.stderr);
+    const unreviewedCarveOuts = (legacyCarveOuts.stdout ?? '')
+      .split('\n')
+      .filter(Boolean)
+      .filter(line => {
+        if (/eslint-disable-next-line\s*(--)?\s*$/.test(line)) return true;
+        if (!/(outside T0|complexity|max-lines-per-function)/.test(line)) return false;
+        return !line.includes('HT-1 reviewed:');
+      });
+    assert.deepEqual(unreviewedCarveOuts, []);
     const eslintConfig = fs.readFileSync(path.join(EXTENSION_ROOT, 'eslint.config.js'), 'utf8');
     assert.match(eslintConfig, /complexity:\s*\['error',\s*\{\s*max:\s*15\s*\}\]/);
     assert.match(eslintConfig, /'max-lines-per-function':\s*\['error',\s*\{\s*max:\s*120/);

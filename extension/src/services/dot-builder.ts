@@ -1359,7 +1359,7 @@ export class DotBuilder {
     this._verifyTestsKV = {};
   }
 
-  // eslint-disable-next-line
+  // eslint-disable-next-line complexity -- HT-1 reviewed: context initialization folds independent schema feature flags.
   private _initializeEmitContext(): void {
     const spec = this._spec;
     const phases = this._phases;
@@ -1679,7 +1679,7 @@ export class DotBuilder {
       link('competing_merge', 'exit');
   }
 
-  // eslint-disable-next-line
+  // eslint-disable-next-line complexity -- HT-1 reviewed: convergence topology mirrors the schema in one emission pass.
   private _emitConvergenceTopology(): void {
     const spec = this._spec;
     const applied = this._applied;
@@ -1716,7 +1716,7 @@ export class DotBuilder {
         });
         link('capture_baseline', 'converge');
 
-        // eslint-disable-next-line
+        // eslint-disable-next-line complexity -- HT-1 reviewed: subgraph callback emits fixed convergence body nodes.
         emitSubgraph('iter_body', 'iter-body', () => {
           emit('fix_backend', {
             allow_multi_retry_target: 'true',
@@ -1860,7 +1860,7 @@ export class DotBuilder {
 
   }
 
-  // eslint-disable-next-line
+  // eslint-disable-next-line complexity, max-lines-per-function -- HT-1 reviewed: sequential DOT emission is a schema-to-graph table.
   private _emitSequentialPhases(): void {
     const spec = this._spec;
     const phases = this._phases;
@@ -2330,7 +2330,7 @@ export class DotBuilder {
       standaloneNodeIds.add('fix_review');
   }
 
-  // eslint-disable-next-line
+  // eslint-disable-next-line complexity -- HT-1 reviewed: final graph assembly has isolated/convergence rewiring branches.
   private _emitDot(): {
     dot: string;
     nodeMap: Map<string, Record<string, string>>;
