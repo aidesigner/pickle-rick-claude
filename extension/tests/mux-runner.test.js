@@ -794,7 +794,7 @@ test('mux-runner: creates mux-runner.log in session directory', () => {
 
 // --- Completion classification (classifyCompletion) ---
 
-import { buildTmuxNotification, classifyCompletion, classifyTicketCompletion, extractAssistantContent, transitionToMeeseeks, loadRateLimitSettings, loadMeeseeksModel, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText, stripSetupSection, detectMultiRepo, writeHandoffAtomic } from '../bin/mux-runner.js';
+import { buildTmuxNotification, classifyCompletion, classifyTicketCompletion, applyAutoTicketCompletionValidation, extractAssistantContent, transitionToMeeseeks, loadRateLimitSettings, loadMeeseeksModel, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText, stripSetupSection, detectMultiRepo, writeHandoffAtomic } from '../bin/mux-runner.js';
 
 test('classifyCompletion: TASK_COMPLETED returns continue (single ticket, loop continues)', () => {
     assert.equal(classifyCompletion('<promise>TASK_COMPLETED</promise>'), 'continue');
@@ -1963,6 +1963,123 @@ function initGitRepo(dir) {
     spawnSync('git', ['add', '.'], { cwd: dir });
     spawnSync('git', ['commit', '-m', 'init', '--no-gpg-sign'], { cwd: dir });
 }
+
+function gitHead(dir) {
+    return spawnSync('git', ['rev-parse', 'HEAD'], { cwd: dir, encoding: 'utf-8' }).stdout.trim();
+}
+
+function writeAutoMarkTicket(sessionDir, ticketId, checked = true) {
+    const ticketDir = path.join(sessionDir, ticketId);
+    fs.mkdirSync(ticketDir, { recursive: true });
+    fs.writeFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`), [
+        '---',
+        `id: ${ticketId}`,
+        'title: Auto mark validation',
+        'status: Todo',
+        'order: 1',
+        '---',
+        '# Description',
+        '',
+        '## Acceptance Criteria',
+        `- [${checked ? 'x' : ' '}] criterion met`,
+        '',
+    ].join('\n'));
+}
+
+function readAutoMarkTicketStatus(sessionDir, ticketId) {
+    const filePath = path.join(sessionDir, ticketId, `linear_ticket_${ticketId}.md`);
+    const content = fs.readFileSync(filePath, 'utf-8');
+    const match = /^status:\s*(.+)$/m.exec(content);
+    return match ? match[1].replace(/^["']|["']$/g, '').trim() : null;
+}
+
+// --- auto-mark-done completion validation ---
+
+test('auto-mark-done.no-commit: transition marks checked ticket Skipped not Done without commit evidence', () => {
+    const tmpDir = makeTmpRoot();
+    try {
+        initGitRepo(tmpDir);
+        const startCommit = gitHead(tmpDir);
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketId = 'auto-no-commit-ticket';
+        writeAutoMarkTicket(sessionDir, ticketId, true);
+
+        const verdict = applyAutoTicketCompletionValidation({
+            sessionDir,
+            ticketId,
+            workingDir: tmpDir,
+            startCommit,
+            iteration: 1,
+        });
+
+        assert.equal(verdict.action, 'skip');
+        assert.equal(verdict.reason, 'no_commit_referencing_ticket_since_current_set');
+        assert.equal(readAutoMarkTicketStatus(sessionDir, ticketId), 'Skipped');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('auto-mark-done.with-commit: transition marks checked ticket Done with referencing commit evidence', () => {
+    const tmpDir = makeTmpRoot();
+    try {
+        initGitRepo(tmpDir);
+        const startCommit = gitHead(tmpDir);
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketId = 'auto-with-commit-ticket';
+        writeAutoMarkTicket(sessionDir, ticketId, true);
+        fs.writeFileSync(path.join(tmpDir, 'work.txt'), 'ticket work');
+        spawnSync('git', ['add', 'work.txt'], { cwd: tmpDir });
+        spawnSync('git', ['commit', '-m', `complete ${ticketId}`, '--no-gpg-sign'], { cwd: tmpDir });
+
+        const verdict = applyAutoTicketCompletionValidation({
+            sessionDir,
+            ticketId,
+            workingDir: tmpDir,
+            startCommit,
+            iteration: 1,
+        });
+
+        assert.equal(verdict.action, 'done');
+        assert.equal(readAutoMarkTicketStatus(sessionDir, ticketId), 'Done');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('auto-mark-done.activity-event: skip path emits ticket_auto_skip_no_evidence event', () => {
+    const tmpDir = makeTmpRoot();
+    const dataRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-auto-mark-data-')));
+    const prev = process.env.PICKLE_DATA_ROOT;
+    try {
+        process.env.PICKLE_DATA_ROOT = dataRoot;
+        initGitRepo(tmpDir);
+        const startCommit = gitHead(tmpDir);
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketId = 'auto-activity-ticket';
+        writeAutoMarkTicket(sessionDir, ticketId, true);
+
+        applyAutoTicketCompletionValidation({
+            sessionDir,
+            ticketId,
+            workingDir: tmpDir,
+            startCommit,
+            iteration: 7,
+        });
+
+        const events = readRelaunchActivityEvents(dataRoot);
+        const event = events.find(e => e.event === 'ticket_auto_skip_no_evidence');
+        assert.ok(event, 'expected skip event');
+        assert.equal(event.ticket, ticketId);
+        assert.equal(event.reason, 'no_commit_referencing_ticket_since_current_set');
+        assert.equal(event.iteration, 7);
+    } finally {
+        if (prev === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = prev;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
 
 test('classifyTicketCompletion: uncommitted git changes + lifecycle artifact → completed', () => {
     const tmpDir = makeTmpRoot();

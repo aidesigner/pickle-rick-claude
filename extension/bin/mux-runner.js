@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, parseTicketFrontmatter, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification } from '../services/pickle-utils.js';
 import { PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -302,6 +302,96 @@ export function classifyTicketCompletion(iterLogFile, workingDir, ticketDir, rol
         process.stderr.write(`[mux-runner:classify-ticket:git-probe] ${safeErrorMessage(err)}\n`); /* artifact alone suffices */
     }
     return 'completed';
+}
+function normalizedStatus(status) {
+    return (status || '').toLowerCase().replace(/^["']|["']$/g, '').trim();
+}
+function isTerminalTicketStatus(status) {
+    const normalized = normalizedStatus(status);
+    return normalized === 'done' || normalized === 'skipped';
+}
+function ticketFilePath(sessionDir, ticketId) {
+    return path.join(sessionDir, ticketId, `linear_ticket_${ticketId}.md`);
+}
+function acceptanceCriteriaSection(content) {
+    const match = /^## Acceptance Criteria\s*$/m.exec(content);
+    if (!match)
+        return '';
+    const rest = content.slice(match.index + match[0].length);
+    const next = /^## \S.*$/m.exec(rest);
+    return next ? rest.slice(0, next.index) : rest;
+}
+function hasCheckedAcceptanceCriteria(content) {
+    const section = acceptanceCriteriaSection(content);
+    const boxes = [...section.matchAll(/^\s*-\s*\[([ xX])\]/gm)];
+    return boxes.length > 0 && boxes.every(match => match[1].toLowerCase() === 'x');
+}
+function readHeadCommit(workingDir) {
+    try {
+        const head = runCmd(['git', 'rev-parse', 'HEAD'], { cwd: workingDir, check: false }).trim();
+        return head.length > 0 ? head : null;
+    }
+    catch {
+        return null;
+    }
+}
+function hasCommitReferencingTicketSince(workingDir, ticketId, startCommit) {
+    if (!startCommit)
+        return false;
+    try {
+        const logOutput = runCmd(['git', 'log', '--format=%H%n%B%n---pickle-commit-boundary---', `${startCommit}..HEAD`], { cwd: workingDir, check: false });
+        return logOutput.toLowerCase().includes(ticketId.toLowerCase());
+    }
+    catch {
+        return false;
+    }
+}
+export function validateAutoTicketCompletion(sessionDir, ticketId, workingDir, startCommit) {
+    const filePath = ticketFilePath(sessionDir, ticketId);
+    const info = parseTicketFrontmatter(filePath);
+    if (!info)
+        return { action: 'leave', reason: 'malformed_or_missing_ticket_frontmatter' };
+    if (isTerminalTicketStatus(info.status))
+        return { action: 'leave', reason: 'ticket_already_terminal' };
+    let content;
+    try {
+        content = fs.readFileSync(filePath, 'utf-8');
+    }
+    catch {
+        return { action: 'leave', reason: 'ticket_file_unreadable' };
+    }
+    if (!hasCheckedAcceptanceCriteria(content)) {
+        return { action: 'skip', reason: 'acceptance_criteria_not_checked' };
+    }
+    if (!hasCommitReferencingTicketSince(workingDir, ticketId, startCommit)) {
+        return { action: 'skip', reason: 'no_commit_referencing_ticket_since_current_set' };
+    }
+    return { action: 'done', reason: 'commit_and_acceptance_checked' };
+}
+export function applyAutoTicketCompletionValidation(input) {
+    const verdict = validateAutoTicketCompletion(input.sessionDir, input.ticketId, input.workingDir, input.startCommit);
+    if (verdict.action === 'done') {
+        if (markTicketDone(input.sessionDir, input.ticketId)) {
+            input.log?.(`Marked ticket ${input.ticketId} as Done (validated: evidence found)`);
+        }
+        return verdict;
+    }
+    if (verdict.action === 'skip') {
+        if (markTicketSkipped(input.sessionDir, input.ticketId)) {
+            input.log?.(`Marked ticket ${input.ticketId} as Skipped (${verdict.reason})`);
+            logActivity({
+                event: 'ticket_auto_skip_no_evidence',
+                source: 'pickle',
+                session: path.basename(input.sessionDir),
+                ticket: input.ticketId,
+                iteration: input.iteration,
+                reason: verdict.reason,
+            });
+        }
+        return verdict;
+    }
+    input.log?.(`Warning: leaving ticket ${input.ticketId} unchanged (${verdict.reason})`);
+    return verdict;
 }
 /**
  * Reads `pickle_settings.json` as an untyped bag, returning `{}` on any
@@ -1516,6 +1606,7 @@ async function runMuxRunnerMain() {
     let stallCount = 0;
     let consecutiveRateLimits = 0;
     let previousTicket = null;
+    let previousTicketStartCommit = null;
     let exitReason = 'error';
     // Non-persisted per-ticket timeout counter (FR-B3/B4) — resets on runner restart.
     let timeoutCount = 0;
@@ -1606,8 +1697,13 @@ async function runMuxRunnerMain() {
             ? 'review'
             : inferTicketLifecycleStep(sessionDir, preTicket, state.step);
         state = updateMuxLifecycleState(statePath, { iteration, currentTicket: preTicket, step: preStep });
-        if (previousTicket === null)
+        if (previousTicket === null) {
             previousTicket = preTicket;
+            if (preTicket) {
+                const ticketInfo = collectTickets(sessionDir).find(t => t.id === preTicket);
+                previousTicketStartCommit = readHeadCommit(ticketInfo?.working_dir || state.working_dir || process.cwd());
+            }
+        }
         log(`--- Iteration ${iteration} (state.iteration=${state.iteration}) ---`);
         logActivity({ event: 'iteration_start', source: 'pickle', session: path.basename(sessionDir), iteration });
         if (!readinessGateChecked && curIter === 0) {
@@ -1704,24 +1800,26 @@ async function runMuxRunnerMain() {
                 else {
                     // Drift scenario: model changed current_ticket without following protocol
                     const ticketWorkingDir = prevTicketInfo?.working_dir || state.working_dir || process.cwd();
-                    const prevTicketDir = path.join(sessionDir, previousTicket);
-                    const role = prevTicketInfo?.type === 'review' ? 'review' : 'implementation';
-                    const verdict = classifyTicketCompletion(iterLogFile, ticketWorkingDir, prevTicketDir, role);
-                    if (verdict === 'completed') {
-                        if (markTicketDone(sessionDir, previousTicket)) {
-                            log(`Marked ticket ${previousTicket} as Done (validated: evidence found)`);
-                        }
-                    }
-                    else {
-                        if (markTicketSkipped(sessionDir, previousTicket)) {
-                            log(`Marked ticket ${previousTicket} as Skipped (no completion evidence)`);
-                        }
-                    }
+                    applyAutoTicketCompletionValidation({
+                        sessionDir,
+                        ticketId: previousTicket,
+                        workingDir: ticketWorkingDir,
+                        startCommit: previousTicketStartCommit,
+                        iteration,
+                        log,
+                    });
                 }
             }
             const postStep = inferTicketLifecycleStep(sessionDir, postTicket, postState.step);
             const lifecycleState = updateMuxLifecycleState(statePath, { currentTicket: postTicket, step: postStep });
-            previousTicket = lifecycleState.current_ticket || null;
+            const nextTicket = lifecycleState.current_ticket || null;
+            if (nextTicket !== previousTicket) {
+                const nextTicketInfo = nextTicket ? collectTickets(sessionDir).find(t => t.id === nextTicket) : null;
+                previousTicketStartCommit = nextTicket
+                    ? readHeadCommit(nextTicketInfo?.working_dir || lifecycleState.working_dir || process.cwd())
+                    : null;
+            }
+            previousTicket = nextTicket;
         }
         catch { /* state read failed — skip transition check */ }
         // --- Rate limit classification (MUST run before CB to prevent CB poisoning) ---

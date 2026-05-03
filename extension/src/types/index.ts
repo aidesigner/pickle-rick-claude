@@ -383,6 +383,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'course_correct_apply_failed',
   'course_correct_recovered',
   'current_ticket_redirected_to_new',
+  'ticket_auto_skip_no_evidence',
   'readiness_delta_requested',
   'phase_transition',
   'extension_dir_fallback',
