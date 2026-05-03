@@ -457,7 +457,7 @@ const ARG_HANDLERS: Record<string, ArgHandler> = {
   },
   '--backend': (config, args, index) => {
     const value = args[index + 1];
-    if (!value || value.startsWith('--')) die('--backend requires a value (claude|codex)');
+    if (!value || value.startsWith('--')) die(`--backend requires a value (${BACKENDS.join('|')})`);
     if (!(BACKENDS as readonly string[]).includes(value)) {
       die(`--backend must be one of: ${BACKENDS.join(', ')}`);
     }

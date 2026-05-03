@@ -390,7 +390,7 @@ const ARG_HANDLERS = {
     '--backend': (config, args, index) => {
         const value = args[index + 1];
         if (!value || value.startsWith('--'))
-            die('--backend requires a value (claude|codex)');
+            die(`--backend requires a value (${BACKENDS.join('|')})`);
         if (!BACKENDS.includes(value)) {
             die(`--backend must be one of: ${BACKENDS.join(', ')}`);
         }

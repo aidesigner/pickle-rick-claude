@@ -99,6 +99,39 @@ test('setup initializeNewSession: state field set matches schema fixture', () =>
     }
 });
 
+test('backend.hermes-accepted: setup persists --backend hermes to state', () => {
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-hermes-data-'));
+    const previousDataRoot = process.env.PICKLE_DATA_ROOT;
+    process.env.PICKLE_DATA_ROOT = dataRoot;
+
+    try {
+        const args = parseArguments(['--backend', 'hermes', '--task', 'hermes backend identity']);
+        const session = initializeNewSession(args);
+        const persisted = JSON.parse(fs.readFileSync(path.join(session.sessionRoot, 'state.json'), 'utf-8'));
+
+        assert.equal(session.state.backend, 'hermes');
+        assert.equal(persisted.backend, 'hermes');
+    } finally {
+        if (previousDataRoot === undefined) {
+            delete process.env.PICKLE_DATA_ROOT;
+        } else {
+            process.env.PICKLE_DATA_ROOT = previousDataRoot;
+        }
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('backend.invalid: setup rejects unknown --backend with exit 1', () => {
+    assert.throws(
+        () => runSetupWithEnv(['--backend', 'bogus', '--task', 'invalid backend'], {}),
+        error => {
+            assert.equal(error.status, 1);
+            assert.match(String(error.stderr), /--backend must be one of: claude, codex, hermes/);
+            return true;
+        },
+    );
+});
+
 test('setup initializeNewSession: fresh PRD-backed state records prd_path and start_commit', () => {
     const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-citadel-data-'));
     const prdPath = path.join(dataRoot, 'citadel-prd.md');

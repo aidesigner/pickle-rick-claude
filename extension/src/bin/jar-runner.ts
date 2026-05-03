@@ -6,7 +6,7 @@ import * as crypto from 'crypto';
 import { spawn } from 'child_process';
 import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, writeStateFile, safeErrorMessage } from '../services/pickle-utils.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason } from '../services/state-manager.js';
-import { State, Defaults } from '../types/index.js';
+import { State, Defaults, type Backend } from '../types/index.js';
 import { logActivity } from '../services/activity-logger.js';
 import { buildManagerInvocation, resolveBackend, backendEnvOverrides } from '../services/backend-spawn.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
@@ -60,7 +60,7 @@ export interface RunTaskResult {
    */
   enoent?: boolean;
   /** Backend that was attempted — used by the caller to short-circuit further codex tasks after an ENOENT. */
-  backend: 'claude' | 'codex';
+  backend: Backend;
 }
 
 export type SpawnResult = RunTaskResult;
@@ -362,7 +362,7 @@ function countRemainingQueuedBackendTasks(
   tasks: JarTask[],
   currentIndex: number,
   sessionsRoot: string,
-  backend: 'claude' | 'codex',
+  backend: Backend,
 ): number {
   let count = 0;
   for (const task of tasks.slice(currentIndex + 1)) {

@@ -45,6 +45,22 @@ test('resolveBackend: reads backend from state', () => {
     assert.equal(resolveBackend({ backend: 'codex' }), 'codex');
 });
 
+test('backend.hermes-accepted: resolves hermes from state and env', () => {
+    withUnsetBackendEnv(() => {
+        assert.equal(isBackend('hermes'), true);
+        assert.equal(resolveBackend({ backend: 'hermes' }), 'hermes');
+    });
+
+    const prev = process.env.PICKLE_BACKEND;
+    process.env.PICKLE_BACKEND = 'hermes';
+    try {
+        assert.equal(resolveBackend({}), 'hermes');
+    } finally {
+        if (prev === undefined) delete process.env.PICKLE_BACKEND;
+        else process.env.PICKLE_BACKEND = prev;
+    }
+});
+
 test('resolveBackend: rejects invalid backend', () => {
     withUnsetBackendEnv(() => {
         assert.equal(resolveBackend({ backend: 'gemini' }), 'claude');
@@ -65,6 +81,7 @@ test('resolveBackend: falls through to PICKLE_BACKEND env', () => {
 test('isBackend: validates values', () => {
     assert.equal(isBackend('claude'), true);
     assert.equal(isBackend('codex'), true);
+    assert.equal(isBackend('hermes'), true);
     assert.equal(isBackend('gpt'), false);
     assert.equal(isBackend(42), false);
 });
@@ -76,6 +93,13 @@ test('resolveBackendFromStateFile: reads backend from JSON', () => {
     const file = path.join(dir, 'state.json');
     fs.writeFileSync(file, JSON.stringify({ backend: 'codex', active: true }));
     assert.equal(resolveBackendFromStateFile(file), 'codex');
+});
+
+test('backend.hermes-accepted: reads hermes backend from state file', () => {
+    const dir = mkTmpDir('backend-spawn-');
+    const file = path.join(dir, 'state.json');
+    fs.writeFileSync(file, JSON.stringify({ backend: 'hermes', active: true }));
+    assert.equal(resolveBackendFromStateFile(file), 'hermes');
 });
 
 test('resolveBackendFromStateFile: defaults to claude on missing file', () => {
@@ -295,6 +319,7 @@ test('buildManagerInvocation(codex): omits -m when no model given', () => {
 test('backendEnvOverrides: emits PICKLE_BACKEND', () => {
     assert.deepEqual(backendEnvOverrides('codex'), { PICKLE_BACKEND: 'codex' });
     assert.deepEqual(backendEnvOverrides('claude'), { PICKLE_BACKEND: 'claude' });
+    assert.deepEqual(backendEnvOverrides('hermes'), { PICKLE_BACKEND: 'hermes' });
 });
 
 // --- buildWorkerInvocation: --effort threading ---
