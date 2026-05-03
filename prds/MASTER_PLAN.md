@@ -15,7 +15,8 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 | # | PRD | Status | Next action |
 |---|---|---|---|
-| 1 | [`prds/p2-mega-bundle-2026-05-02-pm.md`](p2-mega-bundle-2026-05-02-pm.md) ⭐ **NEW MEGA BUNDLE** | **Draft (P2)** — composes 6 source PRDs (strip + state-drift + retry-tracking + smart-handoff + hermes + god-fn-phase-2). ~50-70 atomic tickets, ~5K LOC churn, target v1.69.0. Long pipeline run on codex. | `/pickle-pipeline ... --backend codex` (in flight) |
+| 1 | [`prds/p1-deployed-pkgjson-version-only-revert.md`](p1-deployed-pkgjson-version-only-revert.md) ⭐ **NEW P1** | **Draft** — pkg.json:version-only revert (NEW class, distinct from prior tarball-rsync revert). Same kill-switch state, identical `check-update.js` content-hashes between source and deployed, only the pkg.json version field flips 1.67.0→1.64.0 within ~30-60 min. Diagnostic-first: identify writer via `fs_usage`/`lsof` before fixing. Surfaced during mega bundle session `2026-05-02-fca7952b`. | Diagnose first (R-PJV-1), then fix at root |
+| 2 | [`prds/p2-mega-bundle-2026-05-02-pm.md`](p2-mega-bundle-2026-05-02-pm.md) **MEGA BUNDLE** | **Refined Cycle 3 — IN FLIGHT** — composes 6 source PRDs (strip + state-drift + retry-tracking + smart-handoff + hermes + god-fn-phase-2). 34 atomic tickets refined; pipeline relaunched after readiness halt with `state.flags.skip_readiness_reason` bypass; PHASE 1/4 PICKLE codex active. Cron `2ba30074` armed every hour at :17. | Babysit until closer reaches v1.69.0 |
 | 2 | [`prds/p1-strip-excessive-defense-deploy-reversion.md`](p1-strip-excessive-defense-deploy-reversion.md) | **In mega bundle Section A** | Will land via mega bundle |
 | 3 | [`prds/p2-bundle-deploy-reversion-and-gate-baseline-diagnostic.md`](p2-bundle-deploy-reversion-and-gate-baseline-diagnostic.md) | **30/30 tickets SHIPPED** in code on session `2026-05-02-ad240987` (codex backend). All commits in main. Closer DEFERRED live release because env lacks `crontab` permission. v1.67.0 will NOT be tagged; v1.68.0 ships directly OR rolls into v1.69.0 via mega bundle closer. | Tag in mega bundle closer |
 | 3 | [`prds/p1-bug-bundle-2026-05-01-pm.md`](p1-bug-bundle-2026-05-01-pm.md) | **All 20 tickets DONE** — closer landed v1.67.0 commit `2c814e8`. Source pkg.json still at 1.67.0. v1.67.0 **NOT tagged on GitHub** (Cycle 3 verdict: skip; ship v1.68.0 directly). | Closed by strip-then-v1.68.0 release |
@@ -40,7 +41,8 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 | Path | Status | Notes |
 |---|---|---|
-| `p2-mega-bundle-2026-05-02-pm.md` | **Draft (P2) ⭐ NEW** | 6-PRD mega bundle: strip + state-drift + retry + handoff + hermes + god-fn-2; ~50-70 tickets |
+| `p1-deployed-pkgjson-version-only-revert.md` | **Draft (P1) ⭐ NEW** | NEW deploy-revert bug class: pkg.json:version field reverts while file content-hashes match. Diagnostic-first |
+| `p2-mega-bundle-2026-05-02-pm.md` | **Refined (P2) — IN FLIGHT on session `fca7952b`** | 6-PRD mega bundle: strip + state-drift + retry + handoff + hermes + god-fn-2; 34 tickets |
 | `p1-strip-excessive-defense-deploy-reversion.md` | **In mega bundle Section A** | Drafted; will land via mega bundle |
 | `p2-bundle-deploy-reversion-and-gate-baseline-diagnostic.md` | **30/30 SHIPPED in code** (session `2026-05-02-ad240987`, codex) | Refined PRD has 17 ACs; closer DEFERRED live release. v1.68.0 untagged pending strip |
 | `p1-bug-bundle-2026-05-01-pm.md` | **20/20 SHIPPED** (closer commit `2c814e8`, source v1.67.0) | Anatomy-park failed downstream of deploy-reversion. v1.67.0 will NOT be tagged; v1.68.0 ships directly |
