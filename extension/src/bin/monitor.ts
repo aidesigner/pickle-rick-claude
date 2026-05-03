@@ -127,7 +127,33 @@ export function renderElapsedField(elapsedSec: number, maxTimeMin: number): stri
  * Extracts a short readable summary from a stream-json log line.
  * Returns the original line (sans ANSI) if it's not valid JSON.
  */
-// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
+function summarizeAssistantMessage(parsed: Record<string, unknown>): string {
+  const msg = parsed.message as Record<string, unknown> | undefined;
+  if (!msg || !Array.isArray(msg.content)) return '';
+  const parts: string[] = [];
+  for (const block of msg.content) {
+    if (typeof block !== 'object' || block === null) continue;
+    const b = block as Record<string, unknown>;
+    if (b.type === 'text' && typeof b.text === 'string') {
+      const first = b.text.split('\n')[0].trim();
+      if (first) parts.push(first);
+    } else if (b.type === 'tool_use' && typeof b.name === 'string') {
+      parts.push(`🔧 ${b.name}`);
+    }
+  }
+  return parts.join(' | ') || '';
+}
+
+function summarizeResultMessage(parsed: Record<string, unknown>): string {
+  const isError = typeof parsed.subtype === 'string' && parsed.subtype.startsWith('error');
+  return isError ? `❌ ${parsed.subtype}` : '✅ success';
+}
+
+function summarizeSystemMessage(parsed: Record<string, unknown>): string {
+  if (parsed.subtype !== 'init') return '';
+  return `🚀 init (${typeof parsed.model === 'string' ? parsed.model : 'unknown'})`;
+}
+
 export function summarizeLine(raw: string): string {
   const clean = raw.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').trim();
   if (!clean) return '';
@@ -141,29 +167,9 @@ export function summarizeLine(raw: string): string {
 
   const type = parsed.type;
 
-  if (type === 'assistant') {
-    const msg = parsed.message as Record<string, unknown> | undefined;
-    if (!msg || !Array.isArray(msg.content)) return '';
-    const parts: string[] = [];
-    for (const block of msg.content) {
-      if (typeof block !== 'object' || block === null) continue;
-      const b = block as Record<string, unknown>;
-      if (b.type === 'text' && typeof b.text === 'string') {
-        const first = (b.text as string).split('\n')[0].trim();
-        if (first) parts.push(first);
-      } else if (b.type === 'tool_use' && typeof b.name === 'string') {
-        parts.push(`🔧 ${b.name}`);
-      }
-    }
-    return parts.join(' | ') || '';
-  }
-  if (type === 'result') {
-    const isError = typeof parsed.subtype === 'string' && (parsed.subtype as string).startsWith('error');
-    return isError ? `❌ ${parsed.subtype}` : '✅ success';
-  }
-  if (type === 'system' && parsed.subtype === 'init') {
-    return `🚀 init (${typeof parsed.model === 'string' ? parsed.model : 'unknown'})`;
-  }
+  if (type === 'assistant') return summarizeAssistantMessage(parsed);
+  if (type === 'result') return summarizeResultMessage(parsed);
+  if (type === 'system') return summarizeSystemMessage(parsed);
   return '';
 }
 
@@ -261,7 +267,36 @@ export function formatCurrentField(
  * available (including any indicator lines). Caller accounts for the
  * "Tickets:" section header separately.
  */
-// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
+function colorTicketStatus(ticket: TicketInfo): string {
+  const status = (ticket.status || '').toLowerCase();
+  const sym = statusSymbol(ticket.status);
+  if (status === 'done') return `${MX.GREEN}${sym}${MX.R}`;
+  if (status === 'in progress') return `${MX.WARN}${sym}${MX.R}`;
+  return `${MX.DIM}${sym}${MX.R}`;
+}
+
+function renderTicketLine(ticket: TicketInfo, currentTicketId: string | null | undefined): string {
+  const isCurrent = ticket.id === currentTicketId;
+  const prefix = isCurrent ? `${MX.BRIGHT}▸${MX.R}` : ' ';
+  const titleStr = isCurrent
+    ? `${MX.BRIGHT}${ticket.title || ''}${MX.R}`
+    : `${MX.GREEN}${ticket.title || ''}${MX.R}`;
+  return `${prefix} ${colorTicketStatus(ticket)} ${MX.DIM}${ticket.id}:${MX.R} ${titleStr}\n`;
+}
+
+function findTicketWindowAnchor(tickets: TicketInfo[], currentTicketId: string | null | undefined): number {
+  const currentIdx = currentTicketId
+    ? tickets.findIndex((t) => t.id === currentTicketId)
+    : -1;
+  if (currentIdx >= 0) return currentIdx;
+
+  let lastDone = -1;
+  for (let i = 0; i < tickets.length; i++) {
+    if ((tickets[i].status || '').toLowerCase() === 'done') lastDone = i;
+  }
+  return lastDone >= 0 ? lastDone : 0;
+}
+
 export function buildTicketLines(
   tickets: TicketInfo[],
   currentTicketId: string | null | undefined,
@@ -270,39 +305,14 @@ export function buildTicketLines(
   if (tickets.length === 0) return [];
 
   const renderOne = (ticket: TicketInfo): string => {
-    const status = (ticket.status || '').toLowerCase();
-    const sym = statusSymbol(ticket.status);
-    const coloredSym =
-      status === 'done'
-        ? `${MX.GREEN}${sym}${MX.R}`
-        : status === 'in progress'
-          ? `${MX.WARN}${sym}${MX.R}`
-          : `${MX.DIM}${sym}${MX.R}`;
-    const isCurrent = ticket.id === currentTicketId;
-    const prefix = isCurrent ? `${MX.BRIGHT}▸${MX.R}` : ' ';
-    const titleStr = isCurrent
-      ? `${MX.BRIGHT}${ticket.title || ''}${MX.R}`
-      : `${MX.GREEN}${ticket.title || ''}${MX.R}`;
-    return `${prefix} ${coloredSym} ${MX.DIM}${ticket.id}:${MX.R} ${titleStr}\n`;
+    return renderTicketLine(ticket, currentTicketId);
   };
 
   if (budget <= 0 || tickets.length <= budget) {
     return tickets.map(renderOne);
   }
 
-  const currentIdx = currentTicketId
-    ? tickets.findIndex((t) => t.id === currentTicketId)
-    : -1;
-  let anchorIdx: number;
-  if (currentIdx >= 0) {
-    anchorIdx = currentIdx;
-  } else {
-    let lastDone = -1;
-    for (let i = 0; i < tickets.length; i++) {
-      if ((tickets[i].status || '').toLowerCase() === 'done') lastDone = i;
-    }
-    anchorIdx = lastDone >= 0 ? lastDone : 0;
-  }
+  const anchorIdx = findTicketWindowAnchor(tickets, currentTicketId);
 
   // Reserve up to 2 lines for the above/below indicators.
   const bodyBudget = Math.max(1, budget - 2);
@@ -401,47 +411,16 @@ function countRows(segments: string[]): number {
   return n;
 }
 
-// eslint-disable-next-line complexity, max-lines-per-function -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
-async function render(sessionDir: string, sink: MonitorWriteSink = process.stdout): Promise<boolean> {
-  // If the session directory itself is gone, signal exit (not just "waiting")
-  if (!fs.existsSync(sessionDir)) return false;
-
-  const statePath = path.join(sessionDir, 'state.json');
-  let state: State;
+async function pathExists(p: string): Promise<boolean> {
   try {
-    state = sm.read(statePath);
-  } catch {
-    await writeWithWatchdog(sink, `\x1b[2J\x1b[H${MX.DIM}Awaiting signal...${MX.R}\n`);
+    await fs.promises.access(p);
     return true;
+  } catch {
+    return false;
   }
+}
 
-  const width = getWidth();
-  const sep = matrixSeparator(width);
-
-  const startEpoch = Number(state.start_time_epoch) || 0;
-  const elapsed = startEpoch > 0 ? Math.max(0, Math.floor(Date.now() / 1000) - startEpoch) : 0;
-  const tickets = collectTickets(sessionDir);
-  const maxIter = Number(state.max_iterations) || 0;
-  const maxTime = Number(state.max_time_minutes) || 0;
-  const iterStr = maxIter > 0
-    ? `${state.iteration} / ${state.max_iterations}`
-    : `${state.iteration}`;
-
-  const workDir = state.working_dir || '';
-  const project = workDir ? path.basename(workDir) : 'unknown';
-  const task = state.original_prompt || '';
-  const taskDisplay = task.length > width - 20 ? task.slice(0, width - 23) + '…' : (task || 'none');
-
-  const fields: [string, string][] = [
-    ['Project', `${MX.BRIGHT}${project}${MX.R}`],
-    ['Task', `${MX.GREEN}${taskDisplay}${MX.R}`],
-    ['Phase', `${MX.CYAN}${state.step || 'unknown'}${MX.R}`],
-    ['Iteration', `${MX.GREEN}${iterStr}${MX.R}`],
-    ['Elapsed', renderElapsedField(elapsed, maxTime)],
-    ['Current', formatCurrentField(state.current_ticket, tickets, width)],
-    ['Active', state.active === true ? `${MX.BRIGHT}▣ ONLINE${MX.R}` : `${MX.ERR}▢ OFFLINE${MX.R}`],
-  ];
-
+function appendCircuitField(fields: [string, string][], sessionDir: string): void {
   try {
     const cb = readCircuitBreakerState(sessionDir);
     if (!cb) throw new Error('circuit breaker state unavailable');
@@ -455,23 +434,93 @@ async function render(sessionDir: string, sink: MonitorWriteSink = process.stdou
   } catch {
     // circuit_breaker.json missing or corrupt — skip field
   }
+}
 
-  // Rate limit wait display
+function appendRateLimitField(fields: [string, string][], sessionDir: string): void {
   try {
     const waitPath = path.join(sessionDir, 'rate_limit_wait.json');
     const waitData = readRecoverableJsonObject(waitPath) as Record<string, unknown> | null;
-    if (waitData && waitData.waiting === true && waitData.wait_until) {
-      const remainMs = new Date(String(waitData.wait_until)).getTime() - Date.now();
-      const typeLabel = waitData.rate_limit_type ? ` [${String(waitData.rate_limit_type)}]` : '';
-      const sourceLabel = waitData.wait_source === 'api' ? ' (API reset)' : '';
-      if (remainMs > 0) {
-        const remainSec = Math.ceil(remainMs / 1000);
-        fields.push(['Rate Limit', `${MX.WARN}⏳ Rate limited${typeLabel}${sourceLabel} (${formatTime(remainSec)} remaining)${MX.R}`]);
-      } else {
-        fields.push(['Rate Limit', `${MX.WARN}⏳ Rate limit wait ending...${MX.R}`]);
-      }
+    if (!waitData || waitData.waiting !== true || !waitData.wait_until) return;
+    const remainMs = new Date(String(waitData.wait_until)).getTime() - Date.now();
+    const typeLabel = waitData.rate_limit_type ? ` [${String(waitData.rate_limit_type)}]` : '';
+    const sourceLabel = waitData.wait_source === 'api' ? ' (API reset)' : '';
+    if (remainMs > 0) {
+      const remainSec = Math.ceil(remainMs / 1000);
+      fields.push(['Rate Limit', `${MX.WARN}⏳ Rate limited${typeLabel}${sourceLabel} (${formatTime(remainSec)} remaining)${MX.R}`]);
+    } else {
+      fields.push(['Rate Limit', `${MX.WARN}⏳ Rate limit wait ending...${MX.R}`]);
     }
   } catch { /* no wait state */ }
+}
+
+function buildHeaderFields(state: State, tickets: TicketInfo[], width: number, sessionDir: string): [string, string][] {
+  const startEpoch = Number(state.start_time_epoch) || 0;
+  const elapsed = startEpoch > 0 ? Math.max(0, Math.floor(Date.now() / 1000) - startEpoch) : 0;
+  const maxIter = Number(state.max_iterations) || 0;
+  const maxTime = Number(state.max_time_minutes) || 0;
+  const iterStr = maxIter > 0 ? `${state.iteration} / ${state.max_iterations}` : `${state.iteration}`;
+  const workDir = state.working_dir || '';
+  const project = workDir ? path.basename(workDir) : 'unknown';
+  const task = state.original_prompt || '';
+  const taskDisplay = task.length > width - 20 ? task.slice(0, width - 23) + '…' : (task || 'none');
+  const fields: [string, string][] = [
+    ['Project', `${MX.BRIGHT}${project}${MX.R}`],
+    ['Task', `${MX.GREEN}${taskDisplay}${MX.R}`],
+    ['Phase', `${MX.CYAN}${state.step || 'unknown'}${MX.R}`],
+    ['Iteration', `${MX.GREEN}${iterStr}${MX.R}`],
+    ['Elapsed', renderElapsedField(elapsed, maxTime)],
+    ['Current', formatCurrentField(state.current_ticket, tickets, width)],
+    ['Active', state.active === true ? `${MX.BRIGHT}▣ ONLINE${MX.R}` : `${MX.ERR}▢ OFFLINE${MX.R}`],
+  ];
+  appendCircuitField(fields, sessionDir);
+  appendRateLimitField(fields, sessionDir);
+  return fields;
+}
+
+function buildRecentOutput(sessionDir: string, width: number, sep: string): string[] {
+  const recentOut: string[] = [];
+  try {
+    const logPath = latestIterationLog(sessionDir);
+    if (!logPath) return recentOut;
+    const TAIL_BYTES = 65536;
+    const tail = readTailUtf8(logPath, TAIL_BYTES);
+    const summaryLines = tail
+      .split('\n')
+      .filter((l) => l.trim())
+      .slice(-10)
+      .map(summarizeLine)
+      .filter((l) => l.length > 0)
+      .slice(-5);
+    if (summaryLines.length === 0) return recentOut;
+    recentOut.push(`\n${sep}\n${MX.DIM}Recent output:${MX.R}\n`);
+    for (const logLine of summaryLines) {
+      const truncated = logLine.length > width - 2 ? logLine.slice(0, width - 5) + '…' : logLine;
+      recentOut.push(`${MX.GREEN}  ${truncated}${MX.R}\n`);
+    }
+  } catch {
+    /* ignore */
+  }
+  return recentOut;
+}
+
+async function render(sessionDir: string, sink: MonitorWriteSink = process.stdout): Promise<boolean> {
+  // If the session directory itself is gone, signal exit (not just "waiting")
+  if (!(await pathExists(sessionDir))) return false;
+
+  const statePath = path.join(sessionDir, 'state.json');
+  let state: State;
+  try {
+    state = sm.read(statePath);
+  } catch {
+    await writeWithWatchdog(sink, `\x1b[2J\x1b[H${MX.DIM}Awaiting signal...${MX.R}\n`);
+    return true;
+  }
+
+  const width = getWidth();
+  const sep = matrixSeparator(width);
+
+  const tickets = collectTickets(sessionDir);
+  const fields = buildHeaderFields(state, tickets, width, sessionDir);
 
   const keyWidth = Math.max(...fields.map(([k]) => k.length)) + 1;
 
@@ -494,34 +543,7 @@ async function render(sessionDir: string, sink: MonitorWriteSink = process.stdou
 
   // Build the "Recent output" section first so we can reserve its rows
   // before sizing the ticket window.
-  const recentOut: string[] = [];
-  try {
-    const logPath = latestIterationLog(sessionDir);
-    if (logPath) {
-      // Read only the tail of the file (last 64KB) instead of the entire log,
-      // which can grow to multi-MB during long sessions. 64KB is more than
-      // enough to capture the last 10 NDJSON lines.
-      const TAIL_BYTES = 65536;
-      const tail = readTailUtf8(logPath, TAIL_BYTES);
-      const summaryLines = tail
-        .split('\n')
-        .filter((l) => l.trim())
-        .slice(-10)
-        .map(summarizeLine)
-        .filter((l) => l.length > 0)
-        .slice(-5);
-      if (summaryLines.length > 0) {
-        recentOut.push(`\n${sep}\n${MX.DIM}Recent output:${MX.R}\n`);
-        for (const logLine of summaryLines) {
-          const truncated =
-            logLine.length > width - 2 ? logLine.slice(0, width - 5) + '…' : logLine;
-          recentOut.push(`${MX.GREEN}  ${truncated}${MX.R}\n`);
-        }
-      }
-    }
-  } catch {
-    /* ignore */
-  }
+  const recentOut = buildRecentOutput(sessionDir, width, sep);
 
   const footer = `\n${MX.DIM}Refreshing every 2s  •  Ctrl+C to detach${MX.R}\n`;
 

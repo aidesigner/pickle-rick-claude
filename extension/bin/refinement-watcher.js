@@ -49,7 +49,103 @@ function roleStatus(refinementDir, roleId) {
         return '⏳';
     }
 }
-// eslint-disable-next-line complexity, max-lines-per-function -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
+function initWorkers() {
+    const workers = new Map();
+    for (const role of ROLES) {
+        workers.set(role, { logPath: null, offset: 0, lineBuf: '', cycle: 0, done: false });
+    }
+    return workers;
+}
+function emitWorkerText(role, text, width, prefix) {
+    const { RESET: r, DIM: d } = Style;
+    const color = ROLE_COLORS[role];
+    const icon = ROLE_ICONS[role];
+    for (const line of text.split('\n')) {
+        const truncated = line.length > width ? line.slice(0, width - 3) + '…' : line;
+        process.stdout.write(`${prefix}${color}${icon} ${d}${role}${r} ${truncated}\n`);
+    }
+}
+function drainFinalWorkerLogs(workers, width) {
+    for (const role of ROLES) {
+        const ws = workers.get(role);
+        if (!ws.logPath)
+            continue;
+        drainStreamJsonLines(ws.logPath, ws.offset, ws.lineBuf, processLine, (text) => {
+            emitWorkerText(role, text, width, '');
+        });
+    }
+}
+function renderManifestSummary(manifest, startTime, sep) {
+    const { BOLD: b, RESET: r, DIM: d } = Style;
+    const elapsed = Math.floor((Date.now() - startTime) / 1000);
+    process.stdout.write(`\n${sep}\n`);
+    process.stdout.write(`${b}${Style.GREEN}🥒 Refinement Complete${r} ${d}(${formatTime(elapsed)})${r}\n`);
+    process.stdout.write(`   Cycles: ${manifest.cycles_completed}/${manifest.cycles_requested}\n`);
+    const manifestWorkers = Array.isArray(manifest.workers) ? manifest.workers : [];
+    for (const w of manifestWorkers) {
+        if (!w || typeof w !== 'object')
+            continue;
+        const worker = w;
+        const icon = worker.success ? '✅' : '❌';
+        process.stdout.write(`   ${icon} ${String(worker.role ?? 'unknown')}\n`);
+    }
+    process.stdout.write(`\n`);
+}
+function maybePrintStatusHeader(refinementDir, elapsed) {
+    const { RESET: r } = Style;
+    const statusParts = ROLES.map((role) => {
+        const status = roleStatus(refinementDir, role);
+        const color = ROLE_COLORS[role];
+        return `${status} ${color}${role}${r}`;
+    }).join(' │ ');
+    process.stdout.write(`\n${Style.DIM}[${formatTime(elapsed)}]${r} ${statusParts}\n`);
+}
+function drainRoleLog(refinementDir, role, ws, width, sep, lastRole) {
+    const discovered = discoverLatestWorkerLog(refinementDir, role);
+    if (!discovered)
+        return { anyOutput: false, lastRole };
+    let currentLastRole = lastRole;
+    if (discovered.logPath !== ws.logPath) {
+        ws.logPath = discovered.logPath;
+        ws.offset = 0;
+        ws.lineBuf = '';
+        ws.cycle = discovered.cycle;
+        const cycleLabel = ws.cycle > 1 ? ` (Cycle ${ws.cycle})` : '';
+        process.stdout.write(`\n${sep}\n${Style.BOLD}${ROLE_COLORS[role]}${ROLE_ICONS[role]} ${role}${cycleLabel}${Style.RESET}\n${sep}\n`);
+        currentLastRole = role;
+    }
+    const prevOffset = ws.offset;
+    const result = drainStreamJsonLines(ws.logPath, ws.offset, ws.lineBuf, processLine, (text) => {
+        if (currentLastRole !== role) {
+            currentLastRole = role;
+            process.stdout.write(`${ROLE_COLORS[role]}${Style.DIM}── ${ROLE_ICONS[role]} ${role} ──${Style.RESET}\n`);
+        }
+        for (const line of text.split('\n')) {
+            const truncated = line.length > width ? line.slice(0, width - 3) + '…' : line;
+            process.stdout.write(`  ${truncated}\n`);
+        }
+    });
+    ws.offset = result.offset;
+    ws.lineBuf = result.lineBuf;
+    if (!ws.done && roleStatus(refinementDir, role) === '✅') {
+        ws.done = true;
+        process.stdout.write(`  ${Style.GREEN}✅ ${role} analysis complete${Style.RESET}\n`);
+    }
+    return { anyOutput: result.offset > prevOffset, lastRole: currentLastRole };
+}
+async function shouldStopForInactiveSession(sessionDir, manifestPath) {
+    try {
+        const statePath = path.join(sessionDir, 'state.json');
+        const state = sm.read(statePath);
+        if (state.active !== false || state.step === 'prd')
+            return false;
+        await sleep(3000);
+        return !readRecoverableJsonObject(manifestPath);
+    }
+    catch {
+        return false;
+    }
+}
 async function main() {
     const sessionDir = process.argv[2];
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
@@ -67,10 +163,7 @@ async function main() {
     const width = () => Math.min((process.stdout.columns || 60) - 2, 80);
     const sep = () => `${d}${'─'.repeat(width())}${r}`;
     process.stdout.write(`\n${b}${m}🥒 Pickle Rick — Refinement Team Monitor${r}\n${sep()}\n`);
-    const workers = new Map();
-    for (const role of ROLES) {
-        workers.set(role, { logPath: null, offset: 0, lineBuf: '', cycle: 0, done: false });
-    }
+    const workers = initWorkers();
     const startTime = Date.now();
     let lastRole = null;
     let lastStatusPrint = 0;
@@ -79,35 +172,8 @@ async function main() {
         const manifest = readRecoverableJsonObject(manifestPath);
         if (manifest) {
             // Final drain of all logs
-            for (const role of ROLES) {
-                const ws = workers.get(role);
-                if (ws.logPath) {
-                    drainStreamJsonLines(ws.logPath, ws.offset, ws.lineBuf, processLine, (text) => {
-                        const color = ROLE_COLORS[role];
-                        const icon = ROLE_ICONS[role];
-                        for (const line of text.split('\n')) {
-                            const truncated = line.length > width() ? line.slice(0, width() - 3) + '…' : line;
-                            process.stdout.write(`${color}${icon} ${d}${role}${r} ${truncated}\n`);
-                        }
-                    });
-                }
-            }
-            try {
-                const elapsed = Math.floor((Date.now() - startTime) / 1000);
-                process.stdout.write(`\n${sep()}\n`);
-                process.stdout.write(`${b}${Style.GREEN}🥒 Refinement Complete${r} ${d}(${formatTime(elapsed)})${r}\n`);
-                process.stdout.write(`   Cycles: ${manifest.cycles_completed}/${manifest.cycles_requested}\n`);
-                const manifestWorkers = Array.isArray(manifest.workers) ? manifest.workers : [];
-                for (const w of manifestWorkers) {
-                    if (!w || typeof w !== 'object')
-                        continue;
-                    const worker = w;
-                    const icon = worker.success ? '✅' : '❌';
-                    process.stdout.write(`   ${icon} ${String(worker.role ?? 'unknown')}\n`);
-                }
-                process.stdout.write(`\n`);
-            }
-            catch { /* ignore */ }
+            drainFinalWorkerLogs(workers, width());
+            renderManifestSummary(manifest, startTime, sep());
             break;
         }
         // Wait for refinement directory to exist
@@ -123,72 +189,23 @@ async function main() {
         const elapsed = Math.floor((now - startTime) / 1000);
         if (now - lastStatusPrint >= 10_000) {
             lastStatusPrint = now;
-            const statusParts = ROLES.map((role) => {
-                const status = roleStatus(refinementDir, role);
-                const color = ROLE_COLORS[role];
-                return `${status} ${color}${role}${r}`;
-            }).join(' │ ');
-            process.stdout.write(`\n${d}[${formatTime(elapsed)}]${r} ${statusParts}\n`);
+            maybePrintStatusHeader(refinementDir, elapsed);
         }
         // Discover and drain each worker's log
         let anyOutput = false;
         for (const role of ROLES) {
             const ws = workers.get(role);
-            // Check for new/updated log file
-            const discovered = discoverLatestWorkerLog(refinementDir, role);
-            if (!discovered)
-                continue;
-            // New log file or new cycle
-            if (discovered.logPath !== ws.logPath) {
-                ws.logPath = discovered.logPath;
-                ws.offset = 0;
-                ws.lineBuf = '';
-                ws.cycle = discovered.cycle;
-                const cycleLabel = ws.cycle > 1 ? ` (Cycle ${ws.cycle})` : '';
-                process.stdout.write(`\n${sep()}\n${b}${ROLE_COLORS[role]}${ROLE_ICONS[role]} ${role}${cycleLabel}${r}\n${sep()}\n`);
-                lastRole = role;
-            }
-            // Drain new content
-            const prevOffset = ws.offset;
-            const result = drainStreamJsonLines(ws.logPath, ws.offset, ws.lineBuf, processLine, (text) => {
-                // Print role header if switching roles
-                if (lastRole !== role) {
-                    lastRole = role;
-                    const color = ROLE_COLORS[role];
-                    const icon = ROLE_ICONS[role];
-                    process.stdout.write(`${color}${d}── ${icon} ${role} ──${r}\n`);
-                }
-                for (const line of text.split('\n')) {
-                    const truncated = line.length > width() ? line.slice(0, width() - 3) + '…' : line;
-                    process.stdout.write(`  ${truncated}\n`);
-                }
-            });
-            ws.offset = result.offset;
-            ws.lineBuf = result.lineBuf;
-            if (result.offset > prevOffset)
+            const drained = drainRoleLog(refinementDir, role, ws, width(), sep(), lastRole);
+            lastRole = drained.lastRole;
+            if (drained.anyOutput)
                 anyOutput = true;
-            // Check if analysis file appeared
-            if (!ws.done && roleStatus(refinementDir, role) === '✅') {
-                ws.done = true;
-                process.stdout.write(`  ${Style.GREEN}✅ ${role} analysis complete${r}\n`);
-            }
         }
         // Fallback exit: if state.json shows session ended and no manifest ever appeared,
         // the spawner likely crashed. Don't hang forever.
-        try {
-            const statePath = path.join(sessionDir, 'state.json');
-            const state = sm.read(statePath);
-            if (state.active === false && state.step !== 'prd') {
-                // state advanced past prd (setup --paused sets step=prd, active=false)
-                // but no manifest — something went wrong
-                await sleep(3000);
-                if (!readRecoverableJsonObject(manifestPath)) {
-                    process.stdout.write(`\n${sep()}\n${Style.YELLOW}⚠️  Session inactive with no manifest — refinement may have failed.${r}\n`);
-                    break;
-                }
-            }
+        if (await shouldStopForInactiveSession(sessionDir, manifestPath)) {
+            process.stdout.write(`\n${sep()}\n${Style.YELLOW}⚠️  Session inactive with no manifest — refinement may have failed.${r}\n`);
+            break;
         }
-        catch { /* state.json missing or unreadable — keep waiting */ }
         await sleep(anyOutput ? 200 : 500);
     }
 }

@@ -708,6 +708,19 @@ function syncConfigFromState(config: SetupArgs, state: State) {
   config.promiseToken = state.completion_promise;
 }
 
+function emitResumeEpochReset(fullSessionPath: string, originalEpoch: number | null, state: State): void {
+  if (originalEpoch === null || state.start_time_epoch === originalEpoch) return;
+  try {
+    logActivity({
+      event: 'session_reconstructed_epoch_reset',
+      source: 'pickle',
+      session: path.basename(fullSessionPath),
+      original_epoch: originalEpoch,
+      new_epoch: state.start_time_epoch,
+    });
+  } catch { /* ignore — telemetry should not block resume */ }
+}
+
 function resumeSession(config: SetupArgs): SessionResult {
   const fullSessionPath = config.resumePath
     ? resolvePath(config.resumePath)
@@ -746,20 +759,7 @@ function resumeSession(config: SetupArgs): SessionResult {
     die(`state.json is missing or corrupt in ${fullSessionPath}`);
   }
 
-  // AC-LPB-05: emit activity event so monitor/standup/metrics consumers can
-  // distinguish a fresh launch from a reconstructed-after-crash run. Best-effort —
-  // a logging failure should not abort an otherwise-valid resume.
-  if (originalEpoch !== null && state.start_time_epoch !== originalEpoch) {
-    try {
-      logActivity({
-        event: 'session_reconstructed_epoch_reset',
-        source: 'pickle',
-        session: path.basename(fullSessionPath),
-        original_epoch: originalEpoch,
-        new_epoch: state.start_time_epoch,
-      });
-    } catch { /* ignore — telemetry should not block resume */ }
-  }
+  emitResumeEpochReset(fullSessionPath, originalEpoch, state);
 
   syncConfigFromState(config, state);
   return {

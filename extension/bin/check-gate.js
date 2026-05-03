@@ -31,7 +31,89 @@ function statusToExitCode(status) {
         return 3;
     return 1;
 }
-// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
+function validateKnownFlags(argv) {
+    for (let i = 0; i < argv.length; i++) {
+        const arg = argv[i];
+        if (!arg.startsWith('-'))
+            continue;
+        if (!ALL_FLAGS.has(arg))
+            return `Unknown flag: ${arg}\n${USAGE}`;
+        if (VALUE_FLAGS.has(arg))
+            i++;
+    }
+    return null;
+}
+function parseRequiredCheckGateArgs(argv) {
+    const mode = parseFlag(argv, '--mode');
+    const scope = parseFlag(argv, '--scope');
+    const checks = parseFlag(argv, '--checks');
+    const workingDir = parseFlag(argv, '--working-dir');
+    if (!mode)
+        return { ok: false, error: `--mode is required\n${USAGE}` };
+    if (!VALID_MODES.has(mode))
+        return { ok: false, error: `--mode must be baseline|strict, got: ${mode}` };
+    if (!scope)
+        return { ok: false, error: `--scope is required\n${USAGE}` };
+    if (!VALID_SCOPES.has(scope))
+        return { ok: false, error: `--scope must be full|changed, got: ${scope}` };
+    if (!checks)
+        return { ok: false, error: `--checks is required\n${USAGE}` };
+    if (!workingDir)
+        return { ok: false, error: `--working-dir is required\n${USAGE}` };
+    const parsedChecks = checks.split(',').map(c => c.trim()).filter(Boolean);
+    const invalidChecks = parsedChecks.filter(c => !VALID_CHECKS.has(c));
+    if (invalidChecks.length > 0) {
+        return {
+            ok: false,
+            error: `--checks contains invalid values: ${invalidChecks.join(', ')}. Valid: typecheck,lint,tests`,
+        };
+    }
+    return {
+        ok: true,
+        parsed: {
+            mode: mode,
+            scope: scope,
+            checks: parsedChecks,
+            workingDir,
+            baselinePath: parseFlag(argv, '--baseline-path'),
+            since: parseFlag(argv, '--since'),
+            allowedPathsFile: parseFlag(argv, '--allowed-paths-file'),
+        },
+    };
+}
+function readAllowedPaths(allowedPathsFile) {
+    if (!allowedPathsFile)
+        return { ok: true };
+    let raw;
+    try {
+        raw = readRecoverableJsonObject(allowedPathsFile);
+    }
+    catch (e) {
+        return { ok: false, error: `Failed to read --allowed-paths-file ${allowedPathsFile}: ${safeErrorMessage(e)}` };
+    }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        return { ok: false, error: `--allowed-paths-file ${allowedPathsFile}: expected a JSON object with an 'allowed_paths' array` };
+    }
+    const field = raw.allowed_paths;
+    if (!Array.isArray(field)) {
+        return { ok: false, error: `--allowed-paths-file ${allowedPathsFile}: 'allowed_paths' is missing or not an array` };
+    }
+    if (!field.every((p) => typeof p === 'string')) {
+        return { ok: false, error: `--allowed-paths-file ${allowedPathsFile}: 'allowed_paths' must contain only strings` };
+    }
+    return { ok: true, allowedPaths: field };
+}
+function renderGateResult(result, out, jsonMode) {
+    if (jsonMode) {
+        out(JSON.stringify(result));
+        return;
+    }
+    const badge = result.status === 'green' ? 'GREEN' : result.status === 'red' ? 'RED' : 'WARN';
+    out(`[check-gate] ${badge} status=${result.status} failures=${result.failures.length} elapsed=${result.elapsed_ms}ms`);
+    for (const f of result.failures) {
+        out(`  [${f.check}] ${f.file}:${f.line} ${f.ruleOrCode} — ${f.message.slice(0, 120)}`);
+    }
+}
 export async function checkGateMain(opts) {
     const { argv, runGateFn = runGate } = opts;
     const out = opts.stdout ?? ((msg) => process.stdout.write(msg + '\n'));
@@ -41,108 +123,38 @@ export async function checkGateMain(opts) {
         out(USAGE);
         return 0;
     }
-    // Detect unknown flags
-    for (let i = 0; i < argv.length; i++) {
-        const arg = argv[i];
-        if (!arg.startsWith('-'))
-            continue;
-        if (!ALL_FLAGS.has(arg)) {
-            err(`Unknown flag: ${arg}\n${USAGE}`);
-            return 1;
-        }
-        if (VALUE_FLAGS.has(arg))
-            i++; // skip value
-    }
-    const mode = parseFlag(argv, '--mode');
-    const scope = parseFlag(argv, '--scope');
-    const checks = parseFlag(argv, '--checks');
-    const workingDir = parseFlag(argv, '--working-dir');
-    const baselinePath = parseFlag(argv, '--baseline-path');
-    const since = parseFlag(argv, '--since');
-    const allowedPathsFile = parseFlag(argv, '--allowed-paths-file');
-    if (!mode) {
-        err(`--mode is required\n${USAGE}`);
+    const flagError = validateKnownFlags(argv);
+    if (flagError) {
+        err(flagError);
         return 1;
     }
-    if (!VALID_MODES.has(mode)) {
-        err(`--mode must be baseline|strict, got: ${mode}`);
+    const parsedArgs = parseRequiredCheckGateArgs(argv);
+    if (!parsedArgs.ok || !parsedArgs.parsed) {
+        err(parsedArgs.error ?? USAGE);
         return 1;
     }
-    if (!scope) {
-        err(`--scope is required\n${USAGE}`);
+    const allowedPathsResult = readAllowedPaths(parsedArgs.parsed.allowedPathsFile);
+    if (!allowedPathsResult.ok) {
+        err(allowedPathsResult.error);
         return 1;
-    }
-    if (!VALID_SCOPES.has(scope)) {
-        err(`--scope must be full|changed, got: ${scope}`);
-        return 1;
-    }
-    if (!checks) {
-        err(`--checks is required\n${USAGE}`);
-        return 1;
-    }
-    if (!workingDir) {
-        err(`--working-dir is required\n${USAGE}`);
-        return 1;
-    }
-    const parsedChecks = checks.split(',').map(c => c.trim()).filter(Boolean);
-    const invalidChecks = parsedChecks.filter(c => !VALID_CHECKS.has(c));
-    if (invalidChecks.length > 0) {
-        err(`--checks contains invalid values: ${invalidChecks.join(', ')}. Valid: typecheck,lint,tests`);
-        return 1;
-    }
-    let allowedPaths;
-    if (allowedPathsFile) {
-        let raw;
-        try {
-            raw = readRecoverableJsonObject(allowedPathsFile);
-        }
-        catch (e) {
-            err(`Failed to read --allowed-paths-file ${allowedPathsFile}: ${safeErrorMessage(e)}`);
-            return 1;
-        }
-        if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-            err(`--allowed-paths-file ${allowedPathsFile}: expected a JSON object with an 'allowed_paths' array`);
-            return 1;
-        }
-        const field = raw.allowed_paths;
-        if (!Array.isArray(field)) {
-            err(`--allowed-paths-file ${allowedPathsFile}: 'allowed_paths' is missing or not an array`);
-            return 1;
-        }
-        if (!field.every((p) => typeof p === 'string')) {
-            err(`--allowed-paths-file ${allowedPathsFile}: 'allowed_paths' must contain only strings`);
-            return 1;
-        }
-        allowedPaths = field;
     }
     let result;
     try {
         result = await runGateFn({
-            workingDir,
-            mode: mode,
-            scope: scope,
-            checks: parsedChecks,
-            baselinePath,
-            since,
-            allowedPaths,
+            workingDir: parsedArgs.parsed.workingDir,
+            mode: parsedArgs.parsed.mode,
+            scope: parsedArgs.parsed.scope,
+            checks: parsedArgs.parsed.checks,
+            baselinePath: parsedArgs.parsed.baselinePath,
+            since: parsedArgs.parsed.since,
+            allowedPaths: allowedPathsResult.allowedPaths,
         });
     }
     catch (e) {
         err(`check-gate internal error: ${safeErrorMessage(e)}`);
         return 1;
     }
-    if (jsonMode) {
-        out(JSON.stringify(result));
-    }
-    else {
-        const badge = result.status === 'green' ? 'GREEN' : result.status === 'red' ? 'RED' : 'WARN';
-        out(`[check-gate] ${badge} status=${result.status} failures=${result.failures.length} elapsed=${result.elapsed_ms}ms`);
-        if (result.failures.length > 0) {
-            for (const f of result.failures) {
-                out(`  [${f.check}] ${f.file}:${f.line} ${f.ruleOrCode} — ${f.message.slice(0, 120)}`);
-            }
-        }
-    }
+    renderGateResult(result, out, jsonMode);
     return statusToExitCode(result.status);
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'check-gate.js') {

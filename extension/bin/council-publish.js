@@ -204,19 +204,8 @@ function isMarkerPublished(p) {
         return false;
     }
 }
-// eslint-disable-next-line complexity, max-lines-per-function -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
-export default function publishCouncilStack(sessionRoot, opts = {}) {
-    const ghCommand = opts.ghCommand || 'gh';
-    const dryRun = !!opts.dryRun;
-    const ghTimeoutOverride = opts.ghTimeoutMs;
-    const authTimeoutMs = ghTimeoutOverride ?? 15_000;
-    const prListTimeoutMs = ghTimeoutOverride ?? 30_000;
-    const prCommentTimeoutMs = ghTimeoutOverride ?? 30_000;
-    if (!fs.existsSync(sessionRoot)) {
-        throw new CouncilPublishError(`session_root does not exist: ${sessionRoot}`);
-    }
+function loadCouncilStack(sessionRoot) {
     const stackPath = path.join(sessionRoot, 'council-stack.json');
-    let stack;
     try {
         const parsedStack = readRecoverableJsonObject(stackPath);
         if (!parsedStack) {
@@ -225,13 +214,17 @@ export default function publishCouncilStack(sessionRoot, opts = {}) {
             }
             throw new CouncilPublishError('failed to parse council-stack.json: invalid JSON');
         }
-        stack = parsedStack;
+        const stack = parsedStack;
+        validateCouncilStack(stack);
+        return stack;
     }
     catch (err) {
         if (err instanceof CouncilPublishError)
             throw err;
         throw new CouncilPublishError(`failed to parse council-stack.json: ${safeErrorMessage(err)}`);
     }
+}
+function validateCouncilStack(stack) {
     const { branches, trunk, repo_path } = stack;
     if (!Array.isArray(branches) || typeof trunk !== 'string' || typeof repo_path !== 'string') {
         throw new CouncilPublishError('council-stack.json missing required fields (branches, trunk, repo_path)');
@@ -249,186 +242,149 @@ export default function publishCouncilStack(sessionRoot, opts = {}) {
     if (!repoStat.isDirectory()) {
         throw new CouncilPublishError(`council-stack.json: repo_path is not a directory: ${repo_path}`);
     }
+}
+function ensurePublishDirs(sessionRoot) {
     const commentsDir = path.join(sessionRoot, 'council-comments');
     fs.mkdirSync(commentsDir, { recursive: true });
     const publishedDir = path.join(sessionRoot, '.published');
     fs.mkdirSync(publishedDir, { recursive: true });
     const logPath = path.join(sessionRoot, 'publish.log');
+    return { commentsDir, publishedDir, logPath };
+}
+function checkGhAvailable(ghCommand, authTimeoutMs) {
     // gh availability check. `timeout` guards against a hang on a machine where
     // `gh` is installed but wedged (stuck keyring prompt, dead network on first
     // auth-refresh attempt) — without it, the entire publisher blocks at session
     // end with no log output. Treated the same as any other auth failure.
-    let ghAvailable = true;
     try {
         execFileSync(ghCommand, ['auth', 'status'], { stdio: 'pipe', timeout: authTimeoutMs });
+        return true;
     }
     catch {
-        ghAvailable = false;
+        return false;
     }
+}
+function recordPublishResult(results, logFd, result) {
+    results.push(result);
+    appendPublishLog(logFd, result);
+}
+function countPublishResult(report, result) {
+    if (result.outcome === 'posted')
+        report.posted++;
+    else if (result.outcome === 'failed')
+        report.failed++;
+    else
+        report.skipped++;
+}
+function writeBranchBody(sessionRoot, branch, bodyPath, ctx) {
+    const branchEntry = ctx.directive.branches.find(b => b.name === branch);
+    if (!branchEntry) {
+        return {
+            branch,
+            outcome: 'failed',
+            error: 'council-directive.json has no entry for this branch — directive/stack mismatch',
+        };
+    }
+    const body = composeBody({
+        sessionRoot,
+        branch,
+        finalRound: ctx.finalRound,
+        codexEnabled: ctx.directive.codex_enabled,
+        findings: branchEntry.findings,
+        trapDoors: ctx.directive.trap_doors,
+        roundOutcomes: ctx.roundOutcomes,
+    });
+    fs.writeFileSync(bodyPath, body);
+    return null;
+}
+function pickPrNumber(rows) {
+    rows.sort((a, b) => {
+        if (a.state === 'OPEN' && b.state !== 'OPEN')
+            return -1;
+        if (b.state === 'OPEN' && a.state !== 'OPEN')
+            return 1;
+        return (b.updatedAt || '').localeCompare(a.updatedAt || '');
+    });
+    const picked = rows[0]?.number;
+    return Number.isFinite(picked) && picked > 0 ? picked : undefined;
+}
+function resolvePrNumber(branch, bodyPath, ctx) {
+    try {
+        const out = execFileSync(ctx.ghCommand, ['pr', 'list', '--head', branch, '--state', 'all', '--json', 'number,state,updatedAt'], { cwd: ctx.repoPath, stdio: 'pipe', encoding: 'utf8', timeout: ctx.prListTimeoutMs }).trim();
+        const parsed = parsePrList(out);
+        if (!parsed.ok) {
+            return { branch, outcome: 'failed', error: `pr list parse: ${parsed.reason}`, body_path: bodyPath };
+        }
+        const prNumber = pickPrNumber(parsed.rows);
+        return prNumber ?? { branch, outcome: 'skipped_no_pr', body_path: bodyPath };
+    }
+    catch (err) {
+        return { branch, outcome: 'failed', error: `pr list: ${safeErrorMessage(err)}`, body_path: bodyPath };
+    }
+}
+function publishBranch(sessionRoot, branch, ctx) {
+    const slug = slugify(branch);
+    const bodyPath = path.join(ctx.commentsDir, `${slug}.md`);
+    const markerPath = path.join(ctx.publishedDir, slug);
+    const bodyFailure = writeBranchBody(sessionRoot, branch, bodyPath, ctx);
+    if (bodyFailure)
+        return bodyFailure;
+    if (!ctx.ghAvailable)
+        return { branch, outcome: 'skipped_no_gh', body_path: bodyPath };
+    if (isMarkerPublished(markerPath))
+        return { branch, outcome: 'skipped_already_published', body_path: bodyPath };
+    const resolved = resolvePrNumber(branch, bodyPath, ctx);
+    if (typeof resolved !== 'number')
+        return resolved;
+    if (ctx.dryRun)
+        return { branch, outcome: 'posted', pr_number: resolved, body_path: bodyPath };
+    try {
+        execFileSync(ctx.ghCommand, ['pr', 'comment', String(resolved), '--body-file', bodyPath], { cwd: ctx.repoPath, stdio: 'pipe', timeout: ctx.prCommentTimeoutMs });
+        fs.writeFileSync(markerPath, new Date().toISOString());
+        return { branch, outcome: 'posted', pr_number: resolved, body_path: bodyPath };
+    }
+    catch (err) {
+        return { branch, outcome: 'failed', pr_number: resolved, error: `pr comment: ${safeErrorMessage(err)}`, body_path: bodyPath };
+    }
+}
+export default function publishCouncilStack(sessionRoot, opts = {}) {
+    const ghCommand = opts.ghCommand || 'gh';
+    const ghTimeoutOverride = opts.ghTimeoutMs;
+    const authTimeoutMs = ghTimeoutOverride ?? 15_000;
+    if (!fs.existsSync(sessionRoot)) {
+        throw new CouncilPublishError(`session_root does not exist: ${sessionRoot}`);
+    }
+    const stack = loadCouncilStack(sessionRoot);
+    const { commentsDir, publishedDir, logPath } = ensurePublishDirs(sessionRoot);
     const roundOutcomes = extractRoundOutcomes(path.join(sessionRoot, 'council-of-ricks-summary.md'));
-    const finalRound = roundOutcomes.length;
-    const directive = readDirectiveJson(sessionRoot);
-    const results = [];
-    let posted = 0;
-    let skipped = 0;
-    let failed = 0;
+    const ctx = {
+        ghCommand,
+        dryRun: !!opts.dryRun,
+        prListTimeoutMs: ghTimeoutOverride ?? 30_000,
+        prCommentTimeoutMs: ghTimeoutOverride ?? 30_000,
+        ghAvailable: checkGhAvailable(ghCommand, authTimeoutMs),
+        commentsDir,
+        publishedDir,
+        repoPath: stack.repo_path,
+        directive: readDirectiveJson(sessionRoot),
+        roundOutcomes,
+        finalRound: roundOutcomes.length,
+    };
+    const report = { session_root: sessionRoot, results: [], posted: 0, skipped: 0, failed: 0 };
     const logFd = fs.openSync(logPath, 'a');
     try {
-        for (const branch of branches) {
-            if (branch === trunk)
+        for (const branch of stack.branches) {
+            if (branch === stack.trunk)
                 continue;
-            const slug = slugify(branch);
-            const bodyPath = path.join(commentsDir, `${slug}.md`);
-            const markerPath = path.join(publishedDir, slug);
-            // Fail-fast on directive/stack parity drift. A branch present in
-            // council-stack.json but absent from directive.branches means the
-            // council agent's fan-out dropped it (shard timeout, write error,
-            // sharded run skipped a branch). Silently defaulting to empty findings
-            // would post a misleading "No findings for this branch at session
-            // close." comment AND stamp the .published marker, permanently hiding
-            // the drift — same silent-failure class as the spawnSync-no-timeout
-            // trap doors (see extension/CLAUDE.md). Classify as failed so the
-            // operator sees a real signal and a fixed-directive re-run can post.
-            const branchEntry = directive.branches.find(b => b.name === branch);
-            if (!branchEntry) {
-                const r = {
-                    branch,
-                    outcome: 'failed',
-                    error: 'council-directive.json has no entry for this branch — directive/stack mismatch',
-                };
-                results.push(r);
-                failed++;
-                appendPublishLog(logFd, r);
-                continue;
-            }
-            const findings = branchEntry.findings;
-            const body = composeBody({
-                sessionRoot,
-                branch,
-                finalRound,
-                codexEnabled: directive.codex_enabled,
-                findings,
-                trapDoors: directive.trap_doors,
-                roundOutcomes,
-            });
-            fs.writeFileSync(bodyPath, body);
-            if (!ghAvailable) {
-                const r = { branch, outcome: 'skipped_no_gh', body_path: bodyPath };
-                results.push(r);
-                skipped++;
-                appendPublishLog(logFd, r);
-                continue;
-            }
-            if (isMarkerPublished(markerPath)) {
-                const r = { branch, outcome: 'skipped_already_published', body_path: bodyPath };
-                results.push(r);
-                skipped++;
-                appendPublishLog(logFd, r);
-                continue;
-            }
-            // Resolve PR number. Query all states (OPEN + MERGED + CLOSED) so re-runs
-            // on a merged stack still post. When multiple PRs share a head branch,
-            // prefer OPEN, then most-recently-updated — deterministic tie-break.
-            let prNumber;
-            try {
-                // `timeout` is required: without it, a stalled TLS handshake, DNS hang,
-                // or hung GitHub API request blocks the publisher indefinitely — there
-                // is no other signal surface (no parent watchdog calls into this loop).
-                const out = execFileSync(ghCommand, ['pr', 'list', '--head', branch, '--state', 'all', '--json', 'number,state,updatedAt'], { cwd: repo_path, stdio: 'pipe', encoding: 'utf8', timeout: prListTimeoutMs }).trim();
-                const parsed = parsePrList(out);
-                if (!parsed.ok) {
-                    // Unparseable `gh` output must NOT masquerade as "no PR found".
-                    // Classify as failure so the operator sees a real signal.
-                    const r = {
-                        branch,
-                        outcome: 'failed',
-                        error: `pr list parse: ${parsed.reason}`,
-                        body_path: bodyPath,
-                    };
-                    results.push(r);
-                    failed++;
-                    appendPublishLog(logFd, r);
-                    continue;
-                }
-                const prs = parsed.rows;
-                if (prs.length === 0) {
-                    const r = { branch, outcome: 'skipped_no_pr', body_path: bodyPath };
-                    results.push(r);
-                    skipped++;
-                    appendPublishLog(logFd, r);
-                    continue;
-                }
-                prs.sort((a, b) => {
-                    if (a.state === 'OPEN' && b.state !== 'OPEN')
-                        return -1;
-                    if (b.state === 'OPEN' && a.state !== 'OPEN')
-                        return 1;
-                    return (b.updatedAt || '').localeCompare(a.updatedAt || '');
-                });
-                const picked = prs[0].number;
-                if (!Number.isFinite(picked) || picked <= 0) {
-                    const r = { branch, outcome: 'skipped_no_pr', body_path: bodyPath };
-                    results.push(r);
-                    skipped++;
-                    appendPublishLog(logFd, r);
-                    continue;
-                }
-                prNumber = picked;
-            }
-            catch (err) {
-                const r = {
-                    branch,
-                    outcome: 'failed',
-                    error: `pr list: ${safeErrorMessage(err)}`,
-                    body_path: bodyPath,
-                };
-                results.push(r);
-                failed++;
-                appendPublishLog(logFd, r);
-                continue;
-            }
-            if (dryRun) {
-                const r = { branch, outcome: 'posted', pr_number: prNumber, body_path: bodyPath };
-                results.push(r);
-                posted++;
-                appendPublishLog(logFd, r);
-                continue;
-            }
-            // Post the comment. `timeout` matches pr-list: a stalled write must not
-            // deadlock the session. Node raises on timeout; the catch below classifies
-            // the outcome as `failed` with the underlying error message intact.
-            try {
-                execFileSync(ghCommand, ['pr', 'comment', String(prNumber), '--body-file', bodyPath], { cwd: repo_path, stdio: 'pipe', timeout: prCommentTimeoutMs });
-                fs.writeFileSync(markerPath, new Date().toISOString());
-                const r = { branch, outcome: 'posted', pr_number: prNumber, body_path: bodyPath };
-                results.push(r);
-                posted++;
-                appendPublishLog(logFd, r);
-            }
-            catch (err) {
-                const r = {
-                    branch,
-                    outcome: 'failed',
-                    pr_number: prNumber,
-                    error: `pr comment: ${safeErrorMessage(err)}`,
-                    body_path: bodyPath,
-                };
-                results.push(r);
-                failed++;
-                appendPublishLog(logFd, r);
-            }
+            const result = publishBranch(sessionRoot, branch, ctx);
+            recordPublishResult(report.results, logFd, result);
+            countPublishResult(report, result);
         }
-        const warnings = [];
-        // Trunk-only stack: no non-trunk branches to publish to. Surface as a
-        // warning so `posted=0/skipped=0/failed=0` doesn't look like success.
-        if (results.length === 0) {
+        if (report.results.length === 0) {
             const msg = 'council-stack.json has no non-trunk branches; nothing to publish';
-            warnings.push(msg);
+            report.warnings = [msg];
             appendPublishLogRaw(logFd, { level: 'warn', message: msg });
         }
-        const report = { session_root: sessionRoot, results, posted, skipped, failed };
-        if (warnings.length > 0)
-            report.warnings = warnings;
         return report;
     }
     finally {

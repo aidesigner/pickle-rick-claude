@@ -590,6 +590,15 @@ const STALL_RECOVERY_ACTIONS = {
     circular_revert: 'reset_to_baseline',
     external_blocker: 'halt',
 };
+function hasPreviousRevertForSameSha(input) {
+    return (input.history ?? []).some(entry => entry.action === 'revert' && entry.pre_iteration_sha === input.preIterSha);
+}
+function isNoProgressStall(input) {
+    return input.noCommitClass === 'stall' &&
+        !!input.preIterSha &&
+        !!input.postIterSha &&
+        input.preIterSha === input.postIterSha;
+}
 export function classifyStall(input) {
     if (input.outcome?.timedOut === true || input.exitResult?.type === 'timeout') {
         return { category: 'worker_timeout', recovery_action: STALL_RECOVERY_ACTIONS.worker_timeout };
@@ -598,15 +607,11 @@ export function classifyStall(input) {
         return { category: 'external_blocker', recovery_action: STALL_RECOVERY_ACTIONS.external_blocker };
     }
     if (input.metricClassification === 'regressed') {
-        const previousRevertForSameSha = (input.history ?? []).some(entry => entry.action === 'revert' && entry.pre_iteration_sha === input.preIterSha);
-        if (previousRevertForSameSha) {
+        if (hasPreviousRevertForSameSha(input)) {
             return { category: 'circular_revert', recovery_action: STALL_RECOVERY_ACTIONS.circular_revert };
         }
     }
-    if (input.noCommitClass === 'stall' &&
-        input.preIterSha &&
-        input.postIterSha &&
-        input.preIterSha === input.postIterSha) {
+    if (isNoProgressStall(input)) {
         return { category: 'tests_red_no_progress', recovery_action: STALL_RECOVERY_ACTIONS.tests_red_no_progress };
     }
     return null;
@@ -1392,7 +1397,7 @@ export async function handleNoCommitStall(state, ctx, iterLogFile) {
     emitStallClassification(ctx, classifyStall({
         preIterSha: ctx.preIterSha,
         postIterSha: ctx.postIterSha,
-        history: state.convergence.history,
+        history: state.convergence?.history,
         noCommitClass,
     }));
     replaceMicroverseState(state, recordStall(state));
@@ -1405,13 +1410,21 @@ export async function handleNoCommitStall(state, ctx, iterLogFile) {
     return null;
 }
 function autoRescueDirtyTree(ctx) {
-    if (!_deps.isWorkingTreeDirty(ctx.workingDir))
+    let dirty;
+    try {
+        dirty = _deps.isWorkingTreeDirty(ctx.workingDir);
+    }
+    catch (err) {
+        ctx.log(`Auto-commit skipped: ${safeErrorMessage(err)}`);
         return;
-    ctx.log('No commits but dirty tree detected — auto-committing worker changes');
+    }
+    if (!dirty)
+        return;
     if (!fs.existsSync(path.join(ctx.workingDir, '.git'))) {
         ctx.log(`Auto-commit skipped: not a git repository (${ctx.workingDir})`);
         return;
     }
+    ctx.log('No commits but dirty tree detected — auto-committing worker changes');
     try {
         stageAutoCommitPaths(ctx.workingDir);
         execFileSync('git', ['commit', '-m', `microverse: auto-commit (worker timed out before committing)`], { cwd: ctx.workingDir, timeout: 30_000 });
@@ -1555,6 +1568,25 @@ async function handleMetricMode(state, baseline, ctx, iterLogFile) {
     ctx.log(`Converged after ${ctx.iteration} iterations (${targetHit ? `target=${state.convergence_target} reached` : `stall_counter=${state.convergence.stall_counter}`})`);
     return 'converged';
 }
+async function handleManagerErrorOutcome(ctx) {
+    let postState = ctx.currentRunnerState;
+    try {
+        postState = readRunnerState(ctx.statePath);
+    }
+    catch { /* fall back to current runner state */ }
+    const decision = evaluateCodexManagerRelaunch(postState, collectTickets(ctx.sessionDir), null);
+    if (decision.shouldRelaunch) {
+        const relaunchBackend = resolveBackend(postState);
+        ctx.log(`${relaunchBackend} manager subprocess errored with ${decision.pendingCount} ticket(s) still pending — ` +
+            `relaunching (count ${decision.nextRelaunchCount}/${Defaults.CODEX_MANAGER_RELAUNCH_CAP}).`);
+        recordCodexManagerRelaunch(ctx.statePath, ctx.sessionDir, decision, ctx.iteration, ctx.log);
+        ctx.currentRunnerState = postState;
+        await _deps.sleep(1000);
+        return 'continue';
+    }
+    ctx.log('Subprocess error. Exiting loop.');
+    return 'error';
+}
 async function handleIterationOutcome(state, baseline, ctx, outcome) {
     const iterLogFile = path.join(ctx.sessionDir, `tmux_iteration_${ctx.iteration}.log`);
     const exitResult = classifyIterationExit(outcome.completion, iterLogFile, {
@@ -1572,7 +1604,7 @@ async function handleIterationOutcome(state, baseline, ctx, outcome) {
             exitResult,
             preIterSha: ctx.preIterSha,
             postIterSha: ctx.postIterSha,
-            history: state.convergence.history,
+            history: state.convergence?.history,
         });
         emitStallClassification(ctx, stallClassification);
     }
@@ -1590,23 +1622,7 @@ async function handleIterationOutcome(state, baseline, ctx, outcome) {
         return 'error';
     }
     if (outcome.completion === 'error') {
-        let postState = ctx.currentRunnerState;
-        try {
-            postState = readRunnerState(ctx.statePath);
-        }
-        catch { /* fall back to current runner state */ }
-        const decision = evaluateCodexManagerRelaunch(postState, collectTickets(ctx.sessionDir), null);
-        if (decision.shouldRelaunch) {
-            const relaunchBackend = resolveBackend(postState);
-            ctx.log(`${relaunchBackend} manager subprocess errored with ${decision.pendingCount} ticket(s) still pending — ` +
-                `relaunching (count ${decision.nextRelaunchCount}/${Defaults.CODEX_MANAGER_RELAUNCH_CAP}).`);
-            recordCodexManagerRelaunch(ctx.statePath, ctx.sessionDir, decision, ctx.iteration, ctx.log);
-            ctx.currentRunnerState = postState;
-            await _deps.sleep(1000);
-            return 'continue';
-        }
-        ctx.log('Subprocess error. Exiting loop.');
-        return 'error';
+        return handleManagerErrorOutcome(ctx);
     }
     if (outcome.completion === 'inactive') {
         ctx.log('Session deactivated. Exiting loop.');
