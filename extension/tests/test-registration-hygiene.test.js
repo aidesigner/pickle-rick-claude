@@ -48,10 +48,14 @@ function discoverTestFiles(dir) {
     .sort();
 }
 
+function readPackageJson() {
+  return JSON.parse(readFileSync(PKG_PATH, 'utf8'));
+}
+
 test('no test file is silently unregistered', () => {
   const onDisk = discoverTestFiles(__dirname);
 
-  const pkg = JSON.parse(readFileSync(PKG_PATH, 'utf8'));
+  const pkg = readPackageJson();
   const registeredSet = new Set(
     pkg.scripts.test
       .split(/\s+/)
@@ -65,6 +69,13 @@ test('no test file is silently unregistered', () => {
     [],
     `Unregistered test files (add to package.json scripts.test): ${missing.join(', ')}`,
   );
+});
+
+test('test:fast runs tier audit as npm pre-step', () => {
+  const pkg = readPackageJson();
+
+  assert.equal(pkg.scripts['pretest:fast'], 'bash scripts/audit-test-tiers.sh');
+  assert.ok(pkg.scripts['test:fast'], 'missing package.json scripts.test:fast');
 });
 
 test('PSD-T9 trap-door catalog entries are present', () => {
