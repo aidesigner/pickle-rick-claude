@@ -90,6 +90,18 @@ function bundleArtifact(acId, overrides = {}) {
   };
 }
 
+function assertBundleArtifactMetadata(value, acId) {
+  assert.equal(value.ac_id, acId);
+  assert.equal(typeof value.pass, 'boolean');
+  assert.match(value.checked_at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[.]\d{3}Z$/);
+  assert.equal(typeof value.checker, 'string');
+  assert.equal(typeof value.checker_version, 'string');
+  assert.equal(value.evidence && typeof value.evidence, 'object');
+  assert.equal(Array.isArray(value.evidence), false);
+  assert.equal(value.failure_reason === null || typeof value.failure_reason === 'string', true);
+  assert.equal(value.remediation_hint === null || typeof value.remediation_hint === 'string', true);
+}
+
 test('integration.downgrade-e2e refuses lower release before install and propagates exit', () => {
   const root = tmpRoot('lockdown-downgrade-e2e-');
   try {
@@ -275,7 +287,9 @@ test('integration.verify-bundle-e2e returns pass, fail, and inconclusive exit co
     const passRoot = path.join(root, 'pass');
     fs.mkdirSync(path.join(passRoot, 'bundle'), { recursive: true });
     for (const acId of EXPECTED_BUNDLE_AC_IDS) {
-      writeJson(path.join(passRoot, 'bundle', `${acId.toLowerCase()}.json`), bundleArtifact(acId));
+      const artifact = bundleArtifact(acId);
+      assertBundleArtifactMetadata(artifact, acId);
+      writeJson(path.join(passRoot, 'bundle', `${acId.toLowerCase()}.json`), artifact);
     }
     assert.equal(verifyBundle({ repoRoot: passRoot }).exitCode, 0);
 

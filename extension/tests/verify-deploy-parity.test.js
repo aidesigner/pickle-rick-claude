@@ -66,6 +66,22 @@ function runSampler(fixture) {
   });
 }
 
+function assertSampleShape(sample, expectedKeys) {
+  assert.deepEqual(Object.keys(sample).sort(), expectedKeys.sort());
+  assert.match(sample.ts, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+  assert.equal(typeof sample.src_version, 'string');
+  assert.equal(typeof sample.dep_version, 'string');
+  assert.equal(typeof sample.hashes_match, 'boolean');
+}
+
+function assertDriftShape(drift, key) {
+  assert.equal(drift && typeof drift, 'object');
+  assert.equal(Array.isArray(drift), false);
+  assert.deepEqual(Object.keys(drift).sort(), [key]);
+  assert.equal(typeof drift[key].baseline, 'string');
+  assert.equal(typeof drift[key].actual, 'string');
+}
+
 describe('verify-deploy-parity sampler', () => {
   test('verify-deploy-parity.emits-jsonl emits one JSON-line with required fields', () => {
     const fixture = makeFixture();
@@ -76,11 +92,10 @@ describe('verify-deploy-parity sampler', () => {
       const lines = result.stdout.trim().split('\n');
       assert.equal(lines.length, 1);
       const parsed = JSON.parse(lines[0]);
-      assert.match(parsed.ts, /^\d{4}-\d{2}-\d{2}T/);
+      assertSampleShape(parsed, ['dep_version', 'hashes_match', 'src_version', 'ts']);
       assert.equal(parsed.src_version, '1.2.3');
       assert.equal(parsed.dep_version, '1.2.3');
       assert.equal(parsed.hashes_match, true);
-      assert.equal('drift' in parsed, false);
     } finally {
       rmSync(fixture.dir, { recursive: true, force: true });
     }
@@ -93,7 +108,9 @@ describe('verify-deploy-parity sampler', () => {
       const result = runSampler(fixture);
       assert.equal(result.status, 0, result.stderr);
       const parsed = JSON.parse(result.stdout);
+      assertSampleShape(parsed, ['dep_version', 'drift', 'hashes_match', 'src_version', 'ts']);
       assert.equal(parsed.hashes_match, false);
+      assertDriftShape(parsed.drift, 'dep_version');
       assert.deepEqual(parsed.drift.dep_version, { baseline: '1.2.3', actual: '9.9.9' });
     } finally {
       rmSync(fixture.dir, { recursive: true, force: true });
@@ -107,9 +124,9 @@ describe('verify-deploy-parity sampler', () => {
       const result = runSampler(fixture);
       assert.equal(result.status, 0, result.stderr);
       const parsed = JSON.parse(result.stdout);
+      assertSampleShape(parsed, ['dep_version', 'drift', 'hashes_match', 'src_version', 'ts']);
       assert.equal(parsed.hashes_match, false);
-      assert.equal(typeof parsed.drift['state-manager.js'].baseline, 'string');
-      assert.equal(typeof parsed.drift['state-manager.js'].actual, 'string');
+      assertDriftShape(parsed.drift, 'state-manager.js');
       assert.notEqual(parsed.drift['state-manager.js'].baseline, parsed.drift['state-manager.js'].actual);
     } finally {
       rmSync(fixture.dir, { recursive: true, force: true });

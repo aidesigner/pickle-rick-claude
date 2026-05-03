@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import {
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -19,6 +20,30 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const CLI = path.join(REPO_ROOT, 'bin', 'verify-bundle.js');
+const REFINED_DEPLOY_REVERSION_AC_IDS = Object.freeze([
+  'AC-DR-01',
+  'AC-DR-02',
+  'AC-DR-03',
+  'AC-DR-04a',
+  'AC-DR-04b',
+  'AC-DR-04c',
+  'AC-DR-04d',
+  'AC-DR-05',
+  'AC-DR-06',
+  'AC-DR-07',
+  'AC-DR-08',
+  'AC-DR-09',
+  'AC-DR-10',
+  'AC-DR-11',
+  'AC-DR-12',
+  'AC-DR-13',
+  'AC-DR-14',
+  'AC-DR-15',
+  'AC-DR-16',
+]);
+const REFINED_TO_BUNDLE_ARTIFACT_AC_ID = Object.freeze({
+  'AC-DR-15': 'AC-DR-PRE-FLIGHT',
+});
 
 function acFileName(acId) {
   return `${acId.toLowerCase()}.json`;
@@ -59,6 +84,38 @@ function runVerifier(repoRoot, args = []) {
     env: { ...process.env, BUNDLE_REPO_ROOT: repoRoot },
   });
 }
+
+function assertBundleArtifactShape(value, acId) {
+  assert.equal(value.ac_id, acId);
+  assert.equal(typeof value.pass, 'boolean');
+  assert.match(value.checked_at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[.]\d{3}Z$/);
+  assert.equal(typeof value.checker, 'string');
+  assert.equal(typeof value.checker_version, 'string');
+  assert.equal(value.evidence && typeof value.evidence, 'object');
+  assert.equal(Array.isArray(value.evidence), false);
+  assert.equal(value.failure_reason === null || typeof value.failure_reason === 'string', true);
+  assert.equal(value.remediation_hint === null || typeof value.remediation_hint === 'string', true);
+}
+
+test('verify-bundle.ac-mapping covers every refined deploy-reversion AC exactly once', () => {
+  const expectedArtifactIds = REFINED_DEPLOY_REVERSION_AC_IDS.map((acId) => (
+    REFINED_TO_BUNDLE_ARTIFACT_AC_ID[acId] ?? acId
+  ));
+  assert.deepEqual(EXPECTED_BUNDLE_AC_IDS, expectedArtifactIds);
+  assert.equal(new Set(EXPECTED_BUNDLE_AC_IDS).size, EXPECTED_BUNDLE_AC_IDS.length);
+});
+
+test('verify-bundle.fixture-artifacts satisfy required metadata schema for every AC', () => {
+  const fixture = makeFixture();
+  try {
+    for (const acId of EXPECTED_BUNDLE_AC_IDS) {
+      const parsed = JSON.parse(readFileSync(path.join(fixture, 'bundle', acFileName(acId)), 'utf8'));
+      assertBundleArtifactShape(parsed, acId);
+    }
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
 
 test('verify-bundle.valid-pass exits 0 when all expected artifacts pass', () => {
   const fixture = makeFixture();

@@ -64,6 +64,10 @@ function readAudit(homeDir) {
   return readFileSync(auditPath, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
 }
 
+function invocationTokenSet(invocation) {
+  return new Set(invocation.trim().split(/\s+/));
+}
+
 function runCheckUpdate(root, options, releaseVersion = '1.64.0') {
   const extensionDir = path.join(root, 'extension-root');
   const dataRoot = path.join(root, 'data-root');
@@ -207,8 +211,9 @@ describe('force vs allow-downgrade matrix', () => {
         assert.equal(install.audit[0].event, 'DOWNGRADE');
         assert.equal(install.audit[0].src_version, '1.62.0');
         assert.equal(install.audit[0].dep_version, '1.67.0');
+        const tokens = invocationTokenSet(install.audit[0].invocation);
         for (const arg of matrixCase.args) {
-          assert.equal(install.audit[0].invocation.includes(arg), true);
+          assert.equal(tokens.has(arg), true, `expected exact invocation token ${arg} in ${install.audit[0].invocation}`);
         }
       } else {
         assert.equal(checkUpdate.output.blocked, true);
