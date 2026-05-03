@@ -48,15 +48,29 @@ peer_prds:
 
 ## Bundle-level Acceptance Criteria
 
+*(refined: requirements + codebase + risk Cycle 3 — supersedes original AC-DR-01..07)*
+
 | ID | Phase | Owner | Verification artifact | Check |
 |---|---|---|---|---|
-| AC-DR-01 | bundle-end | post-bundle-audit | `bundle/ac-dr-01.json` | All Section A (F7) ACs from `prds/schema-version-deploy-reversion-rca.md` pass |
-| AC-DR-02 | bundle-end | pipeline-runner-instrumentation | `bundle/ac-dr-02.json` | After Section A ships, the bundle's own anatomy-park phase reaches Phase 4/4 — i.e. v1.66.0+'s recapture fix actually fires; mlog contains literal `"attempting one recapture from pre-iteration tree"` |
-| AC-DR-03 | bundle-end | post-bundle-audit | `bundle/ac-dr-03.json` | After 24h soak post-release, `~/.claude/pickle-rick/extension/package.json:version` matches source `extension/package.json:version`. AC-RVN-11 from `schema-version-deploy-reversion-rca.md`. |
-| AC-DR-04 | bundle-end | post-bundle-audit | `bundle/ac-dr-04.json` | install.sh + check-update.js BOTH refuse to deploy a tarball whose `package.json:version` is older than the currently-deployed version (lockdown invariant). |
-| AC-DR-05 | per-phase | pipeline-runner-instrumentation | `bundle/ac-dr-05.json` | Section C: log-watcher + raw-morty stay alive across full pipeline run (no `◤ FEED TERMINATED ◢` between iterations) |
-| AC-DR-06 | per-phase | pipeline-runner-instrumentation | `bundle/ac-dr-06.json` | Section D: bundle PRD's tickets (with no `source_prd` frontmatter) clear readiness without `--skip-readiness` |
-| AC-DR-07 | bundle-end | closer-commit-gate | `bundle/ac-dr-07.json` | Closer commit bumps 1.67.0 → 1.68.0; release gate clean; tag published; install.sh deploys; deployed parity holds for ≥1 hour post-release |
+| AC-DR-01 | bundle-end | post-bundle-audit | `bundle/ac-dr-01.json` | All Section A ACs from `prds/schema-version-deploy-reversion-rca.md` pass (kill-switch verify) |
+| AC-DR-02 | bundle-end | activity-event-assertion | `bundle/ac-dr-02.json` | Bundle's `state.json.activity[]` contains ≥1 `{event:"baseline_recapture_attempted", iteration:1}` during anatomy-park phase. (Section B.1 + B.2.) |
+| AC-DR-03 | T+24h scheduled | sampler-finalize-24h | `bundle/ac-dr-03.json` | At first-sample-ts + 24h, `deploy-parity-samples.jsonl` has ≥N samples (N = floor(elapsed/300) × 0.9), 100% with `hashes_match:true` AND `src_version === dep_version`. **Bundle status flips to `pass` here.** |
+| AC-DR-04a | bundle-end | check-update-pre-extract-guard | `bundle/ac-dr-04a.json` | `check-update.ts:performUpgrade()` reads candidate tarball's `extension/package.json:version` BEFORE `extractAndInstall`. Refuses if `compareSemver(candidate, current) < 0` UNLESS `options.allowDowngrade === true`. `--force` does NOT bypass; only `--allow-downgrade` does. Defense-in-depth. P1. |
+| AC-DR-04b | bundle-end | install-sh-source-guard | `bundle/ac-dr-04b.json` | `install.sh` reads SRC_V + DEP_V at start; refuses unless `--allow-downgrade`; runs in BOTH `INSTALL_MODE=git` AND `tarball` (NOT gated on the existing schemaVersion git-only block at L65-84). Defense-in-depth. P1. |
+| AC-DR-04c | bundle-end | release-gate-bump-then-tag | `bundle/ac-dr-04c.json` | New `bin/release-gate.sh`. `--pre-tag <tag>` verifies `git show <tag>:extension/package.json \| jq -r .version` equals HEAD bump. `--post-tag <tag>` verifies `gh release download <tag>` extracted pkg.json matches expected. Exit codes: 10 pre-tag package version mismatch; 11 jq parse failed; 12 tag or tagged package missing; 20 release download failed; 21 downloaded tarball package version mismatch; 22 GitHub release API error. **PRIORITY P0 — only AC that prevents root-cause recurrence.** |
+| AC-DR-04d | bundle-start | section-a-diagnostic | `bundle/ac-dr-04d.json` | Section A diagnostic identifies which hypothesis explains the 2026-05-01 → 2026-05-02 reversion timeline given `auto_update_enabled:false` is engaged today. Three options: (A) kill-switch was off historically and got reset, (B) external writer beyond known three, (C) defect in kill-switch path. Output: `bundle/section-a-rca-followup.md` with file:line evidence. P0. |
+| AC-DR-05 | per-phase | watcher-liveness-assertion | `bundle/ac-dr-05.json` | The feed-termination literal emitted by watcher binaries does NOT appear in `tmux-runner.log` OR `tmux capture-pane` output between iterations across full pipeline run. (Section C.) |
+| AC-DR-06 | per-phase | readiness-manifest-gate | `bundle/ac-dr-06.json` | Section D: bundle PRD's tickets (without `source_prd` frontmatter) clear readiness without `--skip-readiness`. AC-RGM-01..07 from source PRD all pass. |
+| AC-DR-07 | bundle-launch | sampler-finalize-1h | `bundle/ac-dr-07.json` | **LAUNCH GATE only** — at first-sample-ts + 1h, sampler has ≥10 samples, 100% match. Bundle status flips to `launch-validated` (NOT `pass`). Bundle pass requires AC-DR-03. |
+| AC-DR-08 | bundle-end | downgrade-flow-test | `bundle/ac-dr-08.json` | R-A-DOWNGRADE-UX six-case test matrix passes. `--closer-context` flag bypasses active-session check while writing audit log. |
+| AC-DR-09 | per-deploy | install-sh-cache-hygiene | `bundle/ac-dr-09.json` | install.sh post-rsync removes `~/.claude/pickle-rick/update-check.json` if its `current_version` doesn't match deployed pkg.json (or sentinel `"1.0.0"`). |
+| AC-DR-10 | per-phase | mux-runner-heartbeat | `bundle/ac-dr-10.json` | mux-runner reads pkg.json:version + content-hashes at iter start AND end; mismatch emits `deploy_drift_detected`, halts pipeline, fails iter `deploy-drift-mid-run`. |
+| AC-DR-11 | bundle-start | v166-disposition | `bundle/ac-dr-11.json` | v1.66.0 broken release: closer downloads tarball (`bundle/pre-deletion-archive/`) + records SHA-256 BEFORE any `gh release delete`. |
+| AC-DR-12 | T+24h closer-late | closer-cleanup-sequencing | `bundle/ac-dr-12.json` | `gh release delete v1.66.0` ONLY after AC-DR-03's 24h soak passes. If AC-DR-03 fails, v1.66.0 stays for forensic re-creation. |
+| AC-DR-13 | bundle-end | install-script-worktree-aware | `bundle/ac-dr-13.json` | install.sh detects worktree context (under `.claude/worktrees/agent-*/`); refuses if HEAD predates `origin/main` ancestor or `compareSemver(SRC_V, DEP_V) < 0`. Test fixture: worktree at v1.62.0 vs deployed v1.67.0 → refusal. |
+| AC-DR-14 | bundle-end | state-schema-forward-compat | `bundle/ac-dr-14.json` | `state-manager.js` event validator: (a) on READ, log+ignore unknown events (forward-compat with reverted-deployed code), (b) on WRITE, validate against current whitelist with no array caching. Tests: v1.67.0-deployed reads state.json with `baseline_recapture_attempted` → no crash; v1.68.0 reads pre-bundle state.json → no crash. |
+| AC-DR-15 | per-pipeline | mux-runner-pre-flight | `bundle/ac-dr-pre-flight.json` | mux-runner.js at startup AND iteration boundaries: read SRC_V + DEP_V, compute SHA-256 of `bin/check-update.js`, `services/state-manager.js`, `types/index.js`. Drift → write `deploy_drift_detected`, halt iteration `deploy-drift-during-bundle-self-verification`, mark all `bundle/ac-dr-*.json` written so far `pass:false, invalidated_by:"deploy-drift"`. Detoxifies `update-check.json` if poisoned. |
+| AC-DR-16 | bundle-end | bundle-artifact-validator | `bundle/ac-dr-16.json` | `bin/verify-bundle.js` globs `bundle/ac-dr-*.json`, validates each against R-BUNDLE-ARTIFACT-SCHEMA, computes status (0=pass, 1=fail, 2=inconclusive). |
 
 ## Sequencing (refinement-locked)
 
@@ -64,7 +78,7 @@ peer_prds:
 2. **Section B (gate-baseline diagnostic)** — assert that the v1.66.0 recapture fix actually fires now that A guarantees deploy parity. If it doesn't fire even with deployed v1.66.0, gate-baseline has a deeper bug than recapture (probably H2 from the original gate-baseline PRD).
 3. **Section C (state.active claim)** — independent fix; can land in parallel with A but makes monitor reliable for D's testing.
 4. **Section D (readiness manifest gate)** — final piece; closes the workaround that's currently masking the bug shape.
-5. **Closer**: 1.67.0 → 1.68.0, tag, install, **wait 1 hour, verify deployed still matches source**, only then call success.
+5. **Closer**: 1.67.0 → 1.68.0, pre-tag gate, tag, post-tag gate, install with cron, then AC-DR-07 at +1h flips to `launch-validated`; AC-DR-03 at +24h owns final bundle `pass`.
 
 ## Cross-cutting risks
 
@@ -77,7 +91,7 @@ peer_prds:
 
 ## Reproducer
 
-Pre-fix: every `bash install.sh && tail -F microverse-runner.log` shows `attempting one recapture` line ABSENT after ~30-60 min, despite source containing it. Cause: deployed JS reverts to v1.64.0.
+Pre-fix: every `bash install.sh && tail -F microverse-runner.log` leaves the AC-DR-02 activity event assertion unsatisfied after ~30-60 min, despite source containing the recapture instrumentation. Cause: deployed JS reverts to v1.64.0.
 
 Post-fix: deployed JS persists at v1.66.0+ across 24h soak. Anatomy-park phase reaches Phase 4/4 of any `/pickle-pipeline` run.
 

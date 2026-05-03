@@ -250,6 +250,24 @@ cd pickle-rick-claude
 bash install.sh
 ```
 
+### Deploy Lockdown Operations
+
+`install.sh` refuses source versions older than the deployed runtime unless rollback is explicit. Supported deploy flags:
+
+| Flag | Effect |
+|---|---|
+| `--allow-downgrade` | Permit an older source version after the downgrade confirmation path. |
+| `--override-active` | Bypass active-session refusal and write an active-session bypass audit entry. |
+| `--no-confirm` | Skip interactive downgrade confirmation. |
+| `--closer-context` | Allow release-closer rollback/install flows to bypass active-session refusal while preserving audit evidence. |
+| `--uninstall-cron` | Remove the deploy parity sampler cron entry and exit. |
+
+Release closer flows must run `bin/release-gate.sh --pre-tag <tag>` before publishing and `bin/release-gate.sh --post-tag <tag>` after the release exists. Exit codes are: `10` pre-tag package version mismatch, `11` jq parse failed, `12` tag or tagged package missing, `20` release download failed, `21` downloaded tarball package version mismatch, and `22` GitHub release API error.
+
+Use `bin/purge-update-cache.js [--dry-run]` to remove poisoned updater cache state before or during a release. Deploy state lives at `~/.claude/pickle-rick/deploy-baseline.json`, updater cache at `~/.claude/pickle-rick/update-check.json`, and audit entries at `~/.claude/pickle-rick/deploy-audit.log`.
+
+Deploy activity events are `baseline_recapture_attempted`, `baseline_recapture_succeeded`, and `deploy_drift_detected`. Deploy audit-log event types are `DOWNGRADE`, `CACHE_PURGE`, and `INSTALL_BYPASS_ACTIVE_SESSION`.
+
 ### 2. Add the Pickle Rick persona to your project
 
 The installer deploys `persona.md` to `~/.claude/pickle-rick/`. Add it to your project's `CLAUDE.md`:
