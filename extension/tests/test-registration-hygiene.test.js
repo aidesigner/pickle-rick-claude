@@ -24,6 +24,7 @@ const REQUIRED_TRAP_DOOR_ENTRY_SUBSTRINGS = [
 ];
 
 const UNREGISTERED_TEST_ALLOWLIST = new Set([
+  'tests/audit-test-isolation-fixture.test.js',
   'tests/bin/check-gate.test.js',
   'tests/bin/finalize-gate.test.js',
   'tests/bin/spawn-gate-remediator.test.js',
@@ -84,7 +85,7 @@ test('package test scripts delegate to tier discovery', () => {
   const pkg = readPackageJson();
 
   assert.equal(pkg.scripts.test, 'npm run test:fast && npm run test:integration');
-  assert.equal(pkg.scripts['pretest:fast'], 'bash scripts/audit-test-tiers.sh');
+  assert.equal(pkg.scripts['pretest:fast'], 'bash scripts/audit-test-tiers.sh && bash scripts/audit-test-isolation.sh');
   assert.equal(pkg.scripts['test:fast'], 'node bin/test-runner.js --tier fast');
   assert.equal(pkg.scripts['test:integration'], 'node bin/test-runner.js --tier integration');
   assert.equal(pkg.scripts['test:expensive'], 'node bin/test-runner.js --tier expensive');
