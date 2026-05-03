@@ -302,7 +302,78 @@ function saveCache(cachePath: string, cache: MetricsCache): void {
   }
 }
 
-// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
+function readSessionSlugs(projectsDir: string): string[] | null {
+  try {
+    return fs.readdirSync(projectsDir).filter((s) => !s.startsWith('-private-var-'));
+  } catch {
+    return null;
+  }
+}
+
+function readSlugJsonlFiles(slugDir: string): string[] | null {
+  try {
+    const stat = fs.statSync(slugDir);
+    if (!stat.isDirectory()) return null;
+    return fs.readdirSync(slugDir).filter((f) => f.endsWith('.jsonl'));
+  } catch {
+    return null;
+  }
+}
+
+function loadSessionFileData(
+  filePath: string,
+  cache: MetricsCache,
+): { fileData: Record<string, DailyTokens>; changed: boolean } | null {
+  let fstat: fs.Stats;
+  try {
+    fstat = fs.statSync(filePath);
+  } catch {
+    return null;
+  }
+  if (fstat.size > MAX_FILE_BYTES) return null;
+
+  const cached = cache.files[filePath];
+  if (cached && cached.mtime === fstat.mtimeMs && cached.size === fstat.size) {
+    return { fileData: cached.data, changed: false };
+  }
+
+  try {
+    const fileData = parseJsonlFile(filePath);
+    cache.files[filePath] = { mtime: fstat.mtimeMs, size: fstat.size, data: fileData };
+    return { fileData, changed: true };
+  } catch {
+    return null;
+  }
+}
+
+function mergeFileDataIntoResult(
+  result: Map<string, Map<string, DailyTokens>>,
+  slug: string,
+  fileData: Record<string, DailyTokens>,
+  since: string,
+  until: string,
+): void {
+  for (const [date, tokens] of Object.entries(fileData)) {
+    if (date < since || date > until) continue;
+    if (!result.has(slug)) result.set(slug, new Map());
+    const dateMap = result.get(slug)!;
+    if (!dateMap.has(date)) dateMap.set(date, emptyDailyTokens());
+    const target = dateMap.get(date)!;
+    mergeDailyTokens(target, tokens);
+  }
+}
+
+function pruneMissingCacheFiles(cache: MetricsCache, validPaths: Set<string>): boolean {
+  let changed = false;
+  for (const cachedPath of Object.keys(cache.files)) {
+    if (!validPaths.has(cachedPath)) {
+      delete cache.files[cachedPath];
+      changed = true;
+    }
+  }
+  return changed;
+}
+
 export function scanSessionFiles(
   projectsDir: string,
   since: string,
@@ -314,68 +385,25 @@ export function scanSessionFiles(
   let cacheChanged = false;
   const validPaths = new Set<string>();
 
-  let slugs: string[];
-  try {
-    slugs = fs.readdirSync(projectsDir).filter((s) => !s.startsWith('-private-var-'));
-  } catch {
-    return result;
-  }
+  const slugs = readSessionSlugs(projectsDir);
+  if (!slugs) return result;
 
   for (const slug of slugs) {
     const slugDir = path.join(projectsDir, slug);
-    let stat: fs.Stats;
-    try {
-      stat = fs.statSync(slugDir);
-    } catch { continue; }
-    if (!stat.isDirectory()) continue;
-
-    let files: string[];
-    try {
-      files = fs.readdirSync(slugDir).filter((f) => f.endsWith('.jsonl'));
-    } catch { continue; }
+    const files = readSlugJsonlFiles(slugDir);
+    if (!files) continue;
 
     for (const file of files) {
       const filePath = path.join(slugDir, file);
       validPaths.add(filePath);
-
-      let fstat: fs.Stats;
-      try {
-        fstat = fs.statSync(filePath);
-      } catch { continue; }
-
-      if (fstat.size > MAX_FILE_BYTES) continue;
-
-      const cached = cache.files[filePath];
-      let fileData: Record<string, DailyTokens>;
-
-      if (cached && cached.mtime === fstat.mtimeMs && cached.size === fstat.size) {
-        fileData = cached.data;
-      } else {
-        try {
-          fileData = parseJsonlFile(filePath);
-        } catch { continue; }
-        cache.files[filePath] = { mtime: fstat.mtimeMs, size: fstat.size, data: fileData };
-        cacheChanged = true;
-      }
-
-      for (const [date, tokens] of Object.entries(fileData)) {
-        if (date < since || date > until) continue;
-        if (!result.has(slug)) result.set(slug, new Map());
-        const dateMap = result.get(slug)!;
-        if (!dateMap.has(date)) dateMap.set(date, emptyDailyTokens());
-        const target = dateMap.get(date)!;
-        mergeDailyTokens(target, tokens);
-      }
+      const loaded = loadSessionFileData(filePath, cache);
+      if (!loaded) continue;
+      cacheChanged = cacheChanged || loaded.changed;
+      mergeFileDataIntoResult(result, slug, loaded.fileData, since, until);
     }
   }
 
-  // Prune stale cache entries
-  for (const cachedPath of Object.keys(cache.files)) {
-    if (!validPaths.has(cachedPath)) {
-      delete cache.files[cachedPath];
-      cacheChanged = true;
-    }
-  }
+  cacheChanged = pruneMissingCacheFiles(cache, validPaths) || cacheChanged;
 
   if (cacheChanged) saveCache(cachePath, cache);
   return result;

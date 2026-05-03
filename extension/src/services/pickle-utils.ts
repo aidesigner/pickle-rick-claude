@@ -127,7 +127,49 @@ interface ShellError extends Error {
   stdout?: Buffer | string;
 }
 
-// eslint-disable-next-line complexity -- command wrapper intentionally handles shell and argv forms plus checked/unchecked failures
+function runArgvCmd(
+  cmd: string[],
+  options: { cwd?: string; check: boolean; capture: boolean }
+): string {
+  const result = spawnSync(cmd[0], cmd.slice(1), {
+    cwd: options.cwd,
+    encoding: 'utf-8',
+    timeout: 30_000,
+    stdio: options.capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+  });
+  if (options.check && (result.status ?? 1) !== 0) {
+    throw new Error(`Command failed: ${cmd.join(' ')}\nError: ${result.stderr || ''}`);
+  }
+  return (result.stdout || '').trim();
+}
+
+function shellErrorOutput(error: unknown, stream: 'stderr' | 'stdout'): string {
+  return error instanceof Error && stream in error
+    ? String((error as ShellError)[stream] || '')
+    : '';
+}
+
+function runShellCmd(
+  cmd: string,
+  options: { cwd?: string; check: boolean; capture: boolean }
+): string {
+  try {
+    const stdout = execSync(cmd, {
+      cwd: options.cwd,
+      encoding: 'utf-8',
+      timeout: 30_000,
+      stdio: options.capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
+    });
+    return (stdout || '').trim();
+  } catch (error) {
+    if (options.check) {
+      const msg = shellErrorOutput(error, 'stderr') || safeErrorMessage(error);
+      throw new Error(`Command failed: ${cmd}\nError: ${msg}`);
+    }
+    return shellErrorOutput(error, 'stdout').trim();
+  }
+}
+
 export function runCmd(
   cmd: string | string[],
   options: { cwd?: string; check?: boolean; capture?: boolean } = {}
@@ -137,39 +179,10 @@ export function runCmd(
   // Array form: use spawnSync so each argument is passed verbatim (no shell splitting).
   // String form: use execSync via the shell (supports pipes, globs, etc.).
   if (Array.isArray(cmd)) {
-    const result = spawnSync(cmd[0], cmd.slice(1), {
-      cwd,
-      encoding: 'utf-8',
-      timeout: 30_000,
-      stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
-    });
-    if (check && (result.status ?? 1) !== 0) {
-      throw new Error(`Command failed: ${cmd.join(' ')}\nError: ${result.stderr || ''}`);
-    }
-    return (result.stdout || '').trim();
+    return runArgvCmd(cmd, { cwd, check, capture });
   }
 
-  try {
-    const stdout = execSync(cmd, {
-      cwd,
-      encoding: 'utf-8',
-      timeout: 30_000,
-      stdio: capture ? ['ignore', 'pipe', 'pipe'] : 'inherit',
-    });
-    return (stdout || '').trim();
-  } catch (error) {
-    if (check) {
-      const stderr = error instanceof Error && 'stderr' in error
-        ? String((error as ShellError).stderr || '')
-        : '';
-      const msg = stderr || safeErrorMessage(error);
-      throw new Error(`Command failed: ${cmd}\nError: ${msg}`);
-    }
-    const stdout = error instanceof Error && 'stdout' in error
-      ? String((error as ShellError).stdout || '')
-      : '';
-    return stdout.trim();
-  }
+  return runShellCmd(cmd, { cwd, check, capture });
 }
 
 /**
@@ -582,22 +595,64 @@ export function collectTickets(sessionDir: string): TicketInfo[] {
   }
 }
 
-// eslint-disable-next-line complexity -- summary composition is centralized to preserve stable handoff wording
+function formatIterationLine(state: Partial<State>): string {
+  const iter = Number(state.iteration) || 0;
+  const maxIter = Number(state.max_iterations) || 0;
+  return maxIter > 0 ? `${iter} of ${maxIter}` : `${iter}`;
+}
+
+function appendTicketSummaryLines(lines: string[], tickets: TicketInfo[], state: Partial<State>): void {
+  if (tickets.length === 0) return;
+  lines.push('Tickets:');
+  for (const ticket of tickets) {
+    lines.push(formatTicketSummaryLine(ticket, state));
+  }
+}
+
+function formatTicketSummaryLine(t: TicketInfo, state: Partial<State>): string {
+  const sym = statusSymbol(t.status || '');
+  const title = (t.title || '').length > 60
+    ? (t.title || '').slice(0, 60) + '...'
+    : (t.title || '');
+  const typeTag = t.type === 'review' ? ' [REVIEW]' : '';
+  const dirTag = t.working_dir && t.working_dir !== state.working_dir ? ` (${t.working_dir})` : '';
+  const tierTag = t.complexity_tier && t.complexity_tier !== 'medium'
+    ? ` [${t.complexity_tier}]`
+    : '';
+  const skippedNote = (t.status || '').toLowerCase().replace(/["']/g, '') === 'skipped'
+    ? ' (no verified completion — re-attempt)'
+    : '';
+  return `  ${sym} ${t.id || '?'}: ${title}${typeTag}${tierTag}${dirTag}${skippedNote}`;
+}
+
+function appendResumeActionLines(lines: string[], state: Partial<State>, iterationNum?: number): void {
+  const isFirstIteration = (iterationNum === 1 || iterationNum === undefined)
+    && (Number(state.iteration) || 0) === 0
+    && (state.history || []).length === 0;
+  lines.push('');
+  if (isFirstIteration) {
+    lines.push(
+      'THIS IS A NEW SESSION. Begin the lifecycle from the current phase.',
+      'Read state.json for full context, then start working on the task.',
+    );
+    return;
+  }
+  lines.push(
+    'NEXT ACTION: Resume from current phase. Read state.json for context.',
+    'Do NOT restart from scratch. Continue where you left off.',
+  );
+}
+
 export function buildHandoffSummary(state: Partial<State>, sessionDir: string, iterationNum?: number): string {
   const task = state.original_prompt || '';
   const truncatedTask = task.length > 300 ? task.slice(0, 300) + ' [truncated]' : task;
   const prdPath = path.join(sessionDir, 'prd.md');
   const prdExists = fs.existsSync(prdPath);
   const tickets = collectTickets(sessionDir);
-  const iter = Number(state.iteration) || 0;
-  const maxIter = Number(state.max_iterations) || 0;
-  const iterLine = maxIter > 0
-    ? `${iter} of ${maxIter}`
-    : `${iter}`;
   const lines = [
     '=== PICKLE RICK LOOP CONTEXT ===',
     `Phase: ${state.step || 'unknown'}`,
-    `Iteration: ${iterLine}`,
+    `Iteration: ${formatIterationLine(state)}`,
     `Session: ${sessionDir}`,
     `Ticket: ${state.current_ticket || 'none'}`,
     `Task: ${truncatedTask}`,
@@ -611,45 +666,13 @@ export function buildHandoffSummary(state: Partial<State>, sessionDir: string, i
   if (state.command_template) {
     lines.push(`Template: ${state.command_template}`);
   }
-  if (tickets.length > 0) {
-    lines.push('Tickets:');
-    for (const t of tickets) {
-      const sym = statusSymbol(t.status || '');
-      const title = (t.title || '').length > 60
-        ? (t.title || '').slice(0, 60) + '...'
-        : (t.title || '');
-      const typeTag = t.type === 'review' ? ' [REVIEW]' : '';
-      const dirTag = t.working_dir && t.working_dir !== state.working_dir ? ` (${t.working_dir})` : '';
-      const tierTag = t.complexity_tier && t.complexity_tier !== 'medium'
-        ? ` [${t.complexity_tier}]`
-        : '';
-      const skippedNote = (t.status || '').toLowerCase().replace(/["']/g, '') === 'skipped'
-        ? ' (no verified completion — re-attempt)'
-        : '';
-      lines.push(`  ${sym} ${t.id || '?'}: ${title}${typeTag}${tierTag}${dirTag}${skippedNote}`);
-    }
-  }
+  appendTicketSummaryLines(lines, tickets, state);
   const workingDirs = new Set(tickets.map(t => t.working_dir).filter(Boolean));
   if (workingDirs.size >= 2) {
     lines.push('');
     lines.push(`⚠️  MULTI-REPO: Tickets span ${[...workingDirs].join(', ')}. Consider separate sessions per repo.`);
   }
-  const isFirstIteration = (iterationNum === 1 || iterationNum === undefined)
-    && (Number(state.iteration) || 0) === 0
-    && (state.history || []).length === 0;
-  if (isFirstIteration) {
-    lines.push(
-      '',
-      'THIS IS A NEW SESSION. Begin the lifecycle from the current phase.',
-      'Read state.json for full context, then start working on the task.',
-    );
-  } else {
-    lines.push(
-      '',
-      'NEXT ACTION: Resume from current phase. Read state.json for context.',
-      'Do NOT restart from scratch. Continue where you left off.',
-    );
-  }
+  appendResumeActionLines(lines, state, iterationNum);
   return lines.join('\n');
 }
 
@@ -679,6 +702,40 @@ const RETRY_LOCK_DEFAULTS = {
   lockJitter: true,
 } as const;
 
+function stealStaleLock(lockPath: string, staleLockTimeoutMs: number): void {
+  try {
+    const stats = fs.statSync(lockPath);
+    if (Date.now() - stats.mtimeMs > staleLockTimeoutMs) {
+      try { fs.unlinkSync(lockPath); } catch { /* already gone — race is fine */ }
+    }
+  } catch {
+    // lock file doesn't exist — expected
+  }
+}
+
+function tryRunWithExclusiveLock<T>(lockPath: string, fn: () => T): { acquired: true; value: T } | { acquired: false } {
+  try {
+    const fd = fs.openSync(lockPath, 'wx');
+    try { fs.writeSync(fd, String(process.pid)); } finally { fs.closeSync(fd); }
+
+    try {
+      return { acquired: true, value: fn() };
+    } finally {
+      try { fs.unlinkSync(lockPath); } catch { /* ignore cleanup failure */ }
+    }
+  } catch (e) {
+    const code = e instanceof Error ? (e as NodeJS.ErrnoException).code : undefined;
+    if (code !== 'EEXIST') throw e;
+    return { acquired: false };
+  }
+}
+
+function sleepBeforeRetry(attempt: number, baseLockDelayMs: number, lockJitter: boolean): void {
+  const backoff = baseLockDelayMs * Math.pow(2, attempt);
+  const jitter = lockJitter ? Math.random() * baseLockDelayMs : 0;
+  sleepMs(Math.min(backoff + jitter, 5000));
+}
+
 /**
  * Acquires an exclusive file lock before executing fn, then releases it.
  * Uses O_EXCL atomic create for lock acquisition. Retries with exponential
@@ -686,7 +743,6 @@ const RETRY_LOCK_DEFAULTS = {
  * Writes PID to lock file for stale detection. NEVER silently falls through —
  * throws LockError if maxRetries is exhausted.
  */
-// eslint-disable-next-line complexity -- lock acquisition loop keeps stale-lock, retry, and cleanup semantics together
 export function withRetryLock<T>(lockPath: string, fn: () => T, opts: RetryLockOptions = {}): T {
   const maxRetries = opts.maxRetries ?? RETRY_LOCK_DEFAULTS.maxRetries;
   const baseLockDelayMs = opts.baseLockDelayMs ?? RETRY_LOCK_DEFAULTS.baseLockDelayMs;
@@ -697,39 +753,19 @@ export function withRetryLock<T>(lockPath: string, fn: () => T, opts: RetryLockO
 
   while (true) {
     // Steal stale lock if present — unlink + create in tight sequence to minimize TOCTOU window
-    try {
-      const stats = fs.statSync(lockPath);
-      if (Date.now() - stats.mtimeMs > staleLockTimeoutMs) {
-        try { fs.unlinkSync(lockPath); } catch { /* already gone — race is fine */ }
-      }
-    } catch { /* lock file doesn't exist — expected */ }
+    stealStaleLock(lockPath, staleLockTimeoutMs);
 
     // Atomic exclusive create; write PID for stale-detection by other processes
-    try {
-      const fd = fs.openSync(lockPath, 'wx');
-      try { fs.writeSync(fd, String(process.pid)); } finally { fs.closeSync(fd); }
+    const locked = tryRunWithExclusiveLock(lockPath, fn);
+    if (locked.acquired) return locked.value;
 
-      try {
-        return fn();
-      } finally {
-        try { fs.unlinkSync(lockPath); } catch { /* ignore cleanup failure */ }
-      }
-    } catch (e) {
-      const code = e instanceof Error ? (e as NodeJS.ErrnoException).code : undefined;
-      if (code !== 'EEXIST') throw e;
-
-      if (attempt >= maxRetries) {
-        throw new LockError(
-          `[pickle] Lock acquisition failed after ${maxRetries} retries (${lockPath})`
-        );
-      }
-
-      // Exponential backoff with optional jitter — cap at 5s per sleep
-      const backoff = baseLockDelayMs * Math.pow(2, attempt);
-      const jitter = lockJitter ? Math.random() * baseLockDelayMs : 0;
-      sleepMs(Math.min(backoff + jitter, 5000));
-      attempt++;
+    if (attempt >= maxRetries) {
+      throw new LockError(
+        `[pickle] Lock acquisition failed after ${maxRetries} retries (${lockPath})`
+      );
     }
+    sleepBeforeRetry(attempt, baseLockDelayMs, lockJitter);
+    attempt++;
   }
 }
 
@@ -831,11 +867,40 @@ function selectScannedSessionPath(
   return activeMatch?.sessionPath ?? inactiveMatch?.sessionPath ?? '';
 }
 
+function resolveMappedSessionForCwd(
+  map: Record<string, unknown>,
+  cwd: string,
+  requireActive: boolean,
+): string | null {
+  const mappedPath = resolveSessionPath(map[cwd]);
+  if (!mappedPath || !fs.existsSync(mappedPath)) return '';
+  const state = readSessionLookupState(mappedPath);
+  if (!state) {
+    return requireActive ? '' : mappedPath;
+  }
+  if (sameWorkingDir(state.working_dir, cwd)) {
+    if (state.active === true) return mappedPath;
+    return requireActive ? '' : mappedPath;
+  }
+  if (!requireActive && (state.working_dir == null || state.working_dir === '')) {
+    return mappedPath;
+  }
+  return '';
+}
+
+function readSessionsMapFallback(sessionsMapPath: string, cwd: string, requireActive: boolean): string {
+  try {
+    const map = readRecoverableJsonObject(sessionsMapPath) as Record<string, unknown> | null;
+    return map ? resolveMappedSessionForCwd(map, cwd, requireActive) ?? '' : '';
+  } catch {
+    return '';
+  }
+}
+
 /**
  * Resolves the session for a cwd from the session map first, then falls back
  * to scanning session state by working_dir when the map is missing or stale.
  */
-// eslint-disable-next-line complexity -- resolver preserves map fallback and active-session scan precedence in one place
 export function findSessionPathForCwd(
   cwd: string,
   options: { requireActive?: boolean } = {},
@@ -843,27 +908,8 @@ export function findSessionPathForCwd(
   const { requireActive = false } = options;
   const dataRoot = getDataRoot();
   const sessionsMapPath = path.join(dataRoot, 'current_sessions.json');
-  let mappedFallback = '';
-
-  try {
-    const map = readRecoverableJsonObject(sessionsMapPath) as Record<string, unknown> | null;
-    if (map) {
-      const mappedPath = resolveSessionPath(map[cwd]);
-      if (mappedPath && fs.existsSync(mappedPath)) {
-        const state = readSessionLookupState(mappedPath);
-        if (!state) {
-          if (!requireActive) mappedFallback = mappedPath;
-        } else if (sameWorkingDir(state.working_dir, cwd)) {
-          if (state.active === true) return mappedPath;
-          if (!requireActive) mappedFallback = mappedPath;
-        } else if (!requireActive && (state.working_dir == null || state.working_dir === '')) {
-          mappedFallback = mappedPath;
-        }
-      }
-    }
-  } catch {
-    // Fall back to scanning session state below.
-  }
+  const mappedFallback = readSessionsMapFallback(sessionsMapPath, cwd, requireActive);
+  if (mappedFallback && requireActive) return mappedFallback;
 
   const sessionsDir = path.join(dataRoot, 'sessions');
   let entries: string[];

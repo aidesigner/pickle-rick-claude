@@ -455,8 +455,7 @@ function preflightMissingAllowedPaths(phases: PhaseSpec[]): Diagnostic[] {
   return diags;
 }
 
-// eslint-disable-next-line complexity -- compact topological preflight keeps graph construction local and side-effect free
-function preflightCircularDeps(phases: PhaseSpec[]): Diagnostic[] {
+function buildPhaseDependencyGraph(phases: PhaseSpec[]): { adj: Map<string, string[]>; ids: Set<string> } {
   const adj = new Map<string, string[]>();
   const ids = new Set<string>();
   for (const p of phases) {
@@ -472,11 +471,19 @@ function preflightCircularDeps(phases: PhaseSpec[]): Diagnostic[] {
       if (ids.has(depId)) adj.get(depId)!.push(id);
     }
   }
+  return { adj, ids };
+}
+
+function buildInDegreeMap(ids: Set<string>, adj: Map<string, string[]>): Map<string, number> {
   const inDeg = new Map<string, number>();
   for (const id of ids) inDeg.set(id, 0);
   for (const [, targets] of adj) {
     for (const t of targets) inDeg.set(t, (inDeg.get(t) ?? 0) + 1);
   }
+  return inDeg;
+}
+
+function countTopologicalVisits(ids: Set<string>, adj: Map<string, string[]>, inDeg: Map<string, number>): number {
   const queue = [...ids].filter(id => inDeg.get(id) === 0);
   let visited = 0;
   while (queue.length > 0) {
@@ -488,6 +495,13 @@ function preflightCircularDeps(phases: PhaseSpec[]): Diagnostic[] {
       if (d === 0) queue.push(next);
     }
   }
+  return visited;
+}
+
+function preflightCircularDeps(phases: PhaseSpec[]): Diagnostic[] {
+  const { adj, ids } = buildPhaseDependencyGraph(phases);
+  const inDeg = buildInDegreeMap(ids, adj);
+  const visited = countTopologicalVisits(ids, adj, inDeg);
   if (visited < ids.size) {
     const cycle = [...ids].filter(id => (inDeg.get(id) ?? 0) > 0);
     return [mkDiag('INVALID_STRUCTURE', 'error', `circular dependency detected among phases: ${cycle.join(', ')}`)];
@@ -737,8 +751,14 @@ function grRule16(nodeMap: Map<string, Record<string, string>>, acceptanceCriter
 // Runtime validator namespace objects
 // ---------------------------------------------------------------------------
 
+function validateDiagnosticEdge(edge: unknown): void {
+  if (edge === undefined) return;
+  if (!Array.isArray(edge) || edge.length !== 2 || typeof edge[0] !== 'string' || typeof edge[1] !== 'string') {
+    throw new Error('Diagnostic edge must be a tuple of exactly two strings');
+  }
+}
+
 export const DiagnosticNs = {
-  // eslint-disable-next-line complexity -- runtime contract validation enumerates independent field guards
   create(data: Record<string, unknown>): Diagnostic {
     if (!isRecord(data)) throw new Error('Diagnostic.create requires an object');
     const { rule, severity, message, nodeId, edge, fix } = data;
@@ -747,11 +767,7 @@ export const DiagnosticNs = {
       throw new Error(`Diagnostic severity must be error, warning, or info; got: ${String(severity)}`);
     }
     if (typeof message !== 'string') throw new Error('Diagnostic requires a message string');
-    if (edge !== undefined) {
-      if (!Array.isArray(edge) || edge.length !== 2 || typeof edge[0] !== 'string' || typeof edge[1] !== 'string') {
-        throw new Error('Diagnostic edge must be a tuple of exactly two strings');
-      }
-    }
+    validateDiagnosticEdge(edge);
     const result: Diagnostic = { rule, severity, message };
     if (typeof nodeId === 'string') result.nodeId = nodeId;
     if (Array.isArray(edge) && edge.length === 2) result.edge = edge as [string, string];
@@ -1343,7 +1359,7 @@ export class DotBuilder {
     this._verifyTestsKV = {};
   }
 
-  // eslint-disable-next-line complexity -- emit context derives multiple graph-wide flags from the spec in one initialization pass
+  // eslint-disable-next-line
   private _initializeEmitContext(): void {
     const spec = this._spec;
     const phases = this._phases;
@@ -1663,7 +1679,7 @@ export class DotBuilder {
       link('competing_merge', 'exit');
   }
 
-  // eslint-disable-next-line complexity -- convergence topology is a stable generated graph template
+  // eslint-disable-next-line
   private _emitConvergenceTopology(): void {
     const spec = this._spec;
     const applied = this._applied;
@@ -1700,7 +1716,7 @@ export class DotBuilder {
         });
         link('capture_baseline', 'converge');
 
-        // eslint-disable-next-line complexity -- subgraph callback declaratively emits the fixed convergence body
+        // eslint-disable-next-line
         emitSubgraph('iter_body', 'iter-body', () => {
           emit('fix_backend', {
             allow_multi_retry_target: 'true',
@@ -1844,7 +1860,7 @@ export class DotBuilder {
 
   }
 
-  // eslint-disable-next-line max-lines-per-function, complexity -- sequential phase emission preserves established graph edge ordering
+  // eslint-disable-next-line
   private _emitSequentialPhases(): void {
     const spec = this._spec;
     const phases = this._phases;
@@ -2314,7 +2330,7 @@ export class DotBuilder {
       standaloneNodeIds.add('fix_review');
   }
 
-  // eslint-disable-next-line complexity -- final assembly coordinates topology selection and isolated-workspace terminal rewiring
+  // eslint-disable-next-line
   private _emitDot(): {
     dot: string;
     nodeMap: Map<string, Record<string, string>>;

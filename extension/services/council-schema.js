@@ -167,18 +167,15 @@ export function validateDirective(obj) {
         trap_doors,
     };
 }
-// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
-export function validateSubagentPayload(obj) {
-    const r = asRecord(obj, '$');
-    const category = requireNonEmptyString(r, 'category', '$');
-    if (!KNOWN_CATEGORIES.includes(category)) {
-        fail(`unknown category "${category}"`, '$.category');
-    }
+function validatePayloadBranch(r) {
     if (!('branch' in r))
         fail('missing required field "branch"', '$.branch');
     const branch = r['branch'];
     if (branch !== null && typeof branch !== 'string')
         fail('"branch" must be a string or null', '$.branch');
+    return branch;
+}
+function validatePayloadStatusAndSkipReason(r) {
     if (!('status' in r))
         fail('missing required field "status"', '$.status');
     const status = r['status'];
@@ -191,11 +188,39 @@ export function validateSubagentPayload(obj) {
         if (typeof skip_reason !== 'string' || skip_reason.length === 0) {
             fail('"skip_reason" must be a non-empty string when status is "skipped"', '$.skip_reason');
         }
+        return { status, skip_reason };
     }
-    else {
-        if (skip_reason !== null)
-            fail('"skip_reason" must be null when status is "ok"', '$.skip_reason');
+    if (skip_reason !== null)
+        fail('"skip_reason" must be null when status is "ok"', '$.skip_reason');
+    return { status, skip_reason };
+}
+function validateCodexPerBranchValue(value, pathKey) {
+    const entry = asRecord(value, pathKey);
+    const verdict = requireString(entry, 'verdict', pathKey);
+    if (!CODEX_VERDICT_VALUES.has(verdict)) {
+        fail(`"verdict" must be one of approve/needs-attention/failed/timeout`, `${pathKey}.verdict`);
     }
+    const reason = requireString(entry, 'reason', pathKey);
+    return { verdict: verdict, reason };
+}
+function validateCodexPerBranch(value) {
+    if (value === null)
+        return null;
+    const cpbR = asRecord(value, '$.codex_per_branch');
+    const codex_per_branch = {};
+    for (const [k, v] of Object.entries(cpbR)) {
+        codex_per_branch[k] = validateCodexPerBranchValue(v, `$.codex_per_branch.${k}`);
+    }
+    return codex_per_branch;
+}
+export function validateSubagentPayload(obj) {
+    const r = asRecord(obj, '$');
+    const category = requireNonEmptyString(r, 'category', '$');
+    if (!KNOWN_CATEGORIES.includes(category)) {
+        fail(`unknown category "${category}"`, '$.category');
+    }
+    const branch = validatePayloadBranch(r);
+    const { status, skip_reason } = validatePayloadStatusAndSkipReason(r);
     if (!('findings' in r))
         fail('missing required field "findings"', '$.findings');
     const findings = validateFindings(r['findings'], '$.findings');
@@ -204,21 +229,7 @@ export function validateSubagentPayload(obj) {
     const trap_door_candidates = validateTrapDoors(r['trap_door_candidates'], '$.trap_door_candidates');
     if (!('codex_per_branch' in r))
         fail('missing required field "codex_per_branch"', '$.codex_per_branch');
-    const cpb = r['codex_per_branch'];
-    let codex_per_branch = null;
-    if (cpb !== null) {
-        const cpbR = asRecord(cpb, '$.codex_per_branch');
-        codex_per_branch = {};
-        for (const [k, v] of Object.entries(cpbR)) {
-            const entry = asRecord(v, `$.codex_per_branch.${k}`);
-            const verdict = requireString(entry, 'verdict', `$.codex_per_branch.${k}`);
-            if (!CODEX_VERDICT_VALUES.has(verdict)) {
-                fail(`"verdict" must be one of approve/needs-attention/failed/timeout`, `$.codex_per_branch.${k}.verdict`);
-            }
-            const reason = requireString(entry, 'reason', `$.codex_per_branch.${k}`);
-            codex_per_branch[k] = { verdict: verdict, reason };
-        }
-    }
+    const codex_per_branch = validateCodexPerBranch(r['codex_per_branch']);
     return {
         category: category,
         branch: branch,
