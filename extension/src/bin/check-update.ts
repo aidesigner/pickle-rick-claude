@@ -32,8 +32,13 @@ export function parseVersion(tag: string): string | null {
 }
 
 export function compareSemver(a: string, b: string): -1 | 0 | 1 {
-  const partsA = a.split('.').map(Number);
-  const partsB = b.split('.').map(Number);
+  const normalizedA = parseVersion(a);
+  const normalizedB = parseVersion(b);
+  if (!normalizedA || !normalizedB) {
+    throw new Error(`Invalid semver comparison: '${a}' vs '${b}'`);
+  }
+  const partsA = normalizedA.split('.').map(Number);
+  const partsB = normalizedB.split('.').map(Number);
   for (let i = 0; i < 3; i++) {
     if (partsA[i] < partsB[i]) return -1;
     if (partsA[i] > partsB[i]) return 1;
@@ -65,12 +70,8 @@ export function readCache(): UpdateCheckCache {
       log('Cache missing or corrupted, using defaults');
       return defaultCache();
     }
-    const latestVersion = typeof raw.latest_version === 'string' && parseVersion(raw.latest_version)
-      ? raw.latest_version
-      : '';
-    const currentVersion = typeof raw.current_version === 'string' && parseVersion(raw.current_version)
-      ? raw.current_version
-      : '';
+    const latestVersion = typeof raw.latest_version === 'string' ? parseVersion(raw.latest_version) ?? '' : '';
+    const currentVersion = typeof raw.current_version === 'string' ? parseVersion(raw.current_version) ?? '' : '';
     const cacheVersionsValid = latestVersion !== '' && currentVersion !== '';
     return {
       last_check_epoch: cacheVersionsValid && typeof raw.last_check_epoch === 'number' ? raw.last_check_epoch : 0,
@@ -228,11 +229,12 @@ function extractReleaseForInspection(tarballPath: string): InspectedRelease {
 
     const pkgPath = path.join(extractDir, 'extension', 'package.json');
     const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8')) as Record<string, unknown>;
-    if (typeof pkg.version !== 'string' || !parseVersion(pkg.version)) {
+    const version = typeof pkg.version === 'string' ? parseVersion(pkg.version) : null;
+    if (!version) {
       throw new Error('Release package.json has invalid version');
     }
 
-    return { extractDir, version: pkg.version };
+    return { extractDir, version };
   } catch (err) {
     try { fs.rmSync(extractDir, { recursive: true, force: true }); } catch { /* best-effort */ }
     throw err;

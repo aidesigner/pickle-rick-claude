@@ -80,6 +80,15 @@ describe('compareSemver', () => {
     test('multi-digit versions', () => {
         assert.equal(compareSemver('1.10.0', '1.9.0'), 1);
     });
+
+    test('normalizes v-prefixed versions before comparing', () => {
+        assert.equal(compareSemver('v1.2.3', '1.2.4'), -1);
+        assert.equal(compareSemver('1.10.0', 'v1.9.0'), 1);
+    });
+
+    test('rejects invalid versions instead of treating NaN parts as equal', () => {
+        assert.throws(() => compareSemver('bad.2.3', '1.2.3'), /Invalid semver comparison/);
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -120,6 +129,24 @@ describe('readCache', () => {
         writeCache(data);
         const result = readCache();
         assert.deepEqual(result, data);
+    });
+
+    test('normalizes v-prefixed cache versions before update comparison', () => {
+        fs.mkdirSync(path.join(tmpDir, 'extension'), { recursive: true });
+        fs.writeFileSync(
+            path.join(tmpDir, 'extension', 'package.json'),
+            JSON.stringify({ version: '1.7.0' }),
+        );
+        fs.writeFileSync(path.join(tmpDir, 'update-check.json'), JSON.stringify({
+            last_check_epoch: Math.floor(Date.now() / 1000),
+            latest_version: 'v2.0.0',
+            current_version: 'v1.7.0',
+        }));
+
+        const result = checkForUpdate();
+        assert.equal(result.status, 'update-available');
+        assert.equal(result.currentVersion, '1.7.0');
+        assert.equal(result.latestVersion, '2.0.0');
     });
 
     test('checkForUpdate ignores malformed fresh cached versions and fetches release', () => {

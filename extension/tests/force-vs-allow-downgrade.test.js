@@ -64,14 +64,14 @@ function readAudit(homeDir) {
   return readFileSync(auditPath, 'utf8').trim().split('\n').filter(Boolean).map((line) => JSON.parse(line));
 }
 
-function runCheckUpdate(root, options) {
+function runCheckUpdate(root, options, releaseVersion = '1.64.0') {
   const extensionDir = path.join(root, 'extension-root');
   const dataRoot = path.join(root, 'data-root');
   const homeDir = path.join(root, 'home');
   mkdirSync(path.join(extensionDir, 'extension', 'bin'), { recursive: true });
   writeFileSync(path.join(extensionDir, 'extension', 'bin', 'log-watcher.js'), '');
   writeJson(path.join(extensionDir, 'extension', 'package.json'), { version: '1.67.0' });
-  const binDir = mockGh(root, makeReleaseTarball(root, '1.64.0'));
+  const binDir = mockGh(root, makeReleaseTarball(root, releaseVersion));
   const script = `
     import { BlockedDowngradeError, performUpgrade } from ${JSON.stringify(pathToFileURL(CHECK_UPDATE).href)};
     try {
@@ -223,4 +223,24 @@ describe('force vs allow-downgrade matrix', () => {
       }
     });
   }
+
+  test('check-update normalizes inspected release version before downgrade decision', () => {
+    const blockedRoot = mkdtempSync(path.join(tmpdir(), 'force-allow-check-update-'));
+    roots.push(blockedRoot);
+    const blocked = runCheckUpdate(blockedRoot, {}, 'v1.64.0');
+    assert.equal(blocked.output.blocked, true);
+    assert.equal(blocked.output.candidate, '1.64.0');
+    assert.equal(blocked.output.current, '1.67.0');
+    assert.equal(blocked.installed, false);
+    assert.deepEqual(blocked.audit, []);
+
+    const allowedRoot = mkdtempSync(path.join(tmpdir(), 'force-allow-check-update-'));
+    roots.push(allowedRoot);
+    const allowed = runCheckUpdate(allowedRoot, { allowDowngrade: true, noConfirm: true }, 'v1.64.0');
+    assert.deepEqual(allowed.output.result, { success: true });
+    assert.equal(allowed.installed, true);
+    assert.equal(allowed.audit.length, 1);
+    assert.equal(allowed.audit[0].src_version, '1.64.0');
+    assert.equal(allowed.audit[0].dep_version, '1.67.0');
+  });
 });
