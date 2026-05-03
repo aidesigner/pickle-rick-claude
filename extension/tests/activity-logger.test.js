@@ -106,6 +106,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'course_correct_recovered',
         'current_ticket_redirected_to_new',
         'ticket_auto_skip_no_evidence',
+        'ticket_state_desync_detected',
         'readiness_delta_requested',
         // Pipeline lifecycle and fallback observability events.
         'phase_transition',
@@ -117,7 +118,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         // per-iteration gate baseline before strict-mode fallback.
         'baseline_recapture_failed',
     ];
-    assert.equal(VALID_ACTIVITY_EVENTS.length, 70);
+    assert.equal(VALID_ACTIVITY_EVENTS.length, 71);
     for (const e of expected) {
         assert.ok(VALID_ACTIVITY_EVENTS.includes(e), `Missing event type: ${e}`);
     }

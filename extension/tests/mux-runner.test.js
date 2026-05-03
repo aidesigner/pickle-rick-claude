@@ -1741,6 +1741,91 @@ function runAndCollectActivity(stateOverrides = {}) {
     return { events, result, sessionDir: path.basename(sessionDir) };
 }
 
+function writeMuxTicket(sessionDir, ticketId, status, order = 1) {
+    const ticketDir = path.join(sessionDir, ticketId);
+    fs.mkdirSync(ticketDir, { recursive: true });
+    fs.writeFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`), [
+        '---',
+        `id: ${ticketId}`,
+        `title: ${ticketId}`,
+        `status: "${status}"`,
+        `order: ${order}`,
+        '---',
+        '# Ticket',
+        '',
+    ].join('\n'));
+}
+
+function readMuxTicketStatus(sessionDir, ticketId) {
+    const file = path.join(sessionDir, ticketId, `linear_ticket_${ticketId}.md`);
+    const content = fs.readFileSync(file, 'utf-8');
+    const match = content.match(/^status:\s*(.+)$/m);
+    return match ? match[1].trim().replace(/^["']|["']$/g, '') : null;
+}
+
+function readActivityEventsFromRoot(tmpRoot) {
+    const activityDir = path.join(tmpRoot, 'activity');
+    const events = [];
+    if (!fs.existsSync(activityDir)) return events;
+    for (const f of fs.readdirSync(activityDir)) {
+        if (!f.endsWith('.jsonl')) continue;
+        const lines = fs.readFileSync(path.join(activityDir, f), 'utf-8').trim().split('\n').filter(Boolean);
+        events.push(...lines.map(l => JSON.parse(l)));
+    }
+    return events;
+}
+
+function runDesyncFixture({ currentTicket, tickets }) {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = path.join(tmpRoot, 'session');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        const templatesDir = path.join(tmpRoot, 'templates');
+        fs.mkdirSync(templatesDir, { recursive: true });
+        fs.writeFileSync(path.join(templatesDir, 'pickle.md'), 'placeholder');
+
+        tickets.forEach((ticket, index) => {
+            writeMuxTicket(sessionDir, ticket.id, ticket.status, index + 1);
+        });
+
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            step: 'implement',
+            iteration: 0,
+            max_iterations: 100,
+            max_time_minutes: 720,
+            worker_timeout_seconds: 1200,
+            original_prompt: 'test ticket desync',
+            working_dir: tmpRoot,
+            current_ticket: currentTicket,
+            history: [],
+            started_at: new Date().toISOString(),
+            session_dir: sessionDir,
+        }, null, 2));
+
+        const pathDirs = (process.env.PATH || '').split(':').filter(d => {
+            try { return !fs.existsSync(path.join(d, 'claude')); } catch { return true; }
+        });
+        const result = spawnSync(process.execPath, [TMUX_RUNNER_BIN, sessionDir], {
+            env: {
+                ...process.env,
+                EXTENSION_DIR: tmpRoot,
+                PATH: pathDirs.join(':'),
+                PICKLE_BACKEND: 'claude',
+            },
+            encoding: 'utf-8',
+            timeout: 60000,
+        });
+
+        const statuses = Object.fromEntries(tickets.map(ticket => [ticket.id, readMuxTicketStatus(sessionDir, ticket.id)]));
+        const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+        const events = readActivityEventsFromRoot(tmpRoot);
+        return { result, statuses, state, events };
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+}
+
 test('iteration events: iteration_start logged at start of iteration', () => {
     const { events } = runAndCollectActivity();
     const starts = events.filter(e => e.event === 'iteration_start');
@@ -1844,6 +1929,40 @@ test('mux-runner: persists iteration, picked ticket, and lifecycle step before m
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
+});
+
+test('desync.multi-in-progress: reconciles multiple In Progress tickets to state.current_ticket', () => {
+    const { result, statuses, state } = runDesyncFixture({
+        currentTicket: 'ticket-current',
+        tickets: [
+            { id: 'ticket-current', status: 'In Progress' },
+            { id: 'ticket-stale', status: 'In Progress' },
+        ],
+    });
+
+    assert.equal(result.status, 1, `Expected backend spawn failure exit. stderr:\n${result.stderr}`);
+    assert.equal(statuses['ticket-current'], 'In Progress');
+    assert.equal(statuses['ticket-stale'], 'Todo');
+    assert.equal(state.current_ticket, 'ticket-current');
+});
+
+test('desync.event: emits ticket_state_desync_detected on frontmatter/current_ticket mismatch', () => {
+    const { result, statuses, state, events } = runDesyncFixture({
+        currentTicket: 'ticket-state',
+        tickets: [
+            { id: 'ticket-state', status: 'Todo' },
+            { id: 'ticket-frontmatter', status: 'In Progress' },
+        ],
+    });
+
+    assert.equal(result.status, 1, `Expected backend spawn failure exit. stderr:\n${result.stderr}`);
+    assert.equal(statuses['ticket-frontmatter'], 'In Progress');
+    assert.equal(statuses['ticket-state'], 'Todo');
+    assert.equal(state.current_ticket, 'ticket-frontmatter');
+    assert.ok(
+        events.some(event => event.event === 'ticket_state_desync_detected' && event.ticket === 'ticket-frontmatter'),
+        `Expected ticket_state_desync_detected event, got: ${JSON.stringify(events)}`
+    );
 });
 
 // --- stripSetupSection ---

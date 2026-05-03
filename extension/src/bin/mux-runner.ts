@@ -11,6 +11,7 @@ import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractEr
 import { buildManagerInvocation, resolveBackend, backendEnvOverrides } from '../services/backend-spawn.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { extractAssistantContent } from '../services/classifier-utils.js';
+import { updateTicketStatusInTransaction } from '../services/transaction-ticket-ops.js';
 import {
   evaluateCodexManagerRelaunch,
   recordCodexManagerRelaunch,
@@ -161,6 +162,70 @@ const MUX_LIFECYCLE_ORDER: Record<MuxLifecycleStep, number> = {
 
 function normalizeTicketStatus(status: string | null): string {
   return (status || '').toLowerCase().replace(/["']/g, '').trim();
+}
+
+function isInProgressTicket(ticket: TicketInfo): boolean {
+  return normalizeTicketStatus(ticket.status) === 'in progress';
+}
+
+function writeTicketStatus(sessionDir: string, ticketId: string, status: string): boolean {
+  try {
+    const planned = updateTicketStatusInTransaction(ticketId, status, sessionDir);
+    fs.writeFileSync(planned.path, planned.content);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function chooseInProgressWinner(inProgress: readonly TicketInfo[], currentTicket: string | null): string | null {
+  if (currentTicket && inProgress.some(ticket => ticket.id === currentTicket)) return currentTicket;
+  return inProgress.find(ticket => !!ticket.id)?.id ?? currentTicket;
+}
+
+function reconcileTicketStateDesync(
+  statePath: string,
+  sessionDir: string,
+  currentTicket: string | null,
+  iteration: number | undefined,
+  log: (msg: string) => void,
+): State {
+  const tickets = collectTickets(sessionDir);
+  if (tickets.length === 0) {
+    log('WARN: ticket_state_desync check found no ticket directories');
+    return readRunnerState(statePath);
+  }
+
+  const inProgress = tickets.filter(isInProgressTicket);
+  const winner = chooseInProgressWinner(inProgress, currentTicket);
+  const winnerMatchesState = winner === currentTicket;
+  const alreadySynced = inProgress.length === 1 && winnerMatchesState;
+  if (alreadySynced) return readRunnerState(statePath);
+
+  logActivity({
+    event: 'ticket_state_desync_detected',
+    source: 'pickle',
+    session: path.basename(sessionDir),
+    iteration,
+    ticket: winner ?? currentTicket ?? undefined,
+    reason: `current_ticket=${currentTicket ?? 'none'} in_progress=${inProgress.map(t => t.id || '?').join(',') || 'none'}`,
+  });
+
+  if (winner && !inProgress.some(ticket => ticket.id === winner)) {
+    writeTicketStatus(sessionDir, winner, 'In Progress');
+  }
+  for (const ticket of inProgress) {
+    if (!ticket.id || ticket.id === winner) continue;
+    writeTicketStatus(sessionDir, ticket.id, 'Todo');
+  }
+
+  if (winner && winner !== currentTicket) {
+    return updateMuxLifecycleState(statePath, {
+      currentTicket: winner,
+      step: inferTicketLifecycleStep(sessionDir, winner, readRunnerState(statePath).step),
+    });
+  }
+  return readRunnerState(statePath);
 }
 
 function isPendingMuxTicket(ticket: TicketInfo): boolean {
@@ -1951,10 +2016,11 @@ async function runMuxRunnerMain() {
       ? 'review'
       : inferTicketLifecycleStep(sessionDir, preTicket, state.step);
     state = updateMuxLifecycleState(statePath, { iteration, currentTicket: preTicket, step: preStep });
+    state = reconcileTicketStateDesync(statePath, sessionDir, state.current_ticket || null, iteration, log);
     if (previousTicket === null) {
-      previousTicket = preTicket;
-      if (preTicket) {
-        const ticketInfo = collectTickets(sessionDir).find(t => t.id === preTicket);
+      previousTicket = state.current_ticket || null;
+      if (previousTicket) {
+        const ticketInfo = collectTickets(sessionDir).find(t => t.id === previousTicket);
         previousTicketStartCommit = readHeadCommit(ticketInfo?.working_dir || state.working_dir || process.cwd());
       }
     }

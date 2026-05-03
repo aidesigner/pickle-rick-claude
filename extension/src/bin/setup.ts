@@ -5,12 +5,13 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
-import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd, formatLocalDateKey } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd, formatLocalDateKey, collectTickets, type TicketInfo } from '../services/pickle-utils.js';
 import { getHeadSha } from '../services/git-utils.js';
 import { State, Defaults, LockError, SessionMapEntry, Backend, BACKENDS, STATE_MANAGER_DEFAULTS } from '../types/index.js';
 import { StateManager, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { logActivity, pruneActivity } from '../services/activity-logger.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
+import { updateTicketStatusInTransaction } from '../services/transaction-ticket-ops.js';
 
 const sm = new StateManager();
 
@@ -574,6 +575,66 @@ function validateResumeCompatibility(preState: State, config: SetupArgs) {
   }
 }
 
+function normalizeTicketStatus(status: string | null): string {
+  return (status || '').toLowerCase().replace(/["']/g, '').trim();
+}
+
+function isInProgressTicket(ticket: TicketInfo): boolean {
+  return normalizeTicketStatus(ticket.status) === 'in progress';
+}
+
+function writeTicketStatus(sessionDir: string, ticketId: string, status: string): boolean {
+  try {
+    const planned = updateTicketStatusInTransaction(ticketId, status, sessionDir);
+    fs.writeFileSync(planned.path, planned.content);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function chooseInProgressWinner(inProgress: readonly TicketInfo[], currentTicket: string | null): string | null {
+  if (currentTicket && inProgress.some(ticket => ticket.id === currentTicket)) return currentTicket;
+  return inProgress.find(ticket => !!ticket.id)?.id ?? currentTicket;
+}
+
+function reconcileTicketStateDesyncOnResume(sessionDir: string, statePath: string, currentTicket: string | null): State {
+  const tickets = collectTickets(sessionDir);
+  if (tickets.length === 0) {
+    process.stderr.write(`WARN: ticket_state_desync check found no ticket directories in ${sessionDir}\n`);
+    return sm.read(statePath);
+  }
+
+  const inProgress = tickets.filter(isInProgressTicket);
+  const winner = chooseInProgressWinner(inProgress, currentTicket);
+  if (inProgress.length === 1 && winner === currentTicket) return sm.read(statePath);
+
+  logActivity({
+    event: 'ticket_state_desync_detected',
+    source: 'pickle',
+    session: path.basename(sessionDir),
+    ticket: winner ?? currentTicket ?? undefined,
+    reason: `current_ticket=${currentTicket ?? 'none'} in_progress=${inProgress.map(t => t.id || '?').join(',') || 'none'}`,
+  });
+
+  if (winner && !inProgress.some(ticket => ticket.id === winner)) {
+    writeTicketStatus(sessionDir, winner, 'In Progress');
+  }
+  for (const ticket of inProgress) {
+    if (!ticket.id || ticket.id === winner) continue;
+    writeTicketStatus(sessionDir, ticket.id, 'Todo');
+  }
+
+  if (winner && winner !== currentTicket) {
+    return sm.update(statePath, s => {
+      s.current_ticket = winner;
+      delete s.current_ticket_tier;
+      delete s.current_ticket_budget;
+    });
+  }
+  return sm.read(statePath);
+}
+
 function applyResumeConfig(s: State, config: SetupArgs, fullSessionPath: string, codexVersionSeen: string | null): void {
   s.active = !config.pausedMode;
   if (config.resetMode) {
@@ -674,6 +735,7 @@ function resumeSession(config: SetupArgs): SessionResult {
       clearExitReason(statePath);
       state = sm.read(statePath);
     }
+    state = reconcileTicketStateDesyncOnResume(fullSessionPath, statePath, state.current_ticket || null);
   } catch {
     die(`state.json is missing or corrupt in ${fullSessionPath}`);
   }
