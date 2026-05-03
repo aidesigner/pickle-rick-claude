@@ -359,7 +359,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'refactor', 'review', 'jar_start', 'jar_end',
   'circuit_open', 'circuit_recovery',
   'tool_retry_circuit_open',
-  'iteration_start', 'iteration_end',
+  'iteration_start', 'iteration_end', 'wasted_iter',
   'rate_limit_wait', 'rate_limit_resume', 'rate_limit_exhausted',
   'judge_unreachable',
   'multi_repo_warning',
@@ -473,6 +473,11 @@ export interface ActivityEvent {
   error?: string;
   iteration?: number;
   exit_type?: IterationExitType;
+  runner?: 'microverse' | 'mux' | string;
+  action?: string;
+  wasted?: boolean;
+  pre_iter_sha?: string | null;
+  post_iter_sha?: string | null;
   original_prompt?: string;
   model?: string;
   backend?: Backend;

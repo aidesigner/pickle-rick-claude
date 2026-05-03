@@ -1191,6 +1191,22 @@ function recordMetricMeasurementFailure(state, ctx) {
     writeMicroverseState(ctx.sessionDir, state);
     return { kind: 'unchanged' };
 }
+function emitMicroverseWastedIter(ctx, action) {
+    const preIterSha = ctx.preIterSha ?? null;
+    const postIterSha = ctx.postIterSha ?? null;
+    const wasted = action === 'revert' || postIterSha === preIterSha;
+    logActivity({
+        event: 'wasted_iter',
+        source: 'pickle',
+        session: path.basename(ctx.sessionDir),
+        iteration: ctx.iteration,
+        runner: 'microverse',
+        action,
+        wasted,
+        pre_iter_sha: preIterSha,
+        post_iter_sha: postIterSha,
+    });
+}
 function adoptLateBaseline(state, baseline, metricResult, metricConv, ctx) {
     const lastAccepted = [...metricConv.history].reverse().find(h => h.action === 'accept');
     if (baseline.score === 0 && state.baseline_score === 0 && !lastAccepted) {
@@ -1425,6 +1441,11 @@ async function handleWorkerMode(state, ctx) {
         minIterations: ctx.currentRunnerState.min_iterations,
     });
     replaceMicroverseState(state, workerResult.currentMv);
+    ctx.postIterSha = _deps.getHeadSha(ctx.workingDir);
+    const lastAction = workerResult.currentMv.convergence?.history
+        ?.findLast((entry) => entry.iteration === ctx.iteration)
+        ?.action;
+    emitMicroverseWastedIter(ctx, lastAction === 'revert' ? 'revert' : 'worker');
     if (workerResult.exitReason) {
         return workerResult.exitReason;
     }
@@ -1516,9 +1537,13 @@ async function handleMetricMode(state, baseline, ctx, iterLogFile) {
     ctx.postIterSha = _deps.getHeadSha(ctx.workingDir);
     if (ctx.postIterSha === ctx.preIterSha)
         autoRescueDirtyTree(ctx);
-    if (ctx.postIterSha === ctx.preIterSha)
-        return await handleNoCommitStall(state, ctx, iterLogFile) ?? 'continue';
+    if (ctx.postIterSha === ctx.preIterSha) {
+        const noCommitExit = await handleNoCommitStall(state, ctx, iterLogFile) ?? 'continue';
+        emitMicroverseWastedIter(ctx, 'no_commit');
+        return noCommitExit;
+    }
     const classification = await measureAndClassifyIteration(state, baseline, ctx);
+    emitMicroverseWastedIter(ctx, classification.kind === 'regressed' ? 'revert' : 'accept');
     const failureExit = currentExitForFailureHistory(state, ctx);
     if (failureExit)
         return failureExit;
@@ -1536,6 +1561,10 @@ async function handleIterationOutcome(state, baseline, ctx, outcome) {
         didTimeout: outcome.timedOut, exitCode: outcome.exitCode, wallSeconds: outcome.wallSeconds,
     });
     logActivity({ event: 'iteration_end', source: 'pickle', session: path.basename(ctx.sessionDir), iteration: ctx.iteration, exit_type: exitResult.type });
+    ctx.postIterSha = _deps.getHeadSha(ctx.workingDir);
+    if (exitResult.type !== 'success') {
+        emitMicroverseWastedIter(ctx, exitResult.type);
+    }
     let stallClassification = null;
     if (exitResult.type === 'timeout' || exitResult.type === 'error') {
         stallClassification = classifyStall({

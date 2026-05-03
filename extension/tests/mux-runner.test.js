@@ -1864,6 +1864,17 @@ test('iteration events: iteration number matches across start and end', () => {
     assert.equal(starts[0].iteration, ends[0].iteration, 'Start and end should have same iteration number');
 });
 
+test('wasted-iter.emit: mux emits wasted_iter with no-progress predicate value', () => {
+    const { events } = runAndCollectActivity();
+    const wasted = events.filter(e => e.event === 'wasted_iter');
+    assert.ok(wasted.length >= 1, 'Expected at least one wasted_iter event');
+    assert.equal(wasted[0].source, 'pickle');
+    assert.equal(wasted[0].runner, 'mux');
+    assert.equal(wasted[0].iteration, 1);
+    assert.equal(wasted[0].wasted, true);
+    assert.equal(wasted[0].post_iter_sha, wasted[0].pre_iter_sha);
+});
+
 test('mux-runner: persists iteration, picked ticket, and lifecycle step before manager spawn', () => {
     const tmpRoot = makeTmpRoot();
     try {

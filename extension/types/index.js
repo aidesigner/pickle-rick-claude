@@ -131,7 +131,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'refactor', 'review', 'jar_start', 'jar_end',
     'circuit_open', 'circuit_recovery',
     'tool_retry_circuit_open',
-    'iteration_start', 'iteration_end',
+    'iteration_start', 'iteration_end', 'wasted_iter',
     'rate_limit_wait', 'rate_limit_resume', 'rate_limit_exhausted',
     'judge_unreachable',
     'multi_repo_warning',

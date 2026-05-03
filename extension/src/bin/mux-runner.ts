@@ -582,6 +582,27 @@ function readHeadCommit(workingDir: string): string | null {
   }
 }
 
+function emitMuxWastedIter(input: {
+  sessionDir: string;
+  iteration: number;
+  action: string;
+  preIterSha: string | null;
+  postIterSha: string | null;
+}): void {
+  const wasted = input.action === 'revert' || input.postIterSha === input.preIterSha;
+  logActivity({
+    event: 'wasted_iter',
+    source: 'pickle',
+    session: path.basename(input.sessionDir),
+    iteration: input.iteration,
+    runner: 'mux',
+    action: input.action,
+    wasted,
+    pre_iter_sha: input.preIterSha,
+    post_iter_sha: input.postIterSha,
+  });
+}
+
 function hasCommitReferencingTicketSince(workingDir: string, ticketId: string, startCommit: string | null): boolean {
   if (!startCommit) return false;
   try {
@@ -2222,6 +2243,8 @@ async function runMuxRunnerMain() {
       log(`commit-pending probe threw (ignored): ${safeErrorMessage(err)}`);
     }
 
+    const iterWorkingDir = state.working_dir || process.cwd();
+    const preIterSha = readHeadCommit(iterWorkingDir);
     const outcome = await runIteration(sessionDir, iteration, extensionRoot, meeseeksModel);
     const result = outcome.completion;
 
@@ -2271,6 +2294,13 @@ async function runMuxRunnerMain() {
     });
     const exitType = exitResult.type;
     logActivity({ event: 'iteration_end', source: 'pickle', session: path.basename(sessionDir), iteration, exit_type: exitType });
+    emitMuxWastedIter({
+      sessionDir,
+      iteration,
+      action: result,
+      preIterSha,
+      postIterSha: readHeadCommit(iterWorkingDir),
+    });
 
     if (exitType === 'api_limit') {
       consecutiveRateLimits++;

@@ -62,7 +62,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'meeseeks_pass', 'commit', 'research', 'bug_fix', 'feature',
         'refactor', 'review', 'jar_start', 'jar_end',
         'circuit_open', 'circuit_recovery',
-        'iteration_start', 'iteration_end',
+        'iteration_start', 'iteration_end', 'wasted_iter',
         'rate_limit_wait', 'rate_limit_resume', 'rate_limit_exhausted',
         'judge_unreachable',
         'multi_repo_warning', 'meeseeks_model_select',
@@ -119,7 +119,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         // per-iteration gate baseline before strict-mode fallback.
         'baseline_recapture_failed',
     ];
-    assert.equal(VALID_ACTIVITY_EVENTS.length, 72);
+    assert.equal(VALID_ACTIVITY_EVENTS.length, 75);
     for (const e of expected) {
         assert.ok(VALID_ACTIVITY_EVENTS.includes(e), `Missing event type: ${e}`);
     }
@@ -453,13 +453,13 @@ test('CLI: truncates title at 200 chars', () => {
     }
 });
 
-test('CLI: accepts all 25 valid event types', () => {
+test('CLI: accepts representative valid event types', () => {
     const expected = [
         'session_start', 'session_end', 'ticket_completed', 'epic_completed',
         'meeseeks_pass', 'commit', 'research', 'bug_fix', 'feature',
         'refactor', 'review', 'jar_start', 'jar_end',
         'circuit_open', 'circuit_recovery',
-        'iteration_start', 'iteration_end',
+        'iteration_start', 'iteration_end', 'wasted_iter',
         'rate_limit_wait', 'rate_limit_resume', 'rate_limit_exhausted',
         'multi_repo_warning',
         'meeseeks_model_select',

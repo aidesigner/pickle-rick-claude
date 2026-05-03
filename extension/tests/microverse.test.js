@@ -619,6 +619,38 @@ test('pass-model.default: microverse runner leaves model empty when current pass
     }
 });
 
+test('wasted-iter.emit: microverse emits wasted_iter with no-commit predicate value', async () => {
+    const workingDir = createTempGitRepo();
+    const extensionRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-wasted-mv-ext-'));
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-wasted-mv-data-'));
+    const previousDataRoot = process.env.PICKLE_DATA_ROOT;
+    const session = createSessionDir(workingDir);
+    const sha = 'a'.repeat(40);
+    const ctx = makeMicroverseLoopContext(session, workingDir, extensionRoot, { max_iterations: 1 });
+    try {
+        process.env.PICKLE_DATA_ROOT = dataRoot;
+        await withMicroverseLoopDeps({
+            getHeadSha: () => sha,
+            runIteration: async () => ({ completion: 'continue', timedOut: false, exitCode: 0, wallSeconds: 1 }),
+        }, () => executeMainLoop(session.mvState, ctx));
+
+        const events = readActivityEvents(dataRoot, 'wasted_iter');
+        assert.equal(events.length, 1);
+        assert.equal(events[0].runner, 'microverse');
+        assert.equal(events[0].action, 'no_commit');
+        assert.equal(events[0].wasted, true);
+        assert.equal(events[0].pre_iter_sha, sha);
+        assert.equal(events[0].post_iter_sha, sha);
+    } finally {
+        if (previousDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = previousDataRoot;
+        fs.rmSync(session.dir, { recursive: true, force: true });
+        fs.rmSync(workingDir, { recursive: true, force: true });
+        fs.rmSync(extensionRoot, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
 test('pass-model.override: szechuan quality pass spawn args contain --model X', async () => {
     const workingDir = createTempGitRepo();
     const extensionRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-pass-model-ext-'));
