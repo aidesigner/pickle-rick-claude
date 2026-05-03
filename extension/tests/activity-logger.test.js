@@ -77,7 +77,8 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'gate_remediation_aborted_unverified_production_change',
         'gate_autofix_reverted', 'gate_workingdir_drift_detected',
         'gate_lock_acquired', 'gate_lock_timeout', 'gate_diff_scope_fallback',
-        'gate_preexisting_tests_baselined', 'iteration_left_regression', 'strict_mode_red',
+        'gate_preexisting_tests_baselined', 'iteration_left_regression', 'coverage_exception',
+        'strict_mode_red',
         'gate_regression_threshold_warning', 'gate_out_of_scope_failures_present',
         'commit_pending_probe_fired',
         'codex_manager_relaunch',
@@ -120,7 +121,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         // per-iteration gate baseline before strict-mode fallback.
         'baseline_recapture_failed',
     ];
-    assert.equal(VALID_ACTIVITY_EVENTS.length, 75);
+    assert.equal(VALID_ACTIVITY_EVENTS.length, 76);
     for (const e of expected) {
         assert.ok(VALID_ACTIVITY_EVENTS.includes(e), `Missing event type: ${e}`);
     }
