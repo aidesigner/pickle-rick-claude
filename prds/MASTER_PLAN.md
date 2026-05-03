@@ -1,6 +1,6 @@
 # MASTER_PLAN — Pickle Rick Engineering Lifecycle
 
-**Last updated**: 2026-05-03 (**Mega bundle landed 34/34 tickets** on session `2026-05-02-fca7952b` over ~10h on codex; source pkg.json bumped to **v1.69.0** by closer; gh release for v1.69.0 NOT yet published. Pipeline phase 2/4 anatomy-park never started — codex manager spins bootstrap loop on empty-queue (NEW bug `p2-codex-manager-empty-queue-spin.md`). pkg.json-only-revert bug (NEW class `p1-deployed-pkgjson-version-only-revert.md`) bites every 30-60 min — operator workaround = manual `bash install.sh` + ts symlink restore. v1.66.0 still GitHub-Latest with poison content.)
+**Last updated**: 2026-05-03 PM (**v1.69.0 RELEASED** — https://github.com/gregorydickson/pickle-rick-claude/releases/tag/v1.69.0. 138 commits pushed v1.66.0..HEAD; install.sh ran clean; src/dep parity OK at 1.69.0. Mega bundle 34/34 tickets shipped via session `2026-05-02-fca7952b` over ~10h on codex. Stuck `pipeline-fca7952b` tmux session is gone. Pipeline phase 2/4 anatomy-park never started this run — codex manager spins bootstrap loop on empty-queue (NEW bug `p2-codex-manager-empty-queue-spin.md`). pkg.json-only-revert bug (NEW class `p1-deployed-pkgjson-version-only-revert.md`) bites every 30-60 min in flight — operator workaround = manual `bash install.sh` + ts symlink restore.)
 
 **Bootstrap for new sessions**: read `CONTEXT_2026-05-03.md` first.
 
@@ -18,6 +18,7 @@ This file is **operational** — it tells the next coding agent what to work on.
 | 1 | [`prds/p1-deployed-pkgjson-version-only-revert.md`](p1-deployed-pkgjson-version-only-revert.md) ⭐ **NEW P1** | **Draft** — pkg.json:version-only revert (NEW class, distinct from prior tarball-rsync revert). Same kill-switch state, identical `check-update.js` content-hashes between source and deployed, only the pkg.json version field flips 1.67.0→1.64.0 within ~30-60 min. Diagnostic-first: identify writer via `fs_usage`/`lsof` before fixing. Surfaced during mega bundle session `2026-05-02-fca7952b`. | Diagnose first (R-PJV-1), then fix at root |
 | 1b | [`prds/p2-codex-manager-empty-queue-spin.md`](p2-codex-manager-empty-queue-spin.md) ⭐ **NEW P2** | **Draft** — codex manager doesn't recognize empty-queue (all 34 mega bundle tickets Done) and spins bootstrap loop instead of emitting `EPIC_COMPLETED`. Pipeline-runner stays in phase 1/4 indefinitely. Mux-runner should detect synthetic completion. 4 ACs. Distinct from D.3 (which fixes "what failed in iter N", not "queue emptiness"). | Add empty-queue scan to mux-runner iteration_start |
 | 1c | [`prds/p3-paused-session-orphan-blocks-stop-hook.md`](p3-paused-session-orphan-blocks-stop-hook.md) ⭐ **NEW P3** | **Draft** — paused setup sessions create `active=true, pid=null` placeholder; abandoned interviews leave orphans that block every future stop-hook in the same cwd. resolve-state.ts should demote orphans older than 300s. Bit twice this session (`9e48bce6`, `45edd193`). 4 ACs. | Add pid=null+active=true demotion to resolve-state.ts |
+| 1d | [`prds/p3-test-flakes-council-publish-and-scope-resolver.md`](p3-test-flakes-council-publish-and-scope-resolver.md) ⭐ **NEW P3** | **Draft** — two pre-existing test failures surfaced during v1.69.0 release gate. F1: `council-publish.test.js:867` hung-timeout classification leaks (2 failed instead of 1). F2: `scope-resolver-import-walks.test.js:111` rg/fail warning missing despite rg exit 2. Both predate v1.66.0; prior timing-bump fixes (`0390916`, `ac7c496`, `71e5c1e`) didn't address root cause. 4 ACs. | Diagnose-first: don't bump timeouts; identify why warnings/classifications are wrong |
 | 2 | [`prds/p2-mega-bundle-2026-05-02-pm.md`](p2-mega-bundle-2026-05-02-pm.md) **MEGA BUNDLE** | **Refined Cycle 3 — IN FLIGHT** — composes 6 source PRDs (strip + state-drift + retry-tracking + smart-handoff + hermes + god-fn-phase-2). 34 atomic tickets refined; pipeline relaunched after readiness halt with `state.flags.skip_readiness_reason` bypass; PHASE 1/4 PICKLE codex active. Cron `2ba30074` armed every hour at :17. | Babysit until closer reaches v1.69.0 |
 | 2 | [`prds/p1-strip-excessive-defense-deploy-reversion.md`](p1-strip-excessive-defense-deploy-reversion.md) | **In mega bundle Section A** | Will land via mega bundle |
 | 3 | [`prds/p2-bundle-deploy-reversion-and-gate-baseline-diagnostic.md`](p2-bundle-deploy-reversion-and-gate-baseline-diagnostic.md) | **30/30 tickets SHIPPED** in code on session `2026-05-02-ad240987` (codex backend). All commits in main. Closer DEFERRED live release because env lacks `crontab` permission. v1.67.0 will NOT be tagged; v1.68.0 ships directly OR rolls into v1.69.0 via mega bundle closer. | Tag in mega bundle closer |
@@ -93,6 +94,12 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 ## 2. Recently Shipped (last 3 releases)
 
+### v1.69.0 (2026-05-03 PM) — mega bundle release ceremony
+
+- **Released** at https://github.com/gregorydickson/pickle-rick-claude/releases/tag/v1.69.0. Rolls up v1.67.0 (P1 bundle: anatomy-park crash + szechuan judge + pipeline-state-desync tail), v1.68.0 (P0 deploy-reversion bundle: 30 tickets + strip + trap-door fixes), and v1.69.0 closer (mega bundle 34/34 from session `fca7952b`: strip + state-drift + retry-tracking + smart-handoff + hermes + god-fn-2 + backend identity + teams validation).
+- 138 commits pushed v1.66.0..HEAD. install.sh clean; src/dep parity OK at 1.69.0.
+- **Known pre-existing test failures (not regressions, predate v1.66.0):** `tests/council-publish.test.js:867` (hung `gh pr comment` timeout asserts 1 call, observes 2) and `tests/scope-resolver-import-walks.test.js:111` (rg→grep fallback returns false locally). Filed as `p3-test-flakes-council-publish-and-scope-resolver.md`.
+
 ### Uncommitted (planned v1.68.0) — P0 deploy-reversion bundle (30 tickets) + P1 strip-back + trap-door fixes
 
 - **30/30 P0 bundle tickets DONE** in code on session `2026-05-02-ad240987` (codex backend, ~9h end-to-end). Section A (14 lockdown tickets), Section B (2 gate-baseline event + verifier), Section C (2 state.active claim + re-eval), Section D (3 readiness manifest), infra (2 verify-bundle + force-vs-allow matrix), wiring, 4 hardening (HT-1..HT-4), closer, scheduled-soak.
@@ -143,16 +150,16 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 ---
 
-## 3. Current State (verified 2026-05-02 PM)
+## 3. Current State (verified 2026-05-03 PM)
 
 | Item | Value |
 |---|---|
 | Source version | **v1.69.0** (commit `bdc775f`) — mega bundle closer |
-| Deployed version | **v1.69.0** (parity OK as of last check; flips back to 1.64.0 every 30-60 min per pkg.json-only-revert bug) |
-| Latest release on GitHub | **v1.66.0** (broken; v1.67.0/v1.68.0/v1.69.0 ALL untagged; release ceremony deferred) |
-| Branch state | `main`, ~120 commits ahead of `origin/main` |
-| Working tree | CLEAN as of last commit (1bdaffc was last MASTER_PLAN/PRD commit before this bookkeeping pass) |
-| Active pipeline session | **STUCK** — `2026-05-02-fca7952b` pickle phase phase 1/4, codex manager spinning empty-queue bootstrap loop. 34/34 tickets Done but pipeline-runner hasn't advanced to phase 2/4 |
+| Deployed version | **v1.69.0** (parity OK after fresh `install.sh`; flips back to 1.64.0 every 30-60 min per pkg.json-only-revert bug — monitor via `jq -r .version $HOME/.claude/pickle-rick/extension/package.json`) |
+| Latest release on GitHub | **v1.69.0** ✅ (released 2026-05-03 PM with full v1.66.0..HEAD release notes; v1.67.0/v1.68.0 source bumps rolled into v1.69.0) |
+| Branch state | `main`, **synced with `origin/main`** (138 commits pushed in release ceremony) |
+| Working tree | CLEAN |
+| Active pipeline session | NONE — stuck `pipeline-fca7952b` tmux session has exited; mega bundle session dir retained at `~/.local/share/pickle-rick/sessions/2026-05-02-fca7952b/` for postmortem |
 | P0 bundle session retained | `~/.local/share/pickle-rick/sessions/2026-05-02-ad240987/` — 30 ticket dirs + bundle artifacts |
 | Mega bundle session retained | `~/.local/share/pickle-rick/sessions/2026-05-02-fca7952b/` — 34 ticket dirs |
 | Cron watchdogs | NONE — `2ba30074` (1h babysit) cancelled after closer Done. `a3a6970f` (30min P0 babysit) cancelled earlier |
