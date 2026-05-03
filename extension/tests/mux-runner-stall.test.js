@@ -22,6 +22,12 @@ function makeTmpRoot() {
     return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-stall-test-')));
 }
 
+function writeExtensionRootSentinel(extDir) {
+    const sentinelDir = path.join(extDir, 'extension', 'bin');
+    fs.mkdirSync(sentinelDir, { recursive: true });
+    fs.writeFileSync(path.join(sentinelDir, 'log-watcher.js'), '');
+}
+
 /**
  * Run mux-runner.js as a subprocess with isolated EXTENSION_DIR.
  */
@@ -68,6 +74,7 @@ test('mux-runner-stall: CB-disabled fixture loads and respects CB disable settin
     try {
         // Create extension dir with custom pickle_settings.json (CB disabled)
         const extDir = tmpRoot;
+        writeExtensionRootSentinel(extDir);
         fs.writeFileSync(
             path.join(extDir, 'pickle_settings.json'),
             JSON.stringify({
@@ -97,12 +104,12 @@ test('mux-runner-stall: CB-disabled fixture loads and respects CB disable settin
         const sessionDir = path.join(tmpRoot, 'session');
         fs.mkdirSync(sessionDir, { recursive: true });
 
-        // Write initial state: iteration=1, with max_iterations=3 to allow a few loops
+        // Write initial state at max_iterations so startup validates settings and exits fast.
         fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
             active: true,
             step: 'implement',
             iteration: 1,
-            max_iterations: 3,
+            max_iterations: 1,
             worker_timeout_seconds: 1200,
             original_prompt: 'test task',
             working_dir: tmpRoot,
