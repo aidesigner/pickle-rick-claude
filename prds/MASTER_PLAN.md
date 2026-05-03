@@ -1,8 +1,8 @@
 # MASTER_PLAN — Pickle Rick Engineering Lifecycle
 
-**Last updated**: 2026-05-02 PM (**P0 deploy-reversion bundle landed 30/30 tickets** on session `2026-05-02-ad240987` over ~9h — codex backend; closer DEFERRED live `gh release create` because env blocks `crontab`. Bundle is **over-engineered** per Cycle 3 codebase analyst's own verdict: only AC-DR-04c is the actual fix, the rest is defense-in-depth for an unidentified writer class. **NEW P1 strip PRD** `prds/p1-strip-excessive-defense-deploy-reversion.md` to trim cron sampler + scheduled-soak + mux-runner pre-flight before tagging v1.68.0. Trap-door pre-existing failures fixed via agent team (uncommitted). Phantom session `9e48bce6` cleaned up.)
+**Last updated**: 2026-05-03 (**Mega bundle landed 34/34 tickets** on session `2026-05-02-fca7952b` over ~10h on codex; source pkg.json bumped to **v1.69.0** by closer; gh release for v1.69.0 NOT yet published. Pipeline phase 2/4 anatomy-park never started — codex manager spins bootstrap loop on empty-queue (NEW bug `p2-codex-manager-empty-queue-spin.md`). pkg.json-only-revert bug (NEW class `p1-deployed-pkgjson-version-only-revert.md`) bites every 30-60 min — operator workaround = manual `bash install.sh` + ts symlink restore. v1.66.0 still GitHub-Latest with poison content.)
 
-**Bootstrap for new sessions**: read `CONTEXT_2026-05-02.md` first.
+**Bootstrap for new sessions**: read `CONTEXT_2026-05-03.md` first.
 
 This file is **operational** — it tells the next coding agent what to work on. Historical narrative lives in:
 - `docs/codex-prompt-design-notes.md` — codex-backend prompt-design lessons (FM-1..FM-4, literalism, scope confusion)
@@ -16,6 +16,7 @@ This file is **operational** — it tells the next coding agent what to work on.
 | # | PRD | Status | Next action |
 |---|---|---|---|
 | 1 | [`prds/p1-deployed-pkgjson-version-only-revert.md`](p1-deployed-pkgjson-version-only-revert.md) ⭐ **NEW P1** | **Draft** — pkg.json:version-only revert (NEW class, distinct from prior tarball-rsync revert). Same kill-switch state, identical `check-update.js` content-hashes between source and deployed, only the pkg.json version field flips 1.67.0→1.64.0 within ~30-60 min. Diagnostic-first: identify writer via `fs_usage`/`lsof` before fixing. Surfaced during mega bundle session `2026-05-02-fca7952b`. | Diagnose first (R-PJV-1), then fix at root |
+| 1b | [`prds/p2-codex-manager-empty-queue-spin.md`](p2-codex-manager-empty-queue-spin.md) ⭐ **NEW P2** | **Draft** — codex manager doesn't recognize empty-queue (all 34 mega bundle tickets Done) and spins bootstrap loop instead of emitting `EPIC_COMPLETED`. Pipeline-runner stays in phase 1/4 indefinitely. Mux-runner should detect synthetic completion. 4 ACs. Distinct from D.3 (which fixes "what failed in iter N", not "queue emptiness"). | Add empty-queue scan to mux-runner iteration_start |
 | 2 | [`prds/p2-mega-bundle-2026-05-02-pm.md`](p2-mega-bundle-2026-05-02-pm.md) **MEGA BUNDLE** | **Refined Cycle 3 — IN FLIGHT** — composes 6 source PRDs (strip + state-drift + retry-tracking + smart-handoff + hermes + god-fn-phase-2). 34 atomic tickets refined; pipeline relaunched after readiness halt with `state.flags.skip_readiness_reason` bypass; PHASE 1/4 PICKLE codex active. Cron `2ba30074` armed every hour at :17. | Babysit until closer reaches v1.69.0 |
 | 2 | [`prds/p1-strip-excessive-defense-deploy-reversion.md`](p1-strip-excessive-defense-deploy-reversion.md) | **In mega bundle Section A** | Will land via mega bundle |
 | 3 | [`prds/p2-bundle-deploy-reversion-and-gate-baseline-diagnostic.md`](p2-bundle-deploy-reversion-and-gate-baseline-diagnostic.md) | **30/30 tickets SHIPPED** in code on session `2026-05-02-ad240987` (codex backend). All commits in main. Closer DEFERRED live release because env lacks `crontab` permission. v1.67.0 will NOT be tagged; v1.68.0 ships directly OR rolls into v1.69.0 via mega bundle closer. | Tag in mega bundle closer |
@@ -145,15 +146,15 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 | Item | Value |
 |---|---|
-| Source version | **v1.67.0** (commit `2c814e8`) — P1 bundle closer; will become 1.68.0 via strip PRD's closer step |
-| Deployed version | **v1.67.0** (parity restored after final cron-sampler-style redeploy) |
-| Latest release on GitHub | **v1.66.0** (broken; v1.67.0 NOT tagged; v1.68.0 pending strip) |
-| Branch state | `main`, 94 commits ahead of `origin/main` |
-| Working tree | **DIRTY** — uncommitted trap-door fixes from agent team: `extension/CLAUDE.md`, `extension/package.json`, two new test files |
-| Active pipeline session | **none** — `2026-05-02-ad240987` reached `step:completed, active:false`; 30/30 tickets Done |
-| Bundle session retained | `~/.local/share/pickle-rick/sessions/2026-05-02-ad240987/` — 30 ticket dirs + bundle/ artifacts |
-| Bundle artifacts | `bundle/section-a-rca-followup.md`, `ac-dr-02.json`, `ac-dr-04d.json`, `ac-dr-06.json`, `v1.66.0-disposition.json` + metadata + tarball archive in `pre-deletion-archive/`, `section-c-still-needed.json` |
-| Cron watchdogs | NONE — `a3a6970f` (30min babysit) cancelled when pipeline reached `success-pending-soak` |
+| Source version | **v1.69.0** (commit `bdc775f`) — mega bundle closer |
+| Deployed version | **v1.69.0** (parity OK as of last check; flips back to 1.64.0 every 30-60 min per pkg.json-only-revert bug) |
+| Latest release on GitHub | **v1.66.0** (broken; v1.67.0/v1.68.0/v1.69.0 ALL untagged; release ceremony deferred) |
+| Branch state | `main`, ~120 commits ahead of `origin/main` |
+| Working tree | CLEAN as of last commit (1bdaffc was last MASTER_PLAN/PRD commit before this bookkeeping pass) |
+| Active pipeline session | **STUCK** — `2026-05-02-fca7952b` pickle phase phase 1/4, codex manager spinning empty-queue bootstrap loop. 34/34 tickets Done but pipeline-runner hasn't advanced to phase 2/4 |
+| P0 bundle session retained | `~/.local/share/pickle-rick/sessions/2026-05-02-ad240987/` — 30 ticket dirs + bundle artifacts |
+| Mega bundle session retained | `~/.local/share/pickle-rick/sessions/2026-05-02-fca7952b/` — 34 ticket dirs |
+| Cron watchdogs | NONE — `2ba30074` (1h babysit) cancelled after closer Done. `a3a6970f` (30min P0 babysit) cancelled earlier |
 | Codex backend | production-grade |
 | `CODEX_MANAGER_RELAUNCH_CAP` | 10 |
 | `engines.codex` pin | `^0.128.0` (source); deployed re-synced via the latest install.sh |
