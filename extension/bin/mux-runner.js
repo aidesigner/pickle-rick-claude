@@ -51,23 +51,35 @@ function normalizeDeploySnapshot(raw) {
     if (!raw || typeof raw !== 'object')
         return null;
     const obj = raw;
-    const deployedVersion = typeof obj.deployedVersion === 'string' ? obj.deployedVersion :
-        typeof obj.dep_v === 'string' ? obj.dep_v :
-            typeof obj.DEP_V === 'string' ? obj.DEP_V :
-                typeof obj.version === 'string' ? obj.version : '';
-    const sourceVersion = typeof obj.sourceVersion === 'string' ? obj.sourceVersion :
-        typeof obj.src_v === 'string' ? obj.src_v :
-            typeof obj.SRC_V === 'string' ? obj.SRC_V : deployedVersion;
-    const rawHashes = obj.hashes && typeof obj.hashes === 'object'
-        ? obj.hashes
-        : {};
+    const deployedVersion = firstStringField(obj, ['deployedVersion', 'dep_version', 'dep_v', 'DEP_V', 'version']);
+    const sourceVersion = firstStringField(obj, ['sourceVersion', 'src_version', 'src_v', 'SRC_V']) || deployedVersion;
+    const rawHashes = deploySnapshotHashSource(obj);
     const hashes = {};
     for (const file of DEPLOY_DRIFT_FILES) {
-        const value = rawHashes[file.key] ?? rawHashes[file.relPath];
+        const value = deploySnapshotHashValue(rawHashes, file.key, file.relPath);
         if (typeof value === 'string')
             hashes[file.key] = value;
     }
     return { sourceVersion, deployedVersion, hashes };
+}
+function firstStringField(obj, keys) {
+    for (const key of keys) {
+        if (typeof obj[key] === 'string')
+            return obj[key];
+    }
+    return '';
+}
+function deploySnapshotHashSource(obj) {
+    if (obj.hashes && typeof obj.hashes === 'object')
+        return obj.hashes;
+    if (obj.content_hashes && typeof obj.content_hashes === 'object') {
+        return obj.content_hashes;
+    }
+    return {};
+}
+function deploySnapshotHashValue(rawHashes, key, relPath) {
+    const installedKey = key.replace(/^bin\//, '').replace(/^services\//, '');
+    return rawHashes[key] ?? rawHashes[relPath] ?? rawHashes[installedKey];
 }
 export function ensureDeployBaseline(extensionRoot, dataRoot) {
     const baselinePath = path.join(dataRoot, DEPLOY_BASELINE_FILE);
