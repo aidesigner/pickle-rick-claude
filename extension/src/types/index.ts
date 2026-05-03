@@ -239,6 +239,25 @@ export interface HookInput {
   prompt_response?: string;
 }
 
+export interface PostToolUseFailureInput {
+  session_id?: string;
+  hook_event_name?: 'PostToolUseFailure' | string;
+  tool_name?: string;
+  tool_input?: Record<string, unknown>;
+  error?: string;
+  is_interrupt?: boolean;
+  tool_use_id?: string;
+  cwd?: string;
+  transcript_path?: string;
+}
+
+export interface LastToolErrorState {
+  ts: string;
+  tool: string;
+  error_signature: string;
+  retry_count: number;
+}
+
 // ---------------------------------------------------------------------------
 // Default Configuration Values
 // ---------------------------------------------------------------------------

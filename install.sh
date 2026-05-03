@@ -443,6 +443,29 @@ else
   echo "✅ Registered PostToolUse hook in $SETTINGS_FILE"
 fi
 
+# --- POST-TOOL-USE-FAILURE HOOK (tool error retry tracker, idempotent) ---
+TOOL_ERROR_HOOK_CMD='node $HOME/.claude/pickle-rick/extension/hooks/dispatch.js tool-error'
+if jq -e --arg cmd "$TOOL_ERROR_HOOK_CMD" \
+    '.hooks.PostToolUseFailure // [] | map(.hooks // [] | map(.command)) | flatten | any(. == $cmd)' \
+    "$SETTINGS_FILE" >/dev/null 2>&1; then
+  echo "⚠️  PostToolUseFailure hook already registered — skipping"
+else
+  TMPFILE="$(mktemp)"
+  jq --arg cmd "$TOOL_ERROR_HOOK_CMD" '
+    {"type": "command", "command": $cmd} as $entry |
+    {"matcher": "*", "hooks": [$entry]} as $group |
+    if .hooks == null then
+      .hooks = {"PostToolUseFailure": [$group]}
+    elif .hooks.PostToolUseFailure == null then
+      .hooks.PostToolUseFailure = [$group]
+    else
+      .hooks.PostToolUseFailure += [$group]
+    end
+  ' "$SETTINGS_FILE" > "$TMPFILE" \
+    && mv "$TMPFILE" "$SETTINGS_FILE"
+  echo "✅ Registered PostToolUseFailure hook in $SETTINGS_FILE"
+fi
+
 # --- PRE-TOOL-USE HOOKS (merge from source settings, preserving existing entries) ---
 SOURCE_SETTINGS="$SCRIPT_DIR/.claude/settings.json"
 SOURCE_PTU_COUNT=$(jq '.hooks.PreToolUse // [] | length' "$SOURCE_SETTINGS" 2>/dev/null || echo "0")
