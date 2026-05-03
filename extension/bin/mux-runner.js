@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, ticketTierBudget } from '../services/pickle-utils.js';
 import { PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -291,11 +291,49 @@ function updateMuxLifecycleState(statePath, patch) {
             s.current_ticket = patch.currentTicket;
             delete s.current_ticket_tier;
             delete s.current_ticket_budget;
+            delete s.current_ticket_max_iterations;
+            delete s.current_ticket_worker_timeout_seconds;
+            delete s.current_ticket_budget_start_iteration;
         }
         if (patch.step !== undefined) {
             s.step = ticketChanged ? patch.step : maxLifecycleStep(s.step, patch.step);
         }
     });
+}
+function readTicketBudgetForState(state, sessionDir) {
+    const cachedTier = typeof state.current_ticket_tier === 'string' ? state.current_ticket_tier : undefined;
+    if (cachedTier)
+        return ticketTierBudget(cachedTier);
+    const ticketId = typeof state.current_ticket === 'string' && state.current_ticket.length > 0
+        ? state.current_ticket
+        : null;
+    if (!ticketId)
+        return ticketTierBudget(undefined);
+    const ticketPath = path.join(sessionDir, ticketId, `linear_ticket_${ticketId}.md`);
+    return ticketInfoBudgetFromPath(ticketPath);
+}
+function ticketInfoBudgetFromPath(ticketPath) {
+    return ticketTierBudget(parseTicketFrontmatter(ticketPath)?.complexity_tier);
+}
+export function applyTicketTierBudget(state, sessionDir) {
+    const budget = readTicketBudgetForState(state, sessionDir);
+    if (state.current_ticket_budget_start_iteration === undefined) {
+        state.current_ticket_budget_start_iteration = Math.max(0, (Number(state.iteration) || 0) - 1);
+    }
+    state.current_ticket_tier = budget.tier;
+    state.current_ticket_max_iterations = budget.max_iterations;
+    state.current_ticket_worker_timeout_seconds = budget.worker_timeout_seconds;
+    state.max_iterations = budget.max_iterations;
+    state.worker_timeout_seconds = budget.worker_timeout_seconds;
+    return budget;
+}
+function ticketBudgetIterationCount(state, currentIteration) {
+    if (!state.current_ticket || typeof state.current_ticket_tier !== 'string')
+        return currentIteration;
+    const start = Number(state.current_ticket_budget_start_iteration);
+    if (!Number.isFinite(start) || start < 0)
+        return currentIteration;
+    return Math.max(0, currentIteration - start);
 }
 /**
  * Returns tickets that are still pending (not Done, not Skipped) excluding
@@ -1760,8 +1798,9 @@ async function runMuxRunnerMain() {
         const maxIter = Number.isFinite(rawMaxIter) ? rawMaxIter : 0;
         const rawCurIter = Number(state.iteration);
         const curIter = Number.isFinite(rawCurIter) ? rawCurIter : 0;
-        if (maxIter > 0 && curIter >= maxIter) {
-            log(`Max iterations reached (${curIter}/${maxIter}). Exiting.`);
+        const budgetIter = ticketBudgetIterationCount(state, curIter);
+        if (maxIter > 0 && budgetIter >= maxIter) {
+            log(`Max iterations reached (${budgetIter}/${maxIter}). Exiting.`);
             finalizeTerminalState(statePath, { step: 'completed', runnerIteration: iteration, exitReason: 'limit' });
             exitReason = 'limit';
             break;
@@ -1821,6 +1860,11 @@ async function runMuxRunnerMain() {
             : inferTicketLifecycleStep(sessionDir, preTicket, state.step);
         state = updateMuxLifecycleState(statePath, { iteration, currentTicket: preTicket, step: preStep });
         state = reconcileTicketStateDesync(statePath, sessionDir, state.current_ticket || null, iteration, log);
+        if (templateName !== 'meeseeks.md') {
+            state = sm.update(statePath, s => {
+                applyTicketTierBudget(s, sessionDir);
+            });
+        }
         if (previousTicket === null) {
             previousTicket = state.current_ticket || null;
             if (previousTicket) {
@@ -2231,6 +2275,9 @@ async function runMuxRunnerMain() {
                             s.current_ticket = recoveredCurrentTicket;
                             delete s.current_ticket_tier;
                             delete s.current_ticket_budget;
+                            delete s.current_ticket_max_iterations;
+                            delete s.current_ticket_worker_timeout_seconds;
+                            delete s.current_ticket_budget_start_iteration;
                         }
                         const recoveredStep = inferTicketLifecycleStep(sessionDir, recoveredCurrentTicket, s.step);
                         s.step = priorTicket !== recoveredCurrentTicket ? recoveredStep : maxLifecycleStep(s.step, recoveredStep);

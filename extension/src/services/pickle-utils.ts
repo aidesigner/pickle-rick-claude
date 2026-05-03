@@ -325,6 +325,44 @@ export interface TicketInfo {
 }
 
 export type TicketStatus = TicketInfo['status'];
+export type TicketComplexityTier = NonNullable<TicketInfo['complexity_tier']>;
+
+export interface TicketTierBudget {
+  tier: TicketComplexityTier;
+  max_iterations: number;
+  worker_timeout_seconds: number;
+}
+
+export const VALID_TICKET_COMPLEXITY_TIERS = ['trivial', 'small', 'medium', 'large'] as const;
+
+export const TICKET_TIER_BUDGETS: Record<TicketComplexityTier, Omit<TicketTierBudget, 'tier'>> = {
+  trivial: { max_iterations: 2, worker_timeout_seconds: 5 * 60 },
+  small: { max_iterations: 5, worker_timeout_seconds: 10 * 60 },
+  medium: { max_iterations: 15, worker_timeout_seconds: 20 * 60 },
+  large: { max_iterations: 30, worker_timeout_seconds: 40 * 60 },
+} as const;
+
+export function normalizeTicketComplexityTier(value: unknown): TicketComplexityTier {
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if ((VALID_TICKET_COMPLEXITY_TIERS as readonly string[]).includes(normalized)) {
+      return normalized as TicketComplexityTier;
+    }
+  }
+  return 'medium';
+}
+
+export function ticketTierBudget(tier: unknown): TicketTierBudget {
+  const normalizedTier = normalizeTicketComplexityTier(tier);
+  return {
+    tier: normalizedTier,
+    ...TICKET_TIER_BUDGETS[normalizedTier],
+  };
+}
+
+export function ticketInfoBudget(ticketInfo: Pick<TicketInfo, 'complexity_tier'> | null | undefined): TicketTierBudget {
+  return ticketTierBudget(ticketInfo?.complexity_tier);
+}
 
 export class MissingTicketError extends Error {
   constructor(
@@ -376,11 +414,7 @@ export function parseTicketFrontmatter(filePath: string): TicketInfo | null {
       const m = fm.body.match(new RegExp(`^${escaped}:\\s*(.+)$`, 'm'));
       return m ? m[1].trim().replace(/^["']|["']$/g, '') : null;
     };
-    const tierRaw = get('complexity_tier');
-    const validTiers = ['trivial', 'small', 'medium', 'large'] as const;
-    const complexity_tier = tierRaw && validTiers.includes(tierRaw as typeof validTiers[number])
-      ? tierRaw as typeof validTiers[number]
-      : 'medium';
+    const complexity_tier = normalizeTicketComplexityTier(get('complexity_tier'));
     // AC-SSV-05: collect both `depends_on` and the legacy `dependencies` alias,
     // strip optional `external:` prefix, dedupe. These edges feed topoSortTickets.
     const rawDeps = [

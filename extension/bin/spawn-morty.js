@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, runCmd, safeErrorMessage, parseTicketFrontmatter, } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, runCmd, safeErrorMessage, parseTicketFrontmatter, ticketInfoBudget, } from '../services/pickle-utils.js';
 import { spawn } from 'child_process';
 import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact } from '../types/index.js';
 import { updateTicketStatus } from '../services/git-utils.js';
@@ -645,19 +645,22 @@ export async function runWorkerProcess(ctx) {
 async function main() {
     const parsed = parseAndValidateArgs(process.argv.slice(2));
     const runtime = readSessionRuntime(parsed);
-    const effectiveTimeout = resolveEffectiveTimeout(parsed.timeout, runtime.state, Date.now());
-    if (runtime.state && effectiveTimeout > parsed.timeout) {
+    const ticketInfo = readTicketInfo(parsed.ticketFilePath);
+    const requestedTimeout = ticketInfo
+        ? ticketInfoBudget(ticketInfo).worker_timeout_seconds
+        : parsed.timeout;
+    const effectiveTimeout = resolveEffectiveTimeout(requestedTimeout, runtime.state, Date.now());
+    if (runtime.state && effectiveTimeout > requestedTimeout) {
         console.log(`${Style.YELLOW}⚠️  Session time already elapsed; running with requested timeout.${Style.RESET}`);
     }
-    else if (effectiveTimeout < parsed.timeout) {
+    else if (effectiveTimeout < requestedTimeout) {
         console.log(`${Style.YELLOW}⚠️  Worker timeout clamped: ${effectiveTimeout}s${Style.RESET}`);
     }
-    const ticketInfo = readTicketInfo(parsed.ticketFilePath);
     const backend = routeBackend(parsed.sessionRoot, ticketInfo);
     const args = { ...parsed, backend };
     const extensionRoot = getExtensionRoot();
     const model = resolveWorkerModel(backend, extensionRoot, parsed.sessionRoot, ticketInfo);
-    printMinimalPanel(args.isReviewTicket ? 'Spawning Review Worker' : 'Spawning Morty Worker', { Request: args.ticket, Ticket: args.ticketId, Type: args.isReviewTicket ? 'review' : 'implementation', Format: args.outputFormat, Backend: backend, Timeout: `${effectiveTimeout}s (Req: ${args.timeout}s)`, PID: process.pid }, args.isReviewTicket ? 'MAGENTA' : 'CYAN', '🥒');
+    printMinimalPanel(args.isReviewTicket ? 'Spawning Review Worker' : 'Spawning Morty Worker', { Request: args.ticket, Ticket: args.ticketId, Type: args.isReviewTicket ? 'review' : 'implementation', Format: args.outputFormat, Backend: backend, Timeout: `${effectiveTimeout}s (Req: ${requestedTimeout}s)`, PID: process.pid }, args.isReviewTicket ? 'MAGENTA' : 'CYAN', '🥒');
     const prompt = buildWorkerPrompt({
         ticket: { task: args.ticket, ticketContent: args.ticketContent, ticketId: args.ticketId, ticketPath: args.ticketPath, sessionRoot: args.sessionRoot, backend, isReviewTicket: args.isReviewTicket },
         model: model ?? 'sonnet',

@@ -12,6 +12,9 @@ export interface State {
   current_ticket: string | null;
   current_ticket_tier?: string;
   current_ticket_budget?: number;
+  current_ticket_max_iterations?: number;
+  current_ticket_worker_timeout_seconds?: number;
+  current_ticket_budget_start_iteration?: number;
   history: Array<{ step: Step; ticket?: string; timestamp: string }>;
   started_at: string;
   session_dir: string;
