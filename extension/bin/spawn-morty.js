@@ -20,6 +20,9 @@ const TIER_MODEL_MAP = {
 const sm = new StateManager();
 const MIN_TIMEOUT_SECONDS = 30;
 const VALID_AGENT_MODELS = new Set(['sonnet', 'opus', 'haiku']);
+const LAST_TOOL_ERROR_FILE = 'last-tool-error.json';
+const TOOL_RETRY_ANALYZE_THRESHOLD = 2;
+const TOOL_RETRY_STOP_THRESHOLD = 4;
 export function tierToModel(tier) {
     if (!tier)
         return 'sonnet';
@@ -147,6 +150,69 @@ function readProjectContextBlock(sessionRoot) {
         return '';
     }
 }
+function isRecord(value) {
+    return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+function isLastToolErrorState(value) {
+    if (!isRecord(value))
+        return false;
+    return typeof value.ts === 'string'
+        && typeof value.tool === 'string'
+        && typeof value.error_signature === 'string'
+        && typeof value.retry_count === 'number'
+        && Number.isInteger(value.retry_count)
+        && value.retry_count > 0;
+}
+function readLastToolErrorState(sessionRoot) {
+    try {
+        const parsed = JSON.parse(fs.readFileSync(path.join(sessionRoot, LAST_TOOL_ERROR_FILE), 'utf-8'));
+        return isLastToolErrorState(parsed) ? parsed : null;
+    }
+    catch {
+        return null;
+    }
+}
+function recordToolRetryCircuitOpen(sessionRoot, ticketId, toolError) {
+    try {
+        writeActivityEntry(path.join(sessionRoot, 'state.json'), {
+            event: 'tool_retry_circuit_open',
+            ts: new Date().toISOString(),
+            source: 'pickle',
+            session: path.basename(sessionRoot),
+            ticket: ticketId,
+            tool: toolError.tool,
+            retry_count: toolError.retry_count,
+            error_signature: toolError.error_signature,
+        });
+    }
+    catch {
+        /* fail open; guidance still reaches the worker */
+    }
+}
+function buildToolRetryGuidanceBlock(ticket) {
+    const toolError = readLastToolErrorState(ticket.sessionRoot);
+    if (!toolError)
+        return '';
+    if (toolError.retry_count >= TOOL_RETRY_STOP_THRESHOLD) {
+        recordToolRetryCircuitOpen(ticket.sessionRoot, ticket.ticketId, toolError);
+        return `# TOOL RETRY CIRCUIT OPEN
+
+STOP. You have hit the same ${toolError.tool} failure ${toolError.retry_count} times.
+Do not retry the same command, edit, or test path again.
+Use a completely different approach: inspect the failure cause, change the implementation strategy, reduce the repro, or choose another verification path before using the failing tool again.
+
+`;
+    }
+    if (toolError.retry_count >= TOOL_RETRY_ANALYZE_THRESHOLD) {
+        return `# TOOL RETRY GUIDANCE
+
+You have hit the same ${toolError.tool} failure ${toolError.retry_count} times.
+Analyze and fix the root cause before retrying. Do not repeat the same tool call until you can explain what changed and why it should succeed.
+
+`;
+    }
+    return '';
+}
 function isArchaeologyDisabled(sessionRoot) {
     try {
         const state = readRecoverableJsonObject(path.join(sessionRoot, 'state.json'));
@@ -244,6 +310,7 @@ export function resolveEffectiveTimeout(configuredTimeoutSec, parentState, wallC
 export function buildWorkerPrompt(opts) {
     const { ticket } = opts;
     const extensionRoot = opts.extensionRoot ?? getExtensionRoot();
+    const toolRetryGuidance = buildToolRetryGuidanceBlock(ticket);
     const promptFilename = ticket.isReviewTicket ? 'send-to-morty-review.md' : 'send-to-morty.md';
     const mortyPromptPath = path.join(os.homedir(), '.claude', 'commands', promptFilename);
     let workerPrompt;
@@ -286,7 +353,7 @@ This repo has a GitNexus knowledge graph index. Use these MCP tools during Resea
 Prefer GitNexus tools over raw Grep/Glob for understanding call chains, dependencies, and execution flows.
 For simple file/string lookups, Grep/Glob are still fine.`;
     }
-    return workerPrompt;
+    return `${toolRetryGuidance}${workerPrompt}`;
 }
 function hasGitNexusIndex(repoRoot) {
     try {

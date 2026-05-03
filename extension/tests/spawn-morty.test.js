@@ -54,6 +54,56 @@ process.exit(0);
     return shimPath;
 }
 
+function writeCodexSpawnHarness(tmpDir, ticketId) {
+    writeExtensionSentinel(tmpDir);
+    const sessionDir = path.join(tmpDir, 'session');
+    const ticketDir = path.join(sessionDir, ticketId);
+    fs.mkdirSync(ticketDir, { recursive: true });
+    fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+        active: true,
+        backend: 'codex',
+        iteration: 1,
+        schema_version: 1,
+    }));
+
+    const shimDir = path.join(tmpDir, 'bin');
+    const shimLog = path.join(tmpDir, `${ticketId}-codex.json`);
+    writeCodexShim(shimDir, shimLog);
+    return { sessionDir, ticketDir, shimDir, shimLog };
+}
+
+function writeLastToolError(sessionDir, retryCount) {
+    fs.writeFileSync(path.join(sessionDir, 'last-tool-error.json'), JSON.stringify({
+        ts: new Date().toISOString(),
+        tool: 'Bash',
+        error_signature: 'Command failed with exit code 1',
+        retry_count: retryCount,
+    }));
+}
+
+function runCodexHarness(tmpDir, harness, ticketId) {
+    return spawnSync(process.execPath, [SPAWN_MORTY_BIN,
+        'implement the thing',
+        '--ticket-id', ticketId,
+        '--ticket-path', harness.ticketDir,
+        '--timeout', '30',
+    ], {
+        env: {
+            ...process.env,
+            EXTENSION_DIR: tmpDir,
+            PATH: `${harness.shimDir}${path.delimiter}${process.env.PATH || ''}`,
+            PICKLE_BACKEND: '',
+        },
+        encoding: 'utf-8',
+        timeout: 45000,
+    });
+}
+
+function readCapturedCodexPrompt(shimLog) {
+    const invocation = JSON.parse(fs.readFileSync(shimLog, 'utf-8'));
+    return invocation.argv[invocation.argv.length - 1];
+}
+
 // --- Argument validation ---
 
 test('spawn-morty: no args → exit 1, prints Usage', () => {
@@ -818,6 +868,58 @@ process.exit(0);
             !allArgv.includes('Codex-specific contract additions'),
             'claude prompt MUST NOT contain codex contract addendum'
         );
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// Tool retry guidance
+// ---------------------------------------------------------------------------
+
+test('tool-retry.analyze-guidance: retry_count=2 prepends analyze guidance', () => {
+    const tmpDir = makeTmpDir();
+    const ticketId = 'ticket-tool-retry-analyze';
+    try {
+        const harness = writeCodexSpawnHarness(tmpDir, ticketId);
+        writeLastToolError(harness.sessionDir, 2);
+
+        const result = runCodexHarness(tmpDir, harness, ticketId);
+
+        assert.equal(result.status, 1, `expected validation failure after shim exit, got: ${result.stdout + result.stderr}`);
+        assert.ok(fs.existsSync(harness.shimLog), 'codex shim should be invoked');
+        const prompt = readCapturedCodexPrompt(harness.shimLog);
+        assert.ok(prompt.startsWith('# TOOL RETRY GUIDANCE'), 'tool retry guidance should be prepended');
+        assert.match(prompt, /Analyze and fix the root cause before retrying/);
+        assert.doesNotMatch(prompt, /TOOL RETRY CIRCUIT OPEN/);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('tool-retry.stop: retry_count=4 prepends STOP guidance and emits activity', () => {
+    const tmpDir = makeTmpDir();
+    const ticketId = 'ticket-tool-retry-stop';
+    try {
+        const harness = writeCodexSpawnHarness(tmpDir, ticketId);
+        const statePath = path.join(harness.sessionDir, 'state.json');
+        writeLastToolError(harness.sessionDir, 4);
+
+        const result = runCodexHarness(tmpDir, harness, ticketId);
+
+        assert.equal(result.status, 1, `expected validation failure after shim exit, got: ${result.stdout + result.stderr}`);
+        assert.ok(fs.existsSync(harness.shimLog), 'codex shim should be invoked');
+        const prompt = readCapturedCodexPrompt(harness.shimLog);
+        assert.ok(prompt.startsWith('# TOOL RETRY CIRCUIT OPEN'), 'STOP guidance should be prepended');
+        assert.match(prompt, /STOP\./);
+        assert.match(prompt, /completely different approach/);
+
+        const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+        const event = state.activity?.find((entry) => entry.event === 'tool_retry_circuit_open');
+        assert.ok(event, 'tool_retry_circuit_open activity should be emitted');
+        assert.equal(event.ticket, ticketId);
+        assert.equal(event.tool, 'Bash');
+        assert.equal(event.retry_count, 4);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
