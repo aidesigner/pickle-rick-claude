@@ -354,130 +354,6 @@ function readJson(filePath) {
   return JSON.parse(readFileSync(filePath, 'utf8'));
 }
 
-function buildDeployParityFixtureScript(scriptDir) {
-  return `#!/bin/bash
-set -euo pipefail
-SCRIPT_DIR="${scriptDir}"
-EXTENSION_ROOT="$HOME/.claude/pickle-rick"
-SRC_V="$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).version)" "$SCRIPT_DIR/extension/package.json")"
-DEPLOY_PARITY_CRON_ENTRY='*/5 * * * * /usr/bin/env node ~/.claude/pickle-rick/extension/bin/verify-deploy-parity.js >> ~/.claude/pickle-rick/deploy-parity-samples.jsonl 2>&1'
-
-hash_deployed_file() {
-  local rel_path="$1"
-  shasum -a 256 "$EXTENSION_ROOT/$rel_path" | awk '{print $1}'
-}
-
-write_deploy_baseline() {
-  local baseline_file="$EXTENSION_ROOT/deploy-baseline.json"
-  local tmpfile
-  tmpfile="$(mktemp)"
-  jq -n \
-    --arg installed_at "2026-05-02T00:00:00Z" \
-    --arg src_version "$SRC_V" \
-    --arg dep_version "$DEPLOYED_V" \
-    --arg check_update "$(hash_deployed_file "extension/bin/check-update.js")" \
-    --arg state_manager "$(hash_deployed_file "extension/services/state-manager.js")" \
-    --arg types_index "$(hash_deployed_file "extension/types/index.js")" \
-    '{
-      installed_at: $installed_at,
-      src_version: $src_version,
-      dep_version: $dep_version,
-      content_hashes: {
-        "check-update.js": $check_update,
-        "state-manager.js": $state_manager,
-        "types/index.js": $types_index
-      }
-    }' > "$tmpfile" \
-    && mv "$tmpfile" "$baseline_file"
-}
-
-install_deploy_parity_cron() {
-  local tmpfile
-  tmpfile="$(mktemp)"
-  (crontab -l 2>/dev/null | grep -v 'verify-deploy-parity[.]js' || true) > "$tmpfile"
-  printf '%s\\n' "$DEPLOY_PARITY_CRON_ENTRY" >> "$tmpfile"
-  crontab "$tmpfile"
-  rm -f "$tmpfile"
-}
-
-uninstall_deploy_parity_cron() {
-  local tmpfile
-  tmpfile="$(mktemp)"
-  (crontab -l 2>/dev/null | grep -v 'verify-deploy-parity[.]js' || true) > "$tmpfile"
-  crontab "$tmpfile"
-  rm -f "$tmpfile"
-}
-
-if [ "$\{1:-}" = "--uninstall-cron" ]; then
-  uninstall_deploy_parity_cron
-  exit 0
-fi
-
-mkdir -p "$EXTENSION_ROOT/extension"
-rsync -a --delete "$SCRIPT_DIR/extension/" "$EXTENSION_ROOT/extension/"
-cp "$SCRIPT_DIR/bin/verify-deploy-parity.js" "$EXTENSION_ROOT/extension/bin/verify-deploy-parity.js"
-DEPLOYED_V="$(node -e "process.stdout.write(JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).version)" "$EXTENSION_ROOT/extension/package.json")"
-write_deploy_baseline
-install_deploy_parity_cron
-`;
-}
-
-function makeDeployParityFixture() {
-  const dir = mkdtempSync(path.join(tmpdir(), 'install-deploy-parity-'));
-  const homeDir = path.join(dir, 'home');
-  const sourceExtension = path.join(dir, 'extension');
-  const runtimeRoot = path.join(homeDir, '.claude', 'pickle-rick');
-  const mockBin = path.join(dir, 'mock-bin');
-  const crontabStore = path.join(dir, 'crontab.txt');
-
-  mkdirSync(path.join(sourceExtension, 'bin'), { recursive: true });
-  mkdirSync(path.join(sourceExtension, 'services'), { recursive: true });
-  mkdirSync(path.join(sourceExtension, 'types'), { recursive: true });
-  mkdirSync(path.join(dir, 'bin'), { recursive: true });
-  mkdirSync(mockBin, { recursive: true });
-  writeFileSync(path.join(sourceExtension, 'package.json'), JSON.stringify({ version: '1.2.3' }));
-  writeFileSync(path.join(sourceExtension, 'bin', 'check-update.js'), 'check update\n');
-  writeFileSync(path.join(sourceExtension, 'services', 'state-manager.js'), 'state manager\n');
-  writeFileSync(path.join(sourceExtension, 'types', 'index.js'), 'types index\n');
-  writeFileSync(path.join(dir, 'bin', 'verify-deploy-parity.js'), '#!/usr/bin/env node\n');
-  writeFileSync(
-    path.join(mockBin, 'crontab'),
-    `#!/bin/sh
-set -eu
-store="${crontabStore}"
-if [ "$#" -eq 1 ] && [ "$1" = "-l" ]; then
-  [ -f "$store" ] || exit 1
-  cat "$store"
-  exit 0
-fi
-if [ "$#" -eq 1 ]; then
-  cp "$1" "$store"
-  exit 0
-fi
-exit 2
-`,
-    { mode: 0o755 },
-  );
-
-  const scriptPath = path.join(dir, 'install.sh');
-  writeFileSync(scriptPath, buildDeployParityFixtureScript(dir), { mode: 0o755 });
-  return {
-    dir,
-    homeDir,
-    scriptPath,
-    runtimeRoot,
-    crontabStore,
-    env: { ...process.env, HOME: homeDir, PATH: `${mockBin}:${process.env.PATH}` },
-  };
-}
-
-function runDeployParityFixture(fixture, args = []) {
-  return spawnSync('bash', [fixture.scriptPath, ...args], {
-    encoding: 'utf8',
-    env: fixture.env,
-  });
-}
-
 function buildActiveSessionFixtureScript() {
   return `#!/bin/bash
 set -euo pipefail
@@ -664,69 +540,18 @@ describe('install.sh active-session guard', () => {
   });
 });
 
-describe('install.sh deploy parity sampler', () => {
-  test('install-script.baseline-written writes deploy-baseline.json post-rsync', () => {
-    const fixture = makeDeployParityFixture();
-    try {
-      const result = runDeployParityFixture(fixture);
-      assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
-      const baselinePath = path.join(fixture.runtimeRoot, 'deploy-baseline.json');
-      assert.equal(existsSync(baselinePath), true);
-      const baseline = JSON.parse(readFileSync(baselinePath, 'utf8'));
-      assert.equal(baseline.installed_at, '2026-05-02T00:00:00Z');
-      assert.equal(baseline.src_version, '1.2.3');
-      assert.equal(baseline.dep_version, '1.2.3');
-      assert.equal(typeof baseline.content_hashes['check-update.js'], 'string');
-      assert.equal(typeof baseline.content_hashes['state-manager.js'], 'string');
-      assert.equal(typeof baseline.content_hashes['types/index.js'], 'string');
-      assert.equal(existsSync(path.join(fixture.runtimeRoot, 'extension', 'bin', 'verify-deploy-parity.js')), true);
-    } finally {
-      rmSync(fixture.dir, { recursive: true, force: true });
-    }
-  });
-
-  test('install-script.cron-installed installs deploy parity cron entry idempotently', () => {
-    const fixture = makeDeployParityFixture();
-    try {
-      writeFileSync(fixture.crontabStore, '0 0 * * * echo keep\n*/5 * * * * old verify-deploy-parity.js\n');
-      const first = runDeployParityFixture(fixture);
-      const second = runDeployParityFixture(fixture);
-      assert.strictEqual(first.status, 0, `expected exit 0, got ${first.status}: ${first.stderr}`);
-      assert.strictEqual(second.status, 0, `expected exit 0, got ${second.status}: ${second.stderr}`);
-      const crontab = readFileSync(fixture.crontabStore, 'utf8');
-      assert.match(crontab, /^0 0 \* \* \* echo keep$/m);
-      const matches = crontab.match(/verify-deploy-parity[.]js/g) ?? [];
-      assert.equal(matches.length, 1);
-      assert.match(crontab, /\/usr\/bin\/env node ~\/[.]claude\/pickle-rick\/extension\/bin\/verify-deploy-parity[.]js/);
-    } finally {
-      rmSync(fixture.dir, { recursive: true, force: true });
-    }
-  });
-
-  test('install-script.uninstall-cron removes deploy parity cron entry', () => {
-    const fixture = makeDeployParityFixture();
-    try {
-      writeFileSync(fixture.crontabStore, '0 0 * * * echo keep\n*/5 * * * * /usr/bin/env node ~/.claude/pickle-rick/extension/bin/verify-deploy-parity.js >> ~/.claude/pickle-rick/deploy-parity-samples.jsonl 2>&1\n');
-      const result = runDeployParityFixture(fixture, ['--uninstall-cron']);
-      assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
-      const crontab = readFileSync(fixture.crontabStore, 'utf8');
-      assert.match(crontab, /^0 0 \* \* \* echo keep$/m);
-      assert.doesNotMatch(crontab, /verify-deploy-parity[.]js/);
-      assert.equal(existsSync(path.join(fixture.runtimeRoot, 'deploy-baseline.json')), false);
-    } finally {
-      rmSync(fixture.dir, { recursive: true, force: true });
-    }
-  });
-
-  test('real install.sh contains deploy parity baseline and cron hooks', () => {
+describe('install.sh deploy parity sampler stripped', () => {
+  test('real install.sh contains no deploy parity sampler hooks', () => {
     const src = readFileSync(INSTALL_SH, 'utf8');
-    const deployedIdx = src.indexOf('DEPLOYED_V="$(read_package_version "$EXTENSION_ROOT/extension/package.json")"');
-    const baselineIdx = src.indexOf('write_deploy_baseline', deployedIdx);
-    assert.ok(src.includes('deploy-baseline.json'), 'install.sh must write deploy-baseline.json');
-    assert.ok(src.includes('verify-deploy-parity.js'), 'install.sh must reference deploy parity sampler');
-    assert.ok(src.includes('--uninstall-cron'), 'install.sh must support --uninstall-cron');
-    assert.ok(deployedIdx !== -1, 'DEPLOYED_V post-rsync marker missing');
-    assert.ok(baselineIdx > deployedIdx, 'baseline must be written after deployed package version is read');
+    assert.doesNotMatch(src, /crontab/, 'install.sh must not invoke crontab');
+    assert.doesNotMatch(src, /deploy-baseline[.]json/, 'install.sh must not write deploy-baseline.json');
+    assert.doesNotMatch(src, /verify-deploy-parity[.]js/, 'install.sh must not reference deploy parity sampler');
+    assert.doesNotMatch(src, /--uninstall-cron/, 'install.sh must not support --uninstall-cron');
+    assert.ok(
+      src.includes('DEPLOYED_V="$(read_package_version "$EXTENSION_ROOT/extension/package.json")"'),
+      'install.sh must still read deployed version for cache hygiene',
+    );
+    assert.ok(src.includes('REFUSE: source v$SRC_V older than deployed v$DEP_V'), 'install.sh must keep downgrade guard');
   });
 });
 

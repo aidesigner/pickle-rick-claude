@@ -10,7 +10,6 @@ SETTINGS_FILE="$HOME/.claude/settings.json"
 HOOK_CMD_LITERAL='node $HOME/.claude/pickle-rick/extension/hooks/dispatch.js stop-hook'
 
 ALLOW_DOWNGRADE=0
-UNINSTALL_CRON=0
 OVERRIDE_ACTIVE=0
 CLOSER_CONTEXT=0
 NO_CONFIRM=0
@@ -19,7 +18,6 @@ for arg in "$@"; do
   case "$arg" in
     --allow-downgrade) ALLOW_DOWNGRADE=1 ;;
     --no-confirm) NO_CONFIRM=1 ;;
-    --uninstall-cron) UNINSTALL_CRON=1 ;;
     --override-active) OVERRIDE_ACTIVE=1 ;;
     --closer-context) CLOSER_CONTEXT=1 ;;
     --dry-ru[n]) DRY_RUN=1 ;;
@@ -64,8 +62,6 @@ read_package_version() {
   echo "$version"
 }
 
-DEPLOY_PARITY_CRON_ENTRY='*/5 * * * * /usr/bin/env node ~/.claude/pickle-rick/extension/bin/verify-deploy-parity.js >> ~/.claude/pickle-rick/deploy-parity-samples.jsonl 2>&1'
-
 append_downgrade_audit() {
   local session_id="$1"
   local audit_file="$EXTENSION_ROOT/deploy-audit.log"
@@ -98,60 +94,6 @@ append_downgrade_audit() {
       closer_context: ($closer_context == "1")
     }' >> "$audit_file"
   chmod 600 "$audit_file"
-}
-
-hash_deployed_file() {
-  local rel_path="$1"
-  shasum -a 256 "$EXTENSION_ROOT/$rel_path" | awk '{print $1}'
-}
-
-write_deploy_baseline() {
-  local baseline_file="$EXTENSION_ROOT/deploy-baseline.json"
-  local tmpfile
-  tmpfile="$(mktemp)"
-  jq -n \
-    --arg installed_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-    --arg src_version "$SRC_V" \
-    --arg dep_version "$DEPLOYED_V" \
-    --arg check_update "$(hash_deployed_file "extension/bin/check-update.js")" \
-    --arg state_manager "$(hash_deployed_file "extension/services/state-manager.js")" \
-    --arg types_index "$(hash_deployed_file "extension/types/index.js")" \
-    '{
-      installed_at: $installed_at,
-      src_version: $src_version,
-      dep_version: $dep_version,
-      content_hashes: {
-        "check-update.js": $check_update,
-        "state-manager.js": $state_manager,
-        "types/index.js": $types_index
-      }
-    }' > "$tmpfile" \
-    && mv "$tmpfile" "$baseline_file"
-}
-
-install_deploy_parity_cron() {
-  if ! command -v crontab >/dev/null 2>&1; then
-    echo "⚠️  crontab not found; deploy parity sampler cron not installed" >&2
-    return 0
-  fi
-  local tmpfile
-  tmpfile="$(mktemp)"
-  (crontab -l 2>/dev/null | grep -v 'verify-deploy-parity[.]js' || true) > "$tmpfile"
-  printf '%s\n' "$DEPLOY_PARITY_CRON_ENTRY" >> "$tmpfile"
-  crontab "$tmpfile"
-  rm -f "$tmpfile"
-}
-
-uninstall_deploy_parity_cron() {
-  if ! command -v crontab >/dev/null 2>&1; then
-    echo "⚠️  crontab not found; deploy parity sampler cron not removed" >&2
-    return 0
-  fi
-  local tmpfile
-  tmpfile="$(mktemp)"
-  (crontab -l 2>/dev/null | grep -v 'verify-deploy-parity[.]js' || true) > "$tmpfile"
-  crontab "$tmpfile"
-  rm -f "$tmpfile"
 }
 
 find_active_session() {
@@ -197,19 +139,16 @@ handle_allowed_downgrade() {
   append_downgrade_audit "$session_id"
 }
 
-SRC_V=""
-if [ "$UNINSTALL_CRON" -eq 0 ]; then
-  SRC_V="$(read_package_version "$SCRIPT_DIR/extension/package.json")"
-  DEPLOYED_PACKAGE_JSON="$EXTENSION_ROOT/extension/package.json"
-  if [ -f "$DEPLOYED_PACKAGE_JSON" ]; then
-    DEP_V="$(read_package_version "$DEPLOYED_PACKAGE_JSON")"
-    if [ "$(compare_semver "$SRC_V" "$DEP_V")" -lt 0 ]; then
-      if [ "$ALLOW_DOWNGRADE" -ne 1 ]; then
-        echo "REFUSE: source v$SRC_V older than deployed v$DEP_V" >&2
-        exit 1
-      fi
-      handle_allowed_downgrade "$@"
+SRC_V="$(read_package_version "$SCRIPT_DIR/extension/package.json")"
+DEPLOYED_PACKAGE_JSON="$EXTENSION_ROOT/extension/package.json"
+if [ -f "$DEPLOYED_PACKAGE_JSON" ]; then
+  DEP_V="$(read_package_version "$DEPLOYED_PACKAGE_JSON")"
+  if [ "$(compare_semver "$SRC_V" "$DEP_V")" -lt 0 ]; then
+    if [ "$ALLOW_DOWNGRADE" -ne 1 ]; then
+      echo "REFUSE: source v$SRC_V older than deployed v$DEP_V" >&2
+      exit 1
     fi
+    handle_allowed_downgrade "$@"
   fi
 fi
 
@@ -262,12 +201,6 @@ fi
 # tests can verify serialization without performing any deploy actions.
 if [ "$DRY_RUN" -eq 1 ]; then
   echo "dry run, skipping"
-  exit 0
-fi
-
-if [ "$UNINSTALL_CRON" -eq 1 ]; then
-  uninstall_deploy_parity_cron
-  echo "✅ Removed deploy parity sampler cron entry"
   exit 0
 fi
 
@@ -334,11 +267,8 @@ rsync -a --delete --delete-excluded \
   --exclude='tsconfig.json' \
   --exclude='package-lock.json' \
   "$SCRIPT_DIR/extension/" "$EXTENSION_ROOT/extension/"
-cp "$SCRIPT_DIR/bin/verify-deploy-parity.js" "$EXTENSION_ROOT/extension/bin/verify-deploy-parity.js"
 
 DEPLOYED_V="$(read_package_version "$EXTENSION_ROOT/extension/package.json")"
-write_deploy_baseline
-install_deploy_parity_cron
 UPDATE_CACHE_FILE="$EXTENSION_ROOT/update-check.json"
 if [ -f "$UPDATE_CACHE_FILE" ]; then
   CACHE_CURRENT_VERSION="$(jq -r '.current_version // ""' "$UPDATE_CACHE_FILE" 2>/dev/null || echo "")"
@@ -414,7 +344,6 @@ chmod +x "$EXTENSION_ROOT/extension/bin/plumbus-frame-analyzer.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/check-gate.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/finalize-gate.js"
 chmod +x "$EXTENSION_ROOT/extension/bin/spawn-gate-remediator.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/verify-deploy-parity.js"
 chmod +x "$EXTENSION_ROOT/extension/scripts/tmux-monitor.sh"
 
 # --- INTERNAL TEMPLATES (hidden from slash command list) ---
