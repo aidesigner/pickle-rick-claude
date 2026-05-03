@@ -67,7 +67,43 @@ function formatTool(name: string, input: Record<string, unknown>): string {
 }
 
 // ── Process a single stream-json line ───────────────────────────
-// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
+function formatRawAssistant(parsed: Record<string, unknown>): string | null {
+  const msg = parsed.message as Record<string, unknown> | undefined;
+  if (!msg || !Array.isArray(msg.content)) return null;
+
+  const parts: string[] = [];
+  for (const block of msg.content) {
+    if (typeof block !== 'object' || block === null) continue;
+    const b = block as Record<string, unknown>;
+    if (b.type === 'text' && typeof b.text === 'string') {
+      parts.push(`${MX.GREEN}${b.text}${MX.R}`);
+      continue;
+    }
+    if (b.type === 'tool_use' && typeof b.name === 'string') {
+      const input = (typeof b.input === 'object' && b.input !== null)
+        ? b.input as Record<string, unknown> : {};
+      parts.push(formatTool(b.name, input));
+    }
+  }
+  return parts.length > 0 ? parts.join('\n') : null;
+}
+
+function formatRawResult(parsed: Record<string, unknown>): string {
+  const isError = typeof parsed.subtype === 'string' && (parsed.subtype as string).startsWith('error');
+  const turns = typeof parsed.num_turns === 'number' ? parsed.num_turns : '?';
+  const cost = typeof parsed.total_cost_usd === 'number'
+    ? `$${(parsed.total_cost_usd as number).toFixed(2)}` : '$?';
+  return isError
+    ? `${MX.ERR}✖ ERROR: ${parsed.subtype} (${turns} turns, ${cost})${MX.R}`
+    : `${MX.BRIGHT}✓ COMPLETE (${turns} turns, ${cost})${MX.R}`;
+}
+
+function formatRawSystem(parsed: Record<string, unknown>): string | null {
+  if (parsed.subtype !== 'init') return null;
+  const model = typeof parsed.model === 'string' ? parsed.model : 'unknown';
+  return `${MX.BRIGHT}▸ INIT ${MX.DIM}model=${model}${MX.R}`;
+}
+
 export function processLineRaw(line: string): string | null {
   const trimmed = line.trim();
   if (!trimmed) return null;
@@ -83,39 +119,15 @@ export function processLineRaw(line: string): string | null {
   const type = parsed.type;
 
   if (type === 'assistant') {
-    const msg = parsed.message as Record<string, unknown> | undefined;
-    if (!msg || !Array.isArray(msg.content)) return null;
-    const parts: string[] = [];
-    for (const block of msg.content) {
-      if (typeof block !== 'object' || block === null) continue;
-      const b = block as Record<string, unknown>;
-      if (b.type === 'text' && typeof b.text === 'string') {
-        parts.push(`${MX.GREEN}${b.text}${MX.R}`);
-      } else if (b.type === 'tool_use' && typeof b.name === 'string') {
-        const input = (typeof b.input === 'object' && b.input !== null)
-          ? b.input as Record<string, unknown> : {};
-        parts.push(formatTool(b.name, input));
-      }
-    }
-    return parts.length > 0 ? parts.join('\n') : null;
+    return formatRawAssistant(parsed);
   }
 
   if (type === 'result') {
-    const isError = typeof parsed.subtype === 'string' && (parsed.subtype as string).startsWith('error');
-    const turns = typeof parsed.num_turns === 'number' ? parsed.num_turns : '?';
-    const cost = typeof parsed.total_cost_usd === 'number'
-      ? `$${(parsed.total_cost_usd as number).toFixed(2)}` : '$?';
-    return isError
-      ? `${MX.ERR}✖ ERROR: ${parsed.subtype} (${turns} turns, ${cost})${MX.R}`
-      : `${MX.BRIGHT}✓ COMPLETE (${turns} turns, ${cost})${MX.R}`;
+    return formatRawResult(parsed);
   }
 
   if (type === 'system') {
-    if (parsed.subtype === 'init') {
-      const model = typeof parsed.model === 'string' ? parsed.model : 'unknown';
-      return `${MX.BRIGHT}▸ INIT ${MX.DIM}model=${model}${MX.R}`;
-    }
-    return null;
+    return formatRawSystem(parsed);
   }
 
   return null;

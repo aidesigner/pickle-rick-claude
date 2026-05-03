@@ -249,6 +249,17 @@ interface DeduplicatedCommits {
   teammateCommits: GitOnlyCommit[];
 }
 
+interface SessionEntry {
+  sid: string;
+  taskName: string;
+  durationStr: string;
+  iterationStr: string;
+  mode: string;
+  commits: ActivityEvent[];
+  firstTs: string;
+  project: string | null;
+}
+
 export function deduplicateCommits(
   events: ActivityEvent[],
   gitCommits: Map<string, GitCommitEntry>,
@@ -277,7 +288,167 @@ export function deduplicateCommits(
   return { hookCommits, mineGitOnlyCommits, teammateCommits };
 }
 
-// eslint-disable-next-line complexity, max-lines-per-function -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
+function groupNonCommitEvents(nonCommitEvents: ActivityEvent[]): {
+  sessionEvents: Map<string, ActivityEvent[]>;
+  adhocEvents: ActivityEvent[];
+} {
+  const sessionEvents = new Map<string, ActivityEvent[]>();
+  const adhocEvents: ActivityEvent[] = [];
+
+  for (const e of nonCommitEvents) {
+    if (!e.session) {
+      adhocEvents.push(e);
+      continue;
+    }
+    const list = sessionEvents.get(e.session) || [];
+    list.push(e);
+    sessionEvents.set(e.session, list);
+  }
+
+  return { sessionEvents, adhocEvents };
+}
+
+function attributeHookCommits(
+  hookCommits: ActivityEvent[],
+  sessionEvents: Map<string, ActivityEvent[]>,
+): { sessionCommits: Map<string, ActivityEvent[]>; adhocHookCommits: ActivityEvent[] } {
+  const sessionCommits = new Map<string, ActivityEvent[]>();
+  const adhocHookCommits: ActivityEvent[] = [];
+
+  for (const c of hookCommits) {
+    if (c.session) {
+      if (!sessionEvents.has(c.session)) sessionEvents.set(c.session, []);
+      const list = sessionCommits.get(c.session) || [];
+      list.push(c);
+      sessionCommits.set(c.session, list);
+      continue;
+    }
+    if (!attributeCommitByTimestamp(c, sessionEvents, sessionCommits)) {
+      adhocHookCommits.push(c);
+    }
+  }
+
+  return { sessionCommits, adhocHookCommits };
+}
+
+function attributeCommitByTimestamp(
+  commit: ActivityEvent,
+  sessionEvents: Map<string, ActivityEvent[]>,
+  sessionCommits: Map<string, ActivityEvent[]>,
+): boolean {
+  for (const [sid, sevts] of sessionEvents) {
+    if (sevts.length === 0) continue;
+    const firstTs = sevts[0].ts;
+    const lastTs = sevts[sevts.length - 1].ts;
+    if (commit.ts < firstTs || commit.ts > lastTs) continue;
+    const list = sessionCommits.get(sid) || [];
+    list.push(commit);
+    sessionCommits.set(sid, list);
+    return true;
+  }
+  return false;
+}
+
+function buildSessionEntries(
+  sessionEvents: Map<string, ActivityEvent[]>,
+  sessionCommits: Map<string, ActivityEvent[]>,
+): SessionEntry[] {
+  const LIFECYCLE_ONLY = new Set(['session_start', 'session_end']);
+  const sessionEntries = [...sessionEvents.entries()]
+    .filter(([sid, sevts]) => {
+      const commits = sessionCommits.get(sid) || [];
+      const hasMeaningfulEvents = sevts.some((e) => !LIFECYCLE_ONLY.has(e.event));
+      return commits.length > 0 || hasMeaningfulEvents;
+    })
+    .map(([sid, sevts]) => buildSessionEntry(sid, sevts, sessionCommits.get(sid) || []));
+
+  sessionEntries.sort((a, b) => (a.firstTs > b.firstTs ? -1 : a.firstTs < b.firstTs ? 1 : 0));
+  return sessionEntries;
+}
+
+function buildSessionEntry(sid: string, sevts: ActivityEvent[], commits: ActivityEvent[]): SessionEntry {
+  const startEvent = sevts.find((e) => e.event === 'session_start');
+  const prompt = startEvent?.original_prompt;
+  const taskName = prompt ? (prompt.length > 60 ? prompt.slice(0, 60) + '...' : prompt) : sid;
+
+  const allTs = sevts.map((e) => e.ts);
+  for (const c of commits) allTs.push(c.ts);
+  allTs.sort();
+
+  const firstTs = allTs[0] || '';
+  const lastTs = allTs[allTs.length - 1] || firstTs;
+  const durationMs = new Date(lastTs).getTime() - new Date(firstTs).getTime();
+  const durationMin = Math.floor(durationMs / 60000);
+  const hours = Math.floor(durationMin / 60);
+  const mins = durationMin % 60;
+  const durationStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+  const iterationStarts = sevts.filter((e) => e.event === 'iteration_start');
+  const iterationCount = iterationStarts.length;
+  const iterationStr = iterationCount > 0 ? `${iterationCount} iteration${iterationCount === 1 ? '' : 's'}` : '? iterations';
+  const mode = startEvent?.mode || (iterationCount > 0 ? 'tmux' : 'inline');
+
+  return { sid, taskName, durationStr, iterationStr, mode, commits, firstTs, project: getSessionProject(sid) };
+}
+
+function appendSessionSections(lines: string[], sessionEntries: SessionEntry[]): void {
+  for (const s of sessionEntries) {
+    const projectTag = s.project ? ` [${s.project}]` : '';
+    lines.push(`## ${s.taskName}${projectTag} (${s.sid})`);
+    lines.push(`- **Duration**: ${s.durationStr} (${s.iterationStr})`);
+    lines.push(`- **Mode**: ${s.mode}`);
+    if (s.commits.length > 0) {
+      lines.push('- **Commits**:');
+      for (const c of s.commits) {
+        const msg = c.commit_message || '(no message)';
+        lines.push(`  - \`${c.commit_hash?.slice(0, 7)}\` ${msg}`);
+      }
+    }
+    lines.push('');
+  }
+}
+
+function appendAdhocCommitSection(
+  lines: string[],
+  adhocHookCommits: ActivityEvent[],
+  mineGitOnlyCommits: GitOnlyCommit[],
+): void {
+  if (adhocHookCommits.length === 0 && mineGitOnlyCommits.length === 0) return;
+
+  lines.push('## Ad-hoc Commits');
+  for (const c of adhocHookCommits) {
+    const msg = c.commit_message || '(no message)';
+    lines.push(`- \`${c.commit_hash?.slice(0, 7)}\` ${msg}`);
+  }
+  for (const { hash, subject } of mineGitOnlyCommits) {
+    lines.push(`- \`${hash.slice(0, 7)}\` ${subject}`);
+  }
+  lines.push('');
+}
+
+function appendTeammateSection(lines: string[], teammateCommits: GitOnlyCommit[]): void {
+  if (teammateCommits.length === 0) return;
+
+  lines.push('## Teammate PRs merged');
+  for (const { hash, authorEmail, subject } of teammateCommits) {
+    const atIdx = authorEmail.indexOf('@');
+    const localPart = atIdx > 0 ? authorEmail.slice(0, atIdx) : authorEmail;
+    lines.push(`- \`${hash.slice(0, 7)}\` (${localPart}) ${subject}`);
+  }
+  lines.push('');
+}
+
+function appendAdhocActivitySection(lines: string[], adhocEvents: ActivityEvent[]): void {
+  if (adhocEvents.length === 0) return;
+
+  lines.push('## Ad-hoc Activity');
+  for (const e of adhocEvents) {
+    const time = e.ts.slice(11, 16);
+    const detail = e.title || e.ticket || e.step || '';
+    lines.push(`- \`${time}\` **${e.event}**${detail ? ` — ${detail}` : ''}`);
+  }
+  lines.push('');
+}
+
 export function formatOutput(
   events: ActivityEvent[],
   hookCommits: ActivityEvent[],
@@ -296,143 +467,17 @@ export function formatOutput(
     return `No activity found for ${sinceStr} to ${untilStr}.`;
   }
 
-  // 1. Build session map from non-commit events
-  const sessionEvents = new Map<string, ActivityEvent[]>();
-  const adhocEvents: ActivityEvent[] = [];
-
-  for (const e of nonCommitEvents) {
-    if (e.session) {
-      const list = sessionEvents.get(e.session) || [];
-      list.push(e);
-      sessionEvents.set(e.session, list);
-    } else {
-      adhocEvents.push(e);
-    }
-  }
-
-  // 2. Attribute commits to sessions
-  const sessionCommits = new Map<string, ActivityEvent[]>();
-  const adhocHookCommits: ActivityEvent[] = [];
-
-  for (const c of hookCommits) {
-    if (c.session) {
-      if (!sessionEvents.has(c.session)) sessionEvents.set(c.session, []);
-      const list = sessionCommits.get(c.session) || [];
-      list.push(c);
-      sessionCommits.set(c.session, list);
-    } else {
-      // No session field — try timestamp fallback
-      let attributed = false;
-      for (const [sid, sevts] of sessionEvents) {
-        if (sevts.length === 0) continue;
-        const firstTs = sevts[0].ts;
-        const lastTs = sevts[sevts.length - 1].ts;
-        if (c.ts >= firstTs && c.ts <= lastTs) {
-          const list = sessionCommits.get(sid) || [];
-          list.push(c);
-          sessionCommits.set(sid, list);
-          attributed = true;
-          break;
-        }
-      }
-      if (!attributed) adhocHookCommits.push(c);
-    }
-  }
-
-  // 3. Build sorted session entries (newest first by first event timestamp)
-  //    Filter out empty sessions: only session_start/session_end events, no commits, no iterations
-  const LIFECYCLE_ONLY = new Set(['session_start', 'session_end']);
-  const sessionEntries = [...sessionEvents.entries()]
-    .filter(([sid, sevts]) => {
-      const commits = sessionCommits.get(sid) || [];
-      const hasMeaningfulEvents = sevts.some((e) => !LIFECYCLE_ONLY.has(e.event));
-      return commits.length > 0 || hasMeaningfulEvents;
-    })
-    .map(([sid, sevts]) => {
-    const startEvent = sevts.find((e) => e.event === 'session_start');
-    const prompt = startEvent?.original_prompt;
-    const taskName = prompt ? (prompt.length > 60 ? prompt.slice(0, 60) + '...' : prompt) : sid;
-
-    const allTs = sevts.map((e) => e.ts);
-    const commits = sessionCommits.get(sid) || [];
-    for (const c of commits) allTs.push(c.ts);
-    allTs.sort();
-
-    const firstTs = allTs[0] || '';
-    const lastTs = allTs[allTs.length - 1] || firstTs;
-
-    const durationMs = new Date(lastTs).getTime() - new Date(firstTs).getTime();
-    const durationMin = Math.floor(durationMs / 60000);
-    const hours = Math.floor(durationMin / 60);
-    const mins = durationMin % 60;
-    const durationStr = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
-
-    const iterationStarts = sevts.filter((e) => e.event === 'iteration_start');
-    const iterationCount = iterationStarts.length;
-    const iterationStr = iterationCount > 0 ? `${iterationCount} iteration${iterationCount === 1 ? '' : 's'}` : '? iterations';
-
-    const mode = startEvent?.mode || (iterationCount > 0 ? 'tmux' : 'inline');
-    const project = getSessionProject(sid);
-
-    return { sid, taskName, durationStr, iterationStr, mode, commits, firstTs, project };
-  });
-
-  sessionEntries.sort((a, b) => (a.firstTs > b.firstTs ? -1 : a.firstTs < b.firstTs ? 1 : 0));
-
-  // 4. Render output
+  const { sessionEvents, adhocEvents } = groupNonCommitEvents(nonCommitEvents);
+  const { sessionCommits, adhocHookCommits } = attributeHookCommits(hookCommits, sessionEvents);
+  const sessionEntries = buildSessionEntries(sessionEvents, sessionCommits);
   const lines: string[] = [];
   lines.push(`# Standup — ${sinceStr} to ${untilStr}`);
   lines.push('');
 
-  for (const s of sessionEntries) {
-    const projectTag = s.project ? ` [${s.project}]` : '';
-    lines.push(`## ${s.taskName}${projectTag} (${s.sid})`);
-    lines.push(`- **Duration**: ${s.durationStr} (${s.iterationStr})`);
-    lines.push(`- **Mode**: ${s.mode}`);
-    if (s.commits.length > 0) {
-      lines.push('- **Commits**:');
-      for (const c of s.commits) {
-        const msg = c.commit_message || '(no message)';
-        lines.push(`  - \`${c.commit_hash?.slice(0, 7)}\` ${msg}`);
-      }
-    }
-    lines.push('');
-  }
-
-  // 5. Ad-hoc section (my commits only)
-  const hasAdhocCommits = adhocHookCommits.length > 0 || mineGitOnlyCommits.length > 0;
-  if (hasAdhocCommits) {
-    lines.push('## Ad-hoc Commits');
-    for (const c of adhocHookCommits) {
-      const msg = c.commit_message || '(no message)';
-      lines.push(`- \`${c.commit_hash?.slice(0, 7)}\` ${msg}`);
-    }
-    for (const { hash, subject } of mineGitOnlyCommits) {
-      lines.push(`- \`${hash.slice(0, 7)}\` ${subject}`);
-    }
-    lines.push('');
-  }
-
-  // 5b. Teammate PRs merged (git-only commits authored by someone other than the current user)
-  if (teammateCommits.length > 0) {
-    lines.push('## Teammate PRs merged');
-    for (const { hash, authorEmail, subject } of teammateCommits) {
-      const atIdx = authorEmail.indexOf('@');
-      const localPart = atIdx > 0 ? authorEmail.slice(0, atIdx) : authorEmail;
-      lines.push(`- \`${hash.slice(0, 7)}\` (${localPart}) ${subject}`);
-    }
-    lines.push('');
-  }
-
-  if (adhocEvents.length > 0) {
-    lines.push('## Ad-hoc Activity');
-    for (const e of adhocEvents) {
-      const time = e.ts.slice(11, 16);
-      const detail = e.title || e.ticket || e.step || '';
-      lines.push(`- \`${time}\` **${e.event}**${detail ? ` — ${detail}` : ''}`);
-    }
-    lines.push('');
-  }
+  appendSessionSections(lines, sessionEntries);
+  appendAdhocCommitSection(lines, adhocHookCommits, mineGitOnlyCommits);
+  appendTeammateSection(lines, teammateCommits);
+  appendAdhocActivitySection(lines, adhocEvents);
 
   return lines.join('\n');
 }

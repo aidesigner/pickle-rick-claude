@@ -16,41 +16,47 @@ function findActiveSession(): string | null {
   }
 }
 
-// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
-function main(): void {
+function readHookInput(): { tool_input?: { command?: string }; tool_response?: { stdout?: string } } | null {
   const MAX_STDIN = 1024 * 1024; // 1 MB guard — truncate oversized input
-  let raw = '';
+  let raw: string;
   try {
     raw = fs.readFileSync(0, 'utf8');
     if (raw.length > MAX_STDIN) raw = raw.slice(0, MAX_STDIN);
   } catch {
-    process.exit(0);
+    return null;
   }
 
-  let input: { tool_input?: { command?: string }; tool_response?: { stdout?: string } };
   try {
-    input = JSON.parse(raw || '{}');
+    return JSON.parse(raw || '{}') as { tool_input?: { command?: string }; tool_response?: { stdout?: string } };
   } catch {
-    process.exit(0);
+    return null;
   }
+}
+
+function extractCommit(stdout: string): { commit_hash?: string; commit_message?: string } {
+  const match = COMMIT_HASH_RE.exec(stdout);
+  return {
+    ...(match?.[1] ? { commit_hash: match[1] } : {}),
+    ...(match?.[2]?.trim() ? { commit_message: match[2].trim() } : {}),
+  };
+}
+
+function main(): void {
+  const input = readHookInput();
+  if (!input) process.exit(0);
 
   const command = input.tool_input?.command;
   if (!command || !COMMIT_CMD_RE.test(command)) {
     process.exit(0);
   }
 
-  const stdout = input.tool_response?.stdout ?? '';
-  const match = COMMIT_HASH_RE.exec(stdout);
-  const commit_hash = match?.[1];
-  const commit_message = match?.[2]?.trim();
-
+  const commit = extractCommit(input.tool_response?.stdout ?? '');
   const session = findActiveSession();
 
   logActivity({
     event: 'commit',
     source: 'hook',
-    ...(commit_hash ? { commit_hash } : {}),
-    ...(commit_message ? { commit_message } : {}),
+    ...commit,
     ...(session ? { session } : {}),
   });
 

@@ -7,7 +7,37 @@ import { State } from '../types/index.js';
 
 const sm = new StateManager();
 
-// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
+function readSessionState(sessionPath: string): State | null {
+  try {
+    return sm.read(path.join(sessionPath, 'state.json'));
+  } catch {
+    return null;
+  }
+}
+
+function formatIteration(state: State): string {
+  const maxIter = Number(state.max_iterations) || 0;
+  const curIter = Number(state.iteration) || 0;
+  return maxIter > 0 ? `${curIter} of ${maxIter}` : String(curIter);
+}
+
+function formatTask(raw: string | undefined): string {
+  const task = raw || '';
+  return task.length > 80 ? task.slice(0, 80) + '…' : task;
+}
+
+function renderTickets(sessionPath: string): void {
+  const tickets = collectTickets(sessionPath);
+  if (tickets.length === 0) return;
+
+  console.log('Tickets:');
+  for (const ticket of tickets) {
+    const status = ticket.id ? getTicketStatus(sessionPath, ticket.id) : ticket.status;
+    console.log(`  ${statusSymbol(status)} ${ticket.id}: ${ticket.title}`);
+  }
+  console.log('');
+}
+
 export function showStatus(cwd: string): void {
   const sessionPath = findSessionPathForCwd(cwd);
 
@@ -16,22 +46,11 @@ export function showStatus(cwd: string): void {
     return;
   }
 
-  let state: State;
-  try {
-    state = sm.read(path.join(sessionPath, 'state.json'));
-  } catch {
+  const state = readSessionState(sessionPath);
+  if (!state) {
     console.log('🥒 Session state is unreadable.');
     process.exit(1);
   }
-
-  const maxIter = Number(state.max_iterations) || 0;
-  const curIter = Number(state.iteration) || 0;
-  const iterationStr = maxIter > 0
-    ? `${curIter} of ${maxIter}`
-    : String(curIter);
-
-  const raw: string = state.original_prompt || '';
-  const taskStr = raw.length > 80 ? raw.slice(0, 80) + '…' : raw;
 
   const isActive = state.active === true;
   const mode = state.tmux_mode === true ? 'tmux' : 'inline';
@@ -40,20 +59,12 @@ export function showStatus(cwd: string): void {
     Active: isActive ? 'Yes' : 'No',
     Mode: mode,
     Phase: state.step || 'unknown',
-    Iteration: iterationStr,
+    Iteration: formatIteration(state),
     Ticket: state.current_ticket || 'none',
-    Task: taskStr,
+    Task: formatTask(state.original_prompt),
   }, isActive ? 'GREEN' : 'RED', '🥒');
 
-  const tickets = collectTickets(sessionPath);
-  if (tickets.length > 0) {
-    console.log('Tickets:');
-    for (const ticket of tickets) {
-      const status = ticket.id ? getTicketStatus(sessionPath, ticket.id) : ticket.status;
-      console.log(`  ${statusSymbol(status)} ${ticket.id}: ${ticket.title}`);
-    }
-    console.log('');
-  }
+  renderTickets(sessionPath);
 }
 
 if (process.argv[1] && path.basename(process.argv[1]) === 'status.js') {

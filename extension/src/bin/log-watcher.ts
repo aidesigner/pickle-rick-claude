@@ -27,7 +27,45 @@ export function formatToolUse(name: string, input: Record<string, unknown>): str
  * Processes a single line from a stream-json log.
  * Returns a human-readable string or null to skip.
  */
-// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
+function formatAssistantMessage(parsed: Record<string, unknown>): string | null {
+  const msg = parsed.message as Record<string, unknown> | undefined;
+  if (!msg || !Array.isArray(msg.content)) return null;
+
+  const parts: string[] = [];
+  for (const block of msg.content) {
+    if (typeof block !== 'object' || block === null) continue;
+    const b = block as Record<string, unknown>;
+    if (b.type === 'text' && typeof b.text === 'string') {
+      parts.push(b.text);
+      continue;
+    }
+    if (b.type === 'tool_use' && typeof b.name === 'string') {
+      const input = (typeof b.input === 'object' && b.input !== null)
+        ? b.input as Record<string, unknown>
+        : {};
+      parts.push(`🔧 ${b.name}: ${formatToolUse(b.name, input)}`);
+    }
+  }
+  return parts.length > 0 ? parts.join('\n') : null;
+}
+
+function formatResultMessage(parsed: Record<string, unknown>): string {
+  const isError = typeof parsed.subtype === 'string' && parsed.subtype.startsWith('error');
+  const turns = typeof parsed.num_turns === 'number' ? parsed.num_turns : '?';
+  const cost = typeof parsed.total_cost_usd === 'number'
+    ? `$${(parsed.total_cost_usd as number).toFixed(2)}`
+    : '$?';
+  return isError
+    ? `❌ Session ${parsed.subtype} (${turns} turns, ${cost})`
+    : `✅ Session success (${turns} turns, ${cost})`;
+}
+
+function formatSystemMessage(parsed: Record<string, unknown>): string | null {
+  if (parsed.subtype !== 'init') return null;
+  const model = typeof parsed.model === 'string' ? parsed.model : 'unknown';
+  return `🚀 Session started (model: ${model})`;
+}
+
 export function processLine(line: string): string | null {
   const trimmed = line.trim();
   if (!trimmed) return null;
@@ -45,42 +83,15 @@ export function processLine(line: string): string | null {
   const type = parsed.type;
 
   if (type === 'assistant') {
-    const msg = parsed.message as Record<string, unknown> | undefined;
-    if (!msg || !Array.isArray(msg.content)) return null;
-    const parts: string[] = [];
-    for (const block of msg.content) {
-      if (typeof block !== 'object' || block === null) continue;
-      const b = block as Record<string, unknown>;
-      if (b.type === 'text' && typeof b.text === 'string') {
-        parts.push(b.text);
-      } else if (b.type === 'tool_use' && typeof b.name === 'string') {
-        const input = (typeof b.input === 'object' && b.input !== null)
-          ? b.input as Record<string, unknown>
-          : {};
-        parts.push(`🔧 ${b.name}: ${formatToolUse(b.name, input)}`);
-      }
-    }
-    return parts.length > 0 ? parts.join('\n') : null;
+    return formatAssistantMessage(parsed);
   }
 
   if (type === 'result') {
-    const isError = typeof parsed.subtype === 'string' && parsed.subtype.startsWith('error');
-    const turns = typeof parsed.num_turns === 'number' ? parsed.num_turns : '?';
-    const cost = typeof parsed.total_cost_usd === 'number'
-      ? `$${(parsed.total_cost_usd as number).toFixed(2)}`
-      : '$?';
-    return isError
-      ? `❌ Session ${parsed.subtype} (${turns} turns, ${cost})`
-      : `✅ Session success (${turns} turns, ${cost})`;
+    return formatResultMessage(parsed);
   }
 
   if (type === 'system') {
-    const subtype = parsed.subtype;
-    if (subtype === 'init') {
-      const model = typeof parsed.model === 'string' ? parsed.model : 'unknown';
-      return `🚀 Session started (model: ${model})`;
-    }
-    return null;
+    return formatSystemMessage(parsed);
   }
 
   // Unknown type — skip
