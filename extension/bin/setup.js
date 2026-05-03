@@ -490,8 +490,9 @@ function validateCommandLine(config) {
     if (config.explicitFlags.has('max-parallel') && !config.teamsMode) {
         die('--max-parallel requires --teams');
     }
-    if (config.teamsMode && config.backend === 'codex') {
-        die('--teams is incompatible with --backend codex (claude backend only)');
+    const backend = config.backend || 'claude';
+    if (config.teamsMode && backend !== 'claude') {
+        die(`--teams is incompatible with --backend ${backend} (claude backend only)`);
     }
 }
 function validateResumeCompatibility(preState, config) {
@@ -501,9 +502,9 @@ function validateResumeCompatibility(preState, config) {
         die(`--resume session belongs to ${resumeWorkingDir}, not ${currentWorkingDir}. Refusing cross-repo resume.`);
     }
     const willHaveTeams = config.explicitFlags.has('teams') ? config.teamsMode : preState.teams_mode === true;
-    const willHaveBackend = config.explicitFlags.has('backend') ? config.backend : preState.backend;
-    if (willHaveTeams && willHaveBackend === 'codex') {
-        die('--teams is incompatible with --backend codex (claude backend only). Resume would create a conflicting state — refusing to continue.');
+    const willHaveBackend = (config.explicitFlags.has('backend') ? config.backend : preState.backend) || 'claude';
+    if (willHaveTeams && willHaveBackend !== 'claude') {
+        die(`--teams is incompatible with --backend ${willHaveBackend} (claude backend only). Resume would create a conflicting state — refusing to continue.`);
     }
 }
 function normalizeTicketStatus(status) {
