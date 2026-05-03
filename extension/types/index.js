@@ -181,6 +181,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'ticket_auto_skip_no_evidence',
     'ticket_phantom_done_corrected',
     'ticket_state_desync_detected',
+    'stall_classified',
     'readiness_delta_requested',
     'phase_transition',
     'extension_dir_fallback',

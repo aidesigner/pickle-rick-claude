@@ -439,7 +439,7 @@ test('runIteration is exported from mux-runner', () => {
 
 // --- microverse-runner tests ---
 
-import { measureMetric, measureLlmMetric, extractScore, buildJudgePrompt, buildMicroverseHandoff, deactivateRunnerState, handleRateLimit, main, _deps, readRunnerState, stageAutoCommitPaths, executeMainLoop } from '../bin/microverse-runner.js';
+import { measureMetric, measureLlmMetric, extractScore, buildJudgePrompt, buildMicroverseHandoff, deactivateRunnerState, handleRateLimit, main, _deps, readRunnerState, stageAutoCommitPaths, executeMainLoop, classifyStall, handleNoCommitStall } from '../bin/microverse-runner.js';
 import { resetToSha } from '../services/git-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { writeStateFile } from '../services/pickle-utils.js';
@@ -500,7 +500,7 @@ function writeMicroverseRelaunchTicket(sessionDir, id, status, order = 1) {
     ].join('\n'));
 }
 
-function readMicroverseRelaunchEvents(dataRoot) {
+function readActivityEvents(dataRoot, eventName) {
     const activityDir = path.join(dataRoot, 'activity');
     if (!fs.existsSync(activityDir)) return [];
     const events = [];
@@ -511,7 +511,15 @@ function readMicroverseRelaunchEvents(dataRoot) {
             try { events.push(JSON.parse(line)); } catch { /* ignore malformed fixture lines */ }
         }
     }
-    return events.filter(event => event.event === 'codex_manager_relaunch');
+    return events.filter(event => event.event === eventName);
+}
+
+function readMicroverseRelaunchEvents(dataRoot) {
+    return readActivityEvents(dataRoot, 'codex_manager_relaunch');
+}
+
+function readStallClassifiedEvents(dataRoot) {
+    return readActivityEvents(dataRoot, 'stall_classified');
 }
 
 async function withMicroverseLoopDeps(overrides, fn) {
@@ -534,6 +542,139 @@ async function withMicroverseLoopDeps(overrides, fn) {
         _deps.isWorkingTreeDirty = original.isWorkingTreeDirty;
     }
 }
+
+test('stall-classifier.category: recognizes worker_timeout from subprocess timeout outcome', () => {
+    const result = classifyStall({
+        outcome: { completion: 'error', timedOut: true, exitCode: null, wallSeconds: 600 },
+        exitResult: { type: 'timeout', exitCode: null, wallSeconds: 600 },
+    });
+    assert.equal(result?.category, 'worker_timeout');
+});
+
+test('stall-classifier.category: recognizes tests_red_no_progress from no-commit stall', () => {
+    const sha = 'a'.repeat(40);
+    const result = classifyStall({
+        preIterSha: sha,
+        postIterSha: sha,
+        noCommitClass: 'stall',
+    });
+    assert.equal(result?.category, 'tests_red_no_progress');
+});
+
+test('stall-classifier.category: recognizes circular_revert from same SHA twice', () => {
+    const sha = 'b'.repeat(40);
+    const result = classifyStall({
+        preIterSha: sha,
+        metricClassification: 'regressed',
+        history: [{
+            iteration: 1,
+            metric_value: '30',
+            score: 30,
+            action: 'revert',
+            description: 'prior revert',
+            pre_iteration_sha: sha,
+            timestamp: new Date().toISOString(),
+        }],
+    });
+    assert.equal(result?.category, 'circular_revert');
+});
+
+test('stall-classifier.category: recognizes external_blocker from non-timeout subprocess error', () => {
+    const result = classifyStall({
+        outcome: { completion: 'error', timedOut: false, exitCode: 1, wallSeconds: 3 },
+        exitResult: { type: 'error' },
+    });
+    assert.equal(result?.category, 'external_blocker');
+});
+
+test('stall-classifier.recovery: maps categories to recovery actions', () => {
+    const sha = 'c'.repeat(40);
+    const cases = [
+        {
+            input: {
+                outcome: { completion: 'error', timedOut: true, exitCode: null, wallSeconds: 600 },
+                exitResult: { type: 'timeout', exitCode: null, wallSeconds: 600 },
+            },
+            action: 'escalate_timeout',
+        },
+        {
+            input: { preIterSha: sha, postIterSha: sha, noCommitClass: 'stall' },
+            action: 'prompt_guidance',
+        },
+        {
+            input: {
+                preIterSha: sha,
+                metricClassification: 'regressed',
+                history: [{
+                    iteration: 1,
+                    metric_value: '30',
+                    score: 30,
+                    action: 'revert',
+                    description: 'prior revert',
+                    pre_iteration_sha: sha,
+                    timestamp: new Date().toISOString(),
+                }],
+            },
+            action: 'reset_to_baseline',
+        },
+        {
+            input: {
+                outcome: { completion: 'error', timedOut: false, exitCode: 1, wallSeconds: 3 },
+                exitResult: { type: 'error' },
+            },
+            action: 'halt',
+        },
+    ];
+
+    for (const item of cases) {
+        assert.equal(classifyStall(item.input)?.recovery_action, item.action);
+    }
+});
+
+test('stall-classifier.recovery: no-commit stall emits exactly one classification event', async () => {
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-stall-classifier-data-'));
+    const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-stall-classifier-session-'));
+    const previousDataRoot = process.env.PICKLE_DATA_ROOT;
+    try {
+        process.env.PICKLE_DATA_ROOT = dataRoot;
+        const sha = 'd'.repeat(40);
+        const logFile = path.join(sessionDir, 'tmux_iteration_1.log');
+        fs.writeFileSync(logFile, '{"type":"result","result":"tests still red","num_turns":8}\n');
+        const state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: TEST_METRIC, stallLimit: 3 });
+        const ctx = {
+            sessionDir,
+            extensionRoot: path.resolve('.'),
+            statePath: path.join(sessionDir, 'state.json'),
+            workingDir: '/tmp',
+            startTime: Date.now(),
+            initialIteration: 0,
+            enableFailureClassification: false,
+            cgSettings: {},
+            rateLimitWaitMinutes: 1,
+            maxRateLimitRetries: 1,
+            log: () => {},
+            currentRunnerState: { active: true, worker_timeout_seconds: 0, max_iterations: 0, max_time_minutes: 0, start_time_epoch: 0 },
+            iteration: 1,
+            consecutiveRateLimits: 0,
+            preIterSha: sha,
+            postIterSha: sha,
+        };
+
+        await withMicroverseLoopDeps({ sleep: async () => {} }, async () => {
+            await handleNoCommitStall(state, ctx, logFile);
+        });
+
+        const events = readStallClassifiedEvents(dataRoot);
+        assert.equal(events.length, 1);
+        assert.equal(events[0].stall_category, 'tests_red_no_progress');
+        assert.equal(events[0].stall_recovery_action, 'prompt_guidance');
+    } finally {
+        if (previousDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = previousDataRoot;
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+});
 
 async function runMicroverseRelaunchScenario({ backend, priorRelaunchCount = 0, tickets }) {
     const workingDir = createTempGitRepo();

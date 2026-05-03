@@ -406,6 +406,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'ticket_auto_skip_no_evidence',
   'ticket_phantom_done_corrected',
   'ticket_state_desync_detected',
+  'stall_classified',
   'readiness_delta_requested',
   'phase_transition',
   'extension_dir_fallback',
@@ -492,6 +493,8 @@ export interface ActivityEvent {
   requested_path?: string;
   fallback_path?: string;
   reason?: string;
+  stall_category?: StallCategory;
+  stall_recovery_action?: StallRecoveryAction;
 }
 
 // ---------------------------------------------------------------------------
@@ -560,6 +563,15 @@ export interface MicroverseMetric {
 }
 
 export type FailureClass = 'tool_failure' | 'approach_exhaustion' | 'regression' | 'metric_unstable' | 'no_progress';
+
+export type StallCategory = 'worker_timeout' | 'tests_red_no_progress' | 'circular_revert' | 'external_blocker';
+
+export type StallRecoveryAction = 'escalate_timeout' | 'prompt_guidance' | 'reset_to_baseline' | 'halt';
+
+export interface StallClassification {
+  category: StallCategory;
+  recovery_action: StallRecoveryAction;
+}
 
 export interface ClassifiedFailure {
   iteration: number;

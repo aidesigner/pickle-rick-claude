@@ -567,6 +567,45 @@ const RECOVERY_TEMPLATES = {
     metric_unstable: 'Metric is oscillating. Stabilize: check for race conditions, flaky tests, or environmental variance before optimizing.',
     no_progress: 'No commits or score change. The current approach may be stuck. Try a fundamentally different strategy.',
 };
+const STALL_RECOVERY_ACTIONS = {
+    worker_timeout: 'escalate_timeout',
+    tests_red_no_progress: 'prompt_guidance',
+    circular_revert: 'reset_to_baseline',
+    external_blocker: 'halt',
+};
+export function classifyStall(input) {
+    if (input.outcome?.timedOut === true || input.exitResult?.type === 'timeout') {
+        return { category: 'worker_timeout', recovery_action: STALL_RECOVERY_ACTIONS.worker_timeout };
+    }
+    if (input.exitResult?.type === 'error' || input.outcome?.completion === 'error') {
+        return { category: 'external_blocker', recovery_action: STALL_RECOVERY_ACTIONS.external_blocker };
+    }
+    if (input.metricClassification === 'regressed') {
+        const previousRevertForSameSha = (input.history ?? []).some(entry => entry.action === 'revert' && entry.pre_iteration_sha === input.preIterSha);
+        if (previousRevertForSameSha) {
+            return { category: 'circular_revert', recovery_action: STALL_RECOVERY_ACTIONS.circular_revert };
+        }
+    }
+    if (input.noCommitClass === 'stall' &&
+        input.preIterSha &&
+        input.postIterSha &&
+        input.preIterSha === input.postIterSha) {
+        return { category: 'tests_red_no_progress', recovery_action: STALL_RECOVERY_ACTIONS.tests_red_no_progress };
+    }
+    return null;
+}
+function emitStallClassification(ctx, classification) {
+    if (!classification)
+        return;
+    logActivity({
+        event: 'stall_classified',
+        source: 'pickle',
+        session: path.basename(ctx.sessionDir),
+        iteration: ctx.iteration,
+        stall_category: classification.category,
+        stall_recovery_action: classification.recovery_action,
+    });
+}
 function firstJsonResultLine(content) {
     const resultLines = content
         .split('\n')
@@ -1188,6 +1227,12 @@ export async function measureAndClassifyIteration(state, baseline, ctx) {
     ctx.log(`Classification: ${classification} (previous=${previousScore}, tolerance=${state.key_metric.tolerance})`);
     const entry = buildMetricHistoryEntry(state, metricResult, previousScore, classification, ctx);
     if (classification === 'regressed') {
+        emitStallClassification(ctx, classifyStall({
+            preIterSha: ctx.preIterSha,
+            postIterSha: ctx.postIterSha,
+            history: metricConv.history,
+            metricClassification: classification,
+        }));
         ctx.log(`Regression detected — rolling back to ${ctx.preIterSha}`);
         _deps.resetToSha(ctx.preIterSha ?? '', ctx.workingDir);
         replaceMicroverseState(state, recordFailedApproach(state, `Iteration ${ctx.iteration}: score dropped from ${previousScore} to ${metricResult.score}`));
@@ -1310,6 +1355,12 @@ export async function handleNoCommitStall(state, ctx, iterLogFile) {
         return null;
     }
     ctx.log('No commits made — stall (no rollback)');
+    emitStallClassification(ctx, classifyStall({
+        preIterSha: ctx.preIterSha,
+        postIterSha: ctx.postIterSha,
+        history: state.convergence.history,
+        noCommitClass,
+    }));
     replaceMicroverseState(state, recordStall(state));
     writeMicroverseState(ctx.sessionDir, state);
     if (isConverged(state)) {
@@ -1467,11 +1518,30 @@ async function handleIterationOutcome(state, baseline, ctx, outcome) {
         didTimeout: outcome.timedOut, exitCode: outcome.exitCode, wallSeconds: outcome.wallSeconds,
     });
     logActivity({ event: 'iteration_end', source: 'pickle', session: path.basename(ctx.sessionDir), iteration: ctx.iteration, exit_type: exitResult.type });
+    let stallClassification = null;
+    if (exitResult.type === 'timeout' || exitResult.type === 'error') {
+        stallClassification = classifyStall({
+            outcome,
+            exitResult,
+            preIterSha: ctx.preIterSha,
+            postIterSha: ctx.postIterSha,
+            history: state.convergence.history,
+        });
+        emitStallClassification(ctx, stallClassification);
+    }
     const rateLimitExit = await handleRateLimitExit(state, ctx, exitResult);
     if (rateLimitExit)
         return rateLimitExit;
     if (exitResult.type === 'success')
         ctx.consecutiveRateLimits = 0;
+    if (exitResult.type === 'timeout' && outcome.completion !== 'error') {
+        ctx.log('Worker timeout. Exiting loop.');
+        return 'error';
+    }
+    if (stallClassification?.category === 'external_blocker') {
+        ctx.log('External blocker classified — halting loop.');
+        return 'error';
+    }
     if (outcome.completion === 'error') {
         let postState = ctx.currentRunnerState;
         try {
