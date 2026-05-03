@@ -15,8 +15,9 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 | # | PRD | Status | Next action |
 |---|---|---|---|
-| 1 | [`prds/p1-strip-excessive-defense-deploy-reversion.md`](p1-strip-excessive-defense-deploy-reversion.md) ⭐ **NEW P1** — strip back P0 bundle's over-engineering before v1.68.0 tag | **Draft (P1)** — Drops cron sampler (`bin/verify-deploy-parity.js` + cron block + `deploy-baseline.json` write), mux-runner pre-flight + drift halt + artifact invalidation (AC-DR-15), scheduled-soak finalizer (`bin/finalize-bundle.js`), `bin/verify-launch.js`. **Keeps** the actual fix (`bin/release-gate.sh`) + cache hygiene + structural guards (A.2/A.3/A.5/A.6/A.7/A.9/A.10/A.13/A.14) + Sections B/C/D + hardening tickets. ~480 LOC removed. 12 ACs. | Manual surgical strip (no pipeline); commit `chore: strip excessive defense from deploy-reversion bundle`; bump to v1.68.0; release |
-| 2 | [`prds/p2-bundle-deploy-reversion-and-gate-baseline-diagnostic.md`](p2-bundle-deploy-reversion-and-gate-baseline-diagnostic.md) | **30/30 tickets SHIPPED** in code on session `2026-05-02-ad240987` (codex backend). All commits in main. Closer DEFERRED live release because env lacks `crontab` permission and full `npm test` blocked on pre-existing trap-door-conformance entries. v1.67.0 will NOT be tagged (per Cycle 3 decision); v1.68.0 ships directly via the strip PRD. | Strip → tag → install |
+| 1 | [`prds/p2-mega-bundle-2026-05-02-pm.md`](p2-mega-bundle-2026-05-02-pm.md) ⭐ **NEW MEGA BUNDLE** | **Draft (P2)** — composes 6 source PRDs (strip + state-drift + retry-tracking + smart-handoff + hermes + god-fn-phase-2). ~50-70 atomic tickets, ~5K LOC churn, target v1.69.0. Long pipeline run on codex. | `/pickle-pipeline ... --backend codex` (in flight) |
+| 2 | [`prds/p1-strip-excessive-defense-deploy-reversion.md`](p1-strip-excessive-defense-deploy-reversion.md) | **In mega bundle Section A** | Will land via mega bundle |
+| 3 | [`prds/p2-bundle-deploy-reversion-and-gate-baseline-diagnostic.md`](p2-bundle-deploy-reversion-and-gate-baseline-diagnostic.md) | **30/30 tickets SHIPPED** in code on session `2026-05-02-ad240987` (codex backend). All commits in main. Closer DEFERRED live release because env lacks `crontab` permission. v1.67.0 will NOT be tagged; v1.68.0 ships directly OR rolls into v1.69.0 via mega bundle closer. | Tag in mega bundle closer |
 | 3 | [`prds/p1-bug-bundle-2026-05-01-pm.md`](p1-bug-bundle-2026-05-01-pm.md) | **All 20 tickets DONE** — closer landed v1.67.0 commit `2c814e8`. Source pkg.json still at 1.67.0. v1.67.0 **NOT tagged on GitHub** (Cycle 3 verdict: skip; ship v1.68.0 directly). | Closed by strip-then-v1.68.0 release |
 | 4 | [`prds/anatomy-park-gate-baseline-missing.md`](anatomy-park-gate-baseline-missing.md) | **SHIPPED v1.66.0** + Section B of P0 bundle adds event-based assertion (`baseline_recapture_attempted`/`_succeeded`). | Verified by P0 bundle's AC-DR-02 once v1.68.0 deployed and a real anatomy-park run executes |
 | 5 | [`prds/hermes-integration.md`](hermes-integration.md) | **Ready (P2)** — research complete, 30 Qs answered | `/pickle-refine-prd` → next overnight bundle after v1.68.0 ships |
@@ -39,7 +40,8 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 | Path | Status | Notes |
 |---|---|---|
-| `p1-strip-excessive-defense-deploy-reversion.md` | **Draft (P1) ⭐ NEW** | Strips ~480 LOC of cron + drift + scheduled-soak from P0 bundle pre-tag; 12 ACs |
+| `p2-mega-bundle-2026-05-02-pm.md` | **Draft (P2) ⭐ NEW** | 6-PRD mega bundle: strip + state-drift + retry + handoff + hermes + god-fn-2; ~50-70 tickets |
+| `p1-strip-excessive-defense-deploy-reversion.md` | **In mega bundle Section A** | Drafted; will land via mega bundle |
 | `p2-bundle-deploy-reversion-and-gate-baseline-diagnostic.md` | **30/30 SHIPPED in code** (session `2026-05-02-ad240987`, codex) | Refined PRD has 17 ACs; closer DEFERRED live release. v1.68.0 untagged pending strip |
 | `p1-bug-bundle-2026-05-01-pm.md` | **20/20 SHIPPED** (closer commit `2c814e8`, source v1.67.0) | Anatomy-park failed downstream of deploy-reversion. v1.67.0 will NOT be tagged; v1.68.0 ships directly |
 | `readiness-gate-manifest-prd-bundle-mismatch.md` | **SHIPPED via P0 bundle** Section D (commits in main) | AC-RGM-01..07 all green; bundle PRDs no longer need `--skip-readiness` |
