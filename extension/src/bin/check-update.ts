@@ -239,6 +239,46 @@ function extractReleaseForInspection(tarballPath: string): InspectedRelease {
   }
 }
 
+function extractReleaseForInstall(tarballPath: string): { extractDir: string; error?: string } {
+  const extractDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-extract-')));
+  log(`Extracting ${tarballPath} to ${extractDir}`);
+
+  const tar = spawnSync('tar', ['xzf', tarballPath, '-C', extractDir, '--strip-components=1'], {
+    encoding: 'utf-8',
+    timeout: 30_000,
+  });
+
+  if (tar.status === 0) return { extractDir };
+
+  const msg = (tar.stderr || '').trim();
+  log(`tar extraction failed: ${msg}`);
+  return { extractDir, error: `Extraction failed: ${msg}` };
+}
+
+function runReleaseInstallScript(extractDir: string): UpgradeResult {
+  const installScript = path.join(extractDir, 'install.sh');
+  if (!fs.existsSync(installScript)) {
+    log('install.sh not found in extracted tarball');
+    return { success: false, error: 'install.sh not found in release' };
+  }
+
+  log('Running install.sh');
+  const install = spawnSync('bash', ['install.sh'], {
+    cwd: extractDir,
+    encoding: 'utf-8',
+    timeout: 30_000,
+  });
+
+  if (install.status === 0) {
+    log('install.sh completed successfully');
+    return { success: true };
+  }
+
+  const msg = (install.stderr || '').trim();
+  log(`install.sh failed (exit ${install.status}): ${msg}`);
+  return { success: false, error: `install.sh failed (exit ${install.status})` };
+}
+
 export function extractAndInstall(tarballPath: string, preExtractedDir?: string): UpgradeResult {
   const tarballDir = path.dirname(tarballPath);
   let extractDir = '';
@@ -247,42 +287,12 @@ export function extractAndInstall(tarballPath: string, preExtractedDir?: string)
       extractDir = preExtractedDir;
       log(`Installing pre-extracted release from ${extractDir}`);
     } else {
-      extractDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-extract-')));
-      log(`Extracting ${tarballPath} to ${extractDir}`);
-
-      const tar = spawnSync('tar', ['xzf', tarballPath, '-C', extractDir, '--strip-components=1'], {
-        encoding: 'utf-8',
-        timeout: 30_000,
-      });
-
-      if (tar.status !== 0) {
-        const msg = (tar.stderr || '').trim();
-        log(`tar extraction failed: ${msg}`);
-        return { success: false, error: `Extraction failed: ${msg}` };
-      }
+      const extracted = extractReleaseForInstall(tarballPath);
+      extractDir = extracted.extractDir;
+      if (extracted.error) return { success: false, error: extracted.error };
     }
 
-    const installScript = path.join(extractDir, 'install.sh');
-    if (!fs.existsSync(installScript)) {
-      log('install.sh not found in extracted tarball');
-      return { success: false, error: 'install.sh not found in release' };
-    }
-
-    log('Running install.sh');
-    const install = spawnSync('bash', ['install.sh'], {
-      cwd: extractDir,
-      encoding: 'utf-8',
-      timeout: 30_000,
-    });
-
-    if (install.status !== 0) {
-      const msg = (install.stderr || '').trim();
-      log(`install.sh failed (exit ${install.status}): ${msg}`);
-      return { success: false, error: `install.sh failed (exit ${install.status})` };
-    }
-
-    log('install.sh completed successfully');
-    return { success: true };
+    return runReleaseInstallScript(extractDir);
   } catch (err) {
     const msg = safeErrorMessage(err);
     log(`extractAndInstall error: ${msg}`);
@@ -403,6 +413,46 @@ function evaluateDowngradeUx(
   return null;
 }
 
+function inspectReleaseForUpgrade(
+  tarballPath: string,
+  options: PerformUpgradeOptions | undefined,
+): { inspected: InspectedRelease } | { result: UpgradeResult } {
+  try {
+    const inspected = extractReleaseForInspection(tarballPath);
+    const currentVersion = getCurrentVersion();
+    if (compareSemver(inspected.version, currentVersion) >= 0) {
+      return { inspected };
+    }
+
+    if (options?.allowDowngrade !== true) {
+      cleanupDownloadedRelease(tarballPath, inspected.extractDir);
+      throw new BlockedDowngradeError(inspected.version, currentVersion);
+    }
+
+    const downgradeUxResult = evaluateDowngradeUx(inspected.version, currentVersion, options);
+    if (downgradeUxResult) {
+      cleanupDownloadedRelease(tarballPath, inspected.extractDir);
+      return { result: downgradeUxResult };
+    }
+
+    return { inspected };
+  } catch (err) {
+    if (err instanceof BlockedDowngradeError) throw err;
+    cleanupDownloadedRelease(tarballPath);
+    const msg = safeErrorMessage(err);
+    log(`Release inspection failed: ${msg}`);
+    return { result: { success: false, error: msg } };
+  }
+}
+
+function updateCacheAfterInstall(to: string): void {
+  writeCache({
+    last_check_epoch: Math.floor(Date.now() / 1000),
+    latest_version: to,
+    current_version: getCurrentVersion(),
+  });
+}
+
 export function performUpgrade(
   from: string,
   to: string,
@@ -423,43 +473,15 @@ export function performUpgrade(
       return { success: false, error: 'Failed to download release' };
     }
 
-    let inspected: InspectedRelease;
-    try {
-      inspected = extractReleaseForInspection(tarballPath);
-      const currentVersion = getCurrentVersion();
-      if (compareSemver(inspected.version, currentVersion) < 0) {
-        if (options?.allowDowngrade !== true) {
-          cleanupDownloadedRelease(tarballPath, inspected.extractDir);
-          throw new BlockedDowngradeError(inspected.version, currentVersion);
-        }
-        const downgradeUxResult = evaluateDowngradeUx(inspected.version, currentVersion, options);
-        if (downgradeUxResult) {
-          cleanupDownloadedRelease(tarballPath, inspected.extractDir);
-          return downgradeUxResult;
-        }
-      }
-    } catch (err) {
-      if (err instanceof BlockedDowngradeError) {
-        throw err;
-      }
-      cleanupDownloadedRelease(tarballPath);
-      const msg = safeErrorMessage(err);
-      log(`Release inspection failed: ${msg}`);
-      return { success: false, error: msg };
-    }
+    const inspection = inspectReleaseForUpgrade(tarballPath, options);
+    if ('result' in inspection) return inspection.result;
 
-    const result = extractAndInstall(tarballPath, inspected.extractDir);
+    const result = extractAndInstall(tarballPath, inspection.inspected.extractDir);
     if (!result.success) {
       return result;
     }
 
-    // Only update cache after confirmed successful install
-    const postInstallVersion = getCurrentVersion();
-    writeCache({
-      last_check_epoch: Math.floor(Date.now() / 1000),
-      latest_version: to,
-      current_version: postInstallVersion,
-    });
+    updateCacheAfterInstall(to);
 
     process.stderr.write(`🥒 Pickle Rick upgraded: v${from} → v${to}\n`);
     log(`Upgrade complete: ${from} → ${to}`);
@@ -479,6 +501,53 @@ export interface CheckForUpdateOptions {
   force?: boolean;
 }
 
+function checkFreshCache(currentVersion: string, cache: UpdateCheckCache): UpdateResult {
+  log('Cache is fresh, using cached result');
+  if (cache.latest_version && compareSemver(currentVersion, cache.latest_version) < 0) {
+    return { status: 'update-available', currentVersion, latestVersion: cache.latest_version };
+  }
+  return { status: 'up-to-date', currentVersion };
+}
+
+function fetchLatestVersion(currentVersion: string): UpdateResult | { latestVersion: string; tagName: string } {
+  log('Cache stale or forced, fetching latest release');
+  const release = getLatestRelease();
+  if (!release) {
+    return { status: 'error', currentVersion, error: 'Failed to fetch latest release' };
+  }
+
+  const latestVersion = parseVersion(release.tagName);
+  if (!latestVersion) {
+    return { status: 'error', currentVersion, error: `Invalid release tag: ${release.tagName}` };
+  }
+
+  writeCache({
+    last_check_epoch: Math.floor(Date.now() / 1000),
+    latest_version: latestVersion,
+    current_version: currentVersion,
+  });
+  return { latestVersion, tagName: release.tagName };
+}
+
+function applyAvailableUpdate(
+  currentVersion: string,
+  latestVersion: string,
+  tagName: string,
+  options: CheckForUpdateOptions | undefined,
+): UpdateResult {
+  if (compareSemver(currentVersion, latestVersion) >= 0) {
+    log(`Up to date: ${currentVersion}`);
+    return { status: 'up-to-date', currentVersion, latestVersion };
+  }
+
+  log(`Update available: ${currentVersion} → ${latestVersion}`);
+  const upgrade = performUpgrade(currentVersion, latestVersion, tagName, { force: options?.force });
+  if (upgrade.success) {
+    return { status: 'up-to-date', currentVersion: latestVersion, latestVersion };
+  }
+  return { status: 'update-available', currentVersion, latestVersion };
+}
+
 export function checkForUpdate(options?: CheckForUpdateOptions): UpdateResult {
   const currentVersion = getCurrentVersion();
   const errorResult: UpdateResult = { status: 'error', currentVersion };
@@ -493,41 +562,14 @@ export function checkForUpdate(options?: CheckForUpdateOptions): UpdateResult {
     const cache = readCache();
 
     if (!options?.force && !isCacheStale(cache, settings.update_check_interval_hours)) {
-      log('Cache is fresh, using cached result');
-      if (cache.latest_version && compareSemver(currentVersion, cache.latest_version) < 0) {
-        return { status: 'update-available', currentVersion, latestVersion: cache.latest_version };
-      }
-      return { status: 'up-to-date', currentVersion };
+      return checkFreshCache(currentVersion, cache);
     }
 
-    log('Cache stale or forced, fetching latest release');
-    const release = getLatestRelease();
-    if (!release) {
-      return { ...errorResult, error: 'Failed to fetch latest release' };
+    const latest = fetchLatestVersion(currentVersion);
+    if ('status' in latest) {
+      return latest;
     }
-
-    const latestVersion = parseVersion(release.tagName);
-    if (!latestVersion) {
-      return { ...errorResult, error: `Invalid release tag: ${release.tagName}` };
-    }
-
-    writeCache({
-      last_check_epoch: Math.floor(Date.now() / 1000),
-      latest_version: latestVersion,
-      current_version: currentVersion,
-    });
-
-    if (compareSemver(currentVersion, latestVersion) < 0) {
-      log(`Update available: ${currentVersion} → ${latestVersion}`);
-      const upgrade = performUpgrade(currentVersion, latestVersion, release.tagName, { force: options?.force });
-      if (upgrade.success) {
-        return { status: 'up-to-date', currentVersion: latestVersion, latestVersion };
-      }
-      return { status: 'update-available', currentVersion, latestVersion };
-    }
-
-    log(`Up to date: ${currentVersion}`);
-    return { status: 'up-to-date', currentVersion, latestVersion };
+    return applyAvailableUpdate(currentVersion, latest.latestVersion, latest.tagName, options);
   } catch (err) {
     const msg = safeErrorMessage(err);
     log(`checkForUpdate error: ${msg}`);

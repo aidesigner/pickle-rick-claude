@@ -909,29 +909,17 @@ function buildSzechuanJudgeContext(
   return contextPath;
 }
 
-function buildSzechuanPrd(
-  target: string,
-  stallLimit: number,
+function appendSzechuanPrinciples(
+  prdParts: string[],
   principlesPath: string,
   extensionRoot: string,
   domain: string | undefined,
-  focus: string | undefined,
-  citadelReport: CitadelJsonReport | null,
-): string {
-  const prdParts = [
-    '# Szechuan Sauce: Iterative Deslopping',
-    '',
-    '## Objective',
-    `Eliminate all coding principle violations in ${target} through iterative review and fix cycles.`,
-    '',
-    '## Target',
-    target,
-    '',
-    '## Principles Reference',
-    `Read: ${principlesPath}`,
-  ];
+): void {
+  prdParts.push('## Principles Reference', `Read: ${principlesPath}`);
   if (domain) prdParts.push(`Read: ${path.join(extensionRoot, `szechuan-sauce-${domain}-principles.md`)}`);
-  if (focus) prdParts.push('', '## Focus', focus);
+}
+
+function appendSzechuanProcess(prdParts: string[], stallLimit: number): void {
   prdParts.push(
     '',
     '## Key Metric',
@@ -953,13 +941,36 @@ function buildSzechuanPrd(
     '3. Fix it — one logical change per iteration',
     '4. Run tests — ensure green',
     '5. Commit',
-    '',
-    '## Rules',
-    '- One fix per iteration (atomic, revertible)',
-    '- Never repeat a failed approach',
-    '- P0 before P1 before P2 before P3 before P4',
-    ...buildCitadelSzechuanContext(citadelReport),
   );
+}
+
+function buildSzechuanPrd(
+  target: string,
+  stallLimit: number,
+  principlesPath: string,
+  extensionRoot: string,
+  domain: string | undefined,
+  focus: string | undefined,
+  citadelReport: CitadelJsonReport | null,
+): string {
+  const prdParts = [
+    '# Szechuan Sauce: Iterative Deslopping',
+    '',
+    '## Objective',
+    `Eliminate all coding principle violations in ${target} through iterative review and fix cycles.`,
+    '',
+    '## Target',
+    target,
+    '',
+  ];
+  appendSzechuanPrinciples(prdParts, principlesPath, extensionRoot, domain);
+  if (focus) prdParts.push('', '## Focus', focus);
+  appendSzechuanProcess(prdParts, stallLimit);
+  prdParts.push('', '## Rules');
+  prdParts.push('- One fix per iteration (atomic, revertible)');
+  prdParts.push('- Never repeat a failed approach');
+  prdParts.push('- P0 before P1 before P2 before P3 before P4');
+  prdParts.push(...buildCitadelSzechuanContext(citadelReport));
   return prdParts.join('\n');
 }
 
@@ -1040,62 +1051,75 @@ function isPhaseName(phase: unknown): phase is PhaseName {
 }
 
 export function setupPhase(phase: PhaseName, config: PipelineConfig): PhaseConfig {
-  const phaseConfigs: Record<PhaseName, PhaseConfig> = {
-    pickle: {
-      name: 'pickle',
-      prevPhase: null,
-      runnerScript: 'mux-runner.js',
-      setup: null,
-      refreshScope: false,
-      throwOnEmptyScope: false,
-      preSpawnStateMutation: (s) => { s.chain_meeseeks = false; },
-    },
-    citadel: {
-      name: 'citadel',
-      prevPhase: 'pickle',
-      runnerScript: null,
-      setup: null,
-      refreshScope: false,
-      throwOnEmptyScope: false,
-      preSpawnStateMutation: null,
-    },
-    'anatomy-park': {
-      name: 'anatomy-park',
-      prevPhase: 'citadel',
-      runnerScript: 'microverse-runner.js',
-      setup: (args) => setupAnatomyPark(
-        args.sessionDir,
-        args.target,
-        config.anatomy_stall_limit,
-        args.extensionRoot,
-        args.log,
-        args.scope ? { allowedPaths: args.scope.allowed_paths, repoRoot: args.workingDir } : undefined,
-      ),
-      refreshScope: true,
-      throwOnEmptyScope: true,
-      preSpawnStateMutation: null,
-    },
-    'szechuan-sauce': {
-      name: 'szechuan-sauce',
-      prevPhase: 'anatomy-park',
-      runnerScript: 'microverse-runner.js',
-      setup: (args) => setupSzechuanSauce(
-        args.sessionDir,
-        args.target,
-        config.szechuan_stall_limit,
-        args.extensionRoot,
-        config.szechuan_domain,
-        config.szechuan_focus,
-        args.log,
-        args.scope ? { allowedPaths: args.scope.allowed_paths } : undefined,
-      ),
-      setupExtraArgs: { domain: config.szechuan_domain, focus: config.szechuan_focus },
-      refreshScope: true,
-      throwOnEmptyScope: false,
-      preSpawnStateMutation: null,
-    },
+  if (phase === 'pickle') return picklePhaseConfig();
+  if (phase === 'citadel') return citadelPhaseConfig();
+  if (phase === 'anatomy-park') return anatomyPhaseConfig(config);
+  return szechuanPhaseConfig(config);
+}
+
+function picklePhaseConfig(): PhaseConfig {
+  return {
+    name: 'pickle',
+    prevPhase: null,
+    runnerScript: 'mux-runner.js',
+    setup: null,
+    refreshScope: false,
+    throwOnEmptyScope: false,
+    preSpawnStateMutation: (s) => { s.chain_meeseeks = false; },
   };
-  return phaseConfigs[phase];
+}
+
+function citadelPhaseConfig(): PhaseConfig {
+  return {
+    name: 'citadel',
+    prevPhase: 'pickle',
+    runnerScript: null,
+    setup: null,
+    refreshScope: false,
+    throwOnEmptyScope: false,
+    preSpawnStateMutation: null,
+  };
+}
+
+function anatomyPhaseConfig(config: PipelineConfig): PhaseConfig {
+  return {
+    name: 'anatomy-park',
+    prevPhase: 'citadel',
+    runnerScript: 'microverse-runner.js',
+    setup: (args) => setupAnatomyPark(
+      args.sessionDir,
+      args.target,
+      config.anatomy_stall_limit,
+      args.extensionRoot,
+      args.log,
+      args.scope ? { allowedPaths: args.scope.allowed_paths, repoRoot: args.workingDir } : undefined,
+    ),
+    refreshScope: true,
+    throwOnEmptyScope: true,
+    preSpawnStateMutation: null,
+  };
+}
+
+function szechuanPhaseConfig(config: PipelineConfig): PhaseConfig {
+  return {
+    name: 'szechuan-sauce',
+    prevPhase: 'anatomy-park',
+    runnerScript: 'microverse-runner.js',
+    setup: (args) => setupSzechuanSauce(
+      args.sessionDir,
+      args.target,
+      config.szechuan_stall_limit,
+      args.extensionRoot,
+      config.szechuan_domain,
+      config.szechuan_focus,
+      args.log,
+      args.scope ? { allowedPaths: args.scope.allowed_paths } : undefined,
+    ),
+    setupExtraArgs: { domain: config.szechuan_domain, focus: config.szechuan_focus },
+    refreshScope: true,
+    throwOnEmptyScope: false,
+    preSpawnStateMutation: null,
+  };
 }
 
 export async function executePhaseRunner(
@@ -1284,87 +1308,88 @@ function createPipelineLog(sessionDir: string): (msg: string) => void {
   };
 }
 
-// eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
-function loadPipelineRuntime(sessionDir: string, opts: MainOpts, log: (msg: string) => void): PipelineRuntime {
-  const extensionRoot = getExtensionRoot();
-  const statePath = path.join(sessionDir, 'state.json');
-  const pipelinePath = path.join(sessionDir, 'pipeline.json');
-
-  // Auto-spawn the 4-pane monitor window. Matches mux-runner behaviour —
-  // skill prompts no longer need a manual tmux-monitor.sh step.
+function ensurePipelineMonitor(sessionDir: string, extensionRoot: string, log: (msg: string) => void): void {
   try {
     const result = ensureMonitorWindow({ sessionDir, extensionRoot, log });
     log(`ensureMonitorWindow: ${result.status}${result.reason ? ` (${result.reason})` : ''}`);
   } catch (err) {
     log(`ensureMonitorWindow: threw (ignored): ${safeErrorMessage(err)}`);
   }
+}
 
-  let config: PipelineConfig;
-  let pipelineRaw: Record<string, unknown>;
+function readPipelineConfig(pipelinePath: string): { config: PipelineConfig; raw: Record<string, unknown> } {
   try {
     const recoveredPipeline = readRecoverableJsonObject(pipelinePath);
     if (!recoveredPipeline) throw new Error('pipeline.json did not contain an object');
-    pipelineRaw = recoveredPipeline as Record<string, unknown>;
-    config = parsePipelineConfig(pipelineRaw);
+    const raw = recoveredPipeline as Record<string, unknown>;
+    return { raw, config: parsePipelineConfig(raw) };
   } catch (err) {
     throw new Error(`Cannot read pipeline.json: ${safeErrorMessage(err)}`);
   }
+}
 
-  // Validate state.json exists
+function readClaimedPipelineState(statePath: string): State {
   if (!fs.existsSync(statePath)) {
     throw new Error('state.json not found — run setup.js first');
   }
 
-  let state: State;
   try {
-    state = sm.read(statePath);
+    sm.read(statePath);
   } catch (err) {
     throw new Error(`Cannot read state.json: ${safeErrorMessage(err)}`);
   }
-  state = claimPipelineRunnerActive(statePath);
+  return claimPipelineRunnerActive(statePath);
+}
+
+function resolvePipelineBackend(
+  statePath: string,
+  state: State,
+  config: PipelineConfig,
+  sessionDir: string,
+  log: (msg: string) => void,
+): { backend: Backend; phaseEnv: NodeJS.ProcessEnv } {
+  const { backend, source } = resolveBackendWithSource(state, config.backend, process.env.PICKLE_BACKEND);
+  assertCodexRequiredBackend(sessionDir, backend, source);
+  if (state.backend !== backend) {
+    sm.update(statePath, s => { s.backend = backend; });
+  }
+  log(`backend resolved: ${backend} (source: ${source})`);
+  return { backend, phaseEnv: { ...process.env, ...backendEnvOverrides(backend) } };
+}
+
+function setupRuntimeScope(
+  sessionDir: string,
+  workingDir: string,
+  target: string,
+  opts: MainOpts,
+  pipelineRaw: Record<string, unknown>,
+  log: (msg: string) => void,
+): void {
+  const scopeFlag = opts.scopeFlag ?? (typeof pipelineRaw.scope === 'string' ? pipelineRaw.scope : undefined);
+  const scopeBase = opts.scopeBase ?? (typeof pipelineRaw.scope_base === 'string' ? pipelineRaw.scope_base : undefined);
+  if (!scopeFlag) return;
+  setupScope({ sessionDir, workingDir, target, scopeFlag, scopeBase, log });
+}
+
+function loadPipelineRuntime(sessionDir: string, opts: MainOpts, log: (msg: string) => void): PipelineRuntime {
+  const extensionRoot = getExtensionRoot();
+  const statePath = path.join(sessionDir, 'state.json');
+  const pipelinePath = path.join(sessionDir, 'pipeline.json');
+
+  ensurePipelineMonitor(sessionDir, extensionRoot, log);
+  const { config, raw: pipelineRaw } = readPipelineConfig(pipelinePath);
+  let state = readClaimedPipelineState(statePath);
   const workingDir = state.working_dir || process.cwd();
 
-  // AC-LPB-05: detect reconstruction and reset start_time_epoch.
   const reset = applyEpochResetOnReconstruction(state, statePath, sessionDir);
   if (reset) {
     log(`reconstruction detected (iteration=${state.iteration ?? 0}) — start_time_epoch reset ${reset.originalEpoch ?? '?'} → ${reset.newEpoch}`);
   }
+  state = reset ? sm.read(statePath) : state;
 
-  // Backend resolution — see resolveBackendWithSource. Capture source BEFORE
-  // any state write so the log reflects the actual resolution path.
-  const { backend, source } = resolveBackendWithSource(state, config.backend, process.env.PICKLE_BACKEND);
-  assertCodexRequiredBackend(sessionDir, backend, source);
-  // Only write when the value actually changes — avoids a lock round-trip on
-  // every phase when state already matches (fresh-run and steady-state case).
-  if (state.backend !== backend) {
-    sm.update(statePath, s => { s.backend = backend; });
-  }
-  const phaseEnv: NodeJS.ProcessEnv = {
-    ...process.env,
-    ...backendEnvOverrides(backend),
-  };
-  log(`backend resolved: ${backend} (source: ${source})`);
-
-  // Pre-flight: refuse to start on a dirty tree. Downstream phases auto-commit
-  // on their own, which would roll the user's unrelated WIP into a pipeline
-  // commit and obscure which phase changed what. `ignore_dirty_paths` (default
-  // ['prds', 'docs']) carves out doc dirs that get edited during long epics.
+  const { backend, phaseEnv } = resolvePipelineBackend(statePath, state, config, sessionDir, log);
   assertCleanWorkingTree(workingDir, config.ignore_dirty_paths);
-
-  // Scope resolution (optional). argv > pipeline.json. Omitted → no scope.json,
-  // no phases_entered — pipeline-runner behaves as it did pre-change.
-  const scopeFlag = opts.scopeFlag ?? (typeof pipelineRaw.scope === 'string' ? pipelineRaw.scope : undefined);
-  const scopeBase = opts.scopeBase ?? (typeof pipelineRaw.scope_base === 'string' ? pipelineRaw.scope_base : undefined);
-  if (scopeFlag) {
-    setupScope({
-      sessionDir,
-      workingDir,
-      target: config.target || workingDir,
-      scopeFlag,
-      scopeBase,
-      log,
-    });
-  }
+  setupRuntimeScope(sessionDir, workingDir, config.target || workingDir, opts, pipelineRaw, log);
 
   return {
     sessionDir,
@@ -1432,6 +1457,26 @@ function logPhaseStart(runtime: PipelineRuntime, phase: PhaseName, index: number
   }, 'CYAN', '🧪');
 }
 
+function writeFinalPipelineActivity(
+  runtime: PipelineRuntime,
+  totalElapsed: number,
+  phasesSummary: string,
+  pipelineFailed: boolean,
+): void {
+  runtime.log(`Pipeline finished: ${phasesSummary} phases, ${formatTime(totalElapsed)}`);
+  emitBundleLinearComments(runtime.sessionDir, path.join(runtime.sessionDir, 'pipeline-runner.log'));
+  logActivity({
+    event: 'session_end', source: 'pickle',
+    session: path.basename(runtime.sessionDir),
+    duration_min: Math.round(totalElapsed / 60),
+    mode: 'tmux',
+  });
+  displayMacNotification(
+    pipelineFailed ? '🧪 Pipeline Stopped' : '🧪 Pipeline Complete',
+    `${phasesSummary} phases, ${formatTime(totalElapsed)}`,
+  );
+}
+
 function finalizePipeline(
   runtime: PipelineRuntime,
   counters: PhaseCounters,
@@ -1454,29 +1499,10 @@ function finalizePipeline(
     Elapsed: formatTime(totalElapsed),
   }, 'GREEN', '🧪');
 
-  runtime.log(`Pipeline finished: ${phasesSummary} phases, ${formatTime(totalElapsed)}`);
-  emitBundleLinearComments(runtime.sessionDir, path.join(runtime.sessionDir, 'pipeline-runner.log'));
+  writeFinalPipelineActivity(runtime, totalElapsed, phasesSummary, pipelineFailed);
 
-  logActivity({
-    event: 'session_end', source: 'pickle',
-    session: path.basename(runtime.sessionDir),
-    duration_min: Math.round(totalElapsed / 60),
-    mode: 'tmux',
-  });
-
-  // macOS notification — helper applies NOTIFICATION_TIMEOUT_MS and swallows
-  // errors so a wedged UI server cannot block the exit path.
-  const allDone = (counters.completed + counters.skipped) === runtime.config.phases.length;
-  displayMacNotification(
-    allDone ? '🧪 Pipeline Complete' : '🧪 Pipeline Stopped',
-    `${phasesSummary} phases, ${formatTime(totalElapsed)}`,
-  );
-
-  // Clean up cancel marker
   try { fs.unlinkSync(cancelMarker); } catch { /* may not exist */ }
 
-  // Explicit exit code so callers can detect pipeline failure.
-  // Skipped phases (e.g. no subsystems for anatomy-park) are not failures.
   writePipelineStatus(runtime.sessionDir, pipelineFailed ? 'failed' : 'completed', {
     current_phase: null,
     completed_phases: counters.completed,
