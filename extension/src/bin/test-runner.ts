@@ -139,6 +139,11 @@ function main(): never {
   const { dryRun, grepPattern, runnerArgs, testFiles, tier } = parseArgs(process.argv.slice(2));
   const rootDir = process.cwd();
 
+  if (tier === 'expensive' && process.env.RUN_EXPENSIVE_TESTS !== '1') {
+    process.stderr.write('[skipped: RUN_EXPENSIVE_TESTS unset]\n');
+    process.exit(0);
+  }
+
   const selectedFiles = tier
     ? discoverTierFiles(rootDir, tier)
     : grepPattern

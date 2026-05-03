@@ -60,7 +60,9 @@ test('discovery walks all tagged test tiers', () => {
     assert.deepEqual(stdoutLines(runRunner(root, ['--tier', 'integration', '--dry-run'])), [
       'tests/integration/integration-a.test.js',
     ]);
-    assert.deepEqual(stdoutLines(runRunner(root, ['--tier', 'expensive', '--dry-run'])), [
+    assert.deepEqual(stdoutLines(runRunner(root, ['--tier', 'expensive', '--dry-run'], {
+      env: { RUN_EXPENSIVE_TESTS: '1' },
+    })), [
       'tests/expensive-a.test.js',
     ]);
     assert.deepEqual(stdoutLines(runRunner(root, ['--tier', 'contract', '--dry-run'])), [
@@ -102,9 +104,28 @@ test('quarantine retains expensive tier files', () => {
     writeFixtureTest(root, 'tests/expensive-quarantined.test.js', 'expensive');
     writeQuarantine(root, '- tests/expensive-quarantined.test.js\n');
 
-    assert.deepEqual(stdoutLines(runRunner(root, ['--tier', 'expensive', '--dry-run'])), [
+    assert.deepEqual(stdoutLines(runRunner(root, ['--tier', 'expensive', '--dry-run'], {
+      env: { RUN_EXPENSIVE_TESTS: '1' },
+    })), [
       'tests/expensive-quarantined.test.js',
     ]);
+  } finally {
+    cleanupFixtureRoot(root);
+  }
+});
+
+test('expensive tier is skipped unless RUN_EXPENSIVE_TESTS is set', () => {
+  const root = makeFixtureRoot();
+  try {
+    writeFixtureTest(root, 'tests/expensive-a.test.js', 'expensive');
+
+    const result = runRunner(root, ['--tier', 'expensive', '--dry-run'], {
+      env: { RUN_EXPENSIVE_TESTS: '' },
+    });
+
+    assert.equal(result.status, 0);
+    assert.deepEqual(stdoutLines(result), []);
+    assert.match(result.stderr, /\[skipped: RUN_EXPENSIVE_TESTS unset\]/);
   } finally {
     cleanupFixtureRoot(root);
   }

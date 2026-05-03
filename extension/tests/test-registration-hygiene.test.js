@@ -1,12 +1,14 @@
 // @tier: fast
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CLAUDE_PATH = path.resolve(__dirname, '..', 'CLAUDE.md');
+const EXTENSION_ROOT = path.resolve(__dirname, '..');
 const PKG_PATH = path.resolve(__dirname, '..', 'package.json');
 
 const REQUIRED_TRAP_DOOR_ENTRY_SUBSTRINGS = [
@@ -53,15 +55,21 @@ function readPackageJson() {
   return JSON.parse(readFileSync(PKG_PATH, 'utf8'));
 }
 
+function discoverTier(tier) {
+  const result = spawnSync(process.execPath, ['bin/test-runner.js', '--tier', tier, '--dry-run'], {
+    cwd: EXTENSION_ROOT,
+    encoding: 'utf8',
+    env: { ...process.env, RUN_EXPENSIVE_TESTS: '1' },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.trim().split('\n').filter(Boolean).map(p => path.normalize(p));
+}
+
 test('no test file is silently unregistered', () => {
   const onDisk = discoverTestFiles(__dirname);
 
-  const pkg = readPackageJson();
   const registeredSet = new Set(
-    pkg.scripts.test
-      .split(/\s+/)
-      .filter(p => /tests\/.*\.test\.js$/.test(p))
-      .map(p => path.normalize(p)),
+    ['fast', 'integration', 'expensive', 'contract'].flatMap(discoverTier),
   );
 
   const missing = onDisk.filter(f => !registeredSet.has(f) && !UNREGISTERED_TEST_ALLOWLIST.has(f));
@@ -72,11 +80,14 @@ test('no test file is silently unregistered', () => {
   );
 });
 
-test('test:fast runs tier audit as npm pre-step', () => {
+test('package test scripts delegate to tier discovery', () => {
   const pkg = readPackageJson();
 
+  assert.equal(pkg.scripts.test, 'npm run test:fast && npm run test:integration');
   assert.equal(pkg.scripts['pretest:fast'], 'bash scripts/audit-test-tiers.sh');
-  assert.ok(pkg.scripts['test:fast'], 'missing package.json scripts.test:fast');
+  assert.equal(pkg.scripts['test:fast'], 'node bin/test-runner.js --tier fast');
+  assert.equal(pkg.scripts['test:integration'], 'node bin/test-runner.js --tier integration');
+  assert.equal(pkg.scripts['test:expensive'], 'node bin/test-runner.js --tier expensive');
 });
 
 test('PSD-T9 trap-door catalog entries are present', () => {
