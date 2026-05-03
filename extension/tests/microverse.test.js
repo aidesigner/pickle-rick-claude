@@ -677,8 +677,9 @@ test('pass-model.override: szechuan quality pass spawn args contain --model X', 
         process.env.PICKLE_CAPTURE_ARGS_PATH = capturePath;
         await runIteration(session.dir, 1, extensionRoot, 'claude-haiku-3-5');
         const args = JSON.parse(fs.readFileSync(capturePath, 'utf-8'));
-        assert.ok(args.includes('--model'));
-        assert.ok(args.includes('claude-haiku-3-5'));
+        const modelIndex = args.indexOf('--model');
+        assert.notEqual(modelIndex, -1, `expected --model in args: ${args.join(' ')}`);
+        assert.equal(args[modelIndex + 1], 'claude-haiku-3-5');
     } finally {
         if (previousPath === undefined) delete process.env.PATH;
         else process.env.PATH = previousPath;
@@ -1622,8 +1623,9 @@ test('measureLlmMetric spawns claude with --system-prompt and --allowedTools', (
         measureLlmMetric('fix bugs', 30, '/tmp', 'claude-opus-4-6');
         assert.equal(capturedArgs.cmd, 'claude');
         assert.ok(capturedArgs.args.includes('-p'));
-        assert.ok(capturedArgs.args.includes('--model'));
-        assert.ok(capturedArgs.args.includes('claude-opus-4-6'));
+        const modelIndex = capturedArgs.args.indexOf('--model');
+        assert.notEqual(modelIndex, -1, `expected --model in args: ${capturedArgs.args.join(' ')}`);
+        assert.equal(capturedArgs.args[modelIndex + 1], 'claude-opus-4-6');
         assert.ok(capturedArgs.args.includes('--system-prompt'), 'should include --system-prompt');
         assert.ok(capturedArgs.args.includes('--allowedTools'), 'should include --allowedTools');
         assert.ok(capturedArgs.args.includes('Read,Glob,Grep'), 'should restrict to read-only tools');
@@ -1801,7 +1803,9 @@ test('measureLlmMetric defaults to claude-sonnet-4-6 model', () => {
     };
     try {
         measureLlmMetric('fix bugs', 30, '/tmp');
-        assert.ok(capturedArgs.includes('claude-sonnet-4-6'), 'should use default model');
+        const modelIndex = capturedArgs.indexOf('--model');
+        assert.notEqual(modelIndex, -1, `expected --model in args: ${capturedArgs.join(' ')}`);
+        assert.equal(capturedArgs[modelIndex + 1], 'claude-sonnet-4-6');
     } finally {
         _deps.execFileSync = orig;
     }

@@ -32,6 +32,10 @@ function makeTmpDir(prefix = 'pickle-spawn-morty-') {
     return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
 
+function stripAnsi(value) {
+    return value.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
 function writeExtensionSentinel(extensionDir) {
     const sentinelDir = path.join(extensionDir, 'extension', 'bin');
     fs.mkdirSync(sentinelDir, { recursive: true });
@@ -638,7 +642,7 @@ test('spawn-morty: recovers orphan tmp backend state before routing worker CLI',
 
         const combined = result.stdout + result.stderr;
         assert.equal(result.status, 1, `expected validation failure after codex shim exit, got: ${combined}`);
-        assert.ok(combined.includes('Backend') && combined.includes('codex'), `expected Backend: codex in output, got: ${combined}`);
+        assert.match(stripAnsi(combined), /Backend:\s*codex\b/, `expected Backend: codex in output, got: ${combined}`);
         assert.ok(fs.existsSync(shimLog), 'codex shim should be invoked after backend recovery');
         const invocation = JSON.parse(fs.readFileSync(shimLog, 'utf-8'));
         assert.equal(invocation.pickle_backend, 'codex');
@@ -789,9 +793,9 @@ test('spawn-morty: recovers orphan tmp session timeout before printing worker bu
         });
 
         const combined = result.stdout + result.stderr;
-        const plain = combined.replace(/\x1b\[[0-9;]*m/g, '');
+        const plain = stripAnsi(combined);
         assert.equal(result.status, 1, `expected spawn failure after recovered timeout path, got: ${plain}`);
-        assert.ok(plain.includes('Backend') && plain.includes('codex'), `expected recovered backend in output, got: ${plain}`);
+        assert.match(plain, /Backend:\s*codex\b/, `expected recovered backend in output, got: ${plain}`);
         assert.ok(plain.includes('Worker timeout clamped'), `expected timeout clamp message, got: ${plain}`);
         const match = plain.match(/Timeout:\s*(\d+)s \(Req: 600s\)/);
         assert.ok(match, `expected timeout panel line, got: ${plain}`);
@@ -1223,7 +1227,7 @@ test('spawn-morty P2: heuristic OFF (default) — large tier on codex stays code
         assert.equal(result.status, 1);
         // No override fired → backend stays codex → codex shim runs → shim log written.
         assert.ok(fs.existsSync(shimLog), 'codex shim should run when heuristic is OFF');
-        assert.ok(combined.includes('Backend') && combined.includes('codex'),
+        assert.match(stripAnsi(combined), /Backend:\s*codex\b/,
             `expected Backend: codex, got: ${combined}`);
         assert.ok(!combined.includes('backend routed: codex → claude'),
             'no routing override message expected when heuristic is OFF');
@@ -1529,7 +1533,7 @@ test('spawn-morty P2: heuristic ON — small tier + neutral title stays codex', 
         assert.ok(fs.existsSync(shimLog), 'codex shim should run because small/neutral did not flip');
         assert.ok(!combined.includes('backend routed'),
             `no routing override expected for small/neutral, got: ${combined}`);
-        assert.ok(combined.includes('Backend') && combined.includes('codex'),
+        assert.match(stripAnsi(combined), /Backend:\s*codex\b/,
             `expected Backend: codex, got: ${combined}`);
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });

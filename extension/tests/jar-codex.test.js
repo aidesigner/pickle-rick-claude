@@ -30,6 +30,10 @@ function makeTmpRoot() {
     return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-jar-codex-')));
 }
 
+function stripAnsi(value) {
+    return value.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
 /**
  * Creates a codex shim script that records its invocation (argv + env) to a
  * log file, then exits 0 immediately so the jar-runner's wait doesn't hang.
@@ -118,8 +122,9 @@ test('jar-runner (codex): panel displays Backend: codex for codex-backed task', 
         });
 
         const combined = result.stdout + result.stderr;
-        assert.ok(
-            combined.includes('Backend: codex') || combined.includes('Backend') && combined.includes('codex'),
+        assert.match(
+            stripAnsi(combined),
+            /Backend:\s*codex\b/,
             `Expected panel "Backend: codex" in output, got: ${combined.slice(0, 800)}`,
         );
 

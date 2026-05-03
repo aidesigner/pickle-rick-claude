@@ -119,8 +119,7 @@ test('processLine: system init', () => {
         model: 'claude-sonnet-4-6',
     });
     const result = processLine(line);
-    assert.ok(result.includes('🚀'), `Expected init icon, got: ${result}`);
-    assert.ok(result.includes('claude-sonnet-4-6'), `Expected model, got: ${result}`);
+    assert.equal(result, '🚀 Session started (model: claude-sonnet-4-6)');
 });
 
 test('processLine: unknown type → null', () => {

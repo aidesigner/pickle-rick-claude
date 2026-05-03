@@ -86,8 +86,7 @@ test('summarizeLine: result error', () => {
 
 test('summarizeLine: system init', () => {
     const line = JSON.stringify({ type: 'system', subtype: 'init', model: 'claude-opus-4-6' });
-    assert.ok(summarizeLine(line).includes('🚀'), 'should have init icon');
-    assert.ok(summarizeLine(line).includes('claude-opus-4-6'), 'should include model');
+    assert.equal(summarizeLine(line), '🚀 init (claude-opus-4-6)');
 });
 
 test('summarizeLine: non-JSON → returns stripped line', () => {

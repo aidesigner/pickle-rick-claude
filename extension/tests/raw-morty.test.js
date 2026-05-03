@@ -11,6 +11,10 @@ import { processLineRaw } from '../bin/raw-morty.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const RAW_MORTY_BIN = path.resolve(__dirname, '../bin/raw-morty.js');
 
+function stripAnsi(value) {
+    return value.replace(/\x1b\[[0-9;]*m/g, '');
+}
+
 function run(args) {
     // 5s → 30s: budget for system load when run alongside concurrent
     // codex/tmux work. Tests validate CLI behavior, not wall-clock.
@@ -244,9 +248,7 @@ test('processLineRaw: system init → includes INIT + model', () => {
         model: 'claude-sonnet-4',
     });
     const result = processLineRaw(line);
-    assert.ok(result !== null);
-    assert.ok(result.includes('INIT'));
-    assert.ok(result.includes('claude-sonnet-4'));
+    assert.equal(stripAnsi(result), '▸ INIT model=claude-sonnet-4');
 });
 
 test('processLineRaw: system init without model → uses "unknown"', () => {
