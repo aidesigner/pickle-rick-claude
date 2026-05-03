@@ -19,6 +19,7 @@ export interface ReadinessArgs {
   contractOnly: boolean;
   history: boolean;
   last: number;
+  maxWallMs: number;
   /**
    * BMAD residual P0.6: when set, the gate is bypassed entirely; the reason is
    * recorded as a `readiness_skipped` activity event for audit. The flag is
@@ -30,7 +31,7 @@ export interface ReadinessArgs {
 
 export interface ReadinessFinding {
   ticket: string;
-  kind: 'prd_map' | 'machinability' | 'file_path' | 'contract' | 'dependency';
+  kind: 'prd_map' | 'machinability' | 'file_path' | 'contract' | 'dependency' | 'performance';
   message: string;
   analyst: 'gaps' | 'codebase' | 'risk';
   detail: string;
@@ -80,14 +81,35 @@ interface ReadinessStateShape {
 const SNAPSHOT_FILE = 'readiness_snapshot.json';
 const READINESS_MAX_RECYCLE_CYCLES = 3;
 const DEFAULT_HISTORY_LIMIT = 10;
+const DEFAULT_MAX_WALL_MS = 60_000;
+const FIND_IMPORTERS_TIMEOUT_MS = 3_000;
 const MACHINE_HINT_RE = /\b(\d+(?:\.\d+)?%?|exit\s+\d+|<\s*\d+|>\s*\d+|<=\s*\d+|>=\s*\d+|under\s+\d+|within\s+\d+|exact(?:ly)?|regex|matches?|JSON|field|file exists|writes?|emits?|test|describe\.each|node --test|npm test|tsc|eslint|table|input\/output)\b/i;
 const PURE_PROSE_RE = /\b(must|should)\s+(?:be|feel)\s+(?:intuitive|performant|fast|easy|simple|clear|usable|nice|good|robust|reliable)\b/i;
 const PATH_RE = /\b(?:[\w.-]+\/)+[\w.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|yml|yaml|sh|py|css|scss|html)\b/g;
 const SYMBOL_RE = /\b[A-Z][A-Za-z0-9]*(?:\.[A-Za-z_$][\w$]*)+\b|\b[A-Za-z_$][\w$]*\(\)/g;
 const GIT_LS_FILES_TIMEOUT_MS = 30_000;
+const DOC_EXTENSION_ALLOWLIST = new Set([
+  'md',
+  'sh',
+  'yml',
+  'yaml',
+  'json',
+  'toml',
+  'txt',
+  'csv',
+  'tsv',
+  'conf',
+  'cfg',
+  'ini',
+  'env',
+  'lock',
+  'gitignore',
+  'dockerignore',
+  'markdown',
+]);
 
 function usage(): never {
-  console.error('Usage: node check-readiness.js --session-dir <dir> [--repo-root <dir>] [--manifest <file>] [--machinability-only] [--contract-only] [--history [--last N]] [--skip-readiness <reason>]');
+  console.error('Usage: node check-readiness.js --session-dir <dir> [--repo-root <dir>] [--manifest <file>] [--machinability-only] [--contract-only] [--history [--last N]] [--skip-readiness <reason>] [--max-wall-ms N]');
   process.exit(1);
 }
 
@@ -115,6 +137,16 @@ function parseLast(argv: string[]): number {
   return last;
 }
 
+function parseMaxWallMs(argv: string[]): number {
+  const idx = argv.indexOf('--max-wall-ms');
+  if (idx < 0) return DEFAULT_MAX_WALL_MS;
+  const raw = argv[idx + 1];
+  if (!raw || raw.startsWith('--')) usage();
+  const value = Number.parseInt(raw, 10);
+  if (!Number.isInteger(value) || value < 1) usage();
+  return value;
+}
+
 function parseValueFlag(argv: string[], flag: string): string | undefined {
   const idx = argv.indexOf(flag);
   if (idx < 0) return undefined;
@@ -134,6 +166,7 @@ export function parseArgs(argv: string[]): ReadinessArgs {
     contractOnly: argv.includes('--contract-only'),
     history: argv.includes('--history'),
     last: parseLast(argv),
+    maxWallMs: parseMaxWallMs(argv),
     skipReadiness: parseSkipReadiness(argv),
   };
 }
@@ -166,6 +199,14 @@ export function isMachineCheckable(ac: string): boolean {
   return MACHINE_HINT_RE.test(ac) || /\|.+\|/.test(ac) || /`[^`]+`/.test(ac);
 }
 
+function isDocExtensionBasename(ref: string): boolean {
+  if (ref.includes('/')) return false;
+  const lastDot = ref.lastIndexOf('.');
+  if (lastDot < 0) return false;
+  const ext = ref.slice(lastDot + 1).toLowerCase();
+  return DOC_EXTENSION_ALLOWLIST.has(ext);
+}
+
 export function extractContractReferences(content: string): string[] {
   const refs = new Set<string>();
   for (const match of content.matchAll(PATH_RE)) refs.add(match[0]);
@@ -179,6 +220,7 @@ export function extractContractReferences(content: string): string[] {
   return [...refs]
     .filter((ref) => !ref.startsWith('AC-'))
     .filter((ref) => !refs.has(`${ref}()`))
+    .filter((ref) => !isDocExtensionBasename(ref))
     .sort();
 }
 
@@ -210,30 +252,61 @@ function gitTrackedFiles(repoRoot: string): string[] {
   return result.stdout.split('\n').filter(Boolean);
 }
 
-function resolveSymbolRef(ref: string, repoRoot: string): boolean {
+interface ResolverCache {
+  trackedSourceFiles: string[];
+  fileContents: Map<string, string>;
+  deadline: number;
+  truncated: boolean;
+}
+
+function createResolverCache(repoRoot: string, maxWallMs: number): ResolverCache {
+  const tracked = gitTrackedFiles(repoRoot)
+    .filter((file) => /\.(?:ts|tsx|js|jsx|mjs|cjs)$/.test(file) && !/(^|\/)tests?\//.test(file));
+  return {
+    trackedSourceFiles: tracked,
+    fileContents: new Map<string, string>(),
+    deadline: Date.now() + maxWallMs,
+    truncated: false,
+  };
+}
+
+function readCachedFile(absPath: string, cache: ResolverCache): string | undefined {
+  const cached = cache.fileContents.get(absPath);
+  if (cached !== undefined) return cached;
+  try {
+    const content = fs.readFileSync(absPath, 'utf-8');
+    cache.fileContents.set(absPath, content);
+    return content;
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveSymbolRef(ref: string, repoRoot: string, cache: ResolverCache): boolean {
   const normalized = ref.replace(/\(\)$/, '');
   const parts = normalized.split('.').filter(Boolean);
   if (parts.length === 0) return false;
-  const tracked = gitTrackedFiles(repoRoot).filter((file) => /\.(?:ts|tsx|js|jsx|mjs|cjs)$/.test(file) && !/(^|\/)tests?\//.test(file));
   const partPatterns = parts.map((part) => new RegExp(`\\b${part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`));
-  const candidates = tracked.filter((file) => {
-    try {
-      const content = fs.readFileSync(path.join(repoRoot, file), 'utf-8');
-      return partPatterns.every((pattern) => pattern.test(content));
-    } catch {
-      return false;
-    }
+  const candidates = cache.trackedSourceFiles.filter((file) => {
+    const content = readCachedFile(path.join(repoRoot, file), cache);
+    if (content === undefined) return false;
+    return partPatterns.every((pattern) => pattern.test(content));
   });
   if (candidates.length === 0) return false;
+  if (candidates.length === 1) return true;
   try {
-    computeOneHop(candidates.slice(0, 1), repoRoot, { findImportersTimeoutMs: 30_000 });
+    computeOneHop(candidates.slice(0, 1), repoRoot, { findImportersTimeoutMs: FIND_IMPORTERS_TIMEOUT_MS });
     return true;
   } catch {
     return false;
   }
 }
 
-export function findReadinessFindings(ticketFile: string, repoRoot: string, opts: { checkMachinability: boolean; checkContracts: boolean }): ReadinessFinding[] {
+export function findReadinessFindings(
+  ticketFile: string,
+  repoRoot: string,
+  opts: { checkMachinability: boolean; checkContracts: boolean; cache?: ResolverCache; maxWallMs?: number },
+): ReadinessFinding[] {
   const content = fs.readFileSync(ticketFile, 'utf-8');
   const findings: ReadinessFinding[] = [];
   if (opts.checkMachinability) {
@@ -251,9 +324,21 @@ export function findReadinessFindings(ticketFile: string, repoRoot: string, opts
     }
   }
   if (opts.checkContracts) {
+    const cache = opts.cache ?? createResolverCache(repoRoot, opts.maxWallMs ?? DEFAULT_MAX_WALL_MS);
     for (const ref of extractContractReferences(content)) {
       if (ref.includes('/')) continue;
-      const resolved = resolveSymbolRef(ref, repoRoot);
+      if (Date.now() > cache.deadline) {
+        cache.truncated = true;
+        findings.push({
+          ticket: ticketFile,
+          kind: 'performance',
+          analyst: 'codebase',
+          message: 'Contract resolution wall budget exceeded; remaining refs were not checked',
+          detail: ref,
+        });
+        break;
+      }
+      const resolved = resolveSymbolRef(ref, repoRoot, cache);
       if (!resolved) {
         findings.push({
           ticket: ticketFile,
@@ -704,11 +789,12 @@ export function runReadiness(args: ReadinessArgs): { exitCode: number; findings:
   const sourceRequirements = sourceRequirementsFromParentPrd(resolveManifestPrdPath(manifest, args.sessionDir, args.repoRoot), args.repoRoot);
   const tickets = enrichTickets(selected.files.map(ticketInfo), manifest, sourceRequirements);
   const refs = manifestRefs(manifest, tickets);
+  const resolverCache = checkContracts ? createResolverCache(args.repoRoot, args.maxWallMs) : undefined;
   const findings = [
     ...findPrdMapFindings(tickets, manifest, sourceRequirements),
     ...tickets.flatMap((ticket) => findPathFindings(ticket, args.repoRoot, args.sessionDir)),
     ...tickets.flatMap((ticket) => findDependencyFindings(ticket, refs)),
-    ...selected.files.flatMap((file) => findReadinessFindings(file, args.repoRoot, { checkMachinability, checkContracts })),
+    ...selected.files.flatMap((file) => findReadinessFindings(file, args.repoRoot, { checkMachinability, checkContracts, cache: resolverCache, maxWallMs: args.maxWallMs })),
   ];
   const ticketsVersion = getTicketsVersion(state);
 

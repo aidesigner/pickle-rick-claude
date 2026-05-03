@@ -10,7 +10,8 @@ const sourcePath = resolve(__dirname, '../src/bin/check-readiness.ts');
 test('check-readiness contract resolution passes explicit one-hop timeout', () => {
   const source = readFileSync(sourcePath, 'utf8');
 
-  assert.match(source, /computeOneHop\([^;]+findImportersTimeoutMs:\s*30_000[^;]+\)/s);
+  assert.match(source, /const FIND_IMPORTERS_TIMEOUT_MS = 3_000;/);
+  assert.match(source, /computeOneHop\([^;]+findImportersTimeoutMs:\s*FIND_IMPORTERS_TIMEOUT_MS[^;]+\)/s);
 });
 
 test('check-readiness tracked-file discovery passes explicit git timeout', () => {
@@ -18,4 +19,19 @@ test('check-readiness tracked-file discovery passes explicit git timeout', () =>
 
   assert.match(source, /const GIT_LS_FILES_TIMEOUT_MS = 30_000;/);
   assert.match(source, /spawnSync\('git', \['ls-files'\], \{[^}]+timeout:\s*GIT_LS_FILES_TIMEOUT_MS[^}]+\}\)/s);
+});
+
+test('check-readiness contract resolution has overall wall budget', () => {
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /const DEFAULT_MAX_WALL_MS = 60_000;/);
+  assert.match(source, /--max-wall-ms/);
+  assert.match(source, /Date\.now\(\) > cache\.deadline/);
+});
+
+test('check-readiness filters doc-extension basenames before symbol resolution', () => {
+  const source = readFileSync(sourcePath, 'utf8');
+
+  assert.match(source, /DOC_EXTENSION_ALLOWLIST/);
+  assert.match(source, /isDocExtensionBasename/);
 });
