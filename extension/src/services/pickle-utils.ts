@@ -324,6 +324,19 @@ export interface TicketInfo {
   depends_on: string[];
 }
 
+export type TicketStatus = TicketInfo['status'];
+
+export class MissingTicketError extends Error {
+  constructor(
+    public readonly sessionRoot: string,
+    public readonly ticketId: string,
+    public readonly ticketPath: string
+  ) {
+    super(`Ticket ${ticketId} not found in session ${sessionRoot}`);
+    this.name = 'MissingTicketError';
+  }
+}
+
 /**
  * Read a string-array field from a YAML-ish frontmatter body. Supports both
  * inline `field: [a, b]` and block list:
@@ -397,6 +410,18 @@ export function parseTicketFrontmatter(filePath: string): TicketInfo | null {
   } catch {
     return null;
   }
+}
+
+export function getTicketStatus(sessionRoot: string, ticketId: string): TicketStatus {
+  const ticketPath = path.join(sessionRoot, ticketId, `linear_ticket_${ticketId}.md`);
+  if (!fs.existsSync(ticketPath)) {
+    throw new MissingTicketError(sessionRoot, ticketId, ticketPath);
+  }
+  const parsed = parseTicketFrontmatter(ticketPath);
+  if (!parsed) {
+    throw new MissingTicketError(sessionRoot, ticketId, ticketPath);
+  }
+  return parsed.status;
 }
 
 /**

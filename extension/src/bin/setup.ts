@@ -5,7 +5,7 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
-import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd, formatLocalDateKey, collectTickets, type TicketInfo } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd, formatLocalDateKey, collectTickets, getTicketStatus, type TicketInfo } from '../services/pickle-utils.js';
 import { getHeadSha } from '../services/git-utils.js';
 import { State, Defaults, LockError, SessionMapEntry, Backend, BACKENDS, STATE_MANAGER_DEFAULTS } from '../types/index.js';
 import { StateManager, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
@@ -579,8 +579,13 @@ function normalizeTicketStatus(status: string | null): string {
   return (status || '').toLowerCase().replace(/["']/g, '').trim();
 }
 
-function isInProgressTicket(ticket: TicketInfo): boolean {
-  return normalizeTicketStatus(ticket.status) === 'in progress';
+function isInProgressTicket(sessionDir: string, ticket: TicketInfo): boolean {
+  if (!ticket.id) return false;
+  try {
+    return normalizeTicketStatus(getTicketStatus(sessionDir, ticket.id)) === 'in progress';
+  } catch {
+    return false;
+  }
 }
 
 function writeTicketStatus(sessionDir: string, ticketId: string, status: string): boolean {
@@ -605,7 +610,7 @@ function reconcileTicketStateDesyncOnResume(sessionDir: string, statePath: strin
     return sm.read(statePath);
   }
 
-  const inProgress = tickets.filter(isInProgressTicket);
+  const inProgress = tickets.filter(ticket => isInProgressTicket(sessionDir, ticket));
   const winner = chooseInProgressWinner(inProgress, currentTicket);
   if (inProgress.length === 1 && winner === currentTicket) return sm.read(statePath);
 

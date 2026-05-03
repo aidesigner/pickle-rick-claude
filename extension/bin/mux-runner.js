@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, parseTicketFrontmatter, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification } from '../services/pickle-utils.js';
 import { PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -136,8 +136,15 @@ const MUX_LIFECYCLE_ORDER = {
 function normalizeTicketStatus(status) {
     return (status || '').toLowerCase().replace(/["']/g, '').trim();
 }
-function isInProgressTicket(ticket) {
-    return normalizeTicketStatus(ticket.status) === 'in progress';
+function isInProgressTicket(sessionDir, ticket) {
+    if (!ticket.id)
+        return false;
+    try {
+        return normalizeTicketStatus(getTicketStatus(sessionDir, ticket.id)) === 'in progress';
+    }
+    catch {
+        return false;
+    }
 }
 function writeTicketStatus(sessionDir, ticketId, status) {
     try {
@@ -160,7 +167,7 @@ function reconcileTicketStateDesync(statePath, sessionDir, currentTicket, iterat
         log('WARN: ticket_state_desync check found no ticket directories');
         return readRunnerState(statePath);
     }
-    const inProgress = tickets.filter(isInProgressTicket);
+    const inProgress = tickets.filter(ticket => isInProgressTicket(sessionDir, ticket));
     const winner = chooseInProgressWinner(inProgress, currentTicket);
     const winnerMatchesState = winner === currentTicket;
     const alreadySynced = inProgress.length === 1 && winnerMatchesState;
@@ -190,17 +197,44 @@ function reconcileTicketStateDesync(statePath, sessionDir, currentTicket, iterat
     }
     return readRunnerState(statePath);
 }
-function isPendingMuxTicket(ticket) {
-    const status = normalizeTicketStatus(ticket.status);
+function isPendingMuxTicket(sessionDir, ticket) {
+    if (!ticket.id)
+        return false;
+    let status;
+    try {
+        status = normalizeTicketStatus(getTicketStatus(sessionDir, ticket.id));
+    }
+    catch {
+        return false;
+    }
     return !!ticket.id && status !== 'done' && status !== 'skipped';
 }
 function findNextPendingTicketId(sessionDir) {
-    return collectTickets(sessionDir).find(isPendingMuxTicket)?.id ?? null;
+    return collectTickets(sessionDir).find(ticket => isPendingMuxTicket(sessionDir, ticket))?.id ?? null;
+}
+function withFreshTicketStatuses(sessionDir, tickets) {
+    return tickets.map(ticket => {
+        if (!ticket.id)
+            return { ...ticket };
+        try {
+            return { ...ticket, status: getTicketStatus(sessionDir, ticket.id) };
+        }
+        catch {
+            return { ...ticket, status: null };
+        }
+    });
 }
 export function correctPhantomDoneTickets(input) {
     let corrected = 0;
     for (const ticket of collectTickets(input.sessionDir)) {
-        if (!ticket.id || normalizedStatus(ticket.status) !== 'done')
+        let status;
+        try {
+            status = ticket.id ? normalizedStatus(getTicketStatus(input.sessionDir, ticket.id)) : '';
+        }
+        catch {
+            continue;
+        }
+        if (!ticket.id || status !== 'done')
             continue;
         const workingDir = ticket.working_dir || input.workingDir || process.cwd();
         if (hasCommitReferencingTicketSince(workingDir, ticket.id, input.startCommit))
@@ -426,11 +460,13 @@ function hasCommitReferencingTicketSince(workingDir, ticketId, startCommit) {
 }
 export function validateAutoTicketCompletion(sessionDir, ticketId, workingDir, startCommit) {
     const filePath = ticketFilePath(sessionDir, ticketId);
-    const info = parseTicketFrontmatter(filePath);
-    if (!info)
+    try {
+        if (isTerminalTicketStatus(getTicketStatus(sessionDir, ticketId)))
+            return { action: 'leave', reason: 'ticket_already_terminal' };
+    }
+    catch {
         return { action: 'leave', reason: 'malformed_or_missing_ticket_frontmatter' };
-    if (isTerminalTicketStatus(info.status))
-        return { action: 'leave', reason: 'ticket_already_terminal' };
+    }
     let content;
     try {
         content = fs.readFileSync(filePath, 'utf-8');
@@ -1512,7 +1548,7 @@ function processTaskCompleted(state, ctx) {
         return { kind: 'break', reason: 'success' };
     }
     const decision = evaluateEpicCompletion({
-        tickets: collectTickets(ctx.sessionDir), currentTicket: curState.current_ticket || null,
+        tickets: withFreshTicketStatuses(ctx.sessionDir, collectTickets(ctx.sessionDir)), currentTicket: curState.current_ticket || null,
         priorFalseCount: Number(curState.false_epic_completed_count) || 0,
         priorFalseTicket: curState.false_epic_completed_ticket ?? null,
     });
@@ -1882,7 +1918,7 @@ async function runMuxRunnerMain() {
                 // Check if the model already marked it Done via prompt-driven validation
                 const tickets = collectTickets(sessionDir);
                 const prevTicketInfo = tickets.find(t => t.id === previousTicket);
-                if (prevTicketInfo?.status?.toLowerCase().replace(/["']/g, '') === 'done') {
+                if (prevTicketInfo?.id && normalizedStatus(getTicketStatus(sessionDir, prevTicketInfo.id)) === 'done') {
                     log(`Ticket ${previousTicket} already marked Done by model — skipping validation`);
                 }
                 else {
@@ -2132,7 +2168,7 @@ async function runMuxRunnerMain() {
             // below is the only place that decides genuine vs. recoverable vs.
             // pathological — a single false EPIC_COMPLETED no longer kills the
             // pipeline. See `evaluateEpicCompletion` for the full state machine.
-            const allTickets = collectTickets(sessionDir);
+            const allTickets = withFreshTicketStatuses(sessionDir, collectTickets(sessionDir));
             const decision = evaluateEpicCompletion({
                 tickets: allTickets,
                 currentTicket: curState.current_ticket || null,

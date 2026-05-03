@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { getExtensionRoot, extractFrontmatter, updateState, safeErrorMessage, findSessionPathForCwd, clearTicketResolutionTimestamps } from '../services/pickle-utils.js';
+import { getExtensionRoot, extractFrontmatter, updateState, safeErrorMessage, findSessionPathForCwd, clearTicketResolutionTimestamps, getTicketStatus } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { Defaults } from '../types/index.js';
 const sm = new StateManager();
@@ -14,6 +14,9 @@ function positiveIntegerOrDefault(value, fallback) {
     }
     const parsed = Number(value);
     return Number.isSafeInteger(parsed) ? parsed : fallback;
+}
+function normalizeTicketStatus(status) {
+    return (status || '').toLowerCase().replace(/["']/g, '').trim();
 }
 export function retryTicket(ticketId, cwd) {
     // Validate ticketId to prevent path traversal
@@ -70,6 +73,9 @@ export function retryTicket(ticketId, cwd) {
         }
         catch { /* ignore cleanup failure */ }
         throw err;
+    }
+    if (normalizeTicketStatus(getTicketStatus(sessionDir, ticketId)) !== 'todo') {
+        throw new Error(`Ticket ${ticketId} did not reset to Todo in ${sessionDir}`);
     }
     // Re-activate session and set current ticket
     sm.update(statePath, s => {

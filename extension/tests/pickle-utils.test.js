@@ -6,6 +6,8 @@ import * as path from 'node:path';
 import {
     statusSymbol,
     parseTicketFrontmatter,
+    getTicketStatus,
+    MissingTicketError,
     collectTickets,
     wrapText,
     formatTime,
@@ -394,6 +396,55 @@ test('parseTicketFrontmatter: missing frontmatter returns null', () => {
 
 test('parseTicketFrontmatter: non-existent file returns null', () => {
     assert.equal(parseTicketFrontmatter('/tmp/nonexistent_pickle_test_xyz.md'), null);
+});
+
+function withTempSessionTicket(id, status, fn) {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-session-'));
+    const ticketDir = path.join(dir, id);
+    fs.mkdirSync(ticketDir);
+    const file = path.join(ticketDir, `linear_ticket_${id}.md`);
+    fs.writeFileSync(file, `---\nid: ${id}\ntitle: T\nstatus: ${status}\norder: 1\n---\n`);
+    try {
+        fn(dir, file);
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+}
+
+// --- getTicketStatus ---
+
+test('getTicketStatus: reads each status type from ticket frontmatter', () => {
+    for (const status of ['Todo', 'In Progress', 'Done', 'Skipped']) {
+        withTempSessionTicket(`ticket-${status.toLowerCase().replace(/\s+/g, '-')}`, status, (dir) => {
+            assert.equal(getTicketStatus(dir, `ticket-${status.toLowerCase().replace(/\s+/g, '-')}`), status);
+        });
+    }
+});
+
+test('getTicketStatus: strips quoted status via frontmatter parser', () => {
+    withTempSessionTicket('quoted', '"Done"', (dir) => {
+        assert.equal(getTicketStatus(dir, 'quoted'), 'Done');
+    });
+});
+
+test('getTicketStatus: rereads frontmatter on each access', () => {
+    withTempSessionTicket('reread', 'Todo', (dir, file) => {
+        assert.equal(getTicketStatus(dir, 'reread'), 'Todo');
+        fs.writeFileSync(file, `---\nid: reread\ntitle: T\nstatus: Done\norder: 1\n---\n`);
+        assert.equal(getTicketStatus(dir, 'reread'), 'Done');
+    });
+});
+
+test('getTicketStatus: missing ticket throws MissingTicketError', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-session-'));
+    try {
+        assert.throws(
+            () => getTicketStatus(dir, 'missing'),
+            (err) => err instanceof MissingTicketError && err.ticketId === 'missing'
+        );
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
 });
 
 test('parseTicketFrontmatter: missing order defaults to 0', () => {

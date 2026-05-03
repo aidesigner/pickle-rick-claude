@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { printMinimalPanel, collectTickets, statusSymbol, findSessionPathForCwd } from '../services/pickle-utils.js';
+import { printMinimalPanel, collectTickets, statusSymbol, findSessionPathForCwd, getTicketStatus } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 const sm = new StateManager();
 // eslint-disable-next-line complexity -- pre-existing — outside T0–T15 god-fn refactor scope; defer to follow-up epic
@@ -40,7 +40,8 @@ export function showStatus(cwd) {
     if (tickets.length > 0) {
         console.log('Tickets:');
         for (const ticket of tickets) {
-            console.log(`  ${statusSymbol(ticket.status)} ${ticket.id}: ${ticket.title}`);
+            const status = ticket.id ? getTicketStatus(sessionPath, ticket.id) : ticket.status;
+            console.log(`  ${statusSymbol(status)} ${ticket.id}: ${ticket.title}`);
         }
         console.log('');
     }

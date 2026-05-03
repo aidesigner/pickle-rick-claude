@@ -5,7 +5,7 @@ import * as os from 'os';
 import * as crypto from 'crypto';
 import { execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
-import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd, formatLocalDateKey, collectTickets } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, getExtensionRoot, getDataRoot, withRetryLock, pruneOldSessions, safeErrorMessage, findSessionPathForCwd, formatLocalDateKey, collectTickets, getTicketStatus } from '../services/pickle-utils.js';
 import { getHeadSha } from '../services/git-utils.js';
 import { Defaults, LockError, BACKENDS, STATE_MANAGER_DEFAULTS } from '../types/index.js';
 import { StateManager, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
@@ -508,8 +508,15 @@ function validateResumeCompatibility(preState, config) {
 function normalizeTicketStatus(status) {
     return (status || '').toLowerCase().replace(/["']/g, '').trim();
 }
-function isInProgressTicket(ticket) {
-    return normalizeTicketStatus(ticket.status) === 'in progress';
+function isInProgressTicket(sessionDir, ticket) {
+    if (!ticket.id)
+        return false;
+    try {
+        return normalizeTicketStatus(getTicketStatus(sessionDir, ticket.id)) === 'in progress';
+    }
+    catch {
+        return false;
+    }
 }
 function writeTicketStatus(sessionDir, ticketId, status) {
     try {
@@ -532,7 +539,7 @@ function reconcileTicketStateDesyncOnResume(sessionDir, statePath, currentTicket
         process.stderr.write(`WARN: ticket_state_desync check found no ticket directories in ${sessionDir}\n`);
         return sm.read(statePath);
     }
-    const inProgress = tickets.filter(isInProgressTicket);
+    const inProgress = tickets.filter(ticket => isInProgressTicket(sessionDir, ticket));
     const winner = chooseInProgressWinner(inProgress, currentTicket);
     if (inProgress.length === 1 && winner === currentTicket)
         return sm.read(statePath);
