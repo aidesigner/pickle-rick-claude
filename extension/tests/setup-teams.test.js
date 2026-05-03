@@ -87,6 +87,12 @@ test('setup --teams --backend codex: rejects with non-zero exit', () => {
     assert.match(r.stderr, /codex|claude/i);
 });
 
+test('setup --teams --backend hermes: rejects with non-zero exit', () => {
+    const r = runSetupExpectFail(['--teams', '--backend', 'hermes', '--task', 'hermes-conflict']);
+    assert.notEqual(r.code, 0, 'expected non-zero exit');
+    assert.match(r.stderr, /hermes|claude/i);
+});
+
 test('setup without --teams: teams_mode is falsy in state.json', () => {
     const sessionPath = runSetup(['--task', 'default-off']);
     try {

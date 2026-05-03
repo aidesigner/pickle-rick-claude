@@ -93,7 +93,7 @@ From `$ARGUMENTS`:
 - `--max-iterations <N>` → PICKLE_MAX_ITER (default: 500)
 - `--max-time <M>` → MAX_TIME in minutes (default: 720)
 - `--worker-timeout <S>` → WORKER_TIMEOUT in seconds (default: 1200)
-- `--backend <claude|codex>` → BACKEND (default `claude`; `codex` routes every phase's worker/manager spawn through `codex exec` and propagates via `PICKLE_BACKEND` to sub-runners)
+- `--backend <claude|codex|hermes>` → BACKEND (default `claude`; `codex` routes phase spawns through `codex exec`, `hermes` routes phase spawns through `hermes chat -q`; both propagate via `PICKLE_BACKEND` to sub-runners)
 
 **Anatomy Park flags:**
 - `--anatomy-max-iterations <N>` → AP_MAX_ITER (default: 100)

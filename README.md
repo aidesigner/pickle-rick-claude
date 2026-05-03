@@ -86,7 +86,7 @@ Sit back. Rick handles the rest.
 
 > **Worker-spawn mechanism** — `/pickle --teams` swaps the per-ticket `claude -p` subprocess for a harness-native subagent on a team (`TeamCreate` + `Agent` + `TaskUpdate`). Same 8-phase lifecycle, same artifact contract, no token-sniffing log heuristics — cleaner completion signals and stricter artifact validation. Claude backend only; the default subprocess path is required for the codex backend and for everything that runs through `mux-runner` (`/pickle-tmux`, `/pickle-zellij`, `/pickle-microverse`, `/pickle-pipeline`). See [Agent Teams Mode](#agent-teams) below.
 
-> **Backend choice** — append `--backend codex` (or export `PICKLE_BACKEND=codex`) to route worker/manager spawns through `codex exec` instead of `claude`. See [Codex backend](#codex-backend) below for precedence and examples.
+> **Backend choice** — append `--backend codex` or `--backend hermes` (or export `PICKLE_BACKEND=codex` / `PICKLE_BACKEND=hermes`) to route worker/manager spawns through another backend instead of `claude`. See [Backends](#backends) below for precedence and examples.
 
 > **If things go wrong** — `"Stop hook error"` in the Claude Code UI is normal: every `decision: block` from the stop hook is labelled that way. The loop is working. If a single ticket fails, run `/pickle-retry <ticket-id>` instead of restarting the whole epic.
 
@@ -107,11 +107,12 @@ If you can define a measurable goal — test coverage, response time, bundle siz
 /pickle-microverse --goal "error messages are user-friendly and actionable" --task "improve UX"
 ```
 
-<a id="codex-backend"></a>**Codex backend** — `/pickle`, `/pickle-tmux`, `/szechuan-sauce`, `/anatomy-park`, and `/pickle-microverse` accept `--backend codex` to route the implementation spawn through `codex exec` (via the installed Codex CLI plugin) instead of `claude`. The choice is persisted in `state.json` and survives resume; omit the flag to keep the default `claude` backend. Set `PICKLE_BACKEND=codex` for a session-independent alternative that persists across commands. Precedence: CLI flag > env var > session state > default `claude`. **Incompatible with `--teams`** — agent-teams mode is claude-harness-native; setup rejects the combination at session creation and on `--resume` in either direction.
+<a id="backends"></a>**Backends** — `/pickle`, `/pickle-tmux`, `/szechuan-sauce`, `/anatomy-park`, and `/pickle-microverse` accept `--backend codex` to route spawns through `codex exec`, or `--backend hermes` to route spawns through `hermes chat -q ... -Q --ignore-rules --ignore-user-config`. The choice is persisted in `state.json` and survives resume; omit the flag to keep the default `claude` backend. Set `PICKLE_BACKEND=codex` or `PICKLE_BACKEND=hermes` for a session-independent alternative that persists across commands. Precedence: CLI flag > env var > session state > default `claude`. **Incompatible with `--teams`** — agent-teams mode is claude-harness-native; setup rejects non-claude backends at session creation and on `--resume`.
 
 ```bash
 /pickle --backend codex "refactor the auth middleware"
 /pickle-tmux --backend codex "refactor the auth middleware"
+/pickle --backend hermes "scaffold CLI smoke tests"
 /szechuan-sauce --backend codex src/services/
 /anatomy-park --backend codex src/
 /pickle-microverse --backend codex --metric "npm run coverage:score" --task "hit 90%"
@@ -260,13 +261,12 @@ bash install.sh
 | `--override-active` | Bypass active-session refusal and write an active-session bypass audit entry. |
 | `--no-confirm` | Skip interactive downgrade confirmation. |
 | `--closer-context` | Allow release-closer rollback/install flows to bypass active-session refusal while preserving audit evidence. |
-| `--uninstall-cron` | Remove the deploy parity sampler cron entry and exit. |
 
 Release closer flows must run `bin/release-gate.sh --pre-tag <tag>` before publishing and `bin/release-gate.sh --post-tag <tag>` after the release exists. Exit codes are: `10` pre-tag package version mismatch, `11` jq parse failed, `12` tag or tagged package missing, `20` release download failed, `21` downloaded tarball package version mismatch, and `22` GitHub release API error.
 
-Use `bin/purge-update-cache.js [--dry-run]` to remove poisoned updater cache state before or during a release. Deploy state lives at `~/.claude/pickle-rick/deploy-baseline.json`, updater cache at `~/.claude/pickle-rick/update-check.json`, and audit entries at `~/.claude/pickle-rick/deploy-audit.log`.
+Use `bin/purge-update-cache.js [--dry-run]` to remove poisoned updater cache state before or during a release. Updater cache lives at `~/.claude/pickle-rick/update-check.json`, and install audit entries live at `~/.claude/pickle-rick/deploy-audit.log`.
 
-Deploy activity events are `baseline_recapture_attempted`, `baseline_recapture_succeeded`, and `deploy_drift_detected`. Deploy audit-log event types are `DOWNGRADE`, `CACHE_PURGE`, and `INSTALL_BYPASS_ACTIVE_SESSION`.
+Gate-baseline activity events are `baseline_recapture_attempted`, `baseline_recapture_succeeded`, and `baseline_recapture_failed`. Deploy audit-log event types are `DOWNGRADE`, `CACHE_PURGE`, and `INSTALL_BYPASS_ACTIVE_SESSION`.
 
 ### 2. Add the Pickle Rick persona to your project
 

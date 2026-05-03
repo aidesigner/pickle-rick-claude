@@ -38,7 +38,7 @@ From `$ARGUMENTS`:
 - `--focus "<text>"` → FOCUS (natural language review directive — narrows what to hunt for, elevates matching violations by one priority level)
 - `--scope <flag>` → SCOPE_FLAG (e.g. `branch`, `branch:one-hop`, `diff:<ref>`, `paths:<globs>`)
 - `--scope-base <ref>` → SCOPE_BASE (e.g. `main`, `origin/main`; optional — defaults to upstream or `main`)
-- `--backend <claude|codex>` → BACKEND (default `claude`; `codex` routes the worker iteration spawn through `codex exec`)
+- `--backend <claude|codex|hermes>` → BACKEND (default `claude`; `codex` routes spawns through `codex exec`, `hermes` routes spawns through `hermes chat -q`)
 - Remainder = TARGET (file or directory to deslop; default: current directory)
 
 If `--scope` and `--dry-run` are BOTH set: print `SCOPE_DRYRUN_CONFLICT: --scope cannot be combined with --dry-run` and stop.

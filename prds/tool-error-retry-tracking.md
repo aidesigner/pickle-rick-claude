@@ -8,7 +8,17 @@
 
 ## Introduction
 
-Add intra-session tool error retry tracking to Pickle Rick. When a Claude worker hits the same tool failure repeatedly within a single session, inject escalating guidance: first "analyze and fix before retrying," then "STOP — try a completely different approach." Mirrors OMC's `last-tool-error.json` pattern, adapted to our hook architecture using the `PostToolUseFailure` hook event.
+Add intra-session tool error retry tracking to Pickle Rick. When a Claude worker hits the same tool failure repeatedly within a single session, persist retry state so the next worker spawn injects escalating guidance: first "analyze and fix before retrying," then "STOP — try a completely different approach." Mirrors OMC's `last-tool-error.json` pattern, adapted to our hook architecture using the `PostToolUseFailure` hook event.
+
+## Bundle Implementation Notes (2026-05-03)
+
+The P2 mega bundle implemented this PRD with a smaller public surface than the original draft:
+
+- Handler: `extension/src/hooks/handlers/tool-error.ts`, dispatched by `node $HOME/.claude/pickle-rick/extension/hooks/dispatch.js tool-error`.
+- State file: `last-tool-error.json` in the active session directory.
+- State type: `LastToolErrorState` with `{ ts, tool, error_signature, retry_count }`.
+- Tests: `extension/tests/tool-error-retry.test.js`, plus worker-guidance coverage in `extension/tests/spawn-morty.test.js`.
+- Guidance injection happens in `spawn-morty.ts` by reading `last-tool-error.json` before spawning the next worker; the hook response remains advisory and only returns `decision: 'approve'`.
 
 ## Problem Statement
 
@@ -29,9 +39,9 @@ Add intra-session tool error retry tracking to Pickle Rick. When a Claude worker
 ### In-scope
 
 - New `PostToolUseFailure` hook handler that tracks tool errors per-session
-- Error state file (`last_tool_error.json`) written per-ticket directory
-- Escalating guidance injected via hook response `additionalContext`
-- Staleness guard (60s) to prevent cross-session bleed
+- Error state file (`last-tool-error.json`) written in the active session directory
+- Escalating guidance injected into the next worker prompt by `spawn-morty.ts`
+- Active-session isolation to prevent cross-session bleed
 - Integration with existing dispatch.ts hook routing
 - Registration in `settings.json` hook config
 
@@ -56,18 +66,18 @@ After 5 identical failures, the hook escalates: "STOP RETRYING. Try a completely
 Worker fails `npm test` (compilation), then fails `npm test` (runtime error). The count resets because the error changed. No escalation.
 
 **CUJ-4: Stale error file from previous session**
-A `last_tool_error.json` exists from 2 minutes ago. The hook ignores it (>60s staleness) and starts fresh.
+A `last-tool-error.json` exists from a previous session. The active-session resolver ensures only the current session's file is read.
 
 ### Functional Requirements
 
 | Priority | Requirement | User Story | Verification |
 |:---|:---|:---|:---|
-| P0 | Write `last_tool_error.json` on PostToolUseFailure | As a hook, I capture tool failures for downstream nudging | `node --test` — unit test writes file with correct schema on simulated failure |
+| P0 | Write `last-tool-error.json` on PostToolUseFailure | As a hook, I capture tool failures for downstream nudging | `node --test` — unit test writes file with correct schema on simulated failure |
 | P0 | Track retry count per tool_name | As a hook, I increment count when same tool fails with same error signature | Unit test: 3 sequential same-error calls → count=3 |
 | P0 | Reset count on error change | As a hook, I reset count when error signature changes | Unit test: error A then error B → count=1 |
-| P0 | Inject "retry smarter" guidance at count < 5 | As a hook, I return additionalContext nudging the LLM to analyze before retrying | Unit test: count=3 → response contains "analyze why" |
-| P0 | Inject "pivot approach" guidance at count >= 5 | As a hook, I return additionalContext telling LLM to stop retrying | Unit test: count=5 → response contains "STOP RETRYING" |
-| P1 | Staleness guard (60s) | As a hook, I ignore error files older than 60 seconds | Unit test: error file with old timestamp → treated as fresh start |
+| P0 | Inject "retry smarter" guidance at count < 5 | As the next worker spawn, I add prompt guidance nudging the LLM to analyze before retrying | Unit test: count=3 → prompt contains "Analyze and fix" |
+| P0 | Inject "pivot approach" guidance at count >= 5 | As the next worker spawn, I add prompt guidance telling the LLM to stop retrying | Unit test: count=5 → prompt contains "TOOL RETRY CIRCUIT OPEN" |
+| P1 | Active-session isolation | As a hook, I only read/write the active session's error file | Unit test: no active session → approve with no side effects |
 | P1 | Normalize error signatures | As a hook, I strip paths, timestamps, UUIDs from errors before comparison | Unit test: same error with different paths → same signature |
 | P1 | Register hook in settings.json install | As install.sh, I add PostToolUseFailure hook config | `bash install.sh` adds hook entry; `jq` verifies |
 
@@ -97,21 +107,20 @@ interface PostToolUseFailureInput {
 // On error tracking (non-blocking — always approve, inject guidance)
 interface ToolErrorHookResponse {
   decision: 'approve';
-  additionalContext?: string;  // Injected into Claude's next turn
+  additionalContext?: string;  // Not used by the bundle implementation; guidance is injected by spawn-morty.ts
 }
 ```
 
-### Error State File Contract (`last_tool_error.json`)
+### Error State File Contract (`last-tool-error.json`)
 
 Written to ticket directory (if active session) or session directory.
 
 ```typescript
-interface ToolErrorState {
-  tool_name: string;
+interface LastToolErrorState {
+  ts: string;                   // ISO 8601
+  tool: string;
   error_signature: string;     // Normalized error (paths/timestamps stripped)
-  raw_error: string;           // Original error string
   retry_count: number;
-  timestamp: string;           // ISO 8601
 }
 ```
 
@@ -119,10 +128,9 @@ interface ToolErrorState {
 
 | From | Event | To | Side Effects | Invariants |
 |:---|:---|:---|:---|:---|
-| No file | PostToolUseFailure | count=1 | Write last_tool_error.json | File has valid schema |
+| No file | PostToolUseFailure | count=1 | Write last-tool-error.json | File has valid schema |
 | count=N, same sig | PostToolUseFailure (same sig) | count=N+1 | Update file, inject guidance if N+1 >= 3 | Count monotonically increases for same sig |
 | count=N, diff sig | PostToolUseFailure (new sig) | count=1 | Overwrite file with new sig | Old signature discarded |
-| count=N, age > 60s | PostToolUseFailure | count=1 | Overwrite stale file | Staleness = Date.now() - timestamp > 60000 |
 
 ## Verification Strategy
 
@@ -138,32 +146,30 @@ interface ToolErrorState {
 | Type check | `cd extension && npx tsc --noEmit` | Exit 0, no errors |
 | Lint | `cd extension && npx eslint src/ --max-warnings=-1` | Exit 0 |
 | Unit tests | `cd extension && npm test` | All tests pass |
-| Hook registration | `jq '.hooks.PostToolUseFailure' ~/.claude/settings.json` | Contains tool-error-tracker entry |
-| Build | `cd extension && npx tsc` | Compiles to extension/hooks/handlers/tool-error-tracker.js |
+| Hook registration | `jq '.hooks.PostToolUseFailure' ~/.claude/settings.json` | Contains tool-error dispatcher entry |
+| Build | `cd extension && npx tsc` | Compiles to extension/hooks/handlers/tool-error.js |
 
 ## Test Expectations
 
 ### Unit Tests
 
-Test file: `extension/tests/tool-error-tracker.test.js`
+Test file: `extension/tests/tool-error-retry.test.js`
 
 | Requirement | Test File | Description | Assertion |
 |:---|:---|:---|:---|
-| Write error file | tool-error-tracker.test.js | First failure writes last_tool_error.json | File exists, schema matches ToolErrorState |
-| Increment count | tool-error-tracker.test.js | Same tool+signature → count increments | count === previous + 1 |
-| Reset on new sig | tool-error-tracker.test.js | Different error signature → count resets to 1 | count === 1, new signature stored |
-| Staleness guard | tool-error-tracker.test.js | File with timestamp > 60s ago treated as fresh | count === 1 regardless of previous count |
-| Guidance < 5 | tool-error-tracker.test.js | count 3 → additionalContext contains retry guidance | Response includes "analyze why" |
-| Guidance >= 5 | tool-error-tracker.test.js | count 5 → additionalContext contains pivot guidance | Response includes "STOP RETRYING" |
-| Signature normalization | tool-error-tracker.test.js | Errors differing only in paths/timestamps → same signature | normalizeErrorSignature(a) === normalizeErrorSignature(b) |
-| No session → no-op | tool-error-tracker.test.js | No active Pickle session → approve with no side effects | No file written, decision: approve |
-| Always approves | tool-error-tracker.test.js | Hook never blocks tool execution | decision === 'approve' in all cases |
+| Write error file | tool-error-retry.test.js | First failure writes last-tool-error.json | File exists, schema matches LastToolErrorState |
+| Increment count | tool-error-retry.test.js | Same tool+signature → count increments | count === previous + 1 |
+| Reset on new sig | tool-error-retry.test.js | Different error signature → count resets to 1 | count === 1, new signature stored |
+| Signature normalization | tool-error-retry.test.js | Errors differing only in paths/timestamps → same signature | normalizeErrorSignature(a) === normalizeErrorSignature(b) |
+| No session → no-op | tool-error-retry.test.js | No active Pickle session → approve with no side effects | No file written, decision: approve |
+| Always approves | tool-error-retry.test.js | Hook never blocks tool execution | decision === 'approve' in all cases |
+| Worker guidance | spawn-morty.test.js | retry count 3/5 reaches worker prompt | prompt contains guidance/circuit-open text |
 
 ### Edge Cases
 
 | Condition | Behavior | Test |
 |:---|:---|:---|
-| Corrupt last_tool_error.json | Treat as fresh (count=1) | Parse failure → fresh file |
+| Corrupt last-tool-error.json | Treat as fresh (count=1) | Parse failure → fresh file |
 | Empty error string | Use "unknown" as signature | Normalize empty → "unknown" |
 | is_interrupt: true | Skip tracking (user cancelled) | No file write on interrupt |
 | File write fails (permissions) | Log warning, approve with no guidance | try-catch, non-fatal |
@@ -173,7 +179,7 @@ Test file: `extension/tests/tool-error-tracker.test.js`
 
 - Claude Code fires PostToolUseFailure for Bash non-zero exits, Edit failures, and Write failures
 - The `error` field contains enough information to create a meaningful signature
-- PostToolUseFailure hook responses support `additionalContext` field (same as other hooks)
+- The next worker spawn is the reliable guidance injection point for persisted retry state.
 - 60-second staleness threshold is appropriate (matches OMC's value)
 - Threshold of 5 before "pivot" guidance is appropriate (matches OMC's value, tunable later via pickle_settings.json)
 
@@ -181,10 +187,10 @@ Test file: `extension/tests/tool-error-tracker.test.js`
 
 | Risk | Impact | Mitigation |
 |:---|:---|:---|
-| PostToolUseFailure doesn't support additionalContext | Guidance can't be injected | Verify with a test hook first; fall back to logging only |
+| PostToolUseFailure doesn't support additionalContext | Hook cannot directly nudge current turn | Persist `last-tool-error.json`; inject guidance on next worker spawn |
 | Hook adds latency to every tool failure | Slows down Claude sessions | File I/O only, no network. Watchdog timeout in dispatch.ts already covers hangs |
 | False signature matches (different errors normalize to same) | Premature pivot guidance | Use circuit-breaker's proven normalizeErrorSignature (paths, timestamps, UUIDs stripped, exit codes preserved) |
-| Error file left on disk across sessions | Stale guidance on next session | 60s staleness guard handles this |
+| Error file left on disk across sessions | Stale guidance on next session | Active-session state resolution keeps reads scoped to the current session |
 
 ## Tradeoffs
 
@@ -212,11 +218,11 @@ Test file: `extension/tests/tool-error-tracker.test.js`
 ## Implementation Notes
 
 ### New Files
-- `extension/src/hooks/handlers/tool-error-tracker.ts` — PostToolUseFailure handler
-- `extension/tests/tool-error-tracker.test.js` — Unit tests
+- `extension/src/hooks/handlers/tool-error.ts` — PostToolUseFailure handler
+- `extension/tests/tool-error-retry.test.js` — Unit tests
 
 ### Modified Files
-- `extension/src/types/index.ts` — Add `ToolErrorState` and `PostToolUseFailureInput` interfaces
+- `extension/src/types/index.ts` — Add `LastToolErrorState` and `PostToolUseFailureInput` interfaces
 - `install.sh` — Register PostToolUseFailure hook in settings.json
 
 ### Reused

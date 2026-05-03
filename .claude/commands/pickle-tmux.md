@@ -6,7 +6,7 @@ Launch a Pickle Rick epic in tmux with true context clearing between iterations 
 Run `tmux -V`. If missing: "Install tmux: `brew install tmux` or `apt install tmux`, or use /pickle for interactive mode." Stop.
 
 ## Step 2: Session Setup
-Extract flags from `$ARGUMENTS` (`--resume <path>`, `--max-iterations <N>`, `--backend <claude|codex>`, etc.). Pass flags before `--task`. Task text goes in `--task "..."`.
+Extract flags from `$ARGUMENTS` (`--resume <path>`, `--max-iterations <N>`, `--backend <claude|codex|hermes>`, etc.). Pass flags before `--task`. Task text goes in `--task "..."`.
 
 ```bash
 node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux <FLAGS> --task "<TASK_TEXT>"
@@ -14,7 +14,7 @@ node "$HOME/.claude/pickle-rick/extension/bin/setup.js" --tmux <FLAGS> --task "<
 No flags: `setup.js --tmux --task "$ARGUMENTS"`.
 Resume example: `setup.js --tmux --resume /sessions/057f0263` (no --task needed).
 Flags+task example: `setup.js --tmux --max-iterations 10 --task "refactor auth"`
-Backend example: `setup.js --tmux --backend codex --task "refactor auth"` — routes worker/manager spawns through `codex exec` instead of `claude`. Backend persists in `state.json` and survives resume.
+Backend example: `setup.js --tmux --backend codex --task "refactor auth"` routes worker/manager spawns through `codex exec`; `setup.js --tmux --backend hermes --task "scaffold CLI smoke tests"` routes through `hermes chat -q`. Backend persists in `state.json` and survives resume.
 
 Extract `SESSION_ROOT=<path>` and `working_dir` from output.
 

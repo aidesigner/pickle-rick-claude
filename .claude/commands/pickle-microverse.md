@@ -22,7 +22,7 @@ Extract from `$ARGUMENTS`:
 | `--max-iterations <N>` | `500` | No | Hard cap on total iterations |
 | `--resume [path]` | — | No | Resume existing session (skips --metric/--task/--goal) |
 | `--interactive` | — | No | Run inline instead of tmux (default is tmux mode) |
-| `--backend <claude\|codex>` | `claude` | No | Backend (`codex` or `claude`) — `codex` routes ALL LLM spawns through `codex exec`: per-iteration manager, gap-analysis baseline, and the LLM judge (baseline + per-iteration). Shell command metrics are backend-agnostic. LLM judges run read-only regardless of backend (`--allowedTools Read,Glob,Grep` on claude; `-s read-only --ignore-rules --ignore-user-config` on codex). |
+| `--backend <claude\|codex\|hermes>` | `claude` | No | Backend. `codex` routes LLM spawns through `codex exec`; `hermes` routes worker/manager spawns through `hermes chat -q`. Shell command metrics are backend-agnostic. LLM judges run read-only for claude/codex (`--allowedTools Read,Glob,Grep` on claude; `-s read-only --ignore-rules --ignore-user-config` on codex). |
 
 If `--resume`: `--metric`/`--goal` and `--task` are NOT required.
 Otherwise:

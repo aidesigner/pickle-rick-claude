@@ -557,8 +557,8 @@ function validateCommandLine(config: SetupArgs) {
   if (config.explicitFlags.has('max-parallel') && !config.teamsMode) {
     die('--max-parallel requires --teams');
   }
-  if (config.teamsMode && config.backend === 'codex') {
-    die('--teams is incompatible with --backend codex (claude backend only)');
+  if (config.teamsMode && config.backend !== 'claude') {
+    die(`--teams is incompatible with --backend ${config.backend} (claude backend only)`);
   }
 }
 
@@ -571,8 +571,8 @@ function validateResumeCompatibility(preState: State, config: SetupArgs) {
 
   const willHaveTeams = config.explicitFlags.has('teams') ? config.teamsMode : preState.teams_mode === true;
   const willHaveBackend = config.explicitFlags.has('backend') ? config.backend : preState.backend;
-  if (willHaveTeams && willHaveBackend === 'codex') {
-    die('--teams is incompatible with --backend codex (claude backend only). Resume would create a conflicting state — refusing to continue.');
+  if (willHaveTeams && willHaveBackend !== 'claude') {
+    die(`--teams is incompatible with --backend ${willHaveBackend} (claude backend only). Resume would create a conflicting state — refusing to continue.`);
   }
 }
 

@@ -1,6 +1,6 @@
 # Hermes Backend Integration PRD
 
-| Hermes Backend Integration PRD | | Add `hermes` as a fourth backend by spawning the first-party `hermes chat -q` CLI in headless mode, with toolset routing and honest backend identity throughout state, logs, and metrics |
+| Hermes Backend Integration PRD | | Add `hermes` as a first-class backend by spawning the first-party `hermes chat -q` CLI in headless mode, with toolset routing and honest backend identity throughout state, logs, and metrics |
 |:---|:---|:---|
 | **Author**: Gregory Dickson **Contributors**: Pickle Rick | **Status**: Ready (research complete) **Created**: 2026-05-01 **Research**: `prds/hermes-research.md` | **Visibility**: Internal |
 
@@ -9,16 +9,26 @@
 
 ## Introduction
 
-Add `hermes` as a first-class backend value alongside `claude`, `codex`, and (in flight) `deepseek`. Unlike deepseek (which rides the `claude` CLI through an Anthropic-compat shim), Hermes ships its own CLI binary with a headless mode (`hermes chat -q "..."`) plus toolset selection (`-t terminal,file,code_execution`) and provider override (`--provider`). Integration shape is closer to codex than deepseek: dispatch a real binary with its own arg shape, capture stdout/stderr, parse output, classify completion.
+Add `hermes` as a first-class backend value alongside `claude` and `codex`. Hermes ships its own CLI binary with a headless mode (`hermes chat -q "..."`) plus toolset selection (`--toolsets terminal,file,code_execution`) and provider override (`--provider`). Integration shape is closer to codex than claude: dispatch a real binary with its own arg shape, capture stdout/stderr, parse output, classify completion.
+
+## Bundle Implementation Notes (2026-05-03)
+
+The P2 mega bundle shipped the Hermes backend as a state/config driven backend, not the full setup-time option surface from the draft:
+
+- Public backend selector: `--backend hermes` and `PICKLE_BACKEND=hermes`.
+- Spawn command: `hermes chat -q <prompt> -Q --ignore-rules --ignore-user-config`, with optional `--max-turns`, `--toolsets`, `--provider`, and `-m` values read from state fields.
+- State fields: `hermes_toolsets`, `hermes_provider`, `hermes_model`, and `hermes_max_turns`.
+- `--teams` is Claude-only and is rejected for `--backend hermes`.
+- Hermes binary/version smoke checks and dedicated `--hermes-*` setup flags remain follow-up work; this bundle does not expose those flags as public CLI.
 
 Source: hermes-agent skill section "Spawning Additional Hermes Instances" (referenced for the `hermes -w` interactive headless pattern, not used here).
 
 ## Problem Statement
 
-**Current Process**: Pickle Rick supports two production backends (`claude`, `codex`) plus deepseek-in-flight. Each integration follows a consistent dispatch contract via `buildWorkerInvocation(backend)` returning `{ cmd, args, backend, env? }`. Adding hermes is the third instance of this pattern, and the second one with a first-party CLI binary (after codex).
+**Current Process**: Pickle Rick supports two production backends (`claude`, `codex`). Each integration follows a consistent dispatch contract via `buildWorkerInvocation(backend)` returning `{ cmd, args, backend }`. Adding hermes is the third instance of this pattern, and the second one with a first-party CLI binary (after codex).
 
 Three integration shapes considered:
-- **Shape A** (this PRD): First-party `hermes chat -q` CLI, parallel to codex's `codex exec` pattern. Toolset selection via `-t` is honored as a Pickle-side flag.
+- **Shape A** (this PRD): First-party `hermes chat -q` CLI, parallel to codex's `codex exec` pattern. Toolset selection via `--toolsets` is honored when present in session state.
 - **Shape B**: Use `hermes -w` interactive headless sessions (long-lived). Higher complexity (would need a session-pool manager); doesn't fit the per-iteration spawn contract.
 - **Shape C**: Skip CLI entirely, hit Hermes' API directly. Out of scope; we don't add native HTTP loops without a clear reason.
 
@@ -33,24 +43,22 @@ Three integration shapes considered:
 
 ## Objective & Scope
 
-**Objective**: Add `'hermes'` to the `Backend` type and dispatch system. Spawn the first-party `hermes chat -q` CLI in headless mode, optionally pass through toolset/provider/model overrides, persist truthful backend identity throughout state and logs, and reuse the existing codex-manager-relaunch primitive (T2 in flight) if hermes has a session timeout.
+**Objective**: Add `'hermes'` to the `Backend` type and dispatch system. Spawn the first-party `hermes chat -q` CLI in headless mode, optionally pass through toolset/provider/model overrides from state, persist truthful backend identity throughout state and logs, and reuse the existing codex-manager-relaunch primitive for manager relaunch decisions.
 
 **Ideal Outcome**: `setup.js --backend hermes --task "..."` works exactly like `--backend codex` from the user's perspective. State, jar queue, mux-runner logs, and metrics all show `'hermes'`. Refinement still forces claude (existing constraint). Output parser gets a third branch if hermes' stdout shape differs from claude/codex.
 
 ### In-scope
 
-- Extend `Backend = 'claude' | 'codex' | 'deepseek' | 'hermes'` in `extension/src/types/index.ts`
+- Extend `Backend = 'claude' | 'codex' | 'hermes'` in `extension/src/types/index.ts`
 - Add `buildHermesInvocation()` in `extension/src/services/backend-spawn.ts` (worker, manager, judge variants)
 - Extend `resolveBackend()` and `isBackend()` to accept the new value
 - Wire all four spawn sites (`spawn-morty.ts`, `mux-runner.ts`, `jar-runner.ts`, `microverse-runner.ts`) to dispatch hermes correctly
-- Pre-flight guard in `setup.ts`: `--backend hermes` requires the `hermes` binary on PATH AND a smoke check that `hermes --version` succeeds; fail fast with actionable error
-- New CLI flag `--hermes-toolsets terminal,file,code_execution` in `setup.ts` → persisted as `state.hermes_toolsets: string[]`
-- Optional `--hermes-provider <name>` flag → persisted as `state.hermes_provider: string`
-- Hermes version smoke check pinned via `engines.hermes` in `extension/package.json` (parallel to existing `engines.codex`)
-- Extend the existing `--teams + codex` conflict guard to also reject `--teams + hermes`
-- Extend `evaluateCodexManagerRelaunch` (newly extracted as `services/codex-manager-relaunch.ts` per T2 in current bundle) to be **backend-aware** — rename to `manager-relaunch.ts` and accept `backend: 'codex' | 'hermes'` parameter; share the same cap (10) and counter shape
+- Runtime spawn guard: missing `hermes` binary exits 127 and emits `hermes_binary_missing`
+- Optional state fields `state.hermes_toolsets`, `state.hermes_provider`, `state.hermes_model`, and `state.hermes_max_turns` are passed through when present
+- Extend the existing teams conflict guard to reject `--teams` with any non-claude backend, including hermes
+- Extend `evaluateCodexManagerRelaunch` to be backend-aware for codex and hermes; keep the existing file/function/event names for compatibility
 - Output classifier extension in `mux-runner.ts:extractAssistantContent` and `mux-runner.ts:classifyCompletion` for hermes' stdout shape (third mode if needed; mode-1 if hermes emits Anthropic-shaped stream-json)
-- Update command docs (`pickle.md`, `pickle-jar-open.md`, `pickle-microverse.md`) to list `--backend <claude|codex|deepseek|hermes>` and document `--hermes-toolsets` / `--hermes-provider`
+- Update command docs to list `--backend <claude|codex|hermes>`
 - Tests mirroring existing codex coverage in `extension/tests/backend-spawn.test.js` (~12 cases)
 - Hermes version smoke test mirroring `extension/tests/codex-version-smoke.test.js`
 
@@ -59,7 +67,7 @@ Three integration shapes considered:
 - Per-token cost reporting in metrics. Pickle Rick tracks total tokens and LOC, not $/token.
 - Long-lived `hermes -w` interactive sessions. Out per Shape B rejection — doesn't fit per-iteration spawn contract.
 - Toolset auto-selection per ticket tier (e.g. "small tier → only file+code_execution"). Toolsets stay session-level for v1; per-ticket routing is a follow-up.
-- Hermes model selection beyond default. Users can pass `--hermes-model` if needed; no per-tier mapping.
+- Hermes setup-time provider/model/toolset CLI flags. State fields exist for programmatic/session-driven routing; public flags remain follow-up work.
 - Refinement support. `PICKLE_REFINEMENT_LOCK=1` already forces claude; hermes inherits the same constraint.
 - Teams mode support. Teams primitives are harness-bound; hermes inherits codex's incompatibility.
 - Promise token translation. `EPIC_COMPLETED` / `TASK_COMPLETED` / `WORKER_DONE` / `EXISTENCE_IS_PAIN` are prompt-driven and model-agnostic.
@@ -72,23 +80,23 @@ Three integration shapes considered:
 
 **CUJ-1: Run an epic on Hermes**
 
-User runs `node ~/.claude/pickle-rick/extension/bin/setup.js --backend hermes --task "scaffold CI/CD for ~/myapp"`. Setup verifies `hermes --version` matches `engines.hermes` pin, writes `state.backend = 'hermes'` to `state.json`. The first iteration spawns `hermes chat -q "<prompt>" -Q [-t <toolsets>]` with `PICKLE_BACKEND=hermes` in the child env. stdout is captured, classifier extracts assistant content (mode-3 if hermes shape differs from claude/codex), promise tokens detected normally. `state.json` and `tmux-runner.log` show `'hermes'` for the duration of the epic.
+User runs `node ~/.claude/pickle-rick/extension/bin/setup.js --backend hermes --task "scaffold CI/CD for ~/myapp"`. Setup writes `state.backend = 'hermes'` to `state.json`. The first iteration spawns `hermes chat -q "<prompt>" -Q --ignore-rules --ignore-user-config [--toolsets <toolsets>]` with `PICKLE_BACKEND=hermes` in the child env. stdout is captured, classifier extracts assistant content, promise tokens are detected normally, and `state.json` / runner logs show `'hermes'` for the duration of the epic.
 
-**CUJ-2: Missing or wrong-version hermes binary fails fast**
+**CUJ-2: Missing hermes binary fails clearly**
 
-User runs `--backend hermes` without `hermes` on PATH. Setup exits non-zero before any session directory is created, with stderr: `Error: --backend hermes requires the 'hermes' CLI on PATH. Install via <docs link>.` Same fail-fast for version mismatch: `Error: hermes version mismatch: hermes --version returned "X.Y.Z", expected engines.hermes "^A.B.C". Update or pin.` (mirrors the existing codex smoke check at `extension/src/bin/setup.ts:355`).
+User runs a Hermes-backed worker without `hermes` on PATH. The worker spawn exits 127, prints the attempted backend, marks the ticket failed, and emits `hermes_binary_missing`.
 
 **CUJ-3: Toolset routing per epic**
 
-User runs `--backend hermes --hermes-toolsets terminal,file,code_execution`. setup.js parses the comma list, persists as `state.hermes_toolsets: ['terminal','file','code_execution']`. Every spawn passes `-t terminal,file,code_execution` to `hermes chat -q`. Toolsets persist across resume; `--hermes-toolsets` on resume errors with "toolsets locked at session creation; use a fresh session to change."
+Session state contains `hermes_toolsets: ['terminal','file','code_execution']`. Every Hermes worker/manager spawn passes `--toolsets terminal,file,code_execution` to `hermes chat -q`. Toolsets persist across resume because they are stored in `state.json`.
 
 **CUJ-4: Mixed-backend jar batch**
 
-User queues four tasks: claude, codex, deepseek, hermes. `pickle-jar-open` walks the queue, reading `state.backend` per task. Each task spawns the right CLI. `jar-runner.log` shows four distinct backend values. ENOENT handling for the `hermes` binary applies as a per-task failure (does NOT fail the batch — task is marked failed and queue advances).
+User queues tasks backed by claude, codex, and hermes. `pickle-jar-open` walks the queue, reading `state.backend` per task. Each task spawns the right CLI. `jar-runner.log` shows distinct backend values. ENOENT handling for backend binaries applies per task.
 
 **CUJ-5: Hermes session timeout + relaunch**
 
-If hermes has a session-timeout wall like codex's 4h subprocess limit (TBD — Open Question 1), `evaluateCodexManagerRelaunch` (renamed `evaluateManagerRelaunch` per T2 follow-up) honors `state.backend === 'hermes'` and triggers the same relaunch evaluator with the same cap (10). Counter shared at `state.manager_relaunch_count`. Activity event remains `codex_manager_relaunch` for backward-compat OR renamed to `manager_relaunch` (decision in §Open Questions).
+If a Hermes manager subprocess exits while work remains, `evaluateCodexManagerRelaunch` honors `state.backend === 'hermes'` and triggers the same relaunch evaluator with the same cap. Counter and event names remain `codex_manager_relaunch_count` and `codex_manager_relaunch` for compatibility.
 
 **CUJ-6: Refinement still uses claude**
 
@@ -102,49 +110,45 @@ User runs `/pickle-refine-prd` from a session where `state.backend = 'hermes'`. 
 
 **FR-3**: `buildHermesInvocation(opts)` returns:
 - `cmd: 'hermes'`
-- `args: ['chat', '-q', opts.prompt, '-Q', '--ignore-rules', '--ignore-user-config', ...(opts.maxTurns ? ['--max-turns', String(opts.maxTurns)] : []), ...(opts.toolsets ? ['-t', opts.toolsets.join(',')] : []), ...(opts.provider ? ['--provider', opts.provider] : []), ...(opts.model ? ['-m', opts.model] : [])]`
+- `args: ['chat', '-q', opts.prompt, '-Q', '--ignore-rules', '--ignore-user-config', ...(opts.maxTurns ? ['--max-turns', String(opts.maxTurns)] : []), ...(opts.toolsets ? ['--toolsets', opts.toolsets.join(',')] : []), ...(opts.provider ? ['--provider', opts.provider] : []), ...(opts.model ? ['-m', opts.model] : [])]`
 - `backend: 'hermes'`
-- `env: undefined` (no overlay needed; hermes uses its own config)
 
 `--ignore-rules --ignore-user-config` is mandatory: it skips `~/.hermes/AGENTS.md`, `~/.hermes/SOUL.md`, the user `config.yaml`, and preloaded skills. This defends against the same literal-bleed class codex hit in v1.59.1 (`~/.hermes/skills/pickle*` would otherwise be auto-loaded). Per Q19 of `prds/hermes-research.md`.
 
-`--max-turns` defaults to `state.max_iterations` when `opts.maxTurns` is unset (Q16: hermes' built-in default is 90, which is incoherent with our per-iteration semantics).
+`--max-turns` is passed when `state.hermes_max_turns` is positive, otherwise worker spawns fall back to `state.max_iterations`.
 
 Manager and judge variants follow the same pattern. Hermes has no built-in read-only mode (Q15) — the **judge variant** restricts toolsets to read-only retrieval only (`search`, `web`) and explicitly omits `terminal`, `file`, `write_file`, `patch`, `code_execution`. The same `--ignore-rules --ignore-user-config` flags carry through.
 
 **FR-4**: `buildWorkerInvocation`, `buildManagerInvocation`, and `buildJudgeInvocation` all dispatch to the hermes builder when `backend === 'hermes'`.
 
-**FR-5**: All four spawn sites — `spawn-morty.ts`, `mux-runner.ts`, `jar-runner.ts`, `microverse-runner.ts` — handle `backend === 'hermes'` correctly. No changes needed to the env-spread logic added for deepseek (hermes returns `env: undefined`).
+**FR-5**: Spawn sites handle `backend === 'hermes'` correctly and pass `PICKLE_BACKEND=hermes` through `backendEnvOverrides`.
 
-**FR-6**: `setup.ts` validates that `hermes --version` succeeds and matches `engines.hermes` from `extension/package.json` when `--backend hermes` is parsed. The version regex is `v(\d+\.\d+\.\d+)` — matches the actual hermes shape `Hermes Agent v0.12.0 (2026.4.30)` (Q11). When `--hermes-provider` is set, smoke check ALSO verifies the corresponding API key env var is present (mapped via a small lookup: `openai → OPENAI_API_KEY`, `anthropic → ANTHROPIC_API_KEY`, `openrouter → OPENROUTER_API_KEY`, etc.) — Q20 confirms hermes has no single `HERMES_API_KEY` and Q25 confirms missing keys produce mid-stream API failures (exit 0) without `--ignore-user-config`. On any failure, exit non-zero before creating session state, with a single-line stderr message. Reuses the same smoke-check helper pattern as `resolveCodexVersionForSetup` at `extension/src/bin/setup.ts:355`.
+**FR-6**: Missing Hermes binaries are surfaced at worker spawn time with exit 127 and `hermes_binary_missing`; setup-time version/API-key smoke checks remain follow-up work.
 
-**FR-7**: `setup.ts` parses `--hermes-toolsets <comma-list>`, `--hermes-provider <name>`, `--hermes-model <name>`, and `--hermes-max-turns <N>` flags. Validates the toolset list is non-empty. `--hermes-max-turns` is an optional positive integer; when unset, hermes invocation defaults to `state.max_iterations`. Persists all four to State as optional fields (`state.hermes_toolsets`, `state.hermes_provider`, `state.hermes_model`, `state.hermes_max_turns`). Resume rejects re-passing these flags with "locked at session creation."
+**FR-7**: State supports optional fields (`state.hermes_toolsets`, `state.hermes_provider`, `state.hermes_model`, `state.hermes_max_turns`). Spawn sites pass them through when present. Dedicated setup flags for these fields are deferred.
 
-**FR-8**: `setup.ts` extends the existing `--teams + codex` conflict guard to also reject `--teams + hermes` with the same error wording.
+**FR-8**: `setup.ts` rejects `--teams` with any non-claude backend, including hermes, with the same Claude-only error wording.
 
-**FR-9**: `extension/package.json` gains `engines.hermes` pin (initial value pinned to current hermes version at PRD acceptance time; bumped per the same pattern as `engines.codex`).
+**FR-9**: Hermes-specific tests are mocked; no `engines.hermes` pin is required until setup-time smoke checks ship.
 
 **FR-10**: Output parsing in `mux-runner.ts:extractAssistantContent` and `mux-runner.ts:classifyCompletion` gets a third mode-branch. Confirmed shape (Q6–Q10): stdout = plain assistant content only, no interleaved tool calls, no ANSI in `-Q` mode. The new mode-3 path treats stdout as-is (no ANSI strip needed for stdout). Promise tokens detected via the same regex set — Q10 confirms no `[tool:...]` markers leak through.
 
-Mode-3 ALSO scans **stderr** for failure markers because Q3 documents that hermes returns exit code 0 even on non-retryable API errors (HTTP 400/404, bad provider). The wrapper greps stderr for `WARNING`, `ERROR`, and known fail strings (after stripping ANSI from stderr — Q9), and promotes those to a worker failure even when exit was 0. Without this, a model-API-misconfigured hermes invocation looks identical to a successful one. This is **NEW behavior** Pickle hasn't needed for codex/claude.
+Hermes stderr classification for provider/API failures remains follow-up work; the bundle-covered hard failure path is missing binary ENOENT.
 
-**FR-11**: `evaluateCodexManagerRelaunch` is renamed to `evaluateManagerRelaunch`. The hermes branch is a **no-op early-return** — Q2 confirms hermes has no wall-clock session-timeout in headless `-q` mode, so the relaunch path is never exercised for hermes:
+**FR-11**: `evaluateCodexManagerRelaunch` accepts codex and hermes as relaunch-eligible backends while keeping the compatibility counter and activity-event names:
 
 ```ts
-export function evaluateManagerRelaunch(state: State, hasPendingWork: boolean): RelaunchEvaluation {
-  if (state.backend === 'hermes') {
-    return { should_relaunch: false, reason: 'hermes_no_timeout', current_count: 0, cap: CAP };
-  }
-  if (state.backend !== 'codex') {
+export function evaluateCodexManagerRelaunch(state: State, hasPendingWork: boolean): RelaunchEvaluation {
+  if (state.backend !== 'codex' && state.backend !== 'hermes') {
     return { should_relaunch: false, reason: 'wrong_backend', current_count: 0, cap: CAP };
   }
   // ... existing codex logic unchanged
 }
 ```
 
-State field stays at schema v3: canonical name is `manager_relaunch_count`; `codex_manager_relaunch_count` is accepted as an alias at read time (Open Question 3 resolved as alias-only — no migration). Activity event: emit `manager_relaunch` with `gate_payload.backend` field; `codex_manager_relaunch` accepted in `VALID_ACTIVITY_EVENTS` and deprecated for one minor cycle (Open Question 4 resolved per PRD recommendation).
+State field stays at schema v3: canonical name remains `codex_manager_relaunch_count`. Activity event remains `codex_manager_relaunch` and carries the backend in the payload.
 
-**FR-12**: `extension/CLAUDE.md` trap-door catalog gets a new entry for `services/manager-relaunch.ts` (renamed from codex-manager-relaunch.ts) documenting the backend-asymmetric invariant and the test ENFORCE clause.
+**FR-12**: `extension/CLAUDE.md` keeps the existing `codex_manager_relaunch_count` invariant and documents Hermes-specific state fields.
 
 ### Non-Functional Requirements
 
@@ -154,7 +158,7 @@ State field stays at schema v3: canonical name is `manager_relaunch_count`; `cod
 
 **NFR-3**: Failure isolation. A missing `hermes` binary at setup time must not corrupt the session state directory; it must fail before any file is written.
 
-**NFR-4**: Toolset list integrity. Empty or malformed `--hermes-toolsets` must be rejected at parse time. Whitespace trimmed; duplicates collapsed; invalid toolset names (not in a known allowlist) emit a warning but pass through (hermes' `-t` flag is the source of truth for valid names).
+**NFR-4**: Toolset list integrity. State-sourced toolsets are whitespace-trimmed and empty entries are omitted before passing `--toolsets` to Hermes.
 
 **NFR-5**: Renamed-helper backward compat. `evaluateCodexManagerRelaunch` (just shipped via T2 in v1.63.0) gets a deprecation alias for one minor cycle before removal. Callers in `mux-runner.ts` and `microverse-runner.ts` updated; old name re-exports for any out-of-tree callers.
 
@@ -164,8 +168,8 @@ State field stays at schema v3: canonical name is `manager_relaunch_count`; `cod
 
 `extension/src/types/index.ts:53-55`:
 ```ts
-export type Backend = 'claude' | 'codex' | 'deepseek' | 'hermes';
-export const BACKENDS: readonly Backend[] = ['claude', 'codex', 'deepseek', 'hermes'] as const;
+export type Backend = 'claude' | 'codex' | 'hermes';
+export const BACKENDS: readonly Backend[] = ['claude', 'codex', 'hermes'] as const;
 ```
 
 State extension:
@@ -175,7 +179,7 @@ export interface State {
   hermes_toolsets?: string[];      // NEW — set at session creation when --backend hermes
   hermes_provider?: string;        // NEW — optional provider override
   hermes_model?: string;           // NEW — optional model override
-  manager_relaunch_count?: number; // RENAMED from codex_manager_relaunch_count (or kept as alias)
+  codex_manager_relaunch_count?: number; // shared compatibility counter for codex/hermes relaunch
 }
 ```
 
@@ -185,7 +189,7 @@ export interface State {
 ```ts
 function buildHermesInvocation(opts: WorkerOpts): SpawnInvocation {
   const args = ['chat', '-q', opts.prompt, '-Q'];
-  if (opts.toolsets?.length) args.push('-t', opts.toolsets.join(','));
+  if (opts.toolsets?.length) args.push('--toolsets', opts.toolsets.join(','));
   if (opts.provider) args.push('--provider', opts.provider);
   if (opts.model) args.push('-m', opts.model);
   return { cmd: 'hermes', args, backend: 'hermes' };
@@ -196,7 +200,7 @@ Manager and judge variants follow the same pattern. Judge variant restricts tool
 
 ### Spawn Site Wiring
 
-The four spawn sites already dispatch via `buildWorkerInvocation(backend)` (or its variants) and spread `invocation.env` per the deepseek FR-6 contract. Hermes returns `env: undefined`, so no spread changes are needed at the spawn sites.
+The spawn sites already dispatch via `buildWorkerInvocation(backend)` or `buildManagerInvocation(backend)` and pass backend identity through `backendEnvOverrides`.
 
 ### Output Parser Extension
 
@@ -212,10 +216,10 @@ if (backend === 'hermes') {
 
 ### Manager Relaunch Generalization
 
-`extension/src/services/codex-manager-relaunch.ts` (just shipped via T2) renamed to `extension/src/services/manager-relaunch.ts`. Function `evaluateCodexManagerRelaunch` renamed `evaluateManagerRelaunch`. Internal logic adds:
+`extension/src/services/codex-manager-relaunch.ts` remains the compatibility module. `evaluateCodexManagerRelaunch` adds Hermes to the eligible backend set:
 
 ```ts
-export function evaluateManagerRelaunch(state: State, hasPendingWork: boolean): RelaunchEvaluation {
+export function evaluateCodexManagerRelaunch(state: State, hasPendingWork: boolean): RelaunchEvaluation {
   if (state.backend !== 'codex' && state.backend !== 'hermes') {
     return { should_relaunch: false, reason: 'wrong_backend', current_count: 0, cap: CAP };
   }
@@ -223,24 +227,18 @@ export function evaluateManagerRelaunch(state: State, hasPendingWork: boolean): 
 }
 ```
 
-Backward-compat shim:
-```ts
-// codex-manager-relaunch.ts (kept as re-export for one minor cycle)
-export { evaluateManagerRelaunch as evaluateCodexManagerRelaunch } from './manager-relaunch.js';
-```
-
 ### CLI Surface (setup.ts additions)
 
 ```
---hermes-toolsets terminal,file,code_execution    Comma-separated toolset list passed to hermes -t
---hermes-provider openai                          Forces hermes provider via --provider
---hermes-model gpt-5-pro                          Overrides hermes model via -m
+state.hermes_toolsets: ["terminal","file"]         Passed to hermes via --toolsets
+state.hermes_provider: "openai"                    Passed to hermes via --provider
+state.hermes_model: "gpt-5-pro"                    Passed to hermes via -m
+state.hermes_max_turns: 9                          Passed to hermes via --max-turns
 ```
 
 Validation:
-- `--hermes-toolsets` value cannot be empty after split+trim
-- All three flags require `--backend hermes`; conflict otherwise
-- All three flags rejected on resume (locked at session creation)
+- Empty toolset entries are omitted before spawn
+- These values are honored only when `state.backend === 'hermes'`
 
 ## Verification
 
@@ -252,7 +250,7 @@ Validation:
 - T3: Provider present → args include `--provider openai`
 - T4: Model present → args include `-m gpt-5-pro`
 - T5: All three present → all flags in args, in correct order
-- T6: Empty toolsets array → no `-t` flag emitted
+- T6: Empty toolsets array → no `--toolsets` flag emitted
 - T7: Manager variant matches worker shape with manager-specific prompt
 - T8: Judge variant restricts to read-only toolsets (per Open Question 2 resolution)
 
