@@ -1172,6 +1172,47 @@ test('AC-LPB-01: codex backend uses lower throughput baseline', () => {
     }
 });
 
+test('throughput.hermes: settings baseline is used by launch sizing', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-sizing-'));
+    try {
+        fs.writeFileSync(
+            path.join(dir, 'decomposition_manifest.json'),
+            JSON.stringify({ tickets: new Array(9).fill(0).map((_, i) => ({ id: `t${i}` })) }),
+        );
+        const config = parseArguments(['--max-time', '30', '--backend', 'hermes', '--task', 'hermes-sizing']);
+        const captured = [];
+        const result = evaluateLaunchSizing(dir, config, (msg) => captured.push(msg));
+        assert.ok(result?.warned);
+        assert.equal(result.backend, 'hermes');
+        assert.equal(result.throughput, 4.5);
+        assert.match(captured.join(''), /at 4\.5 t\/h on hermes/);
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
+test('throughput.hermes: fallback baseline is used when settings omit hermes', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-sizing-'));
+    try {
+        fs.writeFileSync(
+            path.join(dir, 'decomposition_manifest.json'),
+            JSON.stringify({ tickets: new Array(9).fill(0).map((_, i) => ({ id: `t${i}` })) }),
+        );
+        const config = {
+            timeLimit: 30,
+            throughputBaselines: { claude: 5.0 },
+            backend: 'hermes',
+            acknowledgeUndersized: false,
+        };
+        const result = evaluateLaunchSizing(dir, config, () => {});
+        assert.ok(result?.warned);
+        assert.equal(result.backend, 'hermes');
+        assert.equal(result.throughput, 4.5);
+    } finally {
+        fs.rmSync(dir, { recursive: true });
+    }
+});
+
 // ---------------------------------------------------------------------------
 // AC-LPB-05: start_time_epoch resets on session reconstruction
 // ---------------------------------------------------------------------------

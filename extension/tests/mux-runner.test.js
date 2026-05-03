@@ -2806,6 +2806,79 @@ test('mux-runner relaunch: cap honored — break on error after CODEX_MANAGER_RE
     }
 });
 
+test('manager-spawn.hermes: relaunch action mirrors codex below cap', async () => {
+    const session = makeCodexRelaunchSession({
+        backend: 'hermes',
+        priorRelaunchCount: 0,
+        tickets: [
+            { id: 't-pending', status: 'Todo', order: 1 },
+        ],
+    });
+    try {
+        await withRelaunchDataRoot(session.dataRoot, async () => {
+            const logs = [];
+            const ctx = {
+                sessionDir: session.sessionDir,
+                statePath: session.statePath,
+                extensionRoot: path.resolve('.'),
+                iteration: 7,
+                log: (msg) => logs.push(msg),
+                cbEnabled: false,
+                cbState: null,
+            };
+            const action = await processCompletionBranchForRelaunch(
+                JSON.parse(fs.readFileSync(session.statePath, 'utf-8')),
+                'error',
+                ctx,
+            );
+            assert.equal(action.kind, 'relaunch');
+            assert.equal(action.relaunchCount, 1);
+            assert.equal(action.pendingTickets, 1);
+            const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
+            assert.equal(persisted.codex_manager_relaunch_count, 1);
+            assert.ok(logs.some(m => m.includes('hermes manager subprocess errored')));
+        });
+    } finally {
+        fs.rmSync(session.sessionDir, { recursive: true, force: true });
+        fs.rmSync(session.dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('manager-spawn.hermes: relaunch cap is respected', async () => {
+    const session = makeCodexRelaunchSession({
+        backend: 'hermes',
+        priorRelaunchCount: DefaultsForRelaunch.CODEX_MANAGER_RELAUNCH_CAP,
+        tickets: [
+            { id: 't-pending', status: 'Todo', order: 1 },
+        ],
+    });
+    try {
+        await withRelaunchDataRoot(session.dataRoot, async () => {
+            const ctx = {
+                sessionDir: session.sessionDir,
+                statePath: session.statePath,
+                extensionRoot: path.resolve('.'),
+                iteration: 8,
+                log: () => {},
+                cbEnabled: false,
+                cbState: null,
+            };
+            const action = await processCompletionBranchForRelaunch(
+                JSON.parse(fs.readFileSync(session.statePath, 'utf-8')),
+                'error',
+                ctx,
+            );
+            assert.equal(action.kind, 'break');
+            assert.equal(action.reason, 'error');
+            const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
+            assert.equal(persisted.codex_manager_relaunch_count, DefaultsForRelaunch.CODEX_MANAGER_RELAUNCH_CAP);
+        });
+    } finally {
+        fs.rmSync(session.sessionDir, { recursive: true, force: true });
+        fs.rmSync(session.dataRoot, { recursive: true, force: true });
+    }
+});
+
 test('mux-runner relaunch: claude backend untouched — error still breaks the loop', async () => {
     const session = makeCodexRelaunchSession({
         backend: 'claude',

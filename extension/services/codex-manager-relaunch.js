@@ -17,7 +17,8 @@ function ticketIsPending(ticket) {
 function evaluateSimpleCodexManagerRelaunch(state, hasPendingWork) {
     const currentCount = currentRelaunchCount(state);
     const cap = Defaults.CODEX_MANAGER_RELAUNCH_CAP;
-    if (resolveBackend(state) !== 'codex') {
+    const backend = resolveBackend(state);
+    if (backend !== 'codex' && backend !== 'hermes') {
         return { should_relaunch: false, reason: 'wrong_backend', current_count: currentCount, cap };
     }
     if (!hasPendingWork) {
@@ -33,7 +34,7 @@ export function evaluateCodexManagerRelaunch(state, pendingInput, cbState) {
         return evaluateSimpleCodexManagerRelaunch(state, pendingInput);
     }
     const backend = resolveBackend(state);
-    if (backend !== 'codex') {
+    if (backend !== 'codex' && backend !== 'hermes') {
         return { shouldRelaunch: false, pendingCount: 0, nextRelaunchCount: 0, reason: 'not_codex' };
     }
     const startEpoch = Number.isFinite(Number(state.start_time_epoch)) ? Number(state.start_time_epoch) : 0;

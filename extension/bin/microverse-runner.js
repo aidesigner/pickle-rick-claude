@@ -1597,7 +1597,8 @@ async function handleIterationOutcome(state, baseline, ctx, outcome) {
         catch { /* fall back to current runner state */ }
         const decision = evaluateCodexManagerRelaunch(postState, collectTickets(ctx.sessionDir), null);
         if (decision.shouldRelaunch) {
-            ctx.log(`Codex manager subprocess errored with ${decision.pendingCount} ticket(s) still pending — ` +
+            const relaunchBackend = resolveBackend(postState);
+            ctx.log(`${relaunchBackend} manager subprocess errored with ${decision.pendingCount} ticket(s) still pending — ` +
                 `relaunching (count ${decision.nextRelaunchCount}/${Defaults.CODEX_MANAGER_RELAUNCH_CAP}).`);
             recordCodexManagerRelaunch(ctx.statePath, ctx.sessionDir, decision, ctx.iteration, ctx.log);
             ctx.currentRunnerState = postState;

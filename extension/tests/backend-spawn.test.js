@@ -351,6 +351,29 @@ test('buildManagerInvocation(codex): omits -m when no model given', () => {
     assert.equal(inv.args.includes('-m'), false);
 });
 
+test('manager-spawn.hermes: buildManagerInvocation uses hermes chat with manager prompt and options', () => {
+    const dir = mkTmpDir('bs-');
+    const inv = buildManagerInvocation('hermes', {
+        prompt: 'manage hermes',
+        addDirs: [dir],
+        maxTurns: 11,
+        streamJson: true,
+        noSessionPersistence: true,
+        toolsets: ['terminal', 'file'],
+        provider: 'anthropic',
+        model: 'anthropic/claude-sonnet-4',
+    });
+    assert.equal(inv.cmd, 'hermes');
+    assert.equal(inv.backend, 'hermes');
+    assert.deepEqual(inv.args.slice(0, 4), ['chat', '-q', 'manage hermes', '-Q']);
+    assert.equal(inv.args.includes('--output-format'), false);
+    assert.equal(inv.args.includes('--no-session-persistence'), false);
+    assert.equal(inv.args[inv.args.indexOf('--max-turns') + 1], '11');
+    assert.equal(inv.args[inv.args.indexOf('--toolsets') + 1], 'terminal,file');
+    assert.equal(inv.args[inv.args.indexOf('--provider') + 1], 'anthropic');
+    assert.equal(inv.args[inv.args.indexOf('-m') + 1], 'anthropic/claude-sonnet-4');
+});
+
 // --- backendEnvOverrides ---
 
 test('backendEnvOverrides: emits PICKLE_BACKEND', () => {

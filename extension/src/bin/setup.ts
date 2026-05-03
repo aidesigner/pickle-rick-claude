@@ -67,6 +67,7 @@ const DEFAULT_THROUGHPUT_BASELINES: Record<string, number> = {
   claude: 5.0,
   codex: 3.5,
   deepseek: 4.0,
+  hermes: 4.5,
 };
 
 interface SessionResult {

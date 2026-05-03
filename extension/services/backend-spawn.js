@@ -66,6 +66,8 @@ export function buildWorkerInvocation(backend, opts) {
 export function buildManagerInvocation(backend, opts) {
     if (backend === 'codex')
         return buildCodexInvocation(opts.prompt, opts.addDirs, opts.model);
+    if (backend === 'hermes')
+        return buildHermesWorkerInvocation(opts);
     return buildClaudeManagerInvocation(opts);
 }
 function buildClaudeWorkerInvocation(opts) {

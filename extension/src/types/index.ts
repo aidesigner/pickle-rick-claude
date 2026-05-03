@@ -54,14 +54,21 @@ export interface State {
    */
   effort?: 'low' | 'medium' | 'high';
   /**
-   * Codex tmux_mode: count of times mux-runner has relaunched the codex
+   * Manager tmux_mode: count of times mux-runner has relaunched the backend
    * manager subprocess after a per-iteration error (e.g. 4h hang-guard
    * SIGTERM) while tickets remained Todo/In Progress. Capped at
    * `Defaults.CODEX_MANAGER_RELAUNCH_CAP`; once exceeded, mux-runner falls
-   * back to the legacy exit-on-error behavior. Claude backend never sets
-   * this — its iterations are per-ticket spawns.
+   * back to the legacy exit-on-error behavior. Claude backend never sets this.
    */
   codex_manager_relaunch_count?: number;
+  /** Hermes CLI toolsets persisted at setup time and passed to worker/manager spawns. */
+  hermes_toolsets?: string[];
+  /** Optional Hermes provider override persisted at setup time. */
+  hermes_provider?: string;
+  /** Optional Hermes model override persisted at setup time. */
+  hermes_model?: string;
+  /** Optional Hermes max-turns override persisted at setup time. */
+  hermes_max_turns?: number;
   archaeology?: ProjectContext | null;
   tickets_version?: number;
   last_course_correction?: CourseCorrectionRecord | null;

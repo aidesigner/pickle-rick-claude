@@ -998,10 +998,12 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
   const invocation = buildManagerInvocation(backend, {
     prompt: managerPrompt,
     addDirs: [extensionRoot, getDataRoot(), sessionDir],
-    model: iterationModel,
-    maxTurns,
+    model: backend === 'hermes' ? state.hermes_model : iterationModel,
+    maxTurns: backend === 'hermes' ? positiveIntegerOrNull(state.hermes_max_turns) ?? maxTurns : maxTurns,
     streamJson: true,
     noSessionPersistence: true,
+    toolsets: backend === 'hermes' ? state.hermes_toolsets : undefined,
+    provider: backend === 'hermes' ? state.hermes_provider : undefined,
   });
 
   const env: NodeJS.ProcessEnv = {
@@ -1836,8 +1838,9 @@ export async function processCompletionBranch(state: State, result: IterationOut
       ctx.cbState ?? null,
     );
     if (decision.shouldRelaunch) {
+      const relaunchBackend = resolveBackend(postState);
       ctx.log(
-        `Codex manager subprocess errored with ${decision.pendingCount} ticket(s) still pending — ` +
+        `${relaunchBackend} manager subprocess errored with ${decision.pendingCount} ticket(s) still pending — ` +
         `relaunching (count ${decision.nextRelaunchCount}/${Defaults.CODEX_MANAGER_RELAUNCH_CAP}).`,
       );
       recordCodexManagerRelaunch(ctx.statePath, ctx.sessionDir, decision, ctx.iteration, ctx.log);
@@ -2704,8 +2707,9 @@ async function runMuxRunnerMain() {
         cbState,
       );
       if (relaunchDecision.shouldRelaunch) {
+        const relaunchBackend = resolveBackend(postState);
         log(
-          `Codex manager subprocess errored with ${relaunchDecision.pendingCount} ticket(s) still pending — ` +
+          `${relaunchBackend} manager subprocess errored with ${relaunchDecision.pendingCount} ticket(s) still pending — ` +
           `relaunching (count ${relaunchDecision.nextRelaunchCount}/${Defaults.CODEX_MANAGER_RELAUNCH_CAP}).`,
         );
         recordCodexManagerRelaunch(statePath, sessionDir, relaunchDecision, iteration, log);

@@ -20,6 +20,7 @@ const DEFAULT_THROUGHPUT_BASELINES = {
     claude: 5.0,
     codex: 3.5,
     deepseek: 4.0,
+    hermes: 4.5,
 };
 function die(message) {
     console.error(`${Style.RED}❌ Error: ${message}${Style.RESET}`);

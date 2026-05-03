@@ -24,6 +24,8 @@ export interface ManagerInvocationOptions {
   maxTurns?: number;
   streamJson?: boolean;
   noSessionPersistence?: boolean;
+  toolsets?: string[];
+  provider?: string;
 }
 
 export interface JudgeInvocationOptions {
@@ -101,6 +103,7 @@ export function buildWorkerInvocation(backend: Backend, opts: WorkerInvocationOp
 
 export function buildManagerInvocation(backend: Backend, opts: ManagerInvocationOptions): SpawnInvocation {
   if (backend === 'codex') return buildCodexInvocation(opts.prompt, opts.addDirs, opts.model);
+  if (backend === 'hermes') return buildHermesWorkerInvocation(opts);
   return buildClaudeManagerInvocation(opts);
 }
 

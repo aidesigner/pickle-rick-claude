@@ -2075,8 +2075,9 @@ async function handleIterationOutcome(
       null,
     );
     if (decision.shouldRelaunch) {
+      const relaunchBackend = resolveBackend(postState);
       ctx.log(
-        `Codex manager subprocess errored with ${decision.pendingCount} ticket(s) still pending — ` +
+        `${relaunchBackend} manager subprocess errored with ${decision.pendingCount} ticket(s) still pending — ` +
         `relaunching (count ${decision.nextRelaunchCount}/${Defaults.CODEX_MANAGER_RELAUNCH_CAP}).`,
       );
       recordCodexManagerRelaunch(ctx.statePath, ctx.sessionDir, decision, ctx.iteration, ctx.log);
