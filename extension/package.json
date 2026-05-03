@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=20.0.0",
-    "codex": "^0.128.0"
+    "node": "22.x",
+    "codex": "0.128.0"
   },
   "scripts": {
     "lint": "eslint src/",
@@ -22,11 +22,16 @@
     "test:behavioral": "node --test tests/feature-flag-baseline.test.js"
   },
   "_audit": {
-    "flatted": "P3-hygiene: GHSA-25h7-pfq9-p65f HIGH (CVSS 7.5) DoS in parse(). Dev-only path: eslint->file-entry-cache->flat-cache->flatted. Not reachable in production. Track for eslint upgrade to resolve transitively."
+    "flatted": "P3-hygiene: GHSA-25h7-pfq9-p65f HIGH (CVSS 7.5) DoS in parse(). Dev-only path: eslint->file-entry-cache->flat-cache->flatted. Not reachable in production. Track for eslint upgrade to resolve transitively.",
+    "c8": {
+      "version": "11.0.0",
+      "notes": "no current public CVE; pinned exact for contract-test stability"
+    }
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^25.3.3",
+    "c8": "11.0.0",
     "eslint": "^10.0.2",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.56.1"
