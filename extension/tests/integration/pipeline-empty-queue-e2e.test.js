@@ -57,13 +57,33 @@ test('pipeline-empty-queue post-completion contract (AC-RTC-04)', async (t) => {
       );
     });
 
+    let parsed;
+    try { parsed = JSON.parse(state.completion_promise); } catch { parsed = null; }
+
     await t.test('post-completion: state.completion_promise.kind === EPIC_COMPLETED', () => {
-      let parsed;
-      try { parsed = JSON.parse(state.completion_promise); } catch { parsed = null; }
       assert.equal(
         parsed?.kind,
         'EPIC_COMPLETED',
         `expected completion_promise.kind EPIC_COMPLETED but got ${state.completion_promise}`,
+      );
+    });
+
+    await t.test('post-completion: state.completion_promise.reason === all-tickets-done', () => {
+      assert.equal(
+        parsed?.reason,
+        'all-tickets-done',
+        `expected completion_promise.reason all-tickets-done but got ${state.completion_promise}`,
+      );
+    });
+
+    await t.test('post-completion: state.completion_promise.ts is parseable ISO8601', () => {
+      // Guards against locale-dependent Date.toString() leaking into the field.
+      // new Date().toISOString() always emits ISO8601-with-Z; Date.parse of that
+      // is a finite number. NaN means the writer drifted.
+      const tsParsed = Date.parse(parsed?.ts);
+      assert.ok(
+        Number.isFinite(tsParsed),
+        `expected completion_promise.ts to parse as a finite Date but got ${parsed?.ts}`,
       );
     });
 
