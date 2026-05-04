@@ -11,6 +11,18 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 ---
 
+## 🟢 Just shipped (2026-05-04 PM, slot 1l)
+
+- **Codex spark wiring** — commit `59411f8`, deployed via `install.sh` (md5 parity confirmed; `jq '.default_codex_model'` reads `"gpt-5.3-codex-spark"`). Codex spawns now send `-m gpt-5.3-codex-spark` by default; per-session override via `state.codex_model`. Refinement-team intentionally still claude-only (planning, not implementation). Tests: 113/113 across affected suites + trap-door conformance. **Net effect:** the next bug-fix bundle inherits a much bigger codex budget on the spark tier.
+
+## ▶ Recommended next move
+
+Per `CONTEXT_2026-05-04.md` Tier 1 ordering and the user's 2026-05-04 PM direction ("more bug fixes before release"):
+
+1. **Slot 1j cross-backend leak** — diagnostic-first via R-XBL-1 (one-liner activity event at every spawn). Run R-XBL-6 audit script on session `2026-05-03-7d9ee8cc` for ground truth on the 11+ leaked workers, then a 1-ticket smoke on a fresh claude session to confirm which H1–H4 fired before betting a bundle on R-XBL-2/3. Now cheaper to run because codex-side iterations land on spark.
+2. **Then bundle 1j (R-XBL-2..8) + 1g (typescript symlink + cap auto-resume) + 1i (ticket authoring quality)** as one overnight `/pickle-pipeline` run. Migrate 1h R-WSE-* into 1i; defer 1k (P3 monitor watchdog).
+3. **Tag release** only after the bug-fix bundle ships clean. v1.66.0 is still GitHub-Latest with poison content — do NOT push individual hotfixes ahead of the bundle without explicit approval.
+
 ## 🔔 Active Queue (priority order)
 
 | # | PRD | Status | Next action |
