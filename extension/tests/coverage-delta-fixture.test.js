@@ -130,6 +130,16 @@ test('coverage delta: canary coverage gain of at least five covered lines is rep
   });
 });
 
+test('coverage delta: canary coverage gain suppresses pct-only regression', () => {
+  withFixture({ baselinePct: 90, currentPct: 80, baselineCovered: 10, currentCovered: 16 }, (fixture) => {
+    const result = runDelta(fixture);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, '');
+    assert.match(result.stdout, /extension\/src\/services\/sample\.ts: covered lines gain=6/);
+  });
+});
+
 test('coverage delta: missing current coverage summary exits with contract error', () => {
   withFixture({ baselinePct: 75, currentPct: 75 }, (fixture) => {
     fs.rmSync(path.join(fixture.extensionRoot, 'coverage', 'coverage-summary.json'));

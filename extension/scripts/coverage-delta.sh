@@ -7,6 +7,7 @@ REPO_ROOT="$(git -C "$EXTENSION_ROOT" rev-parse --show-toplevel)"
 BASELINE_JSON="$EXTENSION_ROOT/coverage-baseline.json"
 CURRENT_JSON="$EXTENSION_ROOT/coverage/coverage-summary.json"
 PARSER="${COVERAGE_EXCEPTION_PARSER:-$EXTENSION_ROOT/scripts/parse-coverage-exception.sh}"
+MIN_COVERED_LINE_GAIN=5
 
 if [[ ! -f "$CURRENT_JSON" ]]; then
   echo "[error: run 'npm run coverage' first]" >&2
@@ -68,11 +69,15 @@ while IFS= read -r touched_path; do
   [[ "$current_covered" != "null" ]] || current_covered=0
 
   covered_delta="$(line_delta "$current_covered" "$baseline_covered")"
-  if (( covered_delta >= 5 )); then
+  if (( covered_delta >= MIN_COVERED_LINE_GAIN )); then
     echo "$touched_path: covered lines gain=$covered_delta"
   fi
 
   if is_less_than "$current_pct" "$baseline_pct"; then
+    if (( covered_delta >= MIN_COVERED_LINE_GAIN )); then
+      continue
+    fi
+
     if has_exception_for "$touched_path"; then
       continue
     fi
