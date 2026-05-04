@@ -22,3 +22,4 @@ current_sessions.json
 # .claude/commands/ and .claude/skills/ are tracked — they're the product
 /scripts/
 activity/
+.codex/
