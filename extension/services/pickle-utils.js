@@ -98,6 +98,7 @@ export function formatLocalDateKey(d) {
 }
 const CANONICAL_EXTENSION_ROOT = path.join(os.homedir(), '.claude/pickle-rick');
 const EXTENSION_ROOT_SENTINEL = path.join('extension', 'bin', 'log-watcher.js');
+const INSTALL_ROOT_SENTINEL = '.pickle-install-root';
 const EXTENSION_DIR_TEST = 'EXTENSION_DIR_TEST';
 let extensionDirFallbackEmitted = false;
 function runArgvCmd(cmd, options) {
@@ -167,7 +168,8 @@ function resolveExtensionRoot(requestedRoot) {
     return CANONICAL_EXTENSION_ROOT;
 }
 function extensionRootSentinelExists(extensionRoot) {
-    return fs.existsSync(path.join(extensionRoot, EXTENSION_ROOT_SENTINEL));
+    return fs.existsSync(path.join(extensionRoot, EXTENSION_ROOT_SENTINEL)) ||
+        fs.existsSync(path.join(extensionRoot, INSTALL_ROOT_SENTINEL));
 }
 function allowsMissingExtensionSentinelForTests() {
     return process.env.NODE_ENV === 'test' && process.env[EXTENSION_DIR_TEST] === '1';

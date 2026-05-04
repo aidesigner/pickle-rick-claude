@@ -2,33 +2,41 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-EXTENSION_ROOT="$HOME/.claude/pickle-rick"
-COMMANDS_DIR="$HOME/.claude/commands"
-SETTINGS_FILE="$HOME/.claude/settings.json"
-# IMPORTANT: $HOME is intentionally a literal here — it gets expanded at runtime
-# by the shell when Claude Code executes the hook command. Do NOT expand it at install time.
-HOOK_CMD_LITERAL='node $HOME/.claude/pickle-rick/extension/hooks/dispatch.js stop-hook'
 
 ALLOW_DOWNGRADE=0
 OVERRIDE_ACTIVE=0
 CLOSER_CONTEXT=0
 NO_CONFIRM=0
 DRY_RUN=0
-for arg in "$@"; do
-  case "$arg" in
-    --allow-downgrade) ALLOW_DOWNGRADE=1 ;;
-    --no-confirm) NO_CONFIRM=1 ;;
-    --override-active) OVERRIDE_ACTIVE=1 ;;
-    --closer-context) CLOSER_CONTEXT=1 ;;
-    --dry-ru[n]) DRY_RUN=1 ;;
-    --force) ;;
+PREFIX=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --allow-downgrade) ALLOW_DOWNGRADE=1; shift ;;
+    --no-confirm) NO_CONFIRM=1; shift ;;
+    --override-active) OVERRIDE_ACTIVE=1; shift ;;
+    --closer-context) CLOSER_CONTEXT=1; shift ;;
+    --dry-ru[n]) DRY_RUN=1; shift ;;
+    --force) shift ;;
+    --prefix)
+      if [[ -z "${2:-}" ]]; then
+        echo "❌ --prefix requires a non-empty directory argument" >&2; exit 2
+      fi
+      PREFIX="$2"; shift 2 ;;
     *)
-      echo "Unknown flag: $arg" >&2
+      echo "Unknown flag: $1" >&2
       exit 1
       ;;
   esac
 done
 INVOCATION="$0 $*"
+
+PICKLE_INSTALL_ROOT="${PREFIX:-$HOME/.claude/pickle-rick}"
+EXTENSION_ROOT="${PICKLE_INSTALL_ROOT:-$HOME/.claude/pickle-rick}"
+COMMANDS_DIR="${PICKLE_INSTALL_ROOT}/../commands"
+SETTINGS_FILE="${PICKLE_INSTALL_ROOT}/../settings.json"
+# IMPORTANT: ${PICKLE_INSTALL_ROOT:-$HOME/.claude/pickle-rick} is intentionally
+# a literal here — it gets expanded at hook-invocation time by the shell.
+HOOK_CMD_LITERAL='node ${PICKLE_INSTALL_ROOT:-$HOME/.claude/pickle-rick}/extension/hooks/dispatch.js stop-hook'
 
 compare_semver() {
   local a="$1"
@@ -212,7 +220,14 @@ jq --version >/dev/null 2>&1     || { echo "❌ jq not found on PATH"; exit 1; }
 rsync --version >/dev/null 2>&1  || { echo "❌ rsync not found on PATH"; exit 1; }
 claude --version >/dev/null 2>&1 || echo "⚠️  claude CLI not on PATH (needed at runtime for worker spawning)"
 bun --version >/dev/null 2>&1    || echo "WARNING: bun not found. Plumbus generative audit is running in degraded mode. Install bun for full analysis."
-[ -f "$SETTINGS_FILE" ]          || { echo "❌ ~/.claude/settings.json not found. Run 'claude' at least once first."; exit 1; }
+if [ ! -f "$SETTINGS_FILE" ]; then
+  if [ "${PICKLE_INSTALL_ROOT}" = "${HOME}/.claude/pickle-rick" ]; then
+    echo "❌ ~/.claude/settings.json not found. Run 'claude' at least once first."; exit 1
+  else
+    mkdir -p "$(dirname "$SETTINGS_FILE")"
+    echo '{}' > "$SETTINGS_FILE"
+  fi
+fi
 jq . "$SETTINGS_FILE" >/dev/null 2>&1 || { echo "❌ settings.json is not valid JSON"; exit 1; }
 [ -d "$SCRIPT_DIR/extension" ]   || { echo "❌ extension/ not found. Are you running from the repo root?"; exit 1; }
 [ -d "$SCRIPT_DIR/.claude/commands" ] || { echo "❌ .claude/commands/ not found. Are you running from the repo root?"; exit 1; }
@@ -248,13 +263,17 @@ else
 fi
 
 # --- BACKUP ---
-mkdir -p "$HOME/.claude/backups"
-cp "$SETTINGS_FILE" "$HOME/.claude/backups/settings.json.pickle-backup.$(date +%s)"
-echo "✅ Backed up settings.json to ~/.claude/backups/"
+if [ "${PICKLE_INSTALL_ROOT}" = "${HOME}/.claude/pickle-rick" ]; then
+  mkdir -p "$HOME/.claude/backups"
+  cp "$SETTINGS_FILE" "$HOME/.claude/backups/settings.json.pickle-backup.$(date +%s)"
+  echo "✅ Backed up settings.json to ~/.claude/backups/"
+fi
 
 # --- DIRECTORIES ---
 mkdir -p "$EXTENSION_ROOT" "$COMMANDS_DIR" "$EXTENSION_ROOT/activity" "$EXTENSION_ROOT/templates"
 chmod 700 "$EXTENSION_ROOT/activity"
+# Stage install-root sentinel so getExtensionRoot() accepts this prefix before rsync completes
+touch "${PICKLE_INSTALL_ROOT}/.pickle-install-root"
 
 # --- EXTENSION SCRIPTS ---
 # rsync compiled JS runtime files; exclude TS sources, tests, and dev-only files.
@@ -399,14 +418,14 @@ rsync -a "$SCRIPT_DIR/.claude/commands/" "$COMMANDS_DIR/"
 rm -f "$COMMANDS_DIR/microverse.md"
 rm -f "$COMMANDS_DIR/pickle-microverse-tmux.md"
 
-# --- STOP HOOK (idempotent jq merge, $HOME stays LITERAL in JSON) ---
-if jq -e '.hooks.Stop // [] | map(.hooks // [] | map(.command)) | flatten | any(. == "node $HOME/.claude/pickle-rick/extension/hooks/dispatch.js stop-hook")' \
+# --- STOP HOOK (idempotent jq merge, literal vars expanded by hook-invocation shell) ---
+if jq -e '.hooks.Stop // [] | map(.hooks // [] | map(.command)) | flatten | (any(. == "node $HOME/.claude/pickle-rick/extension/hooks/dispatch.js stop-hook") or any(. == "node ${PICKLE_INSTALL_ROOT:-$HOME/.claude/pickle-rick}/extension/hooks/dispatch.js stop-hook"))' \
     "$SETTINGS_FILE" >/dev/null 2>&1; then
   echo "⚠️  Stop hook already registered — skipping"
 else
   TMPFILE="$(mktemp)"
   jq '
-    "node $HOME/.claude/pickle-rick/extension/hooks/dispatch.js stop-hook" as $cmd |
+    "node ${PICKLE_INSTALL_ROOT:-$HOME/.claude/pickle-rick}/extension/hooks/dispatch.js stop-hook" as $cmd |
     {"type": "command", "command": $cmd} as $entry |
     if .hooks == null then
       .hooks = {"Stop": [{"hooks": [$entry]}]}
@@ -421,7 +440,7 @@ else
 fi
 
 # --- POST-TOOL-USE HOOK (git commit activity logger, idempotent) ---
-COMMIT_HOOK_CMD='node $HOME/.claude/pickle-rick/extension/bin/log-commit.js'
+COMMIT_HOOK_CMD='node ${PICKLE_INSTALL_ROOT:-$HOME/.claude/pickle-rick}/extension/bin/log-commit.js'
 if jq -e --arg cmd "$COMMIT_HOOK_CMD" \
     '.hooks.PostToolUse // [] | map(.hooks // [] | map(.command)) | flatten | any(. == $cmd)' \
     "$SETTINGS_FILE" >/dev/null 2>&1; then
@@ -444,7 +463,7 @@ else
 fi
 
 # --- POST-TOOL-USE-FAILURE HOOK (tool error retry tracker, idempotent) ---
-TOOL_ERROR_HOOK_CMD='node $HOME/.claude/pickle-rick/extension/hooks/dispatch.js tool-error'
+TOOL_ERROR_HOOK_CMD='node ${PICKLE_INSTALL_ROOT:-$HOME/.claude/pickle-rick}/extension/hooks/dispatch.js tool-error'
 if jq -e --arg cmd "$TOOL_ERROR_HOOK_CMD" \
     '.hooks.PostToolUseFailure // [] | map(.hooks // [] | map(.command)) | flatten | any(. == $cmd)' \
     "$SETTINGS_FILE" >/dev/null 2>&1; then
