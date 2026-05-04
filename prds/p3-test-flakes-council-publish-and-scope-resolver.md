@@ -34,6 +34,8 @@ expected hasWarning(output.warnings, 'rg', 'fail') === true
 
 **Diagnostic angle**: Either the warning emitter dropped the rg-failure path, or warning categorization labels rg failures differently now. Prior fix attempts: `0390916`, `ac7c496` (timing budget bumps). The failure isn't a timing issue — it's a content-of-warnings issue, so the budget bumps didn't address the actual root cause.
 
+**Resolved** (`e331fab7`): Root-cause diagnosis found the `console.warn` at `_runRgImportWalk` (scope-resolver.ts:728 / compiled JS:610) correctly emits `rg fail` on any non-0/non-1 rg exit code since commit `be2e675`. `hasWarning(warnings, 'rg', 'fail')` regex `\brg\b[^\n]*\bfail\b` matches the emitted string. Both test files run 10/10 green at HEAD. No production code change was required; the fix predated the PRD.
+
 ## Acceptance Criteria
 
 - **AC-TF-1** F1 passes: hung call counted as 1 failed, second call as 1 posted; elapsed < 10s. Verify by running the test in isolation 10× consecutively — must be 10/10 green.
