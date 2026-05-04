@@ -196,6 +196,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'worker_spawn_backend_resolved',
     'worker_spawn_backend_override',
     'worker_spawn_backend_mismatch',
+    'subtool_backend_override',
 ];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {

@@ -10,6 +10,16 @@ node "$HOME/.claude/pickle-rick/extension/bin/worker-setup.js" $ARGUMENTS
 ```
 Extract `${SESSION_ROOT}`, `${TICKET_ID}`, `${TICKET_DIR}`.
 
+## Sub-tool Backend Override (R-XBL-5)
+
+This worker is a sub-tool that may be invoked with the codex backend regardless of the session's declared `state.backend`. When this worker is spawned via the codex backend (sub-tool override), the spawner emits a `subtool_backend_override` activity event before exec. If you need to emit this event manually (e.g., when invoking `/codex:rescue` from within the session), run:
+
+```bash
+node "$HOME/.claude/pickle-rick/extension/bin/log-activity.js" subtool_backend_override "codex sub-tool invoked within Morty worker session"
+```
+
+Per **AC-BUNDLE-04 carve-out**: `subtool_backend_override` events are EXCLUDED from cross-backend leak count and reported separately as informational. They do NOT increment the mismatch counter tracked by `audit-worker-backends.ts`.
+
 ## Resume Detection (run BEFORE Step 1)
 
 | Files in `${TICKET_DIR}` | Enter at step |
