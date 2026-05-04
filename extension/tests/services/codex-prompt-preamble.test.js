@@ -18,11 +18,35 @@ test('template contains Step 0 — Queue Check', () => {
   assert.ok(content.includes('Step 0 — Queue Check'), 'Template must contain "Step 0 — Queue Check"');
 });
 
-test('template contains EPIC_COMPLETED promise tag', () => {
+test('template contains EPIC_COMPLETED promise tag (raw or split-form obfuscated)', () => {
   const content = fs.readFileSync(TEMPLATE_PATH, 'utf-8');
+
+  // The closing-tag suffix `EPIC_COMPLETED</promise>` is invariant across both
+  // forms the template may carry: the raw `<promise>EPIC_COMPLETED</promise>`
+  // and the split-form obfuscation `\`<promise\` + \`>EPIC_COMPLETED</promise>\``
+  // introduced by 2ee7cc1 to satisfy template-no-bare-tokens.test.js. The model
+  // emits the closing tag verbatim either way, so anchoring on the suffix is
+  // the byte-exact contract that survives both lint regimes.
+  const closingMatches = content.match(/EPIC_COMPLETED<\/promise>/g) ?? [];
   assert.ok(
-    content.includes('<promise>EPIC_COMPLETED</promise>'),
-    'Template must contain "<promise>EPIC_COMPLETED</promise>"',
+    closingMatches.length > 0,
+    'Template must contain at least one "EPIC_COMPLETED</promise>" closing-tag suffix',
+  );
+
+  // Sanity: every closing suffix must have an opening `<promise` within 64
+  // chars before it, so the literal is genuinely a promise tag instruction
+  // and not a stray reference in prose. 64 chars covers the split form
+  // including the surrounding inline-code backticks and ` + ` separator.
+  const occurrences = [];
+  let idx = 0;
+  while ((idx = content.indexOf('EPIC_COMPLETED</promise>', idx)) !== -1) {
+    const window = content.slice(Math.max(0, idx - 64), idx);
+    occurrences.push(window.includes('<promise'));
+    idx += 'EPIC_COMPLETED</promise>'.length;
+  }
+  assert.ok(
+    occurrences.length > 0 && occurrences.every(Boolean),
+    'Every "EPIC_COMPLETED</promise>" must be preceded by an "<promise" within 64 chars',
   );
 });
 
