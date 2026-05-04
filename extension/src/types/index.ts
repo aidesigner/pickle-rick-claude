@@ -416,6 +416,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'current_ticket_redirected_to_new',
   'ticket_auto_skip_no_evidence',
   'ticket_phantom_done_corrected',
+  'phantom_done_detected',
   'ticket_state_desync_detected',
   'stall_classified',
   'readiness_delta_requested',
@@ -430,6 +431,7 @@ export enum PipelineRunnerExitCode {
   Success = 0,
   Failure = 1,
   AuditFailure = 2,
+  PhaseIncomplete = 3,
 }
 
 export type IterationExitType = 'success' | 'error' | 'api_limit' | 'inactive' | 'timeout';

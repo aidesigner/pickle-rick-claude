@@ -34,6 +34,9 @@ test('all-sites: every failure-bucket exitReason === site handles timeout_repeat
     if (!line.includes('exitReason ===')) return;
     // exitReason === 'success' at :1228 is a subtitle fallthrough — not a failure-bucket site
     if (line.includes("exitReason === 'success'") && !line.includes('||')) return;
+    // R-ICP-1: 'iteration_cap_exhausted' is an exit-code mapping (→ 3), not a failure-bucket
+    // notification site — it gets the standard failed-exit notification via isFailedExit.
+    if (line.includes("exitReason === 'iteration_cap_exhausted'")) return;
     if (!line.includes("'timeout_repeat'")) {
       unhandled.push({ line: i + 1, content: line.trim() });
     }

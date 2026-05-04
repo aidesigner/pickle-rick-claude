@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, ticketTierBudget, type TicketInfo, type TicketTierBudget } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, ticketTierBudget, extractFrontmatter, type TicketInfo, type TicketTierBudget } from '../services/pickle-utils.js';
 import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact, type Backend, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole, type Step } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -294,6 +294,58 @@ export function correctPhantomDoneTickets(input: CorrectPhantomDoneTicketsInput)
     });
   }
   return corrected;
+}
+
+/**
+ * R-ICP-5: Read a frontmatter field directly from raw ticket file content.
+ * Used by the phantom-Done watcher to inspect the file mid-write without
+ * routing through the full TicketInfo parser (which would discard fields
+ * like `completion_commit:`).
+ */
+export function readFrontmatterField(content: string, field: string): string | null {
+  const fm = extractFrontmatter(content);
+  if (!fm) return null;
+  const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = fm.body.match(new RegExp(`^${escaped}:\\s*(.+)$`, 'm'));
+  if (!match) return null;
+  const raw = match[1].trim().replace(/^["']|["']$/g, '');
+  return raw.length > 0 ? raw : null;
+}
+
+export interface PhantomDoneInspectResult {
+  reverted: boolean;
+  reason: 'reverted' | 'has_completion_commit' | 'not_done' | 'unparseable' | 'missing_id';
+}
+
+/**
+ * R-ICP-5: Inspect a single linear_ticket_*.md file. If frontmatter status
+ * is 'Done' but no `completion_commit:` field is present, revert status to
+ * 'Todo' and report the revert. Pure side-effect on the ticket file plus a
+ * boolean signal — caller owns activity-event + state.activity[] writes.
+ */
+export function inspectPhantomDoneTicketFile(filePath: string, sessionDir: string): PhantomDoneInspectResult {
+  let content: string;
+  try {
+    content = fs.readFileSync(filePath, 'utf8');
+  } catch {
+    return { reverted: false, reason: 'unparseable' };
+  }
+  const status = readFrontmatterField(content, 'status');
+  if (!status || status.toLowerCase() !== 'done') {
+    return { reverted: false, reason: 'not_done' };
+  }
+  const completionCommit = readFrontmatterField(content, 'completion_commit');
+  if (completionCommit) {
+    return { reverted: false, reason: 'has_completion_commit' };
+  }
+  const ticketId = readFrontmatterField(content, 'id');
+  if (!ticketId) {
+    return { reverted: false, reason: 'missing_id' };
+  }
+  const wrote = writeTicketStatus(sessionDir, ticketId, 'Todo');
+  return wrote
+    ? { reverted: true, reason: 'reverted' }
+    : { reverted: false, reason: 'unparseable' };
 }
 
 function hasArtifact(files: readonly string[], prefix: string): boolean {
@@ -1318,10 +1370,10 @@ export function appendPipelineRunnerMarker(sessionDir: string, message: string):
   } catch { /* non-critical — the marker is also in mux-runner.log */ }
 }
 
-export type ExitReason = 'success' | 'cancelled' | 'error' | 'limit' | 'stall' | 'circuit_open' | 'rate_limit_exhausted' | 'timeout_repeat' | 'manager_persistent_hallucination';
+export type ExitReason = 'success' | 'cancelled' | 'error' | 'limit' | 'iteration_cap_exhausted' | 'stall' | 'circuit_open' | 'rate_limit_exhausted' | 'timeout_repeat' | 'manager_persistent_hallucination';
 
 const isHaltExit = (r: ExitReason): boolean => r === 'cancelled' || r === 'limit' || r === 'timeout_repeat';
-const isFailureExit = (r: ExitReason): boolean => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination';
+const isFailureExit = (r: ExitReason): boolean => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination' || r === 'iteration_cap_exhausted';
 
 const CIRCUIT_BREAKER_TIER_BUDGETS = {
   trivial: 3,
@@ -2034,6 +2086,67 @@ async function runMuxRunnerMain() {
     log(`ensureMonitorWindow: threw (ignored): ${safeErrorMessage(err)}`);
   }
 
+  // R-ICP-5: phantom-Done filesystem watcher. Catches Todo→Done flips that
+  // happen mid-iteration (between the iteration-boundary backstop in
+  // correctPhantomDoneTickets). One fs.watch per linear_ticket_*.md file.
+  // Closed on SIGTERM/SIGINT/SIGHUP/exit so we don't leak file descriptors.
+  const phantomDoneWatchers: fs.FSWatcher[] = [];
+  let phantomDoneWatchersClosed = false;
+  const closePhantomDoneWatchers = (): void => {
+    if (phantomDoneWatchersClosed) return;
+    phantomDoneWatchersClosed = true;
+    for (const watcher of phantomDoneWatchers) {
+      try { watcher.close(); } catch { /* best-effort */ }
+    }
+    phantomDoneWatchers.length = 0;
+  };
+  const installPhantomDoneWatchers = (): void => {
+    let installed = 0;
+    let skipped = 0;
+    for (const ticket of collectTickets(sessionDir)) {
+      if (!ticket.id) { skipped++; continue; }
+      const ticketFile = path.join(sessionDir, ticket.id, `linear_ticket_${ticket.id}.md`);
+      if (!fs.existsSync(ticketFile)) { skipped++; continue; }
+      try {
+        const ticketId = ticket.id;
+        const watcher = fs.watch(ticketFile, { persistent: false }, (event) => {
+          if (event !== 'change') return;
+          let result: PhantomDoneInspectResult;
+          try {
+            result = inspectPhantomDoneTicketFile(ticketFile, sessionDir);
+          } catch (err) {
+            log(`phantom-Done watcher: inspect threw for ${ticketId} (ignored): ${safeErrorMessage(err)}`);
+            return;
+          }
+          if (!result.reverted) return;
+          const ts = new Date().toISOString();
+          process.stderr.write(
+            `phantom-Done detected for ticket ${ticketId} — reverted to Todo (no completion_commit field)\n`,
+          );
+          try {
+            writeActivityEntry(statePath, {
+              event: 'phantom_done_detected',
+              source: 'pickle',
+              session: path.basename(sessionDir),
+              ticket: ticketId,
+              ts,
+            });
+          } catch (err) {
+            log(`phantom-Done watcher: writeActivityEntry threw (ignored): ${safeErrorMessage(err)}`);
+          }
+        });
+        phantomDoneWatchers.push(watcher);
+        installed++;
+      } catch (err) {
+        log(`phantom-Done watcher: fs.watch threw for ${ticket.id} (ignored): ${safeErrorMessage(err)}`);
+        skipped++;
+      }
+    }
+    log(`phantom-Done watcher: installed=${installed} skipped=${skipped}`);
+  };
+  installPhantomDoneWatchers();
+  process.on('exit', closePhantomDoneWatchers);
+
   // Graceful shutdown: deactivate session on SIGTERM/SIGINT so it doesn't
   // remain orphaned with active: true when the tmux pane is closed.
   const handleShutdownSignal = (signal: string) => {
@@ -2044,6 +2157,7 @@ async function runMuxRunnerMain() {
     if (currentChildProc && !currentChildProc.killed) {
       currentChildProc.kill('SIGTERM');
     }
+    closePhantomDoneWatchers();
     logActivity({ event: 'session_end', source: 'pickle', session: path.basename(sessionDir), mode: 'tmux', backend });
     process.exit(0);
   };
@@ -2113,9 +2227,18 @@ async function runMuxRunnerMain() {
     const curIter = Number.isFinite(rawCurIter) ? rawCurIter : 0;
     const budgetIter = ticketBudgetIterationCount(state, curIter);
     if (maxIter > 0 && budgetIter >= maxIter) {
+      // R-ICP-1: cap-hit without an EPIC_COMPLETED promise is NOT a clean
+      // success. Distinct exit_reason ('iteration_cap_exhausted') and exit
+      // code 3 let pipeline-runner halt instead of advancing to the next
+      // phase on incomplete pickle output. Forensic-style deactivation
+      // preserves step/current_ticket so postmortem can show the unfinished
+      // queue. The old `Max iterations reached ...` log line is retained
+      // below as a stable marker for grep-based forensics.
+      log(`mux-runner exiting with code 3: iteration cap (${budgetIter}/${maxIter}) reached without ${PromiseTokens.EPIC_COMPLETED} promise`);
       log(`Max iterations reached (${budgetIter}/${maxIter}). Exiting.`);
-      finalizeTerminalState(statePath, { step: 'completed', runnerIteration: iteration, exitReason: 'limit' });
-      exitReason = 'limit';
+      recordExitReason(statePath, 'iteration_cap_exhausted');
+      safeDeactivate(statePath);
+      exitReason = 'iteration_cap_exhausted';
       break;
     }
 
@@ -2792,7 +2915,14 @@ async function runMuxRunnerMain() {
 
   // Explicit exit code so parent processes (pipeline-runner) can detect failure.
   // Matches microverse-runner.ts pattern.
-  const exitCode = isFailedExit ? 1 : 0;
+  // R-ICP-1: 'iteration_cap_exhausted' is a distinct exit code (3) so
+  // pipeline-runner can halt the pipeline instead of treating cap-without-
+  // EPIC_COMPLETED as either silent success (0) or a generic failure (1).
+  let exitCode: number;
+  if (exitReason === 'iteration_cap_exhausted') exitCode = 3;
+  else if (isFailedExit) exitCode = 1;
+  else exitCode = 0;
+  closePhantomDoneWatchers();
   process.exit(exitCode);
 }
 

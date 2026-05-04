@@ -32,6 +32,7 @@ import {
   ensureMonitorWindow,
   displayMacNotification,
   writeStateFile,
+  collectTickets,
 } from '../services/pickle-utils.js';
 import { isWorkingTreeDirty } from '../services/git-utils.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -1478,18 +1479,60 @@ function writeFinalPipelineActivity(
   );
 }
 
+const UNFINISHED_TICKETS_PRINT_CAP = 50;
+
+/**
+ * Report unfinished tickets when a phase exits with PhaseIncomplete (3).
+ * Walks `<session>/<hash>/linear_ticket_<hash>.md`, prints non-Done entries
+ * sorted by `order` ascending, capped at UNFINISHED_TICKETS_PRINT_CAP.
+ * Stamps `state.exit_reason = 'pipeline_phase_incomplete'` so the
+ * pipeline-level outcome is preserved alongside any per-phase
+ * `iteration_cap_exhausted` already recorded by mux-runner.
+ */
+function reportPhaseIncomplete(runtime: PipelineRuntime, phase: PhaseName): void {
+  const tickets = collectTickets(runtime.sessionDir);
+  const unfinished = tickets
+    .filter(t => (t.status || '').toLowerCase() !== 'done')
+    .sort((a, b) => (a.order || 0) - (b.order || 0));
+  const total = tickets.length;
+  runtime.log(`Phase ${phase} hit iteration cap; ${unfinished.length}/${total} tickets remain unfinished.`);
+  if (unfinished.length > 0) {
+    runtime.log('Unfinished tickets:');
+    const printable = unfinished.slice(0, UNFINISHED_TICKETS_PRINT_CAP);
+    for (const t of printable) {
+      const order = String(t.order ?? 0);
+      const id = t.id || '<unknown>';
+      const title = t.title || '';
+      const status = t.status || 'Todo';
+      runtime.log(`  ${order}  ${id}  ${title}  [status: ${status}]`);
+    }
+    const overflow = unfinished.length - printable.length;
+    if (overflow > 0) {
+      runtime.log(`  ... and ${overflow} more`);
+    }
+  }
+  recordExitReason(runtime.statePath, 'pipeline_phase_incomplete');
+}
+
 function finalizePipeline(
   runtime: PipelineRuntime,
   counters: PhaseCounters,
   cancelMarker: string,
   startTime: number,
+  phaseIncomplete: boolean,
 ): void {
   const totalElapsed = Math.floor((Date.now() - startTime) / 1000);
   const pipelineFailed = (counters.completed + counters.skipped) < runtime.config.phases.length;
-  finalizeTerminalState(runtime.statePath, {
-    step: 'completed',
-    exitReason: pipelineFailed ? 'failed' : 'completed',
-  });
+  if (phaseIncomplete) {
+    // Preserve the 'pipeline_phase_incomplete' exit_reason already stamped by
+    // reportPhaseIncomplete; do not let finalizeTerminalState overwrite it.
+    finalizeTerminalState(runtime.statePath, { step: 'completed' });
+  } else {
+    finalizeTerminalState(runtime.statePath, {
+      step: 'completed',
+      exitReason: pipelineFailed ? 'failed' : 'completed',
+    });
+  }
 
   const phasesSummary = counters.skipped > 0
     ? `${counters.completed}/${runtime.config.phases.length} (${counters.skipped} skipped)`
@@ -1510,6 +1553,9 @@ function finalizePipeline(
     skipped_phases: counters.skipped,
     total_phases: runtime.config.phases.length,
   });
+  if (phaseIncomplete) {
+    process.exit(PipelineRunnerExitCode.PhaseIncomplete);
+  }
   process.exit(pipelineFailed ? PipelineRunnerExitCode.Failure : PipelineRunnerExitCode.Success);
 }
 
@@ -1530,6 +1576,7 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
   const cancelMarker = path.join(sessionDir, 'pipeline-cancel');
   const cleanupShutdownHandlers = installShutdownHandlers(runtime, counters, cancelMarker);
   const startTime = Date.now();
+  let phaseIncomplete = false;
   phaseRunnerContext = { sessionDir, extensionRoot: runtime.extensionRoot };
   writeRunningStatus(runtime, counters, null);
 
@@ -1551,6 +1598,11 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
       }
       const exitCode = result.exitCode ?? 1;
       log(`Phase ${rawPhase} exited with code ${exitCode}`);
+      if (exitCode === PipelineRunnerExitCode.PhaseIncomplete) {
+        reportPhaseIncomplete(runtime, rawPhase);
+        phaseIncomplete = true;
+        break;
+      }
       if (shouldHaltAfterPhase(rawPhase, exitCode, runtime)) {
         log(`Phase ${rawPhase} failed (exit ${exitCode}) — stopping pipeline`);
         break;
@@ -1582,7 +1634,7 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
     cleanupShutdownHandlers();
   }
 
-  finalizePipeline(runtime, counters, cancelMarker, startTime);
+  finalizePipeline(runtime, counters, cancelMarker, startTime, phaseIncomplete);
 }
 
 /** Extract the value following `flag` in argv, or `undefined` if absent. */

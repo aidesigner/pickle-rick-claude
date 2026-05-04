@@ -173,10 +173,13 @@ test('mux-runner: takes ownership of inactive session then respects max_iteratio
         // Final state should be inactive again (set by the max_iterations guard)
         const finalState = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
         assert.equal(finalState.active, false, 'Session should be inactive after max iterations');
-        // finalizeTerminalState invariants: step='completed', current_ticket null, exit_reason='limit'
-        assert.equal(finalState.step, 'completed', 'max_iterations terminal exit must set step=completed');
-        assert.equal(finalState.current_ticket, null, 'max_iterations terminal exit must clear current_ticket');
-        assert.equal(finalState.exit_reason, 'limit', 'max_iterations exit_reason must be "limit"');
+        // R-ICP-1: cap-hit without an EPIC_COMPLETED promise is forensic, not clean-success.
+        // safeDeactivate preserves step/current_ticket so postmortem can show the unfinished queue.
+        // exit_reason flips from 'limit' to 'iteration_cap_exhausted' to distinguish from time/budget exits.
+        assert.equal(finalState.step, 'plan', 'iteration-cap exhaustion must preserve original step for forensics');
+        assert.equal(finalState.exit_reason, 'iteration_cap_exhausted', 'cap-hit-without-promise exit_reason must be "iteration_cap_exhausted"');
+        // Exit code must be 3 (distinct from 0=clean and 1=error) so pipeline-runner halts instead of advancing.
+        assert.equal(result.status, 3, 'iteration-cap exhaustion must exit with code 3');
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }

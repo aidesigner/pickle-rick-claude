@@ -662,10 +662,54 @@ function applyResumeConfig(s: State, config: SetupArgs, fullSessionPath: string,
   s.session_dir = fullSessionPath;
 }
 
+/**
+ * R-ICP-3 (p1-iteration-cap-and-phantom-done-handshake): on resume, the cap
+ * fields obey CLI-wins-then-persisted-state-wins precedence. If a CLI flag was
+ * passed, it overrides and is written into state.json. If the flag was NOT
+ * passed, the persisted value in state.json is the authoritative cap and we
+ * leave it alone. When the persisted value is missing or non-finite/non-positive
+ * AND the user didn't pass the flag, we don't silently default — we backfill
+ * the documented default (config.loopLimit / config.timeLimit / config.workerTimeout
+ * computed in parseArguments from settings + per-backend budget) into state and
+ * emit a stderr warning so operators can see the substitution. This eliminates
+ * the display-vs-effective mismatch where setup printed `Limit: 15` but state
+ * persisted 100 (or vice versa) — after this runs, syncConfigFromState reads
+ * the same numbers we just persisted.
+ */
 function applyResumeLimitConfig(s: State, config: SetupArgs): void {
-  if (config.explicitFlags.has('max-iterations')) s.max_iterations = config.loopLimit;
-  if (config.explicitFlags.has('max-time')) s.max_time_minutes = config.timeLimit;
-  if (config.explicitFlags.has('worker-timeout')) s.worker_timeout_seconds = config.workerTimeout;
+  if (config.explicitFlags.has('max-iterations')) {
+    s.max_iterations = config.loopLimit;
+  } else if (!Number.isFinite(Number(s.max_iterations))) {
+    process.stderr.write(
+      `[setup] WARNING: --resume found no persisted max_iterations and --max-iterations was not passed; ` +
+      `falling back to documented default ${config.loopLimit}. Pass --max-iterations to override.\n`,
+    );
+    s.max_iterations = config.loopLimit;
+  }
+
+  if (config.explicitFlags.has('max-time')) {
+    s.max_time_minutes = config.timeLimit;
+  } else if (!Number.isFinite(Number(s.max_time_minutes))) {
+    process.stderr.write(
+      `[setup] WARNING: --resume found no persisted max_time_minutes and --max-time was not passed; ` +
+      `falling back to documented default ${config.timeLimit}. Pass --max-time to override.\n`,
+    );
+    s.max_time_minutes = config.timeLimit;
+  }
+
+  if (config.explicitFlags.has('worker-timeout')) {
+    s.worker_timeout_seconds = config.workerTimeout;
+  } else {
+    const persisted = Number(s.worker_timeout_seconds);
+    if (!Number.isFinite(persisted) || persisted <= 0) {
+      process.stderr.write(
+        `[setup] WARNING: --resume found no persisted worker_timeout_seconds and --worker-timeout was not passed; ` +
+        `falling back to documented default ${config.workerTimeout}. Pass --worker-timeout to override.\n`,
+      );
+      s.worker_timeout_seconds = config.workerTimeout;
+    }
+  }
+
   if (config.promiseToken) s.completion_promise = config.promiseToken;
   if (config.explicitFlags.has('min-iterations')) s.min_iterations = config.minIterations;
 }
@@ -777,6 +821,21 @@ function resolveTask(config: SetupArgs): string {
   return taskStr;
 }
 
+/**
+ * R-ICP-4 (p1-iteration-cap-and-phantom-done-handshake): persist the resolved
+ * cap/timeout/backend values into state.json AT initial setup time so resumed
+ * sessions and downstream consumers (mux-runner, pipeline-runner, monitor) read
+ * the same numbers the activation banner displays. config.loopLimit / .timeLimit
+ * / .workerTimeout were already reconciled by parseArguments through (in order):
+ *   1. createSetupConfig defaults
+ *   2. loadSettings (pickle_settings.json)
+ *   3. parseCommandLine (CLI flags — explicit-flag wins)
+ *   4. applyPerBackendBudget (iteration_budget_per_backend[backend], skipped when
+ *      --max-iterations was explicit)
+ * The State field names below match the existing schema (max_iterations,
+ * max_time_minutes, worker_timeout_seconds, backend) — do not introduce parallel
+ * fields. mux-runner.ts reads state.max_iterations directly to compute the cap.
+ */
 function createInitialState(config: SetupArgs, sessionPath: string, taskStr: string): State {
   const codexVersionSeen = resolveCodexVersionForSetup(config.backend);
   const state: State = {

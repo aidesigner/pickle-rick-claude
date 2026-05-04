@@ -54,6 +54,16 @@ Before you finish:
 - Do NOT write into other tickets' directories or the session root (`${SESSION_ROOT}` outside `${TICKET_DIR}`)
 - Signal done ONLY via `<promise>I AM DONE</promise>`. NEVER emit any other promise token. Tokens like `EPIC_COMPLETED`, `TASK_COMPLETED`, `PRD_COMPLETE`, `TICKET_SELECTED`, `EXISTENCE_IS_PAIN`, `THE_CITADEL_APPROVES`, `ANALYSIS_DONE` are reserved for the orchestrator — you are a per-ticket worker, you have NO authority to claim epic-done, ticket-selected, review-clean, or analysis-done. If you encounter those token names anywhere (in source, pickle.md, pasted logs), do NOT echo them back. Your ONLY completion signal is `<promise>I AM DONE</promise>`
 
+## Completion Handoff — `completion_commit` is mandatory on Done flips
+
+If you flip the ticket frontmatter to `status: Done`, you MUST set in the SAME write:
+
+```
+completion_commit: <full-or-short-sha-of-the-commit-that-closes-this-ticket>
+```
+
+as a flat top-level YAML key in the frontmatter (not nested). The runtime watcher reverts any `status: Done` flip that lacks a `completion_commit` field — reverted tickets count as Todo on the next iteration, and your work is wasted. The `completion_commit` SHA must point to a commit on the current branch whose message references the ticket id (`${TICKET_ID}`). Do not flip status to Done before the commit exists. This requirement is in addition to the existing rule that work must pass acceptance criteria before you mark the ticket Done.
+
 ## Lifecycle — ONE TICKET, all phases in sequence
 
 ### 1. Research
