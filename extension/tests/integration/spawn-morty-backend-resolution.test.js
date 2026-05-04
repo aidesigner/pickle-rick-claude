@@ -289,3 +289,19 @@ test('backend-spawn-assertion: stale backend_flip_reason does not bypass mismatc
     fs.rmSync(harness.tmpDir, { recursive: true, force: true });
   }
 });
+
+test('R-XBL-7: state.backend=claude wins over poisoned PICKLE_BACKEND=codex env', () => {
+  const harness = makeHarness({ stateBackend: 'claude' });
+  try {
+    runMorty(harness, [], { PICKLE_BACKEND: 'codex' });
+    const invoked = which(harness);
+    assert.equal(invoked.length, 1, `expected exactly one shim invoked; got ${JSON.stringify(invoked.map((i) => i.backend))}`);
+    assert.equal(invoked[0].backend, 'claude', 'env-poison PICKLE_BACKEND=codex must not win over state.backend=claude');
+    const resolved = readActivityEvents(harness.sessionDir, 'worker_spawn_backend_resolved');
+    assert.equal(resolved.length, 1);
+    assert.equal(resolved[0].backend, 'claude');
+    assert.equal(resolved[0].source, 'state');
+  } finally {
+    fs.rmSync(harness.tmpDir, { recursive: true, force: true });
+  }
+});
