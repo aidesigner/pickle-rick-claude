@@ -15,6 +15,17 @@ const FIXTURES = JSON.parse(
   fs.readFileSync(path.join(__dirname, 'fixtures', 'stop-hook-states.json'), 'utf-8'),
 );
 
+// Cardinality canary — guards against silent drift in the keyed-object oracle.
+// Per Definitions in prd_refined.md: pid ∈ {null, alive, dead} × active ∈ {true, false}
+// × mtime ∈ {fresh, stale} × iteration ∈ {0, 1, max-1, max, max+1} = 3×2×2×5 = 60.
+test('matrix fixture has exactly 60 cells (R-RTC-5 cardinality)', () => {
+  assert.equal(
+    Object.keys(FIXTURES).length,
+    60,
+    'expected 3×2×2×5 = 60 cells per the boundary-driven Definitions axes',
+  );
+});
+
 // Spawn a process that exits immediately to get a reliably dead PID.
 const _deadPidResult = spawnSync(process.execPath, ['--eval', ''], { timeout: 5_000 });
 const DEAD_PID = _deadPidResult.pid;
