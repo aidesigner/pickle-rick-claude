@@ -544,6 +544,76 @@ function ticketBudgetIterationCount(state: State, currentIteration: number): num
 }
 
 /**
+ * Proactive empty-queue completion check, run at iteration_start before any
+ * manager spawn. If all `linear_ticket_*.md` files in the session report
+ * `status: Done` (and there is at least one ticket), synthesizes an
+ * EPIC_COMPLETED terminal state atomically and returns true so the caller
+ * can break the outer loop.
+ *
+ * Guard conditions (bias: don't fire):
+ *   - N=0 tickets — ambiguous; could be a setup error
+ *   - Any ticket file unparseable — cannot confirm all Done
+ *   - Not all statuses normalize to 'done'
+ *
+ * On success mutates state.json twice:
+ *   1. sm.update  — sets completion_promise (JSON) + appends activity entry
+ *   2. finalizeTerminalState — sets active=false, step='completed', exit_reason='completed'
+ */
+export function applyAllTicketsDoneCompletion(
+  statePath: string,
+  sessionDir: string,
+  iteration: number,
+  log: (msg: string) => void,
+): boolean {
+  let dirEntries: fs.Dirent[];
+  try {
+    dirEntries = fs.readdirSync(sessionDir, { withFileTypes: true });
+  } catch {
+    return false;
+  }
+
+  const ticketPaths: string[] = [];
+  for (const entry of dirEntries) {
+    if (!entry.isDirectory()) continue;
+    const subDir = path.join(sessionDir, entry.name);
+    try {
+      const files = fs.readdirSync(subDir);
+      for (const file of files) {
+        if (file.startsWith('linear_ticket_') && file.endsWith('.md')) {
+          ticketPaths.push(path.join(subDir, file));
+        }
+      }
+    } catch {
+      // subdir unreadable — skip
+    }
+  }
+
+  if (ticketPaths.length === 0) return false;
+
+  const statuses: string[] = [];
+  for (const ticketPath of ticketPaths) {
+    const parsed = parseTicketFrontmatter(ticketPath);
+    if (!parsed) {
+      log(`all-tickets-done-check: cannot parse ${path.basename(path.dirname(ticketPath))} — skipping completion synthesis`);
+      return false;
+    }
+    statuses.push(normalizeTicketStatus(parsed.status || ''));
+  }
+
+  if (!statuses.every(s => s === 'done')) return false;
+
+  const ts = new Date().toISOString();
+  sm.update(statePath, s => {
+    s.completion_promise = JSON.stringify({ kind: 'EPIC_COMPLETED', reason: 'all-tickets-done', ts });
+    if (!Array.isArray(s.activity)) s.activity = [];
+    s.activity.push({ event: 'epic_completed', kind: 'EPIC_COMPLETED', ts });
+  });
+  finalizeTerminalState(statePath, { step: 'completed', runnerIteration: iteration, exitReason: 'completed' });
+  log(`all-tickets-done (${ticketPaths.length}/${ticketPaths.length}): synthesizing EPIC_COMPLETED completion`);
+  return true;
+}
+
+/**
  * Returns tickets that are still pending (not Done, not Skipped) excluding
  * `currentTicket`. Used to fail-loud when the model emits EPIC_COMPLETED but
  * the ticket queue is not actually drained — silent loop-termination on a
@@ -2589,6 +2659,11 @@ async function runMuxRunnerMain() {
     }
     log(`--- Iteration ${iteration} (state.iteration=${state.iteration}) ---`);
     logActivity({ event: 'iteration_start', source: 'pickle', session: path.basename(sessionDir), iteration, backend: resolveBackend(state) });
+
+    if (templateName !== 'meeseeks.md' && applyAllTicketsDoneCompletion(statePath, sessionDir, iteration, log)) {
+      exitReason = 'success';
+      break;
+    }
 
     if (!readinessGateChecked && curIter === 0) {
       readinessGateChecked = true;
