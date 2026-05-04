@@ -67,6 +67,16 @@ export interface State {
   hermes_provider?: string;
   /** Optional Hermes model override persisted at setup time. */
   hermes_model?: string;
+  /**
+   * Optional codex model override (e.g. `gpt-5.3-codex-spark`).
+   * Resolution precedence (see `resolveCodexModel` in `bin/spawn-morty.ts`):
+   *   1. `state.codex_model` (trimmed, non-empty) — per-session override.
+   *   2. `pickle_settings.default_codex_model` — global default.
+   *   3. undefined — codex CLI uses its compiled-in default.
+   * Combined with `--ignore-user-config` on codex spawn, absent values mean
+   * codex never sees a `-m` flag.
+   */
+  codex_model?: string;
   /** Optional Hermes max-turns override persisted at setup time. */
   hermes_max_turns?: number;
   archaeology?: ProjectContext | null;

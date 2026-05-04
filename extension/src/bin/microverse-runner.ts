@@ -47,6 +47,7 @@ import {
   computeRateLimitAction,
   killCurrentChild,
 } from './mux-runner.js';
+import { resolveCodexModel } from './spawn-morty.js';
 import {
   evaluateCodexManagerRelaunch,
   recordCodexManagerRelaunch,
@@ -234,9 +235,23 @@ export async function runRemediatorForIteration(
   }
 
   const startMs = Date.now();
+  // Plumb codex model so remediator spawns honor `default_codex_model` /
+  // `state.codex_model` instead of falling back to the codex CLI compiled-in
+  // default. Other backends ignore the field.
+  let codexModel: string | undefined;
+  if (backend === 'codex') {
+    try {
+      const extRoot = getExtensionRoot();
+      const remediatorState = sm.read(path.join(sessionDir, 'state.json'));
+      codexModel = resolveCodexModel(extRoot, remediatorState);
+    } catch {
+      codexModel = resolveCodexModel(getExtensionRoot(), null);
+    }
+  }
   const invocation = buildWorkerInvocation(backend, {
     prompt: briefContent,
     addDirs: [workingDir],
+    ...(codexModel ? { model: codexModel } : {}),
   });
 
   try {

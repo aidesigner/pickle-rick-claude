@@ -10,6 +10,7 @@ import { writeStateFile, getExtensionRoot, isoCompactStamp, sleep, Style, format
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 const sm = new StateManager();
 import { runIteration, loadRateLimitSettings, classifyIterationExit, computeRateLimitAction, killCurrentChild, } from './mux-runner.js';
+import { resolveCodexModel } from './spawn-morty.js';
 import { evaluateCodexManagerRelaunch, recordCodexManagerRelaunch, } from '../services/codex-manager-relaunch.js';
 import { logActivity } from '../services/activity-logger.js';
 import { assertBaselineFresh, BaselineMissingError, BaselineStaleError, runGate } from '../services/convergence-gate.js';
@@ -101,9 +102,24 @@ export async function runRemediatorForIteration(gateResult, sessionDir, workingD
         return { success: false };
     }
     const startMs = Date.now();
+    // Plumb codex model so remediator spawns honor `default_codex_model` /
+    // `state.codex_model` instead of falling back to the codex CLI compiled-in
+    // default. Other backends ignore the field.
+    let codexModel;
+    if (backend === 'codex') {
+        try {
+            const extRoot = getExtensionRoot();
+            const remediatorState = sm.read(path.join(sessionDir, 'state.json'));
+            codexModel = resolveCodexModel(extRoot, remediatorState);
+        }
+        catch {
+            codexModel = resolveCodexModel(getExtensionRoot(), null);
+        }
+    }
     const invocation = buildWorkerInvocation(backend, {
         prompt: briefContent,
         addDirs: [workingDir],
+        ...(codexModel ? { model: codexModel } : {}),
     });
     try {
         execFileSync(invocation.cmd, invocation.args, {

@@ -6,7 +6,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { tierToModel } from '../bin/spawn-morty.js';
+import { tierToModel, resolveCodexModel } from '../bin/spawn-morty.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SPAWN_MORTY_BIN = path.resolve(__dirname, '../bin/spawn-morty.js');
@@ -1719,4 +1719,81 @@ test('tierToModel: undefined -> sonnet (missing tier fallback)', () => {
 test('tierToModel: unrecognized tier -> sonnet (unknown fallback)', () => {
     assert.equal(tierToModel('mega'), 'sonnet');
     assert.equal(tierToModel(''), 'sonnet');
+});
+
+// ---------------------------------------------------------------------------
+// resolveCodexModel — codex `-m <model>` resolution precedence
+//
+// Precedence: state.codex_model (trimmed, non-empty) →
+//             pickle_settings.default_codex_model → undefined
+// ---------------------------------------------------------------------------
+
+function writeCodexSettings(extensionRoot, body) {
+    fs.mkdirSync(extensionRoot, { recursive: true });
+    fs.writeFileSync(path.join(extensionRoot, 'pickle_settings.json'), JSON.stringify(body));
+}
+
+test('resolveCodexModel: state.codex_model wins over settings default', () => {
+    const extensionRoot = makeTmpDir('pickle-codex-model-state-');
+    try {
+        writeCodexSettings(extensionRoot, { default_codex_model: 'gpt-5.3-codex-spark' });
+        const state = { codex_model: 'custom-model' };
+        assert.equal(resolveCodexModel(extensionRoot, state), 'custom-model');
+    } finally {
+        fs.rmSync(extensionRoot, { recursive: true, force: true });
+    }
+});
+
+test('resolveCodexModel: settings default applies when state.codex_model is absent', () => {
+    const extensionRoot = makeTmpDir('pickle-codex-model-settings-');
+    try {
+        writeCodexSettings(extensionRoot, { default_codex_model: 'gpt-5.3-codex-spark' });
+        assert.equal(resolveCodexModel(extensionRoot, {}), 'gpt-5.3-codex-spark');
+        assert.equal(resolveCodexModel(extensionRoot, null), 'gpt-5.3-codex-spark');
+    } finally {
+        fs.rmSync(extensionRoot, { recursive: true, force: true });
+    }
+});
+
+test('resolveCodexModel: settings default applies when state.codex_model is empty/whitespace', () => {
+    const extensionRoot = makeTmpDir('pickle-codex-model-empty-');
+    try {
+        writeCodexSettings(extensionRoot, { default_codex_model: 'gpt-5.3-codex-spark' });
+        assert.equal(resolveCodexModel(extensionRoot, { codex_model: '' }), 'gpt-5.3-codex-spark');
+        assert.equal(resolveCodexModel(extensionRoot, { codex_model: '   ' }), 'gpt-5.3-codex-spark');
+    } finally {
+        fs.rmSync(extensionRoot, { recursive: true, force: true });
+    }
+});
+
+test('resolveCodexModel: undefined when neither state nor settings supplies a model', () => {
+    const extensionRoot = makeTmpDir('pickle-codex-model-none-');
+    try {
+        writeCodexSettings(extensionRoot, {});
+        assert.equal(resolveCodexModel(extensionRoot, null), undefined);
+        assert.equal(resolveCodexModel(extensionRoot, { codex_model: '' }), undefined);
+    } finally {
+        fs.rmSync(extensionRoot, { recursive: true, force: true });
+    }
+});
+
+test('resolveCodexModel: undefined when settings file is missing', () => {
+    const extensionRoot = makeTmpDir('pickle-codex-model-missing-');
+    try {
+        // No pickle_settings.json written.
+        assert.equal(resolveCodexModel(extensionRoot, null), undefined);
+        assert.equal(resolveCodexModel(extensionRoot, { codex_model: '   ' }), undefined);
+    } finally {
+        fs.rmSync(extensionRoot, { recursive: true, force: true });
+    }
+});
+
+test('resolveCodexModel: trims state.codex_model whitespace', () => {
+    const extensionRoot = makeTmpDir('pickle-codex-model-trim-');
+    try {
+        writeCodexSettings(extensionRoot, { default_codex_model: 'gpt-5.3-codex-spark' });
+        assert.equal(resolveCodexModel(extensionRoot, { codex_model: '  custom  ' }), 'custom');
+    } finally {
+        fs.rmSync(extensionRoot, { recursive: true, force: true });
+    }
 });

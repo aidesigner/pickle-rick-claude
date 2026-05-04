@@ -582,12 +582,41 @@ function routeBackend(sessionRoot: string, ticketInfo: ReturnType<typeof parseTi
   return backend;
 }
 
+/**
+ * Resolve the codex `-m <model>` flag for worker/manager spawns.
+ *
+ * Precedence:
+ *   1. `state.codex_model` (trimmed, non-empty) — per-session override.
+ *   2. `pickle_settings.default_codex_model` — global default.
+ *   3. `undefined` — codex CLI falls back to its compiled-in default.
+ *
+ * Combined with `--ignore-user-config`, absent values mean codex never sees a
+ * `-m` flag. This is a TRAP DOOR: see extension/CLAUDE.md
+ * `src/bin/spawn-morty.ts (codex model resolution)`.
+ */
+export function resolveCodexModel(extensionRoot: string, state: State | null): string | undefined {
+  const stateModel = state?.codex_model;
+  if (typeof stateModel === 'string' && stateModel.trim().length > 0) {
+    return stateModel.trim();
+  }
+  try {
+    const settings = readRecoverableJsonObject(path.join(extensionRoot, 'pickle_settings.json')) as Record<string, unknown> | null;
+    const settingsModel = settings?.default_codex_model;
+    if (typeof settingsModel === 'string' && settingsModel.trim().length > 0) {
+      return settingsModel.trim();
+    }
+  } catch { /* settings missing or unreadable: codex CLI default */ }
+  return undefined;
+}
+
 function resolveWorkerModel(
   backend: Backend,
   extensionRoot: string,
   sessionRoot: string,
-  ticketInfo: ReturnType<typeof parseTicketFrontmatter> | null
+  ticketInfo: ReturnType<typeof parseTicketFrontmatter> | null,
+  state: State | null
 ): string | undefined {
+  if (backend === 'codex') return resolveCodexModel(extensionRoot, state);
   if (backend !== 'claude') return undefined;
   let enableComplexityTiers = true;
   try {
@@ -791,7 +820,7 @@ async function main() {
   const backend = routeBackend(parsed.sessionRoot, ticketInfo);
   const args = { ...parsed, backend };
   const extensionRoot = getExtensionRoot();
-  const model = resolveWorkerModel(backend, extensionRoot, parsed.sessionRoot, ticketInfo);
+  const model = resolveWorkerModel(backend, extensionRoot, parsed.sessionRoot, ticketInfo, runtime.state);
   printMinimalPanel(
     args.isReviewTicket ? 'Spawning Review Worker' : 'Spawning Morty Worker',
     { Request: args.ticket, Ticket: args.ticketId, Type: args.isReviewTicket ? 'review' : 'implementation', Format: args.outputFormat, Backend: backend, Timeout: `${effectiveTimeout}s (Req: ${requestedTimeout}s)`, PID: process.pid },

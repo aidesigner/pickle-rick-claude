@@ -9,6 +9,7 @@ import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, 
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, resetCircuitBreaker } from '../services/circuit-breaker.js';
 import { buildManagerInvocation, resolveBackend, backendEnvOverrides } from '../services/backend-spawn.js';
+import { resolveCodexModel } from './spawn-morty.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { extractAssistantContent } from '../services/classifier-utils.js';
 import { updateTicketStatusInTransaction } from '../services/transaction-ticket-ops.js';
@@ -1057,10 +1058,14 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
     const iterationModel = isQualityPassTemplate && qualityPassModel && backend === 'claude'
         ? qualityPassModel
         : undefined;
+    // Codex manager spawns plumb the resolved codex model so `--ignore-user-config`
+    // doesn't strip away the configured `-m`. Quality-pass-template Claude
+    // overrides (meeseeks/szechuan) remain claude-only above.
+    const codexManagerModel = backend === 'codex' ? resolveCodexModel(extensionRoot, state) : undefined;
     const invocation = buildManagerInvocation(backend, {
         prompt: managerPrompt,
         addDirs: [extensionRoot, getDataRoot(), sessionDir],
-        model: backend === 'hermes' ? state.hermes_model : iterationModel,
+        model: backend === 'hermes' ? state.hermes_model : (backend === 'codex' ? codexManagerModel : iterationModel),
         maxTurns: backend === 'hermes' ? positiveIntegerOrNull(state.hermes_max_turns) ?? maxTurns : maxTurns,
         streamJson: true,
         noSessionPersistence: true,

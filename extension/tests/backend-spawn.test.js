@@ -245,6 +245,25 @@ test('buildWorkerInvocation(codex): omits -m when no model given', () => {
     assert.equal(inv.args.includes('-m'), false);
 });
 
+test('buildWorkerInvocation(codex): -m gpt-5.3-codex-spark appears as adjacent ordered args', () => {
+    // Codex CLI 0.128.0 accepts `-m gpt-5.3-codex-spark`. The fix plumbs the
+    // resolved model from settings (default_codex_model) through to the
+    // invocation; this test guards the args ordering — `-m` immediately
+    // followed by the model value — so a regression that interleaves another
+    // flag between them is caught.
+    const inv = buildWorkerInvocation('codex', {
+        prompt: 'x',
+        addDirs: [],
+        model: 'gpt-5.3-codex-spark',
+    });
+    const mIdx = inv.args.indexOf('-m');
+    assert.ok(mIdx >= 0, 'expected -m flag in codex invocation');
+    assert.equal(inv.args[mIdx + 1], 'gpt-5.3-codex-spark');
+    // -m must precede the `--` prompt separator
+    const dashDashIdx = inv.args.indexOf('--');
+    assert.ok(dashDashIdx > mIdx + 1, 'expected -m <model> to precede `--` separator');
+});
+
 test('buildWorkerInvocation(codex): drops missing add-dir entries (mirrors claude-worker)', () => {
     // Both backends filter non-existent add-dir paths via existsSilently; the
     // claude test already covers this. Mirror it for codex so a regression that
