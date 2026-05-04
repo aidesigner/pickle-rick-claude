@@ -8,7 +8,7 @@ import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRES
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, resetCircuitBreaker, type CircuitBreakerConfig, type CircuitBreakerState } from '../services/circuit-breaker.js';
-import { buildManagerInvocation, resolveBackend, backendEnvOverrides } from '../services/backend-spawn.js';
+import { buildManagerInvocation, resolveBackend, resolveBackendFromStateFileWithSource, backendEnvOverrides } from '../services/backend-spawn.js';
 import { resolveCodexModel } from './spawn-morty.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { extractAssistantContent } from '../services/classifier-utils.js';
@@ -2083,7 +2083,7 @@ export async function processCompletionBranch(state: State, result: IterationOut
       ctx.cbState ?? null,
     );
     if (decision.shouldRelaunch) {
-      const relaunchBackend = resolveBackend(postState);
+      const relaunchBackend = resolveBackendFromStateFileWithSource(ctx.statePath).backend;
       ctx.log(
         `${relaunchBackend} manager subprocess errored with ${decision.pendingCount} ticket(s) still pending — ` +
         `relaunching (count ${decision.nextRelaunchCount}/${Defaults.CODEX_MANAGER_RELAUNCH_CAP}).`,
@@ -3209,7 +3209,7 @@ async function runMuxRunnerMain() {
         cbState,
       );
       if (relaunchDecision.shouldRelaunch) {
-        const relaunchBackend = resolveBackend(postState);
+        const relaunchBackend = resolveBackendFromStateFileWithSource(statePath).backend;
         log(
           `${relaunchBackend} manager subprocess errored with ${relaunchDecision.pendingCount} ticket(s) still pending — ` +
           `relaunching (count ${relaunchDecision.nextRelaunchCount}/${Defaults.CODEX_MANAGER_RELAUNCH_CAP}).`,

@@ -6,6 +6,7 @@ import { State, Defaults } from '../types/index.js';
 import type { ActivityEventType, Backend, IterationExitType, MicroverseSessionState, MicroverseHistoryEntry, FailureClass, GateResult, StallClassification, StallRecoveryAction } from '../types/index.js';
 import {
   resolveBackend,
+  resolveBackendFromStateFileWithSource,
   buildJudgeInvocation,
   buildWorkerInvocation,
   backendEnvOverrides,
@@ -235,17 +236,21 @@ export async function runRemediatorForIteration(
   }
 
   const startMs = Date.now();
+  const statePath = path.join(sessionDir, 'state.json');
   // R-XBL-2: re-read state.backend immediately before exec via StateManager.read
   // so any mid-iteration backend flip is honored at the spawn site (single
   // source of truth). Falls back to the param if the state read fails.
-  // PICKLE_REFINEMENT_LOCK=1 still wins via resolveBackend's sentinel check.
-  let execBackend: Backend = backend;
+  // PICKLE_REFINEMENT_LOCK=1 still wins via resolveBackendFromStateFileWithSource.
+  const execBackend = resolveBackendFromStateFileWithSource(statePath, backend).backend;
+
+  // Preserve the legacy fallback behavior for codex model resolution: if the
+  // state file is missing/unreadable and the backend is still codex, use the
+  // caller-provided fallback model defaults.
   let remediatorState: State | null = null;
   try {
-    remediatorState = sm.read(path.join(sessionDir, 'state.json'));
-    execBackend = resolveBackend(remediatorState);
+    remediatorState = sm.read(statePath);
   } catch {
-    /* fall back to the param backend on read failure */
+    // Keep the fallback state null when the file is unreadable.
   }
   // Plumb codex model so remediator spawns honor `default_codex_model` /
   // `state.codex_model` instead of falling back to the codex CLI compiled-in

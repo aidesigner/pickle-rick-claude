@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { Backend, BACKENDS, State } from '../types/index.js';
+import { Backend, BACKENDS, State, type BackendResolutionSource } from '../types/index.js';
 import { StateManager } from './state-manager.js';
 
 export type ReasoningEffort = 'low' | 'medium' | 'high';
@@ -82,17 +82,48 @@ export function resolveBackend(source: State | { backend?: unknown } | null | un
   return 'claude';
 }
 
-export function resolveBackendFromStateFile(statePath: string): Backend {
-  // Refinement lock sentinel: short-circuit before any disk I/O so a stale or
-  // codex-stamped state.json cannot override the parent's locked-in claude.
-  // Mirrors resolveBackend — see comment above for the full rationale.
-  if (process.env.PICKLE_REFINEMENT_LOCK === '1') return 'claude';
-  try {
-    const parsed = _sm.read(statePath);
-    return resolveBackend(parsed);
-  } catch {
-    return resolveBackend(null);
+export function resolveBackendFromStateFileWithSource(
+  statePath: string,
+  cliBackend?: Backend,
+): { backend: Backend; source: BackendResolutionSource } {
+  // Refinement lock is non-overridable: short-circuits on the lock variable
+  // before disk-I/O so a stale/hostile state.json cannot recover codex for a
+  // locked-in planning run.
+  if (process.env.PICKLE_REFINEMENT_LOCK === '1') {
+    return { backend: 'claude', source: 'refinement-lock' };
   }
+
+  let parsed: { backend?: unknown } | null = null;
+  try {
+    parsed = _sm.read(statePath) as { backend?: unknown } | null;
+  } catch {
+    // ignore read/parsing errors and continue to env/default fallback
+  }
+
+  if (isBackend(parsed?.backend)) {
+    return { backend: parsed.backend, source: 'state' };
+  }
+  if (typeof parsed?.backend === 'string' && parsed.backend.length > 0) {
+    warnBadBackend('state', parsed.backend);
+  }
+
+  // Explicit CLI override should win over env and state for spawn-site callers
+  // that have validated or intentionally selected a backend (e.g. --backend on
+  // spawn-morty, or refinement hardcode).
+  if (cliBackend !== undefined) {
+    return { backend: cliBackend, source: 'cli-flag-override' };
+  }
+
+  const envBackend = process.env.PICKLE_BACKEND;
+  if (isBackend(envBackend)) return { backend: envBackend, source: 'env' };
+  if (typeof envBackend === 'string' && envBackend.length > 0) {
+    warnBadBackend('PICKLE_BACKEND env', envBackend);
+  }
+  return { backend: 'claude', source: 'default' };
+}
+
+export function resolveBackendFromStateFile(statePath: string): Backend {
+  return resolveBackendFromStateFileWithSource(statePath).backend;
 }
 
 export function buildWorkerInvocation(backend: Backend, opts: WorkerInvocationOptions): SpawnInvocation {
