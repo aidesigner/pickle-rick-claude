@@ -604,12 +604,12 @@ export function applyAllTicketsDoneCompletion(
 
   const ts = new Date().toISOString();
   sm.update(statePath, s => {
-    s.completion_promise = JSON.stringify({ kind: 'EPIC_COMPLETED', reason: 'all-tickets-done', ts });
+    s.completion_promise = JSON.stringify({ kind: PromiseTokens.EPIC_COMPLETED, reason: 'all-tickets-done', ts });
     if (!Array.isArray(s.activity)) s.activity = [];
-    s.activity.push({ event: 'epic_completed', kind: 'EPIC_COMPLETED', ts });
+    s.activity.push({ event: 'epic_completed', kind: PromiseTokens.EPIC_COMPLETED, ts });
   });
   finalizeTerminalState(statePath, { step: 'completed', runnerIteration: iteration, exitReason: 'completed' });
-  log(`all-tickets-done (${ticketPaths.length}/${ticketPaths.length}): synthesizing EPIC_COMPLETED completion`);
+  log(`all-tickets-done (${ticketPaths.length}/${ticketPaths.length}): synthesizing ${PromiseTokens.EPIC_COMPLETED} completion`);
   return true;
 }
 

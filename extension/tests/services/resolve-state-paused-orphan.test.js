@@ -155,3 +155,30 @@ test('paused-orphan: idempotent — pre-existing demotion event suppresses re-em
     fs.rmSync(tmp, { recursive: true });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Case 5: boundary — mtime === now - 300s (exactly threshold) demotes
+// ---------------------------------------------------------------------------
+
+test('paused-orphan: (null,true,boundary) at exactly 300s mtime fires demotion (inclusive boundary)', () => {
+  const tmp = tmpDir();
+  try {
+    const stateFile = path.join(tmp, 'state.json');
+    fs.writeFileSync(stateFile, JSON.stringify(baseState({ active: true, pid: null })));
+    const boundaryTime = new Date(Date.now() - 300_000);
+    fs.utimesSync(stateFile, boundaryTime, boundaryTime);
+
+    const state = sm.read(stateFile);
+
+    assert.equal(state.active, false, 'boundary mtime (300s) must demote');
+    assert.equal(state.exit_reason, 'orphan-paused-no-claim');
+    const demoted = (state.activity ?? []).filter(a => a.kind === 'paused_session_orphan_demoted');
+    assert.equal(demoted.length, 1, 'exactly one demotion at boundary');
+    assert.ok(
+      typeof demoted[0].mtime_age_seconds === 'number' && demoted[0].mtime_age_seconds >= 300,
+      'mtime_age_seconds must be >= 300 at boundary',
+    );
+  } finally {
+    fs.rmSync(tmp, { recursive: true });
+  }
+});

@@ -581,7 +581,7 @@ export class StateManager {
             if (!alreadyDemoted) {
                 // Use pre-migration mtime when available; 0 → Infinity (treat as stale).
                 const ageMs = preMigrationMtimeMs > 0 ? Date.now() - preMigrationMtimeMs : Infinity;
-                if (ageMs > 300_000) {
+                if (ageMs >= 300_000) {
                     state.active = false;
                     state.exit_reason = 'orphan-paused-no-claim';
                     state.activity = state.activity ?? [];
