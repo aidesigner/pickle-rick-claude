@@ -967,6 +967,32 @@ ${Style.YELLOW}⚠️  STRICT EXIT CONDITION ACTIVE${Style.RESET}`);
   }
 }
 
+export function scanPausedOrphans(sessionsRoot: string, config: SetupArgs, smInstance: StateManager): void {
+  let entries: string[];
+  try { entries = fs.readdirSync(sessionsRoot); } catch { return; }
+  const cwd = process.cwd();
+  const now = Date.now();
+  for (const entry of entries) {
+    const statePath = path.join(sessionsRoot, entry, 'state.json');
+    let mtime: number;
+    try { mtime = fs.statSync(statePath).mtimeMs; } catch { continue; }
+    if (now - mtime <= 300_000) continue;
+    let state: Record<string, unknown>;
+    try { state = JSON.parse(fs.readFileSync(statePath, 'utf-8')) as Record<string, unknown>; } catch { continue; }
+    if (state.active !== true) continue;
+    if (state.pid != null) continue;
+    if (state.working_dir !== cwd) continue;
+    const ageSeconds = Math.floor((now - mtime) / 1000);
+    process.stderr.write(
+      `[pickle] WARNING: paused-orphan session "${entry}" (${ageSeconds}s old) has active=true for this cwd but no pid. ` +
+      `Use --paused to auto-demote.\n`,
+    );
+    if (config.pausedMode) {
+      try { smInstance.read(statePath); } catch { /* demote is best-effort */ }
+    }
+  }
+}
+
 async function main() {
   try {
     assertSchemaVersionDeployParity();
@@ -982,6 +1008,7 @@ async function main() {
   pruneOldSessions(paths.sessionsRoot);
 
   const args = parseArguments(process.argv.slice(2));
+  scanPausedOrphans(paths.sessionsRoot, args, sm);
   const session = args.resumeMode
     ? handleResumeSession(args)
     : initializeNewSession(args);
