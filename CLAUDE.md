@@ -64,6 +64,9 @@ Before creating a release, run the full lint and test gate from `extension/`: `n
 | Variable | Values | Effect |
 |---|---|---|
 | `PLUMBUS_GENERATIVE_AUDIT` | `"off"` | Kill-switch: bypasses Override 6 entirely — no analyzer invocation, no `## Generative Findings` written, logs `"generative_audit: skipped (kill-switch)"` to `state.json.activity` |
+| `PICKLE_INSTALL_ROOT` | path (default `$HOME/.claude/pickle-rick`) | Override deploy prefix for `install.sh` and deploy-lifecycle soak test |
+| `RUN_EXPENSIVE_TESTS` | `"1"` | Gates the `test:expensive` tier (deploy-lifecycle soak, release-gate full run). Must be set explicitly; not included in default `npm test` |
+| `SOAK_SECONDS` | integer ≥ 1800 (default `1800`) | Duration for deploy-lifecycle soak test in `tests/integration/deploy-lifecycle-soak.test.js` |
 
 <!-- gitnexus:start -->
 # GitNexus MCP
