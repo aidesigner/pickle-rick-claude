@@ -346,7 +346,7 @@ function findActiveSession(): ActiveSession | null {
 }
 
 function auditLogPath(): string {
-  return path.join(os.homedir(), '.claude', 'pickle-rick', 'deploy-audit.log');
+  return path.join(getExtensionRoot(), 'deploy-audit.log');
 }
 
 function appendDowngradeAudit(

@@ -1,11 +1,11 @@
 {
   "ac_id": "AC-DR-02",
   "pass": false,
-  "checked_at": "2026-05-04T02:46:39.486Z",
+  "checked_at": "2026-05-04T03:07:15.052Z",
   "checker": "verify-recapture-fired",
   "checker_version": "1",
   "evidence": {
-    "state_path": "/var/folders/2w/j4nf5k_17ys16yzvmhcx0brh0000gn/T/verify-recapture-missing-5hnBkY/state.json",
+    "state_path": "/var/folders/2w/j4nf5k_17ys16yzvmhcx0brh0000gn/T/verify-recapture-missing-nahUrn/state.json",
     "activity_count": null,
     "anatomy_windows": []
   },
