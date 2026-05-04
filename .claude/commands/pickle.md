@@ -1,3 +1,8 @@
+## Step 0 — Queue Check (mandatory)
+Before any other action, read every linear_ticket_*.md frontmatter in the session root. If every status: field is Done, emit:
+<promise>EPIC_COMPLETED</promise>
+and exit immediately. Do not spawn any tools.
+
 Start the Pickle Rick autonomous coding loop to implement tasks iteratively in interactive mode.
 
 Announce what you are doing, then proceed.
