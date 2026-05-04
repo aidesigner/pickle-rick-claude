@@ -237,3 +237,12 @@ git fetch --tags                                              # sync local tags 
 
 - **v1.64.0** — https://github.com/gregorydickson/pickle-rick-claude/releases/tag/v1.64.0
 - **v1.63.0** — https://github.com/gregorydickson/pickle-rick-claude/releases/tag/v1.63.0
+
+---
+
+## 7. Reliability Bundle — Source PRDs Closed (session 2026-05-03-7d9ee8cc, commit 7786bcb)
+
+- [x] prds/p1-deployed-pkgjson-version-only-revert.md
+- [x] prds/p2-codex-manager-empty-queue-spin.md
+- [x] prds/p3-paused-session-orphan-blocks-stop-hook.md
+- [x] prds/p3-test-flakes-council-publish-and-scope-resolver.md
