@@ -224,10 +224,18 @@ export class StateManager {
             throw new StateError('SCHEMA_MISMATCH', `State file schema_version ${state.schema_version} is newer than supported version ${this.opts.schemaVersion}`);
         }
         this.assertReadableMissingSchemaShape(statePath, state);
+        // Capture mtime before recovery/migration can rewrite the file.
+        let preMigrationMtimeMs;
+        try {
+            preMigrationMtimeMs = fs.statSync(statePath).mtimeMs;
+        }
+        catch {
+            preMigrationMtimeMs = 0;
+        }
         // --- Recovery protocol ---
         this.recoverOrphanTmpFiles(statePath, state);
         this.migrateSchema(statePath, state);
-        this.recoverStaleActiveFlag(statePath, state);
+        this.recoverStaleActiveFlag(statePath, state, preMigrationMtimeMs);
         warnUnknownActivityEvents(state);
         return state;
     }
@@ -562,11 +570,36 @@ export class StateManager {
     // -----------------------------------------------------------------------
     // Recovery: stale active flag
     // -----------------------------------------------------------------------
-    recoverStaleActiveFlag(statePath, state) {
+    recoverStaleActiveFlag(statePath, state, preMigrationMtimeMs = 0) {
         if (state.active !== true)
             return;
-        if (state.pid === undefined || state.pid === null)
+        if (state.pid === undefined || state.pid === null) {
+            // Paused-orphan demotion: no process ever claimed this session (pid=null).
+            // If the state file is stale (>5 min), it will never be claimed — demote.
+            const alreadyDemoted = Array.isArray(state.activity) &&
+                state.activity.some(a => typeof a === 'object' && a !== null && a.kind === 'paused_session_orphan_demoted');
+            if (!alreadyDemoted) {
+                // Use pre-migration mtime when available; 0 → Infinity (treat as stale).
+                const ageMs = preMigrationMtimeMs > 0 ? Date.now() - preMigrationMtimeMs : Infinity;
+                if (ageMs > 300_000) {
+                    state.active = false;
+                    state.exit_reason = 'orphan-paused-no-claim';
+                    state.activity = state.activity ?? [];
+                    state.activity.push({
+                        event: 'paused_session_orphan_demoted',
+                        kind: 'paused_session_orphan_demoted',
+                        pid_orig: null,
+                        mtime_age_seconds: Math.floor(ageMs / 1000),
+                        ts: new Date().toISOString(),
+                    });
+                    try {
+                        writeStateFile(statePath, state);
+                    }
+                    catch { /* best-effort */ }
+                }
+            }
             return;
+        }
         const pid = Number(state.pid);
         if (!Number.isFinite(pid) || pid <= 0)
             return;

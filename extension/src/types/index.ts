@@ -427,6 +427,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'pkgjson_only_revert_detected',
   'pkgjson_full_drift_detected',
   'pkgjson_dep_or_src_missing',
+  'paused_session_orphan_demoted',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];

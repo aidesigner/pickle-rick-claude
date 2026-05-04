@@ -63,6 +63,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'meeseeks_pass', 'commit', 'research', 'bug_fix', 'feature',
         'refactor', 'review', 'jar_start', 'jar_end',
         'circuit_open', 'circuit_recovery',
+        'tool_retry_circuit_open',
         'iteration_start', 'iteration_end', 'wasted_iter',
         'rate_limit_wait', 'rate_limit_resume', 'rate_limit_exhausted',
         'judge_unreachable',
@@ -109,7 +110,10 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'current_ticket_redirected_to_new',
         'ticket_auto_skip_no_evidence',
         'ticket_phantom_done_corrected',
+        'phantom_done_detected',
+        'phantom_done_backfilled',
         'ticket_state_desync_detected',
+        'stall_classified',
         'readiness_delta_requested',
         // Pipeline lifecycle and fallback observability events.
         'phase_transition',
@@ -117,11 +121,17 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         // mux-runner executeTimeoutHalt emits this to state.activity[] before
         // safeDeactivate so /pickle-status surfaces the timeout-repeat halt.
         'halt',
+        'pkgjson_only_revert_detected',
+        'pkgjson_full_drift_detected',
+        'pkgjson_dep_or_src_missing',
         // GBM-T3: emitted when microverse-runner cannot recapture the
         // per-iteration gate baseline before strict-mode fallback.
         'baseline_recapture_failed',
+        // R-PSO-1: state-manager demotes paused orphan sessions (pid=null,
+        // active=true, stale mtime) so stop-hook decisions are unblocked.
+        'paused_session_orphan_demoted',
     ];
-    assert.equal(VALID_ACTIVITY_EVENTS.length, 76);
+    assert.equal(VALID_ACTIVITY_EVENTS.length, 82);
     for (const e of expected) {
         assert.ok(VALID_ACTIVITY_EVENTS.includes(e), `Missing event type: ${e}`);
     }

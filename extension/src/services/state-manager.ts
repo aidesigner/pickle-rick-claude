@@ -268,12 +268,16 @@ export class StateManager {
 
     this.assertReadableMissingSchemaShape(statePath, state);
 
+    // Capture mtime before recovery/migration can rewrite the file.
+    let preMigrationMtimeMs: number;
+    try { preMigrationMtimeMs = fs.statSync(statePath).mtimeMs; } catch { preMigrationMtimeMs = 0; }
+
     // --- Recovery protocol ---
     this.recoverOrphanTmpFiles(statePath, state);
 
     this.migrateSchema(statePath, state);
 
-    this.recoverStaleActiveFlag(statePath, state);
+    this.recoverStaleActiveFlag(statePath, state, preMigrationMtimeMs);
 
     warnUnknownActivityEvents(state);
 
@@ -615,9 +619,33 @@ export class StateManager {
   // Recovery: stale active flag
   // -----------------------------------------------------------------------
 
-  private recoverStaleActiveFlag(statePath: string, state: State): void {
+  private recoverStaleActiveFlag(statePath: string, state: State, preMigrationMtimeMs = 0): void {
     if (state.active !== true) return;
-    if (state.pid === undefined || state.pid === null) return;
+
+    if (state.pid === undefined || state.pid === null) {
+      // Paused-orphan demotion: no process ever claimed this session (pid=null).
+      // If the state file is stale (>5 min), it will never be claimed — demote.
+      const alreadyDemoted = Array.isArray(state.activity) &&
+        state.activity.some(a => typeof a === 'object' && a !== null && (a as Record<string, unknown>).kind === 'paused_session_orphan_demoted');
+      if (!alreadyDemoted) {
+        // Use pre-migration mtime when available; 0 → Infinity (treat as stale).
+        const ageMs = preMigrationMtimeMs > 0 ? Date.now() - preMigrationMtimeMs : Infinity;
+        if (ageMs > 300_000) {
+          state.active = false;
+          state.exit_reason = 'orphan-paused-no-claim';
+          state.activity = state.activity ?? [];
+          state.activity.push({
+            event: 'paused_session_orphan_demoted',
+            kind: 'paused_session_orphan_demoted',
+            pid_orig: null,
+            mtime_age_seconds: Math.floor(ageMs / 1000),
+            ts: new Date().toISOString(),
+          });
+          try { writeStateFile(statePath, state); } catch { /* best-effort */ }
+        }
+      }
+      return;
+    }
 
     const pid = Number(state.pid);
     if (!Number.isFinite(pid) || pid <= 0) return;
