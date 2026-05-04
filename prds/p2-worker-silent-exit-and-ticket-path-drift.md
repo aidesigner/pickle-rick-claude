@@ -116,3 +116,25 @@ None of those help here:
 - Refinement entry point: `extension/src/bin/spawn-refinement-team.ts` (where R-RPD-1/-2 land)
 
 — Pickle Rick out. *belch*
+
+---
+
+## Session Notes — Recurrence on `2026-05-03-7d9ee8cc` (2026-05-04 PM)
+
+**RC-1 fired again on the very last ticket of the reliability bundle.**
+
+- Ticket: `dddee00b` — "Audit: cross-reference consistency for reliability + test-coverage bundle" (order 380, last in queue)
+- Worker session log: `<session>/dddee00b/worker_session_47876.log` — **0 bytes**
+- Observable: lifecycle artifacts up through `plan_2026-05-04.md` and `plan_review.md` exist; downstream `implement_*`, `verify_*`, `review_*` artifacts do NOT
+- Pipeline impact: ticket stuck `In Progress`, session marked `step=completed exit_reason=failed`, **0/4 phases ran** (no citadel/anatomy-park/szechuan-sauce)
+- Final tally: 37/38 tickets Done; this single 0-byte spawn is the entire reason the bundle did not ship clean
+
+**Pairing with the cross-backend leak PRD.** Peer bug `prds/p1-worker-spawns-codex-despite-claude-backend.md` was filed the same day after forensic review found 11+ worker logs across 8 ticket dirs ending in the codex CLI's `chatgpt.com/codex/settings/usage` error. The two bugs interact: when the spawned worker IS codex but the session backend is claude, codex exits on the usage limit — sometimes producing hundreds of KB of output (the cross-backend leak case), sometimes apparently producing zero output (this RC-1 case at `dddee00b`).
+
+It is NOT yet confirmed whether the `dddee00b` 0-byte log is:
+- (a) The same RC-1 silent-exit (worker process aborted before any write), OR
+- (b) A degenerate case of the cross-backend leak where codex exited so fast it didn't even flush its banner
+
+If (b), then RC-1 is partially subsumed by the cross-backend PRD and the count of "true silent exits" drops. The R-XBL-6 audit script (in that new PRD) is the cheapest way to disambiguate — once `audit-worker-backends.ts` lands, run it on this session and see whether `dddee00b` shows up.
+
+**Operator impact.** Bundle has 22 unpushed local commits (work is real and shippable), but pipeline-status.json reports `failed`. Per resume directive the operator does not push automatically; this recurrence note plus the cross-backend PRD are the inputs to that decision.
