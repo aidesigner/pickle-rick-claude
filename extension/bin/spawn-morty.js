@@ -6,7 +6,7 @@ import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, ru
 import { spawn } from 'child_process';
 import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact } from '../types/index.js';
 import { updateTicketStatus } from '../services/git-utils.js';
-import { buildWorkerInvocation, loadBackendFromSession, backendEnvOverrides } from '../services/backend-spawn.js';
+import { buildWorkerInvocation, isBackend, backendEnvOverrides } from '../services/backend-spawn.js';
 import { scrubForbiddenWorkerTokens } from '../services/promise-tokens.js';
 import { StateManager, writeActivityEntry } from '../services/state-manager.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
@@ -472,22 +472,43 @@ function readTicketInfo(ticketFilePath) {
         return null;
     }
 }
-function routeBackend(sessionRoot, ticketInfo) {
-    let backend = loadBackendFromSession(sessionRoot);
+function resolveBackendFromStateOrEnv(sessionRoot) {
+    const statePath = path.join(sessionRoot, 'state.json');
+    try {
+        const state = readRecoverableJsonObject(statePath);
+        if (isBackend(state?.backend))
+            return { backend: state.backend, source: 'state' };
+    }
+    catch {
+        /* fall through to env/default on parse/read errors */
+    }
+    const envBackend = process.env.PICKLE_BACKEND;
+    if (isBackend(envBackend))
+        return { backend: envBackend, source: 'env' };
+    return { backend: 'claude', source: 'default' };
+}
+function applyHeuristicBackendRouting(sessionBackend, ticketInfo) {
+    const { backend } = sessionBackend;
+    let routedReason = null;
     try {
         const settings = readRecoverableJsonObject(path.join(getExtensionRoot(), 'pickle_settings.json'));
         if (settings?.enable_backend_routing_heuristic !== true || backend !== 'codex')
-            return backend;
-        const routedReason = ticketInfo?.complexity_tier === 'large'
+            return sessionBackend;
+        routedReason = ticketInfo?.complexity_tier === 'large'
             ? 'complexity_tier=large'
             : ticketInfo?.title && /\b(UI|Wire|Audit)\b/i.test(ticketInfo.title) ? `title-signal:${ticketInfo.title}` : null;
-        if (routedReason) {
-            console.error(`[spawn-morty] backend routed: codex → claude (reason: ${routedReason})`);
-            backend = 'claude';
-        }
     }
     catch { /* settings missing or unreadable: no override */ }
-    return backend;
+    if (!routedReason)
+        return sessionBackend;
+    console.error(`[spawn-morty] backend routed: codex → claude (reason: ${routedReason})`);
+    return { backend: 'claude', source: 'settings' };
+}
+function routeBackend(sessionRoot, ticketInfo) {
+    if (process.env.PICKLE_REFINEMENT_LOCK === '1') {
+        return { backend: 'claude', source: 'refinement-lock' };
+    }
+    return applyHeuristicBackendRouting(resolveBackendFromStateOrEnv(sessionRoot), ticketInfo);
 }
 /**
  * Resolve the codex `-m <model>` flag for worker/manager spawns.
@@ -740,7 +761,21 @@ async function main() {
     else if (effectiveTimeout < requestedTimeout) {
         console.log(`${Style.YELLOW}⚠️  Worker timeout clamped: ${effectiveTimeout}s${Style.RESET}`);
     }
-    const backend = routeBackend(parsed.sessionRoot, ticketInfo);
+    const { backend, source } = routeBackend(parsed.sessionRoot, ticketInfo);
+    try {
+        writeActivityEntry(path.join(parsed.sessionRoot, 'state.json'), {
+            event: 'worker_spawn_backend_resolved',
+            ts: new Date().toISOString(),
+            backend,
+            source,
+            pid: process.pid,
+            ticket: parsed.ticketId,
+            session: path.basename(parsed.sessionRoot),
+        });
+    }
+    catch {
+        /* best-effort telemetry */
+    }
     const args = { ...parsed, backend };
     const extensionRoot = getExtensionRoot();
     const model = resolveWorkerModel(backend, extensionRoot, parsed.sessionRoot, ticketInfo, runtime.state);
