@@ -6,7 +6,7 @@ import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, ru
 import { spawn } from 'child_process';
 import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact } from '../types/index.js';
 import { updateTicketStatus } from '../services/git-utils.js';
-import { buildWorkerInvocation, isBackend, backendEnvOverrides } from '../services/backend-spawn.js';
+import { assertBackendPreSpawn, buildWorkerInvocation, isBackend, backendEnvOverrides } from '../services/backend-spawn.js';
 import { scrubForbiddenWorkerTokens } from '../services/promise-tokens.js';
 import { StateManager, writeActivityEntry } from '../services/state-manager.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
@@ -785,6 +785,30 @@ async function main() {
         console.log(`${Style.YELLOW}⚠️  Worker timeout clamped: ${effectiveTimeout}s${Style.RESET}`);
     }
     const { backend, source } = routeBackend(parsed.sessionRoot, ticketInfo, parsed.backendOverride);
+    const preSpawn = assertBackendPreSpawn({
+        statePath: path.join(parsed.sessionRoot, 'state.json'),
+        resolvedBackend: backend,
+        source,
+    });
+    if (preSpawn.mode === 'mismatch') {
+        try {
+            writeActivityEntry(path.join(parsed.sessionRoot, 'state.json'), {
+                event: 'worker_spawn_backend_mismatch',
+                ts: new Date().toISOString(),
+                source,
+                pid: process.pid,
+                ticket: parsed.ticketId,
+                session: path.basename(parsed.sessionRoot),
+                resolved_backend: preSpawn.resolvedBackend,
+                state_backend: preSpawn.stateBackend,
+            });
+        }
+        catch {
+            /* best-effort telemetry */
+        }
+        console.error(`[spawn-morty] backend mismatch: resolved=${preSpawn.resolvedBackend}, state=${preSpawn.stateBackend}; aborting worker spawn`);
+        process.exit(1);
+    }
     try {
         writeActivityEntry(path.join(parsed.sessionRoot, 'state.json'), {
             event: 'worker_spawn_backend_resolved',

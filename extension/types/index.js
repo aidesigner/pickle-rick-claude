@@ -195,6 +195,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'paused_session_orphan_demoted',
     'worker_spawn_backend_resolved',
     'worker_spawn_backend_override',
+    'worker_spawn_backend_mismatch',
 ];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {

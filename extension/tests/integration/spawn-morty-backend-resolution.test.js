@@ -20,6 +20,27 @@ function makeTmpDir(prefix = 'pickle-xbl2-') {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
 
+function writePickleSettings(extensionDir, settings) {
+  fs.writeFileSync(path.join(extensionDir, 'pickle_settings.json'), JSON.stringify(settings, null, 2));
+}
+
+function writeTicketFile(ticketDir, ticketId, complexityTier = 'large') {
+  const content = `---
+id: ${ticketId}
+title: Backend routing mismatch fixture
+priority: Medium
+complexity_tier: ${complexityTier}
+---
+
+## Test Fixture
+
+This ticket drives routing-path regression coverage.
+`;
+  const ticketFile = path.join(ticketDir, `linear_ticket_${ticketId}.md`);
+  fs.writeFileSync(ticketFile, content);
+  return ticketFile;
+}
+
 function writeExtensionSentinel(extensionDir) {
   const sentinelDir = path.join(extensionDir, 'extension', 'bin');
   fs.mkdirSync(sentinelDir, { recursive: true });
@@ -185,6 +206,85 @@ test('R-XBL-2: state.backend=hermes spawns hermes (single source of truth)', () 
     const resolved = readActivityEvents(harness.sessionDir, 'worker_spawn_backend_resolved');
     assert.equal(resolved[0].backend, 'hermes');
     assert.equal(resolved[0].source, 'state');
+  } finally {
+    fs.rmSync(harness.tmpDir, { recursive: true, force: true });
+  }
+});
+
+// NOTE: this test forces mismatch only via the existing heuristic path:
+// state.backend=codex + settings heuristic ON + large ticket => resolved claude.
+test('backend-spawn-assertion: stale state/backend + heuristic mismatch exits non-zero', () => {
+  const harness = makeHarness({ stateBackend: 'codex' });
+  writePickleSettings(harness.tmpDir, { enable_backend_routing_heuristic: true });
+  const ticketFile = writeTicketFile(harness.ticketDir, harness.ticketId);
+  try {
+    const result = runMorty(harness, ['--ticket-file', ticketFile]);
+    assert.equal(result.status, 1);
+    const invoked = which(harness);
+    assert.equal(invoked.length, 0, `expected spawn-block before exec; got ${JSON.stringify(invoked.map(i => i.backend))}`);
+    const mismatch = readActivityEvents(harness.sessionDir, 'worker_spawn_backend_mismatch');
+    assert.equal(mismatch.length, 1);
+    assert.equal(mismatch[0].resolved_backend, 'claude');
+    assert.equal(mismatch[0].state_backend, 'codex');
+    assert.equal(mismatch[0].source, 'settings');
+  } finally {
+    fs.rmSync(harness.tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('backend-spawn-assertion: fresh backend_flip_reason bypasses mismatch once and clears flags', () => {
+  const harness = makeHarness({
+    stateBackend: 'codex',
+    extras: {
+      flags: {
+        backend_flip_reason: 'codex-spark-429',
+        backend_flip_reason_ts: new Date(Date.now() - 30_000).toISOString(),
+      },
+    },
+  });
+  writePickleSettings(harness.tmpDir, { enable_backend_routing_heuristic: true });
+  const ticketFile = writeTicketFile(harness.ticketDir, harness.ticketId);
+  try {
+    const result = runMorty(harness, ['--ticket-file', ticketFile]);
+    assert.equal(result.status, 1);
+    const invoked = which(harness);
+    assert.equal(invoked.length, 1);
+    assert.equal(invoked[0].backend, 'claude', 'expected mismatch-bypass to continue with resolved backend');
+    const state = JSON.parse(fs.readFileSync(path.join(harness.sessionDir, 'state.json'), 'utf-8'));
+    assert.equal(state.flags?.backend_flip_reason, undefined);
+    assert.equal(state.flags?.backend_flip_reason_ts, undefined);
+    const mismatch = readActivityEvents(harness.sessionDir, 'worker_spawn_backend_mismatch');
+    assert.equal(mismatch.length, 0);
+    const resolved = readActivityEvents(harness.sessionDir, 'worker_spawn_backend_resolved');
+    assert.equal(resolved.length, 1);
+    assert.equal(resolved[0].source, 'settings');
+  } finally {
+    fs.rmSync(harness.tmpDir, { recursive: true, force: true });
+  }
+});
+
+test('backend-spawn-assertion: stale backend_flip_reason does not bypass mismatch', () => {
+  const harness = makeHarness({
+    stateBackend: 'codex',
+    extras: {
+      flags: {
+        backend_flip_reason: 'codex-spark-429',
+        backend_flip_reason_ts: new Date(Date.now() - 120_000).toISOString(),
+      },
+    },
+  });
+  writePickleSettings(harness.tmpDir, { enable_backend_routing_heuristic: true });
+  const ticketFile = writeTicketFile(harness.ticketDir, harness.ticketId);
+  try {
+    const result = runMorty(harness, ['--ticket-file', ticketFile]);
+    assert.equal(result.status, 1);
+    const state = JSON.parse(fs.readFileSync(path.join(harness.sessionDir, 'state.json'), 'utf-8'));
+    const mismatch = readActivityEvents(harness.sessionDir, 'worker_spawn_backend_mismatch');
+    assert.equal(mismatch.length, 1);
+    assert.equal(mismatch[0].resolved_backend, 'claude');
+    assert.equal(mismatch[0].state_backend, 'codex');
+    assert.equal(state.flags?.backend_flip_reason, 'codex-spark-429');
+    assert.equal(typeof state.flags?.backend_flip_reason_ts, 'string');
   } finally {
     fs.rmSync(harness.tmpDir, { recursive: true, force: true });
   }

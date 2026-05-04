@@ -130,8 +130,9 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         // R-PSO-1: state-manager demotes paused orphan sessions (pid=null,
         // active=true, stale mtime) so stop-hook decisions are unblocked.
         'paused_session_orphan_demoted',
+        'worker_spawn_backend_mismatch',
     ];
-    assert.equal(VALID_ACTIVITY_EVENTS.length, 82);
+    assert.equal(VALID_ACTIVITY_EVENTS.length, 83);
     for (const e of expected) {
         assert.ok(VALID_ACTIVITY_EVENTS.includes(e), `Missing event type: ${e}`);
     }

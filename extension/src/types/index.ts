@@ -441,6 +441,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'paused_session_orphan_demoted',
   'worker_spawn_backend_resolved',
   'worker_spawn_backend_override',
+  'worker_spawn_backend_mismatch',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];

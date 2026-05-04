@@ -16,7 +16,7 @@ import {
 import { spawn } from 'child_process';
 import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact, type Backend, type BackendResolutionSource, type LastToolErrorState, type State } from '../types/index.js';
 import { updateTicketStatus } from '../services/git-utils.js';
-import { buildWorkerInvocation, isBackend, backendEnvOverrides } from '../services/backend-spawn.js';
+import { assertBackendPreSpawn, buildWorkerInvocation, isBackend, backendEnvOverrides } from '../services/backend-spawn.js';
 import { scrubForbiddenWorkerTokens } from '../services/promise-tokens.js';
 import { StateManager, writeActivityEntry } from '../services/state-manager.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
@@ -881,6 +881,38 @@ async function main() {
   }
 
   const { backend, source } = routeBackend(parsed.sessionRoot, ticketInfo, parsed.backendOverride);
+  const preSpawn = assertBackendPreSpawn({
+    statePath: path.join(parsed.sessionRoot, 'state.json'),
+    resolvedBackend: backend,
+    source,
+  });
+  if (preSpawn.mode === 'mismatch') {
+    try {
+      writeActivityEntry(path.join(parsed.sessionRoot, 'state.json'), {
+        event: 'worker_spawn_backend_mismatch',
+        ts: new Date().toISOString(),
+        source,
+        pid: process.pid,
+        ticket: parsed.ticketId,
+        session: path.basename(parsed.sessionRoot),
+        resolved_backend: preSpawn.resolvedBackend,
+        state_backend: preSpawn.stateBackend,
+      } as {
+        event: 'worker_spawn_backend_mismatch';
+        ts: string;
+        source: 'pickle' | 'hook' | 'persona' | BackendResolutionSource;
+        pid: number;
+        ticket: string;
+        session: string;
+        resolved_backend: Backend;
+        state_backend?: Backend;
+      });
+    } catch {
+      /* best-effort telemetry */
+    }
+    console.error(`[spawn-morty] backend mismatch: resolved=${preSpawn.resolvedBackend}, state=${preSpawn.stateBackend}; aborting worker spawn`);
+    process.exit(1);
+  }
   try {
     writeActivityEntry(path.join(parsed.sessionRoot, 'state.json'), {
       event: 'worker_spawn_backend_resolved',

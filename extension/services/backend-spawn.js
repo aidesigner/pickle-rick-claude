@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { BACKENDS } from '../types/index.js';
 import { StateManager } from './state-manager.js';
+const BACKEND_FLIP_REASON_TTL_MS = 60000;
 export function isBackend(value) {
     return typeof value === 'string' && BACKENDS.includes(value);
 }
@@ -13,6 +14,63 @@ const _warnedBackends = new Set();
 const _sm = new StateManager();
 export function __resetBackendWarnings() {
     _warnedBackends.clear();
+}
+
+function parseBackendFlipTs(value) {
+    if (typeof value !== 'string' || !value.trim())
+        return null;
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : parsed;
+}
+
+function isRecentFlipReason(timestampMs, nowMs) {
+    if (timestampMs > nowMs)
+        return false;
+    return nowMs - timestampMs <= BACKEND_FLIP_REASON_TTL_MS;
+}
+
+function clearBackendFlipReasonFlags(statePath) {
+    try {
+        _sm.update(statePath, (state) => {
+            const flags = state.flags;
+            if (typeof flags === 'object' && flags !== null) {
+                delete flags.backend_flip_reason;
+                delete flags.backend_flip_reason_ts;
+                if (!Object.keys(flags).length) {
+                    state.flags = {};
+                }
+            }
+        });
+    }
+    catch {
+        // fail-open: state mutation is optional
+    }
+}
+export function assertBackendPreSpawn(input) {
+    if (input.source === 'refinement-lock' || input.source === 'cli-flag-override') {
+        return { mode: 'match', resolvedBackend: input.resolvedBackend };
+    }
+    const state = (() => {
+        try {
+            return _sm.read(input.statePath);
+        }
+        catch {
+            return null;
+        }
+    })();
+    const stateBackend = isBackend(state === null || state === void 0 ? void 0 : state.backend) ? state === null || state === void 0 ? void 0 : state.backend : undefined;
+    if (!stateBackend || stateBackend === input.resolvedBackend) {
+        return { mode: 'match', resolvedBackend: input.resolvedBackend, stateBackend };
+    }
+    const flipReason = typeof (state === null || state === void 0 ? void 0 : state.flags)?.backend_flip_reason === 'string'
+        ? state.flags.backend_flip_reason
+        : null;
+    const flipTs = parseBackendFlipTs(state === null || state === void 0 ? void 0 : state.flags?.backend_flip_reason_ts);
+    if (!flipReason || flipTs === null || !isRecentFlipReason(flipTs, Date.now())) {
+        return { mode: 'mismatch', resolvedBackend: input.resolvedBackend, stateBackend };
+    }
+    clearBackendFlipReasonFlags(input.statePath);
+    return { mode: 'bypass', resolvedBackend: input.resolvedBackend, stateBackend };
 }
 function warnBadBackend(sourceLabel, value) {
     const key = `${sourceLabel}:${value}`;

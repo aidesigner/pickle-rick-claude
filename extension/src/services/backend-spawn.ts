@@ -51,9 +51,81 @@ export function isBackend(value: unknown): value is Backend {
 // have been 'codex' wastes a whole Morty spawn with no signal.
 const _warnedBackends = new Set<string>();
 const _sm = new StateManager();
+const BACKEND_FLIP_REASON_TTL_MS = 60_000;
+
+export type BackendPreSpawnAssertion = {
+  mode: 'match' | 'bypass' | 'mismatch';
+  resolvedBackend: Backend;
+  stateBackend?: Backend;
+};
 
 export function __resetBackendWarnings(): void {
   _warnedBackends.clear();
+}
+
+function parseBackendFlipTs(value: unknown): number | null {
+  if (typeof value !== 'string' || !value.trim()) return null;
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+function isRecentFlipReason(timestampMs: number, nowMs: number): boolean {
+  if (timestampMs > nowMs) return false;
+  return nowMs - timestampMs <= BACKEND_FLIP_REASON_TTL_MS;
+}
+
+function clearBackendFlipReasonFlags(statePath: string): void {
+  try {
+    _sm.update(statePath, state => {
+      const flags = state.flags;
+      if (typeof flags === 'object' && flags !== null) {
+        delete flags.backend_flip_reason;
+        delete flags.backend_flip_reason_ts;
+        if (!Object.keys(flags).length) {
+          state.flags = {};
+        }
+      }
+    });
+  } catch {
+    // fail-open: worker execution can still continue without flip-carve-out cleanup
+  }
+}
+
+// eslint-disable-next-line complexity
+export function assertBackendPreSpawn(input: {
+  statePath: string;
+  resolvedBackend: Backend;
+  source: BackendResolutionSource;
+}): BackendPreSpawnAssertion {
+  if (input.source === 'refinement-lock' || input.source === 'cli-flag-override') {
+    return { mode: 'match', resolvedBackend: input.resolvedBackend };
+  }
+
+  const state = (() => {
+    try {
+      return _sm.read(input.statePath) as State | null;
+    } catch {
+      return null;
+    }
+  })();
+
+  const stateBackend = isBackend(state?.backend) ? state?.backend : undefined;
+  if (!stateBackend || stateBackend === input.resolvedBackend) {
+    return { mode: 'match', resolvedBackend: input.resolvedBackend, stateBackend };
+  }
+
+  const flipReason = typeof state?.flags?.backend_flip_reason === 'string' ? state.flags.backend_flip_reason : null;
+  const flipTs = parseBackendFlipTs(state?.flags?.backend_flip_reason_ts);
+  if (!flipReason || flipTs === null || !isRecentFlipReason(flipTs, Date.now())) {
+    return { mode: 'mismatch', resolvedBackend: input.resolvedBackend, stateBackend };
+  }
+
+  if (flipReason && isRecentFlipReason(flipTs, Date.now())) {
+    clearBackendFlipReasonFlags(input.statePath);
+    return { mode: 'bypass', resolvedBackend: input.resolvedBackend, stateBackend };
+  }
+
+  return { mode: 'mismatch', resolvedBackend: input.resolvedBackend, stateBackend };
 }
 
 function warnBadBackend(sourceLabel: string, value: string): void {
