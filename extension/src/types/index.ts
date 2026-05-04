@@ -417,6 +417,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'ticket_auto_skip_no_evidence',
   'ticket_phantom_done_corrected',
   'phantom_done_detected',
+  'phantom_done_backfilled',
   'ticket_state_desync_detected',
   'stall_classified',
   'readiness_delta_requested',

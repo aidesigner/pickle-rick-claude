@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { spawn, spawnSync } from 'child_process';
+import { spawn, spawnSync, execFileSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, ticketTierBudget, extractFrontmatter, type TicketInfo, type TicketTierBudget } from '../services/pickle-utils.js';
 import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact, type Backend, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole, type Step } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
@@ -313,39 +313,135 @@ export function readFrontmatterField(content: string, field: string): string | n
 }
 
 export interface PhantomDoneInspectResult {
-  reverted: boolean;
-  reason: 'reverted' | 'has_completion_commit' | 'not_done' | 'unparseable' | 'missing_id';
+  /** True when the ticket file was mutated (either reverted to prior status or backfilled with a commit SHA). */
+  changed: boolean;
+  /**
+   * - 'reverted': status flipped back to prior value (no commit found / git lookup failed)
+   * - 'backfilled': real commit found; completion_commit field inserted
+   * - 'has_completion_commit': frontmatter already had completion_commit; nothing to do
+   * - 'not_done': status is not Done; nothing to do
+   * - 'unparseable': read or write failed
+   * - 'missing_id': frontmatter has no `id:` field
+   */
+  reason:
+    | 'reverted'
+    | 'backfilled'
+    | 'has_completion_commit'
+    | 'not_done'
+    | 'unparseable'
+    | 'missing_id';
+  /** When 'reverted', the prior status that was restored ('Todo' | 'In Progress'). */
+  priorStatus?: string;
+  /** When 'reverted' and git lookup failed (vs. clean "no matches"), the failure reason. */
+  gitFailureReason?: string;
+  /** When 'backfilled', the commit SHA written into completion_commit. */
+  commit?: string;
+}
+
+/**
+ * Locate the closing `---` of the YAML frontmatter and insert
+ * `completion_commit: "<sha>"` immediately before it, preserving all other
+ * body content. Indentation matches the surrounding fields (none — top-level
+ * frontmatter keys are unindented). No-op if the field already exists.
+ */
+function insertCompletionCommitField(content: string, sha: string): string | null {
+  const fm = extractFrontmatter(content);
+  if (!fm) return null;
+  if (/^completion_commit:\s*.+$/m.test(fm.body)) return null;
+  // Locate the closing `---` line (the one ending the frontmatter block).
+  const closingNewline = content.lastIndexOf('\n---', fm.end - 1);
+  if (closingNewline === -1) return null;
+  const insertPoint = closingNewline + 1;
+  return content.slice(0, insertPoint) + `completion_commit: "${sha}"\n` + content.slice(insertPoint);
+}
+
+/**
+ * Search for recent commits (HEAD~10) referencing the ticket id.
+ * Returns the most recent matching SHA (full hash) or null.
+ * Throws on git failure with reason in error message.
+ */
+function findRecentCommitForTicket(workingDir: string, ticketId: string): string | null {
+  // execFileSync per spec; 5s timeout; --grep is case-sensitive but ticket ids
+  // are 8-char lowercase hex, so commit messages reference them as-is.
+  const out = execFileSync(
+    'git',
+    ['-C', workingDir, 'log', '--grep', ticketId, '--format=%H', '-n', '10', 'HEAD'],
+    { timeout: 5000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  const lines = out.split('\n').map((line) => line.trim()).filter((line) => /^[0-9a-f]{40}$/i.test(line));
+  return lines.length > 0 ? lines[0] : null;
 }
 
 /**
  * R-ICP-5: Inspect a single linear_ticket_*.md file. If frontmatter status
- * is 'Done' but no `completion_commit:` field is present, revert status to
- * 'Todo' and report the revert. Pure side-effect on the ticket file plus a
- * boolean signal — caller owns activity-event + state.activity[] writes.
+ * is 'Done' but no `completion_commit:` field is present, take a three-way
+ * decision:
+ *   1. If git log shows a commit referencing the ticket id since HEAD~10 —
+ *      backfill `completion_commit:` with that SHA (work was real, field
+ *      missing).
+ *   2. If no commit found — revert status to its prior value (Todo or
+ *      In Progress).
+ *   3. If git lookup throws/times out — treat as "no commit" (revert path)
+ *      but surface the failure reason for the caller's log line.
+ *
+ * `priorStatus` defaults to 'Todo' but the watcher caller passes the last
+ * known good status from before the flip (read off the previous mtime
+ * snapshot). Pure side-effect on the ticket file plus a structured result —
+ * caller owns activity-event + stderr log writes.
  */
-export function inspectPhantomDoneTicketFile(filePath: string, sessionDir: string): PhantomDoneInspectResult {
+export function inspectPhantomDoneTicketFile(
+  filePath: string,
+  sessionDir: string,
+  workingDir: string,
+  priorStatus: string = 'Todo',
+): PhantomDoneInspectResult {
   let content: string;
   try {
     content = fs.readFileSync(filePath, 'utf8');
   } catch {
-    return { reverted: false, reason: 'unparseable' };
+    return { changed: false, reason: 'unparseable' };
   }
   const status = readFrontmatterField(content, 'status');
   if (!status || status.toLowerCase() !== 'done') {
-    return { reverted: false, reason: 'not_done' };
+    return { changed: false, reason: 'not_done' };
   }
   const completionCommit = readFrontmatterField(content, 'completion_commit');
   if (completionCommit) {
-    return { reverted: false, reason: 'has_completion_commit' };
+    return { changed: false, reason: 'has_completion_commit' };
   }
   const ticketId = readFrontmatterField(content, 'id');
   if (!ticketId) {
-    return { reverted: false, reason: 'missing_id' };
+    return { changed: false, reason: 'missing_id' };
   }
-  const wrote = writeTicketStatus(sessionDir, ticketId, 'Todo');
-  return wrote
-    ? { reverted: true, reason: 'reverted' }
-    : { reverted: false, reason: 'unparseable' };
+
+  let foundSha: string | null = null;
+  let gitFailureReason: string | undefined;
+  try {
+    foundSha = findRecentCommitForTicket(workingDir, ticketId);
+  } catch (err) {
+    gitFailureReason = safeErrorMessage(err);
+  }
+
+  if (foundSha) {
+    const updated = insertCompletionCommitField(content, foundSha);
+    if (!updated) {
+      return { changed: false, reason: 'unparseable' };
+    }
+    try {
+      fs.writeFileSync(filePath, updated);
+    } catch {
+      return { changed: false, reason: 'unparseable' };
+    }
+    return { changed: true, reason: 'backfilled', commit: foundSha };
+  }
+
+  const wrote = writeTicketStatus(sessionDir, ticketId, priorStatus);
+  if (!wrote) {
+    return { changed: false, reason: 'unparseable' };
+  }
+  const result: PhantomDoneInspectResult = { changed: true, reason: 'reverted', priorStatus };
+  if (gitFailureReason) result.gitFailureReason = gitFailureReason;
+  return result;
 }
 
 function hasArtifact(files: readonly string[], prefix: string): boolean {
@@ -2092,6 +2188,16 @@ async function runMuxRunnerMain() {
   // Closed on SIGTERM/SIGINT/SIGHUP/exit so we don't leak file descriptors.
   const phantomDoneWatchers: fs.FSWatcher[] = [];
   let phantomDoneWatchersClosed = false;
+  // Per-ticket debounce timers, last-known prior status (the value before a
+  // possible Done flip), and re-check counters. Re-checks are capped at 2 per
+  // ticket per minute to bound the cost of pathological re-flip loops.
+  const phantomDoneDebounceMs = 150;
+  const phantomDoneRecheckMs = 300;
+  const phantomDoneRecheckWindowMs = 60_000;
+  const phantomDoneRecheckCap = 2;
+  const debounceTimers = new Map<string, NodeJS.Timeout>();
+  const priorStatusMap = new Map<string, string>();
+  const recheckTimestamps = new Map<string, number[]>();
   const closePhantomDoneWatchers = (): void => {
     if (phantomDoneWatchersClosed) return;
     phantomDoneWatchersClosed = true;
@@ -2099,7 +2205,126 @@ async function runMuxRunnerMain() {
       try { watcher.close(); } catch { /* best-effort */ }
     }
     phantomDoneWatchers.length = 0;
+    for (const timer of debounceTimers.values()) {
+      try { clearTimeout(timer); } catch { /* best-effort */ }
+    }
+    debounceTimers.clear();
   };
+
+  const refreshPriorStatusAfterInspect = (
+    ticketId: string,
+    ticketFile: string,
+    result: PhantomDoneInspectResult,
+  ): void => {
+    if (result.reason === 'reverted' && result.priorStatus) {
+      priorStatusMap.set(ticketId, result.priorStatus);
+      return;
+    }
+    if (result.reason !== 'not_done' && result.reason !== 'has_completion_commit') return;
+    try {
+      const live = readFrontmatterField(fs.readFileSync(ticketFile, 'utf8'), 'status');
+      if (live) priorStatusMap.set(ticketId, live);
+    } catch { /* best-effort */ }
+  };
+
+  const emitBackfillEvent = (ticketId: string, commit: string, ts: string): void => {
+    const shortSha = commit.slice(0, 7);
+    process.stderr.write(
+      `phantom-Done backfilled for ticket ${ticketId} with commit ${shortSha} (work was done, completion_commit field was missing)\n`,
+    );
+    try {
+      writeActivityEntry(statePath, {
+        event: 'phantom_done_backfilled',
+        source: 'pickle',
+        session: path.basename(sessionDir),
+        ticket: ticketId,
+        commit_hash: commit,
+        ts,
+      });
+    } catch (err) {
+      log(`phantom-Done watcher: writeActivityEntry threw (ignored): ${safeErrorMessage(err)}`);
+    }
+  };
+
+  const emitRevertEvent = (
+    ticketId: string,
+    result: PhantomDoneInspectResult,
+    ts: string,
+  ): void => {
+    const priorMsg = result.priorStatus ?? 'Todo';
+    if (result.gitFailureReason) {
+      process.stderr.write(
+        `phantom-Done detected for ticket ${ticketId} — reverted (git lookup failed: ${result.gitFailureReason})\n`,
+      );
+    } else {
+      process.stderr.write(
+        `phantom-Done detected for ticket ${ticketId} — reverted to ${priorMsg} (no completion_commit field, no matching commit in HEAD~10)\n`,
+      );
+    }
+    try {
+      writeActivityEntry(statePath, {
+        event: 'phantom_done_detected',
+        source: 'pickle',
+        session: path.basename(sessionDir),
+        ticket: ticketId,
+        ts,
+      });
+    } catch (err) {
+      log(`phantom-Done watcher: writeActivityEntry threw (ignored): ${safeErrorMessage(err)}`);
+    }
+  };
+
+  const scheduleRecheckIfBudget = (
+    ticketId: string,
+    ticketFile: string,
+    workingDir: string,
+  ): void => {
+    const now = Date.now();
+    const stamps = (recheckTimestamps.get(ticketId) ?? []).filter(
+      (t) => now - t < phantomDoneRecheckWindowMs,
+    );
+    if (stamps.length >= phantomDoneRecheckCap) {
+      recheckTimestamps.set(ticketId, stamps);
+      log(`phantom-Done watcher: re-check cap reached for ${ticketId} — skipping further re-checks this minute`);
+      return;
+    }
+    stamps.push(now);
+    recheckTimestamps.set(ticketId, stamps);
+    setTimeout(() => {
+      if (phantomDoneWatchersClosed) return;
+      handlePhantomDoneEvent(ticketId, ticketFile, workingDir, true);
+    }, phantomDoneRecheckMs);
+  };
+
+  const handlePhantomDoneEvent = (
+    ticketId: string,
+    ticketFile: string,
+    workingDir: string,
+    isRecheck: boolean,
+  ): void => {
+    const prior = priorStatusMap.get(ticketId) ?? 'Todo';
+    let result: PhantomDoneInspectResult;
+    try {
+      result = inspectPhantomDoneTicketFile(ticketFile, sessionDir, workingDir, prior);
+    } catch (err) {
+      log(`phantom-Done watcher: inspect threw for ${ticketId} (ignored): ${safeErrorMessage(err)}`);
+      return;
+    }
+
+    refreshPriorStatusAfterInspect(ticketId, ticketFile, result);
+    if (!result.changed) return;
+
+    const ts = new Date().toISOString();
+    if (result.reason === 'backfilled' && result.commit) {
+      emitBackfillEvent(ticketId, result.commit, ts);
+      return;
+    }
+    if (result.reason !== 'reverted') return;
+
+    emitRevertEvent(ticketId, result, ts);
+    if (!isRecheck) scheduleRecheckIfBudget(ticketId, ticketFile, workingDir);
+  };
+
   const installPhantomDoneWatchers = (): void => {
     let installed = 0;
     let skipped = 0;
@@ -2107,33 +2332,28 @@ async function runMuxRunnerMain() {
       if (!ticket.id) { skipped++; continue; }
       const ticketFile = path.join(sessionDir, ticket.id, `linear_ticket_${ticket.id}.md`);
       if (!fs.existsSync(ticketFile)) { skipped++; continue; }
+      const ticketId = ticket.id;
+      const ticketWorkingDir = ticket.working_dir || ownerState.working_dir || process.cwd();
+      // Seed prior status from disk so the first revert restores the right
+      // value (Todo vs. In Progress) instead of defaulting to Todo.
       try {
-        const ticketId = ticket.id;
+        const seed = readFrontmatterField(fs.readFileSync(ticketFile, 'utf8'), 'status');
+        if (seed && seed.toLowerCase() !== 'done') {
+          priorStatusMap.set(ticketId, seed);
+        }
+      } catch { /* best-effort */ }
+      try {
         const watcher = fs.watch(ticketFile, { persistent: false }, (event) => {
           if (event !== 'change') return;
-          let result: PhantomDoneInspectResult;
-          try {
-            result = inspectPhantomDoneTicketFile(ticketFile, sessionDir);
-          } catch (err) {
-            log(`phantom-Done watcher: inspect threw for ${ticketId} (ignored): ${safeErrorMessage(err)}`);
-            return;
-          }
-          if (!result.reverted) return;
-          const ts = new Date().toISOString();
-          process.stderr.write(
-            `phantom-Done detected for ticket ${ticketId} — reverted to Todo (no completion_commit field)\n`,
-          );
-          try {
-            writeActivityEntry(statePath, {
-              event: 'phantom_done_detected',
-              source: 'pickle',
-              session: path.basename(sessionDir),
-              ticket: ticketId,
-              ts,
-            });
-          } catch (err) {
-            log(`phantom-Done watcher: writeActivityEntry threw (ignored): ${safeErrorMessage(err)}`);
-          }
+          // Debounce: coalesce rapid-fire change events into a single read.
+          const existing = debounceTimers.get(ticketId);
+          if (existing) clearTimeout(existing);
+          const timer = setTimeout(() => {
+            debounceTimers.delete(ticketId);
+            if (phantomDoneWatchersClosed) return;
+            handlePhantomDoneEvent(ticketId, ticketFile, ticketWorkingDir, false);
+          }, phantomDoneDebounceMs);
+          debounceTimers.set(ticketId, timer);
         });
         phantomDoneWatchers.push(watcher);
         installed++;
