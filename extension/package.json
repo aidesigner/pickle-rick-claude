@@ -23,7 +23,8 @@
     "coverage:delta": "bash scripts/coverage-delta.sh",
     "test:integration": "node bin/test-runner.js --tier integration",
     "test:expensive": "node bin/test-runner.js --tier expensive",
-    "test:behavioral": "node --test tests/feature-flag-baseline.test.js"
+    "test:behavioral": "node --test tests/feature-flag-baseline.test.js",
+    "wire-check": "bash scripts/check-wired.sh"
   },
   "_audit": {
     "flatted": "P3-hygiene: GHSA-25h7-pfq9-p65f HIGH (CVSS 7.5) DoS in parse(). Dev-only path: eslint->file-entry-cache->flat-cache->flatted. Not reachable in production. Track for eslint upgrade to resolve transitively.",

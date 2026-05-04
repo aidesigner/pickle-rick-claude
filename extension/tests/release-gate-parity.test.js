@@ -10,8 +10,16 @@ const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const CLAUDE_PATH = path.join(REPO_ROOT, 'CLAUDE.md');
 const CI_WORKFLOW = path.join(REPO_ROOT, '.github', 'workflows', 'ci.yml');
 const RELEASE_WORKFLOW = path.join(REPO_ROOT, '.github', 'workflows', 'release.yml');
-const CI_GATE_COMMAND = 'npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npx tsc && npm run test:fast && npm run test:integration';
-const RELEASE_GATE_COMMAND = `${CI_GATE_COMMAND} && RUN_EXPENSIVE_TESTS=1 npm run test:expensive`;
+const AUDIT_SCRIPTS = [
+  'bash scripts/audit-test-tiers.sh',
+  'bash scripts/audit-test-isolation.sh',
+  'bash scripts/audit-fix-commits.sh',
+  'bash scripts/audit-canary-flip.sh',
+  'bash scripts/audit-bundle-thesis.sh',
+  'bash scripts/audit-quarantine.sh',
+  'bash scripts/audit-trap-door-enforcement.sh',
+].join(' && ');
+const RELEASE_GATE_COMMAND = `npx tsc --noEmit && npx eslint src/ --max-warnings=-1 && npx tsc && ${AUDIT_SCRIPTS} && npm run test:fast && npm run test:integration && RUN_EXPENSIVE_TESTS=1 npm run test:expensive`;
 
 function versioningSection(markdown) {
   const lines = markdown.split(/\r?\n/);
@@ -47,15 +55,14 @@ test('release workflow gate matches outer CLAUDE.md Versioning gate', () => {
   );
 });
 
-test('ci workflow runs PR-blocking non-expensive gate', () => {
+test('ci workflow runs full gate on push and PR to main', () => {
   const workflow = readFileSync(CI_WORKFLOW, 'utf8');
 
   assert.match(workflow, /^\s*pull_request:\s*$/m);
   assert.match(workflow, /^\s*push:\s*$/m);
   assert.match(workflow, /^\s*-\s*main\s*$/m);
   assert.ok(
-    runCommands(workflow).some(command => command.includes(CI_GATE_COMMAND)),
-    'ci.yml must contain the fast and integration gate command',
+    runCommands(workflow).some(command => command.includes(RELEASE_GATE_COMMAND)),
+    'ci.yml must contain the full gate command including audit scripts and expensive tests',
   );
-  assert.doesNotMatch(workflow, /test:expensive/);
 });
