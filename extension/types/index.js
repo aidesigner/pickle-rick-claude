@@ -189,6 +189,9 @@ export const VALID_ACTIVITY_EVENTS = [
     'phase_transition',
     'extension_dir_fallback',
     'halt',
+    'pkgjson_only_revert_detected',
+    'pkgjson_full_drift_detected',
+    'pkgjson_dep_or_src_missing',
 ];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {

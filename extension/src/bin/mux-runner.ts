@@ -2075,6 +2075,53 @@ function processReviewClean(ctx: LoopContext): LoopAction {
   return { kind: 'break', reason: 'success' };
 }
 
+export function detectPkgJsonVersionDrift(
+  srcPath: string,
+  depPath: string,
+  statePath: string,
+): void {
+  const ts = new Date().toISOString();
+  let srcPkg: Record<string, unknown>;
+  let depPkg: Record<string, unknown>;
+
+  try {
+    srcPkg = JSON.parse(fs.readFileSync(srcPath, 'utf-8')) as Record<string, unknown>;
+  } catch {
+    writeActivityEntry(statePath, { event: 'pkgjson_dep_or_src_missing', src_path: srcPath, dep_path: depPath, ts });
+    return;
+  }
+  try {
+    depPkg = JSON.parse(fs.readFileSync(depPath, 'utf-8')) as Record<string, unknown>;
+  } catch {
+    writeActivityEntry(statePath, { event: 'pkgjson_dep_or_src_missing', src_path: srcPath, dep_path: depPath, ts });
+    return;
+  }
+
+  const srcVersion = String(srcPkg.version ?? '');
+  const depVersion = String(depPkg.version ?? '');
+
+  if (srcVersion === depVersion) return;
+
+  const srcOther = Object.fromEntries(Object.entries(srcPkg).filter(([k]) => k !== 'version'));
+  const depOther = Object.fromEntries(Object.entries(depPkg).filter(([k]) => k !== 'version'));
+  const onlyVersionDiffers = JSON.stringify(srcOther) === JSON.stringify(depOther);
+
+  const eventKind = onlyVersionDiffers ? 'pkgjson_only_revert_detected' : 'pkgjson_full_drift_detected';
+
+  if (onlyVersionDiffers) {
+    process.stderr.write(`[pickle-rick] pkgjson revert detected: src=${srcVersion} dep=${depVersion}\n`);
+  }
+
+  writeActivityEntry(statePath, {
+    event: eventKind,
+    src_version: srcVersion,
+    dep_version: depVersion,
+    src_path: srcPath,
+    dep_path: depPath,
+    ts,
+  });
+}
+
 async function main() {
   try {
     assertSchemaVersionDeployParity();
@@ -2180,6 +2227,15 @@ async function runMuxRunnerMain() {
     log(`ensureMonitorWindow: ${result.status}${result.reason ? ` (${result.reason})` : ''}`);
   } catch (err) {
     log(`ensureMonitorWindow: threw (ignored): ${safeErrorMessage(err)}`);
+  }
+
+  // R-PJV-2: one-shot package.json version drift detector.
+  try {
+    const srcPkgPath = path.join(ownerState.working_dir ?? '', 'extension', 'package.json');
+    const depPkgPath = path.join(extensionRoot, 'extension', 'package.json');
+    detectPkgJsonVersionDrift(srcPkgPath, depPkgPath, statePath);
+  } catch (err) {
+    log(`detectPkgJsonVersionDrift: threw (ignored): ${safeErrorMessage(err)}`);
   }
 
   // R-ICP-5: phantom-Done filesystem watcher. Catches Todo→Done flips that

@@ -424,6 +424,9 @@ export const VALID_ACTIVITY_EVENTS = [
   'phase_transition',
   'extension_dir_fallback',
   'halt',
+  'pkgjson_only_revert_detected',
+  'pkgjson_full_drift_detected',
+  'pkgjson_dep_or_src_missing',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];
