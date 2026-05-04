@@ -4,7 +4,7 @@ import * as path from 'path';
 import { execFileSync, spawn, spawnSync } from 'child_process';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, safeErrorMessage, } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
-import { buildWorkerInvocation } from '../services/backend-spawn.js';
+import { buildWorkerInvocation, resolveBackendFromStateFileWithSource } from '../services/backend-spawn.js';
 import { PromiseTokens, hasToken, Defaults, VALID_ACTIVITY_EVENTS, PipelineRunnerExitCode } from '../types/index.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { runAcPhaseGate } from '../services/ac-phase-gate.js';
@@ -41,7 +41,7 @@ export function warnIfCodexRequested(stateBackend, envBackend) {
  * Exported for tests.
  */
 export function buildRefinementWorkerInvocation(opts) {
-    const invocation = buildWorkerInvocation(REFINEMENT_BACKEND, {
+    const invocation = buildWorkerInvocation(opts.backend ?? REFINEMENT_BACKEND, {
         prompt: opts.prompt,
         addDirs: opts.addDirs,
     });
@@ -373,10 +373,15 @@ function spawnWorker(roleId, prompt, refinementDir, extensionRoot, timeout, work
     const includes = [extensionRoot, getDataRoot(), workingDir];
     if (sessionDir)
         includes.push(sessionDir);
+    const statePath = sessionDir ? path.join(sessionDir, 'state.json') : null;
+    const resolvedBackend = statePath
+        ? resolveBackendFromStateFileWithSource(statePath, REFINEMENT_BACKEND).backend
+        : REFINEMENT_BACKEND;
     const invocation = buildRefinementWorkerInvocation({
         prompt,
         addDirs: includes,
         maxTurns,
+        backend: resolvedBackend,
     });
     const env = buildRefinementEnv(process.env);
     const proc = spawn(invocation.cmd, invocation.args, {

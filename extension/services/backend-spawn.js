@@ -2,7 +2,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { BACKENDS } from '../types/index.js';
 import { StateManager } from './state-manager.js';
-const BACKEND_FLIP_REASON_TTL_MS = 60000;
 export function isBackend(value) {
     return typeof value === 'string' && BACKENDS.includes(value);
 }
@@ -12,26 +11,24 @@ export function isBackend(value) {
 // have been 'codex' wastes a whole Morty spawn with no signal.
 const _warnedBackends = new Set();
 const _sm = new StateManager();
+const BACKEND_FLIP_REASON_TTL_MS = 60_000;
 export function __resetBackendWarnings() {
     _warnedBackends.clear();
 }
-
 function parseBackendFlipTs(value) {
     if (typeof value !== 'string' || !value.trim())
         return null;
     const parsed = Date.parse(value);
     return Number.isNaN(parsed) ? null : parsed;
 }
-
 function isRecentFlipReason(timestampMs, nowMs) {
     if (timestampMs > nowMs)
         return false;
     return nowMs - timestampMs <= BACKEND_FLIP_REASON_TTL_MS;
 }
-
 function clearBackendFlipReasonFlags(statePath) {
     try {
-        _sm.update(statePath, (state) => {
+        _sm.update(statePath, state => {
             const flags = state.flags;
             if (typeof flags === 'object' && flags !== null) {
                 delete flags.backend_flip_reason;
@@ -43,9 +40,10 @@ function clearBackendFlipReasonFlags(statePath) {
         });
     }
     catch {
-        // fail-open: state mutation is optional
+        // fail-open: worker execution can still continue without flip-carve-out cleanup
     }
 }
+// eslint-disable-next-line complexity
 export function assertBackendPreSpawn(input) {
     if (input.source === 'refinement-lock' || input.source === 'cli-flag-override') {
         return { mode: 'match', resolvedBackend: input.resolvedBackend };
@@ -58,19 +56,20 @@ export function assertBackendPreSpawn(input) {
             return null;
         }
     })();
-    const stateBackend = isBackend(state === null || state === void 0 ? void 0 : state.backend) ? state === null || state === void 0 ? void 0 : state.backend : undefined;
+    const stateBackend = isBackend(state?.backend) ? state?.backend : undefined;
     if (!stateBackend || stateBackend === input.resolvedBackend) {
         return { mode: 'match', resolvedBackend: input.resolvedBackend, stateBackend };
     }
-    const flipReason = typeof (state === null || state === void 0 ? void 0 : state.flags)?.backend_flip_reason === 'string'
-        ? state.flags.backend_flip_reason
-        : null;
-    const flipTs = parseBackendFlipTs(state === null || state === void 0 ? void 0 : state.flags?.backend_flip_reason_ts);
+    const flipReason = typeof state?.flags?.backend_flip_reason === 'string' ? state.flags.backend_flip_reason : null;
+    const flipTs = parseBackendFlipTs(state?.flags?.backend_flip_reason_ts);
     if (!flipReason || flipTs === null || !isRecentFlipReason(flipTs, Date.now())) {
         return { mode: 'mismatch', resolvedBackend: input.resolvedBackend, stateBackend };
     }
-    clearBackendFlipReasonFlags(input.statePath);
-    return { mode: 'bypass', resolvedBackend: input.resolvedBackend, stateBackend };
+    if (flipReason && isRecentFlipReason(flipTs, Date.now())) {
+        clearBackendFlipReasonFlags(input.statePath);
+        return { mode: 'bypass', resolvedBackend: input.resolvedBackend, stateBackend };
+    }
+    return { mode: 'mismatch', resolvedBackend: input.resolvedBackend, stateBackend };
 }
 function warnBadBackend(sourceLabel, value) {
     const key = `${sourceLabel}:${value}`;
@@ -100,19 +99,42 @@ export function resolveBackend(source) {
         warnBadBackend('PICKLE_BACKEND env', env);
     return 'claude';
 }
-export function resolveBackendFromStateFile(statePath) {
-    // Refinement lock sentinel: short-circuit before any disk I/O so a stale or
-    // codex-stamped state.json cannot override the parent's locked-in claude.
-    // Mirrors resolveBackend — see comment above for the full rationale.
-    if (process.env.PICKLE_REFINEMENT_LOCK === '1')
-        return 'claude';
+export function resolveBackendFromStateFileWithSource(statePath, cliBackend) {
+    // Refinement lock is non-overridable: short-circuits on the lock variable
+    // before disk-I/O so a stale/hostile state.json cannot recover codex for a
+    // locked-in planning run.
+    if (process.env.PICKLE_REFINEMENT_LOCK === '1') {
+        return { backend: 'claude', source: 'refinement-lock' };
+    }
+    let parsed = null;
     try {
-        const parsed = _sm.read(statePath);
-        return resolveBackend(parsed);
+        parsed = _sm.read(statePath);
     }
     catch {
-        return resolveBackend(null);
+        // ignore read/parsing errors and continue to env/default fallback
     }
+    if (isBackend(parsed?.backend)) {
+        return { backend: parsed.backend, source: 'state' };
+    }
+    if (typeof parsed?.backend === 'string' && parsed.backend.length > 0) {
+        warnBadBackend('state', parsed.backend);
+    }
+    // Explicit CLI override should win over env and state for spawn-site callers
+    // that have validated or intentionally selected a backend (e.g. --backend on
+    // spawn-morty, or refinement hardcode).
+    if (cliBackend !== undefined) {
+        return { backend: cliBackend, source: 'cli-flag-override' };
+    }
+    const envBackend = process.env.PICKLE_BACKEND;
+    if (isBackend(envBackend))
+        return { backend: envBackend, source: 'env' };
+    if (typeof envBackend === 'string' && envBackend.length > 0) {
+        warnBadBackend('PICKLE_BACKEND env', envBackend);
+    }
+    return { backend: 'claude', source: 'default' };
+}
+export function resolveBackendFromStateFile(statePath) {
+    return resolveBackendFromStateFileWithSource(statePath).backend;
 }
 export function buildWorkerInvocation(backend, opts) {
     if (backend === 'codex')

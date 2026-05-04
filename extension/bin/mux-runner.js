@@ -8,7 +8,7 @@ import { PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, h
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
 import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractErrorSignature, recordIterationResult, resetCircuitBreaker } from '../services/circuit-breaker.js';
-import { buildManagerInvocation, resolveBackend, backendEnvOverrides } from '../services/backend-spawn.js';
+import { buildManagerInvocation, resolveBackend, resolveBackendFromStateFileWithSource, backendEnvOverrides } from '../services/backend-spawn.js';
 import { resolveCodexModel } from './spawn-morty.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { extractAssistantContent } from '../services/classifier-utils.js';
@@ -1785,7 +1785,7 @@ export async function processCompletionBranch(state, result, ctx) {
         catch { /* fall back to pre-iteration state */ }
         const decision = evaluateCodexManagerRelaunch(postState, collectTickets(ctx.sessionDir), ctx.cbState ?? null);
         if (decision.shouldRelaunch) {
-            const relaunchBackend = resolveBackend(postState);
+            const relaunchBackend = resolveBackendFromStateFileWithSource(ctx.statePath).backend;
             ctx.log(`${relaunchBackend} manager subprocess errored with ${decision.pendingCount} ticket(s) still pending — ` +
                 `relaunching (count ${decision.nextRelaunchCount}/${Defaults.CODEX_MANAGER_RELAUNCH_CAP}).`);
             recordCodexManagerRelaunch(ctx.statePath, ctx.sessionDir, decision, ctx.iteration, ctx.log);
@@ -2866,7 +2866,7 @@ async function runMuxRunnerMain() {
             catch { /* fall back */ }
             const relaunchDecision = evaluateCodexManagerRelaunch(postState, collectTickets(sessionDir), cbState);
             if (relaunchDecision.shouldRelaunch) {
-                const relaunchBackend = resolveBackend(postState);
+                const relaunchBackend = resolveBackendFromStateFileWithSource(statePath).backend;
                 log(`${relaunchBackend} manager subprocess errored with ${relaunchDecision.pendingCount} ticket(s) still pending — ` +
                     `relaunching (count ${relaunchDecision.nextRelaunchCount}/${Defaults.CODEX_MANAGER_RELAUNCH_CAP}).`);
                 recordCodexManagerRelaunch(statePath, sessionDir, relaunchDecision, iteration, log);

@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { Defaults } from '../types/index.js';
-import { resolveBackend, buildJudgeInvocation, buildWorkerInvocation, backendEnvOverrides, } from '../services/backend-spawn.js';
+import { resolveBackend, resolveBackendFromStateFileWithSource, buildJudgeInvocation, buildWorkerInvocation, backendEnvOverrides, } from '../services/backend-spawn.js';
 import { readMicroverseState, readRecoverableJsonObject, writeMicroverseState, recordIteration as stateRecordIteration, recordStall, recordAmnesiacExit, clearAmnesiacExits, recordFailedApproach, isConverged, compareMetric, classifyFailure, } from '../services/microverse-state.js';
 import { getHeadSha, resetToSha, isWorkingTreeDirty } from '../services/git-utils.js';
 import { writeStateFile, getExtensionRoot, isoCompactStamp, sleep, Style, formatTime, formatLocalDateKey, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, collectTickets, } from '../services/pickle-utils.js';
@@ -102,18 +102,21 @@ export async function runRemediatorForIteration(gateResult, sessionDir, workingD
         return { success: false };
     }
     const startMs = Date.now();
+    const statePath = path.join(sessionDir, 'state.json');
     // R-XBL-2: re-read state.backend immediately before exec via StateManager.read
     // so any mid-iteration backend flip is honored at the spawn site (single
     // source of truth). Falls back to the param if the state read fails.
-    // PICKLE_REFINEMENT_LOCK=1 still wins via resolveBackend's sentinel check.
-    let execBackend = backend;
+    // PICKLE_REFINEMENT_LOCK=1 still wins via resolveBackendFromStateFileWithSource.
+    const execBackend = resolveBackendFromStateFileWithSource(statePath, backend).backend;
+    // Preserve the legacy fallback behavior for codex model resolution: if the
+    // state file is missing/unreadable and the backend is still codex, use the
+    // caller-provided fallback model defaults.
     let remediatorState = null;
     try {
-        remediatorState = sm.read(path.join(sessionDir, 'state.json'));
-        execBackend = resolveBackend(remediatorState);
+        remediatorState = sm.read(statePath);
     }
     catch {
-        /* fall back to the param backend on read failure */
+        // Keep the fallback state null when the file is unreadable.
     }
     // Plumb codex model so remediator spawns honor `default_codex_model` /
     // `state.codex_model` instead of falling back to the codex CLI compiled-in
