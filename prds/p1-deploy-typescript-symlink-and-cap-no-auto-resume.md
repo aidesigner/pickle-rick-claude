@@ -117,4 +117,24 @@ done
 - install.sh location: `/Users/gregorydickson/loanlight/pickle-rick/pickle-rick-claude/install.sh`
 - The typescript runtime import: `extension/services/citadel/frontend-prop-drift-audit.js` (TS source — find the `import ts from 'typescript'` line near top)
 
+## Session Notes
+
+### 2026-05-04 evening — Bug C surfaced: install.sh leaves `extension/types/index.js` stale
+
+While running the bundle's keystone direct-execute (`9437b0c` R-CNAR-1 + `817e73c` R-XBL-2 + Worker's overlay commits), the **first** `bash install.sh` invocation completed cleanly with no errors but the deployed `~/.claude/pickle-rick/extension/types/index.js` md5 still pointed at the May 3 build — missing 8 events including `worker_spawn_backend_resolved`, `paused_session_orphan_demoted`, `pkgjson_only_revert_detected`, etc. Source `extension/types/index.js` had the new entries, but the rsync from `extension/` → `~/.claude/pickle-rick/extension/` either skipped or pre-empted by `--delete-excluded`.
+
+**User-visible symptom:** every spawn-morty invocation in run #2 emitted `WARN: ignoring unknown activity event worker_spawn_backend_resolved` to stderr × N (state-manager validator running deployed code rejects events not in deployed VALID_ACTIVITY_EVENTS). Activity-log fidelity was lost for the entire run.
+
+**Resolution:** re-running `bash install.sh` a second time DID produce md5 parity. So the rsync logic is correct — the problem is upstream timing. Most likely: `npx tsc` did not actually re-emit `extension/types/index.js` between the source TS edit and install.sh execution (tsc incremental cache + same-second mtimes is a known footgun). install.sh has a **schemaVersion parity gate** (`install.sh:250-258`) but no broader **content parity probe**.
+
+**Bug C — proposal (split out as slot 1q in MASTER_PLAN if not bundled here):**
+
+| Req | What | Where |
+|---|---|---|
+| **R-DTS-4** | install.sh forces clean tsc rebuild | Add `rm -f extension/types/index.js extension/services/state-manager.js extension/bin/spawn-morty.js && (cd extension && npx tsc)` BEFORE the rsync block at install.sh:282. Cost: ~3 sec on incremental rebuild, gives correctness. |
+| **R-DTS-5** | install.sh post-rsync md5 parity probe | After rsync, run `md5 source deployed | uniq -c` for the 5 most-trafficked compiled files (`types/index.js`, `services/state-manager.js`, `services/pickle-utils.js`, `bin/spawn-morty.js`, `bin/mux-runner.js`). Fail-loud if any mismatch — exits 1 with "stale deploy detected." |
+| **R-DTS-6** | install.sh emits a deploy report | One-line summary of bytes/files synced, parity-checked count, and final schemaVersion. So the operator can see at a glance that the deploy actually happened, not just that the script exited 0. |
+
+**Cross-reference:** Run #2 was on session `2026-05-04-f416c6cc`. tmux pane output around 17:00 shows the WARN spam. Re-deploy fix verified at end-of-turn — `md5 extension/types/index.js ~/.claude/pickle-rick/extension/types/index.js` produces identical hashes after the second install.sh.
+
 — Pickle Rick out. *belch*

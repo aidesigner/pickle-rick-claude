@@ -481,3 +481,43 @@ See `## Implementation Task Breakdown` table appended at end of this PRD after d
 | 730 | 50894a9f | Harden: test quality review of bundle subsystems | High | large | (per ticket Files section) |
 | 740 | aadcd07e | Audit: cross-reference consistency for bundle subsystems | High | large | (per ticket Files section) |
 | 750 | bdbf368d | Closer: bump 1.69.0 → 1.70.0 + closer-release-gate.sh + push 74+ commits + tag v1.70.0 | High | large | (per ticket Files section) |
+
+## Session Notes
+
+### 2026-05-04 evening — Run #2 — circuit-tripped after 28min, 5 commits landed
+
+**Commits:**
+- `9437b0c` — R-CNAR-1: TICKET_TIER_BUDGETS raised (mine, direct-execute)
+- `817e73c` — R-XBL-2: read-side SoT at 4 spawn sites (mine, direct-execute)
+- `a3641e3` — R-XBL-2: worker overlay pass (added `assertBackendPreSpawn` import + `worker_spawn_backend_mismatch` event prep)
+- `616f474` — R-XBL-2b: spawn-gate-remediator inheritance audit event
+- `95f2c37` — R-XBL-3: write-side tripwire (`assertBackendPreSpawn()` + `state.flags.backend_flip_reason` carve-out)
+
+**Path C direct-execute pattern justified:** the bundle's keystones (R-XBL-2, R-CNAR-1) needed to ship before the bundle could process them via the normal pickle loop, because *those exact bugs* were what blocked the previous run. Operator landed them manually, then the worker layered its own pass on top via the bundle. Both passes co-exist correctly (the worker's `assertBackendPreSpawn` augments rather than replaces the SoT read).
+
+**Run #2 failure timeline (16:59→17:28 local):**
+
+| t | event |
+|---|---|
+| 16:59:23 | tmux relaunch; pipeline-runner + mux-runner up |
+| 17:00 | first install.sh deployed compiled JS; `extension/types/index.js` md5 mismatch (slot 1q) — `WARN: ignoring unknown activity event worker_spawn_backend_resolved` from this point on |
+| 17:01–17:04 | R-XBL-2 / R-XBL-2b / R-XBL-3 worker passes commit (`a3641e3 616f474 95f2c37`); workers DON'T write `completion_commit:` to ticket frontmatter (slot 1p) |
+| ~17:15–17:23 | codex-spark MANAGER hallucinates: "I'll try one last time under Hermes for that ticket, which previously fa…" — writes `state.backend = 'hermes'` directly to disk (slot 1j H3 confirmed) |
+| 17:28:01 | Phantom-Done watcher correctly reverts `8224fc7f / 160e8816 / 4d7c4cfa` to Todo (no `completion_commit:` in frontmatter despite real git commits) |
+| 17:28:02–22 | iterations 3–6 fire in 20 sec (degenerate fast-loop); circuit breaker opens on tier=small budget=4 |
+| 17:28:22 | Pipeline exits `step=completed exit_reason=failed`, `0/4 phases` |
+
+**Three new findings filed in MASTER_PLAN as slots 1o / 1p / 1q:**
+
+1. **F1 / slot 1o — manager/worker backend split.** R12 ("Spark backend has unproven reliability") materialized at the manager tier. Fix: introduce `state.worker_backend` (optional). Manager runs `state.backend` (claude/sonnet — reliable narration); workers run `state.worker_backend` (codex-spark — cheap+parallel). ~15 LOC + state-field invariant + test. Symmetrical with `state.codex_model`. Eliminates F1 hallucination class entirely.
+2. **F2 / slot 1p — codex-spark worker `completion_commit:` contract violation.** Workers commit to git but skip the YAML field. Phantom-Done correctly reverts. Fix: post-commit wrapper auto-fills frontmatter from `git log -1 --format=%H -- <ticket-path>`, OR phantom-Done watcher cross-checks `git log` before reverting.
+3. **F3 / slot 1q — install.sh post-rsync md5 parity probe missing.** First install.sh after R-CNAR-1 + R-XBL-2 left `extension/types/index.js` deployed-stale (8 events missing). Fix: install.sh forces `rm types/index.js && tsc` BEFORE rsync, then post-rsync md5-parity asserts on 5 most-trafficked compiled files. Documented under prds/p1-deploy-typescript-symlink-and-cap-no-auto-resume.md as Bug C / R-DTS-4..6.
+
+**Run #3 prerequisites (operator checklist):**
+
+1. Restore phantom-reverted Done tickets — manually patch `completion_commit:` into frontmatter for `8224fc7f` (sha `a3641e3`), `160e8816` (sha `616f474`), `4d7c4cfa` (sha `95f2c37`). Set `status: Done`.
+2. Ship slot 1o (`state.worker_backend` field) — block run #3 on this.
+3. Reset session state: `state.backend='claude'`, `state.worker_backend='codex'`, `state.codex_model='gpt-5.3-codex-spark'`. Reset Failed/Skipped→Todo. Reset circuit_breaker.json to CLOSED.
+4. Verify install.sh deploy parity before tmux launch (`md5 extension/types/index.js ~/.claude/pickle-rick/extension/types/index.js`).
+
+R-XBL-3 is now deployed and will catch any residual backend flip pre-spawn — belt-and-suspenders even with the manager-role split.

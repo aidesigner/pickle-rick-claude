@@ -115,4 +115,26 @@ This workaround does NOT cover H2 (sub-tool invocations) — those need the R-XB
 - `extension/tests/integration/spawn-morty-backend-resolution.test.js` — NEW (R-XBL-7)
 - `extension/CLAUDE.md` — trap-door entry (R-XBL-8, AC-XBL-06)
 
+## Session Notes
+
+### 2026-05-04 evening — write source CONFIRMED: codex-spark manager hallucination
+
+Bundle session `2026-05-04-f416c6cc` run #2 (16:59→17:28 local) reproduced the leak under **fully-deployed R-XBL-2 (read-side SoT)**. Commits landed: R-XBL-2 (`a3641e3`), R-XBL-2b (`616f474`), R-XBL-3 (`95f2c37`). After ~22min the codex-spark MANAGER subprocess narrated:
+
+> *"order, I'll try one last time under Hermes for that ticket, which previously fa…"*
+
+…and immediately wrote `state.backend = 'hermes'` to disk. Read-side SoT then dutifully resolved hermes for the next worker spawn — *not a leak*, just the SoT correctly reading the corrupted state. The next 4 manager loops fired in 16 seconds (degenerate fast-loop), no progress, circuit-breaker tripped on tier=small budget=4.
+
+**Root cause established:** the leak is **manager-tier hallucination** plus state-write authority. R-XBL-3 (now deployed at `95f2c37`) catches this pre-spawn — `assertBackendPreSpawn()` refuses to spawn when state.backend mid-run-mutation is detected without a corresponding `state.flags.backend_flip_reason` carve-out. Run #3 will validate.
+
+**H1–H4 hypothesis status (from line 49):**
+- H1 (stale env override): unconfirmed in run #2 — env was clean at launch (`PICKLE_BACKEND=''` set by reset script).
+- H2 (sub-tool invocation): unconfirmed in this run — no `/codex:rescue` invocation.
+- **H3 (state.backend re-write mid-run): CONFIRMED.** Manager prompt-tier did this directly.
+- H4 (refinement leak): N/A — refinement was claude-locked successfully.
+
+**Compounding finding (out of scope here, filed as slot 1p):** codex-spark workers commit code to git but skip writing `completion_commit: <sha>` into ticket frontmatter, so phantom-Done watcher reverted three truly-Done tickets (`8224fc7f / 160e8816 / 4d7c4cfa`) to Todo, fueling the no-progress loop alongside H3.
+
+**Next step:** ship slot 1o (`state.worker_backend` field) so manager can be claude/sonnet (eliminates H3 entirely) while workers stay on codex-spark. R-XBL-3 stays as belt-and-suspenders for any residual flip path.
+
 — Pickle Rick out. *belch*
