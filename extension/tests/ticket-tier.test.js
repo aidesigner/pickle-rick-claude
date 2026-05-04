@@ -52,10 +52,10 @@ function stateFor(ticketId) {
 
 test('ticket-tier.budget-mapping: all tiers map to documented iteration and worker timeout budgets', () => {
   const cases = [
-    ['trivial', 2, 5 * 60],
-    ['small', 5, 10 * 60],
-    ['medium', 15, 20 * 60],
-    ['large', 30, 40 * 60],
+    ['trivial', 5, 5 * 60],
+    ['small', 10, 10 * 60],
+    ['medium', 30, 20 * 60],
+    ['large', 60, 80 * 60],
   ];
 
   const root = tempRoot();
@@ -92,7 +92,7 @@ test('ticket-tier.budget-mapping: all tiers map to documented iteration and work
 test('ticket-tier.default: missing and invalid tiers default to medium budget', () => {
   const expected = {
     tier: 'medium',
-    max_iterations: 15,
+    max_iterations: 30,
     worker_timeout_seconds: 20 * 60,
   };
 
@@ -127,11 +127,11 @@ test('ticket-tier.budget-mapping: cached tier is stable when frontmatter changes
     const budget = applyTicketTierBudget(state, root);
     assert.deepEqual(budget, {
       tier: 'large',
-      max_iterations: 30,
-      worker_timeout_seconds: 40 * 60,
+      max_iterations: 60,
+      worker_timeout_seconds: 80 * 60,
     });
-    assert.equal(state.max_iterations, 30);
-    assert.equal(state.worker_timeout_seconds, 40 * 60);
+    assert.equal(state.max_iterations, 60);
+    assert.equal(state.worker_timeout_seconds, 80 * 60);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
