@@ -71,9 +71,14 @@ function runCell({ pidLabel, active, mtime, iteration }) {
     const recovered = sm.read(stateFile);
 
     // Mirror approveEarlyIfNeeded: inactive state always approves before reaching classifyDecision.
-    if (recovered.active !== true) return 'approve';
+    // The "reason" for an early approve is whatever recovery stamped on exit_reason
+    // (e.g. 'orphan-paused-no-claim') or the literal 'inactive' for plain active=false.
+    if (recovered.active !== true) {
+      return { decision: 'approve', reason: recovered.exit_reason ?? 'inactive' };
+    }
 
-    return classifyDecision(recovered, '', '').decision;
+    const result = classifyDecision(recovered, '', '');
+    return { decision: result.decision, reason: result.reason ?? result.logMessage ?? '' };
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
@@ -89,11 +94,20 @@ for (const [key, oracle] of Object.entries(FIXTURES)) {
   const iteration = parseInt(iterLabel, 10);
 
   test(key, () => {
-    const got = runCell({ pidLabel, active, mtime: mtimeLabel, iteration });
+    const { decision, reason } = runCell({ pidLabel, active, mtime: mtimeLabel, iteration });
+    const tuple = `(pid=${pidLabel}, active=${activeLabel}, mtime=${mtimeLabel}, iteration=${iterLabel})`;
     assert.equal(
-      got,
+      decision,
       oracle.expected,
-      `(pid=${pidLabel}, active=${activeLabel}, mtime=${mtimeLabel}, iteration=${iterLabel}) expected=${oracle.expected} got=${got}`,
+      `${tuple} expected=${oracle.expected} got=${decision} reason="${reason}"`,
+    );
+    // Case-insensitive substring keeps the fixture vocabulary-agnostic across
+    // BLOCK reason prose ("🥒 **Pickle Rick Loop Active** ..."), APPROVE logMessage
+    // prose ("Decision: APPROVE (Max iterations reached: 10/10)"), and recovery-set
+    // exit_reason values ("orphan-paused-no-claim").
+    assert.ok(
+      reason.toLowerCase().includes(oracle.reason_substring.toLowerCase()),
+      `${tuple} expected reason to include "${oracle.reason_substring}" but got "${reason}"`,
     );
   });
 }
