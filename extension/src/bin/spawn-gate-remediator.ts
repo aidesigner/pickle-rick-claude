@@ -2,7 +2,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { isoCompactStamp, safeErrorMessage } from '../services/pickle-utils.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
-import type { GateResult, GateFailure } from '../types/index.js';
+import { isBackend } from '../services/backend-spawn.js';
+import type { Backend, GateResult, GateFailure } from '../types/index.js';
+import { writeActivityEntry } from '../services/state-manager.js';
 
 const USAGE = 'Usage: spawn-gate-remediator --gate-result <path> --session-root <path> --reason strict|per-iteration';
 const LOCKFILE_NAME = 'remediator.lockfile';
@@ -161,6 +163,12 @@ interface ParsedRemediatorFlags {
   gateResultPath: string;
   sessionRoot: string;
   reason: string;
+}
+
+function resolveInheritedBackend(): { backend: Backend; source: 'inherited-from-caller' } {
+  const envBackend = process.env.PICKLE_BACKEND;
+  if (isBackend(envBackend)) return { backend: envBackend, source: 'inherited-from-caller' };
+  return { backend: 'claude', source: 'inherited-from-caller' };
 }
 
 function resolveDeps(opts: SpawnGateRemediatorOpts): SpawnGateRemediatorDeps {
@@ -345,6 +353,20 @@ export async function spawnGateRemediatorMain(opts: SpawnGateRemediatorOpts): Pr
   process.on('exit', cleanup);
 
   try {
+    const { backend, source } = resolveInheritedBackend();
+    try {
+      writeActivityEntry(path.join(sessionRoot, 'state.json'), {
+        event: 'worker_spawn_backend_resolved',
+        ts: new Date().toISOString(),
+        backend,
+        source,
+        pid: process.pid,
+        session: path.basename(sessionRoot),
+      });
+    } catch {
+      /* best-effort telemetry */
+    }
+
     const failingFileContents = loadFailingFileContents(gateResultLoad.gateResult, deps.readFile);
     const trapDoorSection = loadTrapDoorSection(extensionClaudeMdContent, deps.readFile);
 
