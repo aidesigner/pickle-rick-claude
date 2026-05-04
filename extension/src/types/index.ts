@@ -105,6 +105,7 @@ export interface State {
 export const FALSE_EPIC_THRESHOLD = 3;
 
 export type Backend = 'claude' | 'codex' | 'hermes';
+export type BackendResolutionSource = 'state' | 'env' | 'settings' | 'default' | 'refinement-lock' | 'cli-flag-override';
 
 export const BACKENDS: readonly Backend[] = ['claude', 'codex', 'hermes'] as const;
 
@@ -438,9 +439,11 @@ export const VALID_ACTIVITY_EVENTS = [
   'pkgjson_full_drift_detected',
   'pkgjson_dep_or_src_missing',
   'paused_session_orphan_demoted',
+  'worker_spawn_backend_resolved',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];
+export type ActivityEventSource = 'pickle' | 'hook' | 'persona' | BackendResolutionSource;
 
 export enum PipelineRunnerExitCode {
   Success = 0,
@@ -483,7 +486,7 @@ export interface RateLimitAction {
 export interface ActivityEvent {
   ts: string;
   event: ActivityEventType;
-  source: 'pickle' | 'hook' | 'persona';
+  source: ActivityEventSource;
   session?: string;
   epic?: string;
   ticket?: string;
@@ -528,6 +531,7 @@ export interface ActivityEvent {
   reason?: string;
   stall_category?: StallCategory;
   stall_recovery_action?: StallRecoveryAction;
+  pid?: number;
 }
 
 // ---------------------------------------------------------------------------

@@ -104,6 +104,12 @@ function readWorkerLogFile(ticketDir) {
     return fs.readFileSync(path.join(ticketDir, workerLog), 'utf-8');
 }
 
+function readStateEvent(statePath, eventName) {
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    const activity = Array.isArray(state.activity) ? state.activity : [];
+    return activity.find((entry) => entry?.event === eventName);
+}
+
 function writeCodexSpawnHarness(tmpDir, ticketId) {
     writeExtensionSentinel(tmpDir);
     const sessionDir = path.join(tmpDir, 'session');
@@ -1232,6 +1238,9 @@ test('spawn-morty P2: heuristic OFF (default) — large tier on codex stays code
             `expected Backend: codex, got: ${combined}`);
         assert.ok(!combined.includes('backend routed: codex → claude'),
             'no routing override message expected when heuristic is OFF');
+        const event = readStateEvent(path.join(sessionDir, 'state.json'), 'worker_spawn_backend_resolved');
+        assert.equal(event?.backend, 'codex');
+        assert.equal(event?.source, 'state');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -1289,6 +1298,50 @@ test('spawn-morty P2: recovers disabled routing heuristic from newer dead settin
             `no routing override expected from stale enabled base, got: ${combined}`);
         assert.equal(fs.existsSync(path.join(tmpDir, 'pickle_settings.json.tmp.999999')), false,
             'dead settings tmp should be promoted and removed');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('spawn-morty P2: env backend overrides missing state backend and records env source', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        writeSettings(tmpDir, true);
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketDir = path.join(sessionDir, 'ticket-backend-env');
+        fs.mkdirSync(ticketDir, { recursive: true });
+
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            iteration: 1,
+            schema_version: 1,
+        }));
+
+        const shimDir = path.join(tmpDir, 'bin');
+        const shimLog = path.join(tmpDir, 'codex-env.json');
+        writeCodexShim(shimDir, shimLog);
+
+        const result = spawnSync(process.execPath, [SPAWN_MORTY_BIN,
+            'do thing',
+            '--ticket-id', 'ticket-backend-env',
+            '--ticket-path', ticketDir,
+            '--timeout', '30',
+        ], {
+            env: {
+                ...process.env,
+                EXTENSION_DIR: tmpDir,
+                PATH: `${shimDir}${path.delimiter}${process.env.PATH || ''}`,
+                PICKLE_BACKEND: 'codex',
+            },
+            encoding: 'utf-8',
+            timeout: 45000,
+        });
+
+        assert.equal(result.status, 1);
+        const event = readStateEvent(path.join(sessionDir, 'state.json'), 'worker_spawn_backend_resolved');
+        assert.equal(event?.backend, 'codex');
+        assert.equal(event?.source, 'env');
+        assert.equal(typeof event?.pid, 'number');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -1423,6 +1476,10 @@ process.exit(0);
             `expected override log line, got: ${combined}`);
         assert.ok(combined.includes('complexity_tier=large'),
             `expected reason=complexity_tier=large, got: ${combined}`);
+        const event = readStateEvent(path.join(sessionDir, 'state.json'), 'worker_spawn_backend_resolved');
+        assert.equal(event?.backend, 'claude');
+        assert.equal(event?.source, 'settings');
+        assert.equal(typeof event?.pid, 'number');
     } finally {
         fs.rmSync(tmpDir, { recursive: true, force: true });
     }
