@@ -102,21 +102,33 @@ export async function runRemediatorForIteration(gateResult, sessionDir, workingD
         return { success: false };
     }
     const startMs = Date.now();
+    // R-XBL-2: re-read state.backend immediately before exec via StateManager.read
+    // so any mid-iteration backend flip is honored at the spawn site (single
+    // source of truth). Falls back to the param if the state read fails.
+    // PICKLE_REFINEMENT_LOCK=1 still wins via resolveBackend's sentinel check.
+    let execBackend = backend;
+    let remediatorState = null;
+    try {
+        remediatorState = sm.read(path.join(sessionDir, 'state.json'));
+        execBackend = resolveBackend(remediatorState);
+    }
+    catch {
+        /* fall back to the param backend on read failure */
+    }
     // Plumb codex model so remediator spawns honor `default_codex_model` /
     // `state.codex_model` instead of falling back to the codex CLI compiled-in
     // default. Other backends ignore the field.
     let codexModel;
-    if (backend === 'codex') {
+    if (execBackend === 'codex') {
         try {
             const extRoot = getExtensionRoot();
-            const remediatorState = sm.read(path.join(sessionDir, 'state.json'));
-            codexModel = resolveCodexModel(extRoot, remediatorState);
+            codexModel = resolveCodexModel(extRoot, remediatorState ?? sm.read(path.join(sessionDir, 'state.json')));
         }
         catch {
             codexModel = resolveCodexModel(getExtensionRoot(), null);
         }
     }
-    const invocation = buildWorkerInvocation(backend, {
+    const invocation = buildWorkerInvocation(execBackend, {
         prompt: briefContent,
         addDirs: [workingDir],
         ...(codexModel ? { model: codexModel } : {}),
@@ -126,7 +138,7 @@ export async function runRemediatorForIteration(gateResult, sessionDir, workingD
             cwd: workingDir,
             timeout: remediatorTimeoutS * 1000,
             stdio: 'pipe',
-            env: { ...process.env, ...backendEnvOverrides(backend) },
+            env: { ...process.env, ...backendEnvOverrides(execBackend) },
         });
     }
     catch (err) {

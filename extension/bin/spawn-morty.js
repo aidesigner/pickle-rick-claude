@@ -302,10 +302,21 @@ export function parseAndValidateArgs(argv) {
         sessionRoot: path.dirname(ticketPath),
         sessionLogPath: path.join(ticketPath, `worker_session_${process.pid}.log`),
         backend: 'claude',
+        backendOverride: parseBackendOverrideArg(argv),
         timeout: parseTimeoutArg(argv),
         outputFormat: parseOutputFormatArg(argv),
         isReviewTicket: argv.includes('--review'),
     };
+}
+export function parseBackendOverrideArg(argv) {
+    const idx = argv.indexOf('--backend');
+    if (idx === -1)
+        return null;
+    const value = requireFlagValue(argv, idx);
+    if (!isBackend(value)) {
+        die(`Error: --backend must be one of claude, codex, hermes (got ${JSON.stringify(value)}).`);
+    }
+    return value;
 }
 export function resolveEffectiveTimeout(configuredTimeoutSec, parentState, wallClockNowMs) {
     const maxMins = Number(parentState?.max_time_minutes);
@@ -473,9 +484,13 @@ function readTicketInfo(ticketFilePath) {
     }
 }
 function resolveBackendFromStateOrEnv(sessionRoot) {
+    // R-XBL-2: read state.backend exclusively via StateManager.read() — the
+    // canonical recovery-aware reader. NEVER fall back to readRecoverableJsonObject
+    // here; orphan tmp recovery + dead-pid demotion are guarantees we want at the
+    // spawn site. See trap door extension/CLAUDE.md src/bin/spawn-morty.ts (R-XBL-2).
     const statePath = path.join(sessionRoot, 'state.json');
     try {
-        const state = readRecoverableJsonObject(statePath);
+        const state = sm.read(statePath);
         if (isBackend(state?.backend))
             return { backend: state.backend, source: 'state' };
     }
@@ -504,9 +519,17 @@ function applyHeuristicBackendRouting(sessionBackend, ticketInfo) {
     console.error(`[spawn-morty] backend routed: codex → claude (reason: ${routedReason})`);
     return { backend: 'claude', source: 'settings' };
 }
-function routeBackend(sessionRoot, ticketInfo) {
+function routeBackend(sessionRoot, ticketInfo, backendOverride) {
+    // Refinement lock is non-overridable. Preserves the
+    // refinement-team-claude-only carve-out (R-XBL-2 spec).
     if (process.env.PICKLE_REFINEMENT_LOCK === '1') {
         return { backend: 'claude', source: 'refinement-lock' };
+    }
+    // R-XBL-2: `--backend <name>` CLI flag wins over state/env/heuristic. The
+    // caller emits a `worker_spawn_backend_override` activity event so the
+    // bypass is auditable.
+    if (backendOverride) {
+        return { backend: backendOverride, source: 'cli-flag-override' };
     }
     return applyHeuristicBackendRouting(resolveBackendFromStateOrEnv(sessionRoot), ticketInfo);
 }
@@ -761,7 +784,7 @@ async function main() {
     else if (effectiveTimeout < requestedTimeout) {
         console.log(`${Style.YELLOW}⚠️  Worker timeout clamped: ${effectiveTimeout}s${Style.RESET}`);
     }
-    const { backend, source } = routeBackend(parsed.sessionRoot, ticketInfo);
+    const { backend, source } = routeBackend(parsed.sessionRoot, ticketInfo, parsed.backendOverride);
     try {
         writeActivityEntry(path.join(parsed.sessionRoot, 'state.json'), {
             event: 'worker_spawn_backend_resolved',
@@ -772,6 +795,17 @@ async function main() {
             ticket: parsed.ticketId,
             session: path.basename(parsed.sessionRoot),
         });
+        if (source === 'cli-flag-override' && parsed.backendOverride) {
+            writeActivityEntry(path.join(parsed.sessionRoot, 'state.json'), {
+                event: 'worker_spawn_backend_override',
+                ts: new Date().toISOString(),
+                backend: parsed.backendOverride,
+                source,
+                pid: process.pid,
+                ticket: parsed.ticketId,
+                session: path.basename(parsed.sessionRoot),
+            });
+        }
     }
     catch {
         /* best-effort telemetry */
