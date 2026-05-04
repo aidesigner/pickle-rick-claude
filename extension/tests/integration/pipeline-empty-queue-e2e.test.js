@@ -76,14 +76,18 @@ test('pipeline-empty-queue post-completion contract (AC-RTC-04)', async (t) => {
       );
     });
 
-    await t.test('post-completion: state.completion_promise.ts is parseable ISO8601', () => {
-      // Guards against locale-dependent Date.toString() leaking into the field.
-      // new Date().toISOString() always emits ISO8601-with-Z; Date.parse of that
-      // is a finite number. NaN means the writer drifted.
-      const tsParsed = Date.parse(parsed?.ts);
-      assert.ok(
-        Number.isFinite(tsParsed),
-        `expected completion_promise.ts to parse as a finite Date but got ${parsed?.ts}`,
+    await t.test('post-completion: state.completion_promise.ts is round-trip-stable ISO-8601-Z', () => {
+      // Date.parse() accepts non-ISO formats like RFC 2822 ("Mon May 04 2026 12:00:00 GMT-0700"),
+      // locale strings ("5/4/2026"), and missing-Z forms ("2026-05-04 12:00:00") — all return
+      // finite numbers, masking writer drift the AC explicitly forbids ("valid ISO-8601").
+      // Round-trip via toISOString() is the strict test: only the canonical
+      // YYYY-MM-DDTHH:mm:ss.sssZ form survives unchanged.
+      const ts = parsed?.ts;
+      assert.equal(typeof ts, 'string', `expected ts to be a string but got ${typeof ts}`);
+      assert.equal(
+        new Date(ts).toISOString(),
+        ts,
+        `expected completion_promise.ts to be round-trip-stable ISO-8601-Z but got ${ts}`,
       );
     });
 
