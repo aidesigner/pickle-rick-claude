@@ -5,7 +5,9 @@
   "type": "module",
   "engines": {
     "node": "22.x",
-    "codex": "0.128.0"
+    "codex": "0.128.0",
+    "claude": "2.1.126",
+    "gh": "2.88.1"
   },
   "scripts": {
     "lint": "eslint src/",

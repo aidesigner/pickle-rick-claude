@@ -41,3 +41,12 @@ test('_audit.c8 documents the pinned coverage dependency', () => {
   assert.ok(packageJson._audit.c8);
   assert.equal(packageJson._audit.c8.version, packageJson.devDependencies.c8);
 });
+
+test('engines.claude and engines.gh exist as exact pins', () => {
+  const packageJson = readPackageJson();
+
+  assert.ok('claude' in packageJson.engines, 'engines.claude must exist');
+  assert.ok('gh' in packageJson.engines, 'engines.gh must exist');
+  assert.match(packageJson.engines.claude, /^\d+\.\d+\.\d+$/);
+  assert.match(packageJson.engines.gh, /^\d+\.\d+\.\d+$/);
+});
