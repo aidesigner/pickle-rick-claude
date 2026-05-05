@@ -680,6 +680,64 @@ test('mux-runner: runs readiness gate at iteration 0 before manager spawn', () =
     }
 });
 
+// R-TAQ-3: ticket audit gate halts before iteration-0 spawn when audit-ticket-bundle exits non-zero
+test('mux-runner.audit-bundle-halt: halts before manager spawn on defective tickets', () => {
+    const tmpRoot = makeTmpRoot();
+    try {
+        const sessionDir = path.join(tmpRoot, 'session');
+        // 8-char hex hash dir so audit-ticket-bundle.js listTicketDirs picks it up
+        const ticketDir = path.join(sessionDir, 'deadbeef');
+        fs.mkdirSync(ticketDir, { recursive: true });
+        // Body contains a backtick path that doesn't exist in git → path-drift (fatal) finding.
+        // working_dir is tmpRoot (not a git repo) so gitListFiles returns an empty Set,
+        // making every path-shaped token in the ticket body appear as drift.
+        fs.writeFileSync(path.join(ticketDir, 'linear_ticket_deadbeef.md'), [
+            '---',
+            'id: deadbeef',
+            'title: Phantom File Ticket',
+            'status: Todo',
+            'mapped_requirements: []',
+            '---',
+            '',
+            '# Description',
+            '',
+            'Modify `extension/src/does-not-exist-phantom.ts` to add a function.',
+            '',
+        ].join('\n'));
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            step: 'research',
+            iteration: 0,
+            max_iterations: 5,
+            worker_timeout_seconds: 1200,
+            original_prompt: 'test audit gate',
+            working_dir: tmpRoot,
+            command_template: 'pickle.md',
+            flags: {
+                // bypass readiness gate so we reach the ticket audit gate
+                skip_readiness_reason: 'test-skip-readiness-for-audit-test',
+            },
+        }, null, 2));
+
+        const result = run(path.resolve(__dirname, '../..'), [sessionDir]);
+        const runnerLog = fs.readFileSync(path.join(sessionDir, 'mux-runner.log'), 'utf-8');
+        const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+
+        assert.equal(result.status, 1);
+        assert.equal(state.active, false);
+        assert.equal(state.exit_reason, 'ticket_audit_failed');
+        assert.match(result.stderr + runnerLog, /TICKET AUDIT HALT/);
+        assert.match(result.stderr, /ticket audit failed/);
+        // No iteration log file → runIteration was never called (gate fired before spawn)
+        assert.ok(
+            !fs.existsSync(path.join(sessionDir, 'tmux_iteration_1.log')),
+            'Expected no tmux_iteration_1.log (manager should not have spawned)',
+        );
+    } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
 // F20: unknown template rejected (not present in extensionRoot/templates or ~/.claude/commands)
 test('mux-runner: rejects command_template not found in any directory', () => {
     const tmpRoot = makeTmpRoot();

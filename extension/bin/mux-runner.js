@@ -1342,6 +1342,38 @@ export function runMuxReadinessGate(input) {
     return result.status ?? 1;
 }
 /**
+ * Invokes audit-ticket-bundle.js on the session's ticket files immediately
+ * after runMuxReadinessGate exits 0 and BEFORE iteration-0 spawn.
+ * Non-zero exit → caller halts with exit_reason='ticket_audit_failed'.
+ * skipReason (from state.flags.skip_ticket_audit_reason) → bypassed.
+ */
+export function runTicketAuditGate(input) {
+    if (typeof input.skipReason === 'string' && input.skipReason.length > 0) {
+        input.log(`ticket audit gate bypassed via state.flags.skip_ticket_audit_reason: ${input.skipReason}`);
+        return { status: 'bypassed', reason: input.skipReason };
+    }
+    const localBinPath = path.join(input.extensionRoot, 'extension', 'bin', 'audit-ticket-bundle.js');
+    const installedBinPath = path.join(input.extensionRoot, 'bin', 'audit-ticket-bundle.js');
+    const binPath = fs.existsSync(localBinPath) ? localBinPath : installedBinPath;
+    if (!fs.existsSync(binPath)) {
+        input.log(`ticket audit gate skipped: ${binPath} not found`);
+        return { status: 'ok' };
+    }
+    const result = spawnSync(process.execPath, [binPath, input.sessionDir], {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    if (result.stdout)
+        process.stdout.write(result.stdout);
+    if (result.stderr)
+        process.stderr.write(result.stderr);
+    const exitCode = result.status ?? 1;
+    if (exitCode !== 0) {
+        return { status: 'failed', exitCode };
+    }
+    return { status: 'ok' };
+}
+/**
  * Best-effort append of a one-line marker to `pipeline-runner.log` in the
  * session directory. The pipeline-runner owns that file when it spawns
  * mux-runner; in standalone mux-runner runs the file may not exist (we never
@@ -1359,7 +1391,7 @@ export function appendPipelineRunnerMarker(sessionDir, message) {
     catch { /* non-critical — the marker is also in mux-runner.log */ }
 }
 const isHaltExit = (r) => r === 'cancelled' || r === 'limit' || r === 'timeout_repeat';
-const isFailureExit = (r) => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination' || r === 'iteration_cap_exhausted' || r === 'codex_unhealthy_consecutive_failures';
+const isFailureExit = (r) => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination' || r === 'iteration_cap_exhausted' || r === 'codex_unhealthy_consecutive_failures' || r === 'ticket_audit_failed';
 // ---------------------------------------------------------------------------
 // R-CNAR-6 — Spark codex smoke-run gate
 // ---------------------------------------------------------------------------
@@ -2335,6 +2367,7 @@ async function runMuxRunnerMain() {
     const rawProbeThreshold = Number(probeSettings.commit_pending_probe_threshold);
     const commitPendingProbeThreshold = Number.isFinite(rawProbeThreshold) && rawProbeThreshold > 0 ? rawProbeThreshold : 2;
     let readinessGateChecked = false;
+    let ticketAuditGateChecked = false;
     let smokeGateBypassEmitted = false;
     while (true) {
         let state;
@@ -2481,6 +2514,40 @@ async function runMuxRunnerMain() {
                 recordExitReason(statePath, 'readiness_halt');
                 safeDeactivate(statePath);
                 exitReason = 'error';
+                break;
+            }
+        }
+        // R-TAQ-3: ticket audit gate (slot: readiness → ticket-audit → spawn).
+        // Runs once on iteration-0 after readiness gate exits 0.
+        if (!ticketAuditGateChecked && curIter === 0) {
+            ticketAuditGateChecked = true;
+            const skipAuditReasonRaw = state.flags?.skip_ticket_audit_reason;
+            const skipAuditReason = typeof skipAuditReasonRaw === 'string' && skipAuditReasonRaw.length > 0 ? skipAuditReasonRaw : undefined;
+            const auditResult = runTicketAuditGate({
+                sessionDir,
+                extensionRoot,
+                log,
+                skipReason: skipAuditReason,
+            });
+            if (auditResult.status === 'bypassed') {
+                logActivity({
+                    event: 'ticket_audit_bypassed',
+                    source: 'pickle',
+                    session: path.basename(sessionDir),
+                    reason: auditResult.reason,
+                });
+            }
+            else if (auditResult.status === 'failed') {
+                log(`TICKET AUDIT HALT: audit-ticket-bundle exited ${auditResult.exitCode}; defects found — no manager spawn attempted`);
+                process.stderr.write(`[mux-runner] ticket audit failed (exit ${auditResult.exitCode}): defects must be resolved before the pipeline can proceed\n`);
+                logActivity({
+                    event: 'ticket_audit_failed',
+                    source: 'pickle',
+                    session: path.basename(sessionDir),
+                });
+                recordExitReason(statePath, 'ticket_audit_failed');
+                safeDeactivate(statePath);
+                exitReason = 'ticket_audit_failed';
                 break;
             }
         }

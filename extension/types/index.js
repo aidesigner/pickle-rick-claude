@@ -200,6 +200,8 @@ export const VALID_ACTIVITY_EVENTS = [
     'pipeline_auto_resumed',
     'smoke_gate_bypassed',
     'codex_unhealthy_consecutive_failures',
+    'ticket_audit_bypassed',
+    'ticket_audit_failed',
 ];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {

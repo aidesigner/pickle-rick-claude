@@ -134,6 +134,11 @@ export interface StateFlags {
    * out-of-band review.
    */
   skip_readiness_reason?: string;
+  /**
+   * If set, mux-runner bypasses the ticket audit gate (audit-ticket-bundle.js)
+   * on iter 0 and emits a `ticket_audit_bypassed` activity event with this reason.
+   */
+  skip_ticket_audit_reason?: string;
   [key: string]: unknown;
 }
 
@@ -446,6 +451,8 @@ export const VALID_ACTIVITY_EVENTS = [
   'pipeline_auto_resumed',
   'smoke_gate_bypassed',
   'codex_unhealthy_consecutive_failures',
+  'ticket_audit_bypassed',
+  'ticket_audit_failed',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];
