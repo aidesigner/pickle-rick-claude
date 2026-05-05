@@ -1,0 +1,174 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ActivityEventPayloadSchema",
+  "description": "Required-field schemas for 11 new activity event types (AC-EVENT-PAYLOAD-01). Validators read definitions[eventType] to check required top-level and nested gate_payload fields.",
+  "definitions": {
+    "backendEnum": {
+      "type": "string",
+      "enum": ["claude", "codex", "hermes"]
+    },
+    "backendResolutionSourceEnum": {
+      "type": "string",
+      "enum": ["state", "env", "settings", "default", "refinement-lock", "cli-flag-override"]
+    },
+    "worker_spawn_backend_resolved": {
+      "type": "object",
+      "required": ["event", "ts", "backend", "source", "pid"],
+      "properties": {
+        "event": { "type": "string", "const": "worker_spawn_backend_resolved" },
+        "ts": { "type": "string" },
+        "backend": { "$ref": "#/definitions/backendEnum" },
+        "source": { "$ref": "#/definitions/backendResolutionSourceEnum" },
+        "pid": { "type": "integer" }
+      }
+    },
+    "worker_spawn_backend_mismatch": {
+      "type": "object",
+      "required": ["event", "ts", "backend", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "worker_spawn_backend_mismatch" },
+        "ts": { "type": "string" },
+        "backend": { "$ref": "#/definitions/backendEnum" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["expected_backend"],
+          "properties": {
+            "expected_backend": { "$ref": "#/definitions/backendEnum" }
+          }
+        }
+      }
+    },
+    "worker_spawn_backend_override": {
+      "type": "object",
+      "required": ["event", "ts", "backend"],
+      "properties": {
+        "event": { "type": "string", "const": "worker_spawn_backend_override" },
+        "ts": { "type": "string" },
+        "backend": { "$ref": "#/definitions/backendEnum" }
+      }
+    },
+    "subtool_backend_override": {
+      "type": "object",
+      "required": ["event", "ts", "backend"],
+      "properties": {
+        "event": { "type": "string", "const": "subtool_backend_override" },
+        "ts": { "type": "string" },
+        "backend": { "$ref": "#/definitions/backendEnum" }
+      }
+    },
+    "worker_partial_lifecycle_exit": {
+      "type": "object",
+      "required": ["event", "ts", "ticket", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "worker_partial_lifecycle_exit" },
+        "ts": { "type": "string" },
+        "ticket": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["artifacts_missing", "session_log_size"],
+          "properties": {
+            "artifacts_missing": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "session_log_size": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "pipeline_auto_resumed": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "pipeline_auto_resumed" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["retry_index", "ticket_id", "session_done_count_at_retry"],
+          "properties": {
+            "retry_index": { "type": "integer", "minimum": 0 },
+            "ticket_id": { "type": "string" },
+            "session_done_count_at_retry": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "bundle_bootstrap_exemption_applied": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "bundle_bootstrap_exemption_applied" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["skip_readiness_reason", "skip_ticket_audit_reason"],
+          "properties": {
+            "skip_readiness_reason": { "type": "string" },
+            "skip_ticket_audit_reason": { "type": "string" }
+          }
+        }
+      }
+    },
+    "ticket_audit_bypassed": {
+      "type": "object",
+      "required": ["event", "ts", "reason"],
+      "properties": {
+        "event": { "type": "string", "const": "ticket_audit_bypassed" },
+        "ts": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+    "ticket_audit_manual_edit": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "ticket_audit_manual_edit" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["edit_count"],
+          "properties": {
+            "edit_count": { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    },
+    "smoke_gate_bypassed": {
+      "type": "object",
+      "required": ["event", "ts", "reason"],
+      "properties": {
+        "event": { "type": "string", "const": "smoke_gate_bypassed" },
+        "ts": { "type": "string" },
+        "reason": { "type": "string" }
+      }
+    },
+    "bundle_2026_05_04_closer_done": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "bundle_2026_05_04_closer_done" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["release_url"],
+          "properties": {
+            "release_url": { "type": "string" }
+          }
+        }
+      }
+    }
+  },
+  "oneOf": [
+    { "$ref": "#/definitions/worker_spawn_backend_resolved" },
+    { "$ref": "#/definitions/worker_spawn_backend_mismatch" },
+    { "$ref": "#/definitions/worker_spawn_backend_override" },
+    { "$ref": "#/definitions/subtool_backend_override" },
+    { "$ref": "#/definitions/worker_partial_lifecycle_exit" },
+    { "$ref": "#/definitions/pipeline_auto_resumed" },
+    { "$ref": "#/definitions/bundle_bootstrap_exemption_applied" },
+    { "$ref": "#/definitions/ticket_audit_bypassed" },
+    { "$ref": "#/definitions/ticket_audit_manual_edit" },
+    { "$ref": "#/definitions/smoke_gate_bypassed" },
+    { "$ref": "#/definitions/bundle_2026_05_04_closer_done" }
+  ]
+}
