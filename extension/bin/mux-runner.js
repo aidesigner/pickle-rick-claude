@@ -1994,6 +1994,50 @@ function processReviewClean(ctx) {
     ctxFinalize(ctx, 'success');
     return { kind: 'break', reason: 'success' };
 }
+/**
+ * R-WSE-2: Emit worker_partial_lifecycle_exit when research-review is APPROVED
+ * but downstream lifecycle artifacts are missing from the ticket dir.
+ */
+export function checkPartialLifecycleExit(sessionDir, statePath, ticketId) {
+    const ticketDir = path.join(sessionDir, ticketId);
+    let files;
+    try {
+        files = fs.readdirSync(ticketDir);
+    }
+    catch {
+        return;
+    }
+    if (!files.includes('research_review.md'))
+        return;
+    let reviewContent;
+    try {
+        reviewContent = fs.readFileSync(path.join(ticketDir, 'research_review.md'), 'utf-8');
+    }
+    catch {
+        return;
+    }
+    if (!reviewContent.trimEnd().endsWith('APPROVED'))
+        return;
+    const downstreamPrefixes = ['plan', 'conformance', 'code_review'];
+    const artifactsMissing = downstreamPrefixes.filter(prefix => !files.some(f => f === `${prefix}.md` || f.startsWith(`${prefix}_`)));
+    if (artifactsMissing.length === 0)
+        return;
+    let sessionLogSize = 0;
+    for (const file of files) {
+        if (/^worker_session_\d+\.log$/.test(file)) {
+            try {
+                sessionLogSize += fs.statSync(path.join(ticketDir, file)).size;
+            }
+            catch { /* ignore */ }
+        }
+    }
+    writeActivityEntry(statePath, {
+        event: 'worker_partial_lifecycle_exit',
+        source: 'pickle',
+        ticket: ticketId,
+        gate_payload: { artifacts_missing: artifactsMissing, session_log_size: sessionLogSize },
+    });
+}
 export function detectPkgJsonVersionDrift(srcPath, depPath, statePath) {
     const ts = new Date().toISOString();
     let srcPkg;
@@ -2642,6 +2686,13 @@ async function runMuxRunnerMain() {
         const preIterSha = readHeadCommit(iterWorkingDir);
         const outcome = await runIteration(sessionDir, iteration, extensionRoot, meeseeksModel);
         const result = outcome.completion;
+        // R-WSE-2: detect partial lifecycle exit (research-review APPROVED, downstream artifacts missing)
+        try {
+            const iterTicket = state.current_ticket;
+            if (iterTicket)
+                checkPartialLifecycleExit(sessionDir, statePath, iterTicket);
+        }
+        catch { /* best-effort — never block iteration on partial-lifecycle check failure */ }
         // Move iterLogFile computation BEFORE transition block (needed by classifyTicketCompletion)
         const iterLogFile = path.join(sessionDir, `tmux_iteration_${iteration}.log`);
         // Detect ticket transitions: validate completion before marking Done

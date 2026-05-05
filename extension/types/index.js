@@ -202,6 +202,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'codex_unhealthy_consecutive_failures',
     'ticket_audit_bypassed',
     'ticket_audit_failed',
+    'worker_partial_lifecycle_exit',
 ];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {
