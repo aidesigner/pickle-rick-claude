@@ -161,6 +161,18 @@ When writing acceptance criteria or analyzing PRD sections that reference activi
 
 When writing ACs that assert event emission, include the full event name and required payload fields. Do NOT invent event names — use only the names listed here or already present in \`extension/src/types/index.ts:VALID_ACTIVITY_EVENTS\`.`;
 
+export const PATH_VERIFICATION_PROMPT_SECTION = `## Path Verification & Forward-reference hygiene
+
+**Every file path you cite in \`## Files\` or \`## Locations\` MUST be verified via \`git ls-files <path>\` before being included in your output.** Follow this protocol for each path:
+
+1. Run \`git ls-files <path>\` in the working directory.
+2. Cite the verification command output inline — e.g., \`git ls-files src/bin/foo.ts\` → \`src/bin/foo.ts\` (confirmed at HEAD).
+3. If \`git ls-files\` returns empty (path not tracked), the file does not exist at HEAD. Mark it \`(forward-created)\` with a sibling-ticket reference per R-RTRC-7 annotation schema:
+   - Format: \`\\\`path/to/file.ts\\\` (created by ticket <8-char-hash-or-ticket-dir-basename)\` — annotation OUTSIDE backticks, separated by exactly one ASCII space.
+4. Backtick a path ONLY when \`git ls-files\` confirms it exists at HEAD. Never backtick stdlib/external-package imports or paths that do not yet exist.
+
+Consult the per-requirement disposition table at \`extension/src/data/bundle-disposition-2026-05-04.json\` (R-BUNDLE-DISPO-1) when citing paths — requirements with disposition \`DROP\` or \`REGRESSION-TEST-ONLY\` must not drive new file creation.`;
+
 const WORKER_ROLES = [
   { id: 'requirements' },
   { id: 'codebase' },
@@ -481,6 +493,7 @@ ${content}
 
   const outputInstructions = `${TICKET_COMPLEXITY_PROMPT_SECTION}
 ${AC_SHAPE_PROMPT_SECTION}
+${PATH_VERIFICATION_PROMPT_SECTION}
 
 ## Your Output
 
