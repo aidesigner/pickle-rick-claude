@@ -1,0 +1,12 @@
+{
+  "audited_at": "2026-05-05T07:03:03.995Z",
+  "packages": [
+    {
+      "name": "typescript",
+      "source_files": [
+        "src/services/citadel/frontend-prop-drift-audit.ts"
+      ],
+      "deploy_path": "/Users/gregorydickson/loanlight/pickle-rick/pickle-rick-claude/extension/node_modules/typescript"
+    }
+  ]
+}
