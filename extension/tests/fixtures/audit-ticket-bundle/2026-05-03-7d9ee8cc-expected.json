@@ -1,0 +1,14 @@
+{
+  "description": "Placeholder fixture for R-TAQ-6 backfill audit test. R-BUNDLE-2 will replace baseline-2026-05-03-7d9ee8cc/ with the real snapshot.",
+  "min_total_findings": 12,
+  "required_classes": [
+    "path-drift",
+    "self-reference",
+    "missing-deps",
+    "wrong-HEAD-assumptions",
+    "cross-doc-naming",
+    "cross-doc-naming-drift",
+    "hallucinated-premise",
+    "literal-value-drift"
+  ]
+}
