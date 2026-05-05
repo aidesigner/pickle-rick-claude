@@ -2358,6 +2358,25 @@ export function checkPartialLifecycleExit(sessionDir: string, statePath: string,
   });
 }
 
+/**
+ * R-WSE-3: Emit a stderr breadcrumb when a ticket has status Failed
+ * but its research_review.md ends in APPROVED.
+ */
+export function checkFailedAfterResearchApproved(sessionDir: string, ticketId: string): void {
+  let status: string | null;
+  try { status = getTicketStatus(sessionDir, ticketId); } catch { return; }
+  if (normalizeTicketStatus(status) !== 'failed') return;
+
+  const ticketDir = path.join(sessionDir, ticketId);
+  let reviewContent: string;
+  try { reviewContent = fs.readFileSync(path.join(ticketDir, 'research_review.md'), 'utf-8'); } catch { return; }
+  if (!reviewContent.trimEnd().endsWith('APPROVED')) return;
+
+  process.stderr.write(
+    `[warn] [${new Date().toISOString()}] ⚠ ticket ${ticketId} failed AFTER research APPROVED — see ${sessionDir}/${ticketId}/\n`,
+  );
+}
+
 export function detectPkgJsonVersionDrift(
   srcPath: string,
   depPath: string,
@@ -3047,9 +3066,11 @@ async function runMuxRunnerMain() {
     const result = outcome.completion;
 
     // R-WSE-2: detect partial lifecycle exit (research-review APPROVED, downstream artifacts missing)
+    // R-WSE-3: emit stderr breadcrumb when ticket Failed after research APPROVED
     try {
       const iterTicket = state.current_ticket;
       if (iterTicket) checkPartialLifecycleExit(sessionDir, statePath, iterTicket);
+      if (iterTicket) checkFailedAfterResearchApproved(sessionDir, iterTicket);
     } catch { /* best-effort — never block iteration on partial-lifecycle check failure */ }
 
     // Move iterLogFile computation BEFORE transition block (needed by classifyTicketCompletion)
