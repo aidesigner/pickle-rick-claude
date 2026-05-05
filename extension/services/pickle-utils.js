@@ -1080,6 +1080,38 @@ export function drainStreamJsonLines(logPath, offset, lineBuf, processor, emit) 
         return { offset, lineBuf };
     }
 }
+/**
+ * R-MWR-4: detect truncation of a file-tail watcher's current log.
+ *
+ * When the file at `logPath` is truncated (size shrinks below the
+ * caller's recorded `offset`), tail-style watchers must reset their
+ * offset and partial-line buffer so post-truncate content is consumed
+ * instead of skipped. Without this hook, `drainStreamJsonLines` and
+ * `drainLog` early-return on `size <= offset` and the watcher feeds a
+ * dead chunk forever.
+ *
+ * Returns the post-check offset and lineBuf, plus a `truncated` flag
+ * the caller uses to print exactly one dim `(reconnecting...)` line
+ * per disconnect (R-MWR-6: banner stays reserved for liveness-probe
+ * inactive exits, NOT for EOF).
+ *
+ * Returns the inputs unchanged if the file is missing or unreadable —
+ * those cases are owned by the caller's own `latestIterationLog` /
+ * worker-log discovery loop.
+ */
+export function detectLogTruncation(logPath, offset, lineBuf) {
+    try {
+        const { size } = fs.statSync(logPath);
+        if (size < offset) {
+            return { offset: 0, lineBuf: '', truncated: true };
+        }
+    }
+    catch {
+        // Missing or unreadable — caller will pick this up on its next
+        // discovery iteration. Do not mutate offset.
+    }
+    return { offset, lineBuf, truncated: false };
+}
 export function sleep(ms) {
     return new Promise((r) => setTimeout(r, ms));
 }

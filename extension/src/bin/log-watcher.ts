@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { Style, sleep, MatrixStyle, matrixSeparator, latestIterationLog, drainStreamJsonLines, safeErrorMessage } from '../services/pickle-utils.js';
+import { Style, sleep, MatrixStyle, matrixSeparator, latestIterationLog, drainStreamJsonLines, safeErrorMessage, detectLogTruncation } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 
 const sm = new StateManager();
@@ -149,6 +149,18 @@ async function main() {
       lineBuf = '';
       const n = path.basename(log, '.log').replace('tmux_iteration_', '');
       process.stdout.write(`\n${sep()}\n${MX.BRIGHT}▸ ITERATION ${n}${MX.R}\n${sep()}\n`);
+    }
+
+    // R-MWR-4: detect truncation of currentLog so post-truncate content
+    // is consumed instead of skipped by the size<=offset early-return.
+    // R-MWR-6: a dim `(reconnecting...)` line on EOF/truncation, NOT
+    // the `◤ FEED TERMINATED ◢` banner — banner stays reserved for the
+    // liveness-probe inactive exit below.
+    const truncCheck = detectLogTruncation(currentLog, offset, lineBuf);
+    if (truncCheck.truncated) {
+      offset = truncCheck.offset;
+      lineBuf = truncCheck.lineBuf;
+      process.stdout.write(`\n${MX.DIM}(reconnecting...)${MX.R}\n`);
     }
 
     const result = drainStreamJsonLines(currentLog, offset, lineBuf, processLine, emit);

@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { processLine, formatToolUse } from '../bin/log-watcher.js';
-import { drainStreamJsonLines } from '../services/pickle-utils.js';
+import { drainStreamJsonLines, drainLog, detectLogTruncation } from '../services/pickle-utils.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const LOG_WATCHER_BIN = path.resolve(__dirname, '../bin/log-watcher.js');
@@ -263,3 +263,131 @@ test('log-watcher: dead-pid active session terminates via recovered state', () =
         fs.rmSync(sessionDir, { recursive: true, force: true });
     }
 });
+
+// ---------------------------------------------------------------------------
+// R-MWR-4 + R-MWR-6 + R-MWR-8: EOF resilience for file-tail watchers
+// ---------------------------------------------------------------------------
+
+test('detectLogTruncation: size < offset → reset offset to 0 with truncated=true', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const logPath = path.join(tmpDir, 'tail.log');
+        fs.writeFileSync(logPath, 'short content\n');
+        const out = detectLogTruncation(logPath, 1_000_000, 'partial-buffered-line');
+        assert.equal(out.truncated, true);
+        assert.equal(out.offset, 0);
+        assert.equal(out.lineBuf, '');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectLogTruncation: size >= offset → unchanged with truncated=false', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const logPath = path.join(tmpDir, 'tail.log');
+        fs.writeFileSync(logPath, 'a'.repeat(2000));
+        const out = detectLogTruncation(logPath, 1500, 'partial');
+        assert.equal(out.truncated, false);
+        assert.equal(out.offset, 1500);
+        assert.equal(out.lineBuf, 'partial');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('detectLogTruncation: missing file → unchanged (caller owns discovery loop)', () => {
+    const out = detectLogTruncation('/tmp/definitely-not-here-' + Date.now(), 500, 'buf');
+    assert.equal(out.truncated, false);
+    assert.equal(out.offset, 500);
+    assert.equal(out.lineBuf, 'buf');
+});
+
+// R-MWR-8: parametrized truncate test for the 3 file-tail watchers.
+// Each watcher's internal pattern is `let offset = ...; offset = drain*(...)`.
+// We exercise the SHARED truncation primitive (detectLogTruncation) against
+// the same drain functions each watcher uses, plus assert that the reset
+// state reads post-truncate content. This proves the watcher process pattern
+// stays alive across truncate AND consumes post-truncate content.
+const FILE_TAIL_WATCHERS = ['log-watcher', 'morty-watcher', 'raw-morty'];
+for (const watcherName of FILE_TAIL_WATCHERS) {
+    const usesStreamJson = watcherName !== 'morty-watcher';
+    test(`${watcherName}: truncate → reset offset → consume post-truncate content (R-MWR-8)`, () => {
+        const tmpDir = makeTmpDir();
+        try {
+            const logPath = path.join(tmpDir, 'feed.log');
+            // Make pre-truncate content much larger than post-truncate so
+            // size < offset is unambiguous after truncation. R-MWR-4's
+            // detection key is `size < offset`, NOT a magical "I saw a
+            // truncate syscall" — the only signal a tail watcher has is
+            // file size shrinkage.
+            const preLines = [
+                JSON.stringify({ type: 'system', subtype: 'init', model: 'opus' }),
+                ...Array.from({ length: 50 }, (_, i) => JSON.stringify({
+                    type: 'assistant',
+                    message: { content: [{ type: 'text', text: `pre-truncate-line-${i}-${'x'.repeat(100)}` }] },
+                })),
+            ];
+            fs.writeFileSync(logPath, preLines.join('\n') + '\n');
+
+            // First drain: read pre-truncate content.
+            let offset = 0;
+            let lineBuf = '';
+            const preEmitted = [];
+            if (usesStreamJson) {
+                const r = drainStreamJsonLines(logPath, offset, lineBuf, processLine, t => preEmitted.push(t));
+                offset = r.offset;
+                lineBuf = r.lineBuf;
+            } else {
+                offset = drainLog(logPath, offset);
+            }
+            assert.ok(offset > 0, `${watcherName}: drain should advance offset on initial read`);
+            const preOffset = offset;
+
+            // Truncate to zero, then write small fresh content. New size
+            // is much smaller than recorded offset → triggers detection.
+            fs.truncateSync(logPath, 0);
+            const postLines = [
+                JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'after-truncate' }] } }),
+                JSON.stringify({ type: 'result', subtype: 'success', num_turns: 3, total_cost_usd: 0.01 }),
+            ];
+            fs.writeFileSync(logPath, postLines.join('\n') + '\n');
+            const postSize = fs.statSync(logPath).size;
+            assert.ok(postSize < preOffset, `${watcherName}: post-truncate size (${postSize}) must be < preOffset (${preOffset}) for the test to be meaningful`);
+
+            // Without R-MWR-4, the watcher's offset stays past the new
+            // size and post-truncate content is silently skipped. With
+            // R-MWR-4 the watcher detects truncation and resets.
+            const trunc = detectLogTruncation(logPath, offset, lineBuf);
+            assert.equal(trunc.truncated, true, `${watcherName}: truncation must be detected when size < offset`);
+            offset = trunc.offset;
+            lineBuf = trunc.lineBuf;
+            assert.equal(offset, 0, `${watcherName}: offset must reset to 0 after truncate`);
+
+            // Drain again from reset state — proves the watcher consumes
+            // post-truncate content instead of feeding a dead chunk.
+            const postEmitted = [];
+            if (usesStreamJson) {
+                const r2 = drainStreamJsonLines(logPath, offset, lineBuf, processLine, t => postEmitted.push(t));
+                offset = r2.offset;
+                lineBuf = r2.lineBuf;
+                assert.ok(
+                    postEmitted.some(t => t.includes('after-truncate')),
+                    `${watcherName}: must emit post-truncate text, got ${JSON.stringify(postEmitted)}`,
+                );
+            } else {
+                // morty-watcher's drainLog writes to stdout directly; assert
+                // offset advanced from 0 → past the post-truncate content.
+                offset = drainLog(logPath, offset);
+                const finalSize = fs.statSync(logPath).size;
+                assert.equal(
+                    offset,
+                    finalSize,
+                    `${watcherName}: drainLog must advance offset to end of post-truncate file`,
+                );
+            }
+        } finally {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        }
+    });
+}

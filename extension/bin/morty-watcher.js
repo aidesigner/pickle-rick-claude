@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { Style, sleep, drainLog, MatrixStyle, matrixSeparator, safeErrorMessage } from '../services/pickle-utils.js';
+import { Style, sleep, drainLog, MatrixStyle, matrixSeparator, safeErrorMessage, detectLogTruncation } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 const ARTIFACT_IGNORE = new Set(['state.json']);
 const ARTIFACT_RECENCY_MS = 30000;
@@ -167,6 +167,16 @@ async function main() {
                 const pid = path.basename(latest.logPath, '.log').replace('worker_session_', '');
                 process.stdout.write(`\n${sep()}\n${MX.WARN}▸ RETRY (PID ${pid})${MX.R}\n${sep()}\n`);
             }
+        }
+        // R-MWR-4: detect truncation of currentLog so post-truncate content
+        // is consumed instead of skipped by drainLog's size<=offset early-return.
+        // R-MWR-6: a dim `(reconnecting...)` line on EOF/truncation, NOT
+        // the `◤ FEED TERMINATED ◢` banner — banner stays reserved for the
+        // liveness-probe inactive exit below.
+        const truncCheck = detectLogTruncation(currentLog, offset, '');
+        if (truncCheck.truncated) {
+            offset = truncCheck.offset;
+            process.stdout.write(`\n${MX.DIM}(reconnecting...)${MX.R}\n`);
         }
         offset = drainLog(currentLog, offset);
         try {
