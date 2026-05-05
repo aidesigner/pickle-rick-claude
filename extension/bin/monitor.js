@@ -17,8 +17,31 @@ const sm = new StateManager();
  * AC-SSV-07: 2000ms is long enough to ride out routine pane redraws on
  * busy machines but short enough that a wedged pane is detected before
  * the user reaches for `kill -9`.
+ *
+ * R-MWR-rename: this is the STDOUT-write-backpressure watchdog. It is a
+ * DIFFERENT concept from `RESPAWN_WATCHDOG_INTERVAL_MS` (the dead-pane
+ * respawn interval used by `startRespawnWatchdog`). Naming convention
+ * established for R-MWR Section E to avoid R7 symbol collision: every
+ * dead-pane respawn symbol uses the `RESPAWN_WATCHDOG_*` prefix; every
+ * stdout-wedge symbol keeps the existing `MONITOR_STDOUT_WATCHDOG_*`
+ * prefix. The two scopes never share state.
  */
 export const MONITOR_STDOUT_WATCHDOG_MS = 2000;
+/**
+ * Interval (ms) at which the monitor pane re-runs `restartDeadWatcherPanes`
+ * to revive dashboard/log/morty/raw watcher panes that died mid-iteration.
+ *
+ * R-MWR-1: continuous watchdog. Without it, watcher panes that crash
+ * after `ensureMonitorWindow` returns "exists" stay dead until the next
+ * mux-runner phase boundary — operators see frozen panes for the rest of
+ * the pipeline.
+ *
+ * R-MWR-rename: deliberately distinct from `MONITOR_STDOUT_WATCHDOG_MS`
+ * (which guards a synchronous stdout write inside this very monitor).
+ * The RESPAWN_ prefix marks "dead-pane respawn" scope; do NOT share the
+ * symbol with stdout-watchdog code paths.
+ */
+export const RESPAWN_WATCHDOG_INTERVAL_MS = 30_000;
 /**
  * Write `chunk` to `sink`, returning a promise that resolves once the
  * write has flushed (or the kernel has reported drain when backpressure
