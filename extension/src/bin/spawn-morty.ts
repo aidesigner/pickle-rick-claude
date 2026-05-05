@@ -21,6 +21,7 @@ import { scrubForbiddenWorkerTokens } from '../services/promise-tokens.js';
 import { StateManager, writeActivityEntry } from '../services/state-manager.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { loadAgentMd, type AgentModel } from '../services/agent-md-loader.js';
+import { flushAndExit } from '../services/worker-shutdown.js';
 
 const TIER_MODEL_MAP: Record<string, string> = {
   trivial: 'haiku',
@@ -747,6 +748,14 @@ function buildValidationFailureReasons(checks: {
   ].filter(Boolean).join(', ');
 }
 
+function bestEffortFdatasync(logPath: string) {
+  try {
+    const fd = fs.openSync(logPath, 'a');
+    fs.fdatasyncSync(fd);
+    fs.closeSync(fd);
+  } catch { /* best-effort */ }
+}
+
 export async function runWorkerProcess(ctx: WorkerProcessContext): Promise<{ exitCode: number; isSuccess: boolean }> {
   const { args, ticketPath, ticketId, sessionRoot, sessionLog, sessionLogPath, sessionWorkingDir } = ctx;
   const invocation = buildWorkerInvocation(args.backend, {
@@ -784,16 +793,11 @@ export async function runWorkerProcess(ctx: WorkerProcessContext): Promise<{ exi
       try { proc.kill('SIGKILL'); } catch { /* already dead */ }
     }, 2000);
   }, ctx.effectiveTimeoutMs);
-  const hangGuard = setTimeout(() => {
+  const hangGuard = setTimeout(async () => {
     console.error(`${Style.RED}❌ Worker hang detected — forcing exit${Style.RESET}`);
-    try { sessionLog.destroy(); } catch { /* best-effort */ }
-    try {
-      const fd = fs.openSync(sessionLogPath, 'a');
-      fs.fdatasyncSync(fd);
-      fs.closeSync(fd);
-    } catch { /* best-effort */ }
+    bestEffortFdatasync(sessionLogPath);
     try { updateTicketStatus(ticketId, 'Failed', sessionRoot); } catch { /* best-effort */ }
-    process.exit(1);
+    await flushAndExit(sessionLog, 1);
   }, ctx.effectiveTimeoutMs + 30_000);
   hangGuard.unref();
 
@@ -805,9 +809,10 @@ export async function runWorkerProcess(ctx: WorkerProcessContext): Promise<{ exi
       clearTimeout(hangGuard);
       if (process.stdout.isTTY) process.stdout.write('\r\x1b[K');
     };
-    proc.on('error', err => {
+    proc.on('error', async err => {
       clearLifecycleTimers();
       const errorCode = (err as NodeJS.ErrnoException).code;
+      const exitCode = (args.backend === 'hermes' && errorCode === 'ENOENT') ? 127 : 1;
       if (args.backend === 'hermes' && errorCode === 'ENOENT') {
         sessionLog.write(JSON.stringify({
           event: 'hermes_binary_missing',
@@ -816,15 +821,11 @@ export async function runWorkerProcess(ctx: WorkerProcessContext): Promise<{ exi
           backend: args.backend,
           command: invocation.cmd,
         }) + '\n');
-        sessionLog.end(() => process.exit(127));
-      } else {
-        sessionLog.end();
       }
       console.error(`${Style.RED}[pickle-rick] Failed to spawn '${invocation.cmd}' (backend=${args.backend}): ${safeErrorMessage(err)}${Style.RESET}`);
       try { updateTicketStatus(ticketId, 'Failed', sessionRoot); } catch { /* best-effort */ }
       printMinimalPanel('Worker Report', { status: 'spawn-error', validation: 'failed' }, 'RED', '🥒');
-      if (args.backend === 'hermes' && errorCode === 'ENOENT') return;
-      process.exit(1);
+      await flushAndExit(sessionLog, exitCode);
     });
     proc.on('close', code => {
       clearLifecycleTimers();
@@ -838,7 +839,7 @@ export async function runWorkerProcess(ctx: WorkerProcessContext): Promise<{ exi
       });
       sessionLog.end();
 
-      function finalize(exitCode: number | null) {
+      async function finalize(exitCode: number | null) {
         if (ctx.mutableState.finalized) return;
         ctx.mutableState.finalized = true;
         clearTimeout(flushTimeout);
@@ -859,7 +860,7 @@ export async function runWorkerProcess(ctx: WorkerProcessContext): Promise<{ exi
         }
         try { updateTicketStatus(ticketId, isSuccess ? 'Done' : 'Failed', sessionRoot); } catch { /* best-effort */ }
         printMinimalPanel('Worker Report', { status: ctx.mutableState.timedOut ? 'timeout' : `exit:${exitCode}`, validation: isSuccess ? 'successful' : 'failed' }, isSuccess ? 'GREEN' : 'RED', '🥒');
-        if (!isSuccess) process.exit(1);
+        if (!isSuccess) await flushAndExit(sessionLog, 1);
         resolve({ exitCode: exitCode ?? 0, isSuccess });
       }
     });
