@@ -11,7 +11,7 @@
   },
   "scripts": {
     "lint": "eslint src/",
-    "postinstall": "mkdir -p ../node_modules/.bin && ln -sf $(pwd)/node_modules/.bin/tsc ../node_modules/.bin/tsc",
+    "postinstall": "mkdir -p ../node_modules/.bin && rm -f ../node_modules/.bin/tsc && ln -s $(pwd)/node_modules/.bin/tsc ../node_modules/.bin/tsc",
     "sync-schema": "node bin/sync-schema.js",
     "calibrate:readiness": "node bin/calibrate.js readiness --check",
     "calibrate:correct-course": "node bin/calibrate.js correct-course --check",
