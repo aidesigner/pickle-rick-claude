@@ -214,6 +214,26 @@ fi
 
 echo "🥒 Installing Pickle Rick for Claude Code..."
 
+# --- ACTIVE-BUNDLE GUARD (R-ITS-5-MIN) ---
+# Refuse install.sh when any session is active=true. Pre-fix, an operator
+# running install.sh during a live bundle replaced compiled JS in-place
+# while the running mux-runner held old code in-memory; new spawns picked
+# up new code; the runtime mismatch produced bizarre cross-version bugs
+# that took hours to forensic. --override-active and --closer-context
+# bypass the guard (closer-release-gate.sh sets the latter).
+if [ "$OVERRIDE_ACTIVE" -ne 1 ] && [ "$CLOSER_CONTEXT" -ne 1 ]; then
+  if active_session_id="$(find_active_session)"; then
+    echo "❌ REFUSE: install.sh blocked — active session $active_session_id is in flight." >&2
+    echo "   Mid-bundle install replaces compiled JS while the running mux-runner" >&2
+    echo "   holds old code in-memory; new spawns get new code; the version skew" >&2
+    echo "   produces cross-state bugs (R-ITS-5-MIN forensic). Either:" >&2
+    echo "     1. Wait for the bundle to complete (tmux attach -t pipeline-...)," >&2
+    echo "     2. Cancel via 'pickle-rick cancel' first, or" >&2
+    echo "     3. Pass --override-active if you understand the consequences." >&2
+    exit 2
+  fi
+fi
+
 # --- VALIDATION ---
 node --version >/dev/null 2>&1    || { echo "❌ node not found on PATH"; exit 1; }
 jq --version >/dev/null 2>&1     || { echo "❌ jq not found on PATH"; exit 1; }

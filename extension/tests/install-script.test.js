@@ -539,6 +539,32 @@ describe('install.sh active-session guard', () => {
     );
     assert.ok(src.includes('deploy-audit.log'), 'install.sh must append downgrade evidence to deploy-audit.log');
   });
+
+  test('R-ITS-5-MIN: install.sh refuses ALL invocations during active session, not just downgrades', () => {
+    // Pre-fix the active-session guard fired only inside handle_allowed_downgrade
+    // — a non-downgrade install.sh during a live bundle replaced compiled JS
+    // while the running mux-runner held old code in-memory. R-ITS-5-MIN moves
+    // the guard to the top of install.sh so it covers every invocation.
+    const src = readFileSync(INSTALL_SH, 'utf8');
+    assert.ok(
+      src.includes('# --- ACTIVE-BUNDLE GUARD (R-ITS-5-MIN) ---'),
+      'install.sh must contain the R-ITS-5-MIN guard banner',
+    );
+    assert.ok(
+      src.includes('install.sh blocked — active session'),
+      'install.sh must contain the new R-ITS-5-MIN refusal message',
+    );
+    // The guard must run BEFORE the validation phase (which compiles + rsyncs);
+    // assert ordering by line number.
+    const guardLine = src.split('\n').findIndex((line) => line.includes('ACTIVE-BUNDLE GUARD'));
+    const validationLine = src.split('\n').findIndex((line) => line.includes('# --- VALIDATION ---'));
+    assert.ok(guardLine > 0, 'guard banner must exist');
+    assert.ok(validationLine > 0, 'validation banner must exist');
+    assert.ok(
+      guardLine < validationLine,
+      `R-ITS-5-MIN guard (line ${guardLine + 1}) must precede VALIDATION (line ${validationLine + 1}) so the refuse fires before compile/rsync`,
+    );
+  });
 });
 
 describe('install.sh deploy parity sampler stripped', () => {
