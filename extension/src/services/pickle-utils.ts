@@ -1213,6 +1213,42 @@ export function drainStreamJsonLines(
   }
 }
 
+/**
+ * R-MWR-4: detect truncation of a file-tail watcher's current log.
+ *
+ * When the file at `logPath` is truncated (size shrinks below the
+ * caller's recorded `offset`), tail-style watchers must reset their
+ * offset and partial-line buffer so post-truncate content is consumed
+ * instead of skipped. Without this hook, `drainStreamJsonLines` and
+ * `drainLog` early-return on `size <= offset` and the watcher feeds a
+ * dead chunk forever.
+ *
+ * Returns the post-check offset and lineBuf, plus a `truncated` flag
+ * the caller uses to print exactly one dim `(reconnecting...)` line
+ * per disconnect (R-MWR-6: banner stays reserved for liveness-probe
+ * inactive exits, NOT for EOF).
+ *
+ * Returns the inputs unchanged if the file is missing or unreadable —
+ * those cases are owned by the caller's own `latestIterationLog` /
+ * worker-log discovery loop.
+ */
+export function detectLogTruncation(
+  logPath: string,
+  offset: number,
+  lineBuf: string,
+): { offset: number; lineBuf: string; truncated: boolean } {
+  try {
+    const { size } = fs.statSync(logPath);
+    if (size < offset) {
+      return { offset: 0, lineBuf: '', truncated: true };
+    }
+  } catch {
+    // Missing or unreadable — caller will pick this up on its next
+    // discovery iteration. Do not mutate offset.
+  }
+  return { offset, lineBuf, truncated: false };
+}
+
 export function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -1400,12 +1436,20 @@ export function restartDeadWatcherPanes(
   extensionRoot: string,
   mode: MonitorMode,
   spawnSyncFn: typeof spawnSync = spawnSync,
+  /**
+   * R-MWR-3: log-line prefix for respawn decisions. Defaults to
+   * `restartDeadWatcherPanes` for boundary-driven invocations
+   * (`ensureMonitorWindow` re-attach). The continuous in-monitor
+   * watchdog (`startRespawnWatchdog`) passes `monitor-watchdog` so
+   * AC-MWR-05 grep can distinguish the two callers in `mux-runner.log`.
+   */
+  logTag: string = 'restartDeadWatcherPanes',
 ): void {
   if (isSessionInactive(sessionDir)) return;
 
   const sessionName = readCurrentTmuxSessionName(spawnSyncFn);
   if (!sessionName) {
-    appendWatcherRestartLog(sessionDir, 'restartDeadWatcherPanes WARN: unable to resolve tmux session name');
+    appendWatcherRestartLog(sessionDir, `${logTag} WARN: unable to resolve tmux session name`);
     return;
   }
 
@@ -1415,7 +1459,7 @@ export function restartDeadWatcherPanes(
     if (currentCommand === null) {
       appendWatcherRestartLog(
         sessionDir,
-        `restartDeadWatcherPanes WARN: unable to read pane_current_command for pane ${watcher.pane}`,
+        `${logTag} WARN: unable to read pane_current_command for pane ${watcher.pane}`,
       );
       continue;
     }
@@ -1423,7 +1467,7 @@ export function restartDeadWatcherPanes(
 
     appendWatcherRestartLog(
       sessionDir,
-      `restartDeadWatcherPanes WARN: pane ${watcher.pane} command '${currentCommand || '(empty)'}' is not node`,
+      `${logTag} WARN: pane ${watcher.pane} command '${currentCommand || '(empty)'}' is not node`,
     );
     const result = spawnSyncFn('tmux', ['send-keys', '-t', target, watcher.command, 'Enter'], {
       encoding: 'utf-8',
@@ -1432,13 +1476,13 @@ export function restartDeadWatcherPanes(
     if (result.status === 0) {
       appendWatcherRestartLog(
         sessionDir,
-        `restartDeadWatcherPanes: respawned ${watcher.name} in pane ${watcher.pane}`,
+        `${logTag}: respawned ${watcher.name} in pane ${watcher.pane}`,
       );
     } else {
       const err = (result.stderr || result.stdout || '').toString().trim();
       appendWatcherRestartLog(
         sessionDir,
-        `restartDeadWatcherPanes WARN: failed to respawn ${watcher.name} in pane ${watcher.pane}: ${err || 'non-zero exit'}`,
+        `${logTag} WARN: failed to respawn ${watcher.name} in pane ${watcher.pane}: ${err || 'non-zero exit'}`,
       );
     }
   }

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { collectTickets, statusSymbol, formatTime, getWidth, getHeight, Style, sleep, MatrixStyle, matrixSeparator, latestIterationLog, safeErrorMessage } from '../services/pickle-utils.js';
+import { spawnSync } from 'child_process';
+import { collectTickets, statusSymbol, formatTime, getWidth, getHeight, Style, sleep, MatrixStyle, matrixSeparator, latestIterationLog, safeErrorMessage, restartDeadWatcherPanes, inferMonitorMode, getExtensionRoot } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { readMicroverseState, readRecoverableJsonObject } from '../services/microverse-state.js';
 import { readCircuitBreakerState } from '../services/circuit-breaker.js';
@@ -17,8 +18,31 @@ const sm = new StateManager();
  * AC-SSV-07: 2000ms is long enough to ride out routine pane redraws on
  * busy machines but short enough that a wedged pane is detected before
  * the user reaches for `kill -9`.
+ *
+ * R-MWR-rename: this is the STDOUT-write-backpressure watchdog. It is a
+ * DIFFERENT concept from `RESPAWN_WATCHDOG_INTERVAL_MS` (the dead-pane
+ * respawn interval used by `startRespawnWatchdog`). Naming convention
+ * established for R-MWR Section E to avoid R7 symbol collision: every
+ * dead-pane respawn symbol uses the `RESPAWN_WATCHDOG_*` prefix; every
+ * stdout-wedge symbol keeps the existing `MONITOR_STDOUT_WATCHDOG_*`
+ * prefix. The two scopes never share state.
  */
 export const MONITOR_STDOUT_WATCHDOG_MS = 2000;
+/**
+ * Interval (ms) at which the monitor pane re-runs `restartDeadWatcherPanes`
+ * to revive dashboard/log/morty/raw watcher panes that died mid-iteration.
+ *
+ * R-MWR-1: continuous watchdog. Without it, watcher panes that crash
+ * after `ensureMonitorWindow` returns "exists" stay dead until the next
+ * mux-runner phase boundary — operators see frozen panes for the rest of
+ * the pipeline.
+ *
+ * R-MWR-rename: deliberately distinct from `MONITOR_STDOUT_WATCHDOG_MS`
+ * (which guards a synchronous stdout write inside this very monitor).
+ * The RESPAWN_ prefix marks "dead-pane respawn" scope; do NOT share the
+ * symbol with stdout-watchdog code paths.
+ */
+export const RESPAWN_WATCHDOG_INTERVAL_MS = 30_000;
 /**
  * Write `chunk` to `sink`, returning a promise that resolves once the
  * write has flushed (or the kernel has reported drain when backpressure
@@ -532,6 +556,64 @@ async function render(sessionDir, sink = process.stdout) {
     await writeWithWatchdog(sink, out.join(''));
     return state.active === true;
 }
+/**
+ * R-MWR-1: register a continuous watchdog inside the monitor pane that
+ * re-runs `restartDeadWatcherPanes` every {@link RESPAWN_WATCHDOG_INTERVAL_MS}.
+ *
+ * `ensureMonitorWindow` already calls `restartDeadWatcherPanes` once at
+ * window-creation / re-attach time, but if a watcher pane dies AFTER that
+ * call (e.g., a `log-watcher` worker crashed mid-iteration), the dead
+ * pane stays dead until the next mux-runner phase boundary calls
+ * `ensureMonitorWindow` again. This watchdog plugs that gap with a 30s
+ * heartbeat from inside the live monitor process.
+ *
+ * The interval is `unref()`'d so it never holds the process open past
+ * the natural exit conditions (SIGINT or `state.active` flip). Errors
+ * inside the callback are swallowed so a transient `tmux` failure does
+ * not crash the dashboard.
+ *
+ * Returns the timer handle for tests / explicit shutdown; the
+ * production `main()` discards it.
+ */
+/**
+ * R-MWR-2: env kill-switch. When `PICKLE_MONITOR_WATCHDOG === 'off'` the
+ * dead-pane respawn watchdog is fully disabled — no setInterval is
+ * armed, no tmux probes fire, no log lines are emitted. Operators flip
+ * this when they need to debug a frozen pane manually without the
+ * watchdog reviving it underfoot.
+ *
+ * Returns `true` when the watchdog is disabled.
+ */
+export function isRespawnWatchdogDisabled(env = process.env) {
+    return env.PICKLE_MONITOR_WATCHDOG === 'off';
+}
+export function startRespawnWatchdog(opts) {
+    // R-MWR-2: env kill-switch. Bail before scheduling so disabling the
+    // watchdog truly disables it — no timer, no logs, no tmux calls.
+    if (isRespawnWatchdogDisabled(opts.env ?? process.env))
+        return null;
+    const intervalMs = opts.intervalMs ?? RESPAWN_WATCHDOG_INTERVAL_MS;
+    const log = opts.logger || (() => { });
+    const tick = () => {
+        try {
+            const extensionRoot = opts.extensionRoot ?? getExtensionRoot();
+            const mode = inferMonitorMode(opts.sessionDir);
+            // R-MWR-3: tag respawn decisions as `monitor-watchdog:` so they
+            // can be distinguished in mux-runner.log from boundary-driven
+            // restartDeadWatcherPanes calls (AC-MWR-05).
+            restartDeadWatcherPanes(opts.sessionDir, extensionRoot, mode, opts.spawnSyncFn ?? spawnSync, 'monitor-watchdog');
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            log(`monitor-watchdog tick error: ${msg}`);
+        }
+    };
+    const handle = setInterval(tick, intervalMs);
+    if (typeof handle.unref === 'function') {
+        handle.unref();
+    }
+    return handle;
+}
 async function main() {
     const sessionDir = process.argv[2];
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
@@ -539,6 +621,10 @@ async function main() {
         console.error('Usage: node monitor.js <session-dir>');
         process.exit(1);
     }
+    // R-MWR-1: arm the dead-pane respawn watchdog before entering the
+    // render loop so panes that die mid-iteration get revived without
+    // waiting for the next mux-runner phase boundary.
+    startRespawnWatchdog({ sessionDir });
     process.on('SIGINT', () => {
         // AC-SSV-07: never block on stdout in the signal handler. If the pane
         // is wedged a synchronous write would prevent the exit. Try the

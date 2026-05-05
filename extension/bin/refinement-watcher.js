@@ -133,18 +133,53 @@ function drainRoleLog(refinementDir, role, ws, width, sep, lastRole) {
     }
     return { anyOutput: result.offset > prevOffset, lastRole: currentLastRole };
 }
-async function shouldStopForInactiveSession(sessionDir, manifestPath) {
+/**
+ * R-MWR-5: refinement-watcher polls indefinitely until the session is
+ * provably done. The session is provably done when state.json shows
+ * `active=false` AND `step` has advanced past `prd` (so we are not
+ * mid-refinement). State.json missing or unreadable also counts as
+ * "done" — the test fixtures lean on this for clean teardown without
+ * hand-rolling a state.json.
+ *
+ * Pre-R-MWR-5 the helper additionally required NO manifest after a 3s
+ * sleep; that was a relic of the "break on first manifest sighting"
+ * design. Under R-MWR-5 the watcher renders the manifest summary BUT
+ * keeps polling so manifest rewrites are consumed without exit, so the
+ * 3s manifest re-check no longer makes sense — when the session is
+ * inactive the watcher should exit regardless of whether a manifest
+ * has been written.
+ */
+async function shouldStopForInactiveSession(sessionDir) {
+    const statePath = path.join(sessionDir, 'state.json');
+    let state;
     try {
-        const statePath = path.join(sessionDir, 'state.json');
-        const state = sm.read(statePath);
-        if (state.active !== false || state.step === 'prd')
-            return false;
-        await sleep(3000);
-        return !readRecoverableJsonObject(manifestPath);
+        state = sm.read(statePath);
     }
     catch {
-        return false;
+        return true;
     }
+    if (state.active !== false)
+        return false;
+    if (state.step === 'prd')
+        return false;
+    return true;
+}
+/**
+ * R-MWR-5: read the manifest and re-render the summary when its content
+ * changes (cycle 1 → cycle 2 rewrite). Returns the new lastManifestKey
+ * and whether the summary has been rendered at least once. Extracted to
+ * keep main()'s cyclomatic complexity within the lint cap.
+ */
+function consumeManifestRewrite(manifestPath, workers, width, sep, startTime, lastManifestKey, summaryRendered) {
+    const manifest = readRecoverableJsonObject(manifestPath);
+    if (!manifest)
+        return { lastManifestKey, summaryRendered };
+    const manifestKey = JSON.stringify(manifest);
+    if (manifestKey === lastManifestKey)
+        return { lastManifestKey, summaryRendered };
+    drainFinalWorkerLogs(workers, width);
+    renderManifestSummary(manifest, startTime, sep);
+    return { lastManifestKey: manifestKey, summaryRendered: true };
 }
 async function main() {
     const sessionDir = process.argv[2];
@@ -167,18 +202,29 @@ async function main() {
     const startTime = Date.now();
     let lastRole = null;
     let lastStatusPrint = 0;
+    // R-MWR-5: track the last manifest content we rendered so a rewrite
+    // (e.g., cycle 1 manifest replaced by cycle 2 manifest) re-renders
+    // instead of being silently consumed or causing an exit.
+    let lastManifestKey = '';
+    let summaryRendered = false;
     while (true) {
-        // Check if manifest exists (refinement complete)
-        const manifest = readRecoverableJsonObject(manifestPath);
-        if (manifest) {
-            // Final drain of all logs
-            drainFinalWorkerLogs(workers, width());
-            renderManifestSummary(manifest, startTime, sep());
-            break;
-        }
+        // R-MWR-5: read manifest each tick. First sighting renders the
+        // summary; subsequent rewrites that change the content re-render.
+        // We DO NOT break on manifest sighting — exit is owned exclusively
+        // by shouldStopForInactiveSession. This is the documented
+        // contract: "polls indefinitely; rewrite consumed without exit".
+        ({ lastManifestKey, summaryRendered } = consumeManifestRewrite(manifestPath, workers, width(), sep(), startTime, lastManifestKey, summaryRendered));
         // Wait for refinement directory to exist
         // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         if (!fs.existsSync(refinementDir)) {
+            // Check the inactive-session exit BEFORE the awaiting-spinner
+            // sleep so a missing-state-fixture test path can exit promptly.
+            if (await shouldStopForInactiveSession(sessionDir)) {
+                if (!summaryRendered) {
+                    process.stdout.write(`\n${sep()}\n${Style.YELLOW}⚠️  Session inactive with no manifest — refinement may have failed.${r}\n`);
+                }
+                break;
+            }
             const elapsed = Math.floor((Date.now() - startTime) / 1000);
             process.stdout.write(`\r${d}Waiting for refinement workers... (${formatTime(elapsed)})${r}\x1b[K`);
             await sleep(1000);
@@ -200,10 +246,12 @@ async function main() {
             if (drained.anyOutput)
                 anyOutput = true;
         }
-        // Fallback exit: if state.json shows session ended and no manifest ever appeared,
-        // the spawner likely crashed. Don't hang forever.
-        if (await shouldStopForInactiveSession(sessionDir, manifestPath)) {
-            process.stdout.write(`\n${sep()}\n${Style.YELLOW}⚠️  Session inactive with no manifest — refinement may have failed.${r}\n`);
+        // Exit when state.json reports the session has ended (regardless
+        // of manifest presence — see shouldStopForInactiveSession docs).
+        if (await shouldStopForInactiveSession(sessionDir)) {
+            if (!summaryRendered) {
+                process.stdout.write(`\n${sep()}\n${Style.YELLOW}⚠️  Session inactive with no manifest — refinement may have failed.${r}\n`);
+            }
             break;
         }
         await sleep(anyOutput ? 200 : 500);
