@@ -290,35 +290,40 @@ function resolveSymbolRef(ref, repoRoot, cache) {
         return false;
     }
 }
+function findMachinabilityFindings(ticketFile, content) {
+    const findings = [];
+    for (const ac of extractAcceptanceCriteria(content)) {
+        if (acceptanceCriterionVerifyPhase(ac) === 'post')
+            continue;
+        if (!isMachineCheckable(ac)) {
+            findings.push({
+                ticket: ticketFile,
+                kind: 'machinability',
+                analyst: 'gaps',
+                message: 'Acceptance criterion is not machine-checkable',
+                detail: ac,
+            });
+        }
+    }
+    return findings;
+}
+function findAnnotationFormatFindings(ticketFile, content) {
+    // R-RTRC-7: emit annotation_format findings for malformed forward-reference annotations.
+    return extractForwardRefAnnotations(content).malformed.map((malformed) => ({
+        ticket: ticketFile,
+        kind: 'annotation_format',
+        analyst: 'gaps',
+        message: 'annotation-format-error: forward-reference annotation must be `<token>` (created|introduced) by ticket <8-12-char-hash>) — exactly one ASCII space separator',
+        detail: malformed.raw,
+    }));
+}
 export function findReadinessFindings(ticketFile, repoRoot, opts) {
     const content = fs.readFileSync(ticketFile, 'utf-8');
     const findings = [];
-    if (opts.checkMachinability) {
-        for (const ac of extractAcceptanceCriteria(content)) {
-            if (acceptanceCriterionVerifyPhase(ac) === 'post')
-                continue;
-            if (!isMachineCheckable(ac)) {
-                findings.push({
-                    ticket: ticketFile,
-                    kind: 'machinability',
-                    analyst: 'gaps',
-                    message: 'Acceptance criterion is not machine-checkable',
-                    detail: ac,
-                });
-            }
-        }
-    }
+    if (opts.checkMachinability)
+        findings.push(...findMachinabilityFindings(ticketFile, content));
     if (opts.checkContracts) {
-        // R-RTRC-7: emit annotation_format findings for malformed forward-reference annotations.
-        for (const malformed of extractForwardRefAnnotations(content).malformed) {
-            findings.push({
-                ticket: ticketFile,
-                kind: 'annotation_format',
-                analyst: 'gaps',
-                message: 'annotation-format-error: forward-reference annotation must be `<token>` ⎵(created|introduced) by ticket <8-12-char-hash>) — exactly one ASCII space',
-                detail: malformed.raw,
-            });
-        }
+        findings.push(...findAnnotationFormatFindings(ticketFile, content));
         const allowlist = opts.allowlist ?? opts.cache?.allowlist ?? new Set();
         const cache = opts.cache ?? createResolverCache(repoRoot, opts.maxWallMs ?? DEFAULT_MAX_WALL_MS, allowlist);
         for (const ref of extractContractReferences(content)) {
