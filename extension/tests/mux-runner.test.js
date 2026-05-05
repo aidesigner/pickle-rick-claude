@@ -856,7 +856,7 @@ test('mux-runner: creates mux-runner.log in session directory', () => {
 
 // --- Completion classification (classifyCompletion) ---
 
-import { buildTmuxNotification, classifyCompletion, classifyTicketCompletion, applyAutoTicketCompletionValidation, correctPhantomDoneTickets, extractAssistantContent, transitionToMeeseeks, loadRateLimitSettings, loadMeeseeksModel, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText, stripSetupSection, detectMultiRepo, writeHandoffAtomic } from '../bin/mux-runner.js';
+import { buildTmuxNotification, classifyCompletion, classifyTicketCompletion, applyAutoTicketCompletionValidation, correctPhantomDoneTickets, hasCompletionCommit, extractAssistantContent, transitionToMeeseeks, loadRateLimitSettings, loadMeeseeksModel, classifyIterationExit, detectRateLimitInLog, detectRateLimitInText, stripSetupSection, detectMultiRepo, writeHandoffAtomic } from '../bin/mux-runner.js';
 
 test('classifyCompletion: TASK_COMPLETED returns continue (single ticket, loop continues)', () => {
     assert.equal(classifyCompletion('<promise>TASK_COMPLETED</promise>'), 'continue');
@@ -2318,6 +2318,123 @@ test('phantom-done.correction: Done frontmatter with no completion commit is res
         assert.equal(event.ticket, ticketId);
         assert.equal(event.iteration, 3);
         assert.equal(event.reason, 'done_frontmatter_without_completion_commit');
+    } finally {
+        if (prev === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = prev;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
+// --- R-CCC-5: hasCompletionCommit + correctPhantomDoneTickets honor frontmatter ---
+
+function writeAutoMarkTicketWithCompletionCommit(sessionDir, ticketId, sha) {
+    const ticketDir = path.join(sessionDir, ticketId);
+    fs.mkdirSync(ticketDir, { recursive: true });
+    fs.writeFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`), [
+        '---',
+        `id: ${ticketId}`,
+        'title: Auto mark validation',
+        'status: Done',
+        'order: 1',
+        `completion_commit: ${sha}`,
+        '---',
+        '# Description',
+        '',
+        '## Acceptance Criteria',
+        '- [x] criterion met',
+        '',
+    ].join('\n'));
+}
+
+test('R-CCC-5 hasCompletionCommit: explicit frontmatter + reachable SHA returns explicit', () => {
+    const tmpDir = makeTmpRoot();
+    try {
+        initGitRepo(tmpDir);
+        // Worker commits with R-* code in subject (no ticket hash anywhere).
+        fs.writeFileSync(path.join(tmpDir, 'worker.txt'), 'work');
+        spawnSync('git', ['add', '.'], { cwd: tmpDir });
+        spawnSync('git', ['commit', '-m', 'bundle/X: R-FOO-1 — work', '--no-gpg-sign'], { cwd: tmpDir });
+        const sha = gitHead(tmpDir);
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketId = 'aabbccdd';
+        writeAutoMarkTicketWithCompletionCommit(sessionDir, ticketId, sha);
+
+        const evidence = hasCompletionCommit({ sessionDir, ticketId, workingDir: tmpDir });
+        assert.equal(evidence.source, 'explicit');
+        assert.equal(evidence.sha, sha);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('R-CCC-5 hasCompletionCommit: frontmatter absent + git --grep matches returns inferred', () => {
+    const tmpDir = makeTmpRoot();
+    try {
+        initGitRepo(tmpDir);
+        const ticketId = 'deadbeef';
+        fs.writeFileSync(path.join(tmpDir, 'worker.txt'), 'work');
+        spawnSync('git', ['add', '.'], { cwd: tmpDir });
+        spawnSync('git', ['commit', '-m', `feat(${ticketId}): work`, '--no-gpg-sign'], { cwd: tmpDir });
+        const sha = gitHead(tmpDir);
+        const sessionDir = path.join(tmpDir, 'session');
+        // Note: status:Done frontmatter without completion_commit field.
+        writeAutoMarkTicketWithStatus(sessionDir, ticketId, 'Done', true);
+
+        const evidence = hasCompletionCommit({ sessionDir, ticketId, workingDir: tmpDir });
+        assert.equal(evidence.source, 'inferred');
+        assert.equal(evidence.sha, sha);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('R-CCC-5 hasCompletionCommit: no frontmatter SHA AND no matching commit returns absent', () => {
+    const tmpDir = makeTmpRoot();
+    try {
+        initGitRepo(tmpDir);
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketId = 'feedface';
+        writeAutoMarkTicketWithStatus(sessionDir, ticketId, 'Done', true);
+
+        const evidence = hasCompletionCommit({ sessionDir, ticketId, workingDir: tmpDir });
+        assert.equal(evidence.source, 'absent');
+        assert.equal(evidence.sha, null);
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
+test('R-CCC-5 correctPhantomDoneTickets: completion_commit in frontmatter is NOT reverted even when commit lacks ticket hash', () => {
+    // Run #6 forensic replay: bundle commits use R-* codes in subject, operator backfills
+    // completion_commit: SHA into frontmatter. Pre-fix, hasCommitReferencingTicketSince
+    // missed (no ticket hash in commit) and reverted Done→Todo. Post-fix the explicit
+    // field short-circuits the revert.
+    const tmpDir = makeTmpRoot();
+    const dataRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rccc5-data-')));
+    const prev = process.env.PICKLE_DATA_ROOT;
+    try {
+        process.env.PICKLE_DATA_ROOT = dataRoot;
+        initGitRepo(tmpDir);
+        const startCommit = gitHead(tmpDir);
+        // Worker commit with ONLY an R-* code — no ticket hash anywhere.
+        fs.writeFileSync(path.join(tmpDir, 'worker.txt'), 'work');
+        spawnSync('git', ['add', '.'], { cwd: tmpDir });
+        spawnSync('git', ['commit', '-m', 'bundle/A: R-CCC-1 — initial work', '--no-gpg-sign'], { cwd: tmpDir });
+        const completionSha = gitHead(tmpDir);
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketId = '12345678';
+        writeAutoMarkTicketWithCompletionCommit(sessionDir, ticketId, completionSha);
+
+        const corrected = correctPhantomDoneTickets({
+            sessionDir,
+            workingDir: tmpDir,
+            startCommit,
+            iteration: 4,
+        });
+
+        assert.equal(corrected, 0, 'ticket with valid completion_commit must NOT be reverted');
+        assert.equal(readAutoMarkTicketStatus(sessionDir, ticketId), 'Done');
     } finally {
         if (prev === undefined) delete process.env.PICKLE_DATA_ROOT;
         else process.env.PICKLE_DATA_ROOT = prev;

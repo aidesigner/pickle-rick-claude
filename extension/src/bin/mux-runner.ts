@@ -280,7 +280,13 @@ export function correctPhantomDoneTickets(input: CorrectPhantomDoneTicketsInput)
     if (!ticket.id || status !== 'done') continue;
 
     const workingDir = ticket.working_dir || input.workingDir || process.cwd();
-    if (hasCommitReferencingTicketSince(workingDir, ticket.id, input.startCommit)) continue;
+    // R-CCC-5: completion_commit frontmatter is the FIRST gate. Bundle commits
+    // use R-* codes in the subject (not ticket hashes) so the legacy git-log
+    // scan in hasCommitReferencingTicketSince misses 100% of them. The watcher
+    // (inspectPhantomDoneTicketFile) already short-circuits on the field; this
+    // closes the second revert path.
+    const evidence = hasCompletionCommit({ sessionDir: input.sessionDir, ticketId: ticket.id, workingDir });
+    if (evidence.source !== 'absent') continue;
     if (!writeTicketStatus(input.sessionDir, ticket.id, 'Todo')) continue;
 
     corrected++;
@@ -853,6 +859,64 @@ function hasCommitReferencingTicketSince(workingDir: string, ticketId: string, s
   } catch {
     return false;
   }
+}
+
+/**
+ * R-CCC-5: Three-state evidence helper for completion-commit checks.
+ * Phantom-Done revert sites MUST consult this before reverting status:Done→Todo.
+ *
+ *   'explicit'  — frontmatter has `completion_commit:` + git can resolve the SHA.
+ *   'inferred'  — frontmatter absent BUT a recent (HEAD~10) commit message --grep
+ *                 matches the ticket id. Standardizes on findRecentCommitForTicket
+ *                 because (a) bounded scope, (b) precise --grep word match, not
+ *                 lower-cased substring (the run-#6 bug class).
+ *   'absent'    — neither holds; revert is permitted.
+ *
+ * The explicit path is the run-#6 fix: bundle commits use R-* codes in the
+ * subject (e.g. `bundle/C: R-WSE-4 — ...`) and DON'T include the ticket hash,
+ * so any heuristic that scans commit messages for the hash always misses.
+ * Operator-backfilled `completion_commit:` SHAs in frontmatter survive across
+ * iteration_start.
+ */
+export interface CompletionCommitEvidence {
+  sha: string | null;
+  source: 'explicit' | 'inferred' | 'absent';
+}
+
+export function hasCompletionCommit(args: {
+  sessionDir: string;
+  ticketId: string;
+  workingDir: string;
+}): CompletionCommitEvidence {
+  const filePath = ticketFilePath(args.sessionDir, args.ticketId);
+  let content = '';
+  try {
+    content = fs.readFileSync(filePath, 'utf8');
+  } catch {
+    // unreadable ticket file — fall through to inferred check
+  }
+  if (content) {
+    const explicit = readFrontmatterField(content, 'completion_commit');
+    if (explicit && /^[0-9a-f]{7,40}$/i.test(explicit)) {
+      try {
+        execFileSync(
+          'git',
+          ['-C', args.workingDir, 'cat-file', '-e', `${explicit}^{commit}`],
+          { timeout: 5000, stdio: ['ignore', 'ignore', 'ignore'] },
+        );
+        return { sha: explicit, source: 'explicit' };
+      } catch {
+        // SHA not reachable — fall through to inferred check
+      }
+    }
+  }
+  try {
+    const inferred = findRecentCommitForTicket(args.workingDir, args.ticketId);
+    if (inferred) return { sha: inferred, source: 'inferred' };
+  } catch {
+    // git failure — treat as absent
+  }
+  return { sha: null, source: 'absent' };
 }
 
 export function validateAutoTicketCompletion(

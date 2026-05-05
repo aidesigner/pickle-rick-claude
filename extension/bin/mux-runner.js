@@ -238,7 +238,13 @@ export function correctPhantomDoneTickets(input) {
         if (!ticket.id || status !== 'done')
             continue;
         const workingDir = ticket.working_dir || input.workingDir || process.cwd();
-        if (hasCommitReferencingTicketSince(workingDir, ticket.id, input.startCommit))
+        // R-CCC-5: completion_commit frontmatter is the FIRST gate. Bundle commits
+        // use R-* codes in the subject (not ticket hashes) so the legacy git-log
+        // scan in hasCommitReferencingTicketSince misses 100% of them. The watcher
+        // (inspectPhantomDoneTicketFile) already short-circuits on the field; this
+        // closes the second revert path.
+        const evidence = hasCompletionCommit({ sessionDir: input.sessionDir, ticketId: ticket.id, workingDir });
+        if (evidence.source !== 'absent')
             continue;
         if (!writeTicketStatus(input.sessionDir, ticket.id, 'Todo'))
             continue;
@@ -710,6 +716,37 @@ function hasCommitReferencingTicketSince(workingDir, ticketId, startCommit) {
     catch {
         return false;
     }
+}
+export function hasCompletionCommit(args) {
+    const filePath = ticketFilePath(args.sessionDir, args.ticketId);
+    let content = '';
+    try {
+        content = fs.readFileSync(filePath, 'utf8');
+    }
+    catch {
+        // unreadable ticket file — fall through to inferred check
+    }
+    if (content) {
+        const explicit = readFrontmatterField(content, 'completion_commit');
+        if (explicit && /^[0-9a-f]{7,40}$/i.test(explicit)) {
+            try {
+                execFileSync('git', ['-C', args.workingDir, 'cat-file', '-e', `${explicit}^{commit}`], { timeout: 5000, stdio: ['ignore', 'ignore', 'ignore'] });
+                return { sha: explicit, source: 'explicit' };
+            }
+            catch {
+                // SHA not reachable — fall through to inferred check
+            }
+        }
+    }
+    try {
+        const inferred = findRecentCommitForTicket(args.workingDir, args.ticketId);
+        if (inferred)
+            return { sha: inferred, source: 'inferred' };
+    }
+    catch {
+        // git failure — treat as absent
+    }
+    return { sha: null, source: 'absent' };
 }
 export function validateAutoTicketCompletion(sessionDir, ticketId, workingDir, startCommit) {
     const filePath = ticketFilePath(sessionDir, ticketId);
