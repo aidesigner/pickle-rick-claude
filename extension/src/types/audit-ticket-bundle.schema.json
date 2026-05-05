@@ -1,0 +1,85 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "schema_version": 1,
+  "title": "AuditTicketBundleManifest",
+  "description": "R-TAQ-2b schema v1: manifest written by audit-ticket-bundle.ts to ${SESSION_ROOT}/audit-ticket-bundle.json",
+  "type": "object",
+  "required": ["schema_version", "session_hash", "audited_at", "ticket_count", "findings", "exit_code"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version; always 1 for this document version"
+    },
+    "session_hash": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Basename of the session directory (e.g. '2026-05-04-f416c6cc')"
+    },
+    "audited_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 timestamp of when the audit ran"
+    },
+    "ticket_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of ticket files evaluated"
+    },
+    "findings": {
+      "type": "array",
+      "description": "One entry per defect detected across all tickets",
+      "items": {
+        "type": "object",
+        "required": ["ticket_id", "ticket_path", "defect_class", "severity", "evidence", "remediation_hint"],
+        "additionalProperties": false,
+        "properties": {
+          "ticket_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{8}$",
+            "description": "8-character ticket hash"
+          },
+          "ticket_path": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Path to the ticket file, relative to session root"
+          },
+          "defect_class": {
+            "type": "string",
+            "enum": [
+              "path-drift",
+              "self-reference",
+              "missing-deps",
+              "wrong-HEAD-assumptions",
+              "cross-doc-naming",
+              "hallucinated-premise",
+              "literal-value-drift"
+            ],
+            "description": "One of the 7 defect classes checked by the auditor"
+          },
+          "severity": {
+            "type": "string",
+            "enum": ["fatal", "warning", "info"],
+            "description": "fatal → exit 1; warning → exit 1; info → exit 0"
+          },
+          "evidence": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Human-readable description of what triggered the finding"
+          },
+          "remediation_hint": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Actionable hint for the operator"
+          }
+        }
+      }
+    },
+    "exit_code": {
+      "type": "integer",
+      "enum": [0, 1, 2],
+      "description": "0=no findings, 1=findings present, 2=operational error"
+    }
+  }
+}
