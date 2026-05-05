@@ -446,14 +446,6 @@ export async function runPerIterationGateHook(opts) {
 }
 function validateWorkerConvergenceHistory(opts) {
     const { currentMv, minIterations, iteration, sessionDir, log, logActivityFn } = opts;
-    // Worker-managed convergence (anatomy-park) is its own judge — the worker
-    // writes converged=true directly to the convergence_file. Scored history
-    // is a metric-mode artifact (LLM judge / numeric metric); requiring it
-    // here would break dead-tmp recovery where the prior iteration's
-    // convergence claim is authoritative even though in-memory history was
-    // lost with the dead writer.
-    if (currentMv.convergence_mode === 'worker')
-        return null;
     const requiredHistoryLength = Math.max(1, Number(minIterations ?? 1));
     const history = currentMv.convergence?.history?.filter(Boolean) ?? [];
     const hasEnoughHistory = history.length >= requiredHistoryLength;
