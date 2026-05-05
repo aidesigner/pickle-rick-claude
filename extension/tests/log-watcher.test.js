@@ -303,6 +303,84 @@ test('detectLogTruncation: missing file → unchanged (caller owns discovery loo
     assert.equal(out.lineBuf, 'buf');
 });
 
+// ---------------------------------------------------------------------------
+// R-MWR-6: banner reservation (file-tail watchers only)
+// ---------------------------------------------------------------------------
+
+test('log-watcher: truncation prints (reconnecting...) NOT FEED TERMINATED (R-MWR-6)', async () => {
+    const sessionDir = makeSessionDir('pickle-mwr6-log-');
+    try {
+        // Active session keeps the watcher polling.
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            pid: process.pid, // alive PID prevents dead-pid auto-demote
+            step: 'implement',
+            iteration: 1,
+        }, null, 2));
+        // Pre-truncate iteration log: large enough that truncate yields size < offset.
+        const iterLog = path.join(sessionDir, 'tmux_iteration_1.log');
+        const preLines = Array.from({ length: 80 }, (_, i) => JSON.stringify({
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: `pre-${i}-${'p'.repeat(80)}` }] },
+        }));
+        fs.writeFileSync(iterLog, preLines.join('\n') + '\n');
+
+        const { spawn } = await import('node:child_process');
+        const child = spawn(process.execPath, [LOG_WATCHER_BIN, sessionDir], {
+            env: { ...process.env },
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        let stdout = '';
+        child.stdout.on('data', (chunk) => { stdout += chunk.toString('utf-8'); });
+
+        // Let the watcher consume the pre-truncate content.
+        await new Promise(r => setTimeout(r, 800));
+        const preLen = stdout.length;
+
+        // Truncate then write small post-truncate content.
+        fs.truncateSync(iterLog, 0);
+        fs.writeFileSync(iterLog, JSON.stringify({
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'post-truncate-marker' }] },
+        }) + '\n');
+        await new Promise(r => setTimeout(r, 1000));
+
+        // Watcher must STILL be running (truncation is not an exit signal).
+        assert.equal(child.exitCode, null, 'watcher must keep polling after truncate');
+
+        // R-MWR-6 invariant: truncation produces the dim (reconnecting...)
+        // line, NOT the FEED TERMINATED banner. Banner is reserved for
+        // the liveness-probe inactive exit branch.
+        const sliceAfterTruncate = stdout.slice(preLen);
+        assert.match(
+            sliceAfterTruncate,
+            /\(reconnecting\.\.\.\)/,
+            `expected (reconnecting...) after truncate; got: ${sliceAfterTruncate}`,
+        );
+        assert.doesNotMatch(
+            stdout,
+            /FEED TERMINATED/,
+            'FEED TERMINATED banner reserved for inactive exit, must not fire on EOF/truncate',
+        );
+
+        // Now flip state to inactive — watcher exits with FEED TERMINATED.
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: false,
+            pid: process.pid,
+            step: 'implement',
+            iteration: 1,
+        }, null, 2));
+        await new Promise(resolve => {
+            const timer = setTimeout(() => resolve(), 5000);
+            child.once('exit', () => { clearTimeout(timer); resolve(); });
+        });
+        if (child.exitCode === null) child.kill('SIGTERM');
+        assert.match(stdout, /FEED TERMINATED/, 'FEED TERMINATED must fire on inactive exit');
+    } finally {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+});
+
 // R-MWR-8: parametrized truncate test for the 3 file-tail watchers.
 // Each watcher's internal pattern is `let offset = ...; offset = drain*(...)`.
 // We exercise the SHARED truncation primitive (detectLogTruncation) against
