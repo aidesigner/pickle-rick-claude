@@ -233,6 +233,12 @@ export interface RefinementTicketManifestEntry {
   source_file?: string;
 }
 
+export interface TicketQualityWarning {
+  ticket_id: string;
+  defect_class: string;
+  evidence: string;
+}
+
 export interface RefinementManifest {
   prd_path: string;
   refinement_dir: string;
@@ -242,6 +248,7 @@ export interface RefinementManifest {
   max_turns_per_worker: number;
   ac_shape_smells: AcShapeSmell[];
   tickets: RefinementTicketManifestEntry[];
+  ticket_quality_warnings?: TicketQualityWarning[];
   workers: {
     role: RoleId;
     success: boolean;
@@ -1564,9 +1571,9 @@ function runSymbolAuditEnforcement(report: SymbolAuditReport): number {
   return PipelineRunnerExitCode.AuditFailure;
 }
 
-export function buildRefinementManifest(args: RefinementArgs, results: CycleResults): RefinementManifest {
+export function buildRefinementManifest(args: RefinementArgs, results: CycleResults, ticketQualityWarnings?: TicketQualityWarning[]): RefinementManifest {
   const shapeData = collectAcShapeData(results);
-  return {
+  const manifest: RefinementManifest = {
     prd_path: args.prdPath,
     refinement_dir: results.refinementDir,
     all_success: results.allSuccess,
@@ -1588,6 +1595,10 @@ export function buildRefinementManifest(args: RefinementArgs, results: CycleResu
     }),
     completed_at: new Date().toISOString(),
   };
+  if (ticketQualityWarnings !== undefined) {
+    manifest.ticket_quality_warnings = ticketQualityWarnings;
+  }
+  return manifest;
 }
 
 export async function writeManifestAtomic(manifestPath: string, manifest: RefinementManifest): Promise<void> {

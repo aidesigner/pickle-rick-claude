@@ -1321,9 +1321,9 @@ function runSymbolAuditEnforcement(report) {
     }
     return PipelineRunnerExitCode.AuditFailure;
 }
-export function buildRefinementManifest(args, results) {
+export function buildRefinementManifest(args, results, ticketQualityWarnings) {
     const shapeData = collectAcShapeData(results);
-    return {
+    const manifest = {
         prd_path: args.prdPath,
         refinement_dir: results.refinementDir,
         all_success: results.allSuccess,
@@ -1345,6 +1345,10 @@ export function buildRefinementManifest(args, results) {
         }),
         completed_at: new Date().toISOString(),
     };
+    if (ticketQualityWarnings !== undefined) {
+        manifest.ticket_quality_warnings = ticketQualityWarnings;
+    }
+    return manifest;
 }
 export async function writeManifestAtomic(manifestPath, manifest) {
     const manifestTmp = `${manifestPath}.tmp.${process.pid}`;

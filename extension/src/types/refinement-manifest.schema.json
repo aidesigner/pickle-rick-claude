@@ -1,0 +1,97 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RefinementManifest",
+  "description": "Manifest written by spawn-refinement-team to ${SESSION_ROOT}/refinement_manifest.json",
+  "type": "object",
+  "required": ["prd_path", "refinement_dir", "all_success", "cycles_requested", "cycles_completed", "max_turns_per_worker", "ac_shape_smells", "tickets", "workers", "completed_at"],
+  "additionalProperties": false,
+  "properties": {
+    "prd_path": { "type": "string", "minLength": 1 },
+    "refinement_dir": { "type": "string", "minLength": 1 },
+    "all_success": { "type": "boolean" },
+    "cycles_requested": { "type": "integer", "minimum": 1 },
+    "cycles_completed": { "type": "integer", "minimum": 0 },
+    "max_turns_per_worker": { "type": "integer", "minimum": 0 },
+    "ac_shape_smells": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ac_id"],
+        "properties": {
+          "ac_id": { "type": "string", "minLength": 1 },
+          "headline": { "type": "string" },
+          "evidence": { "type": "array", "items": { "type": "string" } },
+          "targets": { "type": "array", "items": { "type": "string" } },
+          "repeated_predicate": { "type": "string" },
+          "ticket_ids": { "type": "array", "items": { "type": "string" } },
+          "source_worker": { "type": "string" },
+          "source_file": { "type": "string" }
+        }
+      }
+    },
+    "tickets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "source_ac_ids"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "title": { "type": "string", "minLength": 1 },
+          "source_ac_ids": { "type": "array", "items": { "type": "string" } },
+          "source_prd": { "type": "string" },
+          "source_section": { "type": "string" },
+          "mapped_requirements": { "type": "array", "items": { "type": "string" } },
+          "acceptance_test": { "type": "string" },
+          "justification": { "type": "string" },
+          "source_worker": { "type": "string" },
+          "source_file": { "type": "string" }
+        }
+      }
+    },
+    "ticket_quality_warnings": {
+      "type": "array",
+      "description": "R-TAQ-7: per-ticket quality warnings populated by R-TAQ-1 (analyst-side verification) and R-TAQ-2 (post-decomp audit)",
+      "items": {
+        "type": "object",
+        "required": ["ticket_id", "defect_class", "evidence"],
+        "additionalProperties": false,
+        "properties": {
+          "ticket_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Ticket identifier (e.g. hash or Linear ID)"
+          },
+          "defect_class": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Defect class string (e.g. 'path-drift', 'hallucinated-premise')"
+          },
+          "evidence": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Human-readable description of what triggered the warning"
+          }
+        }
+      }
+    },
+    "workers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["role", "success", "output_file", "exists", "log_file", "cycle"],
+        "properties": {
+          "role": { "type": "string", "minLength": 1 },
+          "success": { "type": "boolean" },
+          "output_file": { "type": "string" },
+          "exists": { "type": "boolean" },
+          "log_file": { "type": "string" },
+          "cycle": { "type": "integer", "minimum": 1 }
+        }
+      }
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  }
+}
