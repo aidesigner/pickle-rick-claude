@@ -198,6 +198,8 @@ export const VALID_ACTIVITY_EVENTS = [
     'worker_spawn_backend_mismatch',
     'subtool_backend_override',
     'pipeline_auto_resumed',
+    'smoke_gate_bypassed',
+    'codex_unhealthy_consecutive_failures',
 ];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {

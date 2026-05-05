@@ -1359,7 +1359,107 @@ export function appendPipelineRunnerMarker(sessionDir, message) {
     catch { /* non-critical — the marker is also in mux-runner.log */ }
 }
 const isHaltExit = (r) => r === 'cancelled' || r === 'limit' || r === 'timeout_repeat';
-const isFailureExit = (r) => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination' || r === 'iteration_cap_exhausted';
+const isFailureExit = (r) => r === 'error' || r === 'stall' || r === 'circuit_open' || r === 'rate_limit_exhausted' || r === 'timeout_repeat' || r === 'manager_persistent_hallucination' || r === 'iteration_cap_exhausted' || r === 'codex_unhealthy_consecutive_failures';
+// ---------------------------------------------------------------------------
+// R-CNAR-6 — Spark codex smoke-run gate
+// ---------------------------------------------------------------------------
+/** Codex CLI surfaces transport, auth, and rate-limit failures with these markers. */
+const CODEX_CLI_ERROR_PATTERNS = [
+    /\b(?:ECONNRESET|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT|EPIPE)\b/,
+    /\bHTTP\s*(?:429|5\d\d)\b/,
+    /\b429\s+Too\s+Many\s+Requests\b/i,
+    /\b5\d\d\s+(?:Bad\s+Gateway|Internal\s+Server\s+Error|Service\s+Unavailable)\b/i,
+    /\bcodex(?:\s+CLI)?[:\s]+(?:error|exited|failed|crashed)\b/i,
+    /\bstream\s+(?:error|disconnected)\b/i,
+    /\brate[_\s-]?limit(?:\s+exceeded|_exceeded)\b/i,
+    /\b401\s+Unauthorized\b/i,
+];
+const SPARK_MODEL_PATTERN = /^gpt-5\.3-codex-spark/;
+function ticketHasCodexCliError(ticketDir) {
+    let entries;
+    try {
+        entries = fs.readdirSync(ticketDir);
+    }
+    catch {
+        return false;
+    }
+    for (const file of entries) {
+        if (!/^worker_session_\d+\.log$/.test(file))
+            continue;
+        let content;
+        try {
+            content = fs.readFileSync(path.join(ticketDir, file), 'utf-8');
+        }
+        catch {
+            continue;
+        }
+        if (CODEX_CLI_ERROR_PATTERNS.some(re => re.test(content)))
+            return true;
+    }
+    return false;
+}
+function isSparkGateActive(state) {
+    if (state.backend !== 'codex')
+        return false;
+    const codexModel = typeof state.codex_model === 'string' ? state.codex_model : '';
+    return SPARK_MODEL_PATTERN.test(codexModel);
+}
+function isFailedWithCodexError(sessionDir, ticket) {
+    if (!ticket.id)
+        return false;
+    const status = (ticket.status ?? '').trim().toLowerCase();
+    if (status !== 'failed')
+        return false;
+    return ticketHasCodexCliError(path.join(sessionDir, ticket.id));
+}
+/**
+ * Pure decision helper for the R-CNAR-6 spark codex smoke-run gate.
+ *
+ * Active iff `state.backend === 'codex'` AND `state.codex_model` matches
+ * `^gpt-5\.3-codex-spark`. When inactive, returns `allow / gate_inactive`.
+ *
+ * Halt criteria:
+ *   (i) tickets[0] or tickets[1] has `status: Failed` AND a codex-CLI-error
+ *       breadcrumb in any `worker_session_<pid>.log` under that ticket dir.
+ *  (ii) any 3 consecutive tickets in canonical (collectTickets) order are
+ *       Failed-with-codex-CLI-error breadcrumb.
+ *
+ * Bypass: `state.flags.skip_smoke_gate_reason='<reason>'` short-circuits to
+ * `bypass`. Caller is responsible for emitting the `smoke_gate_bypassed`
+ * activity event exactly once per session.
+ */
+export function evaluateSparkSmokeGate(state, sessionDir) {
+    if (!isSparkGateActive(state)) {
+        return { action: 'allow', reason: 'gate_inactive', rule: 'gate_inactive' };
+    }
+    const skipReasonRaw = state.flags?.skip_smoke_gate_reason;
+    const skipReason = typeof skipReasonRaw === 'string' ? skipReasonRaw.trim() : '';
+    if (skipReason.length > 0) {
+        return { action: 'bypass', reason: skipReason, rule: 'bypassed' };
+    }
+    const tickets = collectTickets(sessionDir);
+    let consecutive = 0;
+    for (let i = 0; i < tickets.length; i++) {
+        const ticket = tickets[i];
+        const failedWithErr = isFailedWithCodexError(sessionDir, ticket);
+        if (i < 2 && failedWithErr) {
+            return {
+                action: 'halt',
+                reason: `first 2 tickets must complete: ticket[${i}]=${ticket.id} failed with codex-CLI error`,
+                rule: 'first_two_failed',
+            };
+        }
+        consecutive = failedWithErr ? consecutive + 1 : 0;
+        if (consecutive >= 3) {
+            return {
+                action: 'halt',
+                reason: `3 consecutive ticket failures with codex-CLI errors (last: ${ticket.id})`,
+                rule: 'three_consecutive_failed',
+            };
+        }
+    }
+    return { action: 'allow', reason: 'ok', rule: 'allow' };
+}
 const CIRCUIT_BREAKER_TIER_BUDGETS = {
     trivial: 3,
     small: 4,
@@ -2235,6 +2335,7 @@ async function runMuxRunnerMain() {
     const rawProbeThreshold = Number(probeSettings.commit_pending_probe_threshold);
     const commitPendingProbeThreshold = Number.isFinite(rawProbeThreshold) && rawProbeThreshold > 0 ? rawProbeThreshold : 2;
     let readinessGateChecked = false;
+    let smokeGateBypassEmitted = false;
     while (true) {
         let state;
         try {
@@ -2439,6 +2540,36 @@ async function runMuxRunnerMain() {
         catch (err) {
             // Probe is best-effort — never block the iteration on probe failure.
             log(`commit-pending probe threw (ignored): ${safeErrorMessage(err)}`);
+        }
+        // R-CNAR-6: spark codex smoke-run gate. Active only when state.backend='codex'
+        // AND state.codex_model matches /^gpt-5\.3-codex-spark/. Halt exits with
+        // exit_reason='codex_unhealthy_consecutive_failures'; auto-resume.sh STOPS per
+        // R-CNAR-4(c) (any non-pipeline_phase_incomplete exit halts the resume loop).
+        {
+            const smokeDecision = evaluateSparkSmokeGate(state, sessionDir);
+            if (smokeDecision.action === 'bypass' && !smokeGateBypassEmitted) {
+                smokeGateBypassEmitted = true;
+                log(`spark smoke gate bypassed: ${smokeDecision.reason}`);
+                logActivity({
+                    event: 'smoke_gate_bypassed',
+                    source: 'pickle',
+                    session: path.basename(sessionDir),
+                    reason: smokeDecision.reason,
+                });
+            }
+            if (smokeDecision.action === 'halt') {
+                log(`SMOKE GATE HALT: ${smokeDecision.reason} (rule=${smokeDecision.rule})`);
+                logActivity({
+                    event: 'codex_unhealthy_consecutive_failures',
+                    source: 'pickle',
+                    session: path.basename(sessionDir),
+                    reason: smokeDecision.reason,
+                });
+                recordExitReason(statePath, 'codex_unhealthy_consecutive_failures');
+                safeDeactivate(statePath);
+                exitReason = 'codex_unhealthy_consecutive_failures';
+                break;
+            }
         }
         const iterWorkingDir = state.working_dir || process.cwd();
         const preIterSha = readHeadCommit(iterWorkingDir);
