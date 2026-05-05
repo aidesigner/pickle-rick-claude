@@ -827,7 +827,7 @@ export function pruneOrphanedMapEntries(dataRoot) {
             dirExists = fs.statSync(sessionPath).isDirectory();
         }
         catch {
-            dirExists = false;
+            // dirExists already false
         }
         if (!dirExists) {
             pruned++;
@@ -839,7 +839,7 @@ export function pruneOrphanedMapEntries(dataRoot) {
             stateReadable = true;
         }
         catch {
-            stateReadable = false;
+            // stateReadable already false
         }
         if (!stateReadable) {
             pruned++;

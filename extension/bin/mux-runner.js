@@ -2571,10 +2571,9 @@ async function runMuxRunnerMain() {
             // R-CNAR-7 self-heal: clear all five cache fields atomically. The
             // upstream nullification sites that should have done this are fixed by
             // R-CNAR-8 (sibling commit); this path catches state that pre-dates
-            // those fixes plus any future leak we miss.
+            // those fixes plus any future leak we miss. The next loop iteration
+            // re-reads state via readRunnerState at the top of the while-body.
             sm.update(statePath, s => { clearStaleTicketCacheFields(s); });
-            // Re-read state so the rest of this iteration sees the cleared cache.
-            state = readRunnerState(statePath);
             continue;
         }
         if (state.current_ticket && ticketMaxIter > 0 && budgetIter >= ticketMaxIter) {
