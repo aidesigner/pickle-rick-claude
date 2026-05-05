@@ -125,4 +125,8 @@ PASS → next. NEEDS_FIX → fix, re-verify.
 ### 8. Simplify
 Modified files only (`git diff --name-only`). Delete dead code, merge dupes, flatten nesting (max 2), purge slop comments, replace `any` with project types. Verify after each file — revert if broken.
 
+## ⚠️ CRITICAL: Completion Token Rules
+
+**Do NOT emit `<promise>I AM DONE</promise>` until ALL six lifecycle phases (research, plan, implement, verify, review, refactor) have produced their artifacts.** Premature completion after only research or plan fails validation and the ticket will be reverted to Failed. You MUST complete all phases sequentially, with each phase producing required outputs.
+
 Output `<promise>I AM DONE</promise>` — NOT `EPIC_COMPLETED`, NOT any other token. Then STOP.
