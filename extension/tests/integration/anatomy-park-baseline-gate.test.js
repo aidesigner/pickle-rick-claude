@@ -132,21 +132,38 @@ test('gate-fixture-i: green gate + commits → no regression events', async () =
   const events = [];
   const writtenStates = [];
 
-  const mv = await runPerIterationGateHook({
-    ...BASE_OPTS,
-    currentMv: makeMv(),
-    _deps: {
-      getHeadShaFn: () => 'sha-after',
-      runGateFn: async () => makeGateResult('green', 0),
-      runRemediatorFn: async () => { assert.fail('remediator must not be called on green gate'); },
-      writeMicroverseStateFn: (_, s) => writtenStates.push(s),
-      logActivityFn: (e) => events.push(e),
-    },
-  });
+  // Per-test temp sessionDir + pre-staged baseline.json so the gate runs in
+  // 'baseline' mode (not 'strict'), which avoids the unrelated
+  // baseline_recapture_attempted emission that fires whenever a strict gate
+  // runs without an existing baseline file. The assertion below is testing
+  // green-gate idle behavior, not the recapture path.
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-gate-fixture-i-'));
+  fs.mkdirSync(path.join(sessionDir, 'gate'), { recursive: true });
+  fs.writeFileSync(
+    path.join(sessionDir, 'gate', 'baseline.json'),
+    JSON.stringify({ failures: [], total_raw_failure_count: 0 }),
+  );
 
-  assert.equal(events.length, 0, `No events for green gate, got: ${JSON.stringify(events)}`);
-  assert.equal(writtenStates.length, 0, 'No state writes for green gate');
-  assert.equal(mv.iteration_regressions, 0);
+  try {
+    const mv = await runPerIterationGateHook({
+      ...BASE_OPTS,
+      sessionDir,
+      currentMv: makeMv(),
+      _deps: {
+        getHeadShaFn: () => 'sha-after',
+        runGateFn: async () => makeGateResult('green', 0),
+        runRemediatorFn: async () => { assert.fail('remediator must not be called on green gate'); },
+        writeMicroverseStateFn: (_, s) => writtenStates.push(s),
+        logActivityFn: (e) => events.push(e),
+      },
+    });
+
+    assert.equal(events.length, 0, `No events for green gate, got: ${JSON.stringify(events)}`);
+    assert.equal(writtenStates.length, 0, 'No state writes for green gate');
+    assert.equal(mv.iteration_regressions, 0);
+  } finally {
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
 });
 
 // Fixture ii: gate red + remediator succeeds → no regression event
