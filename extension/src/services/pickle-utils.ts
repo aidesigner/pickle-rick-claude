@@ -1400,12 +1400,20 @@ export function restartDeadWatcherPanes(
   extensionRoot: string,
   mode: MonitorMode,
   spawnSyncFn: typeof spawnSync = spawnSync,
+  /**
+   * R-MWR-3: log-line prefix for respawn decisions. Defaults to
+   * `restartDeadWatcherPanes` for boundary-driven invocations
+   * (`ensureMonitorWindow` re-attach). The continuous in-monitor
+   * watchdog (`startRespawnWatchdog`) passes `monitor-watchdog` so
+   * AC-MWR-05 grep can distinguish the two callers in `mux-runner.log`.
+   */
+  logTag: string = 'restartDeadWatcherPanes',
 ): void {
   if (isSessionInactive(sessionDir)) return;
 
   const sessionName = readCurrentTmuxSessionName(spawnSyncFn);
   if (!sessionName) {
-    appendWatcherRestartLog(sessionDir, 'restartDeadWatcherPanes WARN: unable to resolve tmux session name');
+    appendWatcherRestartLog(sessionDir, `${logTag} WARN: unable to resolve tmux session name`);
     return;
   }
 
@@ -1415,7 +1423,7 @@ export function restartDeadWatcherPanes(
     if (currentCommand === null) {
       appendWatcherRestartLog(
         sessionDir,
-        `restartDeadWatcherPanes WARN: unable to read pane_current_command for pane ${watcher.pane}`,
+        `${logTag} WARN: unable to read pane_current_command for pane ${watcher.pane}`,
       );
       continue;
     }
@@ -1423,7 +1431,7 @@ export function restartDeadWatcherPanes(
 
     appendWatcherRestartLog(
       sessionDir,
-      `restartDeadWatcherPanes WARN: pane ${watcher.pane} command '${currentCommand || '(empty)'}' is not node`,
+      `${logTag} WARN: pane ${watcher.pane} command '${currentCommand || '(empty)'}' is not node`,
     );
     const result = spawnSyncFn('tmux', ['send-keys', '-t', target, watcher.command, 'Enter'], {
       encoding: 'utf-8',
@@ -1432,13 +1440,13 @@ export function restartDeadWatcherPanes(
     if (result.status === 0) {
       appendWatcherRestartLog(
         sessionDir,
-        `restartDeadWatcherPanes: respawned ${watcher.name} in pane ${watcher.pane}`,
+        `${logTag}: respawned ${watcher.name} in pane ${watcher.pane}`,
       );
     } else {
       const err = (result.stderr || result.stdout || '').toString().trim();
       appendWatcherRestartLog(
         sessionDir,
-        `restartDeadWatcherPanes WARN: failed to respawn ${watcher.name} in pane ${watcher.pane}: ${err || 'non-zero exit'}`,
+        `${logTag} WARN: failed to respawn ${watcher.name} in pane ${watcher.pane}: ${err || 'non-zero exit'}`,
       );
     }
   }

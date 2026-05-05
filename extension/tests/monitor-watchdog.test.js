@@ -234,6 +234,34 @@ test('startRespawnWatchdog: kill-switch is independent of MONITOR_STDOUT_WATCHDO
     }
 });
 
+// --- Log-line tagging (R-MWR-3 + AC-MWR-05) ---
+
+test('startRespawnWatchdog: respawn lines are tagged "monitor-watchdog:" (R-MWR-3)', async () => {
+    const f = makeWatchdogFakes();
+    try {
+        const intervalMs = 30;
+        const handle = startRespawnWatchdog({
+            sessionDir: f.sessionDir,
+            extensionRoot: f.extRoot,
+            intervalMs,
+            spawnSyncFn: f.spawnSyncFn,
+        });
+        await new Promise(resolve => setTimeout(resolve, intervalMs + 30));
+        clearInterval(handle);
+
+        const muxLogPath = path.join(f.sessionDir, 'mux-runner.log');
+        const log = fs.existsSync(muxLogPath) ? fs.readFileSync(muxLogPath, 'utf-8') : '';
+        // AC-MWR-05: distinct tag from boundary-driven `restartDeadWatcherPanes:`.
+        assert.match(log, /monitor-watchdog: respawned monitor\.js in pane 0/, log);
+        assert.match(log, /monitor-watchdog: respawned log-watcher\.js in pane 1/, log);
+        assert.match(log, /monitor-watchdog: respawned morty-watcher\.js in pane 2/, log);
+        assert.match(log, /monitor-watchdog: respawned raw-morty\.js in pane 3/, log);
+        assert.doesNotMatch(log, /restartDeadWatcherPanes: respawned/, 'watchdog calls must not leak the boundary tag');
+    } finally {
+        f.cleanup();
+    }
+});
+
 test('startRespawnWatchdog: respawns a dead pane exactly once per tick (R-MWR-7)', async () => {
     // R-MWR-7 acceptance: "advance fake timer 30s, assert respawn invoked
     // exactly once". We approximate "advance fake timer" with one real

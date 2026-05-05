@@ -659,7 +659,10 @@ export function startRespawnWatchdog(opts: {
     try {
       const extensionRoot = opts.extensionRoot ?? getExtensionRoot();
       const mode = inferMonitorMode(opts.sessionDir);
-      restartDeadWatcherPanes(opts.sessionDir, extensionRoot, mode, opts.spawnSyncFn ?? spawnSync);
+      // R-MWR-3: tag respawn decisions as `monitor-watchdog:` so they
+      // can be distinguished in mux-runner.log from boundary-driven
+      // restartDeadWatcherPanes calls (AC-MWR-05).
+      restartDeadWatcherPanes(opts.sessionDir, extensionRoot, mode, opts.spawnSyncFn ?? spawnSync, 'monitor-watchdog');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       log(`monitor-watchdog tick error: ${msg}`);

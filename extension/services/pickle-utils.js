@@ -1230,34 +1230,42 @@ export function inferMonitorMode(sessionDir) {
         return 'pickle';
     }
 }
-export function restartDeadWatcherPanes(sessionDir, extensionRoot, mode, spawnSyncFn = spawnSync) {
+export function restartDeadWatcherPanes(sessionDir, extensionRoot, mode, spawnSyncFn = spawnSync, 
+/**
+ * R-MWR-3: log-line prefix for respawn decisions. Defaults to
+ * `restartDeadWatcherPanes` for boundary-driven invocations
+ * (`ensureMonitorWindow` re-attach). The continuous in-monitor
+ * watchdog (`startRespawnWatchdog`) passes `monitor-watchdog` so
+ * AC-MWR-05 grep can distinguish the two callers in `mux-runner.log`.
+ */
+logTag = 'restartDeadWatcherPanes') {
     if (isSessionInactive(sessionDir))
         return;
     const sessionName = readCurrentTmuxSessionName(spawnSyncFn);
     if (!sessionName) {
-        appendWatcherRestartLog(sessionDir, 'restartDeadWatcherPanes WARN: unable to resolve tmux session name');
+        appendWatcherRestartLog(sessionDir, `${logTag} WARN: unable to resolve tmux session name`);
         return;
     }
     for (const watcher of watcherPaneCommands(sessionDir, extensionRoot, mode)) {
         const target = `${sessionName}:monitor.${watcher.pane}`;
         const currentCommand = readPaneCurrentCommand(target, spawnSyncFn);
         if (currentCommand === null) {
-            appendWatcherRestartLog(sessionDir, `restartDeadWatcherPanes WARN: unable to read pane_current_command for pane ${watcher.pane}`);
+            appendWatcherRestartLog(sessionDir, `${logTag} WARN: unable to read pane_current_command for pane ${watcher.pane}`);
             continue;
         }
         if (currentCommand === 'node')
             continue;
-        appendWatcherRestartLog(sessionDir, `restartDeadWatcherPanes WARN: pane ${watcher.pane} command '${currentCommand || '(empty)'}' is not node`);
+        appendWatcherRestartLog(sessionDir, `${logTag} WARN: pane ${watcher.pane} command '${currentCommand || '(empty)'}' is not node`);
         const result = spawnSyncFn('tmux', ['send-keys', '-t', target, watcher.command, 'Enter'], {
             encoding: 'utf-8',
             timeout: 5_000,
         });
         if (result.status === 0) {
-            appendWatcherRestartLog(sessionDir, `restartDeadWatcherPanes: respawned ${watcher.name} in pane ${watcher.pane}`);
+            appendWatcherRestartLog(sessionDir, `${logTag}: respawned ${watcher.name} in pane ${watcher.pane}`);
         }
         else {
             const err = (result.stderr || result.stdout || '').toString().trim();
-            appendWatcherRestartLog(sessionDir, `restartDeadWatcherPanes WARN: failed to respawn ${watcher.name} in pane ${watcher.pane}: ${err || 'non-zero exit'}`);
+            appendWatcherRestartLog(sessionDir, `${logTag} WARN: failed to respawn ${watcher.name} in pane ${watcher.pane}: ${err || 'non-zero exit'}`);
         }
     }
 }
