@@ -77,7 +77,10 @@ test('ticket-tier.budget-mapping: all tiers map to documented iteration and work
         max_iterations: maxIterations,
         worker_timeout_seconds: workerTimeoutSeconds,
       });
-      assert.equal(state.max_iterations, maxIterations);
+      // R-CNAR-1 part 2: state.max_iterations is the GLOBAL manager-loop cap
+      // (operator-set) and MUST be preserved across applyTicketTierBudget calls.
+      // The per-ticket tier ceiling lives in state.current_ticket_max_iterations.
+      assert.equal(state.max_iterations, 99, 'global max_iterations preserved');
       assert.equal(state.worker_timeout_seconds, workerTimeoutSeconds);
       assert.equal(state.current_ticket_tier, tier);
       assert.equal(state.current_ticket_max_iterations, maxIterations);
@@ -108,7 +111,9 @@ test('ticket-tier.default: missing and invalid tiers default to medium budget', 
 
       const state = stateFor(id);
       assert.deepEqual(applyTicketTierBudget(state, root), expected);
-      assert.equal(state.max_iterations, expected.max_iterations);
+      // R-CNAR-1 part 2: global max_iterations preserved; per-ticket cache holds tier value.
+      assert.equal(state.max_iterations, 99, 'global max_iterations preserved');
+      assert.equal(state.current_ticket_max_iterations, expected.max_iterations);
       assert.equal(state.worker_timeout_seconds, expected.worker_timeout_seconds);
     }
   } finally {
@@ -130,7 +135,10 @@ test('ticket-tier.budget-mapping: cached tier is stable when frontmatter changes
       max_iterations: 60,
       worker_timeout_seconds: 80 * 60,
     });
-    assert.equal(state.max_iterations, 60);
+    // R-CNAR-1 part 2: global max_iterations preserved (still 99 from stateFor);
+    // per-ticket cache holds the cached large-tier value.
+    assert.equal(state.max_iterations, 99, 'global max_iterations preserved');
+    assert.equal(state.current_ticket_max_iterations, 60);
     assert.equal(state.worker_timeout_seconds, 80 * 60);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

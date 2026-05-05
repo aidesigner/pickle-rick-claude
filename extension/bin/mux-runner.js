@@ -452,7 +452,13 @@ export function applyTicketTierBudget(state, sessionDir) {
     state.current_ticket_tier = budget.tier;
     state.current_ticket_max_iterations = budget.max_iterations;
     state.current_ticket_worker_timeout_seconds = budget.worker_timeout_seconds;
-    state.max_iterations = budget.max_iterations;
+    // R-CNAR-1 part 2: do NOT overwrite state.max_iterations here. Per the
+    // trap-door invariant in extension/CLAUDE.md, state.max_iterations is the
+    // GLOBAL manager-loop cap (operator-set at session start). The per-ticket
+    // tier ceiling lives in state.current_ticket_max_iterations (set above).
+    // The cap-check at runMuxLoop reads BOTH and exits whichever fires first.
+    // worker_timeout_seconds is documented as the per-spawn worker budget so it
+    // remains overwritten here — workers want the per-ticket timeout.
     state.worker_timeout_seconds = budget.worker_timeout_seconds;
     return budget;
 }
@@ -2247,21 +2253,38 @@ async function runMuxRunnerMain() {
             exitReason = 'cancelled';
             break;
         }
-        const rawMaxIter = Number(state.max_iterations);
-        const maxIter = Number.isFinite(rawMaxIter) ? rawMaxIter : 0;
+        const rawGlobalMaxIter = Number(state.max_iterations);
+        const globalMaxIter = Number.isFinite(rawGlobalMaxIter) ? rawGlobalMaxIter : 0;
+        const rawTicketMaxIter = Number(state.current_ticket_max_iterations);
+        const ticketMaxIter = Number.isFinite(rawTicketMaxIter) && rawTicketMaxIter > 0
+            ? rawTicketMaxIter
+            : globalMaxIter;
         const rawCurIter = Number(state.iteration);
         const curIter = Number.isFinite(rawCurIter) ? rawCurIter : 0;
         const budgetIter = ticketBudgetIterationCount(state, curIter);
-        if (maxIter > 0 && budgetIter >= maxIter) {
-            // R-ICP-1: cap-hit without an EPIC_COMPLETED promise is NOT a clean
-            // success. Distinct exit_reason ('iteration_cap_exhausted') and exit
-            // code 3 let pipeline-runner halt instead of advancing to the next
-            // phase on incomplete pickle output. Forensic-style deactivation
-            // preserves step/current_ticket so postmortem can show the unfinished
-            // queue. The old `Max iterations reached ...` log line is retained
-            // below as a stable marker for grep-based forensics.
-            log(`mux-runner exiting with code 3: iteration cap (${budgetIter}/${maxIter}) reached without ${PromiseTokens.EPIC_COMPLETED} promise`);
-            log(`Max iterations reached (${budgetIter}/${maxIter}). Exiting.`);
+        // R-ICP-1 + R-CNAR-1 part 2: two independent cap exits.
+        //   (a) PER-TICKET budget exhaustion — current ticket isn't progressing
+        //       within its tier ceiling (current_ticket_max_iterations).
+        //   (b) GLOBAL manager-loop cap exhaustion — total iterations across all
+        //       tickets reached operator-set state.max_iterations.
+        // Both exit_reason='iteration_cap_exhausted' so pipeline-runner halts
+        // (exit code 3, R-ICP-1 contract). Forensic-style deactivation preserves
+        // step/current_ticket so postmortem can show the unfinished queue. The
+        // `Max iterations reached ...` log line is retained as a stable marker
+        // for grep-based forensics.
+        if (ticketMaxIter > 0 && budgetIter >= ticketMaxIter) {
+            const tier = typeof state.current_ticket_tier === 'string' ? state.current_ticket_tier : 'unknown';
+            const ticketId = state.current_ticket ?? 'unknown';
+            log(`mux-runner exiting with code 3: per-ticket budget (${budgetIter}/${ticketMaxIter}, tier=${tier}) exhausted on ticket ${ticketId} without ${PromiseTokens.EPIC_COMPLETED} promise`);
+            log(`Max iterations reached (${budgetIter}/${ticketMaxIter}). Exiting.`);
+            recordExitReason(statePath, 'iteration_cap_exhausted');
+            safeDeactivate(statePath);
+            exitReason = 'iteration_cap_exhausted';
+            break;
+        }
+        if (globalMaxIter > 0 && curIter >= globalMaxIter) {
+            log(`mux-runner exiting with code 3: global iteration cap (${curIter}/${globalMaxIter}) exhausted without ${PromiseTokens.EPIC_COMPLETED} promise`);
+            log(`Max iterations reached (${curIter}/${globalMaxIter}). Exiting.`);
             recordExitReason(statePath, 'iteration_cap_exhausted');
             safeDeactivate(statePath);
             exitReason = 'iteration_cap_exhausted';
