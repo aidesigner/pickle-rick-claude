@@ -1,0 +1,576 @@
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
+const MANIFEST_SCHEMA_VERSION = 1 as const;
+const TICKET_HASH_RE = /^[0-9a-f]{8}$/;
+const SHA_TOKEN_RE = /\b[0-9a-f]{7,40}\b/g;
+const VERSION_TOKEN_RE = /\bv?(\d+\.\d+\.\d+)\b/g;
+const PATH_BACKTICK_RE = /`([^`\n]+)`/g;
+const FORWARD_CREATED_RE = /\(forward-created\)/;
+const PATH_LIKELY_RE =
+  /^(?:extension|src|tests|prds|scripts|services|hooks|bin|types|\.claude)\//;
+const PATH_HAS_EXT_RE = /\/[^\s/]+\.[a-zA-Z][a-zA-Z0-9]+$/;
+const DISPOSITION_FILE_REL = path.join('src', 'data', 'bundle-disposition-2026-05-04.json');
+const EXEMPT_DISPOSITIONS = new Set(['REGRESSION-TEST-ONLY', 'DROP']);
+
+type Severity = 'fatal' | 'warning' | 'info';
+type DefectClass =
+  | 'path-drift'
+  | 'self-reference'
+  | 'missing-deps'
+  | 'wrong-HEAD-assumptions'
+  | 'cross-doc-naming'
+  | 'hallucinated-premise'
+  | 'literal-value-drift';
+
+interface Finding {
+  ticket_id: string;
+  ticket_path: string;
+  defect_class: DefectClass;
+  severity: Severity;
+  evidence: string;
+  remediation_hint: string;
+}
+
+interface ParsedTicket {
+  id: string;
+  title: string;
+  filePath: string;
+  relPath: string;
+  mappedRequirements: string[];
+  body: string;
+  problemSection: string;
+  dependenciesLine: string;
+}
+
+interface AuditManifest {
+  schema_version: typeof MANIFEST_SCHEMA_VERSION;
+  session_hash: string;
+  audited_at: string;
+  ticket_count: number;
+  findings: Finding[];
+  exit_code: number;
+}
+
+interface AuditContext {
+  sessionDir: string;
+  workingDir: string;
+  startCommit: string | null;
+  gitFiles: Set<string>;
+  packageVersion: string | null;
+  knownTicketHashes: Set<string>;
+  dispositions: Record<string, string>;
+  dispositionsLoaded: boolean;
+}
+
+function readFileOrNull(p: string): string | null {
+  try {
+    return fs.readFileSync(p, 'utf-8');
+  } catch {
+    return null;
+  }
+}
+
+function readJsonOrNull<T>(p: string): T | null {
+  const raw = readFileOrNull(p);
+  if (raw === null) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+function splitFrontmatter(raw: string): { frontmatter: string; body: string } | null {
+  if (!raw.startsWith('---\n')) return null;
+  const end = raw.indexOf('\n---\n', 4);
+  if (end === -1) return null;
+  return { frontmatter: raw.slice(4, end), body: raw.slice(end + 5) };
+}
+
+function frontmatterValue(frontmatter: string, key: string): string {
+  const re = new RegExp(`^${key}:\\s*(.*)$`, 'm');
+  const m = re.exec(frontmatter);
+  if (!m) return '';
+  return m[1].trim().replace(/^["']|["']$/g, '');
+}
+
+function parseMappedRequirements(frontmatter: string): string[] {
+  const raw = frontmatterValue(frontmatter, 'mapped_requirements');
+  const inner = raw.replace(/^\[|\]$/g, '');
+  return inner
+    .split(',')
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+}
+
+function extractSection(body: string, heading: string): string {
+  const lines = body.split('\n');
+  const startIdx = lines.findIndex((l) => l.trim() === heading);
+  if (startIdx === -1) return '';
+  const out: string[] = [];
+  for (let i = startIdx + 1; i < lines.length; i++) {
+    if (/^#{1,6}\s/.test(lines[i])) break;
+    out.push(lines[i]);
+  }
+  return out.join('\n');
+}
+
+function extractDependenciesLine(body: string): string {
+  const re = /^\*\*Dependencies\*\*:\s*(.*)$/m;
+  const m = re.exec(body);
+  return m ? m[1] : '';
+}
+
+function parseTicket(filePath: string, sessionDir: string): ParsedTicket | null {
+  const raw = readFileOrNull(filePath);
+  if (raw === null) return null;
+  const split = splitFrontmatter(raw);
+  if (split === null) return null;
+  const id = frontmatterValue(split.frontmatter, 'id');
+  if (!TICKET_HASH_RE.test(id)) return null;
+  return {
+    id,
+    title: frontmatterValue(split.frontmatter, 'title'),
+    filePath,
+    relPath: path.relative(sessionDir, filePath),
+    mappedRequirements: parseMappedRequirements(split.frontmatter),
+    body: split.body,
+    problemSection: extractSection(split.body, '## Problem'),
+    dependenciesLine: extractDependenciesLine(split.body),
+  };
+}
+
+function findExtensionDir(scriptDir: string): string | null {
+  let dir = scriptDir;
+  for (let i = 0; i < 6; i++) {
+    if (path.basename(dir) === 'extension' && fs.existsSync(path.join(dir, 'package.json'))) {
+      return dir;
+    }
+    if (fs.existsSync(path.join(dir, 'extension', 'package.json'))) {
+      return path.join(dir, 'extension');
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+function loadDispositions(scriptDir: string): { table: Record<string, string>; loaded: boolean } {
+  const ext = findExtensionDir(scriptDir);
+  if (ext === null) return { table: {}, loaded: false };
+  const data = readJsonOrNull<Record<string, string>>(path.join(ext, DISPOSITION_FILE_REL));
+  if (data === null || typeof data !== 'object') return { table: {}, loaded: false };
+  return { table: data, loaded: true };
+}
+
+function gitListFiles(workingDir: string): Set<string> {
+  const res = spawnSync('git', ['ls-files'], {
+    cwd: workingDir,
+    encoding: 'utf-8',
+    timeout: 30_000,
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (res.status !== 0) return new Set();
+  return new Set(res.stdout.split('\n').filter((l) => l.length > 0));
+}
+
+function gitVerifySha(sha: string, workingDir: string): boolean {
+  const res = spawnSync('git', ['cat-file', '-e', sha], {
+    cwd: workingDir,
+    encoding: 'utf-8',
+    timeout: 5_000,
+  });
+  return res.status === 0;
+}
+
+function gitIsAncestor(ancestor: string, descendant: string, workingDir: string): boolean {
+  const res = spawnSync('git', ['merge-base', '--is-ancestor', ancestor, descendant], {
+    cwd: workingDir,
+    encoding: 'utf-8',
+    timeout: 5_000,
+  });
+  return res.status === 0;
+}
+
+function looksLikePath(token: string): boolean {
+  if (token.length < 3 || token.length > 200) return false;
+  if (/\s/.test(token)) return false;
+  return PATH_LIKELY_RE.test(token) || PATH_HAS_EXT_RE.test(token);
+}
+
+function extractBacktickedPaths(text: string): string[] {
+  const out: string[] = [];
+  let m: RegExpExecArray | null;
+  PATH_BACKTICK_RE.lastIndex = 0;
+  while ((m = PATH_BACKTICK_RE.exec(text)) !== null) {
+    const tok = m[1].trim();
+    if (looksLikePath(tok)) out.push(tok);
+  }
+  return out;
+}
+
+function lineContext(text: string, token: string): string {
+  const idx = text.indexOf(token);
+  if (idx === -1) return '';
+  const start = text.lastIndexOf('\n', idx) + 1;
+  const end = text.indexOf('\n', idx);
+  return text.slice(start, end === -1 ? text.length : end);
+}
+
+function checkPathDrift(t: ParsedTicket, gitFiles: Set<string>): Finding[] {
+  const findings: Finding[] = [];
+  const seen = new Set<string>();
+  for (const tok of extractBacktickedPaths(t.body)) {
+    if (seen.has(tok)) continue;
+    seen.add(tok);
+    if (gitFiles.has(tok)) continue;
+    const ctx = lineContext(t.body, tok);
+    if (FORWARD_CREATED_RE.test(ctx)) continue;
+    findings.push({
+      ticket_id: t.id,
+      ticket_path: t.relPath,
+      defect_class: 'path-drift',
+      severity: 'fatal',
+      evidence: `cited path \`${tok}\` not found in git ls-files`,
+      remediation_hint: 'verify path or annotate `(forward-created)` per R-RTRC-7',
+    });
+  }
+  return findings;
+}
+
+function checkSelfReference(t: ParsedTicket): Finding[] {
+  const re = new RegExp(`\`[^\`]*${t.id}[^\`]*\``, 'g');
+  const hits = t.body.match(re) ?? [];
+  const offending = hits.filter((h) => !h.includes(`linear_ticket_${t.id}.md`));
+  if (offending.length === 0) return [];
+  return [
+    {
+      ticket_id: t.id,
+      ticket_path: t.relPath,
+      defect_class: 'self-reference',
+      severity: 'warning',
+      evidence: `body cites own hash in: ${offending.slice(0, 3).join(', ')}`,
+      remediation_hint: 'remove self-reference or rephrase without ticket hash',
+    },
+  ];
+}
+
+function extractTicketHashes(text: string): string[] {
+  const tokens = text.match(/\b[0-9a-f]{8}\b/g) ?? [];
+  return [...new Set(tokens)];
+}
+
+function checkMissingDeps(t: ParsedTicket, knownHashes: Set<string>): Finding[] {
+  if (t.dependenciesLine.length === 0) return [];
+  const hashes = extractTicketHashes(t.dependenciesLine);
+  const findings: Finding[] = [];
+  for (const h of hashes) {
+    if (h === t.id) continue;
+    if (knownHashes.has(h)) continue;
+    findings.push({
+      ticket_id: t.id,
+      ticket_path: t.relPath,
+      defect_class: 'missing-deps',
+      severity: 'fatal',
+      evidence: `Dependencies cite unknown ticket hash \`${h}\``,
+      remediation_hint: 'remove dep or add the missing ticket to the bundle',
+    });
+  }
+  return findings;
+}
+
+function isPlausibleSha(token: string): boolean {
+  if (TICKET_HASH_RE.test(token)) return false;
+  return token.length >= 7 && token.length <= 40 && /^[0-9a-f]+$/.test(token);
+}
+
+function extractCandidateShas(t: ParsedTicket, knownHashes: Set<string>): string[] {
+  const tokens = t.body.match(SHA_TOKEN_RE) ?? [];
+  const filtered = tokens.filter((tok) => !knownHashes.has(tok) && isPlausibleSha(tok));
+  return [...new Set(filtered)];
+}
+
+function checkWrongHead(t: ParsedTicket, ctx: AuditContext): Finding[] {
+  if (ctx.startCommit === null) return [];
+  const findings: Finding[] = [];
+  const candidates = extractCandidateShas(t, ctx.knownTicketHashes);
+  for (const sha of candidates) {
+    if (!gitVerifySha(sha, ctx.workingDir)) continue;
+    if (gitIsAncestor(sha, ctx.startCommit, ctx.workingDir)) continue;
+    if (sha === ctx.startCommit) continue;
+    findings.push({
+      ticket_id: t.id,
+      ticket_path: t.relPath,
+      defect_class: 'wrong-HEAD-assumptions',
+      severity: 'warning',
+      evidence: `cited commit \`${sha}\` is not an ancestor of start_commit \`${ctx.startCommit.slice(0, 12)}\``,
+      remediation_hint: 'rebase the ticket reference onto the bundle start_commit or strike the SHA citation',
+    });
+  }
+  return findings;
+}
+
+function checkCrossDocNaming(t: ParsedTicket): Finding[] {
+  const findings: Finding[] = [];
+  const dirHash = path.basename(path.dirname(t.filePath));
+  if (dirHash !== t.id) {
+    findings.push({
+      ticket_id: t.id,
+      ticket_path: t.relPath,
+      defect_class: 'cross-doc-naming',
+      severity: 'fatal',
+      evidence: `frontmatter id \`${t.id}\` does not match containing dir \`${dirHash}\``,
+      remediation_hint: 'rename ticket dir or fix frontmatter id',
+    });
+  }
+  if (t.mappedRequirements.length === 0) return findings;
+  const titleHasReq = t.mappedRequirements.some((req) => t.title.includes(req));
+  if (!titleHasReq) {
+    findings.push({
+      ticket_id: t.id,
+      ticket_path: t.relPath,
+      defect_class: 'cross-doc-naming',
+      severity: 'warning',
+      evidence: `title \`${t.title}\` mentions none of mapped_requirements ${JSON.stringify(t.mappedRequirements)}`,
+      remediation_hint: 'reflect the requirement ID in the title for cross-doc traceability',
+    });
+  }
+  return findings;
+}
+
+function isExemptFromHallucinatedPremise(t: ParsedTicket, dispositions: Record<string, string>): boolean {
+  if (t.mappedRequirements.length === 0) return false;
+  return t.mappedRequirements.every((req) => {
+    const d = dispositions[req];
+    if (typeof d !== 'string') return false;
+    const head = d.split(/\s+/)[0];
+    return EXEMPT_DISPOSITIONS.has(head);
+  });
+}
+
+function checkHallucinatedPremise(t: ParsedTicket, ctx: AuditContext): Finding[] {
+  if (ctx.dispositionsLoaded && isExemptFromHallucinatedPremise(t, ctx.dispositions)) return [];
+  const findings: Finding[] = [];
+  const seen = new Set<string>();
+  for (const tok of extractBacktickedPaths(t.problemSection)) {
+    if (seen.has(tok)) continue;
+    seen.add(tok);
+    if (ctx.gitFiles.has(tok)) continue;
+    const ctxLine = lineContext(t.problemSection, tok);
+    if (FORWARD_CREATED_RE.test(ctxLine)) continue;
+    findings.push({
+      ticket_id: t.id,
+      ticket_path: t.relPath,
+      defect_class: 'hallucinated-premise',
+      severity: 'fatal',
+      evidence: `Problem section cites nonexistent code path \`${tok}\``,
+      remediation_hint: 'rewrite premise against a real path, mark `(forward-created)`, or add disposition exemption',
+    });
+  }
+  return findings;
+}
+
+function extractVersions(text: string): string[] {
+  const out: string[] = [];
+  let m: RegExpExecArray | null;
+  VERSION_TOKEN_RE.lastIndex = 0;
+  while ((m = VERSION_TOKEN_RE.exec(text)) !== null) {
+    out.push(m[1]);
+  }
+  return [...new Set(out)];
+}
+
+function checkLiteralValueDrift(t: ParsedTicket, packageVersion: string | null): Finding[] {
+  if (packageVersion === null) return [];
+  const versions = extractVersions(t.body);
+  const drift = versions.filter((v) => v !== packageVersion);
+  if (drift.length === 0) return [];
+  return [
+    {
+      ticket_id: t.id,
+      ticket_path: t.relPath,
+      defect_class: 'literal-value-drift',
+      severity: 'info',
+      evidence: `version literal(s) ${JSON.stringify(drift)} differ from package.json version \`${packageVersion}\``,
+      remediation_hint: 'update cited version or confirm the literal references a different artifact',
+    },
+  ];
+}
+
+function auditTicket(t: ParsedTicket, ctx: AuditContext): Finding[] {
+  return [
+    ...checkPathDrift(t, ctx.gitFiles),
+    ...checkSelfReference(t),
+    ...checkMissingDeps(t, ctx.knownTicketHashes),
+    ...checkWrongHead(t, ctx),
+    ...checkCrossDocNaming(t),
+    ...checkHallucinatedPremise(t, ctx),
+    ...checkLiteralValueDrift(t, ctx.packageVersion),
+  ];
+}
+
+function listTicketDirs(sessionDir: string): string[] {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(sessionDir, { withFileTypes: true });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(`Cannot read session dir: ${msg}`);
+  }
+  return entries
+    .filter((e) => e.isDirectory() && TICKET_HASH_RE.test(e.name))
+    .map((e) => e.name)
+    .sort();
+}
+
+function loadSessionState(sessionDir: string): { workingDir: string; startCommit: string | null } {
+  const state = readJsonOrNull<{ working_dir?: string; start_commit?: string }>(
+    path.join(sessionDir, 'state.json'),
+  );
+  return {
+    workingDir: state?.working_dir ?? process.cwd(),
+    startCommit: typeof state?.start_commit === 'string' && state.start_commit.length > 0
+      ? state.start_commit
+      : null,
+  };
+}
+
+function loadPackageVersion(workingDir: string): string | null {
+  const pkg = readJsonOrNull<{ version?: string }>(
+    path.join(workingDir, 'extension', 'package.json'),
+  );
+  return typeof pkg?.version === 'string' ? pkg.version : null;
+}
+
+function buildContext(sessionDir: string, scriptDir: string): AuditContext {
+  const { workingDir, startCommit } = loadSessionState(sessionDir);
+  const ticketDirs = listTicketDirs(sessionDir);
+  const { table, loaded } = loadDispositions(scriptDir);
+  if (!loaded) {
+    process.stderr.write(
+      `[audit-ticket-bundle] WARN: disposition table missing at ${DISPOSITION_FILE_REL}; running without exemption\n`,
+    );
+  }
+  return {
+    sessionDir,
+    workingDir,
+    startCommit,
+    gitFiles: gitListFiles(workingDir),
+    packageVersion: loadPackageVersion(workingDir),
+    knownTicketHashes: new Set(ticketDirs),
+    dispositions: table,
+    dispositionsLoaded: loaded,
+  };
+}
+
+function findTicketFiles(sessionDir: string, ticketDirs: string[]): string[] {
+  const out: string[] = [];
+  for (const dir of ticketDirs) {
+    const file = path.join(sessionDir, dir, `linear_ticket_${dir}.md`);
+    if (fs.existsSync(file)) out.push(file);
+  }
+  return out;
+}
+
+export function auditSession(sessionDir: string, scriptDir: string): AuditManifest {
+  const absSession = path.resolve(sessionDir);
+  const ctx = buildContext(absSession, scriptDir);
+  const ticketDirs = [...ctx.knownTicketHashes].sort();
+  const files = findTicketFiles(absSession, ticketDirs);
+  const findings: Finding[] = [];
+  for (const f of files) {
+    const t = parseTicket(f, absSession);
+    if (t === null) continue;
+    findings.push(...auditTicket(t, ctx));
+  }
+  const exit_code = findings.some((f) => f.severity === 'fatal' || f.severity === 'warning') ? 1 : 0;
+  return {
+    schema_version: MANIFEST_SCHEMA_VERSION,
+    session_hash: path.basename(absSession),
+    audited_at: new Date().toISOString(),
+    ticket_count: files.length,
+    findings,
+    exit_code,
+  };
+}
+
+function writeManifest(manifest: AuditManifest, target: string): void {
+  const tmp = `${target}.tmp.${process.pid}`;
+  fs.writeFileSync(tmp, JSON.stringify(manifest, null, 2) + '\n');
+  fs.renameSync(tmp, target);
+}
+
+function usage(): void {
+  process.stdout.write(
+    'Usage: audit-ticket-bundle.js <session-dir> [--manifest <path>]\n\n' +
+      'Walks <session>/<hash>/linear_ticket_<hash>.md files and runs 7 defect-class checks:\n' +
+      '  path-drift, self-reference, missing-deps, wrong-HEAD-assumptions,\n' +
+      '  cross-doc-naming, hallucinated-premise, literal-value-drift.\n\n' +
+      'Reads R-BUNDLE-DISPO-1 disposition table at extension/src/data/bundle-disposition-2026-05-04.json.\n' +
+      'Tickets whose mapped_requirements are all REGRESSION-TEST-ONLY or DROP are EXEMPT\n' +
+      'from the hallucinated-premise check (R15 mitigation).\n\n' +
+      'Writes manifest to <session-dir>/audit-ticket-bundle.json (R-TAQ-2b schema v1).\n\n' +
+      'Exit codes:\n' +
+      '  0  No findings\n' +
+      '  1  Findings present\n' +
+      '  2  Operational error\n',
+  );
+}
+
+function parseArgs(argv: string[]): { sessionDir: string | null; manifestPath: string | null; help: boolean } {
+  let sessionDir: string | null = null;
+  let manifestPath: string | null = null;
+  let help = false;
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--help' || a === '-h') help = true;
+    else if (a === '--manifest') {
+      manifestPath = argv[i + 1] ?? null;
+      i += 1;
+    } else if (!a.startsWith('--') && sessionDir === null) {
+      sessionDir = a;
+    }
+  }
+  return { sessionDir, manifestPath, help };
+}
+
+function printSummary(manifest: AuditManifest): void {
+  process.stdout.write(
+    `[audit-ticket-bundle] tickets=${manifest.ticket_count} findings=${manifest.findings.length} exit=${manifest.exit_code}\n`,
+  );
+  for (const f of manifest.findings.slice(0, 50)) {
+    process.stdout.write(`  ${f.severity.padEnd(7)} ${f.defect_class.padEnd(24)} ${f.ticket_id} — ${f.evidence}\n`);
+  }
+  if (manifest.findings.length > 50) {
+    process.stdout.write(`  ... (${manifest.findings.length - 50} more findings; see manifest)\n`);
+  }
+}
+
+if (process.argv[1] && path.basename(process.argv[1]) === 'audit-ticket-bundle.js') {
+  const { sessionDir, manifestPath, help } = parseArgs(process.argv.slice(2));
+  if (help || (sessionDir === null && process.argv.length <= 2)) {
+    usage();
+    process.exit(0);
+  }
+  if (sessionDir === null) {
+    process.stderr.write('Error: session-dir is required\n');
+    usage();
+    process.exit(2);
+  }
+  try {
+    const scriptDir = path.dirname(fileURLToPath(import.meta.url));
+    const manifest = auditSession(sessionDir, scriptDir);
+    const target = manifestPath ?? path.join(path.resolve(sessionDir), 'audit-ticket-bundle.json');
+    writeManifest(manifest, target);
+    printSummary(manifest);
+    process.exit(manifest.exit_code);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    process.stderr.write(`Error: ${msg}\n`);
+    process.exit(2);
+  }
+}
