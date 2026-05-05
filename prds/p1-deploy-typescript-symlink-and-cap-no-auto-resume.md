@@ -137,4 +137,77 @@ While running the bundle's keystone direct-execute (`9437b0c` R-CNAR-1 + `817e73
 
 **Cross-reference:** Run #2 was on session `2026-05-04-f416c6cc`. tmux pane output around 17:00 shows the WARN spam. Re-deploy fix verified at end-of-turn — `md5 extension/types/index.js ~/.claude/pickle-rick/extension/types/index.js` produces identical hashes after the second install.sh.
 
+---
+
+## 2026-05-05 mid-day forensic addendum — R-CNAR-1 part 2 cap-split fix has a stale-cache edge case (R-CNAR-7 NEW)
+
+**Live forensic from run #6 launch attempt 1** (bundle session `2026-05-04-f416c6cc`, 2026-05-05 ~14:08 local). With cap-split fix `6be334b1` freshly deployed via install.sh, mux-runner exited immediately on launch with:
+
+```
+mux-runner exiting with code 3: per-ticket budget (18/10, tier=unknown) exhausted on ticket unknown without EPIC_COMPLETED promise
+Max iterations reached (18/10). Exiting.
+```
+
+The `tier=unknown` and `ticket unknown` substrings in the runner's own diagnostic indicate the cap-check fired against **stale cache fields with no live current_ticket** — the runner KNOWS it's in a degenerate state and trips the cap anyway.
+
+### Root cause
+
+The cap-split fix (R-CNAR-1 part 2) introduces independent per-ticket and global cap-check branches:
+
+- per-ticket: `budgetIter >= state.current_ticket_max_iterations`
+  where `budgetIter = state.iteration - state.current_ticket_budget_start_iteration`
+- global: `state.iteration >= state.max_iterations`
+
+The per-ticket branch reads three cache fields populated by `applyTicketTierBudget()` when the current ticket changes:
+- `state.current_ticket_max_iterations`
+- `state.current_ticket_budget_start_iteration`
+- `state.current_ticket_tier`
+
+**The bug**: when the runner resumes a session where `state.current_ticket === null` (because a prior run completed/aborted/was reset), these cache fields can be **leftover from a prior ticket** OR partially set. Specifically observed in the recovery sequence on 2026-05-05:
+
+```
+state.iteration                              = 18  (carryover from prior run)
+state.current_ticket                         = null  (cleared)
+state.current_ticket_max_iterations          = 10   (stale leftover)
+state.current_ticket_budget_start_iteration  = null  (cleared)
+state.current_ticket_tier                    = null  (cleared)
+```
+
+The cap-check evaluated:
+- `budgetIter = 18 - null` → JavaScript `Number(null)` is `0` → `budgetIter = 18`
+- `18 >= 10` → cap exhausted → exit with `iteration_cap_exhausted`
+
+### Why R-CNAR-1 part 2's regression test didn't catch it
+
+`extension/tests/mux-runner-cap-split.test.js` verifies the cap-split fix in scenarios where the cache is freshly populated. It does NOT verify the **resume-with-stale-cache** scenario where `state.current_ticket = null` AND `state.current_ticket_max_iterations` is stale AND `state.current_ticket_budget_start_iteration` is null. That gap allowed this regression-class to ship.
+
+### R-CNAR-7 (NEW) — Cap-check guard against stale per-ticket cache
+
+**Requirement**: the per-ticket cap-check at `runMuxLoop` MUST NOT fire when ANY of these conditions hold:
+
+1. `state.current_ticket === null` OR `state.current_ticket === undefined`
+2. `state.current_ticket_max_iterations === null` OR not a positive integer
+3. `state.current_ticket_budget_start_iteration === null` OR not a non-negative integer
+4. `state.current_ticket_tier === null` OR not in the allowed tier set
+
+If any condition holds → SKIP the per-ticket cap-check entirely; let the manager turn proceed; on next ticket selection `applyTicketTierBudget()` repopulates the cache and the cap-check resumes normal operation.
+
+**Diagnostic**: when the cap-check is SKIPPED for stale-cache reason, log a one-line warning `per-ticket cap-check skipped: stale cache (current_ticket=<v>, max_iter=<v>, budget_start=<v>, tier=<v>)` and emit `cap_check_skipped_stale_cache` activity event.
+
+**Self-healing**: at iteration_start, if `state.current_ticket === null` AND any per-ticket cache field is non-null, log `clearing stale per-ticket cache fields (current_ticket=null)` and clear all four cache fields atomically via `StateManager.update()`. Prevents the next iteration from also tripping the check.
+
+### Acceptance criteria
+
+- **AC-CNAR-7-01** — Test that simulates `state.current_ticket=null` + stale `current_ticket_max_iterations=10` + `state.iteration=18` confirms cap-check is SKIPPED (not tripped) and the runner proceeds to manager turn.
+- **AC-CNAR-7-02** — `cap_check_skipped_stale_cache` event is registered in `VALID_ACTIVITY_EVENTS` and emitted with the four cache-field values in payload.
+- **AC-CNAR-7-03** — Self-healing iteration_start clears stale cache fields when `current_ticket=null`; verified by test that asserts post-iteration_start state has all four cache fields = null.
+- **AC-CNAR-7-04** — `mux-runner-cap-split.test.js` extended with the resume-with-stale-cache fixture (the exact 2026-05-05 reproducer state).
+- **AC-CNAR-7-05** — Trap-door entry for `mux-runner.ts (R-CNAR-1 part 2 cap split)` updated to add the stale-cache guard invariant.
+
+### Operator workaround applied 2026-05-05
+
+After the cap-trip, operator manually cleared all four cache fields + reset `state.iteration=0`. Run #6 then launched cleanly. Documented as evidence the gap is exploitable AND the workaround is non-obvious (requires reading mux-runner source to understand which fields to clear).
+
+**Mitigation order**: R-CNAR-7 self-healing iteration_start cleanup is the keystone. Without it, every fresh resume of a stalled session is a candidate for this trap.
+
 — Pickle Rick out. *belch*

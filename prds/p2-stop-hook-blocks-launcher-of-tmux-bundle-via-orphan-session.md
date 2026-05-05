@@ -149,3 +149,50 @@ Note: even with the workaround, R-SHB-1 is still needed because the live session
 - Parent: `prds/p3-paused-session-orphan-blocks-stop-hook.md` — different angle on the same orphan-shadowing failure mode
 
 — Pickle Rick out. *belch*
+
+---
+
+## 2026-05-05 mid-day forensic addendum — phantom map entries after pipeline crash
+
+**Discovered while recovering from run #5 crash (bundle session `2026-05-04-f416c6cc` exited at 05:44 with `exit_reason="failed"`, `active=false`).**
+
+After the crash, `~/.local/share/pickle-rick/current_sessions.json` contained TWO new entries pointing at session paths that **did not exist on disk**:
+
+```json
+"/Users/gregorydickson/loanlight/pickle-rick/pickle-rick-claude": {
+    "sessionPath": ".../sessions/2026-05-05-e7af445b",
+    "pid": 75005
+},
+"/Users/gregorydickson/loanlight/pickle-rick/pickle-rick-claude/extension": {
+    "sessionPath": ".../sessions/2026-05-05-0e4f6e9c",
+    "pid": 17453
+}
+```
+
+Verification: `ls -d ~/.local/share/pickle-rick/sessions/2026-05-05-e7af445b` → does not exist. Same for `0e4f6e9c`. The map points at nothing.
+
+**This is a NEW failure mode beyond the three bugs originally filed**:
+
+### R-SHB-5 (NEW) — `recoverStaleActiveFlag` should demote on missing-sessionDir
+
+**Bug**: When a worker spawn (or auto-resume script, or test fixture) writes a `current_sessions.json` entry but the session dir is later deleted (or was never created), the map entry persists. Future cwd-resolution rounds rank that orphan above any live same-cwd session.
+
+**Current behavior**: `recoverStaleActiveFlag()` checks `state.pid` liveness AND mapped-PID liveness, but does NOT check whether `sessionPath` exists on disk. If the session dir is gone, the recovery short-circuits and leaves the map entry intact.
+
+**Fix**: extend `recoverStaleActiveFlag` (or add a sibling `pruneOrphanedMapEntries`) — for each `current_sessions.json` entry, verify `sessionPath` exists AND `state.json` exists at that path. Missing → demote with `exit_reason='orphan-session-dir-missing'` and emit `phantom_session_demoted` activity event.
+
+**Test**: integration test that writes a current_sessions.json entry pointing at a non-existent path, runs the recovery routine, asserts the entry is removed and the event fired.
+
+### R-SHB-6 (NEW) — mux-runner should clean its OWN map entry on terminal exit
+
+**Bug**: When `mux-runner.ts` exits via the forensic path (`finalizeTerminalState({ exitReason: 'failed' })` or signal handler `safeDeactivate`), it leaves the runner's own `current_sessions.json` entry pointing at a now-inactive session. The next cwd resolution sees `active=false` (correct) but the entry persists indefinitely.
+
+**Compounded with R-SHB-5**: the entry's path still exists (it's the dead session itself, not a phantom), so R-SHB-5's prune doesn't fire. Need separate logic: "active=false" + "exit_reason ∈ failed/orphan-paused-no-claim" → `pruneOrphanedMapEntries` removes the entry on the next cwd-resolve hit OR mux-runner removes it explicitly at deactivation.
+
+**Fix**: add map-entry cleanup to the forensic exit paths in `mux-runner.ts` deactivation invariant. Update trap-door entry to require map cleanup alongside `safeDeactivate + recordExitReason`.
+
+**Test**: `mux-runner.test.js` extended to assert that after `finalizeTerminalState({ exitReason: 'failed' })`, the matching `current_sessions.json` entry is removed (or its inactive flag is detected on the next read).
+
+### Operator workaround applied 2026-05-05 mid-day
+
+After run #5 crash, operator manually edited `current_sessions.json` to remove the two phantom entries before relaunching run #6 (recovery sequence: phantom prune → R-WSE-1 reset to Todo → relaunch). Documented here as evidence that the gap is exploitable in practice and the workaround is non-obvious. Slot 1n's existing 4 R-SHB requirements + these 2 NEW requirements bring the total to 6.

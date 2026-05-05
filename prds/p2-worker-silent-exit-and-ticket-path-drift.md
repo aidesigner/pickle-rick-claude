@@ -138,3 +138,34 @@ It is NOT yet confirmed whether the `dddee00b` 0-byte log is:
 If (b), then RC-1 is partially subsumed by the cross-backend PRD and the count of "true silent exits" drops. The R-XBL-6 audit script (in that new PRD) is the cheapest way to disambiguate — once `audit-worker-backends.ts` lands, run it on this session and see whether `dddee00b` shows up.
 
 **Operator impact.** Bundle has 22 unpushed local commits (work is real and shippable), but pipeline-status.json reports `failed`. Per resume directive the operator does not push automatically; this recurrence note plus the cross-backend PRD are the inputs to that decision.
+
+---
+
+## 2026-05-05 mid-day forensic addendum — R-WSE-1 ticket killed by the bug R-WSE-1 fixes
+
+**Meta-irony of the cycle.** Bundle session `2026-05-04-f416c6cc` run #5, ticket `018f32d2` (R-WSE-1: "flushAndExit helper + per-site migration in spawn-morty.ts"). Worker output:
+
+| Artifact | Status |
+|---|---|
+| `linear_ticket_018f32d2.md` | exists, status: **Failed** |
+| `research_2026-05-05.md` | 3091 bytes, COMPLETE |
+| `research_review.md` | 334 bytes, APPROVED |
+| `plan_2026-05-05.md` | 2938 bytes, COMPLETE |
+| `plan_review.md` | 366 bytes, APPROVED |
+| `conformance_*.md` | **MISSING** |
+| `code_review_*.md` | **MISSING** |
+| `worker_session_73236.log` | **0 bytes** |
+
+Worker exited silently between plan and implement phases. Same RC-1 (silent exit pre-flush) signature as the original session `2026-05-03-7d9ee8cc` ticket `ab62807f` — but **inflicted on the very ticket that was implementing the fix.**
+
+The activity log has `tool_retry_circuit_open` for ticket `018f32d2` at 10:23:59 UTC with `error_signature="Exit code 1"` (no path detail, no stderr, no stdout — pure silent failure). After R-WSE-1 marked Failed, mux-runner spent ~20 minutes in degenerate "Waiting for Monitor signal." turns (observed: 9 consecutive at end of `tmux_iteration_2.log`) before the forensic exit at 05:44.
+
+**Forensic value:**
+
+1. **RC-1 is real and chronic** — not session-specific. Reproduces in the same code path two sessions apart (`7d9ee8cc` then `f416c6cc`).
+2. **R-WSE-2 (`worker_partial_lifecycle_exit` event) would have fired at the right moment.** The worker had research + plan + plan_review (3 of 6 phases) and never emitted a "I AM DONE" promise. Status="Failed" was set by some downstream watcher, not by the worker.
+3. **The `Exit code 1` error_signature is pathologically generic.** No `ls: <PATH>: No such file or directory` detail like earlier failures (e.g., 44c5ab6e at 23:21:19 UTC). This suggests the worker's bash tool itself failed to emit error context — possibly a stderr-flush race compounding RC-1.
+
+**Refinement-time action**: Cycle 1 should add a fixture session derived from `2026-05-04-f416c6cc/018f32d2/` to the regression set for R-WSE-1's flushAndExit helper. The fixture must reproduce: 4 artifacts present (research/research_review/plan/plan_review), 0-byte worker log, generic `Exit code 1` activity event with no error_signature detail. Verifier asserts the new helper would have flushed the log and surfaced the real error.
+
+**Operator workaround applied 2026-05-05 mid-day**: reset R-WSE-1 frontmatter from `Failed` to `Todo` so run #6 can retry with the existing research/plan artifacts intact. The retry path uses `pickle-utils.ts` retry-ticket logic that clears resolution timestamps; existing approved phase artifacts are reused.
