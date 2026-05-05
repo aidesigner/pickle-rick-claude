@@ -185,13 +185,22 @@ test('check-readiness: file path resolver accepts extension-root fallback paths'
 }));
 
 test('check-readiness: missing contract fails independently', () => runFixture((sessionDir) => {
-    writeTicket(sessionDir, 'ctr001', { extra: '## Interface Contracts\n\n- `NoSuchReadinessContract.resolve()` must exist.\n' });
+    // R-RTRC-3 lifts the tests/ exclusion in resolveSymbolRef, so the contract
+    // detail must be a symbol whose every dotted part is absent from any
+    // tracked .ts/.tsx/.js/.jsx/.mjs/.cjs file across src/ AND tests/ — including
+    // this test source. The previous fixture (`NoSuchReadinessContract.resolve()`)
+    // self-resolved once tests/ became a valid resolution scope. Build the
+    // missing-symbol via concat so the literal does not appear in this file.
+    const head = 'Zyxx' + 'QqUni' + 'cornGlyph' + 'Latched';
+    const tail = 'euler' + 'Nautilus' + 'Rune';
+    const symbol = `${head}.${tail}()`;
+    writeTicket(sessionDir, 'ctr001', { extra: `## Interface Contracts\n\n- \`${symbol}\` must exist.\n` });
     writeManifest(sessionDir, { tickets: [{ id: 'ctr001', key: 'CTR-1' }] });
 
     const result = runReadiness(sessionDir);
     assert.equal(result.status, 2);
     const out = JSON.parse(result.stdout);
-    assert.ok(out.findings.some((finding) => finding.kind === 'contract' && finding.detail === 'NoSuchReadinessContract.resolve()'));
+    assert.ok(out.findings.some((finding) => finding.kind === 'contract' && finding.detail === symbol));
 }));
 
 test('check-readiness: missing dependency fails independently', () => runFixture((sessionDir) => {

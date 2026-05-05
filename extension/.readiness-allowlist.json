@@ -1,0 +1,92 @@
+[
+  {
+    "ref": "Promise.all",
+    "kind": "symbol",
+    "source": "ECMAScript stdlib — Promise.all is a built-in static method, not an in-repo symbol; the readiness contract resolver MUST NOT treat it as an unresolved ref."
+  },
+  {
+    "ref": "Promise.resolve",
+    "kind": "symbol",
+    "source": "ECMAScript stdlib — Promise.resolve is a built-in static method."
+  },
+  {
+    "ref": "Promise.reject",
+    "kind": "symbol",
+    "source": "ECMAScript stdlib — Promise.reject is a built-in static method."
+  },
+  {
+    "ref": "Object.assign",
+    "kind": "symbol",
+    "source": "ECMAScript stdlib — Object.assign is a built-in static method."
+  },
+  {
+    "ref": "Object.entries",
+    "kind": "symbol",
+    "source": "ECMAScript stdlib — Object.entries is a built-in static method."
+  },
+  {
+    "ref": "Object.keys",
+    "kind": "symbol",
+    "source": "ECMAScript stdlib — Object.keys is a built-in static method."
+  },
+  {
+    "ref": "Object.values",
+    "kind": "symbol",
+    "source": "ECMAScript stdlib — Object.values is a built-in static method."
+  },
+  {
+    "ref": "Object.fromEntries",
+    "kind": "symbol",
+    "source": "ECMAScript stdlib — Object.fromEntries is a built-in static method."
+  },
+  {
+    "ref": "Array.from",
+    "kind": "symbol",
+    "source": "ECMAScript stdlib — Array.from is a built-in static method."
+  },
+  {
+    "ref": "Array.isArray",
+    "kind": "symbol",
+    "source": "ECMAScript stdlib — Array.isArray is a built-in static method."
+  },
+  {
+    "ref": "JSON.parse",
+    "kind": "symbol",
+    "source": "ECMAScript stdlib — JSON.parse is a built-in global."
+  },
+  {
+    "ref": "JSON.stringify",
+    "kind": "symbol",
+    "source": "ECMAScript stdlib — JSON.stringify is a built-in global."
+  },
+  {
+    "ref": "Number.parseInt",
+    "kind": "symbol",
+    "source": "ECMAScript stdlib — Number.parseInt is a built-in static method."
+  },
+  {
+    "ref": "Number.isFinite",
+    "kind": "symbol",
+    "source": "ECMAScript stdlib — Number.isFinite is a built-in static method."
+  },
+  {
+    "ref": "Number.isInteger",
+    "kind": "symbol",
+    "source": "ECMAScript stdlib — Number.isInteger is a built-in static method."
+  },
+  {
+    "ref": "Math.max",
+    "kind": "symbol",
+    "source": "ECMAScript stdlib — Math.max is a built-in static method."
+  },
+  {
+    "ref": "Math.min",
+    "kind": "symbol",
+    "source": "ECMAScript stdlib — Math.min is a built-in static method."
+  },
+  {
+    "ref": "Date.now",
+    "kind": "symbol",
+    "source": "ECMAScript stdlib — Date.now is a built-in static method."
+  }
+]
