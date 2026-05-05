@@ -163,13 +163,15 @@ When writing ACs that assert event emission, include the full event name and req
 
 export const PATH_VERIFICATION_PROMPT_SECTION = `## Path Verification & Forward-reference hygiene
 
-**Every file path you cite in \`## Files\` or \`## Locations\` MUST be verified via \`git ls-files <path>\` before being included in your output.** Follow this protocol for each path:
+**Every file path or symbol you cite in \`## Files\`, \`## Locations\`, \`## Acceptance Criteria\`, or any backticked reference MUST be verified before being included in your output.** Follow this protocol for each backticked token:
 
-1. Run \`git ls-files <path>\` in the working directory.
-2. Cite the verification command output inline — e.g., \`git ls-files src/bin/foo.ts\` → \`src/bin/foo.ts\` (confirmed at HEAD).
-3. If \`git ls-files\` returns empty (path not tracked), the file does not exist at HEAD. Mark it \`(forward-created)\` with a sibling-ticket reference per R-RTRC-7 annotation schema:
-   - Format: \`\\\`path/to/file.ts\\\` (created by ticket <8-char-hash-or-ticket-dir-basename)\` — annotation OUTSIDE backticks, separated by exactly one ASCII space.
-4. Backtick a path ONLY when \`git ls-files\` confirms it exists at HEAD. Never backtick stdlib/external-package imports or paths that do not yet exist.
+1. **Paths** — Run \`git ls-files <path>\` in the working directory. If \`git ls-files\` returns empty (path not tracked), the file does not exist at HEAD.
+2. **Symbols** — Verify the symbol is defined or exported at HEAD via \`grep -n '<symbol>' <files>\` or \`git grep -n '<symbol>'\`. Stdlib/external-package APIs (\`Promise.all\`, \`fs.readFileSync\`, \`process.exit\`) must NEVER be backticked because the readiness contract resolver treats them as in-repo refs and reports false positives.
+3. **Forward-created artifacts** — If a path or symbol is created by THIS bundle (introduced in a sibling ticket), annotate it per R-RTRC-7 annotation schema:
+   - Format: \`\\\`path/to/file.ts\\\` (created by ticket <8-char-hash-or-ticket-dir-basename)\` — annotation OUTSIDE backticks, separated by **exactly one ASCII space** (no-space, two-space, or tab separators emit \`annotation-format-error\`).
+   - \`(introduced by ticket <hash>)\` is the equivalent annotation for symbols.
+   - Hash format: 8-char short SHA OR ticket-dir basename (both 8-char alphanumerics; resolver accepts either).
+4. **Backtick discipline** — Backtick a path/symbol ONLY when (a) \`git ls-files\` confirms the path exists at HEAD, OR (b) the symbol resolves at HEAD, OR (c) it carries a valid forward-reference annotation. Never backtick stdlib/external-package imports or refs that do not yet exist.
 
 Consult the per-requirement disposition table at \`extension/src/data/bundle-disposition-2026-05-04.json\` (R-BUNDLE-DISPO-1) when citing paths — requirements with disposition \`DROP\` or \`REGRESSION-TEST-ONLY\` must not drive new file creation.`;
 

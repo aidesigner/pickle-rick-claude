@@ -31,7 +31,7 @@ export interface ReadinessArgs {
 
 export interface ReadinessFinding {
   ticket: string;
-  kind: 'prd_map' | 'machinability' | 'file_path' | 'contract' | 'dependency' | 'performance';
+  kind: 'prd_map' | 'machinability' | 'file_path' | 'contract' | 'dependency' | 'performance' | 'annotation_format';
   message: string;
   analyst: 'gaps' | 'codebase' | 'risk';
   detail: string;
@@ -87,6 +87,13 @@ const MACHINE_HINT_RE = /\b(\d+(?:\.\d+)?%?|exit\s+\d+|<\s*\d+|>\s*\d+|<=\s*\d+|
 const PURE_PROSE_RE = /\b(must|should)\s+(?:be|feel)\s+(?:intuitive|performant|fast|easy|simple|clear|usable|nice|good|robust|reliable)\b/i;
 const PATH_RE = /\b(?:[\w.-]+\/)+[\w.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|yml|yaml|sh|py|css|scss|html)\b/g;
 const SYMBOL_RE = /\b[A-Z][A-Za-z0-9]*(?:\.[A-Za-z_$][\w$]*)+\b|\b[A-Za-z_$][\w$]*\(\)/g;
+// R-RTRC-7 forward-reference annotation: backticked token followed by exactly
+// one ASCII space and a `(created|introduced) by ticket <hash>` parenthetical.
+// Hash format = 8-char short SHA OR ticket-dir basename — both 8-char alphanumeric.
+// Resolver matches 6-12 alphanumeric to give some flexibility while remaining strict.
+const FORWARD_REF_ANNOTATION_HASH_RE = /^[A-Za-z0-9]{6,12}$/;
+const FORWARD_REF_ANNOTATION_RE = /`([^`]+)`(\s*)\((created|introduced) by ticket ([^)]+)\)/g;
+const ALLOWLIST_FILE_REL = 'extension/.readiness-allowlist.json';
 const GIT_LS_FILES_TIMEOUT_MS = 30_000;
 const DOC_EXTENSION_ALLOWLIST = new Set([
   'md',
@@ -207,7 +214,49 @@ function isDocExtensionBasename(ref: string): boolean {
   return DOC_EXTENSION_ALLOWLIST.has(ext);
 }
 
+export interface ForwardRefAnnotation {
+  token: string;
+  separator: string;
+  verb: 'created' | 'introduced';
+  hash: string;
+  raw: string;
+}
+
+/**
+ * R-RTRC-2 / R-RTRC-7: Extract `\`token\` (created|introduced) by ticket <hash>`
+ * annotations from PRD/ticket content.
+ *
+ * Annotation schema (R-RTRC-7):
+ *   - position OUTSIDE backticks
+ *   - separated by EXACTLY one ASCII space (no-space, two-space, tab → malformed)
+ *   - hash = 8-char short SHA OR ticket-dir basename (resolver normalizes by length)
+ *
+ * Returns:
+ *   - `valid`: tokens whose annotation parses cleanly. Resolver MUST skip these
+ *              (forward-created artifacts that do not yet exist at HEAD).
+ *   - `malformed`: annotations whose separator/hash format is wrong; resolver
+ *                  emits an `annotation_format` finding for each.
+ */
+export function extractForwardRefAnnotations(content: string): { valid: Set<string>; malformed: ForwardRefAnnotation[] } {
+  const valid = new Set<string>();
+  const malformed: ForwardRefAnnotation[] = [];
+  const re = new RegExp(FORWARD_REF_ANNOTATION_RE.source, FORWARD_REF_ANNOTATION_RE.flags);
+  for (const match of content.matchAll(re)) {
+    const [raw, token, separator, verb, hashRaw] = match;
+    const hash = hashRaw.trim();
+    const verbTyped = verb === 'created' || verb === 'introduced' ? verb : 'created';
+    const annotation: ForwardRefAnnotation = { token: token.trim(), separator, verb: verbTyped, hash, raw };
+    if (separator !== ' ' || !FORWARD_REF_ANNOTATION_HASH_RE.test(hash)) {
+      malformed.push(annotation);
+      continue;
+    }
+    valid.add(annotation.token);
+  }
+  return { valid, malformed };
+}
+
 export function extractContractReferences(content: string): string[] {
+  const annotations = extractForwardRefAnnotations(content);
   const refs = new Set<string>();
   for (const match of content.matchAll(PATH_RE)) refs.add(match[0]);
   for (const match of content.matchAll(/`([^`]+)`/g)) {
@@ -221,10 +270,11 @@ export function extractContractReferences(content: string): string[] {
     .filter((ref) => !ref.startsWith('AC-'))
     .filter((ref) => !refs.has(`${ref}()`))
     .filter((ref) => !isDocExtensionBasename(ref))
+    .filter((ref) => !annotations.valid.has(ref))
     .sort();
 }
 
-function resolvePathRef(ref: string, repoRoot: string, ticket: TicketInfo, sessionDir: string): boolean {
+function resolvePathRef(ref: string, repoRoot: string, ticket: TicketInfo, sessionDir: string, cache?: ResolverCache): boolean {
   if (path.isAbsolute(ref) && fs.existsSync(ref)) return true;
   let workingDir: string | undefined;
   if (ticket.workingDir) {
@@ -239,7 +289,15 @@ function resolvePathRef(ref: string, repoRoot: string, ticket: TicketInfo, sessi
     path.dirname(ticket.file),
     sessionDir,
   ].filter((base): base is string => typeof base === 'string');
-  return bases.some((base) => fs.existsSync(path.resolve(base, ref)));
+  if (bases.some((base) => fs.existsSync(path.resolve(base, ref)))) return true;
+  // R-RTRC-4: git ls-files suffix-match fallback. Equivalent to
+  //   git ls-files | grep -E '/<ref>$|^<ref>$'
+  // Catches deep repo paths whose containing dir none of the bases above resolve.
+  const tracked = cache?.trackedAllFiles ?? gitTrackedFiles(repoRoot);
+  if (cache && cache.trackedAllFiles === undefined) cache.trackedAllFiles = tracked;
+  const escaped = ref.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const suffixRe = new RegExp(`(?:^|/)${escaped}$`);
+  return tracked.some((file) => suffixRe.test(file));
 }
 
 function gitTrackedFiles(repoRoot: string): string[] {
@@ -254,19 +312,26 @@ function gitTrackedFiles(repoRoot: string): string[] {
 
 interface ResolverCache {
   trackedSourceFiles: string[];
+  trackedAllFiles?: string[];
   fileContents: Map<string, string>;
   deadline: number;
   truncated: boolean;
+  allowlist: Set<string>;
 }
 
-function createResolverCache(repoRoot: string, maxWallMs: number): ResolverCache {
+function createResolverCache(repoRoot: string, maxWallMs: number, allowlist: Set<string> = new Set()): ResolverCache {
+  // R-RTRC-3: lift the tests/ exclusion ONLY. Symbols defined in test files
+  // (helpers, test fixtures) are valid resolution targets — the prior filter
+  // produced false positives whenever a ticket cited a test-defined helper.
+  // Extension allowlist (ts|tsx|js|jsx|mjs|cjs) is unchanged.
   const tracked = gitTrackedFiles(repoRoot)
-    .filter((file) => /\.(?:ts|tsx|js|jsx|mjs|cjs)$/.test(file) && !/(^|\/)tests?\//.test(file));
+    .filter((file) => /\.(?:ts|tsx|js|jsx|mjs|cjs)$/.test(file));
   return {
     trackedSourceFiles: tracked,
     fileContents: new Map<string, string>(),
     deadline: Date.now() + maxWallMs,
     truncated: false,
+    allowlist,
   };
 }
 
@@ -302,31 +367,49 @@ function resolveSymbolRef(ref: string, repoRoot: string, cache: ResolverCache): 
   }
 }
 
+function findMachinabilityFindings(ticketFile: string, content: string): ReadinessFinding[] {
+  const findings: ReadinessFinding[] = [];
+  for (const ac of extractAcceptanceCriteria(content)) {
+    if (acceptanceCriterionVerifyPhase(ac) === 'post') continue;
+    if (!isMachineCheckable(ac)) {
+      findings.push({
+        ticket: ticketFile,
+        kind: 'machinability',
+        analyst: 'gaps',
+        message: 'Acceptance criterion is not machine-checkable',
+        detail: ac,
+      });
+    }
+  }
+  return findings;
+}
+
+function findAnnotationFormatFindings(ticketFile: string, content: string): ReadinessFinding[] {
+  // R-RTRC-7: emit annotation_format findings for malformed forward-reference annotations.
+  return extractForwardRefAnnotations(content).malformed.map((malformed) => ({
+    ticket: ticketFile,
+    kind: 'annotation_format' as const,
+    analyst: 'gaps' as const,
+    message: 'annotation-format-error: forward-reference annotation must be `<token>` (created|introduced) by ticket <8-12-char-hash>) — exactly one ASCII space separator',
+    detail: malformed.raw,
+  }));
+}
+
 export function findReadinessFindings(
   ticketFile: string,
   repoRoot: string,
-  opts: { checkMachinability: boolean; checkContracts: boolean; cache?: ResolverCache; maxWallMs?: number },
+  opts: { checkMachinability: boolean; checkContracts: boolean; cache?: ResolverCache; maxWallMs?: number; allowlist?: Set<string> },
 ): ReadinessFinding[] {
   const content = fs.readFileSync(ticketFile, 'utf-8');
   const findings: ReadinessFinding[] = [];
-  if (opts.checkMachinability) {
-    for (const ac of extractAcceptanceCriteria(content)) {
-      if (acceptanceCriterionVerifyPhase(ac) === 'post') continue;
-      if (!isMachineCheckable(ac)) {
-        findings.push({
-          ticket: ticketFile,
-          kind: 'machinability',
-          analyst: 'gaps',
-          message: 'Acceptance criterion is not machine-checkable',
-          detail: ac,
-        });
-      }
-    }
-  }
+  if (opts.checkMachinability) findings.push(...findMachinabilityFindings(ticketFile, content));
   if (opts.checkContracts) {
-    const cache = opts.cache ?? createResolverCache(repoRoot, opts.maxWallMs ?? DEFAULT_MAX_WALL_MS);
+    findings.push(...findAnnotationFormatFindings(ticketFile, content));
+    const allowlist = opts.allowlist ?? opts.cache?.allowlist ?? new Set<string>();
+    const cache = opts.cache ?? createResolverCache(repoRoot, opts.maxWallMs ?? DEFAULT_MAX_WALL_MS, allowlist);
     for (const ref of extractContractReferences(content)) {
       if (ref.includes('/')) continue;
+      if (allowlist.has(ref)) continue;
       if (Date.now() > cache.deadline) {
         cache.truncated = true;
         findings.push({
@@ -451,6 +534,38 @@ function readJsonFile(file: string | undefined): unknown {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * R-RTRC-5: Load `extension/.readiness-allowlist.json` from repoRoot. Each
+ * entry is `{ ref: string, source: string, kind?: 'path'|'symbol'|'both' }`.
+ * Entries lacking a non-empty `source` field are dropped at load time and
+ * blocked by `extension/scripts/audit-readiness-allowlist.sh` (lint).
+ */
+export function loadReadinessAllowlist(repoRoot: string): Set<string> {
+  const candidates = [
+    path.join(repoRoot, ALLOWLIST_FILE_REL),
+    path.join(repoRoot, 'extension', '.readiness-allowlist.json'),
+    path.join(repoRoot, '.readiness-allowlist.json'),
+  ];
+  const allowlistPath = candidates.find((candidate) => fs.existsSync(candidate));
+  if (!allowlistPath) return new Set<string>();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(fs.readFileSync(allowlistPath, 'utf-8'));
+  } catch {
+    return new Set<string>();
+  }
+  if (!Array.isArray(parsed)) return new Set<string>();
+  const refs = new Set<string>();
+  for (const entry of parsed) {
+    if (!isRecord(entry)) continue;
+    const ref = typeof entry.ref === 'string' ? entry.ref.trim() : '';
+    const source = typeof entry.source === 'string' ? entry.source.trim() : '';
+    if (!ref || !source) continue; // R-RTRC-5: source field is mandatory.
+    refs.add(ref);
+  }
+  return refs;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -605,12 +720,18 @@ function findPrdMapFindings(tickets: TicketInfo[], manifest: unknown, sourceRequ
     }));
 }
 
-function findPathFindings(ticket: TicketInfo, repoRoot: string, sessionDir: string): ReadinessFinding[] {
+function findPathFindings(ticket: TicketInfo, repoRoot: string, sessionDir: string, cache?: ResolverCache): ReadinessFinding[] {
   const content = fs.readFileSync(ticket.file, 'utf-8');
+  // R-RTRC-2: skip annotated forward-references — they're documented as
+  // forward-created so the resolver MUST not flag them as unresolved paths.
+  const annotatedTokens = extractForwardRefAnnotations(content).valid;
+  const allowlist = cache?.allowlist ?? new Set<string>();
   const refs = new Set<string>();
   for (const match of content.matchAll(PATH_RE)) refs.add(match[0]);
   return [...refs].sort()
-    .filter((ref) => !resolvePathRef(ref, repoRoot, ticket, sessionDir))
+    .filter((ref) => !annotatedTokens.has(ref))
+    .filter((ref) => !allowlist.has(ref))
+    .filter((ref) => !resolvePathRef(ref, repoRoot, ticket, sessionDir, cache))
     .map((ref) => ({
       ticket: ticket.file,
       kind: 'file_path' as const,
@@ -789,12 +910,19 @@ export function runReadiness(args: ReadinessArgs): { exitCode: number; findings:
   const sourceRequirements = sourceRequirementsFromParentPrd(resolveManifestPrdPath(manifest, args.sessionDir, args.repoRoot), args.repoRoot);
   const tickets = enrichTickets(selected.files.map(ticketInfo), manifest, sourceRequirements);
   const refs = manifestRefs(manifest, tickets);
-  const resolverCache = checkContracts ? createResolverCache(args.repoRoot, args.maxWallMs) : undefined;
+  // R-RTRC-5: extension/.readiness-allowlist.json — long-tail false positives
+  // (stdlib, external APIs) listed with `source:` justification short-circuit
+  // both path and symbol resolution.
+  const allowlist = loadReadinessAllowlist(args.repoRoot);
+  const resolverCache = checkContracts || !args.machinabilityOnly
+    ? createResolverCache(args.repoRoot, args.maxWallMs, allowlist)
+    : undefined;
+  const pathCache: ResolverCache = resolverCache ?? createResolverCache(args.repoRoot, args.maxWallMs, allowlist);
   const findings = [
     ...findPrdMapFindings(tickets, manifest, sourceRequirements),
-    ...tickets.flatMap((ticket) => findPathFindings(ticket, args.repoRoot, args.sessionDir)),
+    ...tickets.flatMap((ticket) => findPathFindings(ticket, args.repoRoot, args.sessionDir, pathCache)),
     ...tickets.flatMap((ticket) => findDependencyFindings(ticket, refs)),
-    ...selected.files.flatMap((file) => findReadinessFindings(file, args.repoRoot, { checkMachinability, checkContracts, cache: resolverCache, maxWallMs: args.maxWallMs })),
+    ...selected.files.flatMap((file) => findReadinessFindings(file, args.repoRoot, { checkMachinability, checkContracts, cache: resolverCache, maxWallMs: args.maxWallMs, allowlist })),
   ];
   const ticketsVersion = getTicketsVersion(state);
 

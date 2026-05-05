@@ -94,17 +94,24 @@ test('check-readiness: prose-only AC exits 2, suggests gaps, writes readiness re
 test('check-readiness: unresolved contract exits 2 and suggests codebase', () => {
     const sessionDir = tmpDir();
     try {
+        // R-RTRC-3: tests/ source files are now in the resolver scope, so this
+        // fixture must use a symbol whose dotted parts are absent from every
+        // tracked .ts/.js source — including this test file. Build via concat
+        // so the literal token never appears in this file's source.
+        const head = 'Wraith' + 'Glyphic' + 'Latched' + 'Nexus';
+        const tail = 'tessera' + 'Cogweld' + 'Forge';
+        const symbol = `${head}.${tail}()`;
         writeTicket(
             sessionDir,
             'bbb222',
             ['Command exits 0 exactly.'],
-            '## Interface Contracts\n\n- `NoSuchContract.resolve()` must exist.\n'
+            `## Interface Contracts\n\n- \`${symbol}\` must exist.\n`
         );
         const result = runReadiness(sessionDir, process.cwd());
         assert.equal(result.status, 2);
         const report = fs.readFileSync(path.join(sessionDir, readinessFiles(sessionDir)[0]), 'utf-8');
         assert.match(report, /suggested_analyst: codebase/);
-        assert.match(report, /NoSuchContract\.resolve\(\)/);
+        assert.ok(report.includes(symbol), `expected report to mention ${symbol}`);
     } finally {
         fs.rmSync(sessionDir, { recursive: true, force: true });
     }
