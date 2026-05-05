@@ -782,6 +782,26 @@ export function writeActivityEntry(statePath: string, entry: ActivityLogEntry): 
   );
 }
 
+/**
+ * Append a `pipeline_auto_resumed` activity entry to state.json.
+ * Called by auto-resume.sh via `node --input-type=module` before each mux-runner relaunch.
+ */
+export function writePipelineAutoResumedEvent(
+  statePath: string,
+  payload: {
+    retry_index: number;
+    ticket_id: string;
+    session_done_count_at_retry: number;
+    parent_ticket_id?: string;
+  },
+): void {
+  writeActivityEntry(statePath, {
+    event: 'pipeline_auto_resumed',
+    ts: new Date().toISOString(),
+    gate_payload: payload,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Timeout stub writer (FR-B8/B9)
 // ---------------------------------------------------------------------------

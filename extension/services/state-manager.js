@@ -701,6 +701,17 @@ export function writeActivityEntry(statePath, entry) {
     }, null);
 }
 /**
+ * Append a `pipeline_auto_resumed` activity entry to state.json.
+ * Called by auto-resume.sh via `node --input-type=module` before each mux-runner relaunch.
+ */
+export function writePipelineAutoResumedEvent(statePath, payload) {
+    writeActivityEntry(statePath, {
+        event: 'pipeline_auto_resumed',
+        ts: new Date().toISOString(),
+        gate_payload: payload,
+    });
+}
+/**
  * Write a TASK_NOTES.md stub at sessionDir/TASK_NOTES.md when the file is absent
  * or empty (FR-B8). Non-empty content — whether Morty-written or a prior stub — is
  * never overwritten (FR-B9). Writes atomically via tmp+rename. Never throws.

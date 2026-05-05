@@ -100,6 +100,20 @@ process.stdout.write(String(n));
 " "$SESSION_DIR" 2>/dev/null || echo "0"
 }
 
+_emit_auto_resumed() {
+  local retry_idx="$1" ticket_id="$2" done_count="$3"
+  AR_RETRY="$retry_idx" AR_TICKET="$ticket_id" AR_DONE="$done_count" \
+    AR_STATE="$STATE_JSON" AR_EXT_ROOT="$EXTENSION_ROOT" \
+    node --input-type=module << 'JSEOF' 2>/dev/null || true
+const { writePipelineAutoResumedEvent } = await import('file://' + process.env.AR_EXT_ROOT + '/extension/services/state-manager.js');
+writePipelineAutoResumedEvent(process.env.AR_STATE, {
+  retry_index: parseInt(process.env.AR_RETRY || '0', 10),
+  ticket_id: process.env.AR_TICKET || '',
+  session_done_count_at_retry: parseInt(process.env.AR_DONE || '0', 10),
+});
+JSEOF
+}
+
 start_epoch="$(date +%s)"
 retry=0
 prev_done=""
@@ -108,6 +122,11 @@ prev_ticket=""
 echo "[auto-resume] starting loop (max_retries=$MAX_RETRIES, session=$SESSION_DIR)" >&2
 
 while true; do
+  cur_ticket="$(_read_state_field current_ticket)"
+  cur_done="$(_count_done_tickets)"
+
+  _emit_auto_resumed "$retry" "$cur_ticket" "$cur_done"
+
   node "$MUX_RUNNER" "$SESSION_DIR" &
   CHILD_PID=$!
   wait "$CHILD_PID" 2>/dev/null || true
@@ -137,9 +156,6 @@ while true; do
   if [[ "$retry" -gt "$BANNER_THRESHOLD" ]]; then
     echo "[auto-resume] WARNING: retry $retry/$MAX_RETRIES — pipeline_phase_incomplete persists (${elapsed}s elapsed)" >&2
   fi
-
-  cur_ticket="$(_read_state_field current_ticket)"
-  cur_done="$(_count_done_tickets)"
 
   if [[ -n "$prev_done" && "$cur_done" == "$prev_done" && "$cur_ticket" == "$prev_ticket" && "$retry" -ge "$PROGRESS_THRESHOLD" ]]; then
     echo "[auto-resume] stopped: no progress after $retry retries (ticket=$cur_ticket, done=$cur_done)" >&2

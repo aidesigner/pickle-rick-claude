@@ -443,6 +443,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'worker_spawn_backend_override',
   'worker_spawn_backend_mismatch',
   'subtool_backend_override',
+  'pipeline_auto_resumed',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];
