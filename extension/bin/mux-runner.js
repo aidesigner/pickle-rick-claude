@@ -478,6 +478,40 @@ function ticketBudgetIterationCount(state, currentIteration) {
     return Math.max(0, currentIteration - start);
 }
 /**
+ * R-CNAR-7: Atomic clear of all five `current_ticket_*` cache fields.
+ * Called when `state.current_ticket` is null/undefined and the per-ticket
+ * cap-check sees a stale, non-zero `current_ticket_max_iterations` left over
+ * from a previously-completed ticket. Without this, --resume of a
+ * clean-success exit (which leaves the cache populated) trips
+ * `iteration_cap_exhausted` on iteration 1 before any new ticket starts.
+ *
+ * Returns the count of fields cleared (0 = state was already clean).
+ */
+export function clearStaleTicketCacheFields(state) {
+    let cleared = 0;
+    if (state.current_ticket_tier !== undefined) {
+        delete state.current_ticket_tier;
+        cleared++;
+    }
+    if (state.current_ticket_budget !== undefined) {
+        delete state.current_ticket_budget;
+        cleared++;
+    }
+    if (state.current_ticket_max_iterations !== undefined) {
+        delete state.current_ticket_max_iterations;
+        cleared++;
+    }
+    if (state.current_ticket_worker_timeout_seconds !== undefined) {
+        delete state.current_ticket_worker_timeout_seconds;
+        cleared++;
+    }
+    if (state.current_ticket_budget_start_iteration !== undefined) {
+        delete state.current_ticket_budget_start_iteration;
+        cleared++;
+    }
+    return cleared;
+}
+/**
  * Proactive empty-queue completion check, run at iteration_start before any
  * manager spawn. If all `linear_ticket_*.md` files in the session report
  * `status: Done` (and there is at least one ticket), synthesizes an
@@ -2514,7 +2548,36 @@ async function runMuxRunnerMain() {
         // step/current_ticket so postmortem can show the unfinished queue. The
         // `Max iterations reached ...` log line is retained as a stable marker
         // for grep-based forensics.
-        if (ticketMaxIter > 0 && budgetIter >= ticketMaxIter) {
+        //
+        // R-CNAR-7 stale-cache guard: when state.current_ticket is null/undefined
+        // but state.current_ticket_max_iterations carries a stale value from the
+        // previously-completed ticket, the per-ticket cap-check would fire with
+        // no ticket to attribute the exit to. This is the run-#6 attempt-1 trip:
+        // a clean-success exit via finalizeTerminalState left max_iterations
+        // populated; --resume re-entered the loop and the very first cap-check
+        // tripped before any ticket started. Self-heal: emit
+        // cap_check_skipped_stale_cache + clear the stale fields, continue.
+        if (!state.current_ticket && ticketMaxIter > 0 && budgetIter >= ticketMaxIter) {
+            logActivity({
+                event: 'cap_check_skipped_stale_cache',
+                source: 'pickle',
+                session: path.basename(sessionDir),
+                iteration: curIter,
+                gate_payload: {
+                    prior_max_iterations: ticketMaxIter,
+                    global_max_iterations: globalMaxIter,
+                },
+            });
+            // R-CNAR-7 self-heal: clear all five cache fields atomically. The
+            // upstream nullification sites that should have done this are fixed by
+            // R-CNAR-8 (sibling commit); this path catches state that pre-dates
+            // those fixes plus any future leak we miss.
+            sm.update(statePath, s => { clearStaleTicketCacheFields(s); });
+            // Re-read state so the rest of this iteration sees the cleared cache.
+            state = readRunnerState(statePath);
+            continue;
+        }
+        if (state.current_ticket && ticketMaxIter > 0 && budgetIter >= ticketMaxIter) {
             const tier = typeof state.current_ticket_tier === 'string' ? state.current_ticket_tier : 'unknown';
             const ticketId = state.current_ticket ?? 'unknown';
             log(`mux-runner exiting with code 3: per-ticket budget (${budgetIter}/${ticketMaxIter}, tier=${tier}) exhausted on ticket ${ticketId} without ${PromiseTokens.EPIC_COMPLETED} promise`);

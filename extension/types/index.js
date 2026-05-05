@@ -203,6 +203,9 @@ export const VALID_ACTIVITY_EVENTS = [
     'ticket_audit_bypassed',
     'ticket_audit_failed',
     'worker_partial_lifecycle_exit',
+    'cap_check_skipped_stale_cache',
+    'ticket_cache_cleared',
+    'orphan_map_entry_pruned',
 ];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {

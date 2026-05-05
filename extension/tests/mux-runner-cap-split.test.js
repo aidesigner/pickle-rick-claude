@@ -19,7 +19,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { applyTicketTierBudget } from '../bin/mux-runner.js';
+import { applyTicketTierBudget, clearStaleTicketCacheFields } from '../bin/mux-runner.js';
 
 function tempRoot() {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-cap-split-')));
@@ -133,4 +133,71 @@ test('cap-split: worker_timeout_seconds remains per-ticket (unchanged behavior)'
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+// --- R-CNAR-7 stale-cache cap-trip guard ---
+
+test('R-CNAR-7 clearStaleTicketCacheFields: clears all 5 cache fields when populated', () => {
+  const state = {
+    active: true,
+    working_dir: '/tmp',
+    step: 'implement',
+    iteration: 11,
+    max_iterations: 500,
+    max_time_minutes: 60,
+    worker_timeout_seconds: 99,
+    start_time_epoch: 1,
+    completion_promise: null,
+    original_prompt: '',
+    current_ticket: null,
+    history: [],
+    started_at: new Date().toISOString(),
+    session_dir: '/tmp',
+    tmux_mode: false,
+    schema_version: 9,
+    backend: 'claude',
+    current_ticket_tier: 'medium',
+    current_ticket_budget: 30,
+    current_ticket_max_iterations: 30,
+    current_ticket_worker_timeout_seconds: 1200,
+    current_ticket_budget_start_iteration: 5,
+  };
+
+  const cleared = clearStaleTicketCacheFields(state);
+
+  assert.equal(cleared, 5, 'all 5 cache fields cleared');
+  assert.equal(state.current_ticket_tier, undefined);
+  assert.equal(state.current_ticket_budget, undefined);
+  assert.equal(state.current_ticket_max_iterations, undefined);
+  assert.equal(state.current_ticket_worker_timeout_seconds, undefined);
+  assert.equal(state.current_ticket_budget_start_iteration, undefined);
+  // unrelated fields preserved
+  assert.equal(state.iteration, 11);
+  assert.equal(state.max_iterations, 500);
+  assert.equal(state.current_ticket, null);
+});
+
+test('R-CNAR-7 clearStaleTicketCacheFields: idempotent (re-run on cleared state is no-op)', () => {
+  const state = { current_ticket: null };
+
+  const first = clearStaleTicketCacheFields(state);
+  const second = clearStaleTicketCacheFields(state);
+
+  assert.equal(first, 0, 'no fields to clear');
+  assert.equal(second, 0, 'still no fields');
+});
+
+test('R-CNAR-7 clearStaleTicketCacheFields: returns count of fields cleared (partial)', () => {
+  const state = {
+    current_ticket: null,
+    current_ticket_max_iterations: 30,
+    current_ticket_worker_timeout_seconds: 1200,
+    // tier/budget/budget_start_iteration absent
+  };
+
+  const cleared = clearStaleTicketCacheFields(state);
+
+  assert.equal(cleared, 2, 'only the 2 populated fields cleared');
+  assert.equal(state.current_ticket_max_iterations, undefined);
+  assert.equal(state.current_ticket_worker_timeout_seconds, undefined);
 });
