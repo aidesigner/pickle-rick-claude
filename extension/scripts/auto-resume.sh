@@ -118,6 +118,7 @@ start_epoch="$(date +%s)"
 retry=0
 prev_done=""
 prev_ticket=""
+no_progress_cycles=0
 
 echo "[auto-resume] starting loop (max_retries=$MAX_RETRIES, session=$SESSION_DIR)" >&2
 
@@ -153,12 +154,18 @@ while true; do
     break
   fi
 
-  if [[ "$retry" -gt "$BANNER_THRESHOLD" ]]; then
-    echo "[auto-resume] WARNING: retry $retry/$MAX_RETRIES — pipeline_phase_incomplete persists (${elapsed}s elapsed)" >&2
+  if [[ -n "$prev_done" && "$cur_done" == "$prev_done" && "$cur_ticket" == "$prev_ticket" ]]; then
+    no_progress_cycles=$((no_progress_cycles + 1))
+  else
+    no_progress_cycles=0
   fi
 
-  if [[ -n "$prev_done" && "$cur_done" == "$prev_done" && "$cur_ticket" == "$prev_ticket" && "$retry" -ge "$PROGRESS_THRESHOLD" ]]; then
-    echo "[auto-resume] stopped: no progress after $retry retries (ticket=$cur_ticket, done=$cur_done)" >&2
+  if [[ "$retry" -gt "$BANNER_THRESHOLD" ]]; then
+    echo "[warn] auto-resume retry $retry/$MAX_RETRIES (no progress for $no_progress_cycles cycles)" >&2
+  fi
+
+  if [[ "$no_progress_cycles" -ge 1 && "$retry" -ge "$PROGRESS_THRESHOLD" ]]; then
+    echo "[auto-resume] stopped: no progress for $no_progress_cycles consecutive retries (ticket=$cur_ticket, done=$cur_done)" >&2
     break
   fi
 
