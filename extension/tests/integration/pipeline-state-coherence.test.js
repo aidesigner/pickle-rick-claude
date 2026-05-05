@@ -159,7 +159,12 @@ test('pipeline state stays coherent across a three-iteration mux-runner fixture'
         });
 
         const output = `${result.stderr ?? ''}${result.stdout ?? ''}`;
-        assert.equal(result.status, 0, `expected runner to exit cleanly; output:\n${output}`);
+        // Per R-CNAR-1 part 2 cap split (extension/CLAUDE.md trap door): once the
+        // per-ticket budget (max_iterations=3) is consumed without an
+        // EPIC_COMPLETED promise, mux-runner exits 3 with
+        // exit_reason='iteration_cap_exhausted' via safeDeactivate (forensic path).
+        // step/current_ticket are intentionally preserved for postmortem.
+        assert.equal(result.status, 3, `expected exit 3 (iteration_cap_exhausted); output:\n${output}`);
 
         const runnerLogPath = path.join(sessionDir, 'mux-runner.log');
         assert.ok(fs.existsSync(runnerLogPath), 'mux-runner.log should exist');
@@ -195,8 +200,14 @@ test('pipeline state stays coherent across a three-iteration mux-runner fixture'
 
         const finalState = readJson(statePath);
         assert.equal(finalState.iteration, runnerIterationCount, 'state.iteration should match mux-runner.log iteration count');
-        assert.equal(finalState.step, 'completed', 'terminal state should be completed');
-        assert.equal(finalState.current_ticket, null, 'terminal state should clear current_ticket');
+        // Forensic preservation: cap-exhausted exits go through safeDeactivate, NOT
+        // finalizeTerminalState. step and current_ticket survive for postmortem.
+        // The fixture's iteration-3 worker advances state.step to 'review' before
+        // the next loop iteration's cap-check fires.
+        assert.equal(finalState.step, 'review', "terminal state.step should be 'review' (preserved from iteration 3 advance before cap check)");
+        assert.equal(finalState.current_ticket, 'coherence-ticket', 'cap-exhausted forensic exit should preserve current_ticket');
+        assert.equal(finalState.exit_reason, 'iteration_cap_exhausted', 'cap-exhausted exit must record exit_reason for auto-resume gating (R-CNAR-4)');
+        assert.equal(finalState.active, false, 'safeDeactivate must clear active flag on cap exhaustion');
 
         const iterationStartEvents = readActivityEvents(path.join(tmpRoot, 'pickle-data'))
             .filter((entry) => entry.event === 'iteration_start');
@@ -226,12 +237,13 @@ test('pipeline state stays coherent across a three-iteration mux-runner fixture'
         const observedAndTerminalSteps = [
             ...observations.map((entry) => entry.step),
             phaseTransitions[2]?.next_phase,
+            phaseTransitions[3]?.next_phase,
             finalState.step,
         ];
         assert.deepEqual(
             observedAndTerminalSteps,
-            ['research', 'plan', 'implement', 'review', 'completed'],
-            'state.step should transition through research, plan, implement, review, and completed',
+            ['research', 'plan', 'implement', 'review', 'completed', 'review'],
+            'observed worker steps + activity-log phase transitions + cap-exhausted forensic state.step',
         );
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
