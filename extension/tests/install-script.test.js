@@ -2,7 +2,7 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, chmodSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, chmodSync, lstatSync, readlinkSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -904,6 +904,84 @@ sleep 2
       );
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+function buildTypescriptSymlinkFixtureScript(scriptDir, extensionRoot) {
+  return `#!/bin/bash
+set -euo pipefail
+SCRIPT_DIR="${scriptDir}"
+EXTENSION_ROOT="${extensionRoot}"
+
+mkdir -p "$EXTENSION_ROOT/extension/node_modules"
+for dep in typescript; do
+  if [ -d "$SCRIPT_DIR/extension/node_modules/$dep" ]; then
+    ln -sfn "$SCRIPT_DIR/extension/node_modules/$dep" "$EXTENSION_ROOT/extension/node_modules/$dep"
+  fi
+done
+echo "ok"
+`;
+}
+
+function makeTypescriptSymlinkFixture() {
+  const dir = mkdtempSync(path.join(tmpdir(), 'install-typescript-symlink-'));
+  const scriptDir = path.join(dir, 'source');
+  const extensionRoot = path.join(dir, 'deployed');
+  const tsNodeModules = path.join(scriptDir, 'extension', 'node_modules', 'typescript');
+  mkdirSync(tsNodeModules, { recursive: true });
+  const scriptPath = path.join(dir, 'install.sh');
+  writeFileSync(scriptPath, buildTypescriptSymlinkFixtureScript(scriptDir, extensionRoot), { mode: 0o755 });
+  return {
+    dir,
+    scriptDir,
+    extensionRoot,
+    scriptPath,
+    symlinkPath: path.join(extensionRoot, 'extension', 'node_modules', 'typescript'),
+    expectedTarget: tsNodeModules,
+  };
+}
+
+describe('install.sh typescript symlink', () => {
+  test('install-script.typescript-symlink exists after install with correct target', () => {
+    const fixture = makeTypescriptSymlinkFixture();
+    try {
+      const result = spawnSync('bash', [fixture.scriptPath], { encoding: 'utf8' });
+      assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
+      assert.match(result.stdout, /ok/);
+      assert.ok(existsSync(fixture.symlinkPath), 'typescript symlink must exist in deployed extension/node_modules');
+      assert.ok(lstatSync(fixture.symlinkPath).isSymbolicLink(), 'typescript entry must be a symlink');
+      assert.strictEqual(
+        readlinkSync(fixture.symlinkPath),
+        fixture.expectedTarget,
+        'symlink target must equal repo extension/node_modules/typescript',
+      );
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('install-script.typescript-symlink idempotent replaces stale symlink', () => {
+    const fixture = makeTypescriptSymlinkFixture();
+    try {
+      const deployedNodeModules = path.join(fixture.extensionRoot, 'extension', 'node_modules');
+      mkdirSync(deployedNodeModules, { recursive: true });
+      const staleTarget = path.join(fixture.dir, 'stale-typescript');
+      mkdirSync(staleTarget);
+      symlinkSync(staleTarget, fixture.symlinkPath);
+      assert.strictEqual(readlinkSync(fixture.symlinkPath), staleTarget, 'pre-condition: stale symlink must be installed');
+
+      const result = spawnSync('bash', [fixture.scriptPath], { encoding: 'utf8' });
+      assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
+      assert.ok(existsSync(fixture.symlinkPath), 'typescript symlink must still exist after re-install');
+      assert.ok(lstatSync(fixture.symlinkPath).isSymbolicLink(), 'typescript entry must remain a symlink after re-install');
+      assert.strictEqual(
+        readlinkSync(fixture.symlinkPath),
+        fixture.expectedTarget,
+        'stale symlink must be replaced with correct target on re-install',
+      );
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
     }
   });
 });
