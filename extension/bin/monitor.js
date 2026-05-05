@@ -575,7 +575,23 @@ async function render(sessionDir, sink = process.stdout) {
  * Returns the timer handle for tests / explicit shutdown; the
  * production `main()` discards it.
  */
+/**
+ * R-MWR-2: env kill-switch. When `PICKLE_MONITOR_WATCHDOG === 'off'` the
+ * dead-pane respawn watchdog is fully disabled — no setInterval is
+ * armed, no tmux probes fire, no log lines are emitted. Operators flip
+ * this when they need to debug a frozen pane manually without the
+ * watchdog reviving it underfoot.
+ *
+ * Returns `true` when the watchdog is disabled.
+ */
+export function isRespawnWatchdogDisabled(env = process.env) {
+    return env.PICKLE_MONITOR_WATCHDOG === 'off';
+}
 export function startRespawnWatchdog(opts) {
+    // R-MWR-2: env kill-switch. Bail before scheduling so disabling the
+    // watchdog truly disables it — no timer, no logs, no tmux calls.
+    if (isRespawnWatchdogDisabled(opts.env ?? process.env))
+        return null;
     const intervalMs = opts.intervalMs ?? RESPAWN_WATCHDOG_INTERVAL_MS;
     const log = opts.logger || (() => { });
     const tick = () => {

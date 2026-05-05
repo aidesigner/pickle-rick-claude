@@ -7,6 +7,7 @@ import * as path from 'node:path';
 
 import {
     startRespawnWatchdog,
+    isRespawnWatchdogDisabled,
     RESPAWN_WATCHDOG_INTERVAL_MS,
     MONITOR_STDOUT_WATCHDOG_MS,
 } from '../bin/monitor.js';
@@ -176,6 +177,58 @@ test('startRespawnWatchdog: callback errors do not crash the timer (best-effort 
         // (depending on whether the error escaped the spawnSync mock or
         // was already absorbed by restartDeadWatcherPanes' own try/catch).
         assert.ok(true, 'watchdog timer survived spawnSync exceptions');
+    } finally {
+        f.cleanup();
+    }
+});
+
+// --- Env kill-switch (R-MWR-2) ---
+
+test('isRespawnWatchdogDisabled: true only when PICKLE_MONITOR_WATCHDOG=off', () => {
+    assert.equal(isRespawnWatchdogDisabled({}), false);
+    assert.equal(isRespawnWatchdogDisabled({ PICKLE_MONITOR_WATCHDOG: '' }), false);
+    assert.equal(isRespawnWatchdogDisabled({ PICKLE_MONITOR_WATCHDOG: 'on' }), false);
+    assert.equal(isRespawnWatchdogDisabled({ PICKLE_MONITOR_WATCHDOG: 'OFF' }), false);
+    assert.equal(isRespawnWatchdogDisabled({ PICKLE_MONITOR_WATCHDOG: 'off' }), true);
+});
+
+test('startRespawnWatchdog: PICKLE_MONITOR_WATCHDOG=off disables the timer entirely', async () => {
+    const f = makeWatchdogFakes();
+    try {
+        const handle = startRespawnWatchdog({
+            sessionDir: f.sessionDir,
+            extensionRoot: f.extRoot,
+            intervalMs: 30,
+            spawnSyncFn: f.spawnSyncFn,
+            env: { PICKLE_MONITOR_WATCHDOG: 'off' },
+        });
+        assert.equal(handle, null, 'kill-switch must return null instead of a Timeout');
+        await new Promise(resolve => setTimeout(resolve, 100));
+        assert.equal(
+            f.spawnCalls.length,
+            0,
+            'no tmux calls when watchdog is disabled — proves no timer fired',
+        );
+    } finally {
+        f.cleanup();
+    }
+});
+
+test('startRespawnWatchdog: kill-switch is independent of MONITOR_STDOUT_WATCHDOG_MS scope', () => {
+    // R-MWR-rename + R-MWR-2: the env knob disables ONLY the respawn
+    // watchdog. The stdout-wedge constant survives unchanged regardless.
+    const before = MONITOR_STDOUT_WATCHDOG_MS;
+    const f = makeWatchdogFakes();
+    try {
+        const handle = startRespawnWatchdog({
+            sessionDir: f.sessionDir,
+            extensionRoot: f.extRoot,
+            intervalMs: 60_000,
+            spawnSyncFn: f.spawnSyncFn,
+            env: { PICKLE_MONITOR_WATCHDOG: 'off' },
+        });
+        assert.equal(handle, null);
+        assert.equal(MONITOR_STDOUT_WATCHDOG_MS, before, 'stdout watchdog constant untouched');
     } finally {
         f.cleanup();
     }
