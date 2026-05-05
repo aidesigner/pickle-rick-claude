@@ -14,7 +14,6 @@ const AUDIT_SCRIPTS = [
   'bash scripts/audit-test-tiers.sh',
   'bash scripts/audit-test-isolation.sh',
   'bash scripts/audit-fix-commits.sh',
-  'bash scripts/audit-canary-flip.sh',
   'bash scripts/audit-bundle-thesis.sh',
   'bash scripts/audit-quarantine.sh',
   'bash scripts/audit-trap-door-enforcement.sh',
