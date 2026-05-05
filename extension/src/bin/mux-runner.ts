@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync, execFileSync } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, ticketTierBudget, extractFrontmatter, type TicketInfo, type TicketTierBudget } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, extractFrontmatter, type TicketInfo, type TicketTierBudget } from '../services/pickle-utils.js';
 import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact, type Backend, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole, type Step } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -504,23 +504,24 @@ function readTicketBudgetForState(state: State, sessionDir: string): TicketTierB
   if (!fs.existsSync(ticketPath)) return sessionRunnerBudget(state);
 
   const cachedTier = typeof state.current_ticket_tier === 'string' ? state.current_ticket_tier : undefined;
-  if (cachedTier) return ticketTierBudget(cachedTier);
-  return ticketInfoBudgetFromPath(ticketPath);
+  if (cachedTier) return getTicketTierBudgetWithOverrides(state, cachedTier);
+  return ticketInfoBudgetFromPath(state, ticketPath);
 }
 
-function ticketInfoBudgetFromPath(ticketPath: string): TicketTierBudget {
-  return ticketTierBudget(parseTicketFrontmatter(ticketPath)?.complexity_tier);
+function ticketInfoBudgetFromPath(state: State, ticketPath: string): TicketTierBudget {
+  return getTicketTierBudgetWithOverrides(state, parseTicketFrontmatter(ticketPath)?.complexity_tier);
 }
 
 function sessionRunnerBudget(state: State): TicketTierBudget {
   const max_iterations = Number(state.max_iterations);
   const worker_timeout_seconds = Number(state.worker_timeout_seconds);
+  const fallback = getTicketTierBudgetWithOverrides(state, undefined);
   return {
     tier: 'medium',
-    max_iterations: Number.isFinite(max_iterations) && max_iterations > 0 ? max_iterations : ticketTierBudget(undefined).max_iterations,
+    max_iterations: Number.isFinite(max_iterations) && max_iterations > 0 ? max_iterations : fallback.max_iterations,
     worker_timeout_seconds: Number.isFinite(worker_timeout_seconds) && worker_timeout_seconds > 0
       ? worker_timeout_seconds
-      : ticketTierBudget(undefined).worker_timeout_seconds,
+      : fallback.worker_timeout_seconds,
   };
 }
 

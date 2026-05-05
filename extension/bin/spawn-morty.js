@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, runCmd, safeErrorMessage, parseTicketFrontmatter, ticketInfoBudget, } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, runCmd, safeErrorMessage, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, } from '../services/pickle-utils.js';
 import { spawn } from 'child_process';
 import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact } from '../types/index.js';
 import { updateTicketStatus } from '../services/git-utils.js';
@@ -775,7 +775,7 @@ async function main() {
     const runtime = readSessionRuntime(parsed);
     const ticketInfo = readTicketInfo(parsed.ticketFilePath);
     const requestedTimeout = ticketInfo
-        ? ticketInfoBudget(ticketInfo).worker_timeout_seconds
+        ? getTicketTierBudgetWithOverrides(runtime.state, ticketInfo.complexity_tier).worker_timeout_seconds
         : parsed.timeout;
     const effectiveTimeout = resolveEffectiveTimeout(requestedTimeout, runtime.state, Date.now());
     if (runtime.state && effectiveTimeout > requestedTimeout) {

@@ -11,7 +11,7 @@ import {
   runCmd,
   safeErrorMessage,
   parseTicketFrontmatter,
-  ticketInfoBudget,
+  getTicketTierBudgetWithOverrides,
 } from '../services/pickle-utils.js';
 import { spawn } from 'child_process';
 import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact, type Backend, type BackendResolutionSource, type LastToolErrorState, type State } from '../types/index.js';
@@ -871,7 +871,7 @@ async function main() {
   const runtime = readSessionRuntime(parsed);
   const ticketInfo = readTicketInfo(parsed.ticketFilePath);
   const requestedTimeout = ticketInfo
-    ? ticketInfoBudget(ticketInfo).worker_timeout_seconds
+    ? getTicketTierBudgetWithOverrides(runtime.state, ticketInfo.complexity_tier).worker_timeout_seconds
     : parsed.timeout;
   const effectiveTimeout = resolveEffectiveTimeout(requestedTimeout, runtime.state, Date.now());
   if (runtime.state && effectiveTimeout > requestedTimeout) {

@@ -296,15 +296,84 @@ export function normalizeTicketComplexityTier(value) {
     }
     return 'medium';
 }
-export function ticketTierBudget(tier) {
+function readTierCapsBlock(block) {
+    if (!block || typeof block !== 'object')
+        return {};
+    const result = {};
+    for (const tier of VALID_TICKET_COMPLEXITY_TIERS) {
+        const entry = block[tier];
+        if (!entry || typeof entry !== 'object')
+            continue;
+        const e = entry;
+        const partial = {};
+        const maxIter = Number(e.max_iterations);
+        if (Number.isFinite(maxIter) && Number.isInteger(maxIter) && maxIter > 0) {
+            partial.max_iterations = maxIter;
+        }
+        const tmout = Number(e.worker_timeout_seconds);
+        if (Number.isFinite(tmout) && Number.isInteger(tmout) && tmout > 0) {
+            partial.worker_timeout_seconds = tmout;
+        }
+        if (partial.max_iterations !== undefined || partial.worker_timeout_seconds !== undefined) {
+            result[tier] = partial;
+        }
+    }
+    return result;
+}
+function loadPickleSettingsBag() {
+    try {
+        const settingsPath = path.join(getExtensionRoot(), 'pickle_settings.json');
+        return readRecoverableJsonObject(settingsPath);
+    }
+    catch {
+        return null;
+    }
+}
+export function readPickleSettingsTierCaps(settings) {
+    if (!settings)
+        return {};
+    return readTierCapsBlock(settings.tier_caps);
+}
+export function readStateTierCapOverrides(state) {
+    const flags = state?.flags;
+    if (!flags || typeof flags !== 'object')
+        return {};
+    return readTierCapsBlock(flags.tier_cap_override);
+}
+/**
+ * Canonical ticket-tier budget accessor. Resolution order, applied
+ * independently per field (max_iterations, worker_timeout_seconds):
+ *
+ *   1. state.flags.tier_cap_override.<tier>.<field>
+ *   2. pickle_settings.tier_caps.<tier>.<field>
+ *   3. TICKET_TIER_BUDGETS[<tier>].<field>  (compiled-in default)
+ *
+ * Invalid (non-positive-integer) values fall through to the next tier of
+ * precedence rather than throwing. Reader honors both pickle_settings v1
+ * (schema_version absent) and v2 (schema_version === 2) — only the
+ * `tier_caps` block is inspected, so older or newer settings files are safe.
+ *
+ * If `settings` is `undefined`, the on-disk pickle_settings.json is read via
+ * `readRecoverableJsonObject(path.join(getExtensionRoot(), 'pickle_settings.json'))`.
+ * Pass `null` to bypass disk I/O (compiled defaults only) — useful in tests.
+ */
+export function getTicketTierBudgetWithOverrides(state, tier, settings) {
     const normalizedTier = normalizeTicketComplexityTier(tier);
+    const defaults = TICKET_TIER_BUDGETS[normalizedTier];
+    const settingsBag = settings === undefined ? loadPickleSettingsBag() : settings;
+    const settingsCap = readPickleSettingsTierCaps(settingsBag)[normalizedTier] ?? {};
+    const stateCap = readStateTierCapOverrides(state)[normalizedTier] ?? {};
     return {
         tier: normalizedTier,
-        ...TICKET_TIER_BUDGETS[normalizedTier],
+        max_iterations: stateCap.max_iterations ?? settingsCap.max_iterations ?? defaults.max_iterations,
+        worker_timeout_seconds: stateCap.worker_timeout_seconds ?? settingsCap.worker_timeout_seconds ?? defaults.worker_timeout_seconds,
     };
 }
+export function ticketTierBudget(tier) {
+    return getTicketTierBudgetWithOverrides(null, tier, null);
+}
 export function ticketInfoBudget(ticketInfo) {
-    return ticketTierBudget(ticketInfo?.complexity_tier);
+    return getTicketTierBudgetWithOverrides(null, ticketInfo?.complexity_tier, null);
 }
 export class MissingTicketError extends Error {
     sessionRoot;

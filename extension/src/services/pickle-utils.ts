@@ -359,6 +359,13 @@ export const TICKET_TIER_BUDGETS: Record<TicketComplexityTier, Omit<TicketTierBu
   large: { max_iterations: 60, worker_timeout_seconds: 80 * 60 },
 } as const;
 
+export interface TierCapPartial {
+  max_iterations?: number;
+  worker_timeout_seconds?: number;
+}
+
+export type TierCapsConfig = Partial<Record<TicketComplexityTier, TierCapPartial>>;
+
 export function normalizeTicketComplexityTier(value: unknown): TicketComplexityTier {
   if (typeof value === 'string') {
     const normalized = value.trim().toLowerCase();
@@ -369,16 +376,93 @@ export function normalizeTicketComplexityTier(value: unknown): TicketComplexityT
   return 'medium';
 }
 
-export function ticketTierBudget(tier: unknown): TicketTierBudget {
+function readTierCapsBlock(block: unknown): TierCapsConfig {
+  if (!block || typeof block !== 'object') return {};
+  const result: TierCapsConfig = {};
+  for (const tier of VALID_TICKET_COMPLEXITY_TIERS) {
+    const entry = (block as Record<string, unknown>)[tier];
+    if (!entry || typeof entry !== 'object') continue;
+    const e = entry as Record<string, unknown>;
+    const partial: TierCapPartial = {};
+    const maxIter = Number(e.max_iterations);
+    if (Number.isFinite(maxIter) && Number.isInteger(maxIter) && maxIter > 0) {
+      partial.max_iterations = maxIter;
+    }
+    const tmout = Number(e.worker_timeout_seconds);
+    if (Number.isFinite(tmout) && Number.isInteger(tmout) && tmout > 0) {
+      partial.worker_timeout_seconds = tmout;
+    }
+    if (partial.max_iterations !== undefined || partial.worker_timeout_seconds !== undefined) {
+      result[tier] = partial;
+    }
+  }
+  return result;
+}
+
+function loadPickleSettingsBag(): Record<string, unknown> | null {
+  try {
+    const settingsPath = path.join(getExtensionRoot(), 'pickle_settings.json');
+    return readRecoverableJsonObject(settingsPath) as Record<string, unknown> | null;
+  } catch {
+    return null;
+  }
+}
+
+export function readPickleSettingsTierCaps(
+  settings: Record<string, unknown> | null | undefined,
+): TierCapsConfig {
+  if (!settings) return {};
+  return readTierCapsBlock((settings as { tier_caps?: unknown }).tier_caps);
+}
+
+export function readStateTierCapOverrides(
+  state: State | null | undefined,
+): TierCapsConfig {
+  const flags = state?.flags;
+  if (!flags || typeof flags !== 'object') return {};
+  return readTierCapsBlock((flags as Record<string, unknown>).tier_cap_override);
+}
+
+/**
+ * Canonical ticket-tier budget accessor. Resolution order, applied
+ * independently per field (max_iterations, worker_timeout_seconds):
+ *
+ *   1. state.flags.tier_cap_override.<tier>.<field>
+ *   2. pickle_settings.tier_caps.<tier>.<field>
+ *   3. TICKET_TIER_BUDGETS[<tier>].<field>  (compiled-in default)
+ *
+ * Invalid (non-positive-integer) values fall through to the next tier of
+ * precedence rather than throwing. Reader honors both pickle_settings v1
+ * (schema_version absent) and v2 (schema_version === 2) — only the
+ * `tier_caps` block is inspected, so older or newer settings files are safe.
+ *
+ * If `settings` is `undefined`, the on-disk pickle_settings.json is read via
+ * `readRecoverableJsonObject(path.join(getExtensionRoot(), 'pickle_settings.json'))`.
+ * Pass `null` to bypass disk I/O (compiled defaults only) — useful in tests.
+ */
+export function getTicketTierBudgetWithOverrides(
+  state: State | null | undefined,
+  tier: unknown,
+  settings?: Record<string, unknown> | null,
+): TicketTierBudget {
   const normalizedTier = normalizeTicketComplexityTier(tier);
+  const defaults = TICKET_TIER_BUDGETS[normalizedTier];
+  const settingsBag = settings === undefined ? loadPickleSettingsBag() : settings;
+  const settingsCap = readPickleSettingsTierCaps(settingsBag)[normalizedTier] ?? {};
+  const stateCap = readStateTierCapOverrides(state)[normalizedTier] ?? {};
   return {
     tier: normalizedTier,
-    ...TICKET_TIER_BUDGETS[normalizedTier],
+    max_iterations: stateCap.max_iterations ?? settingsCap.max_iterations ?? defaults.max_iterations,
+    worker_timeout_seconds: stateCap.worker_timeout_seconds ?? settingsCap.worker_timeout_seconds ?? defaults.worker_timeout_seconds,
   };
 }
 
+export function ticketTierBudget(tier: unknown): TicketTierBudget {
+  return getTicketTierBudgetWithOverrides(null, tier, null);
+}
+
 export function ticketInfoBudget(ticketInfo: Pick<TicketInfo, 'complexity_tier'> | null | undefined): TicketTierBudget {
-  return ticketTierBudget(ticketInfo?.complexity_tier);
+  return getTicketTierBudgetWithOverrides(null, ticketInfo?.complexity_tier, null);
 }
 
 export class MissingTicketError extends Error {

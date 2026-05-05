@@ -7,7 +7,10 @@ import * as path from 'node:path';
 
 import { applyTicketTierBudget } from '../bin/mux-runner.js';
 import {
+  getTicketTierBudgetWithOverrides,
   parseTicketFrontmatter,
+  readPickleSettingsTierCaps,
+  readStateTierCapOverrides,
   ticketInfoBudget,
   ticketTierBudget,
 } from '../services/pickle-utils.js';
@@ -143,4 +146,134 @@ test('ticket-tier.budget-mapping: cached tier is stable when frontmatter changes
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+// ──────────────────────────────────────────────────────────────────────────
+// R-CNAR-1: ticket-tier-budget override precedence (state.flags >
+// pickle_settings.tier_caps > TICKET_TIER_BUDGETS hardcoded defaults).
+// ──────────────────────────────────────────────────────────────────────────
+
+test('ticket-tier-budget overrides: defaults applied when no settings or flags', () => {
+  const budget = getTicketTierBudgetWithOverrides(null, 'medium', null);
+  assert.deepEqual(budget, { tier: 'medium', max_iterations: 30, worker_timeout_seconds: 20 * 60 });
+});
+
+test('ticket-tier-budget overrides: pickle_settings.tier_caps fully overrides field-level', () => {
+  const settings = {
+    schema_version: 2,
+    tier_caps: {
+      medium: { max_iterations: 99, worker_timeout_seconds: 1234 },
+    },
+  };
+  const budget = getTicketTierBudgetWithOverrides(null, 'medium', settings);
+  assert.deepEqual(budget, { tier: 'medium', max_iterations: 99, worker_timeout_seconds: 1234 });
+});
+
+test('ticket-tier-budget overrides: pickle_settings.tier_caps partial leaves the other field at default', () => {
+  const settings = {
+    schema_version: 2,
+    tier_caps: { large: { max_iterations: 75 } },
+  };
+  const budget = getTicketTierBudgetWithOverrides(null, 'large', settings);
+  assert.deepEqual(budget, { tier: 'large', max_iterations: 75, worker_timeout_seconds: 80 * 60 });
+});
+
+test('ticket-tier-budget overrides: state.flags.tier_cap_override beats pickle_settings.tier_caps', () => {
+  const settings = {
+    schema_version: 2,
+    tier_caps: {
+      small: { max_iterations: 22, worker_timeout_seconds: 2222 },
+    },
+  };
+  const state = {
+    flags: {
+      tier_cap_override: {
+        small: { max_iterations: 333, worker_timeout_seconds: 3333 },
+      },
+    },
+  };
+  const budget = getTicketTierBudgetWithOverrides(state, 'small', settings);
+  assert.deepEqual(budget, { tier: 'small', max_iterations: 333, worker_timeout_seconds: 3333 });
+});
+
+test('ticket-tier-budget overrides: state.flags partial mixes with settings + defaults independently', () => {
+  // state.flags overrides only worker_timeout_seconds for trivial; settings
+  // overrides only max_iterations for trivial; both must win for their field.
+  const settings = {
+    schema_version: 2,
+    tier_caps: { trivial: { max_iterations: 7 } },
+  };
+  const state = {
+    flags: {
+      tier_cap_override: { trivial: { worker_timeout_seconds: 11 } },
+    },
+  };
+  const budget = getTicketTierBudgetWithOverrides(state, 'trivial', settings);
+  assert.deepEqual(budget, { tier: 'trivial', max_iterations: 7, worker_timeout_seconds: 11 });
+});
+
+test('ticket-tier-budget overrides: invalid (zero/negative/NaN/non-int) values fall through', () => {
+  const settings = {
+    tier_caps: {
+      medium: { max_iterations: 0, worker_timeout_seconds: -1 }, // both invalid
+      large: { max_iterations: 'oops', worker_timeout_seconds: 1.5 }, // both invalid
+    },
+  };
+  const state = {
+    flags: {
+      tier_cap_override: {
+        medium: { max_iterations: NaN, worker_timeout_seconds: Infinity }, // both invalid
+      },
+    },
+  };
+  const medium = getTicketTierBudgetWithOverrides(state, 'medium', settings);
+  assert.deepEqual(medium, { tier: 'medium', max_iterations: 30, worker_timeout_seconds: 20 * 60 });
+  const large = getTicketTierBudgetWithOverrides(state, 'large', settings);
+  assert.deepEqual(large, { tier: 'large', max_iterations: 60, worker_timeout_seconds: 80 * 60 });
+});
+
+test('ticket-tier-budget overrides: schema_version v1 (absent) and v2 are both honored', () => {
+  // v1 — settings file with no schema_version key.
+  const v1 = {
+    tier_caps: { trivial: { max_iterations: 8 } },
+  };
+  // v2 — settings file with schema_version === 2.
+  const v2 = {
+    schema_version: 2,
+    tier_caps: { trivial: { max_iterations: 8 } },
+  };
+  const expected = { tier: 'trivial', max_iterations: 8, worker_timeout_seconds: 5 * 60 };
+  assert.deepEqual(getTicketTierBudgetWithOverrides(null, 'trivial', v1), expected);
+  assert.deepEqual(getTicketTierBudgetWithOverrides(null, 'trivial', v2), expected);
+});
+
+test('ticket-tier-budget overrides: readPickleSettingsTierCaps and readStateTierCapOverrides parse partials', () => {
+  const settings = {
+    tier_caps: {
+      trivial: { max_iterations: 1 },
+      medium: { worker_timeout_seconds: 222 },
+      bogus: { max_iterations: 9 }, // not a valid tier — ignored
+      large: { max_iterations: 'x', worker_timeout_seconds: 0 }, // both invalid — entry dropped
+    },
+  };
+  assert.deepEqual(readPickleSettingsTierCaps(settings), {
+    trivial: { max_iterations: 1 },
+    medium: { worker_timeout_seconds: 222 },
+  });
+
+  const state = {
+    flags: {
+      tier_cap_override: {
+        small: { max_iterations: 4, worker_timeout_seconds: 44 },
+      },
+    },
+  };
+  assert.deepEqual(readStateTierCapOverrides(state), {
+    small: { max_iterations: 4, worker_timeout_seconds: 44 },
+  });
+
+  assert.deepEqual(readPickleSettingsTierCaps(null), {});
+  assert.deepEqual(readPickleSettingsTierCaps({}), {});
+  assert.deepEqual(readStateTierCapOverrides(null), {});
+  assert.deepEqual(readStateTierCapOverrides({ flags: {} }), {});
 });
