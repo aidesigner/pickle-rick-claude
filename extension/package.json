@@ -11,7 +11,7 @@
   },
   "scripts": {
     "lint": "eslint src/",
-    "postinstall": "mkdir -p ../node_modules/.bin && rm -f ../node_modules/.bin/tsc && ln -s $(pwd)/node_modules/.bin/tsc ../node_modules/.bin/tsc",
+    "postinstall": "node -e \"const fs=require('fs');const path=require('path');const dir=path.resolve('../node_modules/.bin');fs.mkdirSync(dir,{recursive:true});const dst=path.join(dir,'tsc');const src=path.resolve('node_modules/.bin/tsc');const tmp=dst+'.tmp.'+process.pid+'.'+Date.now();fs.symlinkSync(src,tmp);fs.renameSync(tmp,dst);\"",
     "sync-schema": "node bin/sync-schema.js",
     "calibrate:readiness": "node bin/calibrate.js readiness --check",
     "calibrate:correct-course": "node bin/calibrate.js correct-course --check",
