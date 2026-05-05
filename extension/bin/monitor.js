@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { collectTickets, statusSymbol, formatTime, getWidth, getHeight, Style, sleep, MatrixStyle, matrixSeparator, latestIterationLog, safeErrorMessage } from '../services/pickle-utils.js';
+import { spawnSync } from 'child_process';
+import { collectTickets, statusSymbol, formatTime, getWidth, getHeight, Style, sleep, MatrixStyle, matrixSeparator, latestIterationLog, safeErrorMessage, restartDeadWatcherPanes, inferMonitorMode, getExtensionRoot } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { readMicroverseState, readRecoverableJsonObject } from '../services/microverse-state.js';
 import { readCircuitBreakerState } from '../services/circuit-breaker.js';
@@ -555,6 +556,45 @@ async function render(sessionDir, sink = process.stdout) {
     await writeWithWatchdog(sink, out.join(''));
     return state.active === true;
 }
+/**
+ * R-MWR-1: register a continuous watchdog inside the monitor pane that
+ * re-runs `restartDeadWatcherPanes` every {@link RESPAWN_WATCHDOG_INTERVAL_MS}.
+ *
+ * `ensureMonitorWindow` already calls `restartDeadWatcherPanes` once at
+ * window-creation / re-attach time, but if a watcher pane dies AFTER that
+ * call (e.g., a `log-watcher` worker crashed mid-iteration), the dead
+ * pane stays dead until the next mux-runner phase boundary calls
+ * `ensureMonitorWindow` again. This watchdog plugs that gap with a 30s
+ * heartbeat from inside the live monitor process.
+ *
+ * The interval is `unref()`'d so it never holds the process open past
+ * the natural exit conditions (SIGINT or `state.active` flip). Errors
+ * inside the callback are swallowed so a transient `tmux` failure does
+ * not crash the dashboard.
+ *
+ * Returns the timer handle for tests / explicit shutdown; the
+ * production `main()` discards it.
+ */
+export function startRespawnWatchdog(opts) {
+    const intervalMs = opts.intervalMs ?? RESPAWN_WATCHDOG_INTERVAL_MS;
+    const log = opts.logger || (() => { });
+    const tick = () => {
+        try {
+            const extensionRoot = opts.extensionRoot ?? getExtensionRoot();
+            const mode = inferMonitorMode(opts.sessionDir);
+            restartDeadWatcherPanes(opts.sessionDir, extensionRoot, mode, opts.spawnSyncFn ?? spawnSync);
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            log(`monitor-watchdog tick error: ${msg}`);
+        }
+    };
+    const handle = setInterval(tick, intervalMs);
+    if (typeof handle.unref === 'function') {
+        handle.unref();
+    }
+    return handle;
+}
 async function main() {
     const sessionDir = process.argv[2];
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
@@ -562,6 +602,10 @@ async function main() {
         console.error('Usage: node monitor.js <session-dir>');
         process.exit(1);
     }
+    // R-MWR-1: arm the dead-pane respawn watchdog before entering the
+    // render loop so panes that die mid-iteration get revived without
+    // waiting for the next mux-runner phase boundary.
+    startRespawnWatchdog({ sessionDir });
     process.on('SIGINT', () => {
         // AC-SSV-07: never block on stdout in the signal handler. If the pane
         // is wedged a synchronous write would prevent the exit. Try the
