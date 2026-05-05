@@ -25,6 +25,7 @@ const VALID_DEFECT_CLASSES = new Set([
   'missing-deps',
   'wrong-HEAD-assumptions',
   'cross-doc-naming',
+  'cross-doc-naming-drift',
   'hallucinated-premise',
   'literal-value-drift',
 ]);

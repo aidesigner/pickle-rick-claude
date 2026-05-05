@@ -22,6 +22,7 @@ type DefectClass =
   | 'missing-deps'
   | 'wrong-HEAD-assumptions'
   | 'cross-doc-naming'
+  | 'cross-doc-naming-drift'
   | 'hallucinated-premise'
   | 'literal-value-drift';
 
@@ -213,6 +214,93 @@ function extractBacktickedPaths(text: string): string[] {
   return out;
 }
 
+function extractFencedPaths(text: string): string[] {
+  const out: string[] = [];
+  const fenceRe = /^```[^\n]*\n([\s\S]*?)^```/gm;
+  let m: RegExpExecArray | null;
+  fenceRe.lastIndex = 0;
+  while ((m = fenceRe.exec(text)) !== null) {
+    for (const word of m[1].split(/\s+/)) {
+      const tok = word.replace(/^["'([]+|["'\]);,]+$/g, '');
+      if (looksLikePath(tok)) out.push(tok);
+    }
+  }
+  return [...new Set(out)];
+}
+
+export function detectCrossDocNamingDrift(
+  ticketPaths: string[],
+  workingDir: string,
+): Array<{ ticketPath: string; docFile: string; docPath: string }> {
+  if (ticketPaths.length === 0) return [];
+  const basenameMap = new Map<string, Set<string>>();
+  for (const p of ticketPaths) {
+    const base = path.basename(p);
+    let s = basenameMap.get(base);
+    if (!s) { s = new Set(); basenameMap.set(base, s); }
+    s.add(p);
+  }
+  const knownBasenames = new Set(basenameMap.keys());
+
+  // Doc-side extraction: accept standard path tokens AND bare filenames that
+  // match a known basename (e.g. `pickle_settings.json` alongside the ticket's
+  // `extension/pickle_settings.json`).
+  function extractDocTokens(text: string): string[] {
+    const out: string[] = [];
+    const btRe = /`([^`\n]+)`/g;
+    let m: RegExpExecArray | null;
+    btRe.lastIndex = 0;
+    while ((m = btRe.exec(text)) !== null) {
+      const tok = m[1].trim();
+      if (tok.length >= 3 && !/\s/.test(tok) &&
+          (looksLikePath(tok) || knownBasenames.has(path.basename(tok)))) {
+        out.push(tok);
+      }
+    }
+    const fenceRe = /^```[^\n]*\n([\s\S]*?)^```/gm;
+    fenceRe.lastIndex = 0;
+    while ((m = fenceRe.exec(text)) !== null) {
+      for (const word of m[1].split(/\s+/)) {
+        const tok = word.replace(/^["'([]+|["'\]);,]+$/g, '');
+        if (tok.length >= 3 && !/\s/.test(tok) &&
+            (looksLikePath(tok) || knownBasenames.has(path.basename(tok)))) {
+          out.push(tok);
+        }
+      }
+    }
+    return [...new Set(out)];
+  }
+
+  const res = spawnSync('git', ['ls-files'], {
+    cwd: workingDir,
+    encoding: 'utf-8',
+    timeout: 30_000,
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  const mdFiles = res.status === 0
+    ? res.stdout.split('\n').filter((l) => l.endsWith('.md'))
+    : [];
+  const drifts: Array<{ ticketPath: string; docFile: string; docPath: string }> = [];
+  const seen = new Set<string>();
+  for (const mdFile of mdFiles) {
+    const content = readFileOrNull(path.join(workingDir, mdFile));
+    if (content === null) continue;
+    for (const docPath of extractDocTokens(content)) {
+      const base = path.basename(docPath);
+      const variants = basenameMap.get(base);
+      if (!variants) continue;
+      for (const ticketPath of variants) {
+        if (ticketPath === docPath) continue;
+        const key = `${ticketPath}|${mdFile}|${docPath}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        drifts.push({ ticketPath, docFile: mdFile, docPath });
+      }
+    }
+  }
+  return drifts;
+}
+
 function lineContext(text: string, token: string): string {
   const idx = text.indexOf(token);
   if (idx === -1) return '';
@@ -401,6 +489,19 @@ function checkLiteralValueDrift(t: ParsedTicket, packageVersion: string | null):
   ];
 }
 
+function checkCrossDocNamingDrift(t: ParsedTicket, ctx: AuditContext): Finding[] {
+  const ticketPaths = [...extractBacktickedPaths(t.body), ...extractFencedPaths(t.body)];
+  const drifts = detectCrossDocNamingDrift(ticketPaths, ctx.workingDir);
+  return drifts.map(({ ticketPath, docFile, docPath }) => ({
+    ticket_id: t.id,
+    ticket_path: t.relPath,
+    defect_class: 'cross-doc-naming-drift' as DefectClass,
+    severity: 'warning' as Severity,
+    evidence: `ticket cites \`${ticketPath}\` but \`${docFile}\` uses \`${docPath}\` (same basename, path differs)`,
+    remediation_hint: 'align path references across documents to the canonical full path',
+  }));
+}
+
 function auditTicket(t: ParsedTicket, ctx: AuditContext): Finding[] {
   return [
     ...checkPathDrift(t, ctx.gitFiles),
@@ -408,6 +509,7 @@ function auditTicket(t: ParsedTicket, ctx: AuditContext): Finding[] {
     ...checkMissingDeps(t, ctx.knownTicketHashes),
     ...checkWrongHead(t, ctx),
     ...checkCrossDocNaming(t),
+    ...checkCrossDocNamingDrift(t, ctx),
     ...checkHallucinatedPremise(t, ctx),
     ...checkLiteralValueDrift(t, ctx.packageVersion),
   ];
@@ -507,9 +609,9 @@ function writeManifest(manifest: AuditManifest, target: string): void {
 function usage(): void {
   process.stdout.write(
     'Usage: audit-ticket-bundle.js <session-dir> [--manifest <path>]\n\n' +
-      'Walks <session>/<hash>/linear_ticket_<hash>.md files and runs 7 defect-class checks:\n' +
+      'Walks <session>/<hash>/linear_ticket_<hash>.md files and runs 8 defect-class checks:\n' +
       '  path-drift, self-reference, missing-deps, wrong-HEAD-assumptions,\n' +
-      '  cross-doc-naming, hallucinated-premise, literal-value-drift.\n\n' +
+      '  cross-doc-naming, cross-doc-naming-drift, hallucinated-premise, literal-value-drift.\n\n' +
       'Reads R-BUNDLE-DISPO-1 disposition table at extension/src/data/bundle-disposition-2026-05-04.json.\n' +
       'Tickets whose mapped_requirements are all REGRESSION-TEST-ONLY or DROP are EXEMPT\n' +
       'from the hallucinated-premise check (R15 mitigation).\n\n' +

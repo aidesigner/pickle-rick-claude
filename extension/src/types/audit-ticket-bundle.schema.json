@@ -53,10 +53,11 @@
               "missing-deps",
               "wrong-HEAD-assumptions",
               "cross-doc-naming",
+              "cross-doc-naming-drift",
               "hallucinated-premise",
               "literal-value-drift"
             ],
-            "description": "One of the 7 defect classes checked by the auditor"
+            "description": "One of the 8 defect classes checked by the auditor"
           },
           "severity": {
             "type": "string",
