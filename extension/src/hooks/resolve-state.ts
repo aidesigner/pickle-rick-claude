@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { State } from '../types/index.js';
-import { resolveSessionPath } from '../services/pickle-utils.js';
+import { resolveSessionPath, pruneOrphanedMapEntries } from '../services/pickle-utils.js';
 import { readRecoverableJsonObject } from '../services/recoverable-json.js';
 import { StateManager } from '../services/state-manager.js';
 
@@ -127,6 +127,10 @@ export function resolveStateFile(dataDir: string): string | null {
     }
   }
 
+  // R-SHB-6: prune phantom map entries before reading. Pre-fix, removed
+  // session dirs left stale entries that shadowed live same-cwd lookups in
+  // hook resolution paths and blocked the stop-hook indefinitely.
+  pruneOrphanedMapEntries(dataDir);
   const sessionsMapPath = path.join(dataDir, 'current_sessions.json');
   try {
     const map = readRecoverableJsonObject(sessionsMapPath) as Record<string, unknown> | null;

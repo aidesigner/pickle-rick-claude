@@ -887,6 +887,82 @@ export function withRetryLock<T>(lockPath: string, fn: () => T, opts: RetryLockO
 }
 
 /**
+ * R-SHB-5/6: Atomically prune `current_sessions.json` entries whose session
+ * directory has been deleted or whose `state.json` is unreadable. This is the
+ * janitor for the run-#6 forensic operator workaround — pre-fix, 13 phantom
+ * map entries pointed at removed session dirs and shadowed live same-cwd
+ * lookups in stop-hook + resolver paths.
+ *
+ * Atomic write via `.tmp.<pid>` rename so concurrent readers never see a
+ * truncated map. Returns `{ pruned, total }` so callers can log + decide.
+ * Idempotent: missing map file is a no-op; map with all-valid entries is
+ * a no-op (no write).
+ *
+ * Best-effort throughout — never throws on filesystem races, locked files,
+ * or malformed map content. The cwd-resolve path calls this BEFORE reading
+ * the map, so even a corrupted prune result fails-safe to "no entries
+ * pruned + read original map".
+ */
+export function pruneOrphanedMapEntries(dataRoot: string): { pruned: number; total: number } {
+  const sessionsMapPath = path.join(dataRoot, 'current_sessions.json');
+  let map: Record<string, unknown> | null;
+  try {
+    map = readRecoverableJsonObject(sessionsMapPath) as Record<string, unknown> | null;
+  } catch {
+    return { pruned: 0, total: 0 };
+  }
+  if (!map || typeof map !== 'object') return { pruned: 0, total: 0 };
+
+  const entries = Object.entries(map);
+  const total = entries.length;
+  if (total === 0) return { pruned: 0, total: 0 };
+
+  const survivors: Record<string, unknown> = {};
+  let pruned = 0;
+  for (const [cwd, entry] of entries) {
+    const sessionPath = resolveSessionPath(entry);
+    if (!sessionPath) {
+      pruned++;
+      continue;
+    }
+    let dirExists = false;
+    try {
+      dirExists = fs.statSync(sessionPath).isDirectory();
+    } catch {
+      dirExists = false;
+    }
+    if (!dirExists) {
+      pruned++;
+      continue;
+    }
+    let stateReadable = false;
+    try {
+      fs.accessSync(path.join(sessionPath, 'state.json'), fs.constants.R_OK);
+      stateReadable = true;
+    } catch {
+      stateReadable = false;
+    }
+    if (!stateReadable) {
+      pruned++;
+      continue;
+    }
+    survivors[cwd] = entry;
+  }
+
+  if (pruned === 0) return { pruned: 0, total };
+
+  const tmpPath = `${sessionsMapPath}.tmp.${process.pid}`;
+  try {
+    fs.writeFileSync(tmpPath, JSON.stringify(survivors, null, 2));
+    fs.renameSync(tmpPath, sessionsMapPath);
+  } catch {
+    try { fs.unlinkSync(tmpPath); } catch { /* ignore */ }
+    return { pruned: 0, total };
+  }
+  return { pruned, total };
+}
+
+/**
  * Extracts the session path from a session map entry.
  * Handles both the legacy string format and the current object format ({ sessionPath, pid })
  * for backward compatibility with existing current_sessions.json files.
@@ -1024,6 +1100,9 @@ export function findSessionPathForCwd(
 ): string {
   const { requireActive = false } = options;
   const dataRoot = getDataRoot();
+  // R-SHB-6: prune phantom map entries before reading. Pre-fix, removed
+  // session dirs left stale entries that shadowed live same-cwd lookups.
+  pruneOrphanedMapEntries(dataRoot);
   const sessionsMapPath = path.join(dataRoot, 'current_sessions.json');
   const mappedFallback = readSessionsMapFallback(sessionsMapPath, cwd, requireActive);
   if (mappedFallback && requireActive) return mappedFallback;

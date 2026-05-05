@@ -23,6 +23,8 @@ import {
     markTicketDone,
     markTicketSkipped,
     safeErrorMessage,
+    pruneOrphanedMapEntries,
+    clearTicketCacheFields,
 } from '../services/pickle-utils.js';
 import { LockError } from '../types/index.js';
 
@@ -1414,4 +1416,123 @@ test('buildHandoffSummary: shows tier tag for non-medium tiers, omits for medium
     } finally {
         fs.rmSync(dir, { recursive: true });
     }
+});
+
+// --- R-SHB-6: pruneOrphanedMapEntries ---
+
+test('R-SHB-6 pruneOrphanedMapEntries: removes entries whose session_dir is missing', () => {
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-prune-'));
+    try {
+        const sessionsDir = path.join(dataRoot, 'sessions');
+        fs.mkdirSync(sessionsDir, { recursive: true });
+        const liveSession = path.join(sessionsDir, 'live-1234');
+        fs.mkdirSync(liveSession, { recursive: true });
+        fs.writeFileSync(path.join(liveSession, 'state.json'), JSON.stringify({ active: true }));
+
+        const map = {
+            '/cwd/live': { sessionPath: liveSession, pid: 999 },
+            '/cwd/dead-dir': { sessionPath: path.join(sessionsDir, 'never-existed'), pid: 1000 },
+            '/cwd/legacy-string': path.join(sessionsDir, 'also-missing'),
+        };
+        const mapPath = path.join(dataRoot, 'current_sessions.json');
+        fs.writeFileSync(mapPath, JSON.stringify(map));
+
+        const result = pruneOrphanedMapEntries(dataRoot);
+
+        assert.equal(result.pruned, 2);
+        assert.equal(result.total, 3);
+
+        const written = JSON.parse(fs.readFileSync(mapPath, 'utf-8'));
+        assert.deepEqual(Object.keys(written), ['/cwd/live']);
+    } finally {
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('R-SHB-6 pruneOrphanedMapEntries: idempotent on clean map', () => {
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-prune-clean-'));
+    try {
+        const sessionsDir = path.join(dataRoot, 'sessions');
+        fs.mkdirSync(sessionsDir, { recursive: true });
+        const liveSession = path.join(sessionsDir, 'live-1');
+        fs.mkdirSync(liveSession, { recursive: true });
+        fs.writeFileSync(path.join(liveSession, 'state.json'), '{}');
+        fs.writeFileSync(
+            path.join(dataRoot, 'current_sessions.json'),
+            JSON.stringify({ '/cwd': { sessionPath: liveSession, pid: 1 } }),
+        );
+
+        const first = pruneOrphanedMapEntries(dataRoot);
+        const second = pruneOrphanedMapEntries(dataRoot);
+
+        assert.equal(first.pruned, 0);
+        assert.equal(first.total, 1);
+        assert.equal(second.pruned, 0);
+        assert.equal(second.total, 1);
+    } finally {
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('R-SHB-6 pruneOrphanedMapEntries: missing map file is a no-op', () => {
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-prune-empty-'));
+    try {
+        const result = pruneOrphanedMapEntries(dataRoot);
+
+        assert.equal(result.pruned, 0);
+        assert.equal(result.total, 0);
+        assert.equal(fs.existsSync(path.join(dataRoot, 'current_sessions.json')), false);
+    } finally {
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('R-SHB-6 pruneOrphanedMapEntries: removes entries whose state.json is missing even if dir exists', () => {
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-prune-no-state-'));
+    try {
+        const sessionsDir = path.join(dataRoot, 'sessions');
+        fs.mkdirSync(sessionsDir, { recursive: true });
+        const dirNoState = path.join(sessionsDir, 'orphan-dir');
+        fs.mkdirSync(dirNoState, { recursive: true });
+        // dir exists but no state.json inside
+
+        fs.writeFileSync(
+            path.join(dataRoot, 'current_sessions.json'),
+            JSON.stringify({ '/cwd': { sessionPath: dirNoState, pid: 1 } }),
+        );
+
+        const result = pruneOrphanedMapEntries(dataRoot);
+
+        assert.equal(result.pruned, 1);
+        const map = JSON.parse(fs.readFileSync(path.join(dataRoot, 'current_sessions.json'), 'utf-8'));
+        assert.deepEqual(map, {});
+    } finally {
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
+// --- R-CNAR-8 helper unit test (parametrized via describe.each pattern) ---
+
+test('clearTicketCacheFields: clears all 5 fields when populated', () => {
+    const state = {
+        current_ticket: null,
+        current_ticket_tier: 'small',
+        current_ticket_budget: 10,
+        current_ticket_max_iterations: 10,
+        current_ticket_worker_timeout_seconds: 600,
+        current_ticket_budget_start_iteration: 0,
+    };
+    const cleared = clearTicketCacheFields(state);
+    assert.equal(cleared, 5);
+    assert.equal(state.current_ticket_tier, undefined);
+    assert.equal(state.current_ticket_budget, undefined);
+    assert.equal(state.current_ticket_max_iterations, undefined);
+    assert.equal(state.current_ticket_worker_timeout_seconds, undefined);
+    assert.equal(state.current_ticket_budget_start_iteration, undefined);
+});
+
+test('clearTicketCacheFields: idempotent on already-clean state', () => {
+    const state = { current_ticket: null };
+    assert.equal(clearTicketCacheFields(state), 0);
+    assert.equal(clearTicketCacheFields(state), 0);
 });
