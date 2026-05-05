@@ -720,6 +720,16 @@ export function finalizeTerminalState(statePath: string, opts: FinalizeOpts = {}
       s.active = false;
       if (opts.step) s.step = opts.step;
       s.current_ticket = null;
+      // R-CNAR-8: nulling current_ticket REQUIRES atomic clear of the 5 cache
+      // fields. Without this, --resume of the same session sees stale
+      // current_ticket_max_iterations and trips iteration_cap_exhausted on
+      // iteration 1. Forensic origin: bundle session 2026-05-04-f416c6cc run #6
+      // attempt 1.
+      delete s.current_ticket_tier;
+      delete s.current_ticket_budget;
+      delete s.current_ticket_max_iterations;
+      delete s.current_ticket_worker_timeout_seconds;
+      delete s.current_ticket_budget_start_iteration;
       if (typeof opts.runnerIteration === 'number' && Number.isFinite(opts.runnerIteration)) {
         s.iteration = opts.runnerIteration;
       }
@@ -758,7 +768,15 @@ export function clearExitReason(statePath: string, opts: ClearExitReasonOpts = {
     s => {
       s.exit_reason = null;
       if (opts.resetStep) s.step = null as unknown as State['step'];
-      if (opts.resetCurrentTicket) s.current_ticket = null;
+      if (opts.resetCurrentTicket) {
+        s.current_ticket = null;
+        // R-CNAR-8: see finalizeTerminalState — same invariant.
+        delete s.current_ticket_tier;
+        delete s.current_ticket_budget;
+        delete s.current_ticket_max_iterations;
+        delete s.current_ticket_worker_timeout_seconds;
+        delete s.current_ticket_budget_start_iteration;
+      }
     },
     null,
   );

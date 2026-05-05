@@ -11,6 +11,35 @@ import { updateTicketStatusInTransaction } from './transaction-ticket-ops.js';
 let stateWriteSeq = 0;
 
 /** Extracts a string message from any thrown value. Never throws. */
+/**
+ * R-CNAR-8: Atomic clear of all five `current_ticket_*` per-ticket cache fields.
+ * Call this at any site that writes `current_ticket = null` OR transitions
+ * `current_ticket` to a new value. Without it, stale tier/budget/max-iter values
+ * survive into the next ticket's run, and on `--resume` after a clean-success
+ * exit (when the cache survives in state.json) the per-ticket cap-check trips
+ * before any new ticket starts. R-CNAR-7 self-heals at iteration_start as a
+ * safety net for state authored before this fix; this helper closes the leak
+ * at every upstream site.
+ *
+ * Returns the count of fields cleared (0 = state was already clean). Idempotent.
+ */
+export function clearTicketCacheFields(state: { [k: string]: unknown }): number {
+  let cleared = 0;
+  for (const key of [
+    'current_ticket_tier',
+    'current_ticket_budget',
+    'current_ticket_max_iterations',
+    'current_ticket_worker_timeout_seconds',
+    'current_ticket_budget_start_iteration',
+  ]) {
+    if (state[key] !== undefined) {
+      delete state[key];
+      cleared++;
+    }
+  }
+  return cleared;
+}
+
 export function safeErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -1223,8 +1252,14 @@ export function updateState(key: string, value: string, sessionDir: string): voi
       (state as unknown as Record<string, unknown>)[key] = value;
     }
     if (key === 'current_ticket') {
+      // R-CNAR-8: when an operator manually retargets current_ticket, ALL 5
+      // cache fields must clear together. Pre-fix the missing 3 fields skewed
+      // ticketBudgetIterationCount on the next iteration.
       delete state.current_ticket_tier;
       delete state.current_ticket_budget;
+      delete state.current_ticket_max_iterations;
+      delete state.current_ticket_worker_timeout_seconds;
+      delete state.current_ticket_budget_start_iteration;
     }
   });
   console.log(`Successfully updated ${key} to ${value} in ${statePath}`);

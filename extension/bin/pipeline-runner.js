@@ -301,6 +301,12 @@ export function resetStateForPhase(statePath, template, maxIterations) {
         s.active = false;
         s.iteration = 0;
         s.current_ticket = null;
+        // R-CNAR-8: nulling current_ticket REQUIRES clearing the 5 cache fields.
+        delete s.current_ticket_tier;
+        delete s.current_ticket_budget;
+        delete s.current_ticket_max_iterations;
+        delete s.current_ticket_worker_timeout_seconds;
+        delete s.current_ticket_budget_start_iteration;
         s.start_time_epoch = Math.floor(Date.now() / 1000);
         s.max_iterations = maxIterations;
         s.command_template = template;

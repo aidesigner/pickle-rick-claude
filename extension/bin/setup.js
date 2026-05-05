@@ -563,8 +563,15 @@ function reconcileTicketStateDesyncOnResume(sessionDir, statePath, currentTicket
     if (winner && winner !== currentTicket) {
         return sm.update(statePath, s => {
             s.current_ticket = winner;
+            // R-CNAR-8: transitioning current_ticket REQUIRES atomic clear of all
+            // 5 cache fields, not just tier/budget. Pre-fix the other 3 fields
+            // survived from the prior ticket and distorted ticketBudgetIterationCount
+            // on the new ticket's first iteration.
             delete s.current_ticket_tier;
             delete s.current_ticket_budget;
+            delete s.current_ticket_max_iterations;
+            delete s.current_ticket_worker_timeout_seconds;
+            delete s.current_ticket_budget_start_iteration;
         });
     }
     return sm.read(statePath);

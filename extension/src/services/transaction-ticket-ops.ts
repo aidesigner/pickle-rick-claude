@@ -620,11 +620,27 @@ export function applyCourseCorrectionRestructure(
         }
       }
 
-      if (branch === 'a') state.current_ticket = input.restartTicketId ?? null;
+      if (branch === 'a') {
+        state.current_ticket = input.restartTicketId ?? null;
+        // R-CNAR-8: course-correct current_ticket transition MUST clear cache
+        // fields. Pre-fix, the new ticket inherited tier/budget/max-iter from
+        // the killed ticket and skewed budget calculations.
+        delete state.current_ticket_tier;
+        delete state.current_ticket_budget;
+        delete state.current_ticket_max_iterations;
+        delete state.current_ticket_worker_timeout_seconds;
+        delete state.current_ticket_budget_start_iteration;
+      }
       if (branch === 'c') {
         const previousTicket = state.current_ticket;
         const redirectedTicket = resolveAddedCurrentTicket(state, addedSet);
         state.current_ticket = redirectedTicket;
+        // R-CNAR-8: redirect-current-ticket transition MUST clear cache fields.
+        delete state.current_ticket_tier;
+        delete state.current_ticket_budget;
+        delete state.current_ticket_max_iterations;
+        delete state.current_ticket_worker_timeout_seconds;
+        delete state.current_ticket_budget_start_iteration;
         appendActivity(state, {
           event: 'current_ticket_redirected_to_new',
           from_ticket_id: previousTicket,

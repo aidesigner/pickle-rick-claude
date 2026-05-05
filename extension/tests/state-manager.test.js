@@ -1058,6 +1058,87 @@ test('finalizeTerminalState: ignores non-finite runnerIteration', () => {
   });
 });
 
+test('R-CNAR-8: finalizeTerminalState clears all 5 current_ticket cache fields', () => {
+  // Forensic: bundle session 2026-05-04-f416c6cc run #6 attempt 1 — finalize
+  // from a prior clean-success exit left the cache populated; --resume of the
+  // same session tripped iteration_cap_exhausted on iteration 1 because the
+  // per-ticket cap-check saw stale current_ticket_max_iterations.
+  withDir((dir) => {
+    const sp = path.join(dir, 'state.json');
+    writeStateFile(sp, makeState({
+      active: true,
+      step: 'implement',
+      iteration: 9,
+      current_ticket: 'T-99',
+      current_ticket_tier: 'medium',
+      current_ticket_budget: 30,
+      current_ticket_max_iterations: 30,
+      current_ticket_worker_timeout_seconds: 1200,
+      current_ticket_budget_start_iteration: 5,
+    }));
+
+    finalizeTerminalState(sp, { step: 'completed', exitReason: 'success' });
+
+    const read = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+    assert.equal(read.current_ticket, null);
+    assert.equal(read.current_ticket_tier, undefined);
+    assert.equal(read.current_ticket_budget, undefined);
+    assert.equal(read.current_ticket_max_iterations, undefined);
+    assert.equal(read.current_ticket_worker_timeout_seconds, undefined);
+    assert.equal(read.current_ticket_budget_start_iteration, undefined);
+  });
+});
+
+test('R-CNAR-8: clearExitReason with resetCurrentTicket clears all 5 cache fields', () => {
+  withDir((dir) => {
+    const sp = path.join(dir, 'state.json');
+    writeStateFile(sp, makeState({
+      active: false,
+      exit_reason: 'iteration_cap_exhausted',
+      current_ticket: 'T-50',
+      current_ticket_tier: 'large',
+      current_ticket_budget: 60,
+      current_ticket_max_iterations: 60,
+      current_ticket_worker_timeout_seconds: 4800,
+      current_ticket_budget_start_iteration: 12,
+    }));
+
+    clearExitReason(sp, { resetCurrentTicket: true });
+
+    const read = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+    assert.equal(read.current_ticket, null);
+    assert.equal(read.exit_reason, null);
+    assert.equal(read.current_ticket_tier, undefined);
+    assert.equal(read.current_ticket_budget, undefined);
+    assert.equal(read.current_ticket_max_iterations, undefined);
+    assert.equal(read.current_ticket_worker_timeout_seconds, undefined);
+    assert.equal(read.current_ticket_budget_start_iteration, undefined);
+  });
+});
+
+test('R-CNAR-8: clearExitReason without resetCurrentTicket preserves cache fields', () => {
+  // Negative case — clearing exit_reason alone (e.g., reactivation path) must
+  // NOT touch the per-ticket cache. The cache is current_ticket-scoped; if the
+  // ticket isn't being reset, the cache stays.
+  withDir((dir) => {
+    const sp = path.join(dir, 'state.json');
+    writeStateFile(sp, makeState({
+      exit_reason: 'circuit_open',
+      current_ticket: 'T-50',
+      current_ticket_tier: 'medium',
+      current_ticket_max_iterations: 30,
+    }));
+
+    clearExitReason(sp, {});
+
+    const read = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+    assert.equal(read.exit_reason, null);
+    assert.equal(read.current_ticket, 'T-50');
+    assert.equal(read.current_ticket_tier, 'medium');
+    assert.equal(read.current_ticket_max_iterations, 30);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // recordExitReason — forensic stamp without disturbing other fields
 // ---------------------------------------------------------------------------
