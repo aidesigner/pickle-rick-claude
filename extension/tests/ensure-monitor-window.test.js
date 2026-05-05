@@ -703,11 +703,16 @@ test('restartDeadWatcherPanes: mode-specific pane 2 command uses refinement and 
 
 test('restartDeadWatcherPanes: trap-door entry documents T3 regressions and size cap', () => {
     const claudeMd = fs.readFileSync(path.resolve(__dirname, '../CLAUDE.md'), 'utf-8');
+    // Filter to the CANONICAL pane-recovery invariant. R-MWR-3 added a
+    // sibling entry for the same file that also mentions restartDeadWatcherPanes
+    // (the logTag invariant); we exclude it via the parenthetical scope tag.
     const entries = claudeMd
         .split('\n')
-        .filter(line => line.includes('src/services/pickle-utils.ts') && line.includes('restartDeadWatcherPanes'));
+        .filter(line => line.includes('src/services/pickle-utils.ts')
+            && line.includes('restartDeadWatcherPanes')
+            && !line.includes('(R-MWR-'));
 
-    assert.equal(entries.length, 1);
+    assert.equal(entries.length, 1, `expected 1 canonical pane-recovery entry, got: ${JSON.stringify(entries)}`);
     const [entry] = entries;
     assert.ok(entry.length <= 1500, `trap-door entry is ${entry.length} chars`);
     assert.match(entry, /INVARIANT:/);

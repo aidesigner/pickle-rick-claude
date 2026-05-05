@@ -90,6 +90,19 @@ function discoverWorkerLogs(sessionDir: string): WorkerLogEntry[] {
   }
 }
 
+/**
+ * R-MWR-4 + R-MWR-6: shared truncation handler. Resets the watcher's
+ * file offset on shrinkage and emits exactly one dim `(reconnecting...)`
+ * line per disconnect. Extracted to keep `main()` cyclomatic complexity
+ * within the project lint cap.
+ */
+function handleTruncation(currentLog: string, offset: number, mx: typeof MatrixStyle): number {
+  const truncCheck = detectLogTruncation(currentLog, offset, '');
+  if (!truncCheck.truncated) return offset;
+  process.stdout.write(`\n${mx.DIM}(reconnecting...)${mx.R}\n`);
+  return truncCheck.offset;
+}
+
 async function main() {
   const sessionDir = process.argv[2];
   // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
@@ -158,16 +171,12 @@ async function main() {
       }
     }
 
-    // R-MWR-4: detect truncation of currentLog so post-truncate content
-    // is consumed instead of skipped by drainLog's size<=offset early-return.
-    // R-MWR-6: a dim `(reconnecting...)` line on EOF/truncation, NOT
-    // the `◤ FEED TERMINATED ◢` banner — banner stays reserved for the
-    // liveness-probe inactive exit below.
-    const truncCheck = detectLogTruncation(currentLog, offset, '');
-    if (truncCheck.truncated) {
-      offset = truncCheck.offset;
-      process.stdout.write(`\n${MX.DIM}(reconnecting...)${MX.R}\n`);
-    }
+    // R-MWR-4 + R-MWR-6: detect truncation of currentLog so post-truncate
+    // content is consumed instead of skipped by drainLog's size<=offset
+    // early-return. A dim `(reconnecting...)` line on EOF/truncation,
+    // NEVER the `◤ FEED TERMINATED ◢` banner — that's reserved for the
+    // inactive-state liveness branch below.
+    offset = handleTruncation(currentLog, offset, MX);
 
     offset = drainLog(currentLog, offset);
 

@@ -164,6 +164,23 @@ async function shouldStopForInactiveSession(sessionDir) {
         return false;
     return true;
 }
+/**
+ * R-MWR-5: read the manifest and re-render the summary when its content
+ * changes (cycle 1 → cycle 2 rewrite). Returns the new lastManifestKey
+ * and whether the summary has been rendered at least once. Extracted to
+ * keep main()'s cyclomatic complexity within the lint cap.
+ */
+function consumeManifestRewrite(manifestPath, workers, width, sep, startTime, lastManifestKey, summaryRendered) {
+    const manifest = readRecoverableJsonObject(manifestPath);
+    if (!manifest)
+        return { lastManifestKey, summaryRendered };
+    const manifestKey = JSON.stringify(manifest);
+    if (manifestKey === lastManifestKey)
+        return { lastManifestKey, summaryRendered };
+    drainFinalWorkerLogs(workers, width);
+    renderManifestSummary(manifest, startTime, sep);
+    return { lastManifestKey: manifestKey, summaryRendered: true };
+}
 async function main() {
     const sessionDir = process.argv[2];
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
@@ -196,16 +213,7 @@ async function main() {
         // We DO NOT break on manifest sighting — exit is owned exclusively
         // by shouldStopForInactiveSession. This is the documented
         // contract: "polls indefinitely; rewrite consumed without exit".
-        const manifest = readRecoverableJsonObject(manifestPath);
-        if (manifest) {
-            const manifestKey = JSON.stringify(manifest);
-            if (manifestKey !== lastManifestKey) {
-                drainFinalWorkerLogs(workers, width());
-                renderManifestSummary(manifest, startTime, sep());
-                lastManifestKey = manifestKey;
-                summaryRendered = true;
-            }
-        }
+        ({ lastManifestKey, summaryRendered } = consumeManifestRewrite(manifestPath, workers, width(), sep(), startTime, lastManifestKey, summaryRendered));
         // Wait for refinement directory to exist
         // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
         if (!fs.existsSync(refinementDir)) {
