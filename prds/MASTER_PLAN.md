@@ -1,8 +1,8 @@
 # MASTER_PLAN — Pickle Rick Engineering Lifecycle
 
-**Last updated**: 2026-05-05 PM (3 subsystem branches — RTRC, MWR, integration-tests — merged into local `main` via `bab6c7e2`, `ed6a58e3`, `4c97d3ad`. 24 commits ahead of origin/main. NOT pushed, NOT released — building up local for more bug-fix work first. v1.70.0 still GitHub-Latest. R-RTRC-1..7 done (37 tests + new audit-readiness-allowlist). R-MWR-rename + R-MWR-1..8 done (163 watcher + 13 new + 27 extended tests). 6 pre-existing integration test failures fixed (27/27 canaries pass). audit-canary-flip blocks at release for the integration-tests commits' `Canary:` trailers — see Known Follow-ups in `CONTEXT_2026-05-05_post-merge.md`. **Status: 33 Done / 13 Todo from 2026-05-04 bundle**, plus 7 newer 2026-05-05 PRDs (1o..1u) drafted + not refined.)
+**Last updated**: 2026-05-06 (slot 1q SHIPPED via `f6909d78` + follow-ups; audit-canary-flip de-required from gate; trap-door-conformance fixed; mega bundle PRD composed; **path A meta-bundle in flight** at session `pickle-b8465d85`. 32 commits ahead of origin/main. NOT pushed, NOT released — local-only mode per operator. v1.70.0 still GitHub-Latest. **Status: 33 Done + slot 1q + path A ticket 3097eec3 done; 3 path-A meta-tickets remaining; bundle 2026-05-04 carry-forwards (9) and slots 1o..1u still queued — to be decomposed by re-refinement after path A.**)
 
-**Bootstrap for new sessions**: read `CONTEXT_2026-05-05_post-merge.md` first.
+**Bootstrap for new sessions**: read `CONTEXT_2026-05-06_path-A.md` first (supersedes `CONTEXT_2026-05-05_post-merge.md`).
 
 This file is **operational** — it tells the next coding agent what to work on. Historical narrative lives in:
 - `docs/codex-prompt-design-notes.md` — codex-backend prompt-design lessons (FM-1..FM-4, literalism, scope confusion)
@@ -11,7 +11,37 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 ---
 
-## 🟡 Just merged locally — NOT pushed, NOT released (2026-05-05 PM)
+## 🔄 In flight — path A meta-bundle (2026-05-06)
+
+Session `pickle-b8465d85` (`/Users/gregorydickson/.local/share/pickle-rick/sessions/2026-05-05-b8465d85`) is running 4 PRD-quality meta-tickets to make `prds/p1-bug-fix-bundle-2026-05-05.md` refinement-ready. The first refinement pass produced only 5 meta-tickets (deduped to 4) instead of the expected 50+ atomic tickets — the bundle PRD delegated AC bodies to peer PRDs via `composes:`, but the refinement-team's machine-checkability gate requires inline ACs.
+
+| Order | ID | Status | Title |
+|------:|----|--------|-------|
+| 10 | `3097eec3` | ✅ Done (`68d9c1bf`) | Lift section lead requirement ACs into bundle PRD with file:line annotations |
+| 20 | `b90c4ebe` | 🔄 In Progress | Split AC-06 into per-ticket disposition (06a) + path-decision (06b) |
+| 30 | `6836ef13` | Todo | Register 6 new bundle activity events (parametrized over BUNDLE_NEW_EVENTS) |
+| 40 | `e83118ff` | Todo | Refinement-prompt activity-event table rendered from canonical schema |
+
+**`state.flags.skip_readiness_reason` set on this session** — 5 readiness findings were intentional forward references (paths/symbols the tickets themselves create). Per R-RTRC-* trap-door bypass; activity event `readiness_skipped` emitted on iteration 1.
+
+After all 4 land: re-run `/pickle-refine-prd prds/p1-bug-fix-bundle-2026-05-05.md` → expect 50+ atomic implementation tickets (slots 1o, 1p, 1r/1s, 1t, 1u, 1n, 1m, 1d + 9 carry-forwards from 2026-05-04). Then `/pickle-pipeline` runs those.
+
+Resume command if `/clear` happens mid-run:
+```bash
+tmux attach -t pickle-b8465d85
+# OR if killed:
+node ~/.claude/pickle-rick/extension/bin/setup.js --tmux --resume /Users/gregorydickson/.local/share/pickle-rick/sessions/2026-05-05-b8465d85 --max-iterations 0 --max-time 0
+```
+
+## 🟢 Shipped post-v1.70.0 (2026-05-05 → 2026-05-06)
+
+- **`244b4c51`** `chore: remove audit-canary-flip from gate sequence` — 2026-05-05. Stripped `bash scripts/audit-canary-flip.sh` from CLAUDE.md (×2), `extension/scripts/check-wired.sh`, `release-gate-parity.test.js`, `release-gate-wiring.test.js`, `.github/workflows/{ci,release}.yml`. Script + fixture test (`audit-canary-flip-fixture.test.js`) preserved for future re-wiring. Resolves the integration-tests commits' `Canary:` trailer policy issue per operator decision (no release intent in current scope).
+- **`49e0ff84`** `fix(trap-door-conformance)` — 2026-05-05. Pre-existing fast-tier failure since `065acf77`. 5 trap-door entries (lines 7, 127, 140, 141, 145 in `extension/CLAUDE.md`) used grep-based ENFORCE clauses without naming a `.test.js` file. Appended explicit test refs (`audit-ticket-bundle-schema.test.js`, `activity-event-payload.test.js`, `auto-resume-stop-conditions.test.js`). `trap-door-conformance.test.js`: 62/62 pass.
+- **`f6909d78` + `1949c6a4` + `efe0e961`** — Slot 1q (R-ITS-1..4) shipped via `/pickle-tmux` session `pickle-18960261`, 99 min, 1 iteration. Follow-ups: count assertion bumped 11→12 in `activity-event-payload.test.js`; install.sh `R-ITS-1` force-rebuild made TS-derived only (preserved JS-only utilities `parse-coverage-exception.js`, `replay-bundle-iter-stats.js` that earlier wipe deleted).
+- **`80430696`** `docs(prd): mega bundle 2026-05-05 — Section CF carry-forwards + slot 1q ALREADY-SHIPPED` — 2026-05-05. Composed mega bundle PRD for path A → re-refine → mega-pipeline plan. Closer + R-CLOSER-1 explicitly DROPPED (local-only).
+- **`68d9c1bf`** `docs(prd): lift section lead requirement ACs from peer PRDs (path A meta-ticket 1/4)` — 2026-05-06. Path A ticket 3097eec3 — bundle PRD now has Local AC subsections lifted from each peer PRD with verified file:line anchors. Unblocks re-refinement.
+
+## 🟡 Just merged locally — NOT pushed, NOT released (2026-05-05 PM, retained for context)
 
 Three subsystem branches merged into `main` for build-up; held local until next release decision.
 
