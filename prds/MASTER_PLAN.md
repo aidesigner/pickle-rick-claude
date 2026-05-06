@@ -1,8 +1,8 @@
 # MASTER_PLAN — Pickle Rick Engineering Lifecycle
 
-**Last updated**: 2026-05-06 (slot 1q SHIPPED via `f6909d78` + follow-ups; audit-canary-flip de-required from gate; trap-door-conformance fixed; mega bundle PRD composed; **path A meta-bundle in flight** at session `pickle-b8465d85`. 32 commits ahead of origin/main. NOT pushed, NOT released — local-only mode per operator. v1.70.0 still GitHub-Latest. **Status: 33 Done + slot 1q + path A ticket 3097eec3 done; 3 path-A meta-tickets remaining; bundle 2026-05-04 carry-forwards (9) and slots 1o..1u still queued — to be decomposed by re-refinement after path A.**)
+**Last updated**: 2026-05-06 PM (39 commits ahead of origin/main. NOT pushed, NOT released — local-only mode. v1.70.0 still GitHub-Latest. **Quick-refine pipeline live** at session `pipeline-e0834dcd` on `gpt-5.4` codex backend. **Slots SHIPPED post-v1.70: 1q + 1u + 1t** (3 of 9 source-PRD slots). Path A meta-bundle abandoned partway (3 of 4 meta-tickets shipped — useful PRD prep work merged at `68d9c1bf`/`62b34588`/`0b16a707`). 9 carry-forwards from bundle 2026-05-04 (Section CF: AC-TAQ-09, R-BUNDLE-1/2/DISPO-1, 5 Section H Wire/Harden/Audit) deferred to follow-up batch.)
 
-**Bootstrap for new sessions**: read `CONTEXT_2026-05-06_path-A.md` first (supersedes `CONTEXT_2026-05-05_post-merge.md`).
+**Bootstrap for new sessions**: read `CONTEXT_2026-05-06.md` first (supersedes `CONTEXT_2026-05-06_path-A.md` and `CONTEXT_2026-05-05_post-merge.md`).
 
 This file is **operational** — it tells the next coding agent what to work on. Historical narrative lives in:
 - `docs/codex-prompt-design-notes.md` — codex-backend prompt-design lessons (FM-1..FM-4, literalism, scope confusion)
@@ -11,27 +11,40 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 ---
 
-## 🔄 In flight — path A meta-bundle (2026-05-06)
+## 🔄 In flight — quick-refine pipeline on bundle PRD (2026-05-06)
 
-Session `pickle-b8465d85` (`/Users/gregorydickson/.local/share/pickle-rick/sessions/2026-05-05-b8465d85`) is running 4 PRD-quality meta-tickets to make `prds/p1-bug-fix-bundle-2026-05-05.md` refinement-ready. The first refinement pass produced only 5 meta-tickets (deduped to 4) instead of the expected 50+ atomic tickets — the bundle PRD delegated AC bodies to peer PRDs via `composes:`, but the refinement-team's machine-checkability gate requires inline ACs.
+**Session `pipeline-e0834dcd`** (`/Users/gregorydickson/.local/share/pickle-rick/sessions/2026-05-06-e0834dcd`) is running 9 atomic implementation tickets via `/pickle-pipeline --no-refine --backend codex`. Each ticket = 1 source PRD (slots 1o..1u + 1m + 1n + 1d + 1g residual), authored by 9 parallel `Agent` calls in ~2 min ("quick-refine" workflow validated this session — see `prds/p2-abbreviated-refine-command.md`).
 
-| Order | ID | Status | Title |
-|------:|----|--------|-------|
-| 10 | `3097eec3` | ✅ Done (`68d9c1bf`) | Lift section lead requirement ACs into bundle PRD with file:line annotations |
-| 20 | `b90c4ebe` | 🔄 In Progress | Split AC-06 into per-ticket disposition (06a) + path-decision (06b) |
-| 30 | `6836ef13` | Todo | Register 6 new bundle activity events (parametrized over BUNDLE_NEW_EVENTS) |
-| 40 | `e83118ff` | Todo | Refinement-prompt activity-event table rendered from canonical schema |
+**Backend**: codex / `gpt-5.4` (switched from `gpt-5.3-codex-spark` after hitting usage limit; updated in `.codex/config.toml` + `pickle_settings.json` + `state.codex_model`).
 
-**`state.flags.skip_readiness_reason` set on this session** — 5 readiness findings were intentional forward references (paths/symbols the tickets themselves create). Per R-RTRC-* trap-door bypass; activity event `readiness_skipped` emitted on iteration 1.
+**Bypass flags set** on this session for both readiness gate (R-RTRC-*) and ticket-audit gate (R-TAQ-3): forward-created references + agent-authored ticket lints are not blockers. All 9 tickets were post-reviewed by 9 parallel review agents that fixed path-drift, annotated `(created) by ticket <hash>` per R-RTRC-7, lifted ACs verbatim, and structurally cleaned.
 
-After all 4 land: re-run `/pickle-refine-prd prds/p1-bug-fix-bundle-2026-05-05.md` → expect 50+ atomic implementation tickets (slots 1o, 1p, 1r/1s, 1t, 1u, 1n, 1m, 1d + 9 carry-forwards from 2026-05-04). Then `/pickle-pipeline` runs those.
+| Order | ID | Slot | Status | Source PRD |
+|------:|----|------|--------|-----------|
+| 10 | `09969d52` | 1u | ✅ Done (`162c226f`) | `p2-manager-stop-hook-nudge-cadence-wastes-turns.md` |
+| 20 | `bb08867f` | 1t | ✅ Done (`723cb99c`) | `p2-remove-pipeline-wall-clock-time-cap.md` |
+| 30 | `6e80b612` | 1r/1s | 🔄 In flight | `anatomy-park-judge-unreachable-on-worker-convergence.md` |
+| 40 | `edae8fa8` | 1o | Todo | `p1-worker-backend-split-from-manager.md` |
+| 50 | `167fcaf9` | 1p | Todo (depends on 1o) | `p2-codex-spark-worker-completion-commit-contract-violation.md` |
+| 60 | `6edd8868` | 1n | Todo | `p2-stop-hook-blocks-launcher-of-tmux-bundle-via-orphan-session.md` |
+| 70 | `1a11461c` | 1g | Todo | `p1-deploy-typescript-symlink-and-cap-no-auto-resume.md` (R-CNAR-7 residual) |
+| 80 | `1e821336` | 1m | Todo | `p3-pipeline-runner-dirty-tree-guard-blocks-self-cleanup.md` |
+| 90 | `91601dd7` | 1d | Todo | `p3-test-flakes-council-publish-and-scope-resolver.md` |
 
 Resume command if `/clear` happens mid-run:
 ```bash
-tmux attach -t pickle-b8465d85
-# OR if killed:
-node ~/.claude/pickle-rick/extension/bin/setup.js --tmux --resume /Users/gregorydickson/.local/share/pickle-rick/sessions/2026-05-05-b8465d85 --max-iterations 0 --max-time 0
+tmux attach -t pipeline-e0834dcd
+# Or kill + relaunch:
+tmux kill-session -t pipeline-e0834dcd
+tmux new-session -d -s pipeline-e0834dcd -c /Users/gregorydickson/loanlight/pickle-rick/pickle-rick-claude
+tmux send-keys -t pipeline-e0834dcd:0 "bash '/Users/gregorydickson/.local/share/pickle-rick/sessions/2026-05-06-e0834dcd/launch.sh' '/Users/gregorydickson/.local/share/pickle-rick/sessions/2026-05-06-e0834dcd'" Enter
 ```
+
+**Closer + release-gate explicitly DROPPED** — local-only scope; no `gh release create`, no version bump, no push. Carry-forwards from bundle 2026-05-04 (AC-TAQ-09, R-BUNDLE-1/2/DISPO-1, 5 Section H tickets) deferred to a later batch.
+
+## ⏭️ Path A meta-bundle — partial, abandoned (2026-05-06 mid-day)
+
+Briefly attempted: refinement of mega bundle PRD via `/pickle-refine-prd`. First pass produced 5 meta-tickets (PRD-shape fixes, not implementation). Path A ran 3 of 4 meta-tickets (`68d9c1bf`, `62b34588`, `0b16a707` + `48047f56`) before hitting fast-failure loops on the 4th (`e83118ff` skipped). Re-refinement after path A produced only 14 deduped tickets (~6 unique work areas), missing 5 of 9 source PRDs. Abandoned for the simpler quick-refine workflow above. Sessions `2026-05-05-b8465d85` and `2026-05-06-9dacd293` are deactivated; their refinement artifacts remain on disk for forensics.
 
 ## 🟢 Shipped post-v1.70.0 (2026-05-05 → 2026-05-06)
 
@@ -40,6 +53,11 @@ node ~/.claude/pickle-rick/extension/bin/setup.js --tmux --resume /Users/gregory
 - **`f6909d78` + `1949c6a4` + `efe0e961`** — Slot 1q (R-ITS-1..4) shipped via `/pickle-tmux` session `pickle-18960261`, 99 min, 1 iteration. Follow-ups: count assertion bumped 11→12 in `activity-event-payload.test.js`; install.sh `R-ITS-1` force-rebuild made TS-derived only (preserved JS-only utilities `parse-coverage-exception.js`, `replay-bundle-iter-stats.js` that earlier wipe deleted).
 - **`80430696`** `docs(prd): mega bundle 2026-05-05 — Section CF carry-forwards + slot 1q ALREADY-SHIPPED` — 2026-05-05. Composed mega bundle PRD for path A → re-refine → mega-pipeline plan. Closer + R-CLOSER-1 explicitly DROPPED (local-only).
 - **`68d9c1bf`** `docs(prd): lift section lead requirement ACs from peer PRDs (path A meta-ticket 1/4)` — 2026-05-06. Path A ticket 3097eec3 — bundle PRD now has Local AC subsections lifted from each peer PRD with verified file:line anchors. Unblocks re-refinement.
+- **`62b34588`** `docs(prd): split AC-06 into 06a (dispositions) + 06b (path-decision)` — 2026-05-06. Path A meta-ticket 2/4.
+- **`0b16a707`** + **`48047f56`** — Path A meta-ticket 3/4: register 6 new bundle activity events (worker_backend_resolved, completion_commit_auto_filled, completion_commit_inferred_from_git, time_cap_disabled_default, bundle_bootstrap_exemption_applied, manager_idle_backoff_engaged) through full registration quartet (VALID_ACTIVITY_EVENTS + schema + payload-test fixture + count-assertion + deployed mirror).
+- **`34146d6e`** `docs(prd): file /pickle-quick-refine command — abbreviated PRD-to-tickets via parallel Agent fan-out` — 2026-05-06. Captures the validated workflow that replaced path A: 9 parallel Agent calls authoring 9 ticket files in ~2 min vs 30-90 min for the full refinement team. 7 ACs + trap-door for verbatim-AC-lift invariant.
+- **`162c226f`** `feat(stop-hook): add idle backoff for 09969d52` — 2026-05-06. Slot 1u SHIPPED via the quick-refine pipeline. R-MSCN-1..6 (manager stop-hook nudge cadence — fixes the wait-pattern that bit slot 1q's worker).
+- **`723cb99c`** `bb08867f default pipeline wall-clock caps to off` — 2026-05-06. Slot 1t SHIPPED. R-NTC-1..10 (wall-clock cap removal default). Also commits `.codex/config.toml` + `pickle_settings.json` model switch from `gpt-5.3-codex-spark` to `gpt-5.4` after hitting spark usage limit.
 
 ## 🟡 Just merged locally — NOT pushed, NOT released (2026-05-05 PM, retained for context)
 
