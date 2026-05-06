@@ -144,7 +144,8 @@ When `/pickle-refine-prd prds/p1-bug-fix-bundle-2026-05-05.md` runs:
 - **AC-BUNDLE-2026-05-05-03** — Bundle ends with a clean working tree on local `main` and a green local gate (lint + tsc + audits + `npm test:fast` + `npm test:integration` — `audit-canary-flip` is no longer in the gate per commit `244b4c51`). NO `gh release create`; NO version bump; NO push. Closer ticket is explicitly absent.
 - **AC-BUNDLE-2026-05-05-04** — Post-bundle audit confirms: every Section's lead trap-door entry exists in `extension/CLAUDE.md`; every new activity event (`worker_backend_resolved`, `completion_commit_auto_filled`, `completion_commit_inferred_from_git`, `time_cap_disabled_default`, `bundle_bootstrap_exemption_applied`, etc.) is registered in `VALID_ACTIVITY_EVENTS` + `activity-events.schema.json` and the peripheral count assertion in `tests/activity-event-payload.test.js` is updated.
 - **AC-BUNDLE-2026-05-05-05** — Bundle ran end-to-end with no operator manual reset of `start_time_epoch`, no manual install.sh re-run, and no phantom-Done false reverts. (Live validation; bundle is its own integration test.)
-- **AC-BUNDLE-2026-05-05-06** — All 9 Section CF carry-forwards from bundle 2026-05-04 are either Done or REGRESSION-TEST-ONLY. R-BUNDLE-DISPO-1's JSON file exists at `extension/src/data/bundle-disposition-2026-05-04.json` and is referenced by refinement analyst prompts.
+- **AC-BUNDLE-2026-05-05-06a** — All 9 Section CF carry-forwards from bundle 2026-05-04 are marked either `status: Done` or `status: REGRESSION-TEST-ONLY` in their respective ticket files at bundle close.
+- **AC-BUNDLE-2026-05-05-06b** — `extension/src/data/bundle-disposition-2026-05-04.json` exists, is valid JSON, and contains exactly one entry per R-* requirement from the prior bundle (52 IMPL + 1 DROP + 1 RTO per R-BUNDLE-DISPO-1). The path `extension/src/data/` — NOT `extension/data/` — was selected because `src/data` is the home for refinement-team config (analyst prompts read it via path before any compile step).
 - **AC-BUNDLE-2026-05-05-07** — Every lead R-ID in the Composition table has its full AC body lifted from the peer PRD inline in this bundle PRD, with `*(refined: prds/<peer-path>)*` attribution. Verify: `grep -c "(refined: prds/" prds/p1-bug-fix-bundle-2026-05-05.md` ≥ 11; `grep -c "## Section .* — Local ACs" prds/p1-bug-fix-bundle-2026-05-05.md` ≥ 9. Type: lint.
 
 ## Notes & open questions
@@ -152,7 +153,7 @@ When `/pickle-refine-prd prds/p1-bug-fix-bundle-2026-05-05.md` runs:
 - **Filename convention**: this bundle is filed today (2026-05-05) and launches today (post slot-1q ship). Local-only — no release coupling.
 - **Open question**: should slot 1t (wall-clock cap removal) ship in THIS bundle or be a standalone release? If 1t lands in this bundle, the bundle benefits from its own removed cap. Recommendation: keep in bundle; the bundle's risk profile already includes long-running runs.
 - **Open question**: ~~slot 1q hotfix~~ RESOLVED — slot 1q shipped solo as `f6909d78` 2026-05-05. Section C in this PRD is REGRESSION-TEST-ONLY.
-- **Pre-flight checklist** (verified at compose time 2026-05-05):
+- **Pre-flight checklist** (verified at compose time 2026-05-05; path decision: R-BUNDLE-DISPO-1 JSON at `extension/src/data/bundle-disposition-2026-05-04.json`, NOT `extension/data/` — `src/data` is refinement-team config home, read before compile):
   1. ✅ `git log` shows commit `f6909d78 fix(install-parity)` shipping slot 1q solo
   2. ✅ `bash install.sh` runs cleanly with new R-ITS-2 parity probe — exercised twice at compose time, all 5 hot files md5-match
   3. ✅ `audit-canary-flip` removed from gate (`244b4c51`); `release-gate-parity` test passes 2/2
