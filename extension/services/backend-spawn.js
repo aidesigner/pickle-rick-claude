@@ -179,7 +179,7 @@ export function resolveBackendFromStateFileWithSource(statePath, cliBackend) {
     return { backend: 'claude', source: 'default' };
 }
 export function resolveWorkerBackendFromStateFile(statePath) {
-    let parsed = null;
+    let parsed;
     try {
         parsed = _sm.read(statePath);
     }

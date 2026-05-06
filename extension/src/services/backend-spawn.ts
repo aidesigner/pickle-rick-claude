@@ -249,7 +249,7 @@ export function resolveBackendFromStateFileWithSource(
 }
 
 export function resolveWorkerBackendFromStateFile(statePath: string): WorkerBackendResolution {
-  let parsed: { backend?: unknown; worker_backend?: unknown } | null = null;
+  let parsed: { backend?: unknown; worker_backend?: unknown } | null;
   try {
     parsed = _sm.read(statePath) as { backend?: unknown; worker_backend?: unknown } | null;
   } catch {

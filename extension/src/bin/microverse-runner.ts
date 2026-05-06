@@ -6,7 +6,6 @@ import { State, Defaults } from '../types/index.js';
 import type { ActivityEventType, Backend, IterationExitType, MicroverseSessionState, MicroverseHistoryEntry, FailureClass, GateResult, StallClassification, StallRecoveryAction } from '../types/index.js';
 import {
   resolveBackend,
-  resolveBackendFromStateFileWithSource,
   resolveWorkerBackendFromStateFile,
   buildJudgeInvocation,
   buildWorkerInvocation,
@@ -305,8 +304,11 @@ export async function runRemediatorForIteration(
     // Still check for a result file — agent may have written one before failing
   }
 
+  return readRemediationResult(gateDir, startMs);
+}
+
+function readRemediationResult(gateDir: string, startMs: number): { success: boolean } {
   try {
-    // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
     const resultFiles = fs.readdirSync(gateDir)
       .map(f => {
         const match = f.match(/^(remediation_.+_result\.json)(?:\.tmp\.\d+(?:\..+)?)?$/);
@@ -1694,6 +1696,45 @@ export function ensureRunnerStateActive(statePath: string): void {
   });
 }
 
+async function measureLlmBaseline(
+  state: MicroverseState,
+  ctx: RunContext,
+  backend: Backend,
+): Promise<MetricSnapshot | null> {
+  if (state.key_metric.type !== 'llm') return null;
+  const measured = await measureLlmMetricWithBackoff(
+    state.key_metric.validation,
+    state.key_metric.timeout_seconds,
+    ctx.workingDir,
+    state.key_metric.judge_model,
+    state.convergence?.history ?? [],
+    state.prd_path,
+    state.judge_context_path,
+    backend,
+  );
+  if (measured.metric) return measured.metric;
+  const exitReason: ExitReason = measured.exitReason === 'judge_cli_missing'
+    ? 'judge_cli_missing'
+    : 'baseline_unmeasurable';
+  const error = measured.lastError ?? `${exitReason} after ${measured.attempts} attempt(s)`;
+  ctx.log(`ERROR: Could not measure LLM baseline (${exitReason}) after ${measured.attempts} attempt(s): ${error}`);
+  logActivity({
+    event: exitReason,
+    source: 'pickle',
+    session: path.basename(ctx.sessionDir),
+    iteration: ctx.iteration,
+    error,
+    gate_payload: {
+      attempts: measured.attempts,
+      backend,
+    },
+  });
+  state.status = 'stopped';
+  state.exit_reason = exitReason;
+  writeMicroverseState(ctx.sessionDir, state);
+  throw new MicroverseExitError(exitReason, error);
+}
+
 export async function executeGapAnalysis(
   state: MicroverseState,
   ctx: RunContext,
@@ -1729,45 +1770,9 @@ export async function executeGapAnalysis(
     }
   }
   const backend = resolveBackend(ctx.currentRunnerState);
-  let baseline: MetricSnapshot | null = null;
-  if (state.key_metric.type === 'llm') {
-    const measured = await measureLlmMetricWithBackoff(
-      state.key_metric.validation,
-      state.key_metric.timeout_seconds,
-      ctx.workingDir,
-      state.key_metric.judge_model,
-      state.convergence?.history ?? [],
-      state.prd_path,
-      state.judge_context_path,
-      backend,
-    );
-    if (measured.metric) {
-      baseline = measured.metric;
-    } else {
-      const exitReason: ExitReason = measured.exitReason === 'judge_cli_missing'
-        ? 'judge_cli_missing'
-        : 'baseline_unmeasurable';
-      const error = measured.lastError ?? `${exitReason} after ${measured.attempts} attempt(s)`;
-      ctx.log(`ERROR: Could not measure LLM baseline (${exitReason}) after ${measured.attempts} attempt(s): ${error}`);
-      logActivity({
-        event: exitReason,
-        source: 'pickle',
-        session: path.basename(ctx.sessionDir),
-        iteration: ctx.iteration,
-        error,
-        gate_payload: {
-          attempts: measured.attempts,
-          backend,
-        },
-      });
-      state.status = 'stopped';
-      state.exit_reason = exitReason;
-      writeMicroverseState(ctx.sessionDir, state);
-      throw new MicroverseExitError(exitReason, error);
-    }
-  } else {
-    baseline = measureCurrentMetric(state, ctx, backend);
-  }
+  const baseline: MetricSnapshot | null = state.key_metric.type === 'llm'
+    ? await measureLlmBaseline(state, ctx, backend)
+    : measureCurrentMetric(state, ctx, backend);
   if (baseline) {
     state.baseline_score = baseline.score;
     ctx.log(`${state.key_metric.type === 'llm' ? 'LLM baseline' : 'Baseline'} metric: ${baseline.score}${state.key_metric.type === 'command' ? ` (raw: ${baseline.raw})` : ''}`);
@@ -1908,53 +1913,65 @@ function maybeAppendGapAnalysisFixed(
   }
 }
 
+async function measureLlmIteration(
+  state: MicroverseState,
+  ctx: RunContext,
+  backend: Backend,
+): Promise<{ kind: 'ok'; metric: MetricSnapshot } | { kind: 'failed'; exitReason: JudgeFailureExitReason }> {
+  if (state.key_metric.type !== 'llm') {
+    throw new Error('measureLlmIteration requires llm metric');
+  }
+  const measured = await measureLlmMetricWithBackoff(
+    state.key_metric.validation,
+    state.key_metric.timeout_seconds,
+    ctx.workingDir,
+    state.key_metric.judge_model,
+    state.convergence?.history ?? [],
+    state.prd_path,
+    state.judge_context_path,
+    backend,
+  );
+  if (measured.metric) return { kind: 'ok', metric: measured.metric };
+  const exitReason = measured.exitReason;
+  const error = measured.lastError ?? `${exitReason} after ${measured.attempts} attempt(s)`;
+  ctx.log(`ERROR: Metric measurement failed (${exitReason}) after ${measured.attempts} attempt(s): ${error}`);
+  logActivity({
+    event: exitReason,
+    source: 'pickle',
+    session: path.basename(ctx.sessionDir),
+    iteration: ctx.iteration,
+    error,
+    gate_payload: {
+      attempts: measured.attempts,
+      backend,
+    },
+  });
+  return { kind: 'failed', exitReason };
+}
+
 export async function measureAndClassifyIteration(
   state: MicroverseState,
   baseline: MetricSnapshot,
   ctx: RunContext,
 ): Promise<IterationClassification> {
   const backend = resolveBackend(ctx.currentRunnerState);
-  let metricResult: MetricSnapshot | null = null;
+  let metricResult: MetricSnapshot;
   if (state.key_metric.type === 'llm') {
-    const measured = await measureLlmMetricWithBackoff(
-      state.key_metric.validation,
-      state.key_metric.timeout_seconds,
-      ctx.workingDir,
-      state.key_metric.judge_model,
-      state.convergence?.history ?? [],
-      state.prd_path,
-      state.judge_context_path,
-      backend,
-    );
-    if (!measured.metric) {
-      const exitReason = measured.exitReason;
-      const error = measured.lastError ?? `${exitReason} after ${measured.attempts} attempt(s)`;
-      ctx.log(`ERROR: Metric measurement failed (${exitReason}) after ${measured.attempts} attempt(s): ${error}`);
-      logActivity({
-        event: exitReason,
-        source: 'pickle',
-        session: path.basename(ctx.sessionDir),
-        iteration: ctx.iteration,
-        error,
-        gate_payload: {
-          attempts: measured.attempts,
-          backend,
-        },
-      });
-      return { kind: 'failed', exitReason };
-    }
-    metricResult = measured.metric;
+    const llmOutcome = await measureLlmIteration(state, ctx, backend);
+    if (llmOutcome.kind === 'failed') return { kind: 'failed', exitReason: llmOutcome.exitReason };
+    metricResult = llmOutcome.metric;
   } else {
-    metricResult = measureCurrentMetric(state, ctx, backend);
-    if (!metricResult) {
+    let measured = measureCurrentMetric(state, ctx, backend);
+    if (!measured) {
       ctx.log('WARNING: Metric measurement failed — retrying once after 10s');
       await _deps.sleep(Defaults.RATE_LIMIT_POLL_MS);
-      metricResult = measureCurrentMetric(state, ctx, backend);
+      measured = measureCurrentMetric(state, ctx, backend);
     }
 
-    if (!metricResult) {
+    if (!measured) {
       return recordMetricMeasurementFailure(state, ctx);
     }
+    metricResult = measured;
   }
 
   ctx.log(`Metric: ${metricResult.score} (raw: ${metricResult.raw})`);
@@ -2515,10 +2532,11 @@ async function runMicroversePhases(currentMv: MicroverseState, ctx: RunContext, 
     outcome = await executeMainLoop(currentMv, ctx);
   } catch (err) {
     if (err instanceof MicroverseExitError) {
-      log(`microverse-runner exit: ${err.exitReason}${err.message ? ` (${err.message})` : ''}`);
+      const exitErr: MicroverseExitError = err;
+      log(`microverse-runner exit: ${exitErr.exitReason}${exitErr.message ? ` (${exitErr.message})` : ''}`);
       return {
         state: currentMv,
-        exitReason: err.exitReason,
+        exitReason: exitErr.exitReason,
         iterations: ctx.iteration,
         elapsedSeconds: Math.floor((Date.now() - ctx.startTime) / 1000),
       };

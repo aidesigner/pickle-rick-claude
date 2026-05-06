@@ -626,29 +626,9 @@ function bestEffortFdatasync(logPath) {
     }
     catch { /* best-effort */ }
 }
-export async function runWorkerProcess(ctx) {
-    const { args, ticketPath, ticketId, sessionRoot, sessionLog, sessionLogPath, sessionWorkingDir } = ctx;
-    const invocation = buildWorkerInvocation(args.backend, {
-        prompt: ctx.prompt,
-        addDirs: [getExtensionRoot(), getDataRoot(), sessionWorkingDir, ticketPath],
-        model: ctx.model,
-        outputFormat: args.outputFormat,
-        effort: ctx.effort,
-        ...(args.backend === 'hermes' ? ctx.hermesOptions : {}),
-    });
-    try {
-        updateTicketStatus(ticketId, 'In Progress', sessionRoot);
-    }
-    catch { /* best-effort */ }
-    sessionLog.on('error', err => console.error(`${Style.RED}❌ Log stream error: ${safeErrorMessage(err)}${Style.RESET}`));
-    const env = { ...process.env, ...backendEnvOverrides(args.backend), PICKLE_STATE_FILE: ctx.timeoutStatePath || ctx.workerStatePath, PICKLE_ROLE: 'worker', PYTHONUNBUFFERED: '1' };
-    delete env['CLAUDECODE'];
-    const proc = spawn(invocation.cmd, invocation.args, { cwd: sessionWorkingDir, env, stdio: ['inherit', 'pipe', 'pipe'] });
-    proc.stdout?.pipe(sessionLog, { end: false });
-    proc.stderr?.pipe(sessionLog, { end: false });
+function attachCompletionCommitAckListener(proc, ticketId, workerActivityStatePath) {
     // R-CCC-1: Detect COMPLETION_COMMIT_RECORDED: <sha> token in worker stdout.
     let ackLineBuf = '';
-    const workerActivityStatePath = path.join(sessionRoot, 'state.json');
     proc.stdout?.on('data', (chunk) => {
         ackLineBuf += chunk.toString('utf8');
         const newlineIdx = ackLineBuf.lastIndexOf('\n');
@@ -671,6 +651,46 @@ export async function runWorkerProcess(ctx) {
             catch { /* best-effort */ }
         }
     });
+}
+function evaluateWorkerOutcome(params) {
+    const { ctx, logContent, startTime } = params;
+    const role = ctx.args.isReviewTicket ? 'review' : 'implementation';
+    const ticketFiles = readTicketFiles(ctx.ticketPath);
+    const tokenPresent = hasToken(logContent, PromiseTokens.WORKER_DONE);
+    const logNonTrivial = logContent.length > 200;
+    const hasArtifact = hasLifecycleArtifact(ticketFiles, role);
+    const hasEdits = checkGitEdits(ctx.sessionWorkingDir, Math.floor(startTime / 1000));
+    const isSuccess = !ctx.mutableState.timedOut && tokenPresent && hasArtifact && (logNonTrivial || hasEdits);
+    if (!isSuccess) {
+        const reasons = buildValidationFailureReasons({
+            timedOut: ctx.mutableState.timedOut, tokenPresent, hasArtifact, role,
+            logContentLength: logContent.length, logNonTrivial, hasEdits,
+        });
+        console.error(`${Style.RED}Worker validation failed: ${reasons}${Style.RESET}`);
+    }
+    return { isSuccess, role };
+}
+export async function runWorkerProcess(ctx) {
+    const { args, ticketPath, ticketId, sessionRoot, sessionLog, sessionLogPath, sessionWorkingDir } = ctx;
+    const invocation = buildWorkerInvocation(args.backend, {
+        prompt: ctx.prompt,
+        addDirs: [getExtensionRoot(), getDataRoot(), sessionWorkingDir, ticketPath],
+        model: ctx.model,
+        outputFormat: args.outputFormat,
+        effort: ctx.effort,
+        ...(args.backend === 'hermes' ? ctx.hermesOptions : {}),
+    });
+    try {
+        updateTicketStatus(ticketId, 'In Progress', sessionRoot);
+    }
+    catch { /* best-effort */ }
+    sessionLog.on('error', err => console.error(`${Style.RED}❌ Log stream error: ${safeErrorMessage(err)}${Style.RESET}`));
+    const env = { ...process.env, ...backendEnvOverrides(args.backend), PICKLE_STATE_FILE: ctx.timeoutStatePath || ctx.workerStatePath, PICKLE_ROLE: 'worker', PYTHONUNBUFFERED: '1' };
+    delete env['CLAUDECODE'];
+    const proc = spawn(invocation.cmd, invocation.args, { cwd: sessionWorkingDir, env, stdio: ['inherit', 'pipe', 'pipe'] });
+    proc.stdout?.pipe(sessionLog, { end: false });
+    proc.stderr?.pipe(sessionLog, { end: false });
+    attachCompletionCommitAckListener(proc, ticketId, path.join(sessionRoot, 'state.json'));
     const spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
     let idx = 0;
     const startTime = Date.now();
@@ -755,20 +775,7 @@ export async function runWorkerProcess(ctx) {
                 ctx.mutableState.finalized = true;
                 clearTimeout(flushTimeout);
                 const logContent = scrubWorkerLog(sessionLogPath, readWorkerLog(sessionLogPath));
-                const role = args.isReviewTicket ? 'review' : 'implementation';
-                const ticketFiles = readTicketFiles(ticketPath);
-                const tokenPresent = hasToken(logContent, PromiseTokens.WORKER_DONE);
-                const logNonTrivial = logContent.length > 200;
-                const hasArtifact = hasLifecycleArtifact(ticketFiles, role);
-                const hasEdits = checkGitEdits(sessionWorkingDir, Math.floor(startTime / 1000));
-                const isSuccess = !ctx.mutableState.timedOut && tokenPresent && hasArtifact && (logNonTrivial || hasEdits);
-                if (!isSuccess) {
-                    const reasons = buildValidationFailureReasons({
-                        timedOut: ctx.mutableState.timedOut, tokenPresent, hasArtifact, role,
-                        logContentLength: logContent.length, logNonTrivial, hasEdits,
-                    });
-                    console.error(`${Style.RED}Worker validation failed: ${reasons}${Style.RESET}`);
-                }
+                const { isSuccess } = evaluateWorkerOutcome({ ctx, logContent, startTime });
                 try {
                     updateTicketStatus(ticketId, isSuccess ? 'Done' : 'Failed', sessionRoot);
                 }
