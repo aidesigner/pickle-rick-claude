@@ -669,11 +669,9 @@ test('worker convergence: dead-writer tmp snapshot is promoted before convergenc
   fs.utimesSync(tmpPath, future, future);
 
   // Pre-populate convergence.history with a scored entry — the dying writer
-  // had presumably accrued at least one iteration before crashing.
-  // validateWorkerConvergenceHistory short-circuits to 'judge_unreachable'
-  // for empty history per the SCJM-T5 trap door enforced by
-  // tests/integration/microverse-runner-judge-failure.test.js. The dead-tmp
-  // recovery being asserted here is independent of that guard.
+  // had presumably accrued at least one iteration before crashing. The
+  // dead-tmp recovery being asserted here is independent of any metric-mode
+  // convergence-history guard behavior.
   const mvWithHistory = makeMv({
     convergence: {
       stall_limit: 5,

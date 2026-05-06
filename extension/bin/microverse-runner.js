@@ -15,6 +15,14 @@ import { evaluateCodexManagerRelaunch, recordCodexManagerRelaunch, } from '../se
 import { logActivity } from '../services/activity-logger.js';
 import { assertBaselineFresh, BaselineMissingError, BaselineStaleError, runGate } from '../services/convergence-gate.js';
 import { spawnGateRemediatorMain } from './spawn-gate-remediator.js';
+class MicroverseExitError extends Error {
+    exitReason;
+    constructor(exitReason, message) {
+        super(message ?? exitReason);
+        this.name = 'MicroverseExitError';
+        this.exitReason = exitReason;
+    }
+}
 async function pathExists(targetPath) {
     try {
         await fs.promises.access(targetPath);
@@ -472,6 +480,10 @@ function validateWorkerConvergenceHistory(opts) {
         exitReason: 'judge_unreachable',
     };
 }
+function resolveMetricType(currentMv) {
+    const legacyMetric = currentMv;
+    return legacyMetric.key_metric?.type ?? legacyMetric.metric?.type ?? legacyMetric.metric_type ?? 'none';
+}
 export async function handleWorkerManagedIteration(opts) {
     const { preIterSha, workingDir, sessionDir, enabledFiles, regressionWarningThreshold, backend, remediatorTimeoutS, log, iteration, minIterations, _deps, } = opts;
     let currentMv = opts.currentMv;
@@ -518,6 +530,9 @@ export async function handleWorkerManagedIteration(opts) {
         };
     }
     if (converged) {
+        if (resolveMetricType(currentMv) === 'none') {
+            return { currentMv, converged: true, reason };
+        }
         const guardResult = validateWorkerConvergenceHistory({
             currentMv,
             minIterations,
@@ -822,6 +837,17 @@ export function extractScore(output) {
     return null;
 }
 export function measureLlmMetric(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend = 'claude') {
+    return measureLlmMetricAttempt(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend).metric;
+}
+function isMissingCliError(err) {
+    if (!err || typeof err !== 'object')
+        return false;
+    const code = 'code' in err ? String(err.code ?? '') : '';
+    if (code === 'ENOENT')
+        return true;
+    return /not found|ENOENT/i.test(safeErrorMessage(err));
+}
+function measureLlmMetricAttempt(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend = 'claude') {
     // Codex uses a different model vocabulary than claude. The default
     // DEFAULT_JUDGE_MODEL ('claude-sonnet-4-6') is meaningless to `codex exec`,
     // so when routing through codex we omit the -m flag and let codex pick.
@@ -853,15 +879,75 @@ export function measureLlmMetric(goal, timeoutSeconds, cwd, judgeModel, history,
             env: { ...process.env, ...backendEnvOverrides(backend) },
         }).trim();
         const score = extractScore(output);
-        if (score === null)
-            return null;
-        return { raw: output, score };
+        if (score === null) {
+            return {
+                metric: null,
+                failureKind: 'failed',
+                message: 'judge output did not contain a numeric score',
+            };
+        }
+        return { metric: { raw: output, score } };
     }
     catch (err) {
         const msg = safeErrorMessage(err);
         process.stderr.write(`[microverse] measureLlmMetric failed (backend=${backend}, model=${model ?? 'default'}): ${msg}\n`);
-        return null;
+        const failureKind = isMissingCliError(err) ? 'cli_missing'
+            : /\bETIMEDOUT\b/i.test(msg) ? 'timeout'
+                : 'failed';
+        return { metric: null, failureKind, message: msg };
     }
+}
+function probeJudgeCliAvailability(backend, cwd) {
+    try {
+        _deps.execFileSync(backend, ['--version'], {
+            cwd,
+            timeout: 50,
+            encoding: 'utf-8',
+            stdio: ['pipe', 'pipe', 'pipe'],
+            env: { ...process.env, ...backendEnvOverrides(backend) },
+        });
+        return { ok: true };
+    }
+    catch (err) {
+        return { ok: false, message: safeErrorMessage(err) };
+    }
+}
+async function measureLlmMetricWithBackoff(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend = 'claude') {
+    const probe = probeJudgeCliAvailability(backend, cwd);
+    if (!probe.ok) {
+        return {
+            metric: null,
+            exitReason: 'judge_cli_missing',
+            attempts: 0,
+            lastError: probe.message,
+        };
+    }
+    const backoffsMs = [10_000, 30_000, 60_000];
+    let lastError = null;
+    for (let attempt = 0; attempt <= backoffsMs.length; attempt++) {
+        const result = measureLlmMetricAttempt(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend);
+        if (result.metric) {
+            return { metric: result.metric, attempts: attempt + 1 };
+        }
+        lastError = result.message ?? null;
+        if (result.failureKind === 'cli_missing') {
+            return {
+                metric: null,
+                exitReason: 'judge_cli_missing',
+                attempts: attempt + 1,
+                lastError,
+            };
+        }
+        if (attempt < backoffsMs.length) {
+            await _deps.sleep(backoffsMs[attempt]);
+        }
+    }
+    return {
+        metric: null,
+        exitReason: 'judge_timeout',
+        attempts: backoffsMs.length + 1,
+        lastError,
+    };
 }
 function buildWorkerMicroverseHandoff(mvState, iteration, workingDir, sessionDir) {
     const parts = [
@@ -1040,6 +1126,8 @@ export function deactivateRunnerState(statePath) {
     safeDeactivate(statePath);
 }
 function replaceMicroverseState(target, next) {
+    if (target === next)
+        return;
     for (const key of Object.keys(target)) {
         delete target[key];
     }
@@ -1160,7 +1248,39 @@ export async function executeGapAnalysis(state, ctx) {
             ctx.log(`WARNING: Could not re-read state.json before baseline (${safeErrorMessage(err)}) — using in-memory state`);
         }
     }
-    const baseline = measureCurrentMetric(state, ctx, resolveBackend(ctx.currentRunnerState));
+    const backend = resolveBackend(ctx.currentRunnerState);
+    let baseline = null;
+    if (state.key_metric.type === 'llm') {
+        const measured = await measureLlmMetricWithBackoff(state.key_metric.validation, state.key_metric.timeout_seconds, ctx.workingDir, state.key_metric.judge_model, state.convergence?.history ?? [], state.prd_path, state.judge_context_path, backend);
+        if (measured.metric) {
+            baseline = measured.metric;
+        }
+        else {
+            const exitReason = measured.exitReason === 'judge_cli_missing'
+                ? 'judge_cli_missing'
+                : 'baseline_unmeasurable';
+            const error = measured.lastError ?? `${exitReason} after ${measured.attempts} attempt(s)`;
+            ctx.log(`ERROR: Could not measure LLM baseline (${exitReason}) after ${measured.attempts} attempt(s): ${error}`);
+            logActivity({
+                event: exitReason,
+                source: 'pickle',
+                session: path.basename(ctx.sessionDir),
+                iteration: ctx.iteration,
+                error,
+                gate_payload: {
+                    attempts: measured.attempts,
+                    backend,
+                },
+            });
+            state.status = 'stopped';
+            state.exit_reason = exitReason;
+            writeMicroverseState(ctx.sessionDir, state);
+            throw new MicroverseExitError(exitReason, error);
+        }
+    }
+    else {
+        baseline = measureCurrentMetric(state, ctx, backend);
+    }
     if (baseline) {
         state.baseline_score = baseline.score;
         ctx.log(`${state.key_metric.type === 'llm' ? 'LLM baseline' : 'Baseline'} metric: ${baseline.score}${state.key_metric.type === 'command' ? ` (raw: ${baseline.raw})` : ''}`);
@@ -1279,14 +1399,38 @@ function maybeAppendGapAnalysisFixed(state, entry, ctx) {
 }
 export async function measureAndClassifyIteration(state, baseline, ctx) {
     const backend = resolveBackend(ctx.currentRunnerState);
-    let metricResult = measureCurrentMetric(state, ctx, backend);
-    if (!metricResult) {
-        ctx.log('WARNING: Metric measurement failed — retrying once after 10s');
-        await _deps.sleep(Defaults.RATE_LIMIT_POLL_MS);
-        metricResult = measureCurrentMetric(state, ctx, backend);
+    let metricResult = null;
+    if (state.key_metric.type === 'llm') {
+        const measured = await measureLlmMetricWithBackoff(state.key_metric.validation, state.key_metric.timeout_seconds, ctx.workingDir, state.key_metric.judge_model, state.convergence?.history ?? [], state.prd_path, state.judge_context_path, backend);
+        if (!measured.metric) {
+            const exitReason = measured.exitReason;
+            const error = measured.lastError ?? `${exitReason} after ${measured.attempts} attempt(s)`;
+            ctx.log(`ERROR: Metric measurement failed (${exitReason}) after ${measured.attempts} attempt(s): ${error}`);
+            logActivity({
+                event: exitReason,
+                source: 'pickle',
+                session: path.basename(ctx.sessionDir),
+                iteration: ctx.iteration,
+                error,
+                gate_payload: {
+                    attempts: measured.attempts,
+                    backend,
+                },
+            });
+            return { kind: 'failed', exitReason };
+        }
+        metricResult = measured.metric;
     }
-    if (!metricResult) {
-        return recordMetricMeasurementFailure(state, ctx);
+    else {
+        metricResult = measureCurrentMetric(state, ctx, backend);
+        if (!metricResult) {
+            ctx.log('WARNING: Metric measurement failed — retrying once after 10s');
+            await _deps.sleep(Defaults.RATE_LIMIT_POLL_MS);
+            metricResult = measureCurrentMetric(state, ctx, backend);
+        }
+        if (!metricResult) {
+            return recordMetricMeasurementFailure(state, ctx);
+        }
     }
     ctx.log(`Metric: ${metricResult.score} (raw: ${metricResult.raw})`);
     const metricConv = assertMetricConvergence(state, 'measureAndClassifyIteration');
@@ -1587,6 +1731,9 @@ async function handleMetricMode(state, baseline, ctx, iterLogFile) {
         return noCommitExit;
     }
     const classification = await measureAndClassifyIteration(state, baseline, ctx);
+    if (classification.kind === 'failed') {
+        return classification.exitReason;
+    }
     emitMicroverseWastedIter(ctx, classification.kind === 'regressed' ? 'revert' : 'accept');
     const failureExit = currentExitForFailureHistory(state, ctx);
     if (failureExit)
@@ -1786,6 +1933,15 @@ async function runMicroversePhases(currentMv, ctx, log) {
         outcome = await executeMainLoop(currentMv, ctx);
     }
     catch (err) {
+        if (err instanceof MicroverseExitError) {
+            log(`microverse-runner exit: ${err.exitReason}${err.message ? ` (${err.message})` : ''}`);
+            return {
+                state: currentMv,
+                exitReason: err.exitReason,
+                iterations: ctx.iteration,
+                elapsedSeconds: Math.floor((Date.now() - ctx.startTime) / 1000),
+            };
+        }
         log(`microverse-runner error: ${safeErrorMessage(err)}`);
         outcome = {
             state: currentMv,

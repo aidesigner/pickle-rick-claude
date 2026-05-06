@@ -440,7 +440,7 @@ test('runIteration is exported from mux-runner', () => {
 
 // --- microverse-runner tests ---
 
-import { measureMetric, measureLlmMetric, extractScore, buildJudgePrompt, buildMicroverseHandoff, deactivateRunnerState, handleRateLimit, main, _deps, readRunnerState, stageAutoCommitPaths, executeMainLoop, classifyStall, handleNoCommitStall } from '../bin/microverse-runner.js';
+import { measureMetric, measureLlmMetric, extractScore, buildJudgePrompt, buildMicroverseHandoff, deactivateRunnerState, handleRateLimit, main, _deps, readRunnerState, stageAutoCommitPaths, executeMainLoop, executeGapAnalysis, measureAndClassifyIteration, classifyStall, handleNoCommitStall } from '../bin/microverse-runner.js';
 import { resetToSha } from '../services/git-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { writeStateFile } from '../services/pickle-utils.js';
@@ -1950,45 +1950,102 @@ test('LLM iteration: measureLlmMetric result feeds into comparison pipeline', ()
     }
 });
 
-test('LLM measurement failure treated as stall', () => {
-    const orig = _deps.execFileSync;
-    _deps.execFileSync = () => { throw new Error('subprocess failed'); };
-    try {
-        const LLM_METRIC = {
+test('LLM baseline failure exits baseline_unmeasurable instead of defaulting to 0', async () => {
+    const origExec = _deps.execFileSync;
+    const origSleep = _deps.sleep;
+    const origRunIteration = _deps.runIteration;
+    const dir = createTempGitRepo();
+    const { dir: sessionDir } = createSessionDir(dir, {
+        status: 'gap_analysis',
+        key_metric: {
             description: 'code quality',
             validation: 'improve code quality',
             type: 'llm',
             timeout_seconds: 60,
             tolerance: 2,
             judge_model: 'claude-sonnet-4-6',
-        };
-        let currentMv = createMicroverseState({ prdPath: '/tmp/prd.md', metric: LLM_METRIC, stallLimit: 3 });
-        currentMv.status = 'iterating';
-        currentMv.baseline_score = 40;
-        const workingDir = '/tmp';
-
-        // Replicate the runner's iteration branch for type='llm'
-        let metricResult = null;
-        if (currentMv.key_metric.type === 'llm') {
-            metricResult = measureLlmMetric(
-                currentMv.key_metric.validation,
-                currentMv.key_metric.timeout_seconds,
-                workingDir,
-                currentMv.key_metric.judge_model,
-                currentMv.convergence.history,
-            );
-        }
-
-        assert.equal(metricResult, null, 'metricResult should be null on failure');
-
-        // Replicate the runner's stall handling for null metricResult
-        if (!metricResult) {
-            currentMv = recordStall(currentMv);
-        }
-
-        assert.equal(currentMv.convergence.stall_counter, 1, 'stall_counter should increment on null metric');
+        },
+        baseline_score: 0,
+    });
+    const ctx = makeMicroverseLoopContext({ dir: sessionDir, state: JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8')) }, dir, path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), {
+        backend: 'codex',
+    });
+    const sleeps = [];
+    _deps.execFileSync = (_cmd, args) => {
+        if (Array.isArray(args) && args[0] === '--version') return 'codex 0.128.0';
+        const err = new Error('spawnSync codex ETIMEDOUT');
+        err.code = 'ETIMEDOUT';
+        throw err;
+    };
+    _deps.sleep = async (ms) => { sleeps.push(ms); };
+    _deps.runIteration = async () => ({
+        completion: 'success',
+        timedOut: false,
+        exitCode: 0,
+        wallSeconds: 1,
+    });
+    try {
+        await assert.rejects(
+            executeGapAnalysis(readMicroverseState(sessionDir), ctx),
+            (err) => err?.name === 'MicroverseExitError' && err?.exitReason === 'baseline_unmeasurable',
+        );
+        const persisted = readMicroverseState(sessionDir);
+        assert.equal(persisted.exit_reason, 'baseline_unmeasurable');
+        assert.equal(persisted.status, 'stopped');
+        assert.deepEqual(sleeps, [10_000, 30_000, 60_000]);
     } finally {
-        _deps.execFileSync = orig;
+        _deps.execFileSync = origExec;
+        _deps.sleep = origSleep;
+        _deps.runIteration = origRunIteration;
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('LLM iteration timeout exits judge_timeout instead of recording a stall', async () => {
+    const origExec = _deps.execFileSync;
+    const origSleep = _deps.sleep;
+    const dir = createTempGitRepo();
+    const LLM_METRIC = {
+        description: 'code quality',
+        validation: 'improve code quality',
+        type: 'llm',
+        timeout_seconds: 60,
+        tolerance: 2,
+        judge_model: 'claude-sonnet-4-6',
+    };
+    const state = createMicroverseState({ prdPath: '/tmp/prd.md', metric: LLM_METRIC, stallLimit: 3 });
+    state.status = 'iterating';
+    state.baseline_score = 40;
+    const session = createSessionDir(dir, {
+        key_metric: state.key_metric,
+        baseline_score: 40,
+        convergence: state.convergence,
+    });
+    const ctx = makeMicroverseLoopContext(session, dir, path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'), {
+        backend: 'claude',
+    });
+    ctx.iteration = 2;
+    ctx.preIterSha = 'a'.repeat(40);
+    ctx.postIterSha = 'b'.repeat(40);
+    const sleeps = [];
+    _deps.execFileSync = (_cmd, args) => {
+        if (Array.isArray(args) && args[0] === '--version') return 'Claude Code 2.1.126';
+        const err = new Error('spawnSync claude ETIMEDOUT');
+        err.code = 'ETIMEDOUT';
+        throw err;
+    };
+    _deps.sleep = async (ms) => { sleeps.push(ms); };
+    try {
+        const result = await measureAndClassifyIteration(state, { raw: '40', score: 40 }, ctx);
+        assert.deepEqual(result, { kind: 'failed', exitReason: 'judge_timeout' });
+        assert.equal(state.convergence.stall_counter, 0, 'judge timeout must not be translated into stall convergence');
+        assert.deepEqual(sleeps, [10_000, 30_000, 60_000]);
+    } finally {
+        _deps.execFileSync = origExec;
+        _deps.sleep = origSleep;
+        fs.rmSync(session.dir, { recursive: true, force: true });
+        fs.rmSync(dir, { recursive: true, force: true });
     }
 });
 

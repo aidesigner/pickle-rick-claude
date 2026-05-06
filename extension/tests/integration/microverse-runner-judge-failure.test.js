@@ -7,6 +7,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { writeStateFile } from '../../services/pickle-utils.js';
+import { createMicroverseState } from '../../services/microverse-state.js';
 import { measureLlmMetric, _deps } from '../../bin/microverse-runner.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -72,7 +73,7 @@ function writeChildRunner(root) {
     `};`,
     `runner._deps.runIteration = async (_sessionDir, iteration) => {`,
     `  fs.writeFileSync(path.join(_sessionDir, 'tmux_iteration_' + iteration + '.log'), 'fixture worker success\\\\n');`,
-    `  if (iteration >= 2) {`,
+    `  if (iteration >= 1) {`,
     `    fs.writeFileSync(path.join(_sessionDir, 'microverse-result.json'), JSON.stringify({ converged: true, reason: 'fixture worker said done' }, null, 2));`,
     `  }`,
     `  return { completion: 'success', timedOut: false, exitCode: 0, wallSeconds: 1 };`,
@@ -108,7 +109,7 @@ test('codex default judge argv omits -m pair when judge throws twice', () => {
   }
 });
 
-test('microverse-runner codex worker convergence with empty history exits judge_unreachable', () => {
+test('microverse-runner codex worker convergence with empty history honors worker convergence for metric_type=none', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mv-runner-judge-failure-'));
   try {
     const sessionDir = path.join(root, 'session');
@@ -127,6 +128,22 @@ test('microverse-runner codex worker convergence with empty history exits judge_
       '--convergence-file',
       'microverse-result.json',
     ], { cwd: EXTENSION_ROOT, stdio: 'pipe' });
+    const initializedMv = createMicroverseState({
+      prdPath: 'prd.md',
+      metric: {
+        description: 'worker-managed convergence',
+        validation: '',
+        type: 'none',
+        timeout_seconds: 30,
+        tolerance: 0,
+      },
+      stallLimit: 3,
+      convergenceMode: 'worker',
+      convergenceFile: 'microverse-result.json',
+    });
+    initializedMv.status = 'iterating';
+    initializedMv.gap_analysis_path = 'gap.md';
+    fs.writeFileSync(path.join(sessionDir, 'microverse.json'), JSON.stringify(initializedMv, null, 2));
     writeJson(path.join(sessionDir, 'microverse-result.json'), { converged: false, reason: 'not started' });
 
     const childPath = writeChildRunner(root);
@@ -140,18 +157,12 @@ test('microverse-runner codex worker convergence with empty history exits judge_
     });
 
     const combinedOutput = `${result.stdout}\n${result.stderr}`;
-    assert.notEqual(result.status, 0, combinedOutput);
-
-    const capturedArgv = JSON.parse(fs.readFileSync(path.join(sessionDir, 'captured-codex-argv.json'), 'utf-8'));
-    assert.equal(capturedArgv.includes('-m'), false, `codex default judge argv must not include -m: ${JSON.stringify(capturedArgv)}`);
-    assert.equal(capturedArgv.includes('claude-sonnet-4-6'), false, `codex argv must not include claude default model: ${JSON.stringify(capturedArgv)}`);
+    assert.equal(result.status, 0, combinedOutput);
+    assert.equal(fs.existsSync(path.join(sessionDir, 'captured-codex-argv.json')), false, 'worker-managed convergence must not invoke judge CLI');
 
     const finalMv = JSON.parse(fs.readFileSync(path.join(sessionDir, 'microverse.json'), 'utf-8'));
-    assert.equal(finalMv.exit_reason, 'judge_unreachable');
-    assert.equal(finalMv.status, 'stopped');
-    const finalHistory = finalMv.convergence?.history ?? [];
-    assert.equal(finalHistory.length, 0, 'empty convergence history must not count as converged');
-    assert.equal(finalHistory.some(entry => entry.score !== null && entry.score !== undefined), false);
+    assert.equal(finalMv.exit_reason, 'converged');
+    assert.equal(finalMv.status, 'converged');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

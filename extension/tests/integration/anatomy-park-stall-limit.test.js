@@ -95,7 +95,7 @@ function makeRunnerState(sessionDir, workingDir) {
   };
 }
 
-test('SCJM-T4: worker convergence with empty history exits judge_unreachable', async () => {
+test('SCJM-T4: worker convergence with empty history bypasses judge guard for metric_type=none', async () => {
   const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-judge-unreachable-empty-'));
   fs.writeFileSync(
     path.join(sessionDir, 'anatomy-park.json'),
@@ -124,12 +124,13 @@ test('SCJM-T4: worker convergence with empty history exits judge_unreachable', a
     },
   });
 
-  assert.equal(result.converged, false);
-  assert.equal(result.exitReason, 'judge_unreachable');
-  assert.equal(events.some(event => event.event === 'judge_unreachable'), true);
+  assert.equal(result.converged, true);
+  assert.equal(result.reason, 'worker said done');
+  assert.equal(result.exitReason, undefined);
+  assert.equal(events.some(event => event.event === 'judge_unreachable'), false);
 });
 
-test('SCJM-T4: worker convergence with scoreless history exits judge_unreachable', async () => {
+test('SCJM-T4: worker convergence with scoreless history still bypasses judge guard for metric_type=none', async () => {
   const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ap-judge-unreachable-scoreless-'));
   fs.writeFileSync(
     path.join(sessionDir, 'anatomy-park.json'),
@@ -173,9 +174,10 @@ test('SCJM-T4: worker convergence with scoreless history exits judge_unreachable
     },
   });
 
-  assert.equal(result.converged, false);
-  assert.equal(result.exitReason, 'judge_unreachable');
-  assert.equal(events.some(event => event.event === 'judge_unreachable'), true);
+  assert.equal(result.converged, true);
+  assert.equal(result.reason, 'worker said done');
+  assert.equal(result.exitReason, undefined);
+  assert.equal(events.some(event => event.event === 'judge_unreachable'), false);
 });
 
 test('AC-GBM-C1: a single strict-mode red records stall/regression and continues', async () => {
