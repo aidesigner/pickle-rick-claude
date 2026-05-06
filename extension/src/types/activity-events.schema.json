@@ -173,6 +173,60 @@
           }
         }
       }
+    },
+    "worker_backend_resolved": {
+      "type": "object",
+      "required": ["event", "ts", "ticket_id", "manager_backend", "worker_backend", "source"],
+      "properties": {
+        "event": { "type": "string", "const": "worker_backend_resolved" },
+        "ts": { "type": "string" },
+        "ticket_id": { "type": "string" },
+        "manager_backend": { "$ref": "#/definitions/backendEnum" },
+        "worker_backend": { "$ref": "#/definitions/backendEnum" },
+        "source": { "$ref": "#/definitions/backendResolutionSourceEnum" }
+      }
+    },
+    "completion_commit_auto_filled": {
+      "type": "object",
+      "required": ["event", "ts", "ticket_id", "sha", "helper"],
+      "properties": {
+        "event": { "type": "string", "const": "completion_commit_auto_filled" },
+        "ts": { "type": "string" },
+        "ticket_id": { "type": "string" },
+        "sha": { "type": "string" },
+        "helper": { "type": "string" }
+      }
+    },
+    "completion_commit_inferred_from_git": {
+      "type": "object",
+      "required": ["event", "ts", "ticket_id", "sha"],
+      "properties": {
+        "event": { "type": "string", "const": "completion_commit_inferred_from_git" },
+        "ts": { "type": "string" },
+        "ticket_id": { "type": "string" },
+        "sha": { "type": "string" }
+      }
+    },
+    "time_cap_disabled_default": {
+      "type": "object",
+      "required": ["event", "ts", "session_id", "prior_value"],
+      "properties": {
+        "event": { "type": "string", "const": "time_cap_disabled_default" },
+        "ts": { "type": "string" },
+        "session_id": { "type": "string" },
+        "prior_value": {}
+      }
+    },
+    "manager_idle_backoff_engaged": {
+      "type": "object",
+      "required": ["event", "ts", "session_id", "idle_seconds", "current_ticket"],
+      "properties": {
+        "event": { "type": "string", "const": "manager_idle_backoff_engaged" },
+        "ts": { "type": "string" },
+        "session_id": { "type": "string" },
+        "idle_seconds": { "type": "number" },
+        "current_ticket": {}
+      }
     }
   },
   "oneOf": [
@@ -187,6 +241,11 @@
     { "$ref": "#/definitions/ticket_audit_manual_edit" },
     { "$ref": "#/definitions/smoke_gate_bypassed" },
     { "$ref": "#/definitions/bundle_2026_05_04_closer_done" },
-    { "$ref": "#/definitions/install_sh_parity_check" }
+    { "$ref": "#/definitions/install_sh_parity_check" },
+    { "$ref": "#/definitions/worker_backend_resolved" },
+    { "$ref": "#/definitions/completion_commit_auto_filled" },
+    { "$ref": "#/definitions/completion_commit_inferred_from_git" },
+    { "$ref": "#/definitions/time_cap_disabled_default" },
+    { "$ref": "#/definitions/manager_idle_backoff_engaged" }
   ]
 }
