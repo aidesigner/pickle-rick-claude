@@ -16,7 +16,7 @@ import {
 import { spawn } from 'child_process';
 import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact, type Backend, type BackendResolutionSource, type LastToolErrorState, type State } from '../types/index.js';
 import { updateTicketStatus } from '../services/git-utils.js';
-import { assertBackendPreSpawn, buildWorkerInvocation, isBackend, backendEnvOverrides } from '../services/backend-spawn.js';
+import { assertBackendPreSpawn, buildWorkerInvocation, isBackend, backendEnvOverrides, resolveWorkerBackendFromStateFile } from '../services/backend-spawn.js';
 import { scrubForbiddenWorkerTokens } from '../services/promise-tokens.js';
 import { StateManager, writeActivityEntry } from '../services/state-manager.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
@@ -590,22 +590,12 @@ type BackendResolution = {
   source: BackendResolutionSource;
 };
 
-function resolveBackendFromStateOrEnv(sessionRoot: string): BackendResolution {
-  // R-XBL-2: read state.backend exclusively via StateManager.read() — the
-  // canonical recovery-aware reader. NEVER fall back to readRecoverableJsonObject
-  // here; orphan tmp recovery + dead-pid demotion are guarantees we want at the
-  // spawn site. See trap door extension/CLAUDE.md src/bin/spawn-morty.ts (R-XBL-2).
-  const statePath = path.join(sessionRoot, 'state.json');
-  try {
-    const state = sm.read(statePath) as { backend?: unknown } | null;
-    if (isBackend(state?.backend)) return { backend: state.backend, source: 'state' };
-  } catch {
-    /* fall through to env/default on parse/read errors */
-  }
-
-  const envBackend = process.env.PICKLE_BACKEND;
-  if (isBackend(envBackend)) return { backend: envBackend, source: 'env' };
-  return { backend: 'claude', source: 'default' };
+function resolveWorkerBackendBase(sessionRoot: string): BackendResolution {
+  const resolved = resolveWorkerBackendFromStateFile(path.join(sessionRoot, 'state.json'));
+  return {
+    backend: resolved.backend,
+    source: resolved.source === 'env_lock' ? 'refinement-lock' : 'state',
+  };
 }
 
 function applyHeuristicBackendRouting(
@@ -643,7 +633,7 @@ function routeBackend(
   if (backendOverride) {
     return { backend: backendOverride, source: 'cli-flag-override' };
   }
-  return applyHeuristicBackendRouting(resolveBackendFromStateOrEnv(sessionRoot), ticketInfo);
+  return applyHeuristicBackendRouting(resolveWorkerBackendBase(sessionRoot), ticketInfo);
 }
 
 /**
@@ -881,9 +871,11 @@ async function main() {
     console.log(`${Style.YELLOW}⚠️  Worker timeout clamped: ${effectiveTimeout}s${Style.RESET}`);
   }
 
+  const statePath = path.join(parsed.sessionRoot, 'state.json');
+  const workerBackendResolution = resolveWorkerBackendFromStateFile(statePath);
   const { backend, source } = routeBackend(parsed.sessionRoot, ticketInfo, parsed.backendOverride);
   const preSpawn = assertBackendPreSpawn({
-    statePath: path.join(parsed.sessionRoot, 'state.json'),
+    statePath,
     resolvedBackend: backend,
     source,
   });
@@ -915,7 +907,15 @@ async function main() {
     process.exit(1);
   }
   try {
-    writeActivityEntry(path.join(parsed.sessionRoot, 'state.json'), {
+    writeActivityEntry(statePath, {
+      event: 'worker_backend_resolved',
+      ts: new Date().toISOString(),
+      ticket_id: parsed.ticketId,
+      backend: workerBackendResolution.managerBackend,
+      worker_backend: workerBackendResolution.workerBackend,
+      source: workerBackendResolution.source,
+    });
+    writeActivityEntry(statePath, {
       event: 'worker_spawn_backend_resolved',
       ts: new Date().toISOString(),
       backend,
@@ -925,7 +925,7 @@ async function main() {
       session: path.basename(parsed.sessionRoot),
     });
     if (source === 'cli-flag-override' && parsed.backendOverride) {
-      writeActivityEntry(path.join(parsed.sessionRoot, 'state.json'), {
+      writeActivityEntry(statePath, {
         event: 'worker_spawn_backend_override',
         ts: new Date().toISOString(),
         backend: parsed.backendOverride,

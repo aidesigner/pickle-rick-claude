@@ -57,7 +57,10 @@ export function assertBackendPreSpawn(input) {
         }
     })();
     const stateBackend = isBackend(state?.backend) ? state?.backend : undefined;
-    if (!stateBackend || stateBackend === input.resolvedBackend) {
+    const stateWorkerBackend = isBackend(state?.worker_backend)
+        ? state.worker_backend
+        : undefined;
+    if (!stateBackend || stateBackend === input.resolvedBackend || stateWorkerBackend === input.resolvedBackend) {
         return { mode: 'match', resolvedBackend: input.resolvedBackend, stateBackend };
     }
     const flipReason = typeof state?.flags?.backend_flip_reason === 'string' ? state.flags.backend_flip_reason : null;
@@ -99,6 +102,48 @@ export function resolveBackend(source) {
         warnBadBackend('PICKLE_BACKEND env', env);
     return 'claude';
 }
+function resolveManagerBackendValue(source) {
+    const raw = source ? source.backend : undefined;
+    if (isBackend(raw))
+        return raw;
+    if (typeof raw === 'string' && raw.length > 0)
+        warnBadBackend('state', raw);
+    const env = process.env.PICKLE_BACKEND;
+    if (isBackend(env))
+        return env;
+    if (typeof env === 'string' && env.length > 0)
+        warnBadBackend('PICKLE_BACKEND env', env);
+    return 'claude';
+}
+export function resolveWorkerBackendFromState(source) {
+    if (process.env.PICKLE_REFINEMENT_LOCK === '1') {
+        return {
+            backend: 'claude',
+            source: 'env_lock',
+            workerBackend: null,
+            managerBackend: resolveManagerBackendValue(source),
+        };
+    }
+    const managerBackend = resolveManagerBackendValue(source);
+    const rawWorkerBackend = source ? source.worker_backend : undefined;
+    if (isBackend(rawWorkerBackend)) {
+        return {
+            backend: rawWorkerBackend,
+            source: 'worker_backend',
+            workerBackend: rawWorkerBackend,
+            managerBackend,
+        };
+    }
+    if (typeof rawWorkerBackend === 'string' && rawWorkerBackend.length > 0) {
+        warnBadBackend('state.worker_backend', rawWorkerBackend);
+    }
+    return {
+        backend: managerBackend,
+        source: 'backend',
+        workerBackend: null,
+        managerBackend,
+    };
+}
 export function resolveBackendFromStateFileWithSource(statePath, cliBackend) {
     // Refinement lock is non-overridable: short-circuits on the lock variable
     // before disk-I/O so a stale/hostile state.json cannot recover codex for a
@@ -132,6 +177,16 @@ export function resolveBackendFromStateFileWithSource(statePath, cliBackend) {
         warnBadBackend('PICKLE_BACKEND env', envBackend);
     }
     return { backend: 'claude', source: 'default' };
+}
+export function resolveWorkerBackendFromStateFile(statePath) {
+    let parsed = null;
+    try {
+        parsed = _sm.read(statePath);
+    }
+    catch {
+        parsed = null;
+    }
+    return resolveWorkerBackendFromState(parsed);
 }
 export function resolveBackendFromStateFile(statePath) {
     return resolveBackendFromStateFileWithSource(statePath).backend;

@@ -32,8 +32,10 @@ export interface State {
   phases_entered?: string[];
   /** Per-session activity log entries (e.g. halt records). Append-only. */
   activity?: ActivityLogEntry[];
-  /** Implementation backend for worker/manager spawns. Defaults to 'claude' when absent. */
+  /** Implementation backend for manager spawns and worker fallback. Defaults to 'claude' when absent. */
   backend?: Backend;
+  /** Optional per-session worker backend override. Worker spawns prefer this over `backend` when present. */
+  worker_backend?: Backend;
   /** When true, /pickle Phase 3 spawns workers via harness team primitives (TeamCreate + Agent + TaskUpdate) instead of `claude -p` subprocesses. claude backend only. */
   teams_mode?: boolean;
   /** Concurrency cap for parallel `morty-implementer` teammates when teams_mode is true. Default 5. v1 ships sequential; this field is plumbed for the parallel-fan-out follow-up. */
@@ -106,6 +108,7 @@ export const FALSE_EPIC_THRESHOLD = 3;
 
 export type Backend = 'claude' | 'codex' | 'hermes';
 export type BackendResolutionSource = 'state' | 'env' | 'settings' | 'default' | 'refinement-lock' | 'cli-flag-override';
+export type WorkerBackendResolutionSource = 'worker_backend' | 'backend' | 'env_lock';
 
 export const BACKENDS: readonly Backend[] = ['claude', 'codex', 'hermes'] as const;
 
@@ -537,6 +540,8 @@ export interface ActivityEvent {
   original_prompt?: string;
   model?: string;
   backend?: Backend;
+  worker_backend?: Backend | null;
+  ticket_id?: string;
   project_type?: string;
   bytes_out_utf8?: number;
   tokens_in_estimated?: number;

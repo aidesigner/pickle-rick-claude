@@ -11,6 +11,10 @@
       "type": "string",
       "enum": ["state", "env", "settings", "default", "refinement-lock", "cli-flag-override"]
     },
+    "workerBackendResolutionSourceEnum": {
+      "type": "string",
+      "enum": ["worker_backend", "backend", "env_lock"]
+    },
     "worker_spawn_backend_resolved": {
       "type": "object",
       "required": ["event", "ts", "backend", "source", "pid"],
@@ -176,14 +180,19 @@
     },
     "worker_backend_resolved": {
       "type": "object",
-      "required": ["event", "ts", "ticket_id", "manager_backend", "worker_backend", "source"],
+      "required": ["event", "ts", "backend", "worker_backend", "source"],
       "properties": {
         "event": { "type": "string", "const": "worker_backend_resolved" },
         "ts": { "type": "string" },
         "ticket_id": { "type": "string" },
-        "manager_backend": { "$ref": "#/definitions/backendEnum" },
-        "worker_backend": { "$ref": "#/definitions/backendEnum" },
-        "source": { "$ref": "#/definitions/backendResolutionSourceEnum" }
+        "backend": { "$ref": "#/definitions/backendEnum" },
+        "worker_backend": {
+          "anyOf": [
+            { "$ref": "#/definitions/backendEnum" },
+            { "type": "null" }
+          ]
+        },
+        "source": { "$ref": "#/definitions/workerBackendResolutionSourceEnum" }
       }
     },
     "completion_commit_auto_filled": {

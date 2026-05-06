@@ -11,6 +11,7 @@ const schema = JSON.parse(readFileSync(SCHEMA_PATH, 'utf8'));
 
 const BACKEND_ENUM = ['claude', 'codex', 'hermes'];
 const BACKEND_RESOLUTION_SOURCE_ENUM = ['state', 'env', 'settings', 'default', 'refinement-lock', 'cli-flag-override'];
+const WORKER_BACKEND_RESOLUTION_SOURCE_ENUM = ['worker_backend', 'backend', 'env_lock'];
 
 function resolveRef(ref) {
   const name = ref.replace('#/definitions/', '');
@@ -83,6 +84,11 @@ const EVENT_CASES = [
     type: 'subtool_backend_override',
     valid: { event: 'subtool_backend_override', ts: TS, backend: 'codex' },
     drop: 'backend',
+  },
+  {
+    type: 'worker_backend_resolved',
+    valid: { event: 'worker_backend_resolved', ts: TS, backend: 'claude', worker_backend: 'codex', source: 'worker_backend' },
+    drop: 'source',
   },
   {
     type: 'worker_partial_lifecycle_exit',
@@ -207,7 +213,17 @@ test('activity-event-payload: worker_spawn_backend_resolved pid must be an integ
   assert.equal(bad2.valid, false, 'string pid should fail');
 });
 
-test('activity-event-payload: schema defines exactly 18 event type definitions', () => {
+test('activity-event-payload: worker_backend_resolved source must be one of three worker-backend precedence values', () => {
+  const base = { event: 'worker_backend_resolved', ts: TS, backend: 'claude', worker_backend: 'codex' };
+  for (const src of WORKER_BACKEND_RESOLUTION_SOURCE_ENUM) {
+    const result = validate({ ...base, source: src }, 'worker_backend_resolved');
+    assert.equal(result.valid, true, `source '${src}' should be valid`);
+  }
+  const bad = validate({ ...base, source: 'state' }, 'worker_backend_resolved');
+  assert.equal(bad.valid, false, `source 'state' should be rejected`);
+});
+
+test('activity-event-payload: schema defines exactly 19 event type definitions', () => {
   const EVENT_NAMES = [
     'worker_spawn_backend_resolved',
     'worker_spawn_backend_mismatch',
@@ -234,5 +250,5 @@ test('activity-event-payload: schema defines exactly 18 event type definitions',
   const nonSharedDefs = Object.keys(schema.definitions).filter(
     k => k !== 'backendEnum' && k !== 'backendResolutionSourceEnum',
   );
-  assert.equal(nonSharedDefs.length, 18, `expected 18 event definitions, got ${nonSharedDefs.length}`);
+  assert.equal(nonSharedDefs.length, 19, `expected 19 event definitions, got ${nonSharedDefs.length}`);
 });

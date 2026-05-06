@@ -7,6 +7,7 @@ import type { ActivityEventType, Backend, IterationExitType, MicroverseSessionSt
 import {
   resolveBackend,
   resolveBackendFromStateFileWithSource,
+  resolveWorkerBackendFromStateFile,
   buildJudgeInvocation,
   buildWorkerInvocation,
   backendEnvOverrides,
@@ -249,11 +250,12 @@ export async function runRemediatorForIteration(
 
   const startMs = Date.now();
   const statePath = path.join(sessionDir, 'state.json');
+  const workerBackendResolution = resolveWorkerBackendFromStateFile(statePath);
   // R-XBL-2: re-read state.backend immediately before exec via StateManager.read
   // so any mid-iteration backend flip is honored at the spawn site (single
   // source of truth). Falls back to the param if the state read fails.
   // PICKLE_REFINEMENT_LOCK=1 still wins via resolveBackendFromStateFileWithSource.
-  const execBackend = resolveBackendFromStateFileWithSource(statePath, backend).backend;
+  const execBackend = workerBackendResolution.backend;
 
   // Preserve the legacy fallback behavior for codex model resolution: if the
   // state file is missing/unreadable and the backend is still codex, use the
@@ -280,6 +282,14 @@ export async function runRemediatorForIteration(
     prompt: briefContent,
     addDirs: [workingDir],
     ...(codexModel ? { model: codexModel } : {}),
+  });
+  logActivity({
+    event: 'worker_backend_resolved',
+    source: 'pickle',
+    backend: workerBackendResolution.managerBackend,
+    worker_backend: workerBackendResolution.workerBackend,
+    ts: new Date().toISOString(),
+    ticket_id: remediatorState?.current_ticket ?? undefined,
   });
 
   try {

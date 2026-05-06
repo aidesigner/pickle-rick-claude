@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { Defaults } from '../types/index.js';
-import { resolveBackend, resolveBackendFromStateFileWithSource, buildJudgeInvocation, buildWorkerInvocation, backendEnvOverrides, } from '../services/backend-spawn.js';
+import { resolveBackend, resolveWorkerBackendFromStateFile, buildJudgeInvocation, buildWorkerInvocation, backendEnvOverrides, } from '../services/backend-spawn.js';
 import { readMicroverseState, readRecoverableJsonObject, writeMicroverseState, recordIteration as stateRecordIteration, recordStall, recordAmnesiacExit, clearAmnesiacExits, recordFailedApproach, isConverged, compareMetric, classifyFailure, } from '../services/microverse-state.js';
 import { getHeadSha, resetToSha, isWorkingTreeDirty } from '../services/git-utils.js';
 import { writeStateFile, getExtensionRoot, isoCompactStamp, sleep, Style, formatTime, formatLocalDateKey, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, collectTickets, } from '../services/pickle-utils.js';
@@ -111,11 +111,12 @@ export async function runRemediatorForIteration(gateResult, sessionDir, workingD
     }
     const startMs = Date.now();
     const statePath = path.join(sessionDir, 'state.json');
+    const workerBackendResolution = resolveWorkerBackendFromStateFile(statePath);
     // R-XBL-2: re-read state.backend immediately before exec via StateManager.read
     // so any mid-iteration backend flip is honored at the spawn site (single
     // source of truth). Falls back to the param if the state read fails.
     // PICKLE_REFINEMENT_LOCK=1 still wins via resolveBackendFromStateFileWithSource.
-    const execBackend = resolveBackendFromStateFileWithSource(statePath, backend).backend;
+    const execBackend = workerBackendResolution.backend;
     // Preserve the legacy fallback behavior for codex model resolution: if the
     // state file is missing/unreadable and the backend is still codex, use the
     // caller-provided fallback model defaults.
@@ -143,6 +144,14 @@ export async function runRemediatorForIteration(gateResult, sessionDir, workingD
         prompt: briefContent,
         addDirs: [workingDir],
         ...(codexModel ? { model: codexModel } : {}),
+    });
+    logActivity({
+        event: 'worker_backend_resolved',
+        source: 'pickle',
+        backend: workerBackendResolution.managerBackend,
+        worker_backend: workerBackendResolution.workerBackend,
+        ts: new Date().toISOString(),
+        ticket_id: remediatorState?.current_ticket ?? undefined,
     });
     try {
         execFileSync(invocation.cmd, invocation.args, {

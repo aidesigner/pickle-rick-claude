@@ -12,15 +12,41 @@ function readSessionState(sessionDir) {
         const raw = fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8');
         const state = JSON.parse(raw);
         const backend = state.backend ?? 'unknown';
-        const subtoolOverrideCount = (state.activity ?? []).filter((a) => a.event === 'subtool_backend_override').length;
-        return { backend, subtoolOverrideCount };
+        const activity = state.activity ?? [];
+        const subtoolOverrideCount = activity.filter((a) => a.event === 'subtool_backend_override').length;
+        const workerBackendEvents = activity.filter((a) => a.event === 'worker_backend_resolved');
+        const expectedWorkerBackendByTicket = new Map();
+        for (const entry of workerBackendEvents) {
+            if (!entry.ticket_id)
+                continue;
+            const source = entry.source;
+            const expected = source === 'worker_backend'
+                ? entry.worker_backend
+                : source === 'env_lock'
+                    ? 'claude'
+                    : entry.backend;
+            if (typeof expected === 'string' && expected.length > 0) {
+                expectedWorkerBackendByTicket.set(entry.ticket_id, expected);
+            }
+        }
+        return {
+            backend,
+            subtoolOverrideCount,
+            workerBackendResolutionCount: workerBackendEvents.length,
+            expectedWorkerBackendByTicket,
+        };
     }
     catch {
-        return { backend: 'unknown', subtoolOverrideCount: 0 };
+        return {
+            backend: 'unknown',
+            subtoolOverrideCount: 0,
+            workerBackendResolutionCount: 0,
+            expectedWorkerBackendByTicket: new Map(),
+        };
     }
 }
 export function scanSession(sessionDir) {
-    const { backend: sessionBackend, subtoolOverrideCount } = readSessionState(sessionDir);
+    const { backend: sessionBackend, subtoolOverrideCount, workerBackendResolutionCount, expectedWorkerBackendByTicket, } = readSessionState(sessionDir);
     const mismatches = [];
     let scannedLogs = 0;
     let entries;
@@ -52,7 +78,8 @@ export function scanSession(sessionDir) {
                 continue;
             }
             const patternsFound = detectCodexBanner(content);
-            if (sessionBackend === 'claude' && patternsFound.length > 0) {
+            const expectedWorkerBackend = expectedWorkerBackendByTicket.get(entry.name) ?? sessionBackend;
+            if (expectedWorkerBackend === 'claude' && patternsFound.length > 0) {
                 mismatches.push({ ticket: entry.name, log: logFile, patterns_found: patternsFound });
             }
         }
@@ -63,6 +90,7 @@ export function scanSession(sessionDir) {
         scanned_logs: scannedLogs,
         mismatch_count: mismatches.length,
         subtool_override_count: subtoolOverrideCount,
+        worker_backend_resolution_count: workerBackendResolutionCount,
         mismatches,
     };
 }
@@ -74,7 +102,7 @@ function usage() {
         '  "Reading additional input from stdin..."\n' +
         '  "chatgpt.com/codex/settings/usage"\n\n' +
         'Note: subtool_backend_override events are excluded from mismatch_count per AC-BUNDLE-04 carve-out\n' +
-        'and reported separately as subtool_override_count.\n\n' +
+        'and worker_backend_resolved events are informational only; both are reported separately.\n\n' +
         'Exit codes:\n' +
         '  0  No mismatches found\n' +
         '  1  Mismatches found\n' +

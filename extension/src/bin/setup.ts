@@ -41,6 +41,7 @@ export interface SetupArgs {
   commandTemplate: string | undefined;
   chainMeeseeks: boolean;
   backend: Backend | undefined;
+  workerBackend: Backend | undefined;
   teamsMode: boolean;
   maxParallel: number;
   effort: EffortValue | undefined;
@@ -125,6 +126,7 @@ function createSetupConfig(): SetupArgs {
     commandTemplate: undefined,
     chainMeeseeks: false,
     backend: undefined,
+    workerBackend: undefined,
     teamsMode: false,
     maxParallel: 5,
     effort: undefined,
@@ -474,6 +476,16 @@ const ARG_HANDLERS: Record<string, ArgHandler> = {
     }
     config.backend = value as Backend;
     config.explicitFlags.add('backend');
+    return index + 1;
+  },
+  '--worker-backend': (config, args, index) => {
+    const value = args[index + 1];
+    if (!value || value.startsWith('--')) die(`--worker-backend requires a value (${BACKENDS.join('|')})`);
+    if (!(BACKENDS as readonly string[]).includes(value)) {
+      die(`--worker-backend must be one of: ${BACKENDS.join(', ')}`);
+    }
+    config.workerBackend = value as Backend;
+    config.explicitFlags.add('worker-backend');
     return index + 1;
   },
   '--teams': (config, _args, index) => {
@@ -874,6 +886,7 @@ function createInitialState(config: SetupArgs, sessionPath: string, taskStr: str
     chain_meeseeks: config.chainMeeseeks,
     schema_version: STATE_MANAGER_DEFAULTS.schemaVersion,
     backend: config.backend,
+    worker_backend: config.workerBackend,
     teams_mode: config.teamsMode || undefined,
     max_parallel: config.teamsMode ? config.maxParallel : undefined,
     effort: config.effort,
@@ -889,7 +902,6 @@ function createInitialState(config: SetupArgs, sessionPath: string, taskStr: str
   if (config.explicitFlags.has('max-time')) {
     state.max_time_minutes = config.timeLimit;
   }
-
   const startCommit = resolveStartCommit();
   if (config.prdPath) state.prd_path = config.prdPath;
   if (startCommit) state.start_commit = startCommit;

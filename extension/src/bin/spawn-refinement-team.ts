@@ -10,8 +10,8 @@ import {
   getDataRoot,
   safeErrorMessage,
 } from '../services/pickle-utils.js';
-import { StateManager } from '../services/state-manager.js';
-import { buildWorkerInvocation, resolveBackendFromStateFileWithSource, SpawnInvocation } from '../services/backend-spawn.js';
+import { StateManager, writeActivityEntry } from '../services/state-manager.js';
+import { buildWorkerInvocation, isBackend, SpawnInvocation } from '../services/backend-spawn.js';
 import { Backend, PromiseTokens, hasToken, Defaults, VALID_ACTIVITY_EVENTS, PipelineRunnerExitCode } from '../types/index.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { runAcPhaseGate } from '../services/ac-phase-gate.js';
@@ -593,14 +593,31 @@ function spawnWorker(
   const includes = [extensionRoot, getDataRoot(), workingDir];
   if (sessionDir) includes.push(sessionDir);
   const statePath = sessionDir ? path.join(sessionDir, 'state.json') : null;
-  const resolvedBackend = statePath
-    ? resolveBackendFromStateFileWithSource(statePath, REFINEMENT_BACKEND).backend
-    : REFINEMENT_BACKEND;
+  if (statePath) {
+    let managerBackend: Backend = REFINEMENT_BACKEND;
+    try {
+      const state = sm.read(statePath) as { backend?: unknown; worker_backend?: unknown } | null;
+      if (isBackend(state?.backend)) managerBackend = state.backend;
+    } catch {
+      /* keep claude fallback */
+    }
+    try {
+      writeActivityEntry(statePath, {
+        event: 'worker_backend_resolved',
+        ts: new Date().toISOString(),
+        backend: managerBackend,
+        worker_backend: null,
+        source: 'env_lock',
+      });
+    } catch {
+      /* best-effort telemetry */
+    }
+  }
   const invocation = buildRefinementWorkerInvocation({
     prompt,
     addDirs: includes,
     maxTurns,
-    backend: resolvedBackend,
+    backend: REFINEMENT_BACKEND,
   });
 
   const env = buildRefinementEnv(process.env);

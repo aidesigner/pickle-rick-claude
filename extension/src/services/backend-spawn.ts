@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { Backend, BACKENDS, State, type BackendResolutionSource } from '../types/index.js';
+import { Backend, BACKENDS, State, type BackendResolutionSource, type WorkerBackendResolutionSource } from '../types/index.js';
 import { StateManager } from './state-manager.js';
 
 export type ReasoningEffort = 'low' | 'medium' | 'high';
@@ -59,6 +59,13 @@ export type BackendPreSpawnAssertion = {
   stateBackend?: Backend;
 };
 
+export type WorkerBackendResolution = {
+  backend: Backend;
+  source: WorkerBackendResolutionSource;
+  workerBackend: Backend | null;
+  managerBackend: Backend;
+};
+
 export function __resetBackendWarnings(): void {
   _warnedBackends.clear();
 }
@@ -110,7 +117,10 @@ export function assertBackendPreSpawn(input: {
   })();
 
   const stateBackend = isBackend(state?.backend) ? state?.backend : undefined;
-  if (!stateBackend || stateBackend === input.resolvedBackend) {
+  const stateWorkerBackend = isBackend((state as { worker_backend?: unknown } | null | undefined)?.worker_backend)
+    ? (state as { worker_backend?: Backend }).worker_backend
+    : undefined;
+  if (!stateBackend || stateBackend === input.resolvedBackend || stateWorkerBackend === input.resolvedBackend) {
     return { mode: 'match', resolvedBackend: input.resolvedBackend, stateBackend };
   }
 
@@ -154,6 +164,50 @@ export function resolveBackend(source: State | { backend?: unknown } | null | un
   return 'claude';
 }
 
+function resolveManagerBackendValue(source: State | { backend?: unknown } | null | undefined): Backend {
+  const raw = source ? (source as { backend?: unknown }).backend : undefined;
+  if (isBackend(raw)) return raw;
+  if (typeof raw === 'string' && raw.length > 0) warnBadBackend('state', raw);
+  const env = process.env.PICKLE_BACKEND;
+  if (isBackend(env)) return env;
+  if (typeof env === 'string' && env.length > 0) warnBadBackend('PICKLE_BACKEND env', env);
+  return 'claude';
+}
+
+export function resolveWorkerBackendFromState(
+  source: State | { backend?: unknown; worker_backend?: unknown } | null | undefined,
+): WorkerBackendResolution {
+  if (process.env.PICKLE_REFINEMENT_LOCK === '1') {
+    return {
+      backend: 'claude',
+      source: 'env_lock',
+      workerBackend: null,
+      managerBackend: resolveManagerBackendValue(source),
+    };
+  }
+
+  const managerBackend = resolveManagerBackendValue(source);
+  const rawWorkerBackend = source ? (source as { worker_backend?: unknown }).worker_backend : undefined;
+  if (isBackend(rawWorkerBackend)) {
+    return {
+      backend: rawWorkerBackend,
+      source: 'worker_backend',
+      workerBackend: rawWorkerBackend,
+      managerBackend,
+    };
+  }
+  if (typeof rawWorkerBackend === 'string' && rawWorkerBackend.length > 0) {
+    warnBadBackend('state.worker_backend', rawWorkerBackend);
+  }
+
+  return {
+    backend: managerBackend,
+    source: 'backend',
+    workerBackend: null,
+    managerBackend,
+  };
+}
+
 export function resolveBackendFromStateFileWithSource(
   statePath: string,
   cliBackend?: Backend,
@@ -192,6 +246,16 @@ export function resolveBackendFromStateFileWithSource(
     warnBadBackend('PICKLE_BACKEND env', envBackend);
   }
   return { backend: 'claude', source: 'default' };
+}
+
+export function resolveWorkerBackendFromStateFile(statePath: string): WorkerBackendResolution {
+  let parsed: { backend?: unknown; worker_backend?: unknown } | null = null;
+  try {
+    parsed = _sm.read(statePath) as { backend?: unknown; worker_backend?: unknown } | null;
+  } catch {
+    parsed = null;
+  }
+  return resolveWorkerBackendFromState(parsed);
 }
 
 export function resolveBackendFromStateFile(statePath: string): Backend {

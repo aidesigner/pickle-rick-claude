@@ -79,6 +79,8 @@ test('setup initializeNewSession: state field set matches schema fixture', () =>
             'pickle.md',
             '--backend',
             'claude',
+            '--worker-backend',
+            'codex',
             '--teams',
             '--max-parallel',
             '5',
@@ -128,6 +130,41 @@ test('backend.invalid: setup rejects unknown --backend with exit 1', () => {
         error => {
             assert.equal(error.status, 1);
             assert.match(String(error.stderr), /--backend must be one of: claude, codex, hermes/);
+            return true;
+        },
+    );
+});
+
+test('worker-backend: setup persists --worker-backend codex to state', () => {
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-worker-backend-data-'));
+    const previousDataRoot = process.env.PICKLE_DATA_ROOT;
+    process.env.PICKLE_DATA_ROOT = dataRoot;
+
+    try {
+        const args = parseArguments(['--backend', 'claude', '--worker-backend', 'codex', '--task', 'worker backend identity']);
+        const session = initializeNewSession(args);
+        const persisted = JSON.parse(fs.readFileSync(path.join(session.sessionRoot, 'state.json'), 'utf-8'));
+
+        assert.equal(session.state.backend, 'claude');
+        assert.equal(session.state.worker_backend, 'codex');
+        assert.equal(persisted.backend, 'claude');
+        assert.equal(persisted.worker_backend, 'codex');
+    } finally {
+        if (previousDataRoot === undefined) {
+            delete process.env.PICKLE_DATA_ROOT;
+        } else {
+            process.env.PICKLE_DATA_ROOT = previousDataRoot;
+        }
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
+test('worker-backend.invalid: setup rejects unknown --worker-backend with exit 1', () => {
+    assert.throws(
+        () => runSetupWithEnv(['--worker-backend', 'bogus', '--task', 'invalid worker backend'], {}),
+        error => {
+            assert.equal(error.status, 1);
+            assert.match(String(error.stderr), /--worker-backend must be one of: claude, codex, hermes/);
             return true;
         },
     );

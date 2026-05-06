@@ -47,6 +47,17 @@ test('AC-BUNDLE-17: every State field has exactly one field invariant', () => {
   }
 });
 
+test('worker_backend invariant: optional field is documented and typed as an optional backend override', () => {
+  const stateSource = fs.readFileSync(stateTypesPath, 'utf8');
+  const claude = fs.readFileSync(claudePath, 'utf8');
+
+  assert.match(stateSource, /worker_backend\?: Backend;/);
+  assert.match(
+    claude,
+    /INVARIANT: `worker_backend` is the optional worker-spawn backend override; worker spawns prefer it over `backend` when present/,
+  );
+});
+
 // ──────────────────────────────────────────────────────────────────────────
 // R-CNAR-1: ticket-tier-budget override-precedence invariants.
 // state.flags.tier_cap_override.<tier>.<field> wins over

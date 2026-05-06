@@ -66,6 +66,7 @@ function createSetupConfig() {
         commandTemplate: undefined,
         chainMeeseeks: false,
         backend: undefined,
+        workerBackend: undefined,
         teamsMode: false,
         maxParallel: 5,
         effort: undefined,
@@ -404,6 +405,17 @@ const ARG_HANDLERS = {
         }
         config.backend = value;
         config.explicitFlags.add('backend');
+        return index + 1;
+    },
+    '--worker-backend': (config, args, index) => {
+        const value = args[index + 1];
+        if (!value || value.startsWith('--'))
+            die(`--worker-backend requires a value (${BACKENDS.join('|')})`);
+        if (!BACKENDS.includes(value)) {
+            die(`--worker-backend must be one of: ${BACKENDS.join(', ')}`);
+        }
+        config.workerBackend = value;
+        config.explicitFlags.add('worker-backend');
         return index + 1;
     },
     '--teams': (config, _args, index) => {
@@ -795,6 +807,7 @@ function createInitialState(config, sessionPath, taskStr) {
         chain_meeseeks: config.chainMeeseeks,
         schema_version: STATE_MANAGER_DEFAULTS.schemaVersion,
         backend: config.backend,
+        worker_backend: config.workerBackend,
         teams_mode: config.teamsMode || undefined,
         max_parallel: config.teamsMode ? config.maxParallel : undefined,
         effort: config.effort,

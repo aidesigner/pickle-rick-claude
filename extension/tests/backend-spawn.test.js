@@ -9,6 +9,8 @@ import {
     buildManagerInvocation,
     resolveBackend,
     resolveBackendFromStateFile,
+    resolveWorkerBackendFromState,
+    resolveWorkerBackendFromStateFile,
     isBackend,
     backendEnvOverrides,
 } from '../services/backend-spawn.js';
@@ -150,6 +152,52 @@ test('resolveBackendFromStateFile: recovers newer same-iteration orphan tmp back
     });
     const promoted = JSON.parse(fs.readFileSync(file, 'utf-8'));
     assert.equal(promoted.backend, 'codex');
+});
+
+test('resolveWorkerBackendFromState: worker_backend wins over backend', () => {
+    withUnsetBackendEnv(() => {
+        const resolved = resolveWorkerBackendFromState({ backend: 'claude', worker_backend: 'codex' });
+        assert.equal(resolved.backend, 'codex');
+        assert.equal(resolved.managerBackend, 'claude');
+        assert.equal(resolved.workerBackend, 'codex');
+        assert.equal(resolved.source, 'worker_backend');
+    });
+});
+
+test('resolveWorkerBackendFromState: falls back to backend when worker_backend unset', () => {
+    withUnsetBackendEnv(() => {
+        const resolved = resolveWorkerBackendFromState({ backend: 'codex' });
+        assert.equal(resolved.backend, 'codex');
+        assert.equal(resolved.managerBackend, 'codex');
+        assert.equal(resolved.workerBackend, null);
+        assert.equal(resolved.source, 'backend');
+    });
+});
+
+test('resolveWorkerBackendFromState: PICKLE_REFINEMENT_LOCK=1 forces claude', () => {
+    const prev = process.env.PICKLE_REFINEMENT_LOCK;
+    process.env.PICKLE_REFINEMENT_LOCK = '1';
+    try {
+        const resolved = resolveWorkerBackendFromState({ backend: 'claude', worker_backend: 'hermes' });
+        assert.equal(resolved.backend, 'claude');
+        assert.equal(resolved.managerBackend, 'claude');
+        assert.equal(resolved.workerBackend, null);
+        assert.equal(resolved.source, 'env_lock');
+    } finally {
+        if (prev === undefined) delete process.env.PICKLE_REFINEMENT_LOCK;
+        else process.env.PICKLE_REFINEMENT_LOCK = prev;
+    }
+});
+
+test('resolveWorkerBackendFromStateFile: reads worker_backend from JSON', () => {
+    const dir = mkTmpDir('backend-spawn-worker-');
+    const file = path.join(dir, 'state.json');
+    fs.writeFileSync(file, JSON.stringify({ backend: 'claude', worker_backend: 'codex', active: true }));
+    const resolved = resolveWorkerBackendFromStateFile(file);
+    assert.equal(resolved.backend, 'codex');
+    assert.equal(resolved.managerBackend, 'claude');
+    assert.equal(resolved.workerBackend, 'codex');
+    assert.equal(resolved.source, 'worker_backend');
 });
 
 // --- buildWorkerInvocation: claude ---
