@@ -1011,3 +1011,174 @@ describe('install.sh typescript symlink', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// R-ITS-1 / R-ITS-2: parity gate tests
+// ---------------------------------------------------------------------------
+
+function buildParityProbeFixtureScript(sourceDir, deployDir) {
+  return `#!/bin/bash
+set -euo pipefail
+SCRIPT_DIR="${sourceDir}"
+EXTENSION_ROOT="${deployDir}"
+
+md5_file() {
+  local f="$1"
+  if command -v md5sum >/dev/null 2>&1; then
+    md5sum "$f" 2>/dev/null | awk '{print $1}'
+  elif command -v md5 >/dev/null 2>&1; then
+    md5 -q "$f" 2>/dev/null
+  else
+    echo ""
+  fi
+}
+
+if [ "\${INSTALL_SKIP_PARITY:-0}" != "1" ]; then
+  _parity_files=(
+    "types/index.js"
+    "services/state-manager.js"
+    "bin/spawn-morty.js"
+    "bin/mux-runner.js"
+    "services/pickle-utils.js"
+  )
+  _mismatches=()
+  for _f in "\${_parity_files[@]}"; do
+    _src_md5=$(md5_file "$SCRIPT_DIR/extension/$_f")
+    _dst_md5=$(md5_file "$EXTENSION_ROOT/extension/$_f")
+    if [ -n "$_src_md5" ] && [ -n "$_dst_md5" ] && [ "$_src_md5" != "$_dst_md5" ]; then
+      _mismatches+=("$_f (src=$_src_md5 dst=$_dst_md5)")
+    fi
+  done
+  if [ \${#_mismatches[@]} -gt 0 ]; then
+    echo "FAIL: install.sh parity probe found \${#_mismatches[@]} mismatch(es):" >&2
+    printf '  - %s\\n' "\${_mismatches[@]}" >&2
+    exit 1
+  fi
+fi
+echo "ok"
+`;
+}
+
+function makeParityProbeFixture({ staleFile = 'types/index.js' } = {}) {
+  const dir = mkdtempSync(path.join(tmpdir(), 'install-parity-gate-'));
+  const sourceDir = path.join(dir, 'source');
+  const deployDir = path.join(dir, 'deploy');
+
+  const hotFiles = [
+    'types/index.js',
+    'services/state-manager.js',
+    'bin/spawn-morty.js',
+    'bin/mux-runner.js',
+    'services/pickle-utils.js',
+  ];
+
+  for (const f of hotFiles) {
+    const srcPath = path.join(sourceDir, 'extension', f);
+    const dstPath = path.join(deployDir, 'extension', f);
+    mkdirSync(path.dirname(srcPath), { recursive: true });
+    mkdirSync(path.dirname(dstPath), { recursive: true });
+    const content = `// current content for ${f}\nexport const v = 'current';\n`;
+    writeFileSync(srcPath, content);
+    if (f === staleFile) {
+      writeFileSync(dstPath, `// STALE content for ${f}\nexport const v = 'stale';\n`);
+    } else {
+      writeFileSync(dstPath, content);
+    }
+  }
+
+  const scriptPath = path.join(dir, 'install.sh');
+  writeFileSync(scriptPath, buildParityProbeFixtureScript(sourceDir, deployDir), { mode: 0o755 });
+  return { dir, sourceDir, deployDir, scriptPath, staleFile };
+}
+
+function runParityProbeFixture(fixture, env = {}) {
+  return spawnSync('bash', [fixture.scriptPath], {
+    encoding: 'utf8',
+    env: { ...process.env, ...env },
+  });
+}
+
+describe('install.sh parity gate (R-ITS-1 / R-ITS-2)', () => {
+  test('AC-ITS-01: install.sh contains force-rebuild rm before npx tsc', () => {
+    const src = readFileSync(INSTALL_SH, 'utf8');
+    assert.ok(
+      src.includes('Force-cleaning compiled JS'),
+      'install.sh must contain force-rebuild banner comment',
+    );
+    assert.ok(
+      src.includes('rm -f') && src.includes('"$SCRIPT_DIR/extension/types/index.js"'),
+      'install.sh must remove compiled types/index.js before tsc',
+    );
+    assert.ok(
+      src.includes('extension/.tsbuildinfo'),
+      'install.sh must remove .tsbuildinfo to invalidate incremental cache',
+    );
+    const lines = src.split('\n');
+    const rmLine = lines.findIndex((l) => l.includes('"$SCRIPT_DIR/extension/types/index.js"'));
+    const tscLine = lines.findIndex((l) => l.includes('npx tsc') && !l.includes('#'));
+    assert.ok(rmLine > 0, 'force-rebuild rm must exist');
+    assert.ok(tscLine > 0, 'npx tsc must exist');
+    assert.ok(
+      rmLine < tscLine,
+      `force-rebuild rm (line ${rmLine + 1}) must precede npx tsc (line ${tscLine + 1})`,
+    );
+  });
+
+  test('AC-ITS-01b: install.sh contains POST-RSYNC MD5 PARITY PROBE banner', () => {
+    const src = readFileSync(INSTALL_SH, 'utf8');
+    assert.ok(
+      src.includes('POST-RSYNC MD5 PARITY PROBE'),
+      'install.sh must contain the R-ITS-2 parity probe banner',
+    );
+    assert.ok(
+      src.includes('INSTALL_SKIP_PARITY'),
+      'install.sh must reference INSTALL_SKIP_PARITY escape hatch',
+    );
+  });
+
+  test('AC-ITS-02 / AC-ITS-06: stale types/index.js causes exit 1 with mismatch listed', () => {
+    const fixture = makeParityProbeFixture({ staleFile: 'types/index.js' });
+    try {
+      const result = runParityProbeFixture(fixture);
+      assert.strictEqual(result.status, 1, `expected exit 1, got ${result.status}\nstdout: ${result.stdout}\nstderr: ${result.stderr}`);
+      assert.match(result.stderr, /FAIL.*parity probe/i, 'stderr must mention FAIL and parity probe');
+      assert.match(result.stderr, /types\/index\.js/, 'stale file must be named in stderr');
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('AC-ITS-03: INSTALL_SKIP_PARITY=1 skips the probe and exits 0', () => {
+    const fixture = makeParityProbeFixture({ staleFile: 'types/index.js' });
+    try {
+      const result = runParityProbeFixture(fixture, { INSTALL_SKIP_PARITY: '1' });
+      assert.strictEqual(result.status, 0, `expected exit 0 with INSTALL_SKIP_PARITY=1, got ${result.status}\nstderr: ${result.stderr}`);
+      assert.match(result.stdout, /ok/);
+      assert.doesNotMatch(result.stderr, /FAIL.*parity probe/i, 'probe must not run when INSTALL_SKIP_PARITY=1');
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('AC-ITS-06 regression: all-matching files pass probe with exit 0', () => {
+    const fixture = makeParityProbeFixture({ staleFile: null });
+    try {
+      const result = runParityProbeFixture(fixture);
+      assert.strictEqual(result.status, 0, `expected exit 0 when all files match, got ${result.status}\nstderr: ${result.stderr}`);
+      assert.match(result.stdout, /ok/);
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('R-ITS-2: stale non-types hot file also triggers exit 1', () => {
+    const fixture = makeParityProbeFixture({ staleFile: 'services/state-manager.js' });
+    try {
+      const result = runParityProbeFixture(fixture);
+      assert.strictEqual(result.status, 1, `expected exit 1 on stale state-manager.js, got ${result.status}`);
+      assert.match(result.stderr, /services\/state-manager\.js/, 'stale state-manager.js must appear in stderr');
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+});

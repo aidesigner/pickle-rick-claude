@@ -156,6 +156,23 @@
           }
         }
       }
+    },
+    "install_sh_parity_check": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "install_sh_parity_check" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["files_checked", "mismatches", "status"],
+          "properties": {
+            "files_checked": { "type": "array", "items": { "type": "string" } },
+            "mismatches": { "type": "array", "items": { "type": "string" } },
+            "status": { "type": "string", "enum": ["pass", "fail"] }
+          }
+        }
+      }
     }
   },
   "oneOf": [
@@ -169,6 +186,7 @@
     { "$ref": "#/definitions/ticket_audit_bypassed" },
     { "$ref": "#/definitions/ticket_audit_manual_edit" },
     { "$ref": "#/definitions/smoke_gate_bypassed" },
-    { "$ref": "#/definitions/bundle_2026_05_04_closer_done" }
+    { "$ref": "#/definitions/bundle_2026_05_04_closer_done" },
+    { "$ref": "#/definitions/install_sh_parity_check" }
   ]
 }

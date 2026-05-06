@@ -38,6 +38,17 @@ SETTINGS_FILE="${PICKLE_INSTALL_ROOT}/../settings.json"
 # a literal here — it gets expanded at hook-invocation time by the shell.
 HOOK_CMD_LITERAL='node ${PICKLE_INSTALL_ROOT:-$HOME/.claude/pickle-rick}/extension/hooks/dispatch.js stop-hook'
 
+md5_file() {
+  local f="$1"
+  if command -v md5sum >/dev/null 2>&1; then
+    md5sum "$f" 2>/dev/null | awk '{print $1}'
+  elif command -v md5 >/dev/null 2>&1; then
+    md5 -q "$f" 2>/dev/null
+  else
+    echo ""
+  fi
+}
+
 compare_semver() {
   local a="$1"
   local b="$2"
@@ -264,6 +275,13 @@ echo "[install.sh] Mode: $INSTALL_MODE" >&2
 if [ "$INSTALL_MODE" = "git" ]; then
   echo "📦 Installing dependencies..."
   (cd "$SCRIPT_DIR/extension" && npm install --no-fund --no-audit)
+  echo "🗑  Force-cleaning compiled JS (R-ITS-1: prevents stale-tsc-cache drift)..."
+  rm -f "$SCRIPT_DIR/extension/types/index.js" \
+        "$SCRIPT_DIR/extension/services/"*.js \
+        "$SCRIPT_DIR/extension/bin/"*.js \
+        "$SCRIPT_DIR/extension/hooks/"*.js \
+        "$SCRIPT_DIR/extension/lib/"*.js \
+        "$SCRIPT_DIR/extension/.tsbuildinfo" 2>/dev/null || true
   echo "🔨 Compiling TypeScript..."
   (cd "$SCRIPT_DIR/extension" && npx tsc)
   # Sanity check: compiled JS schemaVersion must match source TS
@@ -306,6 +324,37 @@ rsync -a --delete --delete-excluded \
   --exclude='tsconfig.json' \
   --exclude='package-lock.json' \
   "$SCRIPT_DIR/extension/" "$EXTENSION_ROOT/extension/"
+
+# --- POST-RSYNC MD5 PARITY PROBE (R-ITS-2) ---
+# Verifies source-built and deployed copies of the 5 most-trafficked compiled
+# JS files are byte-identical after rsync. Mismatch → exit 1 with diff list.
+# Set INSTALL_SKIP_PARITY=1 to bypass for emergency deploys.
+if [ "${INSTALL_SKIP_PARITY:-0}" != "1" ] && [ "$INSTALL_MODE" = "git" ]; then
+  _parity_files=(
+    "types/index.js"
+    "services/state-manager.js"
+    "bin/spawn-morty.js"
+    "bin/mux-runner.js"
+    "services/pickle-utils.js"
+  )
+  _mismatches=()
+  for _f in "${_parity_files[@]}"; do
+    _src_md5=$(md5_file "$SCRIPT_DIR/extension/$_f")
+    _dst_md5=$(md5_file "$EXTENSION_ROOT/extension/$_f")
+    if [ -n "$_src_md5" ] && [ -n "$_dst_md5" ] && [ "$_src_md5" != "$_dst_md5" ]; then
+      _mismatches+=("$_f (src=$_src_md5 dst=$_dst_md5)")
+    fi
+  done
+  if [ ${#_mismatches[@]} -gt 0 ]; then
+    echo "❌ FAIL: install.sh parity probe found ${#_mismatches[@]} mismatch(es):" >&2
+    printf '  - %s\n' "${_mismatches[@]}" >&2
+    node "${EXTENSION_ROOT}/extension/bin/log-activity.js" install_sh_parity_check \
+      "parity=fail mismatches=${#_mismatches[@]}" 2>/dev/null || true
+    exit 1
+  fi
+  node "${EXTENSION_ROOT}/extension/bin/log-activity.js" install_sh_parity_check \
+    "parity=pass files_checked=${#_parity_files[@]}" 2>/dev/null || true
+fi
 
 DEPLOYED_V="$(read_package_version "$EXTENSION_ROOT/extension/package.json")"
 UPDATE_CACHE_FILE="$EXTENSION_ROOT/update-check.json"

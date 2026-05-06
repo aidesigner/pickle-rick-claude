@@ -206,6 +206,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'cap_check_skipped_stale_cache',
     'ticket_cache_cleared',
     'orphan_map_entry_pruned',
+    'install_sh_parity_check',
 ];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {
