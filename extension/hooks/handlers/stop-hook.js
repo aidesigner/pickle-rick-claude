@@ -440,6 +440,13 @@ function classifyDecisionInternal(state, transcript, role) {
     const maxIter = finiteNumber(state.max_iterations);
     const curIter = finiteNumber(state.iteration);
     const iterSuffix = maxIter > 0 ? ` of ${maxIter}` : '';
+    if (state.tmux_mode === true) {
+        return {
+            decision: 'approve',
+            logMessage: 'Decision: APPROVE (tmux owns this loop, launcher may stop)',
+            token,
+        };
+    }
     return {
         decision: 'block',
         reason: `🥒 **Pickle Rick Loop Active** (Iteration ${curIter}${iterSuffix})`,

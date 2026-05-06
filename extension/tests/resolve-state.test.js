@@ -342,6 +342,39 @@ test('resolveStateFile: mapped dead-pid active session falls back to the live ac
   }
 });
 
+test('resolveStateFile: mapped pid=null orphan with dead mapped PID falls back to the live active state for the cwd', () => {
+  const tmp = tmpDir();
+  try {
+    const staleSessionDir = path.join(tmp, 'sessions', 'stale-session');
+    const liveSessionDir = path.join(tmp, 'sessions', 'live-session');
+    fs.mkdirSync(staleSessionDir, { recursive: true });
+    fs.mkdirSync(liveSessionDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(staleSessionDir, 'state.json'),
+      JSON.stringify(baseState({ active: true, pid: null, session_dir: staleSessionDir })),
+    );
+    const liveStateFile = path.join(liveSessionDir, 'state.json');
+    fs.writeFileSync(
+      liveStateFile,
+      JSON.stringify(baseState({ active: true, session_dir: liveSessionDir })),
+    );
+    fs.writeFileSync(
+      path.join(tmp, 'current_sessions.json'),
+      JSON.stringify({ [process.cwd()]: { sessionPath: staleSessionDir, pid: 99999999 } }),
+    );
+
+    const orig = process.env.PICKLE_STATE_FILE;
+    delete process.env.PICKLE_STATE_FILE;
+    try {
+      assert.equal(resolveStateFile(tmp), liveStateFile);
+    } finally {
+      if (orig !== undefined) process.env.PICKLE_STATE_FILE = orig;
+    }
+  } finally {
+    fs.rmSync(tmp, { recursive: true });
+  }
+});
+
 test('resolveStateFile: returns null when sessions map is corrupt JSON', () => {
   const tmp = tmpDir();
   try {

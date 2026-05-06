@@ -230,6 +230,27 @@ function writeExtensionDirFallbackActivity(requestedPath, fallbackPath, reason) 
         process.stderr.write(`[pickle-rick] Failed to log extension_dir_fallback: ${safeErrorMessage(err)}\n`);
     }
 }
+function writePhantomSessionDemotedActivity(cwd, sessionPath) {
+    try {
+        const ts = new Date();
+        const activityDir = path.join(getCanonicalActivityDataRoot(), 'activity');
+        fs.mkdirSync(activityDir, { recursive: true });
+        const event = {
+            ts: ts.toISOString(),
+            event: 'phantom_session_demoted',
+            source: 'pickle',
+            requested_path: cwd,
+            session_path: sessionPath,
+            exit_reason: 'orphan-session-dir-missing',
+        };
+        fs.appendFileSync(path.join(activityDir, `${formatLocalDateKey(ts)}.jsonl`), `${JSON.stringify(event)}\n`, {
+            mode: 0o600,
+        });
+    }
+    catch (err) {
+        process.stderr.write(`[pickle-rick] Failed to log phantom_session_demoted: ${safeErrorMessage(err)}\n`);
+    }
+}
 function getCanonicalActivityDataRoot() {
     if (process.env.PICKLE_DATA_ROOT)
         return process.env.PICKLE_DATA_ROOT;
@@ -971,6 +992,7 @@ export function pruneOrphanedMapEntries(dataRoot) {
     for (const [cwd, entry] of entries) {
         const sessionPath = resolveSessionPath(entry);
         if (!sessionPath) {
+            writePhantomSessionDemotedActivity(cwd, '');
             pruned++;
             continue;
         }
@@ -982,6 +1004,7 @@ export function pruneOrphanedMapEntries(dataRoot) {
             // dirExists already false
         }
         if (!dirExists) {
+            writePhantomSessionDemotedActivity(cwd, sessionPath);
             pruned++;
             continue;
         }
@@ -994,6 +1017,7 @@ export function pruneOrphanedMapEntries(dataRoot) {
             // stateReadable already false
         }
         if (!stateReadable) {
+            writePhantomSessionDemotedActivity(cwd, sessionPath);
             pruned++;
             continue;
         }

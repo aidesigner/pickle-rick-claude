@@ -11,6 +11,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { STATE_MANAGER_DEFAULTS, LATEST_SCHEMA_VERSION, StateError, LockError, TransactionError, SchemaVersionMismatchError, VALID_ACTIVITY_EVENTS, } from '../types/index.js';
 import { writeStateFile, safeErrorMessage } from './pickle-utils.js';
+import { readRecoverableJsonObject } from './recoverable-json.js';
 // ---------------------------------------------------------------------------
 // Deploy-parity self-check
 // ---------------------------------------------------------------------------
@@ -110,6 +111,49 @@ function presentV3StateShapeMarkers(state) {
 }
 function isRecord(value) {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+function readMappedPid(entry) {
+    if (!isRecord(entry) || typeof entry.pid !== 'number')
+        return null;
+    const pid = Number(entry.pid);
+    return Number.isFinite(pid) && pid > 0 ? pid : null;
+}
+function readSessionsMapForState(statePath, workingDir) {
+    if (typeof workingDir !== 'string' || workingDir.trim() === '')
+        return null;
+    const sessionDir = path.dirname(statePath);
+    const sessionsDir = path.dirname(sessionDir);
+    const dataRoot = path.dirname(sessionsDir);
+    const sessionsMapPath = path.join(dataRoot, 'current_sessions.json');
+    try {
+        const map = readRecoverableJsonObject(sessionsMapPath);
+        if (!map || typeof map !== 'object')
+            return null;
+        const entry = map[workingDir];
+        if (typeof entry === 'string') {
+            return path.resolve(entry) === path.resolve(sessionDir) ? entry : null;
+        }
+        if (!isRecord(entry) || typeof entry.sessionPath !== 'string')
+            return null;
+        return path.resolve(entry.sessionPath) === path.resolve(sessionDir) ? entry : null;
+    }
+    catch {
+        return null;
+    }
+}
+function hasPausedOrphanDemotion(activity) {
+    return Array.isArray(activity) &&
+        activity.some(a => typeof a === 'object' && a !== null && a.kind === 'paused_session_orphan_demoted');
+}
+function getPausedOrphanDemotion(statePath, state, preMigrationMtimeMs) {
+    const ageMs = preMigrationMtimeMs > 0 ? Date.now() - preMigrationMtimeMs : Infinity;
+    const mappedPid = readMappedPid(readSessionsMapForState(statePath, state.working_dir));
+    const deadMappedPid = mappedPid !== null && !isProcessAlive(mappedPid);
+    return {
+        ageMs,
+        mappedPid,
+        shouldDemote: ageMs >= 300_000 || deadMappedPid,
+    };
 }
 export class InvalidActivityEventError extends Error {
     event;
@@ -575,29 +619,28 @@ export class StateManager {
             return;
         if (state.pid === undefined || state.pid === null) {
             // Paused-orphan demotion: no process ever claimed this session (pid=null).
-            // If the state file is stale (>5 min), it will never be claimed — demote.
-            const alreadyDemoted = Array.isArray(state.activity) &&
-                state.activity.some(a => typeof a === 'object' && a !== null && a.kind === 'paused_session_orphan_demoted');
-            if (!alreadyDemoted) {
-                // Use pre-migration mtime when available; 0 → Infinity (treat as stale).
-                const ageMs = preMigrationMtimeMs > 0 ? Date.now() - preMigrationMtimeMs : Infinity;
-                if (ageMs >= 300_000) {
-                    state.active = false;
-                    state.exit_reason = 'orphan-paused-no-claim';
-                    state.activity = state.activity ?? [];
-                    state.activity.push({
-                        event: 'paused_session_orphan_demoted',
-                        kind: 'paused_session_orphan_demoted',
-                        pid_orig: null,
-                        mtime_age_seconds: Math.floor(ageMs / 1000),
-                        ts: new Date().toISOString(),
-                    });
-                    try {
-                        writeStateFile(statePath, state);
-                    }
-                    catch { /* best-effort */ }
-                }
+            // If the state file is stale (>5 min), or its mapped owner PID is dead,
+            // it will never be claimed — demote.
+            if (hasPausedOrphanDemotion(state.activity))
+                return;
+            const demotion = getPausedOrphanDemotion(statePath, state, preMigrationMtimeMs);
+            if (!demotion.shouldDemote)
+                return;
+            state.active = false;
+            state.exit_reason = 'orphan-paused-no-claim';
+            state.activity = state.activity ?? [];
+            state.activity.push({
+                event: 'paused_session_orphan_demoted',
+                kind: 'paused_session_orphan_demoted',
+                pid_orig: null,
+                mtime_age_seconds: Math.floor(demotion.ageMs / 1000),
+                mapped_pid: demotion.mappedPid,
+                ts: new Date().toISOString(),
+            });
+            try {
+                writeStateFile(statePath, state);
             }
+            catch { /* best-effort */ }
             return;
         }
         const pid = Number(state.pid);

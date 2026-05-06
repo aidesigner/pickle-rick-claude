@@ -273,14 +273,14 @@ test('stop-hook: stale state (active:false + tmux_mode:true) → inactive path f
     }
 });
 
-test('stop-hook: tmux_mode, PICKLE_STATE_FILE set (subprocess) → does not early-exit', () => {
-  // Subprocess: has PICKLE_STATE_FILE, should fall through to normal block logic
+test('stop-hook: tmux_mode, PICKLE_STATE_FILE set (subprocess) → approves when tmux owns the loop', () => {
+  // Subprocess: default fallthrough still approves once tmux owns the loop.
   const { decision } = runHook({
     state: baseState({ tmux_mode: true }),
     setStateFileEnv: true,
-    response: '', // no token → default block
+    response: '',
   });
-  assert.equal(decision.decision, 'block', 'tmux subprocess must not bypass the hook');
+  assert.deepEqual(decision, { decision: 'approve' });
 });
 
 // ---------------------------------------------------------------------------

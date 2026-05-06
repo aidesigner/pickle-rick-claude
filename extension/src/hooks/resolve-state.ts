@@ -17,6 +17,7 @@ interface LookupState {
   working_dir?: unknown;
   started_at?: unknown;
   state_mtime_ms?: number;
+  pid?: unknown;
 }
 
 interface StateFileCandidate {
@@ -36,10 +37,34 @@ function readLookupState(stateFile: string): LookupState | null {
       working_dir: state.working_dir,
       started_at: state.started_at,
       state_mtime_ms: stateMtimeMs,
+      pid: state.pid,
     };
   } catch {
     return null;
   }
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function readMappedPid(entry: unknown): number | null {
+  if (entry !== null && typeof entry === 'object' && typeof (entry as Record<string, unknown>).pid === 'number') {
+    const pid = Number((entry as Record<string, unknown>).pid);
+    if (Number.isFinite(pid) && pid > 0) return pid;
+  }
+  return null;
+}
+
+function isMappedOrphanState(entry: unknown, state: LookupState | null): boolean {
+  if (!state || state.active !== true || state.pid !== null) return false;
+  const mappedPid = readMappedPid(entry);
+  return mappedPid !== null && !isProcessAlive(mappedPid);
 }
 
 function getStateFileRecencyMs(state: LookupState): number {
@@ -135,11 +160,13 @@ export function resolveStateFile(dataDir: string): string | null {
   try {
     const map = readRecoverableJsonObject(sessionsMapPath) as Record<string, unknown> | null;
     if (map) {
-      const sessionPath = resolveSessionPath(map[cwd]);
+      const mappedEntry = map[cwd];
+      const sessionPath = resolveSessionPath(mappedEntry);
       if (sessionPath) {
         const mappedStateFile = path.join(sessionPath, 'state.json');
         const mappedMatch = resolveMatchingStateFile(mappedStateFile, cwd);
-        if (mappedMatch) {
+        const mappedState = mappedMatch ? readLookupState(mappedStateFile) : null;
+        if (mappedMatch && !isMappedOrphanState(mappedEntry, mappedState)) {
           if (mappedMatch.active === true) return mappedMatch.stateFile;
           if (!fallbackStateFile) fallbackStateFile = mappedMatch.stateFile;
         }

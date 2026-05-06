@@ -196,6 +196,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'pkgjson_full_drift_detected',
     'pkgjson_dep_or_src_missing',
     'paused_session_orphan_demoted',
+    'phantom_session_demoted',
     'worker_spawn_backend_resolved',
     'worker_spawn_backend_override',
     'worker_spawn_backend_mismatch',

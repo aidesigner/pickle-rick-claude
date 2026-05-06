@@ -22,11 +22,35 @@ function readLookupState(stateFile) {
             working_dir: state.working_dir,
             started_at: state.started_at,
             state_mtime_ms: stateMtimeMs,
+            pid: state.pid,
         };
     }
     catch {
         return null;
     }
+}
+function isProcessAlive(pid) {
+    try {
+        process.kill(pid, 0);
+        return true;
+    }
+    catch {
+        return false;
+    }
+}
+function readMappedPid(entry) {
+    if (entry !== null && typeof entry === 'object' && typeof entry.pid === 'number') {
+        const pid = Number(entry.pid);
+        if (Number.isFinite(pid) && pid > 0)
+            return pid;
+    }
+    return null;
+}
+function isMappedOrphanState(entry, state) {
+    if (!state || state.active !== true || state.pid !== null)
+        return false;
+    const mappedPid = readMappedPid(entry);
+    return mappedPid !== null && !isProcessAlive(mappedPid);
 }
 function getStateFileRecencyMs(state) {
     if (typeof state.started_at === 'string') {
@@ -109,11 +133,13 @@ export function resolveStateFile(dataDir) {
     try {
         const map = readRecoverableJsonObject(sessionsMapPath);
         if (map) {
-            const sessionPath = resolveSessionPath(map[cwd]);
+            const mappedEntry = map[cwd];
+            const sessionPath = resolveSessionPath(mappedEntry);
             if (sessionPath) {
                 const mappedStateFile = path.join(sessionPath, 'state.json');
                 const mappedMatch = resolveMatchingStateFile(mappedStateFile, cwd);
-                if (mappedMatch) {
+                const mappedState = mappedMatch ? readLookupState(mappedStateFile) : null;
+                if (mappedMatch && !isMappedOrphanState(mappedEntry, mappedState)) {
                     if (mappedMatch.active === true)
                         return mappedMatch.stateFile;
                     if (!fallbackStateFile)

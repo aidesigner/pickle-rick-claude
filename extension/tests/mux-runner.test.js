@@ -394,6 +394,10 @@ test('mux-runner: SIGTERM shutdown preserves a newer orphan tmp session payload'
         const templatesDir = path.join(tmpRoot, 'templates');
         fs.mkdirSync(templatesDir, { recursive: true });
         fs.writeFileSync(path.join(templatesDir, 'pickle.md'), '# Pickle\n\nResume: $ARGUMENTS\n');
+        fs.writeFileSync(
+            path.join(tmpRoot, 'current_sessions.json'),
+            JSON.stringify({ [tmpRoot]: { sessionPath: sessionDir, pid: 12345 } }, null, 2),
+        );
 
         const fakeBin = path.join(tmpRoot, 'fake-bin');
         fs.mkdirSync(fakeBin, { recursive: true });
@@ -402,7 +406,13 @@ test('mux-runner: SIGTERM shutdown preserves a newer orphan tmp session payload'
         fs.chmodSync(fakeClaude, 0o755);
 
         const child = spawn(process.execPath, [TMUX_RUNNER_BIN, sessionDir], {
-            env: { ...process.env, EXTENSION_DIR: tmpRoot, PATH: fakeBin, PICKLE_BACKEND: 'claude' },
+            env: {
+                ...process.env,
+                EXTENSION_DIR: tmpRoot,
+                PICKLE_DATA_ROOT: tmpRoot,
+                PATH: fakeBin,
+                PICKLE_BACKEND: 'claude',
+            },
             stdio: ['ignore', 'pipe', 'pipe'],
         });
         let stdout = '';
@@ -435,8 +445,7 @@ test('mux-runner: SIGTERM shutdown preserves a newer orphan tmp session payload'
             session_dir: sessionDir,
         }, null, 2));
 
-        child.kill('SIGTERM');
-        await new Promise((resolve, reject) => {
+        const exitPromise = new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
                 child.kill('SIGKILL');
                 reject(new Error('mux-runner did not exit after SIGTERM'));
@@ -450,6 +459,8 @@ test('mux-runner: SIGTERM shutdown preserves a newer orphan tmp session payload'
                 reject(err);
             });
         });
+        child.kill('SIGTERM');
+        await exitPromise;
 
         const combined = stdout + stderr;
         const finalState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
@@ -461,6 +472,11 @@ test('mux-runner: SIGTERM shutdown preserves a newer orphan tmp session payload'
         assert.equal(finalState.current_ticket, 'T-RECOVERED', 'shutdown must preserve the recovered session payload');
         assert.equal(finalState.active, false, 'shutdown must deactivate the session');
         assert.equal(fs.existsSync(orphanTmpPath), false, 'orphan tmp should be consumed during shutdown recovery');
+        assert.deepEqual(
+            JSON.parse(fs.readFileSync(path.join(tmpRoot, 'current_sessions.json'), 'utf-8')),
+            {},
+            'signal shutdown must remove the current_sessions.json entry for the tmux owner',
+        );
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }

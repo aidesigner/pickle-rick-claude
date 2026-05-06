@@ -22,6 +22,53 @@ let currentChildProc = null;
 function readRunnerState(statePath) {
     return sm.read(statePath);
 }
+function removeRunnerSessionMapEntry(statePath, log) {
+    const sessionsMapPath = path.join(getDataRoot(), 'current_sessions.json');
+    const sessionDir = path.dirname(statePath);
+    const cwd = (() => {
+        try {
+            const state = readRunnerState(statePath);
+            return typeof state.working_dir === 'string' ? state.working_dir : '';
+        }
+        catch {
+            return '';
+        }
+    })();
+    if (!cwd)
+        return;
+    try {
+        const map = (readRecoverableJsonObject(sessionsMapPath) || {});
+        let removed = false;
+        for (const [entryCwd, entryValue] of Object.entries(map)) {
+            const mappedSessionPath = typeof entryValue === 'string'
+                ? entryValue
+                : (entryValue && typeof entryValue === 'object' && typeof entryValue.sessionPath === 'string')
+                    ? String(entryValue.sessionPath)
+                    : '';
+            if (entryCwd === cwd || (mappedSessionPath && path.resolve(mappedSessionPath) === path.resolve(sessionDir))) {
+                delete map[entryCwd];
+                removed = true;
+            }
+        }
+        if (!removed)
+            return;
+        const tmpMap = `${sessionsMapPath}.tmp.${process.pid}.${Date.now()}`;
+        try {
+            fs.writeFileSync(tmpMap, JSON.stringify(map, null, 2));
+            fs.renameSync(tmpMap, sessionsMapPath);
+        }
+        catch (err) {
+            try {
+                fs.unlinkSync(tmpMap);
+            }
+            catch { /* ignore cleanup failure */ }
+            throw err;
+        }
+    }
+    catch (err) {
+        log(`WARNING: failed to remove current_sessions.json entry for forensic exit: ${safeErrorMessage(err)}`);
+    }
+}
 export function killCurrentChild() {
     if (currentChildProc && !currentChildProc.killed) {
         currentChildProc.kill('SIGTERM');
@@ -1696,6 +1743,7 @@ export function setupSignalHandlers(statePath, log) {
         log(`Received ${signal} — deactivating session`);
         recordExitReason(statePath, 'signal');
         safeDeactivate(statePath);
+        removeRunnerSessionMapEntry(statePath, log);
         if (currentChildProc && !currentChildProc.killed)
             currentChildProc.kill('SIGTERM');
         logActivity({ event: 'session_end', source: 'pickle', session: path.basename(path.dirname(statePath)), mode: 'tmux', backend });
@@ -2415,6 +2463,7 @@ async function runMuxRunnerMain() {
         log(`Received ${signal} — deactivating session`);
         recordExitReason(statePath, 'signal');
         safeDeactivate(statePath);
+        removeRunnerSessionMapEntry(statePath, log);
         if (currentChildProc && !currentChildProc.killed) {
             currentChildProc.kill('SIGTERM');
         }
@@ -3234,6 +3283,7 @@ async function runMuxRunnerMain() {
             log('Subprocess error. Exiting loop.');
             recordExitReason(statePath, 'error');
             safeDeactivate(statePath);
+            removeRunnerSessionMapEntry(statePath, log);
             exitReason = 'error';
             break;
         }
