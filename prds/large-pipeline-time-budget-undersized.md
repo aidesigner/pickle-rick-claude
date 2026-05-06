@@ -1,6 +1,6 @@
 # PRD: Large Pipeline Time Budget Undersized + Enforcement Drift
 
-**Status**: SHIPPED via v1.62.1 (2026-04-30) — AC-LPB-01,02,05,08 shipped via `2319cee` (pickle-utils topo-sort + setup launch sizing + epoch reset + throughput config + Step 0.5); AC-LPB-03,04 shipped via `202ac7b` (mux-runner time_limit cap-gate + schema-mismatch escalation); AC-LPB-06 shipped via `643caa5` (monitor EXCEEDED indicator). AC-LPB-07 (manifest-aware default cleanup) is a follow-up if the manifest-default approach proves preferable to launch-time advisory.
+**Status**: SHIPPED via v1.62.1 (2026-04-30) — AC-LPB-01,02,05,08 shipped via `2319cee` (pickle-utils topo-sort + setup launch sizing + epoch reset + throughput config + Step 0.5); AC-LPB-03,04 shipped via `202ac7b` (mux-runner time_limit cap-gate + schema-mismatch escalation); AC-LPB-06 shipped via `643caa5` (monitor EXCEEDED indicator). AC-LPB-07 is SUPERSEDED by slot `1t` / ticket `bb08867f`, which removes the implicit wall-clock default entirely instead of sizing it from the manifest.
 **Author**: Pickle Rick
 **Project**: `pickle-rick-claude` — Claude Code extension
 **Repo**: `https://github.com/gregorydickson/pickle-rick-claude` — branch `main`

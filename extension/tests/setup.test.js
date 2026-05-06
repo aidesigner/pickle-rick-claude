@@ -248,6 +248,29 @@ test('setup: --tmux does not affect other state fields', () => {
     }
 });
 
+test('setup: fresh session without --max-time omits max_time_minutes and emits time_cap_disabled_default', () => {
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-no-cap-default-'));
+    const previousDataRoot = process.env.PICKLE_DATA_ROOT;
+    process.env.PICKLE_DATA_ROOT = dataRoot;
+    try {
+        const sessionPath = runSetup(['--task', 'no-cap-default-test']);
+        const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+        assert.equal('max_time_minutes' in state, false, 'fresh setup should omit max_time_minutes when --max-time is not passed');
+
+        const activityDir = path.join(dataRoot, 'activity');
+        const files = fs.existsSync(activityDir) ? fs.readdirSync(activityDir).filter((f) => f.endsWith('.jsonl')) : [];
+        const events = files
+            .flatMap((f) => fs.readFileSync(path.join(activityDir, f), 'utf-8').split(/\r?\n/).filter(Boolean))
+            .map((line) => JSON.parse(line));
+        const disabled = events.find((event) => event.event === 'time_cap_disabled_default');
+        assert.ok(disabled, 'fresh no-cap setup must emit time_cap_disabled_default');
+    } finally {
+        if (previousDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = previousDataRoot;
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
 test('setup: --resume preserves stored limits when no explicit flags given', () => {
     // Create a session with custom limits
     const sessionPath = runSetup(['--max-iterations', '20', '--max-time', '120', '--worker-timeout', '3000', '--task', 'resume-limits-test']);
@@ -1024,7 +1047,6 @@ test('setup: falls back to default_max_iterations when backend missing from per-
 test('setup: ignores fractional numeric settings and backend budgets', () => {
     const extRoot = makeExtensionRootWithSettings({
         default_max_iterations: 250.5,
-        default_max_time_minutes: 720.25,
         default_worker_timeout_seconds: 1200.75,
         iteration_budget_per_backend: { claude: 100, codex: 80.5 },
     });
@@ -1038,7 +1060,7 @@ test('setup: ignores fractional numeric settings and backend budgets', () => {
     try {
         const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
         assert.equal(state.max_iterations, 100, 'fractional max_iterations and backend budgets must fall back to defaults');
-        assert.equal(state.max_time_minutes, 720, 'fractional max_time must fall back to defaults');
+        assert.equal('max_time_minutes' in state, false, 'fractional max_time setting should be ignored and no default cap should be written');
         assert.equal(state.worker_timeout_seconds, 1200, 'fractional worker timeout must fall back to defaults');
     } finally {
         codexEnv.cleanup();

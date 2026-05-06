@@ -4,7 +4,7 @@ export interface State {
   step: Step;
   iteration: number;
   max_iterations: number;
-  max_time_minutes: number;
+  max_time_minutes?: number;
   worker_timeout_seconds: number;
   start_time_epoch: number;
   completion_promise: string | null;

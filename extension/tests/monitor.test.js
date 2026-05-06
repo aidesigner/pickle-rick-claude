@@ -697,6 +697,7 @@ test('renderElapsedField: no max shows raw elapsed without EXCEEDED', () => {
     const out = stripAnsi(renderElapsedField(1000 * 60, 0));
     assert.ok(!out.includes('EXCEEDED'), `expected no EXCEEDED when no max, got: ${out}`);
     assert.ok(!out.includes('/'), `expected no ceiling label when no max, got: ${out}`);
+    assert.ok(out.includes('elapsed:'), `expected elapsed-only label when no max, got: ${out}`);
 });
 
 // --- AC-SSV-07: stdout watchdog ---

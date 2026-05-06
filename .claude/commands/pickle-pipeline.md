@@ -70,7 +70,7 @@ EXPECTED_MIN=$(awk "BEGIN { print int((${TICKET_COUNT} / ${THROUGHPUT}) * 60 + 0
 RECOMMENDED_MIN=$(awk "BEGIN { print int(${EXPECTED_MIN} * 1.25 + 0.999) }")
 ```
 
-**0.5b — Decide.** Let `MAX_TIME` be the value from `--max-time` if passed, else `default_max_time_minutes` from `pickle_settings.json` (720).
+**0.5b — Decide.** Let `MAX_TIME` be the value from `--max-time` if passed. Otherwise treat wall-clock cap as disabled by default and only opt in if you explicitly want a session wall.
 
 - If `MAX_TIME == 0` (unlimited) → skip the rest of Step 0.5.
 - If `MAX_TIME >= EXPECTED_MIN * 0.8` → log `"sizing-check: ok (max_time=${MAX_TIME}m vs expected=${EXPECTED_MIN}m for ${TICKET_COUNT} tickets at ${THROUGHPUT} t/h)"` and continue.

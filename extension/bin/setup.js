@@ -54,7 +54,7 @@ function buildSetupPaths() {
 function createSetupConfig() {
     return {
         loopLimit: 100,
-        timeLimit: 720,
+        timeLimit: 0,
         workerTimeout: Defaults.WORKER_TIMEOUT_SECONDS,
         promiseToken: null,
         resumeMode: false,
@@ -209,7 +209,6 @@ function loadSettings(config, rootDir) {
         if (!settings)
             return;
         applyPositiveIntegerSetting(settings, 'default_max_iterations', value => { config.loopLimit = value; });
-        applyPositiveIntegerSetting(settings, 'default_max_time_minutes', value => { config.timeLimit = value; });
         applyPositiveIntegerSetting(settings, 'default_worker_timeout_seconds', value => { config.workerTimeout = value; });
         config.managerIdleBackoffFallbackMs = resolveManagerIdleBackoffFallbackMs(settings.manager_idle_backoff_fallback_ms);
         config.iterationBudgetPerBackend = readIterationBudgetPerBackend(settings);
@@ -609,14 +608,12 @@ function applyResumeConfig(s, config, fullSessionPath, codexVersionSeen) {
  * fields obey CLI-wins-then-persisted-state-wins precedence. If a CLI flag was
  * passed, it overrides and is written into state.json. If the flag was NOT
  * passed, the persisted value in state.json is the authoritative cap and we
- * leave it alone. When the persisted value is missing or non-finite/non-positive
- * AND the user didn't pass the flag, we don't silently default — we backfill
- * the documented default (config.loopLimit / config.timeLimit / config.workerTimeout
- * computed in parseArguments from settings + per-backend budget) into state and
- * emit a stderr warning so operators can see the substitution. This eliminates
- * the display-vs-effective mismatch where setup printed `Limit: 15` but state
- * persisted 100 (or vice versa) — after this runs, syncConfigFromState reads
- * the same numbers we just persisted.
+ * leave it alone. For max_iterations / worker_timeout_seconds, missing or
+ * invalid persisted values still fall back to the documented defaults with a
+ * warning so display and persisted state stay aligned. For max_time_minutes,
+ * the default is now "disabled unless explicitly set", so missing or invalid
+ * persisted values cause the field to be removed instead of silently
+ * reintroducing a wall-clock cap on resume.
  */
 function applyResumeLimitConfig(s, config) {
     if (config.explicitFlags.has('max-iterations')) {
@@ -630,10 +627,14 @@ function applyResumeLimitConfig(s, config) {
     if (config.explicitFlags.has('max-time')) {
         s.max_time_minutes = config.timeLimit;
     }
-    else if (!Number.isFinite(Number(s.max_time_minutes))) {
-        process.stderr.write(`[setup] WARNING: --resume found no persisted max_time_minutes and --max-time was not passed; ` +
-            `falling back to documented default ${config.timeLimit}. Pass --max-time to override.\n`);
-        s.max_time_minutes = config.timeLimit;
+    else {
+        const persisted = Number(s.max_time_minutes);
+        if (Number.isFinite(persisted) && persisted >= 0) {
+            // Preserve explicit persisted opt-in caps, including `0` for unlimited.
+        }
+        else {
+            delete s.max_time_minutes;
+        }
     }
     if (config.explicitFlags.has('worker-timeout')) {
         s.worker_timeout_seconds = config.workerTimeout;
@@ -671,7 +672,7 @@ function syncConfigFromState(config, state) {
     const rawLoopLimit = Number(state.max_iterations);
     config.loopLimit = Number.isFinite(rawLoopLimit) ? rawLoopLimit : config.loopLimit;
     const rawTimeLimit = Number(state.max_time_minutes);
-    config.timeLimit = Number.isFinite(rawTimeLimit) ? rawTimeLimit : config.timeLimit;
+    config.timeLimit = Number.isFinite(rawTimeLimit) && rawTimeLimit >= 0 ? rawTimeLimit : 0;
     const rawWorkerTimeout = Number(state.worker_timeout_seconds);
     config.workerTimeout = Number.isFinite(rawWorkerTimeout) && rawWorkerTimeout > 0 ? rawWorkerTimeout : config.workerTimeout;
     const rawMinIter = Number(state.min_iterations);
@@ -769,7 +770,7 @@ function resolveTask(config) {
  *   4. applyPerBackendBudget (iteration_budget_per_backend[backend], skipped when
  *      --max-iterations was explicit)
  * The State field names below match the existing schema (max_iterations,
- * max_time_minutes, worker_timeout_seconds, backend) — do not introduce parallel
+ * max_time_minutes opt-in, worker_timeout_seconds, backend) — do not introduce parallel
  * fields. mux-runner.ts reads state.max_iterations directly to compute the cap.
  */
 function createInitialState(config, sessionPath, taskStr) {
@@ -780,7 +781,6 @@ function createInitialState(config, sessionPath, taskStr) {
         step: 'prd',
         iteration: 0,
         max_iterations: config.loopLimit,
-        max_time_minutes: config.timeLimit,
         worker_timeout_seconds: config.workerTimeout,
         start_time_epoch: config.startEpoch,
         completion_promise: config.promiseToken,
@@ -806,6 +806,9 @@ function createInitialState(config, sessionPath, taskStr) {
         readiness: { cycle_history: [] },
         codex_version_seen: codexVersionSeen,
     };
+    if (config.explicitFlags.has('max-time')) {
+        state.max_time_minutes = config.timeLimit;
+    }
     const startCommit = resolveStartCommit();
     if (config.prdPath)
         state.prd_path = config.prdPath;
@@ -835,6 +838,14 @@ function createSession(config, paths, taskStr) {
         original_prompt: taskStr,
         backend: state.backend || 'claude',
     });
+    if (!('max_time_minutes' in state)) {
+        logActivity({
+            event: 'time_cap_disabled_default',
+            source: 'pickle',
+            session: sessionId,
+            backend: state.backend || 'claude',
+        });
+    }
     return { sessionRoot: fullSessionPath, state };
 }
 function printActivationPanel(paths, config, fullSessionPath, currentIteration) {

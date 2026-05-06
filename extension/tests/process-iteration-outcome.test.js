@@ -11,7 +11,7 @@ import {
   processIterationOutcome,
 } from '../bin/mux-runner.js';
 
-const fixturePath = path.resolve('tests/fixtures/mux-runner/rate-limit-cycle-2026-04.json');
+const fixturePath = path.resolve('extension/tests/fixtures/mux-runner/rate-limit-cycle-2026-04.json');
 
 function tmpSession() {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-process-outcome-')));
@@ -193,6 +193,29 @@ test('processRateLimitCycle: wake path returns continue and writes handoff', asy
     assert.equal(action.kind, 'continue');
     assert.equal(action.consecutiveRateLimits, 0);
     assert.equal(fs.existsSync(path.join(session.dir, 'handoff.txt')), true);
+  } finally {
+    fs.rmSync(session.dir, { recursive: true, force: true });
+  }
+});
+
+test('processRateLimitCycle: no max_time_minutes honors full wait and resumes', async () => {
+  const session = tmpSession();
+  try {
+    const state = baseState({ max_time_minutes: undefined });
+    writeState(session, state);
+    const targetWaitMs = 4 * 60 * 60 * 1000;
+    let sleptMs = 0;
+    const { context, setNow } = ctx(session, {
+      exitResult: { type: 'api_limit', rateLimitInfo: { resetsAt: 1714094400, rateLimitType: 'requests' } },
+      rateLimitWaitMinutes: 240,
+      sleep: async (ms) => {
+        sleptMs += ms;
+        setNow(1714080000 * 1000 + sleptMs);
+      },
+    });
+    const action = await withFrozenDate(1714080000 * 1000, () => processRateLimitCycle(state, context));
+    assert.equal(action.kind, 'continue');
+    assert.ok(sleptMs >= targetWaitMs, `expected full 4h wait without session-cap clamp, got ${sleptMs}ms`);
   } finally {
     fs.rmSync(session.dir, { recursive: true, force: true });
   }

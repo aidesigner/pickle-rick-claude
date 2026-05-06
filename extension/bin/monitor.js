@@ -120,9 +120,9 @@ export function renderElapsedField(elapsedSec, maxTimeMin) {
     const safeElapsed = Math.max(0, Math.floor(elapsedSec));
     const base = formatTime(safeElapsed);
     if (!(maxTimeMin > 0)) {
-        return `${MX.GREEN}${base}${MX.R}`;
+        return `${MX.GREEN}elapsed: ${base}${MX.R}`;
     }
-    const withCeiling = `${base} / ${maxTimeMin}m`;
+    const withCeiling = `elapsed: ${base} / ${maxTimeMin}m`;
     const exceeded = safeElapsed / 60 > maxTimeMin;
     if (!exceeded)
         return `${MX.GREEN}${withCeiling}${MX.R}`;

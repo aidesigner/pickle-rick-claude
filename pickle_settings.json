@@ -6,7 +6,6 @@
   "throughput_baselines_units": "tickets_per_hour",
   "_throughput_baselines_doc": "AC-LPB-02: per-backend throughput estimates used by setup.js to warn when --max-time is undersized for the planned ticket count. Tune these per fleet — claude is generally faster on simple tickets, codex slower on complex; deepseek sits between.",
   "throughput_baselines": { "claude": 5.0, "codex": 3.5, "deepseek": 4.0, "hermes": 4.5 },
-  "default_max_time_minutes": 720,
   "default_worker_timeout_seconds": 1200,
   "default_manager_max_turns": 50,
   "default_tmux_max_turns": 200,
