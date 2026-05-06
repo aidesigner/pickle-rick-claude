@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { classifyDecision } from '../hooks/handlers/stop-hook.js';
+import { classifyDecision, evaluateManagerIdleBackoff } from '../hooks/handlers/stop-hook.js';
 import { StateManager } from '../services/state-manager.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -130,4 +130,36 @@ for (const [key, oracle] of Object.entries(FIXTURES)) {
 
 test('stop-hook state matrix: Section D expansion cells (xfail placeholder)', (t) => {
   t.todo('Section D cells not yet defined; extend matrix when new state axes are added');
+});
+
+test('stop-hook state matrix: wait-pattern branch engages idle backoff on the third manager wait turn', () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'shs-idle-'));
+  const sessionDir = path.join(tmpDir, 'session');
+  const ticketDir = path.join(sessionDir, 'abc123');
+  const stateFile = path.join(sessionDir, 'state.json');
+  fs.mkdirSync(ticketDir, { recursive: true });
+  fs.writeFileSync(path.join(ticketDir, `worker_session_${process.pid}.log`), 'alive\n');
+  fs.writeFileSync(path.join(stateFile), JSON.stringify(buildState({
+    pid: null,
+    active: true,
+    iteration: 1,
+  })));
+  const state = {
+    ...buildState({ pid: null, active: true, iteration: 1 }),
+    current_ticket: 'abc123',
+    session_dir: sessionDir,
+  };
+  const previous = process.env.EXTENSION_DIR;
+  process.env.EXTENSION_DIR = path.resolve(__dirname, '../..');
+  try {
+    assert.equal(evaluateManagerIdleBackoff(state, stateFile, 'Waiting for Monitor signal.', '', () => {}, 0)?.decision, 'block');
+    assert.equal(evaluateManagerIdleBackoff(state, stateFile, 'Waiting for Monitor signal.', '', () => {}, 2_000)?.decision, 'block');
+    const third = evaluateManagerIdleBackoff(state, stateFile, 'Waiting for Monitor signal.', '', () => {}, 4_000);
+    assert.equal(third?.decision, 'block');
+    assert.match(third?.reason || '', /Idle backoff engaged/);
+  } finally {
+    if (previous === undefined) delete process.env.EXTENSION_DIR;
+    else process.env.EXTENSION_DIR = previous;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });

@@ -6,7 +6,7 @@ import { PromiseTokens, hasToken } from '../../types/index.js';
 import { PROMISE_TOKENS } from '../../services/promise-tokens.js';
 import { resolveStateFile, approve } from '../resolve-state.js';
 import { getExtensionRoot, getDataRoot, safeErrorMessage } from '../../services/pickle-utils.js';
-import { StateManager } from '../../services/state-manager.js';
+import { StateManager, writeActivityEntry } from '../../services/state-manager.js';
 import { logActivity } from '../../services/activity-logger.js';
 import { readRecoverableJsonObject } from '../../services/microverse-state.js';
 const sm = new StateManager();
@@ -17,6 +17,15 @@ const sm = new StateManager();
  * row means the manager is genuinely stuck in an ack loop.
  */
 export const DEGENERATE_CONSECUTIVE_THRESHOLD = 3;
+export const DEFAULT_MANAGER_IDLE_BACKOFF_FALLBACK_MS = 60_000;
+export const MANAGER_IDLE_BACKOFF_THRESHOLD = 3;
+const IDLE_BACKOFF_STATE_FILE = '.manager-idle-backoff.json';
+const WORKER_ARTIFACT_PREFIXES = ['research_', 'plan_', 'conformance_', 'code_review_'];
+export const WAIT_PATTERN_REGEXES = [
+    /waiting for monitor signal\.?$/i,
+    /worker still/i,
+    /continuing to wait/i,
+];
 const RATE_LIMIT_PATTERNS = [
     /out of (extra )?usage/i,
     /rate limit/i,
@@ -41,6 +50,10 @@ const NO_OP_PATTERNS = [
 function finiteNumber(value, fallback = 0) {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : fallback;
+}
+function finiteIntegerOrNull(value) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) && Number.isInteger(parsed) ? parsed : null;
 }
 function roleAllowsToken(token, role) {
     if (token.kind === 'worker-done')
@@ -69,6 +82,272 @@ function isNoOpResponse(trimmed) {
 }
 function isShortResponse(trimmed) {
     return trimmed.length > 0 && trimmed.length <= DEGENERATE_MAX_LENGTH;
+}
+function isManagerRole(role) {
+    return role !== 'worker' && role !== 'refinement-worker';
+}
+function isWaitPatternResponse(trimmed) {
+    return trimmed.length > 0 && WAIT_PATTERN_REGEXES.some((pattern) => pattern.test(trimmed));
+}
+function getIdleBackoffStatePath(state) {
+    return state.session_dir ? path.join(state.session_dir, IDLE_BACKOFF_STATE_FILE) : null;
+}
+function readIdleBackoffSnapshot(state) {
+    const snapshotPath = getIdleBackoffStatePath(state);
+    if (!snapshotPath || !fs.existsSync(snapshotPath))
+        return null;
+    const parsed = readRecoverableJsonObject(snapshotPath);
+    if (!parsed)
+        return null;
+    const consecutiveWaitTurns = finiteIntegerOrNull(parsed.consecutive_wait_turns);
+    if (consecutiveWaitTurns === null || consecutiveWaitTurns < 0)
+        return null;
+    const engagedAtMs = finiteNumber(parsed.engaged_at_ms, Number.NaN);
+    const stateMtimeMs = finiteNumber(parsed.state_mtime_ms, Number.NaN);
+    const artifactMtimeMs = finiteNumber(parsed.artifact_mtime_ms, Number.NaN);
+    const workerPid = parsed.worker_pid === null ? null : finiteIntegerOrNull(parsed.worker_pid);
+    return {
+        consecutive_wait_turns: consecutiveWaitTurns,
+        engaged_at_ms: Number.isFinite(engagedAtMs) ? engagedAtMs : undefined,
+        state_mtime_ms: Number.isFinite(stateMtimeMs) ? stateMtimeMs : undefined,
+        artifact_mtime_ms: Number.isFinite(artifactMtimeMs) ? artifactMtimeMs : undefined,
+        worker_pid: workerPid,
+        ticket: typeof parsed.ticket === 'string' ? parsed.ticket : null,
+    };
+}
+function writeIdleBackoffSnapshot(state, snapshot) {
+    const snapshotPath = getIdleBackoffStatePath(state);
+    if (!snapshotPath)
+        return;
+    if (!snapshot) {
+        try {
+            fs.unlinkSync(snapshotPath);
+        }
+        catch { /* ignore */ }
+        return;
+    }
+    const tmpPath = `${snapshotPath}.tmp.${process.pid}.${Date.now()}`;
+    try {
+        fs.writeFileSync(tmpPath, JSON.stringify(snapshot, null, 2));
+        fs.renameSync(tmpPath, snapshotPath);
+    }
+    catch {
+        try {
+            fs.unlinkSync(tmpPath);
+        }
+        catch { /* ignore */ }
+    }
+}
+function readFileMtimeMs(filePath) {
+    try {
+        return fs.statSync(filePath).mtimeMs;
+    }
+    catch {
+        return 0;
+    }
+}
+function getTicketDir(state) {
+    if (!state.session_dir || !state.current_ticket)
+        return null;
+    return path.join(state.session_dir, state.current_ticket);
+}
+function getWorkerArtifactMtimeMs(state) {
+    const ticketDir = getTicketDir(state);
+    if (!ticketDir)
+        return 0;
+    try {
+        const entries = fs.readdirSync(ticketDir);
+        let maxMtime = 0;
+        for (const entry of entries) {
+            if (!WORKER_ARTIFACT_PREFIXES.some((prefix) => entry.startsWith(prefix)) || !entry.endsWith('.md'))
+                continue;
+            const mtime = readFileMtimeMs(path.join(ticketDir, entry));
+            if (mtime > maxMtime)
+                maxMtime = mtime;
+        }
+        return maxMtime;
+    }
+    catch {
+        return 0;
+    }
+}
+function getLatestWorkerPid(state) {
+    const ticketDir = getTicketDir(state);
+    if (!ticketDir)
+        return null;
+    try {
+        const logCandidates = fs.readdirSync(ticketDir)
+            .filter((entry) => /^worker_session_\d+\.log$/.test(entry))
+            .map((entry) => ({ entry, mtimeMs: readFileMtimeMs(path.join(ticketDir, entry)) }))
+            .sort((left, right) => right.mtimeMs - left.mtimeMs);
+        const latest = logCandidates[0];
+        if (!latest)
+            return null;
+        const match = latest.entry.match(/^worker_session_(\d+)\.log$/);
+        if (!match)
+            return null;
+        return finiteIntegerOrNull(match[1]);
+    }
+    catch {
+        return null;
+    }
+}
+function isPidAlive(pid) {
+    if (!Number.isInteger(pid) || pid === null || pid === undefined || pid <= 0)
+        return true;
+    try {
+        process.kill(pid, 0);
+        return true;
+    }
+    catch (err) {
+        const code = err instanceof Error ? err.code : undefined;
+        if (code === 'EPERM')
+            return true;
+        return false;
+    }
+}
+export function resolveManagerIdleBackoffFallbackMs(settings, fallback = DEFAULT_MANAGER_IDLE_BACKOFF_FALLBACK_MS) {
+    const value = settings?.manager_idle_backoff_fallback_ms;
+    if (typeof value === 'number' && Number.isInteger(value) && value >= 1_000 && value <= 600_000) {
+        return value;
+    }
+    return fallback;
+}
+function readManagerIdleBackoffFallbackMs(log) {
+    try {
+        const settingsPath = path.join(getExtensionRoot(), 'pickle_settings.json');
+        const settings = readRecoverableJsonObject(settingsPath);
+        const resolved = resolveManagerIdleBackoffFallbackMs(settings);
+        const raw = settings?.manager_idle_backoff_fallback_ms;
+        const valid = typeof raw === 'number' && Number.isInteger(raw) && raw >= 1_000 && raw <= 600_000;
+        if (settings && raw !== undefined && !valid) {
+            log(`WARN: invalid manager_idle_backoff_fallback_ms in settings; using default ${DEFAULT_MANAGER_IDLE_BACKOFF_FALLBACK_MS}ms`);
+        }
+        return resolved;
+    }
+    catch (err) {
+        log(`WARN: failed to read manager_idle_backoff_fallback_ms; using default ${DEFAULT_MANAGER_IDLE_BACKOFF_FALLBACK_MS}ms (${safeErrorMessage(err)})`);
+        return DEFAULT_MANAGER_IDLE_BACKOFF_FALLBACK_MS;
+    }
+}
+function buildIdleBackoffEventBase(state, stateFile) {
+    return {
+        ts: new Date().toISOString(),
+        session: path.basename(path.dirname(stateFile)),
+        ticket: state.current_ticket,
+    };
+}
+function emitStateActivityEntries(stateFile, entries) {
+    if (!entries || entries.length === 0)
+        return;
+    for (const entry of entries) {
+        try {
+            writeActivityEntry(stateFile, entry);
+        }
+        catch {
+            /* fail open */
+        }
+    }
+}
+function refreshIdleBackoffStateBaseline(state, stateFile, entries) {
+    if (!entries?.some((entry) => entry.event === 'manager_idle_backoff_engaged'))
+        return;
+    const snapshot = readIdleBackoffSnapshot(state);
+    if (!snapshot?.engaged_at_ms)
+        return;
+    snapshot.state_mtime_ms = readFileMtimeMs(stateFile);
+    writeIdleBackoffSnapshot(state, snapshot);
+}
+function idleBackoffReleaseReason(state, stateFile, snapshot, nowMs, fallbackMs) {
+    const currentTicket = state.current_ticket ?? null;
+    const stateMtimeMs = readFileMtimeMs(stateFile);
+    const artifactMtimeMs = getWorkerArtifactMtimeMs(state);
+    const workerPid = snapshot.worker_pid ?? getLatestWorkerPid(state);
+    if (snapshot.ticket !== undefined && snapshot.ticket !== currentTicket)
+        return 'state_mtime';
+    if (snapshot.state_mtime_ms !== undefined && stateMtimeMs > snapshot.state_mtime_ms)
+        return 'state_mtime';
+    if (snapshot.artifact_mtime_ms !== undefined && artifactMtimeMs > snapshot.artifact_mtime_ms)
+        return 'artifact_landed';
+    if (!isPidAlive(workerPid))
+        return 'worker_exit';
+    if (snapshot.engaged_at_ms !== undefined && nowMs - snapshot.engaged_at_ms >= fallbackMs)
+        return 'fallback_timer';
+    return null;
+}
+function releaseIdleBackoffDecision(state, stateFile, snapshot, releaseReason, nowMs) {
+    writeIdleBackoffSnapshot(state, releaseReason === 'fallback_timer'
+        ? { consecutive_wait_turns: MANAGER_IDLE_BACKOFF_THRESHOLD - 1 }
+        : null);
+    return {
+        decision: 'approve',
+        logMessage: `Decision: APPROVE (Idle backoff released: ${releaseReason})`,
+        token: { kind: 'none' },
+        stateActivityEntries: [{
+                event: 'manager_idle_backoff_released',
+                ...buildIdleBackoffEventBase(state, stateFile),
+                duration_ms: Math.max(0, nowMs - (snapshot.engaged_at_ms ?? nowMs)),
+                release_reason: releaseReason,
+            }],
+    };
+}
+function engageIdleBackoffDecision(state, stateFile, nextCount, nowMs) {
+    const engagedSnapshot = {
+        consecutive_wait_turns: nextCount,
+        engaged_at_ms: nowMs,
+        state_mtime_ms: readFileMtimeMs(stateFile),
+        artifact_mtime_ms: getWorkerArtifactMtimeMs(state),
+        worker_pid: getLatestWorkerPid(state),
+        ticket: state.current_ticket,
+    };
+    writeIdleBackoffSnapshot(state, engagedSnapshot);
+    return {
+        decision: 'block',
+        reason: `🥒 Idle backoff engaged for ${state.current_ticket} — suppressing stop-hook nudges`,
+        logMessage: `Decision: BLOCK (Idle backoff engaged after ${nextCount} wait turns)`,
+        token: { kind: 'none' },
+        stateActivityEntries: [{
+                event: 'manager_idle_backoff_engaged',
+                ...buildIdleBackoffEventBase(state, stateFile),
+                consecutive_wait_turns: nextCount,
+                last_worker_pid: engagedSnapshot.worker_pid ?? null,
+            }],
+    };
+}
+export function evaluateManagerIdleBackoff(state, stateFile, transcript, role, log = () => { }, nowMs = Date.now()) {
+    if (!isManagerRole(role) || !state.current_ticket || !state.session_dir)
+        return null;
+    const trimmed = transcript.trim();
+    const snapshot = readIdleBackoffSnapshot(state);
+    if (!isWaitPatternResponse(trimmed)) {
+        if (snapshot)
+            writeIdleBackoffSnapshot(state, null);
+        return null;
+    }
+    const fallbackMs = readManagerIdleBackoffFallbackMs(log);
+    if (snapshot?.engaged_at_ms) {
+        const releaseReason = idleBackoffReleaseReason(state, stateFile, snapshot, nowMs, fallbackMs);
+        if (!releaseReason) {
+            return {
+                decision: 'block',
+                reason: `🥒 Idle backoff active for ${state.current_ticket} — waiting for worker signal`,
+                logMessage: `Decision: BLOCK (Idle backoff active for ticket ${state.current_ticket})`,
+                token: { kind: 'none' },
+            };
+        }
+        return releaseIdleBackoffDecision(state, stateFile, snapshot, releaseReason, nowMs);
+    }
+    const nextCount = Math.min((snapshot?.consecutive_wait_turns ?? 0) + 1, MANAGER_IDLE_BACKOFF_THRESHOLD);
+    if (nextCount < MANAGER_IDLE_BACKOFF_THRESHOLD) {
+        writeIdleBackoffSnapshot(state, { consecutive_wait_turns: nextCount });
+        return {
+            decision: 'block',
+            reason: `🥒 Wait-pattern response (${nextCount}/${MANAGER_IDLE_BACKOFF_THRESHOLD}) — continuing`,
+            logMessage: `Decision: BLOCK (Wait-pattern response: "${trimmed}" — ${nextCount}/${MANAGER_IDLE_BACKOFF_THRESHOLD})`,
+            token: { kind: 'none' },
+        };
+    }
+    return engageIdleBackoffDecision(state, stateFile, nextCount, nowMs);
 }
 export function detectCompletionTokens(transcript, state) {
     if (state.completion_promise && hasToken(transcript, state.completion_promise)) {
@@ -458,6 +737,26 @@ function approveEarlyIfNeeded(state, log) {
     }
     return false;
 }
+function finalizeHookDecision(decision, state, stateFile, extensionDir, isWorker, log) {
+    if (decision.stateMutations && Object.keys(decision.stateMutations).length > 0) {
+        try {
+            sm.update(stateFile, (s) => { Object.assign(s, decision.stateMutations); });
+        }
+        catch {
+            /* fail-open */
+        }
+    }
+    emitStateActivityEntries(stateFile, decision.stateActivityEntries);
+    refreshIdleBackoffStateBaseline(state, stateFile, decision.stateActivityEntries);
+    if (decision.decision === 'approve') {
+        if (isCompletionToken(decision.token))
+            maybeSpawnUpdateCheck(extensionDir, log);
+        emitActivity(decision, state, stateFile, isWorker);
+        approve();
+        return;
+    }
+    console.log(JSON.stringify({ decision: 'block', reason: decision.reason }));
+}
 async function main() {
     const extensionDir = getExtensionRoot();
     const { log, setSessionHooksLog } = createHookLogger(extensionDir);
@@ -480,25 +779,11 @@ async function main() {
         return;
     const responseText = input.last_assistant_message || input.prompt_response || '';
     log(`Agent response received (${responseText.length} chars)`);
-    const decision = classifyDecisionInternal(state, responseText, role || '');
+    const decision = evaluateManagerIdleBackoff(state, stateFile, responseText, role || '', log)
+        ?? classifyDecisionInternal(state, responseText, role || '');
     log(promiseSummary(responseText, state, role || ''));
     log(decision.logMessage);
-    if (decision.stateMutations && Object.keys(decision.stateMutations).length > 0) {
-        try {
-            sm.update(stateFile, (s) => { Object.assign(s, decision.stateMutations); });
-        }
-        catch {
-            /* fail-open */
-        }
-    }
-    if (decision.decision === 'approve') {
-        if (isCompletionToken(decision.token))
-            maybeSpawnUpdateCheck(extensionDir, log);
-        emitActivity(decision, state, stateFile, isWorker);
-        approve();
-        return;
-    }
-    console.log(JSON.stringify({ decision: 'block', reason: decision.reason }));
+    finalizeHookDecision(decision, state, stateFile, extensionDir, isWorker, log);
 }
 function handleFatalStopHookError(err) {
     try {

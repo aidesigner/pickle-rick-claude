@@ -219,13 +219,29 @@
     },
     "manager_idle_backoff_engaged": {
       "type": "object",
-      "required": ["event", "ts", "session_id", "idle_seconds", "current_ticket"],
+      "required": ["event", "ts", "session", "ticket", "consecutive_wait_turns", "last_worker_pid"],
       "properties": {
         "event": { "type": "string", "const": "manager_idle_backoff_engaged" },
         "ts": { "type": "string" },
-        "session_id": { "type": "string" },
-        "idle_seconds": { "type": "number" },
-        "current_ticket": {}
+        "session": { "type": "string" },
+        "ticket": { "type": ["string", "null"] },
+        "consecutive_wait_turns": { "type": "integer", "minimum": 3 },
+        "last_worker_pid": { "type": ["integer", "null"] }
+      }
+    },
+    "manager_idle_backoff_released": {
+      "type": "object",
+      "required": ["event", "ts", "session", "ticket", "duration_ms", "release_reason"],
+      "properties": {
+        "event": { "type": "string", "const": "manager_idle_backoff_released" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" },
+        "ticket": { "type": ["string", "null"] },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "release_reason": {
+          "type": "string",
+          "enum": ["state_mtime", "worker_exit", "artifact_landed", "fallback_timer"]
+        }
       }
     }
   },
@@ -246,6 +262,7 @@
     { "$ref": "#/definitions/completion_commit_auto_filled" },
     { "$ref": "#/definitions/completion_commit_inferred_from_git" },
     { "$ref": "#/definitions/time_cap_disabled_default" },
-    { "$ref": "#/definitions/manager_idle_backoff_engaged" }
+    { "$ref": "#/definitions/manager_idle_backoff_engaged" },
+    { "$ref": "#/definitions/manager_idle_backoff_released" }
   ]
 }

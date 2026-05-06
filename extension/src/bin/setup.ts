@@ -59,6 +59,15 @@ export interface SetupArgs {
   // AC-LPB-01: silences the undersized-warning printed to stderr (warning only;
   // launch always proceeds). Useful for CI runs that pre-compute their budget.
   acknowledgeUndersized: boolean;
+  managerIdleBackoffFallbackMs: number;
+}
+
+export const DEFAULT_MANAGER_IDLE_BACKOFF_FALLBACK_MS = 60_000;
+
+export function resolveManagerIdleBackoffFallbackMs(value: unknown): number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1_000 && value <= 600_000
+    ? value
+    : DEFAULT_MANAGER_IDLE_BACKOFF_FALLBACK_MS;
 }
 
 // AC-LPB-01: hard-coded fallback throughput baselines used when
@@ -127,6 +136,7 @@ function createSetupConfig(): SetupArgs {
     iterationBudgetPerBackend: null,
     throughputBaselines: null,
     acknowledgeUndersized: false,
+    managerIdleBackoffFallbackMs: DEFAULT_MANAGER_IDLE_BACKOFF_FALLBACK_MS,
   };
 }
 
@@ -269,6 +279,7 @@ function loadSettings(config: SetupArgs, rootDir: string) {
     applyPositiveIntegerSetting(settings, 'default_max_iterations', value => { config.loopLimit = value; });
     applyPositiveIntegerSetting(settings, 'default_max_time_minutes', value => { config.timeLimit = value; });
     applyPositiveIntegerSetting(settings, 'default_worker_timeout_seconds', value => { config.workerTimeout = value; });
+    config.managerIdleBackoffFallbackMs = resolveManagerIdleBackoffFallbackMs(settings.manager_idle_backoff_fallback_ms);
     config.iterationBudgetPerBackend = readIterationBudgetPerBackend(settings);
     config.throughputBaselines = readThroughputBaselines(settings);
   } catch (err) {

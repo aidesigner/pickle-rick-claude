@@ -464,6 +464,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'time_cap_disabled_default',
   'bundle_bootstrap_exemption_applied',
   'manager_idle_backoff_engaged',
+  'manager_idle_backoff_released',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];

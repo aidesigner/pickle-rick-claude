@@ -14,6 +14,12 @@ import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { updateTicketStatusInTransaction } from '../services/transaction-ticket-ops.js';
 const sm = new StateManager();
 const VALID_EFFORTS = ['low', 'medium', 'high'];
+export const DEFAULT_MANAGER_IDLE_BACKOFF_FALLBACK_MS = 60_000;
+export function resolveManagerIdleBackoffFallbackMs(value) {
+    return typeof value === 'number' && Number.isInteger(value) && value >= 1_000 && value <= 600_000
+        ? value
+        : DEFAULT_MANAGER_IDLE_BACKOFF_FALLBACK_MS;
+}
 // AC-LPB-01: hard-coded fallback throughput baselines used when
 // pickle_settings.json is missing or doesn't declare `throughput_baselines`.
 const DEFAULT_THROUGHPUT_BASELINES = {
@@ -71,6 +77,7 @@ function createSetupConfig() {
         iterationBudgetPerBackend: null,
         throughputBaselines: null,
         acknowledgeUndersized: false,
+        managerIdleBackoffFallbackMs: DEFAULT_MANAGER_IDLE_BACKOFF_FALLBACK_MS,
     };
 }
 function applyPositiveIntegerSetting(settings, key, apply) {
@@ -204,6 +211,7 @@ function loadSettings(config, rootDir) {
         applyPositiveIntegerSetting(settings, 'default_max_iterations', value => { config.loopLimit = value; });
         applyPositiveIntegerSetting(settings, 'default_max_time_minutes', value => { config.timeLimit = value; });
         applyPositiveIntegerSetting(settings, 'default_worker_timeout_seconds', value => { config.workerTimeout = value; });
+        config.managerIdleBackoffFallbackMs = resolveManagerIdleBackoffFallbackMs(settings.manager_idle_backoff_fallback_ms);
         config.iterationBudgetPerBackend = readIterationBudgetPerBackend(settings);
         config.throughputBaselines = readThroughputBaselines(settings);
     }

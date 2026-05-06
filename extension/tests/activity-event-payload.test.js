@@ -136,6 +136,30 @@ const EVENT_CASES = [
     },
     drop: 'gate_payload',
   },
+  {
+    type: 'manager_idle_backoff_engaged',
+    valid: {
+      event: 'manager_idle_backoff_engaged',
+      ts: TS,
+      session: 'session-1',
+      ticket: 'abc123',
+      consecutive_wait_turns: 3,
+      last_worker_pid: 1234,
+    },
+    drop: 'last_worker_pid',
+  },
+  {
+    type: 'manager_idle_backoff_released',
+    valid: {
+      event: 'manager_idle_backoff_released',
+      ts: TS,
+      session: 'session-1',
+      ticket: 'abc123',
+      duration_ms: 60000,
+      release_reason: 'fallback_timer',
+    },
+    drop: 'release_reason',
+  },
 ];
 
 for (const { type, valid, drop } of EVENT_CASES) {
@@ -183,7 +207,7 @@ test('activity-event-payload: worker_spawn_backend_resolved pid must be an integ
   assert.equal(bad2.valid, false, 'string pid should fail');
 });
 
-test('activity-event-payload: schema defines exactly 17 event type definitions', () => {
+test('activity-event-payload: schema defines exactly 18 event type definitions', () => {
   const EVENT_NAMES = [
     'worker_spawn_backend_resolved',
     'worker_spawn_backend_mismatch',
@@ -202,6 +226,7 @@ test('activity-event-payload: schema defines exactly 17 event type definitions',
     'completion_commit_inferred_from_git',
     'time_cap_disabled_default',
     'manager_idle_backoff_engaged',
+    'manager_idle_backoff_released',
   ];
   for (const name of EVENT_NAMES) {
     assert.ok(name in schema.definitions, `schema missing definition for ${name}`);
@@ -209,5 +234,5 @@ test('activity-event-payload: schema defines exactly 17 event type definitions',
   const nonSharedDefs = Object.keys(schema.definitions).filter(
     k => k !== 'backendEnum' && k !== 'backendResolutionSourceEnum',
   );
-  assert.equal(nonSharedDefs.length, 17, `expected 17 event definitions, got ${nonSharedDefs.length}`);
+  assert.equal(nonSharedDefs.length, 18, `expected 18 event definitions, got ${nonSharedDefs.length}`);
 });

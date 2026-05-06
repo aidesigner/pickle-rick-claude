@@ -131,8 +131,10 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         // active=true, stale mtime) so stop-hook decisions are unblocked.
         'paused_session_orphan_demoted',
         'worker_spawn_backend_mismatch',
+        'manager_idle_backoff_engaged',
+        'manager_idle_backoff_released',
     ];
-    assert.equal(VALID_ACTIVITY_EVENTS.length, 83);
+    assert.equal(VALID_ACTIVITY_EVENTS.length, 103);
     for (const e of expected) {
         assert.ok(VALID_ACTIVITY_EVENTS.includes(e), `Missing event type: ${e}`);
     }
