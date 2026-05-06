@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync, execFileSync } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, extractFrontmatter, type TicketInfo, type TicketTierBudget } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, readFrontmatterField, upsertFrontmatterField, hasCompletionCommit, ticketFilePath, type TicketInfo, type TicketTierBudget } from '../services/pickle-utils.js';
 import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact, type Backend, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole, type Step } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -18,6 +18,7 @@ import {
   recordCodexManagerRelaunch,
 } from '../services/codex-manager-relaunch.js';
 export { extractAssistantContent } from '../services/classifier-utils.js';
+export { hasCompletionCommit } from '../services/pickle-utils.js';
 export {
   evaluateCodexManagerRelaunch,
   recordCodexManagerRelaunch,
@@ -303,22 +304,6 @@ export function correctPhantomDoneTickets(input: CorrectPhantomDoneTicketsInput)
   return corrected;
 }
 
-/**
- * R-ICP-5: Read a frontmatter field directly from raw ticket file content.
- * Used by the phantom-Done watcher to inspect the file mid-write without
- * routing through the full TicketInfo parser (which would discard fields
- * like `completion_commit:`).
- */
-export function readFrontmatterField(content: string, field: string): string | null {
-  const fm = extractFrontmatter(content);
-  if (!fm) return null;
-  const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const match = fm.body.match(new RegExp(`^${escaped}:\\s*(.+)$`, 'm'));
-  if (!match) return null;
-  const raw = match[1].trim().replace(/^["']|["']$/g, '');
-  return raw.length > 0 ? raw : null;
-}
-
 export interface PhantomDoneInspectResult {
   /** True when the ticket file was mutated (either reverted to prior status or backfilled with a commit SHA). */
   changed: boolean;
@@ -346,37 +331,12 @@ export interface PhantomDoneInspectResult {
 }
 
 /**
- * Locate the closing `---` of the YAML frontmatter and insert
- * `completion_commit: "<sha>"` immediately before it, preserving all other
- * body content. Indentation matches the surrounding fields (none — top-level
- * frontmatter keys are unindented). No-op if the field already exists.
+ * Insert or replace `completion_commit_inferred: "<sha>"` in ticket frontmatter.
+ * Preserves all other body content and leaves explicit `completion_commit:` intact.
  */
 function insertCompletionCommitField(content: string, sha: string): string | null {
-  const fm = extractFrontmatter(content);
-  if (!fm) return null;
-  if (/^completion_commit:\s*.+$/m.test(fm.body)) return null;
-  // Locate the closing `---` line (the one ending the frontmatter block).
-  const closingNewline = content.lastIndexOf('\n---', fm.end - 1);
-  if (closingNewline === -1) return null;
-  const insertPoint = closingNewline + 1;
-  return content.slice(0, insertPoint) + `completion_commit: "${sha}"\n` + content.slice(insertPoint);
-}
-
-/**
- * Search for recent commits (HEAD~10) referencing the ticket id.
- * Returns the most recent matching SHA (full hash) or null.
- * Throws on git failure with reason in error message.
- */
-function findRecentCommitForTicket(workingDir: string, ticketId: string): string | null {
-  // execFileSync per spec; 5s timeout; --grep is case-sensitive but ticket ids
-  // are 8-char lowercase hex, so commit messages reference them as-is.
-  const out = execFileSync(
-    'git',
-    ['-C', workingDir, 'log', '--grep', ticketId, '--format=%H', '-n', '10', 'HEAD'],
-    { timeout: 5000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-  );
-  const lines = out.split('\n').map((line) => line.trim()).filter((line) => /^[0-9a-f]{40}$/i.test(line));
-  return lines.length > 0 ? lines[0] : null;
+  if (readFrontmatterField(content, 'completion_commit')) return null;
+  return upsertFrontmatterField(content, 'completion_commit_inferred', sha);
 }
 
 /**
@@ -412,8 +372,8 @@ export function inspectPhantomDoneTicketFile(
   if (!status || status.toLowerCase() !== 'done') {
     return { changed: false, reason: 'not_done' };
   }
-  const completionCommit = readFrontmatterField(content, 'completion_commit');
-  if (completionCommit) {
+  const explicitCommit = readFrontmatterField(content, 'completion_commit');
+  if (explicitCommit) {
     return { changed: false, reason: 'has_completion_commit' };
   }
   const ticketId = readFrontmatterField(content, 'id');
@@ -422,11 +382,18 @@ export function inspectPhantomDoneTicketFile(
   }
 
   let foundSha: string | null = null;
-  let gitFailureReason: string | undefined;
   try {
-    foundSha = findRecentCommitForTicket(workingDir, ticketId);
+    const evidence = hasCompletionCommit({
+      sessionDir,
+      ticketId,
+      ticketPath: filePath,
+      workingDir,
+    });
+    if (evidence.source === 'inferred') {
+      foundSha = evidence.sha;
+    }
   } catch (err) {
-    gitFailureReason = safeErrorMessage(err);
+    return { changed: false, reason: 'unparseable', gitFailureReason: safeErrorMessage(err) };
   }
 
   if (foundSha) {
@@ -447,7 +414,6 @@ export function inspectPhantomDoneTicketFile(
     return { changed: false, reason: 'unparseable' };
   }
   const result: PhantomDoneInspectResult = { changed: true, reason: 'reverted', priorStatus };
-  if (gitFailureReason) result.gitFailureReason = gitFailureReason;
   return result;
 }
 
@@ -820,10 +786,6 @@ function isTerminalTicketStatus(status: string | null | undefined): boolean {
   return normalized === 'done' || normalized === 'skipped';
 }
 
-function ticketFilePath(sessionDir: string, ticketId: string): string {
-  return path.join(sessionDir, ticketId, `linear_ticket_${ticketId}.md`);
-}
-
 function acceptanceCriteriaSection(content: string): string {
   const match = /^## Acceptance Criteria\s*$/m.exec(content);
   if (!match) return '';
@@ -868,75 +830,19 @@ function emitMuxWastedIter(input: {
   });
 }
 
-function hasCommitReferencingTicketSince(workingDir: string, ticketId: string, startCommit: string | null): boolean {
-  if (!startCommit) return false;
+function gitCommitEpoch(workingDir: string, sha: string | null): number | null {
+  if (!sha) return null;
   try {
-    const logOutput = runCmd(
-      ['git', 'log', '--format=%H%n%B%n---pickle-commit-boundary---', `${startCommit}..HEAD`],
-      { cwd: workingDir, check: false }
-    );
-    return logOutput.toLowerCase().includes(ticketId.toLowerCase());
+    const raw = execFileSync('git', ['-C', workingDir, 'show', '-s', '--format=%ct', sha], {
+      timeout: 5000,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
   } catch {
-    return false;
+    return null;
   }
-}
-
-/**
- * R-CCC-5: Three-state evidence helper for completion-commit checks.
- * Phantom-Done revert sites MUST consult this before reverting status:Done→Todo.
- *
- *   'explicit'  — frontmatter has `completion_commit:` + git can resolve the SHA.
- *   'inferred'  — frontmatter absent BUT a recent (HEAD~10) commit message --grep
- *                 matches the ticket id. Standardizes on findRecentCommitForTicket
- *                 because (a) bounded scope, (b) precise --grep word match, not
- *                 lower-cased substring (the run-#6 bug class).
- *   'absent'    — neither holds; revert is permitted.
- *
- * The explicit path is the run-#6 fix: bundle commits use R-* codes in the
- * subject (e.g. `bundle/C: R-WSE-4 — ...`) and DON'T include the ticket hash,
- * so any heuristic that scans commit messages for the hash always misses.
- * Operator-backfilled `completion_commit:` SHAs in frontmatter survive across
- * iteration_start.
- */
-export interface CompletionCommitEvidence {
-  sha: string | null;
-  source: 'explicit' | 'inferred' | 'absent';
-}
-
-export function hasCompletionCommit(args: {
-  sessionDir: string;
-  ticketId: string;
-  workingDir: string;
-}): CompletionCommitEvidence {
-  const filePath = ticketFilePath(args.sessionDir, args.ticketId);
-  let content = '';
-  try {
-    content = fs.readFileSync(filePath, 'utf8');
-  } catch {
-    // unreadable ticket file — fall through to inferred check
-  }
-  if (content) {
-    const explicit = readFrontmatterField(content, 'completion_commit');
-    if (explicit && /^[0-9a-f]{7,40}$/i.test(explicit)) {
-      try {
-        execFileSync(
-          'git',
-          ['-C', args.workingDir, 'cat-file', '-e', `${explicit}^{commit}`],
-          { timeout: 5000, stdio: ['ignore', 'ignore', 'ignore'] },
-        );
-        return { sha: explicit, source: 'explicit' };
-      } catch {
-        // SHA not reachable — fall through to inferred check
-      }
-    }
-  }
-  try {
-    const inferred = findRecentCommitForTicket(args.workingDir, args.ticketId);
-    if (inferred) return { sha: inferred, source: 'inferred' };
-  } catch {
-    // git failure — treat as absent
-  }
-  return { sha: null, source: 'absent' };
 }
 
 export function validateAutoTicketCompletion(
@@ -962,7 +868,13 @@ export function validateAutoTicketCompletion(
   if (!hasCheckedAcceptanceCriteria(content)) {
     return { action: 'skip', reason: 'acceptance_criteria_not_checked' };
   }
-  if (!hasCommitReferencingTicketSince(workingDir, ticketId, startCommit)) {
+  const evidence = hasCompletionCommit({
+    sessionDir,
+    ticketId,
+    workingDir,
+    startTimeEpoch: gitCommitEpoch(workingDir, startCommit),
+  });
+  if (evidence.source === 'absent') {
     return { action: 'skip', reason: 'no_commit_referencing_ticket_since_current_set' };
   }
 
@@ -2672,7 +2584,7 @@ async function runMuxRunnerMain() {
   const emitBackfillEvent = (ticketId: string, commit: string, ts: string): void => {
     const shortSha = commit.slice(0, 7);
     process.stderr.write(
-      `phantom-Done backfilled for ticket ${ticketId} with commit ${shortSha} (work was done, completion_commit field was missing)\n`,
+      `phantom-Done inferred completion commit for ticket ${ticketId} with commit ${shortSha} (work was done, explicit field was missing)\n`,
     );
     try {
       writeActivityEntry(statePath, {
@@ -2681,6 +2593,14 @@ async function runMuxRunnerMain() {
         session: path.basename(sessionDir),
         ticket: ticketId,
         commit_hash: commit,
+        ts,
+      });
+      writeActivityEntry(statePath, {
+        event: 'completion_commit_inferred_from_git',
+        source: 'pickle',
+        session: path.basename(sessionDir),
+        ticket_id: ticketId,
+        sha: commit,
         ts,
       });
     } catch (err) {

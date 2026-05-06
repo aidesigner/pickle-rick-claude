@@ -216,6 +216,16 @@
         "sha": { "type": "string" }
       }
     },
+    "worker_completion_commit_announced": {
+      "type": "object",
+      "required": ["event", "ts", "ticket_id", "sha"],
+      "properties": {
+        "event": { "type": "string", "const": "worker_completion_commit_announced" },
+        "ts": { "type": "string" },
+        "ticket_id": { "type": "string" },
+        "sha": { "type": "string" }
+      }
+    },
     "time_cap_disabled_default": {
       "type": "object",
       "required": ["event", "ts", "session_id", "prior_value"],
@@ -270,6 +280,7 @@
     { "$ref": "#/definitions/worker_backend_resolved" },
     { "$ref": "#/definitions/completion_commit_auto_filled" },
     { "$ref": "#/definitions/completion_commit_inferred_from_git" },
+    { "$ref": "#/definitions/worker_completion_commit_announced" },
     { "$ref": "#/definitions/time_cap_disabled_default" },
     { "$ref": "#/definitions/manager_idle_backoff_engaged" },
     { "$ref": "#/definitions/manager_idle_backoff_released" }

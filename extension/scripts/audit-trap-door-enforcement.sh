@@ -97,4 +97,8 @@ if (failures > 0) {
 console.log(`audit-trap-door-enforcement: ${enforceFiles.size} ENFORCE reference(s) verified`);
 NODE
 
+if ! bash "$SCRIPT_DIR/audit-phantom-done-call-sites.sh"; then
+  status=1
+fi
+
 exit "$status"

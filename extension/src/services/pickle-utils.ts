@@ -1,4 +1,4 @@
-import { execSync, spawnSync } from 'child_process';
+import { execSync, execFileSync, spawnSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
@@ -346,6 +346,40 @@ export function extractFrontmatter(content: string): { body: string; start: numb
   return { body: content.slice(openLen, closeIdx), start: 0, end };
 }
 
+export function readFrontmatterField(content: string, field: string): string | null {
+  const fm = extractFrontmatter(content);
+  if (!fm) return null;
+  const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = fm.body.match(new RegExp(`^${escaped}:\\s*(.+)$`, 'm'));
+  if (!match) return null;
+  const raw = match[1].trim().replace(/^["']|["']$/g, '');
+  return raw.length > 0 ? raw : null;
+}
+
+function readFirstMarkdownHeading(content: string): string | null {
+  const match = content.match(/^#\s+(.+)$/m);
+  return match?.[1]?.trim() || null;
+}
+
+export function upsertFrontmatterField(content: string, field: string, value: string): string | null {
+  const fm = extractFrontmatter(content);
+  if (!fm) return null;
+  const escaped = field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const line = `${field}: "${value}"`;
+  if (new RegExp(`^${escaped}:\\s*(.+)$`, 'm').test(fm.body)) {
+    const nextBody = fm.body.replace(new RegExp(`^${escaped}:\\s*(.+)$`, 'm'), line);
+    return content.slice(0, fm.start) + `---\n${nextBody}\n---\n` + content.slice(fm.end);
+  }
+  const closingNewline = content.lastIndexOf('\n---', fm.end - 1);
+  if (closingNewline === -1) return null;
+  const insertPoint = closingNewline + 1;
+  return content.slice(0, insertPoint) + `${line}\n` + content.slice(insertPoint);
+}
+
+export function ticketFilePath(sessionDir: string, ticketId: string): string {
+  return path.join(sessionDir, ticketId, `linear_ticket_${ticketId}.md`);
+}
+
 export function clearTicketResolutionTimestamps(content: string): string {
   const fm = extractFrontmatter(content);
   if (!fm) return content;
@@ -586,6 +620,158 @@ export function getTicketStatus(sessionRoot: string, ticketId: string): TicketSt
     throw new MissingTicketError(sessionRoot, ticketId, ticketPath);
   }
   return parsed.status;
+}
+
+export interface CompletionCommitEvidence {
+  sha: string | null;
+  source: 'explicit' | 'inferred' | 'absent';
+}
+
+function resolveTicketPath(args: {
+  sessionDir?: string;
+  ticketId?: string;
+  ticketPath?: string;
+}): string | null {
+  if (typeof args.ticketPath === 'string' && args.ticketPath.length > 0) return args.ticketPath;
+  if (typeof args.sessionDir === 'string' && args.sessionDir.length > 0 && typeof args.ticketId === 'string' && args.ticketId.length > 0) {
+    return path.join(args.sessionDir, args.ticketId, `linear_ticket_${args.ticketId}.md`);
+  }
+  return null;
+}
+
+function gitCommitExists(workingDir: string, sha: string): boolean {
+  try {
+    execFileSync('git', ['-C', workingDir, 'cat-file', '-e', `${sha}^{commit}`], {
+      timeout: 5000,
+      stdio: ['ignore', 'ignore', 'ignore'],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function extractRequirementCodes(title: string | null): string[] {
+  if (!title) return [];
+  return [...new Set(Array.from(title.matchAll(/\bR-[A-Z0-9-]+\b/gi), match => match[0].toLowerCase()))];
+}
+
+type MatchingCommit = {
+  sha: string;
+  epoch: number;
+};
+
+function parseGitLogBlocks(raw: string): Array<{ sha: string; epoch: number; message: string }> {
+  return raw
+    .split('\n---pickle-commit-boundary---\n')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const [sha = '', epochRaw = '0', ...messageParts] = entry.split('\n');
+      return {
+        sha: sha.trim(),
+        epoch: Number(epochRaw.trim()) || 0,
+        message: messageParts.join('\n').trim(),
+      };
+    })
+    .filter(entry => /^[0-9a-f]{40}$/i.test(entry.sha));
+}
+
+function findMatchingCommit(args: {
+  workingDir: string;
+  ticketId: string | null;
+  title: string | null;
+  startTimeEpoch?: number | null;
+  ticketPath?: string | null;
+}): MatchingCommit | null {
+  const matchers = [
+    ...(args.ticketId ? [args.ticketId.toLowerCase()] : []),
+    ...extractRequirementCodes(args.title),
+  ];
+  if (matchers.length === 0) return null;
+  const startTimeEpoch = Number(args.startTimeEpoch);
+  const checkEntry = (entry: { sha: string; epoch: number; message: string }): MatchingCommit | null => {
+    if (Number.isFinite(startTimeEpoch) && startTimeEpoch > 0 && entry.epoch < startTimeEpoch) return null;
+    const lower = entry.message.toLowerCase();
+    return matchers.some(token => lower.includes(token)) ? { sha: entry.sha, epoch: entry.epoch } : null;
+  };
+
+  const commands: string[][] = [];
+  if (args.ticketPath) {
+    commands.push(['-C', args.workingDir, 'log', '-n', '20', '--format=%H%n%ct%n%B%n---pickle-commit-boundary---', '--', args.ticketPath]);
+  }
+  commands.push(['-C', args.workingDir, 'log', '-n', '50', '--format=%H%n%ct%n%B%n---pickle-commit-boundary---', 'HEAD']);
+
+  for (const gitArgs of commands) {
+    try {
+      const raw = execFileSync('git', gitArgs, {
+        timeout: 5000,
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      for (const entry of parseGitLogBlocks(raw)) {
+        const matched = checkEntry(entry);
+        if (matched) return matched;
+      }
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+export function hasCommitReferencingTicketSince(args: {
+  workingDir: string;
+  ticketId: string | null;
+  title?: string | null;
+  startTimeEpoch?: number | null;
+  ticketPath?: string | null;
+}): { sha: string | null; matched: boolean } {
+  const match = findMatchingCommit({
+    workingDir: args.workingDir,
+    ticketId: args.ticketId,
+    title: args.title ?? null,
+    startTimeEpoch: args.startTimeEpoch,
+    ticketPath: args.ticketPath,
+  });
+  return match ? { sha: match.sha, matched: true } : { sha: null, matched: false };
+}
+
+export function hasCompletionCommit(args: {
+  sessionDir?: string;
+  ticketId?: string;
+  ticketPath?: string;
+  workingDir: string;
+  startTimeEpoch?: number | null;
+}): CompletionCommitEvidence {
+  const ticketPath = resolveTicketPath(args);
+  if (!ticketPath) return { sha: null, source: 'absent' };
+  let content: string;
+  try {
+    content = fs.readFileSync(ticketPath, 'utf8');
+  } catch {
+    return { sha: null, source: 'absent' };
+  }
+
+  const explicit = readFrontmatterField(content, 'completion_commit');
+  if (explicit && /^[0-9a-f]{7,40}$/i.test(explicit) && gitCommitExists(args.workingDir, explicit)) {
+    return { sha: explicit, source: 'explicit' };
+  }
+
+  const inferredField = readFrontmatterField(content, 'completion_commit_inferred');
+  if (inferredField && /^[0-9a-f]{7,40}$/i.test(inferredField) && gitCommitExists(args.workingDir, inferredField)) {
+    return { sha: inferredField, source: 'inferred' };
+  }
+
+  const inferred = findMatchingCommit({
+    workingDir: args.workingDir,
+    ticketId: readFrontmatterField(content, 'id') ?? args.ticketId ?? null,
+    title: readFrontmatterField(content, 'title') ?? readFirstMarkdownHeading(content),
+    startTimeEpoch: args.startTimeEpoch,
+    ticketPath,
+  });
+  if (inferred) return { sha: inferred.sha, source: 'inferred' };
+  return { sha: null, source: 'absent' };
 }
 
 /**

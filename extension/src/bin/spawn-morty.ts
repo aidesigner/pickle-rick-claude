@@ -22,6 +22,7 @@ import { StateManager, writeActivityEntry } from '../services/state-manager.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { loadAgentMd, type AgentModel } from '../services/agent-md-loader.js';
 import { flushAndExit } from '../services/worker-shutdown.js';
+import { autoFillCompletionCommit } from './auto-fill-completion-commit.js';
 
 const TIER_MODEL_MAP: Record<string, string> = {
   trivial: 'haiku',
@@ -36,6 +37,7 @@ const LAST_TOOL_ERROR_FILE = 'last-tool-error.json';
 const HANDOFF_NOTES_FILE = 'handoff_notes.md';
 const TOOL_RETRY_ANALYZE_THRESHOLD = 2;
 const TOOL_RETRY_STOP_THRESHOLD = 4;
+const COMPLETION_COMMIT_ACK_RE = /^COMPLETION_COMMIT_RECORDED:\s*([0-9a-f]{7,40})\s*$/gim;
 
 export type ParsedArgs = {
   ticket: string;
@@ -453,6 +455,7 @@ export function buildWorkerPrompt(opts: BuildWorkerPromptOptions): string {
 **Codex-specific contract additions:**
 - You MUST run \`git add <files>\` and \`git commit -m "<msg>"\` before emitting \`<promise>${PromiseTokens.WORKER_DONE}</promise>\`. The orchestrator does NOT commit for you.
 - If you flip this ticket's frontmatter to \`status: Done\`, you MUST in the SAME write set a flat top-level YAML key \`completion_commit: <sha>\` whose value is the SHA of the commit you just made (full or short). The commit message must reference the ticket id (\`${ticket.ticketId}\`). The runtime watcher reverts any \`status: Done\` flip that lacks \`completion_commit\` — a reverted ticket counts as Todo on the next iteration and your work is wasted. NEVER flip \`status: Done\` before the commit exists.
+- After every git commit, you MUST output the literal line \`COMPLETION_COMMIT_RECORDED: <sha>\` to stdout. The runner watches for this token and will retry if it's missing.
 - If an acceptance criterion contradicts reality (e.g. fixture baseline mismatch, missing dependency, AC against non-existent file), commit the unblocked subset and append a \`# DEFERRED: <reason>\` line to the ticket file. DO NOT loop indefinitely trying to satisfy a contradicted AC. Do NOT flip \`status: Done\` for a deferred ticket.
 - DO NOT explore harness internals (\`pickle.md\`, \`setup.js\`, \`send-to-morty.md\`, \`mux-runner.js\`). Those are orchestrator-level. Your scope is exclusively the files listed in the ticket's "Files to modify" / "Files to create" sections.`;
   }
@@ -764,6 +767,30 @@ export async function runWorkerProcess(ctx: WorkerProcessContext): Promise<{ exi
   proc.stdout?.pipe(sessionLog, { end: false });
   proc.stderr?.pipe(sessionLog, { end: false });
 
+  // R-CCC-1: Detect COMPLETION_COMMIT_RECORDED: <sha> token in worker stdout.
+  let ackLineBuf = '';
+  const workerActivityStatePath = path.join(sessionRoot, 'state.json');
+  proc.stdout?.on('data', (chunk: Buffer) => {
+    ackLineBuf += chunk.toString('utf8');
+    const newlineIdx = ackLineBuf.lastIndexOf('\n');
+    if (newlineIdx < 0) return;
+    const toScan = ackLineBuf.slice(0, newlineIdx + 1);
+    ackLineBuf = ackLineBuf.slice(newlineIdx + 1);
+    COMPLETION_COMMIT_ACK_RE.lastIndex = 0;
+    const match = COMPLETION_COMMIT_ACK_RE.exec(toScan);
+    if (match?.[1]) {
+      try {
+        writeActivityEntry(workerActivityStatePath, {
+          event: 'worker_completion_commit_announced',
+          source: 'pickle',
+          ticket_id: ticketId,
+          sha: match[1],
+          ts: new Date().toISOString(),
+        });
+      } catch { /* best-effort */ }
+    }
+  });
+
   const spinner = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
   let idx = 0;
   const startTime = Date.now();
@@ -849,6 +876,17 @@ export async function runWorkerProcess(ctx: WorkerProcessContext): Promise<{ exi
           console.error(`${Style.RED}Worker validation failed: ${reasons}${Style.RESET}`);
         }
         try { updateTicketStatus(ticketId, isSuccess ? 'Done' : 'Failed', sessionRoot); } catch { /* best-effort */ }
+        if (isSuccess) {
+          // R-CCC-2: Auto-fill completion_commit: for Done tickets that missed the ACK.
+          try {
+            autoFillCompletionCommit({
+              sessionDir: sessionRoot,
+              workingDir: sessionWorkingDir,
+              ticketId,
+              statePath: ctx.workerStatePath,
+            });
+          } catch { /* best-effort */ }
+        }
         printMinimalPanel('Worker Report', { status: ctx.mutableState.timedOut ? 'timeout' : `exit:${exitCode}`, validation: isSuccess ? 'successful' : 'failed' }, isSuccess ? 'GREEN' : 'RED', '🥒');
         if (!isSuccess) await flushAndExit(sessionLog, 1);
         resolve({ exitCode: exitCode ?? 0, isSuccess });

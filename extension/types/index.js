@@ -213,6 +213,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'worker_backend_resolved',
     'completion_commit_auto_filled',
     'completion_commit_inferred_from_git',
+    'worker_completion_commit_announced',
     'time_cap_disabled_default',
     'bundle_bootstrap_exemption_applied',
     'manager_idle_backoff_engaged',
