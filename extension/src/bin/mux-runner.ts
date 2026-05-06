@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { spawn, spawnSync, execFileSync } from 'child_process';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, readFrontmatterField, upsertFrontmatterField, hasCompletionCommit, ticketFilePath, type TicketInfo, type TicketTierBudget } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, buildHandoffSummary, sleep, writeStateFile, markTicketDone, markTicketSkipped, collectTickets, getTicketStatus, runCmd, safeErrorMessage, ensureMonitorWindow, displayMacNotification, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, readFrontmatterField, upsertFrontmatterField, hasCompletionCommit, ticketFilePath, VALID_TICKET_COMPLEXITY_TIERS, type TicketInfo, type TicketTierBudget } from '../services/pickle-utils.js';
 import { State, PromiseTokens, hasToken, VALID_STEPS, Defaults, FALSE_EPIC_THRESHOLD, hasLifecycleArtifact, type Backend, type RateLimitInfo, type IterationExitResult, type IterationOutcome, type RateLimitAction, type WorkerRole, type Step } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, writeActivityEntry, writeTimeoutStub, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
@@ -582,6 +582,69 @@ export function clearStaleTicketCacheFields(state: State): number {
   if (state.current_ticket_worker_timeout_seconds !== undefined) { delete state.current_ticket_worker_timeout_seconds; cleared++; }
   if (state.current_ticket_budget_start_iteration !== undefined) { delete state.current_ticket_budget_start_iteration; cleared++; }
   return cleared;
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0;
+}
+
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+
+export function hasStalePerTicketCacheFields(state: Pick<State,
+  'current_ticket_tier'
+  | 'current_ticket_budget'
+  | 'current_ticket_max_iterations'
+  | 'current_ticket_worker_timeout_seconds'
+  | 'current_ticket_budget_start_iteration'>): boolean {
+  return state.current_ticket_tier !== undefined
+    || state.current_ticket_budget !== undefined
+    || state.current_ticket_max_iterations !== undefined
+    || state.current_ticket_worker_timeout_seconds !== undefined
+    || state.current_ticket_budget_start_iteration !== undefined;
+}
+
+export function isValidPerTicketCapCache(state: Pick<State,
+  'current_ticket'
+  | 'current_ticket_tier'
+  | 'current_ticket_max_iterations'
+  | 'current_ticket_budget_start_iteration'>): boolean {
+  if (state.current_ticket === null || state.current_ticket === undefined) return false;
+  if (!isPositiveInteger(state.current_ticket_max_iterations)) return false;
+  if (!isNonNegativeInteger(state.current_ticket_budget_start_iteration)) return false;
+  if (typeof state.current_ticket_tier !== 'string') return false;
+  return (VALID_TICKET_COMPLEXITY_TIERS as readonly string[]).includes(state.current_ticket_tier.toLowerCase());
+}
+
+export function stalePerTicketCacheDiagnostic(state: Pick<State,
+  'current_ticket'
+  | 'current_ticket_tier'
+  | 'current_ticket_max_iterations'
+  | 'current_ticket_budget_start_iteration'>): string {
+  return `per-ticket cap-check skipped: stale cache (current_ticket=${String(state.current_ticket)}, max_iter=${String(state.current_ticket_max_iterations)}, budget_start=${String(state.current_ticket_budget_start_iteration)}, tier=${String(state.current_ticket_tier)})`;
+}
+
+function shouldEmitStalePerTicketCapSkip(state: Pick<State,
+  'current_ticket'
+  | 'current_ticket_tier'
+  | 'current_ticket_budget'
+  | 'current_ticket_max_iterations'
+  | 'current_ticket_worker_timeout_seconds'
+  | 'current_ticket_budget_start_iteration'>): boolean {
+  return hasStalePerTicketCacheFields(state) && !isValidPerTicketCapCache(state);
+}
+
+export function clearStalePerTicketCacheAtIterationStart(
+  statePath: string,
+  state: State,
+  log: (msg: string) => void,
+): State {
+  if (state.current_ticket !== null || !hasStalePerTicketCacheFields(state)) return state;
+  log('clearing stale per-ticket cache fields (current_ticket=null)');
+  return sm.update(statePath, s => {
+    clearStaleTicketCacheFields(s);
+  });
 }
 
 /**
@@ -2848,12 +2911,14 @@ async function runMuxRunnerMain() {
       break;
     }
 
+    state = clearStalePerTicketCacheAtIterationStart(statePath, state, log);
+
     const rawGlobalMaxIter = Number(state.max_iterations);
     const globalMaxIter = Number.isFinite(rawGlobalMaxIter) ? rawGlobalMaxIter : 0;
-    const rawTicketMaxIter = Number(state.current_ticket_max_iterations);
-    const ticketMaxIter = Number.isFinite(rawTicketMaxIter) && rawTicketMaxIter > 0
-      ? rawTicketMaxIter
-      : globalMaxIter;
+    const ticketCacheValid = isValidPerTicketCapCache(state);
+    const ticketMaxIter = ticketCacheValid
+      ? Number(state.current_ticket_max_iterations)
+      : 0;
     const rawCurIter = Number(state.iteration);
     const curIter = Number.isFinite(rawCurIter) ? rawCurIter : 0;
     const budgetIter = ticketBudgetIterationCount(state, curIter);
@@ -2877,26 +2942,21 @@ async function runMuxRunnerMain() {
     // populated; --resume re-entered the loop and the very first cap-check
     // tripped before any ticket started. Self-heal: emit
     // cap_check_skipped_stale_cache + clear the stale fields, continue.
-    if (!state.current_ticket && ticketMaxIter > 0 && budgetIter >= ticketMaxIter) {
+    if (shouldEmitStalePerTicketCapSkip(state)) {
+      log(stalePerTicketCacheDiagnostic(state));
       logActivity({
         event: 'cap_check_skipped_stale_cache',
         source: 'pickle',
         session: path.basename(sessionDir),
         iteration: curIter,
         gate_payload: {
-          prior_max_iterations: ticketMaxIter,
-          global_max_iterations: globalMaxIter,
+          current_ticket: state.current_ticket,
+          current_ticket_max_iterations: state.current_ticket_max_iterations,
+          current_ticket_budget_start_iteration: state.current_ticket_budget_start_iteration,
+          current_ticket_tier: state.current_ticket_tier,
         },
       });
-      // R-CNAR-7 self-heal: clear all five cache fields atomically. The
-      // upstream nullification sites that should have done this are fixed by
-      // R-CNAR-8 (sibling commit); this path catches state that pre-dates
-      // those fixes plus any future leak we miss. The next loop iteration
-      // re-reads state via readRunnerState at the top of the while-body.
-      sm.update(statePath, s => { clearStaleTicketCacheFields(s); });
-      continue;
-    }
-    if (state.current_ticket && ticketMaxIter > 0 && budgetIter >= ticketMaxIter) {
+    } else if (ticketMaxIter > 0 && budgetIter >= ticketMaxIter) {
       const tier = typeof state.current_ticket_tier === 'string' ? state.current_ticket_tier : 'unknown';
       const ticketId = state.current_ticket ?? 'unknown';
       log(`mux-runner exiting with code 3: per-ticket budget (${budgetIter}/${ticketMaxIter}, tier=${tier}) exhausted on ticket ${ticketId} without ${PromiseTokens.EPIC_COMPLETED} promise`);

@@ -19,7 +19,14 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { applyTicketTierBudget, clearStaleTicketCacheFields } from '../bin/mux-runner.js';
+import {
+  applyTicketTierBudget,
+  clearStalePerTicketCacheAtIterationStart,
+  clearStaleTicketCacheFields,
+  hasStalePerTicketCacheFields,
+  isValidPerTicketCapCache,
+  stalePerTicketCacheDiagnostic,
+} from '../bin/mux-runner.js';
 
 function tempRoot() {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-cap-split-')));
@@ -200,4 +207,127 @@ test('R-CNAR-7 clearStaleTicketCacheFields: returns count of fields cleared (par
   assert.equal(cleared, 2, 'only the 2 populated fields cleared');
   assert.equal(state.current_ticket_max_iterations, undefined);
   assert.equal(state.current_ticket_worker_timeout_seconds, undefined);
+});
+
+test('R-CNAR-7 stale-cache guard: exact 2026-05-05 resume reproducer is skipped, not treated as valid cap cache', () => {
+  const state = {
+    current_ticket: null,
+    current_ticket_max_iterations: 10,
+    current_ticket_budget_start_iteration: 10,
+    current_ticket_tier: 'small',
+    iteration: 18,
+  };
+
+  assert.equal(isValidPerTicketCapCache(state), false);
+  assert.equal(
+    stalePerTicketCacheDiagnostic(state),
+    'per-ticket cap-check skipped: stale cache (current_ticket=null, max_iter=10, budget_start=10, tier=small)',
+  );
+});
+
+test('R-CNAR-7 stale-cache guard: invalid current_ticket_max_iterations is treated as stale cache', () => {
+  assert.equal(isValidPerTicketCapCache({
+    current_ticket: 'abc',
+    current_ticket_max_iterations: 0,
+    current_ticket_budget_start_iteration: 1,
+    current_ticket_tier: 'medium',
+  }), false);
+});
+
+test('R-CNAR-7 stale-cache guard: invalid current_ticket_budget_start_iteration is treated as stale cache', () => {
+  assert.equal(isValidPerTicketCapCache({
+    current_ticket: 'abc',
+    current_ticket_max_iterations: 30,
+    current_ticket_budget_start_iteration: -1,
+    current_ticket_tier: 'medium',
+  }), false);
+  assert.equal(isValidPerTicketCapCache({
+    current_ticket: 'abc',
+    current_ticket_max_iterations: 30,
+    current_ticket_budget_start_iteration: 1.5,
+    current_ticket_tier: 'medium',
+  }), false);
+});
+
+test('R-CNAR-7 stale-cache guard: invalid current_ticket_tier is treated as stale cache', () => {
+  assert.equal(isValidPerTicketCapCache({
+    current_ticket: 'abc',
+    current_ticket_max_iterations: 30,
+    current_ticket_budget_start_iteration: 2,
+    current_ticket_tier: 'bogus',
+  }), false);
+});
+
+test('R-CNAR-7 stale-cache guard: fully valid cache remains eligible for per-ticket cap-check', () => {
+  assert.equal(isValidPerTicketCapCache({
+    current_ticket: 'abc',
+    current_ticket_max_iterations: 30,
+    current_ticket_budget_start_iteration: 2,
+    current_ticket_tier: 'medium',
+  }), true);
+});
+
+test('R-CNAR-7 stale-cache guard: clean idle state is not treated as stale cache', () => {
+  assert.equal(hasStalePerTicketCacheFields({
+    current_ticket_tier: undefined,
+    current_ticket_budget: undefined,
+    current_ticket_max_iterations: undefined,
+    current_ticket_worker_timeout_seconds: undefined,
+    current_ticket_budget_start_iteration: undefined,
+  }), false);
+  assert.equal(isValidPerTicketCapCache({
+    current_ticket: null,
+    current_ticket_max_iterations: undefined,
+    current_ticket_budget_start_iteration: undefined,
+    current_ticket_tier: undefined,
+  }), false);
+});
+
+test('R-CNAR-7 iteration_start self-heal: clears stale cache when current_ticket=null', () => {
+  const root = tempRoot();
+  try {
+    const statePath = path.join(root, 'state.json');
+    fs.writeFileSync(statePath, JSON.stringify({
+      active: true,
+      working_dir: root,
+      step: 'implement',
+      iteration: 18,
+      max_iterations: 500,
+      max_time_minutes: 60,
+      worker_timeout_seconds: 99,
+      start_time_epoch: 1,
+      completion_promise: null,
+      original_prompt: '',
+      current_ticket: null,
+      history: [],
+      started_at: new Date(0).toISOString(),
+      session_dir: root,
+      current_ticket_tier: 'small',
+      current_ticket_budget: 10,
+      current_ticket_max_iterations: 10,
+      current_ticket_worker_timeout_seconds: 600,
+      current_ticket_budget_start_iteration: 10,
+    }, null, 2));
+
+    const logs = [];
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    const updated = clearStalePerTicketCacheAtIterationStart(statePath, state, msg => logs.push(msg));
+
+    assert.deepEqual(logs, ['clearing stale per-ticket cache fields (current_ticket=null)']);
+    assert.equal(hasStalePerTicketCacheFields(updated), false);
+    assert.equal(updated.current_ticket_tier, undefined);
+    assert.equal(updated.current_ticket_budget, undefined);
+    assert.equal(updated.current_ticket_max_iterations, undefined);
+    assert.equal(updated.current_ticket_worker_timeout_seconds, undefined);
+    assert.equal(updated.current_ticket_budget_start_iteration, undefined);
+
+    const persisted = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    assert.equal(persisted.current_ticket_tier, undefined);
+    assert.equal(persisted.current_ticket_budget, undefined);
+    assert.equal(persisted.current_ticket_max_iterations, undefined);
+    assert.equal(persisted.current_ticket_worker_timeout_seconds, undefined);
+    assert.equal(persisted.current_ticket_budget_start_iteration, undefined);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

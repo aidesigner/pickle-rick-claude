@@ -101,6 +101,20 @@ const EVENT_CASES = [
     drop: 'ticket',
   },
   {
+    type: 'cap_check_skipped_stale_cache',
+    valid: {
+      event: 'cap_check_skipped_stale_cache',
+      ts: TS,
+      gate_payload: {
+        current_ticket: null,
+        current_ticket_max_iterations: 10,
+        current_ticket_budget_start_iteration: 8,
+        current_ticket_tier: 'small',
+      },
+    },
+    drop: 'gate_payload',
+  },
+  {
     type: 'pipeline_auto_resumed',
     valid: {
       event: 'pipeline_auto_resumed',
@@ -230,6 +244,7 @@ test('activity-event-payload: schema defines exactly 19 event type definitions',
     'worker_spawn_backend_override',
     'subtool_backend_override',
     'worker_partial_lifecycle_exit',
+    'cap_check_skipped_stale_cache',
     'pipeline_auto_resumed',
     'bundle_bootstrap_exemption_applied',
     'ticket_audit_bypassed',
@@ -251,5 +266,5 @@ test('activity-event-payload: schema defines exactly 19 event type definitions',
   const nonSharedDefs = Object.keys(schema.definitions).filter(
     k => k !== 'backendEnum' && k !== 'backendResolutionSourceEnum',
   );
-  assert.equal(nonSharedDefs.length, 20, `expected 20 event definitions, got ${nonSharedDefs.length}`);
+  assert.equal(nonSharedDefs.length, 21, `expected 21 event definitions, got ${nonSharedDefs.length}`);
 });
