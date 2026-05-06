@@ -183,7 +183,7 @@ test('activity-event-payload: worker_spawn_backend_resolved pid must be an integ
   assert.equal(bad2.valid, false, 'string pid should fail');
 });
 
-test('activity-event-payload: schema defines exactly 11 event type definitions', () => {
+test('activity-event-payload: schema defines exactly 12 event type definitions', () => {
   const EVENT_NAMES = [
     'worker_spawn_backend_resolved',
     'worker_spawn_backend_mismatch',
@@ -196,6 +196,7 @@ test('activity-event-payload: schema defines exactly 11 event type definitions',
     'ticket_audit_manual_edit',
     'smoke_gate_bypassed',
     'bundle_2026_05_04_closer_done',
+    'install_sh_parity_check',
   ];
   for (const name of EVENT_NAMES) {
     assert.ok(name in schema.definitions, `schema missing definition for ${name}`);
@@ -203,5 +204,5 @@ test('activity-event-payload: schema defines exactly 11 event type definitions',
   const nonSharedDefs = Object.keys(schema.definitions).filter(
     k => k !== 'backendEnum' && k !== 'backendResolutionSourceEnum',
   );
-  assert.equal(nonSharedDefs.length, 11, `expected 11 event definitions, got ${nonSharedDefs.length}`);
+  assert.equal(nonSharedDefs.length, 12, `expected 12 event definitions, got ${nonSharedDefs.length}`);
 });
