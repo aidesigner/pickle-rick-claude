@@ -276,12 +276,14 @@ if [ "$INSTALL_MODE" = "git" ]; then
   echo "📦 Installing dependencies..."
   (cd "$SCRIPT_DIR/extension" && npm install --no-fund --no-audit)
   echo "🗑  Force-cleaning compiled JS (R-ITS-1: prevents stale-tsc-cache drift)..."
-  rm -f "$SCRIPT_DIR/extension/types/index.js" \
-        "$SCRIPT_DIR/extension/services/"*.js \
-        "$SCRIPT_DIR/extension/bin/"*.js \
-        "$SCRIPT_DIR/extension/hooks/"*.js \
-        "$SCRIPT_DIR/extension/lib/"*.js \
-        "$SCRIPT_DIR/extension/.tsbuildinfo" 2>/dev/null || true
+  # Only delete compiled JS that has a corresponding TS source — preserves
+  # JS-only utilities (e.g. parse-coverage-exception.js) that have no .ts twin.
+  while IFS= read -r tsfile; do
+    rel="${tsfile#"$SCRIPT_DIR/extension/src/"}"
+    jsfile="$SCRIPT_DIR/extension/${rel%.ts}.js"
+    rm -f "$jsfile" 2>/dev/null || true
+  done < <(find "$SCRIPT_DIR/extension/src" -type f -name "*.ts" ! -name "*.d.ts" 2>/dev/null)
+  rm -f "$SCRIPT_DIR/extension/.tsbuildinfo" 2>/dev/null || true
   echo "🔨 Compiling TypeScript..."
   (cd "$SCRIPT_DIR/extension" && npx tsc)
   # Sanity check: compiled JS schemaVersion must match source TS
