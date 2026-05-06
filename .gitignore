@@ -23,5 +23,5 @@ current_sessions.json
 /scripts/
 activity/
 .codex/
-# Test debris — non-deterministic files regenerated on each run
-bundle/ac-dr-02.json
+# Runtime test debris — non-deterministic file regenerated on each run
+bundle/ac-dr-02.runtime.json

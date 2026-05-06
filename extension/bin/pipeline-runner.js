@@ -21,7 +21,7 @@ import { BACKENDS, PipelineRunnerExitCode } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { backendEnvOverrides, isBackend } from '../services/backend-spawn.js';
 import { getExtensionRoot, Style, formatTime, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, displayMacNotification, writeStateFile, collectTickets, } from '../services/pickle-utils.js';
-import { isWorkingTreeDirty } from '../services/git-utils.js';
+import { isGitIgnoredPath, listWorkingTreeDirtyPaths } from '../services/git-utils.js';
 import { logActivity } from '../services/activity-logger.js';
 import { emitBundleLinearComments } from '../services/linear-integration.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
@@ -32,6 +32,7 @@ const sm = new StateManager();
 const DEFAULT_IGNORE_DIRTY_PATHS = ['prds', 'docs'];
 const CODEX_REQUIRED_BACKEND = 'codex-required';
 const WATCHER_TERMINATED_BANNER = '◤ FEED TERMINATED ◢';
+const DIRTY_ALLOWED_FILE_REL = path.join('extension', '.pipeline-runner-dirty-allowed.json');
 // ---------------------------------------------------------------------------
 // Config Parsing
 // ---------------------------------------------------------------------------
@@ -217,12 +218,39 @@ export function discoverSubsystems(target) {
  * the dirty check — frequent doc edits during a long-running epic shouldn't
  * block resume. Defaults to ['prds', 'docs'] when omitted.
  */
+function loadAllowedDirtyPaths(workingDir) {
+    const filePath = path.join(workingDir, DIRTY_ALLOWED_FILE_REL);
+    if (!fs.existsSync(filePath))
+        return new Set();
+    try {
+        const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+        const rawPaths = Array.isArray(parsed)
+            ? parsed
+            : (typeof parsed === 'object' && parsed !== null && Array.isArray(parsed.paths)
+                ? parsed.paths
+                : []);
+        return new Set(rawPaths
+            .filter((value) => typeof value === 'string')
+            .map((value) => value.replace(/^\.?\/+/, '').replace(/\/+$/, ''))
+            .filter((value) => value.length > 0));
+    }
+    catch (error) {
+        throw new Error(`Invalid dirty allowlist at ${filePath}: ${safeErrorMessage(error)}`);
+    }
+}
+function allowedDirtyPathsForLaunch(workingDir, ignoreDirtyPaths) {
+    const ignore = ignoreDirtyPaths ?? [...DEFAULT_IGNORE_DIRTY_PATHS];
+    const allowlist = loadAllowedDirtyPaths(workingDir);
+    const dirtyPaths = listWorkingTreeDirtyPaths(workingDir, ignore);
+    return dirtyPaths.filter((filePath) => !allowlist.has(filePath) && !isGitIgnoredPath(workingDir, filePath));
+}
 export function assertCleanWorkingTree(workingDir, ignoreDirtyPaths) {
     const ignore = ignoreDirtyPaths ?? [...DEFAULT_IGNORE_DIRTY_PATHS];
-    if (!isWorkingTreeDirty(workingDir, ignore))
+    const blockingPaths = allowedDirtyPathsForLaunch(workingDir, ignore);
+    if (blockingPaths.length === 0)
         return;
     const suffix = ignore.length > 0 ? ` (ignored prefixes: ${ignore.join(', ')})` : '';
-    throw new Error(`Working tree at ${workingDir} is dirty${suffix}. Commit, stash, or discard changes before starting the pipeline (git status).`);
+    throw new Error(`Working tree at ${workingDir} is dirty${suffix}. Dirty files:\n${blockingPaths.join('\n')}\nCommit, stash, or discard changes before starting the pipeline.`);
 }
 // ---------------------------------------------------------------------------
 // Child Process Management

@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { spawnSync } from 'child_process';
 import { runCmd, extractFrontmatter, formatLocalDateKey } from './pickle-utils.js';
 import { syncLinearTicketStatus } from './linear-integration.js';
 
@@ -131,17 +132,64 @@ export function resetToSha(sha: string, cwd: string): void {
   runGit(['clean', '-fd'], cwd);
 }
 
-export function isWorkingTreeDirty(cwd: string, excludePrefixes?: string[]): boolean {
-  const args = ['status', '--porcelain'];
-  if (excludePrefixes && excludePrefixes.length > 0) {
+function normalizeExcludePrefixes(excludePrefixes?: string[]): string[] {
+  if (!excludePrefixes || excludePrefixes.length === 0) return [];
+  return excludePrefixes
+    .map((prefix) => prefix.replace(/^\.?\/+/, '').replace(/\/+$/, ''))
+    .filter((prefix) => prefix.length > 0);
+}
+
+function statusArgs(excludePrefixes?: string[]): string[] {
+  const args = ['status', '--porcelain', '-z'];
+  const cleanedPrefixes = normalizeExcludePrefixes(excludePrefixes);
+  if (cleanedPrefixes.length > 0) {
     args.push('--', '.');
-    for (const prefix of excludePrefixes) {
-      const cleaned = prefix.replace(/^\.?\/+/, '').replace(/\/+$/, '');
-      if (cleaned.length === 0) continue;
+    for (const cleaned of cleanedPrefixes) {
       args.push(`:!${cleaned}`, `:!${cleaned}/**`);
     }
   }
-  return runGit(args, cwd).trim().length > 0;
+  return args;
+}
+
+export function listWorkingTreeDirtyPaths(cwd: string, excludePrefixes?: string[]): string[] {
+  const result = spawnSync('git', statusArgs(excludePrefixes), {
+    cwd,
+    encoding: 'utf-8',
+    timeout: 30_000,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  if ((result.status ?? 1) !== 0) {
+    throw new Error(`Command failed: git ${statusArgs(excludePrefixes).join(' ')}\nError: ${result.stderr || ''}`);
+  }
+  const output = result.stdout || '';
+  if (!output) return [];
+
+  const tokens = output.split('\0').filter((token) => token.length > 0);
+  const paths: string[] = [];
+
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    if (token.length < 4) continue;
+    paths.push(token.slice(3));
+    const status = token.slice(0, 2);
+    if (status[0] === 'R' || status[0] === 'C' || status[1] === 'R' || status[1] === 'C') {
+      index += 1;
+    }
+  }
+
+  return [...new Set(paths)].sort((left, right) => left.localeCompare(right));
+}
+
+export function isGitIgnoredPath(cwd: string, filePath: string): boolean {
+  const result = spawnSync('git', ['check-ignore', '--no-index', '--quiet', '--', filePath], {
+    cwd,
+    stdio: 'ignore',
+  });
+  return result.status === 0;
+}
+
+export function isWorkingTreeDirty(cwd: string, excludePrefixes?: string[]): boolean {
+  return listWorkingTreeDirtyPaths(cwd, excludePrefixes).length > 0;
 }
 
 export type DiffStatus = 'A' | 'M' | 'D' | 'R' | 'B';

@@ -1078,6 +1078,36 @@ describe('assertCleanWorkingTree', () => {
     fs.rmSync(dir, { recursive: true });
   });
 
+  test('allows tracked dirty files that match .gitignore', () => {
+    const dir = tmpDir();
+    initRepo(dir);
+    fs.writeFileSync(path.join(dir, 'foo.txt'), 'seed');
+    execFileSync('git', ['add', 'foo.txt'], { cwd: dir });
+    execFileSync('git', ['commit', '-q', '-m', 'track file'], { cwd: dir });
+    fs.writeFileSync(path.join(dir, '.gitignore'), 'foo.txt\n');
+    execFileSync('git', ['add', '.gitignore'], { cwd: dir });
+    execFileSync('git', ['commit', '-q', '-m', 'ignore tracked file'], { cwd: dir });
+    fs.writeFileSync(path.join(dir, 'foo.txt'), 'changed');
+    assert.doesNotThrow(() => assertCleanWorkingTree(dir));
+    fs.rmSync(dir, { recursive: true });
+  });
+
+  test('allows tracked dirty files listed in extension/.pipeline-runner-dirty-allowed.json', () => {
+    const dir = tmpDir();
+    initRepo(dir);
+    fs.mkdirSync(path.join(dir, 'extension'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'runtime.txt'), 'seed');
+    fs.writeFileSync(
+      path.join(dir, 'extension', '.pipeline-runner-dirty-allowed.json'),
+      `${JSON.stringify({ paths: ['runtime.txt'] }, null, 2)}\n`,
+    );
+    execFileSync('git', ['add', 'runtime.txt', 'extension/.pipeline-runner-dirty-allowed.json'], { cwd: dir });
+    execFileSync('git', ['commit', '-q', '-m', 'allow runtime file'], { cwd: dir });
+    fs.writeFileSync(path.join(dir, 'runtime.txt'), 'changed');
+    assert.doesNotThrow(() => assertCleanWorkingTree(dir));
+    fs.rmSync(dir, { recursive: true });
+  });
+
   test('explicit ignore list overrides defaults', () => {
     const dir = tmpDir();
     initRepo(dir);
@@ -1090,6 +1120,18 @@ describe('assertCleanWorkingTree', () => {
     fs.mkdirSync(path.join(dir, 'notes'));
     fs.writeFileSync(path.join(dir, 'notes', 'jot.md'), 'wip');
     assert.doesNotThrow(() => assertCleanWorkingTree(dir, ['notes']));
+    fs.rmSync(dir, { recursive: true });
+  });
+
+  test('error lists blocking files one per line', () => {
+    const dir = tmpDir();
+    initRepo(dir);
+    fs.writeFileSync(path.join(dir, 'alpha.txt'), 'a');
+    fs.writeFileSync(path.join(dir, 'beta.txt'), 'b');
+    assert.throws(
+      () => assertCleanWorkingTree(dir),
+      /Dirty files:\nalpha\.txt\nbeta\.txt\nCommit, stash, or discard changes before starting the pipeline\./,
+    );
     fs.rmSync(dir, { recursive: true });
   });
 });

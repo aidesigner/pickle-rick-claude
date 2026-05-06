@@ -12,10 +12,13 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { validateBundleArtifact } from '../../bin/verify-bundle.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 const CLI = path.join(REPO_ROOT, 'bin', 'verify-recapture-fired.js');
-const ARTIFACT = path.join(REPO_ROOT, 'bundle', 'ac-dr-02.json');
+const STABLE_ARTIFACT = path.join(REPO_ROOT, 'bundle', 'ac-dr-02.json');
+const RUNTIME_ARTIFACT = path.join(REPO_ROOT, 'bundle', 'ac-dr-02.runtime.json');
 
 function makeSession(state) {
   const session = mkdtempSync(path.join(tmpdir(), 'verify-recapture-'));
@@ -30,7 +33,8 @@ function runVerifier(session) {
   });
   return {
     ...result,
-    artifact: JSON.parse(readFileSync(ARTIFACT, 'utf8')),
+    stableArtifact: JSON.parse(readFileSync(STABLE_ARTIFACT, 'utf8')),
+    runtimeArtifact: JSON.parse(readFileSync(RUNTIME_ARTIFACT, 'utf8')),
   };
 }
 
@@ -53,12 +57,18 @@ test('verify-recapture.pass writes passing artifact when iteration 1 event is in
       iteration: 1,
     },
   ]));
+  const baseline = readFileSync(STABLE_ARTIFACT, 'utf8');
   try {
     const result = runVerifier(session);
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /AC-DR-02 PASS/);
-    assert.equal(result.artifact.pass, true);
-    assert.equal(result.artifact.failure_reason, null);
+    assert.equal(readFileSync(STABLE_ARTIFACT, 'utf8'), baseline);
+    assert.deepEqual(validateBundleArtifact(result.stableArtifact), []);
+    assert.equal(result.stableArtifact.pass, true);
+    assert.equal(result.stableArtifact.failure_reason, null);
+    assert.equal(result.stableArtifact.checker_version, '2');
+    assert.equal(result.runtimeArtifact.pass, true);
+    assert.equal(result.runtimeArtifact.failure_reason, null);
   } finally {
     rmSync(session, { recursive: true, force: true });
   }
@@ -69,8 +79,8 @@ test('verify-recapture.no-event writes failing artifact when activity has no rec
   try {
     const result = runVerifier(session);
     assert.equal(result.status, 1);
-    assert.equal(result.artifact.pass, false);
-    assert.equal(result.artifact.failure_reason, 'recapture-event-missing');
+    assert.equal(result.runtimeArtifact.pass, false);
+    assert.equal(result.runtimeArtifact.failure_reason, 'recapture-event-missing');
   } finally {
     rmSync(session, { recursive: true, force: true });
   }
@@ -87,8 +97,8 @@ test('verify-recapture.wrong-phase fails when event timestamp is outside anatomy
   try {
     const result = runVerifier(session);
     assert.equal(result.status, 1);
-    assert.equal(result.artifact.pass, false);
-    assert.equal(result.artifact.failure_reason, 'recapture-event-missing');
+    assert.equal(result.runtimeArtifact.pass, false);
+    assert.equal(result.runtimeArtifact.failure_reason, 'recapture-event-missing');
   } finally {
     rmSync(session, { recursive: true, force: true });
   }
@@ -105,8 +115,8 @@ test('verify-recapture.wrong-iteration fails when matching event is not iteratio
   try {
     const result = runVerifier(session);
     assert.equal(result.status, 1);
-    assert.equal(result.artifact.pass, false);
-    assert.equal(result.artifact.failure_reason, 'recapture-event-missing');
+    assert.equal(result.runtimeArtifact.pass, false);
+    assert.equal(result.runtimeArtifact.failure_reason, 'recapture-event-missing');
   } finally {
     rmSync(session, { recursive: true, force: true });
   }
@@ -117,8 +127,8 @@ test('verify-recapture.state-missing exits 2 and writes state-missing artifact',
   try {
     const result = runVerifier(session);
     assert.equal(result.status, 2);
-    assert.equal(result.artifact.pass, false);
-    assert.equal(result.artifact.failure_reason, 'state-missing');
+    assert.equal(result.runtimeArtifact.pass, false);
+    assert.equal(result.runtimeArtifact.failure_reason, 'state-missing');
   } finally {
     rmSync(session, { recursive: true, force: true });
   }
