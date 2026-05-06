@@ -207,6 +207,12 @@ export const VALID_ACTIVITY_EVENTS = [
     'ticket_cache_cleared',
     'orphan_map_entry_pruned',
     'install_sh_parity_check',
+    'worker_backend_resolved',
+    'completion_commit_auto_filled',
+    'completion_commit_inferred_from_git',
+    'time_cap_disabled_default',
+    'bundle_bootstrap_exemption_applied',
+    'manager_idle_backoff_engaged',
 ];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {
