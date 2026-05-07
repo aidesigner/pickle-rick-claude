@@ -15,6 +15,8 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SPAWN_MORTY_BIN = path.resolve(__dirname, '../../bin/spawn-morty.js');
+const ACTIVITY_EVENT_SCHEMA_PATH = path.resolve(__dirname, '../../src/types/activity-events.schema.json');
+const ACTIVITY_EVENT_SCHEMA = JSON.parse(fs.readFileSync(ACTIVITY_EVENT_SCHEMA_PATH, 'utf-8'));
 
 function makeTmpDir(prefix = 'pickle-xbl2-') {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
@@ -118,6 +120,38 @@ function readActivityEvents(sessionDir, eventName) {
   const state = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
   const activity = Array.isArray(state.activity) ? state.activity : [];
   return activity.filter((entry) => entry?.event === eventName);
+}
+
+function resolveSchemaRef(ref) {
+  return ACTIVITY_EVENT_SCHEMA.definitions[ref.replace('#/definitions/', '')];
+}
+
+function validateActivityEventAgainstSchema(payload, defName) {
+  const def = ACTIVITY_EVENT_SCHEMA.definitions[defName];
+  assert.ok(def, `missing schema definition for ${defName}`);
+  for (const field of def.required ?? []) {
+    assert.ok(field in payload, `${defName}: missing required field ${field}`);
+  }
+  for (const [field, rawProp] of Object.entries(def.properties ?? {})) {
+    if (!(field in payload)) continue;
+    const prop = rawProp.$ref ? resolveSchemaRef(rawProp.$ref) : rawProp;
+    const value = payload[field];
+    if (Array.isArray(prop.type)) {
+      const matchesType = prop.type.some((typeName) => {
+        if (typeName === 'null') return value === null;
+        if (typeName === 'integer') return Number.isInteger(value);
+        return typeof value === typeName;
+      });
+      assert.ok(matchesType, `${defName}.${field}: value ${JSON.stringify(value)} does not match ${prop.type.join('|')}`);
+    } else if (prop.type === 'integer') {
+      assert.ok(Number.isInteger(value), `${defName}.${field}: expected integer, got ${JSON.stringify(value)}`);
+    } else if (prop.type === 'string') {
+      assert.equal(typeof value, 'string', `${defName}.${field}: expected string, got ${typeof value}`);
+    }
+    if (Array.isArray(prop.enum)) {
+      assert.ok(prop.enum.includes(value), `${defName}.${field}: ${JSON.stringify(value)} not in enum ${prop.enum.join(',')}`);
+    }
+  }
 }
 
 function which(harness) {
@@ -224,6 +258,7 @@ test('backend-spawn-assertion: stale state/backend + heuristic mismatch exits no
     assert.equal(invoked.length, 0, `expected spawn-block before exec; got ${JSON.stringify(invoked.map(i => i.backend))}`);
     const mismatch = readActivityEvents(harness.sessionDir, 'worker_spawn_backend_mismatch');
     assert.equal(mismatch.length, 1);
+    validateActivityEventAgainstSchema(mismatch[0], 'worker_spawn_backend_mismatch');
     assert.equal(mismatch[0].resolved_backend, 'claude');
     assert.equal(mismatch[0].state_backend, 'codex');
     assert.equal(mismatch[0].source, 'settings');

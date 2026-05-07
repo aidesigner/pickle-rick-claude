@@ -28,18 +28,16 @@
     },
     "worker_spawn_backend_mismatch": {
       "type": "object",
-      "required": ["event", "ts", "backend", "gate_payload"],
+      "required": ["event", "ts", "source", "pid", "ticket", "session", "resolved_backend"],
       "properties": {
         "event": { "type": "string", "const": "worker_spawn_backend_mismatch" },
         "ts": { "type": "string" },
-        "backend": { "$ref": "#/definitions/backendEnum" },
-        "gate_payload": {
-          "type": "object",
-          "required": ["expected_backend"],
-          "properties": {
-            "expected_backend": { "$ref": "#/definitions/backendEnum" }
-          }
-        }
+        "source": { "$ref": "#/definitions/backendResolutionSourceEnum" },
+        "pid": { "type": "integer" },
+        "ticket": { "type": "string" },
+        "session": { "type": "string" },
+        "resolved_backend": { "$ref": "#/definitions/backendEnum" },
+        "state_backend": { "$ref": "#/definitions/backendEnum" }
       }
     },
     "worker_spawn_backend_override": {

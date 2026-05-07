@@ -72,8 +72,17 @@ const EVENT_CASES = [
   },
   {
     type: 'worker_spawn_backend_mismatch',
-    valid: { event: 'worker_spawn_backend_mismatch', ts: TS, backend: 'codex', gate_payload: { expected_backend: 'claude' } },
-    drop: 'gate_payload',
+    valid: {
+      event: 'worker_spawn_backend_mismatch',
+      ts: TS,
+      source: 'settings',
+      pid: 1234,
+      ticket: 'abc123',
+      session: 'session-1',
+      resolved_backend: 'claude',
+      state_backend: 'codex',
+    },
+    drop: 'resolved_backend',
   },
   {
     type: 'worker_spawn_backend_override',
