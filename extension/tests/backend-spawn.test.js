@@ -489,8 +489,8 @@ test('buildWorkerInvocation(codex): emits NO effort flag when effort is unset', 
     assert.ok(!inv.args.some(a => typeof a === 'string' && a.startsWith('reasoning.effort=')));
 });
 
-test('buildWorkerInvocation(codex): all three effort levels round-trip', () => {
-    for (const level of ['low', 'medium', 'high']) {
+test('buildWorkerInvocation(codex): all four effort levels round-trip', () => {
+    for (const level of ['low', 'medium', 'high', 'xhigh']) {
         const inv = buildWorkerInvocation('codex', {
             prompt: 'x',
             addDirs: [],

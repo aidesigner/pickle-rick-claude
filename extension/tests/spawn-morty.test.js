@@ -937,6 +937,56 @@ test('spawn-morty: state.effort=high reaches codex invocation as -c reasoning.ef
     }
 });
 
+test('spawn-morty: state.effort=xhigh reaches codex invocation as -c reasoning.effort=xhigh', () => {
+    const tmpDir = makeTmpDir();
+    try {
+        const sessionDir = path.join(tmpDir, 'session');
+        const ticketDir = path.join(sessionDir, 'ticket-effort-xhigh-thread');
+        fs.mkdirSync(ticketDir, { recursive: true });
+
+        const statePath = path.join(sessionDir, 'state.json');
+        fs.writeFileSync(statePath, JSON.stringify({
+            active: true,
+            backend: 'codex',
+            effort: 'xhigh',
+            iteration: 1,
+            schema_version: 1,
+        }));
+
+        const shimDir = path.join(tmpDir, 'bin');
+        const shimLog = path.join(tmpDir, 'codex-effort-xhigh.json');
+        writeCodexShim(shimDir, shimLog);
+
+        const result = spawnSync(process.execPath, [SPAWN_MORTY_BIN,
+            'implement the thing',
+            '--ticket-id', 'ticket-effort-xhigh-thread',
+            '--ticket-path', ticketDir,
+            '--timeout', '30',
+        ], {
+            env: {
+                ...process.env,
+                EXTENSION_DIR: tmpDir,
+                PATH: `${shimDir}${path.delimiter}${process.env.PATH || ''}`,
+                PICKLE_BACKEND: '',
+            },
+            encoding: 'utf-8',
+            timeout: 45000,
+        });
+
+        assert.equal(result.status, 1);
+        assert.ok(fs.existsSync(shimLog), 'codex shim should be invoked');
+        const invocation = JSON.parse(fs.readFileSync(shimLog, 'utf-8'));
+        const argv = invocation.argv;
+        const dashCIdx = argv.indexOf('-c');
+        assert.ok(dashCIdx >= 0, `expected -c in argv, got: ${JSON.stringify(argv)}`);
+        assert.equal(argv[dashCIdx + 1], 'reasoning.effort=xhigh');
+        const sepIdx = argv.indexOf('--');
+        assert.ok(sepIdx >= 0 && dashCIdx < sepIdx, '-c reasoning.effort must come before --');
+    } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+});
+
 // ---------------------------------------------------------------------------
 // P0: Codex worker contract addendum
 // ---------------------------------------------------------------------------

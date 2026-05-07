@@ -845,8 +845,8 @@ test('setup: --effort high persists into state.effort', () => {
     }
 });
 
-test('setup: --effort low and --effort medium persist correctly', () => {
-    for (const level of ['low', 'medium']) {
+test('setup: --effort low/medium/xhigh persist correctly', () => {
+    for (const level of ['low', 'medium', 'xhigh']) {
         const sessionPath = runSetup(['--effort', level, '--task', `effort-${level}-test`]);
         try {
             const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
@@ -870,7 +870,7 @@ test('setup: without --effort, state.effort is undefined (preserves CLI default)
 test('setup: --effort bogus errors out with a clear message', () => {
     assert.throws(
         () => runSetup(['--effort', 'bogus', '--task', 'effort-bogus-test']),
-        /--effort must be one of: low, medium, high/i,
+        /--effort must be one of: low, medium, high, xhigh/i,
     );
 });
 

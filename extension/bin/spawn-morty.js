@@ -622,7 +622,7 @@ function readSessionRuntime(args) {
     try {
         const state = timeoutStatePath ? sm.read(timeoutStatePath) : null;
         const sessionWorkingDir = state?.working_dir?.trim() ? state.working_dir : process.cwd();
-        const sessionEffort = state?.effort === 'low' || state?.effort === 'medium' || state?.effort === 'high'
+        const sessionEffort = state?.effort === 'low' || state?.effort === 'medium' || state?.effort === 'high' || state?.effort === 'xhigh'
             ? state.effort
             : undefined;
         return { timeoutStatePath, workerStatePath, state, sessionWorkingDir, sessionEffort };

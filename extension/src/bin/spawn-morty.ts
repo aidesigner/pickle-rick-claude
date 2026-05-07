@@ -92,7 +92,7 @@ export type WorkerProcessContext = {
   effectiveTimeoutMs: number;
   mutableState: { finalized: boolean; timedOut: boolean };
   model?: string;
-  effort?: 'low' | 'medium' | 'high';
+  effort?: 'low' | 'medium' | 'high' | 'xhigh';
   hermesOptions?: HermesWorkerOptions;
   preWorkerHead: string | null;
 };
@@ -526,7 +526,7 @@ type SessionRuntime = {
   workerStatePath: string;
   state: State | null;
   sessionWorkingDir: string;
-  sessionEffort?: 'low' | 'medium' | 'high';
+  sessionEffort?: 'low' | 'medium' | 'high' | 'xhigh';
 };
 
 type HermesWorkerOptions = {
@@ -763,7 +763,7 @@ function readSessionRuntime(args: ParsedArgs): SessionRuntime {
   try {
     const state = timeoutStatePath ? sm.read(timeoutStatePath) : null;
     const sessionWorkingDir = state?.working_dir?.trim() ? state.working_dir : process.cwd();
-    const sessionEffort = state?.effort === 'low' || state?.effort === 'medium' || state?.effort === 'high'
+    const sessionEffort = state?.effort === 'low' || state?.effort === 'medium' || state?.effort === 'high' || state?.effort === 'xhigh'
       ? state.effort
       : undefined;
     return { timeoutStatePath, workerStatePath, state, sessionWorkingDir, sessionEffort };

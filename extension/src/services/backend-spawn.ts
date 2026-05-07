@@ -3,7 +3,7 @@ import * as path from 'path';
 import { Backend, BACKENDS, State, type BackendResolutionSource, type WorkerBackendResolutionSource } from '../types/index.js';
 import { StateManager } from './state-manager.js';
 
-export type ReasoningEffort = 'low' | 'medium' | 'high';
+export type ReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh';
 
 export interface WorkerInvocationOptions {
   prompt: string;

@@ -24,8 +24,8 @@ interface SetupPaths {
   sessionsMap: string;
 }
 
-type EffortValue = 'low' | 'medium' | 'high';
-const VALID_EFFORTS: readonly EffortValue[] = ['low', 'medium', 'high'];
+type EffortValue = 'low' | 'medium' | 'high' | 'xhigh';
+const VALID_EFFORTS: readonly EffortValue[] = ['low', 'medium', 'high', 'xhigh'];
 
 export interface SetupArgs {
   loopLimit: number;

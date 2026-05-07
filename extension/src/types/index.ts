@@ -54,7 +54,7 @@ export interface State {
    * backend (`-c reasoning.effort=<value>`); claude has no public flag and
    * silently ignores. When unset, workers inherit the CLI default.
    */
-  effort?: 'low' | 'medium' | 'high';
+  effort?: 'low' | 'medium' | 'high' | 'xhigh';
   /**
    * Manager tmux_mode: count of times mux-runner has relaunched the backend
    * manager subprocess after a per-iteration error (e.g. 4h hang-guard
@@ -479,7 +479,7 @@ export const VALID_ACTIVITY_EVENTS = [
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];
-export type ActivityEventSource = 'pickle' | 'hook' | 'persona' | BackendResolutionSource;
+export type ActivityEventSource = 'pickle' | 'hook' | 'persona' | BackendResolutionSource | WorkerBackendResolutionSource;
 
 export enum PipelineRunnerExitCode {
   Success = 0,

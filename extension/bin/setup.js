@@ -13,7 +13,7 @@ import { logActivity, pruneActivity } from '../services/activity-logger.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { updateTicketStatusInTransaction } from '../services/transaction-ticket-ops.js';
 const sm = new StateManager();
-const VALID_EFFORTS = ['low', 'medium', 'high'];
+const VALID_EFFORTS = ['low', 'medium', 'high', 'xhigh'];
 export const DEFAULT_MANAGER_IDLE_BACKOFF_FALLBACK_MS = 60_000;
 export function resolveManagerIdleBackoffFallbackMs(value) {
     return typeof value === 'number' && Number.isInteger(value) && value >= 1_000 && value <= 600_000
