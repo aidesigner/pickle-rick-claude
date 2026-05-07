@@ -80,6 +80,21 @@ function shellPatternToRegex(pattern) {
                 continue;
             }
         }
+        if (char === '[') {
+            const end = pattern.indexOf(']', i + 1);
+            if (end !== -1) {
+                const rawClass = pattern.slice(i + 1, end);
+                const isNegated = rawClass.startsWith('!') || rawClass.startsWith('^');
+                const classBody = (isNegated ? rawClass.slice(1) : rawClass)
+                    .replace(/\\/g, '\\\\')
+                    .replace(/\]/g, '\\]');
+                if (classBody.length > 0) {
+                    regex += isNegated ? `[^${classBody}]` : `[${classBody}]`;
+                    i = end;
+                    continue;
+                }
+            }
+        }
         regex += char.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     }
     regex += '$';
