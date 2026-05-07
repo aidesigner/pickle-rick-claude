@@ -611,19 +611,30 @@ test('spawn-morty: recovers orphan tmp backend state before routing worker CLI',
         fs.mkdirSync(ticketDir, { recursive: true });
 
         const statePath = path.join(sessionDir, 'state.json');
-        fs.writeFileSync(statePath, JSON.stringify({
+        const baseState = {
+            working_dir: tmpDir,
+            session_dir: sessionDir,
+            started_at: '2026-01-01T00:00:00Z',
+            original_prompt: 'test backend recovery',
+            step: 'implement',
+            iteration: 1,
+            max_iterations: 5,
+            max_time_minutes: 0,
+            worker_timeout_seconds: 1200,
+            start_time_epoch: 0,
+            history: [],
+            completion_promise: null,
+            schema_version: 3,
             active: true,
             backend: 'claude',
-            iteration: 1,
-            schema_version: 1,
-        }));
+        };
+        fs.writeFileSync(statePath, JSON.stringify(baseState));
         fs.writeFileSync(
             `${statePath}.tmp.99999999`,
             JSON.stringify({
-                active: true,
+                ...baseState,
                 backend: 'codex',
                 iteration: 2,
-                schema_version: 1,
             }),
         );
 
@@ -763,23 +774,32 @@ test('spawn-morty: recovers orphan tmp session timeout before printing worker bu
 
         const statePath = path.join(sessionDir, 'state.json');
         const nowEpoch = Math.floor(Date.now() / 1000);
-        fs.writeFileSync(statePath, JSON.stringify({
+        const baseState = {
+            working_dir: tmpDir,
+            session_dir: sessionDir,
+            started_at: '2026-01-01T00:00:00Z',
+            original_prompt: 'test timeout recovery',
+            step: 'implement',
+            iteration: 1,
+            max_iterations: 5,
+            worker_timeout_seconds: 1200,
+            history: [],
+            completion_promise: null,
+            schema_version: 3,
             active: true,
             backend: 'claude',
             max_time_minutes: 20,
             start_time_epoch: nowEpoch - 5,
-            iteration: 1,
-            schema_version: 1,
-        }));
+        };
+        fs.writeFileSync(statePath, JSON.stringify(baseState));
         fs.writeFileSync(
             `${statePath}.tmp.99999998`,
             JSON.stringify({
-                active: true,
+                ...baseState,
                 backend: 'codex',
                 max_time_minutes: 3,
                 start_time_epoch: nowEpoch - 90,
                 iteration: 2,
-                schema_version: 1,
             }),
         );
 

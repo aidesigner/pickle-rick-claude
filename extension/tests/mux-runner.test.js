@@ -327,24 +327,31 @@ test('mux-runner: recovered inactive orphan tmp stops the loop before stale comm
         const sessionDir = path.join(tmpRoot, 'session');
         fs.mkdirSync(sessionDir, { recursive: true });
         const statePath = path.join(sessionDir, 'state.json');
-        fs.writeFileSync(statePath, JSON.stringify({
+        const baseState = {
+            working_dir: tmpRoot,
+            backend: 'claude',
             active: true,
             step: 'implement',
             iteration: 0,
             max_iterations: 5,
+            max_time_minutes: 0,
             worker_timeout_seconds: 1200,
+            start_time_epoch: 0,
             original_prompt: 'test recovered inactive state',
-            working_dir: tmpRoot,
+            session_dir: sessionDir,
+            started_at: '2026-01-01T00:00:00Z',
+            history: [],
+            completion_promise: null,
+            schema_version: 3,
             command_template: '../stale-template.md',
-        }, null, 2));
+        };
+        fs.writeFileSync(statePath, JSON.stringify(baseState, null, 2));
         fs.writeFileSync(`${statePath}.tmp.99999999`, JSON.stringify({
+            ...baseState,
             active: false,
             step: 'review',
             iteration: 4,
-            max_iterations: 5,
-            worker_timeout_seconds: 1200,
             original_prompt: 'promoted inactive state',
-            working_dir: tmpRoot,
         }, null, 2));
 
         const result = run(tmpRoot, [sessionDir]);
@@ -376,7 +383,7 @@ test('mux-runner: SIGTERM shutdown preserves a newer orphan tmp session payload'
         const sessionDir = path.join(tmpRoot, 'session');
         fs.mkdirSync(sessionDir, { recursive: true });
         const statePath = path.join(sessionDir, 'state.json');
-        fs.writeFileSync(statePath, JSON.stringify({
+        const baseState = {
             schema_version: 1,
             active: false,
             tmux_mode: true,
@@ -384,12 +391,18 @@ test('mux-runner: SIGTERM shutdown preserves a newer orphan tmp session payload'
             step: 'implement',
             iteration: 1,
             max_iterations: 10,
+            max_time_minutes: 0,
             worker_timeout_seconds: 1200,
+            start_time_epoch: 0,
             current_ticket: 'T-BASE',
             original_prompt: 'Base mux session state',
             working_dir: tmpRoot,
             session_dir: sessionDir,
-        }, null, 2));
+            started_at: '2026-01-01T00:00:00Z',
+            history: [],
+            completion_promise: null,
+        };
+        fs.writeFileSync(statePath, JSON.stringify(baseState, null, 2));
 
         const templatesDir = path.join(tmpRoot, 'templates');
         fs.mkdirSync(templatesDir, { recursive: true });
@@ -431,18 +444,11 @@ test('mux-runner: SIGTERM shutdown preserves a newer orphan tmp session payload'
 
         const orphanTmpPath = `${statePath}.tmp.99999999`;
         fs.writeFileSync(orphanTmpPath, JSON.stringify({
-            schema_version: 1,
+            ...baseState,
             active: true,
-            tmux_mode: true,
-            backend: 'claude',
-            step: 'implement',
             iteration: 7,
-            max_iterations: 10,
-            worker_timeout_seconds: 1200,
             current_ticket: 'T-RECOVERED',
             original_prompt: 'Recovered mux session state',
-            working_dir: tmpRoot,
-            session_dir: sessionDir,
         }, null, 2));
 
         const exitPromise = new Promise((resolve, reject) => {
