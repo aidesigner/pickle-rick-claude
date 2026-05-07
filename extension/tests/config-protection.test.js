@@ -188,6 +188,11 @@ test('blocks Bash echo append to .prettierrc', () => {
   assert.equal(result.decision, 'block');
 });
 
+test('blocks Bash glob targeting tsconfig*.json', () => {
+  const result = runHandler({ toolName: 'Bash', toolInput: { command: 'sed -i "s/strict/loose/" tsconfig*.json' } });
+  assert.equal(result.decision, 'block');
+});
+
 // ---------------------------------------------------------------------------
 // Approve cases
 // ---------------------------------------------------------------------------
