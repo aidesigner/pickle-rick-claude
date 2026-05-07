@@ -25,6 +25,7 @@ interface AuditReport {
 interface WorkerBackendResolvedEvent {
   event: string;
   ticket_id?: string;
+  ticket?: string;
   backend?: string;
   worker_backend?: string | null;
   source?: string;
@@ -47,6 +48,7 @@ function readSessionState(sessionDir: string): {
     const activity = state.activity ?? [];
     const subtoolOverrideCount = activity.filter((a) => a.event === 'subtool_backend_override').length;
     const workerBackendEvents = activity.filter((a) => a.event === 'worker_backend_resolved');
+    const workerOverrideEvents = activity.filter((a) => a.event === 'worker_spawn_backend_override');
     const expectedWorkerBackendByTicket = new Map<string, string>();
     for (const entry of workerBackendEvents) {
       if (!entry.ticket_id) continue;
@@ -58,6 +60,12 @@ function readSessionState(sessionDir: string): {
           : entry.backend;
       if (typeof expected === 'string' && expected.length > 0) {
         expectedWorkerBackendByTicket.set(entry.ticket_id, expected);
+      }
+    }
+    for (const entry of workerOverrideEvents) {
+      if (!entry.ticket) continue;
+      if (typeof entry.backend === 'string' && entry.backend.length > 0) {
+        expectedWorkerBackendByTicket.set(entry.ticket, entry.backend);
       }
     }
     return {

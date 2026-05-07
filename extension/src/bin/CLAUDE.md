@@ -1,3 +1,4 @@
 ## Trap Doors
 
 - `microverse-runner.ts` — INVARIANT: `worker_backend_resolved.source` must be the worker-backend precedence source from backend resolution. BREAKS: schema-backed activity logs reject or misclassify remediator backend telemetry. ENFORCE: `extension/tests/microverse.test.js` remediator activity-event assertion. PATTERN_SHAPE: `event: 'worker_backend_resolved'` with `source` not sourced from `workerBackendResolution.source`.
+- `audit-worker-backends.ts` — INVARIANT: backend audits must apply per-ticket `worker_spawn_backend_override` before inferring expected worker backend from manager-resolution events. BREAKS: intentional codex overrides are reported as cross-backend mismatches. ENFORCE: `extension/tests/audit-worker-backends.test.js` override regression. PATTERN_SHAPE: `activity.filter(event==='worker_backend_resolved')` without merging `worker_spawn_backend_override` by ticket.
