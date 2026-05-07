@@ -25,6 +25,13 @@ function makeGateResult(overrides = {}) {
   };
 }
 
+function readLatestStateActivityEvent(sessionRoot, eventName) {
+  const statePath = path.join(sessionRoot, 'state.json');
+  const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+  const activity = Array.isArray(state.activity) ? state.activity : [];
+  return [...activity].reverse().find((entry) => entry?.event === eventName) ?? null;
+}
+
 describe('spawn-gate-remediator', () => {
   // ---------------------------------------------------------------------------
   // no-subprocess: child_process is never imported in the bin
@@ -257,6 +264,39 @@ describe('spawn-gate-remediator', () => {
     assert.ok(fs.existsSync(expectedPath), 'Brief file must exist');
 
     fs.rmSync(tmpDir, { recursive: true });
+  });
+
+  test('worker_spawn_backend_resolved telemetry uses schema-valid source values on default backend inheritance', async () => {
+    const tmpDir = makeTmpDir();
+    const grPath = path.join(tmpDir, 'gate-result.json');
+    fs.writeFileSync(grPath, JSON.stringify(makeGateResult()), 'utf-8');
+
+    const sessionRoot = path.join(tmpDir, 'session');
+    fs.mkdirSync(sessionRoot, { recursive: true });
+    fs.writeFileSync(path.join(sessionRoot, 'state.json'), JSON.stringify({ activity: [] }), 'utf-8');
+
+    const originalBackend = process.env.PICKLE_BACKEND;
+    delete process.env.PICKLE_BACKEND;
+    try {
+      const code = await spawnGateRemediatorMain({
+        argv: ['--gate-result', grPath, '--session-root', sessionRoot, '--reason', 'strict'],
+        isoOverride: '2026-04-27T13-50-00Z',
+        extensionClaudeMdContent: '## Trap Doors\nNone.',
+        stdout: () => {},
+        stderr: () => {},
+      });
+
+      assert.equal(code, 0);
+      const event = readLatestStateActivityEvent(sessionRoot, 'worker_spawn_backend_resolved');
+      assert.ok(event, 'expected worker_spawn_backend_resolved activity event');
+      assert.equal(event.backend, 'claude');
+      assert.equal(event.source, 'default');
+      assert.equal(Number.isInteger(event.pid), true);
+    } finally {
+      if (originalBackend === undefined) delete process.env.PICKLE_BACKEND;
+      else process.env.PICKLE_BACKEND = originalBackend;
+      fs.rmSync(tmpDir, { recursive: true });
+    }
   });
 
   // ---------------------------------------------------------------------------

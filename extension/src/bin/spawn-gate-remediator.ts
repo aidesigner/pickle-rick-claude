@@ -165,10 +165,10 @@ interface ParsedRemediatorFlags {
   reason: string;
 }
 
-function resolveInheritedBackend(): { backend: Backend; source: 'inherited-from-caller' } {
+function resolveInheritedBackend(): { backend: Backend; source: 'env' | 'default' } {
   const envBackend = process.env.PICKLE_BACKEND;
-  if (isBackend(envBackend)) return { backend: envBackend, source: 'inherited-from-caller' };
-  return { backend: 'claude', source: 'inherited-from-caller' };
+  if (isBackend(envBackend)) return { backend: envBackend, source: 'env' };
+  return { backend: 'claude', source: 'default' };
 }
 
 function resolveDeps(opts: SpawnGateRemediatorOpts): SpawnGateRemediatorDeps {

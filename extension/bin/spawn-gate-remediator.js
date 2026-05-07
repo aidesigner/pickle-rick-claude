@@ -114,8 +114,8 @@ The abort file must contain: reason, affected file:line, what fix was requested,
 function resolveInheritedBackend() {
     const envBackend = process.env.PICKLE_BACKEND;
     if (isBackend(envBackend))
-        return { backend: envBackend, source: 'inherited-from-caller' };
-    return { backend: 'claude', source: 'inherited-from-caller' };
+        return { backend: envBackend, source: 'env' };
+    return { backend: 'claude', source: 'default' };
 }
 function resolveDeps(opts) {
     return {
