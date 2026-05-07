@@ -163,6 +163,31 @@ test('StateManager.read: throws CORRUPT for JSON null', () => {
   });
 });
 
+test('StateManager.read: ignores newer dead tmp snapshots that are missing required state fields', () => {
+  withDir((dir) => {
+    const sm = new StateManager();
+    const sp = path.join(dir, 'state.json');
+    const state = makeState({ schema_version: 3, session_dir: dir });
+    writeStateFile(sp, state);
+
+    const orphanTmp = `${sp}.tmp.99999999`;
+    fs.writeFileSync(orphanTmp, JSON.stringify({ iteration: 2 }));
+    const baseTime = new Date('2026-05-07T12:00:00.000Z');
+    const tmpTime = new Date('2026-05-07T12:00:05.000Z');
+    fs.utimesSync(sp, baseTime, baseTime);
+    fs.utimesSync(orphanTmp, tmpTime, tmpTime);
+
+    const recovered = sm.read(sp);
+    const onDisk = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+
+    assert.equal(recovered.iteration, 1, 'in-memory state must stay on the valid base snapshot');
+    assert.equal(recovered.working_dir, '/tmp/test');
+    assert.equal(onDisk.iteration, 1, 'invalid orphan tmp must not replace state.json on disk');
+    assert.equal(onDisk.working_dir, '/tmp/test');
+    assert.equal(fs.existsSync(orphanTmp), false, 'invalid orphan tmp should be discarded after recovery');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // read — schema migration
 // ---------------------------------------------------------------------------

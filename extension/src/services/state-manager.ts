@@ -257,6 +257,20 @@ function isStateSnapshotNewer(
   return candidateMtimeMs > currentMtimeMs;
 }
 
+function isRecoverableStateSnapshotCandidate(value: unknown): value is State {
+  if (!isRecord(value)) return false;
+  const requiredStringFields = ['working_dir', 'step', 'original_prompt', 'started_at', 'session_dir'] as const;
+  if (requiredStringFields.some((field) => typeof value[field] !== 'string')) return false;
+  if (!Number.isFinite(Number(value.iteration))) return false;
+  if (!Number.isFinite(Number(value.max_iterations))) return false;
+  if (!Number.isFinite(Number(value.max_time_minutes))) return false;
+  if (!Number.isFinite(Number(value.worker_timeout_seconds))) return false;
+  if (!Number.isFinite(Number(value.start_time_epoch))) return false;
+  if (!Array.isArray(value.history)) return false;
+  if (!('completion_promise' in value)) return false;
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // StateManager
 // ---------------------------------------------------------------------------
@@ -590,8 +604,8 @@ export class StateManager {
 
       try {
         const tmpPath = path.join(dir, entry);
-        const parsed = JSON.parse(fs.readFileSync(tmpPath, 'utf-8')) as State;
-        if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+        const parsed = JSON.parse(fs.readFileSync(tmpPath, 'utf-8')) as unknown;
+        if (!isRecoverableStateSnapshotCandidate(parsed)) continue;
         const mtimeMs = readMtimeMs(tmpPath);
         if (
           !winner ||
@@ -645,7 +659,11 @@ export class StateManager {
       // Check if tmpfile contains valid JSON
       try {
         const raw = fs.readFileSync(tmpPath, 'utf-8');
-        const tmpState = JSON.parse(raw) as Record<string, unknown>;
+        const tmpState = JSON.parse(raw) as unknown;
+        if (!isRecoverableStateSnapshotCandidate(tmpState)) {
+          fs.unlinkSync(tmpPath);
+          continue;
+        }
 
         // Promote a dead-process snapshot if it represents a newer state write.
         // Same-iteration tmpfiles happen when control-flow fields (active/backend/
