@@ -143,7 +143,7 @@ Before writing each ticket body, verify none of these defect classes are present
 | Class | Example defect |
 |---|---|
 | **path-drift** | Citing `` `extension/src/bin/nonexistent.ts` `` when that path is absent from `git ls-files` |
-| **self-reference** | Ticket body contains its own 8-char hash in backticks outside the filename reference |
+| **self-referential-AC** (alias `self-reference`) | Ticket body contains its own 8-char hash in backticks outside the filename reference |
 | **missing-deps** | `Dependencies:` line names hash `ab1234cd` with no matching `linear_ticket_ab1234cd.md` in the bundle |
 | **wrong-HEAD-assumptions** | Citing commit SHA `b19946c6` that is newer than the bundle's `start_commit` |
 | **cross-doc-naming** | Dir is `ab1234cd/` but frontmatter `id: ef567890`; or title omits the `mapped_requirements` value |

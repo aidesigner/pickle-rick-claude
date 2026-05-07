@@ -24,7 +24,8 @@ type DefectClass =
   | 'cross-doc-naming'
   | 'cross-doc-naming-drift'
   | 'hallucinated-premise'
-  | 'literal-value-drift';
+  | 'literal-value-drift'
+  | 'missing-audit-comment';
 
 interface Finding {
   ticket_id: string;
@@ -522,6 +523,25 @@ function checkCrossDocNamingDrift(t: ParsedTicket, ctx: AuditContext): Finding[]
   }));
 }
 
+// R-TAQ-4 / AC-TAQ-04-3 — decomposition agents must append a single-line
+// `<!-- audit: 7-class checked YYYY-MM-DD -->` comment to each ticket body.
+// Missing or malformed comment emits a `missing-audit-comment` info finding.
+const AUDIT_COMMENT_RE = /<!--\s*audit:\s*7-class\s+checked\s+\d{4}-\d{2}-\d{2}\s*-->/;
+
+export function checkMissingAuditComment(t: ParsedTicket): Finding[] {
+  if (AUDIT_COMMENT_RE.test(t.body)) return [];
+  return [
+    {
+      ticket_id: t.id,
+      ticket_path: t.relPath,
+      defect_class: 'missing-audit-comment',
+      severity: 'info',
+      evidence: 'ticket body missing `<!-- audit: 7-class checked YYYY-MM-DD -->` (R-TAQ-4)',
+      remediation_hint: 'append `<!-- audit: 7-class checked YYYY-MM-DD -->` after the body completes',
+    },
+  ];
+}
+
 function auditTicket(t: ParsedTicket, ctx: AuditContext): Finding[] {
   return [
     ...checkPathDrift(t, ctx.gitFiles),
@@ -532,6 +552,7 @@ function auditTicket(t: ParsedTicket, ctx: AuditContext): Finding[] {
     ...checkCrossDocNamingDrift(t, ctx),
     ...checkHallucinatedPremise(t, ctx),
     ...checkLiteralValueDrift(t, ctx.packageVersion),
+    ...checkMissingAuditComment(t),
   ];
 }
 
@@ -629,9 +650,10 @@ function writeManifest(manifest: AuditManifest, target: string): void {
 function usage(): void {
   process.stdout.write(
     'Usage: audit-ticket-bundle.js <session-dir> [--manifest <path>]\n\n' +
-      'Walks <session>/<hash>/linear_ticket_<hash>.md files and runs 8 defect-class checks:\n' +
+      'Walks <session>/<hash>/linear_ticket_<hash>.md files and runs 9 defect-class checks:\n' +
       '  path-drift, self-reference, missing-deps, wrong-HEAD-assumptions,\n' +
-      '  cross-doc-naming, cross-doc-naming-drift, hallucinated-premise, literal-value-drift.\n\n' +
+      '  cross-doc-naming, cross-doc-naming-drift, hallucinated-premise, literal-value-drift,\n' +
+      '  missing-audit-comment.\n\n' +
       'Reads R-BUNDLE-DISPO-1 disposition table at extension/src/data/bundle-disposition-2026-05-04.json.\n' +
       'Tickets whose mapped_requirements are all REGRESSION-TEST-ONLY or DROP are EXEMPT\n' +
       'from the hallucinated-premise check (R15 mitigation).\n\n' +
