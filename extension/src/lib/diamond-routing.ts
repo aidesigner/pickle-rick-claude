@@ -123,7 +123,10 @@ function keySetsForEdges(edges: CondEdge[], observed: Map<string, Set<string>>):
   return referencedKeys.map(key => {
     if (key === 'outcome') return [key, ['fail', 'success', 'unset']];
     const obs = observed.get(key) ?? new Set<string>();
-    return [key, [...new Set([...obs, 'unset'])].sort()];
+    const expected = edges
+      .filter(edge => edge.condition.key === key)
+      .map(edge => edge.condition.expectedValue);
+    return [key, [...new Set([...obs, ...expected, 'unset'])].sort()];
   });
 }
 

@@ -407,5 +407,46 @@ describe('Trace A: analyzer-internal boundary invariants', () => {
         }],
       );
     });
+
+    test('CLI preserves edge-only expected values in diamond_routing cells', () => {
+      const graphContent = JSON.stringify({
+        nodes: [
+          { id: 'writer', context_on_success: 'artifact_state=ready' },
+          { id: 'decision', class: 'diamond' },
+        ],
+        edges: [
+          { source: 'decision', target: 'ship', condition: 'context.artifact_state=ready' },
+          { source: 'decision', target: 'retry', condition: 'context.artifact_state=blocked' },
+        ],
+      });
+      const attractorRoot = makeAttractorRoot();
+      const bunDir = makeFakeBun(graphContent);
+      const dotPath = path.join(FIXTURES_DIR, 'frame1-asymmetric-writer.dot');
+
+      const result = spawnSync(
+        process.execPath,
+        [BIN_PATH, dotPath],
+        {
+          encoding: 'utf8',
+          env: { ...process.env, ATTRACTOR_ROOT: attractorRoot, PATH: `${bunDir}:${process.env.PATH ?? ''}` },
+        },
+      );
+      assert.strictEqual(result.status, 0, `expected exit 0: ${result.stderr}`);
+
+      const parsed = JSON.parse(result.stdout.trim());
+      assert.deepStrictEqual(
+        parsed.diamond_routing,
+        [{
+          diamond: 'decision',
+          covered_states: [
+            { cell: { artifact_state: 'blocked' }, matchingEdges: ['decision->retry'] },
+            { cell: { artifact_state: 'ready' }, matchingEdges: ['decision->ship'] },
+          ],
+          stuck_states: [
+            { cell: { artifact_state: 'unset' }, matchingEdges: [] },
+          ],
+        }],
+      );
+    });
   });
 });
