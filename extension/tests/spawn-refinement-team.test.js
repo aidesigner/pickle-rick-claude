@@ -9,9 +9,11 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BIN = path.resolve(__dirname, '../bin/spawn-refinement-team.js');
+const ACTIVITY_EVENT_SCHEMA_PATH = path.resolve(__dirname, '../src/types/activity-events.schema.json');
 
 // Import exported helpers for direct unit testing
 const {
+    ACTIVITY_EVENT_SCHEMA_SECTION,
     buildRefinementManifest,
     buildWorkerPrompt,
     evaluateAcShapeEnforcement,
@@ -124,6 +126,22 @@ function makeGitRepo(prefix = 'pickle-anchor-repo-') {
     return repo;
 }
 
+function requiredFieldTokens(def, prefix = '') {
+    const required = Array.isArray(def?.required) ? def.required : [];
+    const properties = def?.properties ?? {};
+    const tokens = [];
+    for (const field of required) {
+        const nextPrefix = prefix ? `${prefix}.${field}` : field;
+        const nested = properties[field];
+        if (nested?.type === 'object') {
+            tokens.push(...requiredFieldTokens(nested, nextPrefix));
+        } else {
+            tokens.push(nextPrefix);
+        }
+    }
+    return tokens;
+}
+
 // --- Anchor re-grounding ---
 
 test('spawn-refinement-team: extracts file:line anchors from PRD text', () => {
@@ -144,6 +162,42 @@ test('spawn-refinement-team: extracts file:line anchors from PRD text', () => {
             { sourceLine: 1, filePath: 'extension/src/bin/spawn-refinement-team.ts', lineNumber: 697 },
             { sourceLine: 2, filePath: 'extension/tests/spawn-refinement-team.test.js', lineNumber: 13 },
         ]
+    );
+});
+
+test('spawn-refinement-team: activity event schema reference stays aligned with documented schema payloads', () => {
+    const schema = JSON.parse(fs.readFileSync(ACTIVITY_EVENT_SCHEMA_PATH, 'utf-8'));
+    const documentedEvents = [
+        'worker_spawn_backend_resolved',
+        'worker_partial_lifecycle_exit',
+        'pipeline_auto_resumed',
+        'bundle_bootstrap_exemption_applied',
+        'ticket_audit_bypassed',
+        'ticket_audit_manual_edit',
+        'smoke_gate_bypassed',
+    ];
+
+    for (const eventName of documentedEvents) {
+        const def = schema.definitions[eventName];
+        assert.ok(def, `schema missing definition for ${eventName}`);
+        const rowMatch = ACTIVITY_EVENT_SCHEMA_SECTION.match(new RegExp(String.raw`\| \`${eventName}\` \| ([^|]+) \|`));
+        assert.ok(rowMatch, `prompt table missing row for ${eventName}`);
+        const row = rowMatch[1];
+        for (const field of requiredFieldTokens(def).filter((token) => token !== 'event' && token !== 'ts')) {
+            assert.match(
+                row,
+                new RegExp(String.raw`\`${field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\``),
+                `${eventName} row missing required field ${field}`,
+            );
+        }
+    }
+
+    const prompt = buildWorkerPrompt('codebase', '/tmp/out.md', '/tmp/prd.md', '/tmp/workdir', 1);
+    assert.match(prompt, /## Activity Event Schema Reference/, 'codebase worker prompt should include the activity event schema reference');
+    assert.match(
+        prompt,
+        /`gate_payload\.retry_index`, `gate_payload\.ticket_id`, `gate_payload\.session_done_count_at_retry`/,
+        'prompt should expose the schema-backed pipeline_auto_resumed payload shape',
     );
 });
 

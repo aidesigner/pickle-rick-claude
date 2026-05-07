@@ -129,13 +129,13 @@ When writing acceptance criteria or analyzing PRD sections that reference activi
 
 | Event | Key Payload Fields | Primary Emitter |
 |-------|-------------------|-----------------|
-| \`worker_spawn_backend_resolved\` | \`site\`, \`resolved_backend\`, \`source\` | spawn-morty, spawn-refinement-team, microverse-runner, mux-runner |
-| \`worker_partial_lifecycle_exit\` | \`ticket\`, \`artifacts_missing\`, \`session_log_size\` | spawn-morty worker exit path |
-| \`pipeline_auto_resumed\` | \`session\`, \`reason\`, \`resumed_at\` | mux-runner auto-resume path |
-| \`bundle_bootstrap_exemption_applied\` | \`bundle_mode\`, \`ticket\`, \`exemption_reason\` | mux-runner bootstrap-mode path |
-| \`ticket_audit_bypassed\` | \`ticket\`, \`reason\` | audit-ticket-bundle.js, readiness gate |
-| \`ticket_audit_manual_edit\` | \`ticket\` | mux-runner audit loop |
-| \`smoke_gate_bypassed\` | \`ticket\`, \`reason\` | mux-runner smoke-gate path |
+| \`worker_spawn_backend_resolved\` | \`backend\`, \`source\`, \`pid\` | spawn-morty, spawn-refinement-team, microverse-runner, mux-runner |
+| \`worker_partial_lifecycle_exit\` | \`ticket\`, \`gate_payload.artifacts_missing\`, \`gate_payload.session_log_size\` | spawn-morty worker exit path |
+| \`pipeline_auto_resumed\` | \`gate_payload.retry_index\`, \`gate_payload.ticket_id\`, \`gate_payload.session_done_count_at_retry\` | mux-runner auto-resume path |
+| \`bundle_bootstrap_exemption_applied\` | \`gate_payload.skip_readiness_reason\`, \`gate_payload.skip_ticket_audit_reason\` | mux-runner bootstrap-mode path |
+| \`ticket_audit_bypassed\` | \`reason\` | audit-ticket-bundle.js, readiness gate |
+| \`ticket_audit_manual_edit\` | \`gate_payload.edit_count\` | mux-runner audit loop |
+| \`smoke_gate_bypassed\` | \`reason\` | mux-runner smoke-gate path |
 
 When writing ACs that assert event emission, include the full event name and required payload fields. Do NOT invent event names — use only the names listed here or already present in \`extension/src/types/index.ts:VALID_ACTIVITY_EVENTS\`.`;
 export const PATH_VERIFICATION_PROMPT_SECTION = `## Path Verification & Forward-reference hygiene
