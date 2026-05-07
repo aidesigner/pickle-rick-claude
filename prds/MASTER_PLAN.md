@@ -1,8 +1,8 @@
 # MASTER_PLAN — Pickle Rick Engineering Lifecycle
 
-**Last updated**: 2026-05-06 PM (44 commits ahead of origin/main, **v1.71.0 tagged locally**, push deferred. NOT pushed, NOT released to GitHub — local-only mode. v1.70.0 still GitHub-Latest. **Quick-refine pipeline `pipeline-e0834dcd` SHIPPED 9/9 atomic tickets on `gpt-5.4`** then auto-cancelled before anatomy-park phase. **Slots SHIPPED post-v1.70: 1q + 1u + 1t + 1r/1s + 1o + 1p + 1n + 1g (residual) + 1m + 1d** (all 9 source-PRD slots from this round). Path A meta-bundle abandoned partway (3 of 4 meta-tickets shipped — useful PRD prep work merged at `68d9c1bf`/`62b34588`/`0b16a707`). 9 carry-forwards from bundle 2026-05-04 (Section CF: AC-TAQ-09, R-BUNDLE-1/2/DISPO-1, 5 Section H Wire/Harden/Audit) deferred to follow-up batch.)
+**Last updated**: 2026-05-07 PM (82 commits ahead of origin/main, **v1.71.0 tagged locally on `8d09c503`**, push deferred. NOT pushed, NOT released to GitHub — local-only mode. v1.70.0 still GitHub-Latest. **Pipeline `pipeline-1d81a0bb` (bundle `prds/p1-bug-fix-bundle-2026-05-06.md`) shipped 5/12 sections + slot E hidden-shipped; 6 sections deferred** after bailing on `MANAGER_PERSISTENT_HALLUCINATION` at slot G's codex manager. **anatomy-park `2026-05-07-4ca7a746` ENDED at iteration 21/50 — DID NOT CONVERGE.** Exit reason: per-iteration gate baseline `gate/baseline.json` aged past the 14400s freshness ceiling at iteration 21 and could not be refreshed. 21 anatomy-park fixes (5 bin / 4 hooks / 4 lib / 4 services / 4 types) + 22 trap doors + 1 chore(build) sync of `log-commit.js` landed across `extension/src/`. `consecutive_clean = 0/5` for every subsystem — szechuan-sauce post-pass is OFF the table per CONTEXT preconditions. Theme A bundle PRD (`prds/p1-bug-fix-bundle-theme-a-refinement-quality.md`, 9 sections) is drafted and conflict-checked vs anatomy-park commits — only Section D's `spawn-morty.ts` overlaps, in a different code path. Ready to lock Draft → Ready and run `/pickle-pipeline --no-refine --backend codex` next.)
 
-**Bootstrap for new sessions**: read `CONTEXT_2026-05-06.md` first (supersedes `CONTEXT_2026-05-06_path-A.md` and `CONTEXT_2026-05-05_post-merge.md`).
+**Bootstrap for new sessions**: read `CONTEXT_2026-05-07.md` first (supersedes `CONTEXT_2026-05-06.md`).
 
 This file is **operational** — it tells the next coding agent what to work on. Historical narrative lives in:
 - `docs/codex-prompt-design-notes.md` — codex-backend prompt-design lessons (FM-1..FM-4, literalism, scope confusion)
@@ -17,6 +17,27 @@ This file is **operational** — it tells the next coding agent what to work on.
 2. **Worker tickets must run the lint + typecheck gate before completion-commit.** Workers commit code with the `completion_commit:` contract, but multiple sessions (incl. `pipeline-e0834dcd` 2026-05-06) have shipped tickets that left ESLint and/or `tsc --noEmit` red — caught only when the operator ran the release gate later. Worker prompts must include `npx eslint src/ --max-warnings=-1 && npx tsc --noEmit` ahead of the completion commit; failure blocks the commit. Until that lands, treat post-pipeline lint sweeps as **expected debt**, not optional polish.
 
 ---
+
+## 📅 2026-05-07 status
+
+- **v1.71.0 tagged locally** on `8d09c503` (2026-05-06 evening). NOT pushed; ≥49 commits ahead of `origin/main` and growing as anatomy-park lands fixes.
+- **Pipeline `pipeline-1d81a0bb`** ran the 12-section bundle `prds/p1-bug-fix-bundle-2026-05-06.md`:
+  - **Shipped 5/12 sections** + slot E hidden-shipped (commit lacks ticket-hash → phantom-Done watcher keeps reverting `Status: Done` → `Todo`; resolved in HEAD, ticket file disagrees).
+  - **Bailed on `MANAGER_PERSISTENT_HALLUCINATION`** during slot G — codex manager invented `EPIC_COMPLETED` four times without finishing the slot (codex classifier prompt-leak class).
+  - **Deferred slots H/I/J/K/L** (codex judge model mismatch, iteration-cap persistence vs display, mux-runner exits 0 on cap-hit, deployed package.json version-only revert, strip-excessive-defense). Research artifact for slot K preserved at `prds/research-slot-K-pjv-writer-2026-05-07.md`.
+- **anatomy-park `2026-05-07-4ca7a746` ENDED** at iteration 21/50 in 244m. **Did NOT converge** (`consecutive_clean = 0/5` for all subsystems). Exit reason: `gate/baseline.json` aged past the 14400s freshness ceiling at iteration 21 and the per-iteration baseline-init failed. Pass counts at exit: bin=5 (5 HIGH), hooks=4 (4 HIGH), lib=4 (4 HIGH), services=4 (1 HIGH + **3 CRITICAL**: orphan-tmp partial-state promotion `02adeb73`, future-schema promotion `47095472`, reset-step orphan recovery `5deda0c3`), types=4 (1 HIGH + 1 CLEAN PASS + 2 HIGH). **21 fixes + 22 trap doors landed** across `extension/src/{bin,hooks,lib,services,types}`. Each pass kept surfacing new HIGHs on hooks/lib — the run was making forward progress but never strung together 2 consecutive cleans on any subsystem. Confirm with `git log --oneline 8d09c503..HEAD --grep='anatomy-park' | wc -l` (= 21).
+- **Build-artifact follow-up landed**: `96e959e0 chore(build): rebuild log-commit.js from src/bin/log-commit.ts (ea22262c)` — the AP-HOOKS-STALE-TOOL-ERROR-STATE fix had committed the TS source but not the regenerated JS. `npx tsc` now produces a clean tree.
+- **szechuan-sauce post-pass: OFF the table.** CONTEXT_2026-05-07.md preconditioned szechuan on anatomy-park converging green. Stale-baseline exit ≈ ceiling-without-convergence. Skip.
+- **Theme A bundle PRD ready** for next pipeline launch: `prds/p1-bug-fix-bundle-theme-a-refinement-quality.md` (**9 sections** = 8 P1 refinement+worker core (A-I) + 1 P2 standup-quality addendum (L), status=**Draft**, no `composes:` blocks, 518 lines). Section E folded into B; Section J explicitly deferred to next-next batch; Section K folded into H. **Section L added 2026-05-07 from operator bug report on `/pickle-standup`** — scope-drift relative to refinement+worker theme, separable into a standalone PRD if Cycle 1 reviewers prefer. **Conflict check vs anatomy-park's 21 commits** (touched: `bin/{spawn-morty,setup,spawn-gate-remediator}.ts`, `hooks/handlers/config-protection.ts`, `lib/{context-key-matrix,diamond-routing}.ts`, `services/{state-manager,backend-spawn}.ts`, `types/{activity-events.schema.json,index.ts}`): only Section D's `spawn-morty.ts` overlaps, and the two changes are in different code paths (anatomy-park = backend-resolution telemetry; D = `flushAndExit` + `worker_partial_lifecycle_exit`). **No blocking conflicts.** Three operational decisions before fan-out: (1) lock PRD frontmatter Draft → Ready, (2) confirm Section L stays in this run vs splits out to a separate P2 PRD, (3) confirm `--backend codex` is still desired given codex's 2026-05-06 `MANAGER_PERSISTENT_HALLUCINATION` track record on this PRD's same defect class. Pipeline command on Ready: `/pickle-pipeline --no-refine --backend codex prds/p1-bug-fix-bundle-theme-a-refinement-quality.md`.
+
+## 🔥 Open findings — added 2026-05-07
+
+1. **MANAGER_PERSISTENT_HALLUCINATION root cause unaddressed.** Codex manager invents `EPIC_COMPLETED` mid-run. Slot 1u retry-counter + threshold landed today; the underlying hallucination trigger is not fixed. Hit twice this week. Theme A is the next surface that touches this class.
+2. **Codex "Done by model" without commit.** Workers self-mark `Status: Done` before the validator runs. Phantom-Done watcher reverts only by ticket-hash match in commit message — slot E's fix `617a0db9` lacks the `76f99e4a` hash, so the watcher can't pattern-match and the ticket file stays `Todo` even though the work is in HEAD. Theme A Section G addresses this with a filesystem watcher + completion-commit-hash requirement.
+3. **Anatomy-park scope gap on root `/bin/`.** Today's anatomy-park ran on `extension/src/` only. Repo root `/bin/` has 6 source files (`release-gate.sh`, `purge-update-cache.js`, `verify-bundle.js`, `verify-recapture-fired.js`, `section-c-still-needed.js`, plus `CLAUDE.md`) — load-bearing for releases (P0 deploy-reversion fix). Schedule a follow-up anatomy-park run with `TARGET=/bin/` or repo root.
+4. **`install.sh` chmod block hand-maintained.** Each new bin file needs an explicit chmod entry; missing one means dirty-tree on every build (the `dot-builder.js` filemode incident on `e47ae8c3` today). Replace with directory-glob or manifest.
+5. **Subsystem CLAUDE.md drift.** anatomy-park created `extension/src/types/CLAUDE.md` from scratch because none existed; other subsystems may also be missing them. Audit the 5 subsystems under `extension/src/` once anatomy-park converges.
+6. **`/pickle-standup` output quality + accuracy** *(operator bug report 2026-05-07)*. Five gaps validated against live skill + helper: (1) helper noise — drop list misses `effort-*-test`/`chain-*-test`/`display-sync-test`/`pipeline-dispatch-session-*`/`citadel-pipeline-session-*`/`pickle-debate-*`; (2) Step 3 open-PR query filters PR `updatedAt` not commit-window — misses in-flight epics like PR #1217; (3) **highest-leverage** — no commit-level `LOA-\d+` scan in skill Step 4 (Linear-first algo blind to old tickets with new commits — LOA-661/715/745 missed in 2026-05-07 standup); (4) hardcoded repo list in skill line 41 errors when `loanlight-app/` doesn't exist (auto-discover instead); (5) `--days 1` semantics ambiguous — wording says "yesterday's activity" but filter is "since yesterday 00:00 INCLUDING today". **Captured as Theme A Section L (P2 addendum, scope-drift, 6 ACs R-PSU-1..5 + forensic regression).** Forensic anchors: LOA-661, LOA-715, LOA-745, PR #1217 (`1025-appraisal-epic`).
 
 ## ✅ Completed — quick-refine pipeline on bundle PRD (2026-05-06)
 
@@ -69,6 +90,37 @@ Briefly attempted: refinement of mega bundle PRD via `/pickle-refine-prd`. First
 - **`9347af20`** — 2026-05-06. Slot 1d closed via quick-refine pipeline (ticket `91601dd7`). Test flakes (council-publish + scope-resolver) — verified already green at HEAD; no code change needed.
 - **Post-pipeline lint sweep** — 2026-05-06. The 9 quick-refine tickets shipped 10 ESLint errors across `microverse-runner.ts`, `spawn-morty.ts`, `backend-spawn.ts`. Cleaned up via helper extraction + dead-code removal before tagging v1.71.0. Workers do not run lint locally — captured as Working Rule #2 at the top of this file.
 - **v1.71.0 tagged locally** — 2026-05-06. 44 commits ahead of `origin/main` at session end. Push deferred until further stability. Tag exists on local repo only.
+
+### Pipeline `pipeline-1d81a0bb` (bundle 2026-05-06) — 5/12 + slot E hidden-shipped (2026-05-06 → 2026-05-07)
+
+Pipeline bailed on `MANAGER_PERSISTENT_HALLUCINATION` at slot G; H/I/J/K/L never started.
+
+- **`4e2e8bf8`** `feat(worker): lint + tsc gate at completion-commit (3646c20a)` — slot A. Worker prompts now run `npx eslint src/ --max-warnings=-1 && npx tsc --noEmit` before the completion commit. Closes Working Rule #2 at the source. Refs slot 1q's post-pipeline lint debt.
+- **`eb796544`** `docs(trap-door): complete R-CNAR-7 trap-door audit` — slot B. Tightens the R-CNAR-7 trap-door doc residual flagged by slot 1g's quick-refine ship.
+- **`0da2d099`** + **`532246ec`** + **`03145060`** — slot C. `test(integration): serial tier for subprocess-heavy flakes (3a4c5dc5)` plus deferred-validation-handoff bookkeeping. Splits the parallel-tier flake quarantine: subprocess-heavy tests run serial, the rest stay parallel.
+- **`97653071`** `fix(microverse): guard worker-mode finalizer history 250d5001` — slot D. anatomy-park finalizer history-crash guard.
+- **`c165fa9c`** `test(integration): repair worker fixture sentinels` — cross-cutting integration test fixture repair landed mid-pipeline.
+- **`55ef850e`** `fix(szechuan-sauce): override 6 monorepo journal globbing (23ca1ac2)` — slot F. Override 6 now globs `packages/*/db/migrations/...`, `apps/*/...`, `services/*/...` instead of root-only.
+- **`617a0db9`** `fix(microverse): guard key_metric description for anatomy-park mode` — **slot E hidden-shipped**. Resolves slot E's microverse `key_metric` description guard for anatomy-park mode, but commit message lacks the `76f99e4a` ticket hash, so the phantom-Done watcher keeps reverting `Status: Done` → `Todo`. Code is in HEAD; ticket file disagrees. Theme A Section G fixes the watcher.
+- **Slot G bailed** (`50d51d7a` codex classifier prompt-leak): codex manager hallucinated `EPIC_COMPLETED` four times → pipeline aborted on `MANAGER_PERSISTENT_HALLUCINATION`. Underlying hallucination root cause unaddressed (Open Finding #1).
+- **Slots H/I/J/K/L never started**: H `0642202a` (szechuan codex judge model mismatch), I `cbfdffdf` (iteration cap persistence vs display), J `d02a6128` (mux-runner exits 0 on cap-hit), K `db44f365` (deployed package.json version-only revert — research artifact at `prds/research-slot-K-pjv-writer-2026-05-07.md`), L `4dfd3243` (strip excessive defense from deploy-reversion).
+
+### Maintenance commits 2026-05-06 (post-pipeline)
+
+- **`310834a4`** `chore: sync lockfile version to 1.71.0` — npm-lockfile version field aligned with `extension/package.json`.
+- **`4974b86d`** `refactor: lint cleanup post-pipeline` — fixes for the 10 ESLint errors slot A's gate would have caught.
+- **`8d09c503`** `docs(MASTER_PLAN): record 2026-05-06 pipeline + add bugs-first policy` — v1.71.0 was tagged on this commit.
+- **`e47ae8c3`** `fix(install-parity): track dot-builder.js as 100644` — `install.sh` chmod block missed `dot-builder.js`; resulted in a filemode regression that dirtied the tree on every build. See Open Finding #4.
+
+### anatomy-park `2026-05-07-4ca7a746` (IN FLIGHT 2026-05-07)
+
+5-subsystem rotation on `extension/src/` (bin, hooks, lib, services, types). 5 commits landed at the time of writing; expected to grow as iterations proceed. Convergence target: each of 5 subsystems clean for 2 consecutive iterations.
+
+- **`017cbc2c`** `anatomy-park: bin — HIGH fix retry stale lifecycle artifact evidence, trap door`
+- **`63eddf8b`** `anatomy-park: hooks — HIGH fix stop-hook update-check interval, trap door`
+- **`87ca3e97`** `anatomy-park: lib — HIGH fix dotted RunContext analyzer parsing, trap door`
+- **`d0d8cc79`** `anatomy-park: services — HIGH fix CLI backend override precedence, trap door` (residual on slot 1o `worker_backend` split)
+- **`75ab7b4d`** `anatomy-park: types — HIGH fix activity-event catalog drift, trap door`
 
 ## 🟡 Just merged locally — NOT pushed, NOT released (2026-05-05 PM, retained for context)
 
