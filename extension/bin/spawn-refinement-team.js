@@ -1412,13 +1412,32 @@ export async function writeManifestAtomic(manifestPath, manifest) {
         throw err;
     }
 }
+function readCrossDocDriftWarnings(sessionDir) {
+    const bundlePath = path.join(sessionDir, 'audit-ticket-bundle.json');
+    const raw = readRecoverableJsonObject(bundlePath);
+    if (raw === null) {
+        process.stderr.write(`[spawn-refinement-team] audit-ticket-bundle.json not found at ${bundlePath}; skipping cross-doc drift warnings\n`);
+        return [];
+    }
+    const findings = Array.isArray(raw.findings) ? raw.findings : [];
+    return findings
+        .filter((f) => f.defect_class === 'cross-doc-naming-drift' &&
+        typeof f.ticket_id === 'string' &&
+        typeof f.evidence === 'string')
+        .map((f) => ({
+        ticket_id: f.ticket_id,
+        defect_class: 'cross-doc-naming-drift',
+        evidence: f.evidence,
+    }));
+}
 async function main() {
     const args = parseAndValidateArgs(process.argv.slice(2));
     const settings = loadRefinementSettings();
     const prdContent = await fs.promises.readFile(args.prdPath, 'utf-8');
     const cycleResults = await orchestrateCycles(args, settings, prdContent);
     const manifestPath = path.join(args.sessionDir, 'refinement_manifest.json');
-    const manifest = buildRefinementManifest(args, cycleResults);
+    const qualityWarnings = readCrossDocDriftWarnings(args.sessionDir);
+    const manifest = buildRefinementManifest(args, cycleResults, qualityWarnings.length > 0 ? qualityWarnings : undefined);
     await writeManifestAtomic(manifestPath, manifest);
     const runtime = resolveRuntime(args, settings);
     const symbolAudit = await writeSymbolAudit(cycleResults.refinementDir, prdContent, runtime.workingDir, manifest);
