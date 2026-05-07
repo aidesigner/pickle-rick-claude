@@ -611,6 +611,12 @@ async function finalizeWorkerTurn(params) {
     }
     resolve({ exitCode: exitCode ?? 0, isSuccess });
 }
+const VALID_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh']);
+function pickValidEffort(value) {
+    return typeof value === 'string' && VALID_EFFORTS.has(value)
+        ? value
+        : undefined;
+}
 function readSessionRuntime(args) {
     const parentStatePath = path.join(args.sessionRoot, 'state.json');
     const workerStatePath = path.join(args.ticketPath, 'state.json');
@@ -622,9 +628,7 @@ function readSessionRuntime(args) {
     try {
         const state = timeoutStatePath ? sm.read(timeoutStatePath) : null;
         const sessionWorkingDir = state?.working_dir?.trim() ? state.working_dir : process.cwd();
-        const sessionEffort = state?.effort === 'low' || state?.effort === 'medium' || state?.effort === 'high' || state?.effort === 'xhigh'
-            ? state.effort
-            : undefined;
+        const sessionEffort = pickValidEffort(state?.effort);
         return { timeoutStatePath, workerStatePath, state, sessionWorkingDir, sessionEffort };
     }
     catch {
