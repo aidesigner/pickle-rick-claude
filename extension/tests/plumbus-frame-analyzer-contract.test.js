@@ -115,4 +115,40 @@ describe('plumbus-frame-analyzer — output contract', () => {
     assert.notStrictEqual(result.status, 0, 'expected non-zero exit when nodes key is missing');
     assert.ok(result.stderr.includes('nodes'), `expected stderr to contain "nodes", got: ${result.stderr}`);
   });
+
+  test('dotted ATTRACTOR_CTX keys survive tool_command and prompt supplemental parsing', () => {
+    const graphPath = path.join(tmpRoot, 'dotted-attr-ctx.json');
+    writeFileSync(
+      graphPath,
+      JSON.stringify({
+        nodes: [
+          {
+            id: 'tool_writer',
+            tool_command: 'echo ATTRACTOR_CTX:stack.child.status=ready',
+          },
+          {
+            id: 'prompt_reader',
+            prompt: 'Inspect ${ATTRACTOR_CTX_stack.child.status} before continuing',
+          },
+        ],
+        edges: [
+          {
+            target: 'edge_reader',
+            condition: 'context.stack.child.status=ready',
+          },
+        ],
+      }),
+    );
+    const fakeBunDir = makeFakeBun(graphPath);
+    const result = runAnalyzer({ PATH: `${fakeBunDir}:${process.env.PATH ?? ''}` });
+
+    assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
+    const output = JSON.parse(result.stdout.trim());
+    const row = output.context_keys.find((entry) => entry.key === 'stack.child.status');
+    assert.deepStrictEqual(row, {
+      key: 'stack.child.status',
+      writers: ['tool_writer'],
+      readers: ['edge_reader', 'prompt_reader'],
+    });
+  });
 });
