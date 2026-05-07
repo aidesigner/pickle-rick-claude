@@ -142,13 +142,13 @@ export const PATH_VERIFICATION_PROMPT_SECTION = `## Path Verification & Forward-
 
 **Every file path or symbol you cite in \`## Files\`, \`## Locations\`, \`## Acceptance Criteria\`, or any backticked reference MUST be verified before being included in your output.** Follow this protocol for each backticked token:
 
-1. **Paths** — Run \`git ls-files <path>\` in the working directory. If \`git ls-files\` returns empty (path not tracked), the file does not exist at HEAD.
+1. **Paths** — Run \`git ls-files <path>\` in the working directory; empty output means the path is not tracked at HEAD.
 2. **Symbols** — Verify the symbol is defined or exported at HEAD via \`grep -n '<symbol>' <files>\` or \`git grep -n '<symbol>'\`. Stdlib/external-package APIs (\`Promise.all\`, \`fs.readFileSync\`, \`process.exit\`) must NEVER be backticked because the readiness contract resolver treats them as in-repo refs and reports false positives.
-3. **Forward-created artifacts** — If a path or symbol is created by THIS bundle (introduced in a sibling ticket), annotate it per R-RTRC-7 annotation schema:
+3. **Forward-created artifacts** — If a path does not exist at HEAD and is created by THIS bundle (introduced in a sibling ticket), mark it as (forward-created) with a sibling-ticket reference, then annotate per R-RTRC-7 annotation schema:
    - Format: \`\\\`path/to/file.ts\\\` (created by ticket <8-char-hash-or-ticket-dir-basename)\` — annotation OUTSIDE backticks, separated by **exactly one ASCII space** (no-space, two-space, or tab separators emit \`annotation-format-error\`).
    - \`(introduced by ticket <hash>)\` is the equivalent annotation for symbols.
    - Hash format: 8-char short SHA OR ticket-dir basename (both 8-char alphanumerics; resolver accepts either).
-4. **Backtick discipline** — Backtick a path/symbol ONLY when (a) \`git ls-files\` confirms the path exists at HEAD, OR (b) the symbol resolves at HEAD, OR (c) it carries a valid forward-reference annotation. Never backtick stdlib/external-package imports or refs that do not yet exist.
+4. **Backtick discipline** — Backtick a path/symbol ONLY when (a) the path check above confirms it exists at HEAD, OR (b) the symbol resolves at HEAD, OR (c) it carries a valid forward-reference annotation. Never backtick stdlib/external-package imports or refs that do not yet exist.
 
 Consult the per-requirement disposition table at \`extension/src/data/bundle-disposition-2026-05-04.json\` (R-BUNDLE-DISPO-1) when citing paths — requirements with disposition \`DROP\` or \`REGRESSION-TEST-ONLY\` must not drive new file creation.`;
 const WORKER_ROLES = [
@@ -251,6 +251,32 @@ export function emitStaleAnchorWarnings(warnings) {
         const { citation } = warning;
         process.stderr.write(`[pickle-rick] stale-anchor ${citation.raw} (PRD line ${citation.sourceLine}): ${warning.detail}\n`);
     }
+}
+// Parses analyst output for backtick file paths, checks each via git ls-files,
+// and emits path_not_verified breadcrumbs for unclaimed non-existent paths.
+// Forward-reference annotations ((forward-created), (created by ticket ...), (introduced by ticket ...))
+// suppress the warning. Section I will land these in refinement_manifest.json.ticket_quality_warnings[].
+export function checkAnalystOutputPaths(content, workingDir) {
+    const warnings = [];
+    const backtickPathRe = /`([a-zA-Z][a-zA-Z0-9/_.-]*\/[a-zA-Z0-9/_.-]+)`/g;
+    let match;
+    while ((match = backtickPathRe.exec(content)) !== null) {
+        const citedPath = match[1];
+        const afterMatch = content.slice(match.index + match[0].length);
+        if (/^ \((forward-created|created by ticket|introduced by ticket)\b/.test(afterMatch)) {
+            continue;
+        }
+        const result = spawnSync('git', ['ls-files', citedPath], {
+            cwd: workingDir,
+            encoding: 'utf-8',
+            stdio: ['ignore', 'pipe', 'pipe'],
+        });
+        if (result.status !== 0 || result.stdout.trim() === '') {
+            warnings.push({ type: 'path_not_verified', path: citedPath });
+            process.stderr.write(`[pickle-rick] path_not_verified: ${citedPath}\n`);
+        }
+    }
+    return warnings;
 }
 export function buildWorkerPrompt(roleId, prdContent, outputFile, workingDir, cycle, previousAnalyses, portalContext) {
     const persona = `You are Pickle Rick — hyper-competent, arrogant, ruthlessly thorough.
