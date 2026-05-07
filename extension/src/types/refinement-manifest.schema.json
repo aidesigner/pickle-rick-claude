@@ -59,17 +59,26 @@
           "ticket_id": {
             "type": "string",
             "minLength": 1,
-            "description": "Ticket identifier (e.g. hash or Linear ID)"
+            "description": "Ticket identifier (e.g. hash or Linear ID); operator-facing alias: `ticket`"
           },
           "defect_class": {
             "type": "string",
             "minLength": 1,
-            "description": "Defect class string (e.g. 'path-drift', 'hallucinated-premise')"
+            "description": "Defect class string (e.g. 'path-drift', 'hallucinated-premise'); operator-facing alias: `class`"
           },
           "evidence": {
             "type": "string",
             "minLength": 1,
             "description": "Human-readable description of what triggered the warning"
+          },
+          "source": {
+            "type": "string",
+            "enum": ["analyst", "post-decomp"],
+            "description": "AC-TAQ-07-2: producer category — analyst-side (R-TAQ-1) or post-decomposition audit (R-TAQ-2)"
+          },
+          "file_line": {
+            "type": ["string", "null"],
+            "description": "AC-TAQ-07-2: source citation pointer in `path:line` form, or null when unavailable"
           }
         }
       }

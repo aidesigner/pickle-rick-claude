@@ -239,6 +239,8 @@ export interface TicketQualityWarning {
   ticket_id: string;
   defect_class: string;
   evidence: string;
+  source?: 'analyst' | 'post-decomp';
+  file_line?: string | null;
 }
 
 export interface RefinementManifest {
@@ -1690,6 +1692,8 @@ function readCrossDocDriftWarnings(sessionDir: string): TicketQualityWarning[] {
       ticket_id: f.ticket_id as string,
       defect_class: 'cross-doc-naming-drift',
       evidence: f.evidence as string,
+      source: 'post-decomp' as const,
+      file_line: null,
     }));
 }
 

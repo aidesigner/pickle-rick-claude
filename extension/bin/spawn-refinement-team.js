@@ -1428,6 +1428,8 @@ function readCrossDocDriftWarnings(sessionDir) {
         ticket_id: f.ticket_id,
         defect_class: 'cross-doc-naming-drift',
         evidence: f.evidence,
+        source: 'post-decomp',
+        file_line: null,
     }));
 }
 async function main() {
