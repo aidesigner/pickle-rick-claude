@@ -747,6 +747,7 @@ function applyResumeModeConfig(s: State, config: SetupArgs): void {
   if (config.tmuxMode) s.tmux_mode = true;
   if (config.chainMeeseeks) s.chain_meeseeks = true;
   if (config.explicitFlags.has('backend') && config.backend) s.backend = config.backend;
+  if (config.explicitFlags.has('worker-backend')) s.worker_backend = config.workerBackend;
   if (config.explicitFlags.has('teams')) s.teams_mode = config.teamsMode;
   if (config.explicitFlags.has('max-parallel')) s.max_parallel = config.maxParallel;
   if (config.explicitFlags.has('effort')) s.effort = config.effort;

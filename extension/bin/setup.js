@@ -673,6 +673,8 @@ function applyResumeModeConfig(s, config) {
         s.chain_meeseeks = true;
     if (config.explicitFlags.has('backend') && config.backend)
         s.backend = config.backend;
+    if (config.explicitFlags.has('worker-backend'))
+        s.worker_backend = config.workerBackend;
     if (config.explicitFlags.has('teams'))
         s.teams_mode = config.teamsMode;
     if (config.explicitFlags.has('max-parallel'))

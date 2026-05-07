@@ -170,6 +170,34 @@ test('worker-backend.invalid: setup rejects unknown --worker-backend with exit 1
     );
 });
 
+test('worker-backend: --resume with explicit --worker-backend overrides stored worker_backend', () => {
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-resume-worker-backend-data-'));
+    const previousDataRoot = process.env.PICKLE_DATA_ROOT;
+    process.env.PICKLE_DATA_ROOT = dataRoot;
+
+    try {
+        const sessionPath = runSetupWithEnv([
+            '--backend', 'claude',
+            '--worker-backend', 'codex',
+            '--task', 'resume worker backend override',
+        ], { PICKLE_DATA_ROOT: dataRoot }).match(/SESSION_ROOT=(.+)/)?.[1]?.trim();
+        assert.ok(sessionPath, 'expected SESSION_ROOT from initial setup');
+
+        runSetupWithEnv(['--resume', sessionPath, '--worker-backend', 'hermes'], { PICKLE_DATA_ROOT: dataRoot });
+
+        const state = JSON.parse(fs.readFileSync(path.join(sessionPath, 'state.json'), 'utf-8'));
+        assert.equal(state.backend, 'claude');
+        assert.equal(state.worker_backend, 'hermes', 'explicit --worker-backend on resume must override stored worker_backend');
+    } finally {
+        if (previousDataRoot === undefined) {
+            delete process.env.PICKLE_DATA_ROOT;
+        } else {
+            process.env.PICKLE_DATA_ROOT = previousDataRoot;
+        }
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+    }
+});
+
 test('setup initializeNewSession: fresh PRD-backed state records prd_path and start_commit', () => {
     const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-setup-citadel-data-'));
     const prdPath = path.join(dataRoot, 'citadel-prd.md');
