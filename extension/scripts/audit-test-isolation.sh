@@ -5,6 +5,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXTENSION_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 TEST_ROOT="$EXTENSION_ROOT/extension/tests"
 SRC_ROOT="$EXTENSION_ROOT/extension/src"
+SERIAL_MANIFEST_REL="tests/integration/.serial-tests.json"
+SERIAL_MANIFEST_PATH="$EXTENSION_ROOT/extension/$SERIAL_MANIFEST_REL"
 
 if [ ! -d "$TEST_ROOT" ]; then
   echo "[skipped: tests not deployed]" >&2
@@ -84,6 +86,40 @@ report_violation() {
 
   echo "$file:$line_number $matched" >&2
   status=1
+}
+
+report_subprocess_heavy_classification() {
+  local serial_output
+
+  serial_output="$(
+    cd "$EXTENSION_ROOT/extension" &&
+      node bin/test-runner.js --tier integration --manifest "$SERIAL_MANIFEST_REL" --manifest-mode include --dry-run
+  )" || {
+    status=1
+    return
+  }
+
+  echo "subprocess-heavy:"
+  {
+    printf '%s\n' "spawn-morty-backend-resolution|tests/integration/spawn-morty-backend-resolution.test.js"
+    printf '%s\n' "spawn-morty-actual-session-bug|tests/integration/spawn-morty-actual-session-bug.test.js"
+    printf '%s\n' "dispatch|tests/integration/process-cleanup.test.js"
+    printf '%s\n' "refinement-worker-crash|tests/integration/process-cleanup.test.js"
+    printf '%s\n' "pipeline-state-coherence|tests/integration/pipeline-state-coherence.test.js"
+    printf '%s\n' "mega-bundle-e2e|tests/integration/mega-bundle-e2e.test.js"
+    printf '%s\n' "install-script-real|tests/integration/install-typescript-package.test.js"
+    printf '%s\n' "timeout-e2e|tests/integration/timeout-e2e.test.js"
+    printf '%s\n' "worker-backend-split|tests/integration/worker-backend-split.test.js"
+    printf '%s\n' "concurrent-state|tests/integration/concurrent-state.test.js"
+  } |
+    while IFS='|' read -r fragment expected_path; do
+      if printf '%s\n' "$serial_output" | grep -Fxq "$expected_path"; then
+        printf '  %s: %s\n' "$fragment" "$expected_path"
+      else
+        printf '  %s: [missing manifest entry for %s]\n' "$fragment" "$expected_path" >&2
+        status=1
+      fi
+    done
 }
 
 audit_match_file() {
@@ -230,5 +266,12 @@ while IFS= read -r file; do
 done <<EOF
 $seen_source_files
 EOF
+
+if [ ! -f "$SERIAL_MANIFEST_PATH" ]; then
+  echo "Manifest not found: $SERIAL_MANIFEST_REL" >&2
+  status=1
+else
+  report_subprocess_heavy_classification
+fi
 
 exit "$status"

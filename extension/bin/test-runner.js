@@ -8,46 +8,72 @@ function exitWithError(message, code) {
     process.stderr.write(`${message}\n`);
     process.exit(code);
 }
+function requireArgValue(args, index, flag, code = 2) {
+    const value = args[index + 1];
+    if (!value)
+        exitWithError(`Missing value for ${flag}`, code);
+    return value;
+}
+function parseManifestMode(value) {
+    if (value === 'include' || value === 'exclude') {
+        return value;
+    }
+    exitWithError(`Unknown manifest mode: ${value}`, 2);
+}
+function parseTier(value) {
+    if (VALID_TIERS.has(value)) {
+        return value;
+    }
+    exitWithError(`Unknown tier: ${value}`, 2);
+}
 function parseArgs(args) {
     const runnerArgs = [];
     const testFiles = [];
     let dryRun = false;
     let grepPattern = null;
+    let manifestMode = null;
+    let manifestPath = null;
     let tier = null;
     for (let index = 0; index < args.length; index += 1) {
         const arg = args[index];
-        if (arg === '--grep') {
-            const pattern = args[index + 1];
-            if (!pattern)
-                exitWithError('Missing value for --grep', 1);
-            grepPattern = pattern;
-            runnerArgs.push('--test-name-pattern', pattern);
-            index += 1;
-            continue;
+        switch (arg) {
+            case '--grep': {
+                const pattern = requireArgValue(args, index, '--grep', 1);
+                grepPattern = pattern;
+                runnerArgs.push('--test-name-pattern', pattern);
+                index += 1;
+                break;
+            }
+            case '--tier':
+                tier = parseTier(requireArgValue(args, index, '--tier'));
+                index += 1;
+                break;
+            case '--dry-run':
+                dryRun = true;
+                break;
+            case '--manifest':
+                manifestPath = requireArgValue(args, index, '--manifest');
+                index += 1;
+                break;
+            case '--manifest-mode':
+                manifestMode = parseManifestMode(requireArgValue(args, index, '--manifest-mode'));
+                index += 1;
+                break;
+            default:
+                if (arg.startsWith('--'))
+                    runnerArgs.push(arg);
+                else
+                    testFiles.push(arg);
+                break;
         }
-        if (arg === '--tier') {
-            const tierName = args[index + 1];
-            if (!tierName)
-                exitWithError('Missing value for --tier', 2);
-            if (!VALID_TIERS.has(tierName))
-                exitWithError(`Unknown tier: ${tierName}`, 2);
-            tier = tierName;
-            index += 1;
-            continue;
-        }
-        if (arg === '--dry-run') {
-            dryRun = true;
-            continue;
-        }
-        if (arg.startsWith('--'))
-            runnerArgs.push(arg);
-        else
-            testFiles.push(arg);
     }
     if (tier && testFiles.length > 0) {
         exitWithError('--tier cannot be combined with positional test files', 2);
     }
-    return { dryRun, grepPattern, runnerArgs, testFiles, tier };
+    if ((manifestPath === null) !== (manifestMode === null)) {
+        exitWithError('--manifest and --manifest-mode must be provided together', 2);
+    }
+    return { dryRun, grepPattern, manifestMode, manifestPath, runnerArgs, testFiles, tier };
 }
 function normalizeTestPath(filePath) {
     return filePath.split(path.sep).join('/');
@@ -87,6 +113,37 @@ function normalizeQuarantineEntry(rawEntry) {
         return withoutDotSlash;
     return `tests/${withoutDotSlash}`;
 }
+function readManifestEntries(rootDir, manifestPath) {
+    const resolvedPath = path.resolve(rootDir, manifestPath);
+    if (!existsSync(resolvedPath)) {
+        exitWithError(`Manifest not found: ${manifestPath}`, 1);
+    }
+    let parsed;
+    try {
+        parsed = JSON.parse(readFileSync(resolvedPath, 'utf8'));
+    }
+    catch (error) {
+        const reason = error instanceof Error ? error.message : String(error);
+        exitWithError(`Manifest is not valid JSON: ${manifestPath}\n${reason}`, 1);
+    }
+    if (typeof parsed !== 'object' || parsed === null || !('entries' in parsed)) {
+        exitWithError(`Manifest must contain an entries array: ${manifestPath}`, 1);
+    }
+    const { entries } = parsed;
+    if (!Array.isArray(entries) || !entries.every((entry) => typeof entry === 'string')) {
+        exitWithError(`Manifest entries must be string[]: ${manifestPath}`, 1);
+    }
+    const normalized = new Set();
+    for (const entry of entries) {
+        const candidate = normalizeQuarantineEntry(entry);
+        const candidatePath = path.resolve(rootDir, candidate);
+        if (!existsSync(candidatePath)) {
+            exitWithError(`Manifest entry not found: ${candidate}`, 1);
+        }
+        normalized.add(normalizeTestPath(candidate));
+    }
+    return normalized;
+}
 function readQuarantineSet(rootDir) {
     const manifestPath = path.join(rootDir, 'tests', 'QUARANTINE.md');
     if (!existsSync(manifestPath))
@@ -113,18 +170,27 @@ function discoverTierFiles(rootDir, tier) {
         return tierForTestFile(path.join(rootDir, relativePath)) === tier;
     });
 }
-function main() {
-    const { dryRun, grepPattern, runnerArgs, testFiles, tier } = parseArgs(process.argv.slice(2));
-    const rootDir = process.cwd();
-    if (tier === 'expensive' && process.env.RUN_EXPENSIVE_TESTS !== '1') {
-        process.stderr.write('[skipped: RUN_EXPENSIVE_TESTS unset]\n');
-        process.exit(0);
-    }
-    const selectedFiles = tier
+function applyManifestFilter(selectedFiles, manifestEntries, manifestMode) {
+    return selectedFiles.filter((relativePath) => {
+        const inManifest = manifestEntries.has(normalizeTestPath(relativePath));
+        return manifestMode === 'include' ? inManifest : !inManifest;
+    });
+}
+function shouldSkipTier(tier) {
+    return tier === 'expensive' && process.env.RUN_EXPENSIVE_TESTS !== '1';
+}
+function selectFiles(rootDir, tier, grepPattern, testFiles, manifestEntries, manifestMode) {
+    const baseSelection = tier
         ? discoverTierFiles(rootDir, tier)
         : grepPattern
             ? testFiles.filter((file) => readFileSync(file, 'utf8').includes(grepPattern))
             : testFiles;
+    if (manifestEntries && manifestMode) {
+        return applyManifestFilter(baseSelection, manifestEntries, manifestMode);
+    }
+    return baseSelection;
+}
+function handleEmptySelection(tier, grepPattern, selectedFiles) {
     if (grepPattern && !tier && selectedFiles.length === 0) {
         exitWithError(`No tests matched --grep ${grepPattern}`, 1);
     }
@@ -132,6 +198,17 @@ function main() {
         process.stderr.write(`[no files for tier ${tier}]\n`);
         process.exit(0);
     }
+}
+function main() {
+    const { dryRun, grepPattern, manifestMode, manifestPath, runnerArgs, testFiles, tier, } = parseArgs(process.argv.slice(2));
+    const rootDir = process.cwd();
+    if (shouldSkipTier(tier)) {
+        process.stderr.write('[skipped: RUN_EXPENSIVE_TESTS unset]\n');
+        process.exit(0);
+    }
+    const manifestEntries = manifestPath ? readManifestEntries(rootDir, manifestPath) : null;
+    const selectedFiles = selectFiles(rootDir, tier, grepPattern, testFiles, manifestEntries, manifestMode);
+    handleEmptySelection(tier, grepPattern, selectedFiles);
     if (dryRun) {
         if (selectedFiles.length > 0)
             process.stdout.write(`${selectedFiles.join('\n')}\n`);

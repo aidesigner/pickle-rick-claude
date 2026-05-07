@@ -34,6 +34,12 @@ function writeQuarantine(root, content) {
   writeFileSync(manifestPath, content);
 }
 
+function writeSerialManifest(root, content) {
+  const manifestPath = path.join(root, 'tests', 'integration', '.serial-tests.json');
+  mkdirSync(path.dirname(manifestPath), { recursive: true });
+  writeFileSync(manifestPath, JSON.stringify(content, null, 2));
+}
+
 function runRunner(root, args, options = {}) {
   return spawnSync(process.execPath, [RUNNER_PATH, ...args], {
     cwd: root,
@@ -93,6 +99,79 @@ test('quarantine excludes fast and integration tier files', () => {
     assert.equal(integration.status, 0);
     assert.deepEqual(stdoutLines(integration), []);
     assert.match(integration.stderr, /\[no files for tier integration\]/);
+  } finally {
+    cleanupFixtureRoot(root);
+  }
+});
+
+test('manifest include mode selects only listed integration files', () => {
+  const root = makeFixtureRoot();
+  try {
+    writeFixtureTest(root, 'tests/integration/a.test.js', 'integration');
+    writeFixtureTest(root, 'tests/integration/b.test.js', 'integration');
+    writeSerialManifest(root, { entries: ['tests/integration/b.test.js'] });
+
+    const result = runRunner(root, [
+      '--tier', 'integration',
+      '--manifest', 'tests/integration/.serial-tests.json',
+      '--manifest-mode', 'include',
+      '--dry-run',
+    ]);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(stdoutLines(result), ['tests/integration/b.test.js']);
+  } finally {
+    cleanupFixtureRoot(root);
+  }
+});
+
+test('manifest exclude mode removes listed integration files', () => {
+  const root = makeFixtureRoot();
+  try {
+    writeFixtureTest(root, 'tests/integration/a.test.js', 'integration');
+    writeFixtureTest(root, 'tests/integration/b.test.js', 'integration');
+    writeSerialManifest(root, { entries: ['tests/integration/b.test.js'] });
+
+    const result = runRunner(root, [
+      '--tier', 'integration',
+      '--manifest', 'tests/integration/.serial-tests.json',
+      '--manifest-mode', 'exclude',
+      '--dry-run',
+    ]);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(stdoutLines(result), ['tests/integration/a.test.js']);
+  } finally {
+    cleanupFixtureRoot(root);
+  }
+});
+
+test('manifest path is required for manifest mode', () => {
+  const root = makeFixtureRoot();
+  try {
+    const result = runRunner(root, ['--tier', 'integration', '--manifest-mode', 'include']);
+
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /--manifest and --manifest-mode must be provided together/);
+  } finally {
+    cleanupFixtureRoot(root);
+  }
+});
+
+test('missing manifest fails loudly', () => {
+  const root = makeFixtureRoot();
+  try {
+    writeFixtureTest(root, 'tests/integration/a.test.js', 'integration');
+
+    const result = runRunner(root, [
+      '--tier', 'integration',
+      '--manifest', 'tests/integration/.serial-tests.json',
+      '--manifest-mode', 'include',
+      '--dry-run',
+    ]);
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Manifest not found: tests\/integration\/\.serial-tests\.json/);
   } finally {
     cleanupFixtureRoot(root);
   }

@@ -21,7 +21,9 @@
     "test:fast": "node bin/test-runner.js --tier fast",
     "coverage": "c8 --reporter=html --reporter=json-summary --report-dir=coverage node bin/test-runner.js --tier fast",
     "coverage:delta": "bash scripts/coverage-delta.sh",
-    "test:integration": "node bin/test-runner.js --tier integration",
+    "test:integration": "npm run test:integration:parallel && npm run test:integration:serial",
+    "test:integration:parallel": "node bin/test-runner.js --tier integration --manifest tests/integration/.serial-tests.json --manifest-mode exclude",
+    "test:integration:serial": "node bin/test-runner.js --tier integration --manifest tests/integration/.serial-tests.json --manifest-mode include --test-concurrency=1",
     "test:expensive": "node bin/test-runner.js --tier expensive",
     "test:behavioral": "node --test tests/feature-flag-baseline.test.js",
     "wire-check": "bash scripts/check-wired.sh"

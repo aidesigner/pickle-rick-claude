@@ -1,0 +1,13 @@
+{
+  "entries": [
+    "tests/integration/spawn-morty-backend-resolution.test.js",
+    "tests/integration/spawn-morty-actual-session-bug.test.js",
+    "tests/integration/process-cleanup.test.js",
+    "tests/integration/pipeline-state-coherence.test.js",
+    "tests/integration/mega-bundle-e2e.test.js",
+    "tests/integration/install-typescript-package.test.js",
+    "tests/integration/timeout-e2e.test.js",
+    "tests/integration/worker-backend-split.test.js",
+    "tests/integration/concurrent-state.test.js"
+  ]
+}
