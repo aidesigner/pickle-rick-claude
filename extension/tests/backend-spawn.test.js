@@ -121,13 +121,39 @@ test('resolveBackendFromStateFile: defaults to claude on corrupt JSON', () => {
     });
 });
 
+// Orphan-tmp recovery via StateManager.read requires a complete state snapshot
+// (working_dir, original_prompt, started_at, session_dir as strings; iteration,
+// max_iterations, max_time_minutes, worker_timeout_seconds, start_time_epoch as
+// finite numbers; history array; completion_promise key present). Partial
+// snapshots are intentionally rejected per state-manager.ts orphan-tmp
+// validation invariant — keeps a partial mid-write tmp from corrupting state.
+function makeFullStateSnapshot(overrides = {}) {
+    return {
+        working_dir: '/tmp/test-cwd',
+        backend: 'claude',
+        step: 'research',
+        iteration: 1,
+        max_iterations: 50,
+        max_time_minutes: 720,
+        worker_timeout_seconds: 1200,
+        start_time_epoch: 1700000000,
+        original_prompt: 'test',
+        session_dir: '/tmp/test-session',
+        started_at: '2026-01-01T00:00:00Z',
+        history: [],
+        completion_promise: null,
+        schema_version: 3,
+        ...overrides,
+    };
+}
+
 test('resolveBackendFromStateFile: recovers higher-iteration orphan tmp backend before resolving', () => {
     const dir = mkTmpDir('backend-spawn-');
     const file = path.join(dir, 'state.json');
-    fs.writeFileSync(file, JSON.stringify({ backend: 'claude', iteration: 1, schema_version: 1 }));
+    fs.writeFileSync(file, JSON.stringify(makeFullStateSnapshot({ backend: 'claude', iteration: 1 })));
     fs.writeFileSync(
         `${file}.tmp.99999999`,
-        JSON.stringify({ backend: 'codex', iteration: 2, schema_version: 1 })
+        JSON.stringify(makeFullStateSnapshot({ backend: 'codex', iteration: 2 }))
     );
     withUnsetBackendEnv(() => {
         assert.equal(resolveBackendFromStateFile(file), 'codex');
@@ -141,11 +167,11 @@ test('resolveBackendFromStateFile: recovers newer same-iteration orphan tmp back
     const file = path.join(dir, 'state.json');
     const baseTs = new Date('2026-04-28T12:00:00.000Z');
     const tmpTs = new Date('2026-04-28T12:00:01.000Z');
-    fs.writeFileSync(file, JSON.stringify({ backend: 'claude', iteration: 7, schema_version: 1 }, null, 2));
+    fs.writeFileSync(file, JSON.stringify(makeFullStateSnapshot({ backend: 'claude', iteration: 7 }), null, 2));
     fs.utimesSync(file, baseTs, baseTs);
     fs.writeFileSync(
         `${file}.tmp.99999999`,
-        JSON.stringify({ backend: 'codex', iteration: 7, schema_version: 1 }, null, 2)
+        JSON.stringify(makeFullStateSnapshot({ backend: 'codex', iteration: 7 }), null, 2)
     );
     fs.utimesSync(`${file}.tmp.99999999`, tmpTs, tmpTs);
     withUnsetBackendEnv(() => {

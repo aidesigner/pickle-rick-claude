@@ -311,17 +311,33 @@ describe('error conditions', () => {
         fs.mkdirSync(liveRepo, { recursive: true });
 
         const statePath = path.join(sessionRoot, 'state.json');
-        fs.writeFileSync(statePath, JSON.stringify({
+        // R-anatomy-park-services orphan-tmp validation requires complete state snapshots
+        // (working_dir, original_prompt, started_at, session_dir as strings; iteration,
+        // max_iterations, max_time_minutes, worker_timeout_seconds, start_time_epoch
+        // finite; history array; completion_promise key present). Partial snapshots are
+        // rejected to prevent corrupting state.json mid-write.
+        const baseState = {
             working_dir: staleRepo,
             backend: 'claude',
+            step: 'research',
             iteration: 1,
-            schema_version: 1,
-        }));
+            max_iterations: 50,
+            max_time_minutes: 720,
+            worker_timeout_seconds: 1200,
+            start_time_epoch: 1700000000,
+            original_prompt: 'test',
+            session_dir: sessionRoot,
+            started_at: '2026-01-01T00:00:00Z',
+            history: [],
+            completion_promise: null,
+            schema_version: 3,
+        };
+        fs.writeFileSync(statePath, JSON.stringify(baseState));
         fs.writeFileSync(`${statePath}.tmp.99999999`, JSON.stringify({
+            ...baseState,
             working_dir: liveRepo,
             backend: 'codex',
             iteration: 2,
-            schema_version: 1,
         }));
 
         const seen = [];
