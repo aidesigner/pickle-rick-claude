@@ -237,6 +237,18 @@
         "sha": { "type": "string" }
       }
     },
+    "phantom_done_detected": {
+      "type": "object",
+      "required": ["event", "ts", "ticket", "completion_commit_present"],
+      "properties": {
+        "event": { "type": "string", "const": "phantom_done_detected" },
+        "ts": { "type": "string" },
+        "ticket": { "type": "string" },
+        "completion_commit_present": { "type": "boolean" },
+        "source": { "type": "string" },
+        "session": { "type": "string" }
+      }
+    },
     "worker_lint_gate_passed": {
       "type": "object",
       "required": ["event", "ts", "ticket_id", "file_list"],

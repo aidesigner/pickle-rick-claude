@@ -2734,6 +2734,7 @@ async function runMuxRunnerMain() {
         source: 'pickle',
         session: path.basename(sessionDir),
         ticket: ticketId,
+        completion_commit_present: false,
         ts,
       });
     } catch (err) {

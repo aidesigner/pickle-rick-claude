@@ -286,6 +286,7 @@ test('activity-event-payload: schema defines exactly 19 event type definitions',
     'worker_backend_resolved',
     'completion_commit_auto_filled',
     'completion_commit_inferred_from_git',
+    'phantom_done_detected',
     'worker_lint_gate_passed',
     'worker_lint_gate_failed',
     'worker_lint_autofix_applied',
@@ -300,5 +301,5 @@ test('activity-event-payload: schema defines exactly 19 event type definitions',
   const nonSharedDefs = Object.keys(schema.definitions).filter(
     k => k !== 'backendEnum' && k !== 'backendResolutionSourceEnum',
   );
-  assert.equal(nonSharedDefs.length, 24, `expected 24 event definitions, got ${nonSharedDefs.length}`);
+  assert.equal(nonSharedDefs.length, 25, `expected 25 event definitions, got ${nonSharedDefs.length}`);
 });
