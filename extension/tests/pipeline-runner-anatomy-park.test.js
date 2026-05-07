@@ -114,6 +114,17 @@ test('pipeline advances from worker-mode anatomy-park convergence into szechuan-
         converged: true,
         reason: 'worker convergence complete',
       }, null, 2));
+      fs.writeFileSync(path.join(sessionDir, 'microverse.json'), JSON.stringify({
+        status: 'converged',
+        exit_reason: 'converged',
+        convergence_mode: 'worker',
+        convergence_file: 'anatomy-park.json',
+      }, null, 2));
+      fs.writeFileSync(path.join(sessionDir, 'microverse-finalizer-error.json'), JSON.stringify({
+        status: 'stopped',
+        exit_reason: 'error',
+        preserved_exit_reason: 'converged',
+      }, null, 2));
     }
     return 0;
   });
@@ -123,6 +134,8 @@ test('pipeline advances from worker-mode anatomy-park convergence into szechuan-
     assert.equal(calls.length, 2);
     assertRunnerScript(calls[0].args[0], 'microverse-runner.js');
     assertRunnerScript(calls[1].args[0], 'microverse-runner.js');
+    const finalizerError = JSON.parse(fs.readFileSync(path.join(sessionDir, 'microverse-finalizer-error.json'), 'utf-8'));
+    assert.equal(finalizerError.preserved_exit_reason, 'converged');
     const prd = fs.readFileSync(path.join(sessionDir, 'prd.md'), 'utf-8');
     assert.match(prd, /Szechuan Sauce/);
   } finally {

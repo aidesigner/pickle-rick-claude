@@ -1459,9 +1459,13 @@ export function buildMicroverseHandoff(
   workingDir: string,
   sessionDir?: string,
 ): string {
-  return mvState.convergence_mode === 'worker'
+  return resolveConvergenceMode(mvState) === 'worker'
     ? buildWorkerMicroverseHandoff(mvState, iteration, workingDir, sessionDir)
     : buildMetricMicroverseHandoff(mvState, iteration, workingDir, sessionDir);
+}
+
+function resolveConvergenceMode(mvState: MicroverseSessionState): 'metric' | 'worker' {
+  return mvState.convergence_mode ?? 'metric';
 }
 
 function assertMetricConvergence(
@@ -1475,6 +1479,7 @@ function assertMetricConvergence(
 }
 
 export function getBestScore(mvState: MicroverseSessionState): number | null {
+  if (resolveConvergenceMode(mvState) !== 'metric') return null;
   if (!mvState.convergence) return null;
   const bestFn = (mvState.key_metric?.direction ?? 'higher') === 'lower' ? Math.min : Math.max;
   const accepted = mvState.convergence?.history.filter(h => h.action === 'accept').map(h => h.score) ?? [];
@@ -1529,11 +1534,13 @@ export function writeFinalReport(
   iterations: number,
   elapsedSeconds: number,
 ): void {
-  const history = mvState.convergence?.history.filter(Boolean) ?? [];
+  const convergenceMode = resolveConvergenceMode(mvState);
+  const history = convergenceMode === 'metric'
+    ? mvState.convergence?.history.filter(Boolean) ?? []
+    : [];
   const accepted = history.filter(h => h.action === 'accept').length;
   const reverted = history.filter(h => h.action === 'revert').length;
   const bestScore = getBestScore(mvState);
-  const convergenceMode = mvState.convergence_mode ?? (mvState.convergence ? 'metric' : 'worker');
 
   const report = [
     `# Microverse Final Report`,
@@ -1550,16 +1557,25 @@ export function writeFinalReport(
     `- **Failed Approaches**: ${mvState.failed_approaches.length}`,
   ];
 
-  report.push(
-    '',
-    '## Iteration History',
-    '| Iter | Score | Action | Description |',
-    '|------|-------|--------|-------------|',
-    ...history.map(h => `| ${h.iteration} | ${h.score} | ${h.action} | ${h.description} |`),
-  );
+  if (convergenceMode === 'worker') {
+    const convergenceFile = mvState.convergence_file
+      ? path.join(sessionDir, mvState.convergence_file)
+      : 'n/a';
+    report.push(`- **Worker Convergence File**: ${convergenceFile}`);
+  } else {
+    report.push(
+      '',
+      '## Iteration History',
+      '| Iter | Score | Action | Description |',
+      '|------|-------|--------|-------------|',
+      ...history.map(h => `| ${h.iteration} | ${h.score} | ${h.action} | ${h.description} |`),
+    );
+  }
 
   report.push(buildFailureDistribution(mvState.failure_history));
-  report.push(buildEfficiencySection(history, iterations));
+  if (convergenceMode === 'metric') {
+    report.push(buildEfficiencySection(history, iterations));
+  }
 
   const reportText = report.join('\n');
 
@@ -2201,10 +2217,16 @@ async function handleWorkerMode(
     ctx.log(`Converged (worker-managed: ${workerResult.reason})`);
     return 'converged';
   }
-  if (state.convergence.stall_counter >= state.convergence.stall_limit) {
+  const stallCounter = workerResult.currentMv.convergence?.stall_counter;
+  const stallLimit = workerResult.currentMv.convergence?.stall_limit;
+  if (
+    typeof stallCounter === 'number' &&
+    typeof stallLimit === 'number' &&
+    stallCounter >= stallLimit
+  ) {
     ctx.log(
       `Worker-managed stall limit exhausted ` +
-      `(${state.convergence.stall_counter}/${state.convergence.stall_limit})`,
+      `(${stallCounter}/${stallLimit})`,
     );
     return 'error';
   }
@@ -2617,12 +2639,13 @@ export function markMicroverseFatalError(sessionDir: string): FatalErrorMarkResu
   const recovered = readRecoverableJsonObject(mvPath);
   if (!recovered) return null;
   const mv = recovered as Record<string, unknown>;
-  const successfulReasons = new Set(['converged', 'completed', 'success']);
+  const successfulReasons = new Set(['converged', 'stopped', 'limit_reached', 'approach_exhaustion', 'no_progress', 'completed', 'success']);
   if (typeof mv.exit_reason === 'string' && successfulReasons.has(mv.exit_reason)) {
     sm.forceWrite(path.join(sessionDir, 'microverse-finalizer-error.json'), {
       status: 'stopped',
       exit_reason: 'error',
       preserved_exit_reason: mv.exit_reason,
+      note: 'Finalizer crashed after a successful microverse exit was already recorded.',
       recorded_at: new Date().toISOString(),
     });
     return 'preserved';

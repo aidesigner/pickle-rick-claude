@@ -55,9 +55,12 @@ test('writeFinalReport handles worker-mode state without convergence history', (
   const sessionDir = tmpDir();
   try {
     assert.doesNotThrow(() => writeFinalReport(sessionDir, workerState(), 'converged', 1, 2));
-    const report = fs.readFileSync(path.join(sessionDir, 'memory', fs.readdirSync(path.join(sessionDir, 'memory'))[0]), 'utf-8');
+    const reportPath = path.join(sessionDir, 'memory', fs.readdirSync(path.join(sessionDir, 'memory'))[0]);
+    const report = fs.readFileSync(reportPath, 'utf-8');
+    assert.ok(report.trim().length > 0);
     assert.match(report, /Convergence Mode\*\*: worker/);
-    assert.match(report, /Accepted\*\*: 0/);
+    assert.match(report, /Worker Convergence File\*\*: .*anatomy-park\.json/);
+    assert.doesNotMatch(report, /## Iteration History/);
   } finally {
     fs.rmSync(sessionDir, { recursive: true, force: true });
   }
@@ -118,6 +121,7 @@ test('markMicroverseFatalError preserves a successful exit reason and writes sib
     const sibling = JSON.parse(fs.readFileSync(path.join(sessionDir, 'microverse-finalizer-error.json'), 'utf-8'));
     assert.equal(sibling.exit_reason, 'error');
     assert.equal(sibling.preserved_exit_reason, 'converged');
+    assert.match(sibling.note, /Finalizer crashed after a successful microverse exit/);
   } finally {
     fs.rmSync(sessionDir, { recursive: true, force: true });
   }
