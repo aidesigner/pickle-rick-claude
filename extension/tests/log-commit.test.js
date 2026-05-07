@@ -69,6 +69,38 @@ test('log-commit: npm install exits 0 with no activity', () => {
   assert.equal(events.length, 0);
 });
 
+test('log-commit: successful PostToolUse clears stale last-tool-error state for the active session', () => {
+  const currentCwd = process.cwd();
+  let staleErrorPath = '';
+  const { events, exitCode } = runHook(
+    commitInput('npm test', 'ok'),
+    {},
+    (dataRoot) => {
+      const sessionDir = path.join(dataRoot, 'sessions', 'active-session');
+      fs.mkdirSync(sessionDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(sessionDir, 'state.json'),
+        JSON.stringify({ active: true, working_dir: currentCwd, session_dir: sessionDir }),
+      );
+      fs.writeFileSync(
+        path.join(dataRoot, 'current_sessions.json'),
+        JSON.stringify({ [currentCwd]: sessionDir }),
+      );
+      staleErrorPath = path.join(sessionDir, 'last-tool-error.json');
+      fs.writeFileSync(staleErrorPath, JSON.stringify({
+        ts: '2026-05-07T00:00:00.000Z',
+        tool: 'Bash',
+        error_signature: 'Command exited with code 1',
+        retry_count: 2,
+      }));
+    },
+  );
+
+  assert.equal(exitCode, 0);
+  assert.equal(events.length, 0);
+  assert.equal(fs.existsSync(staleErrorPath), false);
+});
+
 test('log-commit: git status exits 0 with no activity', () => {
   const { events, exitCode } = runHook(commitInput('git status', 'On branch main'));
   assert.equal(exitCode, 0);
