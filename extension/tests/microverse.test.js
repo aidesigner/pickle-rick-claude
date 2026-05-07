@@ -202,6 +202,94 @@ test('per-iteration gate remediation recovers orphan tmp result before classifyi
     }
 });
 
+test('per-iteration gate remediation logs worker_backend_resolved with backend-resolution source semantics', async () => {
+    const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-remediation-session-'));
+    const workingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-remediation-work-'));
+    const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-remediation-data-'));
+    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-remediation-bin-'));
+    const fakeClaudePath = path.join(binDir, 'claude');
+    const oldPath = process.env.PATH;
+    const oldDataRoot = process.env.PICKLE_DATA_ROOT;
+    const gateDir = path.join(sessionDir, 'gate');
+
+    try {
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({
+                backend: 'claude',
+                current_ticket: 'ticket-123',
+            }),
+        );
+        fs.writeFileSync(
+            fakeClaudePath,
+            [
+                '#!/usr/bin/env node',
+                "const fs = require('node:fs');",
+                "const path = require('node:path');",
+                `const gateDir = ${JSON.stringify(gateDir)};`,
+                "fs.mkdirSync(gateDir, { recursive: true });",
+                "const resultPath = path.join(gateDir, `remediation_${Date.now()}_result.json`);",
+                "fs.writeFileSync(resultPath, JSON.stringify({ aborted: false, failures_out: 0 }), 'utf-8');",
+                'process.exit(0);',
+            ].join('\n'),
+            { mode: 0o755 },
+        );
+        fs.chmodSync(fakeClaudePath, 0o755);
+        process.env.PATH = `${binDir}${path.delimiter}${oldPath ?? ''}`;
+        process.env.PICKLE_DATA_ROOT = dataRoot;
+
+        const result = await runRemediatorForIteration(
+            {
+                status: 'red',
+                failures: [{
+                    check: 'tests',
+                    file: path.join(workingDir, 'broken.test.js'),
+                    line: 1,
+                    ruleOrCode: 'simulated',
+                    message: 'simulated failure',
+                    severity: 'error',
+                    occurrence_index: 0,
+                }],
+                baseline_used: false,
+                allowed_paths_used: false,
+                elapsed_ms: 1,
+                total_raw_failure_count: 1,
+                new_failures_vs_baseline: 1,
+            },
+            sessionDir,
+            workingDir,
+            'claude',
+            5,
+        );
+
+        assert.deepEqual(result, { success: true });
+        const activityDir = path.join(dataRoot, 'activity');
+        const activityFiles = fs.readdirSync(activityDir).filter((name) => name.endsWith('.jsonl'));
+        assert.equal(activityFiles.length, 1, 'expected one activity log file');
+        const events = fs.readFileSync(path.join(activityDir, activityFiles[0]), 'utf-8')
+            .trim()
+            .split('\n')
+            .map((line) => JSON.parse(line));
+        const event = events.find((entry) => entry.event === 'worker_backend_resolved');
+        assert.ok(event, 'expected worker_backend_resolved activity event');
+        assert.equal(event.backend, 'claude');
+        assert.equal(event.worker_backend, null);
+        assert.equal(event.source, 'backend');
+        assert.equal(event.ticket_id, 'ticket-123');
+    } finally {
+        process.env.PATH = oldPath;
+        if (oldDataRoot === undefined) {
+            delete process.env.PICKLE_DATA_ROOT;
+        } else {
+            process.env.PICKLE_DATA_ROOT = oldDataRoot;
+        }
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+        fs.rmSync(workingDir, { recursive: true, force: true });
+        fs.rmSync(dataRoot, { recursive: true, force: true });
+        fs.rmSync(binDir, { recursive: true, force: true });
+    }
+});
+
 // --- direction='lower' tests ---
 
 test('compareMetric direction=lower: score drop below tolerance → improved', () => {

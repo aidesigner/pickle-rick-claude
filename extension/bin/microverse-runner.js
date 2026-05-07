@@ -147,7 +147,7 @@ export async function runRemediatorForIteration(gateResult, sessionDir, workingD
     });
     logActivity({
         event: 'worker_backend_resolved',
-        source: 'pickle',
+        source: workerBackendResolution.source,
         backend: workerBackendResolution.managerBackend,
         worker_backend: workerBackendResolution.workerBackend,
         ts: new Date().toISOString(),
