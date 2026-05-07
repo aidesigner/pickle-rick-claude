@@ -11,6 +11,7 @@ import { writeStateFile } from '../../services/pickle-utils.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXTENSION_ROOT = path.resolve(__dirname, '../..');
 const RUNNER_PATH = path.join(EXTENSION_ROOT, 'bin', 'microverse-runner.js');
+const RUNNER_SOURCE_PATH = path.join(EXTENSION_ROOT, 'src', 'bin', 'microverse-runner.ts');
 
 function writeJson(filePath, value) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
@@ -177,4 +178,16 @@ test('anatomy-park microverse-runner completes without key_metric after worker c
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('anatomy-park guard audit: microverse-runner routes key_metric and history reads through helpers', () => {
+  const source = fs.readFileSync(RUNNER_SOURCE_PATH, 'utf-8');
+
+  assert.match(source, /function keyMetricDescription\(/);
+  assert.match(source, /function normalizeHistoryEntries\(/);
+  assert.doesNotMatch(source, /mvState\.key_metric\.\w+/);
+  assert.match(source, /const filteredHistory = normalizeHistoryEntries\(history\);/);
+  assert.match(source, /const history = normalizeHistoryEntries\(mvState\.convergence\?\.history\);/);
+  assert.match(source, /const history = normalizeHistoryEntries\(metricConv\.history\);/);
+  assert.match(source, /const accepted = normalizeHistoryEntries\(mvState\.convergence\?\.history\)/);
 });

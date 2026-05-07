@@ -261,13 +261,30 @@ let phaseRunnerContext = null;
 function spawnRunner(cmd, args, env) {
     return new Promise((resolve, reject) => {
         let settled = false;
-        const child = spawn(cmd, args, { stdio: 'inherit', env: env ?? process.env });
+        let stdout = '';
+        let stderr = '';
+        const child = spawn(cmd, args, {
+            stdio: ['ignore', 'pipe', 'pipe'],
+            env: env ?? process.env,
+        });
         activeChild = child;
-        child.on('exit', (code) => { if (!settled) {
-            settled = true;
-            activeChild = null;
-            resolve(code ?? 1);
-        } });
+        child.stdout?.on('data', (chunk) => {
+            const text = chunk.toString();
+            stdout += text;
+            process.stdout.write(text);
+        });
+        child.stderr?.on('data', (chunk) => {
+            const text = chunk.toString();
+            stderr += text;
+            process.stderr.write(text);
+        });
+        child.on('exit', (code) => {
+            if (!settled) {
+                settled = true;
+                activeChild = null;
+                resolve({ exitCode: code ?? 1, stdout, stderr });
+            }
+        });
         child.on('error', (err) => { if (!settled) {
             settled = true;
             activeChild = null;
@@ -275,8 +292,12 @@ function spawnRunner(cmd, args, env) {
         } });
     });
 }
-function runSpawnRunner(cmd, args, env) {
-    return (spawnRunnerOverride ?? spawnRunner)(cmd, args, env);
+async function runSpawnRunner(cmd, args, env) {
+    const result = await (spawnRunnerOverride ?? spawnRunner)(cmd, args, env);
+    if (typeof result === 'number') {
+        return { exitCode: result, stdout: '', stderr: '' };
+    }
+    return result;
 }
 export function __setSpawnRunnerForTests(fn) {
     spawnRunnerOverride = fn;
@@ -929,11 +950,10 @@ export async function executePhaseRunner(phaseConfig, env) {
         throw new Error('phase runner context not initialized');
     if (!phaseConfig.runnerScript)
         throw new Error(`phase ${phaseConfig.name} does not use a child runner`);
-    const exitCode = await runSpawnRunner('node', [
+    return await runSpawnRunner('node', [
         path.join(phaseRunnerContext.extensionRoot, 'extension', 'bin', phaseConfig.runnerScript),
         phaseRunnerContext.sessionDir,
     ], env);
-    return { exitCode };
 }
 async function executeCitadelPhase(runtime) {
     const state = sm.read(runtime.statePath);
@@ -952,6 +972,21 @@ async function executeCitadelPhase(runtime) {
     });
     runtime.log(`citadel: wrote ${reportPath} with ${result.findings.length} finding(s), exit ${result.exitCode}`);
     return { exitCode: result.exitCode };
+}
+function shouldSkipAnatomyPhaseWithWarning(phase, result, runtime) {
+    if (phase !== 'anatomy-park' || result.exitCode === 0)
+        return null;
+    const runnerState = sm.read(runtime.statePath);
+    if (runnerState.command_template !== 'anatomy-park.md' || runnerState.exit_reason !== 'fatal') {
+        return null;
+    }
+    if (!/Cannot read properties of undefined \(reading 'description'\)/.test(result.stderr)) {
+        return null;
+    }
+    return {
+        warningClass: 'anatomy_park_missing_key_metric',
+        detail: 'microverse-runner crashed on missing key_metric.description; continuing to the next pipeline phase',
+    };
 }
 const SEVERITY_RANK = {
     Critical: 0,
@@ -1077,7 +1112,8 @@ async function runConfiguredPhase(runtime, phaseConfig, counters) {
         return { skipped: true, exitCode: null };
     if (phaseConfig.name === 'citadel')
         return { skipped: false, exitCode: (await executeCitadelPhase(runtime)).exitCode };
-    return { skipped: false, exitCode: (await executePhaseRunner(phaseConfig, runtime.phaseEnv)).exitCode };
+    const result = await executePhaseRunner(phaseConfig, runtime.phaseEnv);
+    return { skipped: false, exitCode: result.exitCode, stderr: result.stderr };
 }
 function createPipelineLog(sessionDir) {
     const runnerLog = path.join(sessionDir, 'pipeline-runner.log');
@@ -1340,6 +1376,22 @@ export async function main(sessionDir, opts = {}) {
             }
             const exitCode = result.exitCode ?? 1;
             log(`Phase ${rawPhase} exited with code ${exitCode}`);
+            const skipWarning = shouldSkipAnatomyPhaseWithWarning(rawPhase, {
+                exitCode,
+                stdout: '',
+                stderr: result.stderr ?? '',
+            }, runtime);
+            if (skipWarning) {
+                counters.skipped++;
+                writeRunningStatus(runtime, counters, null);
+                log(`phase_skipped_with_warning ${JSON.stringify({
+                    phase: rawPhase,
+                    exit_code: exitCode,
+                    warning_class: skipWarning.warningClass,
+                    detail: skipWarning.detail,
+                })}`);
+                continue;
+            }
             if (exitCode === PipelineRunnerExitCode.PhaseIncomplete) {
                 reportPhaseIncomplete(runtime, rawPhase);
                 phaseIncomplete = true;

@@ -1118,7 +1118,7 @@ export function buildJudgePrompt(
 
   parts.push('');
 
-  const filteredHistory = history?.filter(Boolean) ?? [];
+  const filteredHistory = normalizeHistoryEntries(history);
   if (filteredHistory.length > 0) {
     parts.push('Previous iterations:');
     for (const entry of filteredHistory) {
@@ -1138,7 +1138,7 @@ export function buildJudgePrompt(
 }
 
 function baselineShaForRecentChanges(mvState: MicroverseSessionState): string | null {
-  const history = mvState.convergence?.history ?? [];
+  const history = normalizeHistoryEntries(mvState.convergence?.history);
   const firstPreSha = history.find((entry) => entry.pre_iteration_sha.trim().length > 0)?.pre_iteration_sha;
   return firstPreSha ?? null;
 }
@@ -1163,6 +1163,30 @@ function readRecentChangesForHandoff(mvState: MicroverseSessionState, workingDir
   } catch {
     return null;
   }
+}
+
+function getOptionalKeyMetric(
+  mvState: MicroverseSessionState,
+): MicroverseSessionState['key_metric'] | undefined {
+  return (mvState as MicroverseSessionState & { key_metric?: MicroverseSessionState['key_metric'] }).key_metric;
+}
+
+function getKeyMetricField<K extends keyof MicroverseSessionState['key_metric']>(
+  mvState: MicroverseSessionState,
+  field: K,
+  fallback: MicroverseSessionState['key_metric'][K],
+): MicroverseSessionState['key_metric'][K] {
+  return getOptionalKeyMetric(mvState)?.[field] ?? fallback;
+}
+
+function keyMetricDescription(mvState: MicroverseSessionState): string {
+  return getKeyMetricField(mvState, 'description', '(no key metric)');
+}
+
+function normalizeHistoryEntries(
+  history?: readonly (MicroverseHistoryEntry | null | undefined)[],
+): MicroverseHistoryEntry[] {
+  return (history ?? []).filter((entry): entry is MicroverseHistoryEntry => Boolean(entry));
 }
 
 /**
@@ -1414,13 +1438,13 @@ function buildMetricMicroverseHandoff(
   sessionDir?: string,
 ): string {
   const metricConv = assertMetricConvergence(mvState, 'buildMicroverseHandoff');
-  const dir = mvState.key_metric.direction ?? 'higher';
+  const dir = getKeyMetricField(mvState, 'direction', 'higher');
   const parts: string[] = [
     `# Microverse Iteration ${iteration}`,
     '',
-    `## Metric: ${mvState.key_metric.description}`,
-    `- Validation: \`${mvState.key_metric.validation}\``,
-    `- Type: ${mvState.key_metric.type}`,
+    `## Metric: ${keyMetricDescription(mvState)}`,
+    `- Validation: \`${getKeyMetricField(mvState, 'validation', '(no key metric)')}\``,
+    `- Type: ${getKeyMetricField(mvState, 'type', 'none')}`,
     `- Direction: ${dir} (${dir === 'lower' ? 'lower is better' : 'higher is better'})`,
     `- Baseline score: ${mvState.baseline_score}`,
     `- Current stall counter: ${metricConv.stall_counter}/${metricConv.stall_limit}`,
@@ -1429,7 +1453,7 @@ function buildMetricMicroverseHandoff(
 
   appendGapAnalysisHandoff(parts, mvState);
 
-  const history = metricConv.history.filter(Boolean);
+  const history = normalizeHistoryEntries(metricConv.history);
   if (history.length > 0) {
     parts.push('## Recent Metric History');
     const recent = history.slice(-5);
@@ -1482,7 +1506,9 @@ export function getBestScore(mvState: MicroverseSessionState): number | null {
   if (resolveConvergenceMode(mvState) !== 'metric') return null;
   if (!mvState.convergence) return null;
   const bestFn = (mvState.key_metric?.direction ?? 'higher') === 'lower' ? Math.min : Math.max;
-  const accepted = mvState.convergence?.history.filter(h => h.action === 'accept').map(h => h.score) ?? [];
+  const accepted = normalizeHistoryEntries(mvState.convergence?.history)
+    .filter(h => h.action === 'accept')
+    .map(h => h.score);
   if (accepted.length === 0) return mvState.baseline_score;
   return bestFn(...accepted, mvState.baseline_score);
 }
@@ -1514,14 +1540,15 @@ export function buildFailureDistribution(failureHistory: { failure_class: string
 }
 
 export function buildEfficiencySection(
-  history: { action: string }[],
+  history: Array<{ action: string } | null | undefined>,
   totalIterations: number,
 ): string {
   if (totalIterations <= 0) {
     return '\n## Efficiency\n\n- **Wasted iterations**: 0 / 0 (0%)\n';
   }
-  const reverted = history.filter(h => h.action === 'revert').length;
-  const noCommitIterations = totalIterations - history.length;
+  const normalizedHistory = history.filter((entry): entry is { action: string } => Boolean(entry));
+  const reverted = normalizedHistory.filter(h => h.action === 'revert').length;
+  const noCommitIterations = totalIterations - normalizedHistory.length;
   const wasted = reverted + Math.max(0, noCommitIterations);
   const pct = Math.round((wasted / totalIterations) * 100);
   return `\n## Efficiency\n\n- **Wasted iterations**: ${wasted} / ${totalIterations} (${pct}%)\n`;
@@ -1536,7 +1563,7 @@ export function writeFinalReport(
 ): void {
   const convergenceMode = resolveConvergenceMode(mvState);
   const history = convergenceMode === 'metric'
-    ? mvState.convergence?.history.filter(Boolean) ?? []
+    ? normalizeHistoryEntries(mvState.convergence?.history)
     : [];
   const accepted = history.filter(h => h.action === 'accept').length;
   const reverted = history.filter(h => h.action === 'revert').length;

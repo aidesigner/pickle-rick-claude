@@ -108,7 +108,17 @@ export type PhaseConfig = {
   preSpawnStateMutation: null | ((s: State) => void);
 };
 
-export type SpawnRunnerFn = (cmd: string, args: string[], env?: NodeJS.ProcessEnv) => Promise<number>;
+export interface SpawnRunnerResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
+}
+
+export type SpawnRunnerFn = (
+  cmd: string,
+  args: string[],
+  env?: NodeJS.ProcessEnv,
+) => Promise<number | SpawnRunnerResult>;
 
 interface PhaseRunnerContext {
   sessionDir: string;
@@ -358,18 +368,43 @@ let activeChild: ChildProcess | null = null;
 let spawnRunnerOverride: SpawnRunnerFn | null = null;
 let phaseRunnerContext: PhaseRunnerContext | null = null;
 
-function spawnRunner(cmd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<number> {
+function spawnRunner(cmd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<SpawnRunnerResult> {
   return new Promise((resolve, reject) => {
     let settled = false;
-    const child = spawn(cmd, args, { stdio: 'inherit', env: env ?? process.env });
+    let stdout = '';
+    let stderr = '';
+    const child = spawn(cmd, args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: env ?? process.env,
+    });
     activeChild = child;
-    child.on('exit', (code) => { if (!settled) { settled = true; activeChild = null; resolve(code ?? 1); } });
+    child.stdout?.on('data', (chunk: Buffer | string) => {
+      const text = chunk.toString();
+      stdout += text;
+      process.stdout.write(text);
+    });
+    child.stderr?.on('data', (chunk: Buffer | string) => {
+      const text = chunk.toString();
+      stderr += text;
+      process.stderr.write(text);
+    });
+    child.on('exit', (code) => {
+      if (!settled) {
+        settled = true;
+        activeChild = null;
+        resolve({ exitCode: code ?? 1, stdout, stderr });
+      }
+    });
     child.on('error', (err) => { if (!settled) { settled = true; activeChild = null; reject(err); } });
   });
 }
 
-function runSpawnRunner(cmd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<number> {
-  return (spawnRunnerOverride ?? spawnRunner)(cmd, args, env);
+async function runSpawnRunner(cmd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<SpawnRunnerResult> {
+  const result = await (spawnRunnerOverride ?? spawnRunner)(cmd, args, env);
+  if (typeof result === 'number') {
+    return { exitCode: result, stdout: '', stderr: '' };
+  }
+  return result;
 }
 
 export function __setSpawnRunnerForTests(fn: SpawnRunnerFn | null): void {
@@ -1162,14 +1197,13 @@ function szechuanPhaseConfig(config: PipelineConfig): PhaseConfig {
 export async function executePhaseRunner(
   phaseConfig: PhaseConfig,
   env: NodeJS.ProcessEnv,
-): Promise<{ exitCode: number }> {
+): Promise<SpawnRunnerResult> {
   if (!phaseRunnerContext) throw new Error('phase runner context not initialized');
   if (!phaseConfig.runnerScript) throw new Error(`phase ${phaseConfig.name} does not use a child runner`);
-  const exitCode = await runSpawnRunner('node', [
+  return await runSpawnRunner('node', [
     path.join(phaseRunnerContext.extensionRoot, 'extension', 'bin', phaseConfig.runnerScript),
     phaseRunnerContext.sessionDir,
   ], env);
-  return { exitCode };
 }
 
 async function executeCitadelPhase(runtime: PipelineRuntime): Promise<{ exitCode: number }> {
@@ -1189,6 +1223,25 @@ async function executeCitadelPhase(runtime: PipelineRuntime): Promise<{ exitCode
   });
   runtime.log(`citadel: wrote ${reportPath} with ${result.findings.length} finding(s), exit ${result.exitCode}`);
   return { exitCode: result.exitCode };
+}
+
+function shouldSkipAnatomyPhaseWithWarning(
+  phase: PhaseName,
+  result: SpawnRunnerResult,
+  runtime: PipelineRuntime,
+): { warningClass: string; detail: string } | null {
+  if (phase !== 'anatomy-park' || result.exitCode === 0) return null;
+  const runnerState = sm.read(runtime.statePath);
+  if (runnerState.command_template !== 'anatomy-park.md' || runnerState.exit_reason !== 'fatal') {
+    return null;
+  }
+  if (!/Cannot read properties of undefined \(reading 'description'\)/.test(result.stderr)) {
+    return null;
+  }
+  return {
+    warningClass: 'anatomy_park_missing_key_metric',
+    detail: 'microverse-runner crashed on missing key_metric.description; continuing to the next pipeline phase',
+  };
 }
 
 const SEVERITY_RANK: Record<CitadelSeverity, number> = {
@@ -1310,7 +1363,7 @@ async function runConfiguredPhase(
   runtime: PipelineRuntime,
   phaseConfig: PhaseConfig,
   counters: PhaseCounters,
-): Promise<{ skipped: boolean; exitCode: number | null }> {
+): Promise<{ skipped: boolean; exitCode: number | null; stderr?: string }> {
   await postPhaseCleanup(phaseConfig.name, runtime.sessionDir);
   preparePhaseState(phaseConfig, runtime);
   const scope = refreshPhaseScope(phaseConfig, runtime, counters);
@@ -1324,7 +1377,8 @@ async function runConfiguredPhase(
   }) : true;
   if (!setupOk) return { skipped: true, exitCode: null };
   if (phaseConfig.name === 'citadel') return { skipped: false, exitCode: (await executeCitadelPhase(runtime)).exitCode };
-  return { skipped: false, exitCode: (await executePhaseRunner(phaseConfig, runtime.phaseEnv)).exitCode };
+  const result = await executePhaseRunner(phaseConfig, runtime.phaseEnv);
+  return { skipped: false, exitCode: result.exitCode, stderr: result.stderr };
 }
 
 // ---------------------------------------------------------------------------
@@ -1634,6 +1688,22 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
       }
       const exitCode = result.exitCode ?? 1;
       log(`Phase ${rawPhase} exited with code ${exitCode}`);
+      const skipWarning = shouldSkipAnatomyPhaseWithWarning(rawPhase, {
+        exitCode,
+        stdout: '',
+        stderr: result.stderr ?? '',
+      }, runtime);
+      if (skipWarning) {
+        counters.skipped++;
+        writeRunningStatus(runtime, counters, null);
+        log(`phase_skipped_with_warning ${JSON.stringify({
+          phase: rawPhase,
+          exit_code: exitCode,
+          warning_class: skipWarning.warningClass,
+          detail: skipWarning.detail,
+        })}`);
+        continue;
+      }
       if (exitCode === PipelineRunnerExitCode.PhaseIncomplete) {
         reportPhaseIncomplete(runtime, rawPhase);
         phaseIncomplete = true;

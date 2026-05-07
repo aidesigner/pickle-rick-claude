@@ -143,3 +143,41 @@ test('pipeline advances from worker-mode anatomy-park convergence into szechuan-
     fs.rmSync(sessionDir, { recursive: true, force: true });
   }
 });
+
+test('pipeline downgrades known anatomy-park missing-key-metric fatal to phase_skipped_with_warning', async () => {
+  const { repo, sessionDir } = makeSession();
+  const calls = [];
+  __setSpawnRunnerForTests(async (cmd, args) => {
+    calls.push({ cmd, args });
+    if (calls.length === 1) {
+      const statePath = path.join(sessionDir, 'state.json');
+      const currentState = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      currentState.exit_reason = 'fatal';
+      currentState.command_template = 'anatomy-park.md';
+      fs.writeFileSync(statePath, JSON.stringify(currentState, null, 2));
+      return {
+        exitCode: 1,
+        stdout: '',
+        stderr: "TypeError: Cannot read properties of undefined (reading 'description')\n",
+      };
+    }
+    return 0;
+  });
+
+  try {
+    await expectMainExit(sessionDir, 0);
+    assert.equal(calls.length, 2);
+    assertRunnerScript(calls[0].args[0], 'microverse-runner.js');
+    assertRunnerScript(calls[1].args[0], 'microverse-runner.js');
+
+    const runnerLog = fs.readFileSync(path.join(sessionDir, 'pipeline-runner.log'), 'utf-8');
+    assert.match(runnerLog, /phase_skipped_with_warning/);
+    assert.match(runnerLog, /anatomy_park_missing_key_metric/);
+
+    const prd = fs.readFileSync(path.join(sessionDir, 'prd.md'), 'utf-8');
+    assert.match(prd, /Szechuan Sauce/);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+  }
+});
