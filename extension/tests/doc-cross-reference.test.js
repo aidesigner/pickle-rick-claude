@@ -166,7 +166,10 @@ test('AC-BUNDLE-19: Linear integration ticket rows, code, and tests stay cross-r
 
   assert.match(newT6Row, /New Refinement-Derived Tickets > NEW-T6 .* AC-BUNDLE-19/);
   assert.match(h4Row, /AC-BUNDLE-19/);
-  assert.match(gitUtils, /syncLinearTicketStatus\(sessionDir, ticketId, newStatus\)/);
+  // Accept either `newStatus` or `nextStatus` for the third arg — local
+  // variable name is not load-bearing for the wire check; the function
+  // signature (sessionDir, ticketId, status) is what we're asserting.
+  assert.match(gitUtils, /syncLinearTicketStatus\(sessionDir, ticketId, (?:new|next)Status\)/);
   assert.match(implementation, /action: 'createTicket'/);
   assert.match(implementation, /action: 'transitionTicket'/);
   assert.match(implementation, /action: 'commentTicket'/);

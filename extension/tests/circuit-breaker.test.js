@@ -226,8 +226,28 @@ test('initCircuitBreaker: uses recovered orphan tmp state before staleness reset
         });
         const statePath = path.join(tmpDir, 'state.json');
         fs.writeFileSync(path.join(tmpDir, 'circuit_breaker.json'), JSON.stringify(cbState));
-        fs.writeFileSync(statePath, JSON.stringify({ iteration: 3, active: true, pid: 99999999 }));
-        fs.writeFileSync(`${statePath}.tmp.99999999`, JSON.stringify({ iteration: 8, active: true, pid: 99999999 }));
+        // state.json snapshots must satisfy isRecoverableStateSnapshotCandidate to be
+        // promoted from orphan tmp by StateManager.read (see anatomy-park 47095472).
+        const baseState = {
+            working_dir: tmpDir,
+            backend: 'claude',
+            step: 'research',
+            iteration: 3,
+            max_iterations: 50,
+            max_time_minutes: 720,
+            worker_timeout_seconds: 1200,
+            start_time_epoch: 1700000000,
+            original_prompt: 'test',
+            session_dir: tmpDir,
+            started_at: '2026-01-01T00:00:00Z',
+            history: [],
+            completion_promise: null,
+            schema_version: 3,
+            active: true,
+            pid: 99999999,
+        };
+        fs.writeFileSync(statePath, JSON.stringify(baseState));
+        fs.writeFileSync(`${statePath}.tmp.99999999`, JSON.stringify({ ...baseState, iteration: 8 }));
 
         const state = initCircuitBreaker(tmpDir, makeSettings());
 
