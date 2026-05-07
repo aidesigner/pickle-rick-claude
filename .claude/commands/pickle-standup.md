@@ -10,7 +10,7 @@ Persona active via CLAUDE.md. **SPEAK BEFORE ACTING**.
 node ~/.claude/pickle-rick/extension/bin/standup.js $ARGUMENTS
 ```
 
-If no arguments provided, defaults to `--days 1` (yesterday's activity). Save the output mentally — the user does NOT see it; you must surface findings yourself.
+If no arguments provided, defaults to `--days 1` (since yesterday 00:00 — INCLUDES today's commits to current time). Save the output mentally — the user does NOT see it; you must surface findings yourself.
 
 ### Step 2: Pull Linear ground truth (parallel with Step 3)
 
@@ -26,19 +26,47 @@ mcp__plugin_linear_linear__list_issues
 
 For each returned issue, capture: `identifier` (`LOA-NNN`), `title`, `state.name`, `completedAt`, `gitBranchName`, `updatedAt`.
 
-### Step 3: Pull PRs — merged AND open (parallel with Step 2)
+### Step 2.5: Commit-level LOA-### scan (highest-leverage; parallel with Steps 2 + 3)
+
+R-PSU-3 / AC-PSU-03. The Linear-first algorithm misses old tickets that received NEW commits in-window — `list_issues` filters by `updatedAt`, but a 3-week-old `LOA-661` ticket with a new commit yesterday won't surface unless its Linear status was touched. Cover the gap with a commit-message scan.
+
+For each auto-discovered repo (Step 3), run:
+
+```bash
+git -C "$repo" log --all --author="@me" --since="$START" --pretty="%H %ci %s%n%b" \
+  | grep -oE '\bLOA-[0-9]+\b' \
+  | sort -u
+```
+
+Dedupe across repos. For each unique `LOA-###`, call `mcp__plugin_linear_linear__get_issue` to fetch its current Linear state, completedAt, gitBranchName. Merge into Step 4's join algorithm. **A ticket discovered ONLY via this scan (not in the Step 2 list_issues recent set) should still surface in Y:**, with the existing Rule 7 drift annotation if its Linear `state` lags shipped code.
+
+### Step 3: Pull PRs — merged AND open (parallel with Steps 2 + 2.5)
 
 Run BOTH queries. Open PRs are not optional — a major work stream often lives on an open PR for days, and a merged-only query misses it entirely.
 
-```bash
-# Merged in window
-gh pr list --author "@me" --state merged --search "merged:>=$(date -v-{N}d +%Y-%m-%d)" --json number,title,headRefName,mergedAt --limit 30
+R-PSU-2 / AC-PSU-02. The open-PR query MUST drop `--search "updated:>=..."` because GitHub's `updated` predicate misses PRs whose only recent activity was new commits (no comment/label/title change). Replace it with a JS-side filter on `commits[].committedDate`:
 
-# Open AND updated in window (catches in-flight epics)
-gh pr list --author "@me" --state open    --search "updated:>=$(date -v-{N}d +%Y-%m-%d)" --json number,title,headRefName,updatedAt --limit 30
+```bash
+# Merged in window — search-side filter is fine here (mergedAt is the canonical signal)
+gh pr list --author "@me" --state merged --search "merged:>=$(date -v-{N}d +%Y-%m-%d)" \
+  --json number,title,headRefName,mergedAt --limit 30
+
+# Open — pull all recent open PRs and filter by commits[].committedDate locally.
+# This catches in-flight epics whose `updatedAt` is OUT-of-window but whose latest
+# commit is IN-window (common: long-running PR with daily pushes, no comment churn).
+gh pr list --author "@me" --state open --json number,title,headRefName,commits --limit 30 \
+  | jq --arg start "$START" '.[] | select((.commits[-1].committedDate // "") >= $start)'
 ```
 
-(Run both in each loanlight repo directory the helper output references — typically `loanlight-api`, `loanlight-integrations`, `loanlight-app`. Skip `pickle-rick-claude` for the standup proper; its activity is internal churn.)
+R-PSU-4 / AC-PSU-04. **Auto-discover repos instead of hardcoding them.** Skill ran into a hardcoded `loanlight-app/` that doesn't exist locally — the failed `gh` cancels parallel siblings. Use:
+
+```bash
+for d in /Users/gregorydickson/loanlight/*/; do
+  [ -d "$d/.git" ] && [ "$(basename "$d")" != "pickle-rick-claude" ] && echo "$d"
+done
+```
+
+Each `gh pr list` invocation MUST be wrapped in `|| true` so a missing repo / auth failure on one repo doesn't kill the standup.
 
 ### Step 4: Join — Linear-first algorithm
 
@@ -122,8 +150,8 @@ Drift signal: LOA-721 / LOA-722 — In Progress in Linear but shipped on PR #121
 ```
 
 ### Common usage
-- `/pickle-standup` — yesterday's activity
-- `/pickle-standup --days 0` — today's activity
+- `/pickle-standup` (default) — yesterday 00:00 through now, INCLUDING today's commits
+- `/pickle-standup --days 0` — today's activity (today 00:00 through now)
 - `/pickle-standup --days 3` — last 3 days
 - `/pickle-standup --since 2026-02-25` — everything since Feb 25
 - `/pickle-standup --raw` — bypass Linear cross-reference, print helper output verbatim

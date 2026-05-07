@@ -222,6 +222,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'bundle_bootstrap_exemption_applied',
     'manager_idle_backoff_engaged',
     'manager_idle_backoff_released',
+    'standup_session_dropped',
 ];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {

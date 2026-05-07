@@ -249,6 +249,16 @@
         "session": { "type": "string" }
       }
     },
+    "standup_session_dropped": {
+      "type": "object",
+      "required": ["event", "ts", "session_name", "drop_reason"],
+      "properties": {
+        "event": { "type": "string", "const": "standup_session_dropped" },
+        "ts": { "type": "string" },
+        "session_name": { "type": "string" },
+        "drop_reason": { "type": "string" }
+      }
+    },
     "worker_lint_gate_passed": {
       "type": "object",
       "required": ["event", "ts", "ticket_id", "file_list"],

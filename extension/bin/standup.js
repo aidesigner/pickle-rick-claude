@@ -287,13 +287,47 @@ function attributeCommitByTimestamp(commit, sessionEvents, sessionCommits) {
     }
     return false;
 }
+// R-PSU-1 / AC-PSU-01 — drop test/debate/pipeline-noise sessions before they reach
+// stdout. Patterns are anchored on the session id (or its prompt-derived prefix);
+// a session id matching ANY pattern is filtered. Matches the operator-supplied
+// catalogue from the 2026-05-07 standup forensic report.
+const STANDUP_NOISE_PATTERNS = [
+    /^effort-.*-test$/,
+    /^chain-.*-test$/,
+    /^display-sync-test/,
+    /^pipeline-dispatch-session-/,
+    /^citadel-pipeline-session-/,
+    /^pickle-debate-/,
+];
+export function classifyStandupNoise(sid, prompt) {
+    const candidates = [sid, prompt ?? ''];
+    for (const candidate of candidates) {
+        if (!candidate)
+            continue;
+        for (const re of STANDUP_NOISE_PATTERNS) {
+            if (re.test(candidate)) {
+                return { dropped: true, reason: `matches noise pattern ${re.source}` };
+            }
+        }
+    }
+    return { dropped: false, reason: '' };
+}
 function buildSessionEntries(sessionEvents, sessionCommits) {
     const LIFECYCLE_ONLY = new Set(['session_start', 'session_end']);
     const sessionEntries = [...sessionEvents.entries()]
         .filter(([sid, sevts]) => {
         const commits = sessionCommits.get(sid) || [];
         const hasMeaningfulEvents = sevts.some((e) => !LIFECYCLE_ONLY.has(e.event));
-        return commits.length > 0 || hasMeaningfulEvents;
+        if (!(commits.length > 0 || hasMeaningfulEvents))
+            return false;
+        const startEvent = sevts.find((e) => e.event === 'session_start');
+        const prompt = startEvent?.original_prompt;
+        const noise = classifyStandupNoise(sid, prompt);
+        if (noise.dropped) {
+            process.stderr.write(`[standup] dropped session ${sid}: ${noise.reason}\n`);
+            return false;
+        }
+        return true;
     })
         .map(([sid, sevts]) => buildSessionEntry(sid, sevts, sessionCommits.get(sid) || []));
     sessionEntries.sort((a, b) => (a.firstTs > b.firstTs ? -1 : a.firstTs < b.firstTs ? 1 : 0));

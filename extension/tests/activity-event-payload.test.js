@@ -294,6 +294,7 @@ test('activity-event-payload: schema defines exactly 19 event type definitions',
     'time_cap_disabled_default',
     'manager_idle_backoff_engaged',
     'manager_idle_backoff_released',
+    'standup_session_dropped',
   ];
   for (const name of EVENT_NAMES) {
     assert.ok(name in schema.definitions, `schema missing definition for ${name}`);
@@ -301,5 +302,5 @@ test('activity-event-payload: schema defines exactly 19 event type definitions',
   const nonSharedDefs = Object.keys(schema.definitions).filter(
     k => k !== 'backendEnum' && k !== 'backendResolutionSourceEnum',
   );
-  assert.equal(nonSharedDefs.length, 25, `expected 25 event definitions, got ${nonSharedDefs.length}`);
+  assert.equal(nonSharedDefs.length, 26, `expected 26 event definitions, got ${nonSharedDefs.length}`);
 });
