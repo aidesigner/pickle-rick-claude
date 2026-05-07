@@ -4,7 +4,7 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXTENSION_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$EXTENSION_ROOT/.." && pwd)"
-CLAUDE_PATH="$EXTENSION_ROOT/CLAUDE.md"
+CLAUDE_PATH="${CLAUDE_PATH_OVERRIDE:-$EXTENSION_ROOT/CLAUDE.md}"
 
 if [ ! -f "$CLAUDE_PATH" ]; then
   echo "[skipped: extension/CLAUDE.md not found]" >&2
@@ -16,16 +16,55 @@ if ! command -v node >/dev/null 2>&1; then
   exit 1
 fi
 
-status=0
+audit_exit_code=0
 
 fail() {
   echo "$1" >&2
-  status=1
+  audit_exit_code=1
 }
+
+if ! node - "$CLAUDE_PATH" <<'NODE'
+const fs = require('fs');
+
+const [, , claudePath] = process.argv;
+const text = fs.readFileSync(claudePath, 'utf8');
+const lines = text.split('\n');
+const entry = lines.find((line) => line.includes('(R-CNAR-1 part 2 cap split)'));
+
+if (!entry) {
+  process.stderr.write('R-CNAR-7 trap-door entry not found\n');
+  process.exit(1);
+}
+
+const labels = ['INVARIANT', 'PATTERN_SHAPE', 'BREAKS', 'ENFORCE'];
+let failures = 0;
+
+for (const label of labels) {
+  const nextLabelPattern = labels
+    .filter((candidate) => candidate !== label)
+    .map((candidate) => `${candidate}:`)
+    .join('|');
+  const match = entry.match(
+    new RegExp(`${label}:([\\s\\S]*?)(?=\\s(?:${nextLabelPattern})|$)`)
+  );
+
+  if (!match || match[1].trim().length === 0) {
+    process.stderr.write(`R-CNAR-7 trap-door entry is missing populated ${label} content\n`);
+    failures++;
+  }
+}
+
+if (failures > 0) {
+  process.exit(1);
+}
+NODE
+then
+  audit_exit_code=1
+fi
 
 # Parse ENFORCE: references and check reachability via node so we get the
 # same regex as trap-door-conformance.test.js (avoids BSD/GNU grep -P gap).
-node - "$CLAUDE_PATH" "$EXTENSION_ROOT" "$REPO_ROOT" <<'NODE'
+if ! node - "$CLAUDE_PATH" "$EXTENSION_ROOT" "$REPO_ROOT" <<'NODE'
 const fs = require('fs');
 const path = require('path');
 
@@ -96,9 +135,12 @@ if (failures > 0) {
 
 console.log(`audit-trap-door-enforcement: ${enforceFiles.size} ENFORCE reference(s) verified`);
 NODE
-
-if ! bash "$SCRIPT_DIR/audit-phantom-done-call-sites.sh"; then
-  status=1
+then
+  audit_exit_code=1
 fi
 
-exit "$status"
+if ! bash "$SCRIPT_DIR/audit-phantom-done-call-sites.sh"; then
+  audit_exit_code=1
+fi
+
+exit "$audit_exit_code"
