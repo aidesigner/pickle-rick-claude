@@ -2,9 +2,9 @@ import type { Graph, ContextKeyRow } from '../types/plumbus-frame-analyzer.js';
 import type { EngineKeysRegistry } from '../types/engine-keys-registry.js';
 import { isEngineWritten } from './engine-keys-registry.js';
 
-const CONDITION_RE = /context\.([\w.]+)=/;
 const TOOL_CMD_WRITE_RE = /ATTRACTOR_CTX:\s*([\w.]+)\s*=/g;
 const ATTRACTOR_CTX_READ_RE = /\$\{ATTRACTOR_CTX_([\w.]+)\}/g;
+const CONTEXT_CONDITION_CLAUSE_RE = /^(?:context\.)?([A-Za-z_][A-Za-z0-9_.]*)\s*(?:!?=)/;
 
 function parseKeys(raw: string): string[] {
   return raw
@@ -69,18 +69,31 @@ function edgeTargetId(edge: Record<string, unknown>): string | null {
     (typeof edge['to'] === 'string' ? edge['to'] : null);
 }
 
+function parseConditionReaderKeys(condition: string): string[] {
+  const keys = new Set<string>();
+  for (const rawClause of condition.split('&&')) {
+    const clause = rawClause.trim();
+    if (!clause) continue;
+    const match = CONTEXT_CONDITION_CLAUSE_RE.exec(clause);
+    if (!match) continue;
+    const key = match[1];
+    if (key === 'outcome') continue;
+    keys.add(key);
+  }
+  return [...keys];
+}
+
 function collectEdgeRefs(graph: Graph, readers: KeyMap): void {
   for (const edge of graph.edges) {
     const condition = edgeCondition(edge);
     if (!condition) continue;
 
-    const match = CONDITION_RE.exec(condition);
-    if (!match) continue;
-    const key = match[1];
-
     const targetId = edgeTargetId(edge);
     if (!targetId) continue;
-    addKeyRef(readers, key, targetId);
+
+    for (const key of parseConditionReaderKeys(condition)) {
+      addKeyRef(readers, key, targetId);
+    }
   }
 }
 

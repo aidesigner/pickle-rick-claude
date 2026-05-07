@@ -151,4 +151,84 @@ describe('plumbus-frame-analyzer — output contract', () => {
       readers: ['edge_reader', 'prompt_reader'],
     });
   });
+
+  test('multi-clause context conditions preserve all reader keys and routed diamond states', () => {
+    const graphPath = path.join(tmpRoot, 'multi-clause-context-conditions.json');
+    writeFileSync(
+      graphPath,
+      JSON.stringify({
+        nodes: [
+          {
+            id: 'verify_contract',
+            context_on_success: 'contract_violation_category=cast_any,contract_violation_package=api,contract_violation_detail=clean',
+            context_on_failure: 'contract_violation_category=none,contract_violation_package=ui,contract_violation_detail=violation',
+          },
+          {
+            id: 'route_contract_violation',
+            class: 'diamond',
+          },
+        ],
+        edges: [
+          {
+            source: 'route_contract_violation',
+            target: 'fix_backend',
+            condition: 'context.contract_violation_category=cast_any && context.contract_violation_package=api',
+          },
+          {
+            source: 'route_contract_violation',
+            target: 'review_entity',
+            condition: 'context.contract_violation_category=none && context.contract_violation_detail!=violation',
+          },
+        ],
+      }),
+    );
+    const fakeBunDir = makeFakeBun(graphPath);
+    const result = runAnalyzer({ PATH: `${fakeBunDir}:${process.env.PATH ?? ''}` });
+
+    assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
+    const output = JSON.parse(result.stdout.trim());
+
+    assert.deepStrictEqual(
+      output.context_keys.find((entry) => entry.key === 'contract_violation_package'),
+      {
+        key: 'contract_violation_package',
+        writers: ['verify_contract'],
+        readers: ['fix_backend'],
+      },
+    );
+    assert.deepStrictEqual(
+      output.context_keys.find((entry) => entry.key === 'contract_violation_detail'),
+      {
+        key: 'contract_violation_detail',
+        writers: ['verify_contract'],
+        readers: ['review_entity'],
+      },
+    );
+
+    const route = output.diamond_routing.find((entry) => entry.diamond === 'route_contract_violation');
+    assert.ok(route, 'expected routed diamond output for multi-clause context conditions');
+    assert.ok(
+      route.covered_states.some((state) =>
+        state.cell.contract_violation_category === 'cast_any' &&
+        state.cell.contract_violation_package === 'api' &&
+        state.matchingEdges.includes('route_contract_violation->fix_backend'),
+      ),
+      'expected equality multi-clause edge to produce a covered state',
+    );
+    assert.ok(
+      route.covered_states.some((state) =>
+        state.cell.contract_violation_category === 'none' &&
+        state.cell.contract_violation_detail === 'clean' &&
+        state.matchingEdges.includes('route_contract_violation->review_entity'),
+      ),
+      'expected inequality multi-clause edge to produce a covered state',
+    );
+    assert.ok(
+      route.stuck_states.some((state) =>
+        state.cell.contract_violation_category === 'none' &&
+        state.cell.contract_violation_detail === 'violation',
+      ),
+      'expected forbidden inequality value to remain a stuck state',
+    );
+  });
 });

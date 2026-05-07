@@ -1,16 +1,16 @@
 import type { Graph, DiamondRoutingRow } from '../types/plumbus-frame-analyzer.js';
 
-const CONDITION_RE = /^context\.([\w.]+)=(.+)$/;
 const CARTESIAN_CAP = 256;
 
 interface ParsedCondition {
   key: string;
+  operator: '=' | '!=';
   expectedValue: string;
 }
 
 interface CondEdge {
   id: string;
-  condition: ParsedCondition;
+  conditions: ParsedCondition[];
 }
 
 function edgeCondition(edge: Record<string, unknown>): string | null {
@@ -22,9 +22,23 @@ function edgeCondition(edge: Record<string, unknown>): string | null {
   return typeof raw === 'string' ? raw : null;
 }
 
-function parseCondition(condition: string): ParsedCondition | null {
-  const m = CONDITION_RE.exec(condition.trim());
-  return m ? { key: m[1], expectedValue: m[2] } : null;
+function parseConditions(condition: string): ParsedCondition[] | null {
+  const parsed: ParsedCondition[] = [];
+
+  for (const rawClause of condition.split('&&')) {
+    const clause = rawClause.trim();
+    if (!clause) continue;
+
+    const match = /^(?:context\.)?([A-Za-z_][A-Za-z0-9_.]*)\s*(=|!=)\s*(.+)$/.exec(clause);
+    if (!match || match[1] === 'outcome') return null;
+    parsed.push({
+      key: match[1],
+      operator: match[2] as '=' | '!=',
+      expectedValue: match[3],
+    });
+  }
+
+  return parsed.length > 0 ? parsed : null;
 }
 
 function edgeId(edge: Record<string, unknown>): string {
@@ -96,10 +110,10 @@ function collectConditionalOutgoingEdges(graph: Graph): Map<string, CondEdge[]> 
     if (!src) continue;
     const condStr = edgeCondition(edge);
     if (!condStr) continue;
-    const parsed = parseCondition(condStr);
-    if (!parsed) continue;
+    const parsed = parseConditions(condStr);
+    if (parsed === null) continue;
     if (!outgoing.has(src)) outgoing.set(src, []);
-    outgoing.get(src)!.push({ id: edgeId(edge), condition: parsed });
+    outgoing.get(src)!.push({ id: edgeId(edge), conditions: parsed });
   }
   return outgoing;
 }
@@ -119,13 +133,14 @@ function collectDiamondIds(graph: Graph, outgoing: Map<string, CondEdge[]>): Set
 }
 
 function keySetsForEdges(edges: CondEdge[], observed: Map<string, Set<string>>): Array<[string, string[]]> {
-  const referencedKeys = [...new Set(edges.map(e => e.condition.key))].sort();
+  const referencedKeys = [...new Set(edges.flatMap(edge => edge.conditions.map(condition => condition.key)))].sort();
   return referencedKeys.map(key => {
     if (key === 'outcome') return [key, ['fail', 'success', 'unset']];
     const obs = observed.get(key) ?? new Set<string>();
     const expected = edges
-      .filter(edge => edge.condition.key === key)
-      .map(edge => edge.condition.expectedValue);
+      .flatMap(edge => edge.conditions
+        .filter(condition => condition.key === key)
+        .map(condition => condition.expectedValue));
     return [key, [...new Set([...obs, ...expected, 'unset'])].sort()];
   });
 }
@@ -154,7 +169,12 @@ function buildDiamondRow(
 
   for (const cell of cartesian(keySets)) {
     const matching = edges
-      .filter(e => cell[e.condition.key] === e.condition.expectedValue)
+      .filter(edge => edge.conditions.every(condition => {
+        const actual = cell[condition.key];
+        return condition.operator === '='
+          ? actual === condition.expectedValue
+          : actual !== condition.expectedValue;
+      }))
       .map(e => e.id)
       .sort();
     if (matching.length === 0) {
