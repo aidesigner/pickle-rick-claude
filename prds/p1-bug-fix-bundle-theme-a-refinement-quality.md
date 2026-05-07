@@ -1,12 +1,12 @@
 ---
 title: P1 — Bug-fix bundle Theme A (refinement quality + worker reliability)
-status: Draft
+status: Ready
 date: 2026-05-07
 priority: P1
 type: bug-bundle
 scope: local-only
 authoring_path: /pickle-quick-refine fan-out
-pipeline_target: /pickle-pipeline --no-refine --backend codex
+pipeline_target: /pickle-pipeline --no-refine --backend claude
 sections: 9
 peer_prds:
   source_prds:
@@ -38,7 +38,7 @@ chicken_and_egg_note: |
 
 # Bug-Fix Bundle Theme A — Refinement Quality + Worker Reliability
 
-> **DRAFT — pending current pipeline `pipeline-1d81a0bb` finishing.** The section list MAY shift if that pipeline produces unexpected commits that overlap with these defect classes. Lock to Ready only after the current pipeline lands and a fresh `git status` confirms no conflicts.
+> **READY 2026-05-07 PM.** Pipeline `pipeline-1d81a0bb` shipped 5/12 + slot E hidden; anatomy-park `2026-05-07-4ca7a746` ended at iteration 21/50 (did not converge; 21 fixes + 22 trap doors landed). Conflict-checked vs anatomy-park: only Section D's `spawn-morty.ts` overlaps, and the changes are in different code paths (anatomy-park = backend-resolution telemetry; D = `flushAndExit` + `worker_partial_lifecycle_exit`). No blocking conflicts. Backend choice: `--backend claude` — Theme A modifies the refinement-team plumbing, and codex's `MANAGER_PERSISTENT_HALLUCINATION` bailed pipeline-1d81a0bb at slot G on this same defect class yesterday. Section L stays in this run (independent of A-I, no file overlap, runs in parallel).
 >
 > Composed under the **"Bugs first, scope second"** Working Rule (`prds/MASTER_PLAN.md` line 16). 9 atomic implementation tickets (8 core refinement+worker + 1 P2 addendum). No feature scope. Local-only — no `gh release create`, no version bump, no push.
 
