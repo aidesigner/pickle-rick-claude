@@ -60,49 +60,61 @@ function findTicketFile(sessionDir, ticketId) {
     };
     return walk(sessionDir, 0);
 }
-/**
- * Rewrite `status:` / `updated:` inside the YAML frontmatter (or, if the file
- * has no frontmatter, in the whole body). Returns the new content and a flag
- * for whether a `status:` line was found.
- */
-function rewriteTicketFrontmatter(content, ticketId, newStatus, today) {
-    let statusReplaced = false;
-    const fm = extractFrontmatter(content);
-    if (fm) {
-        let fmSection = content.slice(0, fm.end);
-        if (/^status:.*$/m.test(fmSection)) {
-            fmSection = fmSection.replace(/^status:.*$/m, `status: "${newStatus}"`);
-            statusReplaced = true;
-        }
-        if (/^updated:.*$/m.test(fmSection)) {
-            fmSection = fmSection.replace(/^updated:.*$/m, `updated: "${today}"`);
-        }
-        else {
-            fmSection = fmSection.replace(/\n---(\r?\n?)$/, `\nupdated: "${today}"\n---$1`);
-        }
-        return { content: fmSection + content.slice(fm.end), statusReplaced };
+function setFrontmatterField(frontmatterSection, key, value) {
+    const lineRe = new RegExp(`^${key}:.*$(\\r?\\n)?`, 'm');
+    if (value === null) {
+        return frontmatterSection.replace(lineRe, '');
     }
-    console.warn(`Warning: ticket ${ticketId} has no valid YAML frontmatter — status replacement may be imprecise`);
-    let out = content;
-    if (/^status:.*$/m.test(out)) {
-        out = out.replace(/^status:.*$/m, `status: "${newStatus}"`);
-        statusReplaced = true;
+    if (lineRe.test(frontmatterSection)) {
+        return frontmatterSection.replace(lineRe, `${key}: "${value}"$1`);
     }
-    out = out.replace(/^updated:.*$/m, `updated: "${today}"`);
-    return { content: out, statusReplaced };
+    return frontmatterSection.replace(/\n---(\r?\n?)$/, `\n${key}: "${value}"\n---$1`);
 }
-export function updateTicketStatus(ticketId, newStatus, sessionDir) {
-    if (/["\n\r]/.test(newStatus)) {
+function validateTicketFrontmatterPatch(patch) {
+    if (patch.status !== undefined && /["\n\r]/.test(patch.status)) {
         throw new Error('Invalid status value: must not contain quotes or newlines');
     }
+    if (patch.completion_commit !== undefined && patch.completion_commit !== null && /["\n\r]/.test(patch.completion_commit)) {
+        throw new Error('Invalid completion_commit value: must not contain quotes or newlines');
+    }
+}
+function applyStatusAndUpdatedFields(content, ticketId, nextStatus, today) {
+    let statusReplaced = false;
+    let nextContent = content;
+    if (nextStatus !== null && /^status:.*$/m.test(nextContent)) {
+        nextContent = nextContent.replace(/^status:.*$/m, `status: "${nextStatus}"`);
+        statusReplaced = true;
+    }
+    if (/^updated:.*$/m.test(nextContent)) {
+        nextContent = nextContent.replace(/^updated:.*$/m, `updated: "${today}"`);
+    }
+    else if (extractFrontmatter(nextContent)) {
+        nextContent = nextContent.replace(/\n---(\r?\n?)$/, `\nupdated: "${today}"\n---$1`);
+    }
+    else {
+        console.warn(`Warning: ticket ${ticketId} has no valid YAML frontmatter — status replacement may be imprecise`);
+    }
+    return { content: nextContent, statusReplaced };
+}
+function applyCompletionCommitField(content, patch) {
+    if (patch.completion_commit === undefined)
+        return content;
+    return setFrontmatterField(content, 'completion_commit', patch.completion_commit);
+}
+export function updateTicketFrontmatter(ticketId, sessionDir, patch) {
+    validateTicketFrontmatterPatch(patch);
     const ticketPath = findTicketFile(sessionDir, ticketId);
     if (!ticketPath) {
         throw new Error(`Ticket linear_ticket_${ticketId}.md not found in ${sessionDir}`);
     }
     const original = fs.readFileSync(ticketPath, 'utf-8');
     const today = formatLocalDateKey(new Date());
-    const { content, statusReplaced } = rewriteTicketFrontmatter(original, ticketId, newStatus, today);
-    if (!statusReplaced) {
+    const nextStatus = patch.status ?? null;
+    const fm = extractFrontmatter(original);
+    const baseContent = fm ? original.slice(0, fm.end) : original;
+    const { content: updatedBase, statusReplaced } = applyStatusAndUpdatedFields(baseContent, ticketId, nextStatus, today);
+    const content = applyCompletionCommitField(fm ? updatedBase + original.slice(fm.end) : updatedBase, patch);
+    if (nextStatus !== null && !statusReplaced) {
         console.warn(`Warning: no "status:" field found in ticket ${ticketId} — status not updated`);
     }
     const tmp = `${ticketPath}.tmp.${process.pid}`;
@@ -118,16 +130,32 @@ export function updateTicketStatus(ticketId, newStatus, sessionDir) {
         throw err;
     }
     if (statusReplaced) {
-        console.log(`Successfully updated ticket ${ticketId} to status "${newStatus}"`);
+        console.log(`Successfully updated ticket ${ticketId} to status "${nextStatus}"`);
     }
-    syncLinearTicketStatus(sessionDir, ticketId, newStatus);
+    if (nextStatus !== null) {
+        syncLinearTicketStatus(sessionDir, ticketId, nextStatus);
+    }
+}
+export function updateTicketStatus(ticketId, newStatus, sessionDir) {
+    updateTicketFrontmatter(ticketId, sessionDir, { status: newStatus });
 }
 export function getHeadSha(cwd) {
     return runGit(['rev-parse', 'HEAD'], cwd).trim();
 }
-export function resetToSha(sha, cwd) {
+function buildCleanArgs(preservePrefixes) {
+    const args = ['clean', '-fd'];
+    const cleanedPrefixes = normalizeExcludePrefixes(preservePrefixes);
+    if (cleanedPrefixes.length === 0)
+        return args;
+    args.push('--', '.');
+    for (const cleaned of cleanedPrefixes) {
+        args.push(`:!${cleaned}`, `:!${cleaned}/**`);
+    }
+    return args;
+}
+export function resetToSha(sha, cwd, preservePrefixes) {
     runGit(['reset', '--hard', sha], cwd);
-    runGit(['clean', '-fd'], cwd);
+    runGit(buildCleanArgs(preservePrefixes), cwd);
 }
 function normalizeExcludePrefixes(excludePrefixes) {
     if (!excludePrefixes || excludePrefixes.length === 0)

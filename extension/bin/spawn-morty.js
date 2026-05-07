@@ -3,9 +3,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, runCmd, safeErrorMessage, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, } from '../services/pickle-utils.js';
-import { spawn } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact } from '../types/index.js';
-import { updateTicketStatus } from '../services/git-utils.js';
+import { getDiffFiles, getHeadSha, listWorkingTreeDirtyPaths, resetToSha, updateTicketFrontmatter, updateTicketStatus } from '../services/git-utils.js';
 import { assertBackendPreSpawn, buildWorkerInvocation, isBackend, backendEnvOverrides, resolveWorkerBackendFromStateFile } from '../services/backend-spawn.js';
 import { scrubForbiddenWorkerTokens } from '../services/promise-tokens.js';
 import { StateManager, writeActivityEntry } from '../services/state-manager.js';
@@ -433,6 +433,184 @@ export function checkGitEdits(workingDir, sinceEpochSec) {
         return false;
     }
 }
+function runCommand(cmd, args, cwd) {
+    const result = spawnSync(cmd, args, {
+        cwd,
+        encoding: 'utf8',
+        timeout: 120_000,
+        stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    return {
+        ok: (result.status ?? 1) === 0,
+        stdout: result.stdout ?? '',
+        stderr: result.stderr ?? '',
+    };
+}
+function countLintErrors(output) {
+    return (output.match(/\berror\b/gi) ?? []).length;
+}
+function countTscErrors(output) {
+    return (output.match(/\berror TS\d+:/g) ?? []).length;
+}
+function collectChangedFilesForLintGate(workingDir, preWorkerHead) {
+    const files = new Set();
+    if (preWorkerHead) {
+        try {
+            const currentHead = getHeadSha(workingDir);
+            for (const entry of getDiffFiles(preWorkerHead, currentHead, workingDir))
+                files.add(entry.path);
+        }
+        catch { /* best-effort */ }
+    }
+    try {
+        for (const file of listWorkingTreeDirtyPaths(workingDir))
+            files.add(file);
+    }
+    catch { /* best-effort */ }
+    return [...files].sort((left, right) => left.localeCompare(right));
+}
+function toExtensionLintTargets(workingDir, fileList) {
+    return fileList
+        .filter(file => file.startsWith('extension/src/')
+        && /\.(?:[cm]?[jt]sx?)$/.test(file)
+        && fs.existsSync(path.join(workingDir, file)))
+        .map(file => file.replace(/^extension\//, ''));
+}
+function toRepoRelativePath(workingDir, targetPath) {
+    const relativePath = path.relative(workingDir, targetPath);
+    if (!relativePath || relativePath === '.' || relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+        return null;
+    }
+    return relativePath;
+}
+function stageAndCommitLintAutofix(workingDir, ticketId, fileList) {
+    const dirtyPaths = listWorkingTreeDirtyPaths(workingDir).filter(file => fileList.includes(file));
+    if (dirtyPaths.length === 0)
+        return null;
+    runCmd(['git', 'add', '--', ...dirtyPaths], { cwd: workingDir });
+    runCmd(['git', 'commit', '-m', `fix(${ticketId}): worker lint autofix`, '--no-gpg-sign'], { cwd: workingDir });
+    return getHeadSha(workingDir);
+}
+export function runLintGate(changedFiles, args) {
+    const fileList = [...changedFiles];
+    const extensionDir = path.join(args.workingDir, 'extension');
+    if (!fs.existsSync(extensionDir)) {
+        return { ok: true, fileList, lintErrors: 0, tscErrors: 0, autofixApplied: false, completionCommitSha: null };
+    }
+    const lintTargets = toExtensionLintTargets(args.workingDir, fileList);
+    const reportedFileList = lintTargets.length > 0
+        ? lintTargets.map(target => `extension/${target}`)
+        : fileList;
+    let lintErrors = 0;
+    let tscErrors = 0;
+    let autofixApplied = false;
+    const runChecks = () => {
+        let lintOk = true;
+        if (lintTargets.length > 0) {
+            const lintResult = runCommand('npx', ['eslint', ...lintTargets, '--max-warnings=-1'], extensionDir);
+            lintErrors = countLintErrors(`${lintResult.stdout}\n${lintResult.stderr}`);
+            lintOk = lintResult.ok;
+        }
+        else {
+            lintErrors = 0;
+        }
+        const tscResult = runCommand('npx', ['tsc', '--noEmit'], extensionDir);
+        tscErrors = countTscErrors(`${tscResult.stdout}\n${tscResult.stderr}`);
+        return { lintOk, tscOk: tscResult.ok };
+    };
+    let { lintOk, tscOk } = runChecks();
+    if ((!lintOk || !tscOk) && lintTargets.length > 0) {
+        autofixApplied = true;
+        runCommand('npx', ['eslint', '--fix', ...lintTargets, '--max-warnings=-1'], extensionDir);
+        writeActivityEntry(args.statePath, {
+            event: 'worker_lint_autofix_applied',
+            ticket_id: args.ticketId,
+            file_list: reportedFileList,
+            ts: new Date().toISOString(),
+        });
+        ({ lintOk, tscOk } = runChecks());
+    }
+    if (!lintOk || !tscOk) {
+        writeActivityEntry(args.statePath, {
+            event: 'worker_lint_gate_failed',
+            ticket_id: args.ticketId,
+            lint_errors: lintErrors,
+            tsc_errors: tscErrors,
+            file_list: reportedFileList,
+            ts: new Date().toISOString(),
+        });
+        if (args.preWorkerHead) {
+            try {
+                const preservePrefixes = (args.preservePaths ?? [])
+                    .map(preservePath => toRepoRelativePath(args.workingDir, preservePath))
+                    .filter((prefix) => prefix !== null);
+                resetToSha(args.preWorkerHead, args.workingDir, preservePrefixes);
+            }
+            catch { /* best-effort */ }
+        }
+        return { ok: false, fileList, lintErrors, tscErrors, autofixApplied, completionCommitSha: null };
+    }
+    const completionCommitSha = autofixApplied
+        ? stageAndCommitLintAutofix(args.workingDir, args.ticketId, fileList)
+        : null;
+    writeActivityEntry(args.statePath, {
+        event: 'worker_lint_gate_passed',
+        ticket_id: args.ticketId,
+        file_list: reportedFileList,
+        ts: new Date().toISOString(),
+    });
+    return { ok: true, fileList, lintErrors, tscErrors, autofixApplied, completionCommitSha };
+}
+async function finalizeWorkerTurn(params) {
+    const { ctx, exitCode, flushTimeout, startTime, resolve } = params;
+    if (ctx.mutableState.finalized)
+        return;
+    ctx.mutableState.finalized = true;
+    clearTimeout(flushTimeout);
+    const { ticketId, sessionRoot, sessionLog, sessionLogPath, sessionWorkingDir } = ctx;
+    const logContent = scrubWorkerLog(sessionLogPath, readWorkerLog(sessionLogPath));
+    let { isSuccess } = evaluateWorkerOutcome({ ctx, logContent, startTime });
+    let completionCommitSha = null;
+    if (isSuccess) {
+        const changedFiles = collectChangedFilesForLintGate(sessionWorkingDir, ctx.preWorkerHead);
+        const lintGate = runLintGate(changedFiles, {
+            workingDir: sessionWorkingDir,
+            ticketId,
+            statePath: path.join(sessionRoot, 'state.json'),
+            preWorkerHead: ctx.preWorkerHead,
+            preservePaths: [sessionRoot],
+        });
+        isSuccess = lintGate.ok;
+        completionCommitSha = lintGate.completionCommitSha;
+    }
+    try {
+        updateTicketFrontmatter(ticketId, sessionRoot, isSuccess
+            ? { status: 'Done', completion_commit: completionCommitSha ?? getHeadSha(sessionWorkingDir) }
+            : { status: 'Failed', completion_commit: null });
+    }
+    catch {
+        /* best-effort */
+    }
+    if (isSuccess) {
+        // R-CCC-2: Auto-fill completion_commit: for Done tickets that missed the ACK.
+        try {
+            autoFillCompletionCommit({
+                sessionDir: sessionRoot,
+                workingDir: sessionWorkingDir,
+                ticketId,
+                statePath: ctx.workerStatePath,
+            });
+        }
+        catch {
+            /* best-effort */
+        }
+    }
+    printMinimalPanel('Worker Report', { status: ctx.mutableState.timedOut ? 'timeout' : `exit:${exitCode}`, validation: isSuccess ? 'successful' : 'failed' }, isSuccess ? 'GREEN' : 'RED', '🥒');
+    if (!isSuccess) {
+        await flushAndExit(sessionLog, 1);
+    }
+    resolve({ exitCode: exitCode ?? 0, isSuccess });
+}
 function readSessionRuntime(args) {
     const parentStatePath = path.join(args.sessionRoot, 'state.json');
     const workerStatePath = path.join(args.ticketPath, 'state.json');
@@ -770,32 +948,7 @@ export async function runWorkerProcess(ctx) {
             });
             sessionLog.end();
             async function finalize(exitCode) {
-                if (ctx.mutableState.finalized)
-                    return;
-                ctx.mutableState.finalized = true;
-                clearTimeout(flushTimeout);
-                const logContent = scrubWorkerLog(sessionLogPath, readWorkerLog(sessionLogPath));
-                const { isSuccess } = evaluateWorkerOutcome({ ctx, logContent, startTime });
-                try {
-                    updateTicketStatus(ticketId, isSuccess ? 'Done' : 'Failed', sessionRoot);
-                }
-                catch { /* best-effort */ }
-                if (isSuccess) {
-                    // R-CCC-2: Auto-fill completion_commit: for Done tickets that missed the ACK.
-                    try {
-                        autoFillCompletionCommit({
-                            sessionDir: sessionRoot,
-                            workingDir: sessionWorkingDir,
-                            ticketId,
-                            statePath: ctx.workerStatePath,
-                        });
-                    }
-                    catch { /* best-effort */ }
-                }
-                printMinimalPanel('Worker Report', { status: ctx.mutableState.timedOut ? 'timeout' : `exit:${exitCode}`, validation: isSuccess ? 'successful' : 'failed' }, isSuccess ? 'GREEN' : 'RED', '🥒');
-                if (!isSuccess)
-                    await flushAndExit(sessionLog, 1);
-                resolve({ exitCode: exitCode ?? 0, isSuccess });
+                await finalizeWorkerTurn({ ctx, exitCode, flushTimeout, startTime, resolve });
             }
         });
     });
@@ -890,6 +1043,14 @@ async function main() {
         timeoutStatePath: runtime.timeoutStatePath, workerStatePath: runtime.workerStatePath,
         effectiveTimeoutMs: effectiveTimeout * 1000, mutableState: { finalized: false, timedOut: false },
         model, effort: runtime.sessionEffort, hermesOptions: readHermesWorkerOptions(runtime.state),
+        preWorkerHead: (() => {
+            try {
+                return getHeadSha(runtime.sessionWorkingDir);
+            }
+            catch {
+                return null;
+            }
+        })(),
     });
 }
 if (process.argv[1] && path.basename(process.argv[1]) === 'spawn-morty.js') {

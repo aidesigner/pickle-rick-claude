@@ -239,6 +239,38 @@
         "sha": { "type": "string" }
       }
     },
+    "worker_lint_gate_passed": {
+      "type": "object",
+      "required": ["event", "ts", "ticket_id", "file_list"],
+      "properties": {
+        "event": { "type": "string", "const": "worker_lint_gate_passed" },
+        "ts": { "type": "string" },
+        "ticket_id": { "type": "string" },
+        "file_list": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "worker_lint_gate_failed": {
+      "type": "object",
+      "required": ["event", "ts", "ticket_id", "lint_errors", "tsc_errors", "file_list"],
+      "properties": {
+        "event": { "type": "string", "const": "worker_lint_gate_failed" },
+        "ts": { "type": "string" },
+        "ticket_id": { "type": "string" },
+        "lint_errors": { "type": "integer", "minimum": 0 },
+        "tsc_errors": { "type": "integer", "minimum": 0 },
+        "file_list": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "worker_lint_autofix_applied": {
+      "type": "object",
+      "required": ["event", "ts", "ticket_id", "file_list"],
+      "properties": {
+        "event": { "type": "string", "const": "worker_lint_autofix_applied" },
+        "ts": { "type": "string" },
+        "ticket_id": { "type": "string" },
+        "file_list": { "type": "array", "items": { "type": "string" } }
+      }
+    },
     "worker_completion_commit_announced": {
       "type": "object",
       "required": ["event", "ts", "ticket_id", "sha"],
@@ -303,6 +335,9 @@
     { "$ref": "#/definitions/worker_backend_resolved" },
     { "$ref": "#/definitions/completion_commit_auto_filled" },
     { "$ref": "#/definitions/completion_commit_inferred_from_git" },
+    { "$ref": "#/definitions/worker_lint_gate_passed" },
+    { "$ref": "#/definitions/worker_lint_gate_failed" },
+    { "$ref": "#/definitions/worker_lint_autofix_applied" },
     { "$ref": "#/definitions/worker_completion_commit_announced" },
     { "$ref": "#/definitions/time_cap_disabled_default" },
     { "$ref": "#/definitions/manager_idle_backoff_engaged" },

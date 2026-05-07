@@ -237,6 +237,28 @@ test('activity-event-payload: worker_backend_resolved source must be one of thre
   assert.equal(bad.valid, false, `source 'state' should be rejected`);
 });
 
+test('activity-event-payload: worker_lint_gate_failed requires integer error counts and file_list', () => {
+  const good = validate({
+    event: 'worker_lint_gate_failed',
+    ts: TS,
+    ticket_id: 'abc12345',
+    lint_errors: 2,
+    tsc_errors: 1,
+    file_list: ['extension/src/bin/spawn-morty.ts'],
+  }, 'worker_lint_gate_failed');
+  assert.equal(good.valid, true, 'valid lint gate failure payload should pass');
+
+  const bad = validate({
+    event: 'worker_lint_gate_failed',
+    ts: TS,
+    ticket_id: 'abc12345',
+    lint_errors: '2',
+    tsc_errors: 1,
+    file_list: ['extension/src/bin/spawn-morty.ts'],
+  }, 'worker_lint_gate_failed');
+  assert.equal(bad.valid, false, 'string lint_errors should fail');
+});
+
 test('activity-event-payload: schema defines exactly 19 event type definitions', () => {
   const EVENT_NAMES = [
     'worker_spawn_backend_resolved',
@@ -255,6 +277,9 @@ test('activity-event-payload: schema defines exactly 19 event type definitions',
     'worker_backend_resolved',
     'completion_commit_auto_filled',
     'completion_commit_inferred_from_git',
+    'worker_lint_gate_passed',
+    'worker_lint_gate_failed',
+    'worker_lint_autofix_applied',
     'worker_completion_commit_announced',
     'time_cap_disabled_default',
     'manager_idle_backoff_engaged',
@@ -266,5 +291,5 @@ test('activity-event-payload: schema defines exactly 19 event type definitions',
   const nonSharedDefs = Object.keys(schema.definitions).filter(
     k => k !== 'backendEnum' && k !== 'backendResolutionSourceEnum',
   );
-  assert.equal(nonSharedDefs.length, 21, `expected 21 event definitions, got ${nonSharedDefs.length}`);
+  assert.equal(nonSharedDefs.length, 24, `expected 24 event definitions, got ${nonSharedDefs.length}`);
 });
