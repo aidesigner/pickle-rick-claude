@@ -219,6 +219,13 @@ export function resolveBackendFromStateFileWithSource(
     return { backend: 'claude', source: 'refinement-lock' };
   }
 
+  // Explicit CLI override must beat persisted state/env because spawn-site
+  // callers already validated the value and are intentionally overriding the
+  // session's default backend for this launch.
+  if (cliBackend !== undefined) {
+    return { backend: cliBackend, source: 'cli-flag-override' };
+  }
+
   let parsed: { backend?: unknown } | null = null;
   try {
     parsed = _sm.read(statePath) as { backend?: unknown } | null;
@@ -231,13 +238,6 @@ export function resolveBackendFromStateFileWithSource(
   }
   if (typeof parsed?.backend === 'string' && parsed.backend.length > 0) {
     warnBadBackend('state', parsed.backend);
-  }
-
-  // Explicit CLI override should win over env and state for spawn-site callers
-  // that have validated or intentionally selected a backend (e.g. --backend on
-  // spawn-morty, or refinement hardcode).
-  if (cliBackend !== undefined) {
-    return { backend: cliBackend, source: 'cli-flag-override' };
   }
 
   const envBackend = process.env.PICKLE_BACKEND;

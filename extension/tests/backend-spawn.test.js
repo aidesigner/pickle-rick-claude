@@ -9,6 +9,7 @@ import {
     buildManagerInvocation,
     resolveBackend,
     resolveBackendFromStateFile,
+    resolveBackendFromStateFileWithSource,
     resolveWorkerBackendFromState,
     resolveWorkerBackendFromStateFile,
     isBackend,
@@ -152,6 +153,17 @@ test('resolveBackendFromStateFile: recovers newer same-iteration orphan tmp back
     });
     const promoted = JSON.parse(fs.readFileSync(file, 'utf-8'));
     assert.equal(promoted.backend, 'codex');
+});
+
+test('resolveBackendFromStateFileWithSource: cliBackend overrides persisted state backend', () => {
+    const dir = mkTmpDir('backend-spawn-');
+    const file = path.join(dir, 'state.json');
+    fs.writeFileSync(file, JSON.stringify({ backend: 'codex', active: true }));
+    withUnsetBackendEnv(() => {
+        const resolved = resolveBackendFromStateFileWithSource(file, 'hermes');
+        assert.equal(resolved.backend, 'hermes');
+        assert.equal(resolved.source, 'cli-flag-override');
+    });
 });
 
 test('resolveWorkerBackendFromState: worker_backend wins over backend', () => {
