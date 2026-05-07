@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { getExtensionRoot, extractFrontmatter, updateState, safeErrorMessage, findSessionPathForCwd, clearTicketResolutionTimestamps, getTicketStatus } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
-import { Defaults } from '../types/index.js';
+import { Defaults, ARTIFACT_PREFIXES } from '../types/index.js';
 const sm = new StateManager();
 function positiveIntegerOrDefault(value, fallback) {
     if (typeof value === 'number') {
@@ -17,6 +17,9 @@ function positiveIntegerOrDefault(value, fallback) {
 }
 function normalizeTicketStatus(status) {
     return (status || '').toLowerCase().replace(/["']/g, '').trim();
+}
+function isLifecycleArtifact(fileName) {
+    return Object.values(ARTIFACT_PREFIXES).some((prefixes) => prefixes.some((prefix) => fileName === `${prefix}.md` || fileName.startsWith(`${prefix}_`)));
 }
 export function retryTicket(ticketId, cwd) {
     // Validate ticketId to prevent path traversal
@@ -41,8 +44,7 @@ export function retryTicket(ticketId, cwd) {
         throw new Error(`Ticket ${ticketId} not found in session ${sessionDir}`);
     }
     // Archive partial artifacts
-    const artifacts = fs.readdirSync(ticketDir).filter(f => /^research_.*\.md$/.test(f) || f === 'research_review.md' ||
-        /^plan_.*\.md$/.test(f) || f === 'plan_review.md');
+    const artifacts = fs.readdirSync(ticketDir).filter(isLifecycleArtifact);
     if (artifacts.length > 0) {
         const archiveDir = path.join(ticketDir, `_retry_${Date.now()}`);
         fs.mkdirSync(archiveDir, { recursive: true });

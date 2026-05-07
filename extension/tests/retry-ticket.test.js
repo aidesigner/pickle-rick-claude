@@ -147,6 +147,64 @@ test('retryTicket: resets ticket status to Todo and archives artifacts', () => {
     }
 });
 
+test('retryTicket: archives implementation and review lifecycle artifacts to prevent stale completion evidence', () => {
+    const tmpExtDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-retry-ext-')));
+    const sessionDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-session-')));
+    const fakeCwd = sessionDir;
+    const saved = process.env.EXTENSION_DIR;
+    process.env.EXTENSION_DIR = tmpExtDir;
+
+    try {
+        const ticketId = 'stale-artifact-ticket';
+        const ticketDir = path.join(sessionDir, ticketId);
+        fs.mkdirSync(ticketDir, { recursive: true });
+
+        fs.writeFileSync(
+            path.join(ticketDir, `linear_ticket_${ticketId}.md`),
+            `---\nid: ${ticketId}\ntitle: Test\nstatus: Done\norder: 10\n---\n`
+        );
+        fs.writeFileSync(path.join(ticketDir, 'conformance_2026-05-07.md'), '# Old implementation evidence');
+        fs.writeFileSync(path.join(ticketDir, 'review_scope.md'), '# Old review evidence');
+
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({
+                active: false,
+                step: 'review',
+                iteration: 2,
+                session_dir: sessionDir,
+                original_prompt: 'retry stale artifacts',
+                worker_timeout_seconds: 1200,
+            })
+        );
+
+        fs.writeFileSync(
+            path.join(tmpExtDir, 'current_sessions.json'),
+            JSON.stringify({ [fakeCwd]: sessionDir })
+        );
+
+        retryTicket(ticketId, fakeCwd);
+
+        const entries = fs.readdirSync(ticketDir);
+        const archiveDir = entries.find((entry) => entry.startsWith('_retry_'));
+        assert.ok(archiveDir, 'Expected retry archive directory');
+        assert.equal(entries.includes('conformance_2026-05-07.md'), false, 'stale implementation artifact must be removed from live ticket dir');
+        assert.equal(entries.includes('review_scope.md'), false, 'stale review artifact must be removed from live ticket dir');
+
+        const archived = fs.readdirSync(path.join(ticketDir, archiveDir));
+        assert.ok(archived.includes('conformance_2026-05-07.md'));
+        assert.ok(archived.includes('review_scope.md'));
+    } finally {
+        if (saved === undefined) {
+            delete process.env.EXTENSION_DIR;
+        } else {
+            process.env.EXTENSION_DIR = saved;
+        }
+        fs.rmSync(tmpExtDir, { recursive: true, force: true });
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+});
+
 test('retryTicket: clears stale completed_at and skipped_at when resetting to Todo', () => {
     const tmpExtDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-retry-ext-')));
     const sessionDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-session-')));
