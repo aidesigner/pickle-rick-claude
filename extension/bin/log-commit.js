@@ -4,11 +4,10 @@ import { logActivity } from '../services/activity-logger.js';
 import { findSessionPathForCwd } from '../services/pickle-utils.js';
 const COMMIT_CMD_RE = /\bgit\s+(commit|cherry-pick|merge|rebase)\b/;
 const COMMIT_HASH_RE = /\[[^\]]*\s+([a-f0-9]{7,})\]\s+(.+)/;
-function findActiveSession() {
+const LAST_TOOL_ERROR_FILE = 'last-tool-error.json';
+function findActiveSessionPath() {
     try {
-        const cwd = process.cwd();
-        const sessionPath = findSessionPathForCwd(cwd, { requireActive: true });
-        return sessionPath ? path.basename(sessionPath) : null;
+        return findSessionPathForCwd(process.cwd(), { requireActive: true });
     }
     catch {
         return null;
@@ -39,16 +38,28 @@ function extractCommit(stdout) {
         ...(match?.[2]?.trim() ? { commit_message: match[2].trim() } : {}),
     };
 }
+function clearLastToolError(sessionPath) {
+    if (!sessionPath)
+        return;
+    try {
+        fs.unlinkSync(path.join(sessionPath, LAST_TOOL_ERROR_FILE));
+    }
+    catch {
+        /* missing or unreadable retry marker is fine */
+    }
+}
 function main() {
     const input = readHookInput();
     if (!input)
         process.exit(0);
+    const sessionPath = findActiveSessionPath();
+    clearLastToolError(sessionPath);
     const command = input.tool_input?.command;
     if (!command || !COMMIT_CMD_RE.test(command)) {
         process.exit(0);
     }
     const commit = extractCommit(input.tool_response?.stdout ?? '');
-    const session = findActiveSession();
+    const session = sessionPath ? path.basename(sessionPath) : null;
     logActivity({
         event: 'commit',
         source: 'hook',
