@@ -260,14 +260,34 @@ function lineContext(text, token) {
     const end = text.indexOf('\n', idx);
     return text.slice(start, end === -1 ? text.length : end);
 }
-function checkPathDrift(t, gitFiles) {
+// Paths under "## Files to create" headings are forward-create-OK — they don't exist at HEAD by design.
+export function extractForwardCreatePaths(body) {
+    const lines = body.split('\n');
+    const result = new Set();
+    let inCreateSection = false;
+    for (const line of lines) {
+        if (/^#{1,6}\s/.test(line)) {
+            inCreateSection = /files\s+to\s+create/i.test(line);
+        }
+        if (inCreateSection) {
+            for (const p of extractBacktickedPaths(line)) {
+                result.add(p);
+            }
+        }
+    }
+    return result;
+}
+export function checkPathDrift(t, gitFiles) {
     const findings = [];
     const seen = new Set();
+    const forwardCreatePaths = extractForwardCreatePaths(t.body);
     for (const tok of extractBacktickedPaths(t.body)) {
         if (seen.has(tok))
             continue;
         seen.add(tok);
         if (gitFiles.has(tok))
+            continue;
+        if (forwardCreatePaths.has(tok))
             continue;
         const ctx = lineContext(t.body, tok);
         if (FORWARD_CREATED_RE.test(ctx))
