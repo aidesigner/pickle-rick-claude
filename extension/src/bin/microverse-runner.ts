@@ -584,6 +584,44 @@ function maybeEmitGateRegressionWarning(opts: {
   return nextMv;
 }
 
+/**
+ * Returns `'fresh'` when an existing baseline is still valid (caller may early-return),
+ * `'stale'` when an existing baseline was deleted as part of a refresh,
+ * or `'absent'` when no baseline exists yet (fresh init).
+ */
+function classifyExistingBaseline(opts: {
+  baselinePath: string;
+  currentIteration?: number;
+  baselineMaxAgeIterations?: number;
+  baselineMaxAgeSeconds?: number;
+  log: (msg: string) => void;
+}): 'fresh' | 'stale' | 'absent' {
+  const { baselinePath, currentIteration, baselineMaxAgeIterations, baselineMaxAgeSeconds, log } = opts;
+  if (!fs.existsSync(baselinePath)) return 'absent';
+  if (
+    currentIteration === undefined ||
+    baselineMaxAgeIterations === undefined ||
+    baselineMaxAgeSeconds === undefined
+  ) {
+    return 'fresh';
+  }
+  try {
+    assertBaselineFresh(baselinePath, {
+      max_age_iterations: baselineMaxAgeIterations,
+      max_age_seconds: baselineMaxAgeSeconds,
+      current_iteration: currentIteration,
+    });
+    return 'fresh';
+  } catch (err) {
+    if (!(err instanceof BaselineMissingError || err instanceof BaselineStaleError)) {
+      throw err;
+    }
+    fs.rmSync(baselinePath, { force: true });
+    log(`[anatomy-park] refreshing per-iteration gate baseline (${safeErrorMessage(err)})`);
+    return 'stale';
+  }
+}
+
 export async function ensurePerIterationGateBaseline(opts: {
   currentMv: MicroverseSessionState;
   workingDir: string;
@@ -609,47 +647,57 @@ export async function ensurePerIterationGateBaseline(opts: {
   if (!enabledFiles.includes(currentMv.convergence_file ?? '')) return;
 
   const baselinePath = path.join(sessionDir, 'gate', 'baseline.json');
-  if (await pathExists(baselinePath)) {
-    if (
-      currentIteration !== undefined &&
-      baselineMaxAgeIterations !== undefined &&
-      baselineMaxAgeSeconds !== undefined
-    ) {
-      try {
-        assertBaselineFresh(baselinePath, {
-          max_age_iterations: baselineMaxAgeIterations,
-          max_age_seconds: baselineMaxAgeSeconds,
-          current_iteration: currentIteration,
-        });
-        return;
-      } catch (err) {
-        if (!(err instanceof BaselineMissingError || err instanceof BaselineStaleError)) {
-          throw err;
-        }
-        fs.rmSync(baselinePath, { force: true });
-        log(`[anatomy-park] refreshing per-iteration gate baseline (${safeErrorMessage(err)})`);
-      }
-    } else {
-      return;
-    }
-  }
-
-  await capturePerIterationGateBaseline({
-    currentMv,
-    workingDir,
-    sessionDir,
+  const baselineStatus = classifyExistingBaseline({
     baselinePath,
+    currentIteration,
+    baselineMaxAgeIterations,
+    baselineMaxAgeSeconds,
     log,
-    deps: {
-      runGateFn: _deps?.runGateFn ?? runGate,
-      logActivityFn: _deps?.logActivityFn ?? logActivity,
-    },
-    failureEvent: 'gate_baseline_init_failed',
-    failureMessage: `[anatomy-park] per-iteration gate baseline initialization failed - expected baseline at ${baselinePath}`,
-    successMessage: (result) =>
-      `[anatomy-park] initialized per-iteration gate baseline ` +
-      `(captured ${result.total_raw_failure_count} pre-existing failure(s))`,
   });
+  if (baselineStatus === 'fresh') return;
+  const staleRefresh = baselineStatus === 'stale';
+
+  try {
+    await capturePerIterationGateBaseline({
+      currentMv,
+      workingDir,
+      sessionDir,
+      baselinePath,
+      log,
+      deps: {
+        runGateFn: _deps?.runGateFn ?? runGate,
+        logActivityFn: _deps?.logActivityFn ?? logActivity,
+      },
+      failureEvent: 'gate_baseline_init_failed',
+      failureMessage: `[anatomy-park] per-iteration gate baseline initialization failed - expected baseline at ${baselinePath}`,
+      successMessage: (result) =>
+        `[anatomy-park] initialized per-iteration gate baseline ` +
+        `(captured ${result.total_raw_failure_count} pre-existing failure(s))`,
+    });
+  } catch (err) {
+    // Stale-baseline refresh failure is recoverable: the post-commit gate in
+    // runChangedPerIterationGate will detect the missing baseline and recapture
+    // from the clean pre-iteration tree (its strict-mode fallback). Killing
+    // the run here strands a forward-progressing session at the iteration
+    // boundary even though the next gate could heal it. Fresh-init failure
+    // (no baseline ever) still throws because there is no recovery path.
+    if (!staleRefresh) throw err;
+    log(
+      `[anatomy-park] stale-baseline refresh failed (${safeErrorMessage(err)}) — ` +
+      `continuing; post-commit gate will recapture from the pre-iteration tree`,
+    );
+    (_deps?.logActivityFn ?? logActivity)({
+      event: 'gate_baseline_init_failed',
+      source: 'pickle',
+      session: path.basename(sessionDir),
+      gate_payload: {
+        path: baselinePath,
+        recoverable: true,
+        reason: 'stale_refresh_deferred_to_post_commit_recapture',
+        message: safeErrorMessage(err),
+      },
+    });
+  }
 }
 
 export async function runPerIterationGateHook(opts: {
