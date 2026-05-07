@@ -135,7 +135,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'manager_idle_backoff_engaged',
         'manager_idle_backoff_released',
     ];
-    assert.equal(VALID_ACTIVITY_EVENTS.length, 108);
+    assert.equal(VALID_ACTIVITY_EVENTS.length, 112);
     for (const e of expected) {
         assert.ok(VALID_ACTIVITY_EVENTS.includes(e), `Missing event type: ${e}`);
     }
