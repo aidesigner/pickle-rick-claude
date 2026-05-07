@@ -16,7 +16,7 @@ function makeFixture() {
   const homeDir = path.join(dir, 'home');
   const tmpRoot = path.join(dir, 'tmp');
   const varFoldersRoot = path.join(dir, 'var-folders');
-  const runtimeRoot = path.join(homeDir, '.codex', 'pickle-rick');
+  const runtimeRoot = path.join(homeDir, '.claude', 'pickle-rick');
   const cachePath = path.join(runtimeRoot, 'update-check.json');
   const auditPath = path.join(runtimeRoot, 'deploy-audit.log');
   const tarballDir = path.join(tmpRoot, 'pickle-update-fixture');
@@ -92,9 +92,9 @@ describe('purge-update-cache.js', () => {
     }
   });
 
-  test('honors PICKLE_DATA_ROOT for update cache and audit paths', () => {
+  test('honors EXTENSION_DIR for update cache and audit paths', () => {
     const fixture = makeFixture();
-    const overrideRoot = path.join(fixture.dir, 'override-data-root');
+    const overrideRoot = path.join(fixture.dir, 'override-extension-root');
     const overrideCache = path.join(overrideRoot, 'update-check.json');
     const overrideAudit = path.join(overrideRoot, 'deploy-audit.log');
     try {
@@ -110,7 +110,7 @@ describe('purge-update-cache.js', () => {
           ...process.env,
           HOME: fixture.homeDir,
           TMPDIR: fixture.tmpRoot,
-          PICKLE_DATA_ROOT: overrideRoot,
+          EXTENSION_DIR: overrideRoot,
           PICKLE_PURGE_VAR_FOLDERS_ROOT: fixture.varFoldersRoot,
         },
       });
@@ -124,6 +124,26 @@ describe('purge-update-cache.js', () => {
       const audit = JSON.parse(lines[0]);
       assert.equal(audit.event, 'CACHE_PURGE');
       assert.ok(audit.removed_paths.includes(overrideCache));
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('default runtime root matches the canonical extension root used by check-update.js', () => {
+    const fixture = makeFixture();
+    const codexRoot = path.join(fixture.homeDir, '.codex', 'pickle-rick');
+    const codexCache = path.join(codexRoot, 'update-check.json');
+    try {
+      mkdirSync(codexRoot, { recursive: true });
+      writeFileSync(codexCache, JSON.stringify({
+        last_check_epoch: 3,
+        latest_version: '3.0.0',
+        current_version: '3.0.0',
+      }));
+      const result = runPurge(fixture);
+      assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
+      assert.equal(existsSync(fixture.cachePath), false, '.claude cache must be removed (canonical extension root)');
+      assert.equal(existsSync(codexCache), true, '.codex cache must NOT be touched (regression guard for commit 5fc4ecee root drift)');
     } finally {
       rmSync(fixture.dir, { recursive: true, force: true });
     }

@@ -12,7 +12,7 @@ if (unexpected.length > 0) {
   process.exit(2);
 }
 
-const runtimeRoot = process.env.PICKLE_DATA_ROOT || path.join(os.homedir(), '.codex', 'pickle-rick');
+const runtimeRoot = process.env.EXTENSION_DIR || path.join(os.homedir(), '.claude', 'pickle-rick');
 const cachePath = path.join(runtimeRoot, 'update-check.json');
 const auditPath = path.join(runtimeRoot, 'deploy-audit.log');
 const removedPaths = [];
