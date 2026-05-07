@@ -371,6 +371,25 @@ test('stop-hook.rate-limit: 100 invocations in 30s produce no more than one spaw
   }
 });
 
+test('stop-hook.rate-limit: one-hour interval blocks respawn within the same hour', () => {
+  const fixture = makeStopHookFixture();
+  try {
+    fs.writeFileSync(
+      path.join(fixture.tmpDir, 'pickle_settings.json'),
+      JSON.stringify({ update_check_interval_hours: 1 })
+    );
+    const fortyMinutesAgo = Math.floor(Date.now() / 1000) - (40 * 60);
+    fs.writeFileSync(fixture.spawnEpochPath, `${fortyMinutesAgo}\n`);
+
+    const log = runHookInFixture(fixture);
+
+    assert.doesNotMatch(log, /Spawning detached check-update process/);
+    assert.match(log, /check-update spawn skipped: rate-limited/);
+  } finally {
+    fs.rmSync(fixture.tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('stop-hook.rate-limit epoch-write: spawn writes recent epoch file mtime', () => {
   const fixture = makeStopHookFixture();
   try {

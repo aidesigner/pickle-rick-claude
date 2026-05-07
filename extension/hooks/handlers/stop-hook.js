@@ -625,7 +625,7 @@ function maybeSpawnUpdateCheck(extensionDir, log) {
     }
     const intervalHours = settings?.update_check_interval_hours;
     const configuredSeconds = typeof intervalHours === 'number' && Number.isFinite(intervalHours) && intervalHours > 0
-        ? intervalHours * 36
+        ? intervalHours * 3_600
         : 60;
     const spawnIntervalSeconds = Math.max(60, configuredSeconds);
     const spawnEpochPath = path.join(extensionDir, 'last-check-spawn.epoch');
