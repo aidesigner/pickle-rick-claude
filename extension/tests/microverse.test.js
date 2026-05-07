@@ -984,9 +984,13 @@ test('readRunnerState promotes orphan tmp state before microverse control-flow r
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-mv-state-'));
     const statePath = path.join(dir, 'state.json');
     try {
+        // baseState must satisfy isRecoverableStateSnapshotCandidate
+        // (state-manager.ts:260, anatomy-park 47095472) — partial snapshots
+        // are rejected during orphan-tmp promotion.
         const baseState = {
             active: true,
             working_dir: dir,
+            session_dir: dir,
             step: 'implement',
             iteration: 1,
             max_iterations: 10,
@@ -994,6 +998,11 @@ test('readRunnerState promotes orphan tmp state before microverse control-flow r
             worker_timeout_seconds: 120,
             start_time_epoch: Math.floor(Date.now() / 1000),
             backend: 'claude',
+            original_prompt: 'test',
+            started_at: '2026-01-01T00:00:00Z',
+            history: [],
+            completion_promise: null,
+            schema_version: 3,
         };
         const promotedState = {
             ...baseState,

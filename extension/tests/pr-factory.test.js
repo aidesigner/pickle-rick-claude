@@ -128,23 +128,34 @@ test('createPR recovers orphan tmp state before deriving repo path and prompt', 
         fs.mkdirSync(staleRepo, { recursive: true });
         fs.mkdirSync(liveRepo, { recursive: true });
 
+        // Both snapshots must satisfy isRecoverableStateSnapshotCandidate
+        // (state-manager.ts:260, anatomy-park 47095472) for orphan-tmp
+        // promotion. Partial snapshots are rejected.
         const statePath = path.join(tmp, 'state.json');
-        fs.writeFileSync(
-            statePath,
-            JSON.stringify({
-                working_dir: staleRepo,
-                original_prompt: 'stale prompt',
-                iteration: 1,
-                schema_version: 1,
-            })
-        );
+        const baseState = {
+            working_dir: staleRepo,
+            backend: 'claude',
+            step: 'research',
+            iteration: 1,
+            max_iterations: 50,
+            max_time_minutes: 720,
+            worker_timeout_seconds: 1200,
+            start_time_epoch: 1700000000,
+            original_prompt: 'stale prompt',
+            session_dir: tmp,
+            started_at: '2026-01-01T00:00:00Z',
+            history: [],
+            completion_promise: null,
+            schema_version: 3,
+        };
+        fs.writeFileSync(statePath, JSON.stringify(baseState));
         fs.writeFileSync(
             `${statePath}.tmp.99999999`,
             JSON.stringify({
+                ...baseState,
                 working_dir: liveRepo,
                 original_prompt: 'fresh prompt',
                 iteration: 2,
-                schema_version: 1,
             })
         );
 
@@ -177,13 +188,25 @@ test('createPR recovers from a corrupt base state.json when a newer orphan tmp e
 
         const statePath = path.join(tmp, 'state.json');
         fs.writeFileSync(statePath, '{broken json');
+        // Orphan tmp must satisfy isRecoverableStateSnapshotCandidate for
+        // recovery from corrupt base.
         fs.writeFileSync(
             `${statePath}.tmp.99999999`,
             JSON.stringify({
                 working_dir: liveRepo,
-                original_prompt: 'recovered prompt',
+                backend: 'claude',
+                step: 'research',
                 iteration: 4,
-                schema_version: 1,
+                max_iterations: 50,
+                max_time_minutes: 720,
+                worker_timeout_seconds: 1200,
+                start_time_epoch: 1700000000,
+                original_prompt: 'recovered prompt',
+                session_dir: tmp,
+                started_at: '2026-01-01T00:00:00Z',
+                history: [],
+                completion_promise: null,
+                schema_version: 3,
             })
         );
 

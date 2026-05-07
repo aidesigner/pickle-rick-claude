@@ -554,13 +554,25 @@ test('formatOutput: session project uses crash-recovered working_dir', () => {
         const tmpPath = `${statePath}.tmp.999999`;
 
         fs.mkdirSync(sessionDir, { recursive: true });
-        fs.writeFileSync(statePath, JSON.stringify({
-            schema_version: 1,
-            iteration: 1,
+        const baseState = {
             working_dir: '/tmp/stale-project',
-        }));
+            backend: 'claude',
+            step: 'research',
+            iteration: 1,
+            max_iterations: 50,
+            max_time_minutes: 720,
+            worker_timeout_seconds: 1200,
+            start_time_epoch: 1700000000,
+            original_prompt: 'test',
+            session_dir: sessionDir,
+            started_at: '2026-01-01T00:00:00Z',
+            history: [],
+            completion_promise: null,
+            schema_version: 3,
+        };
+        fs.writeFileSync(statePath, JSON.stringify(baseState));
         fs.writeFileSync(tmpPath, JSON.stringify({
-            schema_version: 1,
+            ...baseState,
             iteration: 2,
             working_dir: '/tmp/live-project',
         }));

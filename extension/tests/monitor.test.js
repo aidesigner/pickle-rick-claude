@@ -530,21 +530,32 @@ test('shouldMonitorExit: inactive pipeline session exits once terminal', () => {
 test('monitor CLI exits after orphan tmp recovery promotes an inactive higher-iteration state', () => {
     const dir = tmpDir();
     try {
-        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({
-            active: true,
-            iteration: 1,
-            step: 'implement',
-            original_prompt: 'stale base state',
+        const baseState = {
             working_dir: '/tmp/stale-base',
+            backend: 'claude',
+            step: 'implement',
+            iteration: 1,
+            max_iterations: 50,
+            max_time_minutes: 720,
+            worker_timeout_seconds: 1200,
+            start_time_epoch: 1700000000,
+            original_prompt: 'stale base state',
+            session_dir: dir,
+            started_at: '2026-01-01T00:00:00Z',
+            history: [],
+            completion_promise: null,
+            schema_version: 3,
+            active: true,
             pid: 999999,
-        }));
+        };
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify(baseState));
         fs.writeFileSync(path.join(dir, `state.json.tmp.999999`), JSON.stringify({
+            ...baseState,
             active: false,
             iteration: 2,
             step: 'review',
             original_prompt: 'recovered inactive state',
             working_dir: '/tmp/recovered-state',
-            pid: 999999,
         }));
 
         const result = run([dir]);

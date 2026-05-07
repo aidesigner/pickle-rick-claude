@@ -320,19 +320,28 @@ test('jar-runner (codex): recovered claude task is not skipped by codex ENOENT s
         setupCodexTask(tmpRoot, 'codex-task-a');
         const { metaPath, sessionDir } = setupCodexTask(tmpRoot, 'codex-task-b');
 
-        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
-            active: false,
+        const baseState = {
+            working_dir: tmpRoot,
+            backend: 'codex',
             step: 'prd',
             iteration: 1,
-            backend: 'codex',
-            working_dir: tmpRoot,
-        }, null, 2));
-        fs.writeFileSync(path.join(sessionDir, 'state.json.tmp.999999'), JSON.stringify({
+            max_iterations: 50,
+            max_time_minutes: 720,
+            worker_timeout_seconds: 1200,
+            start_time_epoch: 1700000000,
+            original_prompt: 'test',
+            session_dir: sessionDir,
+            started_at: '2026-01-01T00:00:00Z',
+            history: [],
+            completion_promise: null,
+            schema_version: 3,
             active: false,
-            step: 'prd',
+        };
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify(baseState, null, 2));
+        fs.writeFileSync(path.join(sessionDir, 'state.json.tmp.999999'), JSON.stringify({
+            ...baseState,
             iteration: 2,
             backend: 'claude',
-            working_dir: tmpRoot,
         }, null, 2));
 
         const shimDir = path.join(tmpRoot, 'bin');

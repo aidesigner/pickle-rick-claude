@@ -110,14 +110,31 @@ test('IterationOutcome: missing state.json throws a descriptive error (not an ou
 test('IterationOutcome: runIteration honors a higher-iteration inactive orphan tmp state', async () => {
     const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-outcome-orphan-')));
     try {
+        // Snapshots must satisfy isRecoverableStateSnapshotCandidate
+        // (state-manager.ts:260, anatomy-park 47095472) — partial snapshots
+        // are rejected during orphan-tmp promotion.
         const statePath = path.join(dir, 'state.json');
-        fs.writeFileSync(statePath, JSON.stringify({
-            active: true,
+        const baseState = {
+            working_dir: dir,
+            backend: 'claude',
             step: 'implement',
             iteration: 0,
+            max_iterations: 50,
+            max_time_minutes: 720,
+            worker_timeout_seconds: 1200,
+            start_time_epoch: 1700000000,
+            original_prompt: 'test',
+            session_dir: dir,
+            started_at: '2026-01-01T00:00:00Z',
+            history: [],
+            completion_promise: null,
+            schema_version: 3,
+            active: true,
             command_template: '../stale-template.md',
-        }));
+        };
+        fs.writeFileSync(statePath, JSON.stringify(baseState));
         fs.writeFileSync(`${statePath}.tmp.99999999`, JSON.stringify({
+            ...baseState,
             active: false,
             step: 'review',
             iteration: 3,

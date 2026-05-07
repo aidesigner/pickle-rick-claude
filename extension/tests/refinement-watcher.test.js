@@ -278,15 +278,31 @@ test('refinement-watcher: recovers orphan tmp inactive state before fallback exi
   try {
     const refinementDir = path.join(tmp, 'refinement');
     fs.mkdirSync(refinementDir);
-    writeState(tmp, { active: true, step: 'prd', iteration: 1 });
+    // Both base and orphan tmp must satisfy isRecoverableStateSnapshotCandidate
+    // (state-manager.ts:260, anatomy-park 47095472) for orphan-tmp promotion to
+    // happen — partial snapshots are rejected to prevent corrupt mid-write tmps
+    // from overwriting readable state.json.
+    const baseState = {
+      working_dir: process.cwd(),
+      backend: 'claude',
+      step: 'prd',
+      iteration: 1,
+      max_iterations: 50,
+      max_time_minutes: 720,
+      worker_timeout_seconds: 1200,
+      start_time_epoch: 1700000000,
+      original_prompt: 'test',
+      session_dir: tmp,
+      started_at: '2026-01-01T00:00:00Z',
+      history: [],
+      completion_promise: null,
+      schema_version: 3,
+      active: true,
+    };
+    fs.writeFileSync(path.join(tmp, 'state.json'), JSON.stringify(baseState, null, 2));
     fs.writeFileSync(
       path.join(tmp, 'state.json.tmp.999999'),
-      JSON.stringify({
-        active: false,
-        step: 'implement',
-        iteration: 2,
-        working_dir: process.cwd(),
-      }, null, 2),
+      JSON.stringify({ ...baseState, active: false, step: 'implement', iteration: 2 }, null, 2),
     );
 
     const output = runWatcher([tmp], { timeout: 15_000 });
