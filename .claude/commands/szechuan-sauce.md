@@ -341,17 +341,17 @@ AC-CIT-17 fixture behavior: if the LOA-618-style S3-key structural trap door is 
 
 ### Override 6: Migration Hygiene (Conditional)
 
-Before the first scoring pass, check if the target directory contains a Drizzle migration journal at `db/migrations/meta/_journal.json` (relative to target root). If it does NOT exist, skip this override entirely.
+Before the first scoring pass, check the target for Drizzle migration journals using this 4-path glob list (relative to target root): `db/migrations/meta/_journal.json`, `packages/*/db/migrations/meta/_journal.json`, `apps/*/db/migrations/meta/_journal.json`, `services/*/db/migrations/meta/_journal.json`. If none of these paths resolve, skip this override entirely. If it does NOT exist in any of those locations, skip this override entirely.
 
-If the journal exists, include these four checks in every review pass alongside the standard principles scan. Score findings as HIGH (P1) or MEDIUM (P2) as noted. All Override 6 findings must carry a confidence score per the rubric in `szechuan-sauce-principles.md` and drop below 80 before being scored. Do NOT duplicate mechanical checks (timestamp ordering, file↔journal parity) — those are handled by the CI lint script at `scripts/validate-migrations.ts`.
+If one or more journals resolve, iterate each discovered journal and include these four checks in every review pass alongside the standard principles scan. Run the checks per journal, using that journal's sibling migration and schema directories as the local source of truth. Score findings as HIGH (P1) or MEDIUM (P2) as noted. All Override 6 findings must carry a confidence score per the rubric in `szechuan-sauce-principles.md` and drop below 80 before being scored. Do NOT duplicate mechanical checks (timestamp ordering, file↔journal parity) — those are handled by the CI lint script at `scripts/validate-migrations.ts`.
 
-1. **CHECK Constraint Drift** (HIGH — P1): For each CHECK constraint in migration SQL files under `db/migrations/`, find the corresponding TypeScript enum, union, or type in the codebase. Flag any value present in code but missing from the constraint (INSERT will fail at runtime), or present in the constraint but absent from code (dead value).
+1. **CHECK Constraint Drift** (HIGH — P1): For each discovered journal, inspect the migration SQL files in that journal's sibling `db/migrations/` directory and find the corresponding TypeScript enum, union, or type in the same package/app/service codebase. Flag any value present in code but missing from the constraint (INSERT will fail at runtime), or present in the constraint but absent from code (dead value).
 
 2. **Redundant Constraint Churn** (MEDIUM — P2): Scan migration history for any constraint that has been dropped and re-created 3+ times. These should be collapsed into a single canonical migration. Report the constraint name and the migration files involved.
 
 3. **Idempotency** (MEDIUM — P2): Every `ALTER TABLE`, `CREATE TABLE`, `CREATE INDEX`, `ADD COLUMN` in migration SQL should use `IF EXISTS`/`IF NOT EXISTS` or be wrapped in a DO/EXCEPTION block. Non-idempotent statements break re-runs and rollback recovery.
 
-4. **Schema Drift** (HIGH — P1): Compare Drizzle schema TS files (glob `db/schema/*.ts` or `src/db/schema/*.ts` or `drizzle/schema/*.ts`) against the latest migration SQL. Flag columns, constraints, or column types that diverge between the two sources of truth.
+4. **Schema Drift** (HIGH — P1): For each discovered journal, compare the sibling Drizzle schema TS files against the latest migration SQL from that same journal's migration directory. Use the nearest package/app/service-local schema path that matches the journal root (for example, compare `packages/api/src/database/schema/*.ts` against `packages/api/db/migrations/*.sql`, not root-level `db/schema/*.ts`). Flag columns, constraints, or column types that diverge between the two sources of truth.
 
 When fixing migration hygiene violations, use this commit prefix: `szechuan-sauce: Migration Hygiene — <description>`
 

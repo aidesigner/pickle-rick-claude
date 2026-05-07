@@ -441,9 +441,37 @@ test('szechuan-sauce.md Migration Hygiene override is conditional', () => {
     const workerSection = content.slice(workerStart);
     // Must check for journal existence before applying
     assert.ok(
-        workerSection.includes('If it does NOT exist, skip'),
+        workerSection.includes('If none of these paths resolve, skip this override entirely') ||
+            workerSection.includes('If it does NOT exist, skip'),
         'Migration Hygiene must be skipped when no Drizzle journal found'
     );
+});
+
+test('Override 6 monorepo journal globbing', () => {
+    const content = readCommand();
+    const workerStart = content.indexOf('## WORKER MODE');
+    const workerSection = content.slice(workerStart);
+    assert.ok(workerSection.includes('db/migrations/meta/_journal.json'), 'missing legacy root journal path');
+    assert.ok(
+        workerSection.includes('packages/*/db/migrations/meta/_journal.json'),
+        'missing packages monorepo journal path'
+    );
+    assert.ok(
+        workerSection.includes('apps/*/db/migrations/meta/_journal.json'),
+        'missing apps monorepo journal path'
+    );
+    assert.ok(
+        workerSection.includes('services/*/db/migrations/meta/_journal.json'),
+        'missing services monorepo journal path'
+    );
+    assert.ok(workerSection.includes('iterate each discovered journal'), 'should run checks per discovered journal');
+});
+
+test('Override 6 absent journal still skips', () => {
+    const content = readCommand();
+    const workerStart = content.indexOf('## WORKER MODE');
+    const workerSection = content.slice(workerStart);
+    assert.ok(workerSection.includes('If none of these paths resolve, skip this override entirely'));
 });
 
 test('szechuan-sauce.md Migration Hygiene override defines all four checks', () => {
@@ -461,6 +489,24 @@ test('szechuan-sauce.md Migration Hygiene excludes CI lint overlap', () => {
     const workerStart = content.indexOf('## WORKER MODE');
     const workerSection = content.slice(workerStart);
     assert.ok(workerSection.includes('validate-migrations.ts'), 'should reference CI lint exclusion');
+});
+
+test('Override 6 Schema Drift uses monorepo sibling schema path', () => {
+    const content = readCommand();
+    const workerStart = content.indexOf('## WORKER MODE');
+    const workerSection = content.slice(workerStart);
+    assert.ok(
+        workerSection.includes('packages/api/src/database/schema/*.ts'),
+        'missing monorepo schema TS example'
+    );
+    assert.ok(
+        workerSection.includes('packages/api/db/migrations/*.sql'),
+        'missing monorepo migration SQL example'
+    );
+    assert.ok(
+        workerSection.includes("not root-level `db/schema/*.ts`"),
+        'should explicitly reject root-level schema path for the monorepo example'
+    );
 });
 
 // ---------------------------------------------------------------------------

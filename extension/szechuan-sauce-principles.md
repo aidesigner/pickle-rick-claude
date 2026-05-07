@@ -196,7 +196,7 @@ Database migrations must be idempotent, forward-only by default, and registered 
 **Violations**: Migration not registered in journal, missing rollback script, destructive DDL without backup/copy step, non-idempotent migration (re-running it fails), migration that depends on application runtime state.
 
 ### Migration Hygiene (Drizzle)
-**Conditional**: Only applies when the target contains a Drizzle migration journal (`db/migrations/meta/_journal.json`). Does NOT duplicate mechanical checks (timestamp ordering, file↔journal parity) handled by CI lint (`scripts/validate-migrations.ts`).
+**Conditional**: Only applies when the target contains one or more Drizzle migration journals matching `db/migrations/meta/_journal.json`, `packages/*/db/migrations/meta/_journal.json`, `apps/*/db/migrations/meta/_journal.json`, or `services/*/db/migrations/meta/_journal.json`. Does NOT duplicate mechanical checks (timestamp ordering, file↔journal parity) handled by CI lint (`scripts/validate-migrations.ts`).
 
 Four checks, scored HIGH or MEDIUM:
 
