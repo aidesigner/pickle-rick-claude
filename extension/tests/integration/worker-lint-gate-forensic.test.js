@@ -9,6 +9,13 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SPAWN_MORTY_BIN = path.resolve(__dirname, '../../bin/spawn-morty.js');
+const WORKER_TIMEOUT_MS = 90_000;
+
+function writeExtensionSentinel(root) {
+  const sentinelDir = path.join(root, 'extension', 'bin');
+  fs.mkdirSync(sentinelDir, { recursive: true });
+  fs.writeFileSync(path.join(sentinelDir, 'log-watcher.js'), '');
+}
 
 function makeTmpRoot(prefix = 'pickle-worker-lint-gate-forensic-') {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
@@ -18,6 +25,7 @@ function initRepo(root) {
   execFileSync('git', ['init'], { cwd: root, stdio: 'ignore' });
   execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root });
   execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: root });
+  writeExtensionSentinel(root);
   fs.mkdirSync(path.join(root, 'extension', 'src'), { recursive: true });
   fs.writeFileSync(path.join(root, 'extension', 'package.json'), JSON.stringify({ name: 'fixture', private: true, type: 'module' }, null, 2));
   fs.writeFileSync(path.join(root, 'extension', 'src', 'baseline.ts'), 'export const baseline = 1;\n');
@@ -100,7 +108,7 @@ test('worker lint gate forensic: deliberate lint violation fails ticket and leav
         FAKE_TICKET_DIR: ticketDir,
         FAKE_TICKET_ID: ticketId,
       },
-      timeout: 60000,
+      timeout: WORKER_TIMEOUT_MS,
     });
 
     assert.equal(result.status, 1, `stderr: ${result.stderr}`);

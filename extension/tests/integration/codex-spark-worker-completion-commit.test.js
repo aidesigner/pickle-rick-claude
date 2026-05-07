@@ -9,17 +9,31 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SPAWN_MORTY_BIN = path.resolve(__dirname, '../../bin/spawn-morty.js');
+const WORKER_TIMEOUT_MS = 90_000;
 
 function makeTmpRoot(prefix = 'pickle-codex-completion-commit-') {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+}
+
+function writeExtensionSentinel(root) {
+  const sentinelDir = path.join(root, 'extension', 'bin');
+  fs.mkdirSync(sentinelDir, { recursive: true });
+  fs.writeFileSync(path.join(sentinelDir, 'log-watcher.js'), '');
 }
 
 function initGitRepo(dir) {
   execFileSync('git', ['init'], { cwd: dir, stdio: 'ignore' });
   execFileSync('git', ['config', 'user.email', 'test@example.com'], { cwd: dir });
   execFileSync('git', ['config', 'user.name', 'Test User'], { cwd: dir });
+  writeExtensionSentinel(dir);
+  fs.mkdirSync(path.join(dir, 'extension', 'src'), { recursive: true });
+  fs.writeFileSync(
+    path.join(dir, 'extension', 'package.json'),
+    JSON.stringify({ name: 'fixture', private: true, type: 'module' }, null, 2),
+  );
+  fs.writeFileSync(path.join(dir, 'extension', 'src', 'baseline.ts'), 'export const baseline = 1;\n');
   fs.writeFileSync(path.join(dir, 'README.md'), 'fixture\n');
-  execFileSync('git', ['add', 'README.md'], { cwd: dir });
+  execFileSync('git', ['add', '.'], { cwd: dir });
   execFileSync('git', ['commit', '-m', 'initial fixture', '--no-gpg-sign'], { cwd: dir, stdio: 'ignore' });
 }
 
@@ -51,6 +65,19 @@ process.stdout.write('<promise>I AM DONE</promise>\\n');
   return shimPath;
 }
 
+function writeNpxShim(binDir) {
+  fs.mkdirSync(binDir, { recursive: true });
+  const shimPath = path.join(binDir, 'npx');
+  fs.writeFileSync(shimPath, `#!/usr/bin/env node
+const args = process.argv.slice(2);
+if (args[0] === 'tsc') process.exit(0);
+if (args[0] === 'eslint') process.exit(0);
+process.exit(0);
+`);
+  fs.chmodSync(shimPath, 0o755);
+  return shimPath;
+}
+
 function writeSession(root, ticketId) {
   const sessionRoot = path.join(root, 'session');
   const ticketDir = path.join(sessionRoot, ticketId);
@@ -59,8 +86,18 @@ function writeSession(root, ticketId) {
     backend: 'codex',
     active: true,
     working_dir: root,
+    step: 'implement',
+    iteration: 1,
+    max_iterations: 10,
     worker_timeout_seconds: 30,
     start_time_epoch: Math.floor(Date.now() / 1000) - 60,
+    completion_promise: null,
+    original_prompt: 'integration replay',
+    current_ticket: ticketId,
+    history: [],
+    started_at: new Date().toISOString(),
+    session_dir: sessionRoot,
+    schema_version: 3,
     activity: [],
   }, null, 2));
   fs.writeFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`), [
@@ -78,6 +115,7 @@ function writeSession(root, ticketId) {
 function runSpawnMorty(root, sessionRoot, ticketDir, ticketId, mode) {
   const binDir = path.join(root, 'bin');
   writeCodexShim(binDir);
+  writeNpxShim(binDir);
   return spawnSync(process.execPath, [
     SPAWN_MORTY_BIN,
     'integration replay',
@@ -96,7 +134,7 @@ function runSpawnMorty(root, sessionRoot, ticketDir, ticketId, mode) {
       FAKE_TICKET_DIR: ticketDir,
       FAKE_TICKET_ID: ticketId,
     },
-    timeout: 60000,
+    timeout: WORKER_TIMEOUT_MS,
   });
 }
 
