@@ -97,15 +97,17 @@ test('cancelSession: returns early when cwd not in sessions map', () => {
 test('cancelSession: returns early when state.json missing', () => {
     const tmpRoot = makeTmpRoot();
     try {
-        // Session dir exists but has no state.json
+        // Session dir exists but has no state.json. R-SHB-6's pruneOrphanedMapEntries
+        // (services/pickle-utils.ts) reaps the phantom map entry before cancel.ts
+        // sees it, so the terminal message is "No active session found" rather than
+        // the dead-code "State file not found" branch in cancel.ts.
         const sessionDir = path.join(tmpRoot, 'session');
         fs.mkdirSync(sessionDir, { recursive: true });
 
-        // Map points tmpRoot -> sessionDir (subprocess cwd will be tmpRoot)
         writeSessionsMap(tmpRoot, { [tmpRoot]: sessionDir });
 
         const output = runCancelSubprocess(tmpRoot, tmpRoot);
-        assert.ok(output.includes('State file not found'), 'should report missing state file');
+        assert.ok(output.includes('No active session found'), 'should report no active session after prune');
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
@@ -134,16 +136,28 @@ test('cancelSession: removes cwd entry from sessions map after cancel', () => {
     const tmpRoot = makeTmpRoot();
     try {
         const sessionDir = makeSessionDir(tmpRoot, true);
+        // Real other-cwd + other-session dirs with a stub state.json so
+        // R-SHB-6's pruneOrphanedMapEntries doesn't reap the unrelated entry
+        // before we get a chance to assert it survived cancel.
+        const otherCwd = path.join(tmpRoot, 'other-cwd');
+        const otherSession = path.join(tmpRoot, 'other-session');
+        fs.mkdirSync(otherCwd, { recursive: true });
+        fs.mkdirSync(otherSession, { recursive: true });
+        fs.writeFileSync(
+            path.join(otherSession, 'state.json'),
+            JSON.stringify({ active: true, step: 'research', iteration: 1, original_prompt: 'other' }, null, 2),
+        );
+
         writeSessionsMap(tmpRoot, {
             [tmpRoot]: sessionDir,
-            '/other/dir': '/other/session',
+            [otherCwd]: otherSession,
         });
 
         runCancelSubprocess(tmpRoot, tmpRoot);
 
         const map = readSessionsMap(tmpRoot);
         assert.equal(map[tmpRoot], undefined, 'cancelled cwd must be removed from sessions map');
-        assert.equal(map['/other/dir'], '/other/session', 'other sessions must not be affected');
+        assert.equal(map[otherCwd], otherSession, 'other sessions must not be affected');
     } finally {
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
