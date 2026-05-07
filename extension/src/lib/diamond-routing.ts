@@ -1,6 +1,6 @@
 import type { Graph, DiamondRoutingRow } from '../types/plumbus-frame-analyzer.js';
 
-const CONDITION_RE = /^context\.(\w+)=(.+)$/;
+const CONDITION_RE = /^context\.([\w.]+)=(.+)$/;
 const CARTESIAN_CAP = 256;
 
 interface ParsedCondition {

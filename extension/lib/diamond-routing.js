@@ -1,4 +1,4 @@
-const CONDITION_RE = /^context\.(\w+)=(.+)$/;
+const CONDITION_RE = /^context\.([\w.]+)=(.+)$/;
 const CARTESIAN_CAP = 256;
 function edgeCondition(edge) {
     const attrs = typeof edge['attrs'] === 'object' && edge['attrs'] !== null

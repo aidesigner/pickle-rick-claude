@@ -364,5 +364,48 @@ describe('Trace A: analyzer-internal boundary invariants', () => {
         assert.ok(keys[i - 1] <= keys[i], `context_keys out of sort order at index ${i}: "${keys[i - 1]}" > "${keys[i]}"`);
       }
     });
+
+    test('CLI preserves dotted context keys across context_keys and diamond_routing', () => {
+      const graphContent = JSON.stringify({
+        nodes: [
+          { id: 'writer', context_on_success: 'stack.child.status=completed' },
+          { id: 'manager_gate', class: 'diamond' },
+        ],
+        edges: [
+          { source: 'manager_gate', target: 'done', condition: 'context.stack.child.status=completed' },
+        ],
+      });
+      const attractorRoot = makeAttractorRoot();
+      const bunDir = makeFakeBun(graphContent);
+      const dotPath = path.join(FIXTURES_DIR, 'frame1-asymmetric-writer.dot');
+
+      const result = spawnSync(
+        process.execPath,
+        [BIN_PATH, dotPath],
+        {
+          encoding: 'utf8',
+          env: { ...process.env, ATTRACTOR_ROOT: attractorRoot, PATH: `${bunDir}:${process.env.PATH ?? ''}` },
+        },
+      );
+      assert.strictEqual(result.status, 0, `expected exit 0: ${result.stderr}`);
+
+      const parsed = JSON.parse(result.stdout.trim());
+      assert.deepStrictEqual(
+        parsed.context_keys,
+        [{ key: 'stack.child.status', writers: ['writer'], readers: ['done'] }],
+      );
+      assert.deepStrictEqual(
+        parsed.diamond_routing,
+        [{
+          diamond: 'manager_gate',
+          covered_states: [
+            { cell: { 'stack.child.status': 'completed' }, matchingEdges: ['manager_gate->done'] },
+          ],
+          stuck_states: [
+            { cell: { 'stack.child.status': 'unset' }, matchingEdges: [] },
+          ],
+        }],
+      );
+    });
   });
 });

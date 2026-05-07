@@ -1,5 +1,5 @@
 import { isEngineWritten } from './engine-keys-registry.js';
-const CONDITION_RE = /context\.(\w+)/;
+const CONDITION_RE = /context\.([\w.]+)=/;
 const TOOL_CMD_WRITE_RE = /ATTRACTOR_CTX:\s*(\w+)\s*=/g;
 const ATTRACTOR_CTX_READ_RE = /\$\{ATTRACTOR_CTX_(\w+)\}/g;
 function parseKeys(raw) {
