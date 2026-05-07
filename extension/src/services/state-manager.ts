@@ -257,7 +257,10 @@ function isStateSnapshotNewer(
   return candidateMtimeMs > currentMtimeMs;
 }
 
-function isRecoverableStateSnapshotCandidate(value: unknown): value is State {
+function isRecoverableStateSnapshotCandidate(
+  value: unknown,
+  maxSupportedSchemaVersion: number,
+): value is State {
   if (!isRecord(value)) return false;
   const requiredStringFields = ['working_dir', 'step', 'original_prompt', 'started_at', 'session_dir'] as const;
   if (requiredStringFields.some((field) => typeof value[field] !== 'string')) return false;
@@ -268,6 +271,12 @@ function isRecoverableStateSnapshotCandidate(value: unknown): value is State {
   if (!Number.isFinite(Number(value.start_time_epoch))) return false;
   if (!Array.isArray(value.history)) return false;
   if (!('completion_promise' in value)) return false;
+  if (
+    value.schema_version !== undefined &&
+    (!Number.isFinite(Number(value.schema_version)) || Number(value.schema_version) > maxSupportedSchemaVersion)
+  ) {
+    return false;
+  }
   return true;
 }
 
@@ -605,7 +614,7 @@ export class StateManager {
       try {
         const tmpPath = path.join(dir, entry);
         const parsed = JSON.parse(fs.readFileSync(tmpPath, 'utf-8')) as unknown;
-        if (!isRecoverableStateSnapshotCandidate(parsed)) continue;
+        if (!isRecoverableStateSnapshotCandidate(parsed, this.opts.schemaVersion)) continue;
         const mtimeMs = readMtimeMs(tmpPath);
         if (
           !winner ||
@@ -660,7 +669,7 @@ export class StateManager {
       try {
         const raw = fs.readFileSync(tmpPath, 'utf-8');
         const tmpState = JSON.parse(raw) as unknown;
-        if (!isRecoverableStateSnapshotCandidate(tmpState)) {
+        if (!isRecoverableStateSnapshotCandidate(tmpState, this.opts.schemaVersion)) {
           fs.unlinkSync(tmpPath);
           continue;
         }

@@ -188,6 +188,34 @@ test('StateManager.read: ignores newer dead tmp snapshots that are missing requi
   });
 });
 
+test('StateManager.read: ignores newer dead tmp snapshots that require a newer schema version than this runtime supports', () => {
+  withDir((dir) => {
+    const sm = new StateManager();
+    const sp = path.join(dir, 'state.json');
+    const state = makeState({ schema_version: LATEST_SCHEMA_VERSION, session_dir: dir });
+    writeStateFile(sp, state);
+
+    const orphanTmp = `${sp}.tmp.99999999`;
+    fs.writeFileSync(
+      orphanTmp,
+      JSON.stringify(makeState({ iteration: 2, schema_version: LATEST_SCHEMA_VERSION + 1, session_dir: dir })),
+    );
+    const baseTime = new Date('2026-05-07T12:00:00.000Z');
+    const tmpTime = new Date('2026-05-07T12:00:05.000Z');
+    fs.utimesSync(sp, baseTime, baseTime);
+    fs.utimesSync(orphanTmp, tmpTime, tmpTime);
+
+    const recovered = sm.read(sp);
+    const onDisk = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+
+    assert.equal(recovered.iteration, 1, 'current runtime must keep the readable base snapshot');
+    assert.equal(recovered.schema_version, LATEST_SCHEMA_VERSION);
+    assert.equal(onDisk.iteration, 1, 'future-schema orphan tmp must not replace state.json on disk');
+    assert.equal(onDisk.schema_version, LATEST_SCHEMA_VERSION);
+    assert.equal(fs.existsSync(orphanTmp), false, 'future-schema orphan tmp should be discarded after recovery');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // read — schema migration
 // ---------------------------------------------------------------------------
@@ -446,6 +474,36 @@ test('StateManager.read: promotes orphan tmp when base state.json is corrupt', (
     const onDisk = JSON.parse(fs.readFileSync(sp, 'utf-8'));
     assert.equal(onDisk.iteration, 9, 'promoted tmp should replace the corrupt base file');
     assert.equal(onDisk.current_ticket, 'T-RECOVERED');
+  });
+});
+
+test('StateManager.read: does not promote future-schema orphan tmp when base state.json is corrupt', () => {
+  withDir((dir) => {
+    const sm = new StateManager();
+    const sp = path.join(dir, 'state.json');
+    fs.writeFileSync(sp, '{invalid json!!!');
+    const tmpFile = `${sp}.tmp.99999999`;
+    fs.writeFileSync(
+      tmpFile,
+      JSON.stringify(makeState({
+        iteration: 9,
+        current_ticket: 'T-RECOVERED',
+        step: 'review',
+        schema_version: LATEST_SCHEMA_VERSION + 1,
+        session_dir: dir,
+      })),
+    );
+
+    try {
+      sm.read(sp);
+      assert.fail('should have thrown');
+    } catch (err) {
+      assert.ok(err instanceof StateError);
+      assert.equal(err.code, 'CORRUPT');
+    }
+
+    assert.equal(fs.existsSync(tmpFile), true, 'unsupported tmp should remain for a newer runtime to inspect');
+    assert.equal(fs.readFileSync(sp, 'utf-8'), '{invalid json!!!', 'corrupt base should remain untouched when recovery candidate is unsupported');
   });
 });
 

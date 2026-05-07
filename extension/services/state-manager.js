@@ -216,7 +216,7 @@ function isStateSnapshotNewer(currentState, currentMtimeMs, candidateState, cand
         return false;
     return candidateMtimeMs > currentMtimeMs;
 }
-function isRecoverableStateSnapshotCandidate(value) {
+function isRecoverableStateSnapshotCandidate(value, maxSupportedSchemaVersion) {
     if (!isRecord(value))
         return false;
     const requiredStringFields = ['working_dir', 'step', 'original_prompt', 'started_at', 'session_dir'];
@@ -236,6 +236,10 @@ function isRecoverableStateSnapshotCandidate(value) {
         return false;
     if (!('completion_promise' in value))
         return false;
+    if (value.schema_version !== undefined &&
+        (!Number.isFinite(Number(value.schema_version)) || Number(value.schema_version) > maxSupportedSchemaVersion)) {
+        return false;
+    }
     return true;
 }
 // ---------------------------------------------------------------------------
@@ -561,7 +565,7 @@ export class StateManager {
             try {
                 const tmpPath = path.join(dir, entry);
                 const parsed = JSON.parse(fs.readFileSync(tmpPath, 'utf-8'));
-                if (!isRecoverableStateSnapshotCandidate(parsed))
+                if (!isRecoverableStateSnapshotCandidate(parsed, this.opts.schemaVersion))
                     continue;
                 const mtimeMs = readMtimeMs(tmpPath);
                 if (!winner ||
@@ -611,7 +615,7 @@ export class StateManager {
             try {
                 const raw = fs.readFileSync(tmpPath, 'utf-8');
                 const tmpState = JSON.parse(raw);
-                if (!isRecoverableStateSnapshotCandidate(tmpState)) {
+                if (!isRecoverableStateSnapshotCandidate(tmpState, this.opts.schemaVersion)) {
                     fs.unlinkSync(tmpPath);
                     continue;
                 }
