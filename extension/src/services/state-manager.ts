@@ -262,8 +262,9 @@ function isRecoverableStateSnapshotCandidate(
   maxSupportedSchemaVersion: number,
 ): value is State {
   if (!isRecord(value)) return false;
-  const requiredStringFields = ['working_dir', 'step', 'original_prompt', 'started_at', 'session_dir'] as const;
+  const requiredStringFields = ['working_dir', 'original_prompt', 'started_at', 'session_dir'] as const;
   if (requiredStringFields.some((field) => typeof value[field] !== 'string')) return false;
+  if (!(typeof value.step === 'string' || value.step === null)) return false;
   if (!Number.isFinite(Number(value.iteration))) return false;
   if (!Number.isFinite(Number(value.max_iterations))) return false;
   if (!Number.isFinite(Number(value.max_time_minutes))) return false;

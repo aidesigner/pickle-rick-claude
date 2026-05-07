@@ -216,6 +216,45 @@ test('StateManager.read: ignores newer dead tmp snapshots that require a newer s
   });
 });
 
+test('StateManager.read: recovers a newer dead tmp snapshot produced by resetStep transitions', () => {
+  withDir((dir) => {
+    const sm = new StateManager();
+    const sp = path.join(dir, 'state.json');
+    const snapshotSource = path.join(dir, 'snapshot-source.json');
+    writeStateFile(sp, makeState({ schema_version: LATEST_SCHEMA_VERSION, session_dir: dir }));
+    writeStateFile(snapshotSource, makeState({
+      schema_version: LATEST_SCHEMA_VERSION,
+      session_dir: dir,
+      step: 'review',
+      current_ticket: 'T-100',
+      exit_reason: 'completed',
+      command_template: 'pickle-pipeline.md',
+    }));
+
+    clearExitReason(snapshotSource, { resetStep: true, resetCurrentTicket: true });
+    const resetSnapshot = JSON.parse(fs.readFileSync(snapshotSource, 'utf-8'));
+    assert.equal(resetSnapshot.step, null, 'fixture must mirror resetStateForPhase / clearExitReason output');
+
+    const orphanTmp = `${sp}.tmp.99999999`;
+    fs.writeFileSync(orphanTmp, JSON.stringify({ ...resetSnapshot, iteration: 2 }, null, 2));
+    fs.writeFileSync(sp, '{invalid json!!!');
+    const baseTime = new Date('2026-05-07T12:00:00.000Z');
+    const tmpTime = new Date('2026-05-07T12:00:05.000Z');
+    fs.utimesSync(sp, baseTime, baseTime);
+    fs.utimesSync(orphanTmp, tmpTime, tmpTime);
+
+    const recovered = sm.read(sp);
+    const onDisk = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+
+    assert.equal(recovered.iteration, 2);
+    assert.equal(recovered.step, null, 'reset-step tmp snapshots must be treated as recoverable state');
+    assert.equal(recovered.current_ticket, null);
+    assert.equal(onDisk.step, null);
+    assert.equal(onDisk.current_ticket, null);
+    assert.equal(fs.existsSync(orphanTmp), false, 'promoted orphan tmp should replace the corrupt base');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // read — schema migration
 // ---------------------------------------------------------------------------

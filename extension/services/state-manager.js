@@ -219,8 +219,10 @@ function isStateSnapshotNewer(currentState, currentMtimeMs, candidateState, cand
 function isRecoverableStateSnapshotCandidate(value, maxSupportedSchemaVersion) {
     if (!isRecord(value))
         return false;
-    const requiredStringFields = ['working_dir', 'step', 'original_prompt', 'started_at', 'session_dir'];
+    const requiredStringFields = ['working_dir', 'original_prompt', 'started_at', 'session_dir'];
     if (requiredStringFields.some((field) => typeof value[field] !== 'string'))
+        return false;
+    if (!(typeof value.step === 'string' || value.step === null))
         return false;
     if (!Number.isFinite(Number(value.iteration)))
         return false;
