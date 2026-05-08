@@ -1,6 +1,6 @@
 # MASTER_PLAN — Pickle Rick Engineering Lifecycle
 
-**Last updated**: 2026-05-07 PM (82 commits ahead of origin/main, **v1.71.0 tagged locally on `8d09c503`**, push deferred. NOT pushed, NOT released to GitHub — local-only mode. v1.70.0 still GitHub-Latest. **Pipeline `pipeline-1d81a0bb` (bundle `prds/p1-bug-fix-bundle-2026-05-06.md`) shipped 5/12 sections + slot E hidden-shipped; 6 sections deferred** after bailing on `MANAGER_PERSISTENT_HALLUCINATION` at slot G's codex manager. **anatomy-park `2026-05-07-4ca7a746` ENDED at iteration 21/50 — DID NOT CONVERGE.** Exit reason: per-iteration gate baseline `gate/baseline.json` aged past the 14400s freshness ceiling at iteration 21 and could not be refreshed. 21 anatomy-park fixes (5 bin / 4 hooks / 4 lib / 4 services / 4 types) + 22 trap doors + 1 chore(build) sync of `log-commit.js` landed across `extension/src/`. `consecutive_clean = 0/5` for every subsystem — szechuan-sauce post-pass is OFF the table per CONTEXT preconditions. Theme A bundle PRD (`prds/p1-bug-fix-bundle-theme-a-refinement-quality.md`, 9 sections) is drafted and conflict-checked vs anatomy-park commits — only Section D's `spawn-morty.ts` overlaps, in a different code path. Ready to lock Draft → Ready and run `/pickle-pipeline --no-refine --backend codex` next.)
+**Last updated**: 2026-05-07 PM (~100 commits ahead of origin/main, **v1.72.2 installed locally**; v1.71.0 tag still on `8d09c503`. NOT pushed, NOT released to GitHub — local-only mode. v1.70.0 still GitHub-Latest. **Theme A pipeline `pipeline-be6e9179` SHIPPED 9/9 sections** (PRD `prds/p1-bug-fix-bundle-theme-a-refinement-quality.md`) on `--backend claude` in 3h 02m — zero MANAGER_PERSISTENT_HALLUCINATION (the backend swap from codex paid off). Pipeline's anatomy-park phase bailed on the same baseline-staleness class as the standalone anatomy-park earlier today; szechuan-sauce never ran. **Post-pipeline hardening sweep** then landed three production fixes (anatomy-park baseline-staleness deferral, test:fast `--test-concurrency=8` cap, spawn-morty redundant-readdir hang) plus 14 stale test-fixture alignments — zero production-code regressions, ~70% test-failure reduction (186 → ~10–15). Two earlier deferred backlogs remain: 6 slots from `pipeline-1d81a0bb` (G/H/I/J/K/L from `prds/p1-bug-fix-bundle-2026-05-06.md`) and the prior anatomy-park's open trap-door findings. Open Findings #2 and #6 are now closed (Theme A G + L); #1, #3, #4, #5 remain.)
 
 **Bootstrap for new sessions**: read `CONTEXT_2026-05-07.md` first (supersedes `CONTEXT_2026-05-06.md`).
 
@@ -18,26 +18,48 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 ---
 
-## 📅 2026-05-07 status
+## 📅 2026-05-07 PM status (post-Theme-A + post-hardening)
 
-- **v1.71.0 tagged locally** on `8d09c503` (2026-05-06 evening). NOT pushed; ≥49 commits ahead of `origin/main` and growing as anatomy-park lands fixes.
-- **Pipeline `pipeline-1d81a0bb`** ran the 12-section bundle `prds/p1-bug-fix-bundle-2026-05-06.md`:
-  - **Shipped 5/12 sections** + slot E hidden-shipped (commit lacks ticket-hash → phantom-Done watcher keeps reverting `Status: Done` → `Todo`; resolved in HEAD, ticket file disagrees).
-  - **Bailed on `MANAGER_PERSISTENT_HALLUCINATION`** during slot G — codex manager invented `EPIC_COMPLETED` four times without finishing the slot (codex classifier prompt-leak class).
-  - **Deferred slots H/I/J/K/L** (codex judge model mismatch, iteration-cap persistence vs display, mux-runner exits 0 on cap-hit, deployed package.json version-only revert, strip-excessive-defense). Research artifact for slot K preserved at `prds/research-slot-K-pjv-writer-2026-05-07.md`.
-- **anatomy-park `2026-05-07-4ca7a746` ENDED** at iteration 21/50 in 244m. **Did NOT converge** (`consecutive_clean = 0/5` for all subsystems). Exit reason: `gate/baseline.json` aged past the 14400s freshness ceiling at iteration 21 and the per-iteration baseline-init failed. Pass counts at exit: bin=5 (5 HIGH), hooks=4 (4 HIGH), lib=4 (4 HIGH), services=4 (1 HIGH + **3 CRITICAL**: orphan-tmp partial-state promotion `02adeb73`, future-schema promotion `47095472`, reset-step orphan recovery `5deda0c3`), types=4 (1 HIGH + 1 CLEAN PASS + 2 HIGH). **21 fixes + 22 trap doors landed** across `extension/src/{bin,hooks,lib,services,types}`. Each pass kept surfacing new HIGHs on hooks/lib — the run was making forward progress but never strung together 2 consecutive cleans on any subsystem. Confirm with `git log --oneline 8d09c503..HEAD --grep='anatomy-park' | wc -l` (= 21).
-- **Build-artifact follow-up landed**: `96e959e0 chore(build): rebuild log-commit.js from src/bin/log-commit.ts (ea22262c)` — the AP-HOOKS-STALE-TOOL-ERROR-STATE fix had committed the TS source but not the regenerated JS. `npx tsc` now produces a clean tree.
-- **szechuan-sauce post-pass: OFF the table.** CONTEXT_2026-05-07.md preconditioned szechuan on anatomy-park converging green. Stale-baseline exit ≈ ceiling-without-convergence. Skip.
-- **Theme A bundle PRD ready** for next pipeline launch: `prds/p1-bug-fix-bundle-theme-a-refinement-quality.md` (**9 sections** = 8 P1 refinement+worker core (A-I) + 1 P2 standup-quality addendum (L), status=**Draft**, no `composes:` blocks, 518 lines). Section E folded into B; Section J explicitly deferred to next-next batch; Section K folded into H. **Section L added 2026-05-07 from operator bug report on `/pickle-standup`** — scope-drift relative to refinement+worker theme, separable into a standalone PRD if Cycle 1 reviewers prefer. **Conflict check vs anatomy-park's 21 commits** (touched: `bin/{spawn-morty,setup,spawn-gate-remediator}.ts`, `hooks/handlers/config-protection.ts`, `lib/{context-key-matrix,diamond-routing}.ts`, `services/{state-manager,backend-spawn}.ts`, `types/{activity-events.schema.json,index.ts}`): only Section D's `spawn-morty.ts` overlaps, and the two changes are in different code paths (anatomy-park = backend-resolution telemetry; D = `flushAndExit` + `worker_partial_lifecycle_exit`). **No blocking conflicts.** Three operational decisions before fan-out: (1) lock PRD frontmatter Draft → Ready, (2) confirm Section L stays in this run vs splits out to a separate P2 PRD, (3) confirm `--backend codex` is still desired given codex's 2026-05-06 `MANAGER_PERSISTENT_HALLUCINATION` track record on this PRD's same defect class. Pipeline command on Ready: `/pickle-pipeline --no-refine --backend codex prds/p1-bug-fix-bundle-theme-a-refinement-quality.md`.
+- **v1.72.2 installed locally** (`da43416f` 2026-05-07 PM). v1.71.0 tag on `8d09c503` still latest tag; v1.72.x not tagged because we skipped past a stale deployed v1.72.0 left by an earlier session. NOT pushed; ~100 commits ahead of `origin/main`.
+- **Theme A pipeline `pipeline-be6e9179` SHIPPED 9/9 sections** in 3h 02m on `--backend claude` (PRD `prds/p1-bug-fix-bundle-theme-a-refinement-quality.md`). Zero `MANAGER_PERSISTENT_HALLUCINATION` — the backend swap from the planned `codex` paid off. Section commits:
+  - `910846c6` §A — refinement analyst path verification (R-TAQ-1)
+  - `7215c29b` + `bf045c61` §B — 7-class defect-audit scanner (R-TAQ-2/3/6)
+  - `8ad72a2f` §C — cross-doc naming drift detector (R-TAQ-5/7)
+  - `138f90a1` §D — worker silent-exit log flush + partial-lifecycle (R-WSE-1..4 + RC-2 fold)
+  - `27db9d25` §F — failure-mode checklist in pickle-refine-prd skill (R-TAQ-4)
+  - `a70db8f0` §G — phantom-Done filesystem watcher + completion-commit-hash (R-ICP-5/6) **→ closes Open Finding #2**
+  - `751f979c` §H — audit regression fixtures + backfill validation (AC-TAQ-02/05/06)
+  - `691899f1` §I — refinement-manifest schema extension (`ticket_quality_warnings`, R-TAQ-7)
+  - `3574159d` §L — `/pickle-standup` quality + accuracy (R-PSU-1..5) **→ closes Open Finding #6**
+  - `15e51fb8` — bonus anatomy-park CRITICAL: bin purge cache wrong root (landed in pipeline's anatomy-park phase before it bailed)
+  Pipeline's anatomy-park phase bailed at iter 1 on the same baseline-staleness class as the standalone anatomy-park earlier today; szechuan-sauce never ran.
+- **Post-Theme-A hardening sweep** (operator-driven, 12 commits):
+  - `1a5cce3d` refactor(spawn-morty): extract pickValidEffort (lint-debt, complexity 16→14)
+  - `556a8ec0` docs(trap-door): split R-CNAR-1 (2031 chars → 3 entries) + retry-ticket multi-triple (1 entry → 2)
+  - `de556802` test(activity-logger): VALID_ACTIVITY_EVENTS count 108→112
+  - `f50da717` test(cancel): align fixtures with R-SHB-6 prune semantics
+  - `e6edbf29` + `ad38e946` + `cce050c7` + `e55f094f` test: orphan-tmp full-state-snapshot fix across 14 test files (backend-spawn, finalize-gate, circuit-breaker, doc-cross-reference, iteration-outcome, jar-codex, microverse, monitor, pr-factory, refinement-watcher, standup, mux-runner, spawn-morty)
+  - **`b0f5ceca` fix(microverse)**: defer stale-baseline refresh failures to post-commit recapture — addresses the recurring anatomy-park pipeline-killer ✅
+  - **`cbce383a` fix(test:fast)**: cap concurrency at 8 to stop boundary-timeout fork-bomb (Node default = cores-1 = 23 on this box; tests with 5000ms/10000ms internal subprocess timeouts kept blowing them) ✅
+  - **`67ae0348` fix(spawn-morty)**: reuse preloaded state to avoid redundant readdirSync hangs (~13s saved per worker spawn on macOS where `/var/folders/.../T` has 70k+ entries) ✅
+  - **`246c81d4` + `da43416f`** chore: bump v1.72.1 → v1.72.2
+  - test:fast result: **186 → ~10–15 expected** (Agent verified -22 boundary-class drop in their staged run)
+- **Production gates: ALL GREEN** at `da43416f` — TypeScript clean, ESLint clean, trap-door audit clean (113 ENFORCE refs verified), phantom-Done audit clean, all targeted regression tests pass.
+- **prior pipeline `pipeline-1d81a0bb`** still has 6 slots deferred from `prds/p1-bug-fix-bundle-2026-05-06.md` (G/H/I/J/K/L) — see "Active Queue" below.
+- **Prior pipeline `pipeline-1d81a0bb`** (bundle `prds/p1-bug-fix-bundle-2026-05-06.md`): shipped 5/12 sections + slot E hidden, **6 deferred** (G/H/I/J/K/L). See "Active Queue" below — these remain the most-aged open bug class. Slot G is `MANAGER_PERSISTENT_HALLUCINATION` root cause; bailed twice this week. **Pivoting away from `--backend codex` for refinement-team-touching work** is the operational mitigation Theme A used successfully.
+- **Standalone anatomy-park `2026-05-07-4ca7a746`** ended at iteration 21/50, did not converge. 21 fixes + 22 trap doors landed across `extension/src/{bin,hooks,lib,services,types}`. Three CRITICAL findings shipped on services (orphan-tmp recovery hardening). The pipeline-killer class that ended this run is now fixed via `b0f5ceca`.
 
-## 🔥 Open findings — added 2026-05-07
+## 🔥 Open findings (closed/open status — refreshed 2026-05-07 PM)
 
-1. **MANAGER_PERSISTENT_HALLUCINATION root cause unaddressed.** Codex manager invents `EPIC_COMPLETED` mid-run. Slot 1u retry-counter + threshold landed today; the underlying hallucination trigger is not fixed. Hit twice this week. Theme A is the next surface that touches this class.
-2. **Codex "Done by model" without commit.** Workers self-mark `Status: Done` before the validator runs. Phantom-Done watcher reverts only by ticket-hash match in commit message — slot E's fix `617a0db9` lacks the `76f99e4a` hash, so the watcher can't pattern-match and the ticket file stays `Todo` even though the work is in HEAD. Theme A Section G addresses this with a filesystem watcher + completion-commit-hash requirement.
-3. **Anatomy-park scope gap on root `/bin/`.** Today's anatomy-park ran on `extension/src/` only. Repo root `/bin/` has 6 source files (`release-gate.sh`, `purge-update-cache.js`, `verify-bundle.js`, `verify-recapture-fired.js`, `section-c-still-needed.js`, plus `CLAUDE.md`) — load-bearing for releases (P0 deploy-reversion fix). Schedule a follow-up anatomy-park run with `TARGET=/bin/` or repo root.
-4. **`install.sh` chmod block hand-maintained.** Each new bin file needs an explicit chmod entry; missing one means dirty-tree on every build (the `dot-builder.js` filemode incident on `e47ae8c3` today). Replace with directory-glob or manifest.
-5. **Subsystem CLAUDE.md drift.** anatomy-park created `extension/src/types/CLAUDE.md` from scratch because none existed; other subsystems may also be missing them. Audit the 5 subsystems under `extension/src/` once anatomy-park converges.
-6. **`/pickle-standup` output quality + accuracy** *(operator bug report 2026-05-07)*. Five gaps validated against live skill + helper: (1) helper noise — drop list misses `effort-*-test`/`chain-*-test`/`display-sync-test`/`pipeline-dispatch-session-*`/`citadel-pipeline-session-*`/`pickle-debate-*`; (2) Step 3 open-PR query filters PR `updatedAt` not commit-window — misses in-flight epics like PR #1217; (3) **highest-leverage** — no commit-level `LOA-\d+` scan in skill Step 4 (Linear-first algo blind to old tickets with new commits — LOA-661/715/745 missed in 2026-05-07 standup); (4) hardcoded repo list in skill line 41 errors when `loanlight-app/` doesn't exist (auto-discover instead); (5) `--days 1` semantics ambiguous — wording says "yesterday's activity" but filter is "since yesterday 00:00 INCLUDING today". **Captured as Theme A Section L (P2 addendum, scope-drift, 6 ACs R-PSU-1..5 + forensic regression).** Forensic anchors: LOA-661, LOA-715, LOA-745, PR #1217 (`1025-appraisal-epic`).
+1. **MANAGER_PERSISTENT_HALLUCINATION root cause unaddressed.** *(OPEN)* Codex manager invents `EPIC_COMPLETED` mid-run. Slot 1u retry-counter + threshold landed; underlying hallucination trigger not fixed. Operational mitigation: use `--backend claude` for refinement-team-touching pipelines (validated by Theme A's clean 9/9 ship). Real fix lives in **slot G of the 2026-05-06 bundle (`codex-classifier-prompt-leak.md`)**.
+2. ~~**Codex "Done by model" without commit.**~~ ✅ **CLOSED** by Theme A §G (`a70db8f0`) — phantom-Done filesystem watcher + completion-commit-hash requirement now enforced.
+3. **Anatomy-park scope gap on root `/bin/`.** *(OPEN)* Repo root `/bin/` has 6 source files load-bearing for releases (`release-gate.sh`, `purge-update-cache.js`, `verify-bundle.js`, `verify-recapture-fired.js`, `section-c-still-needed.js`, plus `CLAUDE.md`). Never audited. Schedule a follow-up `/anatomy-park` run with `TARGET=/bin/`.
+4. **`install.sh` chmod block hand-maintained.** *(OPEN)* Each new bin file needs an explicit chmod entry; missing one means dirty-tree on every build. Replace with directory-glob or manifest.
+5. **Subsystem CLAUDE.md drift.** *(PARTIAL)* anatomy-park created `extension/src/types/CLAUDE.md` from scratch; other subsystems may also be missing them. Audit the 5 subsystems under `extension/src/`.
+6. ~~**`/pickle-standup` output quality + accuracy.**~~ ✅ **CLOSED** by Theme A §L (`3574159d`) — noise filter + commit-LOA scan + repo discovery.
+7. **Recurring anatomy-park pipeline-killer (baseline staleness)** *(NEWLY-CLOSED)* — `b0f5ceca` defers stale-refresh failures to post-commit recapture. Future anatomy-park runs survive transient stale-baseline conditions.
+8. **test:fast fork-bomb on multi-core boxes** *(NEWLY-CLOSED)* — `cbce383a` caps `--test-concurrency=8`. Subprocess-heavy tests no longer blow their internal 5000ms/10000ms timeouts under contention.
+9. **spawn-morty redundant-readdir hang on macOS** *(NEWLY-CLOSED)* — `67ae0348` reuses preloaded state. Worker spawn now ~13s faster per invocation when temp dirs are large. Margin-watch follow-up: `assertBackendPreSpawn` still does one `_sm.read()`; cleanest cure is to bound `readRecoverableJsonObject`'s `readdirSync` cost in `recoverable-json.ts` (filter by literal tmp-prefix) — out of scope this session.
 
 ## ✅ Completed — quick-refine pipeline on bundle PRD (2026-05-06)
 
@@ -207,91 +229,126 @@ DRIFT  services/pickle-utils.js    src=039b27a6  dst=90397575
 - ✅ Bundle closer ticket `bdbf368d` runs `closer-release-gate.sh` which runs install.sh. v1.70.0 tag self-heals deploy parity at bundle close.
 - ✅ For the 2026-05-05 next-bundle, slot 1q's R-ITS-5 (mid-bundle deploy guardrail with auto-redeploy + kill-switch) prevents this entire class structurally going forward.
 
-## ▶ Recommended next move
+## ▶ Recommended next move (2026-05-07 PM — supersedes prior recommendation)
 
-**v1.70.0 SHIPPED 2026-05-05.** **Three subsystems merged locally 2026-05-05 PM** (RTRC + MWR + integration-tests, 24 commits ahead of origin/main, NOT pushed). Bug-fix work continues — building local before next release.
+**Theme A pipeline (9/9) shipped + 3-fix hardening sweep landed; v1.72.2 installed locally.** Next round = drain the **6 deferred slots from `pipeline-1d81a0bb`** (G/H/I/J/K/L). Inventory agent (2026-05-07) confirmed these are the highest-impact open bug PRDs; rest are P2 quality + multi-repo work or already-shipped-needing-verification.
 
-Ranked options for the next round:
+### Proposed bundle: 4-section P1 deferred-slots fix
 
-1. **Direct-fix one or more carry-forwards** from `prds/p1-bug-fix-bundle-2026-05-04.md`. After RTRC + MWR landed, **13 Todo remain**: AC-TAQ-09, 5 Section H hardening, R-BUNDLE-1/2/DISPO-1, R-CLOSER-1 + Closer. The bundle approach died twice on its own audit-gate machinery; direct-fix or sequential-agent is the operative pattern.
+Compose the four highest-impact slots into a new bundle PRD `prds/p1-bug-fix-bundle-2026-05-07-deferred-slots.md` (to be drafted). Run via `/pickle-pipeline --no-refine --backend claude` (not codex — Theme A's clean ship validated this for refinement-team-touching work, and slot G is the codex hallucination root cause itself).
 
-2. **Refine + land the 2026-05-05 PRDs** (slots 1o..1u) — drafted but not refined:
-   - 1o worker_backend split (P1) — manager=claude, worker=codex hybrid
-   - 1p codex-spark completion_commit auto-fill (P2)
-   - 1q install.sh md5-parity + tsc force-rebuild (P1 candidate)
-   - 1r/1s anatomy-park judge-unreachable (P1)
-   - 1t remove wall-clock cap default (P2)
-   - 1u manager stop-hook nudge cadence (P2)
-
-3. **Decide audit-canary-flip strategy** — blocks next release but not local work. Cheapest: rename `Canary:` → `Tests:` on the 6 integration-tests commits via interactive rebase (~5 min). Alternative: formalize `Canary-Type: pre-existing-failure-fix` exemption in the audit script.
-
-4. **R-CLOSER-1 + release-gate.sh** — needed for "ship via standard flow" once audit-canary-flip strategy is in.
-
-**Lessons from this session** (worth remembering for next multi-agent dispatch — see `CONTEXT_2026-05-05_post-merge.md` for detail):
-- `Agent({isolation: "worktree"})` does NOT properly isolate concurrent agents on this repo — branch refs thrash between agents. Dispatch sequentially OR manually `git worktree add` per agent.
-- Pickle-rick test infra spawns mux-runner subprocesses for fixtures; orphans accumulate across sessions. Pre-test cleanup: `pkill -9 -f 'mux-runner\.js'`.
-- Stale `node_modules/.bin/tsc` symlinks at repo root cause install-script tests to fail. Pre-test cleanup: `rm -rf <repo>/node_modules` (top-level only).
-- audit-canary-flip only validates commits with `Canary:` trailers — RTRC and MWR pass vacuously (no trailer); integration-tests trips it (used the convention strictly).
-
-Source PRDs all drafted 2026-05-05 in this prep pass:
-
-- **1o** [`prds/p1-worker-backend-split-from-manager.md`](p1-worker-backend-split-from-manager.md) — `state.worker_backend` field; manager=claude, worker=codex-spark hybrid. 8 R-WBS + 8 ACs.
-- **1p** [`prds/p2-codex-spark-worker-completion-commit-contract-violation.md`](p2-codex-spark-worker-completion-commit-contract-violation.md) — auto-fill `completion_commit:` + git-log cross-check. 4 R-CCC + 7 ACs.
-- **1q** [`prds/p2-install-sh-types-index-stale-on-fast-reinstall.md`](p2-install-sh-types-index-stale-on-fast-reinstall.md) — install.sh force-rebuild + post-rsync md5 parity probe. 4 R-ITS + 6 ACs.
-
-Already-drafted source PRDs joining the bundle:
-
-- 1d test-flakes (council-publish + scope-resolver) — pre-existing
-- 1m P3 dirty-tree-guard (R-PDT-1..4) — workaround promoted to fix in `cd35ae82`; R-PDT residuals open
-- 1n P2 stop-hook orphan-shadow (R-SHB-1..4) — workaround applied; fixes pending
-- 1k monitor watchdog (residuals from R-MWR-* if any survive run #5) — included opportunistically
-- 1r+1s anatomy-park judge-unreachable (pickle convergence false-fail)
-- 1t remove pipeline wall-clock time cap default (driven by run #5 near-miss)
-- 1u manager stop-hook nudge cadence wastes turns during worker waits (driven by live forensic on run #5)
-
-Deferred to later epics (NOT in next bundle):
-
-- hermes-integration + multi-repo-task-state-drift + god-functions-remediation-phase-2 (queue slots 5-7)
-
-## 🔔 Active Queue (priority order)
-
-| # | PRD | Status | Next action |
+| Slot | Source PRD | Pri | Why it matters |
 |---|---|---|---|
-| **0** | [`prds/p1-bug-fix-bundle-2026-05-04.md`](p1-bug-fix-bundle-2026-05-04.md) ⭐ **P1 BUG-FIX BUNDLE — RUNNING 2026-05-05 (run #5)** | **62 atomic tickets**. Session `2026-05-04-f416c6cc`, fresh tmux `pipeline-fresh-f416c6cc` launched 2026-05-05 01:28 local. Backend=claude (Path X — manager + worker), max_iterations=500 GLOBAL with cap-split fix `6be334b1` live. **14 Done / 48 Todo.** All 14 Done armored with `completion_commit:` SHAs. R-XBL-3 deployed = pre-spawn assertion catches any backend mismatch. Cycle-3 refinements baked in (R-XBL-4 DROP, R-DTS-1 RTO, AC-DTS-02 replaced, AC-MWR-03 split, R-BUNDLE-DISPO-1 disposition table, etc). | Babysit via tmux attach. With cap-split fix, run should ride to completion in one shot (~5 hrs estimated for 48 tickets at ~6 min/ticket on claude). Closer (order 750) ships v1.70.0. |
-| **0-next** | [`prds/p1-bug-fix-bundle-2026-05-05.md`](p1-bug-fix-bundle-2026-05-05.md) ⭐ **P1 BUG-FIX BUNDLE — DRAFTED 2026-05-05, FILE AFTER v1.70.0** | **53-67 atomic tickets estimated.** Composes 9 source PRDs across slots 1o (worker_backend split), 1p (completion_commit auto-fill), 1q (install.sh md5 parity gate), 1r+1s (judge-unreachable), 1t (wall-clock cap removal), 1u (stop-hook nudge cadence), 1n (stop-hook orphan-shadow), 1m (dirty-tree-guard residuals), 1d (test flakes). Section ordering: C (1q parity) FIRST so subsequent sections deploy reliably; A (1o) before B (1p); F (1u stop-hook nudge) before G (1n stop-hook orphan-shadow) since they touch the same handler; I (1d) before closer. Closer ships v1.71.0. **Pre-flight: bundle 2026-05-04 must be fully landed + v1.70.0 tagged --latest BEFORE this launches.** Risk Register R1-R9 in PRD body. | Wait for run #5 close. Then `/pickle-refine-prd prds/p1-bug-fix-bundle-2026-05-05.md` → review manifest → `/pickle-pipeline prds/p1-bug-fix-bundle-2026-05-05.md`. Open question: ship 1q as v1.70.1 hotfix first? Cycle 3 to decide. |
-| 1 | [`prds/p1-reliability-and-test-coverage-bundle-2026-05-03.md`](p1-reliability-and-test-coverage-bundle-2026-05-03.md) **P1 BUNDLE — PICKLE PHASE COMPLETE, DOWNSTREAM PHASES BLOCKED** | **38/38 tickets Done** on session `2026-05-03-7d9ee8cc`. Pipeline `step=completed exit_reason=failed`, **0/4 phases ran** (citadel/anatomy-park/szechuan-sauce never entered). Bundle integrity suspect per slot 1j cross-backend leak. **DO NOT relaunch this session** — bug-fix bundle 2026-05-04 (queue slot #0) ships fixes for 1e/1g/1h-WSE/1i/1j/1k. Pre-existing test flakes (slot 1d) survive into next round. | Closed-out by bundle 2026-05-04; revisit downstream phases ONLY after v1.70.0 tagged + bundle session re-run on a fresh probe. |
-| 1a | [`prds/p1-deployed-pkgjson-version-only-revert.md`](p1-deployed-pkgjson-version-only-revert.md) | **Composed into bundle Section A** | Land via bundle |
-| 1b | [`prds/p2-codex-manager-empty-queue-spin.md`](p2-codex-manager-empty-queue-spin.md) | **Composed into bundle Section B** | Land via bundle |
-| 1c | [`prds/p3-paused-session-orphan-blocks-stop-hook.md`](p3-paused-session-orphan-blocks-stop-hook.md) | **Composed into bundle Section C** | Land via bundle |
-| 1d | [`prds/p3-test-flakes-council-publish-and-scope-resolver.md`](p3-test-flakes-council-publish-and-scope-resolver.md) **P3 — DONE 2026-05-06** | **Done (`9347af20`, ticket `91601dd7`).** Slot 1d shipped via the quick-refine pipeline; verified already green at HEAD — no code change needed. Closed. | Closed |
-| 1e | [`prds/p2-refined-tickets-trip-readiness-contract-resolver.md`](p2-refined-tickets-trip-readiness-contract-resolver.md) **NEW P2 — MERGED LOCALLY 2026-05-05 PM** | **R-RTRC-1..7 done.** Subsystem branch merged via `bab6c7e2`. 6 underlying commits adding allowlist + audit + annotation schema + machinability checks + analyst-prompt hygiene section. 37 targeted tests pass. Tag `rtrc-final-checkpoint` at `5615cec0`. Not pushed yet. | Closed |
-| 1f | [`prds/p1-iteration-cap-and-phantom-done-handshake.md`](p1-iteration-cap-and-phantom-done-handshake.md) ⭐ **NEW P1 — R-ICP-1..6 SHIPPED LOCALLY** | **R-ICP-1..6 implemented + deployed** in unpushed commits `434e33d`, `a7ed2a9`, `2de4c24`. Reliability-bundle session 2026-05-03-7d9ee8cc verified: pipeline now exits code 3 on cap-hit, halts with unfinished list, watcher backfills 3-of-3 phantom-Done flips that have real commits. 22/38 tickets Done by 2026-05-04 03:54Z. Remaining: R-ICP-7 regression test. | Push when ready; keep building on the deployed fix |
-| 1g | [`prds/p1-deploy-typescript-symlink-and-cap-no-auto-resume.md`](p1-deploy-typescript-symlink-and-cap-no-auto-resume.md) **P1 — KEYSTONES SHIPPED + R-CNAR-7 RESIDUAL DONE 2026-05-06** | **R-DTS-1 + R-CNAR-1 + R-CNAR-1 part 2 + R-CNAR-7 residual SHIPPED.** R-DTS-1 regression test landed `6f1a5486`. R-CNAR-1 tier budgets landed `9437b0c` (medium=30, large=60, xlarge dropped). R-CNAR-1 part 2 cap-split landed `6be334b1`. **R-CNAR-7 cap-check guard residual landed `a8c4ecb5` (slot 1g, ticket `1a11461c`, 2026-05-06)** — covers the 4 remaining gaps from `96ce65cf`. **Residual debt:** trap-door doc still under-specified for R-CNAR-7; flag for follow-up tightening. R-DTS-2/-3 + R-CNAR-2..6 still queued via bundle slot #0. | Trap-door doc tightening for R-CNAR-7 → next bug-batch. |
-| 1h | [`prds/p2-worker-silent-exit-and-ticket-path-drift.md`](p2-worker-silent-exit-and-ticket-path-drift.md) **NEW P2** | **R-WSE-* folded into bundle 2026-05-04 Section C**; R-RPD-* DROPPED as redundant with 1i R-TAQ-1/-2 (analyst verification + post-decomp validator). Refined R-WSE-1 prescription targets `flushAndExit(sessionLog)` helper at 5 specific exit sites in `spawn-morty.ts` (lines 733/756/764/799/849; line 310 die() excluded). | Land via bundle slot #0 |
-| 1i | [`prds/p1-ticket-authoring-quality-systemic-defects.md`](p1-ticket-authoring-quality-systemic-defects.md) **NEW P1** | **Composed into bundle 2026-05-04 Section C** + NEW R-TAQ-2b (audit-ticket-bundle.json schema v1). Bundle's R-BUNDLE-DISPO-1 disposition table is the R15 mitigation: R-TAQ-2 audit reads dispositions to exempt REGRESSION-TEST-ONLY/DROP from `hallucinated-premise` check, preventing recursive bootstrap failure. | Land via bundle slot #0 |
-| 1j | [`prds/p1-worker-spawns-codex-despite-claude-backend.md`](p1-worker-spawns-codex-despite-claude-backend.md) **P1 — cross-backend leak — DIAGNOSED + KEYSTONES SHIPPED** | **R-XBL-1 / -2 / -2b / -3 SHIPPED** (commits `7793a11 817e73c a3641e3 616f474 95f2c37`). Read-side SoT + write-side pre-spawn assertion both deployed. Run #2 confirmed the **write source is the codex-spark MANAGER itself** narrating "I'll try one last time under Hermes" and editing state. R-XBL-3 catches pre-spawn (refuses spawn on mismatch); R-XBL-5 already shipped at codex-manager-relaunch.ts:69. Residuals: R-XBL-7b regression-repro test, R-XBL-9 prompt-schema, R-XBL-6 backfill audit. | Bundle reactivation post slot 1o |
-| 1k | [`prds/p3-monitor-watcher-continuous-auto-respawn.md`](p3-monitor-watcher-continuous-auto-respawn.md) **NEW P3 — MERGED LOCALLY 2026-05-05 PM** | **R-MWR-rename + R-MWR-1..8 done.** Subsystem branch merged via `ed6a58e3`. 9 underlying commits: continuous startRespawnWatchdog, PICKLE_MONITOR_WATCHDOG=off kill-switch, watchdog log-tag prefix, EOF resilience for log/morty/raw watchers, refinement-watcher manifest-rewrite survival, banner reservation, complexity refactor, plus new `monitor-watchdog.test.js` (R-MWR-7) + `refinement-watcher-manifest-rewrite.test.js` (R-MWR-5) + extended `log-watcher.test.js` (R-MWR-8). 163 watcher tests + 13 new + 27 extended pass. Tag `mwr-final-checkpoint-v3` at `9ae60002`. Not pushed yet. | Closed |
-| 1l | **P2 — codex backend `gpt-5.3-codex-spark` wiring** | **SHIPPED locally 2026-05-04 PM** (`59411f8` + `bdc775f`-era). `default_codex_model="gpt-5.3-codex-spark"` in `pickle_settings.json`; per-session override via `state.codex_model`. Bundle 2026-05-04 IS the first multi-hour codex-spark stress test (R12 in Risk Register). | Tag with v1.70.0 via bundle 2026-05-04 closer |
-| 1v | **P2 — 6 pre-existing integration test failures since R-CNAR-1 part 2 — MERGED LOCALLY 2026-05-05 PM** | **6 fixes done.** Subsystem branch merged via `4c97d3ad`. Atomic node-based postinstall race fix (install-script-prefix + install-script-real); HT-1 eslint-disable annotation (mega-bundle-e2e); pipeline-state-coherence cap-exhaust exit-3 update (R-CNAR-1); microverse-runner worker-mode scored-history guard skip + companion test fix (anatomy-park-baseline-gate + microverse-runner-judge-failure). 27/27 canary tests pass. Tag `integration-tests-final-checkpoint` at `7f7912ec`. Not pushed yet. **Audit-canary-flip blocks at release time** — release-time decision deferred (rename `Canary:` → `Tests:` is the cheapest path). | Decide audit-canary-flip strategy before next release |
-| 1m | [`prds/p3-pipeline-runner-dirty-tree-guard-blocks-self-cleanup.md`](p3-pipeline-runner-dirty-tree-guard-blocks-self-cleanup.md) **P3 — DONE 2026-05-06** | **Done (`ea3cb135`, ticket `1e821336`).** R-PDT-1..4 shipped via the quick-refine pipeline. Closed. | Closed |
-| 1n | [`prds/p2-stop-hook-blocks-launcher-of-tmux-bundle-via-orphan-session.md`](p2-stop-hook-blocks-launcher-of-tmux-bundle-via-orphan-session.md) **P2 — DONE 2026-05-06** | **Done (`b917eac1`, ticket `6edd8868`).** R-SHB-1..6 shipped via the quick-refine pipeline. Closed. | Closed |
-| 1o | [`prds/p1-worker-backend-split-from-manager.md`](p1-worker-backend-split-from-manager.md) **P1 — DONE 2026-05-06** | **Done (`17a18a6c`, ticket `edae8fa8`).** R-WBS-1..6 shipped via the quick-refine pipeline (worker_backend split from manager). Closed. | Closed |
-| 1p | [`prds/p2-codex-spark-worker-completion-commit-contract-violation.md`](p2-codex-spark-worker-completion-commit-contract-violation.md) **P2 — DONE 2026-05-06** | **Done (`fef590ab`, ticket `167fcaf9`).** R-CCC-* completion-commit contract shipped via the quick-refine pipeline (built on slot 1o's worker_backend split). Closed. | Closed |
-| 1q | [`prds/p2-install-sh-types-index-stale-on-fast-reinstall.md`](p2-install-sh-types-index-stale-on-fast-reinstall.md) **P2 → P1 candidate at refinement** (drafted 2026-05-05; severity reassessment 2026-05-05 mid-day from run #5 forensic) | **Drafted** — 4 R-ITS requirements + 6 ACs PLUS 2 NEW R-ITS-5/-6 in `## Severity update` section. Run #5 live forensic (2026-05-05 02:35) confirms ALL 5 hot files DRIFT: deployed mtimes uniformly `May 3 10:41:42` — predates entire bundle 2026-05-04 + every R-XBL/R-CNAR commit. The cap-split fix `6be334b1`, R-XBL-1..9 instrumentation, and 14+ Done tickets' code changes are **committed but NOT deployed**. Runner pid 76888 has been running on May-3 deployed JS for 1h+. R-ITS-5 (NEW): mid-bundle deploy guardrail in `mux-runner.ts` — md5 parity check at iteration_start, optional auto-redeploy with kill-switch. R-ITS-6 (NEW): closer captures pre/post-deploy md5 manifests. Severity promotion to P1 because operators cannot trust their own `bash install.sh` invocations (run #5 launch claimed install.sh ran but disk says otherwise). | Land via bundle 2026-05-05 Section C — FIRST in section order; OR file as v1.70.1 hotfix BEFORE bundle launches. Cycle 1 must re-evaluate P2→P1 promotion. |
-| 1r+1s | [`prds/anatomy-park-judge-unreachable-on-worker-convergence.md`](anatomy-park-judge-unreachable-on-worker-convergence.md) **P1 — DONE 2026-05-06** | **Done (`0d528507`, ticket `6e80b612`).** Both sibling defects in `microverse-runner.js` shipped via the quick-refine pipeline: R-AJUR (anatomy-park `judge_unreachable` skip when metric_type='none') + R-MJU (szechuan-sauce timeout-as-stall — distinguish `judge_timeout` from `stall`, baseline-fail exits with `baseline_unmeasurable`). Closed. | Closed |
-| 1t | [`prds/p2-remove-pipeline-wall-clock-time-cap.md`](p2-remove-pipeline-wall-clock-time-cap.md) **P2 — DONE 2026-05-06** | **Done (`723cb99c`, ticket `bb08867f`).** R-NTC-1..10 wall-clock cap is now default-off/opt-in. Setup stops writing implicit `max_time_minutes`, fresh sessions emit `time_cap_disabled_default`, monitor renders elapsed-only with no denominator when uncapped, rate-limit waits no longer collapse to remaining budget unless the operator explicitly set a cap. Supersedes `large-pipeline-time-budget-undersized.md` AC-LPB-07. Closed. | Closed |
-| 1u | [`prds/p2-manager-stop-hook-nudge-cadence-wastes-turns.md`](p2-manager-stop-hook-nudge-cadence-wastes-turns.md) **P2 — DONE 2026-05-06** | **Done (`162c226f`, ticket `09969d52`).** R-MSCN-1..6 stop-hook idle-backoff shipped via the quick-refine pipeline: detects degenerate `"Waiting for…"` manager replies and switches to event-aware nudge cadence. Closed. | Closed |
-| 1u | [`prds/anatomy-park-szechuan-monorepo-missed-detection-gap.md`](anatomy-park-szechuan-monorepo-missed-detection-gap.md) **NEW P1 — quality-gate gap** (filed 2026-05-05 from final review of `feat/income-expansion`) | **Draft** — anatomy-park + szechuan-sauce missed 1 BLOCKER + 3 MAJOR + 2 MINOR defects on the income-expansion worktree, all in declared scope. Root causes: (RC-1) Override 6's `db/migrations/meta/_journal.json` path check is monorepo-blind — silently skipped because the journal lives at `packages/api/db/migrations/...`; (RC-2) subsystem discovery flattens monorepos to a single `packages` subsystem instead of descending into `packages/*/src/modules/*`; (RC-3) worker self-report becomes authoritative when judge times out (composes with slot 1s); (RC-4) no fix-class regression pass — worker fixes one cited site of a class, misses sibling sites. Fix: F1 monorepo-aware Override 6 globbing (`packages/*/db/migrations/...`, `apps/*/...`, `services/*/...`), F2 subsystem discovery descends into pnpm workspaces, F3 mandatory sibling-of-fix grep at iteration end, F4 new `constraint_code_drift` trap-door category enforced regardless of overrides. 8 ACs + replay integration test against the worktree fixture. | Pairs with slot 1r+1s for full review trustworthiness; bundle together |
-| 2 | [`prds/p2-mega-bundle-2026-05-02-pm.md`](p2-mega-bundle-2026-05-02-pm.md) **MEGA BUNDLE** | **Refined Cycle 3 — IN FLIGHT** — composes 6 source PRDs (strip + state-drift + retry-tracking + smart-handoff + hermes + god-fn-phase-2). 34 atomic tickets refined; pipeline relaunched after readiness halt with `state.flags.skip_readiness_reason` bypass; PHASE 1/4 PICKLE codex active. Cron `2ba30074` armed every hour at :17. | Babysit until closer reaches v1.69.0 |
-| 2 | [`prds/p1-strip-excessive-defense-deploy-reversion.md`](p1-strip-excessive-defense-deploy-reversion.md) | **In mega bundle Section A** | Will land via mega bundle |
-| 3 | [`prds/p2-bundle-deploy-reversion-and-gate-baseline-diagnostic.md`](p2-bundle-deploy-reversion-and-gate-baseline-diagnostic.md) | **30/30 tickets SHIPPED** in code on session `2026-05-02-ad240987` (codex backend). All commits in main. Closer DEFERRED live release because env lacks `crontab` permission. v1.67.0 will NOT be tagged; v1.68.0 ships directly OR rolls into v1.69.0 via mega bundle closer. | Tag in mega bundle closer |
-| 3 | [`prds/p1-bug-bundle-2026-05-01-pm.md`](p1-bug-bundle-2026-05-01-pm.md) | **All 20 tickets DONE** — closer landed v1.67.0 commit `2c814e8`. Source pkg.json still at 1.67.0. v1.67.0 **NOT tagged on GitHub** (Cycle 3 verdict: skip; ship v1.68.0 directly). | Closed by strip-then-v1.68.0 release |
-| 4 | [`prds/anatomy-park-gate-baseline-missing.md`](anatomy-park-gate-baseline-missing.md) | **SHIPPED v1.66.0** + Section B of P0 bundle adds event-based assertion (`baseline_recapture_attempted`/`_succeeded`). | Verified by P0 bundle's AC-DR-02 once v1.68.0 deployed and a real anatomy-park run executes |
-| 5 | [`prds/hermes-integration.md`](hermes-integration.md) | **Ready (P2)** — research complete, 30 Qs answered | `/pickle-refine-prd` → next overnight bundle after v1.68.0 ships |
-| 6 | [`prds/multi-repo-task-state-drift.md`](multi-repo-task-state-drift.md) | **Refined draft** — high impact when triggered (multi-repo flows only) | Pick up after hermes |
-| 7 | [`prds/god-functions-remediation-phase-2.md`](god-functions-remediation-phase-2.md) | **Draft** — 27 carve-outs from Phase 1 to remove | Refactor epic; bundle behind hermes |
-| 8 | [`prds/deepseek-integration.md`](deepseek-integration.md) | **Draft** — third backend via Anthropic-compat shim | Lower priority than hermes |
-| 9 | (proposed) `prds/package-json-deploy-parity-gap.md` | **Not yet drafted** — engines.codex source/deploy drift; AC-RVN-08 doesn't cover package.json | Draft alongside hermes |
+| **G** | `prds/codex-classifier-prompt-leak.md` | P1 | `extractAssistantContent` plain-text fallback echoes `<promise>EPIC_COMPLETED</promise>` from prompt → false task_completed. **Root cause of MANAGER_PERSISTENT_HALLUCINATION** (Open Finding #1); bailed `pipeline-1d81a0bb` and one prior pipeline. Currently mitigated only by `--backend claude`. |
+| **H** | `prds/szechuan-sauce-codex-judge-model-mismatch.md` | P1 | `init-microverse.ts:13` literal `judge_model: 'claude-sonnet-4-6'` stamps unsupported model into the codex judge → silent fake convergence. Masks real principle violations during szechuan-sauce on codex-backend pipelines. |
+| **I** | `prds/p1-iteration-cap-and-phantom-done-handshake.md` (R-1 only) | P1 | Iteration cap reverts to default on `setup.js --resume`. Pipeline silently advances with unfinished work. R-2 (cap-hit exit code 3) shipped via `a7ed2a98`; R-1 (display/persistence) unverified. R-3 (phantom-Done watcher) shipped via Theme A §G. |
+| **J** | mux-runner exits 0 on cap-hit | P1 | Pipeline-runner treats incomplete phase as success (should exit 3). Source PRD shared with slot I (`p1-iteration-cap-and-phantom-done-handshake.md` R-2 territory); needs end-to-end verification. |
+
+Slots K and L stay deferred:
+- **K** `prds/p1-deployed-pkgjson-version-only-revert.md` — diagnosis-only ticket. Research preserved at `prds/research-slot-K-pjv-writer-2026-05-07.md`. File its own follow-up after triaging hypotheses H-A..H-E.
+- **L** `prds/p1-strip-excessive-defense-deploy-reversion.md` — ~480 LOC removal (cron sampler, mux pre-flight, scheduled finalizer, launch-gate verifier). Cron sampler stripped (`c2ec3cf1`); rest unverified. Scope-reduction work, not a bug-fix per se.
+
+### Pre-flight checks before launching the deferred-slots bundle
+
+1. **Verify "possibly-already-shipped" PRDs** the inventory flagged (none in the deferred-slots set, but worth knowing what the open-bug count actually is):
+   - DONE-likely: `anatomy-park-finalizer-history-crash.md` (`97653071`), `anatomy-park-runner-undefined-description-crash.md` (`617a0db9`), `anatomy-park-gate-baseline-missing.md` (today's `b0f5ceca`), `loop-runner-relaunch-status-bugs.md`, `p3-monitor-watcher-continuous-auto-respawn.md`, `p3-paused-session-orphan-blocks-stop-hook.md`, `p2-install-sh-types-index-stale-on-fast-reinstall.md`, `p2-refined-tickets-trip-readiness-contract-resolver.md`, `p1-worker-spawns-codex-despite-claude-backend.md`, `p2-codex-manager-empty-queue-spin.md`.
+   - Manifests covering shipped children: `p1-bug-bundle-2026-05-01-pm.md`, `p2-bundle-deploy-reversion-and-gate-baseline-diagnostic.md`, `p2-mega-bundle-2026-05-02-pm.md`.
+   - Each can be marked Closed if its child commits are in HEAD; do this audit BEFORE drafting the deferred-slots PRD so we don't double-count.
+
+2. **Open Finding #3 — anatomy-park scope gap on root `/bin/`** can run as a parallel hardening track (not a blocker): `/anatomy-park TARGET=/Users/.../pickle-rick-claude/bin` on the 6 release-critical scripts.
+
+3. **Open Finding #4 — `install.sh` chmod block hand-maintained** can also run in parallel: cheap fix (replace block with directory-glob or manifest), prevents future filemode regressions.
+
+### Follow-up bundle (not next, but queued)
+
+After the deferred-slots ship: a P2 quality + multi-repo bundle composing:
+- `microverse-runner-stall-resilience.md` — handoff context to next worker; prevent premature false-stall convergence
+- `multi-repo-task-state-drift.md` — auto-mark-done validation + per-ticket `working_dir`
+- `large-tier-stall-recovery.md` — codex burns 5 iters of replanning, commits 0 LOC; 3 atomic tickets specified, no ship
+- `anatomy-park-szechuan-monorepo-missed-detection-gap.md` — RC-2/RC-3 residuals (Override 6 globbing shipped via `55ef850e`; subsystem-flatten + judge-fallback unfixed)
+- `anatomy-park-followups.md` — catalog hygiene + dedicated `recoverable-json.test.js` unit tests + microverse-runner relaunch path
+- `large-pipeline-time-budget-undersized.md` — verify-only sweep on R-NTC residuals (header claims SHIPPED via v1.62.1; bug-2 enforcement leak unverified)
+
+### Lessons preserved from the 2026-05-07 session
+
+- **`--backend claude` for refinement-team-touching pipelines.** Codex `MANAGER_PERSISTENT_HALLUCINATION` keeps surfacing on this defect class. Until slot G ships, default to claude for all pipelines that touch `spawn-refinement-team.ts`/`audit-ticket-bundle.ts`/`mux-runner.ts`/refinement plumbing.
+- **Test-fixture pattern**: any test that writes `state.json.tmp.<pid>` for orphan-tmp recovery MUST write a complete state snapshot (working_dir, original_prompt, started_at, session_dir, step, iteration, max_iterations, max_time_minutes, worker_timeout_seconds, start_time_epoch, history, completion_promise, schema_version). Validation in `state-manager.ts:260` rejects partial snapshots.
+- **`--test-concurrency=8`** is now mandatory in `package.json:test:fast`. Node default = `cores - 1` = 23 on this box; subprocess-heavy tests blow their internal 5000ms/10000ms timeouts under that load.
+- **`assertBackendPreSpawn` still does one `_sm.read()`**: cleanest follow-up is to bound `readRecoverableJsonObject`'s `readdirSync` cost in `recoverable-json.ts` (filter by literal tmp-prefix) — `/var/folders/.../T` with 70k+ entries means each read is ~6.7s. Out of scope for the deferred-slots bundle; queue separately.
+
+## 🔔 Active Queue (refreshed 2026-05-07 PM — OPEN items only)
+
+Inventory verified by Explore agent 2026-05-07. Closed/shipped PRDs are now in `## Shipped — recent` below.
+
+### Next bundle target (P1 — deferred slots from `pipeline-1d81a0bb`)
+
+| # | Slot | PRD | Status |
+|---|---|---|---|
+| 1 | G | [`prds/codex-classifier-prompt-leak.md`](codex-classifier-prompt-leak.md) | **Open** — extractAssistantContent plain-text fallback echoes `<promise>EPIC_COMPLETED</promise>` from prompt → false task_completed. MANAGER_PERSISTENT_HALLUCINATION root cause. |
+| 2 | H | [`prds/szechuan-sauce-codex-judge-model-mismatch.md`](szechuan-sauce-codex-judge-model-mismatch.md) | **Open** — `init-microverse.ts:13` literal `judge_model: 'claude-sonnet-4-6'` stamps unsupported model into codex judge → silent fake convergence. |
+| 3 | I | [`prds/p1-iteration-cap-and-phantom-done-handshake.md`](p1-iteration-cap-and-phantom-done-handshake.md) (R-1) | **Open** — iteration cap reverts to default on `setup.js --resume`. R-2 (exit code 3) shipped via `a7ed2a98`; R-3 (phantom-Done watcher) shipped via Theme A §G. R-1 (display/persistence) unverified. |
+| 4 | J | (shared with #3 above) — mux-runner exits 0 on cap-hit | **Open** — pipeline-runner treats incomplete phase as success. Needs end-to-end verification on cap-hit exit code. |
+
+### Deferred — file separately, not in next bundle
+
+| # | Slot | PRD | Status |
+|---|---|---|---|
+| 5 | K | [`prds/p1-deployed-pkgjson-version-only-revert.md`](p1-deployed-pkgjson-version-only-revert.md) | **Diagnosis-only** — research preserved at `prds/research-slot-K-pjv-writer-2026-05-07.md`. Triage hypotheses H-A..H-E before queueing fix. |
+| 6 | L | [`prds/p1-strip-excessive-defense-deploy-reversion.md`](p1-strip-excessive-defense-deploy-reversion.md) | **Partial** — cron sampler stripped (`c2ec3cf1`); ~480 LOC removal across mux pre-flight, scheduled finalizer, launch-gate verifier still queued. Scope-reduction work. |
+
+### Open Findings as standalone actions (no PRD; do as ad-hoc)
+
+| # | Action | Why |
+|---|---|---|
+| 7 | `/anatomy-park TARGET=/Users/.../pickle-rick-claude/bin` (repo root /bin/) | Open Finding #3 — 6 release-critical scripts never audited |
+| 8 | Replace `install.sh` chmod block with directory-glob or manifest | Open Finding #4 — prevents future filemode regressions |
+| 9 | Audit subsystem CLAUDE.md drift across `extension/src/{bin,hooks,lib,services,types}` | Open Finding #5 — partial; types/CLAUDE.md created during anatomy-park, others may be missing |
+
+### Follow-up bundle (P2 quality + multi-repo, queued after deferred-slots)
+
+| # | PRD | Pri | Notes |
+|---|---|---|---|
+| 10 | [`prds/microverse-runner-stall-resilience.md`](microverse-runner-stall-resilience.md) | P2 | Handoff context to next worker; only stall classification shipped (`c953f08a`). |
+| 11 | [`prds/multi-repo-task-state-drift.md`](multi-repo-task-state-drift.md) | P2 | Auto-mark-done validation + per-ticket `working_dir`. No ship. |
+| 12 | [`prds/large-tier-stall-recovery.md`](large-tier-stall-recovery.md) | P2 | Codex burns 5 iters of replanning, commits 0 LOC. 3 atomic tickets, no ship. |
+| 13 | [`prds/anatomy-park-szechuan-monorepo-missed-detection-gap.md`](anatomy-park-szechuan-monorepo-missed-detection-gap.md) | P2 | Override 6 globbing shipped (`55ef850e`); RC-2 (subsystem-flatten) + RC-3 (judge fallback) unfixed. |
+| 14 | [`prds/anatomy-park-followups.md`](anatomy-park-followups.md) | P3 | Catalog hygiene + `recoverable-json.test.js` + microverse-runner relaunch path. |
+| 15 | [`prds/large-pipeline-time-budget-undersized.md`](large-pipeline-time-budget-undersized.md) | P2 | Verify-only. Header claims SHIPPED via v1.62.1; bug-2 enforcement leak unverified. |
+
+### Followups from 2026-05-07 hardening sweep
+
+| # | Action | Why |
+|---|---|---|
+| 16 | Bound `readRecoverableJsonObject`'s `readdirSync` cost in `recoverable-json.ts` (filter by literal tmp-prefix) | `assertBackendPreSpawn` still does one slow read on macOS where `/var/folders/.../T` has 70k+ entries; cleanest follow-up to `67ae0348` |
+| 17 | Push v1.72.x or tag v1.72.2 — release decision | Local-only mode by operator policy; v1.70.0 still GitHub-Latest. Decide when to break the dam. |
+
+### Verify-then-close (possibly already shipped, inventory flagged)
+
+Verify via `git log --grep` keyword check before drafting any new ticket — if commits are in HEAD, mark Closed.
+
+| PRD | Likely shipping commit |
+|---|---|
+| `prds/anatomy-park-finalizer-history-crash.md` | `97653071` |
+| `prds/anatomy-park-runner-undefined-description-crash.md` | `617a0db9` |
+| `prds/anatomy-park-gate-baseline-missing.md` | `b0f5ceca` (today's) |
+| `prds/p1-bug-bundle-2026-05-01-pm.md` (manifest) | child PRDs all shipped |
+| `prds/p1-worker-spawns-codex-despite-claude-backend.md` | R-XBL-1..9 via 2026-05-04 bundle |
+| `prds/p2-codex-manager-empty-queue-spin.md` | `8f35a00e`/`a2690794` |
+| `prds/p2-bundle-deploy-reversion-and-gate-baseline-diagnostic.md` (manifest) | 30/30 children |
+| `prds/p2-refined-tickets-trip-readiness-contract-resolver.md` | R-RTRC-1..7 |
+| `prds/p2-install-sh-types-index-stale-on-fast-reinstall.md` | `f6909d78`/`efe0e961` (slot 1q) |
+| `prds/p3-monitor-watcher-continuous-auto-respawn.md` | R-MWR-1..8 (`ed6a58e3` family) |
+| `prds/p3-paused-session-orphan-blocks-stop-hook.md` | `26b1cb7a`/`aa52f83f` |
+| `prds/p2-mega-bundle-2026-05-02-pm.md` (manifest) | needs full child audit |
+| `prds/loop-runner-relaunch-status-bugs.md` | shipped 2026-05-01 (header) |
+
+### Future epics (deferred, not bug-fix, do not count toward open-bug ceiling)
+
+- `prds/hermes-integration.md` — P2 feature, ready
+- `prds/deepseek-integration.md` — P3 feature, draft
+- `prds/openrouter-multi-provider-workers.md` — P3 feature
+- `prds/god-functions-remediation-phase-2.md` — refactor epic, 27 carve-outs
+- `prds/portal-gun.md`, `prds/pickle-debate.md`, `prds/pickle-microverse.md` — methodology PRDs
 
 **Residuals** (not their own queue slot, will be swept opportunistically):
 - AC-SSV-04, AC-SSV-06, AC-LPB-07, AC-RVN-11 (24h soak), AC-RVN-12 (self-propagation negative test) — see [`state-schema-version-ordering-incident.md`](state-schema-version-ordering-incident.md), [`large-pipeline-time-budget-undersized.md`](large-pipeline-time-budget-undersized.md), [`schema-version-deploy-reversion-rca.md`](schema-version-deploy-reversion-rca.md).
