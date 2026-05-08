@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync } from 'child_process';
-import { State, Defaults } from '../types/index.js';
+import { State, Defaults, MicroverseExitReason } from '../types/index.js';
 import type { ActivityEventType, Backend, IterationExitType, MicroverseSessionState, MicroverseHistoryEntry, FailureClass, GateResult, StallClassification, StallRecoveryAction } from '../types/index.js';
 import {
   resolveBackend,
@@ -57,7 +57,7 @@ import { logActivity } from '../services/activity-logger.js';
 import { assertBaselineFresh, BaselineMissingError, BaselineStaleError, runGate } from '../services/convergence-gate.js';
 import { spawnGateRemediatorMain } from './spawn-gate-remediator.js';
 
-type ExitReason = 'converged' | 'limit_reached' | 'stopped' | 'error' | 'rate_limit_exhausted' | 'approach_exhaustion' | 'no_progress' | 'judge_unreachable' | 'judge_timeout' | 'baseline_unmeasurable' | 'judge_cli_missing';
+type ExitReason = MicroverseExitReason;
 type MicroverseState = MicroverseSessionState;
 type FatalErrorMarkResult = 'overwritten' | 'preserved';
 type IterationRunOutcome = Awaited<ReturnType<typeof runIteration>>;

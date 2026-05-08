@@ -630,6 +630,20 @@ export interface UpgradeResult {
 // Microverse Types
 // ---------------------------------------------------------------------------
 
+export type MicroverseExitReason =
+  | 'converged' | 'limit_reached' | 'stopped' | 'error'
+  | 'rate_limit_exhausted' | 'approach_exhaustion' | 'no_progress'
+  | 'judge_unreachable' | 'judge_timeout' | 'baseline_unmeasurable' | 'judge_cli_missing';
+
+const MICROVERSE_FAILURE_REASONS = new Set<MicroverseExitReason>([
+  'error', 'rate_limit_exhausted', 'judge_unreachable', 'judge_timeout',
+  'baseline_unmeasurable', 'judge_cli_missing',
+]);
+
+export function isMicroverseFailureExit(reason: MicroverseExitReason): boolean {
+  return MICROVERSE_FAILURE_REASONS.has(reason);
+}
+
 export interface MicroverseMetric {
   description: string;
   validation: string;

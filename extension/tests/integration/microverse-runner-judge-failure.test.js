@@ -8,7 +8,7 @@ import * as path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { writeStateFile } from '../../services/pickle-utils.js';
 import { createMicroverseState } from '../../services/microverse-state.js';
-import { measureLlmMetric, _deps } from '../../bin/microverse-runner.js';
+import { measureLlmMetric, _deps, handleWorkerManagedIteration } from '../../bin/microverse-runner.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXTENSION_ROOT = path.resolve(__dirname, '../..');
@@ -167,6 +167,67 @@ test('microverse-runner codex worker convergence with empty history honors worke
     const finalMv = JSON.parse(fs.readFileSync(path.join(sessionDir, 'microverse.json'), 'utf-8'));
     assert.equal(finalMv.exit_reason, 'converged');
     assert.equal(finalMv.status, 'converged');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('convergence guard fires when all history scores are null (R-SCJM-3)', async () => {
+  // Regression guard for R-SCJM-3: in worker convergence mode with a non-none
+  // metric type, if every history entry has a null score the guard must block
+  // convergence and return judge_unreachable.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mv-null-score-guard-'));
+  try {
+    const sessionDir = path.join(root, 'session');
+    fs.mkdirSync(sessionDir, { recursive: true });
+
+    // convergence file: worker signals done
+    const cfPath = path.join(sessionDir, 'microverse-result.json');
+    fs.writeFileSync(cfPath, JSON.stringify({ converged: true, reason: 'fixture done' }));
+
+    // currentMv: metric_type='llm' (non-none) + worker mode + all null scores in history
+    const currentMv = {
+      status: 'iterating',
+      prd_path: 'prd.md',
+      key_metric: { description: 'judge quality', validation: '', type: 'llm', timeout_seconds: 30, tolerance: 0 },
+      convergence: {
+        stall_limit: 3,
+        stall_counter: 0,
+        history: [
+          { iteration: 1, metric_value: '', score: null, action: 'accept', description: 'iter1', pre_iteration_sha: 'sha1', timestamp: new Date().toISOString() },
+          { iteration: 2, metric_value: '', score: null, action: 'accept', description: 'iter2', pre_iteration_sha: 'sha2', timestamp: new Date().toISOString() },
+        ],
+      },
+      gap_analysis_path: 'gap.md',
+      failed_approaches: [],
+      baseline_score: 0,
+      failure_history: [],
+      approach_exhaustion_fired: false,
+      convergence_file: 'microverse-result.json',
+      convergence_mode: 'worker',
+    };
+
+    const result = await handleWorkerManagedIteration({
+      currentMv,
+      preIterSha: 'sha2',
+      workingDir: sessionDir,
+      sessionDir,
+      enabledFiles: [],
+      regressionWarningThreshold: 0,
+      backend: 'claude',
+      remediatorTimeoutS: 30,
+      log: () => {},
+      iteration: 2,
+      minIterations: 1,
+      _deps: {
+        runGateFn: async () => ({ status: 'green', failures: [], baseline_used: false, allowed_paths_used: false, elapsed_ms: 0, total_raw_failure_count: 0, new_failures_vs_baseline: 0 }),
+        logActivityFn: () => {},
+        getHeadShaFn: () => 'sha2',
+      },
+    });
+
+    assert.equal(result.converged, false, 'guard must block convergence when all scores are null');
+    assert.equal(result.exitReason, 'judge_unreachable', 'exit reason must be judge_unreachable when all scores are null');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

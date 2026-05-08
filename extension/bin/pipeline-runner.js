@@ -17,7 +17,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync, spawn } from 'child_process';
-import { BACKENDS, PipelineRunnerExitCode } from '../types/index.js';
+import { BACKENDS, PipelineRunnerExitCode, isMicroverseFailureExit } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { backendEnvOverrides, isBackend } from '../services/backend-spawn.js';
 import { getExtensionRoot, Style, formatTime, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, displayMacNotification, writeStateFile, collectTickets, } from '../services/pickle-utils.js';
@@ -1398,7 +1398,24 @@ export async function main(sessionDir, opts = {}) {
                 break;
             }
             if (shouldHaltAfterPhase(rawPhase, exitCode, runtime)) {
-                log(`Phase ${rawPhase} failed (exit ${exitCode}) — stopping pipeline`);
+                if (exitCode !== 0 && (rawPhase === 'anatomy-park' || rawPhase === 'szechuan-sauce')) {
+                    try {
+                        const runnerState = sm.read(runtime.statePath);
+                        const exitReason = runnerState.exit_reason;
+                        if (exitReason && isMicroverseFailureExit(exitReason)) {
+                            log(`Phase ${rawPhase}: microverse exited with ${exitReason} — pipeline aborting (no finalize-gate)`);
+                        }
+                        else {
+                            log(`Phase ${rawPhase} failed (exit ${exitCode}) — stopping pipeline`);
+                        }
+                    }
+                    catch {
+                        log(`Phase ${rawPhase} failed (exit ${exitCode}) — stopping pipeline`);
+                    }
+                }
+                else {
+                    log(`Phase ${rawPhase} failed (exit ${exitCode}) — stopping pipeline`);
+                }
                 break;
             }
             const acGate = runAcPhaseGate({

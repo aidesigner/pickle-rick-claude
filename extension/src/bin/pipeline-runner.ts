@@ -20,7 +20,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync, spawn, type ChildProcess } from 'child_process';
 import type { Backend, State } from '../types/index.js';
-import { BACKENDS, PipelineRunnerExitCode } from '../types/index.js';
+import { BACKENDS, PipelineRunnerExitCode, isMicroverseFailureExit, type MicroverseExitReason } from '../types/index.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
 import { backendEnvOverrides, isBackend } from '../services/backend-spawn.js';
 import {
@@ -1710,7 +1710,21 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
         break;
       }
       if (shouldHaltAfterPhase(rawPhase, exitCode, runtime)) {
-        log(`Phase ${rawPhase} failed (exit ${exitCode}) — stopping pipeline`);
+        if (exitCode !== 0 && (rawPhase === 'anatomy-park' || rawPhase === 'szechuan-sauce')) {
+          try {
+            const runnerState = sm.read(runtime.statePath);
+            const exitReason = runnerState.exit_reason as MicroverseExitReason | null | undefined;
+            if (exitReason && isMicroverseFailureExit(exitReason)) {
+              log(`Phase ${rawPhase}: microverse exited with ${exitReason} — pipeline aborting (no finalize-gate)`);
+            } else {
+              log(`Phase ${rawPhase} failed (exit ${exitCode}) — stopping pipeline`);
+            }
+          } catch {
+            log(`Phase ${rawPhase} failed (exit ${exitCode}) — stopping pipeline`);
+          }
+        } else {
+          log(`Phase ${rawPhase} failed (exit ${exitCode}) — stopping pipeline`);
+        }
         break;
       }
       const acGate = runAcPhaseGate({

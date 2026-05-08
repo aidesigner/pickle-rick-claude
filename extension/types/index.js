@@ -231,6 +231,13 @@ export var PipelineRunnerExitCode;
     PipelineRunnerExitCode[PipelineRunnerExitCode["AuditFailure"] = 2] = "AuditFailure";
     PipelineRunnerExitCode[PipelineRunnerExitCode["PhaseIncomplete"] = 3] = "PhaseIncomplete";
 })(PipelineRunnerExitCode || (PipelineRunnerExitCode = {}));
+const MICROVERSE_FAILURE_REASONS = new Set([
+    'error', 'rate_limit_exhausted', 'judge_unreachable', 'judge_timeout',
+    'baseline_unmeasurable', 'judge_cli_missing',
+]);
+export function isMicroverseFailureExit(reason) {
+    return MICROVERSE_FAILURE_REASONS.has(reason);
+}
 // ---------------------------------------------------------------------------
 // DOT Builder Types
 // ---------------------------------------------------------------------------
