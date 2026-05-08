@@ -1,5 +1,5 @@
 ---
-title: P1+P2 — Mega bug-fix bundle 2026-05-08 (codex classifier root cause + szechuan judge model + scope.json preflight + recoverable-json readdir bound + subsystem CLAUDE.md drift + pkgjson version-only revert diagnosis + excessive-defense strip)
+title: P1+P2 — Mega bug-fix bundle 2026-05-08 (codex classifier root cause + szechuan judge model + scope.json edit-time preflight + scope launch-time auto-inference + recoverable-json readdir bound + subsystem CLAUDE.md drift + pkgjson version-only revert diagnosis + excessive-defense strip)
 status: Draft
 filed: 2026-05-08
 priority: P1 (mixed P1 + P2 + ad-hoc; closer ships v1.73.0)
@@ -8,6 +8,7 @@ composes:
   - prds/codex-classifier-prompt-leak.md                     # Slot G — MANAGER_PERSISTENT_HALLUCINATION root cause (P1)
   - prds/szechuan-sauce-codex-judge-model-mismatch.md        # Slot H — claude-routed judge under codex backend (P1)
   - prds/p2-anatomy-park-worker-edits-bypass-scope-allowlist.md  # Open Finding #11 — scope.json preflight at edit time (P2)
+  - prds/p2-pickle-pipeline-no-scope-auto-inference.md       # Open Finding #12 — scope auto-inference at launch time (P2)
   - prds/p1-deployed-pkgjson-version-only-revert.md          # Slot K — diagnosis-first; output is a follow-up fix PRD (P1)
   - prds/p1-strip-excessive-defense-deploy-reversion.md      # Slot L — strip ~480 LOC (cron sampler stripped; rest queued; P1)
 related:
@@ -31,13 +32,15 @@ The 2026-05-07-deferred-slots bundle session `2026-05-08-d6f98b66` shipped Secti
 
 A separate anatomy-park session in `loanlight-api` (2026-05-08-5d60b760) surfaced Open Finding #11: worker edits leak past `scope.json:allowed_paths` between edit and `git commit` because `scope.json` is consumed only at *discovery* and *gate-baseline-failure* time, not at *fix* time.
 
+A third pipeline session (`2026-05-08-33d10614`, `/pickle-pipeline` for LOA-763) surfaced Open Finding #12: the `/pickle-pipeline` skill has no scope auto-inference at launch time. The operator's kickoff prompt named a branch (`gregory/loa-763-shadow-audit-diff-writer`), said "Scope: API-only", and listed a bounded deliverable surface — but the skill treats `--scope`/`--scope-base` as strictly literal-flag-only and wrote a scopeless `pipeline.json`. Anatomy-park self-targeted by luck (citadel's findings happened to all live in `shadow-audit-diff/`); szechuan-sauce was queued unscoped against the entire `packages/api/` tree. Recovery required a 6-step manual state patch (pipeline.json + state.json + pipeline-status.json + tmux pane 0 respawn). Sister to Finding #11: same structural problem (scope under-applied) at different lifecycle stages — Finding #11 is **edit-time** leak; Finding #12 is **launch-time** silence.
+
 Two ad-hoc items earned their way into this bundle:
 - **Finding #5** (subsystem CLAUDE.md drift) — partial; only `extension/src/types/CLAUDE.md` was created during anatomy-park; the other 4 subsystems may also be missing them.
 - **Followup #16** (`readRecoverableJsonObject` `readdirSync` cost) — `assertBackendPreSpawn` still does one slow read on macOS where `/var/folders/.../T` has 70k+ entries; cleanest follow-up to `67ae0348`.
 
 Slots K and L are queued to drain the open-bug ceiling: K's output is research → follow-up PRD (no fix lands this run); L removes ~480 LOC of defense-in-depth (cron sampler already stripped at `c2ec3cf1`; mux pre-flight, scheduled finalizer, launch-gate verifier remain).
 
-This bundle composes 7 fix sections + bootstrap + closer into a single unattended `/pickle-pipeline --no-refine --backend claude` run. Backend MUST be `claude`. **Slot G IS the codex hallucination root cause** — running this bundle on `--backend codex` would reproduce the very defect it fixes. Predecessor bundle session `2026-05-08-d6f98b66` ran on claude precisely for this reason; that decision stands.
+This bundle composes 8 fix sections + bootstrap + closer into a single unattended `/pickle-pipeline --no-refine --backend claude` run. Backend MUST be `claude`. **Slot G IS the codex hallucination root cause** — running this bundle on `--backend codex` would reproduce the very defect it fixes. Predecessor bundle session `2026-05-08-d6f98b66` ran on claude precisely for this reason; that decision stands.
 
 ## Refinement: SKIPPED (quick-refine via parallel Agent fan-out)
 
@@ -52,14 +55,15 @@ Operator override: drop `--no-refine` from the launch command if a section prove
 | **A** | Bundle bootstrap | R-BUNDLE-1, R-BUNDLE-DISPO | this PRD § A | **IMPLEMENT** — bootstrap flags + disposition file |
 | **B** | Slot G — codex classifier prompt leak | R-CCPL-1..6 *(=source R1..R6)* | `prds/codex-classifier-prompt-leak.md` | **IMPLEMENT** — all 6 reqs from source PRD |
 | **C** | Slot H — szechuan judge model | R-SCJM-1..6 *(=source AC-SCJM-01..06)* | `prds/szechuan-sauce-codex-judge-model-mismatch.md` | **IMPLEMENT** — all 6 ACs from source PRD |
-| **D** | Open Finding #11 — anatomy-park scope.json preflight | R-APWS-1..7 | `prds/p2-anatomy-park-worker-edits-bypass-scope-allowlist.md` | **IMPLEMENT** — F1+F2+F3 from source PRD; R-codes assigned in this PRD |
-| **E** | Followup #16 — recoverable-json readdir bound | R-RJR-1..3 *(NEW)* | this PRD § E | **IMPLEMENT** — readdirSync filter + perf regression test |
-| **F** | Open Finding #5 — subsystem CLAUDE.md drift audit | R-CMD-1..4 *(NEW)* | this PRD § F | **IMPLEMENT** — audit-only, files follow-up tickets per drift class |
-| **G** | Slot K — pkgjson version-only revert diagnosis | R-PJV-1..6 | `prds/p1-deployed-pkgjson-version-only-revert.md` | **DIAGNOSE** — no fix ships from this section; output is research artifact + follow-up PRD |
-| **H** | Slot L — strip excessive defense | R-SED-1..7 *(carries source PRD's strip list)* | `prds/p1-strip-excessive-defense-deploy-reversion.md` | **IMPLEMENT** — mux pre-flight + scheduled finalizer + launch-gate verifier removal |
-| **I** | Closer | R-CLOSER-1..3 | this PRD § I | **IMPLEMENT** — version bump + deploy parity + (optional) gh release |
+| **D** | Open Finding #11 — anatomy-park scope.json edit-time preflight | R-APWS-1..7 | `prds/p2-anatomy-park-worker-edits-bypass-scope-allowlist.md` | **IMPLEMENT** — F1+F2+F3 from source PRD; R-codes assigned in this PRD |
+| **E** | Open Finding #12 — `/pickle-pipeline` launch-time scope auto-inference | R-PSAI-1..7 *(=source AC-PSAI-01..07)* | `prds/p2-pickle-pipeline-no-scope-auto-inference.md` | **IMPLEMENT** — all 7 ACs from source PRD; sibling to Section D |
+| **F** | Followup #16 — recoverable-json readdir bound | R-RJR-1..3 *(NEW)* | this PRD § F | **IMPLEMENT** — readdirSync filter + perf regression test |
+| **G** | Open Finding #5 — subsystem CLAUDE.md drift audit | R-CMD-1..4 *(NEW)* | this PRD § G | **IMPLEMENT** — audit-only, files follow-up tickets per drift class |
+| **H** | Slot K — pkgjson version-only revert diagnosis | R-PJV-1..6 | `prds/p1-deployed-pkgjson-version-only-revert.md` | **DIAGNOSE** — no fix ships from this section; output is research artifact + follow-up PRD |
+| **I** | Slot L — strip excessive defense | R-SED-1..7 *(carries source PRD's strip list)* | `prds/p1-strip-excessive-defense-deploy-reversion.md` | **IMPLEMENT** — mux pre-flight + scheduled finalizer + launch-gate verifier removal |
+| **J** | Closer | R-CLOSER-1..3 | this PRD § J | **IMPLEMENT** — version bump + deploy parity + (optional) gh release |
 
-Section ordering rationale: G (highest blast-radius defect) before H (judge fix only matters if codex pipelines run). E (perf, low risk) and 11 (paper-trail, P2) sandwich F (audit) so the audit's child-ticket overhead doesn't bottleneck downstream fix sections. K (diagnosis) before L (LOC removal) so K's research artifacts are written before L touches the same general defense-in-depth area. L second-to-last so working-tree churn from removed code lands against an otherwise-stable base. Closer last.
+Section ordering rationale: G (highest blast-radius defect) before H (judge fix only matters if codex pipelines run). 11 (edit-time scope) immediately before 12 (launch-time scope) because they share R-APWS / R-PSAI plumbing and the worker-side preflight (R-APWS-1) is a natural building block for the operator-side `lock-scope.js` recovery action (R-PSAI-4). 16 (perf, low risk) and 5 (audit) sandwiched between scope work and Slot K so the audit's child-ticket overhead doesn't bottleneck downstream fix sections. K (diagnosis) before L (LOC removal) so K's research artifacts are written before L touches the same general defense-in-depth area. L second-to-last so working-tree churn from removed code lands against an otherwise-stable base. Closer last.
 
 ## Pre-flight — REQUIRED before launch
 
@@ -76,12 +80,12 @@ These checks must all be green before `/pickle-pipeline` is invoked. Bundle does
 | Req | Description |
 |---|---|
 | **R-BUNDLE-1** | `state.flags.bundle_bootstrap_mode = "2026-05-08-mega"` with the new session-hash allowlist; auto-applies BOTH `skip_readiness_reason` AND `skip_ticket_audit_reason` for THIS bundle's launch only. Activity event `bundle_bootstrap_exemption_applied` records `{bundle_id, session_hash, flags}`. |
-| **R-BUNDLE-DISPO** | The disposition table above is committed at `extension/src/data/bundle-disposition-2026-05-08-mega.json`. R-TAQ-2 audit-ticket-bundle reads this file. Exempts disposition `DIAGNOSE` (Section G is research-only; no implementation tickets ship). |
+| **R-BUNDLE-DISPO** | The disposition table above is committed at `extension/src/data/bundle-disposition-2026-05-08-mega.json`. R-TAQ-2 audit-ticket-bundle reads this file. Exempts disposition `DIAGNOSE` (Section H is research-only; no implementation tickets ship). |
 
 **Section A — Acceptance Criteria**
 
 - **AC-A-01** — `bundle-disposition-2026-05-08-mega.json` exists, schema-valid against `extension/src/data/bundle-disposition.schema.json`.
-- **AC-A-02** — Audit-ticket-bundle on this session's tickets exits 0 (or only with non-fatal warnings); the `DIAGNOSE` disposition for Section G is recognized.
+- **AC-A-02** — Audit-ticket-bundle on this session's tickets exits 0 (or only with non-fatal warnings); the `DIAGNOSE` disposition for Section H is recognized.
 - **AC-A-03** — Activity event `bundle_bootstrap_exemption_applied` records `bundle_id="2026-05-08-mega"`.
 
 **Files in scope**: `extension/src/data/bundle-disposition-2026-05-08-mega.json` *(NEW)*, `extension/src/data/bundle-disposition.schema.json` (extend `disposition` enum to include `DIAGNOSE` if not present), `extension/src/services/state-manager.ts` (allowlist), `extension/src/services/audit-ticket-bundle.ts` (recognize new bundle id + DIAGNOSE).
@@ -146,7 +150,29 @@ Source: `prds/p2-anatomy-park-worker-edits-bypass-scope-allowlist.md`. Source PR
 
 **Files in scope**: `extension/src/bin/check-scope-diff.ts` *(NEW)*, `.claude/commands/anatomy-park.md`, `.claude/commands/szechuan-sauce.md`, `extension/src/types/index.ts`, `extension/src/data/activity-events.schema.json`, `extension/tests/fixtures/activity-event-payloads/worker_edit_outside_scope.json` *(NEW)*, `extension/src/bin/pickle-status.ts`, `extension/CLAUDE.md`, tests as above.
 
-## Section E — Followup #16 — recoverable-json readdir bound *(FIFTH — perf)*
+## Section E — Open Finding #12 — `/pickle-pipeline` launch-time scope auto-inference *(FIFTH — P2)*
+
+Source: `prds/p2-pickle-pipeline-no-scope-auto-inference.md` (read in full). Sibling of Section D — Section D fixes the **edit-time** leak after scope is set; this section fixes the **launch-time** silence that lets scope go unset when the operator's kickoff prompt names a branch / subset. Source PRD enumerates `R-PSAI-1..7`; this bundle inherits them verbatim.
+
+| Req | Description |
+|---|---|
+| **R-PSAI-1** *(=source AC)* | Scope auto-inference clause in `/pickle-pipeline` Step 0 (or new Step 0.6). Regex matches branch-name / "API-only" / no-cross-repo phrasings + non-default-branch context. When matched AND `--scope` not passed, single AskUserQuestion: `branch` / `paths:<auto-extracted>` / `none (proceed unscoped)`. MUST NOT silently flip scope on. |
+| **R-PSAI-2** *(=source AC)* | Step 8 report MUST surface resolved scope: `Scope: <branch \| paths:<list> \| unscoped>` + `allowed_paths: <N>` + `refresh: per non-pickle phase`. When unscoped, append `⚠ scope: unscoped — anatomy-park and szechuan-sauce will operate on the entire target directory.` |
+| **R-PSAI-3** *(=source AC)* | Pre-launch safety prompt when target is git repo on non-default branch with ≥1 commit ahead AND `--scope` not passed. Single AskUserQuestion: "Target is on branch `<X>` with `<N>` commits ahead of `<default>`. Lock pipeline to branch diff, or proceed unscoped?" with options `Lock to branch (Recommended)` / `Proceed unscoped (with reason)`. |
+| **R-PSAI-4** *(=source AC)* | New `extension/bin/lock-scope.js <session-root> --mode branch [--scope-base main]` mid-flight recovery action. Validates session is paused (no live `pipeline-runner.js` PID); patches `pipeline.json`, `state.json` (`active: true`, `step: <next>`, `worker_timeout_seconds: <restored>`, `exit_reason: null`), and `pipeline-status.json` (`status: running`, `current_phase: <next>`, `completed_phases: <preserved>`). Prints resumed launch command. Collapses 6-step manual patch to one command. |
+| **R-PSAI-5** *(=source AC)* | `extension/src/services/pickle-utils.ts:ensureMonitorWindow` MUST re-respawn pane 0 on resume. Extend `startRespawnWatchdog` to poll pane 0 (verify which panes it polls today and harden). Confirmed-dead pane 0 (`pane_current_command !== 'node'`) MUST respawn within 30s regardless of phase-transition events. |
+| **R-PSAI-6** *(=source AC)* | `PRD_GUIDE.md` and `COMMANDS.md` document the auto-inference clause + safety prompt + `lock-scope.js` recovery action. Operator-facing line: "Naming a branch in your kickoff prompt is enough — the skill will ask. Use `--scope branch` to skip the prompt." |
+| **R-PSAI-7** *(=source AC)* | Regression test `extension/tests/integration/pickle-pipeline-scope-inference.test.js` covers 6 cases: branch-named kickoff, "API-only" kickoff, `--scope` already passed (auto-inference skipped), no-signal default-branch kickoff (no prompt), non-default-branch + ≥1 ahead + no-scope (safety prompt fires), operator picks "unscoped" (audit log line present). |
+
+**Section E — Acceptance Criteria** — `AC-PSAI-01..07` lifted verbatim from source PRD § Acceptance Criteria. Plus three trap-door tests already enumerated in source PRD § Trap doors:
+
+- **AC-PSAI-08** *(=source trap-door 1)* — `extension/tests/skill-prompt-shape/pickle-pipeline-scope-inference-clause.test.js` greps deployed `pickle-pipeline.md` for the regex tokens + AskUserQuestion call.
+- **AC-PSAI-09** *(=source trap-door 2)* — `extension/tests/integration/monitor-pane-zero-watchdog.test.js` simulates mid-run pane-0 exit, asserts respawn within 30s.
+- **AC-PSAI-10** *(=source trap-door 3)* — `extension/tests/integration/lock-scope-rejects-live-runner.test.js` asserts `lock-scope.js` refuses to run while `pipeline-runner.js` PID is alive.
+
+**Files in scope**: `.claude/commands/pickle-pipeline.md` (Step 0.6 auto-inference + Step 8 scope-surfacing), `extension/src/bin/lock-scope.ts` *(NEW)*, `extension/src/services/pickle-utils.ts` (pane 0 respawn watchdog), `PRD_GUIDE.md`, `COMMANDS.md`, `extension/tests/integration/pickle-pipeline-scope-inference.test.js` *(NEW)*, `extension/tests/integration/monitor-pane-zero-watchdog.test.js` *(NEW)*, `extension/tests/integration/lock-scope-rejects-live-runner.test.js` *(NEW)*, `extension/tests/skill-prompt-shape/pickle-pipeline-scope-inference-clause.test.js` *(NEW)*.
+
+## Section F — Followup #16 — recoverable-json readdir bound *(SIXTH — perf)*
 
 This section is a self-contained perf fix; no source PRD. R-codes assigned inline.
 
@@ -156,7 +182,7 @@ This section is a self-contained perf fix; no source PRD. R-codes assigned inlin
 | **R-RJR-2** | Cache the prefix as a closure-captured constant (or pass-through arg). No behavior change; only filtered enumeration. |
 | **R-RJR-3** | Perf regression test `extension/tests/recoverable-json-readdir-bound.test.js`: synthetic parent dir with 10k decoy entries + 1 matching tmp; assert call wall-clock < 50ms (margin: macOS ext_attr stat ~~ 20µs × 10k ~ 200ms uncached; filtered access < 10ms). Test gated on `process.platform === 'darwin'` to avoid Linux noise. |
 
-**Section E — Acceptance Criteria**
+**Section F — Acceptance Criteria**
 
 - **AC-RJR-01** — `recoverable-json.ts` `readdirSync` callsite filters by prefix; verified by line-anchored snapshot test.
 - **AC-RJR-02** — `recoverable-json-readdir-bound.test.js` passes; wall-clock under threshold on macOS.
@@ -164,7 +190,7 @@ This section is a self-contained perf fix; no source PRD. R-codes assigned inlin
 
 **Files in scope**: `extension/src/services/recoverable-json.ts`, `extension/tests/recoverable-json-readdir-bound.test.js` *(NEW)*.
 
-## Section F — Open Finding #5 — Subsystem CLAUDE.md drift audit *(SIXTH — audit-only)*
+## Section G — Open Finding #5 — Subsystem CLAUDE.md drift audit *(SEVENTH — audit-only)*
 
 This section audits the 5 subsystems under `extension/src/` for missing or stale `CLAUDE.md` files; remediation tickets are filed as follow-ups, NOT shipped here. Bounded scope = audit + drift-classification report; prevents this section from blowing the bundle's wall-clock budget.
 
@@ -175,7 +201,7 @@ This section audits the 5 subsystems under `extension/src/` for missing or stale
 | **R-CMD-3** | For each `MISSING` / `STALE` / `INCOMPLETE` subsystem, file a follow-up PRD `prds/p3-subsystem-claude-md-<name>.md` with: enumeration of public exports, suggested invariants, suggested trap-door entries. PRDs are DRAFT; not refined; not in this bundle. |
 | **R-CMD-4** | Trap-door entry in `extension/CLAUDE.md`: "Each `extension/src/<subsystem>/` directory MUST have a `CLAUDE.md` documenting public exports + invariants. Drift class `OK` enforced by `extension/scripts/audit-subsystem-claude-md.sh`." ENFORCE: `extension/tests/audit-subsystem-claude-md.test.js`. |
 
-**Section F — Acceptance Criteria**
+**Section G — Acceptance Criteria**
 
 - **AC-CMD-01** — Audit script exists and runs cleanly; emits the JSON report.
 - **AC-CMD-02** — Per-subsystem follow-up PRDs filed under `prds/p3-subsystem-claude-md-*.md` for every non-OK subsystem.
@@ -186,9 +212,9 @@ This section audits the 5 subsystems under `extension/src/` for missing or stale
 
 **Files in scope**: `extension/scripts/audit-subsystem-claude-md.sh` *(NEW)*, `extension/audit/subsystem-claude-md-2026-05-08.json` *(NEW)*, `extension/tests/audit-subsystem-claude-md.test.js` *(NEW)*, `extension/CLAUDE.md`, `prds/p3-subsystem-claude-md-*.md` *(NEW, one per non-OK subsystem)*.
 
-## Section G — Slot K — Deployed pkgjson version-only revert *(SEVENTH — diagnosis-only, P1)*
+## Section H — Slot K — Deployed pkgjson version-only revert *(EIGHTH — diagnosis-only, P1)*
 
-Source: `prds/p1-deployed-pkgjson-version-only-revert.md` (read in full). Disposition is `DIAGNOSE`: this section runs the H-A..H-E hypothesis triage and emits a research artifact + follow-up fix PRD. **No fix code ships from this section.** That keeps the closer (Section I) free from a half-diagnosed change.
+Source: `prds/p1-deployed-pkgjson-version-only-revert.md` (read in full). Disposition is `DIAGNOSE`: this section runs the H-A..H-E hypothesis triage and emits a research artifact + follow-up fix PRD. **No fix code ships from this section.** That keeps the closer (Section J) free from a half-diagnosed change.
 
 | Req | Description |
 |---|---|
@@ -199,7 +225,7 @@ Source: `prds/p1-deployed-pkgjson-version-only-revert.md` (read in full). Dispos
 | **R-PJV-5** *(NEW)* | Activity event `pkgjson_revert_forensic_captured` registered with full quartet (types, schema, fixture, count). Payload: `{forensic_artifact_path, suspected_hypothesis, src_version, deployed_version}`. |
 | **R-PJV-6** *(NEW)* | Trap-door entry: "Until R-PJV-4 follow-up ships, `install.sh` MUST log `pkgjson_revert_forensic_captured` whenever `extension/package.json:version` is bumped without `git commit` parentage." ENFORCE: `extension/tests/install-pkgjson-version-trace.test.js`. |
 
-**Section G — Acceptance Criteria**
+**Section H — Acceptance Criteria**
 
 - **AC-PJV-01** — Forensic capture script exists, runs cleanly on demand, writes JSON to `extension/audit/`.
 - **AC-PJV-02** — Writer audit script exists, ranks suspects.
@@ -210,7 +236,7 @@ Source: `prds/p1-deployed-pkgjson-version-only-revert.md` (read in full). Dispos
 
 **Files in scope**: `extension/scripts/capture-pkgjson-revert-forensic.sh` *(NEW)*, `extension/scripts/audit-pkgjson-writers.sh` *(NEW)*, `extension/audit/pkgjson-revert-triage-2026-05-08.md` *(NEW)*, `extension/src/types/index.ts`, `extension/src/data/activity-events.schema.json`, `extension/tests/fixtures/activity-event-payloads/pkgjson_revert_forensic_captured.json` *(NEW)*, `extension/tests/install-pkgjson-version-trace.test.js` *(NEW)*, `extension/CLAUDE.md`, `prds/p1-pkgjson-revert-<top-hypothesis>.md` *(NEW)*.
 
-## Section H — Slot L — Strip excessive defense *(EIGHTH — ~480 LOC removal, P1)*
+## Section I — Slot L — Strip excessive defense *(NINTH — ~480 LOC removal, P1)*
 
 Source: `prds/p1-strip-excessive-defense-deploy-reversion.md` (read in full). Cron sampler stripped at `c2ec3cf1` 2026-05-02 (verify in this section's R-SED-7). Remaining strip targets: mux pre-flight verifier, scheduled finalizer, launch-gate verifier, and their tests/wiring.
 
@@ -224,7 +250,7 @@ Source: `prds/p1-strip-excessive-defense-deploy-reversion.md` (read in full). Cr
 | **R-SED-6** *(NEW)* | Activity events emitted by stripped components are removed from `VALID_ACTIVITY_EVENTS`: `mux_preflight_verifier_*`, `scheduled_finalizer_*`, `launch_gate_verifier_*`. Schema + count-assertion + deployed mirror updated. |
 | **R-SED-7** *(NEW)* | Verify `c2ec3cf1` actually stripped the cron sampler — `git log --oneline c2ec3cf1 -- extension/src/services/cron-sampler.ts` should show the deletion. If sampler still exists in any form, include its removal here. |
 
-**Section H — Acceptance Criteria**
+**Section I — Acceptance Criteria**
 
 - **AC-SED-01** — `mux-preflight-verifier.ts`, `scheduled-finalizer.ts`, `launch-gate-verifier.ts` removed from `extension/src/services/`. Wiring in callers also removed.
 - **AC-SED-02** — Tests exclusive to stripped components removed; replacement-defense tests still pass.
@@ -236,15 +262,15 @@ Source: `prds/p1-strip-excessive-defense-deploy-reversion.md` (read in full). Cr
 
 **Files in scope**: `extension/src/services/{mux-preflight-verifier,scheduled-finalizer,launch-gate-verifier}.ts` *(REMOVED)*, `extension/src/bin/mux-runner.ts` (wiring), `extension/src/bin/setup.ts` (wiring), `extension/src/bin/pipeline-runner.ts` (wiring), `extension/scripts/install-cron.sh`, `extension/src/types/index.ts` (event removal), `extension/src/data/activity-events.schema.json`, count-assertion test, `extension/CLAUDE.md` (trap-door cleanup), `extension/tests/{mux-preflight-verifier,scheduled-finalizer,launch-gate-verifier}.test.js` *(REMOVED)*.
 
-## Section I — Closer *(NINTH — version bump + deploy parity)*
+## Section J — Closer *(TENTH — version bump + deploy parity)*
 
 | Req | Description |
 |---|---|
 | **R-CLOSER-1** | Bump `extension/package.json` from `1.72.2` → `1.73.0` (minor — bundle ships features: scope-diff preflight, audit script, forensic capture). Lockfile sync. |
 | **R-CLOSER-2** | `bash install.sh` deploys to `~/.claude/pickle-rick/`. Post-rsync md5-parity probe (R-ITS-2) must pass. Active-bundle guard auto-permits closer's own session via `--closer-context`. |
-| **R-CLOSER-3** | Update `prds/MASTER_PLAN.md`: mark Open Findings #1, #5, #11, #16 as closed (or note Section F's audit deferral); move source PRDs from Active Queue to Shipped table; record this bundle's session id under "Recently Shipped". |
+| **R-CLOSER-3** | Update `prds/MASTER_PLAN.md`: mark Open Findings #1, #5, #11, #12, #16 as closed (or note Section G's audit deferral); move source PRDs from Active Queue to Shipped table; record this bundle's session id under "Recently Shipped". |
 
-**Section I — Acceptance Criteria**
+**Section J — Acceptance Criteria**
 
 - **AC-CLOSER-01** — `extension/package.json:version === "1.73.0"` at HEAD; lockfile sync committed.
 - **AC-CLOSER-02** — `bash install.sh` exits 0; md5-parity probe passes for all 5 trafficked files.
@@ -260,13 +286,15 @@ Source: `prds/p1-strip-excessive-defense-deploy-reversion.md` (read in full). Cr
 | **R1** | Slot G is the MPH cure → bundle MUST run on `--backend claude` | High | `backend_constraint: claude` in frontmatter; closer + launch script enforce. Explicit comment in this PRD. |
 | **R2** | Open Finding #10 fix (`232f3d26`) deploy owed; running this bundle on stale runtime risks the same fresh-init pipeline-killer that bailed `2026-05-08-d6f98b66` | High | Pre-flight check #1 mandates `bash install.sh` before launch. Closer's `R-CLOSER-2` re-verifies post-bundle parity. |
 | **R3** | Slot L removes ~480 LOC; later sections must not depend on removed defenses | Medium | Section ordering puts L second-to-last. Sections B/C/D/E/F/G complete before L touches code. R-SED-5 verifies kept defenses are end-to-end covered. |
-| **R4** | Slot K is diagnosis-only — `audit-ticket-bundle` may complain about no fix shipping | Medium | Bundle-disposition file declares `DIAGNOSE` for Section G; `R-BUNDLE-DISPO` exempts. |
-| **R5** | Section F audit may generate child tickets mid-pipeline; if the audit script is slow, blows wall-clock budget | Medium | Section F is bounded to `audit-only`; remediation ships as follow-up DRAFT PRDs, NOT in this bundle. Audit script wall-clock target: <30s. |
+| **R4** | Slot K is diagnosis-only — `audit-ticket-bundle` may complain about no fix shipping | Medium | Bundle-disposition file declares `DIAGNOSE` for Section H; `R-BUNDLE-DISPO` exempts. |
+| **R5** | Section G audit may generate child tickets mid-pipeline; if the audit script is slow, blows wall-clock budget | Medium | Section G is bounded to `audit-only`; remediation ships as follow-up DRAFT PRDs, NOT in this bundle. Audit script wall-clock target: <30s. |
 | **R6** | Working tree currently dirty with another session's MASTER_PLAN edits + new bug PRD | High | Pre-flight check #2 mandates quarantine. The dirty paths are owned by session `2026-05-08-5d60b760` (loanlight-api) which is still active — DO NOT touch those files in this bundle's pickle phase. |
 | **R7** | Slot G touches deployed templates (`.claude/commands/*.md`); `install.sh` deploy of the bundle's closer must not race with worker template reads mid-pickle | Medium | Closer runs after pickle phase exits; pre-fix templates remain in place during pickle phase. R-CCPL-3's substring-broken token forms are source-side only until the closer deploys them. |
 | **R8** | The new activity events (`worker_edit_outside_scope`, `pkgjson_revert_forensic_captured`) MUST be registered through the full quartet, not just types | High | R-APWS-3 + R-PJV-5 explicitly list all 5 registration points. Audit-ticket-bundle's existing event-registration check enforces. |
 | **R9** | Quick-refine ticket authoring may drop ACs if Agent prompts under-specify | Medium | Each section's ACs are listed verbatim or with explicit `(=source X)` mapping; quick-refine prompts MUST lift these unchanged. Validation: spot-check 2 random tickets post-quick-refine; if drift, re-run that ticket's authoring. |
 | **R10** | Closer's `gh release create` is OPT-IN; default no-push per local-only-mode policy | Low | AC-CLOSER-04 marked optional; pickle-rick session does NOT auto-push without operator instruction. |
+| **R11** | Sections D + E both touch scope-resolution code paths; ordering matters because R-PSAI-4 (`lock-scope.js`) calls into the same scope-resolver that R-APWS-1 (`check-scope-diff.js`) consumes | Medium | Section D ships first; Section E's `lock-scope.js` imports the scope-resolver helper that Section D's preflight script also uses. Both depend on the same source-of-truth `extension/src/services/scope-resolver.ts` (existing). If Section D touches the resolver's public API, Section E's quick-refine ticket MUST re-read the resolver before authoring. |
+| **R12** | R-PSAI-1's regex catalog is operator-facing; false-positive rate must be low | Medium | Auto-inference NEVER flips scope on silently — always prompts. Worst case: an extra AskUserQuestion. R-PSAI-7 covers all 6 regex cases including `--scope` already-passed (no double-prompt). Operator can document `regex matched but unscoped` via R-PSAI-1.4 audit log. |
 
 ## Pre-flight checklist (operator runs before launch)
 
@@ -287,13 +315,13 @@ cd /Users/gregorydickson/loanlight/pickle-rick/pickle-rick-claude
 
 ## Refinement directives (for the quick-refine fan-out inside the pickle phase)
 
-The pickle phase will spawn 9 parallel `Agent` calls (one per section A..I), each authoring 1 atomic ticket:
+The pickle phase will spawn 10 parallel `Agent` calls (one per section A..J), each authoring 1 atomic ticket:
 
 1. **Lift ACs verbatim** from this PRD's section. Do NOT paraphrase.
 2. **Lift R-codes verbatim** from this PRD's table. Source-PRD R-codes that this bundle renames (e.g. `R-CCPL-1 (=source R1)`) are committed under both names — primary `R-CCPL-1`, alias `(=source R1)`.
 3. **Files in scope** are listed per section; ticket MUST not touch files outside that list without filing a follow-up.
-4. **Sections G and F deliver research artifacts**, not fixes — Agent prompts MUST emit the JSON / markdown report files at the listed paths and mark the ticket Done on artifact landing, not on a code change.
-5. **Section H (Slot L)** is removal — Agent prompt explicitly instructs `git rm` on the listed services, not `git mv`.
+4. **Sections G and H deliver research artifacts**, not fixes — Agent prompts MUST emit the JSON / markdown report files at the listed paths and mark the ticket Done on artifact landing, not on a code change. (G = Finding #5 audit; H = Slot K diagnosis.)
+5. **Section I (Slot L)** is removal — Agent prompt explicitly instructs `git rm` on the listed services, not `git mv`.
 6. Per Working Rule #2, every ticket's worker MUST run `npx eslint src/ --max-warnings=-1 && npx tsc --noEmit` before completion-commit.
 
 ## Post-bundle bookkeeping (closer's R-CLOSER-3)
@@ -301,7 +329,8 @@ The pickle phase will spawn 9 parallel `Agent` calls (one per section A..I), eac
 - Mark Open Finding #1 ✅ CLOSED in MASTER_PLAN.md (now actually closed by Section B).
 - Mark Open Finding #5 ⚠️ DEFERRED in MASTER_PLAN.md (audit done; remediation queued as P3 follow-up PRDs).
 - Mark Open Finding #11 ✅ CLOSED in MASTER_PLAN.md (closed by Section D).
-- Mark Followup #16 ✅ CLOSED in MASTER_PLAN.md (closed by Section E).
+- Mark Open Finding #12 ✅ CLOSED in MASTER_PLAN.md (closed by Section E).
+- Mark Followup #16 ✅ CLOSED in MASTER_PLAN.md (closed by Section F).
 - Move Slots G, H, K, L from Active Queue to Shipped (or "Diagnosis-only" for K) table.
 - Append entry to "Recently Shipped" with bundle session id, ticket count, wall-clock, commit hash range.
 - Bump Last-updated header date.
