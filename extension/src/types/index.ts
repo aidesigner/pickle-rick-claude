@@ -740,7 +740,7 @@ export interface GateBaselineFile {
   schema_version: 1;
   captured_at: string;
   working_dir: string;
-  project_type: 'pnpm' | 'npm' | 'yarn' | 'cargo' | 'go';
+  project_type: 'pnpm' | 'npm' | 'yarn' | 'cargo' | 'go' | 'bun' | null;
   checks: ('typecheck' | 'lint' | 'tests')[];
   failures: GateFailure[];
 }

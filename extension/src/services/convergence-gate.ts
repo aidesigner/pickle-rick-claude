@@ -127,12 +127,16 @@ export function assignOccurrenceIndices(failures: GateFailure[]): GateFailure[] 
 function validateBaselineStructure(data: unknown): data is GateBaselineFile {
   if (!data || typeof data !== 'object') return false;
   const d = data as Record<string, unknown>;
+  const projectType = d['project_type'];
+  const projectTypeValid =
+    projectType === null ||
+    (typeof projectType === 'string' &&
+      ['pnpm', 'npm', 'yarn', 'cargo', 'go', 'bun'].includes(projectType));
   return (
     d['schema_version'] === 1 &&
     typeof d['captured_at'] === 'string' &&
     typeof d['working_dir'] === 'string' &&
-    typeof d['project_type'] === 'string' &&
-    ['pnpm', 'npm', 'yarn', 'cargo', 'go'].includes(d['project_type'] as string) &&
+    projectTypeValid &&
     Array.isArray(d['checks']) &&
     Array.isArray(d['failures'])
   );
@@ -795,6 +799,47 @@ function timeoutFailure(check: GateCheck): GateFailure {
   };
 }
 
+/**
+ * Write a valid empty `GateBaselineFile` for baseline-mode early-return paths
+ * (no project type detected, or detected type lacks a command map). This keeps
+ * the contract with `microverse-runner.capturePerIterationGateBaseline` —
+ * which post-checks `pathExists(baselinePath)` — intact, so a green skip in
+ * baseline mode does NOT become a silent pipeline-killer downstream.
+ *
+ * Mirrors `writeBaselineFile`'s mkdir + writeStateFile + access + post-write
+ * inspect pattern. Throws `BaselineWriteFailedError` on any disk failure.
+ */
+async function writeEmptyBaselineFile(
+  baselinePath: string,
+  opts: RunGateOpts,
+  projectType: ProjectType | null,
+  emit: GateEmit,
+): Promise<void> {
+  try {
+    const baseline: GateBaselineFile = {
+      schema_version: 1,
+      captured_at: new Date().toISOString(),
+      working_dir: opts.workingDir,
+      project_type: projectType as GateBaselineFile['project_type'],
+      checks: [],
+      failures: [],
+    };
+    await fs.promises.mkdir(path.dirname(baselinePath), { recursive: true });
+    writeStateFile(baselinePath, baseline);
+    await fs.promises.access(baselinePath);
+    const postWriteStatus = await inspectBaselinePath(baselinePath);
+    emit('gate_baseline_disk_check', { phase: 'post_write', ...postWriteStatus });
+    if (postWriteStatus.exists !== true) {
+      throw new BaselineWriteFailedError(
+        baselinePath,
+        `Baseline write reported success but file is missing at ${baselinePath}`,
+      );
+    }
+  } catch (err) {
+    throw baselineWriteFailed(baselinePath, err);
+  }
+}
+
 async function writeBaselineFile(
   baselinePath: string,
   opts: RunGateOpts,
@@ -944,21 +989,41 @@ function finalGateResult(
   };
 }
 
+/**
+ * Emit `gate_skipped` and return an empty (green) gate result. When called in
+ * baseline mode with a `baselinePath`, write a valid empty `GateBaselineFile`
+ * BEFORE returning so downstream `pathExists(baselinePath)` consumers (notably
+ * `microverse-runner.capturePerIterationGateBaseline`) don't observe a silent
+ * skip as a missing-baseline error.
+ */
+async function emitSkippedAndReturn(
+  opts: RunGateOpts,
+  projectType: ProjectType | null,
+  reason: string,
+  start: number,
+  emit: GateEmit,
+  extra: Record<string, unknown> = {},
+): Promise<GateResult> {
+  if (opts.mode === 'baseline' && opts.baselinePath) {
+    await writeEmptyBaselineFile(opts.baselinePath, opts, projectType, emit);
+  }
+  emit('gate_skipped', { reason, ...extra });
+  return { ...emptyGateResult(), elapsed_ms: Date.now() - start };
+}
+
 export async function runGate(opts: RunGateOpts): Promise<GateResult> {
   const start = Date.now();
   const emit = (event: string, data: Record<string, unknown>) => opts.onEvent?.(event, data);
 
   const projectType = detectProjectType(opts.workingDir);
   if (!projectType) {
-    emit('gate_skipped', { reason: 'no_project_type_detected' });
-    return { ...emptyGateResult(), elapsed_ms: Date.now() - start };
+    return emitSkippedAndReturn(opts, null, 'no_project_type_detected', start, emit);
   }
 
   const commands = loadGateCommands();
   const cmdMap = commands[projectType];
   if (!cmdMap) {
-    emit('gate_skipped', { reason: 'project_type_low_confidence', detected_signals: [projectType] });
-    return { ...emptyGateResult(), elapsed_ms: Date.now() - start };
+    return emitSkippedAndReturn(opts, projectType, 'project_type_low_confidence', start, emit, { detected_signals: [projectType] });
   }
 
   const workspacePackages = getWorkspacePackages(opts.workingDir);
