@@ -60,6 +60,22 @@ function extractCodexBlockContent(lines) {
     return parts;
 }
 /**
+ * Detects the output format of a log without extracting content.
+ *
+ * Precedence mirrors extractAssistantContent:
+ * 1. 'stream-json'  — ≥1 line is a {type:'assistant',...} JSON object
+ * 2. 'codex-block'  — ≥1 line matches CODEX_DELIMITER_RE
+ * 3. 'plain-text'   — neither; caller with codex context should treat as drift
+ */
+export function detectOutputFormat(output) {
+    const lines = output.split('\n');
+    if (lines.some(isAssistantJsonLine))
+        return 'stream-json';
+    if (lines.some(line => CODEX_DELIMITER_RE.test(line)))
+        return 'codex-block';
+    return 'plain-text';
+}
+/**
  * Extracts text content from assistant messages.
  *
  * Detection precedence:
@@ -76,27 +92,13 @@ function extractCodexBlockContent(lines) {
  * codex user blocks) are excluded in all modes.
  */
 export function extractAssistantContent(output) {
-    const lines = output.split('\n');
-    // Mode 1: stream-json - requires >=1 line that is a {type:'assistant',...}
-    // JSON object. Bare values (null, numbers, arrays), non-assistant typed
-    // objects ({type:'system'}, {type:'user'}) do NOT trigger this mode, so
-    // codex logs that happen to contain stray JSON fall through to codex-mode
-    // detection instead of silently returning empty content.
-    const isStreamJson = lines.some(isAssistantJsonLine);
-    if (isStreamJson) {
-        return extractStreamJsonContent(lines).join('\n');
+    switch (detectOutputFormat(output)) {
+        case 'stream-json':
+            return extractStreamJsonContent(output.split('\n')).join('\n');
+        case 'codex-block':
+            return extractCodexBlockContent(output.split('\n')).join('\n');
+        default:
+            // Mode 3: pure plain-text fallback - return everything.
+            return output;
     }
-    // Mode 2: codex plain-text - block-delimiter format.
-    let isCodexMode = false;
-    for (const line of lines) {
-        if (CODEX_DELIMITER_RE.test(line)) {
-            isCodexMode = true;
-            break;
-        }
-    }
-    if (isCodexMode) {
-        return extractCodexBlockContent(lines).join('\n');
-    }
-    // Mode 3: pure plain-text fallback - return everything.
-    return output;
 }

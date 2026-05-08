@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { classifyCompletion } from '../bin/mux-runner.js';
+import { classifyCompletion, detectOutputFormat } from '../bin/mux-runner.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.resolve(__dirname, 'fixtures', 'iteration-logs');
@@ -41,4 +41,19 @@ test('classifier: claude-real-completion.log → task_completed (EPIC_COMPLETED 
 test('classifier: mixed-json-noise.log → continue (bare null line must not trigger stream-json mode)', () => {
     const content = readFixture('mixed-json-noise.log');
     assert.equal(classifyCompletion(content), 'continue');
+});
+
+test('detectOutputFormat: claude-stream-json.log → stream-json', () => {
+    const content = readFixture('claude-stream-json.log');
+    assert.equal(detectOutputFormat(content), 'stream-json');
+});
+
+test('detectOutputFormat: mixed-json-noise.log → codex-block (block delimiters present despite stray null)', () => {
+    const content = readFixture('mixed-json-noise.log');
+    assert.equal(detectOutputFormat(content), 'codex-block');
+});
+
+test('detectOutputFormat: plain text with no delimiters and no JSON → plain-text (codex delimiter drift)', () => {
+    const drifted = 'Starting analysis...\nImplementing the fix now.\nI AM DONE\n';
+    assert.equal(detectOutputFormat(drifted), 'plain-text');
 });

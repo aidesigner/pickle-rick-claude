@@ -11,13 +11,13 @@ import { loadSettings, initCircuitBreaker, canExecute, detectProgress, extractEr
 import { buildManagerInvocation, resolveBackend, resolveBackendFromStateFileWithSource, backendEnvOverrides } from '../services/backend-spawn.js';
 import { resolveCodexModel } from './spawn-morty.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
-import { extractAssistantContent } from '../services/classifier-utils.js';
+import { extractAssistantContent, detectOutputFormat } from '../services/classifier-utils.js';
 import { updateTicketStatusInTransaction } from '../services/transaction-ticket-ops.js';
 import {
   evaluateCodexManagerRelaunch,
   recordCodexManagerRelaunch,
 } from '../services/codex-manager-relaunch.js';
-export { extractAssistantContent } from '../services/classifier-utils.js';
+export { extractAssistantContent, detectOutputFormat } from '../services/classifier-utils.js';
 export { hasCompletionCommit } from '../services/pickle-utils.js';
 export {
   evaluateCodexManagerRelaunch,
@@ -1420,6 +1420,9 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
       try { fs.writeFileSync(exitCodeFile, String(code ?? -1)); } catch { /* best effort */ }
       let output = '';
       try { output = fs.readFileSync(logFile, 'utf-8'); } catch { /* missing/unreadable log */ }
+      if (backend === 'codex' && detectOutputFormat(output) === 'plain-text') {
+        process.stderr.write(`[classifier] codex delimiter drift: no recognizable codex/user blocks in iteration ${iterationNum} output\n`);
+      }
       resolve({
         completion: classifyCompletion(output),
         timedOut: didTimeout,
