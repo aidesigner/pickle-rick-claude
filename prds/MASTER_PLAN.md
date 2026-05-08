@@ -21,6 +21,7 @@ This file is **operational** — it tells the next coding agent what to work on.
 ## 📅 2026-05-07 PM status (post-Theme-A + post-hardening)
 
 - **v1.72.2 installed locally** (`da43416f` 2026-05-07 PM). v1.71.0 tag on `8d09c503` still latest tag; v1.72.x not tagged because we skipped past a stale deployed v1.72.0 left by an earlier session. NOT pushed; ~100 commits ahead of `origin/main`.
+- **2026-05-07-deferred-slots bundle session `2026-05-08-d6f98b66` SHIPPED** the 4 remaining slots + closer (Slots A/G/H were already shipped on `main` from a prior session). Slot D (`187aa589` R-ICP-3+4 setup.js cap persistence), Slot E (`2f4369c4` R-ICP-1+2 mux-runner cap-exit code 3 + pipeline halt), Slot K (`ce578369` R-ICM-1..3 install.sh chmod glob + post-install verify), Slot L (`1c3e4c27` R-APBS-1..3 anatomy-park /bin/ regression). Trap-door audit count 113 → 121 (+8 ENFORCE refs across the 4 slots). Bundle-level closer ran `bash install.sh` parity check (5/5 md5 match between source and deployed; deployed sync deferred because another active session was holding `~/.claude/pickle-rick/`). **→ closes Open Findings #1, #3, #4** (see updated table below).
 - **Theme A pipeline `pipeline-be6e9179` SHIPPED 9/9 sections** in 3h 02m on `--backend claude` (PRD `prds/p1-bug-fix-bundle-theme-a-refinement-quality.md`). Zero `MANAGER_PERSISTENT_HALLUCINATION` — the backend swap from the planned `codex` paid off. Section commits:
   - `910846c6` §A — refinement analyst path verification (R-TAQ-1)
   - `7215c29b` + `bf045c61` §B — 7-class defect-audit scanner (R-TAQ-2/3/6)
@@ -51,10 +52,10 @@ This file is **operational** — it tells the next coding agent what to work on.
 
 ## 🔥 Open findings (closed/open status — refreshed 2026-05-07 PM)
 
-1. **MANAGER_PERSISTENT_HALLUCINATION root cause unaddressed.** *(OPEN)* Codex manager invents `EPIC_COMPLETED` mid-run. Slot 1u retry-counter + threshold landed; underlying hallucination trigger not fixed. Operational mitigation: use `--backend claude` for refinement-team-touching pipelines (validated by Theme A's clean 9/9 ship). Real fix lives in **slot G of the 2026-05-06 bundle (`codex-classifier-prompt-leak.md`)**.
+1. ~~**MANAGER_PERSISTENT_HALLUCINATION root cause unaddressed.**~~ ✅ **CLOSED** by 2026-05-07-deferred-slots bundle Slot G (R-CCPL-1..6 — see `prds/p1-bug-fix-bundle-2026-05-07-deferred-slots.md`). `extractAssistantContent` + `classifyCompletion` now distinguish prompt content from model response in codex plain-text logs (block-delimiter-driven detection); worker template substring-broken tokens prevent the prompt-leak class. Trap-door pinned in `extension/CLAUDE.md` (R-CCPL-4 / classifier).
 2. ~~**Codex "Done by model" without commit.**~~ ✅ **CLOSED** by Theme A §G (`a70db8f0`) — phantom-Done filesystem watcher + completion-commit-hash requirement now enforced.
-3. **Anatomy-park scope gap on root `/bin/`.** *(OPEN)* Repo root `/bin/` has 6 source files load-bearing for releases (`release-gate.sh`, `purge-update-cache.js`, `verify-bundle.js`, `verify-recapture-fired.js`, `section-c-still-needed.js`, plus `CLAUDE.md`). Never audited. Schedule a follow-up `/anatomy-park` run with `TARGET=/bin/`.
-4. **`install.sh` chmod block hand-maintained.** *(OPEN)* Each new bin file needs an explicit chmod entry; missing one means dirty-tree on every build. Replace with directory-glob or manifest.
+3. ~~**Anatomy-park scope gap on root `/bin/`.**~~ ✅ **CLOSED** by 2026-05-07-deferred-slots bundle Slot L (R-APBS-1..3, commit `1c3e4c27`). `discoverSubsystems` already enumerates repo-root `/bin/` when target=repoRoot and ≥3 source files are present (verified empirically: 4 .js files, fileCount=4). Regression locked in by `extension/tests/anatomy-park-resolveSubsystems-bin.test.js` (3 tests covering the source-extension threshold and the bin-discovery contract); trap-door pinned at `src/bin/pipeline-runner.ts` (R-APBS-1..3).
+4. ~~**`install.sh` chmod block hand-maintained.**~~ ✅ **CLOSED** by 2026-05-07-deferred-slots bundle Slot K (R-ICM-1..3, commit `ce578369`). The hand-maintained chmod list (lines 401–437, 36 entries covering only ~26/49 `extension/bin/*.js`) is replaced with directory-glob `chmod +x "$EXTENSION_ROOT/extension/bin/"*.js`. Post-install verification loop (`R-ICM-2`) asserts every `extension/bin/*.js` + `dispatch.js` is executable; fail-loud on regression. The 4 chmod 600/700 entries (audit_file ×2, activity dir) preserved per `R-ICM-3` and verified post-install. Regression coverage: `extension/tests/integration/install-chmod-coverage.test.js`. Trap-door pinned at `install.sh (R-ICM-1 chmod glob)`.
 5. **Subsystem CLAUDE.md drift.** *(PARTIAL)* anatomy-park created `extension/src/types/CLAUDE.md` from scratch; other subsystems may also be missing them. Audit the 5 subsystems under `extension/src/`.
 6. ~~**`/pickle-standup` output quality + accuracy.**~~ ✅ **CLOSED** by Theme A §L (`3574159d`) — noise filter + commit-LOA scan + repo discovery.
 7. **Recurring anatomy-park pipeline-killer (baseline staleness)** *(NEWLY-CLOSED)* — `b0f5ceca` defers stale-refresh failures to post-commit recapture. Future anatomy-park runs survive transient stale-baseline conditions.
@@ -300,8 +301,8 @@ Inventory verified by Explore agent 2026-05-07. Closed/shipped PRDs are now in `
 
 | # | Action | Why |
 |---|---|---|
-| 7 | `/anatomy-park TARGET=/Users/.../pickle-rick-claude/bin` (repo root /bin/) | Open Finding #3 — 6 release-critical scripts never audited |
-| 8 | Replace `install.sh` chmod block with directory-glob or manifest | Open Finding #4 — prevents future filemode regressions |
+| 7 | ~~`/anatomy-park TARGET=…/pickle-rick-claude/bin`~~ | ✅ Closed by 2026-05-07-deferred-slots Slot L (`1c3e4c27`) |
+| 8 | ~~Replace `install.sh` chmod block with directory-glob or manifest~~ | ✅ Closed by 2026-05-07-deferred-slots Slot K (`ce578369`) |
 | 9 | Audit subsystem CLAUDE.md drift across `extension/src/{bin,hooks,lib,services,types}` | Open Finding #5 — partial; types/CLAUDE.md created during anatomy-park, others may be missing |
 
 ### Follow-up bundle (P2 quality + multi-repo, queued after deferred-slots)
