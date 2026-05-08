@@ -131,7 +131,7 @@ tmux send-keys -t <name>:0 "bash '${SESSION_ROOT}/launch.sh' '${SESSION_ROOT}'" 
 
 7. Report: session name, `tmux attach -t <name>`, window layout (monitor: Ctrl+B 1; runner: Ctrl+B 0), cancel: `cd <working_dir> && /eat-pickle`, emergency: `tmux kill-session -t <name>`, state path.
 
-Output: `<promise>TASK_COMPLETED</promise>`
+Output: `<promise` + `>TASK_COMPLETED</promise>`
 
 ### Option B: Interactive mode (`--interactive` flag present)
 
@@ -179,7 +179,7 @@ Repeat until converged or max iterations reached:
 
 1. Update `microverse.json` with final status and `exit_reason`
 2. Print summary: total iterations, baseline score, best score, exit reason, accepted/reverted counts
-3. Output: `<promise>TASK_COMPLETED</promise>`
+3. Output: `<promise` + `>TASK_COMPLETED</promise>`
 
 ## Rules
 

@@ -8,12 +8,13 @@ import { PROMISE_TOKENS, FORBIDDEN_WORKER_TOKENS } from '../services/promise-tok
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const COMMANDS_DIR = path.resolve(__dirname, '..', '..', '.claude', 'commands');
+const DEPLOYED_DIR = process.env.HOME ? path.join(process.env.HOME, '.claude', 'commands') : null;
 
 const TEMPLATES = [
   'pickle.md',
   'meeseeks.md',
   'szechuan-sauce.md',
-  'microverse.md',
+  'pickle-microverse.md',
   'pickle-tmux.md',
 ];
 
@@ -70,4 +71,26 @@ for (const filename of WORKER_TEMPLATES) {
       );
     }
   });
+}
+
+// AC-CCPL-07: deployed copies under ~/.claude/commands/ must also be free of bare tokens.
+// Skip entire block when DEPLOYED_DIR is absent (CI environments without a home install).
+if (DEPLOYED_DIR && existsSync(DEPLOYED_DIR)) {
+  for (const filename of [...TEMPLATES, ...WORKER_TEMPLATES]) {
+    test(`deployed-template-no-bare-tokens: ${filename}`, () => {
+      const filePath = path.join(DEPLOYED_DIR, filename);
+      if (!existsSync(filePath)) {
+        return;
+      }
+      const stripped = stripHtmlComments(readFileSync(filePath, 'utf8'));
+      const tokensToCheck = WORKER_TEMPLATES.includes(filename) ? FORBIDDEN_WORKER_TOKENS : PROMISE_TOKENS;
+      for (const token of tokensToCheck) {
+        const literal = `<promise>${token}</promise>`;
+        assert.ok(
+          !stripped.includes(literal),
+          `deployed ${filename}: bare promise token found — run bash install.sh to redeploy: ${literal}`,
+        );
+      }
+    });
+  }
 }

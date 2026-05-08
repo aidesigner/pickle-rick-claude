@@ -63,10 +63,10 @@ function extractCodexBlockContent(lines) {
  * Extracts text content from assistant messages.
  *
  * Detection precedence:
- * 1. Stream-json: >=1 line is a {type:'assistant',...} JSON object. Only
- *    non-assistant typed objects ({type:'system'}, {type:'user'}) and bare
- *    JSON values do NOT trigger this mode. Extracts only assistant text
- *    blocks and result blocks; all other JSON types are skipped.
+ * 1. Stream-json: >=1 line is a {type:'assistant',...} JSON object. Non-assistant
+ *    typed objects ({type:'system'}, {type:'user'}) and bare JSON values do NOT
+ *    trigger this mode. Extracts only assistant text blocks and result blocks;
+ *    all other JSON types are skipped.
  * 2. Codex plain-text: >=1 line matches CODEX_DELIMITER_RE. Extracts content
  *    between 'codex' delimiters only; user/exec/tokens/reasoning/tool_call
  *    blocks are dropped. Multi-turn: union of all surviving codex blocks.
