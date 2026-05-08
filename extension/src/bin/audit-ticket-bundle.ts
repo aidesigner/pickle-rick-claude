@@ -13,7 +13,8 @@ const PATH_LIKELY_RE =
   /^(?:extension|src|tests|prds|scripts|services|hooks|bin|types|\.claude)\//;
 const PATH_HAS_EXT_RE = /\/[^\s/]+\.[a-zA-Z][a-zA-Z0-9]+$/;
 const DISPOSITION_FILE_REL = path.join('src', 'data', 'bundle-disposition-2026-05-04.json');
-const EXEMPT_DISPOSITIONS = new Set(['REGRESSION-TEST-ONLY', 'DROP']);
+const DISPOSITION_FILE_REL_2 = path.join('src', 'data', 'bundle-disposition-2026-05-07-deferred-slots.json');
+const EXEMPT_DISPOSITIONS = new Set(['REGRESSION-TEST-ONLY', 'DROP', 'IMPLEMENT-but-no-source-PRD-for-K-L']);
 
 type Severity = 'fatal' | 'warning' | 'info';
 type DefectClass =
@@ -164,9 +165,13 @@ function findExtensionDir(scriptDir: string): string | null {
 function loadDispositions(scriptDir: string): { table: Record<string, string>; loaded: boolean } {
   const ext = findExtensionDir(scriptDir);
   if (ext === null) return { table: {}, loaded: false };
-  const data = readJsonOrNull<Record<string, string>>(path.join(ext, DISPOSITION_FILE_REL));
-  if (data === null || typeof data !== 'object') return { table: {}, loaded: false };
-  return { table: data, loaded: true };
+  const data1 = readJsonOrNull<Record<string, string>>(path.join(ext, DISPOSITION_FILE_REL));
+  const data2 = readJsonOrNull<Record<string, string>>(path.join(ext, DISPOSITION_FILE_REL_2));
+  if (data1 === null && data2 === null) return { table: {}, loaded: false };
+  const merged: Record<string, string> = {};
+  if (data1 !== null && typeof data1 === 'object') Object.assign(merged, data1);
+  if (data2 !== null && typeof data2 === 'object') Object.assign(merged, data2);
+  return { table: merged, loaded: true };
 }
 
 function gitListFiles(workingDir: string): Set<string> {
@@ -595,7 +600,7 @@ function buildContext(sessionDir: string, scriptDir: string): AuditContext {
   const { table, loaded } = loadDispositions(scriptDir);
   if (!loaded) {
     process.stderr.write(
-      `[audit-ticket-bundle] WARN: disposition table missing at ${DISPOSITION_FILE_REL}; running without exemption\n`,
+      `[audit-ticket-bundle] WARN: no disposition tables found at ${DISPOSITION_FILE_REL} or ${DISPOSITION_FILE_REL_2}; running without exemption\n`,
     );
   }
   return {
@@ -654,9 +659,10 @@ function usage(): void {
       '  path-drift, self-reference, missing-deps, wrong-HEAD-assumptions,\n' +
       '  cross-doc-naming, cross-doc-naming-drift, hallucinated-premise, literal-value-drift,\n' +
       '  missing-audit-comment.\n\n' +
-      'Reads R-BUNDLE-DISPO-1 disposition table at extension/src/data/bundle-disposition-2026-05-04.json.\n' +
-      'Tickets whose mapped_requirements are all REGRESSION-TEST-ONLY or DROP are EXEMPT\n' +
-      'from the hallucinated-premise check (R15 mitigation).\n\n' +
+      'Reads R-BUNDLE-DISPO disposition tables (bundle-disposition-2026-05-04.json and\n' +
+      'bundle-disposition-2026-05-07-deferred-slots.json) from extension/src/data/ and merges them.\n' +
+      'Tickets whose mapped_requirements are all REGRESSION-TEST-ONLY, DROP, or\n' +
+      'IMPLEMENT-but-no-source-PRD-for-K-L are EXEMPT from the hallucinated-premise check.\n\n' +
       'Writes manifest to <session-dir>/audit-ticket-bundle.json (R-TAQ-2b schema v1).\n\n' +
       'Exit codes:\n' +
       '  0  No findings\n' +

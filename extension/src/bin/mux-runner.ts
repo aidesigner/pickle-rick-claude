@@ -1716,6 +1716,12 @@ const CODEX_CLI_ERROR_PATTERNS: readonly RegExp[] = [
   /\b401\s+Unauthorized\b/i,
 ];
 
+// R-BUNDLE-1: session-hash allowlist for bundle_bootstrap_mode auto-skip.
+// Extend this table when a new bundle needs both gates bypassed at launch.
+const BUNDLE_BOOTSTRAP_ALLOWLIST: Record<string, Set<string>> = {
+  '2026-05-07-deferred-slots': new Set(['2026-05-07-488e6e1f']),
+};
+
 export type SparkSmokeGateAction = 'allow' | 'bypass' | 'halt';
 export type SparkSmokeGateRule =
   | 'gate_inactive'
@@ -2892,6 +2898,7 @@ async function runMuxRunnerMain() {
   let readinessGateChecked = false;
   let ticketAuditGateChecked = false;
   let smokeGateBypassEmitted = false;
+  let bundleBootstrapApplied = false;
   while (true) {
     let state: State;
     try {
@@ -3051,6 +3058,37 @@ async function runMuxRunnerMain() {
     if (templateName !== 'meeseeks.md' && applyAllTicketsDoneCompletion(statePath, sessionDir, iteration, log)) {
       exitReason = 'success';
       break;
+    }
+
+    // R-BUNDLE-1: bundle bootstrap mode — auto-apply both skip reasons for allowlisted sessions.
+    // Updates local state.flags so the two gate checks below read the derived skip reasons.
+    if (!bundleBootstrapApplied && curIter === 0) {
+      bundleBootstrapApplied = true;
+      const bootstrapMode = typeof state.flags?.bundle_bootstrap_mode === 'string'
+        ? (state.flags.bundle_bootstrap_mode as string)
+        : null;
+      if (bootstrapMode !== null && BUNDLE_BOOTSTRAP_ALLOWLIST[bootstrapMode]?.has(path.basename(sessionDir))) {
+        const derivedReason = `bundle_bootstrap_mode=${bootstrapMode}`;
+        const existingFlags = state.flags ?? {};
+        const skipReadinessReason = typeof existingFlags.skip_readiness_reason === 'string' && existingFlags.skip_readiness_reason.length > 0
+          ? existingFlags.skip_readiness_reason
+          : derivedReason;
+        const skipTicketAuditReason = typeof existingFlags.skip_ticket_audit_reason === 'string' && existingFlags.skip_ticket_audit_reason.length > 0
+          ? existingFlags.skip_ticket_audit_reason
+          : derivedReason;
+        state = { ...state, flags: { ...existingFlags, skip_readiness_reason: skipReadinessReason, skip_ticket_audit_reason: skipTicketAuditReason } };
+        logActivity({
+          event: 'bundle_bootstrap_exemption_applied',
+          source: 'pickle',
+          session: path.basename(sessionDir),
+          gate_payload: {
+            bundle_id: bootstrapMode,
+            skip_readiness_reason: skipReadinessReason,
+            skip_ticket_audit_reason: skipTicketAuditReason,
+          },
+        });
+        log(`bundle bootstrap mode applied: ${bootstrapMode} — both gates auto-skipped for session ${path.basename(sessionDir)}`);
+      }
     }
 
     if (!readinessGateChecked && curIter === 0) {
