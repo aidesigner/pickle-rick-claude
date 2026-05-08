@@ -89,7 +89,7 @@ test('package test scripts delegate to tier discovery', () => {
 
   assert.equal(pkg.scripts.test, 'npm run test:fast && npm run test:integration');
   assert.equal(pkg.scripts['pretest:fast'], 'bash scripts/audit-test-tiers.sh && bash scripts/audit-test-isolation.sh');
-  assert.equal(pkg.scripts['test:fast'], 'node bin/test-runner.js --tier fast');
+  assert.equal(pkg.scripts['test:fast'], 'node bin/test-runner.js --tier fast --test-concurrency=8');
   assert.equal(pkg.scripts['test:integration'], 'npm run test:integration:parallel && npm run test:integration:serial');
   assert.equal(pkg.scripts['test:integration:parallel'], 'node bin/test-runner.js --tier integration --manifest tests/integration/.serial-tests.json --manifest-mode exclude');
   assert.equal(pkg.scripts['test:integration:serial'], 'node bin/test-runner.js --tier integration --manifest tests/integration/.serial-tests.json --manifest-mode include --test-concurrency=1');

@@ -18,7 +18,7 @@
     "calibrate:archaeology": "node bin/calibrate.js archaeology --check",
     "test": "npm run test:fast && npm run test:integration",
     "pretest:fast": "bash scripts/audit-test-tiers.sh && bash scripts/audit-test-isolation.sh",
-    "test:fast": "node bin/test-runner.js --tier fast",
+    "test:fast": "node bin/test-runner.js --tier fast --test-concurrency=8",
     "coverage": "c8 --reporter=html --reporter=json-summary --report-dir=coverage node bin/test-runner.js --tier fast",
     "coverage:delta": "bash scripts/coverage-delta.sh",
     "test:integration": "npm run test:integration:parallel && npm run test:integration:serial",
