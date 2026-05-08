@@ -397,44 +397,54 @@ for f in "$SCRIPT_DIR"/extension/szechuan-sauce-*-principles.md "$SCRIPT_DIR/ext
   [ -f "$f" ] && cp "$f" "$EXTENSION_ROOT/$(basename "$f")"
 done
 
-# --- PERMISSIONS (files with shebangs that may be invoked directly) ---
+# --- PERMISSIONS (glob; NOT hand-maintained — see extension/CLAUDE.md trap-door) ---
+chmod +x "$EXTENSION_ROOT/extension/bin/"*.js
 chmod +x "$EXTENSION_ROOT/extension/hooks/dispatch.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/setup.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/cancel.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/spawn-morty.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/worker-setup.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/jar-runner.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/status.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/retry-ticket.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/mux-runner.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/microverse-runner.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/init-microverse.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/resolve-scope.js"
+chmod +x "$EXTENSION_ROOT/extension/scripts/tmux-monitor.sh"
 ln -sf "$EXTENSION_ROOT/extension/bin/mux-runner.js" "$EXTENSION_ROOT/extension/bin/tmux-runner.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/monitor.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/log-watcher.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/morty-watcher.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/spawn-refinement-team.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/get-session.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/update-state.js"
-[ -f "$EXTENSION_ROOT/extension/bin/validate-teams-ticket.js" ] && chmod +x "$EXTENSION_ROOT/extension/bin/validate-teams-ticket.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/log-activity.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/log-commit.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/prune-activity.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/standup.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/metrics.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/circuit-reset.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/sync-schema.js"
 # Make tsc resolvable from the repo root for sync-schema validation (npx tsc from parent dir)
 mkdir -p "$SCRIPT_DIR/node_modules/.bin"
 ln -sf "$SCRIPT_DIR/extension/node_modules/.bin/tsc" "$SCRIPT_DIR/node_modules/.bin/tsc"
-chmod +x "$EXTENSION_ROOT/extension/bin/dot-builder-cli.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/dot-builder.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/plumbus-frame-analyzer.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/check-gate.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/finalize-gate.js"
-chmod +x "$EXTENSION_ROOT/extension/bin/spawn-gate-remediator.js"
-chmod +x "$EXTENSION_ROOT/extension/scripts/tmux-monitor.sh"
+
+# --- POST-INSTALL chmod VERIFICATION (R-ICM-2) ---
+_chmod_ok=1
+for _js in "$EXTENSION_ROOT/extension/bin/"*.js; do
+  [ -e "$_js" ] || continue
+  if ! test -x "$_js"; then
+    echo "❌ not executable after install: $_js" >&2
+    _chmod_ok=0
+  fi
+done
+if ! test -x "$EXTENSION_ROOT/extension/hooks/dispatch.js"; then
+  echo "❌ not executable after install: $EXTENSION_ROOT/extension/hooks/dispatch.js" >&2
+  _chmod_ok=0
+fi
+if [ "$_chmod_ok" -eq 0 ]; then
+  echo "❌ Post-install chmod verification FAILED" >&2
+  exit 1
+fi
+echo "OK chmod"
+
+# --- POST-INSTALL MODE VERIFICATION (R-ICM-3) ---
+_get_mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null; }
+_mode_fail=0
+_act_mode="$(_get_mode "$EXTENSION_ROOT/activity")"
+if [ "$_act_mode" != "700" ]; then
+  echo "❌ activity dir mode is '$_act_mode', expected 700" >&2
+  _mode_fail=1
+fi
+if [ -e "$EXTENSION_ROOT/deploy-audit.log" ]; then
+  _audit_mode="$(_get_mode "$EXTENSION_ROOT/deploy-audit.log")"
+  if [ "$_audit_mode" != "600" ]; then
+    echo "❌ deploy-audit.log mode is '$_audit_mode', expected 600" >&2
+    _mode_fail=1
+  fi
+fi
+if [ "$_mode_fail" -eq 1 ]; then
+  echo "❌ Post-install mode verification FAILED" >&2
+  exit 1
+fi
+echo "OK modes"
 
 # --- INTERNAL TEMPLATES (hidden from slash command list) ---
 if [ -d "$SCRIPT_DIR/templates" ]; then

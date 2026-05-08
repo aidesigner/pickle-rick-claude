@@ -74,7 +74,9 @@ test('deploy-lifecycle soak: package.json version remains stable', { timeout: 2 
     });
     assert.equal(install.status, 0, `install.sh failed: ${install.stderr}`);
 
-    const pkgjsonPath = path.join(tmpDir, '.claude', 'pickle-rick', 'extension', 'package.json');
+    // install.sh --prefix <tmpDir> deposits directly into <tmpDir>; package.json
+    // lives at <tmpDir>/extension/package.json (NOT under .claude/pickle-rick/).
+    const pkgjsonPath = path.join(tmpDir, 'extension', 'package.json');
     const expectedVersion = JSON.parse(fs.readFileSync(pkgjsonPath, 'utf-8')).version;
     assert.ok(typeof expectedVersion === 'string' && expectedVersion.length > 0,
         'installed package.json must have a version');
