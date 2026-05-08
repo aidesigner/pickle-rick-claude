@@ -16,7 +16,7 @@ import {
 import { spawn, spawnSync } from 'child_process';
 import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact, type Backend, type BackendResolutionSource, type LastToolErrorState, type State } from '../types/index.js';
 import { getDiffFiles, getHeadSha, listWorkingTreeDirtyPaths, resetToSha, updateTicketFrontmatter, updateTicketStatus } from '../services/git-utils.js';
-import { assertBackendPreSpawn, buildWorkerInvocation, isBackend, backendEnvOverrides, resolveWorkerBackendFromStateFile } from '../services/backend-spawn.js';
+import { assertBackendPreSpawn, buildWorkerInvocation, isBackend, backendEnvOverrides, resolveWorkerBackendFromState, resolveWorkerBackendFromStateFile } from '../services/backend-spawn.js';
 import { scrubForbiddenWorkerTokens } from '../services/promise-tokens.js';
 import { StateManager, writeActivityEntry } from '../services/state-manager.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
@@ -825,6 +825,24 @@ function resolveWorkerBackendBase(sessionRoot: string): BackendResolution {
   };
 }
 
+/**
+ * Variant of `resolveWorkerBackendBase` that takes an already-loaded `State`
+ * object instead of re-reading the state file from disk. Each `_sm.read()`
+ * call triggers `recoverable-json` tmp recovery which `readdirSync`'s the
+ * state's data root; on macOS test fixtures rooted at `/var/folders/.../T`
+ * (the system temp dir with 70k+ entries) that single readdir takes ~6.7s,
+ * so the pre-spawn flow's cumulative reads can blow past the test's 45s
+ * spawnSync timeout. Manager-spawn callers without a pre-loaded state still
+ * use the file-reading variant above.
+ */
+function resolveWorkerBackendBaseFromState(state: State | null): BackendResolution {
+  const resolved = resolveWorkerBackendFromState(state);
+  return {
+    backend: resolved.backend,
+    source: resolved.source === 'env_lock' ? 'refinement-lock' : 'state',
+  };
+}
+
 function applyHeuristicBackendRouting(
   sessionBackend: BackendResolution,
   ticketInfo: ReturnType<typeof parseTicketFrontmatter> | null
@@ -848,6 +866,7 @@ function routeBackend(
   sessionRoot: string,
   ticketInfo: ReturnType<typeof parseTicketFrontmatter> | null,
   backendOverride: Backend | null,
+  preloadedState?: State | null,
 ): BackendResolution {
   // Refinement lock is non-overridable. Preserves the
   // refinement-team-claude-only carve-out (R-XBL-2 spec).
@@ -860,7 +879,15 @@ function routeBackend(
   if (backendOverride) {
     return { backend: backendOverride, source: 'cli-flag-override' };
   }
-  return applyHeuristicBackendRouting(resolveWorkerBackendBase(sessionRoot), ticketInfo);
+  // When the caller has already read state via StateManager, prefer the
+  // in-memory variant to avoid a second `_sm.read()`. Each redundant read
+  // re-runs `recoverable-json` tmp recovery (full `readdirSync` of the
+  // data root) which is the dominant cost on macOS test fixtures rooted
+  // in `/var/folders/.../T`.
+  const base = preloadedState !== undefined
+    ? resolveWorkerBackendBaseFromState(preloadedState)
+    : resolveWorkerBackendBase(sessionRoot);
+  return applyHeuristicBackendRouting(base, ticketInfo);
 }
 
 /**
@@ -1131,8 +1158,13 @@ async function main() {
   }
 
   const statePath = path.join(parsed.sessionRoot, 'state.json');
-  const workerBackendResolution = resolveWorkerBackendFromStateFile(statePath);
-  const { backend, source } = routeBackend(parsed.sessionRoot, ticketInfo, parsed.backendOverride);
+  // Reuse `runtime.state` (already loaded via `_sm.read()` in `readSessionRuntime`)
+  // for downstream backend resolution. Each fresh `_sm.read()` re-runs
+  // `recoverable-json` tmp recovery, which `readdirSync`'s the data root;
+  // on macOS test fixtures landing in `/var/folders/.../T` (~70k entries)
+  // a single readdir is ~6.7s and the pre-spawn flow used to do three of them.
+  const workerBackendResolution = resolveWorkerBackendFromState(runtime.state);
+  const { backend, source } = routeBackend(parsed.sessionRoot, ticketInfo, parsed.backendOverride, runtime.state);
   const preSpawn = assertBackendPreSpawn({
     statePath,
     resolvedBackend: backend,
