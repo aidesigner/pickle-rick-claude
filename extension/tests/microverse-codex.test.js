@@ -4,11 +4,10 @@
  *
  * Codex backend coverage for microverse's LLM judge and gap-analysis baseline.
  *
- * Guards against the "judge runs with full FS write" regression: the codex
- * judge MUST use `codex exec -s read-only --ignore-rules --ignore-user-config`
- * and MUST NOT include `--dangerously-bypass-approvals-and-sandbox` — that
- * flag grants the judge rm -rf on the repo and was the bug routed through
- * buildWorkerInvocation prior to switching to buildJudgeInvocation.
+ * Guards against the "judge uses codex path when state.backend=codex" regression
+ * (R-SCJM-2): the judge MUST always spawn via the claude binary, even when the
+ * session backend is codex. codex on ChatGPT accounts rejects claude-sonnet-4-6
+ * causing silent false-convergence (BestScore: 0).
  *
  * Also guards against the "gap-analysis baseline reads stale state" bug: if
  * the user flips state.backend between session start and gap-analysis, the
@@ -26,7 +25,7 @@ import { resolveBackend } from '../services/backend-spawn.js';
 
 // --- Bug 1 coverage: measureLlmMetric read-only sandboxing ---
 
-test('measureLlmMetric codex backend uses read-only sandbox (no bypass flag)', () => {
+test('measureLlmMetric codex backend: judge always spawns via claude binary (R-SCJM-2)', () => {
     const orig = _deps.execFileSync;
     let captured;
     _deps.execFileSync = (cmd, args) => {
@@ -39,15 +38,16 @@ test('measureLlmMetric codex backend uses read-only sandbox (no bypass flag)', (
             undefined, undefined, undefined, undefined,
             'codex',
         );
-        assert.equal(captured.cmd, 'codex', 'should spawn codex binary');
-        assert.ok(captured.args.includes('exec'), 'should pass exec subcommand');
-        assert.ok(captured.args.includes('-s'), 'should pass sandbox flag');
-        assert.ok(captured.args.includes('read-only'), 'should use read-only sandbox');
-        assert.ok(captured.args.includes('--ignore-rules'), 'should ignore project rules');
-        assert.ok(captured.args.includes('--ignore-user-config'), 'should ignore user config');
+        // Judge MUST use claude even when session backend is codex (R-SCJM-2).
+        // codex on ChatGPT accounts rejects claude-sonnet-4-6, causing silent
+        // false-convergence. The fix: judge always spawns via claude binary.
+        assert.equal(captured.cmd, 'claude', 'judge must spawn claude binary even when session backend=codex');
+        assert.ok(captured.args.includes('--allowedTools'), 'claude judge must set tool allowlist');
+        assert.ok(captured.args.includes('Read,Glob,Grep'), 'claude judge is restricted to read-only tools');
+        assert.ok(captured.args.includes('--no-session-persistence'), 'judge sessions are ephemeral');
         assert.ok(
             !captured.args.includes('--dangerously-bypass-approvals-and-sandbox'),
-            'judge MUST NOT have write/shell access — bypass flag is a critical regression',
+            'judge MUST NOT have write/shell access',
         );
         assert.deepEqual(result, { raw: '42', score: 42 });
     } finally {
@@ -55,7 +55,7 @@ test('measureLlmMetric codex backend uses read-only sandbox (no bypass flag)', (
     }
 });
 
-test('measureLlmMetric codex inlines system prompt as prefix (no --system-prompt flag)', () => {
+test('measureLlmMetric codex backend: judge uses --system-prompt flag (claude path)', () => {
     const orig = _deps.execFileSync;
     let captured;
     _deps.execFileSync = (cmd, args) => {
@@ -68,26 +68,24 @@ test('measureLlmMetric codex inlines system prompt as prefix (no --system-prompt
             undefined, undefined, undefined, undefined,
             'codex',
         );
+        // Judge uses claude path, which threads --system-prompt and -p flags
+        // (not codex inline-prefix style).
+        assert.equal(captured.cmd, 'claude', 'judge must use claude binary');
+        const sysIdx = captured.args.indexOf('--system-prompt');
+        assert.ok(sysIdx >= 0, 'claude judge threads --system-prompt');
         assert.ok(
-            !captured.args.includes('--system-prompt'),
-            'codex exec does not expose --system-prompt — must inline instead',
+            captured.args[sysIdx + 1].includes('precise scoring judge'),
+            'system prompt value should be the judge system prompt',
         );
-        // Composed prompt is passed after `--`; verify judge system prompt
-        // is prefixed onto the user prompt.
-        const dashDashIdx = captured.args.indexOf('--');
-        assert.ok(dashDashIdx >= 0, 'codex path should terminate flags with --');
-        const composedPrompt = captured.args[dashDashIdx + 1];
-        assert.ok(
-            composedPrompt.includes('precise scoring judge'),
-            'system prompt should be inlined as prefix',
-        );
-        assert.ok(composedPrompt.includes('fix bugs'), 'user prompt should follow');
+        const pIdx = captured.args.lastIndexOf('-p');
+        assert.ok(pIdx >= 0, 'claude judge passes prompt via -p');
+        assert.ok(captured.args[pIdx + 1].includes('fix bugs'), 'user prompt passed via -p');
     } finally {
         _deps.execFileSync = orig;
     }
 });
 
-test('measureLlmMetric codex omits default claude judge model', () => {
+test('measureLlmMetric codex backend: judge always includes claude-sonnet-4-6 model (R-SCJM-2)', () => {
     const orig = _deps.execFileSync;
     let captured;
     _deps.execFileSync = (cmd, args) => {
@@ -100,11 +98,16 @@ test('measureLlmMetric codex omits default claude judge model', () => {
             undefined, undefined, undefined, undefined,
             'codex',
         );
-        // 'claude-sonnet-4-6' is the claude default and is meaningless to
-        // codex. The runner must not pass it via -m.
-        assert.ok(
-            !captured.args.includes('claude-sonnet-4-6'),
-            'codex must not receive claude model defaults',
+        // Judge always uses claude binary with DEFAULT_JUDGE_MODEL, even when
+        // session backend=codex. The old codex path omitted -m; now judge
+        // always passes --model claude-sonnet-4-6 through the claude path.
+        assert.equal(captured.cmd, 'claude', 'judge must use claude binary');
+        const modelIdx = captured.args.indexOf('--model');
+        assert.ok(modelIdx >= 0, 'claude judge must pass --model flag');
+        assert.equal(
+            captured.args[modelIdx + 1],
+            'claude-sonnet-4-6',
+            'judge always uses DEFAULT_JUDGE_MODEL regardless of session backend',
         );
     } finally {
         _deps.execFileSync = orig;

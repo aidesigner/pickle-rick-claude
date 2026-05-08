@@ -1303,23 +1303,19 @@ function measureLlmMetricAttempt(
   judgeContextPath?: string,
   backend: Backend = 'claude',
 ): JudgeMeasurementAttempt {
-  // Codex uses a different model vocabulary than claude. The default
-  // DEFAULT_JUDGE_MODEL ('claude-sonnet-4-6') is meaningless to `codex exec`,
-  // so when routing through codex we omit the -m flag and let codex pick.
-  const usingClaudeDefault = backend === 'claude';
-  const model = judgeModel || (usingClaudeDefault ? DEFAULT_JUDGE_MODEL : undefined);
+  // The judge always runs via the claude binary, even when state.backend=codex.
+  // codex on ChatGPT accounts rejects claude-sonnet-4-6 as unsupported, causing
+  // silent false-convergence (BestScore: 0). Worker iteration spawns continue
+  // to honor state.backend; only the judge is pinned to claude.
+  const model = judgeModel || DEFAULT_JUDGE_MODEL;
   const timeout = Math.max(timeoutSeconds, DEFAULT_JUDGE_TIMEOUT);
   const userPrompt = buildJudgePrompt(goal, cwd, history, prdPath, judgeContextPath);
 
-  // buildJudgeInvocation enforces read-only sandboxing for BOTH backends:
-  // claude gets --allowedTools Read,Glob,Grep + --no-session-persistence and
-  // threads --system-prompt; codex gets `-s read-only --ignore-rules
-  // --ignore-user-config --ephemeral` with the system prompt inlined as a
-  // prefix (codex exec has no --system-prompt flag). The codex path
-  // explicitly DROPS --dangerously-bypass-approvals-and-sandbox — the judge
-  // MUST NOT have write/shell access. Do NOT reintroduce buildWorkerInvocation
-  // here; that path grants full FS write on codex.
-  const invocation = buildJudgeInvocation(backend, {
+  // Always use the claude judge path: --allowedTools Read,Glob,Grep +
+  // --no-session-persistence + --system-prompt. The judge MUST NOT write,
+  // edit, or execute. Do NOT pass buildWorkerInvocation here — that grants
+  // full FS write access.
+  const invocation = buildJudgeInvocation('claude', {
     prompt: userPrompt,
     addDirs: [cwd],
     model,
@@ -1333,7 +1329,7 @@ function measureLlmMetricAttempt(
       timeout: timeout * 1000,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, ...backendEnvOverrides(backend) },
+      env: { ...process.env, ...backendEnvOverrides('claude') },
     }).trim();
     const score = extractScore(output);
     if (score === null) {
@@ -1346,7 +1342,7 @@ function measureLlmMetricAttempt(
     return { metric: { raw: output, score } };
   } catch (err) {
     const msg = safeErrorMessage(err);
-    process.stderr.write(`[microverse] measureLlmMetric failed (backend=${backend}, model=${model ?? 'default'}): ${msg}\n`);
+    process.stderr.write(`[microverse] measureLlmMetric failed (judge_backend=claude, session_backend=${backend}, model=${model}): ${msg}\n`);
     const failureKind =
       isMissingCliError(err) ? 'cli_missing'
         : /\bETIMEDOUT\b/i.test(msg) ? 'timeout'
@@ -1355,14 +1351,14 @@ function measureLlmMetricAttempt(
   }
 }
 
-function probeJudgeCliAvailability(backend: Backend, cwd: string): { ok: true } | { ok: false; message: string } {
+function probeJudgeCliAvailability(cwd: string): { ok: true } | { ok: false; message: string } {
   try {
-    _deps.execFileSync(backend, ['--version'], {
+    _deps.execFileSync('claude', ['--version'], {
       cwd,
       timeout: 50,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, ...backendEnvOverrides(backend) },
+      env: { ...process.env, ...backendEnvOverrides('claude') },
     });
     return { ok: true };
   } catch (err) {
@@ -1380,7 +1376,7 @@ async function measureLlmMetricWithBackoff(
   judgeContextPath?: string,
   backend: Backend = 'claude',
 ): Promise<JudgeMeasurementResult> {
-  const probe = probeJudgeCliAvailability(backend, cwd);
+  const probe = probeJudgeCliAvailability(cwd);
   if (!probe.ok) {
     return {
       metric: null,

@@ -65,8 +65,9 @@ function writeChildRunner(root) {
     `runner._deps.sleep = async () => {};`,
     `runner._deps.getHeadSha = () => 'fixture-sha';`,
     `runner._deps.execFileSync = (cmd, args) => {`,
-    `  if (cmd === 'codex') {`,
-    `    fs.writeFileSync(path.join(sessionDir, 'captured-codex-argv.json'), JSON.stringify(args, null, 2));`,
+    `  // Judge always uses claude binary even when session backend=codex (R-SCJM-2).`,
+    `  if (cmd === 'claude') {`,
+    `    fs.writeFileSync(path.join(sessionDir, 'captured-judge-argv.json'), JSON.stringify(args, null, 2));`,
     `    throw new Error('fixture judge unreachable');`,
     `  }`,
     `  return '';`,
@@ -84,11 +85,13 @@ function writeChildRunner(root) {
   return childPath;
 }
 
-test('codex default judge argv omits -m pair when judge throws twice', () => {
+test('codex backend: judge uses claude binary with default model (R-SCJM-2)', () => {
+  // Regression guard for R-SCJM-2: with session backend=codex, the judge
+  // must spawn via claude (not codex) and always include --model claude-sonnet-4-6.
   const originalExec = _deps.execFileSync;
   const capturedArgv = [];
   _deps.execFileSync = (cmd, args) => {
-    assert.equal(cmd, 'codex');
+    assert.equal(cmd, 'claude', `judge must use claude binary even when session backend=codex, got: ${cmd}`);
     capturedArgv.push(args);
     throw new Error('fixture judge unreachable');
   };
@@ -101,8 +104,9 @@ test('codex default judge argv omits -m pair when judge throws twice', () => {
     assert.equal(second, null);
     assert.equal(capturedArgv.length, 2);
     for (const argv of capturedArgv) {
-      assert.equal(argv.includes('-m'), false, `codex default judge argv must not include -m: ${JSON.stringify(argv)}`);
-      assert.equal(argv.includes('claude-sonnet-4-6'), false, `codex argv must not include claude default model: ${JSON.stringify(argv)}`);
+      const modelIdx = argv.indexOf('--model');
+      assert.ok(modelIdx >= 0, `claude judge must include --model flag: ${JSON.stringify(argv)}`);
+      assert.equal(argv[modelIdx + 1], 'claude-sonnet-4-6', `judge must use DEFAULT_JUDGE_MODEL: ${JSON.stringify(argv)}`);
     }
   } finally {
     _deps.execFileSync = originalExec;
