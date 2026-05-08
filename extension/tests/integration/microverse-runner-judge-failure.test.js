@@ -232,3 +232,129 @@ test('convergence guard fires when all history scores are null (R-SCJM-3)', asyn
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('judge failure with Codex ChatGPT error exits judge_unreachable with non-zero status (R-SCJM-4)', () => {
+  // Regression guard for R-SCJM-4: when the judge spawn throws the literal
+  // Codex ChatGPT unsupported-model error twice (pre-seeded as null-score history),
+  // the runner must exit judge_unreachable with a non-zero status code.
+  const CODEX_CHATGPT_ERROR = 'claude-sonnet-4-6 model is not supported when using Codex with a ChatGPT account';
+
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mv-judge-chatgpt-error-'));
+  try {
+    const sessionDir = path.join(root, 'session');
+    const workingDir = makeGitRepo(root);
+    fs.mkdirSync(sessionDir, { recursive: true });
+
+    writeJson(path.join(sessionDir, 'state.json'), makeRunnerState(sessionDir, workingDir));
+
+    execFileSync(process.execPath, [
+      INIT_PATH,
+      sessionDir,
+      workingDir,
+      '--stall-limit',
+      '3',
+      '--convergence-mode',
+      'worker',
+      '--convergence-file',
+      'microverse-result.json',
+    ], { cwd: EXTENSION_ROOT, stdio: 'pipe' });
+
+    // LLM metric + worker mode + 2 null-score history entries representing the
+    // judge having thrown the Codex ChatGPT error twice in prior iterations.
+    const mv = createMicroverseState({
+      prdPath: 'prd.md',
+      metric: {
+        description: 'judge quality gate',
+        validation: 'echo judge',
+        type: 'llm',
+        timeout_seconds: 30,
+        tolerance: 0,
+      },
+      stallLimit: 3,
+      convergenceMode: 'worker',
+      convergenceFile: 'microverse-result.json',
+    });
+    mv.status = 'iterating';
+    mv.gap_analysis_path = 'gap.md';
+    mv.baseline_score = 0;
+    mv.convergence.history = [
+      {
+        iteration: 1,
+        metric_value: '',
+        score: null,
+        action: 'accept',
+        description: 'iter1: judge threw Codex ChatGPT error',
+        pre_iteration_sha: 'sha1',
+        timestamp: new Date().toISOString(),
+      },
+      {
+        iteration: 2,
+        metric_value: '',
+        score: null,
+        action: 'accept',
+        description: 'iter2: judge threw Codex ChatGPT error',
+        pre_iteration_sha: 'sha2',
+        timestamp: new Date().toISOString(),
+      },
+    ];
+    fs.writeFileSync(path.join(sessionDir, 'microverse.json'), JSON.stringify(mv, null, 2));
+
+    // Worker signals convergence; guard blocks it because all history scores are null.
+    writeJson(path.join(sessionDir, 'microverse-result.json'), { converged: true, reason: 'worker done' });
+
+    const childPath = path.join(root, 'run-chatgpt-error.mjs');
+    fs.writeFileSync(childPath, [
+      `import * as fs from 'node:fs';`,
+      `import * as path from 'node:path';`,
+      `const sessionDir = process.argv[2];`,
+      `const runner = await import(${JSON.stringify(pathToFileURL(RUNNER_PATH).href)});`,
+      `runner._deps.sleep = async () => {};`,
+      `runner._deps.getHeadSha = () => 'fixture-sha';`,
+      `// Stub: any claude invocation (probe or measurement) throws the literal Codex ChatGPT error.`,
+      `runner._deps.execFileSync = (cmd, _args) => {`,
+      `  if (cmd === 'claude') {`,
+      `    throw new Error(${JSON.stringify(CODEX_CHATGPT_ERROR)});`,
+      `  }`,
+      `  return '';`,
+      `};`,
+      `runner._deps.runIteration = async (_sessionDir, iteration) => {`,
+      `  fs.writeFileSync(path.join(_sessionDir, 'tmux_iteration_' + iteration + '.log'), 'fixture worker success\\n');`,
+      `  return { completion: 'success', timedOut: false, exitCode: 0, wallSeconds: 1 };`,
+      `};`,
+      `await runner.main(sessionDir);`,
+      '',
+    ].join('\n'));
+
+    const result = spawnSync(process.execPath, [childPath, sessionDir], {
+      cwd: EXTENSION_ROOT,
+      encoding: 'utf-8',
+      env: {
+        ...process.env,
+        PICKLE_DATA_ROOT: path.join(root, 'pickle-data'),
+      },
+    });
+
+    const combinedOutput = `${result.stdout}\n${result.stderr}`;
+
+    // (b) non-zero exit
+    assert.notEqual(result.status, 0, `expected non-zero exit; got ${result.status}\n${combinedOutput}`);
+
+    // (a) microverse.json records judge_unreachable
+    const finalMv = JSON.parse(fs.readFileSync(path.join(sessionDir, 'microverse.json'), 'utf-8'));
+    assert.equal(
+      finalMv.exit_reason,
+      'judge_unreachable',
+      `microverse.json.exit_reason: expected judge_unreachable, got ${finalMv.exit_reason}\n${combinedOutput}`,
+    );
+
+    // (c) state.json reflects the judge_unreachable terminal state
+    const finalState = JSON.parse(fs.readFileSync(path.join(sessionDir, 'state.json'), 'utf-8'));
+    assert.equal(
+      finalState.exit_reason,
+      'judge_unreachable',
+      `state.json.exit_reason: expected judge_unreachable, got ${finalState.exit_reason}\n${combinedOutput}`,
+    );
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
