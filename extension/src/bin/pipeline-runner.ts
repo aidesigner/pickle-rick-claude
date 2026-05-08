@@ -1649,6 +1649,101 @@ function finalizePipeline(
   process.exit(pipelineFailed ? PipelineRunnerExitCode.Failure : PipelineRunnerExitCode.Success);
 }
 
+type PhaseIterationOutcome =
+  | { action: 'continue' }
+  | { action: 'break'; phaseIncomplete?: boolean };
+
+function logPhaseHaltReason(
+  runtime: PipelineRuntime,
+  rawPhase: PhaseName,
+  exitCode: number,
+  log: (msg: string) => void,
+): void {
+  const haltMsg = `Phase ${rawPhase} failed (exit ${exitCode}) — stopping pipeline`;
+  if (exitCode === 0 || (rawPhase !== 'anatomy-park' && rawPhase !== 'szechuan-sauce')) {
+    log(haltMsg);
+    return;
+  }
+  try {
+    const runnerState = sm.read(runtime.statePath);
+    const exitReason = runnerState.exit_reason as MicroverseExitReason | null | undefined;
+    if (exitReason && isMicroverseFailureExit(exitReason)) {
+      log(`Phase ${rawPhase}: microverse exited with ${exitReason} — pipeline aborting (no finalize-gate)`);
+    } else {
+      log(haltMsg);
+    }
+  } catch {
+    log(haltMsg);
+  }
+}
+
+async function runPhaseIteration(
+  runtime: PipelineRuntime,
+  counters: PhaseCounters,
+  cancelMarker: string,
+  rawPhase: PhaseName,
+  index: number,
+  log: (msg: string) => void,
+): Promise<PhaseIterationOutcome> {
+  logPhaseStart(runtime, rawPhase, index);
+  writeRunningStatus(runtime, counters, rawPhase);
+  const result = await runConfiguredPhase(runtime, setupPhase(rawPhase, runtime.config), counters);
+  if (result.skipped) {
+    counters.skipped++;
+    writeRunningStatus(runtime, counters, null);
+    log(`Phase ${rawPhase} skipped (setup returned false)`);
+    return { action: 'continue' };
+  }
+  const exitCode = result.exitCode ?? 1;
+  log(`Phase ${rawPhase} exited with code ${exitCode}`);
+  const skipWarning = shouldSkipAnatomyPhaseWithWarning(rawPhase, {
+    exitCode,
+    stdout: '',
+    stderr: result.stderr ?? '',
+  }, runtime);
+  if (skipWarning) {
+    counters.skipped++;
+    writeRunningStatus(runtime, counters, null);
+    log(`phase_skipped_with_warning ${JSON.stringify({
+      phase: rawPhase,
+      exit_code: exitCode,
+      warning_class: skipWarning.warningClass,
+      detail: skipWarning.detail,
+    })}`);
+    return { action: 'continue' };
+  }
+  if (exitCode === PipelineRunnerExitCode.PhaseIncomplete) {
+    reportPhaseIncomplete(runtime, rawPhase);
+    return { action: 'break', phaseIncomplete: true };
+  }
+  if (shouldHaltAfterPhase(rawPhase, exitCode, runtime)) {
+    logPhaseHaltReason(runtime, rawPhase, exitCode, log);
+    return { action: 'break' };
+  }
+  const acGate = runAcPhaseGate({
+    sessionDir: runtime.sessionDir,
+    evaluationPhase: 'per-phase',
+    pipelinePhase: rawPhase,
+    cwd: runtime.workingDir,
+    stdout: (msg) => log(msg),
+    stderr: (msg) => log(msg),
+  });
+  writeWatcherLivenessArtifact(runtime.sessionDir, rawPhase);
+  if (acGate.status !== 'pass') {
+    log(`Phase ${rawPhase} AC gate failed — stopping pipeline`);
+    return { action: 'break' };
+  }
+  counters.completed++;
+  writeRunningStatus(runtime, counters, null);
+  // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
+  if (fs.existsSync(cancelMarker)) {
+    log('Pipeline cancelled (cancel marker found) — stopping');
+    return { action: 'break' };
+  }
+  log(`Phase ${rawPhase} completed successfully`);
+  return { action: 'continue' };
+}
+
 export async function main(sessionDir: string, opts: MainOpts = {}): Promise<void> {
   try {
     assertSchemaVersionDeployParity();
@@ -1677,77 +1772,11 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
         log(`Unknown phase: ${String(rawPhase)} — skipping`);
         continue;
       }
-      logPhaseStart(runtime, rawPhase, i);
-      writeRunningStatus(runtime, counters, rawPhase);
-      const result = await runConfiguredPhase(runtime, setupPhase(rawPhase, runtime.config), counters);
-      if (result.skipped) {
-        counters.skipped++;
-        writeRunningStatus(runtime, counters, null);
-        log(`Phase ${rawPhase} skipped (setup returned false)`);
-        continue;
-      }
-      const exitCode = result.exitCode ?? 1;
-      log(`Phase ${rawPhase} exited with code ${exitCode}`);
-      const skipWarning = shouldSkipAnatomyPhaseWithWarning(rawPhase, {
-        exitCode,
-        stdout: '',
-        stderr: result.stderr ?? '',
-      }, runtime);
-      if (skipWarning) {
-        counters.skipped++;
-        writeRunningStatus(runtime, counters, null);
-        log(`phase_skipped_with_warning ${JSON.stringify({
-          phase: rawPhase,
-          exit_code: exitCode,
-          warning_class: skipWarning.warningClass,
-          detail: skipWarning.detail,
-        })}`);
-        continue;
-      }
-      if (exitCode === PipelineRunnerExitCode.PhaseIncomplete) {
-        reportPhaseIncomplete(runtime, rawPhase);
-        phaseIncomplete = true;
+      const outcome = await runPhaseIteration(runtime, counters, cancelMarker, rawPhase, i, log);
+      if (outcome.action === 'break') {
+        if (outcome.phaseIncomplete) phaseIncomplete = true;
         break;
       }
-      if (shouldHaltAfterPhase(rawPhase, exitCode, runtime)) {
-        if (exitCode !== 0 && (rawPhase === 'anatomy-park' || rawPhase === 'szechuan-sauce')) {
-          try {
-            const runnerState = sm.read(runtime.statePath);
-            const exitReason = runnerState.exit_reason as MicroverseExitReason | null | undefined;
-            if (exitReason && isMicroverseFailureExit(exitReason)) {
-              log(`Phase ${rawPhase}: microverse exited with ${exitReason} — pipeline aborting (no finalize-gate)`);
-            } else {
-              log(`Phase ${rawPhase} failed (exit ${exitCode}) — stopping pipeline`);
-            }
-          } catch {
-            log(`Phase ${rawPhase} failed (exit ${exitCode}) — stopping pipeline`);
-          }
-        } else {
-          log(`Phase ${rawPhase} failed (exit ${exitCode}) — stopping pipeline`);
-        }
-        break;
-      }
-      const acGate = runAcPhaseGate({
-        sessionDir: runtime.sessionDir,
-        evaluationPhase: 'per-phase',
-        pipelinePhase: rawPhase,
-        cwd: runtime.workingDir,
-        stdout: (msg) => log(msg),
-        stderr: (msg) => log(msg),
-      });
-      writeWatcherLivenessArtifact(runtime.sessionDir, rawPhase);
-      if (acGate.status !== 'pass') {
-        log(`Phase ${rawPhase} AC gate failed — stopping pipeline`);
-        break;
-      }
-      counters.completed++;
-      writeRunningStatus(runtime, counters, null);
-      // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-      if (fs.existsSync(cancelMarker)) {
-        log('Pipeline cancelled (cancel marker found) — stopping');
-        break;
-      }
-      log(`Phase ${rawPhase} completed successfully`);
     }
   } finally {
     phaseRunnerContext = null;
