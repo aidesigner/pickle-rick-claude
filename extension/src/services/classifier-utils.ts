@@ -3,11 +3,11 @@
 // next delimiter (or EOF) is assistant output. All other blocks are dropped.
 const CODEX_DELIMITER_RE = /^(user|codex|exec|tokens used|reasoning|tool_call)\s*$/;
 
-function isTypedJsonLine(line: string): boolean {
+function isAssistantJsonLine(line: string): boolean {
   if (!line.trim()) return false;
   try {
     const parsed = JSON.parse(line);
-    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) && 'type' in parsed;
+    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) && parsed.type === 'assistant';
   } catch {
     return false;
   }
@@ -62,9 +62,10 @@ function extractCodexBlockContent(lines: string[]): string[] {
  * Extracts text content from assistant messages.
  *
  * Detection precedence:
- * 1. Stream-json: >=1 line parses as JSON with type:'assistant'. Extracts
- *    only assistant text blocks and result blocks. Non-JSON lines and all
- *    other JSON types (user, system, tool_use) are skipped.
+ * 1. Stream-json: >=1 line is a {type:'assistant',...} JSON object. Non-assistant
+ *    typed objects ({type:'system'}, {type:'user'}) and bare JSON values do NOT
+ *    trigger this mode. Extracts only assistant text blocks and result blocks;
+ *    all other JSON types are skipped.
  * 2. Codex plain-text: >=1 line matches CODEX_DELIMITER_RE. Extracts content
  *    between 'codex' delimiters only; user/exec/tokens/reasoning/tool_call
  *    blocks are dropped. Multi-turn: union of all surviving codex blocks.
@@ -76,12 +77,12 @@ function extractCodexBlockContent(lines: string[]): string[] {
 export function extractAssistantContent(output: string): string {
   const lines = output.split('\n');
 
-  // Mode 1: stream-json - requires >=1 JSON line that is a typed object
-  // ({type:...}). Bare JSON values (null, numbers, arrays, objects without
-  // a 'type' key) do NOT trigger this mode, so codex logs with a stray null
-  // line fall through to codex-mode detection instead of silently eating all
-  // content as stream-json with zero extractions.
-  const isStreamJson = lines.some(isTypedJsonLine);
+  // Mode 1: stream-json - requires >=1 line that is a {type:'assistant',...}
+  // JSON object. Bare values (null, numbers, arrays), non-assistant typed
+  // objects ({type:'system'}, {type:'user'}) do NOT trigger this mode, so
+  // codex logs that happen to contain stray JSON fall through to codex-mode
+  // detection instead of silently returning empty content.
+  const isStreamJson = lines.some(isAssistantJsonLine);
 
   if (isStreamJson) {
     return extractStreamJsonContent(lines).join('\n');
