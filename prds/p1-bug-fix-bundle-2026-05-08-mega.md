@@ -1,5 +1,5 @@
 ---
-title: P1+P2 — Mega bug-fix bundle 2026-05-08 (codex classifier root cause + szechuan judge model + scope.json edit-time preflight + scope launch-time auto-inference + recoverable-json readdir bound + subsystem CLAUDE.md drift + pkgjson version-only revert diagnosis + excessive-defense strip)
+title: P1+P2 — Mega bug-fix bundle 2026-05-08 (codex classifier root cause + szechuan judge model + scope.json edit-time preflight + scope launch-time auto-inference + recoverable-json readdir bound + subsystem CLAUDE.md drift + pkgjson version-only revert diagnosis + excessive-defense strip + microverse judge probe ETIMEDOUT misclassification)
 status: Draft
 filed: 2026-05-08
 priority: P1 (mixed P1 + P2 + ad-hoc; closer ships v1.73.0)
@@ -11,6 +11,7 @@ composes:
   - prds/p2-pickle-pipeline-no-scope-auto-inference.md       # Open Finding #12 — scope auto-inference at launch time (P2)
   - prds/p1-deployed-pkgjson-version-only-revert.md          # Slot K — diagnosis-first; output is a follow-up fix PRD (P1)
   - prds/p1-strip-excessive-defense-deploy-reversion.md      # Slot L — strip ~480 LOC (cron sampler stripped; rest queued; P1)
+  - prds/p1-microverse-judge-probe-misclassifies-timeout-as-cli-missing.md  # Open Finding #13 — judge probe ETIMEDOUT misclassification (P1, pipeline-killer)
 related:
   - prds/p1-bug-fix-bundle-2026-05-07-deferred-slots.md      # predecessor; Slots D/E/K/L + Closer shipped 2026-05-08 AM
   - prds/p1-anatomy-park-detectproject-null-skips-baseline.md  # Open Finding #10 — already shipped (`232f3d26`); deploy owed
@@ -32,7 +33,12 @@ The 2026-05-07-deferred-slots bundle session `2026-05-08-d6f98b66` shipped Secti
 
 A separate anatomy-park session in `loanlight-api` (2026-05-08-5d60b760) surfaced Open Finding #11: worker edits leak past `scope.json:allowed_paths` between edit and `git commit` because `scope.json` is consumed only at *discovery* and *gate-baseline-failure* time, not at *fix* time.
 
-A third pipeline session (`2026-05-08-33d10614`, `/pickle-pipeline` for LOA-763) surfaced Open Finding #12: the `/pickle-pipeline` skill has no scope auto-inference at launch time. The operator's kickoff prompt named a branch (`gregory/loa-763-shadow-audit-diff-writer`), said "Scope: API-only", and listed a bounded deliverable surface — but the skill treats `--scope`/`--scope-base` as strictly literal-flag-only and wrote a scopeless `pipeline.json`. Anatomy-park self-targeted by luck (citadel's findings happened to all live in `shadow-audit-diff/`); szechuan-sauce was queued unscoped against the entire `packages/api/` tree. Recovery required a 6-step manual state patch (pipeline.json + state.json + pipeline-status.json + tmux pane 0 respawn). Sister to Finding #11: same structural problem (scope under-applied) at different lifecycle stages — Finding #11 is **edit-time** leak; Finding #12 is **launch-time** silence.
+The same pipeline session (`2026-05-08-33d10614`, `/pickle-pipeline` for LOA-763) surfaced **two** distinct bugs:
+
+- Open Finding #12: the `/pickle-pipeline` skill has no scope auto-inference at launch time.
+- Open Finding #13 (P1, **pipeline-killer**): `microverse-runner.ts:probeJudgeCliAvailability` runs `claude --version` with a 50ms timeout AND collapses `ETIMEDOUT` / `ENOENT` / other into one `{ok:false}` boolean. The caller maps any failure to `judge_cli_missing`, which `pipeline-runner.ts:1670` honors as a hard no-finalize-gate exit. In this session anatomy-park converged green at 33m03s with 7 CRITICAL fixes shipped, then szechuan-sauce died at `attempts: 0` inside its baseline probe — the 4-attempt backoff loop never even ran. Smoking gun: `microverse-runner.log` literally records `spawnSync claude ETIMEDOUT` while classifying the failure as `judge_cli_missing`. Single-file fix in `microverse-runner.ts` + regression test + trap-door.
+
+Finding #12 detail: the operator's kickoff prompt named a branch (`gregory/loa-763-shadow-audit-diff-writer`), said "Scope: API-only", and listed a bounded deliverable surface — but the skill treats `--scope`/`--scope-base` as strictly literal-flag-only and wrote a scopeless `pipeline.json`. Anatomy-park self-targeted by luck (citadel's findings happened to all live in `shadow-audit-diff/`); szechuan-sauce was queued unscoped against the entire `packages/api/` tree. Recovery required a 6-step manual state patch (pipeline.json + state.json + pipeline-status.json + tmux pane 0 respawn). Sister to Finding #11: same structural problem (scope under-applied) at different lifecycle stages — Finding #11 is **edit-time** leak; Finding #12 is **launch-time** silence.
 
 Two ad-hoc items earned their way into this bundle:
 - **Finding #5** (subsystem CLAUDE.md drift) — partial; only `extension/src/types/CLAUDE.md` was created during anatomy-park; the other 4 subsystems may also be missing them.
@@ -40,7 +46,7 @@ Two ad-hoc items earned their way into this bundle:
 
 Slots K and L are queued to drain the open-bug ceiling: K's output is research → follow-up PRD (no fix lands this run); L removes ~480 LOC of defense-in-depth (cron sampler already stripped at `c2ec3cf1`; mux pre-flight, scheduled finalizer, launch-gate verifier remain).
 
-This bundle composes 8 fix sections + bootstrap + closer into a single unattended `/pickle-pipeline --no-refine --backend claude` run. Backend MUST be `claude`. **Slot G IS the codex hallucination root cause** — running this bundle on `--backend codex` would reproduce the very defect it fixes. Predecessor bundle session `2026-05-08-d6f98b66` ran on claude precisely for this reason; that decision stands.
+This bundle composes 9 fix sections + bootstrap + closer into a single unattended `/pickle-pipeline --no-refine --backend claude` run. Backend MUST be `claude`. **Slot G IS the codex hallucination root cause** — running this bundle on `--backend codex` would reproduce the very defect it fixes. Predecessor bundle session `2026-05-08-d6f98b66` ran on claude precisely for this reason; that decision stands.
 
 ## Refinement: SKIPPED (quick-refine via parallel Agent fan-out)
 
@@ -61,9 +67,10 @@ Operator override: drop `--no-refine` from the launch command if a section prove
 | **G** | Open Finding #5 — subsystem CLAUDE.md drift audit | R-CMD-1..4 *(NEW)* | this PRD § G | **IMPLEMENT** — audit-only, files follow-up tickets per drift class |
 | **H** | Slot K — pkgjson version-only revert diagnosis | R-PJV-1..6 | `prds/p1-deployed-pkgjson-version-only-revert.md` | **DIAGNOSE** — no fix ships from this section; output is research artifact + follow-up PRD |
 | **I** | Slot L — strip excessive defense | R-SED-1..7 *(carries source PRD's strip list)* | `prds/p1-strip-excessive-defense-deploy-reversion.md` | **IMPLEMENT** — mux pre-flight + scheduled finalizer + launch-gate verifier removal |
-| **J** | Closer | R-CLOSER-1..3 | this PRD § J | **IMPLEMENT** — version bump + deploy parity + (optional) gh release |
+| **J** | Open Finding #13 — microverse judge probe ETIMEDOUT misclassification | R-MJCP-1..8 *(=source PRD verbatim)* | `prds/p1-microverse-judge-probe-misclassifies-timeout-as-cli-missing.md` | **IMPLEMENT** — discriminated probe result + 5000ms default + shared `classifyJudgeError` helper; pipeline-killer fix |
+| **K** | Closer | R-CLOSER-1..3 | this PRD § K | **IMPLEMENT** — version bump + deploy parity + (optional) gh release |
 
-Section ordering rationale: G (highest blast-radius defect) before H (judge fix only matters if codex pipelines run). 11 (edit-time scope) immediately before 12 (launch-time scope) because they share R-APWS / R-PSAI plumbing and the worker-side preflight (R-APWS-1) is a natural building block for the operator-side `lock-scope.js` recovery action (R-PSAI-4). 16 (perf, low risk) and 5 (audit) sandwiched between scope work and Slot K so the audit's child-ticket overhead doesn't bottleneck downstream fix sections. K (diagnosis) before L (LOC removal) so K's research artifacts are written before L touches the same general defense-in-depth area. L second-to-last so working-tree churn from removed code lands against an otherwise-stable base. Closer last.
+Section ordering rationale: G (highest blast-radius defect) before H (judge fix only matters if codex pipelines run). 11 (edit-time scope) immediately before 12 (launch-time scope) because they share R-APWS / R-PSAI plumbing and the worker-side preflight (R-APWS-1) is a natural building block for the operator-side `lock-scope.js` recovery action (R-PSAI-4). 16 (perf, low risk) and 5 (audit) sandwiched between scope work and Slot K so the audit's child-ticket overhead doesn't bottleneck downstream fix sections. K (diagnosis) before L (LOC removal) so K's research artifacts are written before L touches the same general defense-in-depth area. L before #13 because the strip touches `services/`-level files while #13 touches `bin/microverse-runner.ts` (no overlap; sequential ordering keeps merge conflicts minimal). #13 last among fix sections so the smallest, hottest pipeline-killer fix lands against an otherwise-stable base — closer (Section K) deploys the bundle including #13 in one shot. Closer last.
 
 ## Pre-flight — REQUIRED before launch
 
@@ -214,7 +221,7 @@ This section audits the 5 subsystems under `extension/src/` for missing or stale
 
 ## Section H — Slot K — Deployed pkgjson version-only revert *(EIGHTH — diagnosis-only, P1)*
 
-Source: `prds/p1-deployed-pkgjson-version-only-revert.md` (read in full). Disposition is `DIAGNOSE`: this section runs the H-A..H-E hypothesis triage and emits a research artifact + follow-up fix PRD. **No fix code ships from this section.** That keeps the closer (Section J) free from a half-diagnosed change.
+Source: `prds/p1-deployed-pkgjson-version-only-revert.md` (read in full). Disposition is `DIAGNOSE`: this section runs the H-A..H-E hypothesis triage and emits a research artifact + follow-up fix PRD. **No fix code ships from this section.** That keeps the closer (Section K) free from a half-diagnosed change.
 
 | Req | Description |
 |---|---|
@@ -262,15 +269,36 @@ Source: `prds/p1-strip-excessive-defense-deploy-reversion.md` (read in full). Cr
 
 **Files in scope**: `extension/src/services/{mux-preflight-verifier,scheduled-finalizer,launch-gate-verifier}.ts` *(REMOVED)*, `extension/src/bin/mux-runner.ts` (wiring), `extension/src/bin/setup.ts` (wiring), `extension/src/bin/pipeline-runner.ts` (wiring), `extension/scripts/install-cron.sh`, `extension/src/types/index.ts` (event removal), `extension/src/data/activity-events.schema.json`, count-assertion test, `extension/CLAUDE.md` (trap-door cleanup), `extension/tests/{mux-preflight-verifier,scheduled-finalizer,launch-gate-verifier}.test.js` *(REMOVED)*.
 
-## Section J — Closer *(TENTH — version bump + deploy parity)*
+## Section J — Open Finding #13 — Microverse judge probe ETIMEDOUT misclassification *(TENTH — P1 pipeline-killer)*
+
+Source: `prds/p1-microverse-judge-probe-misclassifies-timeout-as-cli-missing.md` (read in full). All 8 reqs `R-MJCP-1..8` lifted verbatim.
+
+The probe at `extension/src/bin/microverse-runner.ts:1354–1367` runs `claude --version` with `timeout: 50` (milliseconds — below the macOS dyld+V8 cold-start floor) and collapses every error path into `{ ok: false }`. The caller (`measureLlmMetricWithBackoff`, lines 1378–1387) maps that uniformly to `exitReason: 'judge_cli_missing'` — even when the actual error is `ETIMEDOUT`. `pipeline-runner.ts:1670` correctly treats `judge_cli_missing` as no-finalize-gate (the contract is right when the CLI is genuinely absent), but here the misclassification is upstream and the runner faithfully amplifies it. Smoking gun: `attempts: 0` in the runner's exit log — the existing 4-attempt backoff loop (which already classifies `judge_timeout` correctly) never executed.
+
+| Req | Description |
+|---|---|
+| **R-MJCP-1** | `probeJudgeCliAvailability` returns a discriminated union `{ kind: 'ok' \| 'missing' \| 'timeout' \| 'failed', message? }`, not a boolean. Caller short-circuits to `judge_cli_missing` ONLY for `kind: 'missing'`. For `'timeout'` or `'failed'`, fall through to the existing 4-attempt backoff loop with its own (longer) timeouts. |
+| **R-MJCP-2** | Default probe timeout = **5000 ms** (≥ macOS cold-start floor). Configurable via `PICKLE_JUDGE_PROBE_TIMEOUT_MS` (positive integer, clamp ≤ 60000ms, log when override applied). ENOENT still returns ~10ms — the higher cap doesn't slow the genuinely-missing-CLI path. |
+| **R-MJCP-3** | Extract shared `classifyJudgeError(err): 'missing' \| 'timeout' \| 'failed'` helper from existing `measureLlmMetricAttempt` lines 1346–1349. Both `probeJudgeCliAvailability` and `measureLlmMetricAttempt` MUST call it. No duplicate `isMissingCliError(...) ? ... : /ETIMEDOUT/.test(...) ? ...` branches in the file. |
+| **R-MJCP-4** | **Pipeline-runner unchanged.** No new exit reasons. The fix lives entirely upstream of the `exit_reason` that `pipeline-runner.ts:1670` consumes. Real ENOENT still produces `judge_cli_missing`; slow probe falls through to `judge_timeout` (already correctly handled — no short-circuit). Verified by `extension/tests/process-iteration-outcome.test.js` passing without changes. |
+| **R-MJCP-5** | Operator diagnostic on timeout-class probe failure — verbatim log line (both `microverse-runner.log` and stderr): `[microverse] judge probe timed out at <NNN>ms (claude --version exceeded probe timeout); falling back to measurement loop with 10s/30s/60s backoff. If this recurs, set PICKLE_JUDGE_PROBE_TIMEOUT_MS=10000 or higher.` |
+| **R-MJCP-6** | Regression test `extension/tests/bin/microverse-judge-probe.test.js` (NEW) covers all four probe classifications. Stubbed `_deps.execFileSync` for ENOENT and ETIMEDOUT cases. Asserts: (a) `probeJudgeCliAvailability` returns the right `kind`, (b) `measureLlmMetricWithBackoff` does NOT return `judge_cli_missing` for ETIMEDOUT, (c) backoff loop returns `judge_timeout` if it also fails, (d) symmetric ENOENT case still short-circuits to `judge_cli_missing` with `attempts: 0`. |
+| **R-MJCP-7** | Trap-door entry pinned in `extension/CLAUDE.md`: "`src/bin/microverse-runner.ts` (probe path) — INVARIANT: `probeJudgeCliAvailability` MUST classify ENOENT, ETIMEDOUT, and other errors via `classifyJudgeError`; only ENOENT-class produces `judge_cli_missing`. BREAKS: cold-start probe timeouts on macOS misclassified as missing CLI, killing pipelines that have completed converged phases." ENFORCE: `extension/tests/bin/microverse-judge-probe.test.js`. |
+| **R-MJCP-8** | Subsystem doc (`extension/src/bin/CLAUDE.md` or microverse subsystem doc) gains a short section explaining the probe-vs-measurement timeout distinction: probe is a fail-fast existence check (≥5s, ENOENT-only); measurement is a correctness-check with retry-with-backoff. |
+
+**Section J — Acceptance Criteria** — `AC-MJCP-01..08` lifted verbatim from source PRD § Acceptance Criteria.
+
+**Files in scope**: `extension/src/bin/microverse-runner.ts` (probe + helper extraction), `extension/tests/bin/microverse-judge-probe.test.js` *(NEW)*, `extension/CLAUDE.md` (trap-door), `extension/src/bin/CLAUDE.md` *(NEW or updated)* (probe-vs-measurement distinction docs). **Pipeline-runner explicitly OUT of scope** per R-MJCP-4.
+
+## Section K — Closer *(ELEVENTH — version bump + deploy parity)*
 
 | Req | Description |
 |---|---|
 | **R-CLOSER-1** | Bump `extension/package.json` from `1.72.2` → `1.73.0` (minor — bundle ships features: scope-diff preflight, audit script, forensic capture). Lockfile sync. |
 | **R-CLOSER-2** | `bash install.sh` deploys to `~/.claude/pickle-rick/`. Post-rsync md5-parity probe (R-ITS-2) must pass. Active-bundle guard auto-permits closer's own session via `--closer-context`. |
-| **R-CLOSER-3** | Update `prds/MASTER_PLAN.md`: mark Open Findings #1, #5, #11, #12, #16 as closed (or note Section G's audit deferral); move source PRDs from Active Queue to Shipped table; record this bundle's session id under "Recently Shipped". |
+| **R-CLOSER-3** | Update `prds/MASTER_PLAN.md`: mark Open Findings #1, #5, #11, #12, #13, #16 as closed (or note Section G's audit deferral); move source PRDs from Active Queue to Shipped table; record this bundle's session id under "Recently Shipped". |
 
-**Section J — Acceptance Criteria**
+**Section K — Acceptance Criteria**
 
 - **AC-CLOSER-01** — `extension/package.json:version === "1.73.0"` at HEAD; lockfile sync committed.
 - **AC-CLOSER-02** — `bash install.sh` exits 0; md5-parity probe passes for all 5 trafficked files.
@@ -295,6 +323,8 @@ Source: `prds/p1-strip-excessive-defense-deploy-reversion.md` (read in full). Cr
 | **R10** | Closer's `gh release create` is OPT-IN; default no-push per local-only-mode policy | Low | AC-CLOSER-04 marked optional; pickle-rick session does NOT auto-push without operator instruction. |
 | **R11** | Sections D + E both touch scope-resolution code paths; ordering matters because R-PSAI-4 (`lock-scope.js`) calls into the same scope-resolver that R-APWS-1 (`check-scope-diff.js`) consumes | Medium | Section D ships first; Section E's `lock-scope.js` imports the scope-resolver helper that Section D's preflight script also uses. Both depend on the same source-of-truth `extension/src/services/scope-resolver.ts` (existing). If Section D touches the resolver's public API, Section E's quick-refine ticket MUST re-read the resolver before authoring. |
 | **R12** | R-PSAI-1's regex catalog is operator-facing; false-positive rate must be low | Medium | Auto-inference NEVER flips scope on silently — always prompts. Worst case: an extra AskUserQuestion. R-PSAI-7 covers all 6 regex cases including `--scope` already-passed (no double-prompt). Operator can document `regex matched but unscoped` via R-PSAI-1.4 audit log. |
+| **R13** | Section J's R-MJCP-4 forbids pipeline-runner changes; quick-refine ticket might erroneously touch `pipeline-runner.ts:1670` while looking for the exit-reason consumer | Medium | R-MJCP-4 explicit in section text + AC-MJCP-07 verifies `process-iteration-outcome.test.js` passes without changes. Quick-refine prompt MUST highlight "pipeline-runner OUT of scope". If the ticket touches it, the audit-ticket-bundle exempt-files allowlist will reject the diff. |
+| **R14** | Section J raises the probe timeout 50ms → 5000ms; could mask a *real* missing-CLI case for 5 extra seconds in operator-facing diagnostics | Low | ENOENT-class still returns ~10ms (system-call cost, not timeout-bound). Only ETIMEDOUT-class gets the longer cap, and that's exactly the misclassified-as-missing case we're fixing. Operator diagnostic per R-MJCP-5 is the visibility for slow-but-installed CLI. |
 
 ## Pre-flight checklist (operator runs before launch)
 
@@ -315,7 +345,7 @@ cd /Users/gregorydickson/loanlight/pickle-rick/pickle-rick-claude
 
 ## Refinement directives (for the quick-refine fan-out inside the pickle phase)
 
-The pickle phase will spawn 10 parallel `Agent` calls (one per section A..J), each authoring 1 atomic ticket:
+The pickle phase will spawn 11 parallel `Agent` calls (one per section A..K), each authoring 1 atomic ticket:
 
 1. **Lift ACs verbatim** from this PRD's section. Do NOT paraphrase.
 2. **Lift R-codes verbatim** from this PRD's table. Source-PRD R-codes that this bundle renames (e.g. `R-CCPL-1 (=source R1)`) are committed under both names — primary `R-CCPL-1`, alias `(=source R1)`.
@@ -330,6 +360,7 @@ The pickle phase will spawn 10 parallel `Agent` calls (one per section A..J), ea
 - Mark Open Finding #5 ⚠️ DEFERRED in MASTER_PLAN.md (audit done; remediation queued as P3 follow-up PRDs).
 - Mark Open Finding #11 ✅ CLOSED in MASTER_PLAN.md (closed by Section D).
 - Mark Open Finding #12 ✅ CLOSED in MASTER_PLAN.md (closed by Section E).
+- Mark Open Finding #13 ✅ CLOSED in MASTER_PLAN.md (closed by Section J).
 - Mark Followup #16 ✅ CLOSED in MASTER_PLAN.md (closed by Section F).
 - Move Slots G, H, K, L from Active Queue to Shipped (or "Diagnosis-only" for K) table.
 - Append entry to "Recently Shipped" with bundle session id, ticket count, wall-clock, commit hash range.
