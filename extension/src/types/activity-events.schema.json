@@ -143,6 +143,15 @@
         "reason": { "type": "string" }
       }
     },
+    "ticket_audit_failed": {
+      "type": "object",
+      "required": ["event", "ts"],
+      "properties": {
+        "event": { "type": "string", "const": "ticket_audit_failed" },
+        "ts": { "type": "string" },
+        "session": { "type": "string" }
+      }
+    },
     "ticket_audit_manual_edit": {
       "type": "object",
       "required": ["event", "ts", "gate_payload"],
@@ -385,6 +394,7 @@
     { "$ref": "#/definitions/pipeline_auto_resumed" },
     { "$ref": "#/definitions/bundle_bootstrap_exemption_applied" },
     { "$ref": "#/definitions/ticket_audit_bypassed" },
+    { "$ref": "#/definitions/ticket_audit_failed" },
     { "$ref": "#/definitions/ticket_audit_manual_edit" },
     { "$ref": "#/definitions/smoke_gate_bypassed" },
     { "$ref": "#/definitions/bundle_2026_05_04_closer_done" },

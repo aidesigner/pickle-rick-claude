@@ -134,6 +134,7 @@ When writing acceptance criteria or analyzing PRD sections that reference activi
 | \`pipeline_auto_resumed\` | \`gate_payload.retry_index\`, \`gate_payload.ticket_id\`, \`gate_payload.session_done_count_at_retry\` | mux-runner auto-resume path |
 | \`bundle_bootstrap_exemption_applied\` | \`gate_payload.skip_readiness_reason\`, \`gate_payload.skip_ticket_audit_reason\` | mux-runner bootstrap-mode path |
 | \`ticket_audit_bypassed\` | \`reason\` | audit-ticket-bundle.js, readiness gate |
+| \`ticket_audit_failed\` | \`session\` (optional) | mux-runner ticket-audit halt path |
 | \`ticket_audit_manual_edit\` | \`gate_payload.edit_count\` | mux-runner audit loop |
 | \`smoke_gate_bypassed\` | \`reason\` | mux-runner smoke-gate path |
 

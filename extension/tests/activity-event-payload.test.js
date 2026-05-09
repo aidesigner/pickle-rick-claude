@@ -147,6 +147,11 @@ const EVENT_CASES = [
     drop: 'reason',
   },
   {
+    type: 'ticket_audit_failed',
+    valid: { event: 'ticket_audit_failed', ts: TS, session: 'session-1' },
+    drop: 'ts',
+  },
+  {
     type: 'ticket_audit_manual_edit',
     valid: { event: 'ticket_audit_manual_edit', ts: TS, gate_payload: { edit_count: 2 } },
     drop: 'gate_payload',
@@ -283,7 +288,7 @@ test('activity-event-payload: worker_lint_gate_failed requires integer error cou
   assert.equal(bad.valid, false, 'string lint_errors should fail');
 });
 
-test('activity-event-payload: schema defines exactly 19 event type definitions', () => {
+test('activity-event-payload: schema defines all registered event type definitions', () => {
   const EVENT_NAMES = [
     'worker_spawn_backend_resolved',
     'worker_spawn_backend_mismatch',
@@ -294,6 +299,7 @@ test('activity-event-payload: schema defines exactly 19 event type definitions',
     'pipeline_auto_resumed',
     'bundle_bootstrap_exemption_applied',
     'ticket_audit_bypassed',
+    'ticket_audit_failed',
     'ticket_audit_manual_edit',
     'smoke_gate_bypassed',
     'bundle_2026_05_04_closer_done',
@@ -319,5 +325,5 @@ test('activity-event-payload: schema defines exactly 19 event type definitions',
   const nonSharedDefs = Object.keys(schema.definitions).filter(
     k => k !== 'backendEnum' && k !== 'backendResolutionSourceEnum',
   );
-  assert.equal(nonSharedDefs.length, 28, `expected 28 event definitions, got ${nonSharedDefs.length}`);
+  assert.equal(nonSharedDefs.length, 29, `expected 29 event definitions, got ${nonSharedDefs.length}`);
 });
