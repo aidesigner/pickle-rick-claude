@@ -189,6 +189,21 @@ const EVENT_CASES = [
     },
     drop: 'release_reason',
   },
+  {
+    type: 'worker_edit_outside_scope',
+    valid: {
+      event: 'worker_edit_outside_scope',
+      ts: TS,
+      ticket_id: 'abc12345',
+      gate_payload: {
+        scope_json_path: '/tmp/session/scope.json',
+        staged_paths_outside_scope: ['src/unrelated/file.ts'],
+        head_ref: 'HEAD',
+        suggested_remediation: 'Unstage outside-scope paths or expand scope.json:allowed_paths before committing.',
+      },
+    },
+    drop: 'gate_payload',
+  },
 ];
 
 for (const { type, valid, drop } of EVENT_CASES) {
@@ -295,6 +310,7 @@ test('activity-event-payload: schema defines exactly 19 event type definitions',
     'manager_idle_backoff_engaged',
     'manager_idle_backoff_released',
     'standup_session_dropped',
+    'worker_edit_outside_scope',
   ];
   for (const name of EVENT_NAMES) {
     assert.ok(name in schema.definitions, `schema missing definition for ${name}`);
@@ -302,5 +318,5 @@ test('activity-event-payload: schema defines exactly 19 event type definitions',
   const nonSharedDefs = Object.keys(schema.definitions).filter(
     k => k !== 'backendEnum' && k !== 'backendResolutionSourceEnum',
   );
-  assert.equal(nonSharedDefs.length, 26, `expected 26 event definitions, got ${nonSharedDefs.length}`);
+  assert.equal(nonSharedDefs.length, 27, `expected 27 event definitions, got ${nonSharedDefs.length}`);
 });

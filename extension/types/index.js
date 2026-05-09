@@ -223,6 +223,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'manager_idle_backoff_engaged',
     'manager_idle_backoff_released',
     'standup_session_dropped',
+    'worker_edit_outside_scope',
 ];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {

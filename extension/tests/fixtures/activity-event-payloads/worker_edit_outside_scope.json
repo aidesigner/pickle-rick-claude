@@ -1,0 +1,11 @@
+{
+  "event": "worker_edit_outside_scope",
+  "ts": "2026-05-09T12:00:00.000Z",
+  "ticket_id": "abc12345",
+  "gate_payload": {
+    "scope_json_path": "/tmp/test-session/scope.json",
+    "staged_paths_outside_scope": ["src/unrelated/file.ts"],
+    "head_ref": "HEAD",
+    "suggested_remediation": "Unstage outside-scope paths or expand scope.json:allowed_paths before committing."
+  }
+}

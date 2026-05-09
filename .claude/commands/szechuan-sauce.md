@@ -366,6 +366,15 @@ Examples:
 - `szechuan-sauce: Fail-Fast — add input validation at API boundary`
 - `szechuan-sauce: YAGNI — remove unused AbstractFactoryProvider`
 
+**Scope preflight** (when `${SESSION_ROOT}/scope.json` exists): Before every `git commit`, run:
+```bash
+node "$HOME/.claude/pickle-rick/extension/bin/check-scope-diff.js" \
+  --scope-json "${SESSION_ROOT}/scope.json"
+```
+- **Exit 0**: proceed with commit.
+- **Exit 1**: DO NOT commit. Surface the outside-scope paths as a P1 principle violation (`Scope boundary crossed — files outside allowed_paths staged`), unstage the outside-scope paths with `git reset HEAD <paths>`, and treat it as the iteration's violation — record it in `gap_analysis.md` and move on.
+- **Exit 2** (malformed scope.json): log the error to stderr and proceed without the scope check.
+
 ### Standard Protocol
 
 For everything not covered by the overrides above — loading context, reading the handoff, making one change per iteration, running tests, and exiting cleanly — follow the Microverse Worker protocol (this template is invoked with the microverse.md base; the handoff is appended below).

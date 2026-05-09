@@ -337,6 +337,25 @@
           "enum": ["state_mtime", "worker_exit", "artifact_landed", "fallback_timer"]
         }
       }
+    },
+    "worker_edit_outside_scope": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "worker_edit_outside_scope" },
+        "ts": { "type": "string" },
+        "ticket_id": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["scope_json_path", "staged_paths_outside_scope", "head_ref", "suggested_remediation"],
+          "properties": {
+            "scope_json_path": { "type": "string" },
+            "staged_paths_outside_scope": { "type": "array", "items": { "type": "string" } },
+            "head_ref": { "type": "string" },
+            "suggested_remediation": { "type": "string" }
+          }
+        }
+      }
     }
   },
   "oneOf": [
@@ -361,6 +380,7 @@
     { "$ref": "#/definitions/worker_completion_commit_announced" },
     { "$ref": "#/definitions/time_cap_disabled_default" },
     { "$ref": "#/definitions/manager_idle_backoff_engaged" },
-    { "$ref": "#/definitions/manager_idle_backoff_released" }
+    { "$ref": "#/definitions/manager_idle_backoff_released" },
+    { "$ref": "#/definitions/worker_edit_outside_scope" }
   ]
 }

@@ -333,6 +333,14 @@ Pick the **single highest-severity finding** from Phase 1 (CRITICAL before HIGH)
    - Assert on the specific behavior that was broken
 3. **Draft trap doors** (if any were identified in Phase 1) with `pattern_shape`, but do not write them yet. Phase 2.5 may add replay findings before the catalog is written. See Override 3 for format and merge rules.
 4. **Run the full test suite** for all affected packages.
+4.5. **Scope preflight** (when `${SESSION_ROOT}/scope.json` exists): Before committing, run:
+     ```bash
+     node "$HOME/.claude/pickle-rick/extension/bin/check-scope-diff.js" \
+       --scope-json "${SESSION_ROOT}/scope.json"
+     ```
+     - **Exit 0**: proceed with `git commit`.
+     - **Exit 1** (cross-scope staged paths): DO NOT commit. Surface the outside-scope paths as a CRITICAL finding in `anatomy-park.json` under the current subsystem (`category: "scope"`, `phase: "discovery"`), increment `stall_counts` for the subsystem, run `git reset HEAD <outside_paths>` to unstage them, and treat this iteration as a stall — skip Phase 2.5 and Phase 3.
+     - **Exit 2** (malformed scope.json): log the error to stderr and proceed without the scope check.
 5. If any test fails, determine whether:
    - Your fix changed correct behavior → update the test
    - Your fix introduced a regression → revert and re-approach
