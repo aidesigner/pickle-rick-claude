@@ -403,6 +403,7 @@
     { "$ref": "#/definitions/worker_backend_resolved" },
     { "$ref": "#/definitions/completion_commit_auto_filled" },
     { "$ref": "#/definitions/completion_commit_inferred_from_git" },
+    { "$ref": "#/definitions/phantom_done_detected" },
     { "$ref": "#/definitions/worker_lint_gate_passed" },
     { "$ref": "#/definitions/worker_lint_gate_failed" },
     { "$ref": "#/definitions/worker_lint_autofix_applied" },
