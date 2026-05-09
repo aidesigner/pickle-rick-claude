@@ -347,15 +347,28 @@ if [ "${INSTALL_SKIP_PARITY:-0}" != "1" ] && [ "$INSTALL_MODE" = "git" ]; then
       _mismatches+=("$_f (src=$_src_md5 dst=$_dst_md5)")
     fi
   done
+  _parity_files_json="$(printf '%s\n' "${_parity_files[@]}" | jq -R . | jq -s .)"
   if [ ${#_mismatches[@]} -gt 0 ]; then
     echo "❌ FAIL: install.sh parity probe found ${#_mismatches[@]} mismatch(es):" >&2
     printf '  - %s\n' "${_mismatches[@]}" >&2
+    _mismatches_json="$(printf '%s\n' "${_mismatches[@]}" | jq -R . | jq -s .)"
+    _parity_payload="$(jq -nc \
+      --argjson files_checked "$_parity_files_json" \
+      --argjson mismatches "$_mismatches_json" \
+      --arg status fail \
+      '{files_checked: $files_checked, mismatches: $mismatches, status: $status}')"
     node "${EXTENSION_ROOT}/extension/bin/log-activity.js" install_sh_parity_check \
-      "parity=fail mismatches=${#_mismatches[@]}" 2>/dev/null || true
+      "parity=fail mismatches=${#_mismatches[@]}" \
+      --gate-payload "$_parity_payload" 2>/dev/null || true
     exit 1
   fi
+  _parity_payload="$(jq -nc \
+    --argjson files_checked "$_parity_files_json" \
+    --arg status pass \
+    '{files_checked: $files_checked, mismatches: [], status: $status}')"
   node "${EXTENSION_ROOT}/extension/bin/log-activity.js" install_sh_parity_check \
-    "parity=pass files_checked=${#_parity_files[@]}" 2>/dev/null || true
+    "parity=pass files_checked=${#_parity_files[@]}" \
+    --gate-payload "$_parity_payload" 2>/dev/null || true
 fi
 
 DEPLOYED_V="$(read_package_version "$EXTENSION_ROOT/extension/package.json")"
