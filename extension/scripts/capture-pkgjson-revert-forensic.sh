@@ -92,10 +92,19 @@ jq -n \
 echo "✅ Forensic snapshot written: $OUTPUT"
 echo "   src_version=$SRC_VERSION  deployed_version=$DEP_VERSION"
 
-# Log activity event if log-activity.js is available
+# Log activity event if log-activity.js is available.
+# Schema for `pkgjson_revert_forensic_captured` requires a `gate_payload` object
+# with forensic_artifact_path, suspected_hypothesis, src_version, deployed_version.
 LOG_ACTIVITY="$DEPLOY_ROOT/extension/bin/log-activity.js"
 if [ -f "$LOG_ACTIVITY" ]; then
+  GATE_PAYLOAD="$(jq -nc \
+    --arg fp "$OUTPUT" \
+    --arg sh "h-c" \
+    --arg sv "$SRC_VERSION" \
+    --arg dv "$DEP_VERSION" \
+    '{forensic_artifact_path: $fp, suspected_hypothesis: $sh, src_version: $sv, deployed_version: $dv}')"
   node "$LOG_ACTIVITY" pkgjson_revert_forensic_captured \
-    "forensic_artifact_path=$OUTPUT suspected_hypothesis=h-c src_version=$SRC_VERSION deployed_version=$DEP_VERSION" \
+    "pkgjson revert captured src=$SRC_VERSION deployed=$DEP_VERSION" \
+    --gate-payload "$GATE_PAYLOAD" \
     2>/dev/null || true
 fi
