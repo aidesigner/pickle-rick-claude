@@ -35,6 +35,7 @@ All Pickle Rick slash commands and their flags. For workflow narrative and tool 
 | `/enable-pickle` | Re-enable the stop hook |
 | `/help-pickle` | Show all commands and flags |
 | `/meeseeks` | **Deprecated** — superseded by `/anatomy-park` and `/szechuan-sauce` |
+| `lock-scope.js <session-root> --mode branch` | Mid-flight scope recovery for `/pickle-pipeline` sessions that launched without `--scope`. Patches `pipeline.json`, `state.json`, and `pipeline-status.json` in one command. Refuses to run while `pipeline-runner.js` is alive. See `PRD_GUIDE.md § Pipeline Scope` for full usage. |
 
 † accepts `--backend <claude\|codex>` to swap the worker/manager spawn backend (or set `PICKLE_BACKEND=codex`). `/council-of-ricks` has a separate Codex integration (Phase C adversarial reviewer, `--no-codex` / `--codex-timeout`). `/pickle` additionally accepts `--teams` (claude only) to spawn workers via harness team primitives — see [Agent Teams](README.md#agent-teams).
 
@@ -82,6 +83,8 @@ Most flags are command-scoped. The table groups them by command family — flags
 | `--szechuan-stall-limit <N>` | `/pickle-pipeline` | Szechuan Sauce stall limit (default: 5) |
 | `--szechuan-domain <name>` | `/pickle-pipeline` | Domain-specific principles for Szechuan phase |
 | `--szechuan-focus "<text>"` | `/pickle-pipeline` | Focus directive for Szechuan phase |
+| `--scope <flag>` | `/pickle-pipeline` | Scope all review phases to a subset of files. Values: `branch`, `branch:one-hop`, `diff:<ref>`, `paths:<glob,...>`. Naming a branch in the kickoff prompt triggers auto-inference — the skill will ask. |
+| `--scope-base <ref>` | `/pickle-pipeline` | Base ref for `branch` scope diff (default: upstream or `main`) |
 | `--prd <path>` | `/citadel` | PRD to audit against. Required unless pipeline session state provides `state.prd_path` |
 | `--diff <base..head>` | `/citadel` | Diff range to audit. Defaults to `state.start_commit..HEAD` when available |
 | `--strict` | `/citadel` | Exit non-zero on High findings as well as Critical findings |

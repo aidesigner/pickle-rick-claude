@@ -223,3 +223,45 @@ Settings live under `~/.claude/pickle-rick/pickle_settings.json:bmad_hardening`.
 | `ARCHAEOLOGY_WORKER_TIMEOUT_S` | `600` s | P1 worker spawn through `buildWorkerInvocation()` |
 | `CORRECTOR_TIMEOUT_S` | `300` s | P3 corrector path through `buildJudgeInvocation()`; current bin is brief-prep only |
 | `DEBATER_TIMEOUT_S` | `240` s | P4 per-persona path; current bin is brief-prep only |
+
+---
+
+## Pipeline Scope — Auto-Inference and Mid-Flight Recovery
+
+### Auto-Inference (Step 0.6)
+
+`/pickle-pipeline` detects scope signals at launch time so you don't have to remember the `--scope` flag:
+
+- **Naming a branch in your kickoff prompt is enough — the skill will ask.** Prompts like "build feature/payment-api" or "on branch fix/rate-limit" trigger a scope confirmation.
+- **"API-only" phrasing** (e.g. "API-only changes", "backend only", "no cross-repo") triggers a paths-scope prompt.
+- **Non-default branch with commits ahead** — if the target repo is on a feature branch with ≥1 commit ahead of the default branch and `--scope` was not passed, you get a safety prompt.
+
+In all cases you are asked explicitly — **scope is never silently applied**. Use `--scope branch` to bypass the prompt entirely.
+
+### Step 8 Report
+
+The launch report always surfaces the resolved scope:
+```
+Scope: branch         ← or unscoped if no --scope was passed
+Scope Refresh: per non-pickle phase
+```
+When unscoped, a warning is printed: `⚠ scope: unscoped — anatomy-park and szechuan-sauce will operate on the entire target directory.`
+
+### Mid-Flight Recovery: lock-scope.js
+
+If a pipeline launched without `--scope` and you want to add it after the fact (e.g., after the pickle phase completes and before anatomy-park starts):
+
+```bash
+node ~/.claude/pickle-rick/extension/bin/lock-scope.js <session-root> --mode branch
+# or with explicit base ref:
+node ~/.claude/pickle-rick/extension/bin/lock-scope.js <session-root> --mode branch --scope-base main
+```
+
+This command:
+1. Refuses to run if `pipeline-runner.js` is still alive (you must stop it first)
+2. Patches `pipeline.json` to add `scope: "branch"` (and optionally `scope_base`)
+3. Patches `state.json` (re-activates session, clears stale `exit_reason`, restores `worker_timeout_seconds`)
+4. Patches `pipeline-status.json` (sets `status: running`, preserves `completed_phases`)
+5. Prints the resume command
+
+Collapses the 6-step manual state patch to one command.

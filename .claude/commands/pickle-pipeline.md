@@ -82,6 +82,46 @@ RECOMMENDED_MIN=$(awk "BEGIN { print int(${EXPECTED_MIN} * 1.25 + 0.999) }")
 
 **0.5c — Forward `--acknowledge-undersized`.** If the flag is in `$ARGUMENTS`, append it to the `setup.js` invocation in Step 3 so the launch-path warning is silenced for the actual setup call.
 
+## Step 0.6: Scope Auto-Inference
+
+Only runs when `--scope` was NOT already present in `$ARGUMENTS`.
+
+**Signal detection (first match wins):**
+
+1. `$ARGUMENTS` or TASK matches `/\b(branch|feature|fix|feat|hotfix|release|chore)\/[\w._-]+\b|\bon\s+branch\b|\bbranch[:\s]+[\w\/._-]+/i` → `SCOPE_SIGNAL=branch`, `INFERRED_SCOPE=branch`
+2. `$ARGUMENTS` or TASK matches `/\bapi[\s-]?only\b|\bbackend[\s-]?only\b|\bno[\s-]?cross[\s-]?repo\b|\bapi[\s-]?scope\b/i` → `SCOPE_SIGNAL=api_only`
+3. Non-default-branch check (see below) → `SCOPE_SIGNAL=non_default_branch`, `INFERRED_SCOPE=branch`
+4. No signals matched → skip Step 0.6 entirely. Do NOT prompt.
+
+**Non-default-branch check (Signal 3 only, when Signals 1–2 did not match):**
+
+Only runs when TARGET is a git repository:
+```bash
+DEFAULT=$(git -C "${TARGET}" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|.*/||' || echo "main")
+CURRENT=$(git -C "${TARGET}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+AHEAD=$(git -C "${TARGET}" rev-list --count HEAD ^"${DEFAULT}" 2>/dev/null || echo 0)
+```
+If `CURRENT` is non-empty AND `CURRENT != DEFAULT` AND `AHEAD >= 1` → set `SCOPE_SIGNAL=non_default_branch`, `BRANCH_NAME=$CURRENT`, `AHEAD_COUNT=$AHEAD`.
+
+**When `SCOPE_SIGNAL=non_default_branch`:** emit exactly one AskUserQuestion:
+> "Target is on branch `${BRANCH_NAME}` with ${AHEAD_COUNT} commit(s) ahead of `${DEFAULT}`. Lock pipeline to branch diff, or proceed unscoped?"
+>
+> Options: `Lock to branch (Recommended)` / `Proceed unscoped (with reason)`
+
+- `Lock to branch`: set `SCOPE_FLAG=branch`; this is treated as if `--scope branch` was passed
+- `Proceed unscoped (with reason)`: leave `SCOPE_FLAG` unset; log `"scope-inference: operator chose unscoped on branch ${BRANCH_NAME}"` as activity
+
+**When `SCOPE_SIGNAL=branch` or `SCOPE_SIGNAL=api_only`:** emit exactly one AskUserQuestion:
+> "Scope signal detected in your kickoff prompt (`${SCOPE_SIGNAL}`). Which scope should the pipeline use?"
+>
+> Options: `branch (diff from default)` / `paths:<auto-extracted>` *(only for api_only)* / `none (proceed unscoped)`
+
+Set `SCOPE_FLAG` from the operator's answer. MUST NOT silently flip scope on.
+
+**After Step 0.6:** if `SCOPE_FLAG` was set in this step, treat it as if `--scope ${SCOPE_FLAG}` was passed for the rest of the pipeline (Step 4 pipeline.json write).
+
+**Naming a branch in your kickoff prompt is enough — the skill will ask. Use `--scope branch` to skip the prompt.**
+
 ## Step 1: Check tmux
 Run `tmux -V`. If missing: "Install tmux: `brew install tmux`." Stop.
 
@@ -202,6 +242,10 @@ Verify before reporting: after `sleep 5`, `tmux list-windows -t <name>` MUST sho
 
 ## Step 8: Report
 
+Determine SCOPE_DISPLAY from the final resolved scope:
+- If `--scope` was passed or `SCOPE_FLAG` was set via Step 0.6: `SCOPE_DISPLAY=<SCOPE_FLAG value>`; `ALLOWED_PATHS_LINE="Scope Refresh: per non-pickle phase"`
+- Otherwise: `SCOPE_DISPLAY=unscoped`; `UNSCOPED_WARN="⚠ scope: unscoped — anatomy-park and szechuan-sauce will operate on the entire target directory."`
+
 Print:
 ```
 Full Pipeline — Build → Review → Deslop
@@ -209,6 +253,9 @@ Full Pipeline — Build → Review → Deslop
 Task: <TASK>
 Target: <TARGET>
 Phases: <list of active phases>
+Scope: <SCOPE_DISPLAY>
+<if scoped: "Scope Refresh: per non-pickle phase">
+<if unscoped: "⚠ scope: unscoped — anatomy-park and szechuan-sauce will operate on the entire target directory.">
 Session: tmux attach -t <name>
 Monitor: Ctrl+B 1 | Runner: Ctrl+B 0 | Detach: Ctrl+B D
 Cancel: tmux kill-session -t <name>
