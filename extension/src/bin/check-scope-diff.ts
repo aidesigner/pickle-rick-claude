@@ -2,6 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
+import { logActivity } from '../services/activity-logger.js';
 
 export interface CheckScopeDiffOpts {
   scopeJsonPath?: string;
@@ -93,6 +94,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'check-scope-diff.js')
 
   let scopeJsonPath = parseArg('--scope-json');
   let headRef = parseArg('--head-ref');
+  let ticketId = parseArg('--ticket-id');
 
   // Optionally read from stdin JSON
   if (!scopeJsonPath && !process.stdin.isTTY) {
@@ -102,6 +104,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'check-scope-diff.js')
         const parsed = JSON.parse(raw);
         if (parsed.scope_json_path) scopeJsonPath = parsed.scope_json_path;
         if (parsed.head_ref) headRef = parsed.head_ref;
+        if (parsed.ticket_id) ticketId = parsed.ticket_id;
       }
     } catch {
       // stdin parse failure is non-fatal — fall through to CLI args / defaults
@@ -120,7 +123,24 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'check-scope-diff.js')
     process.exit(2);
   }
 
-  // outside_scope → exit 1
+  // outside_scope → emit audit event then exit 1.
+  // AC-APWS-1 requires a `worker_edit_outside_scope` activity event so
+  // /pickle-status renderScopeDrift can surface drift to the operator.
+  try {
+    logActivity({
+      event: 'worker_edit_outside_scope',
+      source: 'pickle',
+      ...(ticketId ? { ticket_id: ticketId } : {}),
+      gate_payload: {
+        scope_json_path: result.scope_json_path ?? scopeJsonPath ?? '',
+        staged_paths_outside_scope: result.staged_paths_outside_scope ?? [],
+        head_ref: result.head_ref ?? headRef ?? 'HEAD',
+        suggested_remediation: result.suggested_remediation ?? '',
+      },
+    });
+  } catch {
+    // logActivity buffers on failure; never block the gate exit on telemetry.
+  }
   process.stdout.write(JSON.stringify(result) + '\n');
   process.exit(1);
 }

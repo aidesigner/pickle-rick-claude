@@ -369,8 +369,10 @@ Examples:
 **Scope preflight** (when `${SESSION_ROOT}/scope.json` exists): Before every `git commit`, run:
 ```bash
 node "$HOME/.claude/pickle-rick/extension/bin/check-scope-diff.js" \
-  --scope-json "${SESSION_ROOT}/scope.json"
+  --scope-json "${SESSION_ROOT}/scope.json" \
+  --ticket-id "$TICKET_ID"
 ```
+Pass `--ticket-id` with the value of `TICKET_ID` from the EXECUTION CONTEXT block; on exit 1 the gate emits a `worker_edit_outside_scope` activity event with that ticket id so `/pickle-status` can surface the drift.
 - **Exit 0**: proceed with commit.
 - **Exit 1**: DO NOT commit. Surface the outside-scope paths as a P1 principle violation (`Scope boundary crossed — files outside allowed_paths staged`), unstage the outside-scope paths with `git reset HEAD <paths>`, and treat it as the iteration's violation — record it in `gap_analysis.md` and move on.
 - **Exit 2** (malformed scope.json): log the error to stderr and proceed without the scope check.

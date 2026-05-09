@@ -336,8 +336,10 @@ Pick the **single highest-severity finding** from Phase 1 (CRITICAL before HIGH)
 4.5. **Scope preflight** (when `${SESSION_ROOT}/scope.json` exists): Before committing, run:
      ```bash
      node "$HOME/.claude/pickle-rick/extension/bin/check-scope-diff.js" \
-       --scope-json "${SESSION_ROOT}/scope.json"
+       --scope-json "${SESSION_ROOT}/scope.json" \
+       --ticket-id "$TICKET_ID"
      ```
+     Pass `--ticket-id` with the value of `TICKET_ID` from the EXECUTION CONTEXT block; on exit 1 the gate emits a `worker_edit_outside_scope` activity event with that ticket id so `/pickle-status` can surface the drift.
      - **Exit 0**: proceed with `git commit`.
      - **Exit 1** (cross-scope staged paths): DO NOT commit. Surface the outside-scope paths as a CRITICAL finding in `anatomy-park.json` under the current subsystem (`category: "scope"`, `phase: "discovery"`), increment `stall_counts` for the subsystem, run `git reset HEAD <outside_paths>` to unstage them, and treat this iteration as a stall — skip Phase 2.5 and Phase 3.
      - **Exit 2** (malformed scope.json): log the error to stderr and proceed without the scope check.
