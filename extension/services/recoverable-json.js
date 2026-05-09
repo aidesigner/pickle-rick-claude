@@ -58,6 +58,7 @@ export function readRecoverableJsonObject(filePath) {
     const entries = listEntries(dir);
     if (!entries)
         return base;
+    const tmpPrefix = baseName + '.tmp.';
     const tmpPattern = new RegExp(`^${baseName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.tmp\\.(\\d+)(?:\\..+)?$`);
     let baseMtimeMs;
     try {
@@ -67,7 +68,7 @@ export function readRecoverableJsonObject(filePath) {
         baseMtimeMs = 0;
     }
     let winner = null;
-    for (const entry of entries) {
+    for (const entry of entries.filter(e => e.startsWith(tmpPrefix))) {
         const match = entry.match(tmpPattern);
         if (!match)
             continue;
