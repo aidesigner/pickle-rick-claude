@@ -412,6 +412,7 @@
     { "$ref": "#/definitions/time_cap_disabled_default" },
     { "$ref": "#/definitions/manager_idle_backoff_engaged" },
     { "$ref": "#/definitions/manager_idle_backoff_released" },
+    { "$ref": "#/definitions/standup_session_dropped" },
     { "$ref": "#/definitions/worker_edit_outside_scope" },
     { "$ref": "#/definitions/pkgjson_revert_forensic_captured" }
   ]
