@@ -142,6 +142,13 @@ export interface StateFlags {
    * on iter 0 and emits a `ticket_audit_bypassed` activity event with this reason.
    */
   skip_ticket_audit_reason?: string;
+  /**
+   * If set to a recognized bundle ID (e.g. "2026-05-08-mega"), and the current
+   * session hash is in BUNDLE_BOOTSTRAP_ALLOWLIST for that bundle ID, mux-runner
+   * auto-applies both skip_readiness_reason and skip_ticket_audit_reason on iter 0
+   * and emits a `bundle_bootstrap_exemption_applied` activity event.
+   */
+  bundle_bootstrap_mode?: string;
   [key: string]: unknown;
 }
 

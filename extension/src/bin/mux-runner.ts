@@ -1723,6 +1723,7 @@ const CODEX_CLI_ERROR_PATTERNS: readonly RegExp[] = [
 // Extend this table when a new bundle needs both gates bypassed at launch.
 const BUNDLE_BOOTSTRAP_ALLOWLIST: Record<string, Set<string>> = {
   '2026-05-07-deferred-slots': new Set(['2026-05-07-488e6e1f']),
+  '2026-05-08-mega': new Set(['2026-05-09-7ff82595']),
 };
 
 export type SparkSmokeGateAction = 'allow' | 'bypass' | 'halt';

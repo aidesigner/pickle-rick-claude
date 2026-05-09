@@ -12,7 +12,8 @@ const PATH_LIKELY_RE = /^(?:extension|src|tests|prds|scripts|services|hooks|bin|
 const PATH_HAS_EXT_RE = /\/[^\s/]+\.[a-zA-Z][a-zA-Z0-9]+$/;
 const DISPOSITION_FILE_REL = path.join('src', 'data', 'bundle-disposition-2026-05-04.json');
 const DISPOSITION_FILE_REL_2 = path.join('src', 'data', 'bundle-disposition-2026-05-07-deferred-slots.json');
-const EXEMPT_DISPOSITIONS = new Set(['REGRESSION-TEST-ONLY', 'DROP', 'IMPLEMENT-but-no-source-PRD-for-K-L']);
+const DISPOSITION_FILE_REL_3 = path.join('src', 'data', 'bundle-disposition-2026-05-08-mega.json');
+const EXEMPT_DISPOSITIONS = new Set(['REGRESSION-TEST-ONLY', 'DROP', 'IMPLEMENT-but-no-source-PRD-for-K-L', 'DIAGNOSE']);
 function readFileOrNull(p) {
     try {
         return fs.readFileSync(p, 'utf-8');
@@ -116,13 +117,16 @@ function loadDispositions(scriptDir) {
         return { table: {}, loaded: false };
     const data1 = readJsonOrNull(path.join(ext, DISPOSITION_FILE_REL));
     const data2 = readJsonOrNull(path.join(ext, DISPOSITION_FILE_REL_2));
-    if (data1 === null && data2 === null)
+    const data3 = readJsonOrNull(path.join(ext, DISPOSITION_FILE_REL_3));
+    if (data1 === null && data2 === null && data3 === null)
         return { table: {}, loaded: false };
     const merged = {};
     if (data1 !== null && typeof data1 === 'object')
         Object.assign(merged, data1);
     if (data2 !== null && typeof data2 === 'object')
         Object.assign(merged, data2);
+    if (data3 !== null && typeof data3 === 'object')
+        Object.assign(merged, data3);
     return { table: merged, loaded: true };
 }
 function gitListFiles(workingDir) {
@@ -606,10 +610,11 @@ function usage() {
         '  path-drift, self-reference, missing-deps, wrong-HEAD-assumptions,\n' +
         '  cross-doc-naming, cross-doc-naming-drift, hallucinated-premise, literal-value-drift,\n' +
         '  missing-audit-comment.\n\n' +
-        'Reads R-BUNDLE-DISPO disposition tables (bundle-disposition-2026-05-04.json and\n' +
-        'bundle-disposition-2026-05-07-deferred-slots.json) from extension/src/data/ and merges them.\n' +
-        'Tickets whose mapped_requirements are all REGRESSION-TEST-ONLY, DROP, or\n' +
-        'IMPLEMENT-but-no-source-PRD-for-K-L are EXEMPT from the hallucinated-premise check.\n\n' +
+        'Reads R-BUNDLE-DISPO disposition tables (bundle-disposition-2026-05-04.json,\n' +
+        'bundle-disposition-2026-05-07-deferred-slots.json, and bundle-disposition-2026-05-08-mega.json)\n' +
+        'from extension/src/data/ and merges them (later files win on key collision).\n' +
+        'Tickets whose mapped_requirements are all REGRESSION-TEST-ONLY, DROP,\n' +
+        'IMPLEMENT-but-no-source-PRD-for-K-L, or DIAGNOSE are EXEMPT from the hallucinated-premise check.\n\n' +
         'Writes manifest to <session-dir>/audit-ticket-bundle.json (R-TAQ-2b schema v1).\n\n' +
         'Exit codes:\n' +
         '  0  No findings\n' +

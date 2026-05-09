@@ -1513,6 +1513,7 @@ const CODEX_CLI_ERROR_PATTERNS = [
 // Extend this table when a new bundle needs both gates bypassed at launch.
 const BUNDLE_BOOTSTRAP_ALLOWLIST = {
     '2026-05-07-deferred-slots': new Set(['2026-05-07-488e6e1f']),
+    '2026-05-08-mega': new Set(['2026-05-09-7ff82595']),
 };
 const SPARK_MODEL_PATTERN = /^gpt-5\.3-codex-spark/;
 function ticketHasCodexCliError(ticketDir) {

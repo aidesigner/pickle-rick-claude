@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BundleDispositionTable",
+  "description": "R-BUNDLE-DISPO: per-requirement disposition table for a named bundle. Keys are R-code strings; values are disposition tokens. bundle_id identifies the bundle.",
+  "type": "object",
+  "required": ["bundle_id"],
+  "properties": {
+    "bundle_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique identifier for the bundle (e.g. '2026-05-08-mega')"
+    }
+  },
+  "additionalProperties": {
+    "type": "string",
+    "enum": [
+      "IMPLEMENT",
+      "IMPLEMENT-but-no-source-PRD-for-K-L",
+      "REGRESSION-TEST-ONLY",
+      "DROP",
+      "DIAGNOSE"
+    ],
+    "description": "Disposition token for the requirement. DIAGNOSE = research/analysis only, no implementation ships."
+  }
+}
