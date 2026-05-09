@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { isRecord } from '../lib/is-record.js';
 import { STATE_MANAGER_DEFAULTS, LATEST_SCHEMA_VERSION, StateError, LockError, TransactionError, SchemaVersionMismatchError, VALID_ACTIVITY_EVENTS, } from '../types/index.js';
 import { writeStateFile, safeErrorMessage } from './pickle-utils.js';
 import { readRecoverableJsonObject } from './recoverable-json.js';
@@ -108,9 +109,6 @@ const V3_STATE_SHAPE_MARKERS = [
 ];
 function presentV3StateShapeMarkers(state) {
     return V3_STATE_SHAPE_MARKERS.filter(field => Object.prototype.hasOwnProperty.call(state, field));
-}
-function isRecord(value) {
-    return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 function readMappedPid(entry) {
     if (!isRecord(entry) || typeof entry.pid !== 'number')

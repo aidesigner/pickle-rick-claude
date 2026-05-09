@@ -1,4 +1,5 @@
 import * as path from 'path';
+import { isRecord } from '../lib/is-record.js';
 import { StateManager } from './state-manager.js';
 import { safeErrorMessage } from './pickle-utils.js';
 import { readRecoverableJsonObject } from './recoverable-json.js';
@@ -9,9 +10,6 @@ const MICROVERSE_STATUSES = new Set(['gap_analysis', 'iterating', 'converged', '
 const METRIC_TYPES = new Set(['command', 'llm', 'none']);
 const METRIC_DIRECTIONS = new Set(['higher', 'lower']);
 const CONVERGENCE_MODES = new Set(['metric', 'worker']);
-function isRecord(value) {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 function requireString(value, field) {
     if (typeof value !== 'string') {
         throw new Error(`Invalid microverse state: ${field} must be a string`);

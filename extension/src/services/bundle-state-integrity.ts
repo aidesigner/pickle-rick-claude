@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { Defaults } from '../types/index.js';
+import { isRecord } from '../lib/is-record.js';
 import { safeErrorMessage } from './pickle-utils.js';
 import { readRecoverableJsonObject } from './recoverable-json.js';
 
@@ -15,10 +16,6 @@ export interface RelaunchCapAuditResult {
   cap: number;
   checkedStatePaths: string[];
   violations: RelaunchCapAuditViolation[];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function statePathsForBundle(sessionDir: string): string[] {

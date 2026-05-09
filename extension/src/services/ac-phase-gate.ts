@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
+import { isRecord } from '../lib/is-record.js';
 import { auditCodexManagerRelaunchCaps } from './bundle-state-integrity.js';
 import { safeErrorMessage } from './pickle-utils.js';
 
@@ -47,10 +48,6 @@ interface RunAcPhaseGateOpts {
   cwd?: string;
   stdout?: (msg: string) => void;
   stderr?: (msg: string) => void;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function readManifestArray(manifestPath: string): unknown[] {

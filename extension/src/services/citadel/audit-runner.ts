@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
+import { isRecord } from '../../lib/is-record.js';
 import { withLock } from '../state-manager.js';
 import { auditAcShape, AcShapeAuditReport } from './ac-shape-audit.js';
 import { auditSiblingAuthPreconditions } from './sibling-auth-audit.js';
@@ -239,10 +240,6 @@ function withFindingSource<T extends { id: string; severity: string }>(
     severity: isSeverity(finding.severity) ? finding.severity : 'Medium',
     source_section: sourceSection,
   };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }
 
 function isSeverity(value: unknown): value is CitadelSeverity {

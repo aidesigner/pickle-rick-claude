@@ -6,6 +6,7 @@ import { spawnSync } from 'child_process';
 import { logActivity } from '../services/activity-logger.js';
 import { listLinearTicketFiles } from '../services/artifact-validation.js';
 import { computeOneHop } from '../services/scope-resolver.js';
+import { isRecord } from '../lib/is-record.js';
 import { formatLocalDateKey, safeErrorMessage, writeStateFile } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { readRecoverableJsonObject } from '../services/recoverable-json.js';
@@ -566,10 +567,6 @@ export function loadReadinessAllowlist(repoRoot: string): Set<string> {
     refs.add(ref);
   }
   return refs;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function stringArray(value: unknown): string[] {

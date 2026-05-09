@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
+import { isRecord } from '../lib/is-record.js';
 import { auditCodexManagerRelaunchCaps } from './bundle-state-integrity.js';
 import { safeErrorMessage } from './pickle-utils.js';
 export const AC_PHASE_MANIFEST = 'ac-phase-manifest.json';
@@ -11,9 +12,6 @@ const VALID_EVALUATION_PHASES = new Set([
     'per-phase',
     'bundle-end',
 ]);
-function isRecord(value) {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 function readManifestArray(manifestPath) {
     const raw = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'));
     if (Array.isArray(raw))

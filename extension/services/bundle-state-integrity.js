@@ -1,11 +1,9 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { Defaults } from '../types/index.js';
+import { isRecord } from '../lib/is-record.js';
 import { safeErrorMessage } from './pickle-utils.js';
 import { readRecoverableJsonObject } from './recoverable-json.js';
-function isRecord(value) {
-    return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 function statePathsForBundle(sessionDir) {
     const statePaths = [path.join(sessionDir, 'state.json')];
     let entries;

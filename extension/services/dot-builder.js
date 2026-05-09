@@ -1,5 +1,6 @@
 // DOT pipeline codegen builder — no process.exit() (eslint-plugin-pickle rule)
 import { BuildError } from '../types/index.js';
+import { isRecord } from '../lib/is-record.js';
 export { BuildError } from '../types/index.js';
 import { DEFAULT_FIX_BACKEND_PROMPT, DEFAULT_FIX_FRONTEND_PROMPT, DEFAULT_REVIEW_BE_PROMPT, DEFAULT_REVIEW_FE_PROMPT, DEFAULT_REVIEW_INT_PROMPT, DEFAULT_ADVERSARY_PROMPT, DEFAULT_BUILD_API_CMD, DEFAULT_TESTS_API_CMD, DEFAULT_BUILD_UI_CMD, DEFAULT_LINT_CMD, DEFAULT_FP_VERIFY_CMD, DEFAULT_REPRO_VERIFY_CMD, DEFAULT_FIX_BACKEND_MODEL, DEFAULT_FIX_FRONTEND_MODEL, DEFAULT_REVIEW_BE_MODEL, DEFAULT_REVIEW_FE_MODEL, DEFAULT_REVIEW_INT_MODEL, DEFAULT_ADVERSARY_MODEL, DEFAULT_FIX_BACKEND_HARNESS, DEFAULT_FIX_FRONTEND_HARNESS, DEFAULT_ADVERSARY_SEALED_FROM_SOURCE, DEFAULT_CONVERGENCE_EPSILON, DEFAULT_MAX_ITERATIONS, DEFAULT_CONVERGE_MAX_VISITS, DEFAULT_CONVERGE_TIMEOUT, DEFAULT_FIX_TIMEOUT, DEFAULT_MECHANICAL_BUILD_TIMEOUT, DEFAULT_MECHANICAL_TESTS_TIMEOUT, DEFAULT_REVIEW_TIMEOUT, DEFAULT_GOAL_GATE_TIMEOUT, DEFAULT_COMMIT_PUSH_TIMEOUT, DEFAULT_BODY_MAX_VISITS, DEFAULT_GOAL_GATE_MAX_VISITS, DEFAULT_MECHANICAL_MAX_VISITS, } from './convergence-defaults.js';
 // ---------------------------------------------------------------------------
@@ -51,9 +52,6 @@ function expandWithTestDirs(paths) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-function isRecord(v) {
-    return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
 function mkDiag(rule, severity, message, nodeId) {
     const d = { rule, severity, message };
     if (nodeId !== undefined)

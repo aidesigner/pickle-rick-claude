@@ -1,5 +1,6 @@
 // DOT pipeline codegen builder — no process.exit() (eslint-plugin-pickle rule)
 import { BuildError } from '../types/index.js';
+import { isRecord } from '../lib/is-record.js';
 export { BuildError } from '../types/index.js';
 import type {
   BuildResult,
@@ -108,10 +109,6 @@ interface NodeSpec { id: string; attrs: Record<string, string> }
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
 
 function mkDiag(rule: string, severity: 'error' | 'warning' | 'info', message: string, nodeId?: string): Diagnostic {
   const d: Diagnostic = { rule, severity, message };

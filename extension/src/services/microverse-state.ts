@@ -1,5 +1,6 @@
 import * as path from 'path';
 import type { MicroverseSessionState, MicroverseHistoryEntry, CreateMicroverseOpts, FailureClass } from '../types/index.js';
+import { isRecord } from '../lib/is-record.js';
 import { StateManager } from './state-manager.js';
 import { safeErrorMessage } from './pickle-utils.js';
 import { readRecoverableJsonObject } from './recoverable-json.js';
@@ -13,10 +14,6 @@ const MICROVERSE_STATUSES = new Set(['gap_analysis', 'iterating', 'converged', '
 const METRIC_TYPES = new Set(['command', 'llm', 'none']);
 const METRIC_DIRECTIONS = new Set(['higher', 'lower']);
 const CONVERGENCE_MODES = new Set(['metric', 'worker']);
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function requireString(value: unknown, field: string): string {
   if (typeof value !== 'string') {

@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { isRecord } from '../lib/is-record.js';
 import {
   type State,
   type StateManagerOptions,
@@ -133,10 +134,6 @@ const V3_STATE_SHAPE_MARKERS = [
 
 function presentV3StateShapeMarkers(state: object): string[] {
   return V3_STATE_SHAPE_MARKERS.filter(field => Object.prototype.hasOwnProperty.call(state, field));
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function readMappedPid(entry: unknown): number | null {
