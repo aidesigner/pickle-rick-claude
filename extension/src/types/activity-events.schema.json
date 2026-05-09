@@ -312,11 +312,12 @@
     },
     "time_cap_disabled_default": {
       "type": "object",
-      "required": ["event", "ts", "session_id", "prior_value"],
+      "required": ["event", "ts"],
       "properties": {
         "event": { "type": "string", "const": "time_cap_disabled_default" },
         "ts": { "type": "string" },
-        "session_id": { "type": "string" },
+        "session": { "type": "string" },
+        "backend": { "$ref": "#/definitions/backendEnum" },
         "prior_value": {}
       }
     },

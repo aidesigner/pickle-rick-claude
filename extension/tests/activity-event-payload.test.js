@@ -209,6 +209,11 @@ const EVENT_CASES = [
     },
     drop: 'gate_payload',
   },
+  {
+    type: 'time_cap_disabled_default',
+    valid: { event: 'time_cap_disabled_default', ts: TS, session: 'session-1', backend: 'claude' },
+    drop: 'ts',
+  },
 ];
 
 for (const { type, valid, drop } of EVENT_CASES) {
