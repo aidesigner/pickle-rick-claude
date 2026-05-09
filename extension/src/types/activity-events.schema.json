@@ -356,6 +356,24 @@
           }
         }
       }
+    },
+    "pkgjson_revert_forensic_captured": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "pkgjson_revert_forensic_captured" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["forensic_artifact_path", "suspected_hypothesis", "src_version", "deployed_version"],
+          "properties": {
+            "forensic_artifact_path": { "type": "string" },
+            "suspected_hypothesis": { "type": "string" },
+            "src_version": { "type": "string" },
+            "deployed_version": { "type": "string" }
+          }
+        }
+      }
     }
   },
   "oneOf": [
@@ -381,6 +399,7 @@
     { "$ref": "#/definitions/time_cap_disabled_default" },
     { "$ref": "#/definitions/manager_idle_backoff_engaged" },
     { "$ref": "#/definitions/manager_idle_backoff_released" },
-    { "$ref": "#/definitions/worker_edit_outside_scope" }
+    { "$ref": "#/definitions/worker_edit_outside_scope" },
+    { "$ref": "#/definitions/pkgjson_revert_forensic_captured" }
   ]
 }

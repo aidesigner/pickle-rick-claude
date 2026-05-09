@@ -1,0 +1,10 @@
+{
+  "event": "pkgjson_revert_forensic_captured",
+  "ts": "2026-05-09T15:00:00.000Z",
+  "gate_payload": {
+    "forensic_artifact_path": "/Users/example/pickle-rick-claude/extension/audit/pkgjson-revert-2026-05-09T15-00-00Z.json",
+    "suspected_hypothesis": "h-c",
+    "src_version": "1.72.2",
+    "deployed_version": "1.72.1"
+  }
+}

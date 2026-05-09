@@ -311,6 +311,7 @@ test('activity-event-payload: schema defines exactly 19 event type definitions',
     'manager_idle_backoff_released',
     'standup_session_dropped',
     'worker_edit_outside_scope',
+    'pkgjson_revert_forensic_captured',
   ];
   for (const name of EVENT_NAMES) {
     assert.ok(name in schema.definitions, `schema missing definition for ${name}`);
@@ -318,5 +319,5 @@ test('activity-event-payload: schema defines exactly 19 event type definitions',
   const nonSharedDefs = Object.keys(schema.definitions).filter(
     k => k !== 'backendEnum' && k !== 'backendResolutionSourceEnum',
   );
-  assert.equal(nonSharedDefs.length, 27, `expected 27 event definitions, got ${nonSharedDefs.length}`);
+  assert.equal(nonSharedDefs.length, 28, `expected 28 event definitions, got ${nonSharedDefs.length}`);
 });

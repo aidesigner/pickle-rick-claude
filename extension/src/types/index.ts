@@ -485,6 +485,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'manager_idle_backoff_released',
   'standup_session_dropped',
   'worker_edit_outside_scope',
+  'pkgjson_revert_forensic_captured',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];
