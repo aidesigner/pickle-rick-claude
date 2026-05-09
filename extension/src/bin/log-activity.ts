@@ -1,9 +1,10 @@
 import * as path from 'path';
-import { VALID_ACTIVITY_EVENTS, ActivityEventType } from '../types/index.js';
+import { VALID_ACTIVITY_EVENTS, ActivityEventType, BACKENDS, Backend } from '../types/index.js';
+import { isBackend } from '../services/backend-spawn.js';
 import { logActivity } from '../services/activity-logger.js';
 import { safeErrorMessage } from '../services/pickle-utils.js';
 
-const USAGE = `Usage: log-activity <event_type> "<title>" [--gate-payload <json-object>]
+const USAGE = `Usage: log-activity <event_type> "<title>" [--gate-payload <json-object>] [--backend <name>]
 Valid types: ${VALID_ACTIVITY_EVENTS.join(', ')}`;
 
 function parseGatePayload(json: string): Record<string, unknown> {
@@ -21,10 +22,19 @@ function parseGatePayload(json: string): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+function parseBackend(value: string): Backend {
+  if (!isBackend(value)) {
+    console.error(`--backend must be one of: ${BACKENDS.join(', ')} (got "${value}").`);
+    process.exit(1);
+  }
+  return value;
+}
+
 if (process.argv[1] && path.basename(process.argv[1]) === 'log-activity.js') {
   const argv = process.argv.slice(2);
   const positional: string[] = [];
   let gatePayload: Record<string, unknown> | undefined;
+  let backend: Backend | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -35,6 +45,14 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'log-activity.js') {
         process.exit(1);
       }
       gatePayload = parseGatePayload(next);
+      i++;
+    } else if (arg === '--backend') {
+      const next = argv[i + 1];
+      if (!next || next.startsWith('--')) {
+        console.error('--backend requires a value.');
+        process.exit(1);
+      }
+      backend = parseBackend(next);
       i++;
     } else {
       positional.push(arg);
@@ -72,6 +90,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'log-activity.js') {
       title,
       source: 'persona',
       ...(gatePayload ? { gate_payload: gatePayload } : {}),
+      ...(backend ? { backend } : {}),
     });
   } catch (err) {
     console.error(`Failed to log activity: ${safeErrorMessage(err)}`);

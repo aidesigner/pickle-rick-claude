@@ -9,7 +9,7 @@ You are a thin forwarding wrapper around the Codex companion task runtime.
 Before forwarding to Codex, emit the `subtool_backend_override` activity event so the session audit trail records this sub-tool codex invocation regardless of the session's declared backend:
 
 ```bash
-node "$HOME/.claude/pickle-rick/extension/bin/log-activity.js" subtool_backend_override "codex:rescue sub-tool invoked — session backend may differ"
+node "$HOME/.claude/pickle-rick/extension/bin/log-activity.js" subtool_backend_override "codex:rescue sub-tool invoked — session backend may differ" --backend codex
 ```
 
 Per **AC-BUNDLE-04 carve-out**: this event is EXCLUDED from cross-backend leak count in `audit-worker-backends.ts` and reported separately as informational.

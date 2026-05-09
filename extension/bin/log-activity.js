@@ -1,8 +1,9 @@
 import * as path from 'path';
-import { VALID_ACTIVITY_EVENTS } from '../types/index.js';
+import { VALID_ACTIVITY_EVENTS, BACKENDS } from '../types/index.js';
+import { isBackend } from '../services/backend-spawn.js';
 import { logActivity } from '../services/activity-logger.js';
 import { safeErrorMessage } from '../services/pickle-utils.js';
-const USAGE = `Usage: log-activity <event_type> "<title>" [--gate-payload <json-object>]
+const USAGE = `Usage: log-activity <event_type> "<title>" [--gate-payload <json-object>] [--backend <name>]
 Valid types: ${VALID_ACTIVITY_EVENTS.join(', ')}`;
 function parseGatePayload(json) {
     let parsed;
@@ -19,10 +20,18 @@ function parseGatePayload(json) {
     }
     return parsed;
 }
+function parseBackend(value) {
+    if (!isBackend(value)) {
+        console.error(`--backend must be one of: ${BACKENDS.join(', ')} (got "${value}").`);
+        process.exit(1);
+    }
+    return value;
+}
 if (process.argv[1] && path.basename(process.argv[1]) === 'log-activity.js') {
     const argv = process.argv.slice(2);
     const positional = [];
     let gatePayload;
+    let backend;
     for (let i = 0; i < argv.length; i++) {
         const arg = argv[i];
         if (arg === '--gate-payload') {
@@ -32,6 +41,15 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'log-activity.js') {
                 process.exit(1);
             }
             gatePayload = parseGatePayload(next);
+            i++;
+        }
+        else if (arg === '--backend') {
+            const next = argv[i + 1];
+            if (!next || next.startsWith('--')) {
+                console.error('--backend requires a value.');
+                process.exit(1);
+            }
+            backend = parseBackend(next);
             i++;
         }
         else {
@@ -63,6 +81,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'log-activity.js') {
             title,
             source: 'persona',
             ...(gatePayload ? { gate_payload: gatePayload } : {}),
+            ...(backend ? { backend } : {}),
         });
     }
     catch (err) {
