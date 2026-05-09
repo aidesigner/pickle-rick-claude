@@ -1293,6 +1293,12 @@ function isMissingCliError(err: unknown): boolean {
   return /not found|ENOENT/i.test(safeErrorMessage(err));
 }
 
+export function classifyJudgeError(err: unknown): 'missing' | 'timeout' | 'failed' {
+  if (isMissingCliError(err)) return 'missing';
+  if (/\bETIMEDOUT\b/i.test(safeErrorMessage(err))) return 'timeout';
+  return 'failed';
+}
+
 function measureLlmMetricAttempt(
   goal: string,
   timeoutSeconds: number,
@@ -1343,30 +1349,51 @@ function measureLlmMetricAttempt(
   } catch (err) {
     const msg = safeErrorMessage(err);
     process.stderr.write(`[microverse] measureLlmMetric failed (judge_backend=claude, session_backend=${backend}, model=${model}): ${msg}\n`);
-    const failureKind =
-      isMissingCliError(err) ? 'cli_missing'
-        : /\bETIMEDOUT\b/i.test(msg) ? 'timeout'
-          : 'failed';
+    const classified = classifyJudgeError(err);
+    const failureKind = classified === 'missing' ? 'cli_missing' : classified;
     return { metric: null, failureKind, message: msg };
   }
 }
 
-function probeJudgeCliAvailability(cwd: string): { ok: true } | { ok: false; message: string } {
+type ProbeJudgeResult = { kind: 'ok' } | { kind: 'missing' | 'timeout' | 'failed'; message: string };
+
+const DEFAULT_PROBE_TIMEOUT_MS = 5000;
+const MAX_PROBE_TIMEOUT_MS = 60000;
+
+function getProbeTimeoutMs(): number {
+  const raw = parseInt(process.env['PICKLE_JUDGE_PROBE_TIMEOUT_MS'] ?? '', 10);
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_PROBE_TIMEOUT_MS;
+  const clamped = Math.min(raw, MAX_PROBE_TIMEOUT_MS);
+  if (clamped !== raw) {
+    process.stderr.write(`[microverse] PICKLE_JUDGE_PROBE_TIMEOUT_MS clamped from ${raw}ms to ${clamped}ms\n`);
+  }
+  process.stderr.write(`[microverse] judge probe timeout override: ${clamped}ms\n`);
+  return clamped;
+}
+
+export function probeJudgeCliAvailability(cwd: string): ProbeJudgeResult {
+  const timeoutMs = getProbeTimeoutMs();
   try {
     _deps.execFileSync('claude', ['--version'], {
       cwd,
-      timeout: 50,
+      timeout: timeoutMs,
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, ...backendEnvOverrides('claude') },
     });
-    return { ok: true };
+    return { kind: 'ok' };
   } catch (err) {
-    return { ok: false, message: safeErrorMessage(err) };
+    const kind = classifyJudgeError(err);
+    const message = safeErrorMessage(err);
+    if (kind === 'timeout') {
+      const diagLine = `[microverse] judge probe timed out at ${timeoutMs}ms (claude --version exceeded probe timeout); falling back to measurement loop with 10s/30s/60s backoff. If this recurs, set PICKLE_JUDGE_PROBE_TIMEOUT_MS=10000 or higher.`;
+      process.stderr.write(diagLine + '\n');
+    }
+    return { kind, message };
   }
 }
 
-async function measureLlmMetricWithBackoff(
+export async function measureLlmMetricWithBackoff(
   goal: string,
   timeoutSeconds: number,
   cwd: string,
@@ -1377,7 +1404,7 @@ async function measureLlmMetricWithBackoff(
   backend: Backend = 'claude',
 ): Promise<JudgeMeasurementResult> {
   const probe = probeJudgeCliAvailability(cwd);
-  if (!probe.ok) {
+  if (probe.kind === 'missing') {
     return {
       metric: null,
       exitReason: 'judge_cli_missing',

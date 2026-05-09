@@ -30,6 +30,7 @@ const UNREGISTERED_TEST_ALLOWLIST = new Set([
   'tests/audit-test-isolation-fixture.test.js',
   'tests/bin/check-gate.test.js',
   'tests/bin/finalize-gate.test.js',
+  'tests/bin/microverse-judge-probe.test.js',
   'tests/bin/spawn-gate-remediator.test.js',
   'tests/bin/test-runner-tier-discovery.test.js',
   'tests/integration/anatomy-park-baseline-gate.test.js',
