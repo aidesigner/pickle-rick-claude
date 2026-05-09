@@ -1,0 +1,37 @@
+[
+  {
+    "subsystem": "bin",
+    "has_claude_md": true,
+    "last_modified_iso": "2026-05-07T15:15:27Z",
+    "file_count": 49,
+    "drift_class": "INCOMPLETE"
+  },
+  {
+    "subsystem": "hooks",
+    "has_claude_md": true,
+    "last_modified_iso": "2026-05-07T14:25:24Z",
+    "file_count": 2,
+    "drift_class": "INCOMPLETE"
+  },
+  {
+    "subsystem": "lib",
+    "has_claude_md": true,
+    "last_modified_iso": "2026-05-07T14:33:57Z",
+    "file_count": 8,
+    "drift_class": "INCOMPLETE"
+  },
+  {
+    "subsystem": "services",
+    "has_claude_md": true,
+    "last_modified_iso": "2026-05-07T14:39:46Z",
+    "file_count": 30,
+    "drift_class": "INCOMPLETE"
+  },
+  {
+    "subsystem": "types",
+    "has_claude_md": true,
+    "last_modified_iso": "2026-05-07T15:03:41Z",
+    "file_count": 7,
+    "drift_class": "INCOMPLETE"
+  }
+]
