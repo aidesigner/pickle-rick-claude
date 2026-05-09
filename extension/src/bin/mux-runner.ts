@@ -2463,6 +2463,7 @@ export function checkPartialLifecycleExit(sessionDir: string, statePath: string,
 
   writeActivityEntry(statePath, {
     event: 'worker_partial_lifecycle_exit',
+    ts: new Date().toISOString(),
     source: 'pickle',
     ticket: ticketId,
     gate_payload: { artifacts_missing: artifactsMissing, session_log_size: sessionLogSize },

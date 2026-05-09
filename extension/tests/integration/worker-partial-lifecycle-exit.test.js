@@ -68,6 +68,8 @@ test('AC-WSE-02: research APPROVED + missing plan emits worker_partial_lifecycle
     assert.equal(events.length, 1, `expected 1 partial-lifecycle event, got ${events.length}`);
     const ev = events[0];
     assert.equal(ev.ticket, ticketId);
+    assert.equal(typeof ev.ts, 'string', 'schema-required ts must be present');
+    assert.match(ev.ts, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/, 'ts must be ISO 8601 UTC');
     assert.deepStrictEqual(ev.gate_payload.artifacts_missing.sort(), ['code_review', 'conformance', 'plan']);
     assert.equal(ev.gate_payload.session_log_size, 0);
   } finally {
@@ -135,6 +137,8 @@ test('AC-WSE-05: silent-exit-018f32d2 forensic replay — 4 artifacts + 0-byte l
     assert.equal(events.length, 1, 'forensic replay must fire exactly one event');
     const ev = events[0];
     assert.equal(ev.ticket, '018f32d2');
+    assert.equal(typeof ev.ts, 'string', 'schema-required ts must be present');
+    assert.match(ev.ts, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$/, 'ts must be ISO 8601 UTC');
     assert.deepStrictEqual(
       ev.gate_payload.artifacts_missing.sort(),
       ['code_review', 'conformance'],
