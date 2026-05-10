@@ -1,6 +1,7 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { ChangedFileSummary, DiffSummary } from './diff-walker.js';
+import { CitadelFinding } from './reporter.js';
 
 export type RuleSetInvariantSeverity = 'High' | 'Medium';
 export type RuleSetDeclarationKind = 'array' | 'enum' | 'object';
@@ -367,4 +368,81 @@ function slug(value: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
     .slice(0, 80) || 'unknown';
+}
+
+// ---- Trap-door triple audit (R-CCNW-6) ----
+
+export interface TrapDoorDeclarationResult {
+  declarations: number;
+  findings: CitadelFinding[];
+}
+
+const ENFORCE_HAS_REF_RE = /[\w./*-]+\.(?:test\.js|sh)\b/;
+
+export function parseTrapDoorDeclarations(content: string): TrapDoorDeclarationResult {
+  const section = extractTrapDoorsSection(content);
+  const findings: CitadelFinding[] = [];
+  let declarations = 0;
+
+  const lines = section.split('\n');
+  for (let idx = 0; idx < lines.length; idx += 1) {
+    const line = lines[idx];
+    if (!line.includes('INVARIANT:')) continue;
+
+    if (!line.includes('BREAKS:')) {
+      findings.push({
+        id: `malformed-triple:no-breaks:${idx + 1}`,
+        severity: 'Medium',
+        message: `Trap-door entry at line ${idx + 1} has INVARIANT but no BREAKS clause.`,
+      });
+      continue;
+    }
+
+    const enforceIdx = line.indexOf('ENFORCE:');
+    if (enforceIdx === -1) {
+      findings.push({
+        id: `malformed-triple:no-enforce:${idx + 1}`,
+        severity: 'Medium',
+        message: `Trap-door entry at line ${idx + 1} has INVARIANT+BREAKS but no ENFORCE clause.`,
+      });
+      continue;
+    }
+
+    const enforceContent = line.slice(enforceIdx + 8);
+    if (!ENFORCE_HAS_REF_RE.test(enforceContent)) {
+      findings.push({
+        id: `malformed-triple:bad-enforce-ref:${idx + 1}`,
+        severity: 'Medium',
+        message: `Trap-door entry at line ${idx + 1} ENFORCE clause contains no .test.js or .sh reference.`,
+      });
+      continue;
+    }
+
+    declarations += 1;
+  }
+
+  return { declarations, findings };
+}
+
+export function auditTrapDoorDeclarations(options: { repoRoot: string }): TrapDoorDeclarationResult {
+  const claudeMdPath = path.join(options.repoRoot, 'extension', 'CLAUDE.md');
+  if (!existsSync(claudeMdPath)) {
+    return { declarations: 0, findings: [] };
+  }
+  let content: string;
+  try {
+    content = readFileSync(claudeMdPath, 'utf-8');
+  } catch {
+    return { declarations: 0, findings: [] };
+  }
+  return parseTrapDoorDeclarations(content);
+}
+
+function extractTrapDoorsSection(content: string): string {
+  const start = content.search(/^##\s+Trap Doors\s*$/m);
+  if (start === -1) return '';
+  const afterHeading = content.indexOf('\n', start) + 1;
+  const rest = content.slice(afterHeading);
+  const nextHeading = rest.search(/^##\s+/m);
+  return nextHeading === -1 ? rest : rest.slice(0, nextHeading);
 }
