@@ -19,6 +19,7 @@ import {
     renderDashboard,
     inferModeFromStep,
     checkAndSwapMode,
+    renderMicroverseDashboard,
 } from '../bin/monitor.js';
 import { getHeight } from '../services/pickle-utils.js';
 import * as fs from 'node:fs';
@@ -827,15 +828,15 @@ test('renderDashboard: pickle mode renders PICKLE RICK header', () => {
     }
 });
 
-test('renderDashboard: microverse mode renders stub text', () => {
+test('renderDashboard: microverse mode renders microverse dashboard', () => {
     const dir = tmpDir();
     try {
-        const state = makeMinimalState();
+        const state = makeMinimalState({ session_dir: dir });
         const segments = renderDashboard(state, 'microverse', dir, 80);
-        const out = segments.join('');
+        const out = segments.join('').replace(/\x1b\[[0-9;]*[mJH]/g, '');
         assert.ok(
-            out.includes('renderMicroverseDashboard not yet implemented'),
-            `expected microverse stub text, got: ${out}`,
+            out.includes('MICROVERSE MONITOR'),
+            `expected MICROVERSE MONITOR header in microverse mode, got: ${out}`,
         );
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
@@ -992,6 +993,172 @@ test('R-MDS-3 AC-4: checkAndSwapMode preserves mode when state is unreadable', (
         const result = checkAndSwapMode(dir, 'microverse', noopLog);
         assert.equal(result, 'microverse', 'should preserve current mode on unreadable state');
         assert.equal(swaps.length, 0, 'no swap event when state is unreadable');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+// --- R-MDS-4: renderMicroverseDashboard ---
+
+test('R-MDS-4 AC-1: subsystems render consecutive_clean/target per subsystem', () => {
+    const dir = tmpDir();
+    try {
+        const apData = {
+            subsystems: ['services', 'bin'],
+            consecutive_clean: { services: 3, bin: 1 },
+            stall_limit: 5,
+            findings_history: { services: [], bin: [] },
+        };
+        fs.writeFileSync(path.join(dir, 'anatomy-park.json'), JSON.stringify(apData));
+        const state = makeMinimalState({ session_dir: dir });
+        const result = renderMicroverseDashboard(state, null);
+        const clean = result.replace(/\x1b\[[0-9;]*[mJH]/g, '');
+        assert.ok(clean.includes('services'), 'subsystem name "services" should appear');
+        assert.ok(clean.includes('3/5'), 'consecutive_clean=3 / stall_limit=5 should appear');
+        assert.ok(clean.includes('1/5'), 'consecutive_clean=1 / stall_limit=5 should appear');
+        assert.ok(clean.includes('bin'), 'subsystem name "bin" should appear');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('R-MDS-4 AC-2: convergence section shows iter + last 5 classifications', () => {
+    const dir = tmpDir();
+    try {
+        const state = makeMinimalState({ session_dir: dir, iteration: 7, max_iterations: 20 });
+        const mv = {
+            failure_history: [
+                { iteration: 1, failure_class: 'no_progress', description: 'a', timestamp: '' },
+                { iteration: 2, failure_class: 'regression', description: 'b', timestamp: '' },
+                { iteration: 3, failure_class: 'tool_failure', description: 'c', timestamp: '' },
+                { iteration: 4, failure_class: 'no_progress', description: 'd', timestamp: '' },
+                { iteration: 5, failure_class: 'regression', description: 'e', timestamp: '' },
+            ],
+            convergence: { stall_counter: 0, stall_limit: 10, history: [] },
+        };
+        const result = renderMicroverseDashboard(state, mv);
+        const clean = result.replace(/\x1b\[[0-9;]*[mJH]/g, '');
+        assert.ok(clean.includes('iter 7/20'), `should show iter 7/20, got: ${clean}`);
+        assert.ok(clean.includes('no_progress'), `should show failure class no_progress, got: ${clean}`);
+        assert.ok(clean.includes('regression'), `should show failure class regression, got: ${clean}`);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('R-MDS-4 AC-3: stall warning fires red ANSI at stall_counter=4 stall_limit=6 (>=0.66)', () => {
+    const dir = tmpDir();
+    try {
+        const state = makeMinimalState({ session_dir: dir });
+        const mv = {
+            failure_history: [],
+            convergence: { stall_counter: 4, stall_limit: 6, history: [] },
+        };
+        const result = renderMicroverseDashboard(state, mv);
+        // Bold red: \x1b[1;31m (MX.ERR)
+        assert.ok(result.includes('\x1b[1;31m'), `ANSI bold-red should be present for stall at 4/6, got raw: ${JSON.stringify(result)}`);
+        const clean = result.replace(/\x1b\[[0-9;]*[mJH]/g, '');
+        assert.ok(clean.includes('4/6'), 'stall ratio 4/6 should appear in output');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('R-MDS-4 AC-4: sparkline uses 8-char ramp on last-10 values', () => {
+    const dir = tmpDir();
+    try {
+        const state = makeMinimalState({ session_dir: dir });
+        const history = Array.from({ length: 10 }, (_, i) => ({
+            iteration: i + 1,
+            score: i * 10,
+            action: 'accept',
+            metric_value: String(i * 10),
+            description: '',
+            pre_iteration_sha: '',
+            timestamp: '',
+        }));
+        const mv = {
+            failure_history: [],
+            convergence: { stall_counter: 0, stall_limit: 10, history },
+        };
+        const result = renderMicroverseDashboard(state, mv);
+        const sparkChars = '▁▂▃▄▅▆▇█';
+        const found = [...result].filter(c => sparkChars.includes(c));
+        assert.ok(found.length >= 1, `should contain sparkline chars from ramp, got raw: ${JSON.stringify(result)}`);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('R-MDS-4 AC-5: max line width <= 80 cols on max input', () => {
+    const dir = tmpDir();
+    try {
+        const longName = 'very-long-subsystem-name-that-goes-on-and-on-forever';
+        const apData = {
+            subsystems: [longName, 'another-long-name'],
+            consecutive_clean: { [longName]: 99, 'another-long-name': 1 },
+            stall_limit: 100,
+            findings_history: {
+                [longName]: ['a very very very very long last action description that is quite lengthy'],
+                'another-long-name': [],
+            },
+        };
+        fs.writeFileSync(path.join(dir, 'anatomy-park.json'), JSON.stringify(apData));
+        const state = makeMinimalState({ session_dir: dir });
+        const mv = {
+            failure_history: Array.from({ length: 5 }, (_, i) => ({
+                iteration: i,
+                failure_class: 'approach_exhaustion',
+                description: '',
+                timestamp: '',
+            })),
+            convergence: { stall_counter: 4, stall_limit: 6, history: [] },
+        };
+        const result = renderMicroverseDashboard(state, mv);
+        const stripped = result.replace(/\x1b\[[0-9;]*[mJH]/g, '').replace(/\x1b\[2J\x1b\[H/g, '');
+        const lines = stripped.split('\n').filter(l => l.length > 0);
+        const maxLen = Math.max(...lines.map(l => l.length));
+        assert.ok(maxLen <= 80, `max line length should be <= 80, got ${maxLen} in lines: ${JSON.stringify(lines)}`);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('R-MDS-4 AC-6: total height <= 14 lines', () => {
+    const dir = tmpDir();
+    try {
+        const apData = {
+            subsystems: ['s1', 's2', 's3', 's4', 's5'],
+            consecutive_clean: { s1: 0, s2: 1, s3: 2, s4: 3, s5: 4 },
+            stall_limit: 5,
+            findings_history: { s1: [], s2: [], s3: [], s4: [], s5: [] },
+        };
+        fs.writeFileSync(path.join(dir, 'anatomy-park.json'), JSON.stringify(apData));
+        const history = Array.from({ length: 10 }, (_, i) => ({
+            iteration: i + 1, score: i, action: 'accept',
+            metric_value: String(i), description: '', pre_iteration_sha: '', timestamp: '',
+        }));
+        const mv = {
+            failure_history: [{ iteration: 1, failure_class: 'no_progress', description: '', timestamp: '' }],
+            convergence: { stall_counter: 3, stall_limit: 5, history },
+        };
+        const state = makeMinimalState({ session_dir: dir });
+        const result = renderMicroverseDashboard(state, mv);
+        const stripped = result.replace(/\x1b\[[0-9;]*[mJH]/g, '').replace(/\x1b\[2J\x1b\[H/g, '');
+        const lineCount = stripped.split('\n').filter(l => l.length > 0).length;
+        assert.ok(lineCount <= 14, `height should be <= 14 lines, got ${lineCount}`);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('R-MDS-4 AC-7: missing fields render "--"', () => {
+    const dir = tmpDir();
+    try {
+        const state = makeMinimalState({ session_dir: dir });
+        const result = renderMicroverseDashboard(state, null);
+        const stripped = result.replace(/\x1b\[[0-9;]*[mJH]/g, '');
+        assert.ok(stripped.includes('--'), `should render "--" for missing fields, got: ${stripped}`);
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }

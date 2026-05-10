@@ -7,7 +7,7 @@ import { StateManager } from '../services/state-manager.js';
 import { logActivity } from '../services/activity-logger.js';
 import { readMicroverseState, readRecoverableJsonObject } from '../services/microverse-state.js';
 import { readCircuitBreakerState } from '../services/circuit-breaker.js';
-import { State, MicroverseSessionState } from '../types/index.js';
+import { State, MicroverseSessionState, ClassifiedFailure, MicroverseHistoryEntry } from '../types/index.js';
 
 type PipelineLifecycleStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'unknown' | 'none';
 const sm = new StateManager();
@@ -258,6 +258,89 @@ export function sparkline(values: number[]): string {
   return values
     .map(v => blocks[Math.min(blocks.length - 1, Math.round(((v - min) / range) * (blocks.length - 1)))])
     .join('');
+}
+
+const MV_WIDTH = 80;
+
+function mvTruncate(s: string): string {
+  const bare = s.replace(/\x1b\[[0-9;]*[mJH]/g, '');
+  if (bare.length <= MV_WIDTH) return s;
+  return s.slice(0, s.length - (bare.length - MV_WIDTH + 1)) + '…';
+}
+
+function mvSubsystemLine(name: string, clean: string, target: string, findingsMap: Record<string, unknown[]>): string {
+  const findings = Array.isArray(findingsMap[name]) ? findingsMap[name] as unknown[] : [];
+  const rawLast = findings.length > 0 ? String(findings[findings.length - 1]) : '--';
+  const lastAction = rawLast.length > 20 ? rawLast.slice(0, 19) + '…' : rawLast;
+  return mvTruncate(`  ${MX.GREEN}${name}${MX.R} ${MX.DIM}${clean}/${target}${MX.R} ${lastAction}`);
+}
+
+function mvSubsystems(sessionDir: string): string[] {
+  const out: string[] = [`${matrixSeparator(MV_WIDTH)}\n`, `${MX.BRIGHT}Subsystems:${MX.R}\n`];
+  let ap: Record<string, unknown> | null = null;
+  try {
+    ap = readRecoverableJsonObject(path.join(sessionDir, 'anatomy-park.json')) as Record<string, unknown> | null;
+  } catch { /* missing */ }
+  const subs = Array.isArray(ap?.subsystems) ? ap!.subsystems as string[] : [];
+  const cleanMap = (typeof ap?.consecutive_clean === 'object' && ap!.consecutive_clean != null)
+    ? ap!.consecutive_clean as Record<string, number> : {};
+  const target = typeof ap?.stall_limit === 'number' ? String(ap!.stall_limit) : '--';
+  const findingsMap = (typeof ap?.findings_history === 'object' && ap!.findings_history != null)
+    ? ap!.findings_history as Record<string, unknown[]> : {};
+  if (subs.length === 0) return [...out, `  ${MX.DIM}--${MX.R}\n`];
+  for (let i = 0; i < Math.min(5, subs.length); i++) {
+    const name = subs[i];
+    const clean = cleanMap[name] != null ? String(cleanMap[name]) : '--';
+    out.push(`${mvSubsystemLine(name, clean, target, findingsMap)}\n`);
+  }
+  return out;
+}
+
+type MvConv = MicroverseSessionState['convergence'] | undefined;
+
+function mvStall(conv: MvConv): string {
+  const sep = `${matrixSeparator(MV_WIDTH)}\n`;
+  if (conv == null || conv.stall_counter == null || conv.stall_limit == null) {
+    return `${sep}  ${MX.BRIGHT}Stall:${MX.R} ${MX.DIM}--/--${MX.R}\n`;
+  }
+  const stallColor = conv.stall_limit > 0 && conv.stall_counter / conv.stall_limit >= 0.66 ? MX.ERR : MX.GREEN;
+  return `${sep}  ${MX.BRIGHT}Stall:${MX.R} ${stallColor}${conv.stall_counter}/${conv.stall_limit}${MX.R}\n`;
+}
+
+function mvTrend(conv: MvConv): string {
+  const sep = `${matrixSeparator(MV_WIDTH)}\n`;
+  const hist: MicroverseHistoryEntry[] = Array.isArray(conv?.history) ? conv!.history as MicroverseHistoryEntry[] : [];
+  const last10 = hist.slice(-10);
+  if (last10.length === 0) return `${sep}  ${MX.BRIGHT}Metric Trend:${MX.R} ${MX.DIM}--${MX.R}\n`;
+  const scores = last10.map(h => h.score);
+  const spark = sparkline(scores);
+  const minVal = Math.min(...scores);
+  const maxVal = Math.max(...scores);
+  return `${sep}${mvTruncate(`  ${MX.BRIGHT}Metric Trend:${MX.R} ${MX.DIM}${minVal}${MX.R} ${MX.GREEN}${spark}${MX.R} ${MX.DIM}${maxVal}${MX.R}`)}\n`;
+}
+
+/**
+ * R-MDS-4: Render the full microverse dashboard with 4 sections.
+ * Width ≤ 80 cols, height ≤ 14 lines. Missing fields render '--'.
+ */
+export function renderMicroverseDashboard(
+  state: State,
+  microverseJson: MicroverseSessionState | null,
+): string {
+  const out: string[] = ['\x1b[2J\x1b[H', `${MX.BRIGHT}◤ MICROVERSE MONITOR ◢${MX.R}\n`];
+  out.push(...mvSubsystems(state.session_dir || ''));
+
+  const iter = state.iteration ?? '--';
+  const cap = state.max_iterations ?? '--';
+  const fh: ClassifiedFailure[] = Array.isArray(microverseJson?.failure_history)
+    ? microverseJson!.failure_history as ClassifiedFailure[] : [];
+  const last5 = fh.slice(-5).map(f => f.failure_class || '--').join(', ') || '--';
+  out.push(`${matrixSeparator(MV_WIDTH)}\n`);
+  out.push(`${mvTruncate(`  ${MX.BRIGHT}Convergence:${MX.R} iter ${iter}/${cap} | last 5: ${last5}`)}\n`);
+
+  out.push(mvStall(microverseJson?.convergence));
+  out.push(mvTrend(microverseJson?.convergence));
+  return out.join('');
 }
 
 /** Render a compact microverse convergence trend section. */
@@ -634,7 +717,8 @@ export function renderDashboard(
     return ['\x1b[2J\x1b[H', `${MX.BRIGHT}Pipeline complete${MX.R}\n`];
   }
   if (mode === 'microverse') {
-    return ['\x1b[2J\x1b[H', 'renderMicroverseDashboard not yet implemented\n'];
+    const mv = readRecoverableJsonObject(path.join(sessionDir, 'microverse.json')) as MicroverseSessionState | null;
+    return [renderMicroverseDashboard(state, mv)];
   }
   return buildPickleOutput(state, sessionDir, width);
 }
