@@ -1,5 +1,7 @@
 # PRD: Codex Backend Classifier Prompt-Leak
 
+**Status**: Shipped (MASTER_PLAN Open Finding #1 closed)
+
 ## Problem
 
 When `mux-runner.js` runs with `--backend codex`, `classifyCompletion()` non-deterministically returns `'task_completed'` even when the model never emitted `<promise>EPIC_COMPLETED</promise>`. The classifier matches the literal token *inside its own prompt* — codex's plain-text output format defeats the filter that exists to prevent exactly this.

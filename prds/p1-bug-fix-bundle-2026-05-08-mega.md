@@ -1,8 +1,9 @@
 ---
 title: P1+P2 — Mega bug-fix bundle 2026-05-08 (codex classifier root cause + szechuan judge model + scope.json edit-time preflight + scope launch-time auto-inference + recoverable-json readdir bound + subsystem CLAUDE.md drift + pkgjson version-only revert diagnosis + excessive-defense strip + microverse judge probe ETIMEDOUT misclassification)
-status: Draft
+status: Shipped
 filed: 2026-05-08
 priority: P1 (mixed P1 + P2 + ad-hoc; closer ships v1.73.0)
+shipped: v1.73.0 (11/11 sections A–K, commit range ef3b2855..6851f41f)
 type: bug-bundle
 composes:
   - prds/codex-classifier-prompt-leak.md                     # Slot G — MANAGER_PERSISTENT_HALLUCINATION root cause (P1)

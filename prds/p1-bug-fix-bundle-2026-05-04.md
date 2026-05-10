@@ -1,8 +1,9 @@
 ---
 title: P1 — Bug-fix bundle 2026-05-04 (REFINED)
-status: Refined
+status: Shipped
 date: 2026-05-04
 priority: P1
+shipped: with residuals carried forward to p1-bug-fix-bundle-2026-05-04-completion.md
 type: bug-bundle
 peer_prds:
   composes:

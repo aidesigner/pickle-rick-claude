@@ -1,6 +1,6 @@
 # PRD: Convergence Toolchain Gates — szechuan-sauce + anatomy-park
 
-**Status**: Draft (refined cycle 3, 2026-04-27)
+**Status**: Shipped (v1.58.0 — 25 atomic tickets, 122 commits)
 **Author**: Pickle Rick
 **Source**: Post-mortem on LOA-618 epic (loanlight-api `gregory/loa-618-updated-appraisal-comparison-epic`, 164 commits, 12h anatomy-park run, 116 trap doors). Validation by an agent team after both skills declared convergence found 1 typecheck error + 66 ESLint errors + an untested spec-mock cast — none of which the convergence loops can see today.
 

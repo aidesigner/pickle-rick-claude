@@ -1,8 +1,9 @@
 ---
 title: P1 — Reliability + Test Coverage Bundle (2026-05-03 PM)
-status: Draft
+status: Shipped
 date: 2026-05-03
 priority: P1
+shipped: session 2026-05-03-7d9ee8cc (commit 7786bcb)
 type: bundle
 peer_prds:
   composes:

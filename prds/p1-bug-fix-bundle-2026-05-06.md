@@ -1,8 +1,9 @@
 ---
 title: P1 — Bug-fix bundle 2026-05-06 (post-v1.71.0 cleanup)
-status: Draft
+status: Partially Shipped
 date: 2026-05-06
 priority: P1
+shipped: 5/12 sections + slot E; deferred slots G/H/I/J/K/L absorbed by 2026-05-07-deferred-slots + 2026-05-08-mega
 type: bug-bundle
 scope: local-only
 authoring_path: /pickle-quick-refine fan-out (validated 2026-05-06 AM)

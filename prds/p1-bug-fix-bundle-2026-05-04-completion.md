@@ -1,8 +1,9 @@
 ---
 title: P1 — Bug-fix bundle 2026-05-04 COMPLETION (residuals + new findings, ships v1.70.0)
-status: Draft
+status: Shipped
 filed: 2026-05-05
 priority: P1
+shipped: v1.70.0
 type: bug-bundle
 inherits_from: prds/p1-bug-fix-bundle-2026-05-04.md
 composes:

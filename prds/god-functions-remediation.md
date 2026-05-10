@@ -1,5 +1,7 @@
 # PRD: God Function Remediation (Refined)
 
+**Status**: Shipped (v1.59.x — T0-T19, 16 implementation + 4 hardening tickets)
+
 *(refined: requirements, codebase, risk-scope analysts × 3 cycles)*
 
 ## Problem

@@ -1,8 +1,9 @@
 ---
 title: pipeline-runner doesn't claim state.active=true on relaunch into a failed session
-status: Draft
+status: Shipped
 date: 2026-05-01
 priority: P3
+shipped: P0 bundle Section C
 backend: codex-required
 peer_prds:
   related:

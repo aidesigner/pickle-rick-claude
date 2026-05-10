@@ -1,8 +1,9 @@
 ---
 title: Readiness gate doesn't handle manifest/bundle PRDs — 3 related bugs
-status: Draft
+status: Shipped
 date: 2026-05-01
 priority: P2
+shipped: P0 bundle Section D (AC-RGM-01..07)
 backend: codex-required
 peer_prds:
   related:

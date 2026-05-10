@@ -1,8 +1,9 @@
 ---
 title: P1 — Bug-fix bundle 2026-05-07 (deferred slots: codex hallucination root cause + judge model + cap/handshake + install chmod + anatomy-park /bin/ scope)
-status: Draft
+status: Shipped
 filed: 2026-05-07
 priority: P1
+shipped: closes Open Findings #1, #3, #4 (commit 923a7273)
 type: bug-bundle
 composes:
   - prds/codex-classifier-prompt-leak.md                    # Slot G — MANAGER_PERSISTENT_HALLUCINATION root cause

@@ -1,8 +1,9 @@
 ---
 title: Pipeline state desync + watcher-pane EXTENSION_DIR tmpdir respawn
-status: Draft
+status: Shipped
 date: 2026-05-01
 priority: P1
+shipped: T0-T5 in v1.66.0; T6-T10 in v1.67.0
 backend: codex-required
 ---
 

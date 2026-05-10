@@ -1,8 +1,9 @@
 ---
 title: Anatomy-park gate-baseline missing after commit (100% failure at iter 2)
-status: Draft
+status: Partially Shipped
 date: 2026-05-01
 priority: P1
+shipped: stale-refresh class closed; fresh-init class re-opened as MASTER_PLAN Open Finding #7 PARTIAL
 backend: codex-required
 ---
 

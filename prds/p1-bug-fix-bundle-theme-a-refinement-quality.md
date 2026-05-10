@@ -1,8 +1,9 @@
 ---
 title: P1 — Bug-fix bundle Theme A (refinement quality + worker reliability)
-status: Ready
+status: Shipped
 date: 2026-05-07
 priority: P1
+shipped: 9/9 sections via pipeline pipeline-be6e9179
 type: bug-bundle
 scope: local-only
 authoring_path: /pickle-quick-refine fan-out

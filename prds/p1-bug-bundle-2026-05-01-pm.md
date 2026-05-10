@@ -1,8 +1,9 @@
 ---
 title: P1 Bug Bundle — anatomy-park crash, szechuan judge model, pipeline-state-desync tail (refined cycle 3)
-status: Draft
+status: Shipped
 date: 2026-05-01
 priority: P1
+shipped: v1.67.0 (20/20 sections, closer commit 2c814e8)
 backend: codex-required
 type: manifest
 peer_prds:
