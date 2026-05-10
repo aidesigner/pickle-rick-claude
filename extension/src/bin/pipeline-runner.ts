@@ -48,6 +48,7 @@ import {
 } from '../services/scope-resolver.js';
 import { runCitadelAudit } from '../services/citadel/audit-runner.js';
 import type { CitadelFinding, CitadelJsonReport, CitadelSeverity } from '../services/citadel/reporter.js';
+import { respawnMonitorWindowForMode } from '../lib/monitor-respawn.js';
 
 const sm = new StateManager();
 
@@ -1904,6 +1905,18 @@ export async function main(sessionDir: string, opts: MainOpts = {}): Promise<voi
       if (outcome.action === 'break') {
         if (outcome.phaseIncomplete) phaseIncomplete = true;
         break;
+      }
+      // R-MDS-1: Rebind monitor dashboard pane at non-citadel phase boundaries.
+      // pickle→citadel is exempt (citadel reuses pickle template).
+      const nextRawPhase = runtime.config.phases[i + 1] as PipelinePhase | undefined;
+      if (!(rawPhase === 'pickle' && nextRawPhase === 'citadel')) {
+        if (nextRawPhase === 'anatomy-park') {
+          await respawnMonitorWindowForMode(runtime.sessionDir, 'anatomy-park');
+        } else if (nextRawPhase === 'szechuan-sauce') {
+          await respawnMonitorWindowForMode(runtime.sessionDir, 'szechuan-sauce');
+        } else if (nextRawPhase === undefined) {
+          await respawnMonitorWindowForMode(runtime.sessionDir, 'exit');
+        }
       }
     }
   } finally {

@@ -6,6 +6,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { respawnMonitorWindowForMode } from '../../lib/monitor-respawn.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXTENSION_ROOT = path.resolve(__dirname, '../..');
@@ -246,6 +247,134 @@ test('pipeline state stays coherent across a three-iteration mux-runner fixture'
             'observed worker steps + activity-log phase transitions + cap-exhausted forensic state.step',
         );
     } finally {
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// R-MDS-1: respawnMonitorWindowForMode integration tests
+// ---------------------------------------------------------------------------
+
+function readActivityEventsFromDir(dataRoot) {
+    const activityDir = path.join(dataRoot, 'activity');
+    if (!fs.existsSync(activityDir)) return [];
+    return fs.readdirSync(activityDir)
+        .filter((n) => n.endsWith('.jsonl'))
+        .flatMap((n) =>
+            fs.readFileSync(path.join(activityDir, n), 'utf-8')
+                .split(/\r?\n/)
+                .filter(Boolean)
+                .map((l) => JSON.parse(l)),
+        );
+}
+
+function makeSessionDir(tmpRoot) {
+    const sessionDir = path.join(tmpRoot, 'session');
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+        active: true, step: 'anatomy-park', iteration: 1, schema_version: 1,
+        working_dir: tmpRoot, max_iterations: 5, max_time_minutes: 720,
+        worker_timeout_seconds: 1200, start_time_epoch: 0,
+        completion_promise: null, original_prompt: '', current_ticket: null,
+        history: [], activity: [], started_at: new Date().toISOString(),
+        session_dir: sessionDir, chain_meeseeks: false,
+    }));
+    return sessionDir;
+}
+
+test('respawnMonitorWindowForMode: emits monitor_respawn_started on success', { timeout: 15000 }, async () => {
+    const tmpRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'monitor-respawn-')));
+    const prevDataRoot = process.env.PICKLE_DATA_ROOT;
+    try {
+        const sessionDir = makeSessionDir(tmpRoot);
+        const dataRoot = path.join(tmpRoot, 'data');
+        process.env.PICKLE_DATA_ROOT = dataRoot;
+
+        const capturedArgs = [];
+        const mockSpawnSync = (_cmd, args, _opts) => {
+            capturedArgs.push([...args]);
+            if (args[0] === 'display-message') return { status: 0, stdout: 'pickle-test\n', stderr: '' };
+            return { status: 0, stdout: '', stderr: '' };
+        };
+
+        await respawnMonitorWindowForMode(sessionDir, 'anatomy-park', mockSpawnSync);
+
+        const events = readActivityEventsFromDir(dataRoot);
+        const started = events.filter((e) => e.event === 'monitor_respawn_started');
+        assert.equal(started.length, 1, 'should emit one monitor_respawn_started event');
+        assert.equal(started[0].gate_payload.mode, 'microverse', 'anatomy-park maps to microverse');
+        assert.equal(started[0].gate_payload.to_phase, 'anatomy-park', 'to_phase is anatomy-park');
+        const respawnCall = capturedArgs.find((a) => a[0] === 'respawn-pane');
+        assert.ok(respawnCall, 'should call tmux respawn-pane');
+        assert.ok(respawnCall.join(' ').includes('--mode microverse'), 'respawn-pane command includes --mode microverse');
+    } finally {
+        if (prevDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = prevDataRoot;
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('respawnMonitorWindowForMode: emits monitor_respawn_failed and is non-fatal on tmux unavailable', { timeout: 15000 }, async () => {
+    const tmpRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'monitor-respawn-')));
+    const prevDataRoot = process.env.PICKLE_DATA_ROOT;
+    try {
+        const sessionDir = makeSessionDir(tmpRoot);
+        const dataRoot = path.join(tmpRoot, 'data');
+        process.env.PICKLE_DATA_ROOT = dataRoot;
+
+        const mockSpawnSync = (_cmd, _args, _opts) => ({ status: 1, stdout: '', stderr: 'no server running' });
+
+        await assert.doesNotReject(
+            respawnMonitorWindowForMode(sessionDir, 'szechuan-sauce', mockSpawnSync),
+            'respawnMonitorWindowForMode must not throw on tmux unavailable',
+        );
+
+        const events = readActivityEventsFromDir(dataRoot);
+        const failed = events.filter((e) => e.event === 'monitor_respawn_failed');
+        assert.ok(failed.length >= 1, 'should emit monitor_respawn_failed event');
+        assert.equal(failed[0].gate_payload.phase, 'szechuan-sauce', 'failed event carries phase');
+        assert.ok(typeof failed[0].gate_payload.error === 'string' && failed[0].gate_payload.error.length > 0,
+            'failed event carries error message');
+    } finally {
+        if (prevDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = prevDataRoot;
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
+test('respawnMonitorWindowForMode: phase-to-mode mapping covers all phases', { timeout: 15000 }, async () => {
+    const tmpRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'monitor-respawn-')));
+    const prevDataRoot = process.env.PICKLE_DATA_ROOT;
+    try {
+        const sessionDir = makeSessionDir(tmpRoot);
+        const dataRoot = path.join(tmpRoot, 'data');
+        process.env.PICKLE_DATA_ROOT = dataRoot;
+
+        const expectedModes = [
+            ['anatomy-park', 'microverse'],
+            ['szechuan-sauce', 'microverse'],
+            ['pickle', 'pickle'],
+            ['exit', 'idle'],
+        ];
+
+        for (const [phase, expectedMode] of expectedModes) {
+            const capturedRespawnArgs = [];
+            const mockSpawnSync = (_cmd, args, _opts) => {
+                if (args[0] === 'display-message') return { status: 0, stdout: 'pickle-test\n', stderr: '' };
+                capturedRespawnArgs.push([...args]);
+                return { status: 0, stdout: '', stderr: '' };
+            };
+            await respawnMonitorWindowForMode(sessionDir, phase, mockSpawnSync);
+            assert.ok(capturedRespawnArgs.length > 0, `should call respawn-pane for phase=${phase}`);
+            const cmd = capturedRespawnArgs[capturedRespawnArgs.length - 1].join(' ');
+            assert.ok(
+                cmd.includes(`--mode ${expectedMode}`),
+                `phase=${phase} should map to --mode ${expectedMode}, got: ${cmd}`,
+            );
+        }
+    } finally {
+        if (prevDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = prevDataRoot;
         fs.rmSync(tmpRoot, { recursive: true, force: true });
     }
 });

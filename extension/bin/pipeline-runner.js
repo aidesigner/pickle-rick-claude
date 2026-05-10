@@ -28,6 +28,7 @@ import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { runAcPhaseGate } from '../services/ac-phase-gate.js';
 import { resolveScope, refreshScope, filterBySubsystem, ScopeError, } from '../services/scope-resolver.js';
 import { runCitadelAudit } from '../services/citadel/audit-runner.js';
+import { respawnMonitorWindowForMode } from '../lib/monitor-respawn.js';
 const sm = new StateManager();
 const DEFAULT_IGNORE_DIRTY_PATHS = ['prds', 'docs'];
 const CODEX_REQUIRED_BACKEND = 'codex-required';
@@ -1576,6 +1577,20 @@ export async function main(sessionDir, opts = {}) {
                 if (outcome.phaseIncomplete)
                     phaseIncomplete = true;
                 break;
+            }
+            // R-MDS-1: Rebind monitor dashboard pane at non-citadel phase boundaries.
+            // pickle→citadel is exempt (citadel reuses pickle template).
+            const nextRawPhase = runtime.config.phases[i + 1];
+            if (!(rawPhase === 'pickle' && nextRawPhase === 'citadel')) {
+                if (nextRawPhase === 'anatomy-park') {
+                    await respawnMonitorWindowForMode(runtime.sessionDir, 'anatomy-park');
+                }
+                else if (nextRawPhase === 'szechuan-sauce') {
+                    await respawnMonitorWindowForMode(runtime.sessionDir, 'szechuan-sauce');
+                }
+                else if (nextRawPhase === undefined) {
+                    await respawnMonitorWindowForMode(runtime.sessionDir, 'exit');
+                }
             }
         }
     }

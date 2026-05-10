@@ -478,6 +478,39 @@
           }
         }
       }
+    },
+    "monitor_respawn_started": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "monitor_respawn_started" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["from_phase", "to_phase", "mode"],
+          "properties": {
+            "from_phase": { "type": "string" },
+            "to_phase": { "type": "string" },
+            "mode": { "type": "string" }
+          }
+        }
+      }
+    },
+    "monitor_respawn_failed": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "monitor_respawn_failed" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["phase", "error"],
+          "properties": {
+            "phase": { "type": "string" },
+            "error": { "type": "string" }
+          }
+        }
+      }
     }
   },
   "oneOf": [
@@ -514,6 +547,8 @@
     { "$ref": "#/definitions/judge_violation_ledger_advanced" },
     { "$ref": "#/definitions/judge_legacy_shape_inferred" },
     { "$ref": "#/definitions/judge_json_parse_failed" },
-    { "$ref": "#/definitions/consecutive_no_progress_warning" }
+    { "$ref": "#/definitions/consecutive_no_progress_warning" },
+    { "$ref": "#/definitions/monitor_respawn_started" },
+    { "$ref": "#/definitions/monitor_respawn_failed" }
   ]
 }
