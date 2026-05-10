@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { ChangedFileSummary, DiffSummary } from './diff-walker.js';
 import { CitadelFinding } from './reporter.js';
@@ -370,7 +370,7 @@ function slug(value: string): string {
     .slice(0, 80) || 'unknown';
 }
 
-// ---- Trap-door triple audit (R-CCNW-6) ----
+// ---- Trap-door triple audit ----
 
 export interface TrapDoorDeclarationResult {
   declarations: number;
@@ -425,17 +425,12 @@ export function parseTrapDoorDeclarations(content: string): TrapDoorDeclarationR
 }
 
 export function auditTrapDoorDeclarations(options: { repoRoot: string }): TrapDoorDeclarationResult {
-  const claudeMdPath = path.join(options.repoRoot, 'extension', 'CLAUDE.md');
-  if (!existsSync(claudeMdPath)) {
-    return { declarations: 0, findings: [] };
-  }
-  let content: string;
   try {
-    content = readFileSync(claudeMdPath, 'utf-8');
+    const content = readFileSync(path.join(options.repoRoot, 'extension', 'CLAUDE.md'), 'utf-8');
+    return parseTrapDoorDeclarations(content);
   } catch {
     return { declarations: 0, findings: [] };
   }
-  return parseTrapDoorDeclarations(content);
 }
 
 function extractTrapDoorsSection(content: string): string {

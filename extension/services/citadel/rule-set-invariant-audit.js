@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 const DEFAULT_MAX_EVIDENCE = 3;
 const CODE_FILE_PATTERN = /\.[cm]?[jt]sx?$/i;
@@ -302,18 +302,13 @@ export function parseTrapDoorDeclarations(content) {
     return { declarations, findings };
 }
 export function auditTrapDoorDeclarations(options) {
-    const claudeMdPath = path.join(options.repoRoot, 'extension', 'CLAUDE.md');
-    if (!existsSync(claudeMdPath)) {
-        return { declarations: 0, findings: [] };
-    }
-    let content;
     try {
-        content = readFileSync(claudeMdPath, 'utf-8');
+        const content = readFileSync(path.join(options.repoRoot, 'extension', 'CLAUDE.md'), 'utf-8');
+        return parseTrapDoorDeclarations(content);
     }
     catch {
         return { declarations: 0, findings: [] };
     }
-    return parseTrapDoorDeclarations(content);
 }
 function extractTrapDoorsSection(content) {
     const start = content.search(/^##\s+Trap Doors\s*$/m);
