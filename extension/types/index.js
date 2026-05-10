@@ -227,6 +227,9 @@ export const VALID_ACTIVITY_EVENTS = [
     'pkgjson_revert_forensic_captured',
     'pipeline_judge_timeout_recovery_attempted',
     'bundle_preflight_failed',
+    'judge_violation_ledger_advanced',
+    'judge_legacy_shape_inferred',
+    'judge_json_parse_failed',
 ];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {
