@@ -72,6 +72,20 @@ export async function respawnMonitorWindowForMode(
       throw new Error(`tmux respawn-pane failed: ${err}`);
     }
 
+    // R-MDS-5: at microverse-class phase boundaries, swap pane 2 from
+    // morty-watcher to subsystem-watcher (non-fatal if tmux is unavailable).
+    if (mode === 'microverse') {
+      try {
+        const subsystemBin = path.join(extensionRoot, 'extension', 'bin', 'subsystem-watcher.js');
+        const pane2Target = `${sessionName}:monitor.2`;
+        const pane2Command = `node ${subsystemBin} ${sessionDir}`;
+        _spawnSyncFn('tmux', ['respawn-pane', '-k', '-t', pane2Target, pane2Command], {
+          encoding: 'utf-8',
+          timeout: 5_000,
+        });
+      } catch { /* non-fatal — pane 2 swap is best-effort */ }
+    }
+
     let fromPhase = 'unknown';
     try {
       const sm = new StateManager();

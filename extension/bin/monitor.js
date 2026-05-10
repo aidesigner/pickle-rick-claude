@@ -236,90 +236,77 @@ export function sparkline(values) {
         .map(v => blocks[Math.min(blocks.length - 1, Math.round(((v - min) / range) * (blocks.length - 1)))])
         .join('');
 }
+const MV_WIDTH = 80;
+function mvTruncate(s) {
+    const bare = s.replace(/\x1b\[[0-9;]*[mJH]/g, '');
+    if (bare.length <= MV_WIDTH)
+        return s;
+    return s.slice(0, s.length - (bare.length - MV_WIDTH + 1)) + '…';
+}
+function mvSubsystemLine(name, clean, target, findingsMap) {
+    const findings = Array.isArray(findingsMap[name]) ? findingsMap[name] : [];
+    const rawLast = findings.length > 0 ? String(findings[findings.length - 1]) : '--';
+    const lastAction = rawLast.length > 20 ? rawLast.slice(0, 19) + '…' : rawLast;
+    return mvTruncate(`  ${MX.GREEN}${name}${MX.R} ${MX.DIM}${clean}/${target}${MX.R} ${lastAction}`);
+}
+function mvSubsystems(sessionDir) {
+    const out = [`${matrixSeparator(MV_WIDTH)}\n`, `${MX.BRIGHT}Subsystems:${MX.R}\n`];
+    let ap = null;
+    try {
+        ap = readRecoverableJsonObject(path.join(sessionDir, 'anatomy-park.json'));
+    }
+    catch { /* missing */ }
+    const subs = Array.isArray(ap?.subsystems) ? ap.subsystems : [];
+    const cleanMap = (typeof ap?.consecutive_clean === 'object' && ap.consecutive_clean != null)
+        ? ap.consecutive_clean : {};
+    const target = typeof ap?.stall_limit === 'number' ? String(ap.stall_limit) : '--';
+    const findingsMap = (typeof ap?.findings_history === 'object' && ap.findings_history != null)
+        ? ap.findings_history : {};
+    if (subs.length === 0)
+        return [...out, `  ${MX.DIM}--${MX.R}\n`];
+    for (let i = 0; i < Math.min(5, subs.length); i++) {
+        const name = subs[i];
+        const clean = cleanMap[name] != null ? String(cleanMap[name]) : '--';
+        out.push(`${mvSubsystemLine(name, clean, target, findingsMap)}\n`);
+    }
+    return out;
+}
+function mvStall(conv) {
+    const sep = `${matrixSeparator(MV_WIDTH)}\n`;
+    if (conv == null || conv.stall_counter == null || conv.stall_limit == null) {
+        return `${sep}  ${MX.BRIGHT}Stall:${MX.R} ${MX.DIM}--/--${MX.R}\n`;
+    }
+    const stallColor = conv.stall_limit > 0 && conv.stall_counter / conv.stall_limit >= 0.66 ? MX.ERR : MX.GREEN;
+    return `${sep}  ${MX.BRIGHT}Stall:${MX.R} ${stallColor}${conv.stall_counter}/${conv.stall_limit}${MX.R}\n`;
+}
+function mvTrend(conv) {
+    const sep = `${matrixSeparator(MV_WIDTH)}\n`;
+    const hist = Array.isArray(conv?.history) ? conv.history : [];
+    const last10 = hist.slice(-10);
+    if (last10.length === 0)
+        return `${sep}  ${MX.BRIGHT}Metric Trend:${MX.R} ${MX.DIM}--${MX.R}\n`;
+    const scores = last10.map(h => h.score);
+    const spark = sparkline(scores);
+    const minVal = Math.min(...scores);
+    const maxVal = Math.max(...scores);
+    return `${sep}${mvTruncate(`  ${MX.BRIGHT}Metric Trend:${MX.R} ${MX.DIM}${minVal}${MX.R} ${MX.GREEN}${spark}${MX.R} ${MX.DIM}${maxVal}${MX.R}`)}\n`;
+}
 /**
  * R-MDS-4: Render the full microverse dashboard with 4 sections.
  * Width ≤ 80 cols, height ≤ 14 lines. Missing fields render '--'.
  */
 export function renderMicroverseDashboard(state, microverseJson) {
-    const W = 80;
-    const out = ['\x1b[2J\x1b[H'];
-    const stripAnsi = (s) => s.replace(/\x1b\[[0-9;]*[mJH]/g, '');
-    const truncate = (s) => {
-        const bare = stripAnsi(s);
-        if (bare.length <= W)
-            return s;
-        return s.slice(0, s.length - (bare.length - W + 1)) + '…';
-    };
-    out.push(`${MX.BRIGHT}◤ MICROVERSE MONITOR ◢${MX.R}\n`);
-    // --- Section 1: Subsystems ---
-    out.push(`${matrixSeparator(W)}\n`);
-    out.push(`${MX.BRIGHT}Subsystems:${MX.R}\n`);
-    let apData = null;
-    try {
-        const apPath = path.join(state.session_dir || '', 'anatomy-park.json');
-        apData = readRecoverableJsonObject(apPath);
-    }
-    catch { /* missing — render '--' */ }
-    const subsystems = Array.isArray(apData?.subsystems) ? apData.subsystems : [];
-    const cleanMap = (apData?.consecutive_clean != null && typeof apData.consecutive_clean === 'object')
-        ? apData.consecutive_clean : {};
-    const apStallLimit = typeof apData?.stall_limit === 'number' ? apData.stall_limit : null;
-    const findingsMap = (apData?.findings_history != null && typeof apData.findings_history === 'object')
-        ? apData.findings_history : {};
-    const maxSubs = Math.min(5, subsystems.length);
-    if (maxSubs === 0) {
-        out.push(`  ${MX.DIM}--${MX.R}\n`);
-    }
-    else {
-        for (let i = 0; i < maxSubs; i++) {
-            const name = subsystems[i];
-            const clean = cleanMap[name] != null ? String(cleanMap[name]) : '--';
-            const target = apStallLimit != null ? String(apStallLimit) : '--';
-            const findings = Array.isArray(findingsMap[name]) ? findingsMap[name] : [];
-            const lastEntry = findings.length > 0 ? String(findings[findings.length - 1]) : '--';
-            const lastAction = lastEntry.length > 20 ? lastEntry.slice(0, 19) + '…' : lastEntry;
-            const line = `  ${MX.GREEN}${name}${MX.R} ${MX.DIM}${clean}/${target}${MX.R} ${lastAction}`;
-            out.push(`${truncate(line)}\n`);
-        }
-    }
-    // --- Section 2: Convergence ---
-    out.push(`${matrixSeparator(W)}\n`);
-    const iter = state.iteration != null ? state.iteration : '--';
-    const cap = state.max_iterations != null ? state.max_iterations : '--';
-    const failureHistory = Array.isArray(microverseJson?.failure_history)
+    const out = ['\x1b[2J\x1b[H', `${MX.BRIGHT}◤ MICROVERSE MONITOR ◢${MX.R}\n`];
+    out.push(...mvSubsystems(state.session_dir || ''));
+    const iter = state.iteration ?? '--';
+    const cap = state.max_iterations ?? '--';
+    const fh = Array.isArray(microverseJson?.failure_history)
         ? microverseJson.failure_history : [];
-    const last5Classes = failureHistory.slice(-5).map(f => f.failure_class || '--').join(', ') || '--';
-    const convLine = `  ${MX.BRIGHT}Convergence:${MX.R} iter ${iter}/${cap} | last 5: ${last5Classes}`;
-    out.push(`${truncate(convLine)}\n`);
-    // --- Section 3: Stall ---
-    out.push(`${matrixSeparator(W)}\n`);
-    const conv = microverseJson?.convergence;
-    const stallCounter = conv?.stall_counter;
-    const stallLimit = conv?.stall_limit;
-    if (stallCounter == null || stallLimit == null) {
-        out.push(`  ${MX.BRIGHT}Stall:${MX.R} ${MX.DIM}--/--${MX.R}\n`);
-    }
-    else {
-        const stallFrac = stallLimit > 0 ? stallCounter / stallLimit : 0;
-        const stallColor = stallFrac >= 0.66 ? MX.ERR : MX.GREEN;
-        out.push(`  ${MX.BRIGHT}Stall:${MX.R} ${stallColor}${stallCounter}/${stallLimit}${MX.R}\n`);
-    }
-    // --- Section 4: Metric Trend ---
-    out.push(`${matrixSeparator(W)}\n`);
-    const histArr = Array.isArray(conv?.history)
-        ? conv.history : [];
-    const last10 = histArr.slice(-10);
-    if (last10.length === 0) {
-        out.push(`  ${MX.BRIGHT}Metric Trend:${MX.R} ${MX.DIM}--${MX.R}\n`);
-    }
-    else {
-        const scores = last10.map(h => h.score);
-        const spark = sparkline(scores);
-        const minVal = Math.min(...scores);
-        const maxVal = Math.max(...scores);
-        const trendLine = `  ${MX.BRIGHT}Metric Trend:${MX.R} ${MX.DIM}${minVal}${MX.R} ${MX.GREEN}${spark}${MX.R} ${MX.DIM}${maxVal}${MX.R}`;
-        out.push(`${truncate(trendLine)}\n`);
-    }
+    const last5 = fh.slice(-5).map(f => f.failure_class || '--').join(', ') || '--';
+    out.push(`${matrixSeparator(MV_WIDTH)}\n`);
+    out.push(`${mvTruncate(`  ${MX.BRIGHT}Convergence:${MX.R} iter ${iter}/${cap} | last 5: ${last5}`)}\n`);
+    out.push(mvStall(microverseJson?.convergence));
+    out.push(mvTrend(microverseJson?.convergence));
     return out.join('');
 }
 /** Render a compact microverse convergence trend section. */
