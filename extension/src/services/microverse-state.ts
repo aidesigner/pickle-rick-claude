@@ -141,11 +141,20 @@ export function assertMicroverseStateShape(
   return parsed as unknown as MicroverseSessionState;
 }
 
-export function compareMetric(
-  current: number,
-  previous: number,
-  tolerance: number,
-  direction?: 'higher' | 'lower'
+export type LedgerSnapshot = { resolved: string[]; new: string[]; remaining: string[] };
+
+function compareMetricSetOps(ledger: LedgerSnapshot): 'improved' | 'held' | 'regressed' {
+  const resolvedSet = new Set(ledger.resolved);
+  const remainingSet = new Set(ledger.remaining);
+  const newSet = new Set(ledger.new);
+  const intersectionSize = ledger.new.filter(id => remainingSet.has(id)).length;
+  if (newSet.size > resolvedSet.size) return 'regressed';
+  if (resolvedSet.size > 0 && intersectionSize === 0) return 'improved';
+  return 'held';
+}
+
+function compareMetricNumeric(
+  current: number, previous: number, tolerance: number, direction?: 'higher' | 'lower'
 ): 'improved' | 'held' | 'regressed' {
   if (!Number.isFinite(current) || !Number.isFinite(previous) || !Number.isFinite(tolerance)) {
     return 'held';
@@ -158,6 +167,26 @@ export function compareMetric(
   if (current > previous + tolerance) return 'improved';
   if (current < previous - tolerance) return 'regressed';
   return 'held';
+}
+
+export function compareMetric(
+  current: number,
+  previous: number,
+  tolerance: number,
+  direction?: 'higher' | 'lower',
+  currentLedger?: LedgerSnapshot,
+  previousLedger?: LedgerSnapshot,
+): 'improved' | 'held' | 'regressed' {
+  if (currentLedger !== undefined && previousLedger !== undefined) {
+    try { return compareMetricSetOps(currentLedger); } catch { /* fall through to numeric */ }
+  }
+  if (currentLedger !== undefined && previousLedger === undefined) {
+    try {
+      const violationCount = currentLedger.remaining.length + currentLedger.new.length;
+      if (violationCount < previous) return 'improved';
+    } catch { /* fall through to numeric */ }
+  }
+  return compareMetricNumeric(current, previous, tolerance, direction);
 }
 
 function assertCreateMicroverseOpts(opts: CreateMicroverseOpts): void {

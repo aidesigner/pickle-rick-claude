@@ -12,6 +12,7 @@ import {
   readRecoverableJsonObject,
   generateViolationId,
   updateViolationLedger,
+  compareMetric,
 } from '../../services/microverse-state.js';
 
 const READ_MICROVERSE_BIN = path.resolve('bin/read-microverse.js');
@@ -222,6 +223,47 @@ test('updateViolationLedger beyond ±5 lines generates a new ledger entry with a
   updateViolationLedger(state, judgeResult2, 2);
   assert.equal(state.violation_ledger.length, 2, 'should create a new entry');
   assert.notEqual(state.violation_ledger[1].id, firstId, 'new entry must have a different ID');
+});
+
+// ---------------------------------------------------------------------------
+// compareMetric — R-SLLJ-4 set-ops branch
+// ---------------------------------------------------------------------------
+
+test('compareMetric set-ops improved: resolved>0 and no overlap between new and remaining', () => {
+  const current = { resolved: ['a', 'b'], new: [], remaining: ['c', 'd', 'e'] };
+  const previous = { resolved: [], new: ['a', 'b', 'c', 'd', 'e'], remaining: [] };
+  const result = compareMetric(75, 80, 1, 'higher', current, previous);
+  assert.equal(result, 'improved');
+});
+
+test('compareMetric set-ops regressed: new.size > resolved.size', () => {
+  const current = { resolved: ['a'], new: ['x', 'y', 'z', 'w'], remaining: ['b', 'c'] };
+  const previous = { resolved: [], new: ['a', 'b', 'c'], remaining: [] };
+  const result = compareMetric(70, 80, 1, 'higher', current, previous);
+  assert.equal(result, 'regressed');
+});
+
+test('compareMetric set-ops held: resolved=0 and new=0', () => {
+  const current = { resolved: [], new: [], remaining: ['c', 'd'] };
+  const previous = { resolved: [], new: ['c', 'd'], remaining: [] };
+  const result = compareMetric(78, 80, 1, 'higher', current, previous);
+  assert.equal(result, 'held');
+});
+
+test('compareMetric half-ledger fallback: current ledger only, violations.length < previousScore → improved', () => {
+  const current = { resolved: [], new: ['v1'], remaining: ['v2', 'v3'] };
+  // 3 violations (1 new + 2 remaining) < 10 (previousScore) → improved
+  const result = compareMetric(0, 10, 1, 'higher', current, undefined);
+  assert.equal(result, 'improved');
+});
+
+test('compareMetric no-ledger numeric fallback: pre-fix behavior preserved when both ledgers absent', () => {
+  // higher direction: current > previous + tolerance → improved
+  assert.equal(compareMetric(85, 80, 1, 'higher'), 'improved');
+  // lower direction: current < previous - tolerance → improved
+  assert.equal(compareMetric(5, 10, 1, 'lower'), 'improved');
+  // within tolerance → held
+  assert.equal(compareMetric(80, 80, 1, 'higher'), 'held');
 });
 
 test('readMicroverseState migration: missing violation_ledger defaults to []', () => {

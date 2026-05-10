@@ -123,7 +123,18 @@ export function assertMicroverseStateShape(parsed, commandTemplate) {
     }
     return parsed;
 }
-export function compareMetric(current, previous, tolerance, direction) {
+function compareMetricSetOps(ledger) {
+    const resolvedSet = new Set(ledger.resolved);
+    const remainingSet = new Set(ledger.remaining);
+    const newSet = new Set(ledger.new);
+    const intersectionSize = ledger.new.filter(id => remainingSet.has(id)).length;
+    if (newSet.size > resolvedSet.size)
+        return 'regressed';
+    if (resolvedSet.size > 0 && intersectionSize === 0)
+        return 'improved';
+    return 'held';
+}
+function compareMetricNumeric(current, previous, tolerance, direction) {
     if (!Number.isFinite(current) || !Number.isFinite(previous) || !Number.isFinite(tolerance)) {
         return 'held';
     }
@@ -139,6 +150,23 @@ export function compareMetric(current, previous, tolerance, direction) {
     if (current < previous - tolerance)
         return 'regressed';
     return 'held';
+}
+export function compareMetric(current, previous, tolerance, direction, currentLedger, previousLedger) {
+    if (currentLedger !== undefined && previousLedger !== undefined) {
+        try {
+            return compareMetricSetOps(currentLedger);
+        }
+        catch { /* fall through to numeric */ }
+    }
+    if (currentLedger !== undefined && previousLedger === undefined) {
+        try {
+            const violationCount = currentLedger.remaining.length + currentLedger.new.length;
+            if (violationCount < previous)
+                return 'improved';
+        }
+        catch { /* fall through to numeric */ }
+    }
+    return compareMetricNumeric(current, previous, tolerance, direction);
 }
 function assertCreateMicroverseOpts(opts) {
     const { metric, stallLimit, convergenceTarget } = opts;
