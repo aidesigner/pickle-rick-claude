@@ -316,6 +316,29 @@ test('Step 7 references --allowed-paths-file after Step 6.5 (scope wiring for st
 // Backcompat: omitted scope → all subsystems pass through unfiltered
 // ---------------------------------------------------------------------------
 
+test('backcompat: no scope arg → anatomy-park.json contains all 4 subsystems', () => {
+  const session = makeSession();
+  const target = makeTarget();
+  try {
+    makeSubsystem(target, 'alpha');
+    makeSubsystem(target, 'beta');
+    makeSubsystem(target, 'gamma');
+    makeSubsystem(target, 'delta');
+
+    // No scope passed — backcompat path
+    setupAnatomyPark(session, target, 3, EXTENSION_ROOT, () => {});
+
+    const ap = readAnatomyPark(session);
+    const mv = readMicroverse(session);
+    assert.equal(ap.subsystems.length, 4);
+    assert.deepStrictEqual(ap.subsystems.sort(), ['alpha', 'beta', 'delta', 'gamma']);
+    assert.equal(mv.allowed_paths, undefined);
+  } finally {
+    fs.rmSync(session, { recursive: true, force: true });
+    fs.rmSync(target, { recursive: true, force: true });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // Bundle bootstrap: scope.json canonical branch-mode shape
 // ---------------------------------------------------------------------------
@@ -347,28 +370,5 @@ test('bundle bootstrap scope.json: mode is branch and allowed_paths is array of 
     assert.equal(unique.length, 5, 'all 5 allowed_paths must be unique');
   } finally {
     fs.rmSync(session, { recursive: true, force: true });
-  }
-});
-
-test('backcompat: no scope arg → anatomy-park.json contains all 4 subsystems', () => {
-  const session = makeSession();
-  const target = makeTarget();
-  try {
-    makeSubsystem(target, 'alpha');
-    makeSubsystem(target, 'beta');
-    makeSubsystem(target, 'gamma');
-    makeSubsystem(target, 'delta');
-
-    // No scope passed — backcompat path
-    setupAnatomyPark(session, target, 3, EXTENSION_ROOT, () => {});
-
-    const ap = readAnatomyPark(session);
-    const mv = readMicroverse(session);
-    assert.equal(ap.subsystems.length, 4);
-    assert.deepStrictEqual(ap.subsystems.sort(), ['alpha', 'beta', 'delta', 'gamma']);
-    assert.equal(mv.allowed_paths, undefined);
-  } finally {
-    fs.rmSync(session, { recursive: true, force: true });
-    fs.rmSync(target, { recursive: true, force: true });
   }
 });
