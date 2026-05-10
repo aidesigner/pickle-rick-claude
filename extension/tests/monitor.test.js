@@ -16,6 +16,7 @@ import {
     renderElapsedField,
     writeWithWatchdog,
     MONITOR_STDOUT_WATCHDOG_MS,
+    renderDashboard,
 } from '../bin/monitor.js';
 import { getHeight } from '../services/pickle-utils.js';
 import * as fs from 'node:fs';
@@ -785,6 +786,107 @@ test('writeWithWatchdog: surfaces sink error', async () => {
     }
     assert.ok(err, 'should reject on synchronous throw');
     assert.match(err.message, /boom/);
+});
+
+// --- R-MDS-2: --mode flag dispatch ---
+
+function makeMinimalState(overrides = {}) {
+    return {
+        active: false,
+        iteration: 1,
+        max_iterations: 10,
+        max_time_minutes: 0,
+        worker_timeout_seconds: 1200,
+        start_time_epoch: Math.floor(Date.now() / 1000),
+        step: 'implement',
+        original_prompt: 'test task',
+        working_dir: '/tmp/test',
+        current_ticket: null,
+        session_dir: '/tmp/test-session',
+        pid: null,
+        backend: 'claude',
+        schema_version: 3,
+        started_at: new Date().toISOString(),
+        history: [],
+        completion_promise: null,
+        ...overrides,
+    };
+}
+
+test('renderDashboard: pickle mode renders PICKLE RICK header', () => {
+    const dir = tmpDir();
+    try {
+        const state = makeMinimalState();
+        const segments = renderDashboard(state, 'pickle', dir, 80);
+        const out = segments.join('').replace(/\x1b\[[0-9;]*[mJH]/g, '');
+        assert.ok(out.includes('PICKLE RICK'), `expected PICKLE RICK header in pickle mode, got: ${out}`);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('renderDashboard: microverse mode renders stub text', () => {
+    const dir = tmpDir();
+    try {
+        const state = makeMinimalState();
+        const segments = renderDashboard(state, 'microverse', dir, 80);
+        const out = segments.join('');
+        assert.ok(
+            out.includes('renderMicroverseDashboard not yet implemented'),
+            `expected microverse stub text, got: ${out}`,
+        );
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('renderDashboard: idle mode renders "Pipeline complete"', () => {
+    const dir = tmpDir();
+    try {
+        const state = makeMinimalState();
+        const segments = renderDashboard(state, 'idle', dir, 80);
+        const out = segments.join('').replace(/\x1b\[[0-9;]*[mJH]/g, '');
+        assert.ok(out.includes('Pipeline complete'), `expected "Pipeline complete" in idle mode, got: ${out}`);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('monitor CLI: --mode bogus exits 64', () => {
+    const dir = tmpDir();
+    try {
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ active: false }));
+        const result = run([dir, '--mode', 'bogus']);
+        assert.equal(result.status, 64, `expected exit 64 for unknown mode, got ${result.status}`);
+        assert.ok(
+            result.stderr.includes('unknown mode') || result.stderr.includes('bogus'),
+            `expected error message mentioning unknown mode, got: ${result.stderr}`,
+        );
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('monitor CLI: no --mode defaults to pickle template', () => {
+    const dir = tmpDir();
+    try {
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({
+            active: false,
+            iteration: 1,
+            max_iterations: 10,
+            step: 'implement',
+            original_prompt: 'default mode test',
+            working_dir: '/tmp/test',
+            session_dir: dir,
+            pid: 999999,
+        }));
+        const result = run([dir]);
+        assert.equal(result.status, 0, `expected clean exit, got ${result.status}, stderr=${result.stderr}`);
+        const out = result.stdout.replace(/\x1b\[[0-9;]*[mJH]/g, '');
+        assert.ok(out.includes('PICKLE RICK'), `expected PICKLE RICK header for default (pickle) mode, got: ${out}`);
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
 });
 
 test('monitor CLI promotes dead writer rate limit tmp before rendering countdown', () => {

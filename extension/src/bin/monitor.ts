@@ -200,6 +200,9 @@ export function summarizeLine(raw: string): string {
 
 const MX = MatrixStyle;
 
+export type MonitorMode = 'pickle' | 'microverse' | 'idle';
+const VALID_MODES: ReadonlyArray<MonitorMode> = ['pickle', 'microverse', 'idle'];
+
 /** Unicode sparkline from a sequence of numbers. */
 export function sparkline(values: number[]): string {
   if (values.length === 0) return '';
@@ -528,25 +531,10 @@ function buildRecentOutput(sessionDir: string, width: number, sep: string): stri
   return recentOut;
 }
 
-async function render(sessionDir: string, sink: MonitorWriteSink = process.stdout): Promise<boolean> {
-  // If the session directory itself is gone, signal exit (not just "waiting")
-  if (!(await pathExists(sessionDir))) return false;
-
-  const statePath = path.join(sessionDir, 'state.json');
-  let state: State;
-  try {
-    state = sm.read(statePath);
-  } catch {
-    await writeWithWatchdog(sink, `\x1b[2J\x1b[H${MX.DIM}Awaiting signal...${MX.R}\n`);
-    return true;
-  }
-
-  const width = getWidth();
+function buildPickleOutput(state: State, sessionDir: string, width: number): string[] {
   const sep = matrixSeparator(width);
-
   const tickets = collectTickets(sessionDir);
   const fields = buildHeaderFields(state, tickets, width, sessionDir);
-
   const keyWidth = Math.max(...fields.map(([k]) => k.length)) + 1;
 
   const out: string[] = ['\x1b[2J\x1b[H'];
@@ -556,7 +544,6 @@ async function render(sessionDir: string, sink: MonitorWriteSink = process.stdou
     out.push(`  ${MX.DIM}${k + ':'}${' '.repeat(keyWidth - k.length)}${MX.R} ${v}\n`);
   }
 
-  // Microverse convergence trend (szechuan-sauce, pickle-microverse, etc.)
   try {
     const mv = readMicroverseState(sessionDir);
     if (mv?.convergence?.history) {
@@ -566,18 +553,11 @@ async function render(sessionDir: string, sink: MonitorWriteSink = process.stdou
     // No microverse session — skip
   }
 
-  // Build the "Recent output" section first so we can reserve its rows
-  // before sizing the ticket window.
   const recentOut = buildRecentOutput(sessionDir, width, sep);
-
   const footer = `\n${MX.DIM}Refreshing every 2s  •  Ctrl+C to detach${MX.R}\n`;
 
   if (tickets.length > 0) {
     const ticketHeader = `\n${sep}\n${MX.BRIGHT}Tickets:${MX.R}\n`;
-    // The ticket section header consumes 3 rows (leading blank, separator,
-    // "Tickets:" label). Size the body budget from the actual rendered
-    // header/footer/recent row counts so dynamic sections (microverse,
-    // circuit breaker, rate limit) shrink the window correctly.
     const headerRows = countRows(out);
     const recentRows = countRows(recentOut);
     const footerRows = countRows([footer]);
@@ -596,7 +576,40 @@ async function render(sessionDir: string, sink: MonitorWriteSink = process.stdou
 
   out.push(...recentOut);
   out.push(footer);
-  await writeWithWatchdog(sink, out.join(''));
+  return out;
+}
+
+export function renderDashboard(
+  state: State,
+  mode: MonitorMode,
+  sessionDir: string,
+  width: number,
+): string[] {
+  if (mode === 'idle') {
+    return ['\x1b[2J\x1b[H', `${MX.BRIGHT}Pipeline complete${MX.R}\n`];
+  }
+  if (mode === 'microverse') {
+    return ['\x1b[2J\x1b[H', 'renderMicroverseDashboard not yet implemented\n'];
+  }
+  return buildPickleOutput(state, sessionDir, width);
+}
+
+async function render(sessionDir: string, mode: MonitorMode, sink: MonitorWriteSink = process.stdout): Promise<boolean> {
+  // If the session directory itself is gone, signal exit (not just "waiting")
+  if (!(await pathExists(sessionDir))) return false;
+
+  const statePath = path.join(sessionDir, 'state.json');
+  let state: State;
+  try {
+    state = sm.read(statePath);
+  } catch {
+    await writeWithWatchdog(sink, `\x1b[2J\x1b[H${MX.DIM}Awaiting signal...${MX.R}\n`);
+    return true;
+  }
+
+  const width = getWidth();
+  const segments = renderDashboard(state, mode, sessionDir, width);
+  await writeWithWatchdog(sink, segments.join(''));
   return state.active === true;
 }
 
@@ -675,11 +688,30 @@ export function startRespawnWatchdog(opts: {
   return handle;
 }
 
+function parseMonitorArgs(args: string[]): { sessionDir: string | undefined; mode: MonitorMode } {
+  let mode: MonitorMode = 'pickle';
+  let sessionDir: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--mode') {
+      const val = args[i + 1];
+      if (!val || val.startsWith('--') || !(VALID_MODES as readonly string[]).includes(val)) {
+        console.error(`monitor: unknown mode '${val ?? ''}' — must be one of: ${VALID_MODES.join(' | ')}`);
+        process.exit(64);
+      }
+      mode = val as MonitorMode;
+      i++;
+    } else if (!args[i].startsWith('--')) {
+      sessionDir = args[i];
+    }
+  }
+  return { sessionDir, mode };
+}
+
 async function main() {
-  const sessionDir = process.argv[2];
+  const { sessionDir, mode } = parseMonitorArgs(process.argv.slice(2));
   // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
-  if (!sessionDir || sessionDir.startsWith('--') || !fs.existsSync(sessionDir)) {
-    console.error('Usage: node monitor.js <session-dir>');
+  if (!sessionDir || !fs.existsSync(sessionDir)) {
+    console.error('Usage: node monitor.js <session-dir> [--mode pickle|microverse|idle]');
     process.exit(1);
   }
 
@@ -708,7 +740,7 @@ async function main() {
   while (true) {
     let active: boolean;
     try {
-      active = await render(sessionDir);
+      active = await render(sessionDir, mode);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       process.stderr.write(`[monitor] ${msg}\n`);
@@ -718,7 +750,7 @@ async function main() {
       await sleep(3000);
       let stillInactive: boolean;
       try {
-        stillInactive = !(await render(sessionDir));
+        stillInactive = !(await render(sessionDir, mode));
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         process.stderr.write(`[monitor] ${msg}\n`);
