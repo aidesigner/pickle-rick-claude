@@ -491,6 +491,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'judge_violation_ledger_advanced',
   'judge_legacy_shape_inferred',
   'judge_json_parse_failed',
+  'consecutive_no_progress_warning',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];

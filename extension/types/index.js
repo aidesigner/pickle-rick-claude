@@ -230,6 +230,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'judge_violation_ledger_advanced',
     'judge_legacy_shape_inferred',
     'judge_json_parse_failed',
+    'consecutive_no_progress_warning',
 ];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {

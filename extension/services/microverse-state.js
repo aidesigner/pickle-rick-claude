@@ -217,6 +217,7 @@ export function createMicroverseState(opts) {
         approach_exhaustion_fired: false,
         iteration_regressions: 0,
         gate_regression_threshold_warning_emitted: false,
+        violation_ledger: [],
     };
     return withOptionalMicroverseStateFields(state, opts);
 }

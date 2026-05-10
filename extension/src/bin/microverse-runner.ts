@@ -2284,6 +2284,21 @@ export function resetGapAnalysisForAmnesiacBreaker(state: MicroverseState, sessi
   };
 }
 
+/** @internal visible for testing */
+export function maybeEmitConsecutiveNoProgressWarning(state: MicroverseState, sessionDir: string): void {
+  if (state.key_metric?.type === 'llm') return;
+  const recentNoProgress = state.failure_history.slice(-3).filter(f => f.failure_class === 'no_progress').length;
+  if (recentNoProgress === 2) {
+    logActivity({
+      event: 'consecutive_no_progress_warning',
+      source: 'pickle',
+      session: path.basename(sessionDir),
+      ts: new Date().toISOString(),
+      gate_payload: { count: 2, stall_limit: 3, metric_type: state.key_metric?.type ?? 'command' },
+    });
+  }
+}
+
 export function currentExitForFailureHistory(state: MicroverseState, ctx: RunContext): ExitReason | null {
   const last = state.failure_history[state.failure_history.length - 1];
   if (!last) return null;
@@ -2519,6 +2534,7 @@ async function handleMetricMode(
   emitMicroverseWastedIter(ctx, classification.kind === 'regressed' ? 'revert' : 'accept');
   const failureExit = currentExitForFailureHistory(state, ctx);
   if (failureExit) return failureExit;
+  maybeEmitConsecutiveNoProgressWarning(state, ctx.sessionDir);
   if (!isConverged(state)) return null;
   const targetHit = classification.kind === 'improved' &&
     state.convergence_target != null &&

@@ -461,6 +461,23 @@
           }
         }
       }
+    },
+    "consecutive_no_progress_warning": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "consecutive_no_progress_warning" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["count", "stall_limit", "metric_type"],
+          "properties": {
+            "count": { "type": "integer", "minimum": 0 },
+            "stall_limit": { "type": "integer", "minimum": 1 },
+            "metric_type": { "type": "string" }
+          }
+        }
+      }
     }
   },
   "oneOf": [
@@ -496,6 +513,7 @@
     { "$ref": "#/definitions/bundle_preflight_failed" },
     { "$ref": "#/definitions/judge_violation_ledger_advanced" },
     { "$ref": "#/definitions/judge_legacy_shape_inferred" },
-    { "$ref": "#/definitions/judge_json_parse_failed" }
+    { "$ref": "#/definitions/judge_json_parse_failed" },
+    { "$ref": "#/definitions/consecutive_no_progress_warning" }
   ]
 }

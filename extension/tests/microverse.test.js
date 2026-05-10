@@ -2775,3 +2775,62 @@ test('resolveStallLimit: stall_limit_llm=20 in settings is honored for LLM metri
 test('resolveStallLimit: invalid stall_limit_llm=0 falls back to 15', () => {
     assert.equal(resolveStallLimit('llm', { stall_limit_llm: 0 }), 15);
 });
+
+// --- consecutive_no_progress_warning event (R-SLLJ-10) ---
+
+import { maybeEmitConsecutiveNoProgressWarning } from '../bin/microverse-runner.js';
+
+function withDataRoot(fn) {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-dataroot-'));
+    const saved = process.env.PICKLE_DATA_ROOT;
+    process.env.PICKLE_DATA_ROOT = tmpDir;
+    try {
+        return fn(tmpDir);
+    } finally {
+        if (saved === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = saved;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+}
+
+test('maybeEmitConsecutiveNoProgressWarning: emits event at count=2 for non-LLM sessions', () => {
+    withDataRoot((dataRoot) => {
+        const ts = new Date().toISOString();
+        const sessionDir = path.join(dataRoot, 'sessions', 'test-session');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        const state = {
+            key_metric: { type: 'command', description: 'test', validation: 'echo 50', timeout_seconds: 5, tolerance: 2 },
+            failure_history: [
+                { iteration: 1, failure_class: 'no_progress', description: 'stall1', timestamp: ts },
+                { iteration: 2, failure_class: 'no_progress', description: 'stall2', timestamp: ts },
+            ],
+            convergence: { stall_limit: 50, stall_counter: 0, history: [] },
+        };
+        maybeEmitConsecutiveNoProgressWarning(state, sessionDir);
+        const events = readActivityEvents(dataRoot, 'consecutive_no_progress_warning');
+        const warning = events[0];
+        assert.ok(warning, 'expected consecutive_no_progress_warning event to be emitted');
+        assert.equal(warning.gate_payload.count, 2, 'count should be 2');
+        assert.equal(warning.gate_payload.stall_limit, 3, 'stall_limit should be 3');
+        assert.equal(warning.gate_payload.metric_type, 'command', 'metric_type should be command');
+    });
+});
+
+test('maybeEmitConsecutiveNoProgressWarning: does NOT emit event for LLM-judge sessions', () => {
+    withDataRoot((dataRoot) => {
+        const ts = new Date().toISOString();
+        const sessionDir = path.join(dataRoot, 'sessions', 'test-session-llm');
+        fs.mkdirSync(sessionDir, { recursive: true });
+        const state = {
+            key_metric: { type: 'llm', description: 'judge', validation: 'judge', timeout_seconds: 30, tolerance: 0 },
+            failure_history: [
+                { iteration: 1, failure_class: 'no_progress', description: 'stall1', timestamp: ts },
+                { iteration: 2, failure_class: 'no_progress', description: 'stall2', timestamp: ts },
+            ],
+            convergence: { stall_limit: 50, stall_counter: 0, history: [] },
+        };
+        maybeEmitConsecutiveNoProgressWarning(state, sessionDir);
+        const events = readActivityEvents(dataRoot, 'consecutive_no_progress_warning');
+        assert.equal(events.length, 0, 'expected NO consecutive_no_progress_warning event for LLM sessions');
+    });
+});

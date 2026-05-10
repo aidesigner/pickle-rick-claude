@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { showStatus } from '../bin/status.js';
+import { showStatus, computeConsecutiveNoProgress } from '../bin/status.js';
 
 /**
  * All tests use EXTENSION_DIR to isolate from the real ~/.claude/pickle-rick/.
@@ -557,4 +557,115 @@ test('showStatus: shows just the number when max_iterations is 0', () => {
             fs.rmSync(sessionDir, { recursive: true, force: true });
         }
     });
+});
+
+// --- Consecutive no_progress counter ---
+
+const BASE_MICROVERSE_STATE = {
+    status: 'iterating',
+    prd_path: '/tmp/prd.md',
+    gap_analysis_path: '',
+    key_metric: { description: 'test metric', validation: 'echo 50', type: 'command', timeout_seconds: 5, tolerance: 2 },
+    convergence: { stall_limit: 50, stall_counter: 0, history: [] },
+    failure_history: [],
+    failed_approaches: [],
+    approach_exhaustion_fired: false,
+    baseline_score: 0,
+};
+
+test('showStatus: shows Consecutive no_progress counter from microverse.json', () => {
+    withExtensionDir((tmpDir) => {
+        const sessionDir = fs.realpathSync(
+            fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-status-mv-'))
+        );
+        const fakeCwd = sessionDir + '-cwd';
+        const ts = new Date().toISOString();
+        fs.writeFileSync(
+            path.join(tmpDir, 'current_sessions.json'),
+            JSON.stringify({ [fakeCwd]: sessionDir })
+        );
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({ step: 'implement', iteration: 5, max_iterations: 20, current_ticket: 'T-MV', original_prompt: 'Converge' })
+        );
+        fs.writeFileSync(
+            path.join(sessionDir, 'microverse.json'),
+            JSON.stringify({
+                ...BASE_MICROVERSE_STATE,
+                failure_history: [
+                    { iteration: 3, failure_class: 'no_progress', description: 'stall1', timestamp: ts },
+                    { iteration: 4, failure_class: 'no_progress', description: 'stall2', timestamp: ts },
+                ],
+            })
+        );
+        try {
+            const output = captureStdout(() => showStatus(fakeCwd));
+            assert.ok(
+                output.includes('Consecutive no_progress'),
+                `Expected "Consecutive no_progress" label in output, got: ${output}`
+            );
+            assert.ok(
+                output.includes('2/3'),
+                `Expected "2/3" in output for 2 consecutive no_progress entries, got: ${output}`
+            );
+        } finally {
+            fs.rmSync(sessionDir, { recursive: true, force: true });
+        }
+    });
+});
+
+test('showStatus: shows [LLM bypass active] marker for LLM-judge sessions', () => {
+    withExtensionDir((tmpDir) => {
+        const sessionDir = fs.realpathSync(
+            fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-status-llm-'))
+        );
+        const fakeCwd = sessionDir + '-cwd';
+        const ts = new Date().toISOString();
+        fs.writeFileSync(
+            path.join(tmpDir, 'current_sessions.json'),
+            JSON.stringify({ [fakeCwd]: sessionDir })
+        );
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({ step: 'implement', iteration: 3, max_iterations: 20, current_ticket: 'T-LLM', original_prompt: 'Converge' })
+        );
+        fs.writeFileSync(
+            path.join(sessionDir, 'microverse.json'),
+            JSON.stringify({
+                ...BASE_MICROVERSE_STATE,
+                key_metric: { description: 'llm metric', validation: 'judge', type: 'llm', timeout_seconds: 30, tolerance: 0 },
+                failure_history: [
+                    { iteration: 1, failure_class: 'no_progress', description: 'stall1', timestamp: ts },
+                    { iteration: 2, failure_class: 'no_progress', description: 'stall2', timestamp: ts },
+                ],
+            })
+        );
+        try {
+            const output = captureStdout(() => showStatus(fakeCwd));
+            assert.ok(
+                output.includes('[LLM bypass active]'),
+                `Expected "[LLM bypass active]" in output for LLM-judge session, got: ${output}`
+            );
+        } finally {
+            fs.rmSync(sessionDir, { recursive: true, force: true });
+        }
+    });
+});
+
+test('computeConsecutiveNoProgress: returns 0 for empty failure_history', () => {
+    const mvState = { failure_history: [] };
+    assert.equal(computeConsecutiveNoProgress(mvState), 0);
+});
+
+test('computeConsecutiveNoProgress: counts only recent no_progress (capped at 3)', () => {
+    const ts = new Date().toISOString();
+    const mvState = {
+        failure_history: [
+            { iteration: 1, failure_class: 'regression', description: 'r', timestamp: ts },
+            { iteration: 2, failure_class: 'no_progress', description: 'n', timestamp: ts },
+            { iteration: 3, failure_class: 'no_progress', description: 'n', timestamp: ts },
+            { iteration: 4, failure_class: 'no_progress', description: 'n', timestamp: ts },
+        ],
+    };
+    assert.equal(computeConsecutiveNoProgress(mvState), 3);
 });

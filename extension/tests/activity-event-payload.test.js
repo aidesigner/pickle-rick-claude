@@ -260,6 +260,15 @@ const EVENT_CASES = [
     },
     drop: 'gate_payload',
   },
+  {
+    type: 'consecutive_no_progress_warning',
+    valid: {
+      event: 'consecutive_no_progress_warning',
+      ts: TS,
+      gate_payload: { count: 2, stall_limit: 3, metric_type: 'command' },
+    },
+    drop: 'gate_payload',
+  },
 ];
 
 for (const { type, valid, drop } of EVENT_CASES) {
@@ -371,6 +380,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'pkgjson_revert_forensic_captured',
     'pipeline_judge_timeout_recovery_attempted',
     'bundle_preflight_failed',
+    'consecutive_no_progress_warning',
   ];
   for (const name of EVENT_NAMES) {
     assert.ok(name in schema.definitions, `schema missing definition for ${name}`);
@@ -378,5 +388,5 @@ test('activity-event-payload: schema defines all registered event type definitio
   const nonSharedDefs = Object.keys(schema.definitions).filter(
     k => k !== 'backendEnum' && k !== 'backendResolutionSourceEnum',
   );
-  assert.equal(nonSharedDefs.length, 34, `expected 34 event definitions, got ${nonSharedDefs.length}`);
+  assert.equal(nonSharedDefs.length, 35, `expected 35 event definitions, got ${nonSharedDefs.length}`);
 });

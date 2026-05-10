@@ -3,7 +3,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { printMinimalPanel, collectTickets, statusSymbol, findSessionPathForCwd, getTicketStatus, getDataRoot } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
+import { readMicroverseState } from '../services/microverse-state.js';
 const sm = new StateManager();
+export function computeConsecutiveNoProgress(mvState) {
+    const recent = (mvState.failure_history ?? []).slice(-3);
+    return Math.min(recent.filter(f => f.failure_class === 'no_progress').length, 3);
+}
 function readSessionState(sessionPath) {
     try {
         return sm.read(path.join(sessionPath, 'state.json'));
@@ -88,14 +93,21 @@ export function showStatus(cwd) {
     }
     const isActive = state.active === true;
     const mode = state.tmux_mode === true ? 'tmux' : 'inline';
-    printMinimalPanel('Pickle Rick — Session Status', {
+    const mvState = readMicroverseState(sessionPath);
+    const fields = {
         Active: isActive ? 'Yes' : 'No',
         Mode: mode,
         Phase: state.step || 'unknown',
         Iteration: formatIteration(state),
         Ticket: state.current_ticket || 'none',
         Task: formatTask(state.original_prompt),
-    }, isActive ? 'GREEN' : 'RED', '🥒');
+    };
+    if (mvState !== null) {
+        const count = computeConsecutiveNoProgress(mvState);
+        const isLlm = mvState.key_metric?.type === 'llm';
+        fields['Consecutive no_progress'] = `${count}/3${isLlm ? ' [LLM bypass active]' : ''}`;
+    }
+    printMinimalPanel('Pickle Rick — Session Status', fields, isActive ? 'GREEN' : 'RED', '🥒');
     renderTickets(sessionPath);
     renderScopeDrift(sessionPath);
 }
