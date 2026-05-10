@@ -233,6 +233,33 @@ const EVENT_CASES = [
     },
     drop: 'gate_payload',
   },
+  {
+    type: 'judge_violation_ledger_advanced',
+    valid: {
+      event: 'judge_violation_ledger_advanced',
+      ts: TS,
+      gate_payload: { resolved_count: 2, new_count: 1, remaining_count: 5, ledger_size: 8 },
+    },
+    drop: 'gate_payload',
+  },
+  {
+    type: 'judge_legacy_shape_inferred',
+    valid: {
+      event: 'judge_legacy_shape_inferred',
+      ts: TS,
+      gate_payload: { score: 7.5, raw_keys: ['violations', 'score'] },
+    },
+    drop: 'gate_payload',
+  },
+  {
+    type: 'judge_json_parse_failed',
+    valid: {
+      event: 'judge_json_parse_failed',
+      ts: TS,
+      gate_payload: { raw_output_truncated_512: 'Here is my assessment: score 8', parse_error_message: 'Unexpected token H' },
+    },
+    drop: 'gate_payload',
+  },
 ];
 
 for (const { type, valid, drop } of EVENT_CASES) {
@@ -351,5 +378,5 @@ test('activity-event-payload: schema defines all registered event type definitio
   const nonSharedDefs = Object.keys(schema.definitions).filter(
     k => k !== 'backendEnum' && k !== 'backendResolutionSourceEnum',
   );
-  assert.equal(nonSharedDefs.length, 31, `expected 31 event definitions, got ${nonSharedDefs.length}`);
+  assert.equal(nonSharedDefs.length, 34, `expected 34 event definitions, got ${nonSharedDefs.length}`);
 });

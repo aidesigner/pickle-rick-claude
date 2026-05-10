@@ -411,6 +411,56 @@
           }
         }
       }
+    },
+    "judge_violation_ledger_advanced": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "judge_violation_ledger_advanced" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["resolved_count", "new_count", "remaining_count", "ledger_size"],
+          "properties": {
+            "resolved_count": { "type": "integer", "minimum": 0 },
+            "new_count": { "type": "integer", "minimum": 0 },
+            "remaining_count": { "type": "integer", "minimum": 0 },
+            "ledger_size": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "judge_legacy_shape_inferred": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "judge_legacy_shape_inferred" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["score", "raw_keys"],
+          "properties": {
+            "score": { "type": "number" },
+            "raw_keys": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "judge_json_parse_failed": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "judge_json_parse_failed" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["raw_output_truncated_512", "parse_error_message"],
+          "properties": {
+            "raw_output_truncated_512": { "type": "string" },
+            "parse_error_message": { "type": "string" }
+          }
+        }
+      }
     }
   },
   "oneOf": [
@@ -443,6 +493,9 @@
     { "$ref": "#/definitions/worker_edit_outside_scope" },
     { "$ref": "#/definitions/pkgjson_revert_forensic_captured" },
     { "$ref": "#/definitions/pipeline_judge_timeout_recovery_attempted" },
-    { "$ref": "#/definitions/bundle_preflight_failed" }
+    { "$ref": "#/definitions/bundle_preflight_failed" },
+    { "$ref": "#/definitions/judge_violation_ledger_advanced" },
+    { "$ref": "#/definitions/judge_legacy_shape_inferred" },
+    { "$ref": "#/definitions/judge_json_parse_failed" }
   ]
 }
