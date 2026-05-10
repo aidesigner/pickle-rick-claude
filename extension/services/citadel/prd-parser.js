@@ -1,4 +1,37 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync, realpathSync } from 'node:fs';
+import * as path from 'node:path';
+import { extractFrontmatter } from '../pickle-utils.js';
+export const MAX_COMPOSES_DEPTH = 8;
+export class ComposesError extends Error {
+    constructor(message) {
+        super(message);
+        this.name = 'ComposesError';
+    }
+}
+export class ComposesCycleError extends ComposesError {
+    constructor(chain) {
+        super(`Cycle detected in composes: chain: ${chain}`);
+        this.name = 'ComposesCycleError';
+    }
+}
+export class ComposesDepthError extends ComposesError {
+    constructor(depth) {
+        super(`composes: chain exceeded max depth of ${MAX_COMPOSES_DEPTH} at depth ${depth}`);
+        this.name = 'ComposesDepthError';
+    }
+}
+export class ComposesPathError extends ComposesError {
+    constructor(composePath, reason) {
+        super(`Invalid composes: path "${composePath}": ${reason}`);
+        this.name = 'ComposesPathError';
+    }
+}
+export class ComposesGlobError extends ComposesError {
+    constructor(composePath) {
+        super(`Glob patterns not allowed in composes: path "${composePath}"`);
+        this.name = 'ComposesGlobError';
+    }
+}
 const AC_ID_PATTERN = /\bAC-[A-Z0-9]+(?:-[A-Z0-9]+)*(?:-\d+)?\b/g;
 const DECISION_PATTERN = /(?:^|[^\w-])(A(?:[1-9]|[1-9][0-9]))\.?(?=$|[^\w-])/g;
 const ENDPOINT_CELL_PATTERN = /^\s*(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+((?:\/|\{)[^\s|`]*)/i;
@@ -15,6 +48,7 @@ export function parsePrdMarkdown(markdown) {
         allowlistEntries: [],
         statusCodeRows: [],
         transitionAuditRows: [],
+        composedRcodes: new Map(),
     };
     const seen = {
         decisions: new Set(),
@@ -257,4 +291,117 @@ function pushAllowlistEntry(entries, seen, entry) {
         return;
     seen.add(key);
     entries.push(entry);
+}
+// ─── composes: walker ────────────────────────────────────────────────────────
+const RCODE_PATTERN = /\bR-[A-Z]+(?:-[A-Z0-9]+)*-\d+\b/g;
+function extractComposePaths(content) {
+    const fm = extractFrontmatter(content);
+    if (!fm)
+        return [];
+    const body = fm.body;
+    const keyIdx = body.search(/^composes\s*:/m);
+    if (keyIdx === -1)
+        return [];
+    const after = body.slice(keyIdx);
+    const paths = [];
+    for (const line of after.split('\n').slice(1)) {
+        const trimmed = line.trim();
+        if (!trimmed)
+            continue;
+        if (trimmed.startsWith('- ')) {
+            const entry = trimmed.slice(2).replace(/#.*$/, '').trim();
+            if (entry)
+                paths.push(entry);
+        }
+        else if (!trimmed.startsWith('-')) {
+            break; // end of list
+        }
+    }
+    return paths;
+}
+function findRepoRoot(startDir) {
+    let dir = startDir;
+    for (;;) {
+        if (existsSync(path.join(dir, '.git')))
+            return dir;
+        const parent = path.dirname(dir);
+        if (parent === dir)
+            return startDir;
+        dir = parent;
+    }
+}
+function extractRcodesFromMarkdown(content) {
+    const seen = new Set();
+    const entries = [];
+    const lines = content.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        for (const match of line.matchAll(RCODE_PATTERN)) {
+            const id = match[0];
+            if (seen.has(id))
+                continue;
+            seen.add(id);
+            entries.push({ id, line: i + 1, text: line.trim() });
+        }
+    }
+    return entries;
+}
+function walkComposeChain(prdPath, repoRoot, depth, visited, composedRcodes) {
+    let content;
+    try {
+        content = readFileSync(prdPath, 'utf-8');
+    }
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new ComposesError(`Failed to read composed PRD "${prdPath}": ${msg}`);
+    }
+    const composePaths = extractComposePaths(content);
+    for (const composePath of composePaths) {
+        if (/[*?]/.test(composePath))
+            throw new ComposesGlobError(composePath);
+        if (composePath.startsWith('/'))
+            throw new ComposesPathError(composePath, 'must be repo-relative (no leading /)');
+        if (/(^|[/\\])\.\.([/\\]|$)/.test(composePath))
+            throw new ComposesPathError(composePath, 'must not contain .. segments');
+        const absPath = path.join(repoRoot, composePath);
+        let realPath;
+        try {
+            realPath = realpathSync(absPath);
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            throw new ComposesCycleError(`symlink resolution failed for "${composePath}": ${msg}`);
+        }
+        if (visited.has(realPath))
+            throw new ComposesCycleError(realPath);
+        if (depth >= MAX_COMPOSES_DEPTH)
+            throw new ComposesDepthError(depth);
+        visited.add(realPath);
+        let sourceContent;
+        try {
+            sourceContent = readFileSync(realPath, 'utf-8');
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            throw new ComposesError(`Failed to read composed PRD "${realPath}": ${msg}`);
+        }
+        composedRcodes.set(realPath, extractRcodesFromMarkdown(sourceContent));
+        walkComposeChain(realPath, repoRoot, depth + 1, visited, composedRcodes);
+    }
+}
+export function parseWithComposes(prdPath, options = {}) {
+    const base = parsePrdFile(prdPath);
+    const repoRoot = options.repoRoot ?? findRepoRoot(path.dirname(prdPath));
+    const composedRcodes = new Map();
+    let selfReal;
+    try {
+        selfReal = realpathSync(prdPath);
+    }
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new ComposesError(`Failed to resolve path "${prdPath}": ${msg}`);
+    }
+    const visited = options.visited ?? new Set([selfReal]);
+    walkComposeChain(prdPath, repoRoot, 0, visited, composedRcodes);
+    return { ...base, composedRcodes };
 }

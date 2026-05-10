@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync, realpathSync } from 'node:fs';
+import * as path from 'node:path';
+import { extractFrontmatter } from '../pickle-utils.js';
 
 export interface Decision {
   id: string;
@@ -44,6 +46,12 @@ export interface TransitionAuditRow {
   text: string;
 }
 
+export interface RcodeEntry {
+  id: string;
+  line: number;
+  text: string;
+}
+
 export interface ParsedPrd {
   decisions: Decision[];
   acceptanceCriteria: AcceptanceCriterion[];
@@ -51,9 +59,48 @@ export interface ParsedPrd {
   allowlistEntries: AllowlistEntry[];
   statusCodeRows: StatusCodeRow[];
   transitionAuditRows: TransitionAuditRow[];
+  composedRcodes: Map<string, RcodeEntry[]>;
+}
+
+export const MAX_COMPOSES_DEPTH = 8;
+
+export class ComposesError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ComposesError';
+  }
+}
+
+export class ComposesCycleError extends ComposesError {
+  constructor(chain: string) {
+    super(`Cycle detected in composes: chain: ${chain}`);
+    this.name = 'ComposesCycleError';
+  }
+}
+
+export class ComposesDepthError extends ComposesError {
+  constructor(depth: number) {
+    super(`composes: chain exceeded max depth of ${MAX_COMPOSES_DEPTH} at depth ${depth}`);
+    this.name = 'ComposesDepthError';
+  }
+}
+
+export class ComposesPathError extends ComposesError {
+  constructor(composePath: string, reason: string) {
+    super(`Invalid composes: path "${composePath}": ${reason}`);
+    this.name = 'ComposesPathError';
+  }
+}
+
+export class ComposesGlobError extends ComposesError {
+  constructor(composePath: string) {
+    super(`Glob patterns not allowed in composes: path "${composePath}"`);
+    this.name = 'ComposesGlobError';
+  }
 }
 
 type Seen = Set<string>;
+type ScanSeen = Record<'decisions' | 'acceptanceCriteria' | 'endpoints' | 'allowlistEntries' | 'statusCodeRows' | 'transitionAuditRows', Seen>;
 type TableContext = 'valid_actions' | 'lender_feature_flags' | 'enum_values' | 'status_codes' | undefined;
 
 interface ScanState {
@@ -86,6 +133,7 @@ export function parsePrdMarkdown(markdown: string): ParsedPrd {
     allowlistEntries: [],
     statusCodeRows: [],
     transitionAuditRows: [],
+    composedRcodes: new Map(),
   };
   const seen = {
     decisions: new Set<string>(),
@@ -109,7 +157,7 @@ function scanLine(
   line: string,
   lineNumber: number,
   result: ParsedPrd,
-  seen: Record<keyof ParsedPrd, Seen>,
+  seen: ScanSeen,
   state: ScanState,
 ): void {
   updateContext(line, state);
@@ -376,4 +424,128 @@ function pushAllowlistEntry(entries: AllowlistEntry[], seen: Seen, entry: Allowl
   if (seen.has(key)) return;
   seen.add(key);
   entries.push(entry);
+}
+
+// ─── composes: walker ────────────────────────────────────────────────────────
+
+const RCODE_PATTERN = /\bR-[A-Z]+(?:-[A-Z0-9]+)*-\d+\b/g;
+
+function extractComposePaths(content: string): string[] {
+  const fm = extractFrontmatter(content);
+  if (!fm) return [];
+  const body = fm.body;
+  const keyIdx = body.search(/^composes\s*:/m);
+  if (keyIdx === -1) return [];
+  const after = body.slice(keyIdx);
+  const paths: string[] = [];
+  for (const line of after.split('\n').slice(1)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (trimmed.startsWith('- ')) {
+      const entry = trimmed.slice(2).replace(/#.*$/, '').trim();
+      if (entry) paths.push(entry);
+    } else if (!trimmed.startsWith('-')) {
+      break; // end of list
+    }
+  }
+  return paths;
+}
+
+function findRepoRoot(startDir: string): string {
+  let dir = startDir;
+  for (;;) {
+    if (existsSync(path.join(dir, '.git'))) return dir;
+    const parent = path.dirname(dir);
+    if (parent === dir) return startDir;
+    dir = parent;
+  }
+}
+
+function extractRcodesFromMarkdown(content: string): RcodeEntry[] {
+  const seen = new Set<string>();
+  const entries: RcodeEntry[] = [];
+  const lines = content.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    for (const match of line.matchAll(RCODE_PATTERN)) {
+      const id = match[0];
+      if (seen.has(id)) continue;
+      seen.add(id);
+      entries.push({ id, line: i + 1, text: line.trim() });
+    }
+  }
+  return entries;
+}
+
+function walkComposeChain(
+  prdPath: string,
+  repoRoot: string,
+  depth: number,
+  visited: Set<string>,
+  composedRcodes: Map<string, RcodeEntry[]>,
+): void {
+  let content: string;
+  try {
+    content = readFileSync(prdPath, 'utf-8');
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new ComposesError(`Failed to read composed PRD "${prdPath}": ${msg}`);
+  }
+
+  const composePaths = extractComposePaths(content);
+  for (const composePath of composePaths) {
+    if (/[*?]/.test(composePath)) throw new ComposesGlobError(composePath);
+    if (composePath.startsWith('/')) throw new ComposesPathError(composePath, 'must be repo-relative (no leading /)');
+    if (/(^|[/\\])\.\.([/\\]|$)/.test(composePath)) throw new ComposesPathError(composePath, 'must not contain .. segments');
+
+    const absPath = path.join(repoRoot, composePath);
+    let realPath: string;
+    try {
+      realPath = realpathSync(absPath);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new ComposesCycleError(`symlink resolution failed for "${composePath}": ${msg}`);
+    }
+
+    if (visited.has(realPath)) throw new ComposesCycleError(realPath);
+    if (depth >= MAX_COMPOSES_DEPTH) throw new ComposesDepthError(depth);
+
+    visited.add(realPath);
+
+    let sourceContent: string;
+    try {
+      sourceContent = readFileSync(realPath, 'utf-8');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      throw new ComposesError(`Failed to read composed PRD "${realPath}": ${msg}`);
+    }
+    composedRcodes.set(realPath, extractRcodesFromMarkdown(sourceContent));
+
+    walkComposeChain(realPath, repoRoot, depth + 1, visited, composedRcodes);
+  }
+}
+
+export interface ParseWithComposesOptions {
+  maxDepth?: number;
+  visited?: Set<string>;
+  repoRoot?: string;
+}
+
+export function parseWithComposes(prdPath: string, options: ParseWithComposesOptions = {}): ParsedPrd {
+  const base = parsePrdFile(prdPath);
+  const repoRoot = options.repoRoot ?? findRepoRoot(path.dirname(prdPath));
+  const composedRcodes: Map<string, RcodeEntry[]> = new Map();
+
+  let selfReal: string;
+  try {
+    selfReal = realpathSync(prdPath);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new ComposesError(`Failed to resolve path "${prdPath}": ${msg}`);
+  }
+  const visited = options.visited ?? new Set<string>([selfReal]);
+
+  walkComposeChain(prdPath, repoRoot, 0, visited, composedRcodes);
+
+  return { ...base, composedRcodes };
 }
