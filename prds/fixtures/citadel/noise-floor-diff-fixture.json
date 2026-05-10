@@ -3,8 +3,7 @@
   "description": "Clean merged epic fixture with only test coverage changes and no Citadel detector violations.",
   "prd": "noise-floor-prd.md",
   "baseFiles": {
-    "prd.md": "# Noise Floor PRD\n\n## Acceptance Criteria\n\nAC-NOISE-01 verifies the existing smoke workflow remains stable.\n",
-    "src/index.ts": "export function stable() {\n  return true;\n}\n"
+    "prd.md": "# Noise Floor PRD\n\n## Acceptance Criteria\n\nAC-NOISE-01 verifies the existing smoke workflow remains stable.\n"
   },
   "headFiles": {
     "prd.md": "# Noise Floor PRD\n\n## Acceptance Criteria\n\nAC-NOISE-01 verifies the existing smoke workflow remains stable.\n",

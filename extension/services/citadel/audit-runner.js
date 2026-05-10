@@ -10,6 +10,12 @@ import { auditRuleSetInvariants } from './rule-set-invariant-audit.js';
 import { auditDiffHygiene } from './diff-hygiene.js';
 import { reconcileDivergences } from './divergence-reconciliation.js';
 import { Reporter } from './reporter.js';
+import { parsePrdMarkdown } from './prd-parser.js';
+import { buildAcCoverageScorecard } from './ac-coverage-scorecard.js';
+import { detectAllowlistDeadEntries } from './allowlist-dead-entry-detector.js';
+import { auditStateTransitions } from './state-transition-audit.js';
+import { auditTrapDoorCoverage } from './trap-door-coverage-audit.js';
+import { checkEndpointContractConformance } from './endpoint-contract-conformance.js';
 export async function runCitadelAudit(options) {
     const report = buildCitadelAuditReport(options);
     if (!options.sessionDir && !options.reportPath)
@@ -26,6 +32,7 @@ export function buildCitadelAuditReport(options) {
     const repoRoot = path.resolve(options.repoRoot ?? process.cwd());
     const prdPath = path.resolve(repoRoot, options.prdPath);
     const prdMarkdown = readFileSync(prdPath, 'utf-8');
+    const parsedPrd = parsePrdMarkdown(prdMarkdown);
     const diff = walkDiff(options.diffRange, { repoRoot });
     const siblingAuth = auditSiblingAuthPreconditions(diff);
     const frontendPropDrift = auditFrontendPropDrift(diff);
@@ -41,6 +48,11 @@ export function buildCitadelAuditReport(options) {
     };
     const diffHygiene = auditDiffHygiene(diff, { szechuanFindings: crossPhase.szechuan_findings });
     const divergenceReconciliation = reconcileDivergences(diff);
+    const acCoverage = safeRunAnalyzer('citadel-ac-coverage', () => buildAcCoverageScorecard(parsedPrd.acceptanceCriteria, diff, { repoRoot }));
+    const allowlistDead = safeRunAnalyzer('citadel-allowlist-dead', () => detectAllowlistDeadEntries(diff, { repoRoot }));
+    const stateTransitions = safeRunAnalyzer('citadel-state-transitions', () => auditStateTransitions(parsedPrd.transitionAuditRows, diff, { repoRoot }));
+    const trapDoorCoverage = safeRunAnalyzer('citadel-trap-door', () => auditTrapDoorCoverage(diff));
+    const endpointContractConformance = safeRunAnalyzer('citadel-endpoint-contract', () => checkEndpointContractConformance(parsedPrd.endpoints, parsedPrd.statusCodeRows, { repoRoot }));
     const decisionRequired = [
         ...acShape.decisionsRequired,
         ...divergenceReconciliation.decisionsRequired,
@@ -52,6 +64,11 @@ export function buildCitadelAuditReport(options) {
         ...ruleSetInvariants.findings.map((finding) => withFindingSource(finding, 'rule_set_invariants')),
         ...diffHygiene.findings.map((finding) => withFindingSource(finding, 'diff_hygiene')),
         ...crossPhaseReport.findings,
+        ...acCoverage.findings.map((finding) => withFindingSource(finding, 'ac_coverage')),
+        ...allowlistDead.findings.map((finding) => withFindingSource(finding, 'allowlist_dead')),
+        ...stateTransitions.findings.map((finding) => withFindingSource(finding, 'state_transitions')),
+        ...trapDoorCoverage.findings.map((finding) => withFindingSource(finding, 'trap_door_coverage')),
+        ...endpointContractConformance.findings.map((finding) => withFindingSource(finding, 'endpoint_contract_conformance')),
     ]);
     const sections = {
         sibling_auth_preconditions: siblingAuth,
@@ -61,6 +78,11 @@ export function buildCitadelAuditReport(options) {
         diff_hygiene: diffHygiene,
         divergence_reconciliation: divergenceReconciliation,
         cross_phase: crossPhaseReport,
+        ac_coverage: acCoverage,
+        allowlist_dead: allowlistDead,
+        state_transitions: stateTransitions,
+        trap_door_coverage: trapDoorCoverage,
+        endpoint_contract_conformance: endpointContractConformance,
     };
     const reporter = new Reporter();
     return reporter.build({
@@ -184,4 +206,19 @@ function withFindingSource(finding, sourceSection) {
 }
 function isSeverity(value) {
     return value === 'Critical' || value === 'High' || value === 'Medium' || value === 'Low';
+}
+let _analyzerOverridesForTests = null;
+export function __setAnalyzerOverridesForTests(overrides) {
+    _analyzerOverridesForTests = overrides;
+}
+function safeRunAnalyzer(id, run) {
+    const override = _analyzerOverridesForTests?.get(id);
+    const fn = override ?? run;
+    try {
+        return fn();
+    }
+    catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { findings: [{ id, severity: 'Low', analyzer_threw: true, message }], skipped: false };
+    }
 }

@@ -10,6 +10,12 @@ import { auditRuleSetInvariants } from './rule-set-invariant-audit.js';
 import { auditDiffHygiene } from './diff-hygiene.js';
 import { reconcileDivergences, DivergenceDecisionRequired } from './divergence-reconciliation.js';
 import { CitadelFinding, CitadelJsonReport, CitadelRunResult, CitadelSeverity, Reporter } from './reporter.js';
+import { parsePrdMarkdown } from './prd-parser.js';
+import { buildAcCoverageScorecard } from './ac-coverage-scorecard.js';
+import { detectAllowlistDeadEntries } from './allowlist-dead-entry-detector.js';
+import { auditStateTransitions } from './state-transition-audit.js';
+import { auditTrapDoorCoverage } from './trap-door-coverage-audit.js';
+import { checkEndpointContractConformance } from './endpoint-contract-conformance.js';
 
 interface FindingLike extends CitadelFinding {
   id: string;
@@ -69,6 +75,7 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
   const repoRoot = path.resolve(options.repoRoot ?? process.cwd());
   const prdPath = path.resolve(repoRoot, options.prdPath);
   const prdMarkdown = readFileSync(prdPath, 'utf-8');
+  const parsedPrd = parsePrdMarkdown(prdMarkdown);
   const diff = walkDiff(options.diffRange, { repoRoot });
   const siblingAuth = auditSiblingAuthPreconditions(diff);
   const frontendPropDrift = auditFrontendPropDrift(diff);
@@ -84,6 +91,16 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
   };
   const diffHygiene = auditDiffHygiene(diff, { szechuanFindings: crossPhase.szechuan_findings });
   const divergenceReconciliation = reconcileDivergences(diff);
+  const acCoverage = safeRunAnalyzer('citadel-ac-coverage', () =>
+    buildAcCoverageScorecard(parsedPrd.acceptanceCriteria, diff, { repoRoot }));
+  const allowlistDead = safeRunAnalyzer('citadel-allowlist-dead', () =>
+    detectAllowlistDeadEntries(diff, { repoRoot }));
+  const stateTransitions = safeRunAnalyzer('citadel-state-transitions', () =>
+    auditStateTransitions(parsedPrd.transitionAuditRows, diff, { repoRoot }));
+  const trapDoorCoverage = safeRunAnalyzer('citadel-trap-door', () =>
+    auditTrapDoorCoverage(diff));
+  const endpointContractConformance = safeRunAnalyzer('citadel-endpoint-contract', () =>
+    checkEndpointContractConformance(parsedPrd.endpoints, parsedPrd.statusCodeRows, { repoRoot }));
   const decisionRequired: DecisionRequired[] = [
     ...acShape.decisionsRequired,
     ...divergenceReconciliation.decisionsRequired,
@@ -95,6 +112,11 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
     ...ruleSetInvariants.findings.map((finding) => withFindingSource(finding, 'rule_set_invariants')),
     ...diffHygiene.findings.map((finding) => withFindingSource(finding, 'diff_hygiene')),
     ...crossPhaseReport.findings,
+    ...acCoverage.findings.map((finding) => withFindingSource(finding as FindingLike, 'ac_coverage')),
+    ...allowlistDead.findings.map((finding) => withFindingSource(finding as FindingLike, 'allowlist_dead')),
+    ...stateTransitions.findings.map((finding) => withFindingSource(finding as FindingLike, 'state_transitions')),
+    ...trapDoorCoverage.findings.map((finding) => withFindingSource(finding as FindingLike, 'trap_door_coverage')),
+    ...endpointContractConformance.findings.map((finding) => withFindingSource(finding as FindingLike, 'endpoint_contract_conformance')),
   ]);
   const sections = {
     sibling_auth_preconditions: siblingAuth,
@@ -104,6 +126,11 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
     diff_hygiene: diffHygiene,
     divergence_reconciliation: divergenceReconciliation,
     cross_phase: crossPhaseReport,
+    ac_coverage: acCoverage,
+    allowlist_dead: allowlistDead,
+    state_transitions: stateTransitions,
+    trap_door_coverage: trapDoorCoverage,
+    endpoint_contract_conformance: endpointContractConformance,
   };
   const reporter = new Reporter();
   return reporter.build({
@@ -244,4 +271,31 @@ function withFindingSource<T extends { id: string; severity: string }>(
 
 function isSeverity(value: unknown): value is CitadelSeverity {
   return value === 'Critical' || value === 'High' || value === 'Medium' || value === 'Low';
+}
+
+interface AnalyzerErrorResult {
+  findings: Array<{ id: string; severity: 'Low'; analyzer_threw: true; message: string }>;
+  skipped: false;
+}
+
+let _analyzerOverridesForTests: Map<string, () => { findings: unknown[] }> | null = null;
+
+export function __setAnalyzerOverridesForTests(
+  overrides: Map<string, () => { findings: unknown[] }> | null,
+): void {
+  _analyzerOverridesForTests = overrides;
+}
+
+function safeRunAnalyzer<T extends { findings: unknown[] }>(
+  id: string,
+  run: () => T,
+): T | AnalyzerErrorResult {
+  const override = _analyzerOverridesForTests?.get(id);
+  const fn = override ?? run;
+  try {
+    return fn() as T;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return { findings: [{ id, severity: 'Low', analyzer_threw: true, message }], skipped: false };
+  }
 }
