@@ -1658,22 +1658,28 @@ function logPhaseHaltReason(
   rawPhase: PhaseName,
   exitCode: number,
   log: (msg: string) => void,
-): void {
+): 'abort' | 'run-finalize-gate' {
   const haltMsg = `Phase ${rawPhase} failed (exit ${exitCode}) — stopping pipeline`;
   if (exitCode === 0 || (rawPhase !== 'anatomy-park' && rawPhase !== 'szechuan-sauce')) {
     log(haltMsg);
-    return;
+    return 'abort';
   }
   try {
     const runnerState = sm.read(runtime.statePath);
     const exitReason = runnerState.exit_reason as MicroverseExitReason | null | undefined;
     if (exitReason && isMicroverseFailureExit(exitReason)) {
       log(`Phase ${rawPhase}: microverse exited with ${exitReason} — pipeline aborting (no finalize-gate)`);
+      return 'abort';
+    } else if (exitReason === 'judge_timeout') {
+      log(`Phase ${rawPhase}: microverse exited with judge_timeout — running finalize-gate anyway (transient measurement timeout, recoverable per R-PRJT-2)`);
+      return 'run-finalize-gate';
     } else {
       log(haltMsg);
+      return 'abort';
     }
   } catch {
     log(haltMsg);
+    return 'abort';
   }
 }
 
@@ -1717,7 +1723,32 @@ async function runPhaseIteration(
     return { action: 'break', phaseIncomplete: true };
   }
   if (shouldHaltAfterPhase(rawPhase, exitCode, runtime)) {
-    logPhaseHaltReason(runtime, rawPhase, exitCode, log);
+    const haltAction = logPhaseHaltReason(runtime, rawPhase, exitCode, log);
+    if (haltAction === 'run-finalize-gate') {
+      try {
+        logActivity({
+          event: 'pipeline_judge_timeout_recovery_attempted',
+          source: 'pickle',
+          phase: rawPhase,
+          attempts: 4,
+          fall_through_to_finalize_gate: true,
+        });
+      } catch { /* telemetry best-effort */ }
+      const skill = rawPhase === 'anatomy-park' ? 'anatomy-park' : 'szechuan';
+      const gateResult = await runSpawnRunner('node', [
+        path.join(runtime.extensionRoot, 'extension', 'bin', 'finalize-gate.js'),
+        runtime.sessionDir,
+        skill,
+      ], runtime.phaseEnv);
+      if (gateResult.exitCode === 0) {
+        counters.completed++;
+        writeRunningStatus(runtime, counters, null);
+        log(`Phase ${rawPhase} finalize-gate passed after judge_timeout recovery`);
+        return { action: 'continue' };
+      }
+      log(`Phase ${rawPhase} finalize-gate failed after judge_timeout recovery (exit ${gateResult.exitCode})`);
+      return { action: 'break' };
+    }
     return { action: 'break' };
   }
   const acGate = runAcPhaseGate({

@@ -17,7 +17,7 @@
     "subsystem": "lib",
     "has_claude_md": true,
     "last_modified_iso": "2026-05-07T14:33:57Z",
-    "file_count": 8,
+    "file_count": 9,
     "drift_class": "INCOMPLETE"
   },
   {
@@ -30,7 +30,7 @@
   {
     "subsystem": "types",
     "has_claude_md": true,
-    "last_modified_iso": "2026-05-09T20:30:52Z",
+    "last_modified_iso": "2026-05-09T20:44:27Z",
     "file_count": 7,
     "drift_class": "INCOMPLETE"
   }

@@ -486,6 +486,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'standup_session_dropped',
   'worker_edit_outside_scope',
   'pkgjson_revert_forensic_captured',
+  'pipeline_judge_timeout_recovery_attempted',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];
@@ -582,6 +583,9 @@ export interface ActivityEvent {
   stall_category?: StallCategory;
   stall_recovery_action?: StallRecoveryAction;
   pid?: number;
+  phase?: string;
+  attempts?: number;
+  fall_through_to_finalize_gate?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -645,7 +649,7 @@ export type MicroverseExitReason =
   | 'judge_unreachable' | 'judge_timeout' | 'baseline_unmeasurable' | 'judge_cli_missing';
 
 const MICROVERSE_FAILURE_REASONS = new Set<MicroverseExitReason>([
-  'error', 'rate_limit_exhausted', 'judge_unreachable', 'judge_timeout',
+  'error', 'rate_limit_exhausted', 'judge_unreachable',
   'baseline_unmeasurable', 'judge_cli_missing',
 ]);
 

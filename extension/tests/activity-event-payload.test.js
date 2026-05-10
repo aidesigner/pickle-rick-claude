@@ -214,6 +214,16 @@ const EVENT_CASES = [
     valid: { event: 'time_cap_disabled_default', ts: TS, session: 'session-1', backend: 'claude' },
     drop: 'ts',
   },
+  {
+    type: 'pipeline_judge_timeout_recovery_attempted',
+    valid: {
+      event: 'pipeline_judge_timeout_recovery_attempted',
+      ts: TS,
+      phase: 'anatomy-park',
+      fall_through_to_finalize_gate: true,
+    },
+    drop: 'phase',
+  },
 ];
 
 for (const { type, valid, drop } of EVENT_CASES) {
@@ -323,6 +333,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'standup_session_dropped',
     'worker_edit_outside_scope',
     'pkgjson_revert_forensic_captured',
+    'pipeline_judge_timeout_recovery_attempted',
   ];
   for (const name of EVENT_NAMES) {
     assert.ok(name in schema.definitions, `schema missing definition for ${name}`);
@@ -330,5 +341,5 @@ test('activity-event-payload: schema defines all registered event type definitio
   const nonSharedDefs = Object.keys(schema.definitions).filter(
     k => k !== 'backendEnum' && k !== 'backendResolutionSourceEnum',
   );
-  assert.equal(nonSharedDefs.length, 29, `expected 29 event definitions, got ${nonSharedDefs.length}`);
+  assert.equal(nonSharedDefs.length, 30, `expected 30 event definitions, got ${nonSharedDefs.length}`);
 });

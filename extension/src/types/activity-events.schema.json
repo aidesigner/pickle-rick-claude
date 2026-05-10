@@ -384,6 +384,17 @@
           }
         }
       }
+    },
+    "pipeline_judge_timeout_recovery_attempted": {
+      "type": "object",
+      "required": ["event", "ts", "phase", "fall_through_to_finalize_gate"],
+      "properties": {
+        "event": { "type": "string", "const": "pipeline_judge_timeout_recovery_attempted" },
+        "ts": { "type": "string" },
+        "phase": { "type": "string" },
+        "attempts": { "type": "integer", "minimum": 0 },
+        "fall_through_to_finalize_gate": { "type": "boolean", "const": true }
+      }
     }
   },
   "oneOf": [
@@ -414,6 +425,7 @@
     { "$ref": "#/definitions/manager_idle_backoff_released" },
     { "$ref": "#/definitions/standup_session_dropped" },
     { "$ref": "#/definitions/worker_edit_outside_scope" },
-    { "$ref": "#/definitions/pkgjson_revert_forensic_captured" }
+    { "$ref": "#/definitions/pkgjson_revert_forensic_captured" },
+    { "$ref": "#/definitions/pipeline_judge_timeout_recovery_attempted" }
   ]
 }

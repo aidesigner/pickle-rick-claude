@@ -225,6 +225,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'standup_session_dropped',
     'worker_edit_outside_scope',
     'pkgjson_revert_forensic_captured',
+    'pipeline_judge_timeout_recovery_attempted',
 ];
 export var PipelineRunnerExitCode;
 (function (PipelineRunnerExitCode) {
@@ -234,7 +235,7 @@ export var PipelineRunnerExitCode;
     PipelineRunnerExitCode[PipelineRunnerExitCode["PhaseIncomplete"] = 3] = "PhaseIncomplete";
 })(PipelineRunnerExitCode || (PipelineRunnerExitCode = {}));
 const MICROVERSE_FAILURE_REASONS = new Set([
-    'error', 'rate_limit_exhausted', 'judge_unreachable', 'judge_timeout',
+    'error', 'rate_limit_exhausted', 'judge_unreachable',
     'baseline_unmeasurable', 'judge_cli_missing',
 ]);
 export function isMicroverseFailureExit(reason) {

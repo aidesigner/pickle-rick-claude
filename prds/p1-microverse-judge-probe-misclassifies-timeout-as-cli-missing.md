@@ -197,6 +197,16 @@ The fix lives entirely upstream of the `exit_reason` that `pipeline-runner.ts` c
 
 This requirement is explicit because previous fixes in this area (R-AJUR / R-MJU in slot 1r/1s, `0d528507`) added new exit reasons. THIS fix MUST NOT — the reasons are correct; only the classification feeding them is wrong.
 
+#### R-MJCP-4 Closing Loop (R-PRJT-5, ticket `dcd17932`, 2026-05-09)
+
+**The assertion above was wrong at write-time.** At the time this PRD was written, `judge_timeout` was a member of `MICROVERSE_FAILURE_REASONS` in `extension/src/types/index.ts:648`. That meant `isMicroverseFailureExit('judge_timeout') === true`, and `pipeline-runner.ts:1670` routed it to `pipeline aborting (no finalize-gate)` — the exact abort path this requirement claimed did not exist.
+
+Ticket `dcd17932` is the closing fix:
+- Removes `'judge_timeout'` from `MICROVERSE_FAILURE_REASONS`.
+- Adds an explicit `else if (exitReason === 'judge_timeout')` branch in `logPhaseHaltReason` that returns `'run-finalize-gate'` instead of `'abort'`.
+- `runPhaseIteration` now spawns `finalize-gate.js` when that signal is received.
+- Regression test: `extension/tests/integration/pipeline-runner-judge-timeout-recovery.test.js`.
+
 ### R-MJCP-5 — Operator-facing diagnostic for timeout-class probe failures
 
 When `classifyJudgeError` returns `'timeout'` in the probe path, the runner MUST log:
