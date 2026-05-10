@@ -17,6 +17,8 @@ import {
     writeWithWatchdog,
     MONITOR_STDOUT_WATCHDOG_MS,
     renderDashboard,
+    inferModeFromStep,
+    checkAndSwapMode,
 } from '../bin/monitor.js';
 import { getHeight } from '../services/pickle-utils.js';
 import * as fs from 'node:fs';
@@ -922,6 +924,74 @@ test('monitor CLI promotes dead writer rate limit tmp before rendering countdown
         const persisted = JSON.parse(fs.readFileSync(path.join(dir, 'rate_limit_wait.json'), 'utf-8'));
         assert.equal(persisted.waiting, true);
         assert.equal(persisted.rate_limit_type, 'tokens');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+// --- R-MDS-3: inferModeFromStep + checkAndSwapMode ---
+
+test('R-MDS-3 AC-1: inferModeFromStep maps all step categories', () => {
+    // pickle-class steps
+    for (const step of ['research', 'plan', 'implement', 'verify', 'review', 'simplify']) {
+        assert.equal(inferModeFromStep(step), 'pickle', `step '${step}' should map to pickle`);
+    }
+    // microverse-class steps
+    for (const step of ['anatomy-park', 'szechuan-sauce']) {
+        assert.equal(inferModeFromStep(step), 'microverse', `step '${step}' should map to microverse`);
+    }
+    // idle steps
+    assert.equal(inferModeFromStep('completed'), 'idle');
+    assert.equal(inferModeFromStep(null), 'idle');
+    assert.equal(inferModeFromStep(undefined), 'idle');
+    // other → null (preserve current)
+    assert.equal(inferModeFromStep('prd'), null);
+    assert.equal(inferModeFromStep('breakdown'), null);
+    assert.equal(inferModeFromStep('citadel'), null);
+    assert.equal(inferModeFromStep('unknown-step'), null);
+});
+
+test('R-MDS-3 AC-2: checkAndSwapMode swaps when state.step changes', () => {
+    const dir = tmpDir();
+    try {
+        const swaps = [];
+        const noopLog = (e) => swaps.push(e);
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ active: true, step: 'anatomy-park' }));
+        const result = checkAndSwapMode(dir, 'pickle', noopLog);
+        assert.equal(result, 'microverse', 'should swap to microverse when step=anatomy-park');
+        assert.equal(swaps.length, 1, 'should emit exactly one monitor_mode_swapped event');
+        assert.equal(swaps[0].event, 'monitor_mode_swapped');
+        assert.equal(swaps[0].mode, 'microverse');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('R-MDS-3 AC-3: checkAndSwapMode is idempotent on same mode', () => {
+    const dir = tmpDir();
+    try {
+        const swaps = [];
+        const noopLog = (e) => swaps.push(e);
+        fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify({ active: true, step: 'implement' }));
+        const first = checkAndSwapMode(dir, 'pickle', noopLog);
+        const second = checkAndSwapMode(dir, first, noopLog);
+        assert.equal(first, 'pickle', 'first call should return pickle (no swap needed)');
+        assert.equal(second, 'pickle', 'second call should return pickle (idempotent)');
+        assert.equal(swaps.length, 0, 'no swap events for same-mode re-checks');
+    } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
+});
+
+test('R-MDS-3 AC-4: checkAndSwapMode preserves mode when state is unreadable', () => {
+    const dir = tmpDir();
+    try {
+        const swaps = [];
+        const noopLog = (e) => swaps.push(e);
+        fs.writeFileSync(path.join(dir, 'state.json'), 'this is not valid json{{{');
+        const result = checkAndSwapMode(dir, 'microverse', noopLog);
+        assert.equal(result, 'microverse', 'should preserve current mode on unreadable state');
+        assert.equal(swaps.length, 0, 'no swap event when state is unreadable');
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }

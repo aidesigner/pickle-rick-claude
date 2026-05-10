@@ -511,6 +511,16 @@
           }
         }
       }
+    },
+    "monitor_mode_swapped": {
+      "type": "object",
+      "required": ["event", "ts"],
+      "properties": {
+        "event": { "type": "string", "const": "monitor_mode_swapped" },
+        "ts": { "type": "string" },
+        "from_mode": { "type": "string" },
+        "to_mode": { "type": "string" }
+      }
     }
   },
   "oneOf": [
@@ -549,6 +559,7 @@
     { "$ref": "#/definitions/judge_json_parse_failed" },
     { "$ref": "#/definitions/consecutive_no_progress_warning" },
     { "$ref": "#/definitions/monitor_respawn_started" },
-    { "$ref": "#/definitions/monitor_respawn_failed" }
+    { "$ref": "#/definitions/monitor_respawn_failed" },
+    { "$ref": "#/definitions/monitor_mode_swapped" }
   ]
 }

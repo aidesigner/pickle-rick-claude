@@ -494,6 +494,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'consecutive_no_progress_warning',
   'monitor_respawn_started',
   'monitor_respawn_failed',
+  'monitor_mode_swapped',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];

@@ -4,6 +4,7 @@ import * as path from 'path';
 import { spawnSync } from 'child_process';
 import { collectTickets, statusSymbol, formatTime, getWidth, getHeight, Style, sleep, MatrixStyle, matrixSeparator, latestIterationLog, safeErrorMessage, TicketInfo, restartDeadWatcherPanes, inferMonitorMode, getExtensionRoot } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
+import { logActivity } from '../services/activity-logger.js';
 import { readMicroverseState, readRecoverableJsonObject } from '../services/microverse-state.js';
 import { readCircuitBreakerState } from '../services/circuit-breaker.js';
 import { State, MicroverseSessionState } from '../types/index.js';
@@ -202,6 +203,50 @@ const MX = MatrixStyle;
 
 export type MonitorMode = 'pickle' | 'microverse' | 'idle';
 const VALID_MODES: ReadonlyArray<MonitorMode> = ['pickle', 'microverse', 'idle'];
+
+/**
+ * R-MDS-3: Map a lifecycle step to the MonitorMode that should display it.
+ * Returns null for unrecognised steps — callers should preserve the current mode.
+ */
+export function inferModeFromStep(step: string | null | undefined): MonitorMode | null {
+  if (
+    step === 'research' || step === 'plan' || step === 'implement' ||
+    step === 'verify' || step === 'review' || step === 'simplify'
+  ) {
+    return 'pickle';
+  }
+  if (step === 'anatomy-park' || step === 'szechuan-sauce') {
+    return 'microverse';
+  }
+  if (step === 'completed' || step == null) {
+    return 'idle';
+  }
+  return null;
+}
+
+/**
+ * R-MDS-3: Re-read state.step and return the new mode if it differs from
+ * currentMode, logging a monitor_mode_swapped event on the transition.
+ * Returns currentMode unchanged on identical mode or unreadable state.
+ */
+export function checkAndSwapMode(
+  sessionDir: string,
+  currentMode: MonitorMode,
+  logFn: typeof logActivity = logActivity,
+): MonitorMode {
+  const statePath = path.join(sessionDir, 'state.json');
+  let step: string | null | undefined;
+  try {
+    const st = sm.read(statePath);
+    step = st.step;
+  } catch {
+    return currentMode;
+  }
+  const inferred = inferModeFromStep(step);
+  if (inferred === null || inferred === currentMode) return currentMode;
+  logFn({ event: 'monitor_mode_swapped', source: 'pickle', mode: inferred });
+  return inferred;
+}
 
 /** Unicode sparkline from a sequence of numbers. */
 export function sparkline(values: number[]): string {
@@ -708,7 +753,8 @@ function parseMonitorArgs(args: string[]): { sessionDir: string | undefined; mod
 }
 
 async function main() {
-  const { sessionDir, mode } = parseMonitorArgs(process.argv.slice(2));
+  const { sessionDir, mode: initialMode } = parseMonitorArgs(process.argv.slice(2));
+  let mode: MonitorMode = initialMode;
   // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
   if (!sessionDir || !fs.existsSync(sessionDir)) {
     console.error('Usage: node monitor.js <session-dir> [--mode pickle|microverse|idle]');
@@ -767,6 +813,8 @@ async function main() {
         break;
       }
     }
+    // R-MDS-3: re-check state.step each tick and hot-swap mode if phase changed.
+    mode = checkAndSwapMode(sessionDir, mode);
     await sleep(2000);
   }
 }
