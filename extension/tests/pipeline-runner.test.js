@@ -1708,3 +1708,64 @@ describe('pipeline-runner fatal catch', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// Bundle bootstrap shape — R-A-02
+// ---------------------------------------------------------------------------
+
+describe('bundle bootstrap shape', () => {
+  const CANONICAL_BUNDLE = {
+    phases: ['pickle', 'citadel', 'anatomy-park', 'szechuan-sauce'],
+    target: '/tmp/project',
+    anatomy_stall_limit: 3,
+    szechuan_stall_limit: 5,
+    anatomy_max_iterations: 100,
+    szechuan_max_iterations: 50,
+    backend: 'claude',
+    bundle_id: '2026-05-10',
+    composes: [
+      'prds/p1-szechuan-sauce-llm-judge-non-deterministic-scoring-false-stalls.md',
+      'prds/p2-citadel-conformance-core-not-wired-or-silently-skipped.md',
+      'prds/p3-monitor-dashboard-stale-after-pickle-to-anatomy-park-transition.md',
+    ],
+    refine: true,
+    unattended: true,
+    expected_version_after: '1.73.1',
+  };
+
+  test('parsePipelineConfig produces correct phases and backend from bundle JSON', () => {
+    const config = parsePipelineConfig(CANONICAL_BUNDLE);
+    assert.deepEqual(config.phases, ['pickle', 'citadel', 'anatomy-park', 'szechuan-sauce']);
+    assert.equal(config.backend, 'claude');
+    assert.equal(config.anatomy_stall_limit, 3);
+    assert.equal(config.szechuan_stall_limit, 5);
+    assert.equal(config.anatomy_max_iterations, 100);
+    assert.equal(config.szechuan_max_iterations, 50);
+  });
+
+  test('bundle pipeline.json round-trips through disk with all required keys', () => {
+    const dir = tmpDir();
+    try {
+      const pipelinePath = path.join(dir, 'pipeline.json');
+      fs.writeFileSync(pipelinePath, JSON.stringify(CANONICAL_BUNDLE, null, 2));
+
+      const raw = JSON.parse(fs.readFileSync(pipelinePath, 'utf-8'));
+      assert.equal(raw.backend, 'claude');
+      assert.deepEqual(raw.phases, ['pickle', 'citadel', 'anatomy-park', 'szechuan-sauce']);
+      assert.equal(Array.isArray(raw.composes), true);
+      assert.equal(raw.composes.length, 3);
+      assert.equal(raw.bundle_id, '2026-05-10');
+      assert.equal(raw.refine, true);
+      assert.equal(raw.unattended, true);
+      assert.equal(typeof raw.expected_version_after, 'string');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('phases[0] is pickle and backend is claude (invariant check)', () => {
+    const raw = { ...CANONICAL_BUNDLE };
+    assert.equal(raw.phases[0], 'pickle');
+    assert.equal(raw.backend, 'claude');
+  });
+});
