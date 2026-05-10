@@ -1,6 +1,6 @@
 import * as path from 'path';
-import { createMicroverseState, readRecoverableJsonObject, writeMicroverseState } from '../services/microverse-state.js';
-import { safeErrorMessage } from '../services/pickle-utils.js';
+import { createMicroverseState, readRecoverableJsonObject, resolveStallLimit, writeMicroverseState } from '../services/microverse-state.js';
+import { getExtensionRoot, safeErrorMessage } from '../services/pickle-utils.js';
 const DEFAULT_METRIC = {
     description: 'Number of coding principle violations (lower is better)',
     validation: 'Review the code at the target path for violations of established coding principles (KISS, YAGNI, DRY, SOLID, Small Functions, Guard Clauses, Cognitive Load, Self-Documenting Code, Encapsulation, Fail-Fast, etc). Count only REAL, actionable violations — not style nitpicks. A violation must be fixable and must clearly hurt readability, maintainability, or correctness. Score = number of violations found.',
@@ -37,7 +37,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'init-microverse.js') 
         console.error('Usage: init-microverse <session-dir> <target-path> [--stall-limit N] [--convergence-target N] [--convergence-mode metric|worker] [--convergence-file <filename>] [--metric-json \'...\'] [--allowed-paths-file <path>]');
         process.exit(1);
     }
-    const stallLimit = Number(parseFlag(args, '--stall-limit') ?? '5');
+    const explicitStallLimitRaw = parseFlag(args, '--stall-limit');
     const rawConvergence = parseFlag(args, '--convergence-target');
     const rawMetricJson = parseFlag(args, '--metric-json');
     const judgeContextPath = parseFlag(args, '--judge-context');
@@ -70,6 +70,20 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'init-microverse.js') 
     if (metric.type === 'none' && convergenceMode !== 'worker') {
         console.error('type: none requires convergence_mode: worker');
         process.exit(1);
+    }
+    let stallLimit;
+    if (explicitStallLimitRaw !== undefined) {
+        stallLimit = Number(explicitStallLimitRaw);
+    }
+    else {
+        let settingsRaw = null;
+        try {
+            settingsRaw = readRecoverableJsonObject(path.join(getExtensionRoot(), 'pickle_settings.json'));
+        }
+        catch {
+            // defensive: if settings can't be read, resolveStallLimit handles null
+        }
+        stallLimit = resolveStallLimit(metric.type, settingsRaw);
     }
     let allowedPaths;
     if (allowedPathsFile) {

@@ -1,7 +1,7 @@
 import * as path from 'path';
 import type { MicroverseMetric } from '../types/index.js';
-import { createMicroverseState, readRecoverableJsonObject, writeMicroverseState } from '../services/microverse-state.js';
-import { safeErrorMessage } from '../services/pickle-utils.js';
+import { createMicroverseState, readRecoverableJsonObject, resolveStallLimit, writeMicroverseState } from '../services/microverse-state.js';
+import { getExtensionRoot, safeErrorMessage } from '../services/pickle-utils.js';
 
 const DEFAULT_METRIC: MicroverseMetric = {
   description: 'Number of coding principle violations (lower is better)',
@@ -42,7 +42,7 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'init-microverse.js') 
     process.exit(1);
   }
 
-  const stallLimit = Number(parseFlag(args, '--stall-limit') ?? '5');
+  const explicitStallLimitRaw = parseFlag(args, '--stall-limit');
   const rawConvergence = parseFlag(args, '--convergence-target');
   const rawMetricJson = parseFlag(args, '--metric-json');
   const judgeContextPath = parseFlag(args, '--judge-context');
@@ -78,6 +78,19 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'init-microverse.js') 
   if (metric.type === 'none' && convergenceMode !== 'worker') {
     console.error('type: none requires convergence_mode: worker');
     process.exit(1);
+  }
+
+  let stallLimit: number;
+  if (explicitStallLimitRaw !== undefined) {
+    stallLimit = Number(explicitStallLimitRaw);
+  } else {
+    let settingsRaw: Record<string, unknown> | null = null;
+    try {
+      settingsRaw = readRecoverableJsonObject(path.join(getExtensionRoot(), 'pickle_settings.json')) as Record<string, unknown> | null;
+    } catch {
+      // defensive: if settings can't be read, resolveStallLimit handles null
+    }
+    stallLimit = resolveStallLimit(metric.type, settingsRaw);
   }
 
   let allowedPaths: string[] | undefined;

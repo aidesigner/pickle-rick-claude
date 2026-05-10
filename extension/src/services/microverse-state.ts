@@ -471,3 +471,14 @@ export function updateViolationLedger(
     }
   }
 }
+
+export function resolveStallLimit(metricType: string, settings: Record<string, unknown> | null): number {
+  if (metricType !== 'llm') return 5;
+  if (settings !== null &&
+      typeof settings.stall_limit_llm === 'number' &&
+      Number.isInteger(settings.stall_limit_llm) &&
+      settings.stall_limit_llm > 0) {
+    return settings.stall_limit_llm;
+  }
+  return 15;
+}

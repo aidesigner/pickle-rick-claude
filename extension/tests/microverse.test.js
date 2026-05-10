@@ -17,6 +17,7 @@ import {
     isConverged,
     writeMicroverseState,
     readMicroverseState,
+    resolveStallLimit,
 } from '../services/microverse-state.js';
 import { runRemediatorForIteration } from '../bin/microverse-runner.js';
 
@@ -2755,4 +2756,22 @@ test('microverse forensic shutdown stamps signal exit_reason without clearing st
     } finally {
         fs.rmSync(dir, { recursive: true, force: true });
     }
+});
+
+// --- resolveStallLimit (R-SLLJ-5) ---
+
+test('resolveStallLimit: LLM metric with no settings defaults to 15', () => {
+    assert.equal(resolveStallLimit('llm', null), 15);
+});
+
+test('resolveStallLimit: non-LLM metric defaults to 5', () => {
+    assert.equal(resolveStallLimit('count', null), 5);
+});
+
+test('resolveStallLimit: stall_limit_llm=20 in settings is honored for LLM metric', () => {
+    assert.equal(resolveStallLimit('llm', { stall_limit_llm: 20 }), 20);
+});
+
+test('resolveStallLimit: invalid stall_limit_llm=0 falls back to 15', () => {
+    assert.equal(resolveStallLimit('llm', { stall_limit_llm: 0 }), 15);
 });
