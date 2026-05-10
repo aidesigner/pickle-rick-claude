@@ -701,6 +701,9 @@ export interface MicroverseHistoryEntry {
 /** Stable violation record passed to buildJudgePrompt to suppress re-reporting of known issues. */
 export interface ViolationLedger {
   id: string;
+  path?: string;
+  line?: number;
+  rule?: string;
   first_seen_iter: number;
   last_seen_iter: number;
   severity: 'high' | 'med' | 'low';
@@ -710,6 +713,9 @@ export interface ViolationLedger {
 /** Single violation item returned by the LLM judge in structured output mode. */
 export interface Violation {
   id: string;
+  path?: string;
+  line?: number;
+  rule?: string;
   severity: 'high' | 'med' | 'low';
   description: string;
 }
@@ -748,6 +754,7 @@ export interface MicroverseSessionState {
   iteration_regressions?: number;
   gate_regression_threshold_warning_emitted?: boolean;
   consecutive_amnesiac_exits?: number;
+  violation_ledger?: ViolationLedger[];
 }
 
 // ---------------------------------------------------------------------------

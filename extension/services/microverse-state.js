@@ -1,4 +1,5 @@
 import * as path from 'path';
+import * as crypto from 'node:crypto';
 import { isRecord } from '../lib/is-record.js';
 import { StateManager } from './state-manager.js';
 import { safeErrorMessage } from './pickle-utils.js';
@@ -339,6 +340,7 @@ export function readMicroverseState(sessionDir) {
         parsed.approach_exhaustion_fired ??= false;
         parsed.iteration_regressions ??= 0;
         parsed.gate_regression_threshold_warning_emitted ??= false;
+        parsed.violation_ledger ??= [];
         return assertMicroverseStateShape(parsed, readCommandTemplate(sessionDir));
     }
     catch (err) {
@@ -347,5 +349,41 @@ export function readMicroverseState(sessionDir) {
         const msg = safeErrorMessage(err);
         console.error(`[microverse-state] Failed to read ${filePath}: ${msg}`);
         return null;
+    }
+}
+export function generateViolationId(violation) {
+    const { id, path: vPath = '', line = 0, rule = '' } = violation;
+    const isArch = vPath === '<arch>' || rule.startsWith('arch:');
+    if (isArch) {
+        const ruleId = rule.startsWith('arch:') ? rule.slice(5) : rule;
+        return `module:${id}:rule:${ruleId}`;
+    }
+    return crypto.createHash('sha1').update(`${vPath}:${line}:${rule}`).digest('hex').slice(0, 8);
+}
+export function updateViolationLedger(state, judgeResult, iter) {
+    if (!Array.isArray(judgeResult.violations)) {
+        throw new Error('updateViolationLedger: judgeResult.violations must be an array');
+    }
+    state.violation_ledger ??= [];
+    for (const violation of judgeResult.violations) {
+        const generatedId = generateViolationId(violation);
+        const vLine = violation.line ?? 0;
+        const existing = state.violation_ledger.find((e) => e.path === (violation.path ?? '') && e.rule === (violation.rule ?? '') &&
+            Math.abs((e.line ?? 0) - vLine) <= 5);
+        if (existing) {
+            existing.last_seen_iter = iter;
+        }
+        else {
+            state.violation_ledger.push({
+                id: generatedId,
+                path: violation.path,
+                line: violation.line,
+                rule: violation.rule,
+                first_seen_iter: iter,
+                last_seen_iter: iter,
+                severity: violation.severity,
+                description: violation.description,
+            });
+        }
     }
 }
