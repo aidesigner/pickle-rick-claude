@@ -181,3 +181,78 @@ test('morty-watcher: dead-pid active session terminates via recovered state', ()
         fs.rmSync(sessionDir, { recursive: true, force: true });
     }
 });
+
+// ---------------------------------------------------------------------------
+// R-MDS-6: producer_done flag — reader pivot tests
+// ---------------------------------------------------------------------------
+
+test('morty-watcher: producer_done=true renders "Producer complete" (no-data branch)', () => {
+    const sessionDir = makeSessionDir('pickle-morty-watcher-prod-done-');
+    try {
+        // Active session with producer_done=true at pane index 2
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            pid: process.pid,  // live pid — keeps liveness probe satisfied during the brief test window
+            step: 'implement',
+            iteration: 1,
+            monitor_panes: [
+                { producer_done: false },
+                { producer_done: false },
+                { producer_done: true },
+                { producer_done: false },
+            ],
+        }, null, 2));
+
+        // Live pid keeps liveness probe satisfied — watcher loops through the
+        // no-data branch indefinitely. Brief timeout buys at least one render
+        // tick (sleep is 1s in main loop), then we read what was emitted.
+        const result = spawnSync(process.execPath, [MORTY_WATCHER_BIN, sessionDir], {
+            env: { ...process.env },
+            encoding: 'utf-8',
+            timeout: 2500,
+        });
+
+        assert.ok(
+            result.stdout.includes('Producer complete'),
+            `Expected "Producer complete" in output when producer_done=true, got: ${result.stdout}`,
+        );
+    } finally {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+});
+
+test('morty-watcher: producer_done=false renders existing "Awaiting worker signal" (no-data branch)', () => {
+    const sessionDir = makeSessionDir('pickle-morty-watcher-prod-false-');
+    try {
+        // Active session with producer_done=false at pane index 2
+        fs.writeFileSync(path.join(sessionDir, 'state.json'), JSON.stringify({
+            active: true,
+            pid: process.pid,
+            step: 'implement',
+            iteration: 1,
+            monitor_panes: [
+                { producer_done: false },
+                { producer_done: false },
+                { producer_done: false },
+                { producer_done: false },
+            ],
+        }, null, 2));
+
+        const result = spawnSync(process.execPath, [MORTY_WATCHER_BIN, sessionDir], {
+            env: { ...process.env },
+            encoding: 'utf-8',
+            timeout: 2500,
+        });
+
+        assert.ok(
+            result.stdout.includes('Awaiting worker signal'),
+            `Expected "Awaiting worker signal" when producer_done=false, got: ${result.stdout}`,
+        );
+        assert.ok(
+            !result.stdout.includes('Producer complete'),
+            `Should NOT show "Producer complete" when producer_done=false, got: ${result.stdout}`,
+        );
+    } finally {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+});

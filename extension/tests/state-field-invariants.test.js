@@ -115,3 +115,63 @@ test('R-CNAR-1 ticket-tier-budget invariant: documented in extension/CLAUDE.md t
     'extension/CLAUDE.md must document the tier-cap override precedence chain',
   );
 });
+
+// ---------------------------------------------------------------------------
+// R-MDS-6: monitor_panes field invariant
+// ---------------------------------------------------------------------------
+
+test('R-MDS-6: monitor_panes field exists in State interface', () => {
+  const stateSource = fs.readFileSync(stateTypesPath, 'utf8');
+  assert.match(
+    stateSource,
+    /monitor_panes\?:\s*\{[^}]*producer_done:\s*boolean[^}]*\}\[\]/,
+    'State must declare monitor_panes?: { producer_done: boolean }[]',
+  );
+});
+
+test('R-MDS-6: monitor_panes missing field on read defaults to false (safe crash recovery)', async () => {
+  const { StateManager } = await import('../services/state-manager.js');
+  const os = await import('node:os');
+  const tmpD = fs.mkdtempSync(path.join(os.tmpdir(), 'sfi-mds6-'));
+  try {
+    const sm = new StateManager();
+    const sp = path.join(tmpD, 'state.json');
+    // Raw state without monitor_panes — simulates missing field on read
+    fs.writeFileSync(sp, JSON.stringify({
+      active: false,
+      working_dir: tmpD,
+      step: 'prd',
+      iteration: 1,
+      max_iterations: 10,
+      max_time_minutes: 60,
+      worker_timeout_seconds: 1200,
+      start_time_epoch: Date.now(),
+      completion_promise: null,
+      original_prompt: 'test',
+      current_ticket: null,
+      history: [],
+      started_at: new Date().toISOString(),
+      session_dir: tmpD,
+      schema_version: 3,
+    }, null, 2));
+
+    const state = sm.read(sp);
+    assert.ok(Array.isArray(state.monitor_panes), 'monitor_panes must be initialized by migration');
+    assert.equal(state.monitor_panes.length, 4, 'must have 4 pane entries');
+    assert.ok(
+      state.monitor_panes.every((p) => p.producer_done === false),
+      'crash-recovery default must be false — no false-suppression of warnings',
+    );
+  } finally {
+    fs.rmSync(tmpD, { recursive: true, force: true });
+  }
+});
+
+test('R-MDS-6: monitor_panes INVARIANT documented in extension/CLAUDE.md', () => {
+  const claude = fs.readFileSync(claudePath, 'utf8');
+  assert.match(
+    claude,
+    /INVARIANT: `monitor_panes`/,
+    'extension/CLAUDE.md must document the monitor_panes field invariant',
+  );
+});

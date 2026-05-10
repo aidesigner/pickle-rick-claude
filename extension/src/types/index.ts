@@ -96,6 +96,14 @@ export interface State {
    * use this to distinguish a clean exit from a forensic halt.
    */
   exit_reason?: string | null;
+  /**
+   * Per-pane producer liveness flags. Length 4 (pane indices 0..3). Written
+   * exclusively by pipeline-runner.ts at non-citadel phase boundaries.
+   * Pane 2 is the producer pane (morty-watcher in pickle, subsystem-watcher
+   * in microverse). Absent or false → show the normal no-data message.
+   * True → show "Producer complete" instead. Crash-recovery default: false.
+   */
+  monitor_panes?: { producer_done: boolean }[];
 }
 
 /**

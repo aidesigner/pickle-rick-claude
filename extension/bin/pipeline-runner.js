@@ -1582,14 +1582,30 @@ export async function main(sessionDir, opts = {}) {
             // pickle→citadel is exempt (citadel reuses pickle template).
             const nextRawPhase = runtime.config.phases[i + 1];
             if (!(rawPhase === 'pickle' && nextRawPhase === 'citadel')) {
-                if (nextRawPhase === 'anatomy-park') {
-                    await respawnMonitorWindowForMode(runtime.sessionDir, 'anatomy-park');
-                }
-                else if (nextRawPhase === 'szechuan-sauce') {
-                    await respawnMonitorWindowForMode(runtime.sessionDir, 'szechuan-sauce');
-                }
-                else if (nextRawPhase === undefined) {
-                    await respawnMonitorWindowForMode(runtime.sessionDir, 'exit');
+                if (nextRawPhase === 'anatomy-park' || nextRawPhase === 'szechuan-sauce' || nextRawPhase === undefined) {
+                    // R-MDS-6: signal pane 2 producer is done BEFORE respawn so the watcher
+                    // can switch from the no-data warning to "Producer complete".
+                    try {
+                        sm.update(runtime.statePath, s => { if (Array.isArray(s.monitor_panes) && s.monitor_panes[2])
+                            s.monitor_panes[2].producer_done = true; });
+                    }
+                    catch { /* best-effort */ }
+                    if (nextRawPhase === 'anatomy-park') {
+                        await respawnMonitorWindowForMode(runtime.sessionDir, 'anatomy-park');
+                    }
+                    else if (nextRawPhase === 'szechuan-sauce') {
+                        await respawnMonitorWindowForMode(runtime.sessionDir, 'szechuan-sauce');
+                    }
+                    else {
+                        await respawnMonitorWindowForMode(runtime.sessionDir, 'exit');
+                    }
+                    // R-MDS-6: new producer is starting — reset flag so the replacement
+                    // watcher shows the normal no-data message until it goes idle.
+                    try {
+                        sm.update(runtime.statePath, s => { if (Array.isArray(s.monitor_panes) && s.monitor_panes[2])
+                            s.monitor_panes[2].producer_done = false; });
+                    }
+                    catch { /* best-effort */ }
                 }
             }
         }

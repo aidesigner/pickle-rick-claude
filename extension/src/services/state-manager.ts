@@ -231,6 +231,14 @@ function normalizeV3StateDefaults(state: State): void {
   }
 
   if (typeof state.codex_version_seen !== 'string') state.codex_version_seen = null;
+  if (!Array.isArray(state.monitor_panes) || state.monitor_panes.length !== 4) {
+    state.monitor_panes = [
+      { producer_done: false },
+      { producer_done: false },
+      { producer_done: false },
+      { producer_done: false },
+    ];
+  }
 }
 
 function isStateSnapshotNewer(

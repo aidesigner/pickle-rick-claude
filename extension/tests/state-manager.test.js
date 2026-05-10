@@ -1401,3 +1401,59 @@ test('assertSchemaVersionDeployParity: exits 1 with actionable stderr on drift',
   assert.match(result.stderr, /stale deploy/);
   assert.match(result.stderr, /bash install\.sh/);
 });
+
+// ---------------------------------------------------------------------------
+// R-MDS-6: monitor_panes schema migration
+// ---------------------------------------------------------------------------
+
+test('R-MDS-6 schema migration: monitor_panes initialized to 4 false entries when absent', () => {
+  withDir((dir) => {
+    const sm = new StateManager();
+    const sp = path.join(dir, 'state.json');
+    // Old state.json without monitor_panes field
+    writeStateFile(sp, makeState({ schema_version: 3 }));
+
+    const state = sm.read(sp);
+    assert.ok(Array.isArray(state.monitor_panes), 'monitor_panes should be an array');
+    assert.equal(state.monitor_panes.length, 4, 'monitor_panes should have 4 entries');
+    for (let i = 0; i < 4; i++) {
+      assert.equal(state.monitor_panes[i].producer_done, false, `entry ${i} should default to false`);
+    }
+  });
+});
+
+test('R-MDS-6 schema migration: monitor_panes preserved when already set correctly', () => {
+  withDir((dir) => {
+    const sm = new StateManager();
+    const sp = path.join(dir, 'state.json');
+    writeStateFile(sp, makeState({
+      schema_version: 3,
+      monitor_panes: [
+        { producer_done: false },
+        { producer_done: false },
+        { producer_done: true },
+        { producer_done: false },
+      ],
+    }));
+
+    const state = sm.read(sp);
+    assert.equal(state.monitor_panes[2].producer_done, true, 'existing true value should be preserved');
+    assert.equal(state.monitor_panes[0].producer_done, false);
+    assert.equal(state.monitor_panes[3].producer_done, false);
+  });
+});
+
+test('R-MDS-6 crash recovery: missing monitor_panes field defaults to false (safe)', () => {
+  withDir((dir) => {
+    const sm = new StateManager();
+    const sp = path.join(dir, 'state.json');
+    // Simulate crash recovery: raw state without monitor_panes
+    fs.writeFileSync(sp, JSON.stringify(makeState({ schema_version: 3 }), null, 2));
+
+    const state = sm.read(sp);
+    // All entries must default to false — no false-suppression of warnings
+    assert.ok(Array.isArray(state.monitor_panes));
+    assert.equal(state.monitor_panes.every((e) => e.producer_done === false), true,
+      'crash-recovery default must be false for all panes');
+  });
+});

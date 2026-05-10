@@ -342,6 +342,75 @@ test('respawnMonitorWindowForMode: emits monitor_respawn_failed and is non-fatal
     }
 });
 
+// ---------------------------------------------------------------------------
+// R-MDS-6: producer_done writer order — true BEFORE respawn, false AFTER
+// ---------------------------------------------------------------------------
+
+test('R-MDS-6: producer_done true→respawn→false sequence (writer-ownership protocol)', { timeout: 15000 }, async () => {
+    const { StateManager } = await import('../../services/state-manager.js');
+    const sm = new StateManager();
+
+    const tmpRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'monitor-mds6-')));
+    const prevDataRoot = process.env.PICKLE_DATA_ROOT;
+    try {
+        const sessionDir = makeSessionDir(tmpRoot);
+        const statePath = path.join(sessionDir, 'state.json');
+        const dataRoot = path.join(tmpRoot, 'data');
+        process.env.PICKLE_DATA_ROOT = dataRoot;
+
+        // Initialize monitor_panes (migration would do this automatically)
+        sm.update(statePath, (s) => {
+            s.monitor_panes = [
+                { producer_done: false },
+                { producer_done: false },
+                { producer_done: false },
+                { producer_done: false },
+            ];
+        });
+
+        const sequence = [];
+
+        const mockSpawnSync = (_cmd, args, _opts) => {
+            if (args[0] === 'display-message') return { status: 0, stdout: 'pickle-test\n', stderr: '' };
+            // Capture flag at the moment of respawn-pane call (during respawn)
+            try {
+                const snap = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+                sequence.push({ event: 'respawn-pane', producer_done: snap.monitor_panes?.[2]?.producer_done });
+            } catch { sequence.push({ event: 'respawn-pane', producer_done: 'error' }); }
+            return { status: 0, stdout: '', stderr: '' };
+        };
+
+        // Simulate the pipeline-runner writer pattern (R-MDS-6):
+        // Step 1: flip true BEFORE respawn
+        sm.update(statePath, (s) => { if (Array.isArray(s.monitor_panes) && s.monitor_panes[2]) s.monitor_panes[2].producer_done = true; });
+        sequence.push({ event: 'pre-respawn', producer_done: sm.read(statePath).monitor_panes?.[2]?.producer_done });
+
+        // Step 2: call respawn (captured by mock)
+        await respawnMonitorWindowForMode(sessionDir, 'anatomy-park', mockSpawnSync);
+
+        // Step 3: flip false AFTER respawn returns
+        sm.update(statePath, (s) => { if (Array.isArray(s.monitor_panes) && s.monitor_panes[2]) s.monitor_panes[2].producer_done = false; });
+        sequence.push({ event: 'post-respawn', producer_done: sm.read(statePath).monitor_panes?.[2]?.producer_done });
+
+        // Assert order: first entry is pre-respawn, then >=1 respawn-pane all
+        // observing producer_done=true, then post-respawn observing false.
+        assert.equal(sequence[0]?.event, 'pre-respawn');
+        assert.equal(sequence[0]?.producer_done, true, 'flag must be true before respawn');
+        const respawnEntries = sequence.filter((s) => s.event === 'respawn-pane');
+        assert.ok(respawnEntries.length > 0, 'respawn must invoke at least one tmux respawn-pane call');
+        for (const r of respawnEntries) {
+            assert.equal(r.producer_done, true, 'flag must be true DURING every respawn-pane call');
+        }
+        const last = sequence[sequence.length - 1];
+        assert.equal(last?.event, 'post-respawn');
+        assert.equal(last?.producer_done, false, 'flag must be false AFTER respawn returns');
+    } finally {
+        if (prevDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+        else process.env.PICKLE_DATA_ROOT = prevDataRoot;
+        fs.rmSync(tmpRoot, { recursive: true, force: true });
+    }
+});
+
 test('respawnMonitorWindowForMode: phase-to-mode mapping covers all phases', { timeout: 15000 }, async () => {
     const tmpRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'monitor-respawn-')));
     const prevDataRoot = process.env.PICKLE_DATA_ROOT;
@@ -366,10 +435,14 @@ test('respawnMonitorWindowForMode: phase-to-mode mapping covers all phases', { t
             };
             await respawnMonitorWindowForMode(sessionDir, phase, mockSpawnSync);
             assert.ok(capturedRespawnArgs.length > 0, `should call respawn-pane for phase=${phase}`);
-            const cmd = capturedRespawnArgs[capturedRespawnArgs.length - 1].join(' ');
+            // Multiple panes are respawned per call; the dashboard pane (1.0)
+            // carries the --mode flag while other panes (e.g. 1.2 subsystem-
+            // watcher in microverse mode) do not. Look for any captured arg
+            // list containing --mode <expectedMode>.
+            const matched = capturedRespawnArgs.some((args) => args.join(' ').includes(`--mode ${expectedMode}`));
             assert.ok(
-                cmd.includes(`--mode ${expectedMode}`),
-                `phase=${phase} should map to --mode ${expectedMode}, got: ${cmd}`,
+                matched,
+                `phase=${phase} should map to --mode ${expectedMode} on at least one pane respawn; captured: ${capturedRespawnArgs.map((a) => a.join(' ')).join(' || ')}`,
             );
         }
     } finally {

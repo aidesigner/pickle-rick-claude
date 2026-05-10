@@ -160,9 +160,17 @@ async function main() {
                         process.stdout.write(`\n${sep()}\n${MX.BRIGHT}◤ FEED TERMINATED ◢${MX.R}\n`);
                         break;
                     }
+                    // R-MDS-6: pane 2 producer_done flag — switch no-data message
+                    if (state.monitor_panes?.[2]?.producer_done === true) {
+                        process.stdout.write(`\r${MX.DIM}Producer complete${MX.R}\x1b[K`);
+                    }
+                    else {
+                        process.stdout.write(`\r${MX.DIM}Awaiting worker signal...${MX.R}\x1b[K`);
+                    }
                 }
-                catch { /* ignore */ }
-                process.stdout.write(`\r${MX.DIM}Awaiting worker signal...${MX.R}\x1b[K`);
+                catch {
+                    process.stdout.write(`\r${MX.DIM}Awaiting worker signal...${MX.R}\x1b[K`);
+                }
             }
             await sleep(1000);
             continue;
