@@ -139,35 +139,15 @@ Verify via `git log --grep` keyword check before drafting any new ticket — if 
 
 ### Active (queued or in flight)
 
+The operational queue is `## 🔔 Active Queue` above. This section lists open PRDs that aren't already in that queue.
+
 | Path | Status | Notes |
 |---|---|---|
-| `p1-bug-fix-bundle-2026-05-04.md` | **Refined (P1) — IN FLIGHT on session `f416c6cc`, codex-spark** | 62 atomic tickets composing 1e+1g+1h-WSE+1i+1j+1k + R-BUNDLE-1/2 + R-BUNDLE-DISPO-1 + R-CLOSER-1; closer ships v1.70.0 |
-| `p3-pipeline-runner-dirty-tree-guard-blocks-self-cleanup.md` | **Draft (P3)** filed 2026-05-04 PM | 4 R-PDT requirements; workaround documented; file in next bundle after v1.70.0 |
-| `anatomy-park-judge-unreachable-on-worker-convergence.md` | **Draft (P1) — TWO-SECTION BUNDLE** filed 2026-05-05 (slots 1r + 1s) | 12 ACs total; ~30-LOC fix in `microverse-runner.js`. Section 1 (slot 1r): skip `validateWorkerConvergenceHistory` when `metric_type='none'`. Section 2 (slot 1s): `measureLlmMetric` ETIMEDOUT must NOT silently converge — exit `judge_timeout`/`baseline_unmeasurable` with exit code 1 + exponential backoff retry budget. Sibling of the v1.63.0 finalizer fix |
-| `p2-remove-pipeline-wall-clock-time-cap.md` | **Draft (P2)** filed 2026-05-05 (slot 1t) | 10 R-NTC requirements + 12 AC-NTCs. Default-off `state.max_time_minutes`; iteration caps + per-worker timeouts remain. Drops setup default, `--max-time` advisory, monitor "X/Y min" rendering, rate-limit-wait clamp, codex-manager-relaunch time-eligibility. Field stays opt-in. Supersedes `large-pipeline-time-budget-undersized.md` AC-LPB-07. Live repro: run #5 of bundle `2026-05-04-f416c6cc` was 500/720 min into the cap at launch (start_time_epoch preserved across --resume) and would have lost 48 unshipped tickets without manual operator intervention |
-| `p1-worker-backend-split-from-manager.md` | **Draft (P1)** filed 2026-05-05 (slot 1o) | 8 R-WBS requirements + 8 ACs. Optional `state.worker_backend` field; spawn-morty/microverse-runner precedence: refinement-lock → worker_backend → backend. Manager unchanged. Refinement spawns ignore the field. New `worker_backend_resolved` event. Forensic origin: bundle session 2026-05-04-f416c6cc run #2 F1 (codex-spark manager hallucinated backend flip to hermes) |
-| `p2-codex-spark-worker-completion-commit-contract-violation.md` | **Draft (P2)** filed 2026-05-05 (slot 1p) | 4 R-CCC requirements + 7 ACs. Three-layer fix: ACK-token in worker prompt, post-commit auto-fill helper, phantom-Done git-log cross-check. Forensic origin: run #2 lost commits 8224fc7f / 160e8816 / 4d7c4cfa to false-revert because codex-spark workers skip `completion_commit:` frontmatter ~30% of the time |
-| `p2-install-sh-types-index-stale-on-fast-reinstall.md` | **Draft (P2)** filed 2026-05-05 (slot 1q) | 4 R-ITS requirements + 6 ACs. Force-rebuild compiled JS before `npx tsc`; post-rsync md5-parity probe on 5 most-trafficked compiled files; new `install_sh_parity_check` event. Forensic origin: run #2 deployed types/index.js was missing 8 activity events (incl. `worker_spawn_backend_resolved`); state-manager dropped 28 minutes of forensic events as "unknown" |
-| `p2-manager-stop-hook-nudge-cadence-wastes-turns.md` | **Draft (P2)** filed 2026-05-05 (slot 1u) | 6 R-MSCN requirements + 9 AC-MSCN. Adds `WAIT_PATTERN_REGEXES` to stop-hook; after 3 consecutive degenerate manager turns, switches to event-aware nudge (poll state.json mtime, worker-PID liveness, artifact-landing, fallback 60s timer). New `manager_idle_backoff_engaged`/`_released` events. Forensic origin: bundle session 2026-05-04-f416c6cc run #5 ticket 51d826c9 — 154 manager stop-hook turns in 27min worker wait, 133/154 are degenerate `"Waiting for Monitor signal."` |
-| `p1-bug-fix-bundle-2026-05-05.md` | **Draft (P1) — BUNDLE WRAPPER** filed 2026-05-05 (queue slot #0-next) | Composes 8 source PRDs (1o + 1p + 1q + 1r/1s + 1t + 1n + 1m + 1d) into 48-61 atomic tickets. Section ordering: C (1q) FIRST, A (1o) before B (1p), H (1d) BEFORE closer. Closer ships v1.71.0. Risk Register R1-R7 + 5 AC-BUNDLE-2026-05-05-* + pre-flight checklist. Refinement directives for Cycles 1-3 |
-| `p2-stop-hook-blocks-launcher-of-tmux-bundle-via-orphan-session.md` | **Draft (P2)** filed 2026-05-04 PM | 4 R-SHB requirements (3 compounding bugs); workaround applied; file in next bundle after v1.70.0 |
-| `p1-deployed-pkgjson-version-only-revert.md` | **Draft (P1)** | NEW deploy-revert bug class: pkg.json:version field reverts while file content-hashes match. Diagnostic-first |
-| `p2-mega-bundle-2026-05-02-pm.md` | **Refined (P2) — IN FLIGHT on session `fca7952b`** | 6-PRD mega bundle: strip + state-drift + retry + handoff + hermes + god-fn-2; 34 tickets |
-| `p1-strip-excessive-defense-deploy-reversion.md` | **In mega bundle Section A** | Drafted; will land via mega bundle |
-| `p2-bundle-deploy-reversion-and-gate-baseline-diagnostic.md` | **30/30 SHIPPED in code** (session `2026-05-02-ad240987`, codex) | Refined PRD has 17 ACs; closer DEFERRED live release. v1.68.0 untagged pending strip |
-| `p1-bug-bundle-2026-05-01-pm.md` | **20/20 SHIPPED** (closer commit `2c814e8`, source v1.67.0) | Anatomy-park failed downstream of deploy-reversion. v1.67.0 will NOT be tagged; v1.68.0 ships directly |
-| `readiness-gate-manifest-prd-bundle-mismatch.md` | **SHIPPED via P0 bundle** Section D (commits in main) | AC-RGM-01..07 all green; bundle PRDs no longer need `--skip-readiness` |
-| `pipeline-runner-state-active-not-claimed-on-relaunch.md` | **SHIPPED via P0 bundle** Section C (commits in main) | state.active claim-on-relaunch + section-c-still-needed.js gate |
-| `anatomy-park-runner-undefined-description-crash.md` | **SHIPPED via P1 bundle** (commits `bddcb71`, `be5dacf`, `cee66e9`, `c8f14d7`, `17623ea`) | All 5 ACs Done; assertMicroverseStateShape + history guards landed |
-| `szechuan-sauce-codex-judge-model-mismatch.md` | **SHIPPED via P1 bundle** (commits `aa2336c`, `a590b97`, `f2d938b`, `0357d29`, `26cbf98`, `effe287`, `74f463d`) | All 5 ACs Done; one-line fix at init-microverse.ts:13 + judge_unreachable exit |
-| `pipeline-state-desync-and-pane-respawn-tmpdir.md` | **SHIPPED via P1 bundle** (commits `cde1175`, `9a9c9f5`, `145eaea`, `c82c181`, `f55f46c`, `47904e7`, `622cd53`, `674016b`) | T0..T5 in v1.66.0; T6..T10 in v1.67.0 closer commit |
-| `hermes-integration.md` + `hermes-research.md` | **Ready (P2)** | Fourth backend `'hermes'`; 12 FRs + 5 NFRs + ~20 new tests |
-| `multi-repo-task-state-drift.md` | **Refined draft** | T1-T4 partially shipped pre-v1.63.0; remainder TBD |
-| `god-functions-remediation-phase-2.md` | **Draft** | 27 god-fns × ~20 tickets to remove ESLint carve-outs |
-| `deepseek-integration.md` | **Draft** | Third backend via DeepSeek's Anthropic-compat shim |
-| `openrouter-multi-provider-workers.md` | **Draft** | Lower priority; no source impl |
-| `tool-error-retry-tracking.md` | **Draft** | OMC Ralph-mode-inspired; intra-session tool-failure tracking |
-| `smart-iteration-handoff.md` | **Refined draft** | Reduce wasted iterations 30%+ in microverse / 20%+ in tmux |
+| `p1-deployed-pkgjson-version-only-revert.md` | **Diagnosis-only (P1)** | Deploy-revert bug class: pkg.json:version reverts while file content-hashes match. Research at `prds/research-slot-K-pjv-writer-2026-05-07.md`. |
+| `p1-strip-excessive-defense-deploy-reversion.md` | **Partial** | Cron sampler stripped (`c2ec3cf1`); ~480 LOC of mux pre-flight, scheduled finalizer, launch-gate verifier still queued. |
+| `multi-repo-task-state-drift.md` | **Refined draft** | T1-T4 partially shipped pre-v1.63.0; remainder TBD. Queued in follow-up bundle. |
+| `tool-error-retry-tracking.md` | **Draft** | OMC Ralph-mode-inspired intra-session tool-failure tracking. |
+| `smart-iteration-handoff.md` | **Refined draft** | Reduce wasted iterations 30%+ in microverse / 20%+ in tmux. |
 
 ### Design docs (active, no immediate ship target)
 
@@ -212,82 +192,33 @@ Verify via `git log --grep` keyword check before drafting any new ticket — if 
 - **Operator note**: workers timed out at 1200s on most tickets, but produced complete artifacts before the timeout; manager validated gates (tsc + eslint + targeted tests) and committed. Timeout root-cause is in spawn-morty / claude-CLI invocation, not in any single ticket — separately filed for follow-up.
 - **Release tag**: NOT pushed to GitHub (default per AC-CLOSER-04; local-only mode preserved).
 
-### v1.69.0 (2026-05-03 PM) — mega bundle release ceremony
+### Older releases (v1.63.0 → v1.69.0)
 
-- **Released** at https://github.com/gregorydickson/pickle-rick-claude/releases/tag/v1.69.0. Rolls up v1.67.0 (P1 bundle: anatomy-park crash + szechuan judge + pipeline-state-desync tail), v1.68.0 (P0 deploy-reversion bundle: 30 tickets + strip + trap-door fixes), and v1.69.0 closer (mega bundle 34/34 from session `fca7952b`: strip + state-drift + retry-tracking + smart-handoff + hermes + god-fn-2 + backend identity + teams validation).
-- 138 commits pushed v1.66.0..HEAD. install.sh clean; src/dep parity OK at 1.69.0.
-- **Known pre-existing test failures (not regressions, predate v1.66.0):** `tests/council-publish.test.js:867` (hung `gh pr comment` timeout asserts 1 call, observes 2) and `tests/scope-resolver-import-walks.test.js:111` (rg→grep fallback returns false locally). Filed as `p3-test-flakes-council-publish-and-scope-resolver.md`.
+Forensic detail moved to `prds/MASTER_PLAN-archive.md`. Quick map:
 
-### Uncommitted (planned v1.68.0) — P0 deploy-reversion bundle (30 tickets) + P1 strip-back + trap-door fixes
-
-- **30/30 P0 bundle tickets DONE** in code on session `2026-05-02-ad240987` (codex backend, ~9h end-to-end). Section A (14 lockdown tickets), Section B (2 gate-baseline event + verifier), Section C (2 state.active claim + re-eval), Section D (3 readiness manifest), infra (2 verify-bundle + force-vs-allow matrix), wiring, 4 hardening (HT-1..HT-4), closer, scheduled-soak.
-- **Tickets that needed retry**: A.8 (mux-runner pre-flight, c56ab4a7) and A.10 (downgrade UX, 01504f22) failed first pass due to codex's strict full-suite gate; both passed on retry after `state.flags.skip_readiness_reason` bypass for the readiness gate (the bundle PRD itself triggered the very `readiness-gate-manifest-prd-bundle-mismatch.md` bug it ships a fix for — meta).
-- **Closer DEFERRED live release**: `bash install.sh` hangs on `crontab` install (sandbox restriction); full `npm test` blocks on pre-existing `trap-door-conformance.test.js` failures (`extension/CLAUDE.md` lines 9, 13, 64, 76). Pkg.json still at 1.67.0; v1.68.0 not tagged on GitHub; v1.66.0 still GitHub-Latest with poison content.
-- **NEW P1 strip PRD** (`prds/p1-strip-excessive-defense-deploy-reversion.md`) drops ~480 LOC of cron sampler + scheduled-soak + mux-runner pre-flight before tagging. Codebase analyst Cycle 3 already noted only AC-DR-04c is the actual fix; the rest is defense-in-depth for an unidentified writer class.
-- **Trap-door fixes via 2-agent team** (uncommitted): split lines 9+13 of `extension/CLAUDE.md` into separate bullets (one INVARIANT/BREAKS/ENFORCE triple per bullet); created stub tests `extension/tests/mux-runner-state-iteration.test.js` (4 tests) and `extension/tests/get-extension-root-fallback.test.js` (3 tests). `trap-door-conformance.test.js` now 25/25.
-- **Phantom session cleanup**: orphan session `2026-05-02-9e48bce6` left active by an agent's test run, deactivated to unblock stop-hook.
-- Babysit cron `a3a6970f` ran 18 cycles redeploying every 30min — confirmed live the deploy-reversion bug bites continuously (~every 15-20min before A.14 force-write kill-switch landed mid-pipeline).
-
-### Uncommitted (planned v1.67.0) — P1 bundle (anatomy-park crash + szechuan judge model + pipeline-state-desync tail)
-
-- **All 20 tickets DONE** on session `2026-05-01-325ccb80` over two pickle phases (initial 144m + retry). Closer commit `2c814e8` bumped 1.66.0 → 1.67.0.
-- Section A (anatomy-park-runner-undefined-description-crash): 5 ACs shipped (`be5dacf`, `bddcb71`, `cee66e9`, `c8f14d7`, `17623ea`). `assertMicroverseStateShape` runtime validator added; history-access guards; regression test.
-- Section B (szechuan-sauce-codex-judge-model-mismatch): 5 ACs shipped (`aa2336c`, `a590b97`, `f2d938b`, `0357d29`, `26cbf98`, `effe287`, `74f463d`). One-line fix at `init-microverse.ts:13`; convergence guard against empty history; new `judge_unreachable` exit reason.
-- Section C tail (pipeline-state-desync T6..T10): 5 tickets shipped (`47904e7`, `f55f46c`, `622cd53`, `674016b`, `c82c181`, `145eaea`, `9a9c9f5`, `cde1175`). EXTENSION_DIR opt-in renamed to EXTENSION_DIR_TEST; ESLint rule for bare reads; integration test; trap-door catalog.
-- Plus 4 hardening tickets (H1-H4: code quality, data flow, test quality, cross-reference) + 4 anatomy-park bonus commits during the failed phase.
-- **Why pipeline reported FAILED**: anatomy-park exited at iter 2 with the same gate-baseline-missing bug v1.66.0 was supposed to fix. Forensic finding: deployed extension was reverted v1.66.0 → v1.64.0 by auto-updater between install.sh and pipeline launch. **The deploy-reversion meta-bug masked all this work as if it were broken.** All 20 tickets ARE shipped in source; the pipeline phase verification failed because the runtime ran stale JS.
-- v1.67.0 **NOT yet tagged** on GitHub. Held until P0 bundle ships F7 lockdown.
-
-### v1.66.0 (2026-05-01) — anatomy-park gate-baseline missing-after-commit
-
-- 9 atomic tickets shipped in 91m on session `bfa25a4b`. Gate-baseline write-verify, recapture-before-strict-mode, strict-red routed through stall-limit, integration test, trap-door catalog. AC-RVN-08 deploy-parity assertion already in place — but reversion happens at the auto-updater, not at install.sh.
-- Tagged: `gh release create v1.66.0` on 2026-05-01 22:35 UTC. Latest on GitHub.
-
-### Uncommitted (planned v1.65.0) — relaunch status hygiene + ac-phase-gate timeout
-
-- **`loop-runner-relaunch-status-bugs.md` SHIPPED** via `/pickle-pipeline --backend codex` on session `2026-05-01-21605b33`. 5 atomic tickets, 6 commits `087930e..67a2ca0`. Bug A (mux-runner ownership ordering vs `ensureMonitorWindow`), Bug B (monitor pane-0 recovery), Bug C (stale `exit_reason` on relaunch + phase transition).
-- Pipeline result: pickle ✓ (3 iter, 41m), citadel ✓ (1 finding), anatomy-park ✗ (iter 2, gate-baseline missing-after-commit, exit 1), szechuan-sauce never ran. Anatomy-park trap-doored 2 HIGH findings: `ac-phase-gate command-timeout` (independently fixed at commit `d5270c0`) and `check-readiness-snapshot recovery` (still open as P3 residual).
-- **Standalone `ac-phase-gate.timeout` fix** at commit `d5270c0` — adds `timeout_ms?` field per AC criterion + 30-min default; threaded through `spawnSync`. New trap-door INVARIANT in `extension/CLAUDE.md` with PATTERN_SHAPE.
-- **Doc rationalization** at commit `7b5e4df` — MASTER_PLAN 554→160 lines, citadel.md 1103→689 lines, BMAD appendix split out, codex prompt-design notes moved to `docs/`.
-- **Test suite**: still 3464/3464 (loop-runner work added tests; counts in pipeline run). ESLint: 0 errors.
-- Awaits release gate (`tsc --noEmit && eslint && tsc && npm test`) + version bump + `gh release create v1.65.0`.
-
-### v1.64.0 (2026-05-01) — operator hygiene
-
-- `pickle-standup` skill: closed 5 gaps surfaced live (open-PR query, product-voice lint, epic grouping, drift footer, helper-noise drop list). Linear MCP cross-reference shipped.
-- 4 skill launchers (`/anatomy-park`, `/szechuan-sauce`, `/pickle-microverse`, `/plumbus`) refactored: launch microverse-runner via session-local `launch.sh` instead of brittle inline `tmux send-keys` heredocs (zsh silently mis-parsed multi-line `if/elif/fi` chains).
-- Codex test shim derives version from `engines.codex` so future engine-pin bumps don't rot the fixture.
-- Pre-existing lint debt cleared (8 errors → 0). Two `complexity` violations deferred to god-functions-remediation-phase-2 rows 28-29.
-- Test suite: 3464/3464 pass. ESLint: 0 errors.
-
-### v1.63.0 (2026-05-01) — overnight bug bundle
-
-- 9-ticket bundle on codex backend at session `2026-04-30-bc104e78` (109m): APH residual finalizer fix (T1), codex-manager-relaunch service extraction (T2), tier-aware circuit-breaker budget (T3), send-to-morty Resume Detection (T4), microverse stall resilience (T5), trap-door catalog hygiene (T6), test-floor aggregator (T7), parametrized trap-door conformance lint (T8), refinement-time symbol audit (T9).
-- `--skip-readiness <reason>` flag (BMAD residual P0.6) shipped as Agent A bundle (commit `deac6c5`).
-- Anatomy-park audit on the diff converged clean in 2 iterations on session `2026-05-01-9ccab218` (0 confident findings, 8 candidates dropped at conf<80).
+| Release | Date | Source / commit |
+|---|---|---|
+| v1.69.0 | 2026-05-03 | mega bundle ceremony (rolls up v1.67/v1.68/v1.69 closer; 138 commits v1.66.0..HEAD) |
+| v1.68.0 | uncommitted | P0 deploy-reversion bundle 30/30 (session `2026-05-02-ad240987`) |
+| v1.67.0 | uncommitted | P1 anatomy-park crash + szechuan judge + pipeline-state-desync tail (session `2026-05-01-325ccb80`); closer `2c814e8` |
+| v1.66.0 | 2026-05-01 | anatomy-park gate-baseline missing (9 tickets, session `bfa25a4b`) |
+| v1.65.0 | uncommitted | loop-runner-relaunch-status-bugs (5 tickets `087930e..67a2ca0`) + `ac-phase-gate.timeout` `d5270c0` + doc rationalization `7b5e4df` |
+| v1.64.0 | 2026-05-01 | operator hygiene (pickle-standup gaps + 4 skill-launcher refactor) |
+| v1.63.0 | 2026-05-01 | overnight bundle (9 tickets T1-T9, session `2026-04-30-bc104e78`) + `--skip-readiness` flag (`deac6c5`) |
 
 ---
 
-## 3. Current State (verified 2026-05-04 PM)
+## 3. Current State (verified 2026-05-10 AM, pre bundle 2026-05-10)
 
 | Item | Value |
 |---|---|
-| Source version | **v1.69.0** (commit `bdc775f`) + 77 unpushed local commits ahead (R-ICP fixes + bundle 2026-05-04 PRD + refined PRD + 2 new bug PRDs + worker commits as they land) |
-| Deployed version | **v1.69.0** + locally-deployed R-ICP fixes (md5 parity confirmed for mux-runner.js, pipeline-runner.js, check-readiness.js) + typescript symlink in place |
-| Latest release on GitHub | **v1.69.0** — bundle closer ships v1.70.0 with `gh release create --latest` evicting v1.66.0 from GitHub-Latest |
-| Branch state | `main`, **77 local commits ahead of `origin/main`** — NOT pushed per user instruction. Bundle closer (R-CLOSER-1) bundles all pushes |
-| Working tree | CLEAN (after `git checkout -- bundle/ac-dr-02.json` workaround for slot 1m dirty-tree-guard bug) |
-| Active pipeline session | **`2026-05-04-f416c6cc` IN FLIGHT on codex-spark backend** — 62 atomic tickets, R-XBL-1 first ticket Done at iteration 2; R-XBL-2 mid-implement on `extension/src/services/backend-spawn.ts`. Bootstrap flags applied: `bundle_bootstrap_mode="2026-05-04-v1.70.0"` + `skip_readiness_reason`. max-iter=∞ max-time=∞. tmux session `pipeline-f416c6cc` (4-pane monitor active). |
-| Reliability bundle session retained | `~/.local/share/pickle-rick/sessions/2026-05-03-7d9ee8cc/` — postmortem; 38/38 done, 0/4 phases ran. Bundle 2026-05-04 R-BUNDLE-2 snapshots this to `extension/tests/fixtures/baseline-2026-05-03-7d9ee8cc/` for R-XBL-6 + R-TAQ-6 backfill ACs |
-| Orphan session demoted | `~/.local/share/pickle-rick/sessions/2026-05-04-b20c7a0a/` — `active=true, pid=null` orphan; manually demoted with `exit_reason='orphan-paused-no-claim'` 2026-05-04 PM (slot 1n forensic) |
-| Mega bundle session retained | `~/.local/share/pickle-rick/sessions/2026-05-02-fca7952b/` — 34 ticket dirs (postmortem) |
-| P0 bundle session retained | `~/.local/share/pickle-rick/sessions/2026-05-02-ad240987/` — 30 ticket dirs + bundle artifacts |
-| Cron watchdogs | NONE — bundle 2026-05-04 runs autonomously without cron |
-| Codex backend | spark-tier production (gpt-5.3-codex-spark default; bundle is first multi-hour stress test per R12) |
-| `CODEX_MANAGER_RELAUNCH_CAP` | 10 |
-| `engines.codex` pin | `^0.128.0` (source); deployed re-synced via the latest install.sh |
-| Today's bug logs | P0 bundle shipped + P1 strip PRD drafted |
-| Test suite | strip-PRD blocking on pre-existing trap-door entries (NOW FIXED uncommitted by agent team); needs full re-run after strip+commit |
+| Source version | **v1.73.0** (mega bundle 2026-05-08 closer, commit `6851f41f`); ~155 unpushed local commits ahead. Bundle 2026-05-10 closer ships v1.73.1. |
+| Deployed version | **v1.73.0** — installed via `bash install.sh --closer-context` post-mega; md5-parity 5/5 OK across `extension/types/index.js`, `extension/services/state-manager.js`, `extension/bin/spawn-morty.js`, `extension/bin/mux-runner.js`, `extension/services/pickle-utils.js`. |
+| Latest release on GitHub | **v1.69.0** — local-only mode preserved per AC-CLOSER-04. |
+| Branch state | `main` — local-only, NOT pushed per user instruction. |
+| Codex backend | `gpt-5.4` (switched from `gpt-5.3-codex-spark` after spark usage limit; updated in `.codex/config.toml` + `pickle_settings.json`). |
+| `engines.codex` pin | `^0.128.0` (source). |
+| Recent retained sessions (postmortem) | `2026-05-09-7ff82595/` (mega bundle ship — 11/11 + closer), `2026-05-08-d6f98b66/` (deferred-slots ship), `pipeline-be6e9179/` (Theme A 9/9), `pipeline-1d81a0bb/` (5/12 + slot E hidden — manager hallucination bail), `pipeline-e0834dcd/` (quick-refine 9 atomic tickets). |
 
 ---
 
@@ -321,15 +252,7 @@ For codex backend specifics, see `docs/codex-prompt-design-notes.md`.
 ## 6. Quick Reference
 
 ```bash
-# P0 bundle session (completed, retained for postmortem)
-SESSION_ROOT=~/.local/share/pickle-rick/sessions/2026-05-02-ad240987
-ls $SESSION_ROOT/bundle/                                      # AC artifacts
-cat $SESSION_ROOT/refinement_summary.md                       # Cycle-3 analyst summary
-
-# Strip PRD work (manual surgical, no pipeline)
-cat prds/p1-strip-excessive-defense-deploy-reversion.md       # 12 ACs, ~480 LOC removal target
-
-# Metrics
+# Metrics + status
 node ~/.claude/pickle-rick/extension/bin/metrics.js          # token/commit/LOC report
 /pickle-status                                                # formatted current session
 /pickle-metrics                                               # aggregate report
@@ -346,10 +269,9 @@ gh release create vX.Y.Z                                      # tag + publish
 git fetch --tags                                              # sync local tags (gh-created tags lag)
 ```
 
-### Latest release links
-
-- **v1.64.0** — https://github.com/gregorydickson/pickle-rick-claude/releases/tag/v1.64.0
-- **v1.63.0** — https://github.com/gregorydickson/pickle-rick-claude/releases/tag/v1.63.0
+### Latest GitHub releases
+- v1.64.0 — https://github.com/gregorydickson/pickle-rick-claude/releases/tag/v1.64.0
+- v1.63.0 — https://github.com/gregorydickson/pickle-rick-claude/releases/tag/v1.63.0
 
 ---
 
