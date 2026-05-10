@@ -707,6 +707,23 @@ export interface ViolationLedger {
   description: string;
 }
 
+/** Single violation item returned by the LLM judge in structured output mode. */
+export interface Violation {
+  id: string;
+  severity: 'high' | 'med' | 'low';
+  description: string;
+}
+
+/** Return type of parseLlmJudgeOutput — discriminated by shape. */
+export interface JudgeResult {
+  score: number | null;
+  violations: Violation[];
+  resolved: string[];
+  new: string[];
+  remaining: string[];
+  shape: 'full' | 'legacy' | 'malformed' | 'partial';
+}
+
 export interface MicroverseSessionState {
   status: 'gap_analysis' | 'iterating' | 'converged' | 'stopped';
   prd_path: string;

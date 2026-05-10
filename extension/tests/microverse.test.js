@@ -528,7 +528,7 @@ test('runIteration is exported from mux-runner', () => {
 
 // --- microverse-runner tests ---
 
-import { measureMetric, measureLlmMetric, extractScore, buildJudgePrompt, buildMicroverseHandoff, deactivateRunnerState, handleRateLimit, main, _deps, readRunnerState, stageAutoCommitPaths, executeMainLoop, executeGapAnalysis, measureAndClassifyIteration, classifyStall, handleNoCommitStall } from '../bin/microverse-runner.js';
+import { measureMetric, measureLlmMetric, extractScore, parseLlmJudgeOutput, buildJudgePrompt, buildMicroverseHandoff, deactivateRunnerState, handleRateLimit, main, _deps, readRunnerState, stageAutoCommitPaths, executeMainLoop, executeGapAnalysis, measureAndClassifyIteration, classifyStall, handleNoCommitStall } from '../bin/microverse-runner.js';
 import { resetToSha } from '../services/git-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { writeStateFile } from '../services/pickle-utils.js';
@@ -1694,6 +1694,67 @@ test('extractScore: returns null for fractions', () => {
 
 test('extractScore: returns null for empty string', () => {
     assert.equal(extractScore(''), null);
+});
+
+// --- parseLlmJudgeOutput tests ---
+
+test('parseLlmJudgeOutput: full-shape JSON returns shape=full with all fields parsed', () => {
+    const raw = JSON.stringify({
+        score: 7,
+        violations: [{ id: 'V1', severity: 'high', description: 'test violation' }],
+        resolved: ['r1'],
+        new: ['n1'],
+        remaining: ['rem1'],
+    });
+    const result = parseLlmJudgeOutput(raw);
+    assert.equal(result.shape, 'full');
+    assert.equal(result.score, 7);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0].id, 'V1');
+    assert.deepEqual(result.resolved, ['r1']);
+    assert.deepEqual(result.remaining, ['rem1']);
+});
+
+test('parseLlmJudgeOutput: legacy-shape JSON (score only) returns shape=legacy with resolved=[] remaining=[]', () => {
+    const result = parseLlmJudgeOutput(JSON.stringify({ score: 5 }));
+    assert.equal(result.shape, 'legacy');
+    assert.equal(result.score, 5);
+    assert.deepEqual(result.resolved, []);
+    assert.deepEqual(result.remaining, []);
+    assert.deepEqual(result.violations, []);
+});
+
+test('parseLlmJudgeOutput: malformed JSON returns shape=malformed with null score', () => {
+    const result = parseLlmJudgeOutput('not-json{garbage');
+    assert.equal(result.shape, 'malformed');
+    assert.equal(result.score, null);
+    assert.deepEqual(result.violations, []);
+});
+
+test('parseLlmJudgeOutput: partial shape (violations is string) returns shape=partial with null score', () => {
+    const result = parseLlmJudgeOutput(JSON.stringify({ score: 5, violations: 'oops' }));
+    assert.equal(result.shape, 'partial');
+    assert.equal(result.score, null);
+    assert.deepEqual(result.violations, []);
+});
+
+test('parseLlmJudgeOutput: raw_output_truncated_512 truncates 1024-char malformed input to 512 chars', () => {
+    const garbage = 'x'.repeat(1024);
+    const captured = [];
+    const origWrite = process.stderr.write.bind(process.stderr);
+    process.stderr.write = (data) => { captured.push(String(data)); return true; };
+    try {
+        const result = parseLlmJudgeOutput(garbage);
+        assert.equal(result.shape, 'malformed');
+        const line = captured.find(l => l.includes('judge_json_parse_failed'));
+        assert.ok(line, 'expected judge_json_parse_failed to be emitted to stderr');
+        const jsonStart = line.indexOf('{');
+        assert.ok(jsonStart !== -1, 'expected JSON payload in stderr line');
+        const payload = JSON.parse(line.slice(jsonStart));
+        assert.equal(payload.raw_output_truncated_512.length, 512);
+    } finally {
+        process.stderr.write = origWrite;
+    }
 });
 
 // --- measureLlmMetric + buildJudgePrompt tests ---

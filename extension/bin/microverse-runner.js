@@ -921,6 +921,56 @@ export function extractScore(output) {
     }
     return null;
 }
+/**
+ * Parse structured JSON from LLM judge output. Never throws.
+ * Returns JudgeResult with shape discriminator: 'full' | 'legacy' | 'malformed' | 'partial'.
+ * Activity events are emitted to stderr pending registration in R-SLLJ-6 (ticket 96402c0a).
+ */
+export function parseLlmJudgeOutput(rawOutput) {
+    let parsed;
+    try {
+        parsed = JSON.parse(rawOutput);
+    }
+    catch (err) {
+        const parseErrorMessage = err instanceof Error ? err.message : String(err);
+        process.stderr.write(`[microverse] judge_json_parse_failed ${JSON.stringify({ raw_output_truncated_512: rawOutput.slice(0, 512), parse_error_message: parseErrorMessage })}\n`);
+        return { score: null, violations: [], resolved: [], new: [], remaining: [], shape: 'malformed' };
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        process.stderr.write(`[microverse] judge_json_parse_failed ${JSON.stringify({ raw_output_truncated_512: rawOutput.slice(0, 512), parse_error_message: 'parsed value is not an object' })}\n`);
+        return { score: null, violations: [], resolved: [], new: [], remaining: [], shape: 'malformed' };
+    }
+    const obj = parsed;
+    // Partial: violations key present but not an array
+    if ('violations' in obj && !Array.isArray(obj.violations)) {
+        process.stderr.write(`[microverse] judge_json_parse_failed ${JSON.stringify({ raw_output_truncated_512: rawOutput.slice(0, 512), parse_error_message: 'violations field is not an array' })}\n`);
+        return { score: null, violations: [], resolved: [], new: [], remaining: [], shape: 'partial' };
+    }
+    const score = typeof obj.score === 'number' ? obj.score : null;
+    // Legacy: valid JSON but missing structured fields
+    if (!('violations' in obj) || !('resolved' in obj) || !('new' in obj) || !('remaining' in obj)) {
+        process.stderr.write(`[microverse] judge_legacy_shape_inferred\n`);
+        return { score, violations: [], resolved: [], new: [], remaining: [], shape: 'legacy' };
+    }
+    const toStringArray = (arr) => Array.isArray(arr) ? arr.filter((s) => typeof s === 'string') : [];
+    const violations = obj.violations
+        .filter((v) => v !== null && typeof v === 'object' && !Array.isArray(v))
+        .map(v => ({
+        id: typeof v.id === 'string' ? v.id : '',
+        severity: ['high', 'med', 'low'].includes(v.severity)
+            ? v.severity
+            : 'low',
+        description: typeof v.description === 'string' ? v.description : '',
+    }));
+    return {
+        score,
+        violations,
+        resolved: toStringArray(obj.resolved),
+        new: toStringArray(obj.new),
+        remaining: toStringArray(obj.remaining),
+        shape: 'full',
+    };
+}
 export function measureLlmMetric(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend = 'claude') {
     return measureLlmMetricAttempt(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend).metric;
 }
