@@ -170,6 +170,51 @@ A regression-fixture session with the four iter 5–8 metric_value blocks pre-ba
 
 ## Session Notes
 
-Discovered while monitoring `2026-05-09-92dbdff2` after operator question "I do think the scoring might have a bug." Operator's instinct was correct: the loop showed 8 progress commits with score frozen at 5. Confirmed by reading raw `metric_value` strings in `convergence.history[]` and observing different violations listed each iteration despite identical scores. Loop is currently mid-iteration 9 — will likely hit `stall_counter == 5` and false-stall before iter 50 if not interrupted.
+Discovered while monitoring `2026-05-09-92dbdff2` after operator question "I do think the scoring might have a bug." Operator's instinct was correct: the loop showed 8 progress commits with score frozen at 5. Confirmed by reading raw `metric_value` strings in `convergence.history[]` and observing different violations listed each iteration despite identical scores. Loop completed at iter 9 with `exit_reason: no_progress` after `stall_counter` hit 5/5.
 
-Recommended interim mitigation while this PRD is open: raise `stall_limit` from 5 → 15 for LLM-judge szechuan-sauce sessions to defer false-stall. This is not a fix, only a delay.
+### Round 2 (`2026-05-10-965b96f9`): SECOND bail-out path discovered
+
+Operator launched Round 2 with `--stall-limit 50` per the original interim mitigation. **Loop still false-stalled at iter 7** with `exit_reason: no_progress` despite `stall_counter: 5 / stall_limit: 50` (only 5 of 50 holds consumed).
+
+Runner log smoking gun:
+```
+[12:09:29.315Z] Metric: 5 (raw: 5)
+[12:09:29.315Z] Classification: held (previous=5, tolerance=0)
+[12:09:29.331Z] 3 consecutive no_progress — bailing
+[12:09:29.334Z] microverse-runner finished. 7 iterations, 67m 40s, exit: no_progress
+```
+
+This is a **second, independent bail-out path** in `microverse-runner.ts:2211-2218`:
+
+```ts
+if (last.failure_class === 'no_progress') {
+  const recent = state.failure_history.slice(-3);
+  if (recent.length === 3 && recent.every(f => f.failure_class === 'no_progress')) {
+    ctx.log('3 consecutive no_progress — bailing');
+    writeMicroverseState(ctx.sessionDir, state);
+    return 'no_progress';
+  }
+}
+```
+
+Hard-coded "3 consecutive `no_progress` failure_history entries → unconditional exit." This rule fires *regardless of `stall_limit`*. Each `held` classification adds a `failure_history` entry with `failure_class: 'no_progress'`; three consecutive holds = automatic exit.
+
+Round 2 evidence (real progress shipped under the false-stall):
+- Baseline 6 → final 5 (Round 1 + anatomy-park had already cleared the bulk; Round 2 baseline reflects already-cleaned codebase)
+- 7 atomic commits landed: 4× Small Functions (split god procedures into named helpers), 2× Cognitive Load (split inlined extraction flows), 1× DRY (Rule of Three deduplication)
+- 5 files changed, +790/−489 LOC
+- Worker iterations 5/6/7 raw judge output shows the judge naming **different violations each iteration** — same content-drift pattern as Round 1, just at the lower 5-violation floor
+
+### Updated interim mitigation
+
+Raising `stall_limit` alone is insufficient. To actually keep an LLM-judge szechuan-sauce loop running through false-stalls, the operator must ALSO patch around the 3-consecutive bail-out at `microverse-runner.ts:2211-2218`. There is no environment variable or config knob to disable it today — that hard-coded rule is unconditional.
+
+Practical operator workaround until the fix lands:
+1. Run szechuan-sauce in shorter bursts (3-iteration ceilings hit naturally) and re-launch with a fresh session each time so `failure_history` resets. Each restart gets ~3 productive iterations before bail.
+2. Or accept the early stop and audit `git log <baseline>..HEAD` against the actual violation count — the convergence signal is unreliable, but the commit log is honest.
+
+### New acceptance criterion (added to R-SLLJ list)
+
+R-SLLJ-9 (P1, R-MUST): the 3-consecutive `no_progress` bail-out at `microverse-runner.ts:2211-2218` MUST NOT fire on `metric.type === 'llm'` when the worker has produced commits in those iterations AND the metric_value content shows different violations being named (i.e., real progress is occurring under a content-drift score plateau). Today this rule fires unconditionally and overrides any `stall_limit` configuration.
+
+R-SLLJ-10 (P2, R-SHOULD): both the `stall_limit` ceiling and the 3-consecutive-bail rule MUST be observable in `/pickle-status` output so operators can see WHICH counter is about to fire. Today only `stall_counter / stall_limit` is surfaced; the 3-consecutive-`failure_history` bail is invisible until it fires.

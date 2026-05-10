@@ -87,7 +87,9 @@ Lifted from `prds/p1-szechuan-sauce-llm-judge-non-deterministic-scoring-false-st
 | **R-SLLJ-5** | `stall_limit` for LLM-judge szechuan-sauce sessions raised 5→15 in `microverse-runner.ts` (or pulled from settings); guarded by `metric.type === 'llm'` check; non-LLM paths unaffected. |
 | **R-SLLJ-6** | **Three** new activity events (NOT one — clarification of original "quartet" wording, which referred to the four schema-conformance artifacts per event, not four events): `judge_violation_ledger_advanced` (per-iteration ledger advance, payload `{ resolved_count, new_count, remaining_count, ledger_size }`), `judge_legacy_shape_inferred` (R-SLLJ-2a fallback, payload `{ score, raw_keys: string[] }`), `judge_json_parse_failed` (R-SLLJ-2b/2c failure, payload `{ raw_output_truncated_512, parse_error_message }`). Each event ships the full schema-conformance quartet of artifacts: (1) `VALID_ACTIVITY_EVENTS` union entry in `extension/src/types/index.ts`, (2) JSON Schema `oneOf` definition in `extension/src/types/activity-events.schema.json` with `required` array, (3) payload fixture in `extension/tests/activity-event-payload.test.js` `EVENT_CASES`, (4) count-assertion bumped from current 30 → 33 (three new events). |
 | **R-SLLJ-7** | Trap-door entry pinned in `extension/CLAUDE.md`: "INVARIANT: LLM-judge szechuan-sauce sessions MUST consume `microverse.json.violation_ledger` when present; falling back to pure-numeric `compareMetric` when ledger exists is a regression. ENFORCE: `microverse-state.test.js#compareMetric_set_ops_branch`. BREAKS: false-stall reproduction from session 2026-05-09-92dbdff2." |
-| **R-SLLJ-8** | Regression test `microverse-llm-judge-non-determinism-recovery.test.js`: 6 cases — (a) numeric stall + ledger shows `resolved>0, new=0` → classified `improved`; (b) numeric improve + ledger shows `new>resolved` → classified `regressed`; (c) legacy judge shape (R-SLLJ-2a) → `judge_legacy_shape_inferred` event + numeric fallback; (d) `metric.type !== 'llm'` → pure numeric path unchanged; (e) malformed JSON (R-SLLJ-2b) → `judge_json_parse_failed` event + iteration NOT counted toward `stall_counter`; (f) partial-shape JSON (R-SLLJ-2c, has `score` but `violations` non-array) → same handling as (e). |
+| **R-SLLJ-8** | Regression test `microverse-llm-judge-non-determinism-recovery.test.js`: 7 cases — (a) numeric stall + ledger shows `resolved>0, new=0` → classified `improved`; (b) numeric improve + ledger shows `new>resolved` → classified `regressed`; (c) legacy judge shape (R-SLLJ-2a) → `judge_legacy_shape_inferred` event + numeric fallback; (d) `metric.type !== 'llm'` → pure numeric path unchanged; (e) malformed JSON (R-SLLJ-2b) → `judge_json_parse_failed` event + iteration NOT counted toward `stall_counter`; (f) partial-shape JSON (R-SLLJ-2c, has `score` but `violations` non-array) → same handling as (e); (g) R-SLLJ-9 LLM bypass — 3 consecutive `held` iterations + LLM metric + ledger shows `resolved>0` → loop CONTINUES (no premature bail-out). |
+| **R-SLLJ-9** | (Round 2 discovery, P1) Round 2 session `2026-05-10-965b96f9` confirmed a SECOND bail-out path at `microverse-runner.ts:2211-2218`: hard-coded 3-consecutive `no_progress` failure_history check fires regardless of `stall_limit`. Wrap in `if (state.metric.type !== 'llm')` guard so LLM-judge sessions (where R-SLLJ-1..6 ledger-aware classification already distinguishes real-progress holds from genuine-stall holds) never trigger the redundant unconditional bail. Non-LLM metric paths preserve pre-fix behavior. Trap-door entry extends R-SLLJ-7's catalog. |
+| **R-SLLJ-10** | (Round 2 discovery, P2) Surface `consecutive_no_progress_count` in `/pickle-status` output alongside existing `stall_counter / stall_limit`; show `[LLM bypass active]` marker for LLM-judge sessions (post R-SLLJ-9). Emit `consecutive_no_progress_warning` activity event at count === 2 (non-LLM only). Activity event quartet: types union + JSON schema + fixture + count assertion bumped 37 → 38. |
 
 ## Section C — Open Finding #14 — Citadel conformance core wiring *(THIRD — P2)*
 
@@ -186,3 +188,49 @@ Lifted from `prds/p3-monitor-dashboard-stale-after-pickle-to-anatomy-park-transi
 ## Session Notes (post-run; appended by closer)
 
 (empty — closer fills in)
+
+---
+
+## Implementation Task Breakdown
+
+| Order | ID | Title | Priority | Entry | Exit | Files |
+|---|---|---|---|---|---|---|
+| 10 | 814b28f2 | Write scope.json for bundle session | High | bundle init | scope.json on disk | scope.json |
+| 20 | 2df5bf03 | Write pipeline.json with bundle metadata | High | scope.json done | pipeline.json on disk | pipeline.json |
+| 30 | 25456290 | Pre-flight assertion: composes:-chain + R-codes | High | pipeline.json done | runBundlePreflight ships | pipeline-runner.ts, types/index.ts, schema, fixtures |
+| 40 | 526da55e | Extend buildJudgePrompt with priorViolations | High | bootstrap done | prompt accepts ledger | microverse-runner.ts, types/index.ts |
+| 50 | ddf96daf | Upgrade judge schema (3 error paths) | High | R-SLLJ-1 | parseLlmJudgeOutput returns JudgeResult | microverse-runner.ts |
+| 60 | 86f1b135 | violation_ledger field + ID generation | High | R-SLLJ-2 | ledger persists | microverse-state.ts, types/index.ts |
+| 70 | e7220428 | compareMetric set-ops branch | High | R-SLLJ-3 | set-ops classify | microverse-state.ts |
+| 80 | 6806faba | Raise stall_limit 5→15 for LLM-judge | High | R-SLLJ-4 | LLM stall_limit=15 | microverse-runner.ts |
+| 90 | 96402c0a | Register 3 new activity events (parametrized) | High | R-SLLJ-2,4 | events registered | types/index.ts, schema, fixtures |
+| 100 | 41a26950 | Trap-door entries for R-SLLJ | High | R-SLLJ-1..6 | catalog updated | extension/CLAUDE.md |
+| 105 | 25601c7e | Neutralize 3-consecutive bail for LLM (R-SLLJ-9) | High | R-SLLJ-7 | bail-out skipped for LLM | microverse-runner.ts, CLAUDE.md, tests |
+| 110 | edb6d3b4 | Regression test (7 cases incl. R-SLLJ-9) | High | R-SLLJ-9 | test passes | tests/microverse-llm-judge-non-determinism-recovery.test.js |
+| 115 | 578181fd | Surface consecutive bail counter in /pickle-status (R-SLLJ-10) | Medium | R-SLLJ-9 | observability shipped | bin/status.ts, types/index.ts, schema, fixtures |
+| 120 | 7b28b641 | audit-citadel-wiring.js diagnostic | High | bootstrap done | diagnostic ships | scripts/audit-citadel-wiring.js, tests/audit-citadel-wiring.test.js |
+| 130 | a4e3675c | Wire 4 unwired analyzers (parametrized) | High | R-CCNW-1, R-CCNW-3 | analyzers wired | citadel/audit-runner.ts |
+| 140 | 7a276c38 | T6 trap-door-coverage analyzer | High | R-CCNW-1 | T6 ships | citadel/trap-door-coverage-audit.ts |
+| 150 | 1c3e2426 | prd-parser composes:-walk | High | R-CCNW-1 | parser walks chain | citadel/prd-parser.ts |
+| 160 | 24800b65 | Project-shape detection | High | R-CCNW-2 | inert sections distinguishable | citadel/audit-runner.ts |
+| 170 | b3335a18 | rule-set-invariant-audit triple shape | High | R-CCNW-2 | declarations counted | citadel/rule-set-invariant-audit.ts |
+| 180 | ce1196dc | Regression test analyzer wiring | High | R-CCNW-2..6 | test passes | tests/citadel/citadel-analyzer-wiring.test.js |
+| 190 | 18bfceaf | Trap-door entry for analyzer wiring | High | R-CCNW-7 | catalog updated | extension/CLAUDE.md |
+| 200 | 82a7ce6a | Phase-boundary respawn hook (parametrized) | High | R-MDS-2 | hook fires | pipeline-runner.ts, lib/monitor-respawn.ts |
+| 210 | 967e90b7 | monitor.js --mode dispatch | High | none | flag accepted | bin/monitor.ts |
+| 220 | 0f0ef1ad | Defense-in-depth tick re-check | High | R-MDS-2 | hot-swap inline | bin/monitor.ts |
+| 230 | 9da921e8 | renderMicroverseDashboard template | High | R-MDS-2 | 4-section template | bin/monitor.ts |
+| 240 | c3b9a04f | Pane 1.2 ticket→subsystem swap | High | R-MDS-1 | subsystem-watcher.js ships | bin/subsystem-watcher.ts, lib/monitor-respawn.ts |
+| 250 | 678059d3 | producer_done flag + writer ownership | High | R-MDS-1, R-MDS-5 | flag persists | state-manager.ts, pipeline-runner.ts, morty-watcher.ts, subsystem-watcher.ts |
+| 260 | b89cb4fd | Trap-door entry for monitor mode-swap | High | R-MDS-1..6 | catalog updated | extension/CLAUDE.md |
+| 270 | 6ae58eb2 | Regression test mode swap (4 cases) | High | R-MDS-7 | test passes | tests/monitor-mode-swap.test.js |
+| 280 | 70ab0919 | Bump version 1.73.0 → 1.73.1 | High | all impl done | version bumped | extension/package.json |
+| 290 | 698924c1 | Run full release gate | High | R-CLOSER-1 | gate green | (verification only) |
+| 300 | 010f5c8b | Deploy + md5 parity + MASTER_PLAN (parametrized) | High | R-CLOSER-2 | bundle deployed | install.sh run, MASTER_PLAN.md |
+| 310 | 4dcf9b43 | Wire all modules into working extension | High | all impl + closer done | smoke tests pass | (verification only) |
+| 320 | 5b3ef7e0 | Harden: code quality review | High | wiring done | zero P0-P1 violations | MODIFIED_FILES |
+| 330 | 98dc9bed | Audit: data flow integrity | High | code-quality done | zero CRITICAL+HIGH findings | MODIFIED_FILES |
+| 340 | baf22800 | Harden: test quality review | High | data-flow done | zero P0-P1 gaps | TEST_FILES |
+| 350 | 7d47ae2e | Audit: cross-reference consistency | Medium | test-quality done | zero CRITICAL+HIGH mismatches | DOC_FILES + MODIFIED_FILES |
+
+**Total**: 37 child tickets + 1 parent. Sequential by `order` field. Smell-collapses applied to R-A-03, R-CCNW-2, R-MDS-1, R-SLLJ-6, R-CLOSER-3 (parametrized over enumerated targets per refinement-team feedback). R-SLLJ-9 / R-SLLJ-10 added 2026-05-10 after Round 2 session `2026-05-10-965b96f9` discovered a second bail-out path; R-CLOSER-3 count assertion bumped 37 → 38 to absorb the new R-SLLJ-10 `consecutive_no_progress_warning` event.
