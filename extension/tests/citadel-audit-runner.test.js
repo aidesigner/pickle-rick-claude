@@ -8,6 +8,7 @@ import {
   buildCitadelAuditReport,
   __setAnalyzerOverridesForTests,
 } from '../services/citadel/audit-runner.js';
+import { detectProjectShapes } from '../services/citadel/project-shape.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '../..');
@@ -89,5 +90,90 @@ describe('citadel audit-runner wiring', () => {
         `sections missing key after ac_coverage throw: ${key}`,
       );
     }
+  });
+});
+
+describe('citadel project-shape gate', () => {
+  test('frontend_prop_drift is skipped on pickle-rick-claude (non-React repo)', () => {
+    const prdFiles = fs.readdirSync(PRDS_DIR).filter((f) => f.endsWith('.md'));
+    const prdPath = path.join('prds', prdFiles[0]);
+
+    const report = buildCitadelAuditReport({
+      prdPath,
+      diffRange: 'HEAD..HEAD',
+      repoRoot: REPO_ROOT,
+    });
+
+    const section = report.sections['frontend_prop_drift'];
+    assert.ok(section, 'frontend_prop_drift section must exist');
+    assert.equal(
+      section.skipped,
+      'project_shape_mismatch',
+      `expected skipped='project_shape_mismatch', got ${JSON.stringify(section.skipped)}`,
+    );
+    assert.ok(typeof section.reason === 'string' && section.reason.length > 0, 'reason must be non-empty string');
+    assert.deepStrictEqual(section.findings, [], 'skipped section must have empty findings');
+  });
+
+  test('endpoint_contract_conformance is skipped on pickle-rick-claude (non-NestJS repo)', () => {
+    const prdFiles = fs.readdirSync(PRDS_DIR).filter((f) => f.endsWith('.md'));
+    const prdPath = path.join('prds', prdFiles[0]);
+
+    const report = buildCitadelAuditReport({
+      prdPath,
+      diffRange: 'HEAD..HEAD',
+      repoRoot: REPO_ROOT,
+    });
+
+    const section = report.sections['endpoint_contract_conformance'];
+    assert.ok(section, 'endpoint_contract_conformance section must exist');
+    assert.equal(
+      section.skipped,
+      'project_shape_mismatch',
+      `expected skipped='project_shape_mismatch', got ${JSON.stringify(section.skipped)}`,
+    );
+    assert.ok(typeof section.reason === 'string' && section.reason.length > 0, 'reason must be non-empty string');
+    assert.deepStrictEqual(section.findings, [], 'skipped section must have empty findings');
+  });
+
+  test('universal analyzer (trap_door_coverage) fires normally on pickle-rick-claude', () => {
+    const prdFiles = fs.readdirSync(PRDS_DIR).filter((f) => f.endsWith('.md'));
+    const prdPath = path.join('prds', prdFiles[0]);
+
+    const report = buildCitadelAuditReport({
+      prdPath,
+      diffRange: 'HEAD..HEAD',
+      repoRoot: REPO_ROOT,
+    });
+
+    const section = report.sections['trap_door_coverage'];
+    assert.ok(section, 'trap_door_coverage section must exist');
+    assert.ok(section.skipped !== 'project_shape_mismatch', 'universal analyzer must not be shape-gated');
+    assert.ok(Array.isArray(section.findings), 'universal analyzer must have findings array');
+  });
+
+  test('skipped section is distinguishable from clean-run section', () => {
+    const prdFiles = fs.readdirSync(PRDS_DIR).filter((f) => f.endsWith('.md'));
+    const prdPath = path.join('prds', prdFiles[0]);
+
+    const report = buildCitadelAuditReport({
+      prdPath,
+      diffRange: 'HEAD..HEAD',
+      repoRoot: REPO_ROOT,
+    });
+
+    const skipped = report.sections['frontend_prop_drift'];
+    const clean = report.sections['trap_door_coverage'];
+
+    // skipped has skipped='project_shape_mismatch'
+    assert.equal(skipped.skipped, 'project_shape_mismatch');
+    // clean has skipped=false or undefined — either way, not 'project_shape_mismatch'
+    assert.notEqual(clean.skipped, 'project_shape_mismatch');
+  });
+
+  test('detectProjectShapes import is wired (project-shape module loadable)', () => {
+    // Ensure the module exports the function and is callable from test context
+    const shapes = detectProjectShapes(REPO_ROOT);
+    assert.ok(Array.isArray(shapes) && shapes.length > 0, 'detectProjectShapes must return non-empty array');
   });
 });

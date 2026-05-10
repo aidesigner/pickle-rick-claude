@@ -11,6 +11,7 @@ import { auditDiffHygiene } from './diff-hygiene.js';
 import { reconcileDivergences } from './divergence-reconciliation.js';
 import { Reporter } from './reporter.js';
 import { parsePrdMarkdown } from './prd-parser.js';
+import { detectProjectShapes } from './project-shape.js';
 import { buildAcCoverageScorecard } from './ac-coverage-scorecard.js';
 import { detectAllowlistDeadEntries } from './allowlist-dead-entry-detector.js';
 import { auditStateTransitions } from './state-transition-audit.js';
@@ -34,8 +35,9 @@ export function buildCitadelAuditReport(options) {
     const prdMarkdown = readFileSync(prdPath, 'utf-8');
     const parsedPrd = parsePrdMarkdown(prdMarkdown);
     const diff = walkDiff(options.diffRange, { repoRoot });
+    const projectShapes = detectProjectShapes(repoRoot);
     const siblingAuth = auditSiblingAuthPreconditions(diff);
-    const frontendPropDrift = auditFrontendPropDrift(diff);
+    const frontendPropDrift = safeRunAnalyzer('citadel-frontend-prop-drift', () => auditFrontendPropDrift(diff), { analyzerCompatibility: ['react-frontend'], projectShapes });
     const acShape = auditAcShape({
         prdPath,
         sessionDir: options.sessionDir,
@@ -52,7 +54,7 @@ export function buildCitadelAuditReport(options) {
     const allowlistDead = safeRunAnalyzer('citadel-allowlist-dead', () => detectAllowlistDeadEntries(diff, { repoRoot }));
     const stateTransitions = safeRunAnalyzer('citadel-state-transitions', () => auditStateTransitions(parsedPrd.transitionAuditRows, diff, { repoRoot }));
     const trapDoorCoverage = safeRunAnalyzer('citadel-trap-door', () => auditTrapDoorCoverage(diff));
-    const endpointContractConformance = safeRunAnalyzer('citadel-endpoint-contract', () => checkEndpointContractConformance(parsedPrd.endpoints, parsedPrd.statusCodeRows, { repoRoot }));
+    const endpointContractConformance = safeRunAnalyzer('citadel-endpoint-contract', () => checkEndpointContractConformance(parsedPrd.endpoints, parsedPrd.statusCodeRows, { repoRoot }), { analyzerCompatibility: ['nestjs-api'], projectShapes });
     const decisionRequired = [
         ...acShape.decisionsRequired,
         ...divergenceReconciliation.decisionsRequired,
@@ -211,7 +213,19 @@ let _analyzerOverridesForTests = null;
 export function __setAnalyzerOverridesForTests(overrides) {
     _analyzerOverridesForTests = overrides;
 }
-function safeRunAnalyzer(id, run) {
+function safeRunAnalyzer(id, run, shapeOpts) {
+    if (shapeOpts?.analyzerCompatibility != null && shapeOpts.projectShapes) {
+        const compatible = shapeOpts.analyzerCompatibility.some((s) => shapeOpts.projectShapes.includes(s));
+        if (!compatible) {
+            const required = shapeOpts.analyzerCompatibility.join(', ');
+            const detected = shapeOpts.projectShapes.join(', ');
+            return {
+                findings: [],
+                skipped: 'project_shape_mismatch',
+                reason: `analyzer requires [${required}]; detected project shapes: [${detected}]`,
+            };
+        }
+    }
     const override = _analyzerOverridesForTests?.get(id);
     const fn = override ?? run;
     try {
