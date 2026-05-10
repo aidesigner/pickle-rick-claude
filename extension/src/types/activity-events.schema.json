@@ -395,6 +395,22 @@
         "attempts": { "type": "integer", "minimum": 0 },
         "fall_through_to_finalize_gate": { "type": "boolean", "const": true }
       }
+    },
+    "bundle_preflight_failed": {
+      "type": "object",
+      "required": ["event", "ts", "gate_payload"],
+      "properties": {
+        "event": { "type": "string", "const": "bundle_preflight_failed" },
+        "ts": { "type": "string" },
+        "gate_payload": {
+          "type": "object",
+          "required": ["failed_assertion", "reason"],
+          "properties": {
+            "failed_assertion": { "type": "string" },
+            "reason": { "type": "string" }
+          }
+        }
+      }
     }
   },
   "oneOf": [
@@ -426,6 +442,7 @@
     { "$ref": "#/definitions/standup_session_dropped" },
     { "$ref": "#/definitions/worker_edit_outside_scope" },
     { "$ref": "#/definitions/pkgjson_revert_forensic_captured" },
-    { "$ref": "#/definitions/pipeline_judge_timeout_recovery_attempted" }
+    { "$ref": "#/definitions/pipeline_judge_timeout_recovery_attempted" },
+    { "$ref": "#/definitions/bundle_preflight_failed" }
   ]
 }

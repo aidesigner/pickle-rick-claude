@@ -487,6 +487,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'worker_edit_outside_scope',
   'pkgjson_revert_forensic_captured',
   'pipeline_judge_timeout_recovery_attempted',
+  'bundle_preflight_failed',
 ] as const;
 
 export type ActivityEventType = typeof VALID_ACTIVITY_EVENTS[number];

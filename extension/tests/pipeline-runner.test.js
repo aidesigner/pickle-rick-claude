@@ -21,6 +21,8 @@ import {
   applyEpochResetOnReconstruction,
   claimPipelineRunnerActive,
   writeWatcherLivenessArtifact,
+  runBundlePreflight,
+  BundlePreflightError,
 } from '../bin/pipeline-runner.js';
 import { backendEnvOverrides } from '../services/backend-spawn.js';
 import { AC_PHASE_MANIFEST, runAcPhaseGate } from '../services/ac-phase-gate.js';
@@ -1767,5 +1769,124 @@ describe('bundle bootstrap shape', () => {
     const raw = { ...CANONICAL_BUNDLE };
     assert.equal(raw.phases[0], 'pickle');
     assert.equal(raw.backend, 'claude');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runBundlePreflight — R-A-03
+// ---------------------------------------------------------------------------
+
+describe('runBundlePreflight', () => {
+  function makeSession(overrides = {}) {
+    const dir = tmpDir();
+    const state = {
+      active: false,
+      working_dir: dir,
+      step: 'prd',
+      iteration: 0,
+      max_iterations: 50,
+      max_time_minutes: 720,
+      worker_timeout_seconds: 1200,
+      start_time_epoch: 1000,
+      completion_promise: null,
+      original_prompt: 'bundle preflight test',
+      current_ticket: null,
+      history: [],
+      started_at: new Date().toISOString(),
+      session_dir: dir,
+      schema_version: 3,
+      ...overrides,
+    };
+    fs.writeFileSync(path.join(dir, 'state.json'), JSON.stringify(state, null, 2));
+    return dir;
+  }
+
+  test('all-pass: returns void when composes paths exist, have R-codes, manifest >= 26 tickets', () => {
+    const dir = makeSession();
+    try {
+      // Create 3 synthetic PRD files with R-codes
+      const prd1 = path.join(dir, 'prd-a.md');
+      const prd2 = path.join(dir, 'prd-b.md');
+      const prd3 = path.join(dir, 'prd-c.md');
+      fs.writeFileSync(prd1, '# PRD A\nR-SLLJ-1: some requirement\n');
+      fs.writeFileSync(prd2, '# PRD B\nR-CCNW-3: another requirement\n');
+      fs.writeFileSync(prd3, '# PRD C\nR-MDS-7: third requirement\n');
+
+      const pipeline = {
+        phases: ['pickle'],
+        target: dir,
+        composes: [prd1, prd2, prd3],
+      };
+      fs.writeFileSync(path.join(dir, 'pipeline.json'), JSON.stringify(pipeline));
+
+      const tickets = Array.from({ length: 30 }, (_, i) => ({ id: `ticket-${i}` }));
+      fs.writeFileSync(path.join(dir, 'refinement_manifest.json'), JSON.stringify({ tickets }));
+
+      assert.doesNotThrow(() => runBundlePreflight(dir));
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('fails with composes_paths_resolve when a composes path is missing', () => {
+    const dir = makeSession();
+    try {
+      const prd1 = path.join(dir, 'prd-a.md');
+      fs.writeFileSync(prd1, '# PRD A\nR-SLLJ-1: requirement\n');
+      const missingPath = path.join(dir, 'nonexistent-prd.md');
+
+      const pipeline = {
+        phases: ['pickle'],
+        target: dir,
+        composes: [prd1, missingPath],
+      };
+      fs.writeFileSync(path.join(dir, 'pipeline.json'), JSON.stringify(pipeline));
+      fs.writeFileSync(path.join(dir, 'refinement_manifest.json'), JSON.stringify({ tickets: Array.from({ length: 30 }, (_, i) => ({ id: `t${i}` })) }));
+
+      assert.throws(
+        () => runBundlePreflight(dir),
+        (err) => {
+          assert.ok(err instanceof BundlePreflightError, 'should be BundlePreflightError');
+          assert.equal(err.failedAssertion, 'composes_paths_resolve');
+          return true;
+        },
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('fails with manifest_R_code_count_ge_26 when manifest has fewer than 26 tickets', () => {
+    const dir = makeSession();
+    try {
+      const prd1 = path.join(dir, 'prd-a.md');
+      const prd2 = path.join(dir, 'prd-b.md');
+      const prd3 = path.join(dir, 'prd-c.md');
+      fs.writeFileSync(prd1, '# PRD A\nR-SLLJ-1: requirement\n');
+      fs.writeFileSync(prd2, '# PRD B\nR-CCNW-1: requirement\n');
+      fs.writeFileSync(prd3, '# PRD C\nR-MDS-1: requirement\n');
+
+      const pipeline = {
+        phases: ['pickle'],
+        target: dir,
+        composes: [prd1, prd2, prd3],
+      };
+      fs.writeFileSync(path.join(dir, 'pipeline.json'), JSON.stringify(pipeline));
+
+      // Only 25 tickets — one short of the 26 minimum
+      const tickets = Array.from({ length: 25 }, (_, i) => ({ id: `ticket-${i}` }));
+      fs.writeFileSync(path.join(dir, 'refinement_manifest.json'), JSON.stringify({ tickets }));
+
+      assert.throws(
+        () => runBundlePreflight(dir),
+        (err) => {
+          assert.ok(err instanceof BundlePreflightError, 'should be BundlePreflightError');
+          assert.equal(err.failedAssertion, 'manifest_R_code_count_ge_26');
+          return true;
+        },
+      );
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

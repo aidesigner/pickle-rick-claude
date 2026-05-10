@@ -253,6 +253,100 @@ export function assertCleanWorkingTree(workingDir, ignoreDirtyPaths) {
     throw new Error(`Working tree at ${workingDir} is dirty${suffix}. Dirty files:\n${blockingPaths.join('\n')}\nCommit, stash, or discard changes before starting the pipeline.`);
 }
 // ---------------------------------------------------------------------------
+// Bundle Pre-flight
+// ---------------------------------------------------------------------------
+export class BundlePreflightError extends Error {
+    failedAssertion;
+    constructor(failedAssertion, message) {
+        super(message);
+        this.failedAssertion = failedAssertion;
+        this.name = 'BundlePreflightError';
+    }
+}
+const R_CODE_RE = /R-[A-Z]+-\d+/;
+function resolveComposePath(composePath, workingDir) {
+    return path.isAbsolute(composePath) ? composePath : path.join(workingDir, composePath);
+}
+function emitPreflightFailed(sessionRoot, failedAssertion, reason) {
+    try {
+        logActivity({
+            event: 'bundle_preflight_failed',
+            source: 'pickle',
+            session: path.basename(sessionRoot),
+            gate_payload: { failed_assertion: failedAssertion, reason },
+        });
+    }
+    catch { /* best-effort telemetry */ }
+}
+function assertComposesPathsResolve(composes, workingDir, sessionRoot) {
+    for (const composePath of composes) {
+        if (!fs.existsSync(resolveComposePath(composePath, workingDir))) {
+            const reason = `composes path not found: ${composePath}`;
+            emitPreflightFailed(sessionRoot, 'composes_paths_resolve', reason);
+            throw new BundlePreflightError('composes_paths_resolve', reason);
+        }
+    }
+}
+function assertComposedPrdsHaveRCodes(composes, workingDir, sessionRoot) {
+    for (const composePath of composes) {
+        let content = '';
+        try {
+            content = fs.readFileSync(resolveComposePath(composePath, workingDir), 'utf-8');
+        }
+        catch { /* empty */ }
+        if (!R_CODE_RE.test(content)) {
+            const reason = `composed PRD has no R-<KEY>-<N> codes: ${composePath}`;
+            emitPreflightFailed(sessionRoot, 'composed_prds_have_R_codes', reason);
+            throw new BundlePreflightError('composed_prds_have_R_codes', reason);
+        }
+    }
+}
+/**
+ * Validate the bundle's composes: chain and refinement manifest before any
+ * downstream phase runs. Checks three preconditions in order; the first
+ * failure emits bundle_preflight_failed and throws BundlePreflightError.
+ *
+ * Preconditions (in order):
+ *   1. composes_paths_resolve  — all 3 composes: paths resolve to readable files
+ *   2. composed_prds_have_R_codes — each composed PRD declares at least one R-<KEY>-<N>
+ *   3. manifest_R_code_count_ge_26 — refinement_manifest.json.tickets.length >= 26
+ */
+export function runBundlePreflight(sessionRoot) {
+    const pipelinePath = path.join(sessionRoot, 'pipeline.json');
+    const statePath = path.join(sessionRoot, 'state.json');
+    const manifestPath = path.join(sessionRoot, 'refinement_manifest.json');
+    let workingDir = sessionRoot;
+    try {
+        const state = sm.read(statePath);
+        if (typeof state.working_dir === 'string' && state.working_dir.length > 0) {
+            workingDir = state.working_dir;
+        }
+    }
+    catch { /* fall back to sessionRoot */ }
+    let composes = [];
+    try {
+        const pipeline = readRecoverableJsonObject(pipelinePath);
+        if (pipeline && Array.isArray(pipeline.composes)) {
+            composes = pipeline.composes.filter((p) => typeof p === 'string');
+        }
+    }
+    catch { /* composes stays empty */ }
+    assertComposesPathsResolve(composes, workingDir, sessionRoot);
+    assertComposedPrdsHaveRCodes(composes, workingDir, sessionRoot);
+    let ticketCount = 0;
+    try {
+        const manifest = readRecoverableJsonObject(manifestPath);
+        if (manifest && Array.isArray(manifest.tickets))
+            ticketCount = manifest.tickets.length;
+    }
+    catch { /* ticketCount stays 0 */ }
+    if (ticketCount < 26) {
+        const reason = `refinement manifest has ${ticketCount} tickets, expected >= 26`;
+        emitPreflightFailed(sessionRoot, 'manifest_R_code_count_ge_26', reason);
+        throw new BundlePreflightError('manifest_R_code_count_ge_26', reason);
+    }
+}
+// ---------------------------------------------------------------------------
 // Child Process Management
 // ---------------------------------------------------------------------------
 let activeChild = null;

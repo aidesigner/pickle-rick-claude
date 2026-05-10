@@ -224,6 +224,15 @@ const EVENT_CASES = [
     },
     drop: 'phase',
   },
+  {
+    type: 'bundle_preflight_failed',
+    valid: {
+      event: 'bundle_preflight_failed',
+      ts: TS,
+      gate_payload: { failed_assertion: 'composes_paths_resolve', reason: 'path not found: prds/foo.md' },
+    },
+    drop: 'gate_payload',
+  },
 ];
 
 for (const { type, valid, drop } of EVENT_CASES) {
@@ -334,6 +343,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'worker_edit_outside_scope',
     'pkgjson_revert_forensic_captured',
     'pipeline_judge_timeout_recovery_attempted',
+    'bundle_preflight_failed',
   ];
   for (const name of EVENT_NAMES) {
     assert.ok(name in schema.definitions, `schema missing definition for ${name}`);
@@ -341,5 +351,5 @@ test('activity-event-payload: schema defines all registered event type definitio
   const nonSharedDefs = Object.keys(schema.definitions).filter(
     k => k !== 'backendEnum' && k !== 'backendResolutionSourceEnum',
   );
-  assert.equal(nonSharedDefs.length, 30, `expected 30 event definitions, got ${nonSharedDefs.length}`);
+  assert.equal(nonSharedDefs.length, 31, `expected 31 event definitions, got ${nonSharedDefs.length}`);
 });
