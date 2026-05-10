@@ -316,6 +316,40 @@ test('Step 7 references --allowed-paths-file after Step 6.5 (scope wiring for st
 // Backcompat: omitted scope → all subsystems pass through unfiltered
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Bundle bootstrap: scope.json canonical branch-mode shape
+// ---------------------------------------------------------------------------
+
+test('bundle bootstrap scope.json: mode is branch and allowed_paths is array of 5 strings', () => {
+  const session = makeSession();
+  try {
+    const scopePath = path.join(session, 'scope.json');
+    const bundleScope = {
+      mode: 'branch',
+      allowed_paths: [
+        'extension/src/',
+        'extension/tests/',
+        'extension/CLAUDE.md',
+        'prds/MASTER_PLAN.md',
+        'prds/p1-bug-fix-bundle-2026-05-10.md',
+      ],
+      subsystems: ['bin', 'lib', 'services', 'types'],
+      scope_base: 'main',
+    };
+    fs.writeFileSync(scopePath, JSON.stringify(bundleScope, null, 2));
+
+    const parsed = JSON.parse(fs.readFileSync(scopePath, 'utf-8'));
+    assert.equal(parsed.mode, 'branch');
+    assert.ok(Array.isArray(parsed.allowed_paths));
+    assert.equal(parsed.allowed_paths.length, 5);
+    assert.ok(parsed.allowed_paths.every((p) => typeof p === 'string'));
+    const unique = [...new Set(parsed.allowed_paths)];
+    assert.equal(unique.length, 5, 'all 5 allowed_paths must be unique');
+  } finally {
+    fs.rmSync(session, { recursive: true, force: true });
+  }
+});
+
 test('backcompat: no scope arg → anatomy-park.json contains all 4 subsystems', () => {
   const session = makeSession();
   const target = makeTarget();
