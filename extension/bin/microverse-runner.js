@@ -1709,7 +1709,7 @@ export function resetGapAnalysisForAmnesiacBreaker(state, sessionDir) {
         consecutive_amnesiac_exits: 0,
     };
 }
-function currentExitForFailureHistory(state, ctx) {
+export function currentExitForFailureHistory(state, ctx) {
     const last = state.failure_history[state.failure_history.length - 1];
     if (!last)
         return null;
@@ -1721,12 +1721,14 @@ function currentExitForFailureHistory(state, ctx) {
             return 'approach_exhaustion';
         }
     }
-    if (last.failure_class === 'no_progress') {
-        const recent = state.failure_history.slice(-3);
-        if (recent.length === 3 && recent.every(f => f.failure_class === 'no_progress')) {
-            ctx.log('3 consecutive no_progress — bailing');
-            writeMicroverseState(ctx.sessionDir, state);
-            return 'no_progress';
+    if (state.key_metric?.type !== 'llm') {
+        if (last.failure_class === 'no_progress') {
+            const recent = state.failure_history.slice(-3);
+            if (recent.length === 3 && recent.every(f => f.failure_class === 'no_progress')) {
+                ctx.log('3 consecutive no_progress — bailing');
+                writeMicroverseState(ctx.sessionDir, state);
+                return 'no_progress';
+            }
         }
     }
     return null;
