@@ -40,7 +40,7 @@ export function runAudit(citadelDir, runnerPath) {
     .sort();
 
   return analyzers.map((filename) => {
-    const name = filename.slice(0, -3); // strip .ts
+    const name = filename.slice(0, -3);
     const wired = runnerContent.includes(`from './${name}.js'`) || runnerContent.includes(`from './${name}'`);
     const file_size_bytes = fs.statSync(path.join(citadelDir, filename)).size;
     return { analyzer: name, wired, file_size_bytes };
