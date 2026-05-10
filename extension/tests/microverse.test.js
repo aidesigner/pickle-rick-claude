@@ -1876,6 +1876,45 @@ test('buildJudgePrompt places scoring reference before target path', () => {
     assert.ok(refIdx < targetIdx, 'scoring reference should appear before target path');
 });
 
+test('buildJudgePrompt with empty priorViolations produces unchanged prompt (no-op)', () => {
+    const withEmpty = buildJudgePrompt('fix bugs', '/tmp', undefined, undefined, undefined, []);
+    const withOmitted = buildJudgePrompt('fix bugs', '/tmp');
+    assert.strictEqual(withEmpty, withOmitted, 'empty priorViolations must not alter the prompt');
+    assert.ok(!withEmpty.includes('Prior violations'), 'should not include violations section');
+});
+
+test('buildJudgePrompt with 3-entry priorViolations appends section with 3 lines', () => {
+    const violations = [
+        { id: 'src-foo:10:no-unused:ab12cd34', first_seen_iter: 1, last_seen_iter: 3, severity: 'high', description: 'unused variable x' },
+        { id: 'src-bar:20:no-magic:ef56gh78', first_seen_iter: 2, last_seen_iter: 4, severity: 'med', description: 'magic number 42' },
+        { id: 'src-baz:30:no-any:ij90kl12', first_seen_iter: 1, last_seen_iter: 2, severity: 'low', description: 'any type used' },
+    ];
+    const prompt = buildJudgePrompt('fix bugs', '/tmp', undefined, undefined, undefined, violations);
+    assert.ok(prompt.includes('## Prior violations (DO NOT re-report unless still present)'), 'should include section header');
+    assert.ok(prompt.includes('[src-foo:10:no-unused:ab12cd34] high unused variable x (last seen iter 3)'), 'should include first entry');
+    assert.ok(prompt.includes('[src-bar:20:no-magic:ef56gh78] med magic number 42 (last seen iter 4)'), 'should include second entry');
+    assert.ok(prompt.includes('[src-baz:30:no-any:ij90kl12] low any type used (last seen iter 2)'), 'should include third entry');
+    const entryLines = prompt.split('\n').filter(l => l.startsWith('- ['));
+    assert.strictEqual(entryLines.length, 3, 'should have exactly 3 entry lines');
+});
+
+test('buildJudgePrompt with 60-entry priorViolations caps to 50 sorted by last_seen_iter desc', () => {
+    const violations = Array.from({ length: 60 }, (_, i) => ({
+        id: `file:${i}:rule:abc`,
+        first_seen_iter: 1,
+        last_seen_iter: i + 1,
+        severity: 'low',
+        description: `violation ${i}`,
+    }));
+    const prompt = buildJudgePrompt('fix bugs', '/tmp', undefined, undefined, undefined, violations);
+    const entryLines = prompt.split('\n').filter(l => l.startsWith('- ['));
+    assert.strictEqual(entryLines.length, 50, 'should cap at 50 entries');
+    // first entry should be the one with highest last_seen_iter (iter 60)
+    assert.ok(entryLines[0].includes('last seen iter 60'), 'first entry should have highest last_seen_iter');
+    // last entry should be the one with last_seen_iter = 11 (60 - 50 + 1)
+    assert.ok(entryLines[49].includes('last seen iter 11'), 'last entry should have last_seen_iter = 11');
+});
+
 test('measureLlmMetric passes judgeContextPath to buildJudgePrompt', () => {
     const orig = _deps.execFileSync;
     let capturedArgs;

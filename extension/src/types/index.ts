@@ -698,6 +698,15 @@ export interface MicroverseHistoryEntry {
   failure_class?: FailureClass;
 }
 
+/** Stable violation record passed to buildJudgePrompt to suppress re-reporting of known issues. */
+export interface ViolationLedger {
+  id: string;
+  first_seen_iter: number;
+  last_seen_iter: number;
+  severity: 'high' | 'med' | 'low';
+  description: string;
+}
+
 export interface MicroverseSessionState {
   status: 'gap_analysis' | 'iterating' | 'converged' | 'stopped';
   prd_path: string;
