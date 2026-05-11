@@ -1181,6 +1181,43 @@ export function detectRateLimitInText(logFile: string): boolean {
   return false;
 }
 
+export function detectManagerMaxTurnsExit(outcome: IterationOutcome, logFile: string): boolean {
+  if (outcome.completion !== 'error' || outcome.timedOut || outcome.exitCode !== 0) {
+    return false;
+  }
+
+  let content: string;
+  try {
+    content = fs.readFileSync(logFile, 'utf-8');
+  } catch {
+    return false;
+  }
+
+  const lines = content.split(/\r?\n/);
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i]?.trim();
+    if (!line) continue;
+    if (!line.startsWith('{')) continue;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      return false;
+    }
+
+    if (!parsed || typeof parsed !== 'object') continue;
+    const event = parsed as Record<string, unknown>;
+    if (event.type !== 'result') continue;
+
+    return event.stop_reason === 'end_turn'
+      && event.terminal_reason === 'completed'
+      && event.is_error === false;
+  }
+
+  return false;
+}
+
 export function classifyIterationExit(
   completionResult: string,
   logFile: string,

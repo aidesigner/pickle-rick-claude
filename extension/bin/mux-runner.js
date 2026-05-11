@@ -1022,6 +1022,42 @@ export function detectRateLimitInText(logFile) {
     catch { /* file missing */ }
     return false;
 }
+export function detectManagerMaxTurnsExit(outcome, logFile) {
+    if (outcome.completion !== 'error' || outcome.timedOut || outcome.exitCode !== 0) {
+        return false;
+    }
+    let content;
+    try {
+        content = fs.readFileSync(logFile, 'utf-8');
+    }
+    catch {
+        return false;
+    }
+    const lines = content.split(/\r?\n/);
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+        const line = lines[i]?.trim();
+        if (!line)
+            continue;
+        if (!line.startsWith('{'))
+            continue;
+        let parsed;
+        try {
+            parsed = JSON.parse(line);
+        }
+        catch {
+            return false;
+        }
+        if (!parsed || typeof parsed !== 'object')
+            continue;
+        const event = parsed;
+        if (event.type !== 'result')
+            continue;
+        return event.stop_reason === 'end_turn'
+            && event.terminal_reason === 'completed'
+            && event.is_error === false;
+    }
+    return false;
+}
 export function classifyIterationExit(completionResult, logFile, timing) {
     if (completionResult === 'inactive')
         return { type: 'inactive' };
