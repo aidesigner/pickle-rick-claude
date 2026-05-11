@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -63,4 +64,29 @@ test('archaeology fixtures classify with at least 90 percent accuracy', () => {
   }
 
   assert.ok(correct / expectedCategories.length >= 0.9, `accuracy ${correct}/${expectedCategories.length}`);
+});
+
+test('classifyProjectType does not treat substring hits as file-pattern matches', () => {
+  const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'project-type-classifier-'));
+  try {
+    fs.mkdirSync(path.join(projectRoot, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(projectRoot, 'README.md'), '# Fixture\n');
+    fs.writeFileSync(path.join(projectRoot, 'package.json'), JSON.stringify({
+      name: 'fixture-library',
+      private: true,
+      devDependencies: {
+        tsup: '^8.0.0',
+      },
+    }, null, 2));
+    fs.writeFileSync(path.join(projectRoot, 'src', 'commander-helper.ts'), 'export const helper = true;\n');
+
+    const result = classifyProjectType(projectRoot, { extensionRoot: repoRoot });
+    const cliScore = result.scores.find((score) => score.category === 'cli');
+
+    assert.equal(result.category, 'library');
+    assert.ok(cliScore);
+    assert.deepEqual(cliScore.matchedFiles, ['package.json']);
+  } finally {
+    fs.rmSync(projectRoot, { recursive: true, force: true });
+  }
 });

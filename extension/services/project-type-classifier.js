@@ -134,7 +134,7 @@ function matchesPattern(file, pattern) {
         return globLikeMatch(normalizedFile, normalizedPattern);
     if (normalizedPattern.includes('/'))
         return normalizedFile === normalizedPattern || normalizedFile.startsWith(`${normalizedPattern}/`);
-    return path.posix.basename(normalizedFile) === normalizedPattern || normalizedFile.includes(normalizedPattern);
+    return path.posix.basename(normalizedFile) === normalizedPattern;
 }
 function globLikeMatch(file, pattern) {
     const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replaceAll('*', '.*');

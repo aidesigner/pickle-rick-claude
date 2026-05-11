@@ -183,7 +183,7 @@ function matchesPattern(file: string, pattern: string): boolean {
   const normalizedPattern = pattern.toLowerCase().replaceAll('\\', '/');
   if (normalizedPattern.includes('*')) return globLikeMatch(normalizedFile, normalizedPattern);
   if (normalizedPattern.includes('/')) return normalizedFile === normalizedPattern || normalizedFile.startsWith(`${normalizedPattern}/`);
-  return path.posix.basename(normalizedFile) === normalizedPattern || normalizedFile.includes(normalizedPattern);
+  return path.posix.basename(normalizedFile) === normalizedPattern;
 }
 
 function globLikeMatch(file: string, pattern: string): boolean {
