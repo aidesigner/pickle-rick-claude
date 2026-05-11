@@ -1758,6 +1758,75 @@ test('parseLlmJudgeOutput: raw_output_truncated_512 truncates 1024-char malforme
     }
 });
 
+// ticket 98dc9bed F1.5: judge violations preserve path/line/rule so that
+// generateViolationId can compute stable IDs and updateViolationLedger can
+// dedup correctly. Pre-fix: parseLlmJudgeOutput discarded these fields and
+// every violation hashed to the same id.
+test('parseLlmJudgeOutput: preserves Violation.path/.line/.rule fields when present (ticket 98dc9bed)', () => {
+    const raw = JSON.stringify({
+        score: 4,
+        violations: [
+            { id: 'V1', path: 'src/a.ts', line: 42, rule: 'arch:layering', severity: 'high', description: 'first' },
+            { id: 'V2', path: 'src/b.ts', line: 7, rule: 'naming', severity: 'low', description: 'second' },
+        ],
+        resolved: [],
+        new: ['V1', 'V2'],
+        remaining: [],
+    });
+    const result = parseLlmJudgeOutput(raw);
+    assert.equal(result.shape, 'full');
+    assert.equal(result.violations.length, 2);
+    assert.equal(result.violations[0].path, 'src/a.ts');
+    assert.equal(result.violations[0].line, 42);
+    assert.equal(result.violations[0].rule, 'arch:layering');
+    assert.equal(result.violations[1].path, 'src/b.ts');
+    assert.equal(result.violations[1].line, 7);
+    assert.equal(result.violations[1].rule, 'naming');
+});
+
+// ticket 98dc9bed F1.5: absent path/line/rule must stay undefined, not promote
+// to '' or 0 (would silently break generateViolationId hashing in the arch path).
+test('parseLlmJudgeOutput: leaves Violation.path/.line/.rule as undefined when absent (ticket 98dc9bed)', () => {
+    const raw = JSON.stringify({
+        score: 2,
+        violations: [{ id: 'V1', severity: 'high', description: 'no location' }],
+        resolved: [], new: ['V1'], remaining: [],
+    });
+    const result = parseLlmJudgeOutput(raw);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0].path, undefined);
+    assert.equal(result.violations[0].line, undefined);
+    assert.equal(result.violations[0].rule, undefined);
+});
+
+// ticket 98dc9bed F1.3: measureLlmMetric must thread priorViolations into the
+// judge prompt so the R-SLLJ-1 "Prior violations" section is reachable from
+// the runtime path. Pre-fix: the call site dropped the 9th arg, so the prompt
+// silently fell back to priorViolations=[].
+test('measureLlmMetric: passes priorViolations into buildJudgePrompt prior-violations section (ticket 98dc9bed)', () => {
+    let capturedPrompt = '';
+    const orig = _deps.execFileSync;
+    _deps.execFileSync = (_cmd, args) => {
+        const idx = args.indexOf('-p');
+        if (idx !== -1) capturedPrompt = args[idx + 1] || '';
+        return '8';
+    };
+    try {
+        const prior = [
+            { id: 'abc12345', severity: 'high', description: 'leaky abstraction', first_seen_iter: 1, last_seen_iter: 3 },
+        ];
+        measureLlmMetric('reduce slop', 30, '/tmp', undefined, [], undefined, undefined, 'claude', prior);
+        assert.ok(
+            capturedPrompt.includes('## Prior violations (DO NOT re-report unless still present)'),
+            `prompt must include Prior violations section; got prompt:\n${capturedPrompt}`,
+        );
+        assert.ok(capturedPrompt.includes('[abc12345]'), 'prompt must include violation id');
+        assert.ok(capturedPrompt.includes('leaky abstraction'), 'prompt must include violation description');
+    } finally {
+        _deps.execFileSync = orig;
+    }
+});
+
 // --- measureLlmMetric + buildJudgePrompt tests ---
 
 test('measureLlmMetric extracts numeric score from last line', () => {

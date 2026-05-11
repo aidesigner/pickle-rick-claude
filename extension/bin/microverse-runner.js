@@ -957,6 +957,9 @@ export function parseLlmJudgeOutput(rawOutput) {
         .filter((v) => v !== null && typeof v === 'object' && !Array.isArray(v))
         .map(v => ({
         id: typeof v.id === 'string' ? v.id : '',
+        path: typeof v.path === 'string' ? v.path : undefined,
+        line: typeof v.line === 'number' && Number.isFinite(v.line) ? v.line : undefined,
+        rule: typeof v.rule === 'string' ? v.rule : undefined,
         severity: ['high', 'med', 'low'].includes(v.severity)
             ? v.severity
             : 'low',
@@ -971,8 +974,8 @@ export function parseLlmJudgeOutput(rawOutput) {
         shape: 'full',
     };
 }
-export function measureLlmMetric(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend = 'claude') {
-    return measureLlmMetricAttempt(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend).metric;
+export function measureLlmMetric(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend = 'claude', priorViolations = []) {
+    return measureLlmMetricAttempt(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend, priorViolations).metric;
 }
 function isMissingCliError(err) {
     if (!err || typeof err !== 'object')
@@ -989,14 +992,14 @@ export function classifyJudgeError(err) {
         return 'timeout';
     return 'failed';
 }
-function measureLlmMetricAttempt(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend = 'claude') {
+function measureLlmMetricAttempt(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend = 'claude', priorViolations = []) {
     // The judge always runs via the claude binary, even when state.backend=codex.
     // codex on ChatGPT accounts rejects claude-sonnet-4-6 as unsupported, causing
     // silent false-convergence (BestScore: 0). Worker iteration spawns continue
     // to honor state.backend; only the judge is pinned to claude.
     const model = judgeModel || DEFAULT_JUDGE_MODEL;
     const timeout = Math.max(timeoutSeconds, DEFAULT_JUDGE_TIMEOUT);
-    const userPrompt = buildJudgePrompt(goal, cwd, history, prdPath, judgeContextPath);
+    const userPrompt = buildJudgePrompt(goal, cwd, history, prdPath, judgeContextPath, priorViolations);
     // Always use the claude judge path: --allowedTools Read,Glob,Grep +
     // --no-session-persistence + --system-prompt. The judge MUST NOT write,
     // edit, or execute. Do NOT pass buildWorkerInvocation here — that grants
@@ -1069,7 +1072,7 @@ export function probeJudgeCliAvailability(cwd) {
         return { kind, message };
     }
 }
-export async function measureLlmMetricWithBackoff(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend = 'claude') {
+export async function measureLlmMetricWithBackoff(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend = 'claude', priorViolations = []) {
     const probe = probeJudgeCliAvailability(cwd);
     if (probe.kind === 'missing') {
         return {
@@ -1082,7 +1085,7 @@ export async function measureLlmMetricWithBackoff(goal, timeoutSeconds, cwd, jud
     const backoffsMs = [10_000, 30_000, 60_000];
     let lastError = null;
     for (let attempt = 0; attempt <= backoffsMs.length; attempt++) {
-        const result = measureLlmMetricAttempt(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend);
+        const result = measureLlmMetricAttempt(goal, timeoutSeconds, cwd, judgeModel, history, prdPath, judgeContextPath, backend, priorViolations);
         if (result.metric) {
             return { metric: result.metric, attempts: attempt + 1 };
         }
@@ -1324,7 +1327,7 @@ function measureCurrentMetric(state, ctx, backend) {
         return measureMetric(state.key_metric.validation, state.key_metric.timeout_seconds, ctx.workingDir);
     }
     if (state.key_metric.type === 'llm') {
-        return measureLlmMetric(state.key_metric.validation, state.key_metric.timeout_seconds, ctx.workingDir, state.key_metric.judge_model, state.convergence?.history ?? [], state.prd_path, state.judge_context_path, backend);
+        return measureLlmMetric(state.key_metric.validation, state.key_metric.timeout_seconds, ctx.workingDir, state.key_metric.judge_model, state.convergence?.history ?? [], state.prd_path, state.judge_context_path, backend, state.violation_ledger ?? []);
     }
     return null;
 }
@@ -1576,7 +1579,7 @@ async function measureLlmIteration(state, ctx, backend) {
     if (state.key_metric.type !== 'llm') {
         throw new Error('measureLlmIteration requires llm metric');
     }
-    const measured = await measureLlmMetricWithBackoff(state.key_metric.validation, state.key_metric.timeout_seconds, ctx.workingDir, state.key_metric.judge_model, state.convergence?.history ?? [], state.prd_path, state.judge_context_path, backend);
+    const measured = await measureLlmMetricWithBackoff(state.key_metric.validation, state.key_metric.timeout_seconds, ctx.workingDir, state.key_metric.judge_model, state.convergence?.history ?? [], state.prd_path, state.judge_context_path, backend, state.violation_ledger ?? []);
     if (measured.metric)
         return { kind: 'ok', metric: measured.metric };
     const exitReason = measured.exitReason;

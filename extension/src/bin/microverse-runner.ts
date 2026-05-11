@@ -1326,6 +1326,9 @@ export function parseLlmJudgeOutput(rawOutput: string): JudgeResult {
     .filter((v): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v))
     .map(v => ({
       id: typeof v.id === 'string' ? v.id : '',
+      path: typeof v.path === 'string' ? v.path : undefined,
+      line: typeof v.line === 'number' && Number.isFinite(v.line) ? v.line : undefined,
+      rule: typeof v.rule === 'string' ? v.rule : undefined,
       severity: (['high', 'med', 'low'] as const).includes(v.severity as 'high' | 'med' | 'low')
         ? v.severity as Violation['severity']
         : 'low',
@@ -1351,6 +1354,7 @@ export function measureLlmMetric(
   prdPath?: string,
   judgeContextPath?: string,
   backend: Backend = 'claude',
+  priorViolations: ViolationLedger[] = [],
 ): { raw: string; score: number } | null {
   return measureLlmMetricAttempt(
     goal,
@@ -1361,6 +1365,7 @@ export function measureLlmMetric(
     prdPath,
     judgeContextPath,
     backend,
+    priorViolations,
   ).metric;
 }
 
@@ -1396,6 +1401,7 @@ function measureLlmMetricAttempt(
   prdPath?: string,
   judgeContextPath?: string,
   backend: Backend = 'claude',
+  priorViolations: ViolationLedger[] = [],
 ): JudgeMeasurementAttempt {
   // The judge always runs via the claude binary, even when state.backend=codex.
   // codex on ChatGPT accounts rejects claude-sonnet-4-6 as unsupported, causing
@@ -1403,7 +1409,7 @@ function measureLlmMetricAttempt(
   // to honor state.backend; only the judge is pinned to claude.
   const model = judgeModel || DEFAULT_JUDGE_MODEL;
   const timeout = Math.max(timeoutSeconds, DEFAULT_JUDGE_TIMEOUT);
-  const userPrompt = buildJudgePrompt(goal, cwd, history, prdPath, judgeContextPath);
+  const userPrompt = buildJudgePrompt(goal, cwd, history, prdPath, judgeContextPath, priorViolations);
 
   // Always use the claude judge path: --allowedTools Read,Glob,Grep +
   // --no-session-persistence + --system-prompt. The judge MUST NOT write,
@@ -1490,6 +1496,7 @@ export async function measureLlmMetricWithBackoff(
   prdPath?: string,
   judgeContextPath?: string,
   backend: Backend = 'claude',
+  priorViolations: ViolationLedger[] = [],
 ): Promise<JudgeMeasurementResult> {
   const probe = probeJudgeCliAvailability(cwd);
   if (probe.kind === 'missing') {
@@ -1513,6 +1520,7 @@ export async function measureLlmMetricWithBackoff(
       prdPath,
       judgeContextPath,
       backend,
+      priorViolations,
     );
     if (result.metric) {
       return { metric: result.metric, attempts: attempt + 1 };
@@ -1822,6 +1830,7 @@ function measureCurrentMetric(
       state.prd_path,
       state.judge_context_path,
       backend,
+      state.violation_ledger ?? [],
     );
   }
   return null;
@@ -2132,6 +2141,7 @@ async function measureLlmIteration(
     state.prd_path,
     state.judge_context_path,
     backend,
+    state.violation_ledger ?? [],
   );
   if (measured.metric) return { kind: 'ok', metric: measured.metric };
   const exitReason = measured.exitReason;
