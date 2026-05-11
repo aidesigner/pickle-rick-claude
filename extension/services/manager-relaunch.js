@@ -62,7 +62,7 @@ export function evaluateManagerRelaunch(state, pendingInput, cbStateOrExitKind, 
     const maxTimeMins = Number.isFinite(Number(state.max_time_minutes)) ? Number(state.max_time_minutes) : 0;
     if (maxTimeMins > 0 && startEpoch > 0) {
         const elapsedSec = Math.max(0, Math.floor(Date.now() / 1000) - startEpoch);
-        if (elapsedSec > maxTimeMins * 60) {
+        if (elapsedSec >= maxTimeMins * 60) {
             return {
                 shouldRelaunch: false,
                 pendingCount: 0,

@@ -553,6 +553,53 @@ test('processCompletionBranch: codex + error + counter at cap → break with rea
     }
 });
 
+test('processCompletionBranch: codex + error exactly at wall-clock cap → break without relaunch', async () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const session = makeRelaunchSession({
+        backend: 'codex',
+        priorRelaunchCount: 1,
+        tickets: [
+            { id: 't-pending', status: 'Todo', order: 1 },
+        ],
+    });
+    try {
+        await withDataRoot(session.dataRoot, async () => {
+            const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
+            persisted.start_time_epoch = nowSec - 300;
+            persisted.max_time_minutes = 5;
+            fs.writeFileSync(session.statePath, JSON.stringify(persisted, null, 2));
+
+            const realNow = Date.now;
+            Date.now = () => (nowSec * 1000);
+            try {
+                const { ctx } = makeBranchCtx(session);
+                const action = await processCompletionBranch(
+                    JSON.parse(fs.readFileSync(session.statePath, 'utf-8')),
+                    'error',
+                    ctx,
+                );
+                assert.equal(action.kind, 'break');
+                assert.equal(action.reason, 'error');
+
+                const events = readActivityEvents(session.dataRoot);
+                assert.equal(
+                    events.filter(e => e.event === 'codex_manager_relaunch').length,
+                    0,
+                    'must NOT relaunch once elapsed time exactly reaches the configured budget',
+                );
+
+                const finalState = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
+                assert.equal(finalState.manager_relaunch_count, 1);
+            } finally {
+                Date.now = realNow;
+            }
+        });
+    } finally {
+        fs.rmSync(session.sessionDir, { recursive: true, force: true });
+        fs.rmSync(session.dataRoot, { recursive: true, force: true });
+    }
+});
+
 test('processCompletionBranch: claude backend + error + pending → relaunch action with claude cap', async () => {
     const session = makeRelaunchSession({
         backend: 'claude',
@@ -693,6 +740,28 @@ test('evaluateCodexManagerRelaunch returns time_limit when elapsed > max_time_mi
     assert.equal(decision.reason, 'time_limit');
     assert.equal(decision.pendingCount, 0,
         'time_limit short-circuits before counting pending tickets');
+});
+
+test('evaluateCodexManagerRelaunch returns time_limit when elapsed equals max_time_minutes', () => {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const codexState = {
+        backend: 'codex',
+        codex_manager_relaunch_count: 0,
+        start_time_epoch: nowSec - 300,
+        max_time_minutes: 5,
+    };
+    const pending = [
+        { id: 't1', status: 'Todo', title: '', order: 1, type: null, working_dir: null, completed_at: null, skipped_at: null },
+    ];
+    const realNow = Date.now;
+    Date.now = () => nowSec * 1000;
+    try {
+        const decision = evaluateCodexManagerRelaunch(codexState, pending, null);
+        assert.equal(decision.shouldRelaunch, false);
+        assert.equal(decision.reason, 'time_limit');
+    } finally {
+        Date.now = realNow;
+    }
 });
 
 test('evaluateCodexManagerRelaunch returns time_limit before circuit_open / cap_exceeded', () => {
