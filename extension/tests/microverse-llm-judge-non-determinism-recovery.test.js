@@ -7,10 +7,6 @@ import * as path from 'node:path';
 import { currentExitForFailureHistory, parseLlmJudgeOutput } from '../bin/microverse-runner.js';
 import { compareMetric, createMicroverseState } from '../services/microverse-state.js';
 
-test('R-SLLJ stub: trap-door ENFORCE ref exists', () => {
-  assert.ok(true, 'stub placeholder — expanded by ticket edb6d3b4');
-});
-
 // R-SLLJ-9: case A — LLM metric type bypasses the 3-consecutive bail-out
 
 test('R-SLLJ-9 case A: 3 consecutive no_progress with metric.type=llm — loop continues', () => {
