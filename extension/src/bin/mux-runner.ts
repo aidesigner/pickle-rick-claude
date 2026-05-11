@@ -1187,7 +1187,7 @@ export function detectRateLimitInText(logFile: string): boolean {
 }
 
 export function detectManagerMaxTurnsExit(outcome: IterationOutcome, logFile: string): boolean {
-  if (outcome.completion !== 'error' || outcome.timedOut || outcome.exitCode !== 0) {
+  if (outcome.timedOut || outcome.exitCode !== 0) {
     return false;
   }
 
@@ -1480,11 +1480,20 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
       if (backend === 'codex' && detectOutputFormat(output) === 'plain-text') {
         process.stderr.write(`[classifier] codex delimiter drift: no recognizable codex/user blocks in iteration ${iterationNum} output\n`);
       }
-      resolve({
-        completion: classifyCompletion(output),
+      const completion = classifyCompletion(output);
+      const normalizedOutcome = {
+        completion,
         timedOut: didTimeout,
         exitCode: code ?? null,
         wallSeconds: (Date.now() - start) / 1000,
+      } as IterationOutcome;
+      resolve({
+        ...normalizedOutcome,
+        completion: backend === 'claude'
+          && completion === 'continue'
+          && detectManagerMaxTurnsExit(normalizedOutcome, logFile)
+          ? 'error'
+          : completion,
       });
     });
 

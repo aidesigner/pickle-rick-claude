@@ -456,7 +456,9 @@ test('processCompletionBranch: codex + error + pending tickets + below cap → r
     });
     try {
         await withDataRoot(session.dataRoot, async () => {
-            const { ctx } = makeBranchCtx(session);
+            const { ctx } = makeBranchCtx(session, {
+                outcome: { completion: 'error', timedOut: true, exitCode: null, wallSeconds: 14_401 },
+            });
             const action = await processCompletionBranch(
                 JSON.parse(fs.readFileSync(session.statePath, 'utf-8')),
                 'error',
@@ -560,7 +562,15 @@ test('processCompletionBranch: claude backend + error + pending → relaunch act
     });
     try {
         await withDataRoot(session.dataRoot, async () => {
-            const { ctx } = makeBranchCtx(session);
+            const iterLogFile = path.join(session.sessionDir, 'tmux_iteration_4.log');
+            fs.writeFileSync(iterLogFile, [
+                '{"type":"assistant","content":"work"}',
+                '{"type":"result","stop_reason":"end_turn","terminal_reason":"completed","is_error":false}',
+            ].join('\n'));
+            const { ctx } = makeBranchCtx(session, {
+                iterLogFile,
+                outcome: { completion: 'error', timedOut: false, exitCode: 0, wallSeconds: 12 },
+            });
             const action = await processCompletionBranch(
                 JSON.parse(fs.readFileSync(session.statePath, 'utf-8')),
                 'error',
@@ -570,7 +580,7 @@ test('processCompletionBranch: claude backend + error + pending → relaunch act
             assert.equal(action.relaunchCount, 1);
             const events = readActivityEvents(session.dataRoot);
             assert.equal(
-                events.filter(e => e.event === 'codex_manager_relaunch').length,
+                events.filter(e => e.event === 'manager_max_turns_relaunch').length,
                 1,
                 'claude backend must emit relaunch activity when pending work remains',
             );

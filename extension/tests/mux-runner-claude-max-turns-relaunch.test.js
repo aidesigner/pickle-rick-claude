@@ -5,10 +5,19 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 
-import { processCompletionBranch } from '../bin/mux-runner.js';
+import {
+  processCompletionBranch,
+  processIterationOutcome,
+  runIteration,
+} from '../bin/mux-runner.js';
 
 function makeTmpDir(prefix = 'pickle-claude-max-turns-') {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+}
+
+function makeExecutableNodeScript(filePath, source) {
+  fs.writeFileSync(filePath, `#!/usr/bin/env node\n${source}`);
+  fs.chmodSync(filePath, 0o755);
 }
 
 function writeTicket(sessionDir, id, status) {
@@ -100,26 +109,48 @@ async function withFixture(overrides, run) {
 }
 
 test('claude-max-turns-relaunch: claude max-turns exit relaunches instead of tearing down', async () => {
-  await withFixture({
-    iterLog: [
-      '{"type":"assistant","content":"work"}',
-      '{"type":"result","stop_reason":"end_turn","terminal_reason":"completed","is_error":false}',
-    ].join('\n'),
-  }, async ({ state, ctx, statePath, logs, deactivateCalls }) => {
-    const action = await processCompletionBranch(state, 'error', ctx);
-    const persisted = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+  const oldPath = process.env.PATH;
+  const oldBackend = process.env.PICKLE_BACKEND;
+  try {
+    await withFixture({}, async ({ dir, statePath, logs, deactivateCalls }) => {
+      fs.mkdirSync(path.join(dir, 'templates'), { recursive: true });
+      fs.writeFileSync(path.join(dir, 'templates', 'pickle.md'), '# Pickle\n\n$ARGUMENTS\n');
+      const fakeBin = path.join(dir, 'fake-bin');
+      fs.mkdirSync(fakeBin, { recursive: true });
+      makeExecutableNodeScript(path.join(fakeBin, 'claude'), `
+console.log(JSON.stringify({ type: 'assistant', content: 'work' }));
+console.log(JSON.stringify({ type: 'result', stop_reason: 'end_turn', terminal_reason: 'completed', is_error: false }));
+`);
 
-    assert.equal(action.kind, 'relaunch');
-    assert.equal(action.relaunchCount, 1);
-    assert.equal(action.pendingTickets, 1);
-    assert.equal(deactivateCalls.length, 0);
-    assert.equal(persisted.manager_relaunch_count, 1);
-    assert.ok(
-      logs.some(line => line.includes('claude manager subprocess exited via claude_max_turns with 1 ticket(s) still pending')),
-      `expected claude relaunch log, got:\n${logs.join('\n')}`,
-    );
-    assert.ok(!logs.includes('Subprocess error. Exiting loop.'));
-  });
+      process.env.PATH = `${fakeBin}${path.delimiter}${oldPath ?? ''}`;
+      process.env.PICKLE_BACKEND = 'claude';
+
+      const outcome = await runIteration(dir, 3, dir, '');
+      const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+      const iterLogFile = path.join(dir, 'tmux_iteration_3.log');
+      const ctx = buildContext(dir, statePath, outcome, iterLogFile, logs, deactivateCalls);
+      const action = await processIterationOutcome(state, outcome, ctx);
+      const persisted = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+
+      assert.equal(outcome.completion, 'error');
+      assert.equal(outcome.exitCode, 0);
+      assert.equal(action.kind, 'relaunch');
+      assert.equal(action.relaunchCount, 1);
+      assert.equal(action.pendingTickets, 1);
+      assert.equal(deactivateCalls.length, 0);
+      assert.equal(persisted.manager_relaunch_count, 1);
+      assert.ok(
+        logs.some(line => line.includes('claude manager subprocess exited via claude_max_turns with 1 ticket(s) still pending')),
+        `expected claude relaunch log, got:\n${logs.join('\n')}`,
+      );
+      assert.ok(!logs.includes('Subprocess error. Exiting loop.'));
+    });
+  } finally {
+    if (oldPath === undefined) delete process.env.PATH;
+    else process.env.PATH = oldPath;
+    if (oldBackend === undefined) delete process.env.PICKLE_BACKEND;
+    else process.env.PICKLE_BACKEND = oldBackend;
+  }
 });
 
 test('claude-max-turns-relaunch: codex hang-guard relaunch path still works', async () => {
