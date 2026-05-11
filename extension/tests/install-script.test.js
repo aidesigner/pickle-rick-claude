@@ -1105,22 +1105,34 @@ describe('install.sh parity gate (R-ITS-1 / R-ITS-2)', () => {
       src.includes('Force-cleaning compiled JS'),
       'install.sh must contain force-rebuild banner comment',
     );
-    assert.ok(
-      src.includes('rm -f') && src.includes('"$SCRIPT_DIR/extension/types/index.js"'),
-      'install.sh must remove compiled types/index.js before tsc',
+    // The implementation at install.sh:281-285 force-cleans every compiled JS
+    // that has a corresponding TS source via a `find … -name "*.ts"` loop that
+    // computes `$jsfile` per source file. Assert the structural shape of the
+    // loop rather than a literal hardcoded path string.
+    assert.match(
+      src,
+      /find "\$SCRIPT_DIR\/extension\/src" -type f -name "\*\.ts"/,
+      'install.sh must drive the force-clean from a find-loop over extension/src/**/*.ts',
+    );
+    assert.match(
+      src,
+      /rm -f "\$jsfile"/,
+      'install.sh must rm -f the per-source-file computed $jsfile inside the find-loop',
     );
     assert.ok(
       src.includes('extension/.tsbuildinfo'),
       'install.sh must remove .tsbuildinfo to invalidate incremental cache',
     );
     const lines = src.split('\n');
-    const rmLine = lines.findIndex((l) => l.includes('"$SCRIPT_DIR/extension/types/index.js"'));
-    const tscLine = lines.findIndex((l) => l.includes('npx tsc') && !l.includes('#'));
-    assert.ok(rmLine > 0, 'force-rebuild rm must exist');
-    assert.ok(tscLine > 0, 'npx tsc must exist');
+    const forceCleanLine = lines.findIndex((l) => l.includes('Force-cleaning compiled JS'));
+    const tsbuildinfoRmLine = lines.findIndex((l) => /^\s*rm -f "\$SCRIPT_DIR\/extension\/\.tsbuildinfo"/.test(l));
+    const tscLine = lines.findIndex((l) => /^\s*\(cd "\$SCRIPT_DIR\/extension" && npx tsc\)/.test(l));
+    assert.ok(forceCleanLine > 0, 'force-rebuild banner must exist');
+    assert.ok(tsbuildinfoRmLine > 0, '.tsbuildinfo rm must exist');
+    assert.ok(tscLine > 0, 'npx tsc invocation line must exist');
     assert.ok(
-      rmLine < tscLine,
-      `force-rebuild rm (line ${rmLine + 1}) must precede npx tsc (line ${tscLine + 1})`,
+      forceCleanLine < tsbuildinfoRmLine && tsbuildinfoRmLine < tscLine,
+      `force-clean (line ${forceCleanLine + 1}) → .tsbuildinfo rm (line ${tsbuildinfoRmLine + 1}) → npx tsc (line ${tscLine + 1}) ordering required`,
     );
   });
 
