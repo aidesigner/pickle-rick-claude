@@ -1467,6 +1467,11 @@ function uniqueReferences(refs: SymbolAuditReference[]): SymbolAuditReference[] 
   });
 }
 
+/*
+TRAP DOOR: R-SAOV-7 forward-create annotation acceptance
+Symbol audit accepts forward-create annotations matching the path schema for events + helpers.
+New bundle wrappers MUST be reviewable for false-positive enum-value backticks on trigger-phrase lines.
+*/
 // enum-value heuristic:
 // Trigger-phrase lines are still the entrypoint for activity-event auditing.
 // When the same line also advertises enum/state prose, quoted snake_case values
