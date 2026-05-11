@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { ChangedFileSummary, DiffSummary } from './diff-walker.js';
 import { CitadelFinding } from './reporter.js';
+import { extractTrapDoorsSection } from './trap-doors-section.js';
 
 export type RuleSetInvariantSeverity = 'High' | 'Medium';
 export type RuleSetDeclarationKind = 'array' | 'enum' | 'object';
@@ -431,13 +432,4 @@ export function auditTrapDoorDeclarations(options: { repoRoot: string }): TrapDo
   } catch {
     return { declarations: 0, findings: [] };
   }
-}
-
-function extractTrapDoorsSection(content: string): string {
-  const start = content.search(/^##\s+Trap Doors\s*$/m);
-  if (start === -1) return '';
-  const afterHeading = content.indexOf('\n', start) + 1;
-  const rest = content.slice(afterHeading);
-  const nextHeading = rest.search(/^##\s+/m);
-  return nextHeading === -1 ? rest : rest.slice(0, nextHeading);
 }

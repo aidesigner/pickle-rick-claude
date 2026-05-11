@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import * as path from 'node:path';
+import { extractTrapDoorsSection } from './trap-doors-section.js';
 export const ENFORCE_REF_RE = /(?<=ENFORCE:\s*)((?:[`]?[\w./*-]+\.(?:test\.js|sh)[`]?(?:#[\w_-]+)?(?:,\s*)?)+)/g;
 export function auditTrapDoorCoverage(diff) {
     return runT6TrapDoorCoverage({ projectRoot: diff.repoRoot });
@@ -99,15 +100,6 @@ function walkForClaudeMd(dir) {
         // non-fatal: subsystem CLAUDE.md may be missing (Open Finding #5)
     }
     return results;
-}
-function extractTrapDoorsSection(content) {
-    const start = content.search(/^##\s+Trap Doors\s*$/m);
-    if (start === -1)
-        return '';
-    const afterHeading = content.indexOf('\n', start) + 1;
-    const rest = content.slice(afterHeading);
-    const nextHeading = rest.search(/^##\s+/m);
-    return nextHeading === -1 ? rest : rest.slice(0, nextHeading);
 }
 function parseEnforceRefs(raw) {
     return raw.split(/,\s*/).flatMap((part) => {

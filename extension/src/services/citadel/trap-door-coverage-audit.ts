@@ -2,6 +2,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import * as path from 'node:path';
 import { CitadelFinding } from './reporter.js';
 import { DiffSummary } from './diff-walker.js';
+import { extractTrapDoorsSection } from './trap-doors-section.js';
 
 export interface CitadelContext {
   projectRoot: string;
@@ -123,15 +124,6 @@ function walkForClaudeMd(dir: string): string[] {
     // non-fatal: subsystem CLAUDE.md may be missing (Open Finding #5)
   }
   return results;
-}
-
-function extractTrapDoorsSection(content: string): string {
-  const start = content.search(/^##\s+Trap Doors\s*$/m);
-  if (start === -1) return '';
-  const afterHeading = content.indexOf('\n', start) + 1;
-  const rest = content.slice(afterHeading);
-  const nextHeading = rest.search(/^##\s+/m);
-  return nextHeading === -1 ? rest : rest.slice(0, nextHeading);
 }
 
 function parseEnforceRefs(raw: string): Array<{ filePath: string; anchor?: string }> {

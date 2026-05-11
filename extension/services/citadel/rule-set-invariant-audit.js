@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
+import { extractTrapDoorsSection } from './trap-doors-section.js';
 const DEFAULT_MAX_EVIDENCE = 3;
 const CODE_FILE_PATTERN = /\.[cm]?[jt]sx?$/i;
 const RULE_SET_NAME_PATTERN = /(?:RULE|RULES|ACTION|ACTIONS|VALID_ACTIONS|CODE|CODES|STATUS|STATUSES|STATE|STATES|TRANSITION|TRANSITIONS|MACHINE)/;
@@ -309,13 +310,4 @@ export function auditTrapDoorDeclarations(options) {
     catch {
         return { declarations: 0, findings: [] };
     }
-}
-function extractTrapDoorsSection(content) {
-    const start = content.search(/^##\s+Trap Doors\s*$/m);
-    if (start === -1)
-        return '';
-    const afterHeading = content.indexOf('\n', start) + 1;
-    const rest = content.slice(afterHeading);
-    const nextHeading = rest.search(/^##\s+/m);
-    return nextHeading === -1 ? rest : rest.slice(0, nextHeading);
 }

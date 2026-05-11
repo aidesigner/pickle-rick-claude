@@ -11,6 +11,7 @@ const EXCLUDED_FILENAMES = new Set([
   'reporter.ts',
   'diff-walker.ts',
   'prd-parser.ts',
+  'trap-doors-section.ts',
 ]);
 
 function isExcluded(filename) {
