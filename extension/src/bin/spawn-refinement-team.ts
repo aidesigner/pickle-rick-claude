@@ -1714,9 +1714,14 @@ export async function writeSymbolAudit(
   return report;
 }
 
-function runSymbolAuditEnforcement(report: SymbolAuditReport): number {
+export function runSymbolAuditEnforcement(report: SymbolAuditReport): number {
   if (report.ok) return PipelineRunnerExitCode.Success;
   process.stderr.write(`[pickle-rick] symbol audit failed: ${report.findings.length} phantom symbol(s).\n`);
+  process.stderr.write(
+    '[pickle-rick] To allow forward-create symbols, either (a) annotate with (forward-created)\n' +
+      'or (created by R-<CODE>-N) outside the backticks, or (b) ensure the symbol is declared\n' +
+      "in a PRD listed in this bundle's `composes:` frontmatter.\n"
+  );
   for (const finding of report.findings) {
     process.stderr.write(`[pickle-rick] ${finding.category} ${finding.symbol} (PRD line ${finding.sourceLine}): ${finding.reason}\n`);
   }

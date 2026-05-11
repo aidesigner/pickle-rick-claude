@@ -4,7 +4,10 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { evaluateSymbolAudit } from '../bin/spawn-refinement-team.js';
+import {
+  evaluateSymbolAudit,
+  runSymbolAuditEnforcement,
+} from '../bin/spawn-refinement-team.js';
 
 function buildPrd(annotation = '') {
   return `# Bundle PRD
@@ -36,6 +39,28 @@ Sentinels: \`SENTINEL_X\`${annotation}.
 function makeTmpDir(prefix = 'pickle-symbol-annotations-') {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
+
+function captureStderr(run) {
+  const originalWrite = process.stderr.write.bind(process.stderr);
+  const stderr = [];
+  process.stderr.write = (chunk, encoding, cb) => {
+    stderr.push(String(chunk));
+    if (typeof encoding === 'function') encoding();
+    if (typeof cb === 'function') cb();
+    return true;
+  };
+  try {
+    return { result: run(), stderr: stderr.join('') };
+  } finally {
+    process.stderr.write = originalWrite;
+  }
+}
+
+const SYMBOL_AUDIT_FAILURE_WORKAROUND_LINES = [
+  '[pickle-rick] To allow forward-create symbols, either (a) annotate with (forward-created)',
+  'or (created by R-<CODE>-N) outside the backticks, or (b) ensure the symbol is declared',
+  "in a PRD listed in this bundle's `composes:` frontmatter.",
+];
 
 test('forward-create event annotation: accepts `(forward-created)` and reports forward-create', () => {
   const report = evaluateSymbolAudit(buildPrd(' (forward-created)'), process.cwd(), { tickets: [] });
@@ -172,14 +197,6 @@ Activity events: \`event_foo\`.
 
 test('missing composed PRD warns and audit proceeds', () => {
   const repo = makeTmpDir();
-  const originalWrite = process.stderr.write.bind(process.stderr);
-  const stderr = [];
-  process.stderr.write = (chunk, encoding, cb) => {
-    stderr.push(String(chunk));
-    if (typeof encoding === 'function') encoding();
-    if (typeof cb === 'function') cb();
-    return true;
-  };
   try {
     const wrapperPrd = path.join(repo, 'wrapper-prd.md');
     const wrapperContent = `---
@@ -194,12 +211,35 @@ Activity events: \`event_foo\` (forward-created).
 `;
     fs.writeFileSync(wrapperPrd, wrapperContent);
 
-    const report = evaluateSymbolAudit(wrapperContent, repo, { tickets: [] }, wrapperPrd);
+    const { result: report, stderr } = captureStderr(() =>
+      evaluateSymbolAudit(wrapperContent, repo, { tickets: [] }, wrapperPrd)
+    );
 
     assert.equal(report.ok, true, JSON.stringify(report.findings, null, 2));
-    assert.match(stderr.join(''), /warning: composed PRD not found: \.\/missing-prd\.md/);
+    assert.match(stderr, /warning: composed PRD not found: \.\/missing-prd\.md/);
   } finally {
-    process.stderr.write = originalWrite;
     fs.rmSync(repo, { recursive: true, force: true });
   }
+});
+
+test('failure prose', () => {
+  const report = evaluateSymbolAudit(buildPrd(), process.cwd(), { tickets: [] });
+
+  const { stderr } = captureStderr(() => runSymbolAuditEnforcement(report));
+
+  assert.match(stderr, /^\[pickle-rick\] symbol audit failed: 1 phantom symbol\(s\)\.\n/m);
+  assert.match(
+    stderr,
+    new RegExp(
+      SYMBOL_AUDIT_FAILURE_WORKAROUND_LINES.map((line) => line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\n')
+    )
+  );
+});
+
+test('failure exit code preserved', () => {
+  const report = evaluateSymbolAudit(buildPrd(), process.cwd(), { tickets: [] });
+
+  const { result: exitCode } = captureStderr(() => runSymbolAuditEnforcement(report));
+
+  assert.notEqual(exitCode, 0);
 });
