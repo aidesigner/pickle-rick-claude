@@ -1873,6 +1873,16 @@ async function runPhaseIteration(
   return { action: 'continue' };
 }
 
+function setProducerDone(runtime: PipelineRuntime, value: boolean): void {
+  try {
+    sm.update(runtime.statePath, s => {
+      if (Array.isArray(s.monitor_panes) && s.monitor_panes[2]) {
+        s.monitor_panes[2].producer_done = value;
+      }
+    });
+  } catch { /* best-effort */ }
+}
+
 async function handlePhaseBoundaryRespawn(
   runtime: PipelineRuntime,
   rawPhase: PipelinePhase,
@@ -1881,7 +1891,7 @@ async function handlePhaseBoundaryRespawn(
   if (rawPhase === 'pickle' && nextRawPhase === 'citadel') return;
   if (nextRawPhase !== 'anatomy-park' && nextRawPhase !== 'szechuan-sauce' && nextRawPhase !== undefined) return;
   // R-MDS-6: signal pane 2 producer is done BEFORE respawn
-  try { sm.update(runtime.statePath, s => { if (Array.isArray(s.monitor_panes) && s.monitor_panes[2]) s.monitor_panes[2].producer_done = true; }); } catch { /* best-effort */ }
+  setProducerDone(runtime, true);
   if (nextRawPhase === 'anatomy-park') {
     await respawnMonitorWindowForMode(runtime.sessionDir, 'anatomy-park');
   } else if (nextRawPhase === 'szechuan-sauce') {
@@ -1890,7 +1900,7 @@ async function handlePhaseBoundaryRespawn(
     await respawnMonitorWindowForMode(runtime.sessionDir, 'exit');
   }
   // R-MDS-6: reset flag so replacement watcher shows normal no-data message
-  try { sm.update(runtime.statePath, s => { if (Array.isArray(s.monitor_panes) && s.monitor_panes[2]) s.monitor_panes[2].producer_done = false; }); } catch { /* best-effort */ }
+  setProducerDone(runtime, false);
 }
 
 export async function main(sessionDir: string, opts: MainOpts = {}): Promise<void> {
