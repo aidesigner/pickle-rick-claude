@@ -287,10 +287,6 @@ export function recordFailedApproach(state, description) {
         failed_approaches: approaches,
     };
 }
-/**
- * Classify the failure mode of an iteration. Returns null if the iteration
- * succeeded (improved). Priority-ordered — first matching class wins.
- */
 export function findLastAcceptedEntry(history) {
     return [...history].reverse().find(h => h.action === 'accept');
 }

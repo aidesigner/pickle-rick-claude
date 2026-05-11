@@ -322,11 +322,6 @@ export function recordFailedApproach(
   };
 }
 
-/**
- * Classify the failure mode of an iteration. Returns null if the iteration
- * succeeded (improved). Priority-ordered — first matching class wins.
- */
-
 export function findLastAcceptedEntry(
   history: MicroverseHistoryEntry[],
 ): MicroverseHistoryEntry | undefined {
