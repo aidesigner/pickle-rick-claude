@@ -348,6 +348,12 @@ test('activity-event-payload: worker_lint_gate_failed requires integer error cou
   assert.equal(bad.valid, false, 'string lint_errors should fail');
 });
 
+const SHARED_ENUM_DEFS = new Set([
+  'backendEnum',
+  'backendResolutionSourceEnum',
+  'workerBackendResolutionSourceEnum',
+]);
+
 test('activity-event-payload: schema defines all registered event type definitions', () => {
   const EVENT_NAMES = [
     'worker_spawn_backend_resolved',
@@ -381,12 +387,36 @@ test('activity-event-payload: schema defines all registered event type definitio
     'pipeline_judge_timeout_recovery_attempted',
     'bundle_preflight_failed',
     'consecutive_no_progress_warning',
+    'judge_violation_ledger_advanced',
+    'judge_legacy_shape_inferred',
+    'judge_json_parse_failed',
+    'monitor_respawn_started',
+    'monitor_respawn_failed',
+    'monitor_mode_swapped',
   ];
   for (const name of EVENT_NAMES) {
     assert.ok(name in schema.definitions, `schema missing definition for ${name}`);
   }
-  const nonSharedDefs = Object.keys(schema.definitions).filter(
-    k => k !== 'backendEnum' && k !== 'backendResolutionSourceEnum',
+  const nonSharedDefs = Object.keys(schema.definitions).filter((k) => !SHARED_ENUM_DEFS.has(k));
+
+  // Structural drift checks — assert set-equality between registered events
+  // and asserted EVENT_NAMES rather than a hardcoded count literal.
+  const eventNameSet = new Set(EVENT_NAMES);
+  const inSchemaNotAsserted = nonSharedDefs.filter((k) => !eventNameSet.has(k));
+  const assertedNotInSchema = EVENT_NAMES.filter((n) => !(n in schema.definitions));
+  assert.deepStrictEqual(
+    inSchemaNotAsserted,
+    [],
+    `schema defines events absent from EVENT_NAMES: ${inSchemaNotAsserted.join(', ')}`,
   );
-  assert.equal(nonSharedDefs.length, 35, `expected 35 event definitions, got ${nonSharedDefs.length}`);
+  assert.deepStrictEqual(
+    assertedNotInSchema,
+    [],
+    `EVENT_NAMES contains events absent from schema: ${assertedNotInSchema.join(', ')}`,
+  );
+  assert.equal(
+    nonSharedDefs.length,
+    EVENT_NAMES.length,
+    `non-shared schema defs (${nonSharedDefs.length}) must equal EVENT_NAMES.length (${EVENT_NAMES.length})`,
+  );
 });
