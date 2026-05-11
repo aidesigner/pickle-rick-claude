@@ -6,6 +6,11 @@ import { StateManager } from '../services/state-manager.js';
 import { readRecoverableJsonObject } from '../services/recoverable-json.js';
 const POLL_INTERVAL_MS = 2000;
 const sm = new StateManager();
+function resolveDisplay(raw, producerDone) {
+    const subsystem = typeof raw.current_subsystem === 'string' && raw.current_subsystem
+        ? raw.current_subsystem : null;
+    return subsystem ?? (producerDone ? 'Producer complete' : 'idle');
+}
 async function main() {
     const sessionDir = process.argv[2];
     // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
@@ -40,12 +45,8 @@ async function main() {
         }
         const data = readRecoverableJsonObject(microversePath);
         if (data !== null) {
-            const raw = data;
-            const subsystem = typeof raw.current_subsystem === 'string' && raw.current_subsystem
-                ? raw.current_subsystem
-                : null;
             // R-MDS-6: when subsystem is absent, check producer_done for message
-            const display = subsystem ?? (producerDone ? 'Producer complete' : 'idle');
+            const display = resolveDisplay(data, producerDone);
             if (display !== lastRendered) {
                 lastRendered = display;
                 process.stdout.write(`▸ ${display}\n`);

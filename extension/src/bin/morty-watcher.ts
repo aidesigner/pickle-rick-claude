@@ -103,6 +103,43 @@ function handleTruncation(currentLog: string, offset: number, mx: typeof MatrixS
   return truncCheck.offset;
 }
 
+async function handleNoWorkerLogs(
+  sessionDir: string,
+  seenArtifacts: Set<string>,
+  sep: () => string,
+  mx: typeof MatrixStyle,
+  currentTicket: string | null,
+): Promise<{ action: 'break' | 'continue'; currentTicket: string | null }> {
+  const artifacts = discoverArtifacts(sessionDir, seenArtifacts);
+  if (artifacts.length > 0) {
+    let ticket = currentTicket;
+    for (const art of artifacts) {
+      const label = classifyArtifact(art.fileName);
+      if (art.ticketId !== ticket) {
+        ticket = art.ticketId;
+        process.stdout.write(`\n${sep()}\n${mx.BRIGHT}▸ ${art.ticketId}${mx.R}\n${sep()}\n`);
+      }
+      process.stdout.write(`  ${label} ${mx.DIM}${art.fileName}${mx.R}\n`);
+    }
+    return { action: 'continue', currentTicket: ticket };
+  }
+  try {
+    const state = sm.read(path.join(sessionDir, 'state.json'));
+    if (state.active !== true) {
+      process.stdout.write(`\n${sep()}\n${mx.BRIGHT}◤ FEED TERMINATED ◢${mx.R}\n`);
+      return { action: 'break', currentTicket };
+    }
+    if (state.monitor_panes?.[2]?.producer_done === true) {
+      process.stdout.write(`\r${mx.DIM}Producer complete${mx.R}\x1b[K`);
+    } else {
+      process.stdout.write(`\r${mx.DIM}Awaiting worker signal...${mx.R}\x1b[K`);
+    }
+  } catch {
+    process.stdout.write(`\r${mx.DIM}Awaiting worker signal...${mx.R}\x1b[K`);
+  }
+  return { action: 'continue', currentTicket };
+}
+
 async function main() {
   const sessionDir = process.argv[2];
   // eslint-disable-next-line pickle/no-sync-in-async -- intentional blocking call
@@ -130,34 +167,9 @@ async function main() {
     const logs = discoverWorkerLogs(sessionDir);
 
     if (logs.length === 0) {
-      // Fallback: check for artifacts from inline-processed tickets
-      const artifacts = discoverArtifacts(sessionDir, seenArtifacts);
-      if (artifacts.length > 0) {
-        for (const art of artifacts) {
-          const label = classifyArtifact(art.fileName);
-          if (art.ticketId !== currentTicket) {
-            currentTicket = art.ticketId;
-            process.stdout.write(`\n${sep()}\n${MX.BRIGHT}▸ ${art.ticketId}${MX.R}\n${sep()}\n`);
-          }
-          process.stdout.write(`  ${label} ${MX.DIM}${art.fileName}${MX.R}\n`);
-        }
-      } else {
-        try {
-          const state = sm.read(path.join(sessionDir, 'state.json'));
-          if (state.active !== true) {
-            process.stdout.write(`\n${sep()}\n${MX.BRIGHT}◤ FEED TERMINATED ◢${MX.R}\n`);
-            break;
-          }
-          // R-MDS-6: pane 2 producer_done flag — switch no-data message
-          if (state.monitor_panes?.[2]?.producer_done === true) {
-            process.stdout.write(`\r${MX.DIM}Producer complete${MX.R}\x1b[K`);
-          } else {
-            process.stdout.write(`\r${MX.DIM}Awaiting worker signal...${MX.R}\x1b[K`);
-          }
-        } catch {
-          process.stdout.write(`\r${MX.DIM}Awaiting worker signal...${MX.R}\x1b[K`);
-        }
-      }
+      const noLogsResult = await handleNoWorkerLogs(sessionDir, seenArtifacts, sep, MX, currentTicket);
+      currentTicket = noLogsResult.currentTicket;
+      if (noLogsResult.action === 'break') break;
       await sleep(1000);
       continue;
     }

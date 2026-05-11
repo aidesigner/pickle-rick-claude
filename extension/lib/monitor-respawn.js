@@ -46,7 +46,7 @@ export async function respawnMonitorWindowForMode(sessionDir, phase, _spawnSyncF
     const mode = phaseToMode(phase);
     const extensionRoot = getExtensionRoot();
     const monitorBin = path.join(extensionRoot, 'extension', 'bin', 'monitor.js');
-    let sessionName = null;
+    let sessionName;
     try {
         sessionName = resolveSessionName(_spawnSyncFn);
         if (!sessionName) {
