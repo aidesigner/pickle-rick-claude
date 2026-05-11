@@ -394,13 +394,9 @@ test('activity-event-payload: schema defines all registered event type definitio
     'monitor_respawn_failed',
     'monitor_mode_swapped',
   ];
-  for (const name of EVENT_NAMES) {
-    assert.ok(name in schema.definitions, `schema missing definition for ${name}`);
-  }
-  const nonSharedDefs = Object.keys(schema.definitions).filter((k) => !SHARED_ENUM_DEFS.has(k));
-
-  // Structural drift checks — assert set-equality between registered events
+  // Structural drift check — assert set-equality between registered events
   // and asserted EVENT_NAMES rather than a hardcoded count literal.
+  const nonSharedDefs = Object.keys(schema.definitions).filter((k) => !SHARED_ENUM_DEFS.has(k));
   const eventNameSet = new Set(EVENT_NAMES);
   const inSchemaNotAsserted = nonSharedDefs.filter((k) => !eventNameSet.has(k));
   const assertedNotInSchema = EVENT_NAMES.filter((n) => !(n in schema.definitions));
@@ -413,10 +409,5 @@ test('activity-event-payload: schema defines all registered event type definitio
     assertedNotInSchema,
     [],
     `EVENT_NAMES contains events absent from schema: ${assertedNotInSchema.join(', ')}`,
-  );
-  assert.equal(
-    nonSharedDefs.length,
-    EVENT_NAMES.length,
-    `non-shared schema defs (${nonSharedDefs.length}) must equal EVENT_NAMES.length (${EVENT_NAMES.length})`,
   );
 });
