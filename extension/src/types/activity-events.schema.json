@@ -514,12 +514,11 @@
     },
     "monitor_mode_swapped": {
       "type": "object",
-      "required": ["event", "ts"],
+      "required": ["event", "ts", "mode"],
       "properties": {
         "event": { "type": "string", "const": "monitor_mode_swapped" },
         "ts": { "type": "string" },
-        "from_mode": { "type": "string" },
-        "to_mode": { "type": "string" }
+        "mode": { "type": "string" }
       }
     }
   },
