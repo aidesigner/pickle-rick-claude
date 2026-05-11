@@ -5,13 +5,15 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 import {
   processRateLimitCycle,
   processIterationOutcome,
 } from '../bin/mux-runner.js';
 
-const fixturePath = path.resolve('extension/tests/fixtures/mux-runner/rate-limit-cycle-2026-04.json');
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const fixturePath = path.join(__dirname, 'fixtures', 'mux-runner', 'rate-limit-cycle-2026-04.json');
 
 function tmpSession() {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-process-outcome-')));
