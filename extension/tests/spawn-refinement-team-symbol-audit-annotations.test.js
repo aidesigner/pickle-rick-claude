@@ -222,6 +222,12 @@ Activity events: \`event_foo\` (forward-created).
   }
 });
 
+test(
+  'enum false-positive TODO: deferred to R-SAOV-6 for trigger-phrase lines with non-event context markers',
+  { todo: 'R-SAOV-6 should ignore values like `passed`, `wall_clock`, and `output_stall` when the line starts with `gate outcome G ∈` or contains `enum value`.' },
+  () => {}
+);
+
 test('failure prose', () => {
   const report = evaluateSymbolAudit(buildPrd(), process.cwd(), { tickets: [] });
 
