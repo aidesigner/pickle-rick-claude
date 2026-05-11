@@ -1108,6 +1108,8 @@ function runAcShapeEnforcement(manifest) {
 const QUOTED_SYMBOL_RE = /[`'"]([A-Za-z][A-Za-z0-9_.-]*)[`'"]/g;
 const SOURCE_FILE_RE = /\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|yml|yaml|sh|py|css|scss|html)$/;
 const SKIP_SOURCE_DIRS = new Set(['.git', 'node_modules', 'dist', 'coverage', '.turbo', '.next']);
+const FORWARD_CREATE_EVENT_TICKET_RE = '[A-Za-z0-9]{6,12}';
+const FORWARD_CREATE_EVENT_REQUIREMENT_RE = 'R-[A-Z0-9]+(?:-[A-Z0-9]+)*-\\d+';
 function lineRefs(content) {
     return content.split(/\r?\n/).map((line, index) => ({ line, sourceLine: index + 1 }));
 }
@@ -1134,6 +1136,11 @@ function quotedSymbols(line) {
     }
     return symbols;
 }
+export function parseForwardCreateAnnotation(afterQuotedToken) {
+    const annotationRe = new RegExp(`^ \\((?:forward-created|introduced by ticket ${FORWARD_CREATE_EVENT_TICKET_RE}|created by ${FORWARD_CREATE_EVENT_REQUIREMENT_RE})\\)(?:\\b|$|[\\s,.;:])`);
+    const match = annotationRe.exec(afterQuotedToken);
+    return match?.[0].trim();
+}
 function uniqueReferences(refs) {
     const seen = new Set();
     return refs.filter((ref) => {
@@ -1150,14 +1157,25 @@ function collectActivityEventReferences(prdContent) {
     for (const { line, sourceLine } of lineRefs(prdContent)) {
         if (!/\b(?:activity[-_\s]?events?|event_type|logActivity|VALID_ACTIVITY_EVENTS)\b/i.test(line))
             continue;
-        for (const symbol of quotedSymbols(line).filter((s) => /^[a-z][a-z0-9_]*$/.test(s))) {
-            const status = valid.has(symbol) ? 'pass' : 'fail';
+        QUOTED_SYMBOL_RE.lastIndex = 0;
+        let match;
+        while ((match = QUOTED_SYMBOL_RE.exec(line)) !== null) {
+            const [raw, symbol] = match;
+            if (!/^[a-z][a-z0-9_]*$/.test(symbol))
+                continue;
+            const afterMatch = line.slice(match.index + raw.length);
+            const annotation = raw.startsWith('`') ? parseForwardCreateAnnotation(afterMatch) : undefined;
+            const status = valid.has(symbol) ? 'valid' : annotation ? 'forward-create' : 'phantom';
             refs.push({
                 symbol,
                 sourceLine,
                 evidence: line.trim(),
                 status,
-                ...(status === 'fail' ? { reason: 'not present in VALID_ACTIVITY_EVENTS' } : {}),
+                ...(status === 'phantom'
+                    ? { reason: 'not present in VALID_ACTIVITY_EVENTS' }
+                    : status === 'forward-create'
+                        ? { reason: annotation }
+                        : {}),
             });
         }
     }
@@ -1287,7 +1305,7 @@ function collectHelperSentinelReferences(prdContent, workingDir) {
 }
 function findingsFrom(category, refs) {
     return refs
-        .filter((ref) => ref.status === 'fail')
+        .filter((ref) => ref.status === 'fail' || ref.status === 'phantom')
         .map((ref) => ({
         category,
         symbol: ref.symbol,
