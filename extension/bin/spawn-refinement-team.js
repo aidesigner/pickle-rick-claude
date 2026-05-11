@@ -994,6 +994,22 @@ function peerPrdDeferredPaths(frontmatter) {
     }
     return paths;
 }
+function composedPrdPaths(frontmatter) {
+    const lines = frontmatter.split(/\r?\n/);
+    const composeIndex = lines.findIndex((line) => /^composes:\s*$/.test(line));
+    if (composeIndex < 0)
+        return [];
+    const paths = [];
+    for (let i = composeIndex + 1; i < lines.length; i += 1) {
+        const line = lines[i];
+        if (/^\S/.test(line))
+            break;
+        const match = /^\s+-\s+(.+?)\s*(?:#.*)?$/.exec(line);
+        if (match)
+            paths.push(unquoteYamlish(match[1]));
+    }
+    return paths;
+}
 function resolvePeerPrdPath(parentPrdPath, peerPath) {
     if (path.isAbsolute(peerPath) && fs.existsSync(peerPath))
         return peerPath;
@@ -1136,6 +1152,49 @@ function quotedSymbols(line) {
     }
     return symbols;
 }
+function declaredActivityEventSymbols(prdContent) {
+    const symbols = new Set();
+    for (const { line } of lineRefs(prdContent)) {
+        if (!/\b(?:activity[-_\s]?events?|event_type|logActivity|VALID_ACTIVITY_EVENTS)\b/i.test(line))
+            continue;
+        for (const symbol of quotedSymbols(line)) {
+            if (/^[a-z][a-z0-9_]*$/.test(symbol))
+                symbols.add(symbol);
+        }
+    }
+    return symbols;
+}
+function declaredHelperSentinelSymbols(prdContent) {
+    const symbols = new Set();
+    for (const { line } of lineRefs(prdContent)) {
+        if (!/\b(?:helpers?|sentinels?)\b/i.test(line))
+            continue;
+        for (const symbol of quotedSymbols(line)) {
+            if (/^[A-Za-z_$][A-Za-z0-9_$.-]*$/.test(symbol))
+                symbols.add(symbol);
+        }
+    }
+    return symbols;
+}
+export function resolveComposesChain(prdPath) {
+    const resolved = { events: new Set(), helpers: new Set() };
+    if (!prdPath || !fs.existsSync(prdPath))
+        return resolved;
+    const frontmatter = parseFrontmatter(fs.readFileSync(prdPath, 'utf-8'));
+    for (const composePath of composedPrdPaths(frontmatter)) {
+        const composedPrdPath = resolvePeerPrdPath(prdPath, composePath);
+        if (!composedPrdPath) {
+            process.stderr.write(`[pickle-rick] warning: composed PRD not found: ${composePath}\n`);
+            continue;
+        }
+        const composedContent = fs.readFileSync(composedPrdPath, 'utf-8');
+        for (const symbol of declaredActivityEventSymbols(composedContent))
+            resolved.events.add(symbol);
+        for (const symbol of declaredHelperSentinelSymbols(composedContent))
+            resolved.helpers.add(symbol);
+    }
+    return resolved;
+}
 export function parseForwardCreateAnnotation(afterQuotedToken) {
     const annotationRe = new RegExp(`^ \\((?:forward-created|introduced by ticket ${FORWARD_CREATE_EVENT_TICKET_RE}|created by ${FORWARD_CREATE_EVENT_REQUIREMENT_RE})\\)(?:\\b|$|[\\s,.;:])`);
     const match = annotationRe.exec(afterQuotedToken);
@@ -1151,8 +1210,8 @@ function uniqueReferences(refs) {
         return true;
     });
 }
-function collectActivityEventReferences(prdContent) {
-    const valid = new Set(VALID_ACTIVITY_EVENTS);
+function collectActivityEventReferences(prdContent, declaredSymbols = []) {
+    const valid = new Set([...VALID_ACTIVITY_EVENTS, ...declaredSymbols]);
     const refs = [];
     for (const { line, sourceLine } of lineRefs(prdContent)) {
         if (!/\b(?:activity[-_\s]?events?|event_type|logActivity|VALID_ACTIVITY_EVENTS)\b/i.test(line))
@@ -1284,7 +1343,8 @@ function hasSourceHit(symbol, workingDir) {
     }
     return false;
 }
-function collectHelperSentinelReferences(prdContent, workingDir) {
+function collectHelperSentinelReferences(prdContent, workingDir, declaredSymbols = []) {
+    const valid = new Set(declaredSymbols);
     const refs = [];
     for (const { line, sourceLine } of lineRefs(prdContent)) {
         if (!/\b(?:helpers?|sentinels?)\b/i.test(line))
@@ -1297,7 +1357,7 @@ function collectHelperSentinelReferences(prdContent, workingDir) {
                 continue;
             const afterMatch = line.slice(match.index + raw.length);
             const annotation = raw.startsWith('`') ? parseForwardCreateAnnotation(afterMatch) : undefined;
-            const grounded = hasSourceHit(symbol, workingDir);
+            const grounded = valid.has(symbol) || hasSourceHit(symbol, workingDir);
             const status = grounded ? 'valid' : annotation ? 'forward-create' : 'phantom';
             refs.push({
                 symbol,
@@ -1324,11 +1384,12 @@ function findingsFrom(category, refs) {
         reason: ref.reason ?? 'symbol audit failed',
     }));
 }
-export function evaluateSymbolAudit(prdContent, workingDir, manifest) {
-    const activityEvents = collectActivityEventReferences(prdContent);
+export function evaluateSymbolAudit(prdContent, workingDir, manifest, prdPath) {
+    const composedSymbols = prdPath ? resolveComposesChain(prdPath) : { events: new Set(), helpers: new Set() };
+    const activityEvents = collectActivityEventReferences(prdContent, composedSymbols.events);
     const exitCodes = collectExitCodeReferences(prdContent);
     const newFiles = collectNewFileReferences(prdContent, manifest);
-    const helperSentinels = collectHelperSentinelReferences(prdContent, workingDir);
+    const helperSentinels = collectHelperSentinelReferences(prdContent, workingDir, composedSymbols.helpers);
     const findings = [
         ...findingsFrom('activity_event', activityEvents),
         ...findingsFrom('exit_code', exitCodes),
@@ -1385,8 +1446,8 @@ export function renderSymbolAuditMarkdown(report) {
     }
     return `${lines.join('\n')}\n`;
 }
-export async function writeSymbolAudit(refinementDir, prdContent, workingDir, manifest) {
-    const report = evaluateSymbolAudit(prdContent, workingDir, manifest);
+export async function writeSymbolAudit(refinementDir, prdContent, workingDir, manifest, prdPath) {
+    const report = evaluateSymbolAudit(prdContent, workingDir, manifest, prdPath);
     const auditPath = path.join(refinementDir, 'symbol_audit.md');
     await fs.promises.writeFile(auditPath, renderSymbolAuditMarkdown(report));
     return report;
@@ -1473,7 +1534,7 @@ async function main() {
     const manifest = buildRefinementManifest(args, cycleResults, qualityWarnings.length > 0 ? qualityWarnings : undefined);
     await writeManifestAtomic(manifestPath, manifest);
     const runtime = resolveRuntime(args, settings);
-    const symbolAudit = await writeSymbolAudit(cycleResults.refinementDir, prdContent, runtime.workingDir, manifest);
+    const symbolAudit = await writeSymbolAudit(cycleResults.refinementDir, prdContent, runtime.workingDir, manifest, args.prdPath);
     const symbolAuditStatus = runSymbolAuditEnforcement(symbolAudit);
     if (symbolAuditStatus !== 0)
         process.exit(symbolAuditStatus);

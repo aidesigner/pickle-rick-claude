@@ -1,6 +1,9 @@
 // @tier: fast
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import { evaluateSymbolAudit } from '../bin/spawn-refinement-team.js';
 
 function buildPrd(annotation = '') {
@@ -28,6 +31,10 @@ function buildSentinelPrd(annotation = '') {
 
 Sentinels: \`SENTINEL_X\`${annotation}.
 `;
+}
+
+function makeTmpDir(prefix = 'pickle-symbol-annotations-') {
+  return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
 
 test('forward-create event annotation: accepts `(forward-created)` and reports forward-create', () => {
@@ -99,4 +106,100 @@ test('unannotated helper still fails', () => {
   assert.equal(helper.status, 'phantom');
   assert.equal(report.ok, false);
   assert.ok(report.findings.some((finding) => finding.category === 'helper_sentinel' && finding.symbol === symbol));
+});
+
+test('composes chain symbol resolves', () => {
+  const repo = makeTmpDir();
+  try {
+    const sourcePrd = path.join(repo, 'source-prd.md');
+    const wrapperPrd = path.join(repo, 'wrapper-prd.md');
+    fs.writeFileSync(sourcePrd, `# Source PRD
+
+## Activity Events
+
+Activity events: \`event_foo\`.
+
+## Helpers And Sentinels
+
+Helpers: \`helperFoo\`.
+`);
+    const wrapperContent = `---
+composes:
+  - ./source-prd.md
+---
+# Wrapper PRD
+
+## Activity Events
+
+Activity events: \`event_foo\`.
+
+## Helpers And Sentinels
+
+Helpers: \`helperFoo\`.
+`;
+    fs.writeFileSync(wrapperPrd, wrapperContent);
+
+    const report = evaluateSymbolAudit(wrapperContent, repo, { tickets: [] }, wrapperPrd);
+
+    assert.equal(report.ok, true, JSON.stringify(report.findings, null, 2));
+    assert.equal(report.activityEvents.find((ref) => ref.symbol === 'event_foo')?.status, 'valid');
+    assert.equal(report.helperSentinels.find((ref) => ref.symbol === 'helperFoo')?.status, 'valid');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('no composes frontmatter preserves phantom behavior', () => {
+  const repo = makeTmpDir();
+  try {
+    const wrapperPrd = path.join(repo, 'wrapper-prd.md');
+    const wrapperContent = `# Wrapper PRD
+
+## Activity Events
+
+Activity events: \`event_foo\`.
+`;
+    fs.writeFileSync(wrapperPrd, wrapperContent);
+
+    const report = evaluateSymbolAudit(wrapperContent, repo, { tickets: [] }, wrapperPrd);
+
+    assert.equal(report.ok, false);
+    assert.equal(report.activityEvents.find((ref) => ref.symbol === 'event_foo')?.status, 'phantom');
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('missing composed PRD warns and audit proceeds', () => {
+  const repo = makeTmpDir();
+  const originalWrite = process.stderr.write.bind(process.stderr);
+  const stderr = [];
+  process.stderr.write = (chunk, encoding, cb) => {
+    stderr.push(String(chunk));
+    if (typeof encoding === 'function') encoding();
+    if (typeof cb === 'function') cb();
+    return true;
+  };
+  try {
+    const wrapperPrd = path.join(repo, 'wrapper-prd.md');
+    const wrapperContent = `---
+composes:
+  - ./missing-prd.md
+---
+# Wrapper PRD
+
+## Activity Events
+
+Activity events: \`event_foo\` (forward-created).
+`;
+    fs.writeFileSync(wrapperPrd, wrapperContent);
+
+    const report = evaluateSymbolAudit(wrapperContent, repo, { tickets: [] }, wrapperPrd);
+
+    assert.equal(report.ok, true, JSON.stringify(report.findings, null, 2));
+    assert.match(stderr.join(''), /warning: composed PRD not found: \.\/missing-prd\.md/);
+  } finally {
+    process.stderr.write = originalWrite;
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
 });
