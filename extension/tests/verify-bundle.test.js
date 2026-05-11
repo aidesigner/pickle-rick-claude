@@ -17,6 +17,7 @@ import {
   BUNDLE_ARTIFACT_SCHEMA,
   EXPECTED_BUNDLE_AC_IDS,
 } from '../../bin/verify-bundle.js';
+import { writeWatcherLivenessArtifact } from '../bin/pipeline-runner.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
@@ -186,6 +187,19 @@ test('verify-bundle.single-ac validates only requested artifact', () => {
     const result = runVerifier(fixture, ['--ac', 'AC-DR-08']);
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /checked=1/);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});
+
+test('verify-bundle.ac-dr-05 accepts the real watcher-liveness artifact shape', () => {
+  const fixture = mkdtempSync(path.join(tmpdir(), 'verify-bundle-watcher-'));
+  try {
+    writeFileSync(path.join(fixture, 'tmux-runner.log'), 'iteration 1\niteration 2\n');
+    writeWatcherLivenessArtifact(fixture, 'pickle');
+    const result = runVerifier(fixture, ['--ac', 'AC-DR-05']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /bundle PASS/);
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }

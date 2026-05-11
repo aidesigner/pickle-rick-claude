@@ -27,6 +27,7 @@ import {
 import { backendEnvOverrides } from '../services/backend-spawn.js';
 import { AC_PHASE_MANIFEST, runAcPhaseGate } from '../services/ac-phase-gate.js';
 import { Defaults } from '../types/index.js';
+import { validateBundleArtifact } from '../../bin/verify-bundle.js';
 
 function tmpDir() {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-pipeline-'));
@@ -828,8 +829,11 @@ describe('pipeline-runner.relaunch-claim', () => {
       fs.writeFileSync(path.join(dir, 'tmux-runner.log'), 'iteration 1\niteration 2\niteration 3\n');
       writeWatcherLivenessArtifact(dir, 'pickle');
       const artifact = JSON.parse(fs.readFileSync(path.join(dir, 'bundle/ac-dr-05.json'), 'utf-8'));
+      assert.deepEqual(validateBundleArtifact(artifact), []);
+      assert.equal(artifact.ac_id, 'AC-DR-05');
       assert.equal(artifact.pass, true);
       assert.equal(artifact.forbidden_literal_present, false);
+      assert.equal(artifact.failure_reason, null);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -844,11 +848,14 @@ describe('pipeline-runner.relaunch-claim', () => {
 
       const artifactPath = path.join(dir, 'bundle/ac-dr-05.json');
       const artifact = JSON.parse(fs.readFileSync(artifactPath, 'utf-8'));
-      assert.equal(artifact.id, 'AC-DR-05');
+      assert.deepEqual(validateBundleArtifact(artifact), []);
+      assert.equal(artifact.ac_id, 'AC-DR-05');
       assert.equal(artifact.phase, 'pickle');
       assert.equal(artifact.pass, false);
       assert.deepEqual(artifact.checked_files, ['tmux-runner.log']);
       assert.equal(artifact.forbidden_literal_present, true);
+      assert.equal(artifact.failure_reason, 'watcher-terminated-banner-present');
+      assert.match(artifact.remediation_hint, /premature watcher shutdown/i);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }

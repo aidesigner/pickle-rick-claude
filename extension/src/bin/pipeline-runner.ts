@@ -542,13 +542,24 @@ export function writeWatcherLivenessArtifact(sessionDir: string, phase: PhaseNam
     }
   });
   writeStateFile(path.join(bundleDir, 'ac-dr-05.json'), {
-    id: 'AC-DR-05',
+    ac_id: 'AC-DR-05',
     phase,
     pass: matches.length === 0,
+    checked_at: new Date().toISOString(),
+    checker: 'pipeline-runner',
+    checker_version: '1',
+    evidence: {
+      checked_files: checkedFiles.map((file) => path.relative(sessionDir, file)),
+      forbidden_literal_present: matches.length > 0,
+      forbidden_literal: WATCHER_TERMINATED_BANNER,
+    },
+    failure_reason: matches.length > 0 ? 'watcher-terminated-banner-present' : null,
+    remediation_hint: matches.length > 0
+      ? 'Inspect tmux-runner.log and pipeline-runner.log for premature watcher shutdown before bundling.'
+      : null,
     checked_files: checkedFiles.map((file) => path.relative(sessionDir, file)),
     forbidden_literal_present: matches.length > 0,
     forbidden_literal: WATCHER_TERMINATED_BANNER,
-    updated_at: new Date().toISOString(),
   });
 }
 
