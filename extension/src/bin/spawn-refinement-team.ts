@@ -1373,6 +1373,8 @@ function runAcShapeEnforcement(manifest: RefinementManifest): number {
 }
 
 const QUOTED_SYMBOL_RE = /[`'"]([A-Za-z][A-Za-z0-9_.-]*)[`'"]/g;
+const ACTIVITY_EVENT_TRIGGER_RE = /\b(?:activity[-_\s]?events?|event_type|logActivity|VALID_ACTIVITY_EVENTS)\b/i;
+const NON_EVENT_ACTIVITY_CONTEXT_RE = /\b(?:enum value|state field|phase outcome|gate outcome)\b/i;
 const SOURCE_FILE_RE = /\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|yml|yaml|sh|py|css|scss|html)$/;
 const SKIP_SOURCE_DIRS = new Set(['.git', 'node_modules', 'dist', 'coverage', '.turbo', '.next']);
 const FORWARD_CREATE_EVENT_TICKET_RE = '[A-Za-z0-9]{6,12}';
@@ -1409,7 +1411,7 @@ function quotedSymbols(line: string): string[] {
 function declaredActivityEventSymbols(prdContent: string): Set<string> {
   const symbols = new Set<string>();
   for (const { line } of lineRefs(prdContent)) {
-    if (!/\b(?:activity[-_\s]?events?|event_type|logActivity|VALID_ACTIVITY_EVENTS)\b/i.test(line)) continue;
+    if (!ACTIVITY_EVENT_TRIGGER_RE.test(line)) continue;
     for (const symbol of quotedSymbols(line)) {
       if (/^[a-z][a-z0-9_]*$/.test(symbol)) symbols.add(symbol);
     }
@@ -1465,16 +1467,36 @@ function uniqueReferences(refs: SymbolAuditReference[]): SymbolAuditReference[] 
   });
 }
 
+// enum-value heuristic:
+// Trigger-phrase lines are still the entrypoint for activity-event auditing.
+// When the same line also advertises enum/state prose, quoted snake_case values
+// are ignored unless the token itself sits next to explicit event wording.
+// This keeps `gate outcome G ∈ { ... }` values out of the audit while still
+// preserving true positives such as `logged as \`token\`` or emitted-event text.
+function shouldAuditActivityEventToken(line: string, matchIndex: number, raw: string): boolean {
+  if (!NON_EVENT_ACTIVITY_CONTEXT_RE.test(line)) return true;
+  const before = line.slice(Math.max(0, matchIndex - 24), matchIndex);
+  const after = line.slice(matchIndex + raw.length, Math.min(line.length, matchIndex + raw.length + 24));
+  return (
+    /\b(?:activity[-_\s]?events?|activity[-_\s]?event|event_type|activity_event|logged as)\s*[:=]?\s*$/i.test(before) ||
+    /\b(?:emit|emits|emitted)\s*$/i.test(before) ||
+    /^\s*(?:is\s+)?(?:emit|emits|emitted)\b/i.test(after) ||
+    /^\s*(?:as\s+)?(?:an?\s+)?activity[-_\s]?event\b/i.test(after) ||
+    /^\s*(?:event_type|activity_event)\b\s*[:=]/i.test(after)
+  );
+}
+
 function collectActivityEventReferences(prdContent: string, declaredSymbols: Iterable<string> = []): SymbolAuditReference[] {
   const valid = new Set<string>([...VALID_ACTIVITY_EVENTS, ...declaredSymbols]);
   const refs: SymbolAuditReference[] = [];
   for (const { line, sourceLine } of lineRefs(prdContent)) {
-    if (!/\b(?:activity[-_\s]?events?|event_type|logActivity|VALID_ACTIVITY_EVENTS)\b/i.test(line)) continue;
+    if (!ACTIVITY_EVENT_TRIGGER_RE.test(line)) continue;
     QUOTED_SYMBOL_RE.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = QUOTED_SYMBOL_RE.exec(line)) !== null) {
       const [raw, symbol] = match;
       if (!/^[a-z][a-z0-9_]*$/.test(symbol)) continue;
+      if (!shouldAuditActivityEventToken(line, match.index, raw)) continue;
       const afterMatch = line.slice(match.index + raw.length);
       const annotation = raw.startsWith('`') ? parseForwardCreateAnnotation(afterMatch) : undefined;
       const status = valid.has(symbol) ? 'valid' : annotation ? 'forward-create' : 'phantom';

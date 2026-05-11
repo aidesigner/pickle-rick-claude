@@ -222,11 +222,36 @@ Activity events: \`event_foo\` (forward-created).
   }
 });
 
-test(
-  'enum false-positive TODO: deferred to R-SAOV-6 for trigger-phrase lines with non-event context markers',
-  { todo: 'R-SAOV-6 should ignore values like `passed`, `wall_clock`, and `output_stall` when the line starts with `gate outcome G ∈` or contains `enum value`.' },
-  () => {}
-);
+test('enum false-positive filter: ignores enum/state values on trigger-phrase lines with non-event context markers', () => {
+  const prd = `# Bundle PRD
+
+## Activity Events
+
+Activity events: gate outcome G ∈ {\`passed\`, \`wall_clock\`, \`output_stall\`, \`infrastructure_failure\`}.
+Activity events: enum value \`output_stall\` lives in the state field while phase outcome \`passed\` remains non-event prose.
+`;
+  const report = evaluateSymbolAudit(prd, process.cwd(), { tickets: [] });
+
+  assert.equal(report.ok, true, JSON.stringify(report.findings, null, 2));
+  assert.deepEqual(report.activityEvents, []);
+  assert.deepEqual(report.findings, []);
+});
+
+test('true-positive event preserved: emitted activity event still reports phantom when unannotated', () => {
+  const prd = `# Bundle PRD
+
+## Activity Events
+
+The activity event \`mystery_event\` is emitted without annotation or composes support.
+`;
+  const report = evaluateSymbolAudit(prd, process.cwd(), { tickets: [] });
+
+  assert.equal(report.ok, false);
+  assert.equal(report.activityEvents.find((ref) => ref.symbol === 'mystery_event')?.status, 'phantom');
+  assert.ok(
+    report.findings.some((finding) => finding.category === 'activity_event' && finding.symbol === 'mystery_event')
+  );
+});
 
 test('failure prose', () => {
   const report = evaluateSymbolAudit(buildPrd(), process.cwd(), { tickets: [] });
