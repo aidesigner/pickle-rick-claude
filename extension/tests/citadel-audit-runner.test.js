@@ -4,10 +4,12 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import * as os from 'node:os';
 import {
   buildCitadelAuditReport,
   __setAnalyzerOverridesForTests,
 } from '../services/citadel/audit-runner.js';
+import { parseWithComposes } from '../services/citadel/prd-parser.js';
 import { detectProjectShapes } from '../services/citadel/project-shape.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -175,5 +177,55 @@ describe('citadel project-shape gate', () => {
     // Ensure the module exports the function and is callable from test context
     const shapes = detectProjectShapes(REPO_ROOT);
     assert.ok(Array.isArray(shapes) && shapes.length > 0, 'detectProjectShapes must return non-empty array');
+  });
+});
+
+// ticket 98dc9bed F3.1: audit-runner must walk the composes: chain so
+// parsedPrd.composedRcodes is non-empty when the PRD lists composed sources.
+// Pre-fix: audit-runner called parsePrdMarkdown (no composes walk) and
+// composedRcodes stayed an empty Map forever.
+describe('citadel audit-runner composes: wiring (ticket 98dc9bed)', () => {
+  test('audit-runner.ts source imports parseWithComposes', () => {
+    const src = fs.readFileSync(AUDIT_RUNNER_SRC, 'utf-8');
+    assert.ok(
+      src.includes('parseWithComposes'),
+      'audit-runner.ts must import parseWithComposes for composes: chain walking',
+    );
+  });
+
+  test('parseWithComposes populates composedRcodes when PRD has composes: front-matter', () => {
+    const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'audit-runner-composes-'));
+    fs.mkdirSync(path.join(tmpRoot, '.git'), { recursive: true });
+    const sourcePrd = path.join(tmpRoot, 'source.md');
+    const composerPrd = path.join(tmpRoot, 'composer.md');
+    fs.writeFileSync(sourcePrd, '# Source\nR-CHAIN-1 lives here.\nR-CHAIN-2 lives here.\n');
+    fs.writeFileSync(composerPrd, '---\ncomposes:\n  - source.md\n---\n# Composer\n');
+
+    const parsed = parseWithComposes(composerPrd, { repoRoot: tmpRoot });
+    assert.ok(parsed.composedRcodes.size > 0, 'composedRcodes must be populated');
+    const allRcodes = [...parsed.composedRcodes.values()].flat().map((e) => e.id);
+    assert.ok(allRcodes.includes('R-CHAIN-1'), 'expected R-CHAIN-1 from composed source');
+    assert.ok(allRcodes.includes('R-CHAIN-2'), 'expected R-CHAIN-2 from composed source');
+
+    fs.rmSync(tmpRoot, { recursive: true, force: true });
+  });
+
+  test('buildCitadelAuditReport: no throw on PRDs without composes: front-matter', () => {
+    const prdFiles = fs.readdirSync(PRDS_DIR).filter((f) => f.endsWith('.md'));
+    const prdPath = path.join('prds', prdFiles[0]);
+    const report = buildCitadelAuditReport({
+      prdPath,
+      diffRange: 'HEAD..HEAD',
+      repoRoot: REPO_ROOT,
+    });
+    assert.ok(report.sections, 'report must have sections');
+    // Pre-existing analyzers must still produce their sections after the
+    // parser switch.
+    for (const key of ['ac_coverage', 'allowlist_dead', 'state_transitions', 'trap_door_coverage']) {
+      assert.ok(
+        Object.prototype.hasOwnProperty.call(report.sections, key),
+        `sections missing key after parseWithComposes switch: ${key}`,
+      );
+    }
   });
 });
