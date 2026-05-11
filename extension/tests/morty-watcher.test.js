@@ -212,6 +212,15 @@ test('morty-watcher: producer_done=true renders "Producer complete" (no-data bra
             timeout: 2500,
         });
 
+        // The 2.5s timeout is the *expected* termination path here (live pid
+        // keeps the watcher in its no-data render loop). We assert ETIMEDOUT
+        // explicitly so a different error class (spawn failure, segfault)
+        // doesn't silently pass an empty stdout through the includes() check.
+        assert.equal(
+            result.error?.code,
+            'ETIMEDOUT',
+            `expected ETIMEDOUT (live pid keeps loop running); got error=${JSON.stringify(result.error)} stderr=${result.stderr}`,
+        );
         assert.ok(
             result.stdout.includes('Producer complete'),
             `Expected "Producer complete" in output when producer_done=true, got: ${result.stdout}`,
@@ -244,6 +253,11 @@ test('morty-watcher: producer_done=false renders existing "Awaiting worker signa
             timeout: 2500,
         });
 
+        assert.equal(
+            result.error?.code,
+            'ETIMEDOUT',
+            `expected ETIMEDOUT (live pid keeps loop running); got error=${JSON.stringify(result.error)} stderr=${result.stderr}`,
+        );
         assert.ok(
             result.stdout.includes('Awaiting worker signal'),
             `Expected "Awaiting worker signal" when producer_done=false, got: ${result.stdout}`,
