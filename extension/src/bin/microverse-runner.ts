@@ -23,6 +23,7 @@ import {
   isConverged,
   compareMetric,
   classifyFailure,
+  findLastAcceptedEntry,
 } from '../services/microverse-state.js';
 import { getHeadSha, resetToSha, isWorkingTreeDirty } from '../services/git-utils.js';
 import {
@@ -2070,7 +2071,7 @@ function adoptLateBaseline(
   metricConv: MicroverseSessionState['convergence'],
   ctx: RunContext,
 ): void {
-  const lastAccepted = [...metricConv.history].reverse().find(h => h.action === 'accept');
+  const lastAccepted = findLastAcceptedEntry(metricConv.history);
   if (baseline.score === 0 && state.baseline_score === 0 && !lastAccepted) {
     state.baseline_score = metricResult.score;
     ctx.log(`Late baseline adopted: ${metricResult.score} (initial measurement failed)`);
@@ -2177,7 +2178,7 @@ export async function measureAndClassifyIteration(
 
   ctx.log(`Metric: ${metricResult.score} (raw: ${metricResult.raw})`);
   const metricConv = assertMetricConvergence(state, 'measureAndClassifyIteration');
-  const lastAccepted = [...metricConv.history].reverse().find(h => h.action === 'accept');
+  const lastAccepted = findLastAcceptedEntry(metricConv.history);
   adoptLateBaseline(state, baseline, metricResult, metricConv, ctx);
 
   const previousScore = lastAccepted ? lastAccepted.score : state.baseline_score;

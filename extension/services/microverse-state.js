@@ -232,8 +232,7 @@ export function createMicroverseState(opts) {
 export function recordIteration(state, entry, classification) {
     const history = [...(state.convergence?.history ?? []), entry];
     if (!classification) {
-        const lastAccepted = [...(state.convergence?.history ?? [])].reverse().find(h => h.action === 'accept');
-        const previousScore = lastAccepted ? lastAccepted.score : state.baseline_score;
+        const previousScore = getLastAcceptedScore(state);
         classification = compareMetric(entry.score, previousScore, state.key_metric.tolerance, state.key_metric.direction);
     }
     entry.classification = classification;
@@ -292,9 +291,11 @@ export function recordFailedApproach(state, description) {
  * Classify the failure mode of an iteration. Returns null if the iteration
  * succeeded (improved). Priority-ordered — first matching class wins.
  */
-function getLastAcceptedScore(state) {
-    const history = state.convergence?.history ?? [];
-    const lastAccepted = [...history].reverse().find(h => h.action === 'accept');
+export function findLastAcceptedEntry(history) {
+    return [...history].reverse().find(h => h.action === 'accept');
+}
+export function getLastAcceptedScore(state) {
+    const lastAccepted = findLastAcceptedEntry(state.convergence?.history ?? []);
     return lastAccepted ? lastAccepted.score : state.baseline_score;
 }
 function hasOscillatingClassifications(history) {
@@ -344,8 +345,7 @@ export function isConverged(state) {
     // Early exit: if a convergence_target is set and score has reached (or passed) it, we're done.
     // Direction-aware: for 'lower', score <= target; for 'higher', score >= target.
     if (state.convergence_target != null) {
-        const lastAccepted = [...(state.convergence?.history ?? [])].reverse().find(h => h.action === 'accept');
-        const currentScore = lastAccepted ? lastAccepted.score : state.baseline_score;
+        const currentScore = getLastAcceptedScore(state);
         const direction = state.key_metric.direction ?? 'higher';
         if (direction === 'lower'
             ? currentScore <= state.convergence_target

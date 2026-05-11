@@ -4,7 +4,7 @@ import * as path from 'path';
 import { execFileSync } from 'child_process';
 import { Defaults } from '../types/index.js';
 import { resolveBackend, resolveWorkerBackendFromStateFile, buildJudgeInvocation, buildWorkerInvocation, backendEnvOverrides, } from '../services/backend-spawn.js';
-import { readMicroverseState, readRecoverableJsonObject, writeMicroverseState, recordIteration as stateRecordIteration, recordStall, recordAmnesiacExit, clearAmnesiacExits, recordFailedApproach, isConverged, compareMetric, classifyFailure, } from '../services/microverse-state.js';
+import { readMicroverseState, readRecoverableJsonObject, writeMicroverseState, recordIteration as stateRecordIteration, recordStall, recordAmnesiacExit, clearAmnesiacExits, recordFailedApproach, isConverged, compareMetric, classifyFailure, findLastAcceptedEntry, } from '../services/microverse-state.js';
 import { getHeadSha, resetToSha, isWorkingTreeDirty } from '../services/git-utils.js';
 import { writeStateFile, getExtensionRoot, isoCompactStamp, sleep, Style, formatTime, formatLocalDateKey, printMinimalPanel, safeErrorMessage, ensureMonitorWindow, collectTickets, } from '../services/pickle-utils.js';
 import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, clearExitReason, assertSchemaVersionDeployParity, SchemaVersionDeployDriftError } from '../services/state-manager.js';
@@ -1539,7 +1539,7 @@ function emitMicroverseWastedIter(ctx, action) {
     });
 }
 function adoptLateBaseline(state, baseline, metricResult, metricConv, ctx) {
-    const lastAccepted = [...metricConv.history].reverse().find(h => h.action === 'accept');
+    const lastAccepted = findLastAcceptedEntry(metricConv.history);
     if (baseline.score === 0 && state.baseline_score === 0 && !lastAccepted) {
         state.baseline_score = metricResult.score;
         ctx.log(`Late baseline adopted: ${metricResult.score} (initial measurement failed)`);
@@ -1618,7 +1618,7 @@ export async function measureAndClassifyIteration(state, baseline, ctx) {
     }
     ctx.log(`Metric: ${metricResult.score} (raw: ${metricResult.raw})`);
     const metricConv = assertMetricConvergence(state, 'measureAndClassifyIteration');
-    const lastAccepted = [...metricConv.history].reverse().find(h => h.action === 'accept');
+    const lastAccepted = findLastAcceptedEntry(metricConv.history);
     adoptLateBaseline(state, baseline, metricResult, metricConv, ctx);
     const previousScore = lastAccepted ? lastAccepted.score : state.baseline_score;
     const classification = compareMetric(metricResult.score, previousScore, state.key_metric.tolerance, state.key_metric.direction);
