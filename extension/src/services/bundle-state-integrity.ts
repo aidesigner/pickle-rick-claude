@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { Defaults } from '../types/index.js';
+import { Defaults, type Backend } from '../types/index.js';
 import { isRecord } from '../lib/is-record.js';
 import { safeErrorMessage } from './pickle-utils.js';
 import { readRecoverableJsonObject } from './recoverable-json.js';
@@ -43,9 +43,24 @@ function readCount(statePath: string): number | null {
     parsed = JSON.parse(fs.readFileSync(statePath, 'utf-8')) as unknown;
   }
   if (!isRecord(parsed)) return null;
-  const value = parsed.codex_manager_relaunch_count;
+  const value = parsed.manager_relaunch_count ?? parsed.codex_manager_relaunch_count;
   if (value === undefined || value === null) return 0;
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function readBackend(statePath: string): Backend {
+  let parsed: unknown = readRecoverableJsonObject(statePath);
+  if (parsed === null) {
+    parsed = JSON.parse(fs.readFileSync(statePath, 'utf-8')) as unknown;
+  }
+  if (!isRecord(parsed)) return 'claude';
+  if (parsed.backend === 'codex' || parsed.backend === 'hermes' || parsed.backend === 'claude') {
+    return parsed.backend;
+  }
+  if (parsed.codex_manager_relaunch_count !== undefined && parsed.manager_relaunch_count === undefined) {
+    return 'codex';
+  }
+  return 'claude';
 }
 
 export function auditCodexManagerRelaunchCaps(sessionDir: string): RelaunchCapAuditResult {
@@ -56,19 +71,22 @@ export function auditCodexManagerRelaunchCaps(sessionDir: string): RelaunchCapAu
   for (const statePath of checkedStatePaths) {
     try {
       const count = readCount(statePath);
+      const stateCap = readBackend(statePath) === 'claude'
+        ? Defaults.CLAUDE_MANAGER_RELAUNCH_CAP
+        : Defaults.CODEX_MANAGER_RELAUNCH_CAP;
       if (count === null) {
         violations.push({
           statePath,
           count,
-          cap,
-          reason: 'state file is not an object or has a non-numeric codex_manager_relaunch_count',
+          cap: stateCap,
+          reason: 'state file is not an object or has a non-numeric manager_relaunch_count',
         });
-      } else if (count > cap) {
+      } else if (count > stateCap) {
         violations.push({
           statePath,
           count,
-          cap,
-          reason: `codex_manager_relaunch_count ${count} exceeds cap ${cap}`,
+          cap: stateCap,
+          reason: `manager_relaunch_count ${count} exceeds cap ${stateCap}`,
         });
       }
     } catch (err) {

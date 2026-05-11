@@ -14,15 +14,19 @@ import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { extractAssistantContent, detectOutputFormat } from '../services/classifier-utils.js';
 import { updateTicketStatusInTransaction } from '../services/transaction-ticket-ops.js';
 import {
-  evaluateCodexManagerRelaunch,
-  recordCodexManagerRelaunch,
-} from '../services/codex-manager-relaunch.js';
+  evaluateManagerRelaunch,
+  recordManagerRelaunch,
+} from '../services/manager-relaunch.js';
 export { extractAssistantContent, detectOutputFormat } from '../services/classifier-utils.js';
 export { hasCompletionCommit } from '../services/pickle-utils.js';
 export {
-  evaluateCodexManagerRelaunch,
-  recordCodexManagerRelaunch,
-} from '../services/codex-manager-relaunch.js';
+  evaluateManagerRelaunch,
+  recordManagerRelaunch,
+} from '../services/manager-relaunch.js';
+export {
+  evaluateManagerRelaunch as evaluateCodexManagerRelaunch,
+  recordManagerRelaunch as recordCodexManagerRelaunch,
+} from '../services/manager-relaunch.js';
 
 const sm = new StateManager();
 
@@ -2398,18 +2402,19 @@ export async function processCompletionBranch(state: State, result: IterationOut
     // gated on circuit-breaker state.
     let postState: State = state;
     try { postState = ctxReadState(ctx); } catch { /* fall back to pre-iteration state */ }
-    const decision = evaluateCodexManagerRelaunch(
+    const decision = evaluateManagerRelaunch(
       postState,
       collectTickets(ctx.sessionDir),
       ctx.cbState ?? null,
+      'other_error',
     );
     if (decision.shouldRelaunch) {
       const relaunchBackend = resolveBackendFromStateFileWithSource(ctx.statePath).backend;
       ctx.log(
         `${relaunchBackend} manager subprocess errored with ${decision.pendingCount} ticket(s) still pending — ` +
-        `relaunching (count ${decision.nextRelaunchCount}/${Defaults.CODEX_MANAGER_RELAUNCH_CAP}).`,
+        `relaunching (count ${decision.nextRelaunchCount}/${decision.cap}).`,
       );
-      recordCodexManagerRelaunch(ctx.statePath, ctx.sessionDir, decision, ctx.iteration, ctx.log);
+      recordManagerRelaunch(ctx.statePath, ctx.sessionDir, decision, ctx.iteration, ctx.log);
       // Relaunch IS progress — reset stall counter. Do NOT deactivate.
       // Do NOT reset the circuit breaker: a 4h hang-guard timeout is
       // exactly the kind of repeated event the CB should observe.
@@ -3739,18 +3744,19 @@ async function runMuxRunnerMain() {
       // fall through to the legacy exit-on-error.
       let postState: State = state;
       try { postState = readRunnerState(statePath); } catch { /* fall back */ }
-      const relaunchDecision = evaluateCodexManagerRelaunch(
+      const relaunchDecision = evaluateManagerRelaunch(
         postState,
         collectTickets(sessionDir),
         cbState,
+        'other_error',
       );
       if (relaunchDecision.shouldRelaunch) {
         const relaunchBackend = resolveBackendFromStateFileWithSource(statePath).backend;
         log(
           `${relaunchBackend} manager subprocess errored with ${relaunchDecision.pendingCount} ticket(s) still pending — ` +
-          `relaunching (count ${relaunchDecision.nextRelaunchCount}/${Defaults.CODEX_MANAGER_RELAUNCH_CAP}).`,
+          `relaunching (count ${relaunchDecision.nextRelaunchCount}/${relaunchDecision.cap}).`,
         );
-        recordCodexManagerRelaunch(statePath, sessionDir, relaunchDecision, iteration, log);
+        recordManagerRelaunch(statePath, sessionDir, relaunchDecision, iteration, log);
         // Relaunch IS progress for outer-loop stall detection — reset stall.
         // Do NOT clear the circuit breaker: a 4h hang-guard timeout is the
         // exact event the CB should observe across relaunches.

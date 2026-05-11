@@ -56,11 +56,14 @@ export interface State {
    */
   effort?: 'low' | 'medium' | 'high' | 'xhigh';
   /**
-   * Manager tmux_mode: count of times mux-runner has relaunched the backend
-   * manager subprocess after a per-iteration error (e.g. 4h hang-guard
-   * SIGTERM) while tickets remained Todo/In Progress. Capped at
-   * `Defaults.CODEX_MANAGER_RELAUNCH_CAP`; once exceeded, mux-runner falls
-   * back to the legacy exit-on-error behavior. Claude backend never sets this.
+   * Manager tmux_mode: count of times the runner has relaunched the backend
+   * manager subprocess after a per-iteration error while tickets remained
+   * Todo/In Progress. Claimed against the active backend cap.
+   */
+  manager_relaunch_count?: number;
+  /**
+   * Legacy alias for `manager_relaunch_count`. StateManager migrates this to
+   * the canonical field on read for one-version backwards compatibility.
    */
   codex_manager_relaunch_count?: number;
   /** Hermes CLI toolsets persisted at setup time and passed to worker/manager spawns. */
@@ -313,9 +316,9 @@ export const Defaults = {
   MANAGER_MAX_TURNS: 50,
   RATE_LIMIT_POLL_MS: 10_000,
   /**
-   * Maximum number of times mux-runner will relaunch the codex manager
+   * Maximum number of times mux-runner will relaunch the codex or hermes manager
    * subprocess after a per-iteration error while pending tickets remain.
-   * Codex tmux_mode runs ONE long-lived manager that loops across many
+   * Codex and hermes tmux_mode runs ONE long-lived manager that loops across many
    * tickets internally; the 4h `MAX_ITERATION_SECONDS` hang-guard SIGTERMs
    * that subprocess and resolves `{ completion: 'error', timedOut: true }`,
    * which the loop would otherwise treat as terminal. Past this cap, fall
@@ -323,6 +326,8 @@ export const Defaults = {
    * loop forever.
    */
   CODEX_MANAGER_RELAUNCH_CAP: 10,
+  /** Claude manager relaunch cap, primarily for `--max-turns` exhaustion recovery. */
+  CLAUDE_MANAGER_RELAUNCH_CAP: 20,
 } as const;
 
 // ---------------------------------------------------------------------------

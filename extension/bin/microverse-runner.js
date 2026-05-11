@@ -11,7 +11,7 @@ import { StateManager, safeDeactivate, finalizeTerminalState, recordExitReason, 
 const sm = new StateManager();
 import { runIteration, loadRateLimitSettings, classifyIterationExit, computeRateLimitAction, killCurrentChild, } from './mux-runner.js';
 import { resolveCodexModel } from './spawn-morty.js';
-import { evaluateCodexManagerRelaunch, recordCodexManagerRelaunch, } from '../services/codex-manager-relaunch.js';
+import { evaluateManagerRelaunch, recordManagerRelaunch, } from '../services/manager-relaunch.js';
 import { logActivity } from '../services/activity-logger.js';
 import { assertBaselineFresh, BaselineMissingError, BaselineStaleError, runGate } from '../services/convergence-gate.js';
 import { spawnGateRemediatorMain } from './spawn-gate-remediator.js';
@@ -1961,12 +1961,12 @@ async function handleManagerErrorOutcome(ctx) {
         postState = readRunnerState(ctx.statePath);
     }
     catch { /* fall back to current runner state */ }
-    const decision = evaluateCodexManagerRelaunch(postState, collectTickets(ctx.sessionDir), null);
+    const decision = evaluateManagerRelaunch(postState, collectTickets(ctx.sessionDir), null, 'other_error');
     if (decision.shouldRelaunch) {
         const relaunchBackend = resolveBackend(postState);
         ctx.log(`${relaunchBackend} manager subprocess errored with ${decision.pendingCount} ticket(s) still pending — ` +
-            `relaunching (count ${decision.nextRelaunchCount}/${Defaults.CODEX_MANAGER_RELAUNCH_CAP}).`);
-        recordCodexManagerRelaunch(ctx.statePath, ctx.sessionDir, decision, ctx.iteration, ctx.log);
+            `relaunching (count ${decision.nextRelaunchCount}/${decision.cap}).`);
+        recordManagerRelaunch(ctx.statePath, ctx.sessionDir, decision, ctx.iteration, ctx.log);
         ctx.currentRunnerState = postState;
         await _deps.sleep(1000);
         return 'continue';

@@ -26,7 +26,7 @@ function hermesState(overrides = {}) {
         max_time_minutes: 720,
         working_dir: process.cwd(),
         backend: 'hermes',
-        codex_manager_relaunch_count: 2,
+        manager_relaunch_count: 2,
         schema_version: 3,
         ...overrides,
     };
@@ -58,7 +58,7 @@ test('hermes-lifecycle: runner relaunch decision counts pending hermes tickets',
 });
 
 test('hermes-lifecycle: relaunch cap is enforced for hermes', () => {
-    const state = hermesState({ codex_manager_relaunch_count: Defaults.CODEX_MANAGER_RELAUNCH_CAP });
+    const state = hermesState({ manager_relaunch_count: Defaults.CODEX_MANAGER_RELAUNCH_CAP });
     const runnerDecision = evaluateCodexManagerRelaunch(state, pendingTickets, null);
     const simpleDecision = evaluateCodexManagerRelaunch(state, true);
 
@@ -76,14 +76,15 @@ test('hermes-lifecycle: record relaunch persists shared manager counter', () => 
 
     try {
         process.env.PICKLE_DATA_ROOT = dataRoot;
-        fs.writeFileSync(statePath, JSON.stringify(hermesState({ codex_manager_relaunch_count: 2 }), null, 2));
+        fs.writeFileSync(statePath, JSON.stringify(hermesState({ manager_relaunch_count: 2 }), null, 2));
         const decision = evaluateCodexManagerRelaunch(JSON.parse(fs.readFileSync(statePath, 'utf-8')), pendingTickets, null);
 
         recordCodexManagerRelaunch(statePath, sessionDir, decision, 5, () => {});
 
         const persisted = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
         assert.equal(persisted.backend, 'hermes');
-        assert.equal(persisted.codex_manager_relaunch_count, 3);
+        assert.equal(persisted.manager_relaunch_count, 3);
+        assert.equal('codex_manager_relaunch_count' in persisted, false);
     } finally {
         if (previousDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
         else process.env.PICKLE_DATA_ROOT = previousDataRoot;

@@ -2884,7 +2884,7 @@ function makeCodexRelaunchSession({ backend = 'codex', priorRelaunchCount = 0, t
         max_time_minutes: 720,
         working_dir: sessionDir,
         backend,
-        codex_manager_relaunch_count: priorRelaunchCount,
+        manager_relaunch_count: priorRelaunchCount,
     }, null, 2));
     for (const t of tickets) writeRelaunchTicket(sessionDir, t.id, t.status, t.order);
     return { sessionDir, statePath, dataRoot };
@@ -2949,7 +2949,7 @@ test('mux-runner relaunch: processCompletionBranch returns relaunch action with 
 
             // Side effect: state counter persisted.
             const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
-            assert.equal(persisted.codex_manager_relaunch_count, 1);
+            assert.equal(persisted.manager_relaunch_count, 1);
             assert.equal(persisted.active, true,
                 'session must remain active so the next iteration spawns a fresh codex manager');
 
@@ -2999,7 +2999,7 @@ test('mux-runner relaunch: cap honored — break on error after CODEX_MANAGER_RE
             assert.equal(action.kind, 'break');
             assert.equal(action.reason, 'error');
             const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
-            assert.equal(persisted.codex_manager_relaunch_count, DefaultsForRelaunch.CODEX_MANAGER_RELAUNCH_CAP);
+            assert.equal(persisted.manager_relaunch_count, DefaultsForRelaunch.CODEX_MANAGER_RELAUNCH_CAP);
         });
     } finally {
         fs.rmSync(session.sessionDir, { recursive: true, force: true });
@@ -3036,7 +3036,7 @@ test('manager-spawn.hermes: relaunch action mirrors codex below cap', async () =
             assert.equal(action.relaunchCount, 1);
             assert.equal(action.pendingTickets, 1);
             const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
-            assert.equal(persisted.codex_manager_relaunch_count, 1);
+            assert.equal(persisted.manager_relaunch_count, 1);
             assert.ok(logs.some(m => m.includes('hermes manager subprocess errored')));
         });
     } finally {
@@ -3072,7 +3072,7 @@ test('manager-spawn.hermes: relaunch cap is respected', async () => {
             assert.equal(action.kind, 'break');
             assert.equal(action.reason, 'error');
             const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
-            assert.equal(persisted.codex_manager_relaunch_count, DefaultsForRelaunch.CODEX_MANAGER_RELAUNCH_CAP);
+            assert.equal(persisted.manager_relaunch_count, DefaultsForRelaunch.CODEX_MANAGER_RELAUNCH_CAP);
         });
     } finally {
         fs.rmSync(session.sessionDir, { recursive: true, force: true });
@@ -3080,7 +3080,7 @@ test('manager-spawn.hermes: relaunch cap is respected', async () => {
     }
 });
 
-test('mux-runner relaunch: claude backend untouched — error still breaks the loop', async () => {
+test('mux-runner relaunch: claude backend relaunches pending work', async () => {
     const session = makeCodexRelaunchSession({
         backend: 'claude',
         tickets: [
@@ -3103,11 +3103,13 @@ test('mux-runner relaunch: claude backend untouched — error still breaks the l
                 'error',
                 ctx,
             );
-            assert.equal(action.kind, 'break');
-            assert.equal(action.reason, 'error');
+            assert.equal(action.kind, 'relaunch');
+            assert.equal(action.relaunchCount, 1);
             const events = readRelaunchActivityEvents(session.dataRoot)
                 .filter(e => e.event === 'codex_manager_relaunch');
-            assert.equal(events.length, 0);
+            assert.equal(events.length, 1);
+            const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
+            assert.equal(persisted.manager_relaunch_count, 1);
         });
     } finally {
         fs.rmSync(session.sessionDir, { recursive: true, force: true });
@@ -3142,7 +3144,7 @@ test('mux-runner relaunch: circuit-breaker OPEN suppresses relaunch even with pe
             assert.equal(action.kind, 'break');
             assert.equal(action.reason, 'error');
             const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
-            assert.equal(persisted.codex_manager_relaunch_count, 0,
+            assert.equal(persisted.manager_relaunch_count, 0,
                 'CB OPEN must NOT bump relaunch counter');
         });
     } finally {

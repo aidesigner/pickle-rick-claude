@@ -129,6 +129,7 @@ const V3_STATE_SHAPE_MARKERS = [
   'teams_mode',
   'max_parallel',
   'effort',
+  'manager_relaunch_count',
   'codex_manager_relaunch_count',
 ] as const;
 
@@ -239,6 +240,29 @@ function normalizeV3StateDefaults(state: State): void {
       { producer_done: false },
     ];
   }
+}
+
+function readFiniteCount(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function migrateLegacyManagerRelaunchCount(state: State): boolean {
+  const canonical = readFiniteCount(state.manager_relaunch_count);
+  const legacy = readFiniteCount(state.codex_manager_relaunch_count);
+
+  if (canonical !== null) {
+    if (state.codex_manager_relaunch_count !== undefined) {
+      delete state.codex_manager_relaunch_count;
+      return true;
+    }
+    return false;
+  }
+
+  if (legacy === null) return false;
+  state.manager_relaunch_count = legacy;
+  delete state.codex_manager_relaunch_count;
+  return true;
 }
 
 function isStateSnapshotNewer(
@@ -383,6 +407,7 @@ export class StateManager {
       process.stderr.write(`[state-manager] schema_version missing in ${statePath} — migrating to 1\n`);
       // Best-effort persist migration — don't throw if write fails
       if (this.opts.schemaVersion >= 3) normalizeV3StateDefaults(state);
+      migrateLegacyManagerRelaunchCount(state);
       try { writeMigrationStateFile(statePath, state); } catch { /* migration write failed, non-fatal */ }
     }
 
@@ -396,10 +421,14 @@ export class StateManager {
     if (state.schema_version < this.opts.schemaVersion) {
       state.schema_version = this.opts.schemaVersion;
       if (this.opts.schemaVersion >= 3) normalizeV3StateDefaults(state);
+      migrateLegacyManagerRelaunchCount(state);
       process.stderr.write(`[state-manager] migrating ${statePath} to schema_version ${this.opts.schemaVersion}\n`);
       try { writeMigrationStateFile(statePath, state); } catch { /* migration write failed, non-fatal */ }
     } else if (state.schema_version >= 3) {
       normalizeV3StateDefaults(state);
+      if (migrateLegacyManagerRelaunchCount(state)) {
+        try { writeMigrationStateFile(statePath, state); } catch { /* migration write failed, non-fatal */ }
+      }
     }
   }
 

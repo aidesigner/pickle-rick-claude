@@ -924,7 +924,7 @@ async function runMicroverseRelaunchScenario({ backend, priorRelaunchCount = 0, 
     const state = {
         ...session.state,
         backend,
-        codex_manager_relaunch_count: priorRelaunchCount,
+        manager_relaunch_count: priorRelaunchCount,
     };
     fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
     for (const ticket of tickets) {
@@ -1602,7 +1602,7 @@ test('microverse-runner relaunches codex manager subprocess below cap', async ()
     });
 
     assert.equal(outcome.calls, 2, 'second iteration proves the outer loop relaunched');
-    assert.equal(outcome.persisted.codex_manager_relaunch_count, 1);
+    assert.equal(outcome.persisted.manager_relaunch_count, 1);
     assert.equal(outcome.persisted.active, true, 'relaunch path must not deactivate the session');
     assert.equal(outcome.relaunchEvents.length, 1);
     assert.equal(outcome.relaunchEvents[0].iteration, 1);
@@ -1623,12 +1623,12 @@ test('microverse-runner honors codex manager relaunch cap', async () => {
     });
 
     assert.equal(outcome.calls, 1, 'at cap should break instead of starting another iteration');
-    assert.equal(outcome.persisted.codex_manager_relaunch_count, Defaults.CODEX_MANAGER_RELAUNCH_CAP);
+    assert.equal(outcome.persisted.manager_relaunch_count, Defaults.CODEX_MANAGER_RELAUNCH_CAP);
     assert.equal(outcome.relaunchEvents.length, 0);
     assert.equal(outcome.result.exitReason, 'error');
 });
 
-test('microverse-runner leaves claude subprocess errors terminal', async () => {
+test('microverse-runner relaunches claude manager subprocess below cap', async () => {
     const outcome = await runMicroverseRelaunchScenario({
         backend: 'claude',
         tickets: [
@@ -1636,8 +1636,29 @@ test('microverse-runner leaves claude subprocess errors terminal', async () => {
         ],
     });
 
-    assert.equal(outcome.calls, 1, 'claude backend must not relaunch');
-    assert.equal(outcome.persisted.codex_manager_relaunch_count, 0);
+    assert.equal(outcome.calls, 2, 'second iteration proves the outer loop relaunched');
+    assert.equal(outcome.persisted.manager_relaunch_count, 1);
+    assert.equal(outcome.persisted.active, true, 'relaunch path must not deactivate the session');
+    assert.equal(outcome.relaunchEvents.length, 1);
+    assert.equal(outcome.relaunchEvents[0].iteration, 1);
+    assert.equal(outcome.result.exitReason, 'stopped');
+    assert.ok(
+        outcome.logs.some(msg => msg.includes('relaunching') && msg.includes(`1/${Defaults.CLAUDE_MANAGER_RELAUNCH_CAP}`)),
+        `expected relaunch log, got ${JSON.stringify(outcome.logs)}`,
+    );
+});
+
+test('microverse-runner honors claude manager relaunch cap', async () => {
+    const outcome = await runMicroverseRelaunchScenario({
+        backend: 'claude',
+        priorRelaunchCount: Defaults.CLAUDE_MANAGER_RELAUNCH_CAP,
+        tickets: [
+            { id: 'mv-pending', status: 'Todo', order: 1 },
+        ],
+    });
+
+    assert.equal(outcome.calls, 1, 'at cap should break instead of starting another iteration');
+    assert.equal(outcome.persisted.manager_relaunch_count, Defaults.CLAUDE_MANAGER_RELAUNCH_CAP);
     assert.equal(outcome.relaunchEvents.length, 0);
     assert.equal(outcome.result.exitReason, 'error');
 });

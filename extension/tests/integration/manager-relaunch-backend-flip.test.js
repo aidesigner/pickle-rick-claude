@@ -1,8 +1,6 @@
 // @tier: integration
-// AC-XBL-08 — Regression test: state.backend=codex yields shouldRelaunch:true;
-// mutating to state.backend=claude yields shouldRelaunch:false, reason:'not_codex'.
-// ZERO production-code change (R-XBL-4 was dropped — behavior already shipped at
-// codex-manager-relaunch.ts:69, mux-runner.ts:2078-2086 + :3206-3212).
+// AC-XBL-08 — Regression test: state.backend=codex and state.backend=claude are
+// both eligible for manager relaunch, with backend-specific caps.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
@@ -46,7 +44,7 @@ function makeState(overrides = {}) {
     start_time_epoch: Math.floor(Date.now() / 1000),
     max_time_minutes: 720,
     schema_version: 1,
-    codex_manager_relaunch_count: 0,
+    manager_relaunch_count: 0,
     original_prompt: 'manager-relaunch-backend-flip regression fixture',
     history: [],
     started_at: new Date().toISOString(),
@@ -64,16 +62,17 @@ test('AC-XBL-08: manager-relaunch-backend-flip — codex backend yields shouldRe
   });
 });
 
-test('AC-XBL-08: manager-relaunch-backend-flip — mutating to claude yields shouldRelaunch:false reason:not_codex', () => {
+test('AC-XBL-08: manager-relaunch-backend-flip — mutating to claude yields shouldRelaunch:true', () => {
   withCleanEnv(() => {
     const state = makeState({ backend: 'claude' });
     const decision = evaluateCodexManagerRelaunch(state, PENDING_TICKETS, null);
-    assert.equal(decision.shouldRelaunch, false, 'state.backend=claude must not trigger codex relaunch');
-    assert.equal(decision.reason, 'not_codex', 'reason must be not_codex when backend is claude');
+    assert.equal(decision.shouldRelaunch, true, 'state.backend=claude with pending tickets must trigger relaunch');
+    assert.equal(decision.reason, 'eligible');
+    assert.equal(decision.cap, 20);
   });
 });
 
-test('AC-XBL-08: manager-relaunch-backend-flip — sequential flip: codex→true then claude→false', () => {
+test('AC-XBL-08: manager-relaunch-backend-flip — sequential flip: codex→true then claude→true', () => {
   // Core regression: single state object mutated between decisions, same ticket list.
   // Locks in codex-manager-relaunch.ts:69 behavior.
   withCleanEnv(() => {
@@ -86,8 +85,9 @@ test('AC-XBL-08: manager-relaunch-backend-flip — sequential flip: codex→true
     state.backend = 'claude';
 
     const second = evaluateCodexManagerRelaunch(state, PENDING_TICKETS, null);
-    assert.equal(second.shouldRelaunch, false, 'second decision (claude) must not shouldRelaunch');
-    assert.equal(second.reason, 'not_codex', 'second decision reason must be not_codex');
+    assert.equal(second.shouldRelaunch, true, 'second decision (claude) must shouldRelaunch');
+    assert.equal(second.reason, 'eligible');
+    assert.equal(second.cap, 20);
   });
 });
 
@@ -115,8 +115,9 @@ test('AC-XBL-08: manager-relaunch-backend-flip — state-file-backed: StateManag
     withCleanEnv(() => {
       const claudeState = sm.read(statePath);
       const second = evaluateCodexManagerRelaunch(claudeState, PENDING_TICKETS, null);
-      assert.equal(second.shouldRelaunch, false, 'state-file claude backend must not shouldRelaunch');
-      assert.equal(second.reason, 'not_codex');
+      assert.equal(second.shouldRelaunch, true, 'state-file claude backend must shouldRelaunch');
+      assert.equal(second.reason, 'eligible');
+      assert.equal(second.cap, 20);
     });
   } finally {
     fs.rmSync(tmpDir, { recursive: true, force: true });

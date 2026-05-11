@@ -29,10 +29,25 @@ function readCount(statePath) {
     }
     if (!isRecord(parsed))
         return null;
-    const value = parsed.codex_manager_relaunch_count;
+    const value = parsed.manager_relaunch_count ?? parsed.codex_manager_relaunch_count;
     if (value === undefined || value === null)
         return 0;
     return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+function readBackend(statePath) {
+    let parsed = readRecoverableJsonObject(statePath);
+    if (parsed === null) {
+        parsed = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    }
+    if (!isRecord(parsed))
+        return 'claude';
+    if (parsed.backend === 'codex' || parsed.backend === 'hermes' || parsed.backend === 'claude') {
+        return parsed.backend;
+    }
+    if (parsed.codex_manager_relaunch_count !== undefined && parsed.manager_relaunch_count === undefined) {
+        return 'codex';
+    }
+    return 'claude';
 }
 export function auditCodexManagerRelaunchCaps(sessionDir) {
     const cap = Defaults.CODEX_MANAGER_RELAUNCH_CAP;
@@ -41,20 +56,23 @@ export function auditCodexManagerRelaunchCaps(sessionDir) {
     for (const statePath of checkedStatePaths) {
         try {
             const count = readCount(statePath);
+            const stateCap = readBackend(statePath) === 'claude'
+                ? Defaults.CLAUDE_MANAGER_RELAUNCH_CAP
+                : Defaults.CODEX_MANAGER_RELAUNCH_CAP;
             if (count === null) {
                 violations.push({
                     statePath,
                     count,
-                    cap,
-                    reason: 'state file is not an object or has a non-numeric codex_manager_relaunch_count',
+                    cap: stateCap,
+                    reason: 'state file is not an object or has a non-numeric manager_relaunch_count',
                 });
             }
-            else if (count > cap) {
+            else if (count > stateCap) {
                 violations.push({
                     statePath,
                     count,
-                    cap,
-                    reason: `codex_manager_relaunch_count ${count} exceeds cap ${cap}`,
+                    cap: stateCap,
+                    reason: `manager_relaunch_count ${count} exceeds cap ${stateCap}`,
                 });
             }
         }

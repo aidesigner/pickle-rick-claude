@@ -319,7 +319,7 @@ function makeRelaunchSession(opts = {}) {
         max_time_minutes: 720,
         working_dir: sessionDir,
         backend: opts.backend ?? 'codex',
-        codex_manager_relaunch_count: opts.priorRelaunchCount ?? 0,
+        manager_relaunch_count: opts.priorRelaunchCount ?? 0,
     }, null, 2));
 
     for (const t of opts.tickets || []) {
@@ -468,8 +468,8 @@ test('processCompletionBranch: codex + error + pending tickets + below cap → r
             assert.equal(action.resetStall, true);
 
             const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
-            assert.equal(persisted.codex_manager_relaunch_count, 2,
-                'state.codex_manager_relaunch_count must be incremented');
+            assert.equal(persisted.manager_relaunch_count, 2,
+                'state.manager_relaunch_count must be incremented');
             assert.equal(persisted.active, true,
                 'session must remain active across relaunch (no safeDeactivate)');
 
@@ -507,7 +507,7 @@ test('processCompletionBranch: codex + error + all tickets Done → break with r
             assert.equal(action.reason, 'error');
             const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
             // No relaunch happened — counter unchanged.
-            assert.equal(persisted.codex_manager_relaunch_count, 0);
+            assert.equal(persisted.manager_relaunch_count, 0);
         });
     } finally {
         fs.rmSync(session.sessionDir, { recursive: true, force: true });
@@ -537,7 +537,7 @@ test('processCompletionBranch: codex + error + counter at cap → break with rea
             assert.equal(action.reason, 'error');
             // Cap honored: counter not bumped past the cap.
             const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
-            assert.equal(persisted.codex_manager_relaunch_count, Defaults.CODEX_MANAGER_RELAUNCH_CAP);
+            assert.equal(persisted.manager_relaunch_count, Defaults.CODEX_MANAGER_RELAUNCH_CAP);
             const events = readActivityEvents(session.dataRoot);
             assert.equal(
                 events.filter(e => e.event === 'codex_manager_relaunch').length,
@@ -551,7 +551,7 @@ test('processCompletionBranch: codex + error + counter at cap → break with rea
     }
 });
 
-test('processCompletionBranch: claude backend + error + pending → break with reason error (no relaunch)', async () => {
+test('processCompletionBranch: claude backend + error + pending → relaunch action with claude cap', async () => {
     const session = makeRelaunchSession({
         backend: 'claude',
         tickets: [
@@ -566,14 +566,16 @@ test('processCompletionBranch: claude backend + error + pending → break with r
                 'error',
                 ctx,
             );
-            assert.equal(action.kind, 'break');
-            assert.equal(action.reason, 'error');
+            assert.equal(action.kind, 'relaunch');
+            assert.equal(action.relaunchCount, 1);
             const events = readActivityEvents(session.dataRoot);
             assert.equal(
                 events.filter(e => e.event === 'codex_manager_relaunch').length,
-                0,
-                'claude backend must never emit codex_manager_relaunch',
+                1,
+                'claude backend must emit relaunch activity when pending work remains',
             );
+            const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
+            assert.equal(persisted.manager_relaunch_count, 1);
         });
     } finally {
         fs.rmSync(session.sessionDir, { recursive: true, force: true });
@@ -597,10 +599,11 @@ test('evaluateCodexManagerRelaunch: pure decision honors cap, CB-OPEN, and pendi
     assert.equal(eligible.nextRelaunchCount, 1);
     assert.equal(eligible.reason, 'eligible');
 
-    // Not codex
-    const notCodex = evaluateCodexManagerRelaunch(claudeState, pending, null);
-    assert.equal(notCodex.shouldRelaunch, false);
-    assert.equal(notCodex.reason, 'not_codex');
+    // Claude uses the backend-specific cap and is also eligible.
+    const claude = evaluateCodexManagerRelaunch(claudeState, pending, null);
+    assert.equal(claude.shouldRelaunch, true);
+    assert.equal(claude.reason, 'eligible');
+    assert.equal(claude.cap, Defaults.CLAUDE_MANAGER_RELAUNCH_CAP);
 
     // No pending
     const noPending = evaluateCodexManagerRelaunch(codexState, allDone, null);
@@ -642,7 +645,7 @@ test('recordCodexManagerRelaunch: persists counter and emits activity event', ()
                 (m) => logs.push(m),
             );
             const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
-            assert.equal(persisted.codex_manager_relaunch_count, 1);
+            assert.equal(persisted.manager_relaunch_count, 1);
 
             const events = readActivityEvents(session.dataRoot);
             const relaunch = events.find(e => e.event === 'codex_manager_relaunch');
@@ -717,10 +720,11 @@ test('evaluateCodexManagerRelaunch returns existing reason when within budget', 
     assert.equal(eligible.shouldRelaunch, true);
     assert.equal(eligible.reason, 'eligible');
 
-    // Within budget but not codex → still falls through to not_codex.
+    // Within budget and claude → eligible under the claude cap.
     const claudeState = { ...codexState, backend: 'claude' };
-    const notCodex = evaluateCodexManagerRelaunch(claudeState, pending, null);
-    assert.equal(notCodex.reason, 'not_codex');
+    const claude = evaluateCodexManagerRelaunch(claudeState, pending, null);
+    assert.equal(claude.reason, 'eligible');
+    assert.equal(claude.cap, Defaults.CLAUDE_MANAGER_RELAUNCH_CAP);
 
     // Within budget but no pending → no_pending.
     const allDone = pending.map(t => ({ ...t, status: 'Done' }));

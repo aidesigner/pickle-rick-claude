@@ -63,9 +63,9 @@ export const Defaults = {
     MANAGER_MAX_TURNS: 50,
     RATE_LIMIT_POLL_MS: 10_000,
     /**
-     * Maximum number of times mux-runner will relaunch the codex manager
+     * Maximum number of times mux-runner will relaunch the codex or hermes manager
      * subprocess after a per-iteration error while pending tickets remain.
-     * Codex tmux_mode runs ONE long-lived manager that loops across many
+     * Codex and hermes tmux_mode runs ONE long-lived manager that loops across many
      * tickets internally; the 4h `MAX_ITERATION_SECONDS` hang-guard SIGTERMs
      * that subprocess and resolves `{ completion: 'error', timedOut: true }`,
      * which the loop would otherwise treat as terminal. Past this cap, fall
@@ -73,6 +73,8 @@ export const Defaults = {
      * loop forever.
      */
     CODEX_MANAGER_RELAUNCH_CAP: 10,
+    /** Claude manager relaunch cap, primarily for `--max-turns` exhaustion recovery. */
+    CLAUDE_MANAGER_RELAUNCH_CAP: 20,
 };
 // ---------------------------------------------------------------------------
 // Lifecycle Steps
