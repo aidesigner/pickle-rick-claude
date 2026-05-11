@@ -1289,15 +1289,26 @@ function collectHelperSentinelReferences(prdContent, workingDir) {
     for (const { line, sourceLine } of lineRefs(prdContent)) {
         if (!/\b(?:helpers?|sentinels?)\b/i.test(line))
             continue;
-        const candidates = quotedSymbols(line).filter((symbol) => /^[A-Za-z_$][A-Za-z0-9_$.-]*$/.test(symbol));
-        for (const symbol of candidates) {
+        QUOTED_SYMBOL_RE.lastIndex = 0;
+        let match;
+        while ((match = QUOTED_SYMBOL_RE.exec(line)) !== null) {
+            const [raw, symbol] = match;
+            if (!/^[A-Za-z_$][A-Za-z0-9_$.-]*$/.test(symbol))
+                continue;
+            const afterMatch = line.slice(match.index + raw.length);
+            const annotation = raw.startsWith('`') ? parseForwardCreateAnnotation(afterMatch) : undefined;
             const grounded = hasSourceHit(symbol, workingDir);
+            const status = grounded ? 'valid' : annotation ? 'forward-create' : 'phantom';
             refs.push({
                 symbol,
                 sourceLine,
                 evidence: line.trim(),
-                status: grounded ? 'pass' : 'fail',
-                ...(grounded ? {} : { reason: 'no source-tree hit found' }),
+                status,
+                ...(status === 'phantom'
+                    ? { reason: 'no source-tree hit found' }
+                    : status === 'forward-create'
+                        ? { reason: annotation }
+                        : {}),
             });
         }
     }
