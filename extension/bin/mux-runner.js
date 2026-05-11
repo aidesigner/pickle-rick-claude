@@ -1059,6 +1059,16 @@ export function detectManagerMaxTurnsExit(outcome, logFile) {
     }
     return false;
 }
+export function classifyManagerRelaunchExit(state, outcome, logFile) {
+    const backend = resolveBackend(state);
+    if (backend === 'claude' && outcome && detectManagerMaxTurnsExit(outcome, logFile)) {
+        return 'claude_max_turns';
+    }
+    if (backend === 'codex' && outcome?.timedOut === true) {
+        return 'codex_4h_hang_guard';
+    }
+    return 'other_error';
+}
 export function classifyIterationExit(completionResult, logFile, timing) {
     if (completionResult === 'inactive')
         return { type: 'inactive' };
@@ -2069,10 +2079,11 @@ export async function processCompletionBranch(state, result, ctx) {
             postState = ctxReadState(ctx);
         }
         catch { /* fall back to pre-iteration state */ }
-        const decision = evaluateManagerRelaunch(postState, collectTickets(ctx.sessionDir), ctx.cbState ?? null, 'other_error');
-        if (decision.shouldRelaunch) {
+        const exitKind = classifyManagerRelaunchExit(postState, ctx.outcome, ctx.iterLogFile || path.join(ctx.sessionDir, `tmux_iteration_${ctx.iteration}.log`));
+        const decision = evaluateManagerRelaunch(postState, collectTickets(ctx.sessionDir), ctx.cbState ?? null, exitKind);
+        if (decision.shouldRelaunch && decision.exitKind !== 'other_error') {
             const relaunchBackend = resolveBackendFromStateFileWithSource(ctx.statePath).backend;
-            ctx.log(`${relaunchBackend} manager subprocess errored with ${decision.pendingCount} ticket(s) still pending — ` +
+            ctx.log(`${relaunchBackend} manager subprocess exited via ${decision.exitKind} with ${decision.pendingCount} ticket(s) still pending — ` +
                 `relaunching (count ${decision.nextRelaunchCount}/${decision.cap}).`);
             recordManagerRelaunch(ctx.statePath, ctx.sessionDir, decision, ctx.iteration, ctx.log);
             // Relaunch IS progress — reset stall counter. Do NOT deactivate.
@@ -3380,10 +3391,11 @@ async function runMuxRunnerMain() {
                 postState = readRunnerState(statePath);
             }
             catch { /* fall back */ }
-            const relaunchDecision = evaluateManagerRelaunch(postState, collectTickets(sessionDir), cbState, 'other_error');
-            if (relaunchDecision.shouldRelaunch) {
+            const exitKind = classifyManagerRelaunchExit(postState, outcome, iterLogFile);
+            const relaunchDecision = evaluateManagerRelaunch(postState, collectTickets(sessionDir), cbState, exitKind);
+            if (relaunchDecision.shouldRelaunch && relaunchDecision.exitKind !== 'other_error') {
                 const relaunchBackend = resolveBackendFromStateFileWithSource(statePath).backend;
-                log(`${relaunchBackend} manager subprocess errored with ${relaunchDecision.pendingCount} ticket(s) still pending — ` +
+                log(`${relaunchBackend} manager subprocess exited via ${relaunchDecision.exitKind} with ${relaunchDecision.pendingCount} ticket(s) still pending — ` +
                     `relaunching (count ${relaunchDecision.nextRelaunchCount}/${relaunchDecision.cap}).`);
                 recordManagerRelaunch(statePath, sessionDir, relaunchDecision, iteration, log);
                 // Relaunch IS progress for outer-loop stall detection — reset stall.

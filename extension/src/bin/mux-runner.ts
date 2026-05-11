@@ -16,6 +16,7 @@ import { updateTicketStatusInTransaction } from '../services/transaction-ticket-
 import {
   evaluateManagerRelaunch,
   recordManagerRelaunch,
+  type ManagerRelaunchExitKind,
 } from '../services/manager-relaunch.js';
 export { extractAssistantContent, detectOutputFormat } from '../services/classifier-utils.js';
 export { hasCompletionCommit } from '../services/pickle-utils.js';
@@ -1222,6 +1223,21 @@ export function detectManagerMaxTurnsExit(outcome: IterationOutcome, logFile: st
   return false;
 }
 
+export function classifyManagerRelaunchExit(
+  state: State,
+  outcome: IterationOutcome | undefined,
+  logFile: string,
+): ManagerRelaunchExitKind {
+  const backend = resolveBackend(state);
+  if (backend === 'claude' && outcome && detectManagerMaxTurnsExit(outcome, logFile)) {
+    return 'claude_max_turns';
+  }
+  if (backend === 'codex' && outcome?.timedOut === true) {
+    return 'codex_4h_hang_guard';
+  }
+  return 'other_error';
+}
+
 export function classifyIterationExit(
   completionResult: string,
   logFile: string,
@@ -2402,16 +2418,21 @@ export async function processCompletionBranch(state: State, result: IterationOut
     // gated on circuit-breaker state.
     let postState: State = state;
     try { postState = ctxReadState(ctx); } catch { /* fall back to pre-iteration state */ }
+    const exitKind = classifyManagerRelaunchExit(
+      postState,
+      ctx.outcome,
+      ctx.iterLogFile || path.join(ctx.sessionDir, `tmux_iteration_${ctx.iteration}.log`),
+    );
     const decision = evaluateManagerRelaunch(
       postState,
       collectTickets(ctx.sessionDir),
       ctx.cbState ?? null,
-      'other_error',
+      exitKind,
     );
-    if (decision.shouldRelaunch) {
+    if (decision.shouldRelaunch && decision.exitKind !== 'other_error') {
       const relaunchBackend = resolveBackendFromStateFileWithSource(ctx.statePath).backend;
       ctx.log(
-        `${relaunchBackend} manager subprocess errored with ${decision.pendingCount} ticket(s) still pending — ` +
+        `${relaunchBackend} manager subprocess exited via ${decision.exitKind} with ${decision.pendingCount} ticket(s) still pending — ` +
         `relaunching (count ${decision.nextRelaunchCount}/${decision.cap}).`,
       );
       recordManagerRelaunch(ctx.statePath, ctx.sessionDir, decision, ctx.iteration, ctx.log);
@@ -3744,16 +3765,17 @@ async function runMuxRunnerMain() {
       // fall through to the legacy exit-on-error.
       let postState: State = state;
       try { postState = readRunnerState(statePath); } catch { /* fall back */ }
+      const exitKind = classifyManagerRelaunchExit(postState, outcome, iterLogFile);
       const relaunchDecision = evaluateManagerRelaunch(
         postState,
         collectTickets(sessionDir),
         cbState,
-        'other_error',
+        exitKind,
       );
-      if (relaunchDecision.shouldRelaunch) {
+      if (relaunchDecision.shouldRelaunch && relaunchDecision.exitKind !== 'other_error') {
         const relaunchBackend = resolveBackendFromStateFileWithSource(statePath).backend;
         log(
-          `${relaunchBackend} manager subprocess errored with ${relaunchDecision.pendingCount} ticket(s) still pending — ` +
+          `${relaunchBackend} manager subprocess exited via ${relaunchDecision.exitKind} with ${relaunchDecision.pendingCount} ticket(s) still pending — ` +
           `relaunching (count ${relaunchDecision.nextRelaunchCount}/${relaunchDecision.cap}).`,
         );
         recordManagerRelaunch(statePath, sessionDir, relaunchDecision, iteration, log);
