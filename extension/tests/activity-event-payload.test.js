@@ -215,6 +215,21 @@ const EVENT_CASES = [
     drop: 'ts',
   },
   {
+    type: 'manager_max_turns_relaunch',
+    valid: {
+      event: 'manager_max_turns_relaunch',
+      ts: TS,
+      backend: 'claude',
+      relaunch_count: 4,
+      cap: 20,
+      pending_count: 3,
+      last_ticket_seen: '620fea14',
+      session: 'session-1',
+      iteration: 7,
+    },
+    drop: 'last_ticket_seen',
+  },
+  {
     type: 'pipeline_judge_timeout_recovery_attempted',
     valid: {
       event: 'pipeline_judge_timeout_recovery_attempted',
@@ -402,6 +417,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'worker_lint_autofix_applied',
     'worker_completion_commit_announced',
     'time_cap_disabled_default',
+    'manager_max_turns_relaunch',
     'manager_idle_backoff_engaged',
     'manager_idle_backoff_released',
     'standup_session_dropped',

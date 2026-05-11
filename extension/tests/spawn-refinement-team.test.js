@@ -176,6 +176,7 @@ test('spawn-refinement-team: activity event schema reference stays aligned with 
         'ticket_audit_failed',
         'ticket_audit_manual_edit',
         'smoke_gate_bypassed',
+        'manager_max_turns_relaunch',
     ];
 
     for (const eventName of documentedEvents) {

@@ -221,6 +221,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'completion_commit_inferred_from_git',
     'worker_completion_commit_announced',
     'time_cap_disabled_default',
+    'manager_max_turns_relaunch',
     'bundle_bootstrap_exemption_applied',
     'manager_idle_backoff_engaged',
     'manager_idle_backoff_released',

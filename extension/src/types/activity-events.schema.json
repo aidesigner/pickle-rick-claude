@@ -321,6 +321,22 @@
         "prior_value": {}
       }
     },
+    "manager_max_turns_relaunch": {
+      "type": "object",
+      "required": ["event", "ts", "backend", "relaunch_count", "cap", "pending_count", "last_ticket_seen"],
+      "properties": {
+        "event": { "type": "string", "const": "manager_max_turns_relaunch" },
+        "ts": { "type": "string" },
+        "backend": { "$ref": "#/definitions/backendEnum" },
+        "relaunch_count": { "type": "integer", "minimum": 0 },
+        "cap": { "type": "integer", "minimum": 0 },
+        "pending_count": { "type": "integer", "minimum": 0 },
+        "last_ticket_seen": { "type": ["string", "null"] },
+        "session": { "type": "string" },
+        "iteration": { "type": "integer" },
+        "source": { "type": "string" }
+      }
+    },
     "manager_idle_backoff_engaged": {
       "type": "object",
       "required": ["event", "ts", "session", "ticket", "consecutive_wait_turns", "last_worker_pid"],
@@ -546,6 +562,7 @@
     { "$ref": "#/definitions/worker_lint_autofix_applied" },
     { "$ref": "#/definitions/worker_completion_commit_announced" },
     { "$ref": "#/definitions/time_cap_disabled_default" },
+    { "$ref": "#/definitions/manager_max_turns_relaunch" },
     { "$ref": "#/definitions/manager_idle_backoff_engaged" },
     { "$ref": "#/definitions/manager_idle_backoff_released" },
     { "$ref": "#/definitions/standup_session_dropped" },

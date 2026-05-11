@@ -120,8 +120,12 @@ export function evaluateManagerRelaunch(state, pendingInput, cbStateOrExitKind, 
     };
 }
 export function recordManagerRelaunch(statePath, sessionDir, decision, iteration, log = () => { }) {
+    let lastTicketSeen = null;
     try {
         sm.update(statePath, s => {
+            lastTicketSeen = typeof s.current_ticket === 'string' && s.current_ticket.length > 0
+                ? s.current_ticket
+                : null;
             s.manager_relaunch_count = decision
                 ? decision.nextRelaunchCount
                 : currentManagerRelaunchCount(s) + 1;
@@ -132,6 +136,20 @@ export function recordManagerRelaunch(statePath, sessionDir, decision, iteration
         log(`WARN: failed to persist manager_relaunch_count: ${safeErrorMessage(err)}`);
     }
     if (sessionDir && iteration !== undefined) {
+        if (decision?.exitKind === 'claude_max_turns') {
+            logActivity({
+                event: 'manager_max_turns_relaunch',
+                source: 'pickle',
+                session: path.basename(sessionDir),
+                iteration,
+                backend: decision.backend,
+                relaunch_count: decision.nextRelaunchCount,
+                cap: decision.cap,
+                pending_count: decision.pendingCount,
+                last_ticket_seen: lastTicketSeen,
+            });
+            return;
+        }
         logActivity({
             event: 'codex_manager_relaunch',
             source: 'pickle',

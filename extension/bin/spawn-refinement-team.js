@@ -137,6 +137,7 @@ When writing acceptance criteria or analyzing PRD sections that reference activi
 | \`ticket_audit_failed\` | \`session\` (optional) | mux-runner ticket-audit halt path |
 | \`ticket_audit_manual_edit\` | \`gate_payload.edit_count\` | mux-runner audit loop |
 | \`smoke_gate_bypassed\` | \`reason\` | mux-runner smoke-gate path |
+| \`manager_max_turns_relaunch\` | \`backend\`, \`relaunch_count\`, \`cap\`, \`pending_count\`, \`last_ticket_seen\` | manager-relaunch Claude max-turn relaunch path |
 
 When writing ACs that assert event emission, include the full event name and required payload fields. Do NOT invent event names — use only the names listed here or already present in \`extension/src/types/index.ts:VALID_ACTIVITY_EVENTS\`.`;
 export const PATH_VERIFICATION_PROMPT_SECTION = `## Path Verification & Forward-reference hygiene

@@ -146,6 +146,47 @@ test('recordManagerRelaunch persists canonical counter and emits activity event'
   }
 });
 
+test('recordManagerRelaunch emits manager_max_turns_relaunch payload for claude max-turn exits', () => {
+  const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-relaunch-service-'));
+  const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-relaunch-service-data-'));
+  const previousDataRoot = process.env.PICKLE_DATA_ROOT;
+  const statePath = path.join(sessionDir, 'state.json');
+
+  try {
+    process.env.PICKLE_DATA_ROOT = dataRoot;
+    fs.writeFileSync(statePath, JSON.stringify(stateFixture({
+      backend: 'claude',
+      current_ticket: '620fea14',
+      manager_relaunch_count: 2,
+    }), null, 2));
+
+    const decision = evaluateManagerRelaunch(
+      JSON.parse(fs.readFileSync(statePath, 'utf-8')),
+      pendingTickets,
+      null,
+      'claude_max_turns',
+    );
+    assert.equal(decision.shouldRelaunch, true);
+
+    recordManagerRelaunch(statePath, sessionDir, decision, 7, () => {});
+
+    const relaunchEvent = readActivityEvents(dataRoot).find(event => event.event === 'manager_max_turns_relaunch');
+    assert.ok(relaunchEvent);
+    assert.equal(relaunchEvent.backend, 'claude');
+    assert.equal(relaunchEvent.relaunch_count, 3);
+    assert.equal(relaunchEvent.cap, Defaults.CLAUDE_MANAGER_RELAUNCH_CAP);
+    assert.equal(relaunchEvent.pending_count, 1);
+    assert.equal(relaunchEvent.last_ticket_seen, '620fea14');
+    assert.equal(relaunchEvent.iteration, 7);
+    assert.equal(relaunchEvent.session, path.basename(sessionDir));
+  } finally {
+    if (previousDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+    else process.env.PICKLE_DATA_ROOT = previousDataRoot;
+    fs.rmSync(sessionDir, { recursive: true, force: true });
+    fs.rmSync(dataRoot, { recursive: true, force: true });
+  }
+});
+
 test('StateManager migrates codex_manager_relaunch_count to manager_relaunch_count on read', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-relaunch-migrate-'));
   const statePath = path.join(dir, 'state.json');

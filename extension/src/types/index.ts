@@ -493,6 +493,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'completion_commit_inferred_from_git',
   'worker_completion_commit_announced',
   'time_cap_disabled_default',
+  'manager_max_turns_relaunch',
   'bundle_bootstrap_exemption_applied',
   'manager_idle_backoff_engaged',
   'manager_idle_backoff_released',
@@ -587,6 +588,10 @@ export interface ActivityEvent {
   expected_tickets_version?: number;
   actual_tickets_version?: number;
   bytes_dropped?: number;
+  relaunch_count?: number;
+  pending_count?: number;
+  cap?: number;
+  last_ticket_seen?: string | null;
   gate_payload?: Record<string, unknown>;
   // AC-LPB-05: emitted by setup.ts/pipeline-runner.ts on session reconstruction
   // (resume) so monitor/standup consumers can distinguish a fresh launch from a

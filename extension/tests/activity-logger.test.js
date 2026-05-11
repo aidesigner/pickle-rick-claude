@@ -83,6 +83,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'gate_regression_threshold_warning', 'gate_out_of_scope_failures_present',
         'commit_pending_probe_fired',
         'codex_manager_relaunch',
+        'manager_max_turns_relaunch',
         'readiness_failed_post_correction',
         // BMAD residual P0.6: check-readiness --skip-readiness emits this when
         // the gate is bypassed via state.flags.skip_readiness_reason.
@@ -135,7 +136,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'manager_idle_backoff_engaged',
         'manager_idle_backoff_released',
     ];
-    assert.equal(VALID_ACTIVITY_EVENTS.length, 114);
+    assert.equal(VALID_ACTIVITY_EVENTS.length, 124);
     for (const e of expected) {
         assert.ok(VALID_ACTIVITY_EVENTS.includes(e), `Missing event type: ${e}`);
     }
