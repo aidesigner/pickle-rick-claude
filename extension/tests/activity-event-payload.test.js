@@ -269,6 +269,29 @@ const EVENT_CASES = [
     },
     drop: 'gate_payload',
   },
+  {
+    type: 'monitor_respawn_started',
+    valid: {
+      event: 'monitor_respawn_started',
+      ts: TS,
+      gate_payload: { from_phase: 'pickle', to_phase: 'anatomy-park', mode: 'microverse' },
+    },
+    drop: 'gate_payload',
+  },
+  {
+    type: 'monitor_respawn_failed',
+    valid: {
+      event: 'monitor_respawn_failed',
+      ts: TS,
+      gate_payload: { phase: 'anatomy-park', error: 'tmux respawn failed: pane 0 not found' },
+    },
+    drop: 'gate_payload',
+  },
+  {
+    type: 'monitor_mode_swapped',
+    valid: { event: 'monitor_mode_swapped', ts: TS, mode: 'microverse' },
+    drop: 'mode',
+  },
 ];
 
 for (const { type, valid, drop } of EVENT_CASES) {
