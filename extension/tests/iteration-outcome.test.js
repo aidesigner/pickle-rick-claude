@@ -579,7 +579,7 @@ test('processCompletionBranch: codex + error exactly at wall-clock cap → break
                     ctx,
                 );
                 assert.equal(action.kind, 'break');
-                assert.equal(action.reason, 'error');
+                assert.equal(action.reason, 'limit');
 
                 const events = readActivityEvents(session.dataRoot);
                 assert.equal(
@@ -589,6 +589,9 @@ test('processCompletionBranch: codex + error exactly at wall-clock cap → break
                 );
 
                 const finalState = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
+                assert.equal(finalState.active, false);
+                assert.equal(finalState.current_ticket, null);
+                assert.equal(finalState.exit_reason, 'limit');
                 assert.equal(finalState.manager_relaunch_count, 1);
             } finally {
                 Date.now = realNow;

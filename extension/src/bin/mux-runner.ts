@@ -2438,6 +2438,11 @@ export async function processCompletionBranch(state: State, result: IterationOut
       ctx.cbState ?? null,
       exitKind,
     );
+    if (decision.reason === 'time_limit') {
+      ctx.log('Time limit reached. Exiting.');
+      finalizeTerminalState(ctx.statePath, { step: 'completed', runnerIteration: ctx.iteration, exitReason: 'limit' });
+      return { kind: 'break', reason: 'limit' };
+    }
     if (decision.shouldRelaunch && decision.exitKind !== 'other_error') {
       const relaunchBackend = resolveBackendFromStateFileWithSource(ctx.statePath).backend;
       ctx.log(
@@ -3781,6 +3786,12 @@ async function runMuxRunnerMain() {
         cbState,
         exitKind,
       );
+      if (relaunchDecision.reason === 'time_limit') {
+        log('Time limit reached. Exiting.');
+        finalizeTerminalState(statePath, { step: 'completed', runnerIteration: iteration, exitReason: 'limit' });
+        exitReason = 'limit';
+        break;
+      }
       if (relaunchDecision.shouldRelaunch && relaunchDecision.exitKind !== 'other_error') {
         const relaunchBackend = resolveBackendFromStateFileWithSource(statePath).backend;
         log(

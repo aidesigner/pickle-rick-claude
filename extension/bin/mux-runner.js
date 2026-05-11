@@ -2090,6 +2090,11 @@ export async function processCompletionBranch(state, result, ctx) {
         catch { /* fall back to pre-iteration state */ }
         const exitKind = classifyManagerRelaunchExit(postState, ctx.outcome, ctx.iterLogFile || path.join(ctx.sessionDir, `tmux_iteration_${ctx.iteration}.log`));
         const decision = evaluateManagerRelaunch(postState, collectTickets(ctx.sessionDir), ctx.cbState ?? null, exitKind);
+        if (decision.reason === 'time_limit') {
+            ctx.log('Time limit reached. Exiting.');
+            finalizeTerminalState(ctx.statePath, { step: 'completed', runnerIteration: ctx.iteration, exitReason: 'limit' });
+            return { kind: 'break', reason: 'limit' };
+        }
         if (decision.shouldRelaunch && decision.exitKind !== 'other_error') {
             const relaunchBackend = resolveBackendFromStateFileWithSource(ctx.statePath).backend;
             ctx.log(`${relaunchBackend} manager subprocess exited via ${decision.exitKind} with ${decision.pendingCount} ticket(s) still pending — ` +
@@ -3402,6 +3407,12 @@ async function runMuxRunnerMain() {
             catch { /* fall back */ }
             const exitKind = classifyManagerRelaunchExit(postState, outcome, iterLogFile);
             const relaunchDecision = evaluateManagerRelaunch(postState, collectTickets(sessionDir), cbState, exitKind);
+            if (relaunchDecision.reason === 'time_limit') {
+                log('Time limit reached. Exiting.');
+                finalizeTerminalState(statePath, { step: 'completed', runnerIteration: iteration, exitReason: 'limit' });
+                exitReason = 'limit';
+                break;
+            }
             if (relaunchDecision.shouldRelaunch && relaunchDecision.exitKind !== 'other_error') {
                 const relaunchBackend = resolveBackendFromStateFileWithSource(statePath).backend;
                 log(`${relaunchBackend} manager subprocess exited via ${relaunchDecision.exitKind} with ${relaunchDecision.pendingCount} ticket(s) still pending — ` +

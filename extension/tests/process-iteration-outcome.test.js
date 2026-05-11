@@ -343,11 +343,41 @@ test('processIterationOutcome: inactive exits cancelled', async () => {
 test('processIterationOutcome: error exits error', async () => {
   const session = tmpSession();
   try {
-    const state = baseState();
+    const state = baseState({ max_time_minutes: 0 });
     writeState(session, state);
     const { context } = ctx(session);
     const action = await processIterationOutcome(state, baseOutcome({ completion: 'error' }), context);
     assert.deepEqual({ kind: action.kind, reason: action.reason }, { kind: 'break', reason: 'error' });
+  } finally {
+    fs.rmSync(session.dir, { recursive: true, force: true });
+  }
+});
+
+test('processIterationOutcome: exhausted wall-clock budget exits limit instead of error', async () => {
+  const session = tmpSession();
+  try {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const state = baseState({
+      backend: 'codex',
+      start_time_epoch: nowSec - 300,
+      max_time_minutes: 5,
+      current_ticket: 't-pending',
+    });
+    writeState(session, state);
+    writeTicket(session.dir, 't-pending', 'Todo');
+    const { context } = ctx(session);
+    const realNow = Date.now;
+    Date.now = () => nowSec * 1000;
+    try {
+      const action = await processIterationOutcome(state, baseOutcome({ completion: 'error', timedOut: true }), context);
+      assert.deepEqual({ kind: action.kind, reason: action.reason }, { kind: 'break', reason: 'limit' });
+      const persisted = JSON.parse(fs.readFileSync(session.statePath, 'utf-8'));
+      assert.equal(persisted.active, false);
+      assert.equal(persisted.current_ticket, null);
+      assert.equal(persisted.exit_reason, 'limit');
+    } finally {
+      Date.now = realNow;
+    }
   } finally {
     fs.rmSync(session.dir, { recursive: true, force: true });
   }
