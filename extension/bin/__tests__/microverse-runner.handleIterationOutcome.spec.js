@@ -200,6 +200,9 @@ test("R-APMW-2: third worker subprocess error returns 'error' (cap)", async () =
     strictEqual(scenario.result, 'error');
     strictEqual(scenario.microverseState.consecutive_subprocess_errors, 3);
     strictEqual(scenario.logs.some((line) => line.includes('cap reached')), true);
+    strictEqual(scenario.convergenceLedger.stall_counts.alpha, 1);
+    strictEqual(scenario.convergenceLedger.current_index, 1);
+    strictEqual(scenario.microverseState.current_subsystem, 'beta');
 });
 test('R-APMW-2: manager mode unchanged on subprocess error', async () => {
     const scenario = await runWorkerErrorScenario({ convergenceMode: 'metric' });
