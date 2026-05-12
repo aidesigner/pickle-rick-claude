@@ -276,6 +276,72 @@ test('StateManager.read: migrates undefined schema_version to current schema', (
   });
 });
 
+test('StateManager.read: legacy baseline_unmeasurable upgraded', () => {
+  withDir((dir) => {
+    const sm = new StateManager();
+    const sp = path.join(dir, 'state.json');
+    writeStateFile(sp, makeState({
+      schema_version: LATEST_SCHEMA_VERSION,
+      session_dir: dir,
+      exit_reason: 'baseline_unmeasurable',
+    }));
+
+    const result = sm.read(sp);
+
+    assert.equal(result.exit_reason, 'baseline_unmeasurable_unrecoverable');
+  });
+});
+
+test('StateManager.read: baseline_unmeasurable upgrade idempotent', () => {
+  withDir((dir) => {
+    const sm = new StateManager();
+    const sp = path.join(dir, 'state.json');
+    writeStateFile(sp, makeState({
+      schema_version: LATEST_SCHEMA_VERSION,
+      session_dir: dir,
+      exit_reason: 'baseline_unmeasurable_unrecoverable',
+    }));
+
+    const first = sm.read(sp);
+    const second = sm.read(sp);
+
+    assert.equal(first.exit_reason, 'baseline_unmeasurable_unrecoverable');
+    assert.equal(second.exit_reason, 'baseline_unmeasurable_unrecoverable');
+  });
+});
+
+test('StateManager.read: baseline_unmeasurable upgrade null safe', () => {
+  withDir((dir) => {
+    const sm = new StateManager();
+    const sp = path.join(dir, 'state.json');
+    writeStateFile(sp, makeState({
+      schema_version: LATEST_SCHEMA_VERSION,
+      session_dir: dir,
+      exit_reason: null,
+    }));
+
+    const result = sm.read(sp);
+
+    assert.equal(result.exit_reason, null);
+  });
+});
+
+test('StateManager.read: baseline_unmeasurable upgrade leaves unrelated value untouched', () => {
+  withDir((dir) => {
+    const sm = new StateManager();
+    const sp = path.join(dir, 'state.json');
+    writeStateFile(sp, makeState({
+      schema_version: LATEST_SCHEMA_VERSION,
+      session_dir: dir,
+      exit_reason: 'converged',
+    }));
+
+    const result = sm.read(sp);
+
+    assert.equal(result.exit_reason, 'converged');
+  });
+});
+
 test('StateManager.read: throws SCHEMA_MISMATCH for future schema version', () => {
   withDir((dir) => {
     // State file claims schema_version 2, but this binary only understands version 1

@@ -274,6 +274,14 @@ function migrateLegacySignalExitReason(state: State): boolean {
   return false;
 }
 
+function migrateLegacyBaselineExitReason(state: State): boolean {
+  if (state.exit_reason === 'baseline_unmeasurable') {
+    state.exit_reason = 'baseline_unmeasurable_unrecoverable';
+    return true;
+  }
+  return false;
+}
+
 function isStateSnapshotNewer(
   currentState: { iteration?: unknown },
   currentMtimeMs: number,
@@ -418,6 +426,7 @@ export class StateManager {
       if (this.opts.schemaVersion >= 3) normalizeV3StateDefaults(state);
       migrateLegacyManagerRelaunchCount(state);
       migrateLegacySignalExitReason(state);
+      migrateLegacyBaselineExitReason(state);
       try { writeMigrationStateFile(statePath, state); } catch { /* migration write failed, non-fatal */ }
     }
 
@@ -433,6 +442,7 @@ export class StateManager {
       if (this.opts.schemaVersion >= 3) normalizeV3StateDefaults(state);
       migrateLegacyManagerRelaunchCount(state);
       migrateLegacySignalExitReason(state);
+      migrateLegacyBaselineExitReason(state);
       process.stderr.write(`[state-manager] migrating ${statePath} to schema_version ${this.opts.schemaVersion}\n`);
       try { writeMigrationStateFile(statePath, state); } catch { /* migration write failed, non-fatal */ }
     } else if (state.schema_version >= 3) {
@@ -441,6 +451,7 @@ export class StateManager {
       if (missingPipelineContinueOnPhaseFail || migrateLegacyManagerRelaunchCount(state) || migrateLegacySignalExitReason(state)) {
         try { writeMigrationStateFile(statePath, state); } catch { /* migration write failed, non-fatal */ }
       }
+      migrateLegacyBaselineExitReason(state);
     }
   }
 

@@ -237,6 +237,13 @@ function migrateLegacySignalExitReason(state) {
     }
     return false;
 }
+function migrateLegacyBaselineExitReason(state) {
+    if (state.exit_reason === 'baseline_unmeasurable') {
+        state.exit_reason = 'baseline_unmeasurable_unrecoverable';
+        return true;
+    }
+    return false;
+}
 function isStateSnapshotNewer(currentState, currentMtimeMs, candidateState, candidateMtimeMs) {
     const currentIteration = readFiniteIteration(currentState);
     const candidateIteration = readFiniteIteration(candidateState);
@@ -366,6 +373,7 @@ export class StateManager {
                 normalizeV3StateDefaults(state);
             migrateLegacyManagerRelaunchCount(state);
             migrateLegacySignalExitReason(state);
+            migrateLegacyBaselineExitReason(state);
             try {
                 writeMigrationStateFile(statePath, state);
             }
@@ -380,6 +388,7 @@ export class StateManager {
                 normalizeV3StateDefaults(state);
             migrateLegacyManagerRelaunchCount(state);
             migrateLegacySignalExitReason(state);
+            migrateLegacyBaselineExitReason(state);
             process.stderr.write(`[state-manager] migrating ${statePath} to schema_version ${this.opts.schemaVersion}\n`);
             try {
                 writeMigrationStateFile(statePath, state);
@@ -395,6 +404,7 @@ export class StateManager {
                 }
                 catch { /* migration write failed, non-fatal */ }
             }
+            migrateLegacyBaselineExitReason(state);
         }
     }
     // -----------------------------------------------------------------------
