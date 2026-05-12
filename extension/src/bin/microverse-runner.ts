@@ -1955,6 +1955,21 @@ export function loadFailureClassificationFlag(extensionRoot: string): boolean {
   }
 }
 
+export function mapBaselineMeasureExitReason(
+  exitReason: string,
+): Extract<ExitReason, 'judge_cli_missing' | 'judge_timeout' | 'baseline_unmeasurable_unrecoverable'> {
+  switch (exitReason) {
+    case 'judge_cli_missing':
+    case 'cli_missing':
+      return 'judge_cli_missing';
+    case 'judge_timeout':
+    case 'timeout':
+      return 'judge_timeout';
+    default:
+      return 'baseline_unmeasurable_unrecoverable';
+  }
+}
+
 function resetStoppedMicroverseState(state: MicroverseState, sessionDir: string, log: (msg: string) => void): void {
   if (state.status !== 'stopped') return;
   const hasHistory = state.convergence?.history?.length > 0;
@@ -2033,13 +2048,26 @@ async function measureLlmBaseline(
     backend,
   );
   if (measured.metric) return measured.metric;
-  const exitReason: ExitReason = measured.exitReason === 'judge_cli_missing'
-    ? 'judge_cli_missing'
-    : 'baseline_unmeasurable';
+  let measuredFailureExitReason: JudgeFailureExitReason | 'failed';
+  switch (measured.exitReason) {
+    case 'judge_cli_missing':
+      measuredFailureExitReason = 'judge_cli_missing';
+      break;
+    case 'judge_timeout':
+      measuredFailureExitReason = 'judge_timeout';
+      break;
+    default:
+      measuredFailureExitReason = 'failed';
+      break;
+  }
+  const exitReason: ExitReason = mapBaselineMeasureExitReason(measuredFailureExitReason);
+  const activityEvent: ActivityEventType = exitReason === 'baseline_unmeasurable_unrecoverable'
+    ? 'baseline_unmeasurable'
+    : exitReason;
   const error = measured.lastError ?? `${exitReason} after ${measured.attempts} attempt(s)`;
   ctx.log(`ERROR: Could not measure LLM baseline (${exitReason}) after ${measured.attempts} attempt(s): ${error}`);
   logActivity({
-    event: exitReason,
+    event: activityEvent,
     source: 'pickle',
     session: path.basename(ctx.sessionDir),
     iteration: ctx.iteration,

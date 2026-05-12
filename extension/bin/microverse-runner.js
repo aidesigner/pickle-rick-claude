@@ -1414,6 +1414,18 @@ export function loadFailureClassificationFlag(extensionRoot) {
         return true;
     }
 }
+export function mapBaselineMeasureExitReason(exitReason) {
+    switch (exitReason) {
+        case 'judge_cli_missing':
+        case 'cli_missing':
+            return 'judge_cli_missing';
+        case 'judge_timeout':
+        case 'timeout':
+            return 'judge_timeout';
+        default:
+            return 'baseline_unmeasurable_unrecoverable';
+    }
+}
 function resetStoppedMicroverseState(state, sessionDir, log) {
     if (state.status !== 'stopped')
         return;
@@ -1484,13 +1496,26 @@ async function measureLlmBaseline(state, ctx, backend) {
     const measured = await measureLlmMetricWithBackoff(state.key_metric.validation, state.key_metric.timeout_seconds, ctx.workingDir, state.key_metric.judge_model, state.convergence?.history ?? [], state.prd_path, state.judge_context_path, backend);
     if (measured.metric)
         return measured.metric;
-    const exitReason = measured.exitReason === 'judge_cli_missing'
-        ? 'judge_cli_missing'
-        : 'baseline_unmeasurable';
+    let measuredFailureExitReason;
+    switch (measured.exitReason) {
+        case 'judge_cli_missing':
+            measuredFailureExitReason = 'judge_cli_missing';
+            break;
+        case 'judge_timeout':
+            measuredFailureExitReason = 'judge_timeout';
+            break;
+        default:
+            measuredFailureExitReason = 'failed';
+            break;
+    }
+    const exitReason = mapBaselineMeasureExitReason(measuredFailureExitReason);
+    const activityEvent = exitReason === 'baseline_unmeasurable_unrecoverable'
+        ? 'baseline_unmeasurable'
+        : exitReason;
     const error = measured.lastError ?? `${exitReason} after ${measured.attempts} attempt(s)`;
     ctx.log(`ERROR: Could not measure LLM baseline (${exitReason}) after ${measured.attempts} attempt(s): ${error}`);
     logActivity({
-        event: exitReason,
+        event: activityEvent,
         source: 'pickle',
         session: path.basename(ctx.sessionDir),
         iteration: ctx.iteration,
