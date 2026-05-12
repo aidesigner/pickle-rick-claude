@@ -128,6 +128,98 @@ function parseTaskNoteSections(content) {
 function priorityFor(name) {
     return TASK_NOTE_PRIORITY[name] ?? 3;
 }
+function normalizeBetweenTicketFailureFile(rawFile, workingDir) {
+    const trimmed = rawFile.trim();
+    if (!trimmed)
+        return '';
+    const normalized = trimmed.replace(/\\/g, '/');
+    if (!path.isAbsolute(normalized))
+        return normalized;
+    const relative = path.relative(workingDir, normalized).replace(/\\/g, '/');
+    return relative.startsWith('..') ? normalized : relative;
+}
+export function parseBetweenTicketFastGateFailures(output, workingDir) {
+    const failures = [];
+    const lines = output.split(/\r?\n/);
+    let activeFailure = null;
+    const flushFailure = () => {
+        if (!activeFailure)
+            return;
+        failures.push({
+            name: activeFailure.name,
+            file: activeFailure.file,
+        });
+        activeFailure = null;
+    };
+    for (const line of lines) {
+        const failureStart = line.match(/^not ok(?:\s+\d+)?\s+-\s+(.+)$/);
+        if (failureStart) {
+            flushFailure();
+            activeFailure = { name: failureStart[1].trim(), file: '' };
+            continue;
+        }
+        if (!activeFailure)
+            continue;
+        if (line.trim() === '...') {
+            flushFailure();
+            continue;
+        }
+        const locationMatch = line.match(/location:\s*'([^']+)'/) ?? line.match(/location:\s*"([^"]+)"/);
+        if (locationMatch && !activeFailure.file) {
+            activeFailure.file = normalizeBetweenTicketFailureFile(locationMatch[1], workingDir);
+        }
+    }
+    flushFailure();
+    if (failures.length > 0)
+        return failures;
+    const fallback = lines.map(line => line.trim()).find(Boolean) ?? 'npm run test:fast failed';
+    return [{ name: fallback, file: '' }];
+}
+export function runBetweenTicketFastTests(extensionDir) {
+    const result = spawnSync('npm', ['run', 'test:fast'], {
+        cwd: extensionDir,
+        encoding: 'utf-8',
+    });
+    const output = `${result.stdout || ''}\n${result.stderr || ''}`;
+    return {
+        ok: result.status === 0,
+        failures: result.status === 0
+            ? []
+            : parseBetweenTicketFastGateFailures(output, path.dirname(extensionDir)),
+    };
+}
+export function runBetweenTicketFastGate(input) {
+    const extensionDir = path.join(input.workingDir, 'extension');
+    if (!fs.existsSync(extensionDir))
+        return null;
+    const runTestFast = input.runTestFast ?? runBetweenTicketFastTests;
+    const ts = (input.now ?? Date.now)();
+    const result = runTestFast(extensionDir);
+    sm.update(input.statePath, state => {
+        state.last_between_ticket_gate = {
+            ts,
+            ok: result.ok,
+            failures: result.failures.map(failure => ({
+                name: failure.name,
+                file: failure.file,
+            })),
+        };
+    });
+    if (!result.ok && normalizedStatus(input.landedStatus) === 'done') {
+        writeActivityEntry(input.statePath, {
+            event: 'cross_ticket_regression_detected',
+            ts: new Date(ts).toISOString(),
+            ticket_id: input.nextTicketId || input.completedTicketId,
+            prior_ticket_id: input.completedTicketId,
+            failing_tests: result.failures.map(failure => ({
+                name: failure.name,
+                file: failure.file,
+            })),
+        });
+    }
+    input.log(`between-ticket fast gate for ${input.completedTicketId}: ${result.ok ? 'passed' : `failed (${result.failures.length} failure(s))`}`);
+    return result;
+}
 function formatWorkerGateFailureLine(failure) {
     const label = failure.file || failure.name || 'unknown';
     const message = failure.message || failure.name || 'unknown failure';
@@ -2165,8 +2257,23 @@ function processTaskCompleted(state, ctx) {
         (ctx.writeHandoff || writeHandoffAtomic)(ctx.sessionDir, handoffSummary, process.pid, ctx.log);
         return { kind: 'continue', resetStall: true };
     }
-    if (curState.current_ticket)
+    if (curState.current_ticket) {
         markTicketDone(ctx.sessionDir, curState.current_ticket);
+        try {
+            runBetweenTicketFastGate({
+                statePath: ctx.statePath,
+                workingDir: curState.working_dir || state.working_dir || process.cwd(),
+                completedTicketId: curState.current_ticket,
+                nextTicketId: null,
+                landedStatus: 'done',
+                log: ctx.log,
+                now: ctx.now,
+            });
+        }
+        catch (err) {
+            ctx.log(`between-ticket fast gate failed after final completion (ignored): ${safeErrorMessage(err)}`);
+        }
+    }
     if (curState.chain_meeseeks === true) {
         if (ctx.updateState)
             ctx.updateState(s => Object.assign(s, ctx.transitionToMeeseeks ? ctx.transitionToMeeseeks(s) : transitionToMeeseeks(s, ctx.extensionRoot)));
@@ -2997,6 +3104,7 @@ async function runMuxRunnerMain() {
         try {
             const postState = readRunnerState(statePath);
             const postTicket = postState.current_ticket || null;
+            let completedBoundary = null;
             if (previousTicket && postTicket !== previousTicket) {
                 // Check if the model already marked it Done via prompt-driven validation
                 const tickets = collectTickets(sessionDir);
@@ -3016,10 +3124,32 @@ async function runMuxRunnerMain() {
                         log,
                     });
                 }
+                completedBoundary = {
+                    ticketId: previousTicket,
+                    landedStatus: prevTicketInfo?.id ? getTicketStatus(sessionDir, prevTicketInfo.id) : null,
+                    workingDir: prevTicketInfo?.working_dir || postState.working_dir || state.working_dir || process.cwd(),
+                    nextTicketId: postTicket,
+                };
             }
             const postStep = inferTicketLifecycleStep(sessionDir, postTicket, postState.step);
             const lifecycleState = updateMuxLifecycleState(statePath, { currentTicket: postTicket, step: postStep });
             const nextTicket = lifecycleState.current_ticket || null;
+            if (completedBoundary) {
+                completedBoundary.nextTicketId = nextTicket;
+                try {
+                    runBetweenTicketFastGate({
+                        statePath,
+                        workingDir: completedBoundary.workingDir,
+                        completedTicketId: completedBoundary.ticketId,
+                        nextTicketId: completedBoundary.nextTicketId,
+                        landedStatus: completedBoundary.landedStatus,
+                        log,
+                    });
+                }
+                catch (err) {
+                    log(`between-ticket fast gate failed at ticket boundary (ignored): ${safeErrorMessage(err)}`);
+                }
+            }
             if (nextTicket !== previousTicket) {
                 const nextTicketInfo = nextTicket ? collectTickets(sessionDir).find(t => t.id === nextTicket) : null;
                 previousTicketStartCommit = nextTicket

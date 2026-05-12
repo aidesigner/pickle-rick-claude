@@ -109,6 +109,14 @@ export interface State {
    * True → show "Producer complete" instead. Crash-recovery default: false.
    */
   monitor_panes?: { producer_done: boolean }[];
+  last_between_ticket_gate?: {
+    ts: number;
+    ok: boolean;
+    failures: Array<{
+      name: string;
+      file: string;
+    }>;
+  };
 }
 
 /**
@@ -488,6 +496,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'orphan_map_entry_pruned',
   'install_sh_parity_check',
   'worker_backend_resolved',
+  'cross_ticket_regression_detected',
   'worker_gate_failed',
   'worker_lint_gate_passed',
   'worker_lint_gate_failed',

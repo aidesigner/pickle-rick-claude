@@ -278,6 +278,27 @@
         "file_list": { "type": "array", "items": { "type": "string" } }
       }
     },
+    "cross_ticket_regression_detected": {
+      "type": "object",
+      "required": ["event", "ts", "ticket_id", "prior_ticket_id", "failing_tests"],
+      "properties": {
+        "event": { "type": "string", "const": "cross_ticket_regression_detected" },
+        "ts": { "type": "string" },
+        "ticket_id": { "type": "string" },
+        "prior_ticket_id": { "type": "string" },
+        "failing_tests": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "file"],
+            "properties": {
+              "name": { "type": "string" },
+              "file": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
     "worker_gate_failed": {
       "type": "object",
       "required": ["event", "ts", "ticket_id", "gate_phase", "failures", "retry_count"],
@@ -581,6 +602,7 @@
     { "$ref": "#/definitions/completion_commit_inferred_from_git" },
     { "$ref": "#/definitions/phantom_done_detected" },
     { "$ref": "#/definitions/worker_lint_gate_passed" },
+    { "$ref": "#/definitions/cross_ticket_regression_detected" },
     { "$ref": "#/definitions/worker_gate_failed" },
     { "$ref": "#/definitions/worker_lint_gate_failed" },
     { "$ref": "#/definitions/worker_lint_autofix_applied" },

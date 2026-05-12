@@ -416,6 +416,31 @@ test('activity-event-payload: worker_gate_failed requires structured failures an
   assert.equal(bad.valid, false, 'invalid gate_phase and string retry_count should fail');
 });
 
+test('activity-event-payload: cross_ticket_regression_detected requires prior_ticket_id and failing_tests', () => {
+  const good = validate({
+    event: 'cross_ticket_regression_detected',
+    ts: TS,
+    ticket_id: 'bbbb2222',
+    prior_ticket_id: 'aaaa1111',
+    failing_tests: [{
+      name: 'boundary detection fires',
+      file: 'extension/tests/mux-runner-between-ticket-gate.test.js',
+    }],
+  }, 'cross_ticket_regression_detected');
+  assert.equal(good.valid, true, 'valid cross-ticket regression payload should pass');
+
+  const bad = validate({
+    event: 'cross_ticket_regression_detected',
+    ts: TS,
+    ticket_id: 'bbbb2222',
+    failing_tests: [{
+      name: 'boundary detection fires',
+      file: 'extension/tests/mux-runner-between-ticket-gate.test.js',
+    }],
+  }, 'cross_ticket_regression_detected');
+  assert.equal(bad.valid, false, 'missing prior_ticket_id should fail');
+});
+
 const SHARED_ENUM_DEFS = new Set([
   'backendEnum',
   'backendResolutionSourceEnum',
@@ -443,6 +468,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'completion_commit_inferred_from_git',
     'phantom_done_detected',
     'worker_lint_gate_passed',
+    'cross_ticket_regression_detected',
     'worker_gate_failed',
     'worker_lint_gate_failed',
     'worker_lint_autofix_applied',
