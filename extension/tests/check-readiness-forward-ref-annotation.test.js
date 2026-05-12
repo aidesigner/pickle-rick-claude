@@ -52,6 +52,13 @@ test('R-RTRC-7: extractForwardRefAnnotations accepts canonical 8-char SHA annota
     assert.equal(out.valid.has('extension/services/new-helper.ts'), true);
 });
 
+test('R-RTRC-7: extractForwardRefAnnotations accepts legacy bare forward-created marker', () => {
+    const content = '`extension/services/new-helper.ts` (forward-created) is carried by a sibling ticket.';
+    const out = extractForwardRefAnnotations(content);
+    assert.deepEqual(out.malformed, []);
+    assert.equal(out.valid.has('extension/services/new-helper.ts'), true);
+});
+
 test('R-RTRC-7: extractForwardRefAnnotations accepts ticket-dir basename annotation', () => {
     const content = '`extension/services/another.ts` (introduced by ticket dddee00b) is forward-created.';
     const out = extractForwardRefAnnotations(content);
@@ -119,6 +126,37 @@ test('R-RTRC-7: end-to-end — canonical annotation suppresses contract finding 
             '## Files',
             '',
             '- `extension/services/forward-rtrc7sha.ts` (created by ticket 5c75a9eb)',
+            '',
+            '## Acceptance Criteria',
+            '',
+            '- [ ] Command exits 0 exactly.',
+            '',
+        ].join('\n'));
+        const result = runReadiness(sessionDir);
+        assert.equal(result.status, 0, `expected exit 0; stderr=${result.stderr}; stdout=${result.stdout}`);
+        const out = JSON.parse(result.stdout);
+        assert.equal(out.status, 'pass');
+        assert.deepEqual(out.findings, []);
+    } finally {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+});
+
+test('R-RTRC-7: end-to-end — legacy bare forward-created path suppresses contract finding', () => {
+    const sessionDir = tmpDir();
+    try {
+        writeTicket(sessionDir, 'rtrc7fwd', [
+            '---',
+            'id: rtrc7fwd',
+            'key: RTRC7-FWD',
+            'ac_ids: []',
+            '---',
+            '',
+            '# Forward-ref via legacy bare marker',
+            '',
+            '## Files',
+            '',
+            '- `extension/services/forward-rtrc7fwd.ts` (forward-created)',
             '',
             '## Acceptance Criteria',
             '',

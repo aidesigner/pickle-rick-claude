@@ -20,11 +20,12 @@ const PURE_PROSE_RE = /\b(must|should)\s+(?:be|feel)\s+(?:intuitive|performant|f
 const PATH_RE = /\b(?:[\w.-]+\/)+[\w.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|yml|yaml|sh|py|css|scss|html)\b/g;
 const SYMBOL_RE = /\b[A-Z][A-Za-z0-9]*(?:\.[A-Za-z_$][\w$]*)+\b|\b[A-Za-z_$][\w$]*\(\)/g;
 // R-RTRC-7 forward-reference annotation: backticked token followed by exactly
-// one ASCII space and a `(created|introduced) by ticket <hash>` parenthetical.
-// Hash format = 8-char short SHA OR ticket-dir basename — both 8-char alphanumeric.
-// Resolver matches 6-12 alphanumeric to give some flexibility while remaining strict.
+// one ASCII space and either a legacy `(forward-created)` marker or a canonical
+// `(created|introduced) by ticket <hash>` parenthetical. Hash format = 8-char
+// short SHA OR ticket-dir basename — both 8-char alphanumeric. Resolver matches
+// 6-12 alphanumeric to give some flexibility while remaining strict.
 const FORWARD_REF_ANNOTATION_HASH_RE = /^[A-Za-z0-9]{6,12}$/;
-const FORWARD_REF_ANNOTATION_RE = /`([^`]+)`(\s*)\((created|introduced) by ticket ([^)]+)\)/g;
+const FORWARD_REF_ANNOTATION_RE = /`([^`]+)`(\s*)\((forward-created|((created|introduced) by ticket ([^)]+)))\)/g;
 const ALLOWLIST_FILE_REL = 'extension/.readiness-allowlist.json';
 const GIT_LS_FILES_TIMEOUT_MS = 30_000;
 const DOC_EXTENSION_ALLOWLIST = new Set([
@@ -148,12 +149,14 @@ function isDocExtensionBasename(ref) {
     return DOC_EXTENSION_ALLOWLIST.has(ext);
 }
 /**
- * R-RTRC-2 / R-RTRC-7: Extract `\`token\` (created|introduced) by ticket <hash>`
- * annotations from PRD/ticket content.
+ * R-RTRC-2 / R-RTRC-7: Extract forward-reference annotations from PRD/ticket content.
  *
  * Annotation schema (R-RTRC-7):
  *   - position OUTSIDE backticks
  *   - separated by EXACTLY one ASCII space (no-space, two-space, tab → malformed)
+ *   - canonical form: `(created|introduced) by ticket <hash>`
+ *   - compatibility alias: `(forward-created)` for bundle-authored paths already
+ *     accepted by upstream audit/path-verification stages
  *   - hash = 8-char short SHA OR ticket-dir basename (resolver normalizes by length)
  *
  * Returns:
@@ -167,11 +170,18 @@ export function extractForwardRefAnnotations(content) {
     const malformed = [];
     const re = new RegExp(FORWARD_REF_ANNOTATION_RE.source, FORWARD_REF_ANNOTATION_RE.flags);
     for (const match of content.matchAll(re)) {
-        const [raw, token, separator, verb, hashRaw] = match;
-        const hash = hashRaw.trim();
-        const verbTyped = verb === 'created' || verb === 'introduced' ? verb : 'created';
-        const annotation = { token: token.trim(), separator, verb: verbTyped, hash, raw };
-        if (separator !== ' ' || !FORWARD_REF_ANNOTATION_HASH_RE.test(hash)) {
+        const [raw, token, separator, annotationBody, canonicalBody, verbRaw, hashRaw] = match;
+        const hash = hashRaw?.trim();
+        const verbTyped = annotationBody === 'forward-created'
+            ? 'forward-created'
+            : verbRaw === 'introduced'
+                ? 'introduced'
+                : 'created';
+        const annotation = { token: token.trim(), separator, verb: verbTyped, raw };
+        if (hash)
+            annotation.hash = hash;
+        const invalidCanonicalHash = annotationBody !== 'forward-created' && (!hash || !FORWARD_REF_ANNOTATION_HASH_RE.test(hash));
+        if (separator !== ' ' || invalidCanonicalHash) {
             malformed.push(annotation);
             continue;
         }
@@ -314,7 +324,7 @@ function findAnnotationFormatFindings(ticketFile, content) {
         ticket: ticketFile,
         kind: 'annotation_format',
         analyst: 'gaps',
-        message: 'annotation-format-error: forward-reference annotation must be `<token>` (created|introduced) by ticket <8-12-char-hash>) — exactly one ASCII space separator',
+        message: 'annotation-format-error: forward-reference annotation must be `<token>` (forward-created) or `<token>` (created|introduced) by ticket <8-12-char-hash> — exactly one ASCII space separator',
         detail: malformed.raw,
     }));
 }
