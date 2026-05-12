@@ -150,6 +150,9 @@ function isDocExtensionBasename(ref) {
     const ext = ref.slice(lastDot + 1).toLowerCase();
     return DOC_EXTENSION_ALLOWLIST.has(ext);
 }
+function isPathLikeForwardRefToken(token) {
+    return token.includes('/') || /\.[A-Za-z][A-Za-z0-9]*$/.test(token);
+}
 /**
  * R-RTRC-2 / R-RTRC-7: Extract forward-reference annotations from PRD/ticket content.
  *
@@ -185,12 +188,13 @@ export function extractForwardRefAnnotations(content) {
             annotation.hash = hash;
         if (requirementCode)
             annotation.hash = requirementCode;
+        const invalidRequirementAliasTarget = Boolean(requirementCode) && isPathLikeForwardRefToken(annotation.token);
         const invalidCanonicalHash = annotationBody === 'forward-created'
             ? false
             : requirementCode
                 ? !FORWARD_REF_REQUIREMENT_RE.test(requirementCode)
                 : !hash || !FORWARD_REF_ANNOTATION_HASH_RE.test(hash);
-        if (separator !== ' ' || invalidCanonicalHash) {
+        if (separator !== ' ' || invalidCanonicalHash || invalidRequirementAliasTarget) {
             malformed.push(annotation);
             continue;
         }

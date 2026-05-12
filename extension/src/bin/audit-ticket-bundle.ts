@@ -490,7 +490,7 @@ function checkHallucinatedPremise(t: ParsedTicket, ctx: AuditContext): Finding[]
     seen.add(tok);
     if (ctx.gitFiles.has(tok)) continue;
     const ctxLine = lineContext(t.problemSection, tok);
-    if (FORWARD_CREATED_RE.test(ctxLine)) continue;
+    if (hasForwardRefPathAnnotation(ctxLine, tok)) continue;
     findings.push({
       ticket_id: t.id,
       ticket_path: t.relPath,

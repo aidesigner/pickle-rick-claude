@@ -118,6 +118,13 @@ test('R-RTRC-7: requirement-code alias accepted for forward-created helper contr
     assert.equal(out.valid.has('FutureHelper.build()'), true);
 });
 
+test('R-RTRC-7: requirement-code alias on a path is malformed', () => {
+    const content = '`extension/services/new-helper.ts` (created by R-SAOV-1) is not a valid path annotation.';
+    const out = extractForwardRefAnnotations(content);
+    assert.equal(out.valid.size, 0);
+    assert.equal(out.malformed.length, 1);
+});
+
 test('R-RTRC-7: end-to-end — canonical annotation suppresses contract finding (8-char SHA)', () => {
     const sessionDir = tmpDir();
     try {
@@ -237,6 +244,41 @@ test('R-RTRC-7: end-to-end — requirement-code alias suppresses forward-created
         const out = JSON.parse(result.stdout);
         assert.equal(out.status, 'pass');
         assert.deepEqual(out.findings, []);
+    } finally {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+});
+
+test('R-RTRC-7: end-to-end — requirement-code alias on a path fails readiness before ticket audit', () => {
+    const sessionDir = tmpDir();
+    try {
+        writeTicket(sessionDir, 'a1b2c3d4', [
+            '---',
+            'id: a1b2c3d4',
+            'key: RTRC7-PATH-ALIAS',
+            'ac_ids: []',
+            '---',
+            '',
+            '# Invalid path alias',
+            '',
+            '## Files to modify',
+            '',
+            '- `extension/services/not-yet-real-rtrc7pth.ts` (created by R-SAOV-1)',
+            '',
+            '## Acceptance Criteria',
+            '',
+            '- [ ] Command exits 0 exactly.',
+            '',
+        ].join('\n'));
+        const result = runReadiness(sessionDir);
+        assert.equal(result.status, 2, `expected exit 2; stdout=${result.stdout}`);
+        const out = JSON.parse(result.stdout);
+        const annotationFindings = out.findings.filter((f) => f.kind === 'annotation_format');
+        const filePathFindings = out.findings.filter((f) => f.kind === 'file_path');
+        assert.equal(annotationFindings.length, 1, `expected annotation_format finding, got ${JSON.stringify(out.findings)}`);
+        assert.equal(filePathFindings.length, 1, `expected file_path finding, got ${JSON.stringify(out.findings)}`);
+        assert.match(annotationFindings[0].detail, /created by R-SAOV-1/);
+        assert.equal(filePathFindings[0].detail, 'extension/services/not-yet-real-rtrc7pth.ts');
     } finally {
         fs.rmSync(sessionDir, { recursive: true, force: true });
     }
