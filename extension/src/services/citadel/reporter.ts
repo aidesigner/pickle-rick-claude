@@ -27,6 +27,11 @@ export interface CitadelDecision {
   line?: number;
 }
 
+export interface CitadelReportHeader {
+  pickle_phase_failed: boolean;
+  pickle_exit_code: number | null;
+}
+
 export interface CitadelJsonReport {
   schema: '1.0';
   schema_version: '1.0';
@@ -34,6 +39,7 @@ export interface CitadelJsonReport {
   diff_range: string;
   exit_code: number;
   exitCode: number;
+  header: CitadelReportHeader;
   sections: Record<string, unknown>;
   findings: CitadelFinding[];
   decision_required: CitadelDecision[];
@@ -56,6 +62,7 @@ export interface CitadelSummary {
 export interface ReporterInput {
   prdPath: string;
   diffRange: string;
+  header: CitadelReportHeader;
   sections: Record<string, unknown>;
   findings: CitadelFinding[];
   decisions: CitadelDecision[];
@@ -88,6 +95,7 @@ export class Reporter {
       diff_range: input.diffRange,
       exit_code: exitCode,
       exitCode,
+      header: input.header,
       sections: input.sections,
       findings,
       decision_required: decisions,

@@ -102,6 +102,7 @@ export function buildCitadelAuditReport(options) {
     return reporter.build({
         prdPath,
         diffRange: options.diffRange,
+        header: buildCitadelReportHeader(options.sessionDir),
         sections,
         findings,
         decisions: decisionRequired,
@@ -110,6 +111,38 @@ export function buildCitadelAuditReport(options) {
 }
 function stableJson(value) {
     return JSON.stringify(value, null, 2);
+}
+export function buildCitadelReportHeader(sessionDir) {
+    const fallback = {
+        pickle_phase_failed: false,
+        pickle_exit_code: null,
+    };
+    if (!sessionDir)
+        return fallback;
+    const statePath = path.join(sessionDir, 'state.json');
+    if (!existsSync(statePath))
+        return fallback;
+    let parsed;
+    try {
+        parsed = JSON.parse(readFileSync(statePath, 'utf-8'));
+    }
+    catch {
+        return fallback;
+    }
+    if (!isRecord(parsed) || !Array.isArray(parsed.activity))
+        return fallback;
+    const pickleFailures = parsed.activity.filter((entry) => (isRecord(entry)
+        && entry.event === 'recoverable_phase_failure'
+        && entry.phase === 'pickle'
+        && typeof entry.exit_code === 'number'
+        && entry.exit_code !== 0));
+    if (pickleFailures.length === 0)
+        return fallback;
+    const lastFailure = pickleFailures[pickleFailures.length - 1];
+    return {
+        pickle_phase_failed: true,
+        pickle_exit_code: lastFailure.exit_code,
+    };
 }
 function readCrossPhaseFindings(sessionDir) {
     const anatomyArtifact = readPhaseFindings(sessionDir, 'anatomy-park', 'anatomy-park.json');

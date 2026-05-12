@@ -9,7 +9,7 @@ import { walkDiff } from './diff-walker.js';
 import { auditRuleSetInvariants } from './rule-set-invariant-audit.js';
 import { auditDiffHygiene } from './diff-hygiene.js';
 import { reconcileDivergences, DivergenceDecisionRequired } from './divergence-reconciliation.js';
-import { CitadelFinding, CitadelJsonReport, CitadelRunResult, CitadelSeverity, Reporter } from './reporter.js';
+import { CitadelFinding, CitadelJsonReport, CitadelReportHeader, CitadelRunResult, CitadelSeverity, Reporter } from './reporter.js';
 import { parsePrdMarkdown, parseWithComposes, ComposesError } from './prd-parser.js';
 import { detectProjectShapes, ProjectShape } from './project-shape.js';
 import { buildAcCoverageScorecard } from './ac-coverage-scorecard.js';
@@ -155,6 +155,7 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
   return reporter.build({
     prdPath,
     diffRange: options.diffRange,
+    header: buildCitadelReportHeader(options.sessionDir),
     sections,
     findings,
     decisions: decisionRequired,
@@ -164,6 +165,40 @@ export function buildCitadelAuditReport(options: CitadelAuditOptions): CitadelAu
 
 function stableJson(value: CitadelJsonReport): string {
   return JSON.stringify(value, null, 2);
+}
+
+export function buildCitadelReportHeader(sessionDir: string | undefined): CitadelReportHeader {
+  const fallback: CitadelReportHeader = {
+    pickle_phase_failed: false,
+    pickle_exit_code: null,
+  };
+  if (!sessionDir) return fallback;
+
+  const statePath = path.join(sessionDir, 'state.json');
+  if (!existsSync(statePath)) return fallback;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(statePath, 'utf-8')) as unknown;
+  } catch {
+    return fallback;
+  }
+
+  if (!isRecord(parsed) || !Array.isArray(parsed.activity)) return fallback;
+  const pickleFailures = parsed.activity.filter((entry): entry is Record<string, unknown> => (
+    isRecord(entry)
+      && entry.event === 'recoverable_phase_failure'
+      && entry.phase === 'pickle'
+      && typeof entry.exit_code === 'number'
+      && entry.exit_code !== 0
+  ));
+  if (pickleFailures.length === 0) return fallback;
+
+  const lastFailure = pickleFailures[pickleFailures.length - 1];
+  return {
+    pickle_phase_failed: true,
+    pickle_exit_code: lastFailure.exit_code as number,
+  };
 }
 
 function readCrossPhaseFindings(sessionDir: string | undefined): CrossPhaseReadResult {

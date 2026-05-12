@@ -1209,6 +1209,37 @@ export function logPhaseContinueReason(runtime, phase, exitCode) {
     }
     runtime.log(`Phase ${phase} exited with code ${exitCode} (non-fatal) — no remaining phases; pipeline complete with non-zero phase exits`);
 }
+function hasPriorNonZeroRecoverableFailure(activity) {
+    if (!Array.isArray(activity))
+        return false;
+    return activity.some((entry) => (entry?.event === 'recoverable_phase_failure'
+        && typeof entry.exit_code === 'number'
+        && entry.exit_code !== 0));
+}
+export function buildCloserReleasePlan(state) {
+    if (!hasPriorNonZeroRecoverableFailure(state.activity)) {
+        return {
+            release: true,
+            install: true,
+            tag: true,
+            skipReason: null,
+        };
+    }
+    return {
+        release: false,
+        install: false,
+        tag: false,
+        skipReason: 'prior phase non-zero exit detected',
+    };
+}
+export function executeCloserReleasePlan(plan, actions, log) {
+    if (!plan.release) {
+        log('Closer: prior phase non-zero exit detected — skipping install and tag');
+        return;
+    }
+    actions.install();
+    actions.tag();
+}
 export async function postPhaseCleanup(phase, sessionDir) {
     const prevPhaseByPhase = {
         pickle: null,
@@ -1572,6 +1603,13 @@ function finalizePipeline(runtime, counters, cancelMarker, startTime, phaseIncom
         Elapsed: formatTime(totalElapsed),
     }, 'GREEN', '🧪');
     writeFinalPipelineActivity(runtime, totalElapsed, phasesSummary, pipelineFailed);
+    if (!pipelineFailed) {
+        const closerPlan = buildCloserReleasePlan(sm.read(runtime.statePath));
+        executeCloserReleasePlan(closerPlan, {
+            install: () => { },
+            tag: () => { },
+        }, runtime.log);
+    }
     try {
         fs.unlinkSync(cancelMarker);
     }

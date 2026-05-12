@@ -17,6 +17,7 @@ export class Reporter {
             diff_range: input.diffRange,
             exit_code: exitCode,
             exitCode,
+            header: input.header,
             sections: input.sections,
             findings,
             decision_required: decisions,

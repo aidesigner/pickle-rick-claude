@@ -8,6 +8,8 @@ import * as path from 'node:path';
 import {
   __setSpawnRunnerForTests,
   applyStrictPhasesOverride,
+  buildCloserReleasePlan,
+  executeCloserReleasePlan,
   isFatalPhaseFailure,
   logPhaseContinueReason,
   main,
@@ -363,4 +365,50 @@ test('continue path logs no remaining phases for last phase', () => {
   logPhaseContinueReason(runtime, 'szechuan-sauce', 1);
 
   assert.match(logs.join('\n'), /no remaining phases/);
+});
+
+test('closer skip install and tag when prior phase non-zero recoverable failure exists', () => {
+  const plan = buildCloserReleasePlan({
+    activity: [
+      {
+        event: 'recoverable_phase_failure',
+        phase: 'pickle',
+        exit_code: 1,
+      },
+    ],
+  });
+  let installCalled = false;
+  let tagCalled = false;
+
+  executeCloserReleasePlan(plan, {
+    install: () => { installCalled = true; },
+    tag: () => { tagCalled = true; },
+  }, () => {});
+
+  assert.equal(plan.release, false);
+  assert.equal(installCalled, false);
+  assert.equal(tagCalled, false);
+});
+
+test('closer log skip install message when prior phase non-zero recoverable failure exists', () => {
+  const logs = [];
+  const plan = buildCloserReleasePlan({
+    activity: [
+      {
+        event: 'recoverable_phase_failure',
+        phase: 'anatomy-park',
+        exit_code: 2,
+      },
+    ],
+  });
+
+  executeCloserReleasePlan(plan, {
+    install: () => {},
+    tag: () => {},
+  }, (msg) => logs.push(msg));
+
+  assert.match(
+    logs.join('\n'),
+    /Closer: prior phase non-zero exit detected — skipping install and tag/,
+  );
 });

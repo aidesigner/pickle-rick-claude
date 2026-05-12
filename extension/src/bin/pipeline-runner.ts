@@ -1225,6 +1225,18 @@ interface PhaseCounters {
   skipped: number;
 }
 
+export interface CloserReleasePlan {
+  release: boolean;
+  install: boolean;
+  tag: boolean;
+  skipReason: string | null;
+}
+
+export interface CloserReleaseActions {
+  install: () => void;
+  tag: () => void;
+}
+
 const PHASE_NAMES: readonly PhaseName[] = ['pickle', 'citadel', 'anatomy-park', 'szechuan-sauce'];
 
 function isPhaseName(phase: unknown): phase is PhaseName {
@@ -1482,6 +1494,45 @@ export function logPhaseContinueReason(
     return;
   }
   runtime.log(`Phase ${phase} exited with code ${exitCode} (non-fatal) — no remaining phases; pipeline complete with non-zero phase exits`);
+}
+
+function hasPriorNonZeroRecoverableFailure(activity: State['activity']): boolean {
+  if (!Array.isArray(activity)) return false;
+  return activity.some((entry) => (
+    entry?.event === 'recoverable_phase_failure'
+      && typeof entry.exit_code === 'number'
+      && entry.exit_code !== 0
+  ));
+}
+
+export function buildCloserReleasePlan(state: Pick<State, 'activity'>): CloserReleasePlan {
+  if (!hasPriorNonZeroRecoverableFailure(state.activity)) {
+    return {
+      release: true,
+      install: true,
+      tag: true,
+      skipReason: null,
+    };
+  }
+  return {
+    release: false,
+    install: false,
+    tag: false,
+    skipReason: 'prior phase non-zero exit detected',
+  };
+}
+
+export function executeCloserReleasePlan(
+  plan: CloserReleasePlan,
+  actions: CloserReleaseActions,
+  log: (msg: string) => void,
+): void {
+  if (!plan.release) {
+    log('Closer: prior phase non-zero exit detected — skipping install and tag');
+    return;
+  }
+  actions.install();
+  actions.tag();
 }
 
 export async function postPhaseCleanup(phase: PhaseName, sessionDir: string): Promise<void> {
@@ -1903,6 +1954,14 @@ function finalizePipeline(
   }, 'GREEN', '🧪');
 
   writeFinalPipelineActivity(runtime, totalElapsed, phasesSummary, pipelineFailed);
+
+  if (!pipelineFailed) {
+    const closerPlan = buildCloserReleasePlan(sm.read(runtime.statePath));
+    executeCloserReleasePlan(closerPlan, {
+      install: () => {},
+      tag: () => {},
+    }, runtime.log);
+  }
 
   try { fs.unlinkSync(cancelMarker); } catch { /* may not exist */ }
 
