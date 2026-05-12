@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { resolveWorkerGateTier } from '../bin/spawn-morty.js';
 import { resolveWorkerTestGateTimeoutMs } from '../services/pickle-utils.js';
 
 function withExtensionRoot(fn) {
@@ -32,5 +33,38 @@ test('settings-loader: override worker_test_gate_timeout_ms is honored', () => {
     }, null, 2));
 
     assert.equal(resolveWorkerTestGateTimeoutMs(extensionRoot), 12_345);
+  });
+});
+
+test('settings-loader: default worker_gate_tier applies when key is absent', () => {
+  withExtensionRoot((extensionRoot) => {
+    fs.writeFileSync(path.join(extensionRoot, 'pickle_settings.json'), JSON.stringify({
+      default_worker_timeout_seconds: 1200,
+    }, null, 2));
+
+    assert.equal(resolveWorkerGateTier(extensionRoot), 'fast');
+  });
+});
+
+test('settings-loader: invalid worker_gate_tier warns and falls back to fast', () => {
+  withExtensionRoot((extensionRoot) => {
+    fs.writeFileSync(path.join(extensionRoot, 'pickle_settings.json'), JSON.stringify({
+      worker_gate_tier: 'bogus',
+    }, null, 2));
+
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (message) => {
+      warnings.push(String(message));
+    };
+    try {
+      assert.equal(resolveWorkerGateTier(extensionRoot), 'fast');
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /invalid worker_gate_tier "bogus"/);
+    assert.match(warnings[0], /defaulting to "fast"/);
   });
 });

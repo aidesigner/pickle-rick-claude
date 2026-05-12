@@ -674,6 +674,7 @@ export interface UpdateSettings {
 export interface PickleSettings {
   default_codex_model?: string;
   enable_complexity_tiers?: boolean;
+  worker_gate_tier?: 'narrow' | 'fast' | 'full';
   worker_test_gate_timeout_ms?: number;
   [key: string]: unknown;
 }

@@ -540,7 +540,8 @@ type WorkerGateTestFailure = {
   message: string;
 };
 
-type WorkerGatePhase = 'lint' | 'tsc' | 'test:fast';
+type WorkerGateTier = 'narrow' | 'fast' | 'full';
+type WorkerGatePhase = 'lint' | 'tsc' | 'test:fast' | 'test:integration';
 
 type WorkerGateResult = {
   ok: boolean;
@@ -572,6 +573,25 @@ type WorkerGateCheckResult = {
   gateFailures: WorkerGateTestFailure[];
   gatePhase: WorkerGatePhase | null;
 };
+
+export function resolveWorkerGateTier(
+  extensionRoot: string,
+  settings?: PickleSettings | null,
+): WorkerGateTier {
+  const settingsBag = settings ?? (() => {
+    try {
+      return readRecoverableJsonObject(path.join(extensionRoot, 'pickle_settings.json')) as PickleSettings | null;
+    } catch {
+      return null;
+    }
+  })();
+  const tier = settingsBag?.worker_gate_tier;
+  if (tier === 'narrow' || tier === 'fast' || tier === 'full') return tier;
+  if (tier !== undefined) {
+    console.warn(`[spawn-morty] WARNING: invalid worker_gate_tier "${String(tier)}"; defaulting to "fast"`);
+  }
+  return 'fast';
+}
 
 function runCommand(cmd: string, args: string[], cwd: string, opts: { timeoutMs?: number } = {}): CommandResult {
   const result = spawnSync(cmd, args, {
@@ -693,6 +713,33 @@ function parseWorkerGateTscFailures(output: string, extensionDir: string): Worke
   return buildFallbackGateFailure('tsc', '', fallbackMessage);
 }
 
+function runWorkerGateTestCommand(
+  scriptName: 'test:fast' | 'test:integration',
+  extensionDir: string,
+  workerTestGateTimeoutMs: number,
+): {
+  ok: boolean;
+  failures: WorkerGateTestFailure[];
+  gatePhase: WorkerGatePhase;
+} {
+  const commandName = `npm run ${scriptName}` as const;
+  const testResult = runCommand('npm', ['run', scriptName], extensionDir, { timeoutMs: workerTestGateTimeoutMs });
+  const failures = testResult.ok
+    ? []
+    : testResult.timedOut
+      ? [{
+        name: '__timeout__',
+        file: commandName,
+        message: `killed after ${workerTestGateTimeoutMs}ms`,
+      }]
+      : parseWorkerGateTestFailures(`${testResult.stdout}\n${testResult.stderr}`, extensionDir);
+  return {
+    ok: testResult.ok,
+    failures,
+    gatePhase: scriptName,
+  };
+}
+
 function collectChangedFilesForLintGate(workingDir: string, preWorkerHead: string | null): string[] {
   const files = new Set<string>();
   if (preWorkerHead) {
@@ -737,6 +784,7 @@ function runWorkerGateChecks(args: {
   lintTargets: string[];
   extensionDir: string;
   workerTestGateTimeoutMs: number;
+  workerGateTier: WorkerGateTier;
 }): WorkerGateCheckResult {
   let lintOk = true;
   let lintErrors = 0;
@@ -774,28 +822,51 @@ function runWorkerGateChecks(args: {
     };
   }
 
-  const testResult = runCommand('npm', ['run', 'test:fast'], args.extensionDir, { timeoutMs: args.workerTestGateTimeoutMs });
-  const testFailures = testResult.ok
-    ? []
-    : testResult.timedOut
-      ? [{
-        name: '__timeout__',
-        file: 'npm run test:fast',
-        message: `killed after ${args.workerTestGateTimeoutMs}ms`,
-      }]
-      : parseWorkerGateTestFailures(`${testResult.stdout}\n${testResult.stderr}`, args.extensionDir);
-  if (!testResult.ok) {
-    gatePhase = 'test:fast';
-    gateFailures = testFailures;
+  if (args.workerGateTier === 'narrow') {
+    return {
+      lintOk,
+      tscOk: tscResult.ok,
+      testsOk: true,
+      lintErrors,
+      tscErrors,
+      testFailures: [],
+      gateFailures,
+      gatePhase,
+    };
+  }
+
+  const fastTierResult = runWorkerGateTestCommand('test:fast', args.extensionDir, args.workerTestGateTimeoutMs);
+  if (!fastTierResult.ok) {
+    gatePhase = fastTierResult.gatePhase;
+    gateFailures = fastTierResult.failures;
+  }
+
+  if (!fastTierResult.ok || args.workerGateTier !== 'full') {
+    return {
+      lintOk,
+      tscOk: tscResult.ok,
+      testsOk: fastTierResult.ok,
+      lintErrors,
+      tscErrors,
+      testFailures: fastTierResult.failures,
+      gateFailures,
+      gatePhase,
+    };
+  }
+
+  const integrationTierResult = runWorkerGateTestCommand('test:integration', args.extensionDir, args.workerTestGateTimeoutMs);
+  if (!integrationTierResult.ok) {
+    gatePhase = integrationTierResult.gatePhase;
+    gateFailures = integrationTierResult.failures;
   }
 
   return {
     lintOk,
     tscOk: tscResult.ok,
-    testsOk: testResult.ok,
+    testsOk: integrationTierResult.ok,
     lintErrors,
     tscErrors,
-    testFailures,
+    testFailures: integrationTierResult.failures,
     gateFailures,
     gatePhase,
   };
@@ -837,11 +908,16 @@ export function runWorkerGate(changedFiles: string[], args: {
     : fileList;
   let retryCount = 0;
   let autofixApplied = false;
+  const workerGateTier = resolveWorkerGateTier(args.workingDir);
   const workerTestGateTimeoutMs = resolveWorkerTestGateTimeoutMs(args.workingDir);
+  if (workerGateTier === 'narrow') {
+    console.warn('[spawn-morty] worker gate tier downgraded to "narrow"; skipping test:fast and test:integration');
+  }
   let gateResult = runWorkerGateChecks({
     lintTargets,
     extensionDir,
     workerTestGateTimeoutMs,
+    workerGateTier,
   });
   let { lintOk, tscOk, testsOk } = gateResult;
   if (shouldRetryWorkerGate(lintOk, tscOk, lintTargets.length)) {
@@ -858,6 +934,7 @@ export function runWorkerGate(changedFiles: string[], args: {
       lintTargets,
       extensionDir,
       workerTestGateTimeoutMs,
+      workerGateTier,
     });
     ({ lintOk, tscOk, testsOk } = gateResult);
   }

@@ -182,6 +182,60 @@ test('runWorkerGate: lints changed extension/src files, runs tsc, then runs test
   }
 });
 
+test('runWorkerGate: narrow tier stops after eslint and tsc and logs the downgrade warning', () => {
+  const root = makeTmpRoot();
+  try {
+    initGitRepo(root);
+    fs.writeFileSync(path.join(root, 'pickle_settings.json'), JSON.stringify({
+      worker_gate_tier: 'narrow',
+    }, null, 2));
+    fs.mkdirSync(path.join(root, 'extension', 'src', 'demo'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'extension', 'src', 'demo', 'one.ts'), 'export const one = 1;\n');
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['commit', '-m', 'base', '--no-gpg-sign'], { cwd: root, stdio: 'ignore' });
+    fs.writeFileSync(path.join(root, 'extension', 'src', 'demo', 'one.ts'), 'export const one = 2;\n');
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['commit', '-m', 'worker change abc12345', '--no-gpg-sign'], { cwd: root, stdio: 'ignore' });
+
+    const statePath = path.join(root, 'state.json');
+    fs.writeFileSync(statePath, JSON.stringify({ activity: [] }, null, 2));
+    const shimDir = path.join(root, 'bin');
+    const logPath = path.join(root, 'gate-log.json');
+    writeCommandShim(shimDir, 'npx', logPath);
+    writeCommandShim(shimDir, 'npm', logPath);
+
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (message) => {
+      warnings.push(String(message));
+    };
+    let result;
+    try {
+      result = withPathPrefix(shimDir, () => runWorkerGate([
+        'extension/src/demo/one.ts',
+      ], {
+        workingDir: root,
+        ticketId: 'abc12345',
+        statePath,
+        preWorkerHead: null,
+      }));
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    assert.equal(result.ok, true);
+    const calls = JSON.parse(fs.readFileSync(logPath, 'utf8'));
+    assert.deepEqual(calls, [
+      ['npx', 'eslint', 'src/demo/one.ts', '--max-warnings=-1'],
+      ['npx', 'tsc', '--noEmit'],
+    ]);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /worker gate tier downgraded to "narrow"/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('runWorkerGate: returns parsed testFailures when npm run test:fast fails after clean lint and tsc', () => {
   const root = makeTmpRoot();
   try {
@@ -244,6 +298,50 @@ test('runWorkerGate: returns parsed testFailures when npm run test:fast fails af
       }],
       retry_count: 0,
     });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('runWorkerGate: full tier runs test:fast and then test:integration', () => {
+  const root = makeTmpRoot();
+  try {
+    initGitRepo(root);
+    fs.writeFileSync(path.join(root, 'pickle_settings.json'), JSON.stringify({
+      worker_gate_tier: 'full',
+    }, null, 2));
+    fs.mkdirSync(path.join(root, 'extension', 'src', 'demo'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'extension', 'src', 'demo', 'one.ts'), 'export const one = 1;\n');
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['commit', '-m', 'base', '--no-gpg-sign'], { cwd: root, stdio: 'ignore' });
+    fs.writeFileSync(path.join(root, 'extension', 'src', 'demo', 'one.ts'), 'export const one = 2;\n');
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['commit', '-m', 'worker change abc12345', '--no-gpg-sign'], { cwd: root, stdio: 'ignore' });
+
+    const statePath = path.join(root, 'state.json');
+    fs.writeFileSync(statePath, JSON.stringify({ activity: [] }, null, 2));
+    const shimDir = path.join(root, 'bin');
+    const logPath = path.join(root, 'gate-log.json');
+    writeCommandShim(shimDir, 'npx', logPath);
+    writeCommandShim(shimDir, 'npm', logPath);
+
+    const result = withPathPrefix(shimDir, () => runWorkerGate([
+      'extension/src/demo/one.ts',
+    ], {
+      workingDir: root,
+      ticketId: 'abc12345',
+      statePath,
+      preWorkerHead: null,
+    }));
+
+    assert.equal(result.ok, true);
+    const calls = JSON.parse(fs.readFileSync(logPath, 'utf8'));
+    assert.deepEqual(calls, [
+      ['npx', 'eslint', 'src/demo/one.ts', '--max-warnings=-1'],
+      ['npx', 'tsc', '--noEmit'],
+      ['npm', 'run', 'test:fast'],
+      ['npm', 'run', 'test:integration'],
+    ]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
