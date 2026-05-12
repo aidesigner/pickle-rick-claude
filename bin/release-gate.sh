@@ -34,6 +34,13 @@ read_expected_version() {
   printf '%s\n' "$version"
 }
 
+read_tag_name_version() {
+  local tag="$1"
+  local version="${tag#v}"
+  [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || die 12 "tag $tag is not a semver release tag"
+  printf '%s\n' "$version"
+}
+
 read_tag_version() {
   local tag="$1"
   local pkg
@@ -47,17 +54,21 @@ read_tag_version() {
 
 pre_tag() {
   local tag="$1"
-  local expected tagged
+  local expected tag_name_version tagged
   expected="$(read_expected_version)"
+  tag_name_version="$(read_tag_name_version "$tag")"
   tagged="$(read_tag_version "$tag")"
+  [ "$expected" = "$tag_name_version" ] || die 10 "expected release tag $tag to match $PKG_PATH version $expected"
   [ "$expected" = "$tagged" ] || die 10 "expected $PKG_PATH version $expected but tag $tag has $tagged"
   echo "ok: tag $tag has $PKG_PATH version $expected"
 }
 
 post_tag() {
   local tag="$1"
-  local expected tmpdir
+  local expected tag_name_version tmpdir
   expected="$(read_expected_version)"
+  tag_name_version="$(read_tag_name_version "$tag")"
+  [ "$expected" = "$tag_name_version" ] || die 21 "expected release tag $tag to match $PKG_PATH version $expected"
   gh api "repos/$REPO/releases/tags/$tag" >/dev/null 2>&1 || die 22 "GitHub release API check failed for $tag"
   tmpdir="$(mktemp -d)"
   RELEASE_GATE_TMPDIR="$tmpdir"

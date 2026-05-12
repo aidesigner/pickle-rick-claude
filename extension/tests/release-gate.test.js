@@ -31,7 +31,11 @@ function writePackage(repoDir, version) {
   writeFileSync(path.join(extensionDir, 'package.json'), `${JSON.stringify({ version }, null, 2)}\n`);
 }
 
-function makeGitFixture({ headVersion = '1.67.0', tagVersion = '1.67.0' } = {}) {
+function makeGitFixture({
+  headVersion = '1.67.0',
+  tagVersion = '1.67.0',
+  tagName = `v${tagVersion}`,
+} = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), 'release-gate-repo-'));
   run('git', ['init', '-q'], { cwd: dir });
   run('git', ['config', 'user.email', 'release-gate@example.com'], { cwd: dir });
@@ -39,13 +43,13 @@ function makeGitFixture({ headVersion = '1.67.0', tagVersion = '1.67.0' } = {}) 
   writePackage(dir, tagVersion);
   run('git', ['add', 'extension/package.json'], { cwd: dir });
   run('git', ['commit', '-q', '-m', 'tag version'], { cwd: dir });
-  run('git', ['tag', 'v-test'], { cwd: dir });
+  run('git', ['tag', tagName], { cwd: dir });
   if (headVersion !== tagVersion) {
     writePackage(dir, headVersion);
     run('git', ['add', 'extension/package.json'], { cwd: dir });
     run('git', ['commit', '-q', '-m', 'head version'], { cwd: dir });
   }
-  return dir;
+  return { dir, tagName };
 }
 
 function makeTarball(version) {
@@ -103,9 +107,9 @@ function gate(args, { cwd, pathPrefix } = {}) {
 
 describe('release-gate.pre-tag', () => {
   test('passes when tag package version matches HEAD package version', () => {
-    const repoDir = makeGitFixture();
+    const { dir: repoDir, tagName } = makeGitFixture();
     try {
-      const result = gate(['--pre-tag', 'v-test'], { cwd: repoDir });
+      const result = gate(['--pre-tag', tagName], { cwd: repoDir });
       assert.equal(result.status, 0, result.stderr);
       assert.match(result.stdout, /ok/);
     } finally {
@@ -114,9 +118,9 @@ describe('release-gate.pre-tag', () => {
   });
 
   test('exits 10 when tag package version is older than HEAD package version', () => {
-    const repoDir = makeGitFixture({ headVersion: '1.67.0', tagVersion: '1.64.0' });
+    const { dir: repoDir, tagName } = makeGitFixture({ headVersion: '1.67.0', tagVersion: '1.64.0' });
     try {
-      const result = gate(['--pre-tag', 'v-test'], { cwd: repoDir });
+      const result = gate(['--pre-tag', tagName], { cwd: repoDir });
       assert.equal(result.status, 10);
       assert.match(result.stderr, /exit 10/);
     } finally {
@@ -124,11 +128,22 @@ describe('release-gate.pre-tag', () => {
     }
   });
 
+  test('exits 10 when tag name semver does not match HEAD package version', () => {
+    const { dir: repoDir } = makeGitFixture({ headVersion: '1.67.0', tagVersion: '1.67.0', tagName: 'v9.99.0' });
+    try {
+      const result = gate(['--pre-tag', 'v9.99.0'], { cwd: repoDir });
+      assert.equal(result.status, 10);
+      assert.match(result.stderr, /match extension\/package\.json version 1\.67\.0/);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+    }
+  });
+
   test('exits 11 when jq cannot parse package JSON', () => {
-    const repoDir = makeGitFixture();
+    const { dir: repoDir, tagName } = makeGitFixture();
     writeFileSync(path.join(repoDir, 'extension', 'package.json'), '{broken\n');
     try {
-      const result = gate(['--pre-tag', 'v-test'], { cwd: repoDir });
+      const result = gate(['--pre-tag', tagName], { cwd: repoDir });
       assert.equal(result.status, 11);
       assert.match(result.stderr, /exit 11/);
     } finally {
@@ -137,7 +152,7 @@ describe('release-gate.pre-tag', () => {
   });
 
   test('exits 12 when the requested tag is missing', () => {
-    const repoDir = makeGitFixture();
+    const { dir: repoDir } = makeGitFixture();
     try {
       const result = gate(['--pre-tag', 'v-missing'], { cwd: repoDir });
       assert.equal(result.status, 12);
@@ -150,11 +165,11 @@ describe('release-gate.pre-tag', () => {
 
 describe('release-gate.post-tag', () => {
   test('passes when downloaded tarball package version matches HEAD package version', () => {
-    const repoDir = makeGitFixture();
+    const { dir: repoDir, tagName } = makeGitFixture();
     const tarFixture = makeTarball('1.67.0');
     const ghDir = makeGhFixture({ tarball: tarFixture.tarball });
     try {
-      const result = gate(['--post-tag', 'v-test'], { cwd: repoDir, pathPrefix: ghDir });
+      const result = gate(['--post-tag', tagName], { cwd: repoDir, pathPrefix: ghDir });
       assert.equal(result.status, 0, result.stderr);
       assert.match(result.stdout, /ok/);
     } finally {
@@ -165,10 +180,10 @@ describe('release-gate.post-tag', () => {
   });
 
   test('exits 20 when release asset download fails', () => {
-    const repoDir = makeGitFixture();
+    const { dir: repoDir, tagName } = makeGitFixture();
     const ghDir = makeGhFixture({ mode: 'download-fail' });
     try {
-      const result = gate(['--post-tag', 'v-test'], { cwd: repoDir, pathPrefix: ghDir });
+      const result = gate(['--post-tag', tagName], { cwd: repoDir, pathPrefix: ghDir });
       assert.equal(result.status, 20);
       assert.match(result.stderr, /exit 20/);
     } finally {
@@ -178,11 +193,11 @@ describe('release-gate.post-tag', () => {
   });
 
   test('exits 21 when downloaded tarball package version is older than HEAD package version', () => {
-    const repoDir = makeGitFixture({ headVersion: '1.67.0', tagVersion: '1.67.0' });
+    const { dir: repoDir, tagName } = makeGitFixture({ headVersion: '1.67.0', tagVersion: '1.67.0' });
     const tarFixture = makeTarball('1.64.0');
     const ghDir = makeGhFixture({ tarball: tarFixture.tarball });
     try {
-      const result = gate(['--post-tag', 'v-test'], { cwd: repoDir, pathPrefix: ghDir });
+      const result = gate(['--post-tag', tagName], { cwd: repoDir, pathPrefix: ghDir });
       assert.equal(result.status, 21);
       assert.match(result.stderr, /exit 21/);
     } finally {
@@ -192,11 +207,26 @@ describe('release-gate.post-tag', () => {
     }
   });
 
+  test('exits 21 when tag name semver does not match HEAD package version', () => {
+    const { dir: repoDir } = makeGitFixture({ headVersion: '1.67.0', tagVersion: '1.67.0', tagName: 'v9.99.0' });
+    const tarFixture = makeTarball('1.67.0');
+    const ghDir = makeGhFixture({ tarball: tarFixture.tarball });
+    try {
+      const result = gate(['--post-tag', 'v9.99.0'], { cwd: repoDir, pathPrefix: ghDir });
+      assert.equal(result.status, 21);
+      assert.match(result.stderr, /match extension\/package\.json version 1\.67\.0/);
+    } finally {
+      rmSync(repoDir, { recursive: true, force: true });
+      rmSync(tarFixture.dir, { recursive: true, force: true });
+      rmSync(ghDir, { recursive: true, force: true });
+    }
+  });
+
   test('exits 22 when the GitHub release API check fails', () => {
-    const repoDir = makeGitFixture();
+    const { dir: repoDir, tagName } = makeGitFixture();
     const ghDir = makeGhFixture({ mode: 'api-fail' });
     try {
-      const result = gate(['--post-tag', 'v-test'], { cwd: repoDir, pathPrefix: ghDir });
+      const result = gate(['--post-tag', tagName], { cwd: repoDir, pathPrefix: ghDir });
       assert.equal(result.status, 22);
       assert.match(result.stderr, /exit 22/);
     } finally {
