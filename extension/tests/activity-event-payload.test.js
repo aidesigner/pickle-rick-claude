@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { VALID_ACTIVITY_EVENTS } from '../types/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const SCHEMA_PATH = path.resolve(__dirname, '../src/types/activity-events.schema.json');
@@ -39,6 +40,11 @@ function validateAgainstDefinition(payload, def) {
         return { valid: false, error: `${field} value '${payload[field]}' not in enum [${propSchema.enum.join(', ')}]` };
       }
     }
+    if (Object.prototype.hasOwnProperty.call(propSchema, 'const')) {
+      if (payload[field] !== propSchema.const) {
+        return { valid: false, error: `${field} must equal ${String(propSchema.const)}` };
+      }
+    }
     if (propSchema.type === 'object' && propSchema.required) {
       const val = payload[field];
       if (typeof val !== 'object' || val === null) {
@@ -50,6 +56,24 @@ function validateAgainstDefinition(payload, def) {
     if (propSchema.type === 'integer') {
       if (!Number.isInteger(payload[field])) {
         return { valid: false, error: `${field} must be an integer` };
+      }
+    }
+    if (propSchema.type === 'boolean') {
+      if (typeof payload[field] !== 'boolean') {
+        return { valid: false, error: `${field} must be a boolean` };
+      }
+    }
+    if (propSchema.type === 'string') {
+      if (typeof payload[field] !== 'string') {
+        return { valid: false, error: `${field} must be a string` };
+      }
+    }
+    if (propSchema.type === 'array') {
+      if (!Array.isArray(payload[field])) {
+        return { valid: false, error: `${field} must be an array` };
+      }
+      if (propSchema.items?.type === 'string' && payload[field].some((item) => typeof item !== 'string')) {
+        return { valid: false, error: `${field} items must be strings` };
       }
     }
   }
@@ -98,6 +122,20 @@ const EVENT_CASES = [
     type: 'worker_backend_resolved',
     valid: { event: 'worker_backend_resolved', ts: TS, backend: 'claude', worker_backend: 'codex', source: 'worker_backend' },
     drop: 'source',
+  },
+  {
+    type: 'recoverable_phase_failure',
+    valid: {
+      event: 'recoverable_phase_failure',
+      ts: TS,
+      phase: 'pickle',
+      exit_code: 1,
+      fatal: false,
+      reason: 'non-fatal pickle exit, commits present',
+      downstream_phases_remaining: ['citadel', 'anatomy-park', 'szechuan-sauce'],
+      decision: 'continue',
+    },
+    drop: 'decision',
   },
   {
     type: 'worker_partial_lifecycle_exit',
@@ -323,6 +361,39 @@ for (const { type, valid, drop } of EVENT_CASES) {
   });
 }
 
+test('activity-event-payload: recoverable_phase_failure registered in VALID_ACTIVITY_EVENTS', () => {
+  assert.ok(
+    VALID_ACTIVITY_EVENTS.includes('recoverable_phase_failure'),
+    'recoverable_phase_failure must be present in VALID_ACTIVITY_EVENTS',
+  );
+});
+
+test('activity-event-payload: recoverable_phase_failure schema enforces contract fields', () => {
+  const good = validate({
+    event: 'recoverable_phase_failure',
+    ts: TS,
+    phase: 'anatomy-park',
+    exit_code: 1,
+    fatal: false,
+    reason: 'non-fatal anatomy-park exit, exit_reason=judge_timeout',
+    downstream_phases_remaining: ['szechuan-sauce'],
+    decision: 'continue',
+  }, 'recoverable_phase_failure');
+  assert.equal(good.valid, true, good.error);
+
+  const bad = validate({
+    event: 'recoverable_phase_failure',
+    ts: TS,
+    phase: 'anatomy-park',
+    exit_code: '1',
+    fatal: true,
+    reason: 'bad',
+    downstream_phases_remaining: ['szechuan-sauce', 2],
+    decision: 'resume',
+  }, 'recoverable_phase_failure');
+  assert.equal(bad.valid, false, 'invalid exit_code/fatal/downstream_phases_remaining/decision should fail');
+});
+
 // worker_spawn_backend_resolved specific: source enum-of-six and backend enum-of-three
 test('activity-event-payload: worker_spawn_backend_resolved source must be one of six BackendResolutionSource values', () => {
   const base = { event: 'worker_spawn_backend_resolved', ts: TS, backend: 'claude', pid: 4567 };
@@ -473,6 +544,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'worker_lint_gate_failed',
     'worker_lint_autofix_applied',
     'worker_completion_commit_announced',
+    'recoverable_phase_failure',
     'time_cap_disabled_default',
     'manager_max_turns_relaunch',
     'manager_idle_backoff_engaged',

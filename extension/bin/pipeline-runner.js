@@ -1151,6 +1151,59 @@ export function shouldHaltAfterPhase(phase, exitCode, runtime) {
     }
     return shouldHalt;
 }
+function getRecoverablePhaseFailureReason(phase, runtime) {
+    try {
+        const runnerState = sm.read(runtime.statePath);
+        if (phase === 'pickle') {
+            const startCommit = runnerState.start_commit?.trim();
+            if (startCommit) {
+                const commits = countCommitsSince(startCommit, runtime.workingDir);
+                if (commits > 0) {
+                    return 'non-fatal pickle exit, commits present';
+                }
+            }
+            return 'non-fatal pickle exit';
+        }
+        if (phase === 'citadel') {
+            const threshold = runtime.config.citadel_strict ? 'High' : 'Critical';
+            return `non-fatal citadel exit, findings below ${threshold} halt threshold`;
+        }
+        if (phase === 'anatomy-park' || phase === 'szechuan-sauce') {
+            const exitReason = typeof runnerState.exit_reason === 'string'
+                ? runnerState.exit_reason
+                : 'unknown';
+            return `non-fatal ${phase} exit, exit_reason=${exitReason}`;
+        }
+    }
+    catch {
+        // Best-effort telemetry; fall back to a generic reason below.
+    }
+    return `non-fatal ${phase} exit`;
+}
+export function recordRecoverablePhaseFailure(runtime, phase, exitCode, phaseIndex, decision) {
+    const downstreamPhasesRemaining = runtime.config.phases.slice(phaseIndex + 1);
+    try {
+        sm.update(runtime.statePath, state => {
+            const activity = Array.isArray(state.activity) ? state.activity : [];
+            state.activity = [
+                ...activity,
+                {
+                    event: 'recoverable_phase_failure',
+                    ts: new Date().toISOString(),
+                    phase,
+                    exit_code: exitCode,
+                    fatal: false,
+                    reason: getRecoverablePhaseFailureReason(phase, runtime),
+                    downstream_phases_remaining: downstreamPhasesRemaining,
+                    decision,
+                },
+            ];
+        });
+    }
+    catch (err) {
+        runtime.log(`recoverable_phase_failure activity write failed: ${safeErrorMessage(err)}`);
+    }
+}
 export async function postPhaseCleanup(phase, sessionDir) {
     const prevPhaseByPhase = {
         pickle: null,
@@ -1253,6 +1306,16 @@ async function runConfiguredPhase(runtime, phaseConfig, counters) {
         return { skipped: false, exitCode: (await executeCitadelPhase(runtime)).exitCode };
     const result = await executePhaseRunner(phaseConfig, runtime.phaseEnv);
     return { skipped: false, exitCode: result.exitCode, stderr: result.stderr };
+}
+export function applyStrictPhasesOverride(statePath, strictPhases, log) {
+    if (!strictPhases)
+        return false;
+    const state = sm.read(statePath);
+    if (state.pipeline_continue_on_phase_fail === false)
+        return false;
+    sm.update(statePath, s => { s.pipeline_continue_on_phase_fail = false; });
+    log?.('strict phase policy enabled via --strict-phases; state.pipeline_continue_on_phase_fail=false');
+    return true;
 }
 function createPipelineLog(sessionDir) {
     const runnerLog = path.join(sessionDir, 'pipeline-runner.log');
@@ -1576,7 +1639,11 @@ async function runPhaseIteration(runtime, counters, cancelMarker, rawPhase, inde
         reportPhaseIncomplete(runtime, rawPhase);
         return { action: 'break', phaseIncomplete: true };
     }
-    if (shouldHaltAfterPhase(rawPhase, exitCode, runtime)) {
+    const shouldHalt = shouldHaltAfterPhase(rawPhase, exitCode, runtime);
+    if (exitCode !== 0 && !shouldHalt) {
+        recordRecoverablePhaseFailure(runtime, rawPhase, exitCode, index, 'continue');
+    }
+    if (shouldHalt) {
         const haltAction = logPhaseHaltReason(runtime, rawPhase, exitCode, log);
         if (haltAction === 'run-finalize-gate') {
             try {
@@ -1657,16 +1724,6 @@ async function handlePhaseBoundaryRespawn(runtime, rawPhase, nextRawPhase) {
     }
     // R-MDS-6: reset flag so replacement watcher shows normal no-data message
     setProducerDone(runtime, false);
-}
-export function applyStrictPhasesOverride(statePath, strictPhases, log) {
-    if (!strictPhases)
-        return false;
-    const state = sm.read(statePath);
-    if (state.pipeline_continue_on_phase_fail === false)
-        return false;
-    sm.update(statePath, s => { s.pipeline_continue_on_phase_fail = false; });
-    log?.('strict phase policy enabled via --strict-phases; state.pipeline_continue_on_phase_fail=false');
-    return true;
 }
 export async function main(sessionDir, opts = {}) {
     try {

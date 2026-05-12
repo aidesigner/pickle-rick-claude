@@ -506,6 +506,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'completion_commit_auto_filled',
   'completion_commit_inferred_from_git',
   'worker_completion_commit_announced',
+  'recoverable_phase_failure',
   'time_cap_disabled_default',
   'manager_max_turns_relaunch',
   'bundle_bootstrap_exemption_applied',
@@ -634,6 +635,10 @@ export interface ActivityEvent {
   received_at_iso?: string;
   handler_stack?: string[];
   phase?: string;
+  exit_code?: number;
+  fatal?: boolean;
+  downstream_phases_remaining?: string[];
+  decision?: 'continue' | 'abort';
   attempts?: number;
   fall_through_to_finalize_gate?: boolean;
 }

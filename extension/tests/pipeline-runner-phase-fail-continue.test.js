@@ -6,8 +6,10 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
+  __setSpawnRunnerForTests,
   applyStrictPhasesOverride,
   isFatalPhaseFailure,
+  recordRecoverablePhaseFailure,
   shouldHaltAfterPhase,
 } from '../bin/pipeline-runner.js';
 import { MICROVERSE_FATAL_REASONS } from '../types/index.js';
@@ -59,6 +61,7 @@ function writeState(sessionDir, repo, overrides = {}) {
     history: [],
     started_at: new Date().toISOString(),
     session_dir: sessionDir,
+    schema_version: 3,
     backend: 'claude',
     ...overrides,
   }, null, 2));
@@ -103,6 +106,7 @@ function makeRuntime({
 }
 
 afterEach(() => {
+  __setSpawnRunnerForTests(null);
   for (const dir of TMP_DIRS) {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -176,4 +180,36 @@ test('strict-phases cli override is a no-op when strict mode is not requested', 
 
   assert.equal(changed, false);
   assert.equal(state.pipeline_continue_on_phase_fail, true);
+});
+
+test('recoverable_phase_failure emitted on every non-fatal exit during simulated 4-phase pipeline', () => {
+  const { runtime } = makeRuntime({ createFollowupCommit: true });
+  const phases = runtime.config.phases;
+
+  recordRecoverablePhaseFailure(runtime, 'pickle', 1, phases.indexOf('pickle'), 'continue');
+  fs.writeFileSync(runtime.statePath, JSON.stringify({
+    ...JSON.parse(fs.readFileSync(runtime.statePath, 'utf-8')),
+    exit_reason: 'judge_timeout',
+  }, null, 2));
+  recordRecoverablePhaseFailure(runtime, 'anatomy-park', 1, phases.indexOf('anatomy-park'), 'continue');
+  fs.writeFileSync(runtime.statePath, JSON.stringify({
+    ...JSON.parse(fs.readFileSync(runtime.statePath, 'utf-8')),
+    exit_reason: 'error',
+  }, null, 2));
+  recordRecoverablePhaseFailure(runtime, 'szechuan-sauce', 1, phases.indexOf('szechuan-sauce'), 'continue');
+
+  const state = JSON.parse(fs.readFileSync(runtime.statePath, 'utf-8'));
+  const events = state.activity.filter((entry) => entry.event === 'recoverable_phase_failure');
+
+  assert.equal(events.length, 3);
+  assert.deepEqual(
+    events.map((entry) => entry.phase),
+    ['pickle', 'anatomy-park', 'szechuan-sauce'],
+  );
+  assert.deepEqual(events[0].downstream_phases_remaining, ['citadel', 'anatomy-park', 'szechuan-sauce']);
+  assert.deepEqual(events[1].downstream_phases_remaining, ['szechuan-sauce']);
+  assert.deepEqual(events[2].downstream_phases_remaining, []);
+  assert.equal(events[0].reason, 'non-fatal pickle exit, commits present');
+  assert.equal(events[0].fatal, false);
+  assert.equal(events[0].decision, 'continue');
 });

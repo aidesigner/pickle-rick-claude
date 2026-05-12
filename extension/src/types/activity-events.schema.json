@@ -354,6 +354,20 @@
         "sha": { "type": "string" }
       }
     },
+    "recoverable_phase_failure": {
+      "type": "object",
+      "required": ["event", "ts", "phase", "exit_code", "fatal", "reason", "downstream_phases_remaining", "decision"],
+      "properties": {
+        "event": { "type": "string", "const": "recoverable_phase_failure" },
+        "ts": { "type": "string" },
+        "phase": { "type": "string" },
+        "exit_code": { "type": "integer" },
+        "fatal": { "type": "boolean", "const": false },
+        "reason": { "type": "string" },
+        "downstream_phases_remaining": { "type": "array", "items": { "type": "string" } },
+        "decision": { "type": "string", "enum": ["continue", "abort"] }
+      }
+    },
     "time_cap_disabled_default": {
       "type": "object",
       "required": ["event", "ts"],
@@ -607,6 +621,7 @@
     { "$ref": "#/definitions/worker_lint_gate_failed" },
     { "$ref": "#/definitions/worker_lint_autofix_applied" },
     { "$ref": "#/definitions/worker_completion_commit_announced" },
+    { "$ref": "#/definitions/recoverable_phase_failure" },
     { "$ref": "#/definitions/time_cap_disabled_default" },
     { "$ref": "#/definitions/manager_max_turns_relaunch" },
     { "$ref": "#/definitions/manager_idle_backoff_engaged" },

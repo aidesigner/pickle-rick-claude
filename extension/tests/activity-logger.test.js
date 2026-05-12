@@ -153,6 +153,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'completion_commit_auto_filled',
         'completion_commit_inferred_from_git',
         'worker_completion_commit_announced',
+        'recoverable_phase_failure',
         'time_cap_disabled_default',
         'bundle_bootstrap_exemption_applied',
         'signal_received',
@@ -173,7 +174,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'manager_idle_backoff_engaged',
         'manager_idle_backoff_released',
     ];
-    assert.equal(VALID_ACTIVITY_EVENTS.length, 127);
+    assert.equal(VALID_ACTIVITY_EVENTS.length, 128);
     for (const e of expected) {
         assert.ok(VALID_ACTIVITY_EVENTS.includes(e), `Missing event type: ${e}`);
     }

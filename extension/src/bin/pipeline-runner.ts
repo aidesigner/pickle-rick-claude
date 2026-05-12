@@ -1412,6 +1412,68 @@ export function shouldHaltAfterPhase(phase: PhaseName, exitCode: number, runtime
   return shouldHalt;
 }
 
+function getRecoverablePhaseFailureReason(
+  phase: PhaseName,
+  runtime: PipelineRuntime,
+): string {
+  try {
+    const runnerState = sm.read(runtime.statePath);
+    if (phase === 'pickle') {
+      const startCommit = runnerState.start_commit?.trim();
+      if (startCommit) {
+        const commits = countCommitsSince(startCommit, runtime.workingDir);
+        if (commits > 0) {
+          return 'non-fatal pickle exit, commits present';
+        }
+      }
+      return 'non-fatal pickle exit';
+    }
+    if (phase === 'citadel') {
+      const threshold: CitadelSeverity = runtime.config.citadel_strict ? 'High' : 'Critical';
+      return `non-fatal citadel exit, findings below ${threshold} halt threshold`;
+    }
+    if (phase === 'anatomy-park' || phase === 'szechuan-sauce') {
+      const exitReason = typeof runnerState.exit_reason === 'string'
+        ? runnerState.exit_reason
+        : 'unknown';
+      return `non-fatal ${phase} exit, exit_reason=${exitReason}`;
+    }
+  } catch {
+    // Best-effort telemetry; fall back to a generic reason below.
+  }
+  return `non-fatal ${phase} exit`;
+}
+
+export function recordRecoverablePhaseFailure(
+  runtime: PipelineRuntime,
+  phase: PhaseName,
+  exitCode: number,
+  phaseIndex: number,
+  decision: 'continue' | 'abort',
+): void {
+  const downstreamPhasesRemaining = runtime.config.phases.slice(phaseIndex + 1);
+  try {
+    sm.update(runtime.statePath, state => {
+      const activity = Array.isArray(state.activity) ? state.activity : [];
+      state.activity = [
+        ...activity,
+        {
+          event: 'recoverable_phase_failure',
+          ts: new Date().toISOString(),
+          phase,
+          exit_code: exitCode,
+          fatal: false,
+          reason: getRecoverablePhaseFailureReason(phase, runtime),
+          downstream_phases_remaining: downstreamPhasesRemaining,
+          decision,
+        },
+      ];
+    });
+  } catch (err) {
+    runtime.log(`recoverable_phase_failure activity write failed: ${safeErrorMessage(err)}`);
+  }
+}
+
 export async function postPhaseCleanup(phase: PhaseName, sessionDir: string): Promise<void> {
   const prevPhaseByPhase: Record<PhaseName, PhaseConfig['prevPhase']> = {
     pickle: null,
@@ -1919,7 +1981,11 @@ async function runPhaseIteration(
     reportPhaseIncomplete(runtime, rawPhase);
     return { action: 'break', phaseIncomplete: true };
   }
-  if (shouldHaltAfterPhase(rawPhase, exitCode, runtime)) {
+  const shouldHalt = shouldHaltAfterPhase(rawPhase, exitCode, runtime);
+  if (exitCode !== 0 && !shouldHalt) {
+    recordRecoverablePhaseFailure(runtime, rawPhase, exitCode, index, 'continue');
+  }
+  if (shouldHalt) {
     const haltAction = logPhaseHaltReason(runtime, rawPhase, exitCode, log);
     if (haltAction === 'run-finalize-gate') {
       try {

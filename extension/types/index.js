@@ -222,6 +222,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'completion_commit_auto_filled',
     'completion_commit_inferred_from_git',
     'worker_completion_commit_announced',
+    'recoverable_phase_failure',
     'time_cap_disabled_default',
     'manager_max_turns_relaunch',
     'bundle_bootstrap_exemption_applied',
