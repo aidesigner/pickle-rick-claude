@@ -47,15 +47,23 @@ function writeCommandShim(binDir, commandName, logPath, options = {}) {
   const exitCode = options.exitCode ?? 0;
   const stdout = options.stdout ?? '';
   const stderr = options.stderr ?? '';
+  const sleepMs = options.sleepMs ?? 0;
   fs.writeFileSync(shimPath, `#!/usr/bin/env node
 const fs = require('fs');
 const logPath = ${JSON.stringify(logPath)};
 const existing = fs.existsSync(logPath) ? JSON.parse(fs.readFileSync(logPath, 'utf8')) : [];
 existing.push([${JSON.stringify(commandName)}, ...process.argv.slice(2)]);
 fs.writeFileSync(logPath, JSON.stringify(existing, null, 2));
+const finish = () => {
 if (${JSON.stringify(stdout)}.length > 0) process.stdout.write(${JSON.stringify(stdout)});
 if (${JSON.stringify(stderr)}.length > 0) process.stderr.write(${JSON.stringify(stderr)});
 process.exit(${JSON.stringify(exitCode)});
+};
+if (${JSON.stringify(sleepMs)} > 0) {
+  setTimeout(finish, ${JSON.stringify(sleepMs)});
+} else {
+  finish();
+}
 `);
   fs.chmodSync(shimPath, 0o755);
 }
@@ -296,6 +304,52 @@ test.skip('runWorkerGate: skips test:fast when SKIP_WORKER_TEST_GATE=1 and logs 
   assert.match('SKIP_WORKER_TEST_GATE', /SKIP_WORKER_TEST_GATE/);
 });
 
-test.skip('runWorkerGate: honors worker_test_gate_timeout_ms without truncating test:fast output', () => {
-  assert.match('worker_test_gate_timeout_ms', /worker_test_gate_timeout_ms/);
+test('runWorkerGate: honors worker_test_gate_timeout_ms and reports a synthetic timeout failure', () => {
+  const root = makeTmpRoot();
+  try {
+    initGitRepo(root);
+    fs.writeFileSync(path.join(root, 'pickle_settings.json'), JSON.stringify({
+      worker_test_gate_timeout_ms: 100,
+    }, null, 2));
+    fs.mkdirSync(path.join(root, 'extension', 'src', 'demo'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'extension', 'src', 'demo', 'one.ts'), 'export const one = 1;\n');
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['commit', '-m', 'base', '--no-gpg-sign'], { cwd: root, stdio: 'ignore' });
+    fs.writeFileSync(path.join(root, 'extension', 'src', 'demo', 'one.ts'), 'export const one = 2;\n');
+    execFileSync('git', ['add', '.'], { cwd: root });
+    execFileSync('git', ['commit', '-m', 'worker change abc12345', '--no-gpg-sign'], { cwd: root, stdio: 'ignore' });
+
+    const statePath = path.join(root, 'state.json');
+    fs.writeFileSync(statePath, JSON.stringify({ activity: [] }, null, 2));
+    const shimDir = path.join(root, 'bin');
+    const logPath = path.join(root, 'gate-log.json');
+    writeCommandShim(shimDir, 'npx', logPath);
+    writeCommandShim(shimDir, 'npm', logPath, {
+      sleepMs: 250,
+      stdout: 'partial output should not matter\n',
+    });
+
+    const result = withPathPrefix(shimDir, () => runWorkerGate([
+      'extension/src/demo/one.ts',
+    ], {
+      workingDir: root,
+      ticketId: 'abc12345',
+      statePath,
+      preWorkerHead: null,
+    }));
+
+    assert.equal(result.ok, false);
+    assert.deepEqual(result.testFailures, [{
+      name: '__timeout__',
+      file: 'npm run test:fast',
+      message: 'killed after 100ms',
+    }]);
+    const calls = JSON.parse(fs.readFileSync(logPath, 'utf8'));
+    assert.deepEqual(calls, [
+      ['npx', 'eslint', 'src/demo/one.ts', '--max-warnings=-1'],
+      ['npx', 'tsc', '--noEmit'],
+    ]);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });

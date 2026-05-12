@@ -83,6 +83,7 @@ export function wrapText(text, width) {
         lines.push(currentLine);
     return lines.length > 0 ? lines : [''];
 }
+export const DEFAULT_WORKER_TEST_GATE_TIMEOUT_MS = 240_000;
 export function printMinimalPanel(title, fields, colorName = 'GREEN', icon = '🥒') {
     const width = getWidth();
     const c = Style[colorName] || Style.GREEN;
@@ -403,14 +404,22 @@ function readTierCapsBlock(block) {
     }
     return result;
 }
-function loadPickleSettingsBag() {
+export function loadPickleSettingsBag(extensionRoot = getExtensionRoot()) {
     try {
-        const settingsPath = path.join(getExtensionRoot(), 'pickle_settings.json');
+        const settingsPath = path.join(extensionRoot, 'pickle_settings.json');
         return readRecoverableJsonObject(settingsPath);
     }
     catch {
         return null;
     }
+}
+export function resolveWorkerTestGateTimeoutMs(extensionRoot = getExtensionRoot(), settings) {
+    const settingsBag = settings === undefined ? loadPickleSettingsBag(extensionRoot) : settings;
+    const timeoutMs = Number(settingsBag?.worker_test_gate_timeout_ms);
+    if (Number.isFinite(timeoutMs) && Number.isInteger(timeoutMs) && timeoutMs > 0) {
+        return timeoutMs;
+    }
+    return DEFAULT_WORKER_TEST_GATE_TIMEOUT_MS;
 }
 export function readPickleSettingsTierCaps(settings) {
     if (!settings)

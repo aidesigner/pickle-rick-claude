@@ -2,7 +2,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, runCmd, safeErrorMessage, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, } from '../services/pickle-utils.js';
+import { printMinimalPanel, Style, formatTime, getExtensionRoot, getDataRoot, runCmd, safeErrorMessage, parseTicketFrontmatter, getTicketTierBudgetWithOverrides, resolveWorkerTestGateTimeoutMs, } from '../services/pickle-utils.js';
 import { spawn, spawnSync } from 'child_process';
 import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact } from '../types/index.js';
 import { isRecord } from '../lib/is-record.js';
@@ -431,17 +431,20 @@ export function checkGitEdits(workingDir, sinceEpochSec) {
         return false;
     }
 }
-function runCommand(cmd, args, cwd) {
+function runCommand(cmd, args, cwd, opts = {}) {
     const result = spawnSync(cmd, args, {
         cwd,
         encoding: 'utf8',
-        timeout: 120_000,
+        timeout: opts.timeoutMs ?? 120_000,
         stdio: ['ignore', 'pipe', 'pipe'],
     });
+    const timedOut = result.error?.code === 'ETIMEDOUT';
     return {
-        ok: (result.status ?? 1) === 0,
+        ok: (result.status ?? 1) === 0 && !timedOut,
         stdout: result.stdout ?? '',
         stderr: result.stderr ?? '',
+        signal: result.signal ?? null,
+        timedOut,
     };
 }
 function countLintErrors(output) {
@@ -560,6 +563,7 @@ export function runWorkerGate(changedFiles, args) {
     let tscErrors = 0;
     let testFailures = [];
     let autofixApplied = false;
+    const workerTestGateTimeoutMs = resolveWorkerTestGateTimeoutMs(args.workingDir);
     const runChecks = () => {
         let lintOk = true;
         if (lintTargets.length > 0) {
@@ -576,10 +580,16 @@ export function runWorkerGate(changedFiles, args) {
             testFailures = [];
             return { lintOk, tscOk: tscResult.ok, testsOk: true };
         }
-        const testResult = runCommand('npm', ['run', 'test:fast'], extensionDir);
+        const testResult = runCommand('npm', ['run', 'test:fast'], extensionDir, { timeoutMs: workerTestGateTimeoutMs });
         testFailures = testResult.ok
             ? []
-            : parseWorkerGateTestFailures(`${testResult.stdout}\n${testResult.stderr}`, extensionDir);
+            : testResult.timedOut
+                ? [{
+                        name: '__timeout__',
+                        file: 'npm run test:fast',
+                        message: `killed after ${workerTestGateTimeoutMs}ms`,
+                    }]
+                : parseWorkerGateTestFailures(`${testResult.stdout}\n${testResult.stderr}`, extensionDir);
         return { lintOk, tscOk: tscResult.ok, testsOk: testResult.ok };
     };
     let { lintOk, tscOk, testsOk } = runChecks();

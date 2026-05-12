@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import { StringDecoder } from 'string_decoder';
-import { State, VALID_STEPS, LockError, SessionMapEntry, type ActivityEvent } from '../types/index.js';
+import { State, VALID_STEPS, LockError, SessionMapEntry, type ActivityEvent, type PickleSettings } from '../types/index.js';
 import { StateManager } from './state-manager.js';
 import { readRecoverableJsonObject } from './recoverable-json.js';
 import { updateTicketStatusInTransaction } from './transaction-ticket-ops.js';
@@ -89,6 +89,8 @@ export function wrapText(text: string, width: number): string[] {
   if (currentLine) lines.push(currentLine);
   return lines.length > 0 ? lines : [''];
 }
+
+export const DEFAULT_WORKER_TEST_GATE_TIMEOUT_MS = 240_000;
 
 export function printMinimalPanel(
   title: string,
@@ -483,13 +485,25 @@ function readTierCapsBlock(block: unknown): TierCapsConfig {
   return result;
 }
 
-function loadPickleSettingsBag(): Record<string, unknown> | null {
+export function loadPickleSettingsBag(extensionRoot = getExtensionRoot()): PickleSettings | null {
   try {
-    const settingsPath = path.join(getExtensionRoot(), 'pickle_settings.json');
-    return readRecoverableJsonObject(settingsPath) as Record<string, unknown> | null;
+    const settingsPath = path.join(extensionRoot, 'pickle_settings.json');
+    return readRecoverableJsonObject(settingsPath) as PickleSettings | null;
   } catch {
     return null;
   }
+}
+
+export function resolveWorkerTestGateTimeoutMs(
+  extensionRoot = getExtensionRoot(),
+  settings?: PickleSettings | null,
+): number {
+  const settingsBag = settings === undefined ? loadPickleSettingsBag(extensionRoot) : settings;
+  const timeoutMs = Number(settingsBag?.worker_test_gate_timeout_ms);
+  if (Number.isFinite(timeoutMs) && Number.isInteger(timeoutMs) && timeoutMs > 0) {
+    return timeoutMs;
+  }
+  return DEFAULT_WORKER_TEST_GATE_TIMEOUT_MS;
 }
 
 export function readPickleSettingsTierCaps(

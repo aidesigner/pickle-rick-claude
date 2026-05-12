@@ -140,6 +140,45 @@ test('showStatus: does not throw with valid sessions map and state.json', () => 
             assert.ok(output.includes('Session Status'), `Expected panel title in output, got: ${output}`);
             assert.ok(output.includes('implement'), `Expected phase "implement" in output, got: ${output}`);
             assert.ok(output.includes('TICKET-1'), `Expected ticket "TICKET-1" in output, got: ${output}`);
+            assert.ok(output.includes('Worker test gate timeout'), `Expected timeout field in output, got: ${output}`);
+        } finally {
+            fs.rmSync(sessionDir, { recursive: true, force: true });
+        }
+    });
+});
+
+test('showStatus: renders resolved worker_test_gate_timeout_ms from settings', () => {
+    withExtensionDir((tmpDir) => {
+        const sessionDir = fs.realpathSync(
+            fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-status-timeout-session-'))
+        );
+        const fakeCwd = sessionDir + '-cwd';
+        fs.mkdirSync(path.join(tmpDir, 'extension', 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(tmpDir, 'extension', 'bin', 'log-watcher.js'), '');
+
+        fs.writeFileSync(
+            path.join(tmpDir, 'pickle_settings.json'),
+            JSON.stringify({ worker_test_gate_timeout_ms: 3456 })
+        );
+        fs.writeFileSync(
+            path.join(tmpDir, 'current_sessions.json'),
+            JSON.stringify({ [fakeCwd]: sessionDir })
+        );
+        fs.writeFileSync(
+            path.join(sessionDir, 'state.json'),
+            JSON.stringify({
+                step: 'implement',
+                iteration: 3,
+                max_iterations: 10,
+                current_ticket: 'TICKET-1',
+                original_prompt: 'Build the thing',
+            })
+        );
+
+        try {
+            const output = captureStdout(() => showStatus(fakeCwd));
+            assert.ok(output.includes('Worker test gate timeout'), `Expected timeout label in output, got: ${output}`);
+            assert.ok(output.includes('3456 ms'), `Expected resolved timeout value in output, got: ${output}`);
         } finally {
             fs.rmSync(sessionDir, { recursive: true, force: true });
         }

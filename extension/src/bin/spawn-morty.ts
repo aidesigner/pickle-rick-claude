@@ -12,9 +12,10 @@ import {
   safeErrorMessage,
   parseTicketFrontmatter,
   getTicketTierBudgetWithOverrides,
+  resolveWorkerTestGateTimeoutMs,
 } from '../services/pickle-utils.js';
 import { spawn, spawnSync } from 'child_process';
-import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact, type Backend, type BackendResolutionSource, type LastToolErrorState, type State } from '../types/index.js';
+import { PromiseTokens, hasToken, Defaults, hasLifecycleArtifact, type Backend, type BackendResolutionSource, type LastToolErrorState, type PickleSettings, type State } from '../types/index.js';
 import { isRecord } from '../lib/is-record.js';
 import { getDiffFiles, getHeadSha, listWorkingTreeDirtyPaths, resetToSha, updateTicketFrontmatter, updateTicketStatus } from '../services/git-utils.js';
 import { assertBackendPreSpawn, buildWorkerInvocation, isBackend, backendEnvOverrides, resolveWorkerBackendFromState, resolveWorkerBackendFromStateFile } from '../services/backend-spawn.js';
@@ -553,19 +554,24 @@ type CommandResult = {
   ok: boolean;
   stdout: string;
   stderr: string;
+  signal: NodeJS.Signals | null;
+  timedOut: boolean;
 };
 
-function runCommand(cmd: string, args: string[], cwd: string): CommandResult {
+function runCommand(cmd: string, args: string[], cwd: string, opts: { timeoutMs?: number } = {}): CommandResult {
   const result = spawnSync(cmd, args, {
     cwd,
     encoding: 'utf8',
-    timeout: 120_000,
+    timeout: opts.timeoutMs ?? 120_000,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+  const timedOut = (result.error as NodeJS.ErrnoException | undefined)?.code === 'ETIMEDOUT';
   return {
-    ok: (result.status ?? 1) === 0,
+    ok: (result.status ?? 1) === 0 && !timedOut,
     stdout: result.stdout ?? '',
     stderr: result.stderr ?? '',
+    signal: result.signal ?? null,
+    timedOut,
   };
 }
 
@@ -696,6 +702,7 @@ export function runWorkerGate(changedFiles: string[], args: {
   let tscErrors = 0;
   let testFailures: WorkerGateTestFailure[] = [];
   let autofixApplied = false;
+  const workerTestGateTimeoutMs = resolveWorkerTestGateTimeoutMs(args.workingDir);
 
   const runChecks = (): { lintOk: boolean; tscOk: boolean; testsOk: boolean } => {
     let lintOk = true;
@@ -712,10 +719,16 @@ export function runWorkerGate(changedFiles: string[], args: {
       testFailures = [];
       return { lintOk, tscOk: tscResult.ok, testsOk: true };
     }
-    const testResult = runCommand('npm', ['run', 'test:fast'], extensionDir);
+    const testResult = runCommand('npm', ['run', 'test:fast'], extensionDir, { timeoutMs: workerTestGateTimeoutMs });
     testFailures = testResult.ok
       ? []
-      : parseWorkerGateTestFailures(`${testResult.stdout}\n${testResult.stderr}`, extensionDir);
+      : testResult.timedOut
+        ? [{
+          name: '__timeout__',
+          file: 'npm run test:fast',
+          message: `killed after ${workerTestGateTimeoutMs}ms`,
+        }]
+        : parseWorkerGateTestFailures(`${testResult.stdout}\n${testResult.stderr}`, extensionDir);
     return { lintOk, tscOk: tscResult.ok, testsOk: testResult.ok };
   };
 
@@ -980,7 +993,7 @@ export function resolveCodexModel(extensionRoot: string, state: State | null): s
     return stateModel.trim();
   }
   try {
-    const settings = readRecoverableJsonObject(path.join(extensionRoot, 'pickle_settings.json')) as Record<string, unknown> | null;
+    const settings = readRecoverableJsonObject(path.join(extensionRoot, 'pickle_settings.json')) as PickleSettings | null;
     const settingsModel = settings?.default_codex_model;
     if (typeof settingsModel === 'string' && settingsModel.trim().length > 0) {
       return settingsModel.trim();
@@ -1000,7 +1013,7 @@ function resolveWorkerModel(
   if (backend !== 'claude') return undefined;
   let enableComplexityTiers = true;
   try {
-    const settings = readRecoverableJsonObject(path.join(extensionRoot, 'pickle_settings.json')) as Record<string, unknown> | null;
+    const settings = readRecoverableJsonObject(path.join(extensionRoot, 'pickle_settings.json')) as PickleSettings | null;
     if (settings?.enable_complexity_tiers === false) enableComplexityTiers = false;
   } catch { /* default true */ }
   try {

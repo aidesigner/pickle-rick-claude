@@ -661,6 +661,13 @@ export interface UpdateSettings {
   update_check_interval_hours: number;
 }
 
+export interface PickleSettings {
+  default_codex_model?: string;
+  enable_complexity_tiers?: boolean;
+  worker_test_gate_timeout_ms?: number;
+  [key: string]: unknown;
+}
+
 export type UpdateStatus = 'up-to-date' | 'update-available' | 'error';
 
 export interface UpdateResult {

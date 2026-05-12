@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
 import * as path from 'path';
-import { printMinimalPanel, collectTickets, statusSymbol, findSessionPathForCwd, getTicketStatus, getDataRoot } from '../services/pickle-utils.js';
+import { printMinimalPanel, collectTickets, statusSymbol, findSessionPathForCwd, getTicketStatus, getDataRoot, resolveWorkerTestGateTimeoutMs } from '../services/pickle-utils.js';
 import { StateManager } from '../services/state-manager.js';
 import { readMicroverseState } from '../services/microverse-state.js';
 const sm = new StateManager();
@@ -100,6 +100,8 @@ export function showStatus(cwd) {
         Phase: state.step || 'unknown',
         Iteration: formatIteration(state),
         Ticket: state.current_ticket || 'none',
+        // Surface resolved pickle_settings.json.worker_test_gate_timeout_ms to operators.
+        'Worker test gate timeout': `${resolveWorkerTestGateTimeoutMs()} ms`,
         Task: formatTask(state.original_prompt),
     };
     if (mvState !== null) {
