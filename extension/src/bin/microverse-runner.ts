@@ -2672,6 +2672,40 @@ async function handleIterationErrorOrStop(
   return null;
 }
 
+/**
+ * State machine for per-iteration outcome handling.
+ *
+ *   outcome
+ *     |
+ *     v
+ *   classifyIterationExit(...)
+ *     |
+ *     +-- success --------------------------------------------------------+
+ *     |                                                                   |
+ *     |   reset consecutive_subprocess_errors to 0                        |
+ *     |     |                                                             |
+ *     |     +-- worker converged --> return 'success'                     |
+ *     |     |                                                             |
+ *     |     +-- otherwise --------> return 'continue'                     |
+ *     |                                                                   |
+ *     +-- error ----------------------------------------------------------+
+ *     |                                                                   |
+ *     |   convergence_mode === 'worker'                                   |
+ *     |     |                                                             |
+ *     |     +--> handleWorkerSubprocessError(...)                         |
+ *     |            |                                                      |
+ *     |            +-- count < Defaults.WORKER_CONSECUTIVE_ERROR_CAP ---> |
+ *     |            |      return 'continue'                               |
+ *     |            |                                                      |
+ *     |            +-- count >= Defaults.WORKER_CONSECUTIVE_ERROR_CAP --> |
+ *     |                   return 'error'                                  |
+ *     |                                                                   |
+ *     |   convergence_mode !== 'worker'                                   |
+ *     |     |                                                             |
+ *     |     +--> handleManagerErrorOutcome(...) --> return 'continue'|'error'
+ *     |                                                                   |
+ *     +-- inactive -------------------------------------------------> return 'stopped'
+ */
 export async function handleIterationOutcome(
   state: MicroverseState,
   baseline: MetricSnapshot,
