@@ -143,4 +143,10 @@ if ! bash "$SCRIPT_DIR/audit-phantom-done-call-sites.sh"; then
   audit_exit_code=1
 fi
 
+if rg -n -e "npm (ci|install)" \
+  "$EXTENSION_ROOT/src/bin/spawn-morty.ts" \
+  "$EXTENSION_ROOT/src/bin/mux-runner.ts" >/dev/null; then
+  fail 'worker boot paths must reuse extension/node_modules; found npm ci/install in spawn-morty.ts or mux-runner.ts'
+fi
+
 exit "$audit_exit_code"
