@@ -9,6 +9,7 @@ import {
   __setSpawnRunnerForTests,
   applyStrictPhasesOverride,
   isFatalPhaseFailure,
+  logPhaseContinueReason,
   recordRecoverablePhaseFailure,
   shouldHaltAfterPhase,
 } from '../bin/pipeline-runner.js';
@@ -212,4 +213,27 @@ test('recoverable_phase_failure emitted on every non-fatal exit during simulated
   assert.equal(events[0].reason, 'non-fatal pickle exit, commits present');
   assert.equal(events[0].fatal, false);
   assert.equal(events[0].decision, 'continue');
+});
+
+test('continue path logs next remediation phase for pickle to citadel', () => {
+  const logs = [];
+  const { runtime } = makeRuntime({ createFollowupCommit: true });
+  runtime.log = (msg) => logs.push(msg);
+
+  logPhaseContinueReason(runtime, 'pickle', 1);
+
+  assert.match(
+    logs.join('\n'),
+    /Phase pickle exited with code 1 \(non-fatal\) — continuing to citadel for automated remediation/,
+  );
+});
+
+test('continue path logs no remaining phases for last phase', () => {
+  const logs = [];
+  const { runtime } = makeRuntime();
+  runtime.log = (msg) => logs.push(msg);
+
+  logPhaseContinueReason(runtime, 'szechuan-sauce', 1);
+
+  assert.match(logs.join('\n'), /no remaining phases/);
 });

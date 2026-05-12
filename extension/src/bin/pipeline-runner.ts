@@ -1405,11 +1405,7 @@ export function shouldHaltAfterPhase(phase: PhaseName, exitCode: number, runtime
   const report = readCitadelReport(runtime.sessionDir);
   if (!report) return true;
   const threshold: CitadelSeverity = runtime.config.citadel_strict ? 'High' : 'Critical';
-  const shouldHalt = report.findings.some(finding => findingMeetsThreshold(finding, threshold));
-  if (!shouldHalt) {
-    runtime.log(`citadel: non-zero audit result did not meet ${threshold} halt threshold — continuing`);
-  }
-  return shouldHalt;
+  return report.findings.some(finding => findingMeetsThreshold(finding, threshold));
 }
 
 function getRecoverablePhaseFailureReason(
@@ -1472,6 +1468,20 @@ export function recordRecoverablePhaseFailure(
   } catch (err) {
     runtime.log(`recoverable_phase_failure activity write failed: ${safeErrorMessage(err)}`);
   }
+}
+
+export function logPhaseContinueReason(
+  runtime: PipelineRuntime,
+  phase: PhaseName,
+  exitCode: number,
+): void {
+  const phaseIndex = runtime.config.phases.indexOf(phase);
+  const nextPhase = phaseIndex >= 0 ? runtime.config.phases[phaseIndex + 1] : undefined;
+  if (nextPhase) {
+    runtime.log(`Phase ${phase} exited with code ${exitCode} (non-fatal) — continuing to ${nextPhase} for automated remediation`);
+    return;
+  }
+  runtime.log(`Phase ${phase} exited with code ${exitCode} (non-fatal) — no remaining phases; pipeline complete with non-zero phase exits`);
 }
 
 export async function postPhaseCleanup(phase: PhaseName, sessionDir: string): Promise<void> {
@@ -1984,6 +1994,7 @@ async function runPhaseIteration(
   const shouldHalt = shouldHaltAfterPhase(rawPhase, exitCode, runtime);
   if (exitCode !== 0 && !shouldHalt) {
     recordRecoverablePhaseFailure(runtime, rawPhase, exitCode, index, 'continue');
+    logPhaseContinueReason(runtime, rawPhase, exitCode);
   }
   if (shouldHalt) {
     const haltAction = logPhaseHaltReason(runtime, rawPhase, exitCode, log);
