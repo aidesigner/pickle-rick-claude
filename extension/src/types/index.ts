@@ -26,6 +26,8 @@ export interface State {
   prd_path?: string;
   start_commit?: string;
   pid?: number;
+  /** Optional launch-shell PID breadcrumb written by per-session launch.sh at startup. */
+  launch_shell_pid?: number | null;
   /** Count of consecutive short manager responses (≤ DEGENERATE_MAX_LENGTH). Reset on substantive response. */
   consecutive_short_responses?: number;
   /** Pipeline phases that have invoked refreshScope. Monotonically extends; guards against duplicate refresh. */

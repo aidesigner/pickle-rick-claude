@@ -203,6 +203,20 @@ Write the launch sequence to a script file and `tmux send-keys` only the path. I
 cat > "${SESSION_ROOT}/launch.sh" <<'LAUNCH_EOF'
 #!/bin/bash
 SESSION_ROOT="$1"
+STATE_PATH="${SESSION_ROOT}/state.json"
+node --input-type=module - "$STATE_PATH" "$$" <<'NODE_EOF' || true
+import fs from 'node:fs';
+
+const [, , statePath, rawPid] = process.argv;
+
+try {
+  const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+  if (state && typeof state === 'object') {
+    state.launch_shell_pid = Number(rawPid);
+    fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+  }
+} catch {}
+NODE_EOF
 node "$HOME/.claude/pickle-rick/extension/bin/microverse-runner.js" "$SESSION_ROOT"
 node "$HOME/.claude/pickle-rick/extension/bin/finalize-gate.js" "$SESSION_ROOT" anatomy-park
 GATE_RC=$?
