@@ -1,4 +1,4 @@
-import { strictEqual } from 'node:assert/strict';
+import { deepStrictEqual, strictEqual } from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -122,8 +122,25 @@ function readMicroverse(sessionDir: string): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(path.join(sessionDir, 'microverse.json'), 'utf-8')) as Record<string, unknown>;
 }
 
+function readRunnerState(statePath: string): Record<string, unknown> {
+  return JSON.parse(fs.readFileSync(statePath, 'utf-8')) as Record<string, unknown>;
+}
+
 function readConvergenceLedger(sessionDir: string): Record<string, unknown> {
   return JSON.parse(fs.readFileSync(path.join(sessionDir, 'anatomy-park.json'), 'utf-8')) as Record<string, unknown>;
+}
+
+function readActivityEvents(dataRoot: string): Array<Record<string, unknown>> {
+  const activityDir = path.join(dataRoot, 'activity');
+  if (!fs.existsSync(activityDir)) return [];
+  return fs.readdirSync(activityDir)
+    .filter((entry) => entry.endsWith('.jsonl'))
+    .flatMap((entry) =>
+      fs.readFileSync(path.join(activityDir, entry), 'utf-8')
+        .split(/\r?\n/)
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as Record<string, unknown>),
+    );
 }
 
 async function runWorkerErrorScenario(opts?: {
@@ -132,11 +149,16 @@ async function runWorkerErrorScenario(opts?: {
 }): Promise<{
   result: Awaited<ReturnType<typeof handleIterationOutcome>>;
   logs: string[];
+  statePath: string;
+  dataRoot: string;
   microverseState: Record<string, unknown>;
+  runnerState: Record<string, unknown>;
   convergenceLedger: Record<string, unknown>;
+  activityEvents: Array<Record<string, unknown>>;
 }> {
   const sessionDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rapmw1-session-'));
   const workingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rapmw1-work-'));
+  const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-rapmw1-data-'));
   const runnerState = makeRunnerState(sessionDir, workingDir);
   const statePath = path.join(sessionDir, 'state.json');
   const logs: string[] = [];
@@ -152,12 +174,16 @@ async function runWorkerErrorScenario(opts?: {
 
   const originalCollectTickets = _deps.collectTickets;
   const originalGetHeadSha = _deps.getHeadSha;
+  const originalLogActivity = _deps.logActivity;
   const originalSleep = _deps.sleep;
+  const originalDataRoot = process.env.PICKLE_DATA_ROOT;
 
   try {
     _deps.collectTickets = () => [];
     _deps.getHeadSha = () => 'deadbeef';
+    _deps.logActivity = originalLogActivity;
     _deps.sleep = async () => {};
+    process.env.PICKLE_DATA_ROOT = dataRoot;
 
     const ctx = makeContext(sessionDir, statePath, runnerState);
     ctx.log = (msg) => { logs.push(msg); };
@@ -171,15 +197,23 @@ async function runWorkerErrorScenario(opts?: {
     return {
       result,
       logs,
+      statePath,
+      dataRoot,
       microverseState: readMicroverse(sessionDir),
+      runnerState: readRunnerState(statePath),
       convergenceLedger: readConvergenceLedger(sessionDir),
+      activityEvents: readActivityEvents(dataRoot),
     };
   } finally {
     _deps.collectTickets = originalCollectTickets;
     _deps.getHeadSha = originalGetHeadSha;
+    _deps.logActivity = originalLogActivity;
     _deps.sleep = originalSleep;
+    if (originalDataRoot === undefined) delete process.env.PICKLE_DATA_ROOT;
+    else process.env.PICKLE_DATA_ROOT = originalDataRoot;
     fs.rmSync(sessionDir, { recursive: true, force: true });
     fs.rmSync(workingDir, { recursive: true, force: true });
+    fs.rmSync(dataRoot, { recursive: true, force: true });
   }
 }
 
@@ -266,5 +300,59 @@ test('R-APMW-4: success outcome resets counter to 0', async () => {
     _deps.runWorkerManagedIteration = originalRunWorkerManagedIteration;
     fs.rmSync(sessionDir, { recursive: true, force: true });
     fs.rmSync(workingDir, { recursive: true, force: true });
+  }
+});
+
+test('R-APMW-5: state.last_error populated on subprocess error', async () => {
+  const scenario = await runWorkerErrorScenario({ consecutiveErrors: 0 });
+  const lastError = scenario.runnerState.last_error as Record<string, unknown>;
+
+  strictEqual(typeof lastError, 'object');
+  strictEqual(lastError.iteration, 111);
+  strictEqual(typeof lastError.timestamp, 'string');
+  strictEqual(lastError.completion, 'error');
+  strictEqual(lastError.timedOut, true);
+  strictEqual(lastError.wallSeconds, 14_400);
+});
+
+test('R-APMW-5: state.last_subprocess_error matches last_error shape', async () => {
+  const scenario = await runWorkerErrorScenario({ consecutiveErrors: 0 });
+  deepStrictEqual(scenario.runnerState.last_subprocess_error, scenario.runnerState.last_error);
+});
+
+test('R-APMW-5: subprocess_error event written to activity log', async () => {
+  const scenario = await runWorkerErrorScenario({ consecutiveErrors: 0 });
+  const lastError = scenario.runnerState.last_error as Record<string, unknown>;
+  const event = scenario.activityEvents.find((entry) => entry.event === 'subprocess_error');
+
+  strictEqual(event?.event, 'subprocess_error');
+  strictEqual(event?.iteration, 111);
+  strictEqual(event?.completion, 'error');
+  strictEqual(event?.timedOut, true);
+  strictEqual(event?.wallSeconds, 14_400);
+  strictEqual(event?.ts, lastError.timestamp);
+});
+
+test('R-APMW-5: observability write failure does not throw', async () => {
+  const originalLogActivity = _deps.logActivity;
+  const originalStderrWrite = process.stderr.write.bind(process.stderr);
+  let stderr = '';
+
+  try {
+    _deps.logActivity = () => {
+      throw new Error('simulated activity failure');
+    };
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      stderr += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf-8');
+      return true;
+    }) as typeof process.stderr.write;
+
+    const scenario = await runWorkerErrorScenario({ consecutiveErrors: 0 });
+    strictEqual(scenario.result, 'continue');
+    deepStrictEqual(scenario.runnerState.last_subprocess_error, scenario.runnerState.last_error);
+    strictEqual(stderr.includes('simulated activity failure'), true);
+  } finally {
+    _deps.logActivity = originalLogActivity;
+    process.stderr.write = originalStderrWrite;
   }
 });

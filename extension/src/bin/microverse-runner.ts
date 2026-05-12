@@ -6,6 +6,7 @@ import { execFileSync, spawnSync } from 'child_process';
 import { pathToFileURL } from 'node:url';
 import { State, Defaults, MicroverseExitReason } from '../types/index.js';
 import type { ActivityEventType, Backend, IterationExitType, MicroverseSessionState, MicroverseHistoryEntry, ViolationLedger, FailureClass, GateResult, StallClassification, StallRecoveryAction, JudgeResult, Violation } from '../types/index.js';
+import type { ErrorRecord } from '../types/index.js';
 import {
   resolveBackend,
   resolveWorkerBackendFromStateFile,
@@ -979,6 +980,7 @@ export const _deps = {
   isWorkingTreeDirty: isWorkingTreeDirty as typeof isWorkingTreeDirty,
   sleep: sleep as typeof sleep,
   collectTickets: collectTickets as typeof collectTickets,
+  logActivity: logActivity as typeof logActivity,
 };
 
 type TestRunIterationOverride = typeof runIteration;
@@ -986,39 +988,41 @@ type TestRunIterationOverride = typeof runIteration;
 function buildLastSubprocessError(
   iteration: number,
   outcome: IterationRunOutcome,
-): {
-  iteration: number;
-  timestamp: string;
-  completion: IterationRunOutcome['completion'];
-  timedOut: boolean;
-  exitCode: number | null;
-  wallSeconds: number;
-  stallReason?: IterationRunOutcome['stallReason'];
-} {
+  timestamp: string,
+): ErrorRecord {
   return {
     iteration,
-    timestamp: new Date().toISOString(),
+    timestamp,
     completion: outcome.completion,
     timedOut: outcome.timedOut === true,
-    exitCode: outcome.exitCode,
     wallSeconds: outcome.wallSeconds,
-    ...(outcome.stallReason ? { stallReason: outcome.stallReason } : {}),
   };
 }
 
 function recordRunnerSubprocessErrorState(
   ctx: RunContext,
   outcome: IterationRunOutcome,
-): void {
-  const lastError = buildLastSubprocessError(ctx.iteration, outcome);
+  timestamp: string,
+): ErrorRecord {
+  const lastError = buildLastSubprocessError(ctx.iteration, outcome, timestamp);
   sm.update(ctx.statePath, rawState => {
-    const state = rawState as State & {
-      last_error?: typeof lastError;
-      last_subprocess_error?: typeof lastError;
-    };
+    const state = rawState as State;
     state.last_error = lastError;
     state.last_subprocess_error = lastError;
   });
+  return lastError;
+}
+
+function recordSubprocessErrorActivity(
+  ctx: RunContext,
+  outcome: IterationRunOutcome,
+  errorRecord: ErrorRecord,
+): void {
+  try {
+    _deps.logActivity({ event: 'subprocess_error', source: 'pickle', session: path.basename(ctx.sessionDir), iteration: errorRecord.iteration, completion: outcome.completion, timedOut: outcome.timedOut === true, wallSeconds: outcome.wallSeconds, ts: errorRecord.timestamp });
+  } catch (err) {
+    process.stderr.write(`[microverse] Failed to log subprocess_error activity: ${safeErrorMessage(err)}\n`);
+  }
 }
 
 function notifyOperatorOnTerminalError(
@@ -2728,7 +2732,9 @@ async function handleWorkerSubprocessError(
   outcome: IterationRunOutcome,
   _stallClassification: StallClassification | null,
 ): Promise<ExitReason | 'continue'> {
-  recordRunnerSubprocessErrorState(ctx, outcome);
+  const timestamp = new Date().toISOString();
+  const errorRecord = recordRunnerSubprocessErrorState(ctx, outcome, timestamp);
+  recordSubprocessErrorActivity(ctx, outcome, errorRecord);
   const nextCount = Number(state.consecutive_subprocess_errors ?? 0) + 1;
   replaceMicroverseState(state, {
     ...state,

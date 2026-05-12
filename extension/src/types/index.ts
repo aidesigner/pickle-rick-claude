@@ -111,6 +111,8 @@ export interface State {
    * True → show "Producer complete" instead. Crash-recovery default: false.
    */
   monitor_panes?: { producer_done: boolean }[];
+  last_error?: ErrorRecord | null;
+  last_subprocess_error?: ErrorRecord | null;
   last_between_ticket_gate?: {
     ts: number;
     ok: boolean;
@@ -201,6 +203,14 @@ export interface ChangeProposal {
   before_count: number;
   after_count: number;
   [key: string]: unknown;
+}
+
+export interface ErrorRecord {
+  iteration: number;
+  timestamp: string;
+  completion: IterationOutcome['completion'];
+  timedOut: boolean;
+  wallSeconds: number;
 }
 
 export interface DebateRound {
@@ -511,6 +521,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'completion_commit_inferred_from_git',
   'worker_completion_commit_announced',
   'recoverable_phase_failure',
+  'subprocess_error',
   'time_cap_disabled_default',
   'manager_max_turns_relaunch',
   'bundle_bootstrap_exemption_applied',
@@ -590,6 +601,9 @@ export interface ActivityEvent {
   duration_ms?: number;
   error?: string;
   iteration?: number;
+  completion?: IterationOutcome['completion'];
+  timedOut?: boolean;
+  wallSeconds?: number;
   exit_type?: IterationExitType;
   runner?: 'microverse' | 'mux' | string;
   action?: string;
