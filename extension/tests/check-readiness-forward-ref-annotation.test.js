@@ -111,6 +111,13 @@ test('R-RTRC-7: introduced verb accepted same as created', () => {
     assert.equal(out.valid.has('SomeSymbol.method()'), true);
 });
 
+test('R-RTRC-7: requirement-code alias accepted for forward-created helper contracts', () => {
+    const content = '`FutureHelper.build()` (created by R-SAOV-1) is forward-created by a sibling requirement.';
+    const out = extractForwardRefAnnotations(content);
+    assert.deepEqual(out.malformed, []);
+    assert.equal(out.valid.has('FutureHelper.build()'), true);
+});
+
 test('R-RTRC-7: end-to-end — canonical annotation suppresses contract finding (8-char SHA)', () => {
     const sessionDir = tmpDir();
     try {
@@ -188,6 +195,37 @@ test('R-RTRC-7: end-to-end — canonical annotation suppresses contract finding 
             '## Files',
             '',
             '- `extension/services/forward-rtrc7dir.ts` (introduced by ticket rtrc7dir)',
+            '',
+            '## Acceptance Criteria',
+            '',
+            '- [ ] Command exits 0 exactly.',
+            '',
+        ].join('\n'));
+        const result = runReadiness(sessionDir);
+        assert.equal(result.status, 0, `expected exit 0; stderr=${result.stderr}; stdout=${result.stdout}`);
+        const out = JSON.parse(result.stdout);
+        assert.equal(out.status, 'pass');
+        assert.deepEqual(out.findings, []);
+    } finally {
+        fs.rmSync(sessionDir, { recursive: true, force: true });
+    }
+});
+
+test('R-RTRC-7: end-to-end — requirement-code alias suppresses forward-created helper contract finding', () => {
+    const sessionDir = tmpDir();
+    try {
+        writeTicket(sessionDir, 'rtrc7req', [
+            '---',
+            'id: rtrc7req',
+            'key: RTRC7-REQ',
+            'ac_ids: []',
+            '---',
+            '',
+            '# Forward-ref via requirement-code alias',
+            '',
+            '## Interface Contracts',
+            '',
+            '- `FutureHelper.build()` (created by R-SAOV-1) MUST exist after sibling work lands.',
             '',
             '## Acceptance Criteria',
             '',
