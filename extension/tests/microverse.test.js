@@ -708,6 +708,42 @@ test('pass-model.default: microverse runner leaves model empty when current pass
     }
 });
 
+test('worker current_subsystem: microverse runner persists active subsystem before iteration spawn', async () => {
+    const workingDir = createTempGitRepo();
+    const extensionRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pickle-current-subsystem-ext-'));
+    const session = createSessionDir(workingDir, {
+        convergence_mode: 'worker',
+        convergence_file: 'anatomy-park.json',
+        current_subsystem: 'stale-subsystem',
+    });
+    const ctx = makeMicroverseLoopContext(session, workingDir, extensionRoot, {
+        max_iterations: 1,
+        command_template: 'anatomy-park.md',
+    });
+    const seenSubsystems = [];
+    fs.writeFileSync(path.join(session.dir, 'anatomy-park.json'), JSON.stringify({
+        subsystems: ['alpha', 'beta'],
+        current_index: 1,
+        stall_counts: { alpha: 0, beta: 0 },
+    }, null, 2));
+    try {
+        await withMicroverseLoopDeps({
+            runIteration: async () => {
+                const persisted = JSON.parse(fs.readFileSync(path.join(session.dir, 'microverse.json'), 'utf-8'));
+                seenSubsystems.push(persisted.current_subsystem);
+                return { completion: 'inactive', timedOut: false, exitCode: 0, wallSeconds: 1 };
+            },
+        }, () => executeMainLoop(session.mvState, ctx));
+        assert.deepEqual(seenSubsystems, ['beta']);
+        const finalMv = JSON.parse(fs.readFileSync(path.join(session.dir, 'microverse.json'), 'utf-8'));
+        assert.equal(finalMv.current_subsystem, 'beta');
+    } finally {
+        fs.rmSync(session.dir, { recursive: true, force: true });
+        fs.rmSync(workingDir, { recursive: true, force: true });
+        fs.rmSync(extensionRoot, { recursive: true, force: true });
+    }
+});
+
 test('R-APMW-8: production path unaffected when env var unset', async () => {
     const originalRunIteration = _deps.runIteration;
     const previousOverride = process.env.PICKLE_TEST_BACKEND_PATH;

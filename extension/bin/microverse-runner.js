@@ -2022,6 +2022,37 @@ function readLoopExit(ctx) {
     }
     return null;
 }
+function resolveCurrentWorkerSubsystem(state, sessionDir) {
+    const convergenceFile = state.convergence_file;
+    if (!convergenceFile)
+        return null;
+    const convergencePath = path.join(sessionDir, convergenceFile);
+    const raw = readRecoverableJsonObject(convergencePath);
+    if (!raw)
+        return null;
+    const subsystems = Array.isArray(raw.subsystems)
+        ? raw.subsystems.filter((value) => typeof value === 'string' && value.trim().length > 0)
+        : [];
+    if (subsystems.length === 0)
+        return null;
+    const currentIndex = Number.isInteger(raw.current_index) ? Number(raw.current_index) : 0;
+    return subsystems[currentIndex] ?? null;
+}
+function syncCurrentWorkerSubsystem(state, sessionDir) {
+    const nextSubsystem = state.convergence_mode === 'worker'
+        ? resolveCurrentWorkerSubsystem(state, sessionDir)
+        : null;
+    if (nextSubsystem) {
+        if (state.current_subsystem === nextSubsystem)
+            return false;
+        state.current_subsystem = nextSubsystem;
+        return true;
+    }
+    if (state.current_subsystem === undefined)
+        return false;
+    delete state.current_subsystem;
+    return true;
+}
 async function prepareIteration(state, ctx) {
     await ensurePerIterationGateBaseline({
         currentMv: state,
@@ -2033,6 +2064,9 @@ async function prepareIteration(state, ctx) {
         baselineMaxAgeIterations: ctx.cgSettings.baseline_max_age_iterations,
         baselineMaxAgeSeconds: ctx.cgSettings.baseline_max_age_seconds,
     });
+    if (syncCurrentWorkerSubsystem(state, ctx.sessionDir)) {
+        writeMicroverseState(ctx.sessionDir, state);
+    }
     ctx.iteration++;
     ctx.log(`--- Iteration ${ctx.iteration} ---`);
     logActivity({ event: 'iteration_start', source: 'pickle', session: path.basename(ctx.sessionDir), iteration: ctx.iteration });

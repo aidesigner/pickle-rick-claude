@@ -2654,6 +2654,39 @@ function readLoopExit(ctx: RunContext): ExitReason | null {
   return null;
 }
 
+function resolveCurrentWorkerSubsystem(state: MicroverseState, sessionDir: string): string | null {
+  const convergenceFile = state.convergence_file;
+  if (!convergenceFile) return null;
+
+  const convergencePath = path.join(sessionDir, convergenceFile);
+  const raw = readRecoverableJsonObject(convergencePath) as Record<string, unknown> | null;
+  if (!raw) return null;
+
+  const subsystems = Array.isArray(raw.subsystems)
+    ? raw.subsystems.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    : [];
+  if (subsystems.length === 0) return null;
+
+  const currentIndex = Number.isInteger(raw.current_index) ? Number(raw.current_index) : 0;
+  return subsystems[currentIndex] ?? null;
+}
+
+function syncCurrentWorkerSubsystem(state: MicroverseState, sessionDir: string): boolean {
+  const nextSubsystem = state.convergence_mode === 'worker'
+    ? resolveCurrentWorkerSubsystem(state, sessionDir)
+    : null;
+
+  if (nextSubsystem) {
+    if (state.current_subsystem === nextSubsystem) return false;
+    state.current_subsystem = nextSubsystem;
+    return true;
+  }
+
+  if (state.current_subsystem === undefined) return false;
+  delete state.current_subsystem;
+  return true;
+}
+
 async function prepareIteration(state: MicroverseState, ctx: RunContext): Promise<void> {
   await ensurePerIterationGateBaseline({
     currentMv: state,
@@ -2665,6 +2698,9 @@ async function prepareIteration(state: MicroverseState, ctx: RunContext): Promis
     baselineMaxAgeIterations: ctx.cgSettings.baseline_max_age_iterations,
     baselineMaxAgeSeconds: ctx.cgSettings.baseline_max_age_seconds,
   });
+  if (syncCurrentWorkerSubsystem(state, ctx.sessionDir)) {
+    writeMicroverseState(ctx.sessionDir, state);
+  }
 
   ctx.iteration++;
   ctx.log(`--- Iteration ${ctx.iteration} ---`);
