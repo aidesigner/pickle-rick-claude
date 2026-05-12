@@ -729,7 +729,8 @@ export interface UpgradeResult {
 export type MicroverseExitReason =
   | 'converged' | 'limit_reached' | 'stopped' | 'error'
   | 'rate_limit_exhausted' | 'approach_exhaustion' | 'no_progress'
-  | 'judge_unreachable' | 'judge_timeout' | 'baseline_unmeasurable' | 'judge_cli_missing';
+  | 'judge_unreachable' | 'judge_timeout' | 'baseline_unmeasurable' | 'judge_cli_missing'
+  | 'baseline_unmeasurable_transient' | 'baseline_unmeasurable_unrecoverable';
 
 export const MICROVERSE_FATAL_REASONS = [
   'judge_cli_missing',
@@ -741,7 +742,7 @@ export type MicroverseFatalReason = typeof MICROVERSE_FATAL_REASONS[number];
 
 const MICROVERSE_FAILURE_REASONS = new Set<MicroverseExitReason>([
   'error', 'rate_limit_exhausted', 'judge_unreachable',
-  'baseline_unmeasurable', 'judge_cli_missing',
+  'baseline_unmeasurable_unrecoverable', 'judge_cli_missing',
 ]);
 
 export function isMicroverseFailureExit(reason: MicroverseExitReason): boolean {

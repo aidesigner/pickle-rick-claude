@@ -260,7 +260,7 @@ export const MICROVERSE_FATAL_REASONS = [
 ];
 const MICROVERSE_FAILURE_REASONS = new Set([
     'error', 'rate_limit_exhausted', 'judge_unreachable',
-    'baseline_unmeasurable', 'judge_cli_missing',
+    'baseline_unmeasurable_unrecoverable', 'judge_cli_missing',
 ]);
 export function isMicroverseFailureExit(reason) {
     return MICROVERSE_FAILURE_REASONS.has(reason);
