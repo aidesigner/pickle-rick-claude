@@ -2189,13 +2189,15 @@ async function handleWorkerSubprocessError(state, ctx, outcome, _stallClassifica
         ...state,
         consecutive_subprocess_errors: nextCount,
     });
-    writeMicroverseState(ctx.sessionDir, state);
     if (nextCount >= Defaults.WORKER_CONSECUTIVE_ERROR_CAP) {
+        writeMicroverseState(ctx.sessionDir, state);
         ctx.log(`Worker subprocess error cap reached (${nextCount}/${Defaults.WORKER_CONSECUTIVE_ERROR_CAP}) - exiting loop`);
         notifyOperatorOnTerminalError(state, ctx, outcome);
         return 'error';
     }
     markWorkerSubsystemStalled(state, ctx.sessionDir);
+    syncCurrentWorkerSubsystem(state, ctx.sessionDir);
+    writeMicroverseState(ctx.sessionDir, state);
     ctx.log(`Worker iteration ${ctx.iteration} errored - advancing rotation ` +
         `(count ${nextCount}/${Defaults.WORKER_CONSECUTIVE_ERROR_CAP})`);
     return 'continue';

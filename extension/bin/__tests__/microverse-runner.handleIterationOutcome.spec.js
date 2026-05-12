@@ -185,6 +185,7 @@ test("R-APMW-2: first worker subprocess error returns 'continue'", async () => {
     strictEqual(scenario.microverseState.consecutive_subprocess_errors, 1);
     strictEqual(scenario.convergenceLedger.stall_counts.alpha, 1);
     strictEqual(scenario.convergenceLedger.current_index, 1);
+    strictEqual(scenario.microverseState.current_subsystem, 'beta');
 });
 test("R-APMW-2: second worker subprocess error returns 'continue'", async () => {
     const scenario = await runWorkerErrorScenario({ consecutiveErrors: 1 });
@@ -192,6 +193,7 @@ test("R-APMW-2: second worker subprocess error returns 'continue'", async () => 
     strictEqual(scenario.microverseState.consecutive_subprocess_errors, 2);
     strictEqual(scenario.convergenceLedger.stall_counts.alpha, 1);
     strictEqual(scenario.convergenceLedger.current_index, 1);
+    strictEqual(scenario.microverseState.current_subsystem, 'beta');
 });
 test("R-APMW-2: third worker subprocess error returns 'error' (cap)", async () => {
     const scenario = await runWorkerErrorScenario({ consecutiveErrors: 2 });
