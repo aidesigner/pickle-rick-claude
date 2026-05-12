@@ -154,6 +154,7 @@ test('types.activity-events: VALID_ACTIVITY_EVENTS contains all expected event t
         'completion_commit_inferred_from_git',
         'worker_completion_commit_announced',
         'recoverable_phase_failure',
+        'subprocess_error',
         'time_cap_disabled_default',
         'bundle_bootstrap_exemption_applied',
         'signal_received',

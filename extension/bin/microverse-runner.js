@@ -679,25 +679,33 @@ export const _deps = {
     isWorkingTreeDirty: isWorkingTreeDirty,
     sleep: sleep,
     collectTickets: collectTickets,
+    logActivity: logActivity,
 };
-function buildLastSubprocessError(iteration, outcome) {
+function buildLastSubprocessError(iteration, outcome, timestamp) {
     return {
         iteration,
-        timestamp: new Date().toISOString(),
+        timestamp,
         completion: outcome.completion,
         timedOut: outcome.timedOut === true,
-        exitCode: outcome.exitCode,
         wallSeconds: outcome.wallSeconds,
-        ...(outcome.stallReason ? { stallReason: outcome.stallReason } : {}),
     };
 }
-function recordRunnerSubprocessErrorState(ctx, outcome) {
-    const lastError = buildLastSubprocessError(ctx.iteration, outcome);
+function recordRunnerSubprocessErrorState(ctx, outcome, timestamp) {
+    const lastError = buildLastSubprocessError(ctx.iteration, outcome, timestamp);
     sm.update(ctx.statePath, rawState => {
         const state = rawState;
         state.last_error = lastError;
         state.last_subprocess_error = lastError;
     });
+    return lastError;
+}
+function recordSubprocessErrorActivity(ctx, outcome, errorRecord) {
+    try {
+        _deps.logActivity({ event: 'subprocess_error', source: 'pickle', session: path.basename(ctx.sessionDir), iteration: errorRecord.iteration, completion: outcome.completion, timedOut: outcome.timedOut === true, wallSeconds: outcome.wallSeconds, ts: errorRecord.timestamp });
+    }
+    catch (err) {
+        process.stderr.write(`[microverse] Failed to log subprocess_error activity: ${safeErrorMessage(err)}\n`);
+    }
 }
 function notifyOperatorOnTerminalError(state, ctx, outcome) {
     if (process.env.PICKLE_NOTIFY_ON_ERROR !== '1')
@@ -2139,7 +2147,9 @@ function markWorkerSubsystemStalled(state, sessionDir) {
     });
 }
 async function handleWorkerSubprocessError(state, ctx, outcome, _stallClassification) {
-    recordRunnerSubprocessErrorState(ctx, outcome);
+    const timestamp = new Date().toISOString();
+    const errorRecord = recordRunnerSubprocessErrorState(ctx, outcome, timestamp);
+    recordSubprocessErrorActivity(ctx, outcome, errorRecord);
     const nextCount = Number(state.consecutive_subprocess_errors ?? 0) + 1;
     replaceMicroverseState(state, {
         ...state,
