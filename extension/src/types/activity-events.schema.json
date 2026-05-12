@@ -324,7 +324,7 @@
         "event": { "type": "string", "const": "worker_gate_failed" },
         "ts": { "type": "string" },
         "ticket_id": { "type": "string" },
-        "gate_phase": { "type": "string", "enum": ["test:fast", "lint", "tsc"] },
+        "gate_phase": { "type": "string", "enum": ["test:fast", "test:integration", "lint", "tsc"] },
         "failures": {
           "type": "array",
           "items": {

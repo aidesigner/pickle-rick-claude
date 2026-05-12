@@ -462,11 +462,11 @@ test('activity-event-payload: worker_gate_failed requires structured failures an
     event: 'worker_gate_failed',
     ts: TS,
     ticket_id: 'abc12345',
-    gate_phase: 'test:fast',
+    gate_phase: 'test:integration',
     failures: [{
-      name: 'worker fast tier fails',
-      file: 'tests/worker-fixture.test.js',
-      message: 'boom',
+      name: 'worker integration tier fails',
+      file: 'tests/integration-fixture.test.js',
+      message: 'integration boom',
     }],
     retry_count: 1,
   }, 'worker_gate_failed');

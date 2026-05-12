@@ -347,6 +347,76 @@ test('runWorkerGate: full tier runs test:fast and then test:integration', () => 
   }
 });
 
+test('runWorkerGate: full tier integration failure emits worker_gate_failed with test:integration phase', () => {
+  const root = makeTmpRoot();
+  try {
+    initGitRepo(root);
+    fs.writeFileSync(path.join(root, 'pickle_settings.json'), JSON.stringify({
+      worker_gate_tier: 'full',
+    }, null, 2));
+    fs.mkdirSync(path.join(root, 'extension', 'src', 'demo'), { recursive: true });
+    fs.writeFileSync(path.join(root, 'extension', 'src', 'demo', 'one.ts'), 'export const one = 1;\n');
+    const statePath = path.join(root, 'state.json');
+    fs.writeFileSync(statePath, JSON.stringify({ activity: [] }, null, 2));
+    const shimDir = path.join(root, 'shims');
+    const logPath = path.join(root, 'calls.json');
+    const npmShim = `#!/bin/sh
+set -eu
+printf '%s\\n' "$0 $*" >> "${logPath}"
+if [ "$1" = "run" ] && [ "$2" = "test:integration" ]; then
+  cat <<'EOF'
+not ok 1 - integration tier fails
+  ---
+  location: '${path.join(root, 'extension', 'tests', 'integration-fixture.test.js')}:9:3'
+  error: 'integration boom'
+  ...
+EOF
+  exit 1
+fi
+exit 0
+`;
+    fs.mkdirSync(shimDir, { recursive: true });
+    fs.writeFileSync(path.join(shimDir, 'npx'), `#!/bin/sh\nset -eu\nprintf '%s\\n' "$0 $*" >> "${logPath}"\nexit 0\n`);
+    fs.chmodSync(path.join(shimDir, 'npx'), 0o755);
+    fs.writeFileSync(path.join(shimDir, 'npm'), npmShim);
+    fs.chmodSync(path.join(shimDir, 'npm'), 0o755);
+
+    const result = withPathPrefix(shimDir, () => runWorkerGate([
+      'extension/src/demo/one.ts',
+    ], {
+      workingDir: root,
+      ticketId: 'abc12345',
+      statePath,
+      preWorkerHead: null,
+    }));
+
+    assert.equal(result.ok, false);
+    assert.equal(result.gatePhase, 'test:integration');
+    assert.deepEqual(result.testFailures, [{
+      name: 'integration tier fails',
+      file: 'tests/integration-fixture.test.js',
+      message: 'integration boom',
+    }]);
+
+    const state = readState(path.dirname(statePath));
+    const failedEvent = state.activity.find((entry) => entry.event === 'worker_gate_failed');
+    assert.deepEqual(failedEvent, {
+      event: 'worker_gate_failed',
+      ticket_id: 'abc12345',
+      gate_phase: 'test:integration',
+      failures: [{
+        name: 'integration tier fails',
+        file: 'tests/integration-fixture.test.js',
+        message: 'integration boom',
+      }],
+      retry_count: 0,
+      ts: failedEvent.ts,
+    });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('spawn-morty: test:fast failure marks ticket Failed, emits failure event, and resets HEAD without a completion commit', () => {
   const root = makeTmpRoot();
   try {
