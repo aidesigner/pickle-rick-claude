@@ -1252,7 +1252,17 @@ export async function postPhaseCleanup(phase, sessionDir) {
         cleanPhaseArtifacts(sessionDir, prevPhase);
 }
 function persistPhaseTransition(runtime, phaseConfig, previousState) {
-    sm.update(runtime.statePath, s => { s.step = phaseConfig.name; });
+    sm.update(runtime.statePath, s => {
+        const history = Array.isArray(s.history) ? s.history : [];
+        const last = history[history.length - 1];
+        s.step = phaseConfig.name;
+        if (previousState.step !== phaseConfig.name && last?.step !== phaseConfig.name) {
+            s.history = [...history, {
+                    step: phaseConfig.name,
+                    timestamp: new Date().toISOString(),
+                }];
+        }
+    });
     try {
         logActivity({
             event: 'phase_transition',

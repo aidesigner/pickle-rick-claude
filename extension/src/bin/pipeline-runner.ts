@@ -1551,7 +1551,17 @@ function persistPhaseTransition(
   phaseConfig: PhaseConfig,
   previousState: State,
 ): void {
-  sm.update(runtime.statePath, s => { s.step = phaseConfig.name; });
+  sm.update(runtime.statePath, s => {
+    const history = Array.isArray(s.history) ? s.history : [];
+    const last = history[history.length - 1];
+    s.step = phaseConfig.name;
+    if (previousState.step !== phaseConfig.name && last?.step !== phaseConfig.name) {
+      s.history = [...history, {
+        step: phaseConfig.name,
+        timestamp: new Date().toISOString(),
+      }];
+    }
+  });
   try {
     logActivity({
       event: 'phase_transition',
