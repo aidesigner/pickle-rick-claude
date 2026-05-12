@@ -182,8 +182,6 @@ test('runWorkerGate: returns parsed testFailures when npm run test:fast fails af
     fs.writeFileSync(path.join(root, 'extension', 'src', 'demo', 'one.ts'), 'export const one = 1;\n');
     execFileSync('git', ['add', '.'], { cwd: root });
     execFileSync('git', ['commit', '-m', 'base', '--no-gpg-sign'], { cwd: root, stdio: 'ignore' });
-    const preWorkerHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-
     fs.writeFileSync(path.join(root, 'extension', 'src', 'demo', 'one.ts'), 'export const one = 2;\n');
     execFileSync('git', ['add', '.'], { cwd: root });
     execFileSync('git', ['commit', '-m', 'worker change abc12345', '--no-gpg-sign'], { cwd: root, stdio: 'ignore' });
@@ -204,17 +202,24 @@ test('runWorkerGate: returns parsed testFailures when npm run test:fast fails af
       workingDir: root,
       ticketId: 'abc12345',
       statePath,
-      preWorkerHead,
+      preWorkerHead: null,
     }));
 
     assert.equal(result.ok, false);
     assert.equal(result.lintErrors, 0);
     assert.equal(result.tscErrors, 0);
+    assert.equal(result.autofixApplied, false);
     assert.deepEqual(result.testFailures, [{
       name: 'fast tier fails',
       file: 'tests/demo.test.js',
       message: 'boom',
     }]);
+    const calls = JSON.parse(fs.readFileSync(logPath, 'utf8'));
+    assert.deepEqual(calls, [
+      ['npx', 'eslint', 'src/demo/one.ts', '--max-warnings=-1'],
+      ['npx', 'tsc', '--noEmit'],
+      ['npm', 'run', 'test:fast'],
+    ]);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -229,9 +234,10 @@ test('spawn-morty: test:fast failure marks ticket Failed, emits failure event, a
     const binDir = path.join(root, 'bin');
     writeCodexShim(binDir, 'test-fixture.ts');
     writeNpxPassShim(binDir, path.join(root, 'npx-calls.json'));
+    const npmCallsPath = path.join(sessionRoot, 'npm-calls.json');
     writeNpmFailShim(
       binDir,
-      path.join(root, 'npm-calls.json'),
+      npmCallsPath,
       `not ok 1 - worker fast tier fails\n  ---\n  location: '${path.join(root, 'extension', 'tests', 'worker-fixture.test.js')}:7:3'\n  error: 'boom'\n  ...\n`,
     );
     const headBefore = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
@@ -268,6 +274,8 @@ test('spawn-morty: test:fast failure marks ticket Failed, emits failure event, a
     const ticketContent = fs.readFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`), 'utf8');
     assert.match(ticketContent, /status: "Failed"/);
     assert.doesNotMatch(ticketContent, /completion_commit:/);
+    const npmCalls = JSON.parse(fs.readFileSync(npmCallsPath, 'utf8'));
+    assert.deepEqual(npmCalls, [['npm', 'run', 'test:fast']]);
 
     const headAfter = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
     assert.equal(headAfter, headBefore);
