@@ -189,6 +189,8 @@ function normalizeV3StateDefaults(state) {
     state.last_course_correction ??= null;
     if (typeof state.phase_personas_active !== 'boolean')
         state.phase_personas_active = false;
+    if (typeof state.pipeline_continue_on_phase_fail !== 'boolean')
+        state.pipeline_continue_on_phase_fail = true;
     if (!isRecord(state.flags))
         state.flags = {};
     if (!isRecord(state.readiness)) {
@@ -385,8 +387,9 @@ export class StateManager {
             catch { /* migration write failed, non-fatal */ }
         }
         else if (state.schema_version >= 3) {
+            const missingPipelineContinueOnPhaseFail = typeof state.pipeline_continue_on_phase_fail !== 'boolean';
             normalizeV3StateDefaults(state);
-            if (migrateLegacyManagerRelaunchCount(state) || migrateLegacySignalExitReason(state)) {
+            if (missingPipelineContinueOnPhaseFail || migrateLegacyManagerRelaunchCount(state) || migrateLegacySignalExitReason(state)) {
                 try {
                     writeMigrationStateFile(statePath, state);
                 }

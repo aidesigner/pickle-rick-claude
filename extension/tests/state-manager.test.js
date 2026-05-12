@@ -406,6 +406,20 @@ test('StateManager.read: preserves existing v3 values while hydrating missing de
   });
 });
 
+test('StateManager.read: state pipeline_continue_on_phase_fail default hydrates to true when omitted', () => {
+  withDir((dir) => {
+    const sm = new StateManager({ schemaVersion: 3 });
+    const sp = path.join(dir, 'state.json');
+    writeStateFile(sp, makeState({ schema_version: 3 }));
+
+    const result = sm.read(sp);
+    const onDisk = JSON.parse(fs.readFileSync(sp, 'utf-8'));
+
+    assert.equal(result.pipeline_continue_on_phase_fail, true);
+    assert.equal(onDisk.pipeline_continue_on_phase_fail, true);
+  });
+});
+
 test('StateManager.read: logs to stderr on undefined schema_version migration', () => {
   withDir((dir) => {
     const messages = [];

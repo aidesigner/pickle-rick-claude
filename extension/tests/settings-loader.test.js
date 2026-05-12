@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { resolvePipelineContinueOnPhaseFailSetting } from '../bin/setup.js';
 import { resolveWorkerGateTier } from '../bin/spawn-morty.js';
 import { resolveWorkerTestGateTimeoutMs } from '../services/pickle-utils.js';
 
@@ -67,4 +68,14 @@ test('settings-loader: invalid worker_gate_tier warns and falls back to fast', (
     assert.match(warnings[0], /invalid worker_gate_tier "bogus"/);
     assert.match(warnings[0], /defaulting to "fast"/);
   });
+});
+
+test('settings-loader: pipeline_continue_on_phase_fail defaults to true when key is absent', () => {
+  assert.equal(resolvePipelineContinueOnPhaseFailSetting(undefined), true);
+  assert.equal(resolvePipelineContinueOnPhaseFailSetting({ default_worker_timeout_seconds: 1200 }), true);
+});
+
+test('settings-loader: pipeline_continue_on_phase_fail honors false override from settings', () => {
+  assert.equal(resolvePipelineContinueOnPhaseFailSetting({ pipeline_continue_on_phase_fail: false }), false);
+  assert.equal(resolvePipelineContinueOnPhaseFailSetting({ pipeline_continue_on_phase_fail: true }), true);
 });

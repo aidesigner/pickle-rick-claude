@@ -38,6 +38,8 @@ export interface State {
   backend?: Backend;
   /** Optional per-session worker backend override. Worker spawns prefer this over `backend` when present. */
   worker_backend?: Backend;
+  /** When false, pipeline-runner halts on any non-zero non-citadel phase exit instead of continuing on recoverable failures. */
+  pipeline_continue_on_phase_fail?: boolean;
   /** When true, /pickle Phase 3 spawns workers via harness team primitives (TeamCreate + Agent + TaskUpdate) instead of `claude -p` subprocesses. claude backend only. */
   teams_mode?: boolean;
   /** Concurrency cap for parallel `morty-implementer` teammates when teams_mode is true. Default 5. v1 ships sequential; this field is plumbed for the parallel-fan-out follow-up. */
@@ -674,6 +676,7 @@ export interface UpdateSettings {
 export interface PickleSettings {
   default_codex_model?: string;
   enable_complexity_tiers?: boolean;
+  pipeline_continue_on_phase_fail?: boolean;
   worker_gate_tier?: 'narrow' | 'fast' | 'full';
   worker_test_gate_timeout_ms?: number;
   [key: string]: unknown;

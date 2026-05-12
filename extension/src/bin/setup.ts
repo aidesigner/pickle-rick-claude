@@ -31,6 +31,7 @@ export interface SetupArgs {
   loopLimit: number;
   timeLimit: number;
   workerTimeout: number;
+  pipelineContinueOnPhaseFail: boolean;
   promiseToken: string | null;
   resumeMode: boolean;
   resumePath: string | null;
@@ -116,6 +117,7 @@ function createSetupConfig(): SetupArgs {
     loopLimit: 100,
     timeLimit: 0,
     workerTimeout: Defaults.WORKER_TIMEOUT_SECONDS,
+    pipelineContinueOnPhaseFail: true,
     promiseToken: null,
     resumeMode: false,
     resumePath: null,
@@ -145,6 +147,10 @@ function createSetupConfig(): SetupArgs {
 function applyPositiveIntegerSetting(settings: Record<string, unknown>, key: string, apply: (value: number) => void) {
   const value = settings[key];
   if (typeof value === 'number' && Number.isInteger(value) && value > 0) apply(value);
+}
+
+export function resolvePipelineContinueOnPhaseFailSetting(settings: Record<string, unknown> | null | undefined): boolean {
+  return settings?.pipeline_continue_on_phase_fail === false ? false : true;
 }
 
 function readIterationBudgetPerBackend(settings: Record<string, unknown>): Partial<Record<Backend, number>> | null {
@@ -280,6 +286,7 @@ function loadSettings(config: SetupArgs, rootDir: string) {
     if (!settings) return;
     applyPositiveIntegerSetting(settings, 'default_max_iterations', value => { config.loopLimit = value; });
     applyPositiveIntegerSetting(settings, 'default_worker_timeout_seconds', value => { config.workerTimeout = value; });
+    config.pipelineContinueOnPhaseFail = resolvePipelineContinueOnPhaseFailSetting(settings);
     config.managerIdleBackoffFallbackMs = resolveManagerIdleBackoffFallbackMs(settings.manager_idle_backoff_fallback_ms);
     config.iterationBudgetPerBackend = readIterationBudgetPerBackend(settings);
     config.throughputBaselines = readThroughputBaselines(settings);
@@ -888,6 +895,7 @@ function createInitialState(config: SetupArgs, sessionPath: string, taskStr: str
     schema_version: STATE_MANAGER_DEFAULTS.schemaVersion,
     backend: config.backend,
     worker_backend: config.workerBackend,
+    pipeline_continue_on_phase_fail: config.pipelineContinueOnPhaseFail,
     teams_mode: config.teamsMode || undefined,
     max_parallel: config.teamsMode ? config.maxParallel : undefined,
     effort: config.effort,

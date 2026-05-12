@@ -6,6 +6,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
+  applyStrictPhasesOverride,
   isFatalPhaseFailure,
   shouldHaltAfterPhase,
 } from '../bin/pipeline-runner.js';
@@ -145,4 +146,34 @@ describe('shouldHaltAfterPhase', () => {
 
     assert.equal(shouldHaltAfterPhase('citadel', 1, runtime), true);
   });
+});
+
+test('strict-phases cli override persists state.pipeline_continue_on_phase_fail=false', () => {
+  const { repo } = makeRepo();
+  const sessionDir = tmpDir('pipeline-phase-session-');
+  const statePath = writeState(sessionDir, repo, {
+    schema_version: 3,
+    pipeline_continue_on_phase_fail: true,
+  });
+
+  const changed = applyStrictPhasesOverride(statePath, true);
+  const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+
+  assert.equal(changed, true);
+  assert.equal(state.pipeline_continue_on_phase_fail, false);
+});
+
+test('strict-phases cli override is a no-op when strict mode is not requested', () => {
+  const { repo } = makeRepo();
+  const sessionDir = tmpDir('pipeline-phase-session-');
+  const statePath = writeState(sessionDir, repo, {
+    schema_version: 3,
+    pipeline_continue_on_phase_fail: true,
+  });
+
+  const changed = applyStrictPhasesOverride(statePath, false);
+  const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+
+  assert.equal(changed, false);
+  assert.equal(state.pipeline_continue_on_phase_fail, true);
 });

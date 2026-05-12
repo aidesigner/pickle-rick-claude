@@ -1324,6 +1324,9 @@ function loadPipelineRuntime(sessionDir, opts, log) {
         log(`reconstruction detected (iteration=${state.iteration ?? 0}) — start_time_epoch reset ${reset.originalEpoch ?? '?'} → ${reset.newEpoch}`);
     }
     state = reset ? sm.read(statePath) : state;
+    if (applyStrictPhasesOverride(statePath, opts.strictPhases === true, log)) {
+        state = sm.read(statePath);
+    }
     const { backend, phaseEnv } = resolvePipelineBackend(statePath, state, config, sessionDir, log);
     assertCleanWorkingTree(workingDir, config.ignore_dirty_paths);
     setupRuntimeScope(sessionDir, workingDir, config.target || workingDir, opts, pipelineRaw, log);
@@ -1655,6 +1658,16 @@ async function handlePhaseBoundaryRespawn(runtime, rawPhase, nextRawPhase) {
     // R-MDS-6: reset flag so replacement watcher shows normal no-data message
     setProducerDone(runtime, false);
 }
+export function applyStrictPhasesOverride(statePath, strictPhases, log) {
+    if (!strictPhases)
+        return false;
+    const state = sm.read(statePath);
+    if (state.pipeline_continue_on_phase_fail === false)
+        return false;
+    sm.update(statePath, s => { s.pipeline_continue_on_phase_fail = false; });
+    log?.('strict phase policy enabled via --strict-phases; state.pipeline_continue_on_phase_fail=false');
+    return true;
+}
 export async function main(sessionDir, opts = {}) {
     try {
         assertSchemaVersionDeployParity();
@@ -1724,12 +1737,13 @@ if (process.argv[1] && path.basename(process.argv[1]) === 'pipeline-runner.js') 
     const valuedFlags = new Set(['--scope', '--scope-base']);
     const sessionDir = findPositional(argv, valuedFlags);
     if (!sessionDir || !fs.existsSync(path.join(sessionDir, 'state.json'))) {
-        console.error('Usage: node pipeline-runner.js <session-dir> [--scope <flag>] [--scope-base <ref>]');
+        console.error('Usage: node pipeline-runner.js <session-dir> [--scope <flag>] [--scope-base <ref>] [--strict-phases]');
         process.exit(1);
     }
     const scopeFlag = parseArgvFlag(argv, '--scope');
     const scopeBase = parseArgvFlag(argv, '--scope-base');
-    main(sessionDir, { scopeFlag, scopeBase }).catch((err) => {
+    const strictPhases = argv.includes('--strict-phases');
+    main(sessionDir, { scopeFlag, scopeBase, strictPhases }).catch((err) => {
         try {
             writePipelineStatus(sessionDir, 'failed');
         }
