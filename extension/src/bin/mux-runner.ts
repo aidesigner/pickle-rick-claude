@@ -13,6 +13,7 @@ import { resolveCodexModel } from './spawn-morty.js';
 import { readRecoverableJsonObject } from '../services/microverse-state.js';
 import { extractAssistantContent, detectOutputFormat } from '../services/classifier-utils.js';
 import { updateTicketStatusInTransaction } from '../services/transaction-ticket-ops.js';
+import { emitCrossTicketRegressionLinearComment } from '../lib/linear-comment.js';
 import {
   evaluateManagerRelaunch,
   recordManagerRelaunch,
@@ -269,6 +270,16 @@ export function runBetweenTicketFastGate(input: RunBetweenTicketFastGateInput): 
         name: failure.name,
         file: failure.file,
       })),
+    });
+    emitCrossTicketRegressionLinearComment({
+      sessionDir: path.dirname(input.statePath),
+      priorTicketId: input.completedTicketId,
+      regressedTicketId: input.nextTicketId || input.completedTicketId,
+      failingTests: result.failures.map(failure => ({
+        name: failure.name,
+        file: failure.file,
+      })),
+      log: input.log,
     });
   }
 
