@@ -1484,9 +1484,17 @@ type JudgeMeasurementAttempt = {
   message?: string;
 };
 
+type JudgeMeasurementExhaustedFailureKind = Exclude<JudgeMeasurementAttempt['failureKind'], 'cli_missing' | undefined>;
+
 type JudgeMeasurementResult =
   | { metric: MetricSnapshot; attempts: number }
-  | { metric: null; exitReason: JudgeFailureExitReason; attempts: number; lastError: string | null };
+  | {
+    metric: null;
+    exitReason: JudgeFailureExitReason;
+    attempts: number;
+    lastError: string | null;
+    exhaustedFailureKind: JudgeMeasurementExhaustedFailureKind;
+  };
 
 function isMissingCliError(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false;
@@ -1614,11 +1622,13 @@ export async function measureLlmMetricWithBackoff(
       exitReason: 'judge_cli_missing',
       attempts: 0,
       lastError: probe.message,
+      exhaustedFailureKind: 'failed',
     };
   }
 
   const backoffsMs = [10_000, 30_000, 60_000];
   let lastError: string | null = null;
+  let exhaustedFailureKind: JudgeMeasurementExhaustedFailureKind = probe.kind === 'failed' ? 'failed' : 'timeout';
   for (let attempt = 0; attempt <= backoffsMs.length; attempt++) {
     const result = measureLlmMetricAttempt(
       goal,
@@ -1641,7 +1651,13 @@ export async function measureLlmMetricWithBackoff(
         exitReason: 'judge_cli_missing',
         attempts: attempt + 1,
         lastError,
+        exhaustedFailureKind: 'failed',
       };
+    }
+    if (result.failureKind === 'failed') {
+      exhaustedFailureKind = 'failed';
+    } else if (result.failureKind === 'timeout' && exhaustedFailureKind !== 'failed') {
+      exhaustedFailureKind = 'timeout';
     }
     if (attempt < backoffsMs.length) {
       await _deps.sleep(backoffsMs[attempt]);
@@ -1653,6 +1669,7 @@ export async function measureLlmMetricWithBackoff(
     exitReason: 'judge_timeout',
     attempts: backoffsMs.length + 1,
     lastError,
+    exhaustedFailureKind,
   };
 }
 
@@ -2048,12 +2065,14 @@ async function measureLlmBaseline(
     backend,
   );
   if (measured.metric) return measured.metric;
+  const baselineFailureKind: 'judge_cli_missing' | JudgeMeasurementExhaustedFailureKind =
+    measured.exitReason === 'judge_timeout' ? measured.exhaustedFailureKind : measured.exitReason;
   let measuredFailureExitReason: JudgeFailureExitReason | 'failed';
-  switch (measured.exitReason) {
+  switch (baselineFailureKind) {
     case 'judge_cli_missing':
       measuredFailureExitReason = 'judge_cli_missing';
       break;
-    case 'judge_timeout':
+    case 'timeout':
       measuredFailureExitReason = 'judge_timeout';
       break;
     default:
