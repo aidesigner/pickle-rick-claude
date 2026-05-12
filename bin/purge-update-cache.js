@@ -2,6 +2,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { getExtensionRoot } from '../extension/services/pickle-utils.js';
 
 const args = process.argv.slice(2);
 const dryRun = args.includes('--dry-run');
@@ -12,7 +13,7 @@ if (unexpected.length > 0) {
   process.exit(2);
 }
 
-const runtimeRoot = process.env.EXTENSION_DIR || path.join(os.homedir(), '.claude', 'pickle-rick');
+const runtimeRoot = getExtensionRoot();
 const cachePath = path.join(runtimeRoot, 'update-check.json');
 const auditPath = path.join(runtimeRoot, 'deploy-audit.log');
 const removedPaths = [];

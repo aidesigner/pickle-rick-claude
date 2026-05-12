@@ -99,6 +99,7 @@ describe('purge-update-cache.js', () => {
     const overrideAudit = path.join(overrideRoot, 'deploy-audit.log');
     try {
       mkdirSync(overrideRoot, { recursive: true });
+      writeFileSync(path.join(overrideRoot, '.pickle-install-root'), '');
       writeFileSync(overrideCache, JSON.stringify({
         last_check_epoch: 2,
         latest_version: '2.0.0',
@@ -124,6 +125,36 @@ describe('purge-update-cache.js', () => {
       const audit = JSON.parse(lines[0]);
       assert.equal(audit.event, 'CACHE_PURGE');
       assert.ok(audit.removed_paths.includes(overrideCache));
+    } finally {
+      rmSync(fixture.dir, { recursive: true, force: true });
+    }
+  });
+
+  test('falls back to canonical runtime root when EXTENSION_DIR points at a missing install root', () => {
+    const fixture = makeFixture();
+    const invalidRoot = path.join(fixture.dir, 'missing-extension-root');
+    const invalidAudit = path.join(invalidRoot, 'deploy-audit.log');
+    try {
+      const result = spawnSync('node', [PURGE_SCRIPT], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          HOME: fixture.homeDir,
+          TMPDIR: fixture.tmpRoot,
+          EXTENSION_DIR: invalidRoot,
+          PICKLE_PURGE_VAR_FOLDERS_ROOT: fixture.varFoldersRoot,
+        },
+      });
+
+      assert.strictEqual(result.status, 0, `expected exit 0, got ${result.status}: ${result.stderr}`);
+      assert.equal(existsSync(fixture.cachePath), false, 'canonical cache must be purged when EXTENSION_DIR is invalid');
+      assert.equal(existsSync(invalidAudit), false, 'invalid override root must not receive audit writes');
+
+      const lines = readFileSync(fixture.auditPath, 'utf8').trim().split('\n');
+      assert.equal(lines.length, 1);
+      const audit = JSON.parse(lines[0]);
+      assert.equal(audit.event, 'CACHE_PURGE');
+      assert.ok(audit.removed_paths.includes(fixture.cachePath));
     } finally {
       rmSync(fixture.dir, { recursive: true, force: true });
     }
