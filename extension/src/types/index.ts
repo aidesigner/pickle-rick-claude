@@ -495,6 +495,7 @@ export const VALID_ACTIVITY_EVENTS = [
   'time_cap_disabled_default',
   'manager_max_turns_relaunch',
   'bundle_bootstrap_exemption_applied',
+  'signal_received',
   'manager_idle_backoff_engaged',
   'manager_idle_backoff_released',
   'standup_session_dropped',
@@ -608,7 +609,16 @@ export interface ActivityEvent {
   reason?: string;
   stall_category?: StallCategory;
   stall_recovery_action?: StallRecoveryAction;
+  signal?: string;
   pid?: number;
+  ppid?: number;
+  is_tty?: boolean;
+  pgid?: number | null;
+  active_child_pid?: number | null;
+  active_child_cmd?: string | null;
+  current_phase?: string | null;
+  received_at_iso?: string;
+  handler_stack?: string[];
   phase?: string;
   attempts?: number;
   fall_through_to_finalize_gate?: boolean;

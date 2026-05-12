@@ -1605,7 +1605,10 @@ function loadPipelineRuntime(sessionDir: string, opts: MainOpts, log: (msg: stri
 }
 
 export function installShutdownHandlers(runtime: PipelineRuntime, counters: PhaseCounters, cancelMarker: string): () => void {
-  const handleShutdown = (signal: string) => {
+  const handleShutdown = (signal: 'SIGINT' | 'SIGTERM' | 'SIGHUP') => {
+    try {
+      logActivity({ event: 'signal_received', ...buildSignalReceivedEvent(runtime, signal) });
+    } catch { /* telemetry best effort */ }
     runtime.log(`Received ${signal} — shutting down pipeline`);
     try { fs.writeFileSync(cancelMarker, signal); } catch { /* best effort */ }
     try {
@@ -1634,6 +1637,41 @@ export function installShutdownHandlers(runtime: PipelineRuntime, counters: Phas
     process.off('SIGTERM', handlers.SIGTERM);
     process.off('SIGINT', handlers.SIGINT);
     process.off('SIGHUP', handlers.SIGHUP);
+  };
+}
+
+function getProcessGroupId(pid: number): number | null {
+  const pgidFn = (process as NodeJS.Process & { getpgid?: (targetPid: number) => number }).getpgid;
+  if (typeof pgidFn !== 'function') return null;
+  try {
+    return pgidFn(pid);
+  } catch {
+    return null;
+  }
+}
+
+function getHandlerStackFrames(): string[] {
+  return new Error('signal received').stack
+    ?.split('\n')
+    .slice(1, 6)
+    .map((line) => line.trim()) ?? [];
+}
+
+function buildSignalReceivedEvent(runtime: PipelineRuntime, signal: 'SIGINT' | 'SIGTERM' | 'SIGHUP') {
+  const state = sm.read(runtime.statePath);
+  return {
+    source: 'pickle' as const,
+    session: path.basename(runtime.sessionDir),
+    signal,
+    pid: process.pid,
+    ppid: process.ppid,
+    is_tty: Boolean(process.stdin.isTTY || process.stdout.isTTY),
+    pgid: getProcessGroupId(process.pid),
+    active_child_pid: activeChild?.pid ?? null,
+    active_child_cmd: activeChild?.spawnargs?.join(' ') ?? null,
+    current_phase: typeof state.step === 'string' ? state.step : null,
+    received_at_iso: new Date().toISOString(),
+    handler_stack: getHandlerStackFrames(),
   };
 }
 
