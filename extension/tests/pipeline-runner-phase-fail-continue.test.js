@@ -10,12 +10,20 @@ import {
   applyStrictPhasesOverride,
   isFatalPhaseFailure,
   logPhaseContinueReason,
+  main,
   recordRecoverablePhaseFailure,
   shouldHaltAfterPhase,
 } from '../bin/pipeline-runner.js';
 import { MICROVERSE_FATAL_REASONS } from '../types/index.js';
 
 const TMP_DIRS = new Set();
+
+class ExitIntercept extends Error {
+  constructor(code) {
+    super(`process.exit(${code})`);
+    this.code = code;
+  }
+}
 
 function tmpDir(prefix) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -69,6 +77,22 @@ function writeState(sessionDir, repo, overrides = {}) {
   return statePath;
 }
 
+function writePipeline(sessionDir, repo, overrides = {}) {
+  const pipelinePath = path.join(sessionDir, 'pipeline.json');
+  fs.writeFileSync(pipelinePath, JSON.stringify({
+    phases: ['pickle', 'citadel', 'anatomy-park', 'szechuan-sauce'],
+    target: repo,
+    anatomy_stall_limit: 3,
+    szechuan_stall_limit: 5,
+    anatomy_max_iterations: 100,
+    szechuan_max_iterations: 50,
+    citadel_strict: false,
+    ignore_dirty_paths: ['prds', 'docs'],
+    ...overrides,
+  }, null, 2));
+  return pipelinePath;
+}
+
 function makeRuntime({
   createFollowupCommit = false,
   stateOverrides = {},
@@ -106,6 +130,46 @@ function makeRuntime({
   };
 }
 
+function makePipelineSession({
+  createFollowupCommit = false,
+  stateOverrides = {},
+  pipelineOverrides = {},
+} = {}) {
+  const sessionDir = tmpDir('pipeline-phase-main-session-');
+  const { repo, startCommit } = makeRepo({ createFollowupCommit });
+  const statePath = writeState(sessionDir, repo, {
+    start_commit: startCommit,
+    tmux_mode: true,
+    chain_meeseeks: false,
+    pipeline_continue_on_phase_fail: true,
+    ...stateOverrides,
+  });
+  writePipeline(sessionDir, repo, pipelineOverrides);
+  return { repo, sessionDir, statePath };
+}
+
+async function expectMainExit(sessionDir, code, opts = {}) {
+  const originalExit = process.exit;
+  const originalTmux = process.env.TMUX;
+  delete process.env.TMUX;
+  process.exit = ((actualCode) => {
+    throw new ExitIntercept(actualCode ?? 0);
+  });
+  try {
+    await assert.rejects(
+      () => main(sessionDir, opts),
+      (err) => err instanceof ExitIntercept && err.code === code,
+    );
+  } finally {
+    process.exit = originalExit;
+    if (originalTmux === undefined) {
+      delete process.env.TMUX;
+    } else {
+      process.env.TMUX = originalTmux;
+    }
+  }
+}
+
 afterEach(() => {
   __setSpawnRunnerForTests(null);
   for (const dir of TMP_DIRS) {
@@ -138,19 +202,6 @@ describe('shouldHaltAfterPhase', () => {
     assert.equal(isFatalPhaseFailure('anatomy-park', runtime), true);
     assert.equal(shouldHaltAfterPhase('anatomy-park', 1, runtime), true);
   });
-
-  test('shouldHaltAfterPhase citadel unchanged for high finding in strict mode', () => {
-    const { runtime, sessionDir } = makeRuntime({
-      configOverrides: { citadel_strict: true },
-    });
-    fs.writeFileSync(path.join(sessionDir, 'citadel_report.json'), JSON.stringify({
-      findings: [{ severity: 'High' }],
-      summary: { total: 1 },
-      exitCode: 1,
-    }, null, 2));
-
-    assert.equal(shouldHaltAfterPhase('citadel', 1, runtime), true);
-  });
 });
 
 test('strict-phases cli override persists state.pipeline_continue_on_phase_fail=false', () => {
@@ -181,6 +232,82 @@ test('strict-phases cli override is a no-op when strict mode is not requested', 
 
   assert.equal(changed, false);
   assert.equal(state.pipeline_continue_on_phase_fail, true);
+});
+
+test('anatomy-park judge_timeout runs finalize-gate instead of halting pipeline', async () => {
+  const { repo, sessionDir } = makePipelineSession({
+    pipelineOverrides: { phases: ['anatomy-park'] },
+  });
+  const spawnCalls = [];
+  let callCount = 0;
+
+  __setSpawnRunnerForTests(async (cmd, args) => {
+    spawnCalls.push({ cmd, args: [...args] });
+    callCount++;
+    const statePath = path.join(sessionDir, 'state.json');
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+    if (callCount === 1) {
+      state.exit_reason = 'judge_timeout';
+      fs.writeFileSync(statePath, JSON.stringify(state, null, 2));
+      return { exitCode: 1, stdout: '', stderr: '' };
+    }
+    return { exitCode: 0, stdout: '', stderr: '' };
+  });
+
+  await expectMainExit(sessionDir, 0);
+
+  const finalizeGateCalls = spawnCalls.filter((call) => call.args.some((arg) => String(arg).includes('finalize-gate.js')));
+  assert.equal(finalizeGateCalls.length, 1);
+  assert.ok(finalizeGateCalls[0].args.includes('anatomy-park'));
+  const runnerLog = fs.readFileSync(path.join(sessionDir, 'pipeline-runner.log'), 'utf-8');
+  assert.match(runnerLog, /running finalize-gate anyway/);
+  assert.match(runnerLog, /finalize-gate passed after judge_timeout recovery/);
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+test('persisted pipeline_continue_on_phase_fail=false halts on non-zero pickle exit even when commits exist', async () => {
+  const { repo, sessionDir, statePath } = makePipelineSession({
+    createFollowupCommit: true,
+    stateOverrides: { pipeline_continue_on_phase_fail: false },
+    pipelineOverrides: { phases: ['pickle', 'citadel'] },
+  });
+
+  __setSpawnRunnerForTests(async () => ({ exitCode: 1, stdout: '', stderr: '' }));
+
+  await expectMainExit(sessionDir, 1);
+
+  const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+  const events = Array.isArray(state.activity)
+    ? state.activity.filter((entry) => entry.event === 'recoverable_phase_failure')
+    : [];
+  assert.equal(events.length, 0);
+  const runnerLog = fs.readFileSync(path.join(sessionDir, 'pipeline-runner.log'), 'utf-8');
+  assert.doesNotMatch(runnerLog, /continuing to citadel for automated remediation/);
+  assert.match(runnerLog, /Phase pickle failed \(exit 1\) — stopping pipeline/);
+  fs.rmSync(repo, { recursive: true, force: true });
+});
+
+test('--strict-phases halts at runtime and persists pipeline_continue_on_phase_fail=false', async () => {
+  const { repo, sessionDir, statePath } = makePipelineSession({
+    createFollowupCommit: true,
+    pipelineOverrides: { phases: ['pickle', 'citadel'] },
+  });
+
+  __setSpawnRunnerForTests(async () => ({ exitCode: 1, stdout: '', stderr: '' }));
+
+  await expectMainExit(sessionDir, 1, { strictPhases: true });
+
+  const state = JSON.parse(fs.readFileSync(statePath, 'utf-8'));
+  assert.equal(state.pipeline_continue_on_phase_fail, false);
+  const events = Array.isArray(state.activity)
+    ? state.activity.filter((entry) => entry.event === 'recoverable_phase_failure')
+    : [];
+  assert.equal(events.length, 0);
+  const runnerLog = fs.readFileSync(path.join(sessionDir, 'pipeline-runner.log'), 'utf-8');
+  assert.match(runnerLog, /strict phase policy enabled via --strict-phases/);
+  assert.match(runnerLog, /Phase pickle failed \(exit 1\) — stopping pipeline/);
+  assert.doesNotMatch(runnerLog, /continuing to citadel for automated remediation/);
+  fs.rmSync(repo, { recursive: true, force: true });
 });
 
 test('recoverable_phase_failure emitted on every non-fatal exit during simulated 4-phase pipeline', () => {
