@@ -1386,6 +1386,8 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
         let settled = false;
         const start = Date.now();
         let didTimeout = false;
+        let stallReason;
+        let lastDataAt = start;
         const proc = spawn(invocation.cmd, invocation.args, {
             cwd: state.working_dir || process.cwd(),
             env,
@@ -1393,11 +1395,22 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
         });
         currentChildProc = proc;
         const hangGuardMs = Defaults.MAX_ITERATION_SECONDS * 1000;
-        const hangGuard = setTimeout(() => {
+        const outputStallGuardMs = Defaults.OUTPUT_STALL_SECONDS * 1000;
+        let outputStallGuard = null;
+        function clearIterationGuards() {
+            clearTimeout(hangGuard);
+            if (outputStallGuard) {
+                clearTimeout(outputStallGuard);
+                outputStallGuard = null;
+            }
+        }
+        function resolveTimeout(reason) {
             if (settled)
                 return;
             settled = true;
             didTimeout = true;
+            stallReason = reason;
+            clearIterationGuards();
             currentChildProc = null;
             try {
                 proc.kill('SIGTERM');
@@ -1411,17 +1424,49 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
                 fs.closeSync(logFd);
             }
             catch { /* already closed */ }
-            console.error(`${Style.RED}❌ Iteration ${iterationNum} hang detected — forcing failure${Style.RESET}`);
-            resolve({ completion: 'error', timedOut: true, exitCode: null, wallSeconds: (Date.now() - start) / 1000 });
+            const label = reason === 'output_stall' ? 'output stall detected' : 'hang detected';
+            console.error(`${Style.RED}❌ Iteration ${iterationNum} ${label} — forcing failure${Style.RESET}`);
+            resolve({
+                completion: 'error',
+                timedOut: true,
+                exitCode: null,
+                wallSeconds: (Date.now() - start) / 1000,
+                stallReason,
+            });
+        }
+        function armOutputStallGuard() {
+            if (settled)
+                return;
+            if (outputStallGuard)
+                clearTimeout(outputStallGuard);
+            const remainingMs = Math.max(1, (lastDataAt + outputStallGuardMs) - Date.now());
+            outputStallGuard = setTimeout(() => {
+                if (settled)
+                    return;
+                if ((Date.now() - lastDataAt) < outputStallGuardMs) {
+                    armOutputStallGuard();
+                    return;
+                }
+                resolveTimeout('output_stall');
+            }, remainingMs);
+            outputStallGuard.unref();
+        }
+        const hangGuard = setTimeout(() => {
+            resolveTimeout('wall_clock');
         }, hangGuardMs);
         hangGuard.unref();
+        armOutputStallGuard();
         // Direct data handlers: write each chunk to both the log file (sync,
         // no buffering) and the terminal (for the tmux-runner pane).
         proc.stdout?.on('data', (chunk) => {
+            lastDataAt = Date.now();
+            armOutputStallGuard();
             writeToLog(chunk);
             process.stderr.write(chunk);
         });
         proc.stderr?.on('data', (chunk) => {
+            lastDataAt = Date.now();
+            armOutputStallGuard();
             writeToLog(chunk);
             process.stderr.write(chunk);
         });
@@ -1430,8 +1475,7 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
                 return;
             settled = true;
             currentChildProc = null;
-            if (hangGuard)
-                clearTimeout(hangGuard);
+            clearIterationGuards();
             try {
                 fs.fsyncSync(logFd);
             }
@@ -1459,6 +1503,7 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
                 timedOut: didTimeout,
                 exitCode: code ?? null,
                 wallSeconds: (Date.now() - start) / 1000,
+                stallReason,
             };
             resolve({
                 ...normalizedOutcome,
@@ -1474,8 +1519,7 @@ export async function runIteration(sessionDir, iterationNum, extensionRoot, qual
                 return;
             settled = true;
             currentChildProc = null;
-            if (hangGuard)
-                clearTimeout(hangGuard);
+            clearIterationGuards();
             const msg = safeErrorMessage(err);
             console.error(`${Style.RED}Failed to spawn ${invocation.cmd}: ${msg}${Style.RESET}`);
             try {

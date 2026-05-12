@@ -62,6 +62,8 @@ export const Defaults = {
     WORKER_CONSECUTIVE_ERROR_CAP: 3,
     /** Absolute ceiling for a single iteration when per-iteration timeout is disabled (4h). */
     MAX_ITERATION_SECONDS: 14_400,
+    /** Separate guard for subprocesses that stop producing stdout/stderr progress (30m). */
+    OUTPUT_STALL_SECONDS: 1800,
     MANAGER_MAX_TURNS: 50,
     RATE_LIMIT_POLL_MS: 10_000,
     /**
