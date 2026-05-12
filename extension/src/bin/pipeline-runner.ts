@@ -1606,10 +1606,12 @@ function loadPipelineRuntime(sessionDir: string, opts: MainOpts, log: (msg: stri
 
 export function installShutdownHandlers(runtime: PipelineRuntime, counters: PhaseCounters, cancelMarker: string): () => void {
   const handleShutdown = (signal: 'SIGINT' | 'SIGTERM' | 'SIGHUP') => {
+    const signalPayload = buildSignalReceivedEvent(runtime, signal);
     try {
-      logActivity({ event: 'signal_received', ...buildSignalReceivedEvent(runtime, signal) });
+      logActivity({ event: 'signal_received', ...signalPayload });
     } catch { /* telemetry best effort */ }
     runtime.log(`Received ${signal} — shutting down pipeline`);
+    runtime.log(`signal_received ${JSON.stringify(signalPayload)}`);
     try { fs.writeFileSync(cancelMarker, signal); } catch { /* best effort */ }
     try {
       writePipelineStatus(runtime.sessionDir, 'cancelled', {
