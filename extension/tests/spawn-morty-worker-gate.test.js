@@ -292,6 +292,7 @@ test('spawn-morty: test:fast failure marks ticket Failed, emits failure event, a
   }
 });
 
+// These contracts stay deferred until the matching production entry conditions land.
 test.skip('runWorkerGate: retries once when npm run test:fast fails and the second attempt passes', () => {
   assert.match('pending', /pending/);
 });
