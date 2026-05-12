@@ -1308,7 +1308,13 @@ function loadPipelineRuntime(sessionDir, opts, log) {
 }
 export function installShutdownHandlers(runtime, counters, cancelMarker) {
     const handleShutdown = (signal) => {
+        const signalPayload = buildSignalReceivedEvent(runtime, signal);
+        try {
+            logActivity({ event: 'signal_received', ...signalPayload });
+        }
+        catch { /* telemetry best effort */ }
         runtime.log(`Received ${signal} — shutting down pipeline`);
+        runtime.log(`signal_received ${JSON.stringify(signalPayload)}`);
         try {
             fs.writeFileSync(cancelMarker, signal);
         }
@@ -1324,7 +1330,7 @@ export function installShutdownHandlers(runtime, counters, cancelMarker) {
         catch { /* best effort */ }
         if (activeChild && !activeChild.killed)
             activeChild.kill('SIGTERM');
-        recordExitReason(runtime.statePath, 'signal');
+        recordExitReason(runtime.statePath, `signal:${signal}`);
         safeDeactivate(runtime.statePath);
         logActivity({ event: 'session_end', source: 'pickle', session: path.basename(runtime.sessionDir), mode: 'tmux', backend: runtime.backend });
         process.exit(1);
@@ -1341,6 +1347,40 @@ export function installShutdownHandlers(runtime, counters, cancelMarker) {
         process.off('SIGTERM', handlers.SIGTERM);
         process.off('SIGINT', handlers.SIGINT);
         process.off('SIGHUP', handlers.SIGHUP);
+    };
+}
+function getProcessGroupId(pid) {
+    const pgidFn = process.getpgid;
+    if (typeof pgidFn !== 'function')
+        return null;
+    try {
+        return pgidFn(pid);
+    }
+    catch {
+        return null;
+    }
+}
+function getHandlerStackFrames() {
+    return new Error('signal received').stack
+        ?.split('\n')
+        .slice(1, 6)
+        .map((line) => line.trim()) ?? [];
+}
+function buildSignalReceivedEvent(runtime, signal) {
+    const state = sm.read(runtime.statePath);
+    return {
+        source: 'pickle',
+        session: path.basename(runtime.sessionDir),
+        signal,
+        pid: process.pid,
+        ppid: process.ppid,
+        is_tty: Boolean(process.stdin.isTTY || process.stdout.isTTY),
+        pgid: getProcessGroupId(process.pid),
+        active_child_pid: activeChild?.pid ?? null,
+        active_child_cmd: activeChild?.spawnargs?.join(' ') ?? null,
+        current_phase: typeof state.step === 'string' ? state.step : null,
+        received_at_iso: new Date().toISOString(),
+        handler_stack: getHandlerStackFrames(),
     };
 }
 function writeRunningStatus(runtime, counters, currentPhase) {

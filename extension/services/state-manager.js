@@ -228,6 +228,13 @@ function migrateLegacyManagerRelaunchCount(state) {
     delete state.codex_manager_relaunch_count;
     return true;
 }
+function migrateLegacySignalExitReason(state) {
+    if (state.exit_reason === 'signal') {
+        state.exit_reason = 'signal:SIGINT';
+        return true;
+    }
+    return false;
+}
 function isStateSnapshotNewer(currentState, currentMtimeMs, candidateState, candidateMtimeMs) {
     const currentIteration = readFiniteIteration(currentState);
     const candidateIteration = readFiniteIteration(candidateState);
@@ -356,6 +363,7 @@ export class StateManager {
             if (this.opts.schemaVersion >= 3)
                 normalizeV3StateDefaults(state);
             migrateLegacyManagerRelaunchCount(state);
+            migrateLegacySignalExitReason(state);
             try {
                 writeMigrationStateFile(statePath, state);
             }
@@ -369,6 +377,7 @@ export class StateManager {
             if (this.opts.schemaVersion >= 3)
                 normalizeV3StateDefaults(state);
             migrateLegacyManagerRelaunchCount(state);
+            migrateLegacySignalExitReason(state);
             process.stderr.write(`[state-manager] migrating ${statePath} to schema_version ${this.opts.schemaVersion}\n`);
             try {
                 writeMigrationStateFile(statePath, state);
@@ -377,7 +386,7 @@ export class StateManager {
         }
         else if (state.schema_version >= 3) {
             normalizeV3StateDefaults(state);
-            if (migrateLegacyManagerRelaunchCount(state)) {
+            if (migrateLegacyManagerRelaunchCount(state) || migrateLegacySignalExitReason(state)) {
                 try {
                     writeMigrationStateFile(statePath, state);
                 }

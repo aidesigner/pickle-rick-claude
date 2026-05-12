@@ -223,6 +223,7 @@ export const VALID_ACTIVITY_EVENTS = [
     'time_cap_disabled_default',
     'manager_max_turns_relaunch',
     'bundle_bootstrap_exemption_applied',
+    'signal_received',
     'manager_idle_backoff_engaged',
     'manager_idle_backoff_released',
     'standup_session_dropped',
