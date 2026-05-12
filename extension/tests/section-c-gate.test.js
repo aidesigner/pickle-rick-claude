@@ -6,6 +6,8 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  mkdirSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -94,6 +96,42 @@ test('section-c-gate.no-session exits zero and defaults still_needed true', () =
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.artifact.still_needed, true);
   assert.match(result.artifact.evidence, /No recent session found/);
+});
+
+test('section-c-gate.default-session-selection follows newest watcher log activity, not newest session directory', () => {
+  const fakeHome = mkdtempSync(path.join(tmpdir(), 'section-c-home-'));
+  const sessionsDir = path.join(fakeHome, '.local', 'share', 'pickle-rick', 'sessions');
+  mkdirSync(sessionsDir, { recursive: true });
+
+  const activeSession = path.join(sessionsDir, '2026-05-12-active');
+  const idleSession = path.join(sessionsDir, '2026-05-12-idle');
+  mkdirSync(activeSession);
+  writeFileSync(path.join(activeSession, 'tmux-runner.log'), 'iteration 4 completed\n');
+  mkdirSync(idleSession);
+  writeFileSync(path.join(idleSession, 'tmux-runner.log'), 'iteration 4 completed\niteration 5 starting\n');
+
+  const activeLog = path.join(activeSession, 'tmux-runner.log');
+  const now = new Date();
+  const newer = new Date(now.getTime() + 60_000);
+  utimesSync(activeLog, newer, newer);
+
+  const result = spawnSync(process.execPath, [CLI], {
+    cwd: REPO_ROOT,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      HOME: fakeHome,
+    },
+  });
+  const artifact = JSON.parse(readFileSync(ARTIFACT, 'utf8'));
+
+  try {
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(artifact.still_needed, false);
+    assert.match(artifact.evidence, /iteration 4 completed/);
+  } finally {
+    rmSync(fakeHome, { recursive: true, force: true });
+  }
 });
 
 test('section-c-gate.cli-guard rejects unknown arguments', () => {

@@ -23,9 +23,18 @@ function newestSessionRoot() {
   const dirs = fs.readdirSync(DEFAULT_SESSIONS_DIR, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => path.join(DEFAULT_SESSIONS_DIR, entry.name))
-    .map((dir) => ({ dir, mtime: fs.statSync(dir).mtimeMs }))
+    .map((dir) => ({ dir, mtime: sessionSignalMtime(dir) }))
     .sort((a, b) => b.mtime - a.mtime);
   return dirs[0]?.dir ?? null;
+}
+
+function sessionSignalMtime(sessionRoot) {
+  const logMtimes = LOG_NAMES
+    .map((logName) => path.join(sessionRoot, logName))
+    .filter((logPath) => fs.existsSync(logPath))
+    .map((logPath) => fs.statSync(logPath).mtimeMs);
+  if (logMtimes.length > 0) return Math.max(...logMtimes);
+  return fs.statSync(sessionRoot).mtimeMs;
 }
 
 function lastLines(text, limit = 1000) {
