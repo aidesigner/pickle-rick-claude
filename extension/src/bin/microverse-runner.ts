@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawnSync } from 'child_process';
 import { pathToFileURL } from 'node:url';
 import { State, Defaults, MicroverseExitReason } from '../types/index.js';
 import type { ActivityEventType, Backend, IterationExitType, MicroverseSessionState, MicroverseHistoryEntry, ViolationLedger, FailureClass, GateResult, StallClassification, StallRecoveryAction, JudgeResult, Violation } from '../types/index.js';
@@ -970,6 +971,7 @@ export function measureMetric(
 /** @internal test seam — do not use outside tests */
 export const _deps = {
   execFileSync: execFileSync as typeof execFileSync,
+  spawnSync: spawnSync as typeof spawnSync,
   runIteration: runIteration as typeof runIteration,
   runWorkerManagedIteration: handleWorkerManagedIteration as typeof handleWorkerManagedIteration,
   getHeadSha: getHeadSha as typeof getHeadSha,
@@ -1017,6 +1019,45 @@ function recordRunnerSubprocessErrorState(
     state.last_error = lastError;
     state.last_subprocess_error = lastError;
   });
+}
+
+function notifyOperatorOnTerminalError(
+  state: MicroverseState,
+  ctx: RunContext,
+  outcome: IterationRunOutcome,
+): void {
+  if (process.env.PICKLE_NOTIFY_ON_ERROR !== '1') return;
+
+  const notificationsPath = path.join(os.homedir(), '.claude', 'pickle-rick', 'notifications.log');
+  const record = {
+    ts: new Date().toISOString(),
+    session_id: (state as MicroverseState & { session_id?: string }).session_id ?? path.basename(ctx.sessionDir),
+    iteration: ctx.iteration,
+    reason: 'subprocess_error_cap_exhausted',
+    completion: outcome.completion,
+    timedOut: outcome.timedOut === true,
+    stallReason: outcome.stallReason ?? null,
+  };
+
+  try {
+    fs.mkdirSync(path.dirname(notificationsPath), { recursive: true });
+    fs.appendFileSync(notificationsPath, `${JSON.stringify(record)}\n`);
+  } catch {
+    // Notification is best-effort and must not change loop-exit behavior.
+  }
+
+  if (process.platform !== 'darwin') return;
+
+  try {
+    _deps.spawnSync('osascript', [
+      '-e',
+      'display notification "Pickle Rick session exited on subprocess-error cap" with title "Pickle Rick"',
+    ], {
+      stdio: 'ignore',
+    });
+  } catch {
+    // Desktop notification is best-effort and must not change loop-exit behavior.
+  }
 }
 
 export async function applyTestBackendOverrideFromEnv(): Promise<boolean> {
@@ -2697,6 +2738,7 @@ async function handleWorkerSubprocessError(
 
   if (nextCount >= Defaults.WORKER_CONSECUTIVE_ERROR_CAP) {
     ctx.log(`Worker subprocess error cap reached (${nextCount}/${Defaults.WORKER_CONSECUTIVE_ERROR_CAP}) - exiting loop`);
+    notifyOperatorOnTerminalError(state, ctx, outcome);
     return 'error';
   }
 
