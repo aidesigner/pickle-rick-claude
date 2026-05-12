@@ -1454,7 +1454,7 @@ export function resolveComposesChain(prdPath: string): { events: Set<string>; he
 
 export function parseForwardCreateAnnotation(afterQuotedToken: string): string | undefined {
   const annotationRe = new RegExp(
-    `^ \\((?:forward-created|introduced by ticket ${FORWARD_CREATE_EVENT_TICKET_RE}|created by ${FORWARD_CREATE_EVENT_REQUIREMENT_RE})\\)(?:\\b|$|[\\s,.;:])`
+    `^ \\((?:forward-created|(?:created|introduced) by ticket ${FORWARD_CREATE_EVENT_TICKET_RE}|created by ${FORWARD_CREATE_EVENT_REQUIREMENT_RE})\\)(?:\\b|$|[\\s,.;:])`
   );
   const match = annotationRe.exec(afterQuotedToken);
   return match?.[0].trim();

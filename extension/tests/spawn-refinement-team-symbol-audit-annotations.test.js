@@ -77,7 +77,7 @@ test('forward-create event annotation variants: accepts ticket and requirement-c
 
 ## Activity Events
 
-Activity events: \`my_new_event\` (forward-created), \`other_new_event\` (introduced by ticket abcd1234), \`third_new_event\` (created by R-SAOV-1).
+Activity events: \`my_new_event\` (forward-created), \`other_new_event\` (introduced by ticket abcd1234), \`third_new_event\` (created by ticket bcde2345), \`fourth_new_event\` (created by R-SAOV-1).
 `;
   const report = evaluateSymbolAudit(prd, process.cwd(), { tickets: [] });
   const statuses = Object.fromEntries(report.activityEvents.map((ref) => [ref.symbol, ref.status]));
@@ -86,6 +86,25 @@ Activity events: \`my_new_event\` (forward-created), \`other_new_event\` (introd
     my_new_event: 'forward-create',
     other_new_event: 'forward-create',
     third_new_event: 'forward-create',
+    fourth_new_event: 'forward-create',
+  });
+  assert.equal(report.ok, true);
+  assert.deepEqual(report.findings, []);
+});
+
+test('forward-create helper annotation variants: accepts created-by-ticket suffix', () => {
+  const prd = `# Bundle PRD
+
+## Helpers And Sentinels
+
+Helpers: \`FutureHelper.build\` (created by ticket 5c75a9eb), \`LaterHelper.run\` (introduced by ticket abcd1234).
+`;
+  const report = evaluateSymbolAudit(prd, process.cwd(), { tickets: [] });
+  const statuses = Object.fromEntries(report.helperSentinels.map((ref) => [ref.symbol, ref.status]));
+
+  assert.deepEqual(statuses, {
+    'FutureHelper.build': 'forward-create',
+    'LaterHelper.run': 'forward-create',
   });
   assert.equal(report.ok, true);
   assert.deepEqual(report.findings, []);
