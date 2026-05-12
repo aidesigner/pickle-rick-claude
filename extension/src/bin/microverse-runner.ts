@@ -2012,12 +2012,16 @@ function mapJudgeMeasurementFailure(
   if (!('exitReason' in measured)) {
     throw new Error('mapJudgeMeasurementFailure requires a failed judge measurement');
   }
-  if (measured.exitReason === 'judge_cli_missing') {
-    return 'judge_cli_missing';
+  switch (measured.exitReason) {
+    case 'judge_cli_missing':
+      return 'judge_cli_missing';
+    case 'judge_timeout':
+      return measured.exhaustedFailureKind === 'timeout'
+        ? 'judge_timeout'
+        : 'baseline_unmeasurable_unrecoverable';
+    default:
+      return 'baseline_unmeasurable_unrecoverable';
   }
-  return measured.exhaustedFailureKind === 'timeout'
-    ? 'judge_timeout'
-    : 'baseline_unmeasurable_unrecoverable';
 }
 
 function resetStoppedMicroverseState(state: MicroverseState, sessionDir: string, log: (msg: string) => void): void {
