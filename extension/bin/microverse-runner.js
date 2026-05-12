@@ -675,6 +675,7 @@ export const _deps = {
     resetToSha: resetToSha,
     isWorkingTreeDirty: isWorkingTreeDirty,
     sleep: sleep,
+    collectTickets: collectTickets,
 };
 const RECOVERY_TEMPLATES = {
     tool_failure: 'Metric tool failed. Check tool prerequisites, env vars, and dependencies before retrying.',
@@ -1961,7 +1962,7 @@ async function handleManagerErrorOutcome(ctx) {
         postState = readRunnerState(ctx.statePath);
     }
     catch { /* fall back to current runner state */ }
-    const decision = evaluateManagerRelaunch(postState, collectTickets(ctx.sessionDir), null, 'other_error');
+    const decision = evaluateManagerRelaunch(postState, _deps.collectTickets(ctx.sessionDir), null, 'other_error');
     if (decision.shouldRelaunch) {
         const relaunchBackend = resolveBackend(postState);
         ctx.log(`${relaunchBackend} manager subprocess errored with ${decision.pendingCount} ticket(s) still pending — ` +
@@ -1974,7 +1975,7 @@ async function handleManagerErrorOutcome(ctx) {
     ctx.log('Subprocess error. Exiting loop.');
     return 'error';
 }
-async function handleIterationOutcome(state, baseline, ctx, outcome) {
+export async function handleIterationOutcome(state, baseline, ctx, outcome) {
     const iterLogFile = path.join(ctx.sessionDir, `tmux_iteration_${ctx.iteration}.log`);
     const exitResult = classifyIterationExit(outcome.completion, iterLogFile, {
         didTimeout: outcome.timedOut, exitCode: outcome.exitCode, wallSeconds: outcome.wallSeconds,

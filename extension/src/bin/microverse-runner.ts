@@ -975,6 +975,7 @@ export const _deps = {
   resetToSha: resetToSha as typeof resetToSha,
   isWorkingTreeDirty: isWorkingTreeDirty as typeof isWorkingTreeDirty,
   sleep: sleep as typeof sleep,
+  collectTickets: collectTickets as typeof collectTickets,
 };
 
 const RECOVERY_TEMPLATES: Record<FailureClass, string> = {
@@ -2559,7 +2560,7 @@ async function handleManagerErrorOutcome(ctx: RunContext): Promise<ExitReason | 
   try { postState = readRunnerState(ctx.statePath); } catch { /* fall back to current runner state */ }
   const decision = evaluateManagerRelaunch(
     postState,
-    collectTickets(ctx.sessionDir),
+    _deps.collectTickets(ctx.sessionDir),
     null,
     'other_error',
   );
@@ -2578,7 +2579,7 @@ async function handleManagerErrorOutcome(ctx: RunContext): Promise<ExitReason | 
   return 'error';
 }
 
-async function handleIterationOutcome(
+export async function handleIterationOutcome(
   state: MicroverseState,
   baseline: MetricSnapshot,
   ctx: RunContext,
