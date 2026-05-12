@@ -278,6 +278,29 @@
         "file_list": { "type": "array", "items": { "type": "string" } }
       }
     },
+    "worker_gate_failed": {
+      "type": "object",
+      "required": ["event", "ts", "ticket_id", "gate_phase", "failures", "retry_count"],
+      "properties": {
+        "event": { "type": "string", "const": "worker_gate_failed" },
+        "ts": { "type": "string" },
+        "ticket_id": { "type": "string" },
+        "gate_phase": { "type": "string", "enum": ["test:fast", "lint", "tsc"] },
+        "failures": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "file", "message"],
+            "properties": {
+              "name": { "type": "string" },
+              "file": { "type": "string" },
+              "message": { "type": "string" }
+            }
+          }
+        },
+        "retry_count": { "type": "integer", "minimum": 0 }
+      }
+    },
     "worker_lint_gate_failed": {
       "type": "object",
       "required": ["event", "ts", "ticket_id", "lint_errors", "tsc_errors", "file_list"],
@@ -558,6 +581,7 @@
     { "$ref": "#/definitions/completion_commit_inferred_from_git" },
     { "$ref": "#/definitions/phantom_done_detected" },
     { "$ref": "#/definitions/worker_lint_gate_passed" },
+    { "$ref": "#/definitions/worker_gate_failed" },
     { "$ref": "#/definitions/worker_lint_gate_failed" },
     { "$ref": "#/definitions/worker_lint_autofix_applied" },
     { "$ref": "#/definitions/worker_completion_commit_announced" },

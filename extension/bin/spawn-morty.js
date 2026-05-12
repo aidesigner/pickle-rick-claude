@@ -453,6 +453,9 @@ function countLintErrors(output) {
 function countTscErrors(output) {
     return (output.match(/\berror TS\d+:/g) ?? []).length;
 }
+function buildFallbackGateFailure(name, file, message) {
+    return [{ name, file, message }];
+}
 function normalizeTestFailureFile(locationValue, extensionDir) {
     const trimmed = locationValue.trim().replace(/^['"]|['"]$/g, '');
     const filePath = trimmed.replace(/:\d+:\d+$/, '');
@@ -510,6 +513,40 @@ function parseWorkerGateTestFailures(output, extensionDir) {
             message: fallbackMessage,
         }];
 }
+function parseWorkerGateLintFailures(output, extensionDir) {
+    const failures = [];
+    for (const line of output.split(/\r?\n/)) {
+        const match = line.match(/^(.+?):\d+:\d+:\s+(.+)$/);
+        if (!match)
+            continue;
+        failures.push({
+            name: 'eslint',
+            file: normalizeTestFailureFile(match[1], extensionDir),
+            message: match[2].trim(),
+        });
+    }
+    if (failures.length > 0)
+        return failures;
+    const fallbackMessage = output.split(/\r?\n/).map(line => line.trim()).find(Boolean) ?? 'eslint failed';
+    return buildFallbackGateFailure('eslint', '', fallbackMessage);
+}
+function parseWorkerGateTscFailures(output, extensionDir) {
+    const failures = [];
+    for (const line of output.split(/\r?\n/)) {
+        const match = line.match(/^(.+?)\(\d+,\d+\):\s+error\s+TS\d+:\s+(.+)$/);
+        if (!match)
+            continue;
+        failures.push({
+            name: 'tsc',
+            file: normalizeTestFailureFile(match[1], extensionDir),
+            message: match[2].trim(),
+        });
+    }
+    if (failures.length > 0)
+        return failures;
+    const fallbackMessage = output.split(/\r?\n/).map(line => line.trim()).find(Boolean) ?? 'tsc failed';
+    return buildFallbackGateFailure('tsc', '', fallbackMessage);
+}
 function collectChangedFilesForLintGate(workingDir, preWorkerHead) {
     const files = new Set();
     if (preWorkerHead) {
@@ -549,52 +586,103 @@ function stageAndCommitLintAutofix(workingDir, ticketId, fileList) {
     runCmd(['git', 'commit', '-m', `fix(${ticketId}): worker lint autofix`, '--no-gpg-sign'], { cwd: workingDir });
     return getHeadSha(workingDir);
 }
+function runWorkerGateChecks(args) {
+    let lintOk = true;
+    let lintErrors = 0;
+    let gateFailures = [];
+    let gatePhase = null;
+    if (args.lintTargets.length > 0) {
+        const lintResult = runCommand('npx', ['eslint', ...args.lintTargets, '--max-warnings=-1'], args.extensionDir);
+        const lintOutput = `${lintResult.stdout}\n${lintResult.stderr}`;
+        lintErrors = countLintErrors(lintOutput);
+        lintOk = lintResult.ok;
+        if (!lintOk) {
+            gatePhase = 'lint';
+            gateFailures = parseWorkerGateLintFailures(lintOutput, args.extensionDir);
+        }
+    }
+    const tscResult = runCommand('npx', ['tsc', '--noEmit'], args.extensionDir);
+    const tscOutput = `${tscResult.stdout}\n${tscResult.stderr}`;
+    const tscErrors = countTscErrors(tscOutput);
+    if (lintOk && !tscResult.ok) {
+        gatePhase = 'tsc';
+        gateFailures = parseWorkerGateTscFailures(tscOutput, args.extensionDir);
+    }
+    if (!lintOk || !tscResult.ok) {
+        return {
+            lintOk,
+            tscOk: tscResult.ok,
+            testsOk: true,
+            lintErrors,
+            tscErrors,
+            testFailures: [],
+            gateFailures,
+            gatePhase,
+        };
+    }
+    const testResult = runCommand('npm', ['run', 'test:fast'], args.extensionDir, { timeoutMs: args.workerTestGateTimeoutMs });
+    const testFailures = testResult.ok
+        ? []
+        : testResult.timedOut
+            ? [{
+                    name: '__timeout__',
+                    file: 'npm run test:fast',
+                    message: `killed after ${args.workerTestGateTimeoutMs}ms`,
+                }]
+            : parseWorkerGateTestFailures(`${testResult.stdout}\n${testResult.stderr}`, args.extensionDir);
+    if (!testResult.ok) {
+        gatePhase = 'test:fast';
+        gateFailures = testFailures;
+    }
+    return {
+        lintOk,
+        tscOk: tscResult.ok,
+        testsOk: testResult.ok,
+        lintErrors,
+        tscErrors,
+        testFailures,
+        gateFailures,
+        gatePhase,
+    };
+}
+function shouldRetryWorkerGate(lintOk, tscOk, lintTargetCount) {
+    return (!lintOk || !tscOk) && lintTargetCount > 0;
+}
+function didWorkerGateFail(lintOk, tscOk, testsOk) {
+    return !lintOk || !tscOk || !testsOk;
+}
 export function runWorkerGate(changedFiles, args) {
     const fileList = [...changedFiles];
     const extensionDir = path.join(args.workingDir, 'extension');
     if (!fs.existsSync(extensionDir)) {
-        return { ok: true, fileList, lintErrors: 0, tscErrors: 0, testFailures: [], autofixApplied: false, completionCommitSha: null };
+        return {
+            ok: true,
+            fileList,
+            lintErrors: 0,
+            tscErrors: 0,
+            testFailures: [],
+            gatePhase: null,
+            retryCount: 0,
+            autofixApplied: false,
+            completionCommitSha: null,
+        };
     }
     const lintTargets = toExtensionLintTargets(args.workingDir, fileList);
     const reportedFileList = lintTargets.length > 0
         ? lintTargets.map(target => `extension/${target}`)
         : fileList;
-    let lintErrors = 0;
-    let tscErrors = 0;
-    let testFailures = [];
+    let retryCount = 0;
     let autofixApplied = false;
     const workerTestGateTimeoutMs = resolveWorkerTestGateTimeoutMs(args.workingDir);
-    const runChecks = () => {
-        let lintOk = true;
-        if (lintTargets.length > 0) {
-            const lintResult = runCommand('npx', ['eslint', ...lintTargets, '--max-warnings=-1'], extensionDir);
-            lintErrors = countLintErrors(`${lintResult.stdout}\n${lintResult.stderr}`);
-            lintOk = lintResult.ok;
-        }
-        else {
-            lintErrors = 0;
-        }
-        const tscResult = runCommand('npx', ['tsc', '--noEmit'], extensionDir);
-        tscErrors = countTscErrors(`${tscResult.stdout}\n${tscResult.stderr}`);
-        if (!lintOk || !tscResult.ok) {
-            testFailures = [];
-            return { lintOk, tscOk: tscResult.ok, testsOk: true };
-        }
-        const testResult = runCommand('npm', ['run', 'test:fast'], extensionDir, { timeoutMs: workerTestGateTimeoutMs });
-        testFailures = testResult.ok
-            ? []
-            : testResult.timedOut
-                ? [{
-                        name: '__timeout__',
-                        file: 'npm run test:fast',
-                        message: `killed after ${workerTestGateTimeoutMs}ms`,
-                    }]
-                : parseWorkerGateTestFailures(`${testResult.stdout}\n${testResult.stderr}`, extensionDir);
-        return { lintOk, tscOk: tscResult.ok, testsOk: testResult.ok };
-    };
-    let { lintOk, tscOk, testsOk } = runChecks();
-    if ((!lintOk || !tscOk) && lintTargets.length > 0) {
+    let gateResult = runWorkerGateChecks({
+        lintTargets,
+        extensionDir,
+        workerTestGateTimeoutMs,
+    });
+    let { lintOk, tscOk, testsOk } = gateResult;
+    if (shouldRetryWorkerGate(lintOk, tscOk, lintTargets.length)) {
         autofixApplied = true;
+        retryCount = 1;
         runCommand('npx', ['eslint', '--fix', ...lintTargets, '--max-warnings=-1'], extensionDir);
         writeActivityEntry(args.statePath, {
             event: 'worker_lint_autofix_applied',
@@ -602,15 +690,20 @@ export function runWorkerGate(changedFiles, args) {
             file_list: reportedFileList,
             ts: new Date().toISOString(),
         });
-        ({ lintOk, tscOk, testsOk } = runChecks());
+        gateResult = runWorkerGateChecks({
+            lintTargets,
+            extensionDir,
+            workerTestGateTimeoutMs,
+        });
+        ({ lintOk, tscOk, testsOk } = gateResult);
     }
-    if (!lintOk || !tscOk || !testsOk) {
+    if (didWorkerGateFail(lintOk, tscOk, testsOk)) {
         writeActivityEntry(args.statePath, {
-            event: 'worker_lint_gate_failed',
+            event: 'worker_gate_failed',
             ticket_id: args.ticketId,
-            lint_errors: lintErrors,
-            tsc_errors: tscErrors,
-            file_list: reportedFileList,
+            gate_phase: gateResult.gatePhase ?? (gateResult.lintErrors > 0 ? 'lint' : gateResult.tscErrors > 0 ? 'tsc' : 'test:fast'),
+            failures: gateResult.gateFailures,
+            retry_count: retryCount,
             ts: new Date().toISOString(),
         });
         if (args.preWorkerHead) {
@@ -622,7 +715,17 @@ export function runWorkerGate(changedFiles, args) {
             }
             catch { /* best-effort */ }
         }
-        return { ok: false, fileList, lintErrors, tscErrors, testFailures, autofixApplied, completionCommitSha: null };
+        return {
+            ok: false,
+            fileList,
+            lintErrors: gateResult.lintErrors,
+            tscErrors: gateResult.tscErrors,
+            testFailures: gateResult.testFailures,
+            gatePhase: gateResult.gatePhase,
+            retryCount,
+            autofixApplied,
+            completionCommitSha: null,
+        };
     }
     const completionCommitSha = autofixApplied
         ? stageAndCommitLintAutofix(args.workingDir, args.ticketId, fileList)
@@ -633,7 +736,17 @@ export function runWorkerGate(changedFiles, args) {
         file_list: reportedFileList,
         ts: new Date().toISOString(),
     });
-    return { ok: true, fileList, lintErrors, tscErrors, testFailures, autofixApplied, completionCommitSha };
+    return {
+        ok: true,
+        fileList,
+        lintErrors: gateResult.lintErrors,
+        tscErrors: gateResult.tscErrors,
+        testFailures: gateResult.testFailures,
+        gatePhase: null,
+        retryCount,
+        autofixApplied,
+        completionCommitSha,
+    };
 }
 async function finalizeWorkerTurn(params) {
     const { ctx, exitCode, flushTimeout, startTime, resolve } = params;

@@ -216,6 +216,8 @@ test('runWorkerGate: returns parsed testFailures when npm run test:fast fails af
     assert.equal(result.ok, false);
     assert.equal(result.lintErrors, 0);
     assert.equal(result.tscErrors, 0);
+    assert.equal(result.gatePhase, 'test:fast');
+    assert.equal(result.retryCount, 0);
     assert.equal(result.autofixApplied, false);
     assert.deepEqual(result.testFailures, [{
       name: 'fast tier fails',
@@ -228,6 +230,20 @@ test('runWorkerGate: returns parsed testFailures when npm run test:fast fails af
       ['npx', 'tsc', '--noEmit'],
       ['npm', 'run', 'test:fast'],
     ]);
+    const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+    const failedEvent = state.activity.find((entry) => entry.event === 'worker_gate_failed');
+    assert.deepEqual(failedEvent, {
+      event: 'worker_gate_failed',
+      ts: failedEvent.ts,
+      ticket_id: 'abc12345',
+      gate_phase: 'test:fast',
+      failures: [{
+        name: 'fast tier fails',
+        file: 'tests/demo.test.js',
+        message: 'boom',
+      }],
+      retry_count: 0,
+    });
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -272,11 +288,15 @@ test('spawn-morty: test:fast failure marks ticket Failed, emits failure event, a
 
     assert.equal(result.status, 1, `stderr: ${result.stderr}`);
     const state = readState(sessionRoot);
-    const failedEvent = state.activity.find((entry) => entry.event === 'worker_lint_gate_failed');
-    assert.ok(failedEvent, `missing worker_lint_gate_failed in ${JSON.stringify(state.activity)}`);
-    assert.equal(failedEvent.lint_errors, 0);
-    assert.equal(failedEvent.tsc_errors, 0);
-    assert.deepEqual(failedEvent.file_list, ['extension/src/test-fixture.ts']);
+    const failedEvent = state.activity.find((entry) => entry.event === 'worker_gate_failed');
+    assert.ok(failedEvent, `missing worker_gate_failed in ${JSON.stringify(state.activity)}`);
+    assert.equal(failedEvent.gate_phase, 'test:fast');
+    assert.equal(failedEvent.retry_count, 0);
+    assert.deepEqual(failedEvent.failures, [{
+      name: 'worker fast tier fails',
+      file: 'tests/worker-fixture.test.js',
+      message: 'boom',
+    }]);
     assert.equal(state.activity.some((entry) => entry.event === 'worker_lint_autofix_applied'), false);
 
     const ticketContent = fs.readFileSync(path.join(ticketDir, `linear_ticket_${ticketId}.md`), 'utf8');
@@ -295,10 +315,6 @@ test('spawn-morty: test:fast failure marks ticket Failed, emits failure event, a
 // These contracts stay deferred until the matching production entry conditions land.
 test.skip('runWorkerGate: retries once when npm run test:fast fails and the second attempt passes', () => {
   assert.match('pending', /pending/);
-});
-
-test.skip('spawn-morty: hard-fails after one retried test:fast failure, emits worker_gate_failed, and does not commit', () => {
-  assert.match('worker_gate_failed', /worker_gate_failed/);
 });
 
 test.skip('runWorkerGate: skips test:fast when SKIP_WORKER_TEST_GATE=1 and logs the skip marker', () => {

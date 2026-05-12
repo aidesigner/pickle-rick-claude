@@ -144,6 +144,54 @@ function priorityFor(name: string): number {
   return TASK_NOTE_PRIORITY[name] ?? 3;
 }
 
+type WorkerGateFailureSummaryEvent = {
+  event: 'worker_gate_failed';
+  ticket_id?: string;
+  gate_phase?: string;
+  retry_count?: number;
+  failures?: Array<{
+    name?: string;
+    file?: string;
+    message?: string;
+  }>;
+  ts?: string;
+};
+
+function formatWorkerGateFailureLine(failure: { name?: string; file?: string; message?: string }): string {
+  const label = failure.file || failure.name || 'unknown';
+  const message = failure.message || failure.name || 'unknown failure';
+  return `  - ${label}: ${message}`;
+}
+
+export function buildWorkerGateFailureSummary(state: Partial<State>): string {
+  const events = (Array.isArray(state.activity) ? state.activity : [])
+    .filter((entry): entry is WorkerGateFailureSummaryEvent => entry?.event === 'worker_gate_failed')
+    .slice(-3);
+  if (events.length === 0) return '';
+
+  const lines = ['=== RECENT WORKER GATE FAILURES ==='];
+  for (const entry of events) {
+    lines.push(
+      `worker_gate_failed ticket_id=${entry.ticket_id || 'unknown'} gate_phase=${entry.gate_phase || 'unknown'} retry_count=${Number.isInteger(entry.retry_count) ? entry.retry_count : 0}`,
+    );
+    const failures = Array.isArray(entry.failures) ? entry.failures.slice(0, 3) : [];
+    if (failures.length === 0) {
+      lines.push('  - unknown: no structured failures recorded');
+      continue;
+    }
+    for (const failure of failures) {
+      lines.push(formatWorkerGateFailureLine(failure));
+    }
+  }
+  return lines.join('\n');
+}
+
+function buildIterationHandoffSummary(state: Partial<State>, sessionDir: string, iterationNum?: number): string {
+  const handoffSummary = buildHandoffSummary(state, sessionDir, iterationNum);
+  const workerGateFailureSummary = buildWorkerGateFailureSummary(state);
+  return workerGateFailureSummary ? `${handoffSummary}\n\n${workerGateFailureSummary}` : handoffSummary;
+}
+
 /**
  * Truncate TASK_NOTES.md content with section-aware priority.
  * Preserves ## Next and ## Dead Ends fully, trims ## Progress from oldest.
@@ -1352,7 +1400,7 @@ export async function runIteration(sessionDir: string, iterationNum: number, ext
       }
     }
   } else {
-    managerPrompt += '\n\n' + buildHandoffSummary(state, sessionDir, iterationNum);
+    managerPrompt += '\n\n' + buildIterationHandoffSummary(state, sessionDir, iterationNum);
   }
 
   const settings = loadSettingsBag(extensionRoot, 'mux-runner:run-iteration:settings');
@@ -2298,7 +2346,7 @@ async function processRateLimitWait(
   const nextConsecutive = rlAction.resetCounter ? 0 : consecutiveRateLimits;
   logActivity({ event: 'rate_limit_resume', source: 'pickle', session: path.basename(ctx.sessionDir) });
   const handoffContent = [
-    buildHandoffSummary(state, ctx.sessionDir, ctx.iteration + 1), '',
+    buildIterationHandoffSummary(state, ctx.sessionDir, ctx.iteration + 1), '',
     `NOTE: Resumed after ${Math.ceil(rlAction.waitMs / 60_000)}-minute API rate limit wait (source: ${waitSource}).`,
     'Resume from current phase — do not repeat the rate-limited iteration.',
   ].join('\n');
@@ -2479,7 +2527,7 @@ function processTaskCompleted(state: State, ctx: LoopContext): LoopAction {
     return { kind: 'break', reason: 'manager_persistent_hallucination' };
   }
   if (decision.kind === 'recover_advance' || decision.kind === 'recover_retry') {
-    const handoffSummary = buildHandoffSummary(state, ctx.sessionDir, ctx.iteration + 1);
+    const handoffSummary = buildIterationHandoffSummary(state, ctx.sessionDir, ctx.iteration + 1);
     (ctx.writeHandoff || writeHandoffAtomic)(ctx.sessionDir, handoffSummary, process.pid, ctx.log);
     return { kind: 'continue', resetStall: true };
   }
@@ -3473,7 +3521,7 @@ async function runMuxRunnerMain() {
       logActivity({ event: 'rate_limit_resume', source: 'pickle', session: path.basename(sessionDir) });
       const waitedMinutes = Math.ceil(computedWaitMs / 60_000);
       const handoffContent = [
-        buildHandoffSummary(state, sessionDir, iteration + 1), '',
+        buildIterationHandoffSummary(state, sessionDir, iteration + 1), '',
         `NOTE: Resumed after ${waitedMinutes}-minute API rate limit wait (source: ${waitSource}).`,
         'Resume from current phase — do not repeat the rate-limited iteration.',
       ].join('\n');
@@ -3700,7 +3748,7 @@ async function runMuxRunnerMain() {
             : `Resume work on current_ticket=${curState.current_ticket}. It is NOT yet Done. Do NOT emit ${PromiseTokens.EPIC_COMPLETED} again until every linear_ticket_*.md file in the session root reports status: Done.`,
           `Use ${PromiseTokens.TASK_COMPLETED} for single-ticket completions; reserve ${PromiseTokens.EPIC_COMPLETED} for the moment all tickets are Done.`,
         ].filter(Boolean).join('\n');
-        const handoffSummary = buildHandoffSummary(state, sessionDir, iteration + 1);
+        const handoffSummary = buildIterationHandoffSummary(state, sessionDir, iteration + 1);
         writeHandoffAtomic(sessionDir, `${handoffSummary}\n\n${retryBrief}`, process.pid, log);
 
         // Reset stall counter so the recovery iteration isn't immediately

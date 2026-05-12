@@ -386,6 +386,36 @@ test('activity-event-payload: worker_lint_gate_failed requires integer error cou
   assert.equal(bad.valid, false, 'string lint_errors should fail');
 });
 
+test('activity-event-payload: worker_gate_failed requires structured failures and retry_count', () => {
+  const good = validate({
+    event: 'worker_gate_failed',
+    ts: TS,
+    ticket_id: 'abc12345',
+    gate_phase: 'test:fast',
+    failures: [{
+      name: 'worker fast tier fails',
+      file: 'tests/worker-fixture.test.js',
+      message: 'boom',
+    }],
+    retry_count: 1,
+  }, 'worker_gate_failed');
+  assert.equal(good.valid, true, 'valid worker gate failure payload should pass');
+
+  const bad = validate({
+    event: 'worker_gate_failed',
+    ts: TS,
+    ticket_id: 'abc12345',
+    gate_phase: 'deploy',
+    failures: [{
+      name: 'worker fast tier fails',
+      file: 'tests/worker-fixture.test.js',
+      message: 'boom',
+    }],
+    retry_count: '1',
+  }, 'worker_gate_failed');
+  assert.equal(bad.valid, false, 'invalid gate_phase and string retry_count should fail');
+});
+
 const SHARED_ENUM_DEFS = new Set([
   'backendEnum',
   'backendResolutionSourceEnum',
@@ -413,6 +443,7 @@ test('activity-event-payload: schema defines all registered event type definitio
     'completion_commit_inferred_from_git',
     'phantom_done_detected',
     'worker_lint_gate_passed',
+    'worker_gate_failed',
     'worker_lint_gate_failed',
     'worker_lint_autofix_applied',
     'worker_completion_commit_announced',
