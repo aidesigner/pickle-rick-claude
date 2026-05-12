@@ -265,6 +265,14 @@ function migrateLegacyManagerRelaunchCount(state: State): boolean {
   return true;
 }
 
+function migrateLegacySignalExitReason(state: State): boolean {
+  if (state.exit_reason === 'signal') {
+    state.exit_reason = 'signal:SIGINT';
+    return true;
+  }
+  return false;
+}
+
 function isStateSnapshotNewer(
   currentState: { iteration?: unknown },
   currentMtimeMs: number,
@@ -408,6 +416,7 @@ export class StateManager {
       // Best-effort persist migration — don't throw if write fails
       if (this.opts.schemaVersion >= 3) normalizeV3StateDefaults(state);
       migrateLegacyManagerRelaunchCount(state);
+      migrateLegacySignalExitReason(state);
       try { writeMigrationStateFile(statePath, state); } catch { /* migration write failed, non-fatal */ }
     }
 
@@ -422,11 +431,12 @@ export class StateManager {
       state.schema_version = this.opts.schemaVersion;
       if (this.opts.schemaVersion >= 3) normalizeV3StateDefaults(state);
       migrateLegacyManagerRelaunchCount(state);
+      migrateLegacySignalExitReason(state);
       process.stderr.write(`[state-manager] migrating ${statePath} to schema_version ${this.opts.schemaVersion}\n`);
       try { writeMigrationStateFile(statePath, state); } catch { /* migration write failed, non-fatal */ }
     } else if (state.schema_version >= 3) {
       normalizeV3StateDefaults(state);
-      if (migrateLegacyManagerRelaunchCount(state)) {
+      if (migrateLegacyManagerRelaunchCount(state) || migrateLegacySignalExitReason(state)) {
         try { writeMigrationStateFile(statePath, state); } catch { /* migration write failed, non-fatal */ }
       }
     }

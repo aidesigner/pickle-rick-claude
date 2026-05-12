@@ -1620,7 +1620,7 @@ export function installShutdownHandlers(runtime: PipelineRuntime, counters: Phas
       });
     } catch { /* best effort */ }
     if (activeChild && !activeChild.killed) activeChild.kill('SIGTERM');
-    recordExitReason(runtime.statePath, 'signal');
+    recordExitReason(runtime.statePath, `signal:${signal}`);
     safeDeactivate(runtime.statePath);
     logActivity({ event: 'session_end', source: 'pickle', session: path.basename(runtime.sessionDir), mode: 'tmux', backend: runtime.backend });
     process.exit(1);
