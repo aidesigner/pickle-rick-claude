@@ -8,7 +8,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
 const ARTIFACT_PATH = path.join(REPO_ROOT, 'bundle', 'section-c-still-needed.json');
 const DEFAULT_SESSIONS_DIR = path.join(os.homedir(), '.local', 'share', 'pickle-rick', 'sessions');
-const LOG_NAME = 'tmux-runner.log';
+const LOG_NAMES = Object.freeze(['tmux-runner.log', 'pipeline-runner.log']);
 const BANNER = '◤ FEED TERMINATED ◢';
 
 function parseArgs(argv) {
@@ -53,22 +53,24 @@ export function evaluateSectionC({ sessionRoot } = {}) {
     return writeArtifact({
       still_needed: true,
       evidence: 'No recent session found; defaulting Section C to still needed.',
-    });
+      });
   }
 
-  const logPath = path.join(resolvedSession, LOG_NAME);
-  if (!fs.existsSync(logPath)) {
+  const logPaths = LOG_NAMES
+    .map((logName) => path.join(resolvedSession, logName))
+    .filter((logPath) => fs.existsSync(logPath));
+  if (logPaths.length === 0) {
     return writeArtifact({
       still_needed: true,
-      evidence: `${LOG_NAME} missing in ${resolvedSession}; defaulting Section C to still needed.`,
+      evidence: `${LOG_NAMES.join(' and ')} missing in ${resolvedSession}; defaulting Section C to still needed.`,
     });
   }
 
-  const lines = lastLines(fs.readFileSync(logPath, 'utf8'));
+  const lines = logPaths.flatMap((logPath) => lastLines(fs.readFileSync(logPath, 'utf8')));
   const stillNeeded = lines.some((line) => line.includes(BANNER));
   return writeArtifact({
     still_needed: stillNeeded,
-    evidence: evidenceFor(lines) || `No ${BANNER} found in ${logPath}.`,
+    evidence: evidenceFor(lines) || `No ${BANNER} found in ${logPaths.join(', ')}.`,
   });
 }
 

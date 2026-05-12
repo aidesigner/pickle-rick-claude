@@ -23,6 +23,14 @@ function makeSession(log) {
   return session;
 }
 
+function makeSessionWithLogs(logs) {
+  const session = mkdtempSync(path.join(tmpdir(), 'section-c-gate-'));
+  for (const [name, contents] of Object.entries(logs)) {
+    writeFileSync(path.join(session, name), contents);
+  }
+  return session;
+}
+
 function runGate(session) {
   const result = spawnSync(process.execPath, [CLI, '--session', session], {
     cwd: REPO_ROOT,
@@ -60,6 +68,21 @@ test('section-c-gate.symptom-absent writes still_needed false for clean log', ()
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.artifact.still_needed, false);
     assert.match(result.artifact.evidence, /iteration 5 starting/);
+  } finally {
+    rmSync(session, { recursive: true, force: true });
+  }
+});
+
+test('section-c-gate.pipeline-log-banner writes still_needed true when only pipeline-runner.log shows the symptom', () => {
+  const session = makeSessionWithLogs({
+    'tmux-runner.log': 'iteration 4 completed\niteration 5 starting\n',
+    'pipeline-runner.log': 'phase handoff\n◤ FEED TERMINATED ◢\n',
+  });
+  try {
+    const result = runGate(session);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.artifact.still_needed, true);
+    assert.match(result.artifact.evidence, /FEED TERMINATED/);
   } finally {
     rmSync(session, { recursive: true, force: true });
   }
